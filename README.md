@@ -272,16 +272,18 @@ through the runtime-host route (`run --runtime codex` → `runtime next`).
 The narrow Tavily runtime-first path is Experimental. Its credential remains
 in the private workspace `.env` until the Human rotates or removes it, but
 credential presence is not provider-spend authority. Each separately
-Human-confirmed, Store-recorded acquisition attempt permits at most one bounded
-search request. Exact replay never redials; failures never auto-retry, and a
-safe failed response remains auditable without creating source or execution
-authority. A successful attempt freezes the exact provider response and
-returned content, then atomically records the Store-native source pack plus
-execution authorization before entering the existing external-role workflow.
-Search snippets remain claims-ineligible; only non-empty provider-returned
-durable content is claims-eligible. Synthetic loopback transport is tested.
-Live usefulness, reliability, cost, and acquisition-to-`finalized_local`
-performance are **NOT MEASURED**.
+Human-confirmed, Store-recorded acquisition attempt permits at most one Tavily
+Search followed by one batch Extract over at most five deduplicated URLs. The
+Search request discovers URLs and snippets only; its snippets are never
+claims-eligible. Only non-empty content from successful Extract results enters
+the Intake source pack. Partial Extract success commits successful URLs only,
+while retaining exact request/response bytes and per-URL outcomes in one
+hash-bound acquisition bundle. Zero Search results or all-failed Extract creates
+neither source nor execution authorization. Exact replay never redials and
+failures never auto-retry. A HumanSourcePack remains a separate Human source
+path and never counts as Tavily success. Synthetic loopback transport is tested.
+Live usefulness, reliability, cost, coverage, success rate, and
+acquisition-to-`finalized_local` performance are **NOT MEASURED**.
 
 ### Windows PowerShell
 

@@ -31,6 +31,8 @@ from multi_agent_brief.contracts.v2 import (
     IntegrityCheckRequest,
     SourceCommitRequest,
     SourceProposal,
+    TavilyAcquisitionBundle,
+    TavilyExtractUrlOutcome,
 )
 from multi_agent_brief.control_store import (
     ControlStoreIntegrityError,
@@ -71,7 +73,14 @@ from multi_agent_brief.runtime_host_v2.submission import (
     source_stage_root,
 )
 from multi_agent_brief.sources.base import SourceItem
-from multi_agent_brief.sources.search_backends.tavily import TavilyBackend
+from multi_agent_brief.sources.search_backends.tavily import (
+    TAVILY_ACQUISITION_BUNDLE_BYTE_CAP,
+    TAVILY_RESPONSE_BYTE_BUDGET,
+    TavilyBackend,
+)
+from multi_agent_brief.sources.tavily_acquisition import (
+    parse_tavily_acquisition_bundle,
+)
 from multi_agent_brief.sources.web_search import (
     WebSearchCollection,
     WebSearchProvider,
@@ -588,12 +597,13 @@ def _transferred_discovery_source_action(workspace: Path) -> CoreRunNextAction:
         action,
         request_id=invocation_request_id,
     )
+    collection = _tavily_collection([_tavily_item(durable=True)])
     material = _material_from_item(
         workspace=workspace,
         run_id=action.run_id,
         invocation_id=invocation_id,
         route=route,
-        item=_tavily_item(durable=True),
+        item=collection.items[0],
     )
     _manifest, proposals, ordered_materials = service._freeze_discovery_source_manifest(
         (material,)
@@ -615,7 +625,6 @@ def _transferred_discovery_source_action(workspace: Path) -> CoreRunNextAction:
             "attempt_authorization_id": attempt.attempt_authorization_id,
         }
     )
-    collection = _tavily_collection([_tavily_item(durable=True)])
     stage_source_pack_bytes(
         workspace,
         stage_identity=stage_identity,
@@ -645,7 +654,7 @@ def _transferred_discovery_source_action(workspace: Path) -> CoreRunNextAction:
 def _tavily_item(*, durable: bool) -> SourceItem:
     return SourceItem(
         source_id="durable" if durable else "snippet",
-        source_name="Publisher",
+        source_name="example.com",
         source_type="web_search",
         title="Durable source" if durable else "Snippet result",
         content=("durable provider content" if durable else "discovery snippet only"),
@@ -655,7 +664,9 @@ def _tavily_item(*, durable: bool) -> SourceItem:
         retrieved_at="2026-07-26T00:00:00Z",
         metadata={
             "backend": "tavily",
-            "content_shape": ("provider_raw_content" if durable else "search_snippet"),
+            "content_shape": (
+                "provider_extract_content" if durable else "search_snippet"
+            ),
             "has_raw_content": durable,
             "evidence_quality": "partial_extract" if durable else "snippet",
         },
@@ -664,53 +675,170 @@ def _tavily_item(*, durable: bool) -> SourceItem:
 
 def _tavily_collection(
     items: list[SourceItem],
+    *,
+    query: str = "manufacturing",
+    time_range: str = "week",
+    domains: tuple[str, ...] = (),
 ) -> WebSearchCollection:
-    projections = [
+    search_rows = [
         {
             "title": item.title,
             "url": item.url,
-            "snippet": (
-                "discovery snippet"
-                if item.metadata.get("has_raw_content") is True
-                else item.content
-            ),
-            "raw_content": (
-                item.content if item.metadata.get("has_raw_content") is True else None
-            ),
+            "content": "discovery snippet",
             "published_date": item.published_at or "",
             "score": 0.9,
         }
         for item in items
     ]
+    search_payload: dict[str, object] = {
+        "query": query,
+        "max_results": 5,
+        "topic": "news",
+        "search_depth": "basic",
+        "include_answer": False,
+        "include_raw_content": False,
+        "auto_parameters": False,
+        "time_range": time_range,
+    }
+    if domains:
+        search_payload["include_domains"] = list(domains)
+    search_request = canonical_json_bytes(search_payload)
+    search_response = canonical_json_bytes({"results": search_rows})
+    search_exchange = TavilyBackend._exchange(
+        "search",
+        search_request,
+        response_body=search_response,
+        status_code=200,
+    )
+    if not items:
+        envelope = TavilyBackend._bundle_response(
+            "search_results_empty",
+            search_exchange,
+        )
+        return WebSearchCollection(
+            items=(),
+            raw_response=envelope.raw_response,
+            status_code=envelope.status_code,
+        )
+
+    extract_urls = sorted({item.url for item in items})
+    extract_request = canonical_json_bytes(
+        {
+            "urls": extract_urls,
+            "query": query,
+            "chunks_per_source": 5,
+            "extract_depth": "basic",
+            "include_images": False,
+            "include_favicon": False,
+            "format": "markdown",
+            "include_usage": True,
+        }
+    )
+    successes = [
+        {"url": item.url, "raw_content": item.content}
+        for item in items
+        if item.metadata.get("has_raw_content") is True
+    ]
+    failures = [
+        {"url": item.url, "error": "test_provider_failure"}
+        for item in items
+        if item.metadata.get("has_raw_content") is not True
+    ]
+    extract_response = canonical_json_bytes(
+        {"results": successes, "failed_results": failures}
+    )
+    extract_exchange = TavilyBackend._exchange(
+        "extract",
+        extract_request,
+        response_body=extract_response,
+        status_code=200,
+    )
+    outcomes: list[TavilyExtractUrlOutcome] = []
+    for row in sorted([*successes, *failures], key=lambda value: value["url"]):
+        content = row.get("raw_content")
+        payload = {
+            "url": row["url"],
+            "status": "succeeded" if content else "provider_failed",
+            "response_item_sha256": hashlib.sha256(
+                canonical_json_bytes(row)
+            ).hexdigest(),
+        }
+        if isinstance(content, str):
+            content_bytes = content.strip().encode("utf-8")
+            payload.update(
+                {
+                    "content_sha256": hashlib.sha256(content_bytes).hexdigest(),
+                    "content_size_bytes": len(content_bytes),
+                }
+            )
+        outcomes.append(TavilyExtractUrlOutcome.model_validate(payload, strict=True))
+
+    search_by_url = {row["url"]: row for row in search_rows}
+    extract_by_url = {row["url"]: row for row in successes}
     normalized = [
         replace(
             item,
             metadata={
                 **item.metadata,
-                "provider_projection": projection,
+                "provider_projection": {
+                    "schema_version": ("briefloop.tavily_extract_source_projection.v1"),
+                    "search_result": search_by_url[item.url],
+                    "extract_result": extract_by_url[item.url],
+                },
             },
         )
-        for item, projection in zip(items, projections, strict=True)
+        for item in items
+        if item.metadata.get("has_raw_content") is True
     ]
-    response_rows = [
-        {
-            "title": projection["title"],
-            "url": projection["url"],
-            "content": projection["snippet"],
-            "raw_content": projection["raw_content"],
-            "published_date": projection["published_date"],
-            "score": projection["score"],
-        }
-        for projection in projections
-    ]
+    status = (
+        "extract_results_all_failed"
+        if not normalized
+        else "extract_results_succeeded"
+        if len(normalized) == len(extract_urls)
+        else "extract_results_partial"
+    )
+    envelope = TavilyBackend._bundle_response(
+        status,
+        search_exchange,
+        extract=extract_exchange,
+        extract_urls=extract_urls,
+        outcomes=tuple(outcomes),
+    )
     return WebSearchCollection(
         items=tuple(normalized),
-        raw_response=json.dumps(
-            {"results": response_rows},
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8"),
+        raw_response=envelope.raw_response,
+        status_code=envelope.status_code,
+    )
+
+
+def _tavily_search_invalid_collection() -> WebSearchCollection:
+    search_request = canonical_json_bytes(
+        {
+            "query": "manufacturing",
+            "max_results": 5,
+            "topic": "news",
+            "search_depth": "basic",
+            "include_answer": False,
+            "include_raw_content": False,
+            "auto_parameters": False,
+            "time_range": "week",
+        }
+    )
+    invalid_response = canonical_json_bytes({"results": "not-a-list"})
+    search_exchange = TavilyBackend._exchange(
+        "search",
+        search_request,
+        response_body=invalid_response,
         status_code=200,
+    )
+    envelope = TavilyBackend._bundle_response(
+        "search_response_invalid",
+        search_exchange,
+    )
+    return WebSearchCollection(
+        items=(),
+        raw_response=envelope.raw_response,
+        status_code=envelope.status_code,
     )
 
 
@@ -1533,7 +1661,7 @@ def test_discovery_invocation_rejects_role_output_drift_after_host_request(
 
 
 @_REQUIRES_RETAINED_PUBLICATION
-def test_discovery_continue_promotes_one_mixed_pack_atomically(
+def test_discovery_partial_extract_promotes_only_success_and_keeps_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1572,13 +1700,31 @@ def test_discovery_continue_promotes_one_mixed_pack_atomically(
         assert head is not None
         snapshot = store.load_snapshot(head.current_run_id)
         history = store.load_history()
+    forged_source = snapshot.sources[0].model_copy(
+        update={
+            "retrieved_at": "2099-01-01T00:00:00Z",
+            "content_media_type": "application/pdf",
+            "raw_payload_media_type": "application/pdf",
+            "document_kind": "forged-document-kind",
+        }
+    )
+    with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+        CoreRunDomainVerifier()._verify_snapshot(
+            history,
+            replace(snapshot, sources=(forged_source,)),
+        )
     assert len(snapshot.run_source_discovery_authorizations) == 1
+    attempt = snapshot.run_source_acquisition_attempt_authorizations[0]
+    assert (
+        attempt.max_provider_calls,
+        attempt.max_search_calls,
+        attempt.max_extract_calls,
+        attempt.max_extract_urls,
+        attempt.provider_call_sequence,
+    ) == (2, 1, 1, 5, "search_then_batch_extract")
     assert len(snapshot.run_execution_authorizations) == 1
-    assert len(snapshot.sources) == 2
-    assert sorted(source.claims_eligible for source in snapshot.sources) == [
-        False,
-        True,
-    ]
+    assert len(snapshot.sources) == 1
+    assert snapshot.sources[0].claims_eligible is True
     promotion_receipts = [
         receipt
         for receipt in history.transactions
@@ -1586,7 +1732,7 @@ def test_discovery_continue_promotes_one_mixed_pack_atomically(
     ]
     assert len(promotion_receipts) == 1
     promotion = promotion_receipts[0]
-    assert len(promotion.source_ids) == 2
+    assert len(promotion.source_ids) == 1
     assert len(promotion.run_source_discovery_authorizations) == 1
     assert len(promotion.run_execution_authorizations) == 1
     database_bytes = (workspace / "briefloop.db").read_bytes()
@@ -1633,14 +1779,13 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     calls: list[dict[str, object]] = []
     authorization_headers: list[str | None] = []
-    response_bytes = json.dumps(
+    search_response_bytes = json.dumps(
         {
             "results": [
                 {
                     "title": "Durable source",
                     "url": "https://example.com/durable",
                     "content": "snippet only",
-                    "raw_content": "durable provider content",
                     "published_date": " 2026-07-23",
                     "score": 0.9,
                 }
@@ -1648,6 +1793,35 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
         },
         separators=(",", ":"),
     ).encode("utf-8")
+    empty_extract_response = json.dumps(
+        {
+            "results": [
+                {
+                    "url": "https://example.com/durable",
+                    "raw_content": "",
+                }
+            ],
+            "failed_results": [],
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    remaining_response_budget = TAVILY_RESPONSE_BYTE_BUDGET - len(search_response_bytes)
+    durable_content = "x" * (
+        remaining_response_budget - len(empty_extract_response) - 128
+    )
+    extract_response_bytes = json.dumps(
+        {
+            "results": [
+                {
+                    "url": "https://example.com/durable",
+                    "raw_content": durable_content,
+                }
+            ],
+            "failed_results": [],
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert 0 < remaining_response_budget - len(extract_response_bytes) < 256
 
     class _Response:
         status = 200
@@ -1658,18 +1832,22 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
         def __exit__(self, *_args):
             return False
 
-        @staticmethod
-        def read(_limit=-1) -> bytes:
-            return response_bytes
+        def __init__(self, payload: bytes) -> None:
+            self._payload = payload
+
+        def read(self, _limit=-1) -> bytes:
+            return self._payload
 
     def urlopen(request, *, timeout):
         assert timeout == 30
-        assert request.full_url == "https://api.tavily.com/search"
         assert os.environ["TAVILY_API_KEY"] == "tvly-runtime-secret-sentinel"
         payload = json.loads(request.data.decode("utf-8"))
         calls.append(payload)
         authorization_headers.append(request.get_header("Authorization"))
-        return _Response()
+        if request.full_url == "https://api.tavily.com/search":
+            return _Response(search_response_bytes)
+        assert request.full_url == "https://api.tavily.com/extract"
+        return _Response(extract_response_bytes)
 
     monkeypatch.setattr(
         "multi_agent_brief.sources.search_backends.tavily.urllib.request.urlopen",
@@ -1681,15 +1859,29 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
     result = service.apply_current(action)
 
     assert result.status == "committed"
-    assert len(calls) == 1
-    assert calls[0]["include_raw_content"] == "markdown"
+    assert len(calls) == 2
+    assert calls[0]["include_raw_content"] is False
+    assert calls[0]["include_answer"] is False
     assert calls[0]["auto_parameters"] is False
     assert calls[0]["search_depth"] == "basic"
     assert calls[0]["max_results"] == 5
     assert calls[0]["time_range"] == "week"
     assert "days" not in calls[0]
     assert "api_key" not in calls[0]
-    assert authorization_headers == ["Bearer tvly-runtime-secret-sentinel"]
+    assert calls[1] == {
+        "urls": ["https://example.com/durable"],
+        "query": "manufacturing",
+        "chunks_per_source": 5,
+        "extract_depth": "basic",
+        "include_images": False,
+        "include_favicon": False,
+        "format": "markdown",
+        "include_usage": True,
+    }
+    assert authorization_headers == [
+        "Bearer tvly-runtime-secret-sentinel",
+        "Bearer tvly-runtime-secret-sentinel",
+    ]
     assert "TAVILY_API_KEY" not in os.environ
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         head = store.load_workspace_run_head()
@@ -1713,6 +1905,11 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
             provider_revision.revision,
         )
         source = snapshot.sources[0]
+        source_content = store.read_artifact_revision_bytes(
+            snapshot.run.run_id,
+            source.content_artifact_id,
+            source.content_artifact_revision,
+        )
         raw_projection = store.read_artifact_revision_bytes(
             snapshot.run.run_id,
             source.raw_payload_artifact_id,
@@ -1724,8 +1921,14 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
     assert source.material_kind == "partial_extract"
     assert source.claims_eligible is True
     assert source.published_at is None
-    assert provider_bytes == response_bytes
-    assert json.loads(raw_projection)["published_date"] == " 2026-07-23"
+    observation = parse_tavily_acquisition_bundle(provider_bytes)
+    assert len(provider_bytes) <= TAVILY_ACQUISITION_BUNDLE_BYTE_CAP
+    assert observation.bundle.status == "extract_results_succeeded"
+    assert observation.result_count == observation.durable_content_count == 1
+    assert source_content == durable_content.encode("utf-8")
+    assert json.loads(raw_projection)["search_result"]["published_date"] == (
+        " 2026-07-23"
+    )
     assert len(snapshot.run_execution_authorizations) == 1
     handoff = service.continue_authorized()
     assert handoff.status == "role_work_required"
@@ -1736,7 +1939,7 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
     replayed = service.continue_authorized()
 
     assert replayed.status == "role_work_required"
-    assert len(calls) == 1
+    assert len(calls) == 2
     assert _revision(workspace) == revision
     assert (workspace / "briefloop.db").read_bytes() == database
     assert b"tvly-runtime-secret-sentinel" not in database
@@ -1754,7 +1957,9 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
         payload = original_reader(reader, run_id, artifact_id, artifact_revision)
         if artifact_id == source.raw_payload_artifact_id:
             projection = json.loads(payload)
-            projection["published_date"] = projection["published_date"].strip()
+            projection["search_result"]["published_date"] = projection["search_result"][
+                "published_date"
+            ].strip()
             return canonical_json_bytes(projection)
         return payload
 
@@ -1765,6 +1970,78 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
     )
     with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
         CoreRunDomainVerifier()._verify_snapshot(history, snapshot)
+
+
+@_REQUIRES_RETAINED_PUBLICATION
+def test_discovery_overbound_provider_response_never_reaches_stage_or_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    workspace = _discovery_workspace(tmp_path)
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    sentinel = b"overbound-provider-body-must-not-persist"
+    provider_body = sentinel + (b"x" * TAVILY_RESPONSE_BYTE_BUDGET)
+    read_limits: list[int] = []
+    provider_calls = 0
+
+    class _Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, limit: int = -1) -> bytes:
+            read_limits.append(limit)
+            return provider_body if limit < 0 else provider_body[:limit]
+
+    def urlopen(request, *, timeout):
+        nonlocal provider_calls
+        assert timeout == 30
+        assert request.full_url == "https://api.tavily.com/search"
+        provider_calls += 1
+        return _Response()
+
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.search_backends.tavily.urllib.request.urlopen",
+        urlopen,
+    )
+    action = _advance_discovery_to_source_action(workspace)
+    stage_identity = _discovery_stage_identity(workspace, action)
+
+    result = _service(workspace).continue_authorized()
+
+    assert result.status == "needs_human"
+    assert result.reason_code == "source_acquisition_recovery_decision_required"
+    assert provider_calls == 1
+    assert read_limits == [TAVILY_RESPONSE_BYTE_BUDGET + 1]
+    assert not source_stage_root(workspace, stage_identity).exists()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+        history = store.load_history()
+        evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
+        assert evidence is not None
+        assert evidence.provider_response_artifact is not None
+        provider_bytes = store.read_artifact_revision_bytes(
+            snapshot.run.run_id,
+            evidence.provider_response_artifact.artifact_id,
+            evidence.provider_response_artifact.revision,
+        )
+    bundle = TavilyAcquisitionBundle.model_validate_json(provider_bytes, strict=True)
+    assert bundle.status == "search_response_unavailable"
+    assert bundle.search.response_body_base64 is None
+    assert len(provider_bytes) <= TAVILY_ACQUISITION_BUNDLE_BYTE_CAP
+    assert snapshot.sources == ()
+    assert snapshot.run_execution_authorizations == ()
+    assert sentinel not in provider_bytes
+    assert sentinel not in (workspace / "briefloop.db").read_bytes()
+    assert sentinel.decode("ascii") not in caplog.text
+    assert sentinel.decode("ascii") not in repr(history.transactions)
 
 
 @_REQUIRES_RETAINED_PUBLICATION
@@ -2803,21 +3080,27 @@ def test_discovery_promotion_failure_rolls_back_all_authority_rows(
 
 
 @_REQUIRES_RETAINED_PUBLICATION
-def test_discovery_all_snippets_fail_without_promotion(
+def test_discovery_extract_all_failed_is_terminal_without_automatic_retry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = _discovery_workspace(tmp_path)
+    provider_calls = 0
+
+    def collect(_provider, _query, _config):
+        nonlocal provider_calls
+        provider_calls += 1
+        return _tavily_collection([_tavily_item(durable=False)])
+
     monkeypatch.setattr(
         WebSearchProvider,
         "collect_with_response",
-        lambda _provider, _query, _config: _tavily_collection(
-            [_tavily_item(durable=False)]
-        ),
+        collect,
     )
     action = _advance_discovery_to_source_action(workspace)
+    service = _service(workspace)
 
-    result = _service(workspace).apply_current(action)
+    result = service.apply_current(action)
 
     assert result.status == "rejected_recorded"
     assert result.next_action.effect_kind == "source_acquisition_recovery"
@@ -2839,6 +3122,7 @@ def test_discovery_all_snippets_fail_without_promotion(
     assert evidence.durable_content_count == 0
     assert evidence.claims_eligible_count == 0
     assert evidence.provider_response_artifact is not None
+    assert provider_calls == 1
     assert (
         len(
             [
@@ -2849,6 +3133,66 @@ def test_discovery_all_snippets_fail_without_promotion(
         )
         == 1
     )
+    database = (workspace / "briefloop.db").read_bytes()
+    revision = _revision(workspace)
+    (workspace / ".env").unlink()
+
+    replay = service.continue_authorized()
+
+    assert replay.status == "needs_human"
+    assert replay.reason_code == "source_acquisition_recovery_decision_required"
+    assert provider_calls == 1
+    assert _revision(workspace) == revision
+    assert (workspace / "briefloop.db").read_bytes() == database
+
+
+@_REQUIRES_RETAINED_PUBLICATION
+def test_discovery_invalid_search_is_terminal_without_automatic_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _discovery_workspace(tmp_path)
+    provider_calls = 0
+
+    def collect(_provider, _query, _config):
+        nonlocal provider_calls
+        provider_calls += 1
+        return _tavily_search_invalid_collection()
+
+    monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
+    action = _advance_discovery_to_source_action(workspace)
+    service = _service(workspace)
+
+    result = service.apply_current(action)
+
+    assert result.status == "rejected_recorded"
+    assert result.next_action.reason_code == (
+        "source_acquisition_recovery_decision_required"
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert snapshot.sources == ()
+    assert snapshot.run_execution_authorizations == ()
+    evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
+    assert evidence is not None
+    assert evidence.failure_class == "provider_search_failed"
+    assert evidence.result_count == 0
+    assert evidence.durable_content_count == 0
+    assert evidence.provider_response_artifact is not None
+    assert provider_calls == 1
+    database = (workspace / "briefloop.db").read_bytes()
+    revision = _revision(workspace)
+    (workspace / ".env").unlink()
+
+    replay = service.continue_authorized()
+
+    assert replay.status == "needs_human"
+    assert replay.reason_code == "source_acquisition_recovery_decision_required"
+    assert provider_calls == 1
+    assert _revision(workspace) == revision
+    assert (workspace / "briefloop.db").read_bytes() == database
 
 
 @_REQUIRES_RETAINED_PUBLICATION
@@ -3267,12 +3611,19 @@ def test_discovery_malformed_provider_result_fails_without_promotion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = _discovery_workspace(tmp_path)
-    duplicate = _tavily_item(durable=True)
-    conflicting = replace(duplicate, content="conflicting durable content")
+    collection = _tavily_collection([_tavily_item(durable=True)])
+    conflicting = replace(
+        collection.items[0],
+        content="conflicting durable content",
+    )
     monkeypatch.setattr(
         WebSearchProvider,
         "collect_with_response",
-        lambda _provider, _query, _config: _tavily_collection([duplicate, conflicting]),
+        lambda _provider, _query, _config: WebSearchCollection(
+            items=(conflicting,),
+            raw_response=collection.raw_response,
+            status_code=collection.status_code,
+        ),
     )
     action = _advance_discovery_to_source_action(workspace)
 
@@ -3301,6 +3652,138 @@ def test_discovery_malformed_provider_result_fails_without_promotion(
         )
         == 1
     )
+
+
+@_REQUIRES_RETAINED_PUBLICATION
+def test_discovery_rehashed_bundle_cannot_change_frozen_search_direction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _discovery_workspace(tmp_path)
+    provider_calls = 0
+
+    def collect(_provider, _query, _config):
+        nonlocal provider_calls
+        provider_calls += 1
+        if provider_calls != 1:
+            pytest.fail("frozen-spec rejection must not redial the provider")
+        return _tavily_collection(
+            [_tavily_item(durable=True)],
+            query="unapproved replacement query",
+            time_range="month",
+            domains=("unapproved.example",),
+        )
+
+    monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
+    action = _advance_discovery_to_source_action(workspace)
+    service = _service(workspace)
+
+    rejected = service.apply_current(action)
+
+    assert rejected.status == "rejected_recorded"
+    assert rejected.next_action.reason_code == (
+        "source_acquisition_recovery_decision_required"
+    )
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert snapshot.sources == ()
+    assert snapshot.run_execution_authorizations == ()
+    assert snapshot.events[-1].intake_binding.source_acquisition_failure is not None
+    assert provider_calls == 1
+    database = (workspace / "briefloop.db").read_bytes()
+    revision = snapshot.store_revision
+    (workspace / ".env").unlink()
+
+    replay = service.continue_authorized()
+
+    assert replay.status == "needs_human"
+    assert replay.reason_code == "source_acquisition_recovery_decision_required"
+    assert provider_calls == 1
+    assert _revision(workspace) == revision
+    assert (workspace / "briefloop.db").read_bytes() == database
+
+
+@_REQUIRES_RETAINED_PUBLICATION
+def test_discovery_staged_proposal_is_derived_from_bundle_and_invocation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _discovery_workspace(tmp_path)
+    provider_calls = 0
+
+    def collect(_provider, _query, _config):
+        nonlocal provider_calls
+        provider_calls += 1
+        if provider_calls != 1:
+            pytest.fail("forged-proposal rejection must not redial the provider")
+        return _tavily_collection([_tavily_item(durable=True)])
+
+    original_stage = host_service.stage_source_pack_bytes
+
+    def stage_forged_proposal(*args, **kwargs):
+        members = kwargs["members"]
+        assert len(members) == 1
+        member = members[0]
+        proposal = json.loads(member.proposal_bytes)
+        proposal.update(
+            {
+                "proposal_id": "PROP-FORGED-STAGED-001",
+                "source_id": "SRC-FORGED-STAGED-001",
+                "retrieved_at": "2099-01-01T00:00:00Z",
+                "content_media_type": "application/pdf",
+                "document_kind": "forged-document-kind",
+            }
+        )
+        kwargs["members"] = (
+            SourceStageBytesInput(
+                member_id="SRC-FORGED-STAGED-001",
+                proposal_bytes=canonical_json_bytes(proposal),
+                content_bytes=member.content_bytes,
+                raw_payload_bytes=member.raw_payload_bytes,
+            ),
+        )
+        return original_stage(*args, **kwargs)
+
+    monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
+    monkeypatch.setattr(
+        host_service,
+        "stage_source_pack_bytes",
+        stage_forged_proposal,
+    )
+    action = _advance_discovery_to_source_action(workspace)
+    service = _service(workspace)
+
+    try:
+        rejected = service.apply_current(action)
+    except RuntimeHostError as exc:
+        assert str(exc) in {
+            "runtime_source_staging_invalid",
+            "source_provider_result_invalid",
+        }
+    else:
+        assert rejected.status == "rejected_recorded"
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert snapshot.sources == ()
+    assert snapshot.run_execution_authorizations == ()
+    assert provider_calls == 1
+    database = (workspace / "briefloop.db").read_bytes()
+    revision = snapshot.store_revision
+    (workspace / ".env").unlink()
+
+    replay = service.continue_authorized()
+
+    assert replay.status == "needs_human"
+    assert replay.reason_code == "source_acquisition_recovery_decision_required"
+    assert provider_calls == 1
+    assert _revision(workspace) == revision
+    assert (workspace / "briefloop.db").read_bytes() == database
 
 
 @_REQUIRES_RETAINED_PUBLICATION
@@ -3340,18 +3823,19 @@ def test_discovery_provider_failure_records_one_typed_failure(
     assert calls == 1
     assert snapshot.sources == ()
     assert snapshot.run_execution_authorizations == ()
-    assert snapshot.artifacts == artifacts_before
+    assert len(snapshot.artifacts) == len(artifacts_before) + 1
     failures = [
         item
         for item in snapshot.invocations
         if item.role_id == "source-provider" and item.status == "failed"
     ]
     assert len(failures) == 1
-    assert failures[0].failure_reason == "child_failed"
+    assert failures[0].failure_reason == "proposal_invalid"
     evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
     assert evidence is not None
-    assert evidence.failure_class == "provider_response_unavailable"
-    assert evidence.provider_response_artifact is None
+    assert evidence.failure_class == "provider_search_failed"
+    assert evidence.provider_status_class == "acquisition_bundle_retained"
+    assert evidence.provider_response_artifact is not None
     assert sentinel not in repr(snapshot)
     assert sentinel not in repr(history.transactions)
     assert sentinel.encode() not in (workspace / "briefloop.db").read_bytes()
@@ -3359,7 +3843,7 @@ def test_discovery_provider_failure_records_one_typed_failure(
 
 @pytest.mark.parametrize("echo_kind", ["secret", "sha256"])
 @_REQUIRES_RETAINED_PUBLICATION
-def test_discovery_provider_credential_echo_fails_before_stage_or_promotion(
+def test_discovery_provider_credential_echo_keeps_only_value_free_failure_bundle(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -3429,7 +3913,12 @@ def test_discovery_provider_credential_echo_fails_before_stage_or_promotion(
         history = store.load_history()
     assert snapshot.sources == ()
     assert snapshot.run_execution_authorizations == ()
-    assert snapshot.artifacts == artifacts_before
+    assert len(snapshot.artifacts) == len(artifacts_before) + 1
+    evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
+    assert evidence is not None
+    assert evidence.failure_class == "provider_search_failed"
+    assert evidence.provider_status_class == "acquisition_bundle_retained"
+    assert evidence.provider_response_artifact is not None
     database_bytes = (workspace / "briefloop.db").read_bytes()
     assert sentinel.encode("utf-8") not in database_bytes
     assert sentinel_hash.encode("ascii") not in database_bytes.lower()
@@ -4580,9 +5069,7 @@ def test_reader_projection_issue_routes_editor_repair_before_finalize(
         )
 
     projection_findings = [
-        item
-        for item in snapshot.gate_findings
-        if item.finding_type == finding_type
+        item for item in snapshot.gate_findings if item.finding_type == finding_type
     ]
     assert len(projection_findings) == 1
     finding = projection_findings[0]

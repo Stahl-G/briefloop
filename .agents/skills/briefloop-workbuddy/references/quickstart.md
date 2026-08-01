@@ -66,23 +66,25 @@ secret；已有工作区也要先验证它存在。不要在 `& $BriefLoop new` 
    - management monthly、管理月报、月报 -> `management-monthly`
    - file review、PDF review、document review、文件、PDF、审阅 ->
      `document-review`
-5. 用户确认目标路径之后才运行 `& $BriefLoop new ...`。
+5. 用户确认目标路径之后，在线搜索走 onboarding 或 Init Web；本地优先
+   Report Pack 才运行 `& $BriefLoop new ...`。
 
-一次只用一个产品入口，并把用户的搜索选择写明。
+一次只用一个工作区入口，并把用户的搜索选择写明。
 
-如果用户开启在线搜索，强烈推荐 Tavily：
+如果用户开启在线搜索，强烈推荐 Tavily，并在 onboarding 中明确确认唯一检索
+主题与 7 或 30 天窗口：
 
 ```powershell
-& $BriefLoop new industry-weekly "<workspace>" --industry "<topic>" --search-backend tavily
-& $BriefLoop new management-monthly "<workspace>" --industry "<topic>" --search-backend tavily
-& $BriefLoop new document-review "<workspace>" --industry "<topic>" --search-backend tavily
-& $BriefLoop new solar-periodic "<workspace>" --industry "<topic>" --search-backend tavily
+& $BriefLoop onboard --output "<onboarding-json>"
+& $BriefLoop init "<workspace>" --from-onboarding "<onboarding-json>"
 ```
 
-把 `<topic>` 替换成 Human 明确确认的检索主题。该值就是唯一 Tavily query；
-product entry 和报告目标不会改写它。
+可使用浏览器时，也可以运行 `& $BriefLoop init "<workspace>" --web`，并在
+one-shot loopback wizard 中确认 Tavily、精确主题和 7 或 30 天窗口。90 天、
+custom 或缺失窗口必须在 secret/provider effect 前停止。不得改用已退役并会被
+拒绝的 `& $BriefLoop new ... --search-backend tavily`。
 
-如果用户拒绝在线搜索，显式关闭：
+如果用户拒绝在线搜索，本地优先 Report Pack 显式关闭搜索：
 
 ```powershell
 & $BriefLoop new industry-weekly "<workspace>" --web-search-mode disabled

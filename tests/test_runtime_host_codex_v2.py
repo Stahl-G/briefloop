@@ -14,9 +14,16 @@ import yaml
 from multi_agent_brief.cli.init_wizard import create_workspace
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.contracts import SchemaRegistry
-from multi_agent_brief.contracts.v2 import InvocationStartRequest, SourceProposal
+from multi_agent_brief.contracts.v2 import (
+    InvocationStartRequest,
+    SourceProposal,
+    TavilyExtractUrlOutcome,
+)
 from multi_agent_brief.control_store import SQLiteControlStore
-from multi_agent_brief.control_store.serialization import canonical_fingerprint
+from multi_agent_brief.control_store.serialization import (
+    canonical_fingerprint,
+    canonical_json_bytes,
+)
 from multi_agent_brief.core_run_v2.errors import CoreRunResult
 from multi_agent_brief.core_run_v2.policy import derived_id
 from multi_agent_brief.core_run_v2.service import CoreRunService
@@ -37,6 +44,7 @@ from multi_agent_brief.runtime_host_v2.service import (
 from multi_agent_brief.runtime_host_v2.submission import source_stage_root
 from multi_agent_brief.runtime_assets import install_runtime_kit
 from multi_agent_brief.sources.base import SourceItem
+from multi_agent_brief.sources.search_backends.tavily import TavilyBackend
 from multi_agent_brief.sources.web_search import (
     WebSearchCollection,
 )
@@ -1754,6 +1762,124 @@ def _provider_collection(items: list[SourceItem]) -> WebSearchCollection:
     )
 
 
+def _durable_tavily_collection(
+    items: list[SourceItem],
+    *,
+    query: str,
+    time_range: str,
+    domains: tuple[str, ...] = (),
+) -> WebSearchCollection:
+    """Build one canonical Search + batch Extract success bundle."""
+
+    search_rows = [
+        {
+            "title": item.title,
+            "url": item.url,
+            "content": f"Discovery snippet {position}.",
+            "published_date": item.published_at,
+            "score": 0.9,
+        }
+        for position, item in enumerate(items, start=1)
+    ]
+    search_payload: dict[str, object] = {
+        "query": query,
+        "max_results": 5,
+        "topic": "news",
+        "search_depth": "basic",
+        "include_answer": False,
+        "include_raw_content": False,
+        "auto_parameters": False,
+        "time_range": time_range,
+    }
+    if domains:
+        search_payload["include_domains"] = list(domains)
+    search_request = canonical_json_bytes(search_payload)
+    search_response = canonical_json_bytes({"results": search_rows})
+    search_exchange = TavilyBackend._exchange(
+        "search",
+        search_request,
+        response_body=search_response,
+        status_code=200,
+    )
+
+    extract_urls = sorted(item.url for item in items)
+    extract_request = canonical_json_bytes(
+        {
+            "urls": extract_urls,
+            "query": query,
+            "chunks_per_source": 5,
+            "extract_depth": "basic",
+            "include_images": False,
+            "include_favicon": False,
+            "format": "markdown",
+            "include_usage": True,
+        }
+    )
+    extract_rows = [
+        {"url": item.url, "raw_content": item.content.strip()}
+        for item in sorted(items, key=lambda value: value.url)
+    ]
+    extract_response = canonical_json_bytes(
+        {"results": extract_rows, "failed_results": []}
+    )
+    extract_exchange = TavilyBackend._exchange(
+        "extract",
+        extract_request,
+        response_body=extract_response,
+        status_code=200,
+    )
+    outcomes = tuple(
+        TavilyExtractUrlOutcome.model_validate(
+            {
+                "url": row["url"],
+                "status": "succeeded",
+                "response_item_sha256": hashlib.sha256(
+                    canonical_json_bytes(row)
+                ).hexdigest(),
+                "content_sha256": hashlib.sha256(
+                    row["raw_content"].encode("utf-8")
+                ).hexdigest(),
+                "content_size_bytes": len(row["raw_content"].encode("utf-8")),
+            },
+            strict=True,
+        )
+        for row in extract_rows
+    )
+    search_by_url = {row["url"]: row for row in search_rows}
+    extract_by_url = {row["url"]: row for row in extract_rows}
+    normalized = tuple(
+        replace(
+            item,
+            content=item.content.strip(),
+            metadata={
+                **item.metadata,
+                "backend": "tavily",
+                "content_shape": "provider_extract_content",
+                "has_raw_content": True,
+                "evidence_quality": "partial_extract",
+                "provider_projection": {
+                    "schema_version": ("briefloop.tavily_extract_source_projection.v1"),
+                    "search_result": search_by_url[item.url],
+                    "extract_result": extract_by_url[item.url],
+                },
+            },
+        )
+        for item in items
+    )
+    bundle = TavilyBackend._bundle_response(
+        "extract_results_succeeded",
+        search_exchange,
+        extract=extract_exchange,
+        extract_urls=extract_urls,
+        outcomes=outcomes,
+    )
+    return WebSearchCollection(
+        items=normalized,
+        raw_response=bundle.raw_response,
+        status_code=bundle.status_code,
+    )
+
+
 def test_deterministic_source_acquire_rejects_public_invocation_start_before_mutation(
     tmp_path: Path,
     capsys,
@@ -1884,10 +2010,16 @@ def test_provider_max_five_commits_once_and_store_replay_skips_second_call(
     host, action = _advance_to_source_route(workspace, capsys, route="web-search")
     calls = 0
 
-    def bounded(_provider, _query, _config):
+    def bounded(_provider, _query, config):
         nonlocal calls
         calls += 1
-        return _provider_collection([_provider_item(position) for position in range(5)])
+        task = config["search_tasks"][0]
+        return _durable_tavily_collection(
+            [_provider_item(position) for position in range(5)],
+            query=task["query"],
+            time_range=config["time_range"],
+            domains=tuple(task["domains"]),
+        )
 
     monkeypatch.setattr(
         "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",
@@ -2215,10 +2347,16 @@ def test_source_pack_commit_outcome_unknown_replays_identical_request(
     host, action = _advance_to_source_route(workspace, capsys, route="web-search")
     provider_calls = 0
 
-    def one_result(_provider, _query, _config):
+    def one_result(_provider, _query, config):
         nonlocal provider_calls
         provider_calls += 1
-        return _provider_collection([_provider_item(1)])
+        task = config["search_tasks"][0]
+        return _durable_tavily_collection(
+            [_provider_item(1)],
+            query=task["query"],
+            time_range=config["time_range"],
+            domains=tuple(task["domains"]),
+        )
 
     monkeypatch.setattr(
         "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",

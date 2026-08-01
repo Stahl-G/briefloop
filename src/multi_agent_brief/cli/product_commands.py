@@ -74,6 +74,12 @@ EVIDENCE_EXTRACT_PAGE_INVENTORY_SCHEMA_VERSION = (
     "briefloop.evidence_extract_page_inventory.v1"
 )
 PRODUCT_WORKSPACE_SELECTOR_MAX_ITEMS = 20
+TAVILY_CONFIRMED_INIT_GUIDANCE = (
+    "Tavily setup requires Human-confirmed direction and a 7- or 30-day "
+    "source window. Use `briefloop init <workspace> --web`, or run "
+    "`briefloop onboard` and then `briefloop init <workspace> "
+    "--from-onboarding onboarding.json`."
+)
 
 
 def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
@@ -97,9 +103,9 @@ def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument(
         "--industry",
         help=(
-            "Human-authored industry or topic. It is also the exact Tavily query "
-            "when the resolved search backend is tavily, and is therefore required "
-            "for Tavily. Low-confidence PolicyProfile matches use the ReportPack default."
+            "Human-authored industry or topic. Low-confidence PolicyProfile "
+            "matches use the ReportPack default. Tavily setup belongs to "
+            "`briefloop init --web` or conversational onboarding."
         ),
     )
     parser.add_argument(
@@ -124,7 +130,10 @@ def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument(
         "--search-backend",
         choices=["tavily", "exa", "brave", "firecrawl", "serper"],
-        help="Opt into an external API search backend, for example tavily.",
+        help=(
+            "External API backend for this developer workspace shortcut. "
+            "Tavily requires `briefloop init --web` or conversational onboarding."
+        ),
     )
 
 
@@ -403,6 +412,16 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
 
 
 def handle_new_workspace(args: argparse.Namespace) -> int:
+    if str(getattr(args, "search_backend", "") or "").strip() == "tavily":
+        payload = {
+            "ok": False,
+            "error": TAVILY_CONFIRMED_INIT_GUIDANCE,
+            "workspace": str(args.workspace),
+            "report_pack": str(args.report_pack),
+        }
+        _print_payload("new", payload, as_json=False)
+        return 1
+
     registry = ReportPackRegistry.from_package()
     requested_pack_id = resolve_report_pack_id(args.report_pack)
     pack = registry.get(requested_pack_id)
@@ -883,9 +902,9 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
                 print("Online search:")
                 print("  Online search is recommended but not active by default.")
                 print("  Tavily is the recommended external API backend.")
+                print("  To enable Tavily, use `briefloop init <workspace> --web`,")
                 print(
-                    '  To enable it, recreate with --industry "<topic>"'
-                    " --search-backend tavily and set TAVILY_API_KEY."
+                    "  or run `briefloop onboard` and initialize from onboarding.json."
                 )
                 print("  To stay offline, recreate with --web-search-mode disabled.")
             elif web_search_mode == "disabled":
@@ -1068,20 +1087,16 @@ def _create_report_pack_workspace(
 
     requested_backend = str(getattr(args, "search_backend", None) or "").strip()
     requested_mode = str(getattr(args, "web_search_mode", None) or "").strip()
-    resolved_backend = (
-        requested_backend
-        if requested_backend
-        else "tavily"
-        if requested_mode == "external_api"
-        else ""
-    )
+    if requested_backend == "tavily":
+        raise ValueError(TAVILY_CONFIRMED_INIT_GUIDANCE)
+    if requested_mode == "external_api" and not requested_backend:
+        raise ValueError(
+            "--web-search-mode external_api requires an explicit "
+            "--search-backend; Tavily must be configured through `briefloop init "
+            "<workspace> --web` or conversational onboarding."
+        )
     industry_hint = getattr(args, "industry", None)
     industry_topic = industry_hint.strip() if isinstance(industry_hint, str) else ""
-    if resolved_backend == "tavily" and not industry_topic:
-        raise ValueError(
-            "Tavily search requires an explicit --industry <topic>; "
-            "that Human-authored topic is the exact Tavily query."
-        )
 
     policy_registry = PolicyProfileRegistry.from_package()
     spec = deepcopy(dict(pack.default_report_spec))
@@ -1147,9 +1162,6 @@ def _create_report_pack_workspace(
         if web_search_mode == "disabled":
             profile.tavily_enabled = False
             profile.search_backend = ""
-        elif web_search_mode == "external_api" and not profile.search_backend:
-            profile.tavily_enabled = True
-            profile.search_backend = "tavily"
         elif web_search_mode in {"runtime_tool", "configure_later"}:
             profile.tavily_enabled = False
             profile.search_backend = ""

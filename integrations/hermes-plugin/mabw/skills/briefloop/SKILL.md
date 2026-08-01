@@ -82,11 +82,13 @@ work and call it again. Stop on `proposal_invalid`, `needs_human`,
 `needs_attention`, or `finalized_local` as directed; never invent the missing
 request or repair. During discovery-only continuation, the host may run the
 doctor, source planner, and exact bound Tavily route. The workspace credential
-remains local until the Human rotates/removes it, but each provider call needs
-one distinct Human/Store attempt authorization. Exact replay never redials and
+remains local until the Human rotates/removes it, but each attempt needs one
+distinct Human/Store authorization and permits at most one Search followed by
+one batch Extract over at most five deduplicated URLs. Exact replay never redials and
 failures never auto-retry. A typed recovery action requires the Human to
-authorize another attempt or provide a HumanSourcePack. Search snippets remain
-ineligible; only durable provider content can participate in the single atomic
+authorize another attempt or provide a HumanSourcePack. HumanSourcePack never
+counts as Tavily success. Search snippets remain ineligible; only non-empty
+successful Extract content can participate in the single atomic
 source/manifest/classification/execution-authorization promotion receipt.
 Unauthorized runs retain the granular/manual protocol.
 

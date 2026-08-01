@@ -31,6 +31,8 @@ from multi_agent_brief.contracts.v2 import (
     RunExecutionAuthorization,
     RunSourceAcquisitionAttemptAuthorization,
     RunSourceDiscoveryAuthorization,
+    RuntimeSourcePlanBinding,
+    RuntimeWebSearchAcquisitionSpec,
     ScreenedCandidatesProposal,
     SourceAcquisitionFailureEvidence,
     SourceCommitRequest,
@@ -67,6 +69,16 @@ from multi_agent_brief.intake_v2.policy import (
 from multi_agent_brief.intake_v2.scratch import ScratchReader, parse_json_object
 from multi_agent_brief.core_run_v2.policy import (
     EXECUTION_AUTHORIZATION_MANIFEST_ARTIFACT_ID,
+)
+from multi_agent_brief.core_run_v2.tavily_source_binding import (
+    expected_tavily_intake_submission,
+    expected_tavily_source_pack,
+)
+from multi_agent_brief.sources.tavily_acquisition import (
+    TavilyAcquisitionBundleError,
+    TavilyAcquisitionObservation,
+    parse_tavily_acquisition_bundle,
+    tavily_observation_matches_spec,
 )
 
 
@@ -423,6 +435,12 @@ class IntakeService:
 
         if not input.provider_response:
             raise IntakeError("source_provider_result_invalid")
+        observation = _source_acquisition_observation(input.provider_response)
+        if observation.bundle.status not in {
+            "extract_results_partial",
+            "extract_results_succeeded",
+        }:
+            raise IntakeError("source_provider_result_invalid")
         members, prepared, canonical_manifest = self._prepare_discovery_source_members(
             run_id=input.run_id,
             invocation_id=input.invocation_id,
@@ -434,7 +452,6 @@ class IntakeService:
         )
         if not any(item.claims_eligible for item in prepared):
             raise IntakeError("source_pack_empty")
-
         request = SourcePackCommitRequest.model_validate(
             {
                 "schema_version": SourcePackCommitRequest.schema_id,
@@ -515,8 +532,55 @@ class IntakeService:
                 or attempt.discovery_authorization_id != discovery.authorization_id
                 or attempt.provider_request_fingerprint
                 != input.provider_request_fingerprint
+                or attempt.max_provider_calls != 2
+                or attempt.max_search_calls != 1
+                or attempt.max_extract_calls != 1
+                or attempt.max_extract_urls != 5
+                or attempt.provider_call_sequence != "search_then_batch_extract"
             ):
                 raise IntakeError("source_discovery_authorization_invalid")
+            spec = _authorized_tavily_spec(
+                store,
+                snapshot,
+                route_fingerprint=discovery.source_route_fingerprint,
+                provider_request_fingerprint=input.provider_request_fingerprint,
+            )
+            if not tavily_observation_matches_spec(observation, spec):
+                raise IntakeError("source_provider_result_invalid")
+            try:
+                expected_pack = expected_tavily_source_pack(
+                    observation,
+                    run_id=input.run_id,
+                    invocation_id=input.invocation_id,
+                    route_fingerprint=discovery.source_route_fingerprint,
+                    retrieved_at=invocation.started_at,
+                )
+            except ValueError as exc:
+                raise IntakeError("source_provider_result_invalid") from exc
+            if (
+                input.manifest != expected_pack.manifest
+                or input.source_manifest_sha256 != expected_pack.manifest_sha256
+                or input.proposals != expected_pack.proposals
+                or input.contents != expected_pack.contents
+                or input.raw_payloads != expected_pack.raw_payloads
+            ):
+                raise IntakeError("source_provider_result_invalid")
+            expected_submission = expected_tavily_intake_submission(
+                expected_pack,
+                request_id=input.request_id,
+                run_id=input.run_id,
+                invocation_id=input.invocation_id,
+                expected_store_revision=input.expected_store_revision,
+                provider_response=input.provider_response,
+                attempt_authorization_id=input.attempt_authorization_id,
+                attempt_ordinal=input.attempt_ordinal,
+                provider_request_fingerprint=input.provider_request_fingerprint,
+            )
+            if (
+                request != expected_submission.request
+                or request_fingerprint != expected_submission.request_fingerprint
+            ):
+                raise IntakeError("source_provider_result_invalid")
             return self._commit_source_pack(
                 store,
                 request=request,
@@ -550,6 +614,7 @@ class IntakeService:
         response_artifact_id: str | None = None
         rejection_counts: dict[str, int] | None = None
         claims_eligible_count: int | None = None
+        observation: TavilyAcquisitionObservation | None = None
         if input.provider_response is None:
             if (
                 input.provider_status_code is not None
@@ -568,9 +633,9 @@ class IntakeService:
         else:
             if input.provider_status_code != 200:
                 raise IntakeError("source_provider_result_invalid")
-            observed_results, observed_durable = (
-                _source_acquisition_response_observations(input.provider_response)
-            )
+            observation = _source_acquisition_observation(input.provider_response)
+            observed_results = observation.result_count
+            observed_durable = observation.durable_content_count
             if (
                 input.result_count != observed_results
                 or input.durable_content_count != observed_durable
@@ -584,7 +649,7 @@ class IntakeService:
                 input.discovery_authorization_id,
                 input.invocation_id,
             )
-            provider_status_class = "http_200"
+            provider_status_class = "acquisition_bundle_retained"
             if input.validation_rejected:
                 if (
                     input.manifest is not None
@@ -595,7 +660,21 @@ class IntakeService:
                 ):
                     raise IntakeError("source_provider_result_invalid")
                 failure_class = "source_pack_validation_rejected"
-            elif observed_results == 0:
+            elif observation.bundle.status in {
+                "search_response_unavailable",
+                "search_response_invalid",
+            }:
+                if (
+                    input.manifest is not None
+                    or input.source_manifest_sha256 is not None
+                    or input.proposals
+                    or input.contents
+                    or input.raw_payloads
+                ):
+                    raise IntakeError("source_provider_result_invalid")
+                claims_eligible_count = 0
+                failure_class = "provider_search_failed"
+            elif observation.bundle.status == "search_results_empty":
                 if (
                     input.manifest is not None
                     or input.source_manifest_sha256 is not None
@@ -606,6 +685,28 @@ class IntakeService:
                     raise IntakeError("source_provider_result_invalid")
                 claims_eligible_count = 0
                 failure_class = "provider_results_empty"
+            elif observation.bundle.status in {
+                "extract_response_unavailable",
+                "extract_response_invalid",
+                "extract_results_all_failed",
+            }:
+                if (
+                    input.manifest is not None
+                    or input.source_manifest_sha256 is not None
+                    or input.proposals
+                    or input.contents
+                    or input.raw_payloads
+                    or observed_results == 0
+                    or observed_durable != 0
+                ):
+                    raise IntakeError("source_provider_result_invalid")
+                claims_eligible_count = 0
+                rejection_counts = {"extract_not_succeeded": observed_results}
+                failure_class = (
+                    "provider_results_without_durable_content"
+                    if observation.bundle.status == "extract_results_all_failed"
+                    else "provider_extract_failed"
+                )
             else:
                 if input.manifest is None or input.source_manifest_sha256 is None:
                     raise IntakeError("source_provider_result_invalid")
@@ -735,8 +836,22 @@ class IntakeService:
                 or attempt.discovery_authorization_id != discovery.authorization_id
                 or attempt.provider_request_fingerprint
                 != input.provider_request_fingerprint
+                or attempt.max_provider_calls != 2
+                or attempt.max_search_calls != 1
+                or attempt.max_extract_calls != 1
+                or attempt.max_extract_urls != 5
+                or attempt.provider_call_sequence != "search_then_batch_extract"
             ):
                 raise IntakeError("source_discovery_authorization_invalid")
+            if observation is not None:
+                spec = _authorized_tavily_spec(
+                    store,
+                    snapshot,
+                    route_fingerprint=discovery.source_route_fingerprint,
+                    provider_request_fingerprint=input.provider_request_fingerprint,
+                )
+                if not tavily_observation_matches_spec(observation, spec):
+                    raise IntakeError("source_provider_result_invalid")
             return self._record_rejection(
                 store,
                 request=request,
@@ -2810,38 +2925,67 @@ def _blob_workspace_path(digest: str) -> str:
     return f"briefloop.db.blobs/sha256/{digest[:2]}/{digest}"
 
 
-def _source_acquisition_response_observations(payload: bytes) -> tuple[int, int]:
-    """Return bounded mechanical counts from one already-safe Tavily response."""
+def _source_acquisition_observation(
+    payload: bytes,
+) -> TavilyAcquisitionObservation:
+    """Recompute one strict Tavily acquisition from its exact frozen bytes."""
 
     try:
-        response = parse_json_object(payload)
-    except IntakeError as exc:
+        return parse_tavily_acquisition_bundle(payload)
+    except TavilyAcquisitionBundleError as exc:
         raise IntakeError("source_provider_result_invalid") from exc
-    results = response.get("results")
-    if type(results) is not list or len(results) > 5:
-        raise IntakeError("source_provider_result_invalid")
-    durable_count = 0
-    for result in results:
-        if type(result) is not dict:
-            raise IntakeError("source_provider_result_invalid")
-        title = result.get("title")
-        url = result.get("url")
-        snippet = result.get("content")
-        raw_content = result.get("raw_content")
-        published_date = result.get("published_date")
-        score = result.get("score")
-        if (
-            type(title) is not str
-            or type(url) is not str
-            or type(snippet) is not str
-            or type(raw_content) not in {str, type(None)}
-            or type(published_date) not in {str, type(None)}
-            or type(score) not in {int, float, type(None)}
-        ):
-            raise IntakeError("source_provider_result_invalid")
-        if isinstance(raw_content, str) and raw_content.strip():
-            durable_count += 1
-    return len(results), durable_count
+
+
+def _source_acquisition_response_observations(payload: bytes) -> tuple[int, int]:
+    """Compatibility-free count projection used by deterministic verifiers."""
+
+    observation = _source_acquisition_observation(payload)
+    return observation.result_count, observation.durable_content_count
+
+
+def _authorized_tavily_spec(
+    store: SQLiteControlStore,
+    snapshot: ControlStoreSnapshot,
+    *,
+    route_fingerprint: str,
+    provider_request_fingerprint: str,
+) -> RuntimeWebSearchAcquisitionSpec:
+    """Load the exact Store-frozen request authority before Intake mutation."""
+
+    if len(snapshot.run_contract_bindings) != 1:
+        raise IntakeError("source_discovery_authorization_invalid")
+    binding = snapshot.run_contract_bindings[0]
+    try:
+        payload = store.read_artifact_revision_bytes(
+            snapshot.run.run_id,
+            binding.runtime_source_plan_artifact.artifact_id,
+            binding.runtime_source_plan_artifact.revision,
+        )
+        source_plan = RuntimeSourcePlanBinding.model_validate_json(payload, strict=True)
+    except Exception as exc:
+        raise IntakeError("control_store_integrity_invalid") from exc
+    if sha256_hex(
+        payload
+    ) != binding.runtime_source_plan_sha256 or payload != canonical_json_bytes(
+        source_plan.model_dump(mode="json", exclude_unset=False)
+    ):
+        raise IntakeError("control_store_integrity_invalid")
+    routes = [
+        route
+        for route in source_plan.routes
+        if route.route_fingerprint == route_fingerprint
+        and route.route_id == "web-search"
+        and route.provider_id == "tavily"
+        and isinstance(route.acquisition_spec, RuntimeWebSearchAcquisitionSpec)
+        and route.acquisition_spec.acquisition_spec_fingerprint
+        == provider_request_fingerprint
+    ]
+    if len(routes) != 1 or not isinstance(
+        routes[0].acquisition_spec,
+        RuntimeWebSearchAcquisitionSpec,
+    ):
+        raise IntakeError("source_discovery_authorization_invalid")
+    return routes[0].acquisition_spec
 
 
 def _artifact_pair(

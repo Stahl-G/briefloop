@@ -30,14 +30,18 @@ page describes implemented runtime capability, not a breaking deep rename.
   Store-frozen Human-confirmed discovery authorization. `runtime continue`
   keeps the credential in private workspace `.env` until Human
   rotation/removal, while every separately Human-confirmed, Store-recorded
-  attempt permits at most one bounded provider request. Exact replay never
+  attempt permits at most one Search followed by one batch Extract over at most
+  five deduplicated URLs. Exact replay never
   redials and failures never auto-retry. Safe failed responses remain
   receipt-owned audit evidence without source or execution authority. A
-  successful attempt freezes the exact response, per-result projection, and
-  returned content, then uses the existing Intake UoW to atomically record the
-  mixed-eligibility source pack and execution authorization before returning
-  the external-role handoff. Search snippets are claims-ineligible. Synthetic
-  transport is tested; live usefulness, reliability, cost, and
+  successful attempt freezes both exact request/response exchanges and per-URL
+  outcomes in one canonical acquisition bundle, then uses the existing Intake
+  UoW to atomically record only successful non-empty Extract content plus
+  execution authorization before returning the external-role handoff. Search
+  snippets are never claims-eligible; zero Search or all-failed Extract creates
+  no source or execution authorization. HumanSourcePack is a separate Human
+  path and never counts as Tavily success. Synthetic transport is tested; live
+  usefulness, reliability, cost, coverage, success rate, and
   acquisition-to-`finalized_local` performance are NOT MEASURED.
   POSIX/macOS retained-publication capability is checked before any Tavily call.
   On current Windows, `runtime continue` returns the typed

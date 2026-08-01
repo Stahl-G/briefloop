@@ -32,7 +32,9 @@ WORKBUDDY_DOCS = (
 WORKBUDDY_SMOKE_CHECKLIST = ROOT / "docs" / "workbuddy-smoke-checklist.md"
 CODEBUDDY_AGENT_ROOT = ROOT / ".codebuddy" / "agents"
 CODEBUDDY_SKILL = ROOT / ".codebuddy" / "skills" / "briefloop" / "SKILL.md"
-VERSION_MATRIX = ROOT / ".agents" / "skills" / "briefloop" / "references" / "version-matrix.md"
+VERSION_MATRIX = (
+    ROOT / ".agents" / "skills" / "briefloop" / "references" / "version-matrix.md"
+)
 CODEBUDDY_ROLE_AGENTS = {
     "briefloop-scout.md": {
         "tools": "tools: Read, Write, Grep, Glob",
@@ -86,7 +88,9 @@ def _all_skill_text() -> str:
 
 
 def _all_legacy_workbuddy_text() -> str:
-    return "\n".join(_read(path) for path in sorted(LEGACY_WORKBUDDY_SKILL.rglob("*.md")))
+    return "\n".join(
+        _read(path) for path in sorted(LEGACY_WORKBUDDY_SKILL.rglob("*.md"))
+    )
 
 
 def _compact(text: str) -> str:
@@ -150,7 +154,9 @@ def test_codebuddy_role_agents_are_project_level_assets() -> None:
         assert "CodeBuddy sub-agents cannot spawn other sub-agents" in compact
         assert "stop without writing" in text
         assert "Do not run `briefloop` or `multi-agent-brief` CLI commands" in text
-        assert "ask the main CodeBuddy session to run deterministic validation" in compact
+        assert (
+            "ask the main CodeBuddy session to run deterministic validation" in compact
+        )
         for output in spec["outputs"]:
             assert output in text
 
@@ -169,12 +175,27 @@ def test_codebuddy_skill_adapter_is_main_session_orchestrator() -> None:
     assert ".agents/skills/briefloop-workbuddy/SKILL.md" in text
     assert ".agents/skills/briefloop-workbuddy/references/" in text
     assert ".codebuddy/skills/briefloop/SKILL.md" in text
-    assert text.index("If the main session cannot resolve and invoke") < role_delegation_offset
-    assert "stop before workspace creation, role work, fallback, or state advancement" in compact
-    assert "Regenerating an operator handoff does not supply missing command execution" in compact
+    assert (
+        text.index("If the main session cannot resolve and invoke")
+        < role_delegation_offset
+    )
+    assert (
+        "stop before workspace creation, role work, fallback, or state advancement"
+        in compact
+    )
+    assert (
+        "Regenerating an operator handoff does not supply missing command execution"
+        in compact
+    )
     assert "is not a fallback for a missing CLI" in compact
-    assert "If the main session can invoke BriefLoop CLI commands but the host cannot" in compact
-    assert "Do not perform Scout, Screener, Claim Ledger, Analyst, Editor, Auditor, or" in text
+    assert (
+        "If the main session can invoke BriefLoop CLI commands but the host cannot"
+        in compact
+    )
+    assert (
+        "Do not perform Scout, Screener, Claim Ledger, Analyst, Editor, Auditor, or"
+        in text
+    )
     for role_name in [
         "briefloop-scout",
         "briefloop-screener",
@@ -241,14 +262,23 @@ def test_codebuddy_claim_ledger_never_emits_claim_ids() -> None:
     text = _read(CODEBUDDY_AGENT_ROOT / "briefloop-claim-ledger.md")
     assert "Never\nemit `claim_id` in `claim_drafts.json`" in text
     assert "including nested metadata fields" in text
-    assert "let the deterministic freeze transaction assign\nauthoritative Claim Ledger IDs" in text
+    assert (
+        "let the deterministic freeze transaction assign\nauthoritative Claim Ledger IDs"
+        in text
+    )
 
 
 def test_workbuddy_skill_is_exposed_at_agent_skill_root() -> None:
     assert WORKBUDDY_SKILL.exists()
     assert LEGACY_WORKBUDDY_SKILL.exists()
-    assert WORKBUDDY_SKILL.relative_to(ROOT).as_posix() == ".agents/skills/briefloop-workbuddy"
-    assert LEGACY_WORKBUDDY_SKILL.relative_to(ROOT).as_posix() == "integrations/workbuddy/briefloop"
+    assert (
+        WORKBUDDY_SKILL.relative_to(ROOT).as_posix()
+        == ".agents/skills/briefloop-workbuddy"
+    )
+    assert (
+        LEGACY_WORKBUDDY_SKILL.relative_to(ROOT).as_posix()
+        == "integrations/workbuddy/briefloop"
+    )
     text = _read(WORKBUDDY_SKILL / "SKILL.md")
     assert "BriefLoop WorkBuddy Skill" in text
     assert "面向 WorkBuddy 的适配层" in text
@@ -281,7 +311,9 @@ def test_workbuddy_skill_has_natural_language_triggers() -> None:
         assert phrase in text
 
 
-def test_workbuddy_skill_uses_codebuddy_role_agent_runtime_not_operator_default() -> None:
+def test_workbuddy_skill_uses_codebuddy_role_agent_runtime_not_operator_default() -> (
+    None
+):
     text = _all_skill_text()
     compact = _compact(text)
     assert "--runtime codebuddy" in text
@@ -330,10 +362,11 @@ def test_workbuddy_skill_includes_required_cli_surface() -> None:
         "& $BriefLoop version",
         "py -3 --version",
         "git --version",
-        '& $BriefLoop new industry-weekly "<workspace>" --industry "<topic>" --search-backend tavily',
-        '& $BriefLoop new management-monthly "<workspace>" --industry "<topic>" --search-backend tavily',
-        '& $BriefLoop new document-review "<workspace>" --industry "<topic>" --search-backend tavily',
-        '& $BriefLoop new solar-periodic "<workspace>" --industry "<topic>" --search-backend tavily',
+        '& $BriefLoop onboard --output "<onboarding-json>"',
+        '& $BriefLoop init "<workspace>" --from-onboarding "<onboarding-json>"',
+        '& $BriefLoop init "<workspace>" --web',
+        "source_age_days=7",
+        "或 `30`",
         '& $BriefLoop new industry-weekly "<workspace>" --web-search-mode disabled',
         '& $BriefLoop new management-monthly "<workspace>" --web-search-mode disabled',
         '& $BriefLoop new document-review "<workspace>" --web-search-mode disabled',
@@ -353,6 +386,9 @@ def test_workbuddy_skill_includes_required_cli_surface() -> None:
         '& $BriefLoop repair complete --workspace "<workspace>" --reason',
     ]:
         assert phrase in text
+    assert not re.search(
+        r"(?m)^\s*& \$BriefLoop new .*--search-backend tavily(?:\s|$)", text
+    )
     assert "do not use unscoped repair start for current-gate blockers" in compact
     assert "不要使用裸的 repair start --workspace <workspace>" in normalized
     assert _bare_repair_start_offenders(text) == []
@@ -375,7 +411,11 @@ def _bare_repair_start_offenders(text: str) -> list[str]:
         r"multi-agent-brief\s+repair\s+start\s+--workspace\s+<workspace>"
         r"(?![^\n`]*(?:--gate-stage|--finding-id|--route-index))"
     )
-    return [line for line in text.splitlines() if bare_start.search(line) and "Do not use bare" not in line]
+    return [
+        line
+        for line in text.splitlines()
+        if bare_start.search(line) and "Do not use bare" not in line
+    ]
 
 
 def test_legacy_workbuddy_mirror_declares_non_authoritative_status() -> None:
@@ -450,7 +490,9 @@ def test_workbuddy_skill_hardens_first_use_routing_and_progress_feedback() -> No
         assert phrase in compact
 
 
-def test_workbuddy_skill_requires_stage_handoff_reread_and_deterministic_progress() -> None:
+def test_workbuddy_skill_requires_stage_handoff_reread_and_deterministic_progress() -> (
+    None
+):
     text = _all_skill_text()
     compact = _compact(text)
     for phrase in [
@@ -502,8 +544,8 @@ def test_workbuddy_skill_requires_run_card_and_hard_stop_rules() -> None:
         "非交付工作流步骤",
         "否则说目前既没有草稿也没有交付",
         "本身不阻塞更早的 handoff 指派阶段",
-            "`& $BriefLoop status --workspace \"<workspace>\" --json` "
-            "报告当前 run 的 `delivered=true`",
+        '`& $BriefLoop status --workspace "<workspace>" --json` '
+        "报告当前 run 的 `delivered=true`",
         "不要打包或分享整个工作区",
         "绝不包含 `.env`",
         "只分享经人工确认的非敏感摘录",
@@ -596,13 +638,21 @@ def test_workbuddy_public_docs_declare_install_and_assistant_boundaries() -> Non
         assert "WorkBuddy Assistant trigger" in text
         assert "--runtime codebuddy" in text
         assert "WorkBuddy role-agent orchestration" in text
-        assert "silently fall back to `--runtime operator`" in text or "静默回退到 `--runtime operator`" in text
-        assert "semantic proof" in text or "semantic truth" in text or "语义证明" in text
+        assert (
+            "silently fall back to `--runtime operator`" in text
+            or "静默回退到 `--runtime operator`" in text
+        )
+        assert (
+            "semantic proof" in text or "semantic truth" in text or "语义证明" in text
+        )
         assert "approve delivery" in text or "不批准交付" in text
         assert "authorize release" in text or "不授权 release" in text
         assert "WorkBuddy Marketplace" in text
         assert "docs/workbuddy-smoke-checklist.md" in text
-        assert "not the WorkBuddy first-user adapter" in compact or "不是 WorkBuddy first-user" in compact
+        assert (
+            "not the WorkBuddy first-user adapter" in compact
+            or "不是 WorkBuddy first-user" in compact
+        )
         assert "Run Card" in text
         assert "workspace zip" in text or "workspace" in text and ".env" in text
         assert "run_integrity" in text
@@ -674,10 +724,13 @@ def test_workbuddy_skill_pack_contains_only_public_skill_files(tmp_path: Path) -
     result = package_workbuddy_skill(output_dir=tmp_path, repo_workdir=ROOT)
     assert result.zip_path.exists()
     assert result.manifest_path.exists()
-    assert validate_workbuddy_skill_pack(
-        zip_path=result.zip_path,
-        manifest_path=result.manifest_path,
-    ) == []
+    assert (
+        validate_workbuddy_skill_pack(
+            zip_path=result.zip_path,
+            manifest_path=result.manifest_path,
+        )
+        == []
+    )
 
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     assert manifest["schema_version"] == MANIFEST_SCHEMA_VERSION
@@ -737,7 +790,9 @@ def test_workbuddy_skill_pack_is_reproducible(tmp_path: Path) -> None:
 def test_workbuddy_pack_skill_cli_json(tmp_path: Path) -> None:
     env = os.environ.copy()
     src = str(ROOT / "src")
-    env["PYTHONPATH"] = src if not env.get("PYTHONPATH") else f"{src}{os.pathsep}{env['PYTHONPATH']}"
+    env["PYTHONPATH"] = (
+        src if not env.get("PYTHONPATH") else f"{src}{os.pathsep}{env['PYTHONPATH']}"
+    )
     result = subprocess.run(
         [
             sys.executable,
@@ -775,7 +830,9 @@ def test_workbuddy_skill_pack_rejects_output_inside_source_tree() -> None:
         raise AssertionError("expected output directory rejection")
 
 
-def test_validate_workbuddy_skill_pack_reports_malformed_included_files(tmp_path: Path) -> None:
+def test_validate_workbuddy_skill_pack_reports_malformed_included_files(
+    tmp_path: Path,
+) -> None:
     zip_path = tmp_path / "briefloop-workbuddy-skill.zip"
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("briefloop/SKILL.md", "ok\n")
@@ -792,7 +849,9 @@ def test_validate_workbuddy_skill_pack_reports_malformed_included_files(tmp_path
         encoding="utf-8",
     )
 
-    errors = validate_workbuddy_skill_pack(zip_path=zip_path, manifest_path=manifest_path)
+    errors = validate_workbuddy_skill_pack(
+        zip_path=zip_path, manifest_path=manifest_path
+    )
 
     assert "manifest included_files must be a list" in errors
     assert "zip sha256 mismatch" in errors
@@ -811,7 +870,9 @@ def test_workbuddy_skill_pack_rejects_symlinked_source_file(tmp_path: Path) -> N
     (source / "references" / "local.md").symlink_to(outside)
 
     try:
-        package_workbuddy_skill(output_dir=tmp_path / "out", repo_workdir=tmp_path / "repo")
+        package_workbuddy_skill(
+            output_dir=tmp_path / "out", repo_workdir=tmp_path / "repo"
+        )
     except WorkBuddySkillPackError as exc:
         assert "symlink" in str(exc)
     else:  # pragma: no cover - clearer failure than pytest.raises message here

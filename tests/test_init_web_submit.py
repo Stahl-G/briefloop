@@ -430,7 +430,7 @@ def test_public_web_changed_search_domains_conflict_before_secret_effect(
     assert not (workspace / ".env").exists()
 
 
-@pytest.mark.parametrize("max_source_age_days", [7, 30, 90])
+@pytest.mark.parametrize("max_source_age_days", [7, 30])
 def test_public_web_submission_freezes_confirmed_report_window(
     tmp_path: Path,
     max_source_age_days: int,
@@ -469,7 +469,7 @@ def test_public_web_submission_freezes_confirmed_report_window(
 
 @pytest.mark.parametrize(
     "invalid_window",
-    [None, True, "30", 0, 14, 91],
+    [None, True, "30", 0, 14, 90, 91],
 )
 def test_public_web_invalid_report_window_fails_before_state_or_secret(
     tmp_path: Path,

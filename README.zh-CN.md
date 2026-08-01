@@ -240,14 +240,15 @@ URL 与事件 `opened_at` 元数据。workspace 内的 Codex kit 也会被哈希
 窄范围 Tavily runtime-first 路径仍是 Experimental。凭据会保留在工作区私有
 `.env` 中，直到 Human 显式轮换或移除；凭据存在本身不构成 provider spend
 authority。每个由 Human 单独确认并记录到 Store 的 acquisition attempt 至多
-允许一次有界搜索请求。精确 replay 不会重新调用 provider，失败不会自动重试；
-通过安全校验的失败响应会保留审计证据，但不会产生 source 或 execution
-authority。成功 attempt 会冻结准确的 provider response 与返回内容，并在进入
-现有外部角色工作流前，通过一个原子 transaction 登记 Store-native source pack
-与 execution authorization。搜索摘要保留为 claims-ineligible；只有非空的
-provider-returned durable content 才能成为 claims-eligible。合成 loopback
-transport 已测试；真实用途、可靠性、成本以及从 acquisition 到
-`finalized_local` 的表现均为 **NOT MEASURED**。
+允许 1 次 Tavily Search，随后对最多 5 个去重 URL 发出 1 次批量 Extract。
+Search 只发现 URL 与摘要；摘要永不具备 claims eligibility。只有 Extract 成功
+返回的非空正文进入 Intake source pack；部分成功只提交成功 URL，同时在一个
+哈希绑定的 acquisition bundle 中保留准确的 request/response bytes 与逐 URL
+结果。Search 零结果或 Extract 全失败不产生 source 或 execution authorization。
+精确 replay 不会重新调用 provider，失败不会自动重试；HumanSourcePack 是独立的
+Human 来源路径，不能算 Tavily 成功。合成 loopback transport 已测试；真实用途、
+可靠性、成本、覆盖率、成功率以及从 acquisition 到 `finalized_local` 的表现均为
+**NOT MEASURED**。
 
 ### Windows PowerShell
 

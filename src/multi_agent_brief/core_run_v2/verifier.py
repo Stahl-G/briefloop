@@ -23,6 +23,7 @@ from multi_agent_brief.contracts.v2 import (
     RunSourceDiscoveryAuthorization,
     RuntimeAdapterBinding,
     RuntimeSourcePlanBinding,
+    RuntimeWebSearchAcquisitionSpec,
     ScreenedCandidatesProposal,
     SourceAcquisitionAttemptAuthorizeRequest,
     SourceAcquisitionFailureEvidence,
@@ -47,6 +48,12 @@ from multi_agent_brief.contracts.runtime_contracts import (
     validate_runtime_contract_payloads_by_digest,
 )
 from multi_agent_brief.quality_gates.contract import GATE_IDS
+from multi_agent_brief.sources.tavily_acquisition import (
+    TavilyAcquisitionBundleError,
+    TavilyAcquisitionObservation,
+    parse_tavily_acquisition_bundle,
+    tavily_observation_matches_spec,
+)
 
 from .errors import CoreRunError, CoreRunResult
 from .lineage import (
@@ -80,6 +87,11 @@ from .terminal import (
     TerminalEffectSubject,
     classify_terminal_effect_authorization,
     classify_terminal_legality,
+)
+from .tavily_source_binding import (
+    accepted_source_matches_expected,
+    expected_tavily_intake_submission,
+    expected_tavily_source_pack,
 )
 
 
@@ -1923,7 +1935,11 @@ class CoreRunDomainVerifier:
                 or attempt.provider_request_fingerprint != provider_request_fingerprint
                 or attempt.provider_id != discovery.provider_id
                 or attempt.route_id != discovery.route_id
-                or attempt.max_provider_calls != 1
+                or attempt.max_provider_calls != 2
+                or attempt.max_search_calls != 1
+                or attempt.max_extract_calls != 1
+                or attempt.max_extract_urls != 5
+                or attempt.provider_call_sequence != "search_then_batch_extract"
                 or attempt.provider_cost_status != "not_reported_acknowledged"
                 or attempt.previous_attempt_authorization_id
                 != (
@@ -2118,11 +2134,34 @@ class CoreRunDomainVerifier:
                     reference.artifact_id,
                     reference.revision,
                 )
-                result_count, durable_count = (
-                    CoreRunDomainVerifier._tavily_response_counts(response_bytes)
-                )
+                observation = CoreRunDomainVerifier._tavily_observation(response_bytes)
+                route_spec = routes[0].acquisition_spec
+                if not isinstance(route_spec, RuntimeWebSearchAcquisitionSpec) or not (
+                    tavily_observation_matches_spec(observation, route_spec)
+                ):
+                    raise CoreRunError("control_store_integrity_invalid")
+                result_count = observation.result_count
+                durable_count = observation.durable_content_count
             except Exception as exc:
                 raise CoreRunError("control_store_integrity_invalid") from exc
+            expected_failure_classes = {
+                "search_response_unavailable": {"provider_search_failed"},
+                "search_response_invalid": {"provider_search_failed"},
+                "search_results_empty": {"provider_results_empty"},
+                "extract_response_unavailable": {"provider_extract_failed"},
+                "extract_response_invalid": {"provider_extract_failed"},
+                "extract_results_all_failed": {
+                    "provider_results_without_durable_content"
+                },
+                "extract_results_partial": {
+                    "intake_rejected_no_eligible_source",
+                    "source_pack_validation_rejected",
+                },
+                "extract_results_succeeded": {
+                    "intake_rejected_no_eligible_source",
+                    "source_pack_validation_rejected",
+                },
+            }
             if (
                 sha256_hex(response_bytes) != evidence.provider_response_sha256
                 or len(response_bytes) != evidence.provider_response_size_bytes
@@ -2138,37 +2177,22 @@ class CoreRunDomainVerifier:
                 or revision.producer_id != "source-discovery"
                 or result_count != evidence.result_count
                 or durable_count != evidence.durable_content_count
+                or evidence.failure_class
+                not in expected_failure_classes[observation.bundle.status]
             ):
                 raise CoreRunError("control_store_integrity_invalid")
 
     @staticmethod
     def _tavily_response_counts(payload: bytes) -> tuple[int, int]:
-        response = parse_json_object(payload)
-        results = response.get("results")
-        if type(results) is not list or len(results) > 5:
-            raise CoreRunError("control_store_integrity_invalid")
-        durable = 0
-        for result in results:
-            if type(result) is not dict:
-                raise CoreRunError("control_store_integrity_invalid")
-            title = result.get("title")
-            url = result.get("url")
-            snippet = result.get("content")
-            raw_content = result.get("raw_content")
-            published_date = result.get("published_date")
-            score = result.get("score")
-            if (
-                type(title) is not str
-                or type(url) is not str
-                or type(snippet) is not str
-                or type(raw_content) not in {str, type(None)}
-                or type(published_date) not in {str, type(None)}
-                or type(score) not in {int, float, type(None)}
-            ):
-                raise CoreRunError("control_store_integrity_invalid")
-            if isinstance(raw_content, str) and raw_content.strip():
-                durable += 1
-        return len(results), durable
+        observation = CoreRunDomainVerifier._tavily_observation(payload)
+        return observation.result_count, observation.durable_content_count
+
+    @staticmethod
+    def _tavily_observation(payload: bytes) -> TavilyAcquisitionObservation:
+        try:
+            return parse_tavily_acquisition_bundle(payload)
+        except TavilyAcquisitionBundleError as exc:
+            raise CoreRunError("control_store_integrity_invalid") from exc
 
     @staticmethod
     def _verify_authorized_source_pack(
@@ -2211,6 +2235,8 @@ class CoreRunDomainVerifier:
                 receipt,
                 tuple(sources.values()),
                 discovery,
+                binding,
+                manifest,
             )
         for source_id, source in sources.items():
             member = members[source_id]
@@ -2285,6 +2311,8 @@ class CoreRunDomainVerifier:
         receipt: TransactionReceipt,
         sources: tuple[Any, ...],
         discovery: list[RunSourceDiscoveryAuthorization],
+        binding: RunContractBinding,
+        manifest: ExecutionSourceManifest,
     ) -> None:
         """Bind exact Tavily response bytes to every accepted member projection."""
 
@@ -2303,6 +2331,11 @@ class CoreRunDomainVerifier:
             len(attempt_refs) != 1
             or len(attempts) != 1
             or attempts[0].discovery_authorization_id != discovery[0].authorization_id
+            or attempts[0].max_provider_calls != 2
+            or attempts[0].max_search_calls != 1
+            or attempts[0].max_extract_calls != 1
+            or attempts[0].max_extract_urls != 5
+            or attempts[0].provider_call_sequence != "search_then_batch_extract"
         ):
             raise CoreRunError("control_store_integrity_invalid")
         invocation_ids = {source.invocation_id for source in sources}
@@ -2310,11 +2343,21 @@ class CoreRunDomainVerifier:
             source.provider != "tavily" for source in sources
         ):
             raise CoreRunError("control_store_integrity_invalid")
+        invocation_id = next(iter(invocation_ids))
+        invocations = [
+            item
+            for item in snapshot.invocations
+            if item.invocation_id == invocation_id
+            and item.run_id == receipt.run_id
+            and item.role_id == "source-provider"
+        ]
+        if len(invocations) != 1 or invocations[0].status != "completed":
+            raise CoreRunError("control_store_integrity_invalid")
         artifact_id = derived_id(
             "ARTIFACT-PROVIDER-RESPONSE",
             receipt.run_id,
             discovery[0].authorization_id,
-            next(iter(invocation_ids)),
+            invocation_id,
         )
         if (artifact_id, 1) not in {
             (item.artifact_id, item.revision) for item in receipt.artifact_revisions
@@ -2326,61 +2369,81 @@ class CoreRunDomainVerifier:
                 artifact_id,
                 1,
             )
-            response = parse_json_object(response_bytes)
+            observation = CoreRunDomainVerifier._tavily_observation(response_bytes)
+            _contracts, _adapter, source_plan = CoreRunDomainVerifier._load_contracts(
+                reader,
+                binding,
+            )
         except Exception as exc:
             raise CoreRunError("control_store_integrity_invalid") from exc
-        results = response.get("results")
-        if type(results) is not list or not 1 <= len(results) <= 5:
+        route_specs = [
+            route.acquisition_spec
+            for route in source_plan.routes
+            if route.route_fingerprint == discovery[0].source_route_fingerprint
+            and route.route_id == "web-search"
+            and route.provider_id == "tavily"
+            and isinstance(route.acquisition_spec, RuntimeWebSearchAcquisitionSpec)
+            and route.acquisition_spec.acquisition_spec_fingerprint
+            == attempts[0].provider_request_fingerprint
+        ]
+        if (
+            observation.bundle.status
+            not in {
+                "extract_results_partial",
+                "extract_results_succeeded",
+            }
+            or len(sources) != observation.durable_content_count
+        ):
             raise CoreRunError("control_store_integrity_invalid")
-
-        provider_projections: list[bytes] = []
-        provider_content: dict[bytes, bytes] = {}
-        for result in results:
-            if type(result) is not dict:
-                raise CoreRunError("control_store_integrity_invalid")
-            title = result.get("title")
-            url = result.get("url")
-            snippet = result.get("content")
-            raw_content_value = result.get("raw_content")
-            published_value = result.get("published_date")
-            score = result.get("score")
-            if (
-                type(title) is not str
-                or type(url) is not str
-                or type(snippet) is not str
-                or type(raw_content_value) not in {str, type(None)}
-                or type(published_value) not in {str, type(None)}
-                or type(score) not in {int, float, type(None)}
-            ):
-                raise CoreRunError("control_store_integrity_invalid")
-            raw_content = (
-                raw_content_value.strip()
-                if isinstance(raw_content_value, str) and raw_content_value.strip()
-                else None
+        if len(route_specs) != 1 or not tavily_observation_matches_spec(
+            observation,
+            route_specs[0],
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        try:
+            expected_pack = expected_tavily_source_pack(
+                observation,
+                run_id=receipt.run_id,
+                invocation_id=invocation_id,
+                route_fingerprint=discovery[0].source_route_fingerprint,
+                retrieved_at=invocations[0].started_at,
             )
-            projection = canonical_json_bytes(
-                {
-                    "title": title,
-                    "url": url,
-                    "snippet": snippet,
-                    "raw_content": raw_content,
-                    "published_date": (
-                        published_value if published_value is not None else ""
-                    ),
-                    "score": score,
-                }
-            )
-            if projection in provider_content:
-                raise CoreRunError("control_store_integrity_invalid")
-            provider_projections.append(projection)
-            provider_content[projection] = (
-                raw_content if raw_content is not None else snippet
-            ).encode("utf-8")
+        except ValueError as exc:
+            raise CoreRunError("control_store_integrity_invalid") from exc
+        expected_sources = {
+            item.proposal.source_id: item for item in expected_pack.sources
+        }
+        if manifest != expected_pack.manifest or set(expected_sources) != {
+            source.source_id for source in sources
+        }:
+            raise CoreRunError("control_store_integrity_invalid")
+        expected_submission = expected_tavily_intake_submission(
+            expected_pack,
+            request_id=receipt.transaction_id,
+            run_id=receipt.run_id,
+            invocation_id=invocation_id,
+            expected_store_revision=receipt.prior_revision,
+            provider_response=response_bytes,
+            attempt_authorization_id=attempts[0].attempt_authorization_id,
+            attempt_ordinal=attempts[0].attempt_ordinal,
+            provider_request_fingerprint=attempts[0].provider_request_fingerprint,
+        )
+        events_by_id = {item.event_id: item for item in snapshot.events}
 
-        source_projections: list[bytes] = []
         for source in sources:
+            expected_source = expected_sources.get(source.source_id)
+            source_event = events_by_id.get(source.acquisition_event_id)
             if (
-                source.raw_payload_artifact_id is None
+                expected_source is None
+                or source_event is None
+                or not accepted_source_matches_expected(
+                    source,
+                    expected_source,
+                    accepted_transaction_id=receipt.transaction_id,
+                    request_fingerprint=(expected_submission.request_fingerprint),
+                    created_at=source_event.created_at,
+                )
+                or source.raw_payload_artifact_id is None
                 or source.raw_payload_artifact_revision != 1
             ):
                 raise CoreRunError("control_store_integrity_invalid")
@@ -2398,14 +2461,12 @@ class CoreRunDomainVerifier:
                 )
             except Exception as exc:
                 raise CoreRunError("control_store_integrity_invalid") from exc
-            if raw_projection != canonical_json_bytes(projection_object):
+            if (
+                raw_projection != canonical_json_bytes(projection_object)
+                or raw_projection != expected_source.raw_payload
+                or content != expected_source.content
+            ):
                 raise CoreRunError("control_store_integrity_invalid")
-            source_projections.append(raw_projection)
-            if provider_content.get(raw_projection) != content:
-                raise CoreRunError("control_store_integrity_invalid")
-
-        if Counter(source_projections) != Counter(provider_projections):
-            raise CoreRunError("control_store_integrity_invalid")
 
     @staticmethod
     def _verify_checkout_revisions(

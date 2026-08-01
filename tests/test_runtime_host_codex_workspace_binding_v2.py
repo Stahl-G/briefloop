@@ -160,9 +160,7 @@ def test_cli_initial_news_backfill_prepares_exact_kit_without_store(
         "--source-profile",
         "llm_decide",
         "--web-search-mode",
-        "external_api",
-        "--search-backend",
-        "tavily",
+        "runtime_tool",
         "--initial-news-backfill",
     ]
 
@@ -173,6 +171,8 @@ def test_cli_initial_news_backfill_prepares_exact_kit_without_store(
     run_id = config["controlstore_v2"]["run_id"]
 
     assert sources["web_search"]["initial_news_backfill"]["enabled"] is True
+    assert sources["web_search"]["mode"] == "runtime_tool"
+    assert "backend" not in sources["web_search"]
     assert load_workspace_codex_adapter_binding(
         workspace, run_id
     ) == load_codex_adapter_binding(run_id)
@@ -187,33 +187,56 @@ def test_cli_initial_news_backfill_prepares_exact_kit_without_store(
         ("--web-search-mode", "external_api"),
     ),
 )
-def test_direct_init_tavily_freezes_exact_human_industry_as_query(
+def test_direct_init_tavily_entrypoints_require_confirmed_onboarding_before_writes(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     tavily_args: tuple[str, ...],
 ) -> None:
     workspace = tmp_path / "cli-tavily-workspace"
-    topic = "grid-scale energy storage"
     args = _direct_init_args(workspace)
-    args[args.index("--industry") + 1] = topic
     args.extend(tavily_args)
 
+    assert main(args) == 1
+    output = capsys.readouterr().out
+    assert "briefloop init <workspace> --web" in output
+    assert "briefloop onboard" in output
+    assert not workspace.exists()
+
+
+@pytest.mark.parametrize(
+    ("backend", "api_key_env"),
+    (
+        ("exa", "EXA_API_KEY"),
+        ("brave", "BRAVE_SEARCH_API_KEY"),
+        ("firecrawl", "FIRECRAWL_API_KEY"),
+        ("serper", "SERPER_API_KEY"),
+    ),
+)
+def test_direct_init_preserves_explicit_supported_non_tavily_backends(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    backend: str,
+    api_key_env: str,
+) -> None:
+    workspace = tmp_path / f"cli-{backend}-workspace"
+    args = [
+        *_direct_init_args(workspace),
+        "--web-search-mode",
+        "external_api",
+        "--search-backend",
+        backend,
+    ]
+
     assert main(args) == 0
-    capsys.readouterr()
-    initialized = initialize_or_open_runtime(
-        workspace,
-        adapter_loader=workspace_codex_adapter_loader(workspace),
-    )
-    route = next(
-        item for item in initialized.verified.source_plan.routes
-        if item.route_id == "web-search"
-    )
-    assert route.acquisition_spec is not None
-    assert [request.query for request in route.acquisition_spec.requests] == [topic]
-    assert all(
-        "ExampleCo" not in request.query
-        for request in route.acquisition_spec.requests
-    )
+    output = capsys.readouterr().out
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    web_search = sources["web_search"]
+    assert web_search["enabled"] is True
+    assert web_search["mode"] == "external_api"
+    assert web_search["backend"] == backend
+    assert web_search["api_key_env"] == api_key_env
+    assert api_key_env in output
+    assert not (workspace / "briefloop.db").exists()
 
 
 def test_cli_init_force_never_rewrites_existing_store_workspace(

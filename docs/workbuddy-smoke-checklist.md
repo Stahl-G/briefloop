@@ -81,11 +81,17 @@ or any issue/PR comment that reports the result.
    - First-time run: WorkBuddy explains that a BriefLoop workspace is the local
      folder for this report project, suggests a safe path, and waits for
      explicit confirmation before creation.
-   - For a new public-safe weekly smoke with online search enabled, use:
+   - For a new public-safe weekly smoke with online search enabled, use
+     onboarding to confirm Tavily, the exact topic, and 7 or 30 days:
 
      ```powershell
-     & $BriefLoop new industry-weekly "<workspace>" --industry "<topic>" --search-backend tavily
+     & $BriefLoop onboard --output "<onboarding-json>"
+     & $BriefLoop init "<workspace>" --from-onboarding "<onboarding-json>"
      ```
+
+   - When a browser is available, `& $BriefLoop init "<workspace>" --web` is
+     the equivalent supported route. Do not use the rejected
+     `& $BriefLoop new ... --search-backend tavily` shortcut.
 
    - If the user declines online search, use:
 
@@ -93,8 +99,9 @@ or any issue/PR comment that reports the result.
      & $BriefLoop new industry-weekly "<workspace>" --web-search-mode disabled
      ```
 
-   - Replace `<topic>` with the exact Human-confirmed Tavily search topic. It is
-     the sole provider query; the pack name and report objective do not rewrite it.
+   - Require the exact Human-confirmed topic and `source_age_days=7` or `30`.
+     Reject 90-day, custom, or missing windows before secret/provider effects.
+     Local-first Report Pack names do not authorize or rewrite a Tavily query.
    - If Tavily is enabled, import the key only after the workspace exists:
 
      ```powershell

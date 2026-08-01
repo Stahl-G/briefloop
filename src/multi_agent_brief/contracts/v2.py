@@ -10,6 +10,7 @@ from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime
+import base64
 import hashlib
 import json
 import math
@@ -609,10 +610,159 @@ class AuditFindingItem(StrictModel):
 
 
 class SourceAcquisitionArtifactReference(StrictModel):
-    """Exact optional provider-response artifact frozen with one failed attempt."""
+    """Exact optional acquisition-bundle artifact frozen with one attempt."""
 
     artifact_id: ContractId
     revision: Literal[1]
+
+
+class TavilyAcquisitionExchange(StrictModel):
+    """One exact non-secret HTTP body exchange in a Tavily acquisition attempt."""
+
+    operation: Literal["search", "extract"]
+    endpoint: Literal["/search", "/extract"]
+    request_body_base64: str
+    request_body_sha256: Sha256
+    request_body_size_bytes: PositiveInt
+    response_body_base64: str | None = None
+    response_body_sha256: Sha256 | None = None
+    response_body_size_bytes: NonNegativeInt | None = None
+    status_code: Annotated[int, Field(ge=100, le=599)] | None = None
+
+    @staticmethod
+    def _decode_exact(value: str) -> bytes:
+        try:
+            decoded = base64.b64decode(value.encode("ascii"), validate=True)
+        except (UnicodeEncodeError, ValueError) as exc:
+            raise ValueError("exchange bytes are not canonical base64") from exc
+        if base64.b64encode(decoded).decode("ascii") != value:
+            raise ValueError("exchange bytes are not canonical base64")
+        return decoded
+
+    @model_validator(mode="after")
+    def byte_identity_is_total(self) -> "TavilyAcquisitionExchange":
+        if self.endpoint != f"/{self.operation}":
+            raise ValueError("exchange endpoint does not match operation")
+        request = self._decode_exact(self.request_body_base64)
+        if (
+            not request
+            or len(request) != self.request_body_size_bytes
+            or hashlib.sha256(request).hexdigest() != self.request_body_sha256
+        ):
+            raise ValueError("exchange request identity mismatch")
+        response_fields = (
+            self.response_body_base64,
+            self.response_body_sha256,
+            self.response_body_size_bytes,
+            self.status_code,
+        )
+        if all(value is None for value in response_fields):
+            return self
+        if any(value is None for value in response_fields):
+            raise ValueError("exchange response identity is incomplete")
+        response = self._decode_exact(self.response_body_base64 or "")
+        if (
+            len(response) != self.response_body_size_bytes
+            or hashlib.sha256(response).hexdigest() != self.response_body_sha256
+        ):
+            raise ValueError("exchange response identity mismatch")
+        return self
+
+
+class TavilyExtractUrlOutcome(StrictModel):
+    """Value-free per-URL projection from one batch Extract response."""
+
+    url: CleanText
+    status: Literal["succeeded", "provider_failed", "empty_content"]
+    response_item_sha256: Sha256
+    content_sha256: Sha256 | None = None
+    content_size_bytes: PositiveInt | None = None
+
+    @model_validator(mode="after")
+    def success_content_identity_is_total(self) -> "TavilyExtractUrlOutcome":
+        if self.status == "succeeded":
+            if self.content_sha256 is None or self.content_size_bytes is None:
+                raise ValueError("successful extract outcome requires content identity")
+        elif self.content_sha256 is not None or self.content_size_bytes is not None:
+            raise ValueError("failed extract outcome cannot claim content identity")
+        return self
+
+
+class TavilyAcquisitionBundle(StrictModel):
+    """Canonical exact-byte Search + optional batch Extract acquisition evidence."""
+
+    schema_id = "briefloop.tavily_acquisition_bundle.v1"
+
+    schema_version: Literal["briefloop.tavily_acquisition_bundle.v1"]
+    provider_id: Literal["tavily"]
+    status: Literal[
+        "search_response_unavailable",
+        "search_response_invalid",
+        "search_results_empty",
+        "extract_response_unavailable",
+        "extract_response_invalid",
+        "extract_results_all_failed",
+        "extract_results_partial",
+        "extract_results_succeeded",
+    ]
+    search: TavilyAcquisitionExchange
+    extract: TavilyAcquisitionExchange | None = None
+    extract_urls: list[CleanText] = Field(max_length=5)
+    outcomes: list[TavilyExtractUrlOutcome] = Field(max_length=5)
+
+    @model_validator(mode="after")
+    def acquisition_shape_is_canonical(self) -> "TavilyAcquisitionBundle":
+        if self.search.operation != "search":
+            raise ValueError("bundle search exchange is invalid")
+        if self.extract_urls != sorted(set(self.extract_urls)):
+            raise ValueError("extract URLs must be sorted and unique")
+        if [item.url for item in self.outcomes] != sorted(
+            {item.url for item in self.outcomes}
+        ):
+            raise ValueError("extract outcomes must be sorted and unique")
+        if self.status in {
+            "search_response_unavailable",
+            "search_response_invalid",
+            "search_results_empty",
+        }:
+            if self.extract is not None or self.extract_urls or self.outcomes:
+                raise ValueError("terminal Search cannot carry Extract evidence")
+            if self.status == "search_response_unavailable":
+                if self.search.status_code == 200:
+                    raise ValueError("unavailable Search cannot be HTTP 200")
+            elif self.search.status_code != 200:
+                raise ValueError("valid or invalid Search requires HTTP 200 evidence")
+            return self
+        if (
+            self.search.status_code != 200
+            or self.extract is None
+            or self.extract.operation != "extract"
+            or not self.extract_urls
+        ):
+            raise ValueError("non-empty search requires one batch Extract exchange")
+        if self.status == "extract_response_unavailable":
+            if self.outcomes or self.extract.status_code == 200:
+                raise ValueError("unavailable Extract response cannot carry outcomes")
+            return self
+        if self.status == "extract_response_invalid":
+            if self.outcomes or self.extract.status_code != 200:
+                raise ValueError("invalid Extract response requires exact HTTP 200")
+            return self
+        if self.extract.status_code != 200 or set(self.extract_urls) != {
+            item.url for item in self.outcomes
+        }:
+            raise ValueError("Extract outcomes do not cover the exact request")
+        succeeded = sum(item.status == "succeeded" for item in self.outcomes)
+        expected = (
+            "extract_results_all_failed"
+            if succeeded == 0
+            else "extract_results_succeeded"
+            if succeeded == len(self.outcomes)
+            else "extract_results_partial"
+        )
+        if self.status != expected:
+            raise ValueError("bundle status does not match Extract outcomes")
+        return self
 
 
 class SourceAcquisitionFailureEvidence(StrictModel):
@@ -632,13 +782,18 @@ class SourceAcquisitionFailureEvidence(StrictModel):
     provider_request_fingerprint: Sha256
     request_fingerprint: Sha256
     failure_class: Literal[
+        "provider_search_failed",
+        "provider_extract_failed",
         "provider_results_empty",
         "provider_results_without_durable_content",
         "intake_rejected_no_eligible_source",
         "source_pack_validation_rejected",
         "provider_response_unavailable",
     ]
-    provider_status_class: Literal["http_200", "response_unavailable"]
+    provider_status_class: Literal[
+        "acquisition_bundle_retained",
+        "response_unavailable",
+    ]
     provider_response_artifact: SourceAcquisitionArtifactReference | None = None
     provider_response_sha256: Sha256 | None = None
     provider_response_size_bytes: PositiveInt | None = None
@@ -673,7 +828,7 @@ class SourceAcquisitionFailureEvidence(StrictModel):
                 raise ValueError("unavailable response cannot carry response evidence")
             return self
         if (
-            self.provider_status_class != "http_200"
+            self.provider_status_class != "acquisition_bundle_retained"
             or any(value is None for value in artifact_values)
             or self.result_count is None
             or self.durable_content_count is None
@@ -697,7 +852,17 @@ class SourceAcquisitionFailureEvidence(StrictModel):
             or self.rejection_counts is not None
         ):
             raise ValueError("empty response evidence is inconsistent")
-        if self.failure_class == "provider_results_without_durable_content" and (
+        if self.failure_class == "provider_search_failed" and (
+            self.result_count != 0
+            or self.durable_content_count != 0
+            or self.claims_eligible_count != 0
+            or self.rejection_counts is not None
+        ):
+            raise ValueError("failed Search evidence is inconsistent")
+        if self.failure_class in {
+            "provider_extract_failed",
+            "provider_results_without_durable_content",
+        } and (
             self.result_count == 0
             or self.durable_content_count != 0
             or self.claims_eligible_count != 0
@@ -1739,7 +1904,7 @@ class RunSourceDiscoveryAuthorization(StrictModel):
 
 
 class RunSourceAcquisitionAttemptAuthorization(StrictModel):
-    """Receipt-owned permission for exactly one bounded provider call."""
+    """Receipt-owned permission for one Search then one bounded batch Extract."""
 
     schema_id = "briefloop.run_source_acquisition_attempt_authorization.v1"
 
@@ -1756,7 +1921,11 @@ class RunSourceAcquisitionAttemptAuthorization(StrictModel):
     provider_request_fingerprint: Sha256
     provider_id: Literal["tavily"]
     route_id: Literal["web-search"]
-    max_provider_calls: Literal[1]
+    max_provider_calls: Literal[2]
+    max_search_calls: Literal[1]
+    max_extract_calls: Literal[1]
+    max_extract_urls: Literal[5]
+    provider_call_sequence: Literal["search_then_batch_extract"]
     provider_cost_status: Literal["not_reported_acknowledged"]
     previous_attempt_authorization_id: ContractId | None = None
     human_request_id: ContractId
@@ -5403,7 +5572,11 @@ RunSourceAcquisitionAttemptAuthorization.minimal_example = {
     "provider_request_fingerprint": _SHA_A,
     "provider_id": "tavily",
     "route_id": "web-search",
-    "max_provider_calls": 1,
+    "max_provider_calls": 2,
+    "max_search_calls": 1,
+    "max_extract_calls": 1,
+    "max_extract_urls": 5,
+    "provider_call_sequence": "search_then_batch_extract",
     "provider_cost_status": "not_reported_acknowledged",
     "previous_attempt_authorization_id": None,
     "human_request_id": "REQ-INIT-001",
@@ -5421,6 +5594,37 @@ RunSourceAcquisitionAttemptAuthorization.full_example = {
     "authorization_event_id": "EVT-ATTEMPT-002",
     "accepted_transaction_id": "REQ-ATTEMPT-002",
 }
+_TAVILY_SEARCH_REQUEST_EXAMPLE = b'{"include_raw_content":false,"max_results":5,"query":"ExampleCo","search_depth":"basic","time_range":"week","topic":"news"}'
+_TAVILY_SEARCH_RESPONSE_EXAMPLE = b'{"results":[]}'
+_TAVILY_ACQUISITION_BUNDLE_EXAMPLE = {
+    "schema_version": TavilyAcquisitionBundle.schema_id,
+    "provider_id": "tavily",
+    "status": "search_results_empty",
+    "search": {
+        "operation": "search",
+        "endpoint": "/search",
+        "request_body_base64": base64.b64encode(_TAVILY_SEARCH_REQUEST_EXAMPLE).decode(
+            "ascii"
+        ),
+        "request_body_sha256": hashlib.sha256(
+            _TAVILY_SEARCH_REQUEST_EXAMPLE
+        ).hexdigest(),
+        "request_body_size_bytes": len(_TAVILY_SEARCH_REQUEST_EXAMPLE),
+        "response_body_base64": base64.b64encode(
+            _TAVILY_SEARCH_RESPONSE_EXAMPLE
+        ).decode("ascii"),
+        "response_body_sha256": hashlib.sha256(
+            _TAVILY_SEARCH_RESPONSE_EXAMPLE
+        ).hexdigest(),
+        "response_body_size_bytes": len(_TAVILY_SEARCH_RESPONSE_EXAMPLE),
+        "status_code": 200,
+    },
+    "extract": None,
+    "extract_urls": [],
+    "outcomes": [],
+}
+TavilyAcquisitionBundle.minimal_example = deepcopy(_TAVILY_ACQUISITION_BUNDLE_EXAMPLE)
+TavilyAcquisitionBundle.full_example = deepcopy(_TAVILY_ACQUISITION_BUNDLE_EXAMPLE)
 SourceAcquisitionAttemptAuthorizeRequest.minimal_example = {
     "schema_version": SourceAcquisitionAttemptAuthorizeRequest.schema_id,
     "request_id": "REQ-ATTEMPT-002",
@@ -6862,6 +7066,7 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     RunSourceDiscoveryAuthorizationBootstrap,
     RunSourceDiscoveryAuthorization,
     RunSourceAcquisitionAttemptAuthorization,
+    TavilyAcquisitionBundle,
     SourceAcquisitionAttemptAuthorizeRequest,
     WorkspaceControlStoreBootstrapV2,
     RuntimeAdapterBinding,
@@ -7168,6 +7373,9 @@ __all__ = [
     "RunExecutionAuthorizationInput",
     "RunSourceDiscoveryAuthorization",
     "RunSourceAcquisitionAttemptAuthorization",
+    "TavilyAcquisitionExchange",
+    "TavilyExtractUrlOutcome",
+    "TavilyAcquisitionBundle",
     "SourceAcquisitionAttemptAuthorizeRequest",
     "RunSourceDiscoveryAuthorizationBootstrap",
     "RunSourceDiscoveryAuthorizationInput",

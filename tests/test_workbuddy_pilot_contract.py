@@ -14,11 +14,7 @@ CANONICAL = ROOT / ".agents" / "skills" / "briefloop-workbuddy"
 MIRROR = ROOT / "integrations" / "workbuddy" / "briefloop"
 CODEBUDDY = ROOT / ".codebuddy" / "skills" / "briefloop" / "SKILL.md"
 ASSISTANT = (
-    ROOT
-    / "integrations"
-    / "workbuddy"
-    / "assistant"
-    / "briefloop-assistant-prompt.md"
+    ROOT / "integrations" / "workbuddy" / "assistant" / "briefloop-assistant-prompt.md"
 )
 DOCS = (
     ROOT / "docs" / "workbuddy.md",
@@ -74,9 +70,7 @@ ROLE_ACTION_SEQUENCE_SURFACES = (
     ASSISTANT,
 )
 ACTION_SURFACES = ACTIVE_INSTRUCTION_SURFACES
-CANONICAL_STATUS_COMMAND = (
-    '& $BriefLoop status --workspace "<workspace>" --json'
-)
+CANONICAL_STATUS_COMMAND = '& $BriefLoop status --workspace "<workspace>" --json'
 DIAGNOSE_INSTRUCTION_SURFACES = (
     CANONICAL / "SKILL.md",
     CANONICAL / "references" / "quickstart.md",
@@ -181,7 +175,9 @@ def test_windows_entrypoints_bind_one_powershell_cli_identity() -> None:
         assert phrase in combined
 
 
-@pytest.mark.skipif(os.name != "nt", reason="PowerShell application lookup is Windows-specific")
+@pytest.mark.skipif(
+    os.name != "nt", reason="PowerShell application lookup is Windows-specific"
+)
 def test_powershell_application_binding_ignores_function_and_alias_shadowing(
     tmp_path: Path,
 ) -> None:
@@ -191,7 +187,7 @@ def test_powershell_application_binding_ignores_function_and_alias_shadowing(
         (
             f'$env:PATH = "{tmp_path};$env:PATH"',
             'function global:briefloop { "function-shadow" }',
-            'Set-Alias -Name briefloop -Value Get-Date -Scope Global -Force',
+            "Set-Alias -Name briefloop -Value Get-Date -Scope Global -Force",
             "$BriefLoopCommand = Get-Command -Name briefloop -CommandType Application "
             "-ErrorAction Stop | Select-Object -First 1",
             "$BriefLoop = $BriefLoopCommand.Path",
@@ -289,8 +285,9 @@ def test_finalize_evidence_inventory_does_not_publish_incomplete_commands() -> N
         ), path
 
 
-def test_current_workbuddy_status_instruction_inventory_contains_canonical_command(
-) -> None:
+def test_current_workbuddy_status_instruction_inventory_contains_canonical_command() -> (
+    None
+):
     assert set(DIAGNOSE_INSTRUCTION_SURFACES) <= set(ACTIVE_INSTRUCTION_SURFACES)
     for path in DIAGNOSE_INSTRUCTION_SURFACES:
         assert CANONICAL_STATUS_COMMAND in _compact(path), path
@@ -319,12 +316,10 @@ def test_current_action_inventory_invokes_roles_only_when_assigned() -> None:
             or "invokes no role" in compact
             or "不调用任何角色" in compact
         ), path
-        assert (
-            "authorized transaction" in compact or "获授权事务" in compact
-        ), path
+        assert "authorized transaction" in compact or "获授权事务" in compact, path
 
 
-def test_new_workspace_precedes_secret_import_on_first_use_surfaces() -> None:
+def test_confirmed_tavily_init_precedes_secret_import_on_first_use_surfaces() -> None:
     ordered_surfaces = (
         CANONICAL / "SKILL.md",
         CANONICAL / "references" / "quickstart.md",
@@ -337,15 +332,15 @@ def test_new_workspace_precedes_secret_import_on_first_use_surfaces() -> None:
     )
     for path in ordered_surfaces:
         text = _read(path)
-        assert text.index("& $BriefLoop new") < text.index(
-            "& $BriefLoop secrets import"
-        ), path
+        assert text.index(
+            '& $BriefLoop init "<workspace>" --from-onboarding "<onboarding-json>"'
+        ) < text.index("& $BriefLoop secrets import"), path
     ordering_contract = "\n".join(_read(path) for path in ordered_surfaces)
-    assert "before `& $BriefLoop new`" in ordering_contract
-    assert "之前运行" in ordering_contract
+    assert "after the workspace exists" in ordering_contract
+    assert "工作区存在后" in ordering_contract
 
 
-def test_every_first_workspace_command_persists_the_search_choice() -> None:
+def test_first_workspace_guidance_separates_tavily_from_local_report_packs() -> None:
     first_use_surfaces = (
         CANONICAL / "SKILL.md",
         CANONICAL / "references" / "quickstart.md",
@@ -357,24 +352,31 @@ def test_every_first_workspace_command_persists_the_search_choice() -> None:
         ROOT / "docs" / "workbuddy-smoke-checklist.md",
     )
     for path in first_use_surfaces:
+        text = _read(path)
+        compact = _compact(path)
+        assert not re.search(
+            r"(?m)^\s*& \$BriefLoop new .*--search-backend tavily(?:\s|$)", text
+        ), path
+        assert '& $BriefLoop onboard --output "<onboarding-json>"' in text, path
+        assert (
+            '& $BriefLoop init "<workspace>" --from-onboarding "<onboarding-json>"'
+            in text
+        ), path
+        assert '& $BriefLoop init "<workspace>" --web' in text, path
+        assert "7" in compact and "30" in compact, path
         commands = tuple(
             line.strip()
-            for line in _read(path).splitlines()
+            for line in text.splitlines()
             if line.strip().startswith("& $BriefLoop new ")
         )
         assert commands, path
-        assert any("--search-backend tavily" in command for command in commands), path
-        assert any("--web-search-mode disabled" in command for command in commands), path
-        assert all(
-            '--industry "<topic>"' in command
-            for command in commands
-            if "--search-backend tavily" in command
-        ), (path, commands)
-        assert all(
-            "--search-backend tavily" in command
-            or "--web-search-mode disabled" in command
-            for command in commands
-        ), (path, commands)
+        assert any("--web-search-mode disabled" in command for command in commands), (
+            path
+        )
+        assert all("--web-search-mode disabled" in command for command in commands), (
+            path,
+            commands,
+        )
 
 
 def test_generated_required_commands_only_rebind_the_executable() -> None:
@@ -491,6 +493,7 @@ def test_public_run_cards_use_status_projection_delivery_truth() -> None:
         assert "recovery" in compact
         assert "next_action" in compact
 
+
 def test_doctor_error_cannot_be_human_overridden() -> None:
     combined = "\n".join(_read(path) for path in ACTION_SURFACES).lower()
     for phrase in (
@@ -569,21 +572,24 @@ def test_formatter_and_formal_finalize_require_deterministic_truth() -> None:
         for phrase in (
             "finalize_report.json",
             "reader-clean",
-                "promoted",
-                "render_transaction",
-                "finalize-complete",
+            "promoted",
+            "render_transaction",
+            "finalize-complete",
             "package_ready=true",
             "delivered",
             "draft/manual/unverified",
-            ):
-                assert phrase in text, (path, phrase)
+        ):
+            assert phrase in text, (path, phrase)
         assert re.search(r"finalize (?:quality[- ]?)?gate", text), path
 
     combined = "\n".join(_read(path) for path in authoritative_surfaces).lower()
     for residue in ("cl-*", "src-*", "claim ledger", "local path"):
         assert residue in combined
     assert "eligibility" in combined or "只是资格" in combined
-    assert "not evidence that delivery occurred" in combined or "不是交付发生证据" in combined
+    assert (
+        "not evidence that delivery occurred" in combined
+        or "不是交付发生证据" in combined
+    )
 
 
 def test_synthetic_manual_docx_incident_cannot_be_relabelled() -> None:

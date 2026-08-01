@@ -677,7 +677,11 @@ class CoreRunService:
                         ),
                         "provider_id": source_discovery_authorization.provider_id,
                         "route_id": source_discovery_authorization.route_id,
-                        "max_provider_calls": 1,
+                        "max_provider_calls": 2,
+                        "max_search_calls": 1,
+                        "max_extract_calls": 1,
+                        "max_extract_urls": 5,
+                        "provider_call_sequence": "search_then_batch_extract",
                         "provider_cost_status": ("not_reported_acknowledged"),
                         "previous_attempt_authorization_id": None,
                         "human_request_id": request.request_id,
@@ -1091,7 +1095,11 @@ class CoreRunService:
                     ),
                     "provider_id": discovery.provider_id,
                     "route_id": discovery.route_id,
-                    "max_provider_calls": 1,
+                    "max_provider_calls": 2,
+                    "max_search_calls": 1,
+                    "max_extract_calls": 1,
+                    "max_extract_urls": 5,
+                    "provider_call_sequence": "search_then_batch_extract",
                     "provider_cost_status": request.provider_cost_status,
                     "previous_attempt_authorization_id": (
                         previous.attempt_authorization_id
@@ -2699,6 +2707,7 @@ def _source_acquisition_spec(
                 run_direction is None
                 or run_direction.industry_or_theme is None
                 or max_results != 5
+                or recency_days not in {7, 30}
             ):
                 raise CoreRunError("runtime_source_plan_invalid")
             requests = [

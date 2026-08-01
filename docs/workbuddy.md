@@ -121,11 +121,17 @@ After confirmation, choose a product entry:
 | management monthly, 管理月报, 月报 | `management-monthly` |
 | file review, PDF review, document review, 文件, PDF, 审阅 | `document-review` |
 
-If the user enables online search, strongly recommend Tavily and use:
+If the user enables online search, strongly recommend Tavily. Use onboarding
+to confirm the exact topic and a 7- or 30-day source window:
 
 ```powershell
-& $BriefLoop new industry-weekly "<workspace>" --industry "<topic>" --search-backend tavily
+& $BriefLoop onboard --output "<onboarding-json>"
+& $BriefLoop init "<workspace>" --from-onboarding "<onboarding-json>"
 ```
+
+When a browser is available, `& $BriefLoop init "<workspace>" --web` is the
+equivalent supported route. Do not use the rejected
+`& $BriefLoop new ... --search-backend tavily` shortcut.
 
 If the user declines online search, use:
 
@@ -133,8 +139,10 @@ If the user declines online search, use:
 & $BriefLoop new industry-weekly "<workspace>" --web-search-mode disabled
 ```
 
-Replace `<topic>` with the exact Human-confirmed Tavily search topic. It is the
-sole provider query; the product entry and report objective do not rewrite it.
+The Tavily route must bind the exact Human-confirmed topic and
+`source_age_days=7` or `30`. Reject 90-day, custom, or missing windows before
+secret/provider effects. Local-first Report Pack entries do not authorize or
+rewrite a Tavily query.
 
 If the user enabled Tavily, persist its key after the workspace exists without
 printing the key. If the user disabled online search, skip this import:
