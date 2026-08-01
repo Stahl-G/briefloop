@@ -3919,6 +3919,7 @@ def _write_current_role_proposal(
     *,
     initial_editor_repetitions: int = 210,
     repair_editor_repetitions: int = 210,
+    initial_editor_reader_residue: bool = False,
 ) -> None:
     assert result.trace.envelope_path is not None
     envelope_path = workspace / result.trace.envelope_path
@@ -3977,10 +3978,16 @@ def _write_current_role_proposal(
         repetitions = (
             repair_editor_repetitions if repairing else initial_editor_repetitions
         )
+        reader_residue = (
+            "\n\nClaim Ledger reference CL-0001 must not reach readers."
+            if (role_id == "editor" and not repairing and initial_editor_reader_residue)
+            else ""
+        )
         body = (
             "# ExampleCo public brief\n\n## Executive Summary\n\n"
             + " ".join(["ExampleCo operations context"] * repetitions)
             + " ExampleCo opened a public pilot facility. [src:CL-0001]\n"
+            + reader_residue
         )
         (
             scratch
@@ -4471,6 +4478,94 @@ def test_authorized_editor_gate_repair_runs_once_then_finalizes_local(
     mismatch = integrity.first_mismatch(verified)
     assert mismatch is not None
     assert (mismatch[0].artifact_id, mismatch[0].revision) == successor_key
+
+
+def test_reader_projection_residue_routes_editor_repair_before_finalize(
+    tmp_path: Path,
+) -> None:
+    if sys.platform == "win32":
+        return
+    workspace = _authorized_workspace(tmp_path)
+    service = _service(workspace)
+    role_sequence: list[str] = []
+
+    for _ in range(12):
+        result = service.continue_authorized()
+        if result.status == "finalized_local":
+            break
+        assert result.status == "role_work_required", (
+            result.reason_code,
+            result.trace.next_action.action_kind,
+            result.trace.next_action.effect_kind,
+            result.trace.next_action.reason_code,
+            result.trace.transaction_ids,
+        )
+        assert result.trace.envelope_path is not None
+        envelope = json.loads(
+            (workspace / result.trace.envelope_path).read_text(encoding="utf-8")
+        )
+        role_sequence.append(envelope["role_id"])
+        _write_current_role_proposal(
+            workspace,
+            result,
+            initial_editor_reader_residue=True,
+        )
+    else:
+        raise AssertionError("reader-residue Gate repair did not terminate")
+
+    assert role_sequence == [
+        "scout",
+        "screener",
+        "claim-ledger",
+        "analyst",
+        "editor",
+        "auditor",
+        "editor",
+        "auditor",
+    ]
+    assert result.reason_code == "local_finalization_complete"
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+        reader_record = next(
+            item for item in snapshot.artifacts if item.artifact_id == "reader_brief"
+        )
+        reader_bytes = store.read_artifact_revision_bytes(
+            head.current_run_id,
+            "reader_brief",
+            reader_record.current_revision,
+        )
+
+    residue_findings = [
+        item
+        for item in snapshot.gate_findings
+        if item.finding_type == "reader_projection_residue"
+    ]
+    assert len(residue_findings) == 1
+    finding = residue_findings[0]
+    assert finding.blocking_level == "blocking"
+    assert finding.gate_id == "final_abstract_quality"
+    assert finding.repair_owner == "editor"
+    assert finding.stage_id == "editor"
+    assert finding.artifact_id == "audited_brief"
+    assert finding.claim_id is None
+    assert finding.source_id is None
+    assert finding.metadata == {
+        "bare_claim_id_count": 1,
+        "process_wording_count": 1,
+        "reader_artifact_id": "reader_brief",
+        "residue_kinds": ["bare_claim_id", "process_wording"],
+    }
+    assert len(snapshot.gate_repair_cycles) == 1
+    assert len(snapshot.gate_repair_outcomes) == 1
+    assert snapshot.gate_repair_outcomes[0].disposition == "passed"
+    assert len(snapshot.finalize_renders) == 1
+    assert len(snapshot.finalizations) == 1
+    reader_text = reader_bytes.decode("utf-8")
+    assert "Claim Ledger" not in reader_text
+    assert "CL-0001" not in reader_text
 
 
 def test_active_gate_repair_contamination_is_zero_write_human_block(
