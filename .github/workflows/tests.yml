@@ -117,11 +117,11 @@ jobs:
                       "os": "ubuntu-latest",
                       "python-version": "3.12",
                       "shard": index,
-                      "shards": 4,
+                      "shards": 6,
                       "select": "",
                       "durations": ".test_durations",
                   }
-                  for index in (1, 2, 3, 4)
+                  for index in (1, 2, 3, 4, 5, 6)
               ]
               + [
                   {
@@ -270,6 +270,12 @@ jobs:
       - name: Terminology check
         run: python scripts/check_terms.py
 
+      # faulthandler_timeout kills the worker when it fires, so it has to sit
+      # above the slowest legitimate test rather than near it. The slowest
+      # post-final review tests run ~90s locally and ~4x that on a shared
+      # runner, which tripped the old 240s bound and failed a shard on a test
+      # that was still making progress. 600s still catches a real hang well
+      # inside the 45 minute step bound.
       - name: Tests
         timeout-minutes: 45
         run: >-
@@ -282,7 +288,7 @@ jobs:
           --group ${{ matrix.shard }}
           --durations-path ${{ matrix.durations }}
           --max-worker-restart=0
-          -o faulthandler_timeout=240
+          -o faulthandler_timeout=600
 
       - name: Agent config check
         run: python scripts/generate_agent_configs.py --check
@@ -854,6 +860,10 @@ jobs:
         with:
           name: test-durations-${{ matrix.os }}
           path: ${{ matrix.durations }}
+          # The duration files are dotfiles and upload-artifact skips hidden
+          # paths by default, which uploads nothing while still reporting
+          # success.
+          include-hidden-files: true
 
   merge-gate:
     name: >-

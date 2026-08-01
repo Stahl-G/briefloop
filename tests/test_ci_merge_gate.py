@@ -185,7 +185,7 @@ def test_candidate_classification_pins_supported_matrix() -> None:
     # a shard slot there and return instantly: weighting Windows with POSIX
     # durations measured a 2.9x imbalance against 1.0x with its own.
     for name, expected_shards, expected_select, expected_durations in (
-        ("ubuntu-latest", 4, "", ".test_durations"),
+        ("ubuntu-latest", 6, "", ".test_durations"),
         ("windows-latest", 2, "", ".test_durations.windows"),
         ("macos-latest", 1, "macos_publication", ".test_durations"),
     ):
@@ -230,7 +230,10 @@ def test_matrix_pytest_harness_excludes_explicit_e2e_and_is_diagnostic() -> None
     assert "--group ${{ matrix.shard }}" in command
     assert "--durations-path ${{ matrix.durations }}" in command
     assert "--max-worker-restart=0" in command
-    assert "-o faulthandler_timeout=240" in command
+    # Firing this kills the worker, so it must stay above the slowest real
+    # test, not near it. At 240s it failed a shard on a test that was still
+    # progressing.
+    assert "-o faulthandler_timeout=600" in command
     assert "--timeout=" not in command
 
     pyproject = PYPROJECT_PATH.read_text(encoding="utf-8")
