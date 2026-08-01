@@ -23,7 +23,11 @@ from multi_agent_brief.sources.search_backends.base import (
     SearchBackendError,
     SearchResult,
 )
-from multi_agent_brief.sources.search_backends.tavily import TavilyBackend
+from multi_agent_brief.sources.search_backends.tavily import (
+    TAVILY_ACQUISITION_BUNDLE_BYTE_CAP,
+    TAVILY_RESPONSE_BYTE_BUDGET,
+    TavilyBackend,
+)
 from multi_agent_brief.sources.manual import ManualProvider
 from multi_agent_brief.sources.rss import RssProvider
 from multi_agent_brief.sources.web_search import WebSearchProvider
@@ -484,6 +488,141 @@ def test_tavily_search_then_batch_extract_preserves_exact_partial_outcome(monkey
         "search raw content must not be evidence" not in response.results[0].raw_content
     )
     assert sentinel not in repr(response)
+
+
+def test_tavily_search_and_extract_share_one_stage_safe_response_budget(
+    monkeypatch,
+):
+    search_body = json.dumps(
+        {
+            "results": [
+                {
+                    "title": "Near-bound durable result",
+                    "url": "https://example.com/near-bound",
+                    "content": "search snippet",
+                    "score": 0.9,
+                }
+            ]
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    remaining = TAVILY_RESPONSE_BYTE_BUDGET - len(search_body)
+    empty_extract = json.dumps(
+        {
+            "results": [
+                {
+                    "url": "https://example.com/near-bound",
+                    "raw_content": "",
+                }
+            ],
+            "failed_results": [],
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    content = "x" * (remaining - len(empty_extract) - 128)
+    extract_body = json.dumps(
+        {
+            "results": [
+                {
+                    "url": "https://example.com/near-bound",
+                    "raw_content": content,
+                }
+            ],
+            "failed_results": [],
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert 0 < remaining - len(extract_body) < 256
+    read_limits: list[int] = []
+
+    class _Response:
+        status = 200
+
+        def __init__(self, body: bytes) -> None:
+            self.body = body
+
+        def read(self, limit: int = -1) -> bytes:
+            read_limits.append(limit)
+            return self.body if limit < 0 else self.body[:limit]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def _urlopen(request, timeout=30):
+        assert timeout == 30
+        return _Response(
+            search_body if request.full_url.endswith("/search") else extract_body
+        )
+
+    monkeypatch.setattr("urllib.request.urlopen", _urlopen)
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only-tavily-key")
+
+    response = TavilyBackend().acquisition_response(
+        "test query",
+        max_results=1,
+        time_range="week",
+    )
+    bundle = TavilyAcquisitionBundle.model_validate_json(
+        response.raw_response,
+        strict=True,
+    )
+
+    assert read_limits == [
+        TAVILY_RESPONSE_BYTE_BUDGET + 1,
+        remaining + 1,
+    ]
+    assert bundle.status == "extract_results_succeeded"
+    assert response.results[0].raw_content == content
+    assert len(response.raw_response) <= TAVILY_ACQUISITION_BUNDLE_BYTE_CAP
+
+
+def test_tavily_overbound_search_response_is_not_retained(monkeypatch):
+    sentinel = b"overbound-provider-body-must-not-persist"
+    overbound_body = sentinel + (b"x" * TAVILY_RESPONSE_BYTE_BUDGET)
+    read_limits: list[int] = []
+    calls = 0
+
+    class _Response:
+        status = 200
+
+        def read(self, limit: int = -1) -> bytes:
+            read_limits.append(limit)
+            return overbound_body if limit < 0 else overbound_body[:limit]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def _urlopen(_request, timeout=30):
+        nonlocal calls
+        assert timeout == 30
+        calls += 1
+        return _Response()
+
+    monkeypatch.setattr("urllib.request.urlopen", _urlopen)
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only-tavily-key")
+
+    response = TavilyBackend().acquisition_response(
+        "test query",
+        max_results=1,
+        time_range="week",
+    )
+    bundle = TavilyAcquisitionBundle.model_validate_json(
+        response.raw_response,
+        strict=True,
+    )
+
+    assert calls == 1
+    assert read_limits == [TAVILY_RESPONSE_BYTE_BUDGET + 1]
+    assert bundle.status == "search_response_unavailable"
+    assert bundle.search.response_body_base64 is None
+    assert sentinel not in response.raw_response
+    assert len(response.raw_response) <= TAVILY_ACQUISITION_BUNDLE_BYTE_CAP
 
 
 def test_tavily_search_redirect_is_retained_without_following_target(monkeypatch):

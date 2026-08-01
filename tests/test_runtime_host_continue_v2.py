@@ -31,6 +31,7 @@ from multi_agent_brief.contracts.v2 import (
     IntegrityCheckRequest,
     SourceCommitRequest,
     SourceProposal,
+    TavilyAcquisitionBundle,
     TavilyExtractUrlOutcome,
 )
 from multi_agent_brief.control_store import (
@@ -72,7 +73,11 @@ from multi_agent_brief.runtime_host_v2.submission import (
     source_stage_root,
 )
 from multi_agent_brief.sources.base import SourceItem
-from multi_agent_brief.sources.search_backends.tavily import TavilyBackend
+from multi_agent_brief.sources.search_backends.tavily import (
+    TAVILY_ACQUISITION_BUNDLE_BYTE_CAP,
+    TAVILY_RESPONSE_BYTE_BUDGET,
+    TavilyBackend,
+)
 from multi_agent_brief.sources.tavily_acquisition import (
     parse_tavily_acquisition_bundle,
 )
@@ -1788,18 +1793,35 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
         },
         separators=(",", ":"),
     ).encode("utf-8")
-    extract_response_bytes = json.dumps(
+    empty_extract_response = json.dumps(
         {
             "results": [
                 {
                     "url": "https://example.com/durable",
-                    "raw_content": "durable provider content",
+                    "raw_content": "",
                 }
             ],
             "failed_results": [],
         },
         separators=(",", ":"),
     ).encode("utf-8")
+    remaining_response_budget = TAVILY_RESPONSE_BYTE_BUDGET - len(search_response_bytes)
+    durable_content = "x" * (
+        remaining_response_budget - len(empty_extract_response) - 128
+    )
+    extract_response_bytes = json.dumps(
+        {
+            "results": [
+                {
+                    "url": "https://example.com/durable",
+                    "raw_content": durable_content,
+                }
+            ],
+            "failed_results": [],
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    assert 0 < remaining_response_budget - len(extract_response_bytes) < 256
 
     class _Response:
         status = 200
@@ -1883,6 +1905,11 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
             provider_revision.revision,
         )
         source = snapshot.sources[0]
+        source_content = store.read_artifact_revision_bytes(
+            snapshot.run.run_id,
+            source.content_artifact_id,
+            source.content_artifact_revision,
+        )
         raw_projection = store.read_artifact_revision_bytes(
             snapshot.run.run_id,
             source.raw_payload_artifact_id,
@@ -1895,8 +1922,10 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
     assert source.claims_eligible is True
     assert source.published_at is None
     observation = parse_tavily_acquisition_bundle(provider_bytes)
+    assert len(provider_bytes) <= TAVILY_ACQUISITION_BUNDLE_BYTE_CAP
     assert observation.bundle.status == "extract_results_succeeded"
     assert observation.result_count == observation.durable_content_count == 1
+    assert source_content == durable_content.encode("utf-8")
     assert json.loads(raw_projection)["search_result"]["published_date"] == (
         " 2026-07-23"
     )
@@ -1941,6 +1970,78 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
     )
     with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
         CoreRunDomainVerifier()._verify_snapshot(history, snapshot)
+
+
+@_REQUIRES_RETAINED_PUBLICATION
+def test_discovery_overbound_provider_response_never_reaches_stage_or_store(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    workspace = _discovery_workspace(tmp_path)
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    sentinel = b"overbound-provider-body-must-not-persist"
+    provider_body = sentinel + (b"x" * TAVILY_RESPONSE_BYTE_BUDGET)
+    read_limits: list[int] = []
+    provider_calls = 0
+
+    class _Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self, limit: int = -1) -> bytes:
+            read_limits.append(limit)
+            return provider_body if limit < 0 else provider_body[:limit]
+
+    def urlopen(request, *, timeout):
+        nonlocal provider_calls
+        assert timeout == 30
+        assert request.full_url == "https://api.tavily.com/search"
+        provider_calls += 1
+        return _Response()
+
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.search_backends.tavily.urllib.request.urlopen",
+        urlopen,
+    )
+    action = _advance_discovery_to_source_action(workspace)
+    stage_identity = _discovery_stage_identity(workspace, action)
+
+    result = _service(workspace).continue_authorized()
+
+    assert result.status == "needs_human"
+    assert result.reason_code == "source_acquisition_recovery_decision_required"
+    assert provider_calls == 1
+    assert read_limits == [TAVILY_RESPONSE_BYTE_BUDGET + 1]
+    assert not source_stage_root(workspace, stage_identity).exists()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+        history = store.load_history()
+        evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
+        assert evidence is not None
+        assert evidence.provider_response_artifact is not None
+        provider_bytes = store.read_artifact_revision_bytes(
+            snapshot.run.run_id,
+            evidence.provider_response_artifact.artifact_id,
+            evidence.provider_response_artifact.revision,
+        )
+    bundle = TavilyAcquisitionBundle.model_validate_json(provider_bytes, strict=True)
+    assert bundle.status == "search_response_unavailable"
+    assert bundle.search.response_body_base64 is None
+    assert len(provider_bytes) <= TAVILY_ACQUISITION_BUNDLE_BYTE_CAP
+    assert snapshot.sources == ()
+    assert snapshot.run_execution_authorizations == ()
+    assert sentinel not in provider_bytes
+    assert sentinel not in (workspace / "briefloop.db").read_bytes()
+    assert sentinel.decode("ascii") not in caplog.text
+    assert sentinel.decode("ascii") not in repr(history.transactions)
 
 
 @_REQUIRES_RETAINED_PUBLICATION

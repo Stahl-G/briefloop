@@ -43,9 +43,32 @@ from multi_agent_brief.sources.tavily_acquisition import (
 TAVILY_API_URL = "https://api.tavily.com/search"
 TAVILY_EXTRACT_API_URL = "https://api.tavily.com/extract"
 DEFAULT_API_KEY_ENV = "TAVILY_API_KEY"
-TAVILY_RESPONSE_BYTE_CAP = 4 * 1024 * 1024
+# The complete canonical acquisition bundle is later staged as one provider
+# response.  Search and Extract therefore share one raw-response budget; two
+# independent per-call caps can exceed the stage even when each call is valid.
+TAVILY_ACQUISITION_BUNDLE_BYTE_CAP = 4 * 1024 * 1024
+TAVILY_REQUEST_BODY_BYTE_CAP = 64 * 1024
+TAVILY_RESPONSE_BYTE_BUDGET = 2_400_000
+_TAVILY_BUNDLE_STRUCTURAL_RESERVE_BYTES = 512 * 1024
 TAVILY_TIMEOUT_SECONDS = 30
 _ORIGINAL_URLOPEN = urllib.request.urlopen
+
+
+def _base64_size(byte_count: int) -> int:
+    return 4 * ((byte_count + 2) // 3)
+
+
+# The response budget may be split across two exchanges, adding at most one
+# extra base64 quantum.  The reserve covers the fixed schema plus the bounded
+# five URL/outcome projections.  Keep this proof next to the producer limits.
+if (
+    _base64_size(TAVILY_RESPONSE_BYTE_BUDGET)
+    + 4
+    + (2 * _base64_size(TAVILY_REQUEST_BODY_BYTE_CAP))
+    + _TAVILY_BUNDLE_STRUCTURAL_RESERVE_BYTES
+    > TAVILY_ACQUISITION_BUNDLE_BYTE_CAP
+):  # pragma: no cover - constant invariant
+    raise RuntimeError("invalid Tavily acquisition byte budget")
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -339,8 +362,14 @@ class TavilyBackend(SearchBackend):
             },
             strict=True,
         )
+        bundle_bytes = _canonical_json_bytes(bundle.model_dump(mode="json"))
+        if len(bundle_bytes) > TAVILY_ACQUISITION_BUNDLE_BYTE_CAP:
+            raise SearchBackendError(
+                "Tavily acquisition failed",
+                backend="tavily",
+            ) from None
         return SearchResponse(
-            raw_response=_canonical_json_bytes(bundle.model_dump(mode="json")),
+            raw_response=bundle_bytes,
             status_code=200,
             results=results,
         )
@@ -350,8 +379,20 @@ class TavilyBackend(SearchBackend):
         endpoint: str,
         payload: dict[str, Any],
         api_key: str,
+        *,
+        response_byte_cap: int = TAVILY_RESPONSE_BYTE_BUDGET,
     ) -> tuple[bytes, int, bytes]:
         request_body = _canonical_json_bytes(payload)
+        if (
+            not request_body
+            or len(request_body) > TAVILY_REQUEST_BODY_BYTE_CAP
+            or response_byte_cap < 0
+            or response_byte_cap > TAVILY_RESPONSE_BYTE_BUDGET
+        ):
+            raise SearchBackendError(
+                "Tavily request failed",
+                backend="tavily",
+            ) from None
         request = urllib.request.Request(
             endpoint,
             data=request_body,
@@ -366,10 +407,10 @@ class TavilyBackend(SearchBackend):
         try:
             with _open_no_redirect(request, timeout=TAVILY_TIMEOUT_SECONDS) as response:
                 status_code = int(getattr(response, "status", 200))
-                response_body = response.read(TAVILY_RESPONSE_BYTE_CAP + 1)
+                response_body = response.read(response_byte_cap + 1)
         except urllib.error.HTTPError as exc:
             status_code = int(exc.code)
-            response_body = exc.read(TAVILY_RESPONSE_BYTE_CAP + 1)
+            response_body = exc.read(response_byte_cap + 1)
         except Exception:
             transport_failed = True
             status_code = 0
@@ -379,7 +420,7 @@ class TavilyBackend(SearchBackend):
                 "Tavily request failed",
                 backend="tavily",
             ) from None
-        if len(response_body) > TAVILY_RESPONSE_BYTE_CAP:
+        if len(response_body) > response_byte_cap:
             raise SearchBackendError(
                 "Tavily request failed",
                 backend="tavily",
@@ -583,7 +624,10 @@ class TavilyBackend(SearchBackend):
         search_request = _canonical_json_bytes(search_payload)
         try:
             search_request, search_status, search_response = self._post_json(
-                TAVILY_API_URL, search_payload, api_key
+                TAVILY_API_URL,
+                search_payload,
+                api_key,
+                response_byte_cap=TAVILY_RESPONSE_BYTE_BUDGET,
             )
         except SearchBackendError:
             return self._bundle_response(
@@ -636,9 +680,13 @@ class TavilyBackend(SearchBackend):
             "include_usage": True,
         }
         extract_request = _canonical_json_bytes(extract_payload)
+        remaining_response_budget = TAVILY_RESPONSE_BYTE_BUDGET - len(search_response)
         try:
             extract_request, extract_status, extract_response = self._post_json(
-                TAVILY_EXTRACT_API_URL, extract_payload, api_key
+                TAVILY_EXTRACT_API_URL,
+                extract_payload,
+                api_key,
+                response_byte_cap=remaining_response_budget,
             )
         except SearchBackendError:
             extract_exchange = self._exchange("extract", extract_request)

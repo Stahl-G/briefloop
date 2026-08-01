@@ -425,13 +425,17 @@ def _existing_store_init_error(target: Path) -> str | None:
 
 def _init_workspace(args: argparse.Namespace) -> int:
     """Create a brief workspace from onboarding or CLI args."""
+    search_backend = getattr(args, "search_backend", None)
     if (
         not getattr(args, "web", False)
         and not getattr(args, "from_onboarding", None)
         and (
             getattr(args, "tavily", False)
-            or getattr(args, "search_backend", None) == "tavily"
-            or getattr(args, "web_search_mode", None) == "external_api"
+            or search_backend == "tavily"
+            or (
+                getattr(args, "web_search_mode", None) == "external_api"
+                and not search_backend
+            )
         )
     ):
         print(f"[error] {TAVILY_CONFIRMED_INIT_GUIDANCE}")

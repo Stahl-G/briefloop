@@ -203,6 +203,42 @@ def test_direct_init_tavily_entrypoints_require_confirmed_onboarding_before_writ
     assert not workspace.exists()
 
 
+@pytest.mark.parametrize(
+    ("backend", "api_key_env"),
+    (
+        ("exa", "EXA_API_KEY"),
+        ("brave", "BRAVE_SEARCH_API_KEY"),
+        ("firecrawl", "FIRECRAWL_API_KEY"),
+        ("serper", "SERPER_API_KEY"),
+    ),
+)
+def test_direct_init_preserves_explicit_supported_non_tavily_backends(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    backend: str,
+    api_key_env: str,
+) -> None:
+    workspace = tmp_path / f"cli-{backend}-workspace"
+    args = [
+        *_direct_init_args(workspace),
+        "--web-search-mode",
+        "external_api",
+        "--search-backend",
+        backend,
+    ]
+
+    assert main(args) == 0
+    output = capsys.readouterr().out
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    web_search = sources["web_search"]
+    assert web_search["enabled"] is True
+    assert web_search["mode"] == "external_api"
+    assert web_search["backend"] == backend
+    assert web_search["api_key_env"] == api_key_env
+    assert api_key_env in output
+    assert not (workspace / "briefloop.db").exists()
+
+
 def test_cli_init_force_never_rewrites_existing_store_workspace(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

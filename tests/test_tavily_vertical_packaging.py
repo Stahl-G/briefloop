@@ -129,12 +129,12 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             },
             separators=(",", ":"),
         ).encode("utf-8")
-        extract_response_bytes = json.dumps(
+        empty_extract_response = json.dumps(
             {
                 "results": [
                     {
                         "url": "https://openai.com/public-durable",
-                        "raw_content": "provider-returned extracted content",
+                        "raw_content": "",
                     }
                 ],
                 "failed_results": [
@@ -146,6 +146,33 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             },
             separators=(",", ":"),
         ).encode("utf-8")
+        remaining_response_budget = (
+            tavily_module.TAVILY_RESPONSE_BYTE_BUDGET - len(search_response_bytes)
+        )
+        durable_content = "x" * (
+            remaining_response_budget - len(empty_extract_response) - 128
+        )
+        extract_response_bytes = json.dumps(
+            {
+                "results": [
+                    {
+                        "url": "https://openai.com/public-durable",
+                        "raw_content": durable_content,
+                    }
+                ],
+                "failed_results": [
+                    {
+                        "url": "https://openai.com/public-failed",
+                        "error": "unavailable",
+                    }
+                ],
+            },
+            separators=(",", ":"),
+        ).encode("utf-8")
+        require(
+            0 < remaining_response_budget - len(extract_response_bytes) < 256,
+            "Extract response is not near the shared response budget",
+        )
 
         class TavilyHandler(BaseHTTPRequestHandler):
             def do_POST(self):
@@ -428,6 +455,11 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
 
         observation = parse_tavily_acquisition_bundle(provider_bytes)
         require(
+            len(provider_bytes)
+            <= tavily_module.TAVILY_ACQUISITION_BUNDLE_BYTE_CAP,
+            "canonical acquisition bundle exceeds the stage-safe cap",
+        )
+        require(
             observation.bundle.status == "extract_results_partial",
             "partial Extract status missing",
         )
@@ -444,7 +476,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             "per-URL Extract outcomes missing",
         )
         require(
-            source_content == b"provider-returned extracted content",
+            source_content == durable_content.encode("utf-8"),
             "Search snippet/raw bytes entered source content",
         )
         projection = json.loads(source_projection)
@@ -458,8 +490,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             "Search raw content leaked into the eligible-source projection",
         )
         require(
-            projection["extract_result"]["raw_content"]
-            == "provider-returned extracted content",
+            projection["extract_result"]["raw_content"] == durable_content,
             "exact Extract projection missing",
         )
         require(source.claims_eligible is True, "Extract source not eligible")
