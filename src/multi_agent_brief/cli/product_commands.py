@@ -572,6 +572,7 @@ def handle_quality(args: argparse.Namespace) -> int:
         from multi_agent_brief.product.post_final_assessment import (
             PostFinalAssessmentError,
             PostFinalAssessmentService,
+            upgrade_post_final_assessment_store,
         )
         from multi_agent_brief.control_store.errors import ControlStoreError
         from multi_agent_brief.product.post_final_review import (
@@ -612,9 +613,10 @@ def handle_quality(args: argparse.Namespace) -> int:
                     abandon_predecessor=bool(args.abandon_predecessor),
                 )
             elif laj_action == "store-upgrade":
-                from multi_agent_brief.control_store.upgrade import upgrade_store
-
-                payload = upgrade_store(args.workspace, args.backup)
+                payload = upgrade_post_final_assessment_store(
+                    args.workspace,
+                    args.backup,
+                )
             elif laj_action == "assessment-list":
                 payload = service.assessment_list()
             elif laj_action == "review-open":

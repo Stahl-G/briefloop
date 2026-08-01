@@ -14,13 +14,17 @@ import pytest
 
 from multi_agent_brief.control_store.errors import (
     ControlStoreError,
+    ControlStoreIntegrityError,
     ControlStoreSchemaError,
 )
 from multi_agent_brief.control_store.schema import verify_schema
 from multi_agent_brief.control_store.sqlite_store import SQLiteControlStore
 import multi_agent_brief.control_store.upgrade as upgrade_module
-from multi_agent_brief.control_store.upgrade import upgrade_store
 from multi_agent_brief.control_store.serialization import canonical_json_bytes
+import multi_agent_brief.product.post_final_assessment as assessment_module
+from multi_agent_brief.product.post_final_assessment import (
+    upgrade_post_final_assessment_store as upgrade_store,
+)
 from tests.test_control_store import BLOB, _records, _stage_all
 
 
@@ -481,18 +485,24 @@ def test_migrated_clone_validates_before_live_writer_and_binds_source_archive(
     workspace = _v11_workspace(tmp_path)
     backup = tmp_path / "clone-order-backup"
     events: list[tuple[str, Path | None]] = []
-    original_validate = upgrade_module._validate_migrated_workspace
+    original_validate = (
+        assessment_module._validate_post_final_assessment_upgrade_snapshot
+    )
     original_connect = upgrade_module._connect
 
-    def validate(*args, **kwargs) -> None:
-        events.append(("clone", kwargs.get("archive_workspace")))
-        original_validate(*args, **kwargs)
+    def validate(workspace: Path, archive_workspace: Path) -> None:
+        events.append(("clone", archive_workspace))
+        original_validate(workspace, archive_workspace)
 
     def connect(*args, **kwargs):
         events.append(("connect", None))
         return original_connect(*args, **kwargs)
 
-    monkeypatch.setattr(upgrade_module, "_validate_migrated_workspace", validate)
+    monkeypatch.setattr(
+        assessment_module,
+        "_validate_post_final_assessment_upgrade_snapshot",
+        validate,
+    )
     monkeypatch.setattr(upgrade_module, "_connect", connect)
 
     def stop_before_migration(stage: str) -> None:
@@ -504,6 +514,57 @@ def test_migrated_clone_validates_before_live_writer_and_binds_source_archive(
         upgrade_store(workspace, backup, failure_hook=stop_before_migration)
     assert [name for name, _ in events] == ["clone", "connect", "migration"]
     assert events[0][1] == workspace
+
+
+def test_low_level_upgrade_requires_product_validator_before_any_effect(
+    tmp_path: Path,
+) -> None:
+    workspace = _v11_workspace(tmp_path)
+    backup = tmp_path / "missing-validator-backup"
+    before = (workspace / "briefloop.db").read_bytes()
+
+    with pytest.raises(TypeError):
+        upgrade_module.upgrade_store(workspace, backup)  # type: ignore[call-arg]
+
+    assert (workspace / "briefloop.db").read_bytes() == before
+    assert not backup.exists()
+
+
+def test_product_validator_postcommit_failure_restores_verified_v11_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _v11_workspace(tmp_path)
+    backup = tmp_path / "validator-rollback-backup"
+    original_validate = (
+        assessment_module._validate_post_final_assessment_upgrade_snapshot
+    )
+    calls = 0
+
+    def validate(staging: Path, archive_workspace: Path) -> None:
+        nonlocal calls
+        original_validate(staging, archive_workspace)
+        calls += 1
+        if calls == 2:
+            raise ControlStoreIntegrityError("synthetic_product_validator_failure")
+
+    monkeypatch.setattr(
+        assessment_module,
+        "_validate_post_final_assessment_upgrade_snapshot",
+        validate,
+    )
+
+    with pytest.raises(ControlStoreError) as error:
+        upgrade_store(workspace, backup)
+
+    assert error.value.code == "synthetic_product_validator_failure"
+    assert calls == 2
+    assert backup.is_dir()
+    connection = sqlite3.connect(workspace / "briefloop.db")
+    try:
+        verify_schema(connection, expected_version=11)
+    finally:
+        connection.close()
 
 
 def _downgrade_0012_preserving_v2_assessment_request(root: Path) -> None:
@@ -643,10 +704,10 @@ def test_upgrade_rejects_tampered_original_pf_archive_before_backup(
     )
     from multi_agent_brief.semantic_evaluator.archive import trial_archive_path
     import multi_agent_brief.semantic_evaluator.runner as runner_module
-    from tests.test_core_run_v2_packaging import _real_finalized_local_workspace
+    from tests.test_finalized_local_review_facts import _finalized_local_workspace
     from tests.test_post_final_assessment import _fixture_service, _policy_payload
 
-    workspace = _real_finalized_local_workspace(tmp_path, monkeypatch)
+    workspace, _run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
     service = _fixture_service(workspace, [], terminal_mode="finding")
     policy = _policy_payload()
     policy["auto_run"] = True

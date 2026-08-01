@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 import sqlite3
 import stat
-from typing import Any, Callable
+from typing import Callable
 from urllib.parse import quote
 from uuid import uuid4
 
@@ -29,12 +29,14 @@ from multi_agent_brief.control_store.sqlite_store import (
 
 
 UpgradeHook = Callable[[str], None]
+UpgradeValidator = Callable[[Path, Path], None]
 
 
 def upgrade_store(
     workspace: str | os.PathLike[str],
     backup: str | os.PathLike[str],
     *,
+    validator: UpgradeValidator,
     failure_hook: UpgradeHook | None = None,
 ) -> dict[str, object]:
     """Upgrade one workspace from schema v11 to v12, or report no-op v12.
@@ -77,7 +79,7 @@ def upgrade_store(
 
     # The complete migrated clone, including the package-owned PF-LAJ archive
     # sibling, must pass before opening the live writer or publishing backup.
-    _validate_migrated_snapshot(root, database, blobs)
+    _validate_migrated_snapshot(root, database, blobs, validator=validator)
 
     connection = _connect(database)
     committed = False
@@ -121,7 +123,7 @@ def upgrade_store(
         connection.close()
         connection = None  # type: ignore[assignment]
 
-        _validate_current_snapshot(root, database, blobs)
+        _validate_current_snapshot(root, database, blobs, validator=validator)
         with _open_read_only_store(database, blobs) as store:
             result = {
                 "ok": True,
@@ -462,8 +464,10 @@ def _validate_migrated_snapshot(
     workspace: Path,
     database: Path,
     blobs: Path,
+    *,
+    validator: UpgradeValidator,
 ) -> None:
-    """Prove a v11 payload after migration, including the Core boundary."""
+    """Prove a v11 payload after migration through the required product gate."""
 
     staging = database.parent / f".{database.name}.{uuid4().hex}.validate"
     staging.mkdir(parents=False, exist_ok=False)
@@ -480,7 +484,7 @@ def _validate_migrated_snapshot(
             connection.execute("PRAGMA foreign_keys = ON")
         finally:
             connection.close()
-        _validate_migrated_workspace(staging, archive_workspace=workspace)
+        validator(staging, workspace)
     except ControlStoreError:
         raise
     except (OSError, sqlite3.Error, ValueError, TypeError) as exc:
@@ -493,6 +497,8 @@ def _validate_current_snapshot(
     workspace: Path,
     database: Path,
     blobs: Path,
+    *,
+    validator: UpgradeValidator,
 ) -> None:
     """Validate the committed v12 copy before publishing upgrade success."""
 
@@ -500,7 +506,7 @@ def _validate_current_snapshot(
     staging.mkdir(parents=False, exist_ok=False)
     try:
         _copy_workspace_snapshot(database, blobs, staging)
-        _validate_migrated_workspace(staging, archive_workspace=workspace)
+        validator(staging, workspace)
     except ControlStoreError:
         raise
     except (OSError, sqlite3.Error, ValueError, TypeError) as exc:
@@ -531,137 +537,6 @@ def _copy_workspace_snapshot(
         destination / "briefloop.db.blobs",
         error_code="blob_topology_invalid",
     )
-
-
-def _validate_migrated_workspace(
-    workspace: Path,
-    *,
-    archive_workspace: Path | None = None,
-) -> None:
-    """Run Store, Core and finalized-local projections on a private copy."""
-
-    database = workspace / "briefloop.db"
-    blobs = workspace / "briefloop.db.blobs"
-    with SQLiteControlStore.open(database, blob_root=blobs) as store:
-        history = store.load_history()
-    run_ids = {
-        snapshot.workspace_run_head.current_run_id
-        for snapshot in history.snapshots
-        if snapshot.workspace_run_head is not None
-    }
-    if len(run_ids) != 1:
-        return
-    run_id = next(iter(run_ids))
-    snapshot = next(
-        (item for item in history.snapshots if item.run.run_id == run_id),
-        None,
-    )
-    # A deliberately minimal v11 store may only contain bootstrap records.
-    # Once a Core run contract exists, however, the entire immutable Core
-    # verifier and the finalized-local projection are mandatory upgrade gates.
-    if snapshot is None or not snapshot.run_contract_bindings:
-        return
-    from multi_agent_brief.core_run_v2.next_action import classify_core_run_next_action
-    from multi_agent_brief.core_run_v2.errors import CoreRunError
-    from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
-
-    try:
-        verified = CoreRunDomainVerifier().verify_loaded_history(history, run_id)
-    except CoreRunError as exc:
-        raise ControlStoreIntegrityError(exc.code) from exc
-    action = classify_core_run_next_action(verified)
-    if action.effect_kind != "finalized_local":
-        return
-    from multi_agent_brief.runtime_host_v2.projections import (
-        build_finalized_local_review_projection,
-    )
-
-    try:
-        projection = build_finalized_local_review_projection(workspace)
-    except Exception as exc:
-        # RuntimeHost projections are read-only consumers here; translate any
-        # projection failure into the Store's fixed value-free error boundary.
-        raise ControlStoreIntegrityError("finalized_local_projection_invalid") from exc
-    if projection.facts.run_id != run_id:
-        raise ControlStoreIntegrityError("finalized_local_projection_invalid")
-
-    _validate_post_final_assessment_snapshot(
-        workspace,
-        archive_workspace=archive_workspace or workspace,
-        history=history,
-        snapshot=history.snapshot_at_revision(run_id, history.store_revision),
-        facts=projection.facts,
-        action=action,
-    )
-
-
-def _validate_post_final_assessment_snapshot(
-    workspace: Path,
-    *,
-    archive_workspace: Path,
-    history: Any,
-    snapshot: Any,
-    facts: Any,
-    action: Any,
-) -> None:
-    """Re-verify any existing PF-LAJ result without creating advisory state."""
-
-    from multi_agent_brief.product.post_final_assessment import (
-        PostFinalAssessmentError,
-        PostFinalAssessmentService,
-        post_final_assessment_archive_root,
-        resolve_current_post_final_assessment_result,
-        resolve_post_final_assessment_series,
-    )
-    from multi_agent_brief.semantic_evaluator.archive import (
-        trial_archive_path,
-        verify_shadow_archive,
-    )
-    from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
-    from multi_agent_brief.semantic_evaluator.reader import build_laj_reader_view
-
-    try:
-        series = resolve_post_final_assessment_series(
-            history,
-            snapshot,
-            facts,
-            action,
-        )
-        for request in series:
-            result = resolve_current_post_final_assessment_result(snapshot, request)
-            if result is None:
-                continue
-            # Zero-advice terminal records intentionally do not require an archive
-            # to remain readable; nonzero evidence must be fully replay-verifiable
-            # before an upgrade can claim success.
-            if result.finding_count == 0 and result.withheld_finding_count == 0:
-                continue
-            archive = verify_shadow_archive(
-                trial_archive_path(
-                    post_final_assessment_archive_root(archive_workspace),
-                    request.trial_id,
-                )
-            )
-            view = build_laj_reader_view(
-                archive.path,
-                expected_report_sha256=facts.report.sha256,
-            )
-            if not PostFinalAssessmentService._result_matches_verified_evidence(
-                result,
-                request,
-                archive,
-                view,
-            ):
-                raise ControlStoreIntegrityError(
-                    "post_final_assessment_binding_invalid"
-                )
-    except (
-        PostFinalAssessmentError,
-        SemanticEvaluatorError,
-        OSError,
-        ValueError,
-    ) as exc:
-        raise ControlStoreIntegrityError("post_final_assessment_invalid") from exc
 
 
 def _execute_migration_in_transaction(
@@ -953,4 +828,4 @@ def _fsync_directory(path: Path) -> None:
             pass
 
 
-__all__ = ["upgrade_store"]
+__all__ = ["UpgradeHook", "UpgradeValidator", "upgrade_store"]
