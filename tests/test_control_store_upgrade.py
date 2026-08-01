@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import hashlib
 from importlib import resources
+import os
 from pathlib import Path
 import shutil
 import sqlite3
@@ -17,6 +18,7 @@ from multi_agent_brief.control_store.errors import (
 )
 from multi_agent_brief.control_store.schema import verify_schema
 from multi_agent_brief.control_store.sqlite_store import SQLiteControlStore
+import multi_agent_brief.control_store.upgrade as upgrade_module
 from multi_agent_brief.control_store.upgrade import upgrade_store
 from multi_agent_brief.control_store.serialization import canonical_json_bytes
 from tests.test_control_store import BLOB, _records, _stage_all
@@ -235,6 +237,112 @@ def test_upgrade_is_backup_first_and_replayable(tmp_path: Path) -> None:
     retry = upgrade_store(workspace, tmp_path / "should-not-be-created")
     assert retry["status"] == "already_current"
     assert not (tmp_path / "should-not-be-created").exists()
+
+
+def _database_sidecar_bytes(workspace: Path) -> dict[str, bytes | None]:
+    values: dict[str, bytes | None] = {}
+    for suffix in ("", "-wal", "-shm"):
+        path = workspace / f"briefloop.db{suffix}"
+        values[suffix] = path.read_bytes() if path.exists() else None
+    return values
+
+
+def test_upgrade_rejects_backup_topology_before_wal_or_database_effect(
+    tmp_path: Path,
+) -> None:
+    workspace = _v11_workspace(tmp_path)
+    before_database = (workspace / "briefloop.db").read_bytes()
+    before_sidecars = _database_sidecar_bytes(workspace)
+    loop = tmp_path / "backup-loop"
+    try:
+        loop.symlink_to(loop, target_is_directory=True)
+    except OSError:
+        pytest.skip("symlink creation unavailable")
+
+    with pytest.raises(ControlStoreError) as error:
+        upgrade_store(workspace, loop / "nested")
+    assert error.value.code == "backup_destination_invalid"
+    assert (workspace / "briefloop.db").read_bytes() == before_database
+    assert _database_sidecar_bytes(workspace) == before_sidecars
+
+
+def test_current_v12_noop_does_not_touch_database_or_journal(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    store = SQLiteControlStore.create(
+        workspace / "briefloop.db",
+        workspace_id="WS-UPGRADE-NOOP-BYTES",
+    )
+    store.close()
+    before_database = (workspace / "briefloop.db").read_bytes()
+    before_sidecars = _database_sidecar_bytes(workspace)
+    existing = tmp_path / "existing-backup"
+    existing.mkdir()
+
+    result = upgrade_store(workspace, existing)
+
+    assert result["status"] == "already_current"
+    assert (workspace / "briefloop.db").read_bytes() == before_database
+    assert _database_sidecar_bytes(workspace) == before_sidecars
+
+
+def test_upgrade_rollback_replace_failure_keeps_verified_v11_source(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _v11_workspace(tmp_path, workspace_id="WS-UPGRADE-ROLLBACK-REPLACE")
+    backup = tmp_path / "rollback-backup"
+    before_blobs = sorted(
+        (
+            path.relative_to(workspace / "briefloop.db.blobs").as_posix(),
+            path.read_bytes(),
+        )
+        for path in (workspace / "briefloop.db.blobs").rglob("*")
+        if path.is_file()
+    )
+    original_replace = upgrade_module.os.replace
+    failed = False
+
+    def fail_restore_replace(
+        source: str | os.PathLike[str], destination: str | os.PathLike[str]
+    ) -> None:
+        nonlocal failed
+        if not failed and Path(destination) == workspace / "briefloop.db":
+            failed = True
+            raise OSError("synthetic restore replace failure")
+        original_replace(source, destination)
+
+    monkeypatch.setattr(upgrade_module.os, "replace", fail_restore_replace)
+
+    def fail_after_commit(stage: str) -> None:
+        if stage == "migration_committed":
+            raise RuntimeError("synthetic post-commit failure")
+
+    with pytest.raises(ControlStoreError) as error:
+        upgrade_store(workspace, backup, failure_hook=fail_after_commit)
+    assert error.value.code == "store_upgrade_failed"
+    assert failed is True
+    connection = sqlite3.connect(workspace / "briefloop.db")
+    try:
+        verify_schema(connection, expected_version=11)
+    finally:
+        connection.close()
+    backup_connection = sqlite3.connect(backup / "control.db")
+    try:
+        verify_schema(backup_connection, expected_version=11)
+    finally:
+        backup_connection.close()
+    after_blobs = sorted(
+        (
+            path.relative_to(workspace / "briefloop.db.blobs").as_posix(),
+            path.read_bytes(),
+        )
+        for path in (workspace / "briefloop.db.blobs").rglob("*")
+        if path.is_file()
+    )
+    assert after_blobs == before_blobs
 
 
 def test_upgrade_preserves_nonempty_generation_one_history_and_hashes(
