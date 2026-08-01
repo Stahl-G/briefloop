@@ -13,7 +13,18 @@ import yaml
 
 from multi_agent_brief.cli.main import build_parser, main
 from multi_agent_brief.cli import product_commands
+import multi_agent_brief.product.post_final_assessment as assessment_module
+from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+    ANTHROPIC_API_KEY_SETTING,
+)
+import multi_agent_brief.semantic_evaluator.runner as runner_module
 from tests.helpers import initialize_workspace
+from tests.test_control_store_upgrade import _v11_workspace
+from tests.test_post_final_assessment import (
+    _finalized_local_workspace,
+    _fixture_service,
+    _policy_payload,
+)
 
 
 def complete_init_args(workspace, *, language="zh-CN", industry="finance", extra=None):
@@ -234,6 +245,152 @@ def test_quality_laj_help_exposes_actionable_human_review_without_unit_c(capsys)
         assert command in output
     assert "snapshot" not in output
     assert "not consumed by later runs" in output
+
+
+def test_quality_laj_cli_executes_upgrade_and_assessment_next_request(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The public commands emit a request accepted verbatim by assessment-run."""
+
+    upgrade_root = tmp_path / "upgrade"
+    upgrade_root.mkdir()
+    upgrade_workspace = _v11_workspace(upgrade_root)
+    upgrade_backup = tmp_path / "upgrade-backup"
+    assert (
+        main(
+            [
+                "quality",
+                "laj",
+                "store-upgrade",
+                "--workspace",
+                str(upgrade_workspace),
+                "--backup",
+                str(upgrade_backup),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    upgrade_payload = json.loads(capsys.readouterr().out)
+    assert upgrade_payload["ok"] is True
+    assert upgrade_payload["status"] == "upgraded"
+    assert upgrade_payload["schema_version"] == 12
+
+    workspace, _run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
+    calls: list[tuple[str, int]] = []
+    service = _fixture_service(workspace, calls, terminal_mode="finding")
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+    monkeypatch.setattr(
+        assessment_module,
+        "PostFinalAssessmentService",
+        lambda _workspace: service,
+    )
+    policy_json = json.dumps(_policy_payload(), sort_keys=True)
+    assert (
+        main(
+            [
+                "quality",
+                "laj",
+                "policy-set",
+                "--workspace",
+                str(workspace),
+                "--policy-json",
+                policy_json,
+                "--json",
+            ]
+        )
+        == 0
+    )
+    policy_payload = json.loads(capsys.readouterr().out)
+    policy_id = policy_payload["policy_revision_id"]
+
+    next_args = [
+        "quality",
+        "laj",
+        "assessment-next",
+        "--workspace",
+        str(workspace),
+        "--policy-revision-id",
+        policy_id,
+        "--human-actor-id",
+        "human-cli",
+        "--human-request-id",
+        "cli-assessment-next-1",
+        "--assessment-purpose",
+        "post_final_review",
+        "--json",
+    ]
+    assert main(next_args) == 0
+    first_next = json.loads(capsys.readouterr().out)
+    assert first_next["ok"] is True
+    assert first_next["status"] == "ready"
+    request = first_next["request"]
+    assert request["human_request_id"] == "cli-assessment-next-1"
+    assert request["assessment_generation"] == 1
+
+    assert main(next_args[:-1] + ["--json"]) == 0
+    second_next = json.loads(capsys.readouterr().out)
+    assert second_next == first_next
+
+    invalid_args = list(next_args)
+    invalid_args[invalid_args.index("--policy-revision-id") + 1] = "stale-policy"
+    assert main(invalid_args) == 1
+    invalid = json.loads(capsys.readouterr().out)
+    assert invalid["ok"] is False
+    assert invalid["reason_code"] == "post_final_assessment_policy_conflict"
+
+    request_json = json.dumps(request, sort_keys=True)
+    assert (
+        main(
+            [
+                "quality",
+                "laj",
+                "assessment-run",
+                "--workspace",
+                str(workspace),
+                "--request-json",
+                request_json,
+                "--json",
+            ]
+        )
+        == 0
+    )
+    assessed = json.loads(capsys.readouterr().out)
+    assert assessed["ok"] is True
+    assert assessed["status"] == "available"
+    calls_before_replay = len(calls)
+
+    replay_service = _fixture_service(workspace, calls, terminal_mode="finding")
+    replay_service._adapter_factory = lambda _execution: (_ for _ in ()).throw(
+        AssertionError("public CLI replay touched provider")
+    )
+    monkeypatch.setattr(
+        assessment_module,
+        "PostFinalAssessmentService",
+        lambda _workspace: replay_service,
+    )
+    assert (
+        main(
+            [
+                "quality",
+                "laj",
+                "assessment-run",
+                "--workspace",
+                str(workspace),
+                "--request-json",
+                request_json,
+                "--json",
+            ]
+        )
+        == 0
+    )
+    replayed = json.loads(capsys.readouterr().out)
+    assert replayed["ok"] is True
+    assert replayed["replayed"] is True
+    assert len(calls) == calls_before_replay
 
 
 def test_readmes_keep_unreleased_laj_human_loop_outside_v014_claims() -> None:

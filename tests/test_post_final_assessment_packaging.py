@@ -403,6 +403,228 @@ print(json.dumps({
 """
 
 
+_UPGRADE_NEXT_PROBE = r"""
+import hashlib
+from importlib import resources
+import io
+import json
+import shutil
+import sqlite3
+import sys
+from contextlib import redirect_stdout
+from pathlib import Path
+
+import pytest
+
+import multi_agent_brief
+from multi_agent_brief.cli.main import main
+from tests.test_post_final_assessment import (
+    _policy_payload,
+    _schema9_finalized_local_workspace_upgraded,
+)
+
+
+mode = sys.argv[1]
+workspace_arg = Path(sys.argv[2])
+expected_package_root = Path(sys.argv[3]).resolve()
+package_file = Path(multi_agent_brief.__file__).resolve()
+if not package_file.is_relative_to(expected_package_root):
+    raise RuntimeError("package root mismatch")
+
+
+def downgrade_0012(root: Path) -> None:
+    database = root / "briefloop.db"
+    connection = sqlite3.connect(database)
+    expected = sqlite3.connect(":memory:")
+    try:
+        for version in range(1, 12):
+            migration = resources.files("multi_agent_brief.control_store").joinpath(
+                "migrations", f"{version:04d}.sql"
+            )
+            expected.executescript(migration.read_text(encoding="utf-8"))
+        request_sql = expected.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' "
+            "AND name='post_final_assessment_requests'"
+        ).fetchone()[0]
+        request_triggers = [
+            expected.execute(
+                "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?",
+                (name,),
+            ).fetchone()[0]
+            for name in (
+                "post_final_assessment_requests_no_update",
+                "post_final_assessment_requests_no_delete",
+                "schema_migrations_no_delete",
+            )
+        ]
+        connection.execute("PRAGMA foreign_keys = OFF")
+        for trigger in (
+            "post_final_assessment_requests_no_update",
+            "post_final_assessment_requests_no_delete",
+            "post_final_assessment_abandonments_no_update",
+            "post_final_assessment_abandonments_no_delete",
+            "transaction_post_final_assessment_abandonments_no_update",
+            "transaction_post_final_assessment_abandonments_no_delete",
+            "post_final_assessment_abandonment_compatibility_boundaries_no_update",
+            "post_final_assessment_abandonment_compatibility_boundaries_no_delete",
+        ):
+            connection.execute(f"DROP TRIGGER IF EXISTS {trigger}")
+        for table in (
+            "transaction_post_final_assessment_abandonments",
+            "post_final_assessment_abandonments",
+            "post_final_assessment_abandonment_compatibility_boundaries",
+            "post_final_assessment_requests",
+        ):
+            connection.execute(f"DROP TABLE IF EXISTS {table}")
+        connection.execute(request_sql)
+        connection.execute("DROP TRIGGER IF EXISTS schema_migrations_no_delete")
+        connection.execute("DELETE FROM schema_migrations WHERE version=12")
+        for trigger_sql in request_triggers:
+            connection.executescript(trigger_sql)
+        connection.execute("PRAGMA user_version = 11")
+        connection.commit()
+    finally:
+        expected.close()
+        connection.close()
+
+
+def run_json(arguments: list[str]) -> tuple[int, dict[str, object]]:
+    output = io.StringIO()
+    with redirect_stdout(output):
+        code = main(arguments + ["--json"])
+    return code, json.loads(output.getvalue())
+
+
+if mode == "source":
+    workspace_arg.parent.mkdir(parents=True, exist_ok=True)
+    seed_root = workspace_arg.parent / "source-seed"
+    seed_root.mkdir(parents=True, exist_ok=True)
+    patch = pytest.MonkeyPatch()
+    try:
+        source_workspace, _run_id, _historical = (
+            _schema9_finalized_local_workspace_upgraded(seed_root, patch)
+        )
+    finally:
+        patch.undo()
+    downgrade_0012(source_workspace)
+    backup = workspace_arg.parent / "source-backup"
+    before_receipt = sqlite3.connect(source_workspace / "briefloop.db")
+    try:
+        receipt_payload = before_receipt.execute(
+            "SELECT payload_json FROM transactions ORDER BY committed_revision"
+        ).fetchone()[0].encode("utf-8")
+    finally:
+        before_receipt.close()
+    upgrade_code, upgrade = run_json(
+        [
+            "quality",
+            "laj",
+            "store-upgrade",
+            "--workspace",
+            str(source_workspace),
+            "--backup",
+            str(backup),
+        ]
+    )
+    if upgrade_code != 0 or upgrade.get("status") != "upgraded":
+        raise RuntimeError(f"upgrade failed: {upgrade!r}")
+    with sqlite3.connect(backup / "control.db") as connection:
+        if connection.execute("PRAGMA user_version").fetchone()[0] != 11:
+            raise RuntimeError("backup schema drift")
+        if (
+            connection.execute(
+                "SELECT payload_json FROM transactions ORDER BY committed_revision"
+            ).fetchone()[0].encode("utf-8")
+            != receipt_payload
+        ):
+            raise RuntimeError("historical receipt bytes changed")
+    template = workspace_arg.parent / "upgrade-next-v12"
+    shutil.copytree(source_workspace, template)
+    source_workspace = template
+else:
+    template = workspace_arg.parent / "upgrade-next-v12"
+    source_workspace = template
+    downgrade_0012(source_workspace)
+    backup = workspace_arg.parent / "wheel-backup"
+    upgrade_code, upgrade = run_json(
+        [
+            "quality",
+            "laj",
+            "store-upgrade",
+            "--workspace",
+            str(source_workspace),
+            "--backup",
+            str(backup),
+        ]
+    )
+    if upgrade_code != 0 or upgrade.get("status") != "upgraded":
+        raise RuntimeError(f"wheel upgrade failed: {upgrade!r}")
+
+policy_json = json.dumps(_policy_payload(), sort_keys=True)
+policy_code, policy = run_json(
+    [
+        "quality",
+        "laj",
+        "policy-set",
+        "--workspace",
+        str(source_workspace),
+        "--policy-json",
+        policy_json,
+    ]
+)
+if policy_code != 0 or not policy.get("ok"):
+    raise RuntimeError(f"policy failed: {policy!r}")
+policy_id = str(policy["policy_revision_id"])
+next_args = [
+    "quality",
+    "laj",
+    "assessment-next",
+    "--workspace",
+    str(source_workspace),
+    "--policy-revision-id",
+    policy_id,
+    "--human-actor-id",
+    "packaging-human",
+    "--human-request-id",
+    "packaging-next-1",
+    "--assessment-purpose",
+    "post_final_review",
+]
+next_code, next_payload = run_json(next_args)
+policy_flag_index = next_args.index("--policy-revision-id")
+policy_value_index = next_args.index(policy_id)
+invalid_code, invalid_payload = run_json(
+    [
+        *next_args[: policy_flag_index + 1],
+        "stale-policy",
+        *next_args[policy_value_index + 1 :],
+    ]
+)
+if next_code != 0 or not next_payload.get("ok"):
+    raise RuntimeError(f"assessment-next failed: {next_payload!r}")
+if invalid_code != 1 or invalid_payload.get("reason_code") != (
+    "post_final_assessment_policy_conflict"
+):
+    raise RuntimeError(f"assessment-next invalid row drift: {invalid_payload!r}")
+
+print(
+    json.dumps(
+        {
+            "optimize": sys.flags.optimize,
+            "upgrade_status": upgrade["status"],
+            "backup_schema_version": 11,
+            "request": next_payload["request"],
+            "request_fingerprint": next_payload["request_fingerprint"],
+            "invalid_reason_code": invalid_payload["reason_code"],
+            "provider_calls": 0,
+            "key_present": False,
+        },
+        sort_keys=True,
+    )
+)
+"""
+
+
 def _run_probe(
     *,
     mode: str,
@@ -545,3 +767,75 @@ def test_source_and_non_editable_wheel_replay_the_same_pf_laj_result(
     assert zero_wheel["finding_count"] == 0
     assert zero_wheel["withheld_finding_count"] == 0
     assert zero_wheel["archive_verified"] is False
+
+
+@pytest.mark.explicit_e2e
+@pytest.mark.timeout(900)
+@pytest.mark.skipif(
+    not supports_retained_directory_publication(),
+    reason="source/non-editable-wheel upgrade parity is unavailable on this platform",
+)
+def test_source_and_non_editable_wheel_run_v11_upgrade_and_assessment_next(
+    tmp_path: Path,
+) -> None:
+    """New continuation surfaces are executable and parity-safe after install."""
+
+    build_root = tmp_path / "build-root"
+    build_root.mkdir()
+    shutil.copy2(ROOT / "pyproject.toml", build_root / "pyproject.toml")
+    shutil.copy2(ROOT / "README.md", build_root / "README.md")
+    shutil.copytree(ROOT / "src", build_root / "src")
+    wheel_dir = tmp_path / "wheel"
+    wheel_dir.mkdir()
+    build = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            ".",
+            "--no-deps",
+            "--no-build-isolation",
+            "--wheel-dir",
+            str(wheel_dir),
+        ],
+        cwd=build_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert build.returncode == 0, build.stdout + build.stderr
+    wheel_path = next(wheel_dir.glob("briefloop-*.whl"))
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    with zipfile.ZipFile(wheel_path) as archive:
+        archive.extractall(installed)
+        assert "multi_agent_brief/control_store/upgrade.py" in archive.namelist()
+        assert (
+            "multi_agent_brief/control_store/migrations/0012.sql" in archive.namelist()
+        )
+
+    script = tmp_path / "upgrade_next_probe.py"
+    script.write_text(textwrap.dedent(_UPGRADE_NEXT_PROBE), encoding="utf-8")
+    workspace = tmp_path / "upgrade-next" / "workspace"
+    source = _run_probe(
+        mode="source",
+        workspace=workspace,
+        package_root=ROOT / "src",
+        script=script,
+        cwd=tmp_path,
+    )
+    wheel = _run_probe(
+        mode="wheel",
+        workspace=workspace,
+        package_root=installed,
+        script=script,
+        cwd=tmp_path,
+    )
+    assert source == wheel
+    assert source["upgrade_status"] == "upgraded"
+    assert source["backup_schema_version"] == 11
+    assert source["provider_calls"] == 0
+    assert source["key_present"] is False
+    assert source["invalid_reason_code"] == "post_final_assessment_policy_conflict"
+    assert source["request"]["assessment_generation"] == 1
