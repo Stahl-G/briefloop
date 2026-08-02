@@ -81,6 +81,23 @@ _POST_FINAL_RECEIPT_RELATION_FIELDS = (
     "post_final_assessment_abandonments",
     "run_source_acquisition_attempt_authorizations",
 )
+_ASSESSMENT_RESULT_READOUT_FIELDS = (
+    "assessed_unit_count",
+    "finding_count",
+    "withheld_finding_count",
+    "abstention_count",
+    "reason_codes",
+)
+
+
+def _assessment_result_readout(result) -> dict[str, object]:
+    return {
+        field: getattr(result, field) for field in _ASSESSMENT_RESULT_READOUT_FIELDS
+    }
+
+
+def _listed_assessment_result_readout(item: dict[str, object]) -> dict[str, object]:
+    return {field: item[field] for field in _ASSESSMENT_RESULT_READOUT_FIELDS}
 
 
 class _MessagesFixtureAdapter:
@@ -1042,11 +1059,30 @@ def test_same_lineage_supports_same_model_and_cross_model_human_runs(
         generation_one["assessment_result_id"] != generation_two["assessment_result_id"]
     )
     assert len(calls) == 18
+    database_before_listing = (workspace / "briefloop.db").read_bytes()
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        revision_before_listing = store.current_revision
     listing = service.assessment_list()
+    assert (workspace / "briefloop.db").read_bytes() == database_before_listing
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == revision_before_listing
     assert [item["assessment_generation"] for item in listing["assessments"]] == [
         1,
         2,
     ]
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(run_id)
+    stored_results = {
+        result.assessment_request_id: result
+        for result in snapshot.post_final_assessment_results
+    }
+    for item in listing["assessments"]:
+        stored_result = stored_results[item["assessment_request_id"]]
+        assert item["assessment_result_id"] == stored_result.assessment_result_id
+        assert item["assessment_result_fingerprint"] == stored_result.result_fingerprint
+        assert _listed_assessment_result_readout(item) == (
+            _assessment_result_readout(stored_result)
+        )
     assert build_post_final_assessment_projection(workspace).status == "invalid"
     for result in (generation_one, generation_two):
         selected = build_post_final_assessment_projection(
@@ -1150,6 +1186,14 @@ def test_outcome_unknown_is_atomically_abandoned_before_next_generation(
     assert snapshot.post_final_assessment_abandonments == ()
     predecessor = snapshot.post_final_assessment_requests[0]
     assert calls == []
+    pending_item = service.assessment_list()["assessments"][0]
+    assert pending_item["terminal_evidence_class"] == "outcome_unknown"
+    assert pending_item["abandonment_id"] is None
+    assert pending_item["assessment_result_id"] is None
+    assert pending_item["assessment_result_fingerprint"] is None
+    assert _listed_assessment_result_readout(pending_item) == dict.fromkeys(
+        _ASSESSMENT_RESULT_READOUT_FIELDS
+    )
 
     generation_two_request = _abandoning_next_generation_run_payload(
         service,
@@ -1178,6 +1222,33 @@ def test_outcome_unknown_is_atomically_abandoned_before_next_generation(
     assert not any(
         result.assessment_request_id == predecessor.assessment_request_id
         for result in snapshot.post_final_assessment_results
+    )
+    listing = service.assessment_list()
+    abandoned_item, successor_item = listing["assessments"]
+    assert abandoned_item["assessment_request_id"] == predecessor.assessment_request_id
+    assert abandoned_item["terminal_evidence_class"] == "abandoned"
+    assert abandoned_item["abandonment_id"] == abandonment.abandonment_id
+    assert abandoned_item["assessment_result_id"] is None
+    assert abandoned_item["assessment_result_fingerprint"] is None
+    assert _listed_assessment_result_readout(abandoned_item) == dict.fromkeys(
+        _ASSESSMENT_RESULT_READOUT_FIELDS
+    )
+    successor_result = snapshot.post_final_assessment_results[0]
+    assert successor_item["assessment_request_id"] == successor.assessment_request_id
+    assert (
+        successor_item["terminal_evidence_class"]
+        == successor_result.terminal_evidence_class
+    )
+    assert successor_item["abandonment_id"] is None
+    assert (
+        successor_item["assessment_result_id"] == successor_result.assessment_result_id
+    )
+    assert (
+        successor_item["assessment_result_fingerprint"]
+        == successor_result.result_fingerprint
+    )
+    assert _listed_assessment_result_readout(successor_item) == (
+        _assessment_result_readout(successor_result)
     )
     database_before = (workspace / "briefloop.db").read_bytes()
     revision_before = snapshot.store_revision
@@ -2392,6 +2463,17 @@ def test_terminal_provider_evidence_is_qualified_without_advice_or_redial(
     assert result.finding_count == result.withheld_finding_count == 0
     assert projection.view.reason_codes == result.reason_codes
     database_before = (workspace / "briefloop.db").read_bytes()
+    listing = service.assessment_list()
+    assert (workspace / "briefloop.db").read_bytes() == database_before
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == revision_before
+    listed_result = listing["assessments"][0]
+    assert listed_result["terminal_evidence_class"] == expected_class
+    assert listed_result["assessment_result_id"] == result.assessment_result_id
+    assert listed_result["assessment_result_fingerprint"] == result.result_fingerprint
+    assert _listed_assessment_result_readout(listed_result) == (
+        _assessment_result_readout(result)
+    )
     shutil.rmtree(trial_archive_path(service._archive_root, request.trial_id))
 
     monkeypatch.delenv(ANTHROPIC_API_KEY_SETTING, raising=False)
@@ -2421,6 +2503,7 @@ def test_terminal_provider_evidence_is_qualified_without_advice_or_redial(
     retry = replay.retry(result.assessment_request_id)
     assert retry["ok"] is True and retry["replayed"] is True
     assert retry["status"] == expected_class
+    assert replay.assessment_list() == listing
     replayed_projection = build_post_final_assessment_projection(workspace)
     assert replayed_projection.status == expected_class
     assert replayed_projection.view.archive_verified is False

@@ -336,6 +336,52 @@ def test_quality_laj_cli_executes_assessment_next_request(
     assessed = json.loads(capsys.readouterr().out)
     assert assessed["ok"] is True
     assert assessed["status"] == "available"
+    list_args = [
+        "quality",
+        "laj",
+        "assessment-list",
+        "--workspace",
+        str(workspace),
+    ]
+    assert main(list_args + ["--json"]) == 0
+    listing = json.loads(capsys.readouterr().out)
+    listed_result = listing["assessments"][0]
+    assert listed_result["assessment_result_id"] == assessed["assessment_result_id"]
+    assert (
+        listed_result["assessment_result_fingerprint"]
+        == assessed["assessment_result_fingerprint"]
+    )
+    for field in (
+        "assessed_unit_count",
+        "finding_count",
+        "withheld_finding_count",
+        "abstention_count",
+        "reason_codes",
+    ):
+        assert field in listed_result
+
+    assert main(list_args) == 0
+    assert capsys.readouterr().out.splitlines() == [
+        "[quality laj assessment-list] ok: True",
+        (
+            "- assessment_generation=1 assessment_purpose=post_final_review "
+            "requested_model_id=public-compatible-model-v1 "
+            "terminal_evidence_class=available"
+        ),
+        (
+            f"  assessment_result_id={listed_result['assessment_result_id']} "
+            "assessment_result_fingerprint="
+            f"{listed_result['assessment_result_fingerprint']}"
+        ),
+        (
+            f"  assessed_unit_count={listed_result['assessed_unit_count']} "
+            f"finding_count={listed_result['finding_count']} "
+            "withheld_finding_count="
+            f"{listed_result['withheld_finding_count']} "
+            f"abstention_count={listed_result['abstention_count']} "
+            f"reason_codes={listed_result['reason_codes']}"
+        ),
+    ]
     calls_before_replay = len(calls)
 
     replay_service = _fixture_service(workspace, calls, terminal_mode="finding")
@@ -365,6 +411,8 @@ def test_quality_laj_cli_executes_assessment_next_request(
     replayed = json.loads(capsys.readouterr().out)
     assert replayed["ok"] is True
     assert replayed["replayed"] is True
+    assert main(list_args + ["--json"]) == 0
+    assert json.loads(capsys.readouterr().out) == listing
     assert len(calls) == calls_before_replay
 
 

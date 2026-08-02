@@ -1696,23 +1696,22 @@ class PostFinalAssessmentService:
                 facts,
                 action,
             )
+            results: dict[str, PostFinalAssessmentResultRecord] = {}
+            for item in series:
+                result = resolve_current_post_final_assessment_result(snapshot, item)
+                if result is not None:
+                    results[item.assessment_request_id] = result
         except PostFinalAssessmentError as exc:
             return {"ok": False, "status": "invalid", "reason_code": str(exc)}
-        results = {
-            item.assessment_request_id: item
-            for item in snapshot.post_final_assessment_results
-        }
         abandonments = {
             item.assessment_request_id: item
             for item in snapshot.post_final_assessment_abandonments
         }
-        return {
-            "ok": True,
-            "status": "available",
-            "finalized_lineage_fingerprint": finalized_lineage_fingerprint(
-                facts, action
-            ),
-            "assessments": [
+        assessments: list[dict[str, object]] = []
+        for item in series:
+            result = results.get(item.assessment_request_id)
+            abandonment = abandonments.get(item.assessment_request_id)
+            assessments.append(
                 {
                     "assessment_generation": item.assessment_generation,
                     "assessment_request_id": item.assessment_request_id,
@@ -1721,30 +1720,45 @@ class PostFinalAssessmentService:
                     "requested_model_id": item.requested_model_id,
                     "expected_model_identity": item.expected_model_identity,
                     "assessment_result_id": (
-                        results[item.assessment_request_id].assessment_result_id
-                        if item.assessment_request_id in results
-                        else None
+                        result.assessment_result_id if result is not None else None
                     ),
                     "assessment_result_fingerprint": (
-                        results[item.assessment_request_id].result_fingerprint
-                        if item.assessment_request_id in results
-                        else None
+                        result.result_fingerprint if result is not None else None
                     ),
                     "terminal_evidence_class": (
-                        results[item.assessment_request_id].terminal_evidence_class
-                        if item.assessment_request_id in results
+                        result.terminal_evidence_class
+                        if result is not None
                         else "abandoned"
-                        if item.assessment_request_id in abandonments
+                        if abandonment is not None
                         else "outcome_unknown"
                     ),
+                    "assessed_unit_count": (
+                        result.assessed_unit_count if result is not None else None
+                    ),
+                    "finding_count": (
+                        result.finding_count if result is not None else None
+                    ),
+                    "withheld_finding_count": (
+                        result.withheld_finding_count if result is not None else None
+                    ),
+                    "abstention_count": (
+                        result.abstention_count if result is not None else None
+                    ),
+                    "reason_codes": (
+                        list(result.reason_codes) if result is not None else None
+                    ),
                     "abandonment_id": (
-                        abandonments[item.assessment_request_id].abandonment_id
-                        if item.assessment_request_id in abandonments
-                        else None
+                        abandonment.abandonment_id if abandonment is not None else None
                     ),
                 }
-                for item in series
-            ],
+            )
+        return {
+            "ok": True,
+            "status": "available",
+            "finalized_lineage_fingerprint": finalized_lineage_fingerprint(
+                facts, action
+            ),
+            "assessments": assessments,
         }
 
     def assessment_next(
