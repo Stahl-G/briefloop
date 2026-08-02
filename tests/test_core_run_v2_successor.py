@@ -104,6 +104,21 @@ def _approve_one_guidance(review, status, finding, *, text: str):
     return draft, approved
 
 
+def _start_active_role_invocation(workspace: Path):
+    service = RuntimeHostService(
+        workspace,
+        adapter_loader=_stored_adapter_loader(workspace),
+    )
+    for _ in range(8):
+        action = service.next_action()
+        if action.action_kind == "delegate":
+            return service, service.start_current_invocation(action)
+        if action.action_kind != "deterministic":
+            raise AssertionError(action.model_dump(mode="json"))
+        service.apply_current(action, presentation_hook=False)
+    raise AssertionError("successor did not reach one delegated role")
+
+
 class _CapturedSuccessorRequest(Exception):
     def __init__(self, request: RunSuccessorStartRequest) -> None:
         self.request = request
@@ -400,6 +415,20 @@ def test_approved_guidance_is_scope_selected_frozen_and_role_bounded(
     deactivated = json.loads(capsys.readouterr().out)
     assert deactivated["replayed"] is False
     assert deactivated["status_revision_id"]
+    later_rejection = PostFinalReviewService(
+        matching_workspace,
+        status["assessment_result_id"],
+        status["assessment_result_fingerprint"],
+        allow_historical=True,
+    ).record_disposition(
+        _disposition_payload(
+            status,
+            finding,
+            request_id="historical-disposition-after-successor",
+            decision="reject",
+        )
+    )
+    assert later_rejection["replayed"] is False
     after_status_change = _verified(matching_workspace, successor_run_id)
     assert (
         after_status_change.snapshot.run_guidance_snapshot_items[0].model_dump(
@@ -438,6 +467,204 @@ def test_approved_guidance_is_scope_selected_frozen_and_role_bounded(
         for entry in mismatch.run_guidance_selection_decisions
     ] == [(False, "guidance_scope_mismatch")]
     assert len(provider_calls) == provider_call_count
+
+
+@pytest.mark.parametrize("decision", ["reject", "defer"])
+def test_current_nonaccept_disposition_omits_previously_approved_guidance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    decision: str,
+) -> None:
+    workspace, predecessor_run_id, _calls, review, status, finding = _qualified_review(
+        tmp_path, monkeypatch
+    )
+    _approve_one_guidance(
+        review,
+        status,
+        finding,
+        text="Use only guidance whose acceptance is still current.",
+    )
+    review.record_disposition(
+        _disposition_payload(
+            status,
+            finding,
+            request_id=f"successor-guidance-{decision}-head",
+            decision=decision,
+        )
+    )
+    successor_run_id = f"RUN-GUIDANCE-{decision.upper()}-002"
+    assert (
+        _start_successor(
+            workspace,
+            successor_run_id=successor_run_id,
+            run_direction=_verified(
+                workspace, predecessor_run_id
+            ).binding.run_direction,
+            include_approved_guidance=True,
+        ).status
+        == "committed"
+    )
+    successor = _verified(workspace, successor_run_id).snapshot
+    assert successor.run_guidance_snapshot_items == ()
+    assert [
+        (entry.selected, entry.reason_code)
+        for entry in successor.run_guidance_selection_decisions
+    ] == [(False, "guidance_unapproved")]
+
+
+def test_active_successor_blocks_new_historical_review_writes_but_allows_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, predecessor_run_id, _calls, review, status, finding = _qualified_review(
+        tmp_path, monkeypatch
+    )
+    accept_payload = _disposition_payload(
+        status,
+        finding,
+        request_id="active-guard-accept",
+        decision="accept",
+    )
+    accepted = review.record_disposition(accept_payload)
+    draft_payload = {
+        "schema_version": POST_FINAL_GUIDANCE_DRAFT_INPUT_SCHEMA,
+        "human_actor_id": "human-reviewer-1",
+        "human_request_id": "active-guard-draft",
+        "assessment_result_id": status["assessment_result_id"],
+        "finding_id": finding["finding_id"],
+        "disposition_id": accepted["disposition_id"],
+        "guidance_text": "Preserve the active invocation envelope exactly.",
+    }
+    draft = review.append_guidance_draft(draft_payload)
+    approve_payload = {
+        "schema_version": POST_FINAL_GUIDANCE_STATUS_INPUT_SCHEMA,
+        "human_actor_id": "human-reviewer-1",
+        "human_request_id": "active-guard-approve",
+        "guidance_id": draft["guidance_id"],
+        "draft_revision": draft["draft_revision"],
+    }
+    review.approve_guidance(approve_payload)
+
+    second_finding = status["dispositions"][1]
+    second_accept = review.record_disposition(
+        _disposition_payload(
+            status,
+            second_finding,
+            request_id="active-guard-second-accept",
+            decision="accept",
+        )
+    )
+    second_draft = review.append_guidance_draft(
+        {
+            "schema_version": POST_FINAL_GUIDANCE_DRAFT_INPUT_SCHEMA,
+            "human_actor_id": "human-reviewer-1",
+            "human_request_id": "active-guard-second-draft",
+            "assessment_result_id": status["assessment_result_id"],
+            "finding_id": second_finding["finding_id"],
+            "disposition_id": second_accept["disposition_id"],
+            "guidance_text": "Keep this second draft pending Human approval.",
+        }
+    )
+
+    direction = _verified(workspace, predecessor_run_id).binding.run_direction
+    successor_run_id = "RUN-ACTIVE-GUARD-002"
+    assert (
+        _start_successor(
+            workspace,
+            successor_run_id=successor_run_id,
+            run_direction=direction,
+            include_approved_guidance=True,
+        ).status
+        == "committed"
+    )
+    runtime, dispatch = _start_active_role_invocation(workspace)
+    historical = PostFinalReviewService(
+        workspace,
+        status["assessment_result_id"],
+        status["assessment_result_fingerprint"],
+        allow_historical=True,
+    )
+    database = workspace / "briefloop.db"
+    before = database.read_bytes()
+    with SQLiteControlStore.open(database) as store:
+        before_revision = store.current_revision
+
+    assert historical.record_disposition(accept_payload)["replayed"] is True
+    assert historical.append_guidance_draft(draft_payload)["replayed"] is True
+    assert historical.approve_guidance(approve_payload)["replayed"] is True
+    assert database.read_bytes() == before
+
+    blocked_calls = [
+        lambda: historical.record_disposition(
+            _disposition_payload(
+                status,
+                finding,
+                request_id="active-guard-new-reject",
+                decision="reject",
+            )
+        ),
+        lambda: historical.append_guidance_draft(
+            {
+                **draft_payload,
+                "human_request_id": "active-guard-new-draft",
+                "guidance_text": "This revision must wait for the active role.",
+            }
+        ),
+        lambda: historical.approve_guidance(
+            {
+                "schema_version": POST_FINAL_GUIDANCE_STATUS_INPUT_SCHEMA,
+                "human_actor_id": "human-reviewer-1",
+                "human_request_id": "active-guard-new-approve",
+                "guidance_id": second_draft["guidance_id"],
+                "draft_revision": second_draft["draft_revision"],
+            }
+        ),
+    ]
+    for action_name, action in (
+        ("deactivate", historical.deactivate_guidance),
+        ("revert", historical.revert_guidance),
+        ("supersede", historical.supersede_guidance),
+    ):
+        blocked_calls.append(
+            lambda action=action, action_name=action_name: action(
+                {
+                    **approve_payload,
+                    "human_request_id": f"active-guard-new-{action_name}",
+                }
+            )
+        )
+    for call in blocked_calls:
+        with pytest.raises(
+            PostFinalReviewError,
+            match="post_final_review_request_conflict",
+        ):
+            call()
+        assert database.read_bytes() == before
+    with SQLiteControlStore.open(database) as store:
+        assert store.current_revision == before_revision
+        active = [
+            item
+            for item in store.load_snapshot(successor_run_id).invocations
+            if item.status == "active"
+        ]
+    assert [item.invocation_id for item in active] == [dispatch.envelope.invocation_id]
+
+    failed = runtime.fail_invocation(
+        dispatch.envelope.invocation_id,
+        reason_code="child_failed",
+    )
+    assert failed.status == "rejected_recorded"
+    assert (
+        historical.record_disposition(
+            _disposition_payload(
+                status,
+                finding,
+                request_id="active-guard-new-reject",
+                decision="reject",
+            )
+        )["replayed"]
+        is False
+    )
 
 
 def test_tampered_and_ambiguous_guidance_selection_fail_closed_without_writes(

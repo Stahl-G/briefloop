@@ -4048,6 +4048,42 @@ class PostFinalFindingDispositionRecord(StrictModel):
         return self
 
 
+def _current_post_final_disposition_at_cutoff(
+    records: tuple[PostFinalFindingDispositionRecord, ...],
+    *,
+    receipt_revisions: dict[tuple[str, str], int],
+    run_id: str,
+    assessment_result_id: str,
+    finding_id: str,
+    cutoff_revision: int,
+) -> PostFinalFindingDispositionRecord | None:
+    """Select one deterministic disposition head at an exact Store revision."""
+
+    if type(cutoff_revision) is not int or cutoff_revision < 0:
+        raise ValueError("post-final disposition cutoff is invalid")
+    candidates: list[tuple[int, PostFinalFindingDispositionRecord]] = []
+    seen_revisions: set[int] = set()
+    for record in records:
+        if (
+            record.run_id != run_id
+            or record.assessment_result_id != assessment_result_id
+            or record.finding_id != finding_id
+        ):
+            continue
+        revision = receipt_revisions.get(
+            (record.run_id, record.accepted_transaction_id)
+        )
+        if type(revision) is not int or revision < 0:
+            raise ValueError("post-final disposition receipt is invalid")
+        if revision > cutoff_revision:
+            continue
+        if revision in seen_revisions:
+            raise ValueError("post-final disposition revision is ambiguous")
+        seen_revisions.add(revision)
+        candidates.append((revision, record))
+    return max(candidates, key=lambda item: item[0])[1] if candidates else None
+
+
 class PostFinalGuidanceDraftRevision(StrictModel):
     """One Human-authored guidance text revision sourced from an acceptance."""
 

@@ -23,6 +23,7 @@ from multi_agent_brief.contracts.v2 import (
     StageState,
     StageTransitionRecord,
     WorkspaceRunHead,
+    _current_post_final_disposition_at_cutoff,
 )
 from multi_agent_brief.control_store import ControlStoreError, SQLiteControlStore
 from multi_agent_brief.control_store.serialization import (
@@ -107,6 +108,9 @@ def build_run_guidance_snapshot(
         for source_snapshot in history.snapshots
         for receipt in source_snapshot.transactions
     }
+    receipt_revisions = {
+        key: receipt.committed_revision for key, receipt in receipts.items()
+    }
     run_order = {
         source_snapshot.run.run_id: (
             source_snapshot.run.created_at,
@@ -184,6 +188,17 @@ def build_run_guidance_snapshot(
             != draft.finalized_lineage_fingerprint
         ):
             raise CoreRunError("guidance_binding_invalid")
+        try:
+            current_disposition = _current_post_final_disposition_at_cutoff(
+                tuple(source.post_final_finding_dispositions),
+                receipt_revisions=receipt_revisions,
+                run_id=draft.run_id,
+                assessment_result_id=draft.assessment_result_id,
+                finding_id=draft.finding_id,
+                cutoff_revision=request.expected_store_revision,
+            )
+        except ValueError as exc:
+            raise CoreRunError("guidance_binding_invalid") from exc
         current_status = None
         if statuses:
             try:
@@ -215,6 +230,12 @@ def build_run_guidance_snapshot(
         elif current_status.status == "superseded":
             reason = "guidance_superseded"
         elif current_status.status != "approved":
+            reason = "guidance_unapproved"
+        elif (
+            current_disposition is None
+            or current_disposition.disposition_id != draft.disposition_id
+            or current_disposition.decision != "accept"
+        ):
             reason = "guidance_unapproved"
         elif source_scope.scope_fingerprint != successor_scope.scope_fingerprint:
             reason = "guidance_scope_mismatch"

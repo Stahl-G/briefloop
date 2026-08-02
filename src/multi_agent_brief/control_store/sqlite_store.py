@@ -105,6 +105,7 @@ from multi_agent_brief.contracts.v2 import (
     _build_checkout_revision_structure,
     canonical_run_direction_for_binding,
     _derive_publication_structure,
+    _current_post_final_disposition_at_cutoff,
     _publication_identity_digest,
 )
 from multi_agent_brief.control_store.errors import (
@@ -2890,6 +2891,19 @@ class SQLiteControlStore:
                 != draft.finalized_lineage_fingerprint
             ):
                 raise ControlStoreIntegrityError("control_store_integrity_invalid")
+            try:
+                current_disposition = _current_post_final_disposition_at_cutoff(
+                    tuple(source.post_final_finding_dispositions),
+                    receipt_revisions=receipt_revisions,
+                    run_id=draft.run_id,
+                    assessment_result_id=draft.assessment_result_id,
+                    finding_id=draft.finding_id,
+                    cutoff_revision=cutoff_revision,
+                )
+            except ValueError as exc:
+                raise ControlStoreIntegrityError(
+                    "control_store_integrity_invalid"
+                ) from exc
             statuses = tuple(
                 item
                 for item in source.post_final_guidance_statuses
@@ -2922,6 +2936,12 @@ class SQLiteControlStore:
             elif current_status.status == "superseded":
                 reason = "guidance_superseded"
             elif current_status.status != "approved":
+                reason = "guidance_unapproved"
+            elif (
+                current_disposition is None
+                or current_disposition.disposition_id != draft.disposition_id
+                or current_disposition.decision != "accept"
+            ):
                 reason = "guidance_unapproved"
             elif source_scope.scope_fingerprint != successor_scope.scope_fingerprint:
                 reason = "guidance_scope_mismatch"

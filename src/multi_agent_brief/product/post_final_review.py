@@ -273,6 +273,35 @@ class PostFinalReviewService:
         except (TypeError, ValidationError, ValueError) as exc:
             raise PostFinalReviewError("post_final_review_request_invalid") from exc
 
+    @staticmethod
+    def _require_quiescent_current_head(store: SQLiteControlStore) -> int:
+        """Bind a Human write to one live current-head quiescence snapshot."""
+
+        history = store.load_history()
+        current_run_ids = {
+            item.workspace_run_head.current_run_id
+            for item in history.snapshots
+            if item.workspace_run_head is not None
+        }
+        if len(current_run_ids) != 1:
+            raise PostFinalReviewError("post_final_review_request_conflict")
+        current_run_id = next(iter(current_run_ids))
+        current = next(
+            (item for item in history.snapshots if item.run.run_id == current_run_id),
+            None,
+        )
+        if current is None or any(
+            item.status == "active" for item in current.invocations
+        ):
+            raise PostFinalReviewError("post_final_review_request_conflict")
+        return history.store_revision
+
+    @staticmethod
+    def _write_error(exc: ControlStoreError) -> PostFinalReviewError:
+        if str(exc) == "store_revision_conflict":
+            return PostFinalReviewError("post_final_review_request_conflict")
+        return PostFinalReviewError(str(exc))
+
     def record_disposition(self, value: Mapping[str, object]) -> dict[str, object]:
         command = self._validate(FindingDispositionInput, value)
         loaded = self._load()
@@ -380,17 +409,18 @@ class PostFinalReviewService:
         )
         try:
             with SQLiteControlStore.open(self._database_path) as store:
+                expected_revision = self._require_quiescent_current_head(store)
                 with store.begin(
                     result.run_id,
                     transaction_id,
                     "post_final_finding_disposition",
-                    store.current_revision,
+                    expected_revision,
                 ) as uow:
                     uow.append_event(event)
                     uow.put_post_final_finding_disposition(record)
                     receipt = uow.commit()
         except ControlStoreError as exc:
-            raise PostFinalReviewError(str(exc)) from exc
+            raise self._write_error(exc) from exc
         return {
             "ok": True,
             "replayed": False,
@@ -518,17 +548,18 @@ class PostFinalReviewService:
         )
         try:
             with SQLiteControlStore.open(self._database_path) as store:
+                expected_revision = self._require_quiescent_current_head(store)
                 with store.begin(
                     result.run_id,
                     transaction_id,
                     "post_final_guidance_draft",
-                    store.current_revision,
+                    expected_revision,
                 ) as uow:
                     uow.append_event(event)
                     uow.put_post_final_guidance_draft(record)
                     receipt = uow.commit()
         except ControlStoreError as exc:
-            raise PostFinalReviewError(str(exc)) from exc
+            raise self._write_error(exc) from exc
         return {
             "ok": True,
             "replayed": False,
@@ -668,17 +699,18 @@ class PostFinalReviewService:
         )
         try:
             with SQLiteControlStore.open(self._database_path) as store:
+                expected_revision = self._require_quiescent_current_head(store)
                 with store.begin(
                     result.run_id,
                     transaction_id,
                     "post_final_guidance_status",
-                    store.current_revision,
+                    expected_revision,
                 ) as uow:
                     uow.append_event(event)
                     uow.put_post_final_guidance_status(record)
                     receipt = uow.commit()
         except ControlStoreError as exc:
-            raise PostFinalReviewError(str(exc)) from exc
+            raise self._write_error(exc) from exc
         return {
             "ok": True,
             "replayed": False,
