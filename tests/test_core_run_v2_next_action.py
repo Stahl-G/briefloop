@@ -157,6 +157,36 @@ def test_next_action_selects_stage_complete_after_current_proposals(tmp_path) ->
     )
 
 
+def test_next_action_routes_negative_audit_truth_to_human_review(tmp_path) -> None:
+    workspace = core_fixture._workspace(tmp_path)
+    core_fixture._advance_to_auditor_ready(workspace, audit_decision="fail")
+    gate = core_fixture.GateEvaluationService(
+        workspace,
+        clock=core_fixture.CLOCK,
+    ).evaluate(core_fixture._gate_request(workspace))
+    assert gate.status == "committed", gate.to_dict()
+
+    verified = _verified(workspace, core_fixture.RUN_ID)
+    before_revision = verified.snapshot.store_revision
+    first = classify_core_run_next_action(verified)
+    second = classify_core_run_next_action(verified)
+
+    assert first == second
+    assert (
+        first.action_kind,
+        first.effect_kind,
+        first.reason_code,
+        first.stage_id,
+    ) == (
+        "human_decision",
+        "audit_human_review",
+        "negative_audit_truth_requires_human_review",
+        "auditor",
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_revision
+
+
 def test_next_action_recovery_precedes_normal_workflow(tmp_path) -> None:
     workspace = recovery_fixture._initialized_workspace(tmp_path)
     with SQLiteControlStore.open(

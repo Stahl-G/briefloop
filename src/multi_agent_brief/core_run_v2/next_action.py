@@ -11,7 +11,10 @@ from multi_agent_brief.quality_gates.contract import GATE_IDS
 from .errors import CoreRunError
 from .gate_repair import classify_gate_repair_legality
 from .gates import EVALUATOR_IMPLEMENTATION, EVALUATOR_VERSION
-from .lineage import classify_current_lineage
+from .lineage import (
+    audit_promotion_allows_stage_completion,
+    classify_current_lineage,
+)
 from .policy import (
     SOURCE_ROUTE_OWNER_ORDER,
     core_role_topology_policy,
@@ -898,6 +901,25 @@ def _auditor_action(verified: VerifiedCoreRun) -> CoreRunNextAction | None:
             action_kind="blocked",
             effect_kind="auditor_gate_blocked",
             reason_code="current_auditor_gate_blocked",
+            stage_id="auditor",
+        )
+    promotion = verified.current_audit_promotion
+    if promotion is None or not promotion.is_current_lineage:
+        raise CoreRunError("control_store_integrity_invalid")
+    if not audit_promotion_allows_stage_completion(promotion):
+        if gate_repair.state == "passed":
+            return _action(
+                verified,
+                action_kind="human_decision",
+                effect_kind="gate_repair_human_review",
+                reason_code="gate_repair_failed_after_attempt",
+                stage_id="auditor",
+            )
+        return _action(
+            verified,
+            action_kind="human_decision",
+            effect_kind="audit_human_review",
+            reason_code="negative_audit_truth_requires_human_review",
             stage_id="auditor",
         )
     return _action(
