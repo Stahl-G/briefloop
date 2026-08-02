@@ -51,6 +51,7 @@ from multi_agent_brief.core_run_v2.integrity import (
     protected_revision_keys,
     workspace_observation_revision_keys,
 )
+from multi_agent_brief.core_run_v2 import verifier as verifier_module
 from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
 from multi_agent_brief.intake_v2.service import IntakeService
 from multi_agent_brief.product.init_web.submit import InitWebSubmitter
@@ -4686,6 +4687,7 @@ def test_authorized_current_session_reaches_truthful_finalized_local(
 
 def test_authorized_editor_gate_repair_runs_once_then_finalizes_local(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     if sys.platform == "win32":
         return
@@ -4782,6 +4784,18 @@ def test_authorized_editor_gate_repair_runs_once_then_finalizes_local(
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         verified = CoreRunDomainVerifier().verify(store, snapshot.run.run_id)
         history = store.load_history()
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            verifier_module,
+            "audit_promotion_allows_stage_completion",
+            lambda _promotion: False,
+        )
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            with pytest.raises(
+                CoreRunError,
+                match="control_store_integrity_invalid",
+            ):
+                CoreRunDomainVerifier().verify(store, snapshot.run.run_id)
     revisions = {
         (item.artifact_id, item.revision): item for item in snapshot.artifact_revisions
     }

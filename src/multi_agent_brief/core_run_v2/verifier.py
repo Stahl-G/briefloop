@@ -58,6 +58,7 @@ from multi_agent_brief.sources.tavily_acquisition import (
 from .errors import CoreRunError, CoreRunResult
 from .lineage import (
     CurrentAuditPromotion,
+    audit_promotion_allows_stage_completion,
     classify_current_audit_promotion,
     classify_current_lineage,
     require_current_gate_after_audit_promotion,
@@ -4593,11 +4594,7 @@ class CoreRunDomainVerifier:
                     or not audit_promotion.is_current_lineage
                     or audit_promotion.report_revision != audit_revision
                     or audit_promotion.brief_revision != brief_revision
-                    or audit_promotion.proposal.decision == "fail"
-                    or any(
-                        finding.severity == "error"
-                        for finding in audit_promotion.proposal.findings
-                    )
+                    or not audit_promotion_allows_stage_completion(audit_promotion)
                 ):
                     raise CoreRunError("control_store_integrity_invalid")
             elif (
