@@ -70,6 +70,7 @@ from .checkout import (
 )
 from .integrity import RunIntegrityService, read_workspace_file
 from .lineage import (
+    audit_promotion_allows_stage_completion,
     classify_current_audit_promotion,
     classify_current_lineage,
     require_current_gate_after_audit_promotion,
@@ -1769,10 +1770,7 @@ class CoreRunService:
             if artifacts["analyst_draft_snapshot"].current_revision:
                 require_artifact("analyst_draft_snapshot", "consumed")
             del ledger
-            if audit_promotion.proposal.decision == "fail" or any(
-                finding.severity == "error"
-                for finding in audit_promotion.proposal.findings
-            ):
+            if not audit_promotion_allows_stage_completion(audit_promotion):
                 raise CoreRunError("stage_artifact_binding_invalid")
             evaluations = {
                 item.gate_id: item

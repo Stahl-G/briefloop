@@ -4409,6 +4409,7 @@ def _write_current_role_proposal(
     initial_editor_repetitions: int = 210,
     repair_editor_repetitions: int = 210,
     initial_editor_reader_issue: str | None = None,
+    repair_audit_decision: str = "pass",
 ) -> None:
     assert result.trace.envelope_path is not None
     envelope_path = workspace / result.trace.envelope_path
@@ -4494,6 +4495,7 @@ def _write_current_role_proposal(
         )
         return
     elif role_id == "auditor":
+        repairing = bool(snapshot.gate_repair_cycles)
         payload = deepcopy(
             SchemaRegistry.example("briefloop.audit_proposal.v2", "minimal")
         )
@@ -4510,7 +4512,7 @@ def _write_current_role_proposal(
                 for item in snapshot.artifacts
                 if item.artifact_id == "audited_brief"
             ),
-            decision="pass",
+            decision=repair_audit_decision if repairing else "pass",
             findings=[],
         )
         filename = "audit_proposal.json"
@@ -4974,6 +4976,95 @@ def test_authorized_editor_gate_repair_runs_once_then_finalizes_local(
     mismatch = integrity.first_mismatch(verified)
     assert mismatch is not None
     assert (mismatch[0].artifact_id, mismatch[0].revision) == successor_key
+
+
+def test_negative_audit_after_gate_repair_routes_stable_human_review(
+    tmp_path: Path,
+) -> None:
+    if sys.platform == "win32":
+        return
+    workspace = _authorized_workspace(tmp_path)
+    service = _service(workspace)
+    role_sequence: list[str] = []
+
+    for _ in range(12):
+        result = service.continue_authorized()
+        if result.status == "needs_human":
+            break
+        assert result.status == "role_work_required", (
+            result.reason_code,
+            result.trace.next_action.action_kind,
+            result.trace.next_action.effect_kind,
+            result.trace.next_action.reason_code,
+            result.trace.transaction_ids,
+        )
+        assert result.trace.envelope_path is not None
+        envelope = json.loads(
+            (workspace / result.trace.envelope_path).read_text(encoding="utf-8")
+        )
+        role_sequence.append(envelope["role_id"])
+        _write_current_role_proposal(
+            workspace,
+            result,
+            initial_editor_repetitions=20,
+            repair_editor_repetitions=210,
+            repair_audit_decision="fail",
+        )
+    else:
+        raise AssertionError("negative repaired audit did not reach Human review")
+
+    assert role_sequence == [
+        "scout",
+        "screener",
+        "claim-ledger",
+        "analyst",
+        "editor",
+        "auditor",
+        "editor",
+        "auditor",
+    ]
+    assert (
+        result.status,
+        result.reason_code,
+        result.trace.next_action.action_kind,
+        result.trace.next_action.effect_kind,
+    ) == (
+        "needs_human",
+        "gate_repair_failed_after_attempt",
+        "human_decision",
+        "gate_repair_human_review",
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+        before_revision = store.current_revision
+    assert len(snapshot.gate_repair_cycles) == 1
+    assert len(snapshot.gate_repair_outcomes) == 1
+    assert snapshot.gate_repair_outcomes[0].disposition == "passed"
+    assert not snapshot.finalizations
+    assert (
+        next(
+            item for item in snapshot.stage_states if item.stage_id == "auditor"
+        ).status
+        == "ready"
+    )
+
+    replay = service.continue_authorized()
+    assert (
+        replay.status,
+        replay.reason_code,
+        replay.store_revision,
+        replay.trace.next_action,
+    ) == (
+        result.status,
+        result.reason_code,
+        result.store_revision,
+        result.trace.next_action,
+    )
+    assert replay.trace.transaction_ids == []
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_revision
 
 
 @pytest.mark.parametrize(

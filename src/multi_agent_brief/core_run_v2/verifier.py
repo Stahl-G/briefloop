@@ -57,6 +57,7 @@ from multi_agent_brief.sources.tavily_acquisition import (
 
 from .errors import CoreRunError, CoreRunResult
 from .lineage import (
+    CurrentAuditPromotion,
     classify_current_audit_promotion,
     classify_current_lineage,
     require_current_gate_after_audit_promotion,
@@ -102,6 +103,7 @@ class VerifiedCoreRun:
     contracts: ValidatedRuntimeContractPayloads
     runtime_adapter: RuntimeAdapterBinding
     source_plan: RuntimeSourcePlanBinding
+    current_audit_promotion: CurrentAuditPromotion | None
     exhausted_source_route_keys: frozenset[tuple[str, str, str, str | None]] = (
         frozenset()
     )
@@ -1748,12 +1750,17 @@ class CoreRunDomainVerifier:
         self._verify_claim_chain(reader, snapshot, binding)
         self._verify_gate_chain(reader, snapshot, binding, contracts)
         self._verify_gate_repair_chain(snapshot)
+        current_audit_promotion = classify_current_audit_promotion(
+            snapshot,
+            reader.read_artifact_revision_bytes,
+        )
         return VerifiedCoreRun(
             snapshot=snapshot,
             binding=binding,
             contracts=contracts,
             runtime_adapter=runtime_adapter,
             source_plan=source_plan,
+            current_audit_promotion=current_audit_promotion,
         )
 
     @staticmethod
