@@ -155,6 +155,21 @@ def _request_with(request: RunSuccessorStartRequest, **updates):
     return RunSuccessorStartRequest.model_validate(payload, strict=True)
 
 
+def _workspace_topology(workspace: Path) -> dict[str, tuple[str, object]]:
+    observed: dict[str, tuple[str, object]] = {}
+    for path in sorted(workspace.rglob("*")):
+        relative = path.relative_to(workspace).as_posix()
+        if path.is_symlink():
+            observed[relative] = ("symlink", path.readlink().as_posix())
+        elif path.is_dir():
+            observed[relative] = ("directory", None)
+        elif path.is_file():
+            observed[relative] = ("blob", path.read_bytes())
+        else:
+            observed[relative] = ("other", None)
+    return observed
+
+
 def test_normal_successor_freezes_empty_snapshot_without_inheriting_authority(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -256,6 +271,76 @@ def test_normal_successor_freezes_empty_snapshot_without_inheriting_authority(
             successor_run_id="RUN-OLD-SCHEMA-003",
             run_direction=direction,
             include_approved_guidance=False,
+        )
+
+
+def test_successor_rejects_tampered_finalized_checkout_before_write(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, predecessor_run_id, _clock = _finalized_local_workspace(
+        tmp_path,
+        monkeypatch,
+    )
+    direction = _verified(workspace, predecessor_run_id).binding.run_direction
+    request = _capture_successor_request(
+        workspace,
+        monkeypatch,
+        successor_run_id="RUN-TAMPERED-CHECKOUT-002",
+        run_direction=direction,
+        include_approved_guidance=False,
+    )
+    database = workspace / "briefloop.db"
+    with SQLiteControlStore.open(database) as store:
+        predecessor = store.load_snapshot(predecessor_run_id)
+        committed_revisions = {
+            item.transaction_id: item.committed_revision
+            for item in predecessor.transactions
+        }
+        checkout_binding = max(
+            predecessor.receipt_checkout_bindings,
+            key=lambda item: committed_revisions[item.transaction_id],
+        )
+        checkout_members = tuple(
+            item
+            for item in predecessor.checkout_revision_members
+            if item.checkout_revision_id == checkout_binding.post_checkout_revision_id
+        )
+    target_member = next(
+        item
+        for item in sorted(checkout_members, key=lambda item: item.canonical_path)
+        if (workspace / item.canonical_path).is_file()
+    )
+    target = workspace / target_member.canonical_path
+    assert hashlib.sha256(target.read_bytes()).hexdigest() == target_member.blob_sha256
+    tampered_bytes = b"tampered finalized predecessor checkout\n"
+    target.write_bytes(tampered_bytes)
+
+    database_before = database.read_bytes()
+    topology_before = _workspace_topology(workspace)
+    with SQLiteControlStore.open(database) as store:
+        revision_before = store.current_revision
+        history_before = store.load_history()
+        head_before = store.load_workspace_run_head()
+        predecessor_before = store.load_snapshot(predecessor_run_id)
+
+    result = CoreRunSuccessorService(workspace).start_successor(request)
+
+    assert (result.status, result.error_code) == (
+        "failed_uncommitted",
+        "checkout_projection_preimage_restore_required",
+    )
+    assert database.read_bytes() == database_before
+    assert _workspace_topology(workspace) == topology_before
+    assert target.read_bytes() == tampered_bytes
+    with SQLiteControlStore.open(database) as store:
+        assert store.current_revision == revision_before
+        assert store.load_workspace_run_head() == head_before
+        assert store.load_snapshot(predecessor_run_id) == predecessor_before
+        assert store.load_history() == history_before
+        assert all(
+            item.run.run_id != request.successor_run_id
+            for item in store.load_history().snapshots
         )
 
 
