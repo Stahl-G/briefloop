@@ -398,6 +398,8 @@ EVENT_TYPES = {
     "run_blocked",
     "run_integrity_contaminated",
     "run_reset",
+    "run_successor_started",
+    "run_guidance_snapshot_frozen",
     "semantic_assessment_checked_inputs_bound",
     "semantic_support_finding_adjudicated",
     "source_evidence_committed",
@@ -933,6 +935,7 @@ class CoreRunEventBinding(StrictModel):
         "recovery_complete",
         "gate_repair_start",
         "run_head_transition",
+        "run_successor_start",
         "finalize_render",
         "finalize_complete",
         "internal_approval",
@@ -1490,11 +1493,8 @@ class EventEnvelope(StrictModel):
                 },
                 "repair_complete": {"repair_completed", "stage_status_changed"},
                 "recovery_complete": {"decision_recorded"},
-                "run_head_transition": {
-                    "run_reset",
-                    "run_initialized",
-                    "stage_status_changed",
-                },
+                "run_head_transition": {"run_reset"},
+                "run_successor_start": {"run_successor_started"},
                 "finalize_render": {"owned_artifact_accepted"},
                 "finalize_complete": {
                     "stage_status_changed",
@@ -3295,8 +3295,8 @@ class RunHeadTransitionRecord(StrictModel):
     successor_run_id: ContractId
     prior_workspace_revision: NonNegativeInt
     successor_workspace_revision: PositiveInt
-    reason_code: Literal["run_reset"]
-    successor_disposition: Literal["non_reference"]
+    reason_code: Literal["run_reset", "human_started_successor"]
+    successor_disposition: Literal["non_reference", "reference"]
     created_at: IsoDateTime
     transition_event_id: ContractId
     accepted_transaction_id: ContractId
@@ -3308,6 +3308,177 @@ class RunHeadTransitionRecord(StrictModel):
             raise ValueError("reset successor must be a distinct run")
         if self.successor_workspace_revision != self.prior_workspace_revision + 1:
             raise ValueError("workspace revision must advance once")
+        if (self.reason_code, self.successor_disposition) not in {
+            ("run_reset", "non_reference"),
+            ("human_started_successor", "reference"),
+        }:
+            raise ValueError("head transition reason and disposition do not match")
+        return self
+
+
+class GuidanceReuseScopeV1(StrictModel):
+    """Deterministic presentation-only compatibility scope for guidance reuse."""
+
+    schema_id = "briefloop.guidance_reuse_scope.v1"
+
+    schema_version: Literal["briefloop.guidance_reuse_scope.v1"]
+    audience: CleanText
+    audience_profile: CleanText
+    output_language: CleanText
+    output_style: Optional[CleanText] = None
+    output_formats: list[ContractId] = Field(min_length=1)
+    cadence: CleanText
+    scope_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def scope_identity_is_exact(self) -> "GuidanceReuseScopeV1":
+        if len(self.output_formats) != len(set(self.output_formats)):
+            raise ValueError("duplicate guidance reuse output format")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"scope_fingerprint"}),
+            field="scope_fingerprint",
+        )
+        if self.scope_fingerprint != expected:
+            raise ValueError("guidance reuse scope fingerprint mismatch")
+        return self
+
+
+class RunGuidanceSelectionDecisionRecord(StrictModel):
+    """One immutable deterministic decision for a guidance draft head."""
+
+    schema_id = "briefloop.run_guidance_selection_decision_record.v1"
+
+    schema_version: Literal["briefloop.run_guidance_selection_decision_record.v1"]
+    decision_id: ContractId
+    run_id: ContractId
+    snapshot_id: ContractId
+    source_run_id: ContractId
+    guidance_id: ContractId
+    draft_revision: PositiveInt
+    status_revision_id: Optional[ContractId] = None
+    assessment_result_id: ContractId
+    finding_id: ContractId
+    disposition_id: ContractId
+    result_fingerprint: Sha256
+    finding_fingerprint: Sha256
+    disposition_fingerprint: Sha256
+    draft_fingerprint: Sha256
+    status_fingerprint: Optional[Sha256] = None
+    source_scope_fingerprint: Sha256
+    successor_scope_fingerprint: Sha256
+    selected: bool
+    reason_code: Literal[
+        "approved_scope_match",
+        "reuse_not_requested",
+        "guidance_unapproved",
+        "guidance_inactive",
+        "guidance_superseded",
+        "guidance_scope_mismatch",
+    ]
+    decision_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def decision_identity_is_exact(self) -> "RunGuidanceSelectionDecisionRecord":
+        if self.selected != (self.reason_code == "approved_scope_match"):
+            raise ValueError("guidance selection verdict does not match reason")
+        if (self.status_revision_id is None) != (self.status_fingerprint is None):
+            raise ValueError("guidance status identity must be total or absent")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"decision_fingerprint"}),
+            field="decision_fingerprint",
+        )
+        if self.decision_fingerprint != expected:
+            raise ValueError("guidance selection decision fingerprint mismatch")
+        return self
+
+
+class RunGuidanceSnapshotItemRecord(StrictModel):
+    """One copied Human-authored guidance item frozen for a successor run."""
+
+    schema_id = "briefloop.run_guidance_snapshot_item_record.v1"
+
+    schema_version: Literal["briefloop.run_guidance_snapshot_item_record.v1"]
+    item_id: ContractId
+    run_id: ContractId
+    snapshot_id: ContractId
+    position: NonNegativeInt
+    source_run_id: ContractId
+    finalized_lineage_fingerprint: Sha256
+    assessment_result_id: ContractId
+    assessment_result_fingerprint: Sha256
+    finding_id: ContractId
+    finding_fingerprint: Sha256
+    disposition_id: ContractId
+    disposition_fingerprint: Sha256
+    guidance_id: ContractId
+    draft_revision: PositiveInt
+    draft_fingerprint: Sha256
+    status_revision_id: ContractId
+    status_fingerprint: Sha256
+    guidance_text: CleanText
+    guidance_sha256: Sha256
+    reuse_scope: GuidanceReuseScopeV1
+    item_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def snapshot_item_identity_is_exact(self) -> "RunGuidanceSnapshotItemRecord":
+        if (
+            self.guidance_sha256
+            != hashlib.sha256(self.guidance_text.encode("utf-8")).hexdigest()
+        ):
+            raise ValueError("snapshot guidance text hash mismatch")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"item_fingerprint"}),
+            field="item_fingerprint",
+        )
+        if self.item_fingerprint != expected:
+            raise ValueError("guidance snapshot item fingerprint mismatch")
+        return self
+
+
+class RunGuidanceSnapshotRecord(StrictModel):
+    """The one immutable approved-guidance context frozen with a successor run."""
+
+    schema_id = "briefloop.run_guidance_snapshot_record.v1"
+
+    schema_version: Literal["briefloop.run_guidance_snapshot_record.v1"]
+    snapshot_id: ContractId
+    workspace_id: ContractId
+    run_id: ContractId
+    predecessor_run_id: ContractId
+    reuse_requested: bool
+    successor_direction_fingerprint: Sha256
+    successor_run_contract_fingerprint: Sha256
+    candidate_set_fingerprint: Sha256
+    selected_item_ids: list[ContractId]
+    decision_ids: list[ContractId]
+    selected_count: NonNegativeInt
+    omitted_count: NonNegativeInt
+    snapshot_fingerprint: Sha256
+    snapshot_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def snapshot_identity_is_exact(self) -> "RunGuidanceSnapshotRecord":
+        if self.predecessor_run_id == self.run_id:
+            raise ValueError("guidance snapshot predecessor must be distinct")
+        if len(self.selected_item_ids) != len(set(self.selected_item_ids)):
+            raise ValueError("duplicate guidance snapshot item identity")
+        if len(self.decision_ids) != len(set(self.decision_ids)):
+            raise ValueError("duplicate guidance decision identity")
+        if self.selected_count != len(self.selected_item_ids):
+            raise ValueError("guidance selected count mismatch")
+        if self.selected_count + self.omitted_count != len(self.decision_ids):
+            raise ValueError("guidance decision count mismatch")
+        if not self.reuse_requested and self.selected_count != 0:
+            raise ValueError("guidance reuse opt-out cannot select items")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"snapshot_fingerprint"}),
+            field="snapshot_fingerprint",
+        )
+        if self.snapshot_fingerprint != expected:
+            raise ValueError("guidance snapshot fingerprint mismatch")
         return self
 
 
@@ -4087,6 +4258,42 @@ class RunResetRequest(StrictModel):
     input_governance_required: bool
 
 
+class RunSuccessorStartRequest(StrictModel):
+    """Human request for one normal same-workspace successor run."""
+
+    schema_id = "briefloop.run_successor_start_request.v1"
+
+    schema_version: Literal["briefloop.run_successor_start_request.v1"]
+    request_id: ContractId
+    predecessor_run_id: ContractId
+    successor_run_id: ContractId
+    workspace_id: ContractId
+    runtime: RuntimeName
+    expected_head_run_id: ContractId
+    expected_store_revision: NonNegativeInt
+    expected_workspace_revision: NonNegativeInt
+    run_direction: RunDirection
+    workspace_config_sha256: Sha256
+    sources_config_sha256: Sha256
+    role_topology: RoleTopology
+    gate_strictness: dict[GateId, bool]
+    input_governance_required: bool
+    include_approved_guidance: bool
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def successor_request_identity_is_exact(self) -> "RunSuccessorStartRequest":
+        if self.predecessor_run_id == self.successor_run_id:
+            raise ValueError("successor run must be distinct")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"request_fingerprint"}),
+            field="request_fingerprint",
+        )
+        if self.request_fingerprint != expected:
+            raise ValueError("successor request fingerprint mismatch")
+        return self
+
+
 class FinalizeRenderRequest(StrictModel):
     schema_id = "briefloop.finalize_render_request.v2"
     schema_version: Literal["briefloop.finalize_render_request.v2"]
@@ -4776,6 +4983,18 @@ class PostFinalGuidanceStatusReference(StrictModel):
     status_revision_id: ContractId
 
 
+class RunGuidanceSnapshotReference(StrictModel):
+    snapshot_id: ContractId
+
+
+class RunGuidanceSelectionDecisionReference(StrictModel):
+    decision_id: ContractId
+
+
+class RunGuidanceSnapshotItemReference(StrictModel):
+    item_id: ContractId
+
+
 class CheckoutRevisionReference(StrictModel):
     checkout_revision_id: CheckoutRevisionId
 
@@ -4889,6 +5108,15 @@ class TransactionReceipt(StrictModel):
     post_final_guidance_statuses: list[PostFinalGuidanceStatusReference] = Field(
         default_factory=list
     )
+    run_guidance_snapshots: list[RunGuidanceSnapshotReference] = Field(
+        default_factory=list
+    )
+    run_guidance_selection_decisions: list[RunGuidanceSelectionDecisionReference] = (
+        Field(default_factory=list)
+    )
+    run_guidance_snapshot_items: list[RunGuidanceSnapshotItemReference] = Field(
+        default_factory=list
+    )
     checkout_revisions: list[CheckoutRevisionReference] = Field(default_factory=list)
     receipt_checkout_bindings: list[ReceiptCheckoutBindingReference] = Field(
         default_factory=list
@@ -4957,6 +5185,9 @@ class TransactionReceipt(StrictModel):
             self.post_final_finding_dispositions,
             self.post_final_guidance_drafts,
             self.post_final_guidance_statuses,
+            self.run_guidance_snapshots,
+            self.run_guidance_selection_decisions,
+            self.run_guidance_snapshot_items,
             self.checkout_revisions,
             self.receipt_checkout_bindings,
             self.checkout_publication_intents,
@@ -6321,6 +6552,113 @@ RunHeadTransitionRecord.minimal_example = {
     "accepted_transaction_id": "REQ-RESET-001",
     "request_fingerprint": _SHA_A,
 }
+_GUIDANCE_REUSE_SCOPE_EXAMPLE = {
+    "schema_version": GuidanceReuseScopeV1.schema_id,
+    "audience": "Executive team",
+    "audience_profile": "Decision makers",
+    "output_language": "English",
+    "output_style": "concise",
+    "output_formats": ["markdown"],
+    "cadence": "weekly",
+}
+_GUIDANCE_REUSE_SCOPE_EXAMPLE["scope_fingerprint"] = _contract_fingerprint(
+    _GUIDANCE_REUSE_SCOPE_EXAMPLE,
+    field="scope_fingerprint",
+)
+GuidanceReuseScopeV1.minimal_example = deepcopy(_GUIDANCE_REUSE_SCOPE_EXAMPLE)
+
+_GUIDANCE_DECISION_EXAMPLE = {
+    "schema_version": RunGuidanceSelectionDecisionRecord.schema_id,
+    "decision_id": "GUIDANCE-DECISION-001",
+    "run_id": "RUN-20260714-002",
+    "snapshot_id": "GUIDANCE-SNAPSHOT-001",
+    "source_run_id": _RUN,
+    "guidance_id": "GUIDANCE-001",
+    "draft_revision": 1,
+    "status_revision_id": "GUIDANCE-STATUS-001",
+    "assessment_result_id": "PFLAJ-RESULT-001",
+    "finding_id": "FINDING-001",
+    "disposition_id": "DISPOSITION-001",
+    "result_fingerprint": _SHA_A,
+    "finding_fingerprint": _SHA_B,
+    "disposition_fingerprint": _SHA_C,
+    "draft_fingerprint": _SHA_D,
+    "status_fingerprint": _SHA_A,
+    "source_scope_fingerprint": _GUIDANCE_REUSE_SCOPE_EXAMPLE["scope_fingerprint"],
+    "successor_scope_fingerprint": _GUIDANCE_REUSE_SCOPE_EXAMPLE["scope_fingerprint"],
+    "selected": True,
+    "reason_code": "approved_scope_match",
+}
+_GUIDANCE_DECISION_EXAMPLE["decision_fingerprint"] = _contract_fingerprint(
+    _GUIDANCE_DECISION_EXAMPLE,
+    field="decision_fingerprint",
+)
+RunGuidanceSelectionDecisionRecord.minimal_example = deepcopy(
+    _GUIDANCE_DECISION_EXAMPLE
+)
+
+_GUIDANCE_ITEM_EXAMPLE = {
+    "schema_version": RunGuidanceSnapshotItemRecord.schema_id,
+    "item_id": "GUIDANCE-ITEM-001",
+    "run_id": "RUN-20260714-002",
+    "snapshot_id": "GUIDANCE-SNAPSHOT-001",
+    "position": 0,
+    "source_run_id": _RUN,
+    "finalized_lineage_fingerprint": _SHA_A,
+    "assessment_result_id": "PFLAJ-RESULT-001",
+    "assessment_result_fingerprint": _SHA_B,
+    "finding_id": "FINDING-001",
+    "finding_fingerprint": _SHA_C,
+    "disposition_id": "DISPOSITION-001",
+    "disposition_fingerprint": _SHA_D,
+    "guidance_id": "GUIDANCE-001",
+    "draft_revision": 1,
+    "draft_fingerprint": _SHA_A,
+    "status_revision_id": "GUIDANCE-STATUS-001",
+    "status_fingerprint": _SHA_B,
+    "guidance_text": "Prefer a short executive summary before the detail.",
+    "guidance_sha256": hashlib.sha256(
+        b"Prefer a short executive summary before the detail."
+    ).hexdigest(),
+    "reuse_scope": deepcopy(_GUIDANCE_REUSE_SCOPE_EXAMPLE),
+}
+_GUIDANCE_ITEM_EXAMPLE["item_fingerprint"] = _contract_fingerprint(
+    _GUIDANCE_ITEM_EXAMPLE,
+    field="item_fingerprint",
+)
+RunGuidanceSnapshotItemRecord.minimal_example = deepcopy(_GUIDANCE_ITEM_EXAMPLE)
+
+_GUIDANCE_SNAPSHOT_EXAMPLE = {
+    "schema_version": RunGuidanceSnapshotRecord.schema_id,
+    "snapshot_id": "GUIDANCE-SNAPSHOT-001",
+    "workspace_id": "WS-001",
+    "run_id": "RUN-20260714-002",
+    "predecessor_run_id": _RUN,
+    "reuse_requested": True,
+    "successor_direction_fingerprint": _SHA_A,
+    "successor_run_contract_fingerprint": _SHA_B,
+    "candidate_set_fingerprint": _SHA_C,
+    "selected_item_ids": ["GUIDANCE-ITEM-001"],
+    "decision_ids": ["GUIDANCE-DECISION-001"],
+    "selected_count": 1,
+    "omitted_count": 0,
+    "snapshot_event_id": "EVT-GUIDANCE-SNAPSHOT-001",
+    "accepted_transaction_id": "REQ-SUCCESSOR-001",
+    "request_fingerprint": _SHA_D,
+}
+_GUIDANCE_SNAPSHOT_EXAMPLE["snapshot_fingerprint"] = _contract_fingerprint(
+    _GUIDANCE_SNAPSHOT_EXAMPLE,
+    field="snapshot_fingerprint",
+)
+RunGuidanceSnapshotRecord.minimal_example = deepcopy(_GUIDANCE_SNAPSHOT_EXAMPLE)
+
+for _model in (
+    GuidanceReuseScopeV1,
+    RunGuidanceSelectionDecisionRecord,
+    RunGuidanceSnapshotItemRecord,
+    RunGuidanceSnapshotRecord,
+):
+    _model.full_example = deepcopy(_model.minimal_example)
 FinalizeRenderRecord.minimal_example = {
     "schema_version": FinalizeRenderRecord.schema_id,
     "render_id": "RENDER-001",
@@ -6550,6 +6888,35 @@ RunResetRequest.minimal_example = {
     "gate_strictness": {key: True for key in GATE_ID_VALUES},
     "input_governance_required": False,
 }
+_SUCCESSOR_REQUEST_EXAMPLE = {
+    "schema_version": RunSuccessorStartRequest.schema_id,
+    "request_id": "REQ-SUCCESSOR-001",
+    "predecessor_run_id": _RUN,
+    "successor_run_id": "RUN-20260714-002",
+    "workspace_id": "WS-001",
+    "runtime": "operator",
+    "expected_head_run_id": _RUN,
+    "expected_store_revision": 14,
+    "expected_workspace_revision": 14,
+    "run_direction": deepcopy(
+        CoreRunInitializeRequest.minimal_example["run_direction"]
+    ),
+    "workspace_config_sha256": _SHA_A,
+    "sources_config_sha256": _SHA_B,
+    "role_topology": "default",
+    "gate_strictness": {key: True for key in GATE_ID_VALUES},
+    "input_governance_required": False,
+    "include_approved_guidance": True,
+}
+_SUCCESSOR_REQUEST_EXAMPLE["run_direction"] = RunDirection.model_validate(
+    _SUCCESSOR_REQUEST_EXAMPLE["run_direction"],
+    strict=True,
+).model_dump(mode="json")
+_SUCCESSOR_REQUEST_EXAMPLE["request_fingerprint"] = _contract_fingerprint(
+    _SUCCESSOR_REQUEST_EXAMPLE,
+    field="request_fingerprint",
+)
+RunSuccessorStartRequest.minimal_example = _SUCCESSOR_REQUEST_EXAMPLE
 FinalizeRenderRequest.minimal_example = {
     "schema_version": FinalizeRenderRequest.schema_id,
     "request_id": "REQ-RENDER-001",
@@ -6649,6 +7016,7 @@ for _model in (
     RepairCompleteRequest,
     RecoveryCompleteRequest,
     RunResetRequest,
+    RunSuccessorStartRequest,
     FinalizeRenderRequest,
     FinalizeCompleteRequest,
     InternalApprovalRequest,
@@ -7107,6 +7475,10 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     RepairCompletionRecord,
     RecoveryCompletionRecord,
     RunHeadTransitionRecord,
+    GuidanceReuseScopeV1,
+    RunGuidanceSelectionDecisionRecord,
+    RunGuidanceSnapshotItemRecord,
+    RunGuidanceSnapshotRecord,
     FinalizeRenderRecord,
     FinalizationRecord,
     RunArchiveRecord,
@@ -7130,6 +7502,7 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     RepairCompleteRequest,
     RecoveryCompleteRequest,
     RunResetRequest,
+    RunSuccessorStartRequest,
     FinalizeRenderRequest,
     FinalizeCompleteRequest,
     InternalApprovalRequest,
@@ -7368,6 +7741,7 @@ __all__ = [
     "RunSourceDiscoveryAuthorizationReference",
     "RunSourceAcquisitionAttemptAuthorizationReference",
     "RunDirection",
+    "GuidanceReuseScopeV1",
     "RunExecutionAuthorization",
     "RunExecutionAuthorizationBootstrap",
     "RunExecutionAuthorizationInput",
@@ -7395,7 +7769,14 @@ __all__ = [
     "RunIntegrityRecord",
     "RunHeadTransitionRecord",
     "RunHeadTransitionReference",
+    "RunGuidanceSelectionDecisionRecord",
+    "RunGuidanceSelectionDecisionReference",
+    "RunGuidanceSnapshotItemRecord",
+    "RunGuidanceSnapshotItemReference",
+    "RunGuidanceSnapshotRecord",
+    "RunGuidanceSnapshotReference",
     "RunResetRequest",
+    "RunSuccessorStartRequest",
     "ScreenedCandidatesProposal",
     "SourceAcquisitionFailureEvidence",
     "SOURCE_ACQUISITION_METHODS",

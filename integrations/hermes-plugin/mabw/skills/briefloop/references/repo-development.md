@@ -24,8 +24,8 @@ or its references and run the skill contract tests.
 Skill-impact areas include:
 
 - runtime workspace operation
-- archived MABW-080 / BriefLoop-090 experiment operation that uses current 080
-  tooling
+- archived MABW-080 / BriefLoop-090 history interpretation; its command tooling
+  is retired and must not be restored as a current path
 - repair protocol
 - gates, status, finalize, or delivery behavior
 - public claim boundaries

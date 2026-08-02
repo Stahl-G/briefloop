@@ -6,6 +6,8 @@ import argparse
 import json
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from multi_agent_brief.runtime_assets import (
     RuntimeAssetInstallError,
     apply_runtime_kit_plan,
@@ -100,6 +102,19 @@ def register(subparsers: argparse._SubParsersAction) -> None:
                 help="Include the read-only Store action trace.",
             )
 
+    successor = actions.add_parser(
+        "successor-start",
+        help="Start a normal same-workspace successor run.",
+    )
+    successor.add_argument("--workspace", required=True)
+    successor.add_argument("--direction-json", required=True)
+    successor.add_argument("--run-id", required=True)
+    successor.add_argument(
+        "--include-approved-guidance",
+        action="store_true",
+        help="Freeze compatible active Human-approved guidance for this successor.",
+    )
+
 
 def handle(args: argparse.Namespace) -> int:
     if args.runtime_action == "install":
@@ -192,6 +207,50 @@ def handle(args: argparse.Namespace) -> int:
                 "[runtime install] Codex note: open and trust this workspace in Codex "
                 "so project .codex/config.toml and custom agents are loaded."
             )
+        return 0
+    if args.runtime_action == "successor-start":
+        from multi_agent_brief.contracts.v2 import RunDirection
+        from multi_agent_brief.runtime_host_v2.codex import (
+            workspace_codex_adapter_loader,
+        )
+        from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
+
+        try:
+            workspace = Path(args.workspace).expanduser().resolve(strict=True)
+            raw = json.loads(args.direction_json)
+            if type(raw) is not dict:
+                raise RuntimeHostError("runtime_successor_request_invalid")
+            direction = RunDirection.model_validate(raw, strict=True)
+            result = RuntimeHostService(
+                workspace,
+                adapter_loader=workspace_codex_adapter_loader(workspace),
+            ).start_successor(
+                successor_run_id=args.run_id,
+                run_direction=direction,
+                include_approved_guidance=bool(args.include_approved_guidance),
+            )
+        except (
+            json.JSONDecodeError,
+            OSError,
+            RuntimeHostError,
+            TypeError,
+            ValidationError,
+            ValueError,
+        ) as exc:
+            code = (
+                str(exc)
+                if isinstance(exc, RuntimeHostError)
+                else "runtime_successor_request_invalid"
+            )
+            print(f"[runtime successor-start] {code}")
+            return 1
+        print(
+            json.dumps(
+                result.to_dict(),
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
         return 0
     if args.runtime_action in {
         "next",

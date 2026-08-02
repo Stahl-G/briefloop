@@ -9,23 +9,27 @@ For writers and business users, the useful mental model is not a list of control
 ```text
 Where the brief stands.
 Where each number came from.
-What the system has learned with approval.
+What approved guidance was explicitly carried.
 What is guarding delivery.
 ```
 
 ## The Promise
 
-MABW can observe and suggest, but only what you approve is remembered, and every approved memory stays in an inspectable ledger you can undo.
+BriefLoop can observe and suggest, but it does not learn automatically. Human
+review records approved guidance in SQLite, and a later run uses it only when a
+Human explicitly opts in while starting a normal same-workspace successor.
 
 In shorter form:
 
-> The system will not learn anything you did not approve.
+> Approval is necessary, but reuse still requires a separate explicit successor request.
 
-This does not mean MABW never observes your work. It means observation is not authority. The system may suggest a preference, a format rule, or a fact check, but only approved guidance can affect a future run.
+Observation is not authority. The system may suggest a preference, format rule,
+or fact check, but only compatible, active Human-approved guidance can reach a
+successor, and only after `--include-approved-guidance` opt-in.
 
 In plain terms:
 
-> AI can draft; the system records ledgers; only the operator can make preferences affect later runs.
+> AI can draft; deterministic services record effects; only a Human can approve and explicitly carry guidance.
 
 ## 1. Where The Brief Stands
 
@@ -73,7 +77,7 @@ How it protects you when things go wrong:
 
 > Pick a number in the final brief and ask "where did this come from?" The workflow should point back to the claim, source, date, and checks instead of relying on memory or model confidence.
 
-## 3. What The System Has Learned With Approval
+## 3. What Approved Guidance Was Explicitly Carried
 
 What it records:
 
@@ -86,14 +90,17 @@ These are not facts. They are preferences about how the brief should be written 
 
 Where to look:
 
-- `improvement/ledger.jsonl`
-- `improvement/memory.md`
-- `output/intermediate/improvement_memory_snapshot.md`
-- `output/intermediate/runtime_manifest.json`
+- Store-native post-final review status for the exact assessment result;
+- the Receipt from `briefloop runtime successor-start`; and
+- the successor's immutable `RoleTaskEnvelope.frozen_guidance_context` for
+  Analyst or Editor.
+
+The former Improvement JSON/JSONL ledger, memory projection, and Markdown
+snapshot are retired and inert.
 
 How it protects you when things go wrong:
 
-> If you want MABW to remember a writing preference, it must be approved first. Unapproved suggestions do not affect future runs, approved guidance only affects later runs, and reverted guidance disappears from later snapshots.
+> Unapproved, inactive, reverted, superseded, malformed, or scope-mismatched guidance is not consumed. Approval alone does nothing to a later run; the Human must explicitly opt in when starting the successor. Once frozen, that successor snapshot does not change when the live guidance lifecycle changes.
 
 ## 4. What Is Guarding Delivery
 
@@ -130,9 +137,9 @@ MABW may split that into:
 
 | User-facing bucket | Internal route | Example |
 |---|---|---|
-| Writing preference | `memory_guidance` | Lead with company impact. |
+| Writing preference | `approved_guidance_candidate` | Lead with company impact. |
 | Fixed format candidate | `checkable_rule_candidate` | Use implication -> fact -> uncertainty for each item. |
-| Style boundary | `memory_guidance` or future checklist | Do not decide for management. |
+| Style boundary | `approved_guidance_candidate` or future checklist | Do not decide for management. |
 | Fact or source check | `fact_review` | Correct a price, date, source, or company status. |
 | Already covered | `already_enforced` | Source appendix is already checked before delivery. |
 
@@ -210,7 +217,7 @@ Current control surfaces can prove things like:
 
 - an approved guidance entry was recorded;
 - a snapshot was frozen;
-- a run referenced that snapshot;
+- an explicitly started successor referenced that snapshot;
 - a gate report was written;
 - a claim had a cited source;
 - a feedback issue was structured.
@@ -222,7 +229,12 @@ They do not by themselves prove:
 - no useful structure regressed;
 - all relevant facts were covered.
 
-Those require separate evaluation, reference runs, and future manifestation reporting.
+Guidance utility is NOT MEASURED. The snapshot is presentation context for
+Analyst/Editor only; it is not evidence, a Gate rule, a repair command, or
+finalize/delivery/Core authority.
+
+Those require separate evaluation, reference runs, and Human review; this
+mechanism makes no such quality claim.
 
 ## The One-Minute Demo
 

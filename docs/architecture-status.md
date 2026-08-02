@@ -92,8 +92,15 @@ page describes implemented runtime capability, not a breaking deep rename.
 - The Orchestrator control switchboard can surface deterministic control recommendations and record enable/defer/reject selections without executing those controls.
 - Finalize writes the reader delivery bundle under `output/delivery/`, appending the source appendix to delivery Markdown/DOCX while retaining `output/source_appendix.md` as an audit/control copy. Reader-facing appendices can show safe source identity and taxonomy labels, while `output/source_appendix_trace.md` can carry internal claim/source/span IDs, source paths, source byte hashes, and metadata completeness warnings for audit review. Delivery artifacts must not expose internal claim IDs, source IDs, evidence text, local paths, or file URLs.
 - Runtime asset availability is now explicit: packaged installs include contract configs and public-safe eval fixtures, while source runtime assets such as `.agents/`, `.claude/`, `.opencode/`, `.codex/`, `.codebuddy/`, and Hermes plugin files are source-clone-only unless copied into a workspace with `briefloop runtime install` or used directly from a source checkout where documented.
-- The legacy Improvement Ledger lifecycle was retired in LD2-3. Its JSON/JSONL files remain inert with no reader or writer. Experimental post-final Human review now records finding dispositions, Human-edited guidance drafts, and separate approval/status revisions as append-only SQLite receipts. Approved guidance is not consumed by a later run until the separate snapshot/precedence unit ships.
-- Packaged public-safe evaluation cases now cover Improvement Memory control behavior: unapproved entries are not materialized, approved guidance is frozen, and reverted entries disappear from the next snapshot.
+- The legacy Improvement Ledger lifecycle was retired in LD2-3. Its JSON/JSONL
+  files remain inert with no reader or writer. Experimental post-final Human
+  review records finding dispositions, Human-edited guidance drafts, and
+  separate approval/status revisions as append-only SQLite Receipts. On
+  development main, a Human may explicitly start a normal same-workspace
+  successor with a new `RunDirection` and `--include-approved-guidance`; the
+  Core transaction atomically freezes only compatible, active Human-approved
+  guidance. Analyst and Editor receive the same immutable context. Other roles
+  receive none, and no live ledger or retired file is read after commit.
 - Experimental Atomic Claim Graph controls can validate an optional
   `output/intermediate/atomic_claim_graph.json`, check whole-ledger coverage and
   deterministic Claim Ledger type consistency, expose Analyst/Editor
@@ -114,13 +121,13 @@ page describes implemented runtime capability, not a breaking deep rename.
   findings. This is a support-record control plane only, not automatic support
   assessment, semantic proof, release eligibility, or a support-sufficiency
   gate.
-- Experimental Semantic Assessment Report controls can validate an optional
-  `output/intermediate/semantic_assessment_report.json` schema, validate
-  machine-checkable references to Claim Ledger claims, Atomic Claim Graph atoms,
-  and Evidence Span Registry spans, project rows into proposal-only
-  Claim-Support Matrix delta candidates, and surface read-only status counts.
-  This is a proposal surface only, not accepted support truth, adjudication
-  queue creation, delivery gating, release authority, or semantic proof.
+- The optional `output/intermediate/semantic_assessment_report.json` contract
+  and machine-checkable reference validation remain experimental. Its producer,
+  proposal projection, status visibility, and adjudication writer were retired
+  with the legacy stack; no current runtime role is instructed to create it.
+  The remaining schema is non-blocking and creates no support truth, Claim-
+  Support Matrix row, repair route, Gate, delivery decision, release authority,
+  or semantic proof.
 - Experimental offline-shadow LAJ tools can execute or exactly replay one
   public/synthetic Semantic Evaluator trial and deterministically render its
   verified archive as standalone JSON, Markdown, and static HTML. These files
@@ -140,12 +147,19 @@ page describes implemented runtime capability, not a breaking deep rename.
   canonical `brief_html` page is read-only as a static export and becomes
   actionable only through a secured loopback Review Session, where strict
   Human commands append accept/reject/defer, edited guidance drafts, and
-  separate approval/status Receipts. It never changes Gate, finalization,
-  delivery, or Core next-action truth; utility is NOT MEASURED and next-run
-  guidance consumption is not shipped. Development main also exposes the
+  separate approval/status Receipts. Development main also exposes the
   read-only `assessment-next` request projection; it is not a second assessment
-  writer. Older development SQLite workspaces are unsupported when the schema
-  changes and must be recreated on the current schema.
+  writer. A separate public `briefloop runtime successor-start` command can
+  create a normal same-workspace successor only after explicit Human input
+  supplies the new run ID and strict direction. Guidance reuse is separately
+  opt-in. The atomic Core transaction freezes the complete compatible
+  active-approved set for Analyst/Editor only, with fixed 16-item and
+  65,536-byte limits and no truncation. Guidance is advisory presentation
+  context: current direction and evidence govern, and it never changes Claim
+  Ledger, Gate, finalization, delivery, repair, or Core next-action truth.
+  Utility is NOT MEASURED; this is not automatic learning. Older development
+  SQLite workspaces are unsupported when the schema changes and must be
+  recreated on the current schema.
 - The v0.11 product-baseline target has stable product-facing workspace
   entries for `briefloop new industry-weekly`, `briefloop new
   management-monthly`, and `briefloop new document-review`. These entries map

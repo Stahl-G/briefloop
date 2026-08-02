@@ -25,8 +25,10 @@ def _assert_scout_chunk_contract(path: str) -> None:
     assert "completion order" in normalized, path
     assert (
         "append to candidate_claims.json from chunk workers" in normalized
-        or "join chunk outputs deterministically before writing candidate_claims.json" in normalized
-        or "join chunks deterministically before writing candidate_claims.json" in normalized
+        or "join chunk outputs deterministically before writing candidate_claims.json"
+        in normalized
+        or "join chunks deterministically before writing candidate_claims.json"
+        in normalized
     ), path
     assert "silently drop" in normalized, path
 
@@ -54,19 +56,33 @@ def _assert_generate_brief_repair_transaction(path: str) -> None:
     assert "briefloop repair route --workspace $ARGUMENTS --json" in normalized, path
     assert "--finding-id <finding_id>" in normalized, path
     assert "--route-index <route_index>" in normalized, path
-    assert "do not use unscoped repair start for current-gate blockers" in normalized, path
-    assert "scoped repair start command from gates show required_commands" in normalized, path
+    assert "do not use unscoped repair start for current-gate blockers" in normalized, (
+        path
+    )
+    assert (
+        "scoped repair start command from gates show required_commands" in normalized
+    ), path
     assert "do not use bare repair start --workspace $ARGUMENTS" in normalized, path
-    assert "briefloop repair complete --workspace $ARGUMENTS --reason" in normalized, path
+    assert "briefloop repair complete --workspace $ARGUMENTS --reason" in normalized, (
+        path
+    )
     assert "do not edit artifacts directly" in normalized.lower(), path
     assert "Do not edit frozen artifacts directly" in normalized, path
-    assert "Direct edits will mark the run contaminated and non-reference-eligible" in normalized, path
+    assert (
+        "Direct edits will mark the run contaminated and non-reference-eligible"
+        in normalized
+    ), path
     assert "reported repair_owner role" in normalized, path
     assert "allowed_artifacts" in normalized, path
     assert "blocked_direct_edits" in normalized, path
     assert "must_rerun_from" in normalized, path
-    assert "Never use state decide delegate_repair to authorize artifact edits" in normalized, path
-    assert "Never manually update artifact_registry.json or frozen hashes" in normalized, path
+    assert (
+        "Never use state decide delegate_repair to authorize artifact edits"
+        in normalized
+    ), path
+    assert (
+        "Never manually update artifact_registry.json or frozen hashes" in normalized
+    ), path
 
 
 def test_python_agent_package_removed_from_runtime_source():
@@ -119,7 +135,10 @@ def test_user_facing_docs_do_not_present_prepare_as_workflow_runtime():
 
 def test_agents_md_states_python_commands_are_support_tools():
     text = _read("AGENTS.md")
-    assert "Python CLI commands provide onboarding, workspace setup, runtime handoff" in text
+    assert (
+        "Python CLI commands provide onboarding, workspace setup, runtime handoff"
+        in text
+    )
     assert "subagent-first" in text
 
 
@@ -168,7 +187,10 @@ def test_claude_generate_brief_command_uses_orchestrator_contract():
 def test_claude_generate_brief_requires_stage_complete_before_next_specialist():
     text = _read(".claude/commands/generate-brief.md")
     assert "A stage is not complete when its artifact is written." in text
-    assert "Only after `stage-complete` succeeds may you dispatch the next specialist" in text
+    assert (
+        "Only after `stage-complete` succeeds may you dispatch the next specialist"
+        in text
+    )
     assert "Do not call the next specialist" in text
     assert "Never treat `state stage-complete` as after-the-fact bookkeeping" in text
     assert "output artifacts are frozen for downstream stages" in text
@@ -185,14 +207,23 @@ def test_generate_brief_commands_use_repair_transaction_for_blocking_gates():
 
 def test_claude_generate_brief_is_topology_aware_for_scout_and_screener():
     text = _read(".claude/commands/generate-brief.md")
-    assert "With `role_topology=default`, Scout writes both `candidate_claims.json`" in text
+    assert (
+        "With `role_topology=default`, Scout writes both `candidate_claims.json`"
+        in text
+    )
     assert "`screened_candidates.json` before `stage-complete --stage scout`" in text
     assert "Do not delegate Screener in default topology" in text
     assert "do not call `state stage-complete --stage screener`" in text
-    assert "Do not replay Screener delegation or `stage-complete --stage screener`" in text
+    assert (
+        "Do not replay Screener delegation or `stage-complete --stage screener`" in text
+    )
     assert "Strict topology only: invoke the **screener** subagent" in text
-    assert "With `role_topology=strict`, Scout writes only `candidate_claims.json`" in text
-    assert "strict topology delegates Screener separately after Scout completion" in text
+    assert (
+        "With `role_topology=strict`, Scout writes only `candidate_claims.json`" in text
+    )
+    assert (
+        "strict topology delegates Screener separately after Scout completion" in text
+    )
 
 
 def test_checked_in_hermes_skill_is_topology_aware_for_scout_and_screener():
@@ -236,14 +267,20 @@ def test_claim_ledger_skill_accepts_screened_candidates_from_any_topology():
 
 def test_claude_generate_brief_runs_claim_ledger_freeze_transaction():
     text = _read(".claude/commands/generate-brief.md")
-    claim_ledger_section = text.split("8. Invoke the **claim-ledger** subagent:", 1)[1].split(
-        "9. **Market & Competitor Module", 1
-    )[0]
+    claim_ledger_section = text.split("8. Invoke the **claim-ledger** subagent:", 1)[
+        1
+    ].split("9. **Market & Competitor Module", 1)[0]
     assert "claim_drafts.json" in claim_ledger_section
     assert "without `claim_id` fields" in claim_ledger_section
     assert "state freeze-claim-ledger" in claim_ledger_section
-    assert "Confirm freeze produced `$ARGUMENTS/output/intermediate/claim_ledger.json`" in claim_ledger_section
-    assert "Write `$ARGUMENTS/output/intermediate/claim_ledger.json`" not in claim_ledger_section
+    assert (
+        "Confirm freeze produced `$ARGUMENTS/output/intermediate/claim_ledger.json`"
+        in claim_ledger_section
+    )
+    assert (
+        "Write `$ARGUMENTS/output/intermediate/claim_ledger.json`"
+        not in claim_ledger_section
+    )
 
 
 def test_analyst_prompts_use_frozen_ledger_only():
@@ -279,7 +316,9 @@ def test_auditor_prompts_check_overstatement_and_support_calibration():
     for path in prompt_paths:
         text = _read(path)
         assert "overstatement" in text, f"overstatement check missing in {path}"
-        assert "support-strength calibration" in text, f"support calibration missing in {path}"
+        assert "support-strength calibration" in text, (
+            f"support calibration missing in {path}"
+        )
         assert "confidence mismatch" in text, f"confidence mismatch missing in {path}"
         assert "Do not read" in text and "claim_drafts.json" in text, (
             f"claim_drafts read prohibition missing in {path}"
@@ -289,7 +328,7 @@ def test_auditor_prompts_check_overstatement_and_support_calibration():
         )
 
 
-def test_semantic_support_auditor_is_proposal_only():
+def test_semantic_assessment_report_has_no_active_agent_producer():
     prompt_paths = [
         "configs/agent_roles.yaml",
         ".agents/skills/auditor/SKILL.md",
@@ -300,42 +339,87 @@ def test_semantic_support_auditor_is_proposal_only():
     for path in prompt_paths:
         text = _read(path)
         lowered = text.lower()
-        assert "semantic support auditor" in lowered, f"semantic support auditor missing in {path}"
         assert "semantic_assessment_report.json" in text, (
-            f"semantic proposal artifact missing in {path}"
+            f"semantic schema boundary missing in {path}"
         )
-        assert "proposal" in lowered, f"proposal-only framing missing in {path}"
-        # Proposals must never be described as gating finalize/delivery/release.
-        assert "do not gate finalize" in lowered, f"gate boundary missing in {path}"
-        # The semantic auditor must not be told to write authoritative control files.
-        assert "must not" in lowered and "audit_report.json" in text, (
-            f"authoritative-write prohibition missing in {path}"
+        assert "no current producer" in lowered or (
+            "producer" in lowered and "retired" in lowered
         )
-        assert "records adjudication only" in lowered, (
-            f"human adjudication boundary missing in {path}"
-        )
-        assert "does not create support truth" in lowered, (
-            f"support-truth boundary missing in {path}"
+        assert "do not create" in lowered, (
+            f"retired producer prohibition missing in {path}"
         )
         forbidden = [
-            "until a human accepts",
-            "unless a human accepts",
-            "becomes authoritative",
-            "become authoritative",
-            "human accept makes",
-            "human acceptance makes",
+            "optionally run a proposal-only semantic support auditor",
+            "writes only output/intermediate/semantic_assessment_report.json",
+            "write only `output/intermediate/semantic_assessment_report.json`",
+            "let python validate and project semantic_assessment_report.json",
+            "records adjudication only",
         ]
         for phrase in forbidden:
-            assert phrase not in lowered, f"semantic support authority leak in {path}: {phrase}"
+            assert phrase not in lowered, (
+                f"retired semantic producer survives in {path}: {phrase}"
+            )
+
+
+def test_analyst_and_editor_use_only_frozen_guidance_context():
+    prompt_paths = [
+        "configs/agent_roles.yaml",
+        ".claude/agents/analyst.md",
+        ".claude/agents/editor.md",
+        ".codex/agents/analyst.toml",
+        ".codex/agents/editor.toml",
+        ".opencode/agents/brief-analyst.md",
+        ".opencode/agents/brief-editor.md",
+    ]
+    for path in prompt_paths:
+        text = _read(path)
+        normalized = " ".join(text.replace("`", "").split())
+        assert "FrozenGuidanceContext" in text, (
+            f"frozen guidance context missing in {path}"
+        )
+        assert "audience fit, structure, style, and expression" in normalized
+        assert "Current RunDirection and evidence govern" in normalized
+        assert (
+            "Guidance is not a fact, source, Claim Ledger input, Gate rule, repair command, or delivery authority"
+            in normalized
+        )
+        assert "Never read a live guidance ledger" in normalized
+        assert "Core integrity and legality" in normalized
+        assert "frozen approved guidance" in normalized
+
+    non_consumers = [
+        ".claude/agents/scout.md",
+        ".claude/agents/screener.md",
+        ".claude/agents/claim-ledger.md",
+        ".claude/agents/auditor.md",
+        ".codex/agents/scout.toml",
+        ".codex/agents/screener.toml",
+        ".codex/agents/claim-ledger.toml",
+        ".codex/agents/auditor.toml",
+        ".opencode/agents/brief-scout.md",
+        ".opencode/agents/brief-screener.md",
+        ".opencode/agents/brief-claim-ledger.md",
+        ".opencode/agents/brief-auditor.md",
+    ]
+    for path in non_consumers:
+        assert "FrozenGuidanceContext" not in _read(path), (
+            f"non-consumer receives guidance instruction in {path}"
+        )
 
 
 def test_claude_generate_brief_requires_source_discovery_transaction_for_all_profiles():
     text = _read(".claude/commands/generate-brief.md")
-    source_section = text.split("**Source discovery transaction (all source profiles):**", 1)[1].split(
-        "**Input governance gate", 1
-    )[0]
-    assert "Source discovery is a workflow stage for every run, not only for `llm_decide`." in source_section
-    assert "Complete the `source-discovery` transaction before invoking Scout." in source_section
+    source_section = text.split(
+        "**Source discovery transaction (all source profiles):**", 1
+    )[1].split("**Input governance gate", 1)[0]
+    assert (
+        "Source discovery is a workflow stage for every run, not only for `llm_decide`."
+        in source_section
+    )
+    assert (
+        "Complete the `source-discovery` transaction before invoking Scout."
+        in source_section
+    )
     assert "configured non-`llm_decide` source profile" in source_section
     assert (
         "briefloop state stage-complete --workspace $ARGUMENTS --stage source-discovery"
@@ -393,7 +477,10 @@ def test_codex_orchestrator_has_writer_flow_protocol():
     assert "Codex writer flow protocol" in text
     assert "Workspace Card" in text
     assert "Trust status is one Workspace Card line, not the main answer" in text
-    assert "Do not launch the interactive terminal onboarding wizard inside Codex chat" in text
+    assert (
+        "Do not launch the interactive terminal onboarding wizard inside Codex chat"
+        in text
+    )
     assert "show the values to be written" in text
     assert "Before initializing into an existing directory" in text
     assert "output/intermediate/runtime_manifest.json" in text
@@ -403,10 +490,15 @@ def test_codex_orchestrator_has_writer_flow_protocol():
     assert "URL, source title/name" in text
     assert "raw excerpt/snippet" in text
     assert "Do not call the retired briefloop sources decide command" in text
-    assert "Never merge source_plan_only artifacts into evidence or source authority" in text
+    assert (
+        "Never merge source_plan_only artifacts into evidence or source authority"
+        in text
+    )
     assert "source_candidates.yaml is planning/review only, not evidence" in text
     assert "report progress after every successful stage-complete transaction" in text
-    assert "[stage] produced <artifact> -> stage-complete passed -> next <stage>" in text
+    assert (
+        "[stage] produced <artifact> -> stage-complete passed -> next <stage>" in text
+    )
 
 
 def test_screener_role_treats_freshness_config_as_authoritative():
@@ -491,20 +583,30 @@ def test_analyst_editor_contracts_use_atomic_graph_as_optional_no_new_atom_aid()
     for path in prompt_paths:
         text = _read(path)
         normalized = " ".join(text.replace("`", "").split())
-        assert "atomic_claim_graph.json" in normalized, f"atomic graph boundary missing in {path}"
+        assert "atomic_claim_graph.json" in normalized, (
+            f"atomic graph boundary missing in {path}"
+        )
         assert "optional experimental structural decomposition aid" in normalized, (
             f"optional aid wording missing in {path}"
         )
-        assert "not source evidence" in normalized, f"source-evidence boundary missing in {path}"
-        assert "proof of support" in normalized, f"support-proof boundary missing in {path}"
+        assert "not source evidence" in normalized, (
+            f"source-evidence boundary missing in {path}"
+        )
+        assert "proof of support" in normalized, (
+            f"support-proof boundary missing in {path}"
+        )
         assert "create, edit, rewrite, repair, or extend" in normalized, (
             f"graph mutation ban missing in {path}"
         )
-        assert "absent or invalid" in normalized, f"absent/invalid graph boundary missing in {path}"
+        assert "absent or invalid" in normalized, (
+            f"absent/invalid graph boundary missing in {path}"
+        )
         assert "Do not cite atom IDs in reader-facing prose" in normalized, (
             f"atom citation ban missing in {path}"
         )
-        assert "material atoms absent" in normalized, f"no-new-atom boundary missing in {path}"
+        assert "material atoms absent" in normalized, (
+            f"no-new-atom boundary missing in {path}"
+        )
 
 
 def test_stage_protocol_does_not_require_atomic_claim_graph():
@@ -529,7 +631,9 @@ def test_formatter_contract_forbids_patching_frozen_audited_brief():
         assert "audited_brief.md" in text, f"audited brief boundary missing in {path}"
         assert "frozen input" in text, f"frozen input boundary missing in {path}"
         assert "repair" in text, f"repair route guidance missing in {path}"
-        assert "workflow state" in text or "workflow_state" in text, f"workflow-state edit ban missing in {path}"
+        assert "workflow state" in text or "workflow_state" in text, (
+            f"workflow-state edit ban missing in {path}"
+        )
 
 
 def test_claude_mabw_command_is_five_verb_writer_surface():
@@ -569,8 +673,14 @@ def test_claude_mabw_command_resolves_cli_once_for_compatibility():
     assert "Do not check one CLI binary" in routing_section
     assert "- check whether `multi-agent-brief` is available;" not in text
     assert "briefloop init <workspace>" not in new_section
-    assert "$BRIEFLOOP_CLI init <workspace> --from-onboarding <onboarding.json>" in new_section
-    assert "$BRIEFLOOP_CLI run --workspace <workspace> --runtime claude --skip-doctor" in new_section
+    assert (
+        "$BRIEFLOOP_CLI init <workspace> --from-onboarding <onboarding.json>"
+        in new_section
+    )
+    assert (
+        "$BRIEFLOOP_CLI run --workspace <workspace> --runtime claude --skip-doctor"
+        in new_section
+    )
 
 
 def test_claude_briefloop_command_is_five_verb_writer_surface():
@@ -670,9 +780,9 @@ def test_claude_mabw_status_is_read_only_and_feedback_is_bounded():
     assert "do not refresh artifact registry" in status_section
     assert "do not append event log entries" in status_section
 
-    feedback_section = text.split("## `feedback <workspace> [text-or-file]`", 1)[1].split(
-        "## `deliver <workspace>`", 1
-    )[0]
+    feedback_section = text.split("## `feedback <workspace> [text-or-file]`", 1)[
+        1
+    ].split("## `deliver <workspace>`", 1)[0]
     assert "$BRIEFLOOP_CLI feedback ingest" in feedback_section
     assert "Downstream actions require explicit user confirmation" in feedback_section
     assert "do not execute repair" in feedback_section
@@ -686,12 +796,26 @@ def test_claude_mabw_deliver_uses_completion_transactions():
     deliver_section = text.split("## `deliver <workspace>`", 1)[1].split(
         "## Diagnostic And Maintainer Commands", 1
     )[0]
-    assert "$BRIEFLOOP_CLI gates check --workspace <workspace> --stage auditor" in deliver_section
-    assert "$BRIEFLOOP_CLI gates check --workspace <workspace> --stage finalize" in deliver_section
-    assert "$BRIEFLOOP_CLI state check --workspace <workspace> --strict" in deliver_section
-    assert "$BRIEFLOOP_CLI state stage-complete --workspace <workspace> --stage auditor" in deliver_section
+    assert (
+        "$BRIEFLOOP_CLI gates check --workspace <workspace> --stage auditor"
+        in deliver_section
+    )
+    assert (
+        "$BRIEFLOOP_CLI gates check --workspace <workspace> --stage finalize"
+        in deliver_section
+    )
+    assert (
+        "$BRIEFLOOP_CLI state check --workspace <workspace> --strict" in deliver_section
+    )
+    assert (
+        "$BRIEFLOOP_CLI state stage-complete --workspace <workspace> --stage auditor"
+        in deliver_section
+    )
     assert "$BRIEFLOOP_CLI finalize --config <workspace>/config.yaml" in deliver_section
-    assert "$BRIEFLOOP_CLI state finalize-complete --workspace <workspace>" in deliver_section
+    assert (
+        "$BRIEFLOOP_CLI state finalize-complete --workspace <workspace>"
+        in deliver_section
+    )
     assert "finalize` as a quality-gate executor" in deliver_section
     assert "state decide --decision finalize" in deliver_section
     assert "state decide --decision continue" not in deliver_section
@@ -700,7 +824,9 @@ def test_claude_mabw_deliver_uses_completion_transactions():
 def test_opencode_generate_brief_command_uses_audience_snapshot_context():
     text = _read(".opencode/commands/generate-brief.md")
     assert "Orchestrator main agent" in text
-    assert "briefloop run --workspace $ARGUMENTS --runtime opencode --skip-doctor" in text
+    assert (
+        "briefloop run --workspace $ARGUMENTS --runtime opencode --skip-doctor" in text
+    )
     assert "output/intermediate/audience_profile_snapshot.md" in text
     assert "output/intermediate/orchestrator_control_switchboard.json" in text
     assert "briefloop controls select" in text

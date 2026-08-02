@@ -66,9 +66,17 @@ def _minimal_data() -> dict[str, object]:
             "reason_code": "final_reader_not_available",
             "boundary": "projection_only_not_gate_or_delivery_authority",
             "projection": {"ok": False},
-            "groups": {key: [] for key in (
-                "control", "source", "gates", "claims", "reader_clean", "closeout"
-            )},
+            "groups": {
+                key: []
+                for key in (
+                    "control",
+                    "source",
+                    "gates",
+                    "claims",
+                    "reader_clean",
+                    "closeout",
+                )
+            },
             "actions": [],
         },
         "semantic": {
@@ -119,7 +127,7 @@ def test_render_is_self_contained_and_embeds_parseable_data() -> None:
 
     assert "<!-- brief-html:" not in html
     assert "http://" not in html and "https://" not in html
-    assert '<script src=' not in html and "<link" not in html
+    assert "<script src=" not in html and "<link" not in html
     island = html.split('id="brief-pages-data">', 1)[1].split("</script>", 1)[0]
     payload = json.loads(island)
     assert payload["schema_version"] == "briefloop.brief_pages.data.v2"
@@ -151,6 +159,21 @@ def test_runtime_assets_have_no_injection_or_external_surface() -> None:
     assert b"eval(" not in app
     index = read_brief_asset("index.html")
     assert b"https://" not in index and b"http://" not in index
+
+
+def test_improvement_copy_states_explicit_successor_reuse_in_both_languages() -> None:
+    app = read_brief_asset("app.js").decode("utf-8")
+    assert "Human-started successor with explicit reuse opt-in" in app
+    assert "No Store-qualified Human review or approved guidance" in app
+    assert (
+        "当前报告或所选 assessment 暂无 Store-qualified 人类审阅或已批准 guidance"
+        in app
+    )
+    assert "No Store-native authoritative home" not in app
+    assert "尚无权威记录面" not in app
+    assert "人类显式选择复用并启动后继 run" in app
+    assert "next-run consumption is not shipped" not in app
+    assert "下一轮消费尚未实现" not in app
 
 
 def test_read_brief_asset_rejects_unknown_names() -> None:

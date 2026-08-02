@@ -66,34 +66,15 @@ Use after editor has completed audited_brief.md.
 - Report audit readiness only. Formatter, finalize, and deterministic gates
   decide delivery completion.
 
-## Optional Semantic Support Auditor
+## Retired Semantic Assessment Producer
 
-- Run this proposal-only check only when the runtime supports subagent
-  delegation or the operator explicitly runs the semantic support auditor role.
-- It compares `output/intermediate/audited_brief.md` against the frozen
-  `output/intermediate/claim_ledger.json` and proposes support-calibration
-  issues such as overstatement, missing limitations, or unsupported numbers.
-- Read frozen `output/intermediate/atomic_claim_graph.json` and
-  `output/intermediate/evidence_span_registry.json` (read-only) to obtain the
-  atom (`AC-####-##`) and evidence span (`ESP-###-##`) ids that each
-  `semantic_assessment_report.json` row must bind to. If those frozen artifacts
-  are absent, skip the check and report it skipped; never invent atom or span ids.
-- Judge claims only against frozen Claim Ledger evidence. Do not use external
-  knowledge or infer missing sources.
-- Write only `output/intermediate/semantic_assessment_report.json`. Its raw rows
-  are proposals, not authoritative `audit_report.json` findings, gate results,
-  or release decisions. Python may render them as advisory, non-blocking
-  `AuditFinding` surfaces. They remain proposal records even after human
-  adjudication; a human accept/reject records an adjudication entry but does not
-  create support truth, authoritative `audit_report.json` findings, gate
-  results, repair routes, delivery approval, or release authority.
-- Do not edit frozen artifacts, and do not write `audit_report.json`,
-  `auditor_quality_gate_report.json`, `claim_support_matrix.json`,
-  `workflow_state.json`, or `event_log.jsonl`.
-- Semantic support proposals do not gate finalize, delivery, or release by
-  themselves. Python validates and projects the proposal artifact; human
-  acceptance records adjudication only and does not create support truth or
-  authoritative audit findings.
+The optional `semantic_assessment_report.json` contract retains schema and
+machine-checkable reference validation only. Its Semantic Support Auditor
+producer, proposal/status projection, and adjudication writer are retired.
+Do not create, edit, or repair that artifact; do not delegate a semantic
+assessment role or route adjudication. Continue the ordinary `audit_report.json`
+contract. The remaining optional validator is Python-owned, non-blocking, and
+has no Claim-Support Matrix, Gate, repair, delivery, release, or truth authority.
 
 ## Handoff
 

@@ -137,79 +137,20 @@ Not allowed:
 - Do not claim compact workflow is quality-equivalent to full specialist
   delegation.
 
-## Fast Rerun Recipe
+## Retired Fast-Rerun Recipe
 
-Use when a fresh workspace has already imported a complete archived frozen fact
-layer with `state import-fact-layer`, and the operator wants to rerun the
-writing/audit side against the same evidence.
+The former `state import-fact-layer` and `run --recipe fast-rerun` path was
+deleted with the legacy runtime-state stack in LD2-3. It is not a current
+SQLite recipe, successor mechanism, experiment path, or fallback. Historical
+command semantics remain only in git history, archived experiment material,
+and frozen reference-run records.
 
-Product rule:
-
-```text
-same frozen evidence, new writing -- verified by hash
-```
-
-Import first:
-
-```bash
-briefloop state import-fact-layer --runtime operator \
-  --workspace <new_workspace> \
-  --archive <source_workspace>/output/runs/<run_id>/manifest.json
-```
-
-Create handoff:
-
-```bash
-briefloop run --workspace <new_workspace> --runtime operator --recipe fast-rerun
-```
-
-This recipe is handoff guidance only. It does not import the fact layer by
-itself, make Python execute writing stages, or generate the brief.
-
-Required imported fact-layer artifacts:
-
-```text
-input/sources/*
-output/input_classification.json
-output/intermediate/candidate_claims.json
-output/intermediate/screened_candidates.json
-output/intermediate/claim_ledger.json
-```
-
-Runtime Orchestrator behavior:
-
-```text
-state import-fact-layer
-→ run --recipe fast-rerun
-→ analyst
-→ editor
-→ auditor
-→ gates/state review
-→ finalize
-```
-
-Allowed:
-
-- Reuse only the hash-verified fact-layer artifacts copied from the archive by
-  `state import-fact-layer`.
-- Start model-backed content work at Analyst.
-- Expect finalize completion to re-check imported fact-layer freshness against
-  the target workspace reporting window before archiving the rerun.
-- Use this recipe for private instrumentation and manifestation reruns.
-
-Not allowed:
-
-- Do not run `run --recipe fast-rerun` without a valid
-  `runtime_manifest.fact_layer_import`.
-- Do not silently fall back to a full run if the import is missing or invalid.
-- Do not regenerate source-discovery, input-governance, Scout, Screener, or
-  Claim Ledger outputs inside the fast-rerun path.
-- Do not synthesize upstream `stage-complete` or `decision_recorded` events for
-  imported stages.
-- Do not add facts outside the imported Claim Ledger.
-- Do not use this as proof of output-quality improvement.
-- Do not expose `improvement/memory.md`; use only the frozen per-run snapshot
-  when present.
+For a current fresh SQLite workspace, start a normal successor only through the
+explicit Human `briefloop runtime successor-start` transaction. That command
+does not import a prior fact layer: the new run must establish its own current
+direction, sources, evidence, Claim Ledger, gates, finalize, and delivery truth.
+Optional approved-guidance reuse is presentation context for Analyst/Editor
+only, not evidence reuse or a fast path.
 
 ## Existing Draft Review
 

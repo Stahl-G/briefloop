@@ -50,6 +50,7 @@ from multi_agent_brief.contracts.v2 import (
     GateRepairArtifactBinding,
     GateRepairCycleRecord,
     GateRepairOutcomeRecord,
+    GuidanceReuseScopeV1,
     FinalizationRecord,
     FinalizeRenderRecord,
     Invocation,
@@ -83,6 +84,12 @@ from multi_agent_brief.contracts.v2 import (
     RunSourceAcquisitionAttemptAuthorization,
     RunSourceDiscoveryAuthorization,
     RunIdentity,
+    RunGuidanceSelectionDecisionRecord,
+    RunGuidanceSelectionDecisionReference,
+    RunGuidanceSnapshotItemRecord,
+    RunGuidanceSnapshotItemReference,
+    RunGuidanceSnapshotRecord,
+    RunGuidanceSnapshotReference,
     RunIntegrityRecord,
     RunArchiveArtifactBinding,
     RunArchiveRecord,
@@ -133,6 +140,11 @@ _POST_FINAL_RECEIPT_RELATION_FIELDS = (
     "post_final_guidance_statuses",
 )
 _POST_FINAL_ABANDONMENT_RECEIPT_FIELD = "post_final_assessment_abandonments"
+_GUIDANCE_RECEIPT_RELATION_FIELDS = (
+    "run_guidance_snapshots",
+    "run_guidance_selection_decisions",
+    "run_guidance_snapshot_items",
+)
 _POST_FINAL_RECEIPT_TRANSACTION_TYPES = frozenset(
     {
         "post_final_assessment_policy",
@@ -153,6 +165,9 @@ _SOURCE_ATTEMPT_COMPATIBILITY_BOUNDARY_ID = (
 _POST_FINAL_ABANDONMENT_COMPATIBILITY_BOUNDARY_ID = (
     "briefloop.post_final_assessment_abandonment_compatibility.v1"
 )
+_GUIDANCE_SUCCESSOR_TRANSACTION_TYPE = "core-v2-run-successor-start"
+_MAX_GUIDANCE_SNAPSHOT_ITEMS = 16
+_MAX_GUIDANCE_SNAPSHOT_UTF8_BYTES = 65_536
 _EXTENDED_RECORD_MODELS = (
     WorkspaceRunHead,
     ArtifactIdentityRecord,
@@ -199,6 +214,9 @@ _EXTENDED_RECORD_MODELS = (
     PostFinalFindingDispositionRecord,
     PostFinalGuidanceDraftRevision,
     PostFinalGuidanceStatusRevision,
+    RunGuidanceSelectionDecisionRecord,
+    RunGuidanceSnapshotItemRecord,
+    RunGuidanceSnapshotRecord,
     CheckoutRevisionRecord,
     CheckoutRevisionMember,
     ReceiptCheckoutBinding,
@@ -254,6 +272,8 @@ def _decode_record(
             raise ControlStoreIntegrityError("stored_payload_invalid") from exc
         if not isinstance(payload, dict):
             raise ControlStoreIntegrityError("stored_payload_invalid")
+        if any(field not in payload for field in _GUIDANCE_RECEIPT_RELATION_FIELDS):
+            raise ControlStoreIntegrityError("stored_payload_not_canonical")
         missing_post_final = {
             field
             for field in _POST_FINAL_RECEIPT_RELATION_FIELDS
@@ -339,6 +359,24 @@ def _validate_contract_id(value: object, error_code: str) -> str:
         return _CONTRACT_ID_ADAPTER.validate_python(value, strict=True)
     except ValidationError as exc:
         raise ControlStoreIntegrityError(error_code) from exc
+
+
+def _guidance_reuse_scope(binding: RunContractBinding) -> GuidanceReuseScopeV1:
+    direction = binding.run_direction
+    payload = {
+        "schema_version": GuidanceReuseScopeV1.schema_id,
+        "audience": direction.audience,
+        "audience_profile": direction.audience_profile,
+        "output_language": direction.output_language,
+        "output_style": direction.output_style,
+        "output_formats": list(direction.output_formats),
+        "cadence": direction.cadence,
+    }
+    payload["scope_fingerprint"] = canonical_fingerprint(payload)
+    try:
+        return GuidanceReuseScopeV1.model_validate(payload, strict=True)
+    except ValidationError as exc:
+        raise ControlStoreIntegrityError("control_store_integrity_invalid") from exc
 
 
 def _validate_blob_topology(
@@ -542,6 +580,9 @@ class ControlStoreSnapshot:
     post_final_finding_dispositions: tuple[PostFinalFindingDispositionRecord, ...]
     post_final_guidance_drafts: tuple[PostFinalGuidanceDraftRevision, ...]
     post_final_guidance_statuses: tuple[PostFinalGuidanceStatusRevision, ...]
+    run_guidance_snapshots: tuple[RunGuidanceSnapshotRecord, ...]
+    run_guidance_selection_decisions: tuple[RunGuidanceSelectionDecisionRecord, ...]
+    run_guidance_snapshot_items: tuple[RunGuidanceSnapshotItemRecord, ...]
     checkout_revisions: tuple[CheckoutRevisionRecord, ...]
     checkout_revision_members: tuple[CheckoutRevisionMember, ...]
     receipt_checkout_bindings: tuple[ReceiptCheckoutBinding, ...]
@@ -562,6 +603,7 @@ class ControlStoreHistory:
     store_revision: int
     snapshots: tuple[ControlStoreSnapshot, ...]
     artifact_contents: Mapping[tuple[str, str, int], bytes]
+
     @property
     def transactions(self) -> tuple[TransactionReceipt, ...]:
         return tuple(
@@ -971,6 +1013,21 @@ class ControlStoreHistory:
             ("status_revision_id",),
             full.post_final_guidance_statuses,
         )
+        run_guidance_snapshots = selected(
+            "run_guidance_snapshots",
+            ("snapshot_id",),
+            full.run_guidance_snapshots,
+        )
+        run_guidance_selection_decisions = selected(
+            "run_guidance_selection_decisions",
+            ("decision_id",),
+            full.run_guidance_selection_decisions,
+        )
+        run_guidance_snapshot_items = selected(
+            "run_guidance_snapshot_items",
+            ("item_id",),
+            full.run_guidance_snapshot_items,
+        )
         checkout_revision_ids = {
             reference.checkout_revision_id
             for receipt in transactions
@@ -1076,6 +1133,9 @@ class ControlStoreHistory:
             post_final_finding_dispositions=post_final_finding_dispositions,
             post_final_guidance_drafts=post_final_guidance_drafts,
             post_final_guidance_statuses=post_final_guidance_statuses,
+            run_guidance_snapshots=run_guidance_snapshots,
+            run_guidance_selection_decisions=run_guidance_selection_decisions,
+            run_guidance_snapshot_items=run_guidance_snapshot_items,
             checkout_revisions=checkout_revisions,
             checkout_revision_members=checkout_revision_members,
             receipt_checkout_bindings=receipt_checkout_bindings,
@@ -1145,6 +1205,16 @@ class ControlStoreHistory:
             },
             strict=True,
         )
+
+
+@dataclass(frozen=True)
+class _GuidanceCandidateAtRevision:
+    draft: PostFinalGuidanceDraftRevision
+    status: PostFinalGuidanceStatusRevision | None
+    result: PostFinalAssessmentResultRecord
+    disposition: PostFinalFindingDispositionRecord
+    source_scope: GuidanceReuseScopeV1
+    reason_code: str
 
 
 @dataclass(frozen=True)
@@ -1749,6 +1819,7 @@ class SQLiteControlStore:
             self._preflight_core_run_subgraph(uow, run_id)
             self._preflight_pr4b_subgraph(uow, run_id)
             self._preflight_post_final_assessment_subgraph(uow, run_id)
+            self._preflight_guidance_snapshot_subgraph(uow, run_id)
             self._preflight_checkout_subgraph(uow, run_id)
             self._inject("before_blob_write")
             for position, item in enumerate(uow._artifact_revisions, start=1):
@@ -1785,6 +1856,7 @@ class SQLiteControlStore:
                 if locked_artifact_identities != new_artifact_identities:
                     raise ControlStoreConflict("relational_integrity_conflict")
                 self._preflight_post_final_assessment_subgraph(uow, run_id)
+                self._preflight_guidance_snapshot_subgraph(uow, run_id)
                 committed_revision = locked_revision + 1
                 receipt = self._build_receipt(
                     uow,
@@ -1838,6 +1910,7 @@ class SQLiteControlStore:
                 self._insert_gate_repair_records(uow)
                 self._insert_pr4b_records(uow)
                 self._insert_post_final_assessment_records(uow)
+                self._insert_guidance_snapshot_records(uow)
                 self._insert_checkout_records(uow)
                 self._insert_transaction_relations(receipt)
                 self._inject("after_records")
@@ -2716,6 +2789,350 @@ class SQLiteControlStore:
             ) != list(range(len(bindings))):
                 raise ControlStoreConflict("relational_integrity_conflict")
 
+    def _guidance_candidates_at_revision(
+        self,
+        *,
+        cutoff_revision: int,
+        successor_binding: RunContractBinding,
+        reuse_requested: bool,
+        exclude_run_id: str,
+    ) -> tuple[_GuidanceCandidateAtRevision, ...]:
+        """Recompute the complete deterministic candidate set as of one Receipt."""
+
+        if type(cutoff_revision) is not int or cutoff_revision < 0:
+            raise ControlStoreIntegrityError("control_store_integrity_invalid")
+        source_snapshots: dict[str, ControlStoreSnapshot] = {}
+        for row in self._connection.execute(
+            "SELECT run_id FROM runs WHERE workspace_id=? ORDER BY created_at,run_id",
+            (self.workspace_id,),
+        ).fetchall():
+            source_run_id = str(row[0])
+            if source_run_id == exclude_run_id:
+                continue
+            source_snapshots[source_run_id] = self._load_snapshot_in_transaction(
+                source_run_id,
+                _verify_guidance=False,
+            )
+
+        receipt_revisions = {
+            (source.run.run_id, receipt.transaction_id): receipt.committed_revision
+            for source in source_snapshots.values()
+            for receipt in source.transactions
+        }
+
+        def existed_at_cutoff(record: StrictModel) -> bool:
+            accepted_transaction_id = getattr(
+                record,
+                "accepted_transaction_id",
+                None,
+            )
+            revision = receipt_revisions.get(
+                (str(getattr(record, "run_id", "")), accepted_transaction_id)
+            )
+            return revision is not None and revision <= cutoff_revision
+
+        latest_drafts: dict[tuple[str, str], PostFinalGuidanceDraftRevision] = {}
+        for source in source_snapshots.values():
+            for draft in source.post_final_guidance_drafts:
+                if not existed_at_cutoff(draft):
+                    continue
+                key = (draft.run_id, draft.guidance_id)
+                prior = latest_drafts.get(key)
+                if prior is None or draft.draft_revision > prior.draft_revision:
+                    latest_drafts[key] = draft
+
+        run_order = {
+            source.run.run_id: (source.run.created_at, source.run.run_id)
+            for source in source_snapshots.values()
+        }
+        successor_scope = _guidance_reuse_scope(successor_binding)
+        candidates: list[_GuidanceCandidateAtRevision] = []
+        for draft in sorted(
+            latest_drafts.values(),
+            key=lambda item: (
+                run_order.get(item.run_id, ("", item.run_id)),
+                item.guidance_id,
+                item.draft_revision,
+            ),
+        ):
+            source = source_snapshots.get(draft.run_id)
+            if source is None or len(source.run_contract_bindings) != 1:
+                raise ControlStoreIntegrityError("control_store_integrity_invalid")
+            source_scope = _guidance_reuse_scope(source.run_contract_bindings[0])
+            results = tuple(
+                item
+                for item in source.post_final_assessment_results
+                if item.assessment_result_id == draft.assessment_result_id
+                and existed_at_cutoff(item)
+            )
+            dispositions = tuple(
+                item
+                for item in source.post_final_finding_dispositions
+                if item.disposition_id == draft.disposition_id
+                and existed_at_cutoff(item)
+            )
+            if len(results) != 1 or len(dispositions) != 1:
+                raise ControlStoreIntegrityError("control_store_integrity_invalid")
+            result = results[0]
+            disposition = dispositions[0]
+            if (
+                disposition.decision != "accept"
+                or disposition.run_id != draft.run_id
+                or disposition.assessment_result_id != draft.assessment_result_id
+                or disposition.assessment_result_fingerprint
+                != draft.assessment_result_fingerprint
+                or disposition.finding_id != draft.finding_id
+                or disposition.finding_fingerprint != draft.finding_fingerprint
+                or disposition.disposition_fingerprint != draft.disposition_fingerprint
+                or result.run_id != draft.run_id
+                or result.result_fingerprint != draft.assessment_result_fingerprint
+                or result.finalized_lineage_fingerprint
+                != draft.finalized_lineage_fingerprint
+            ):
+                raise ControlStoreIntegrityError("control_store_integrity_invalid")
+            statuses = tuple(
+                item
+                for item in source.post_final_guidance_statuses
+                if item.guidance_id == draft.guidance_id and existed_at_cutoff(item)
+            )
+            current_status = (
+                None
+                if not statuses
+                else max(
+                    statuses,
+                    key=lambda item: receipt_revisions[
+                        (item.run_id, item.accepted_transaction_id)
+                    ],
+                )
+            )
+            if current_status is not None and (
+                current_status.run_id != draft.run_id
+                or current_status.guidance_sha256 != draft.guidance_sha256
+            ):
+                raise ControlStoreIntegrityError("control_store_integrity_invalid")
+            if not reuse_requested:
+                reason = "reuse_not_requested"
+            elif (
+                current_status is None
+                or current_status.draft_revision != draft.draft_revision
+            ):
+                reason = "guidance_unapproved"
+            elif current_status.status in {"deactivated", "reverted"}:
+                reason = "guidance_inactive"
+            elif current_status.status == "superseded":
+                reason = "guidance_superseded"
+            elif current_status.status != "approved":
+                reason = "guidance_unapproved"
+            elif source_scope.scope_fingerprint != successor_scope.scope_fingerprint:
+                reason = "guidance_scope_mismatch"
+            else:
+                reason = "approved_scope_match"
+            candidates.append(
+                _GuidanceCandidateAtRevision(
+                    draft=draft,
+                    status=current_status,
+                    result=result,
+                    disposition=disposition,
+                    source_scope=source_scope,
+                    reason_code=reason,
+                )
+            )
+        return tuple(candidates)
+
+    def _guidance_snapshot_content_is_exact(
+        self,
+        *,
+        snapshot: RunGuidanceSnapshotRecord,
+        decisions: tuple[RunGuidanceSelectionDecisionRecord, ...],
+        items: tuple[RunGuidanceSnapshotItemRecord, ...],
+        successor_binding: RunContractBinding,
+        cutoff_revision: int,
+    ) -> bool:
+        successor_scope = _guidance_reuse_scope(successor_binding)
+        if (
+            snapshot.successor_run_contract_fingerprint
+            != successor_binding.contract_fingerprint
+            or snapshot.successor_direction_fingerprint
+            != canonical_fingerprint(
+                successor_binding.run_direction.model_dump(mode="json")
+            )
+        ):
+            return False
+        candidates = self._guidance_candidates_at_revision(
+            cutoff_revision=cutoff_revision,
+            successor_binding=successor_binding,
+            reuse_requested=snapshot.reuse_requested,
+            exclude_run_id=snapshot.run_id,
+        )
+        candidate_payloads = [
+            {
+                "source_run_id": candidate.draft.run_id,
+                "guidance_id": candidate.draft.guidance_id,
+                "draft_revision": candidate.draft.draft_revision,
+                "draft_fingerprint": candidate.draft.draft_fingerprint,
+                "status_revision_id": (
+                    None
+                    if candidate.status is None
+                    else candidate.status.status_revision_id
+                ),
+                "status_fingerprint": (
+                    None
+                    if candidate.status is None
+                    else candidate.status.status_fingerprint
+                ),
+                "source_scope_fingerprint": (candidate.source_scope.scope_fingerprint),
+                "reason_code": candidate.reason_code,
+            }
+            for candidate in candidates
+        ]
+        if snapshot.candidate_set_fingerprint != canonical_fingerprint(
+            {"candidates": candidate_payloads}
+        ):
+            return False
+        decision_by_id = {item.decision_id: item for item in decisions}
+        item_by_id = {item.item_id: item for item in items}
+        if (
+            len(decision_by_id) != len(decisions)
+            or len(item_by_id) != len(items)
+            or set(decision_by_id) != set(snapshot.decision_ids)
+            or set(item_by_id) != set(snapshot.selected_item_ids)
+            or len(snapshot.decision_ids) != len(candidates)
+        ):
+            return False
+        selected_candidates: list[_GuidanceCandidateAtRevision] = []
+        for decision_id, candidate in zip(
+            snapshot.decision_ids,
+            candidates,
+            strict=True,
+        ):
+            decision = decision_by_id[decision_id]
+            status_id = (
+                None
+                if candidate.status is None
+                else candidate.status.status_revision_id
+            )
+            status_fingerprint = (
+                None
+                if candidate.status is None
+                else candidate.status.status_fingerprint
+            )
+            if (
+                decision.run_id != snapshot.run_id
+                or decision.snapshot_id != snapshot.snapshot_id
+                or decision.source_run_id != candidate.draft.run_id
+                or decision.guidance_id != candidate.draft.guidance_id
+                or decision.draft_revision != candidate.draft.draft_revision
+                or decision.status_revision_id != status_id
+                or decision.assessment_result_id
+                != candidate.result.assessment_result_id
+                or decision.finding_id != candidate.draft.finding_id
+                or decision.disposition_id != candidate.disposition.disposition_id
+                or decision.result_fingerprint != candidate.result.result_fingerprint
+                or decision.finding_fingerprint != candidate.draft.finding_fingerprint
+                or decision.disposition_fingerprint
+                != candidate.disposition.disposition_fingerprint
+                or decision.draft_fingerprint != candidate.draft.draft_fingerprint
+                or decision.status_fingerprint != status_fingerprint
+                or decision.source_scope_fingerprint
+                != candidate.source_scope.scope_fingerprint
+                or decision.successor_scope_fingerprint
+                != successor_scope.scope_fingerprint
+                or decision.selected
+                != (candidate.reason_code == "approved_scope_match")
+                or decision.reason_code != candidate.reason_code
+            ):
+                return False
+            if decision.selected:
+                selected_candidates.append(candidate)
+
+        if len(snapshot.selected_item_ids) != len(selected_candidates):
+            return False
+        for position, (item_id, candidate) in enumerate(
+            zip(snapshot.selected_item_ids, selected_candidates, strict=True)
+        ):
+            item = item_by_id[item_id]
+            status = candidate.status
+            if status is None or (
+                item.run_id != snapshot.run_id
+                or item.snapshot_id != snapshot.snapshot_id
+                or item.position != position
+                or item.source_run_id != candidate.draft.run_id
+                or item.finalized_lineage_fingerprint
+                != candidate.draft.finalized_lineage_fingerprint
+                or item.assessment_result_id != candidate.result.assessment_result_id
+                or item.assessment_result_fingerprint
+                != candidate.result.result_fingerprint
+                or item.finding_id != candidate.draft.finding_id
+                or item.finding_fingerprint != candidate.draft.finding_fingerprint
+                or item.disposition_id != candidate.disposition.disposition_id
+                or item.disposition_fingerprint
+                != candidate.disposition.disposition_fingerprint
+                or item.guidance_id != candidate.draft.guidance_id
+                or item.draft_revision != candidate.draft.draft_revision
+                or item.draft_fingerprint != candidate.draft.draft_fingerprint
+                or item.status_revision_id != status.status_revision_id
+                or item.status_fingerprint != status.status_fingerprint
+                or item.guidance_text != candidate.draft.guidance_text
+                or item.guidance_sha256 != candidate.draft.guidance_sha256
+                or item.reuse_scope != candidate.source_scope
+            ):
+                return False
+        return (
+            len(items) <= _MAX_GUIDANCE_SNAPSHOT_ITEMS
+            and sum(len(item.guidance_text.encode("utf-8")) for item in items)
+            <= _MAX_GUIDANCE_SNAPSHOT_UTF8_BYTES
+        )
+
+    def _preflight_guidance_snapshot_subgraph(
+        self,
+        uow: "ControlUnitOfWork",
+        run_id: str,
+    ) -> None:
+        snapshots = tuple(uow._run_guidance_snapshots.values())
+        decisions = tuple(uow._run_guidance_selection_decisions.values())
+        items = tuple(uow._run_guidance_snapshot_items.values())
+        has_guidance_effect = any((snapshots, decisions, items))
+        is_successor = uow.transaction_type == _GUIDANCE_SUCCESSOR_TRANSACTION_TYPE
+        if not has_guidance_effect:
+            if is_successor:
+                raise ControlStoreConflict("relational_integrity_conflict")
+            return
+        if not is_successor or len(snapshots) != 1:
+            raise ControlStoreConflict("relational_integrity_conflict")
+        snapshot = snapshots[0]
+        binding = uow._run_contract_binding
+        transitions = tuple(uow._run_head_transitions.values())
+        events = {item.event_id: item for item in uow._events}
+        event = events.get(snapshot.snapshot_event_id)
+        if (
+            binding is None
+            or len(transitions) != 1
+            or uow._run is None
+            or snapshot.run_id != run_id
+            or snapshot.workspace_id != self.workspace_id
+            or snapshot.accepted_transaction_id != uow.transaction_id
+            or snapshot.request_fingerprint != binding.request_fingerprint
+            or event is None
+            or event.run_id != run_id
+            or event.transaction_id != uow.transaction_id
+            or event.event_type != "run_guidance_snapshot_frozen"
+            or event.core_run_binding is not None
+            or transitions[0].predecessor_run_id != snapshot.predecessor_run_id
+            or transitions[0].successor_run_id != run_id
+            or transitions[0].reason_code != "human_started_successor"
+            or transitions[0].successor_disposition != "reference"
+            or transitions[0].request_fingerprint != snapshot.request_fingerprint
+        ):
+            raise ControlStoreConflict("relational_integrity_conflict")
+        if not self._guidance_snapshot_content_is_exact(
+            snapshot=snapshot,
+            decisions=decisions,
+            items=items,
+            successor_binding=binding,
+            cutoff_revision=uow.expected_revision,
+        ):
+            raise ControlStoreConflict("relational_integrity_conflict")
+
     def _preflight_post_final_assessment_subgraph(
         self, uow: "ControlUnitOfWork", run_id: str
     ) -> None:
@@ -3327,6 +3744,18 @@ class SQLiteControlStore:
                     "post_final_guidance_statuses": [
                         {"status_revision_id": key}
                         for key in sorted(uow._post_final_guidance_statuses)
+                    ],
+                    "run_guidance_snapshots": [
+                        {"snapshot_id": key}
+                        for key in sorted(uow._run_guidance_snapshots)
+                    ],
+                    "run_guidance_selection_decisions": [
+                        {"decision_id": key}
+                        for key in sorted(uow._run_guidance_selection_decisions)
+                    ],
+                    "run_guidance_snapshot_items": [
+                        {"item_id": key}
+                        for key in sorted(uow._run_guidance_snapshot_items)
                     ],
                     "checkout_revisions": [
                         {"checkout_revision_id": key}
@@ -5081,6 +5510,103 @@ class SQLiteControlStore:
                 ),
             )
 
+    def _insert_guidance_snapshot_records(self, uow: "ControlUnitOfWork") -> None:
+        """Insert the immutable successor guidance snapshot graph."""
+
+        for record in uow._run_guidance_snapshots.values():
+            self._connection.execute(
+                "INSERT INTO run_guidance_snapshots VALUES "
+                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record.run_id,
+                    record.snapshot_id,
+                    record.workspace_id,
+                    record.predecessor_run_id,
+                    record.schema_version,
+                    int(record.reuse_requested),
+                    record.successor_direction_fingerprint,
+                    record.successor_run_contract_fingerprint,
+                    record.candidate_set_fingerprint,
+                    record.selected_count,
+                    record.omitted_count,
+                    record.snapshot_fingerprint,
+                    record.snapshot_event_id,
+                    record.accepted_transaction_id,
+                    record.request_fingerprint,
+                    _canonical_record_text(record),
+                ),
+            )
+        for record in uow._run_guidance_selection_decisions.values():
+            self._connection.execute(
+                "INSERT INTO run_guidance_selection_decisions VALUES "
+                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record.run_id,
+                    record.decision_id,
+                    record.snapshot_id,
+                    record.source_run_id,
+                    record.schema_version,
+                    record.guidance_id,
+                    record.draft_revision,
+                    record.status_revision_id,
+                    record.assessment_result_id,
+                    record.finding_id,
+                    record.disposition_id,
+                    record.result_fingerprint,
+                    record.finding_fingerprint,
+                    record.disposition_fingerprint,
+                    record.draft_fingerprint,
+                    record.status_fingerprint,
+                    record.source_scope_fingerprint,
+                    record.successor_scope_fingerprint,
+                    int(record.selected),
+                    record.reason_code,
+                    record.decision_fingerprint,
+                    _canonical_record_text(record),
+                ),
+            )
+        for record in uow._run_guidance_snapshot_items.values():
+            self._connection.execute(
+                "INSERT INTO run_guidance_snapshot_items VALUES "
+                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record.run_id,
+                    record.item_id,
+                    record.snapshot_id,
+                    record.position,
+                    record.source_run_id,
+                    record.schema_version,
+                    record.finalized_lineage_fingerprint,
+                    record.assessment_result_id,
+                    record.assessment_result_fingerprint,
+                    record.finding_id,
+                    record.finding_fingerprint,
+                    record.disposition_id,
+                    record.disposition_fingerprint,
+                    record.guidance_id,
+                    record.draft_revision,
+                    record.draft_fingerprint,
+                    record.status_revision_id,
+                    record.status_fingerprint,
+                    record.guidance_text,
+                    record.guidance_sha256,
+                    record.reuse_scope.scope_fingerprint,
+                    record.item_fingerprint,
+                    _canonical_record_text(record),
+                ),
+            )
+        for snapshot in uow._run_guidance_snapshots.values():
+            for position, decision_id in enumerate(snapshot.decision_ids):
+                self._connection.execute(
+                    "INSERT INTO run_guidance_snapshot_decisions VALUES (?,?,?,?)",
+                    (snapshot.run_id, snapshot.snapshot_id, position, decision_id),
+                )
+            for position, item_id in enumerate(snapshot.selected_item_ids):
+                self._connection.execute(
+                    "INSERT INTO run_guidance_snapshot_selected_items VALUES (?,?,?,?)",
+                    (snapshot.run_id, snapshot.snapshot_id, position, item_id),
+                )
+
     def _insert_checkout_records(self, uow: "ControlUnitOfWork") -> None:
         for record in uow._checkout_revisions.values():
             self._connection.execute(
@@ -5538,6 +6064,21 @@ class SQLiteControlStore:
                 receipt.post_final_guidance_statuses,
                 "status_revision_id",
             ),
+            (
+                "transaction_run_guidance_snapshots",
+                receipt.run_guidance_snapshots,
+                "snapshot_id",
+            ),
+            (
+                "transaction_run_guidance_selection_decisions",
+                receipt.run_guidance_selection_decisions,
+                "decision_id",
+            ),
+            (
+                "transaction_run_guidance_snapshot_items",
+                receipt.run_guidance_snapshot_items,
+                "item_id",
+            ),
         )
         for table, references, field in simple_relations:
             for position, reference in enumerate(references):
@@ -5992,7 +6533,12 @@ class SQLiteControlStore:
                 self._connection.rollback()
                 raise
 
-    def _load_snapshot_in_transaction(self, run_id: str) -> ControlStoreSnapshot:
+    def _load_snapshot_in_transaction(
+        self,
+        run_id: str,
+        *,
+        _verify_guidance: bool = True,
+    ) -> ControlStoreSnapshot:
         run_rows = self._connection.execute(
             "SELECT * FROM runs WHERE run_id = ?",
             (run_id,),
@@ -7116,6 +7662,92 @@ class SQLiteControlStore:
                     "status_fingerprint": "status_fingerprint",
                 },
             ),
+            run_guidance_snapshots=self._load_for_run(
+                RunGuidanceSnapshotRecord,
+                "run_guidance_snapshots",
+                run_id,
+                "snapshot_id",
+                {
+                    "run_id": "run_id",
+                    "snapshot_id": "snapshot_id",
+                    "workspace_id": "workspace_id",
+                    "predecessor_run_id": "predecessor_run_id",
+                    "schema_version": "schema_version",
+                    "reuse_requested": "reuse_requested",
+                    "successor_direction_fingerprint": (
+                        "successor_direction_fingerprint"
+                    ),
+                    "successor_run_contract_fingerprint": (
+                        "successor_run_contract_fingerprint"
+                    ),
+                    "candidate_set_fingerprint": "candidate_set_fingerprint",
+                    "selected_count": "selected_count",
+                    "omitted_count": "omitted_count",
+                    "snapshot_fingerprint": "snapshot_fingerprint",
+                    "snapshot_event_id": "snapshot_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "request_fingerprint": "request_fingerprint",
+                },
+            ),
+            run_guidance_selection_decisions=self._load_for_run(
+                RunGuidanceSelectionDecisionRecord,
+                "run_guidance_selection_decisions",
+                run_id,
+                "decision_id",
+                {
+                    "run_id": "run_id",
+                    "decision_id": "decision_id",
+                    "snapshot_id": "snapshot_id",
+                    "source_run_id": "source_run_id",
+                    "schema_version": "schema_version",
+                    "guidance_id": "guidance_id",
+                    "draft_revision": "draft_revision",
+                    "status_revision_id": "status_revision_id",
+                    "assessment_result_id": "assessment_result_id",
+                    "finding_id": "finding_id",
+                    "disposition_id": "disposition_id",
+                    "result_fingerprint": "result_fingerprint",
+                    "finding_fingerprint": "finding_fingerprint",
+                    "disposition_fingerprint": "disposition_fingerprint",
+                    "draft_fingerprint": "draft_fingerprint",
+                    "status_fingerprint": "status_fingerprint",
+                    "source_scope_fingerprint": "source_scope_fingerprint",
+                    "successor_scope_fingerprint": ("successor_scope_fingerprint"),
+                    "selected": "selected",
+                    "reason_code": "reason_code",
+                    "decision_fingerprint": "decision_fingerprint",
+                },
+            ),
+            run_guidance_snapshot_items=self._load_for_run(
+                RunGuidanceSnapshotItemRecord,
+                "run_guidance_snapshot_items",
+                run_id,
+                "position, item_id",
+                {
+                    "run_id": "run_id",
+                    "item_id": "item_id",
+                    "snapshot_id": "snapshot_id",
+                    "position": "position",
+                    "source_run_id": "source_run_id",
+                    "schema_version": "schema_version",
+                    "finalized_lineage_fingerprint": ("finalized_lineage_fingerprint"),
+                    "assessment_result_id": "assessment_result_id",
+                    "assessment_result_fingerprint": ("assessment_result_fingerprint"),
+                    "finding_id": "finding_id",
+                    "finding_fingerprint": "finding_fingerprint",
+                    "disposition_id": "disposition_id",
+                    "disposition_fingerprint": "disposition_fingerprint",
+                    "guidance_id": "guidance_id",
+                    "draft_revision": "draft_revision",
+                    "draft_fingerprint": "draft_fingerprint",
+                    "status_revision_id": "status_revision_id",
+                    "status_fingerprint": "status_fingerprint",
+                    "guidance_text": "guidance_text",
+                    "guidance_sha256": "guidance_sha256",
+                    "reuse_scope_fingerprint": "reuse_scope.scope_fingerprint",
+                    "item_fingerprint": "item_fingerprint",
+                },
+            ),
             checkout_revisions=self._load_for_run(
                 CheckoutRevisionRecord,
                 "checkout_revisions",
@@ -7262,6 +7894,8 @@ class SQLiteControlStore:
         self._verify_core_snapshot_structure(snapshot)
         self._verify_gate_repair_snapshot_structure(snapshot)
         self._verify_post_final_assessment_snapshot_structure(snapshot)
+        if _verify_guidance:
+            self._verify_guidance_snapshot_structure(snapshot)
         self._verify_checkout_snapshot_structure(snapshot)
         return snapshot
 
@@ -7714,6 +8348,101 @@ class SQLiteControlStore:
                     raise ControlStoreIntegrityError("control_store_integrity_invalid")
                 previous = status.status_revision_id
                 previous_status = status
+
+    def _verify_guidance_snapshot_structure(
+        self,
+        snapshot: ControlStoreSnapshot,
+    ) -> None:
+        """Verify one successor's frozen guidance graph and its historical inputs."""
+
+        graph = (
+            snapshot.run_guidance_snapshots,
+            snapshot.run_guidance_selection_decisions,
+            snapshot.run_guidance_snapshot_items,
+        )
+        successor_receipts = tuple(
+            item
+            for item in snapshot.transactions
+            if item.transaction_type == _GUIDANCE_SUCCESSOR_TRANSACTION_TYPE
+        )
+        if not any(graph):
+            if successor_receipts:
+                raise ControlStoreIntegrityError("control_store_integrity_invalid")
+            return
+        if len(snapshot.run_guidance_snapshots) != 1 or len(successor_receipts) != 1:
+            raise ControlStoreIntegrityError("control_store_integrity_invalid")
+        guidance_snapshot = snapshot.run_guidance_snapshots[0]
+        receipt = successor_receipts[0]
+        bindings = tuple(
+            item
+            for item in snapshot.run_contract_bindings
+            if item.accepted_transaction_id == receipt.transaction_id
+        )
+        transitions = tuple(
+            item
+            for item in snapshot.run_head_transitions
+            if item.accepted_transaction_id == receipt.transaction_id
+        )
+        events = {item.event_id: item for item in snapshot.events}
+        event = events.get(guidance_snapshot.snapshot_event_id)
+        decision_rows = self._connection.execute(
+            "SELECT position,decision_id FROM run_guidance_snapshot_decisions "
+            "WHERE run_id=? AND snapshot_id=? ORDER BY position",
+            (snapshot.run.run_id, guidance_snapshot.snapshot_id),
+        ).fetchall()
+        item_rows = self._connection.execute(
+            "SELECT position,item_id FROM run_guidance_snapshot_selected_items "
+            "WHERE run_id=? AND snapshot_id=? ORDER BY position",
+            (snapshot.run.run_id, guidance_snapshot.snapshot_id),
+        ).fetchall()
+        if (
+            guidance_snapshot.run_id != snapshot.run.run_id
+            or guidance_snapshot.workspace_id != snapshot.workspace_id
+            or guidance_snapshot.accepted_transaction_id != receipt.transaction_id
+            or len(bindings) != 1
+            or len(transitions) != 1
+            or guidance_snapshot.request_fingerprint != bindings[0].request_fingerprint
+            or transitions[0].predecessor_run_id != guidance_snapshot.predecessor_run_id
+            or transitions[0].successor_run_id != snapshot.run.run_id
+            or transitions[0].reason_code != "human_started_successor"
+            or transitions[0].successor_disposition != "reference"
+            or transitions[0].request_fingerprint
+            != guidance_snapshot.request_fingerprint
+            or event is None
+            or event.run_id != snapshot.run.run_id
+            or event.transaction_id != receipt.transaction_id
+            or event.event_type != "run_guidance_snapshot_frozen"
+            or event.core_run_binding is not None
+            or [row[0] for row in decision_rows] != list(range(len(decision_rows)))
+            or [str(row[1]) for row in decision_rows] != guidance_snapshot.decision_ids
+            or [row[0] for row in item_rows] != list(range(len(item_rows)))
+            or [str(row[1]) for row in item_rows] != guidance_snapshot.selected_item_ids
+            or [item.snapshot_id for item in snapshot.run_guidance_selection_decisions]
+            != [
+                guidance_snapshot.snapshot_id
+                for _item in snapshot.run_guidance_selection_decisions
+            ]
+            or [item.snapshot_id for item in snapshot.run_guidance_snapshot_items]
+            != [
+                guidance_snapshot.snapshot_id
+                for _item in snapshot.run_guidance_snapshot_items
+            ]
+            or {item.snapshot_id for item in receipt.run_guidance_snapshots}
+            != {guidance_snapshot.snapshot_id}
+            or {item.decision_id for item in receipt.run_guidance_selection_decisions}
+            != {item.decision_id for item in snapshot.run_guidance_selection_decisions}
+            or {item.item_id for item in receipt.run_guidance_snapshot_items}
+            != {item.item_id for item in snapshot.run_guidance_snapshot_items}
+        ):
+            raise ControlStoreIntegrityError("control_store_integrity_invalid")
+        if not self._guidance_snapshot_content_is_exact(
+            snapshot=guidance_snapshot,
+            decisions=snapshot.run_guidance_selection_decisions,
+            items=snapshot.run_guidance_snapshot_items,
+            successor_binding=bindings[0],
+            cutoff_revision=receipt.prior_revision,
+        ):
+            raise ControlStoreIntegrityError("control_store_integrity_invalid")
 
     def _verify_checkout_snapshot_structure(
         self, snapshot: ControlStoreSnapshot
@@ -8217,12 +8946,17 @@ class SQLiteControlStore:
             initialization is None
             or initialization.run_id != snapshot.run.run_id
             or initialization.transaction_type
-            not in {"core-v2-initialize", "core-v2-run-reset"}
+            not in {
+                "core-v2-initialize",
+                "core-v2-run-reset",
+                _GUIDANCE_SUCCESSOR_TRANSACTION_TYPE,
+            }
             or [item.run_id for item in initialization.run_contract_bindings]
             != [snapshot.run.run_id]
             or binding.initialization_event_id not in initialization.event_ids
             or (
-                initialization.transaction_type == "core-v2-run-reset"
+                initialization.transaction_type
+                in {"core-v2-run-reset", _GUIDANCE_SUCCESSOR_TRANSACTION_TYPE}
                 and len(initialization.run_head_transitions) != 1
             )
             or (
@@ -8231,6 +8965,32 @@ class SQLiteControlStore:
             )
         ):
             raise ControlStoreIntegrityError("core_run_relation_invalid")
+        if initialization.run_head_transitions:
+            head_transition_id = initialization.run_head_transitions[
+                0
+            ].head_transition_id
+            matching_head_transitions = tuple(
+                item
+                for item in snapshot.run_head_transitions
+                if item.head_transition_id == head_transition_id
+            )
+            expected_transition = (
+                ("run_reset", "non_reference")
+                if initialization.transaction_type == "core-v2-run-reset"
+                else ("human_started_successor", "reference")
+            )
+            if (
+                len(matching_head_transitions) != 1
+                or matching_head_transitions[0].successor_run_id != snapshot.run.run_id
+                or matching_head_transitions[0].accepted_transaction_id
+                != initialization.transaction_id
+                or (
+                    matching_head_transitions[0].reason_code,
+                    matching_head_transitions[0].successor_disposition,
+                )
+                != expected_transition
+            ):
+                raise ControlStoreIntegrityError("core_run_relation_invalid")
         init_event = events.get(binding.initialization_event_id)
         if (
             init_event is None
@@ -8245,7 +9005,8 @@ class SQLiteControlStore:
                 )
             )
             or (
-                initialization.transaction_type == "core-v2-run-reset"
+                initialization.transaction_type
+                in {"core-v2-run-reset", _GUIDANCE_SUCCESSOR_TRANSACTION_TYPE}
                 and (
                     init_event.event_type != "run_initialized"
                     or init_event.core_run_binding is not None
@@ -9553,6 +10314,24 @@ class SQLiteControlStore:
                 ),
             ),
             (
+                "transaction_run_guidance_snapshots",
+                ("snapshot_id",),
+                tuple((item.snapshot_id,) for item in receipt.run_guidance_snapshots),
+            ),
+            (
+                "transaction_run_guidance_selection_decisions",
+                ("decision_id",),
+                tuple(
+                    (item.decision_id,)
+                    for item in receipt.run_guidance_selection_decisions
+                ),
+            ),
+            (
+                "transaction_run_guidance_snapshot_items",
+                ("item_id",),
+                tuple((item.item_id,) for item in receipt.run_guidance_snapshot_items),
+            ),
+            (
                 "transaction_checkout_revisions",
                 ("checkout_revision_id",),
                 tuple(
@@ -9886,12 +10665,13 @@ class SQLiteControlStore:
         self._verify_run_head_transition_chain()
         self._verify_core_relation_coverage()
         self._verify_pr4b_relation_coverage()
+        self._verify_guidance_snapshot_relation_coverage()
         # Only reached when every check above passed; each one raises instead of
         # returning, so a failed verification never records a token.
         self._verified_ledger_token = token
 
     def _verify_run_head_transition_chain(self) -> None:
-        """Verify that reset transitions form one acyclic chain ending at head."""
+        """Verify that run-successor transitions form one chain ending at head."""
 
         run_ids = {
             str(row[0])
@@ -10360,6 +11140,55 @@ class SQLiteControlStore:
             approval_owners[(row[0], row[1])] != str(row[2]) for row in approval_rows
         ):
             raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
+
+    def _verify_guidance_snapshot_relation_coverage(self) -> None:
+        """Prove every guidance snapshot row has its successor Receipt owner."""
+
+        snapshot_relations = self._connection.execute(
+            "SELECT run_id,transaction_id,snapshot_id "
+            "FROM transaction_run_guidance_snapshots"
+        ).fetchall()
+        snapshot_owners = {(row[0], row[2]): str(row[1]) for row in snapshot_relations}
+        if len(snapshot_owners) != len(snapshot_relations):
+            raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
+
+        snapshot_rows = self._connection.execute(
+            "SELECT run_id,snapshot_id,accepted_transaction_id "
+            "FROM run_guidance_snapshots"
+        ).fetchall()
+        snapshot_keys = {(row[0], row[1]) for row in snapshot_rows}
+        if snapshot_keys != set(snapshot_owners) or any(
+            snapshot_owners[(row[0], row[1])] != str(row[2]) for row in snapshot_rows
+        ):
+            raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
+
+        for relation_table, domain_table, identity_column in (
+            (
+                "transaction_run_guidance_selection_decisions",
+                "run_guidance_selection_decisions",
+                "decision_id",
+            ),
+            (
+                "transaction_run_guidance_snapshot_items",
+                "run_guidance_snapshot_items",
+                "item_id",
+            ),
+        ):
+            relation_rows = self._connection.execute(
+                f"SELECT run_id,transaction_id,{identity_column} FROM {relation_table}"
+            ).fetchall()
+            owners = {(row[0], row[2]): str(row[1]) for row in relation_rows}
+            if len(owners) != len(relation_rows):
+                raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
+            domain_rows = self._connection.execute(
+                f"SELECT run_id,{identity_column},snapshot_id FROM {domain_table}"
+            ).fetchall()
+            domain_keys = {(row[0], row[1]) for row in domain_rows}
+            if domain_keys != set(owners) or any(
+                owners[(row[0], row[1])] != snapshot_owners.get((row[0], row[2]))
+                for row in domain_rows
+            ):
+                raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
 
     def _verify_source_graph_record(self, source: AcceptedSourceRecord) -> None:
         content_revision = self._artifact_revision_for(

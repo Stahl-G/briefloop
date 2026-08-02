@@ -14,6 +14,7 @@ from .next_action import classify_core_run_next_action
 from .publication import CheckoutPublicationEngine, preflight_publication
 from .recovery import CoreRunRecoveryService
 from .service import CoreRunService
+from .successor import CoreRunSuccessorService
 from .terminal import CoreRunTerminalService
 from .verifier import CoreRunDomainVerifier
 
@@ -27,6 +28,7 @@ __all__ = [
     "CoreRunResult",
     "CoreRunRecoveryService",
     "CoreRunService",
+    "CoreRunSuccessorService",
     "CoreRunTerminalService",
     "GateEvaluationService",
     "RunIntegrityService",

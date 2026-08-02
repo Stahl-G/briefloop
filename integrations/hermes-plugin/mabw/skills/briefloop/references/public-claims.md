@@ -8,10 +8,11 @@ research summaries, or public experiment conclusions.
 - BriefLoop records where claims entered the workflow.
 - BriefLoop provides deterministic gates, ledgers, events, repair transactions,
   and archived control records.
-- MABW-080 scorecards can record deterministic readiness fields and imported
-  human or llm-assisted-human assessment. BriefLoop-090 reference runs may use
-  this archived tooling only when a fresh experiment is explicitly run and
-  documented.
+- Archived MABW-080 scorecards and BriefLoop-090 reference runs may be
+  described as historical records. Their command tooling is retired and is not
+  a current experiment or product path.
+- BriefLoop can explicitly start a normal same-workspace successor and freeze
+  compatible active-approved Human guidance for Analyst/Editor use.
 - A run or experiment observed a specific pattern under stated controls.
 
 ## Forbidden Claim Shapes
@@ -22,6 +23,10 @@ Do not say:
 - BriefLoop eliminates hallucinations.
 - BriefLoop makes reports automatically ready to send.
 - Improvement Memory improves output quality as a general fact.
+- BriefLoop learns automatically, guarantees improvement, or lets approval
+  implicitly change a later run.
+- Guidance is evidence, deterministic policy, a Gate rule, or delivery/Core
+  authority.
 - Python judged prose quality, semantic manifestation, or factual regression.
 - Planned support-sufficiency structures are implemented.
 
@@ -35,6 +40,9 @@ Use wording like:
 - "pilot-level observation"
 - "formal denominator excludes invalid or unbound runs"
 - "not a management-ready delivery claim" for `auditable_brief`
+- "explicit Human successor opt-in"
+- "Analyst/Editor presentation context only"
+- "utility NOT MEASURED"
 
 ## RC-Phase Wording
 

@@ -33,21 +33,27 @@ This page explains the public architecture migration from older Python-pipeline 
   as Tavily success, and legacy source commands are not a fallback. Synthetic
   transport is tested; live results, cost, coverage, and success rate are NOT
   MEASURED.
-- Schema 12 adds append-only post-final assessment-series relations for fresh
-  current-schema workspaces. Older development SQLite workspaces are
-  unsupported when the schema changes; create a fresh workspace. There is no
-  in-product development-schema upgrade path.
+- Schema 13 adds the normal successor-run and immutable approved-guidance
+  snapshot relations for fresh current-schema workspaces. Older development
+  SQLite workspaces are unsupported when the schema changes; create a fresh
+  workspace. There is no in-product development-schema upgrade path.
 - Legacy Improvement JSON/JSONL remains inert. Experimental post-final review
   supports multiple independently Human-authorized append-only assessments on
   one finalized lineage, explicit result selection, Human accept/reject/defer,
   Human-edited guidance drafts, and separate approval/status revisions through
   SQLite Receipts. Generation 2 and later are explicit only. Static HTML stays
   read-only; only the secured loopback Review Session accepts strict Human
-  commands. No approved guidance is consumed by later runs until the separate
-  snapshot/precedence unit ships.
-- Retained legacy commands and assets may remain in the tree until the separate
-  deletion unit, but the authority guard prevents them from acting on a SQLite
-  workspace or continuing a JSON-only workspace.
+  commands. A Human may separately run `briefloop runtime successor-start` with
+  a new strict `RunDirection`, new run ID, and the explicit
+  `--include-approved-guidance` opt-in. One Core transaction creates the normal
+  same-workspace successor and freezes the complete compatible, active-approved
+  guidance set for Analyst/Editor only. Current direction and evidence govern;
+  guidance is not a fact, source, Claim Ledger input, Gate rule, repair command,
+  finalize/delivery authority, or Core policy. Utility is NOT MEASURED.
+- Legacy Improvement files and mutators, fast-rerun/080 commands, and the
+  Semantic Assessment Report producer/projection/adjudication stack are
+  retired. The optional Semantic Assessment Report schema and reference
+  validation remain non-blocking. None is a fallback for a SQLite workspace.
 - Do not restore a Python full-pipeline as the standard generation path.
 - Do not treat roadmap goals as implemented modules.
 - Do not move hard constraints into user notes when validators or audit checks should enforce them.

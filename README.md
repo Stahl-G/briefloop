@@ -155,9 +155,15 @@ Agents can observe and propose. Only strict requests accepted by deterministic
 services change the Store, and delivery stays human-controlled. On the
 unreleased development main, Experimental post-final Human review can record
 accept/reject/defer, Human-edited guidance, and a separate approval Receipt in
-SQLite. Later runs do not consume that guidance yet; the Improvement Ledger
-surface is not shipped yet as a complete next-run loop. Released v0.14.0 truth:
-the Improvement Ledger surface is not shipped yet.
+SQLite. A Human can then explicitly start a normal successor in the same
+workspace with `briefloop runtime successor-start`, supplying the new
+`RunDirection` and opting in with `--include-approved-guidance`. One
+deterministic transaction freezes only compatible, active Human-approved
+guidance for the successor's Analyst and Editor. The same immutable context is
+advisory only: current direction and evidence govern, and guidance has no Claim
+Ledger, Gate, finalize, delivery, repair, or Core authority. Utility is NOT
+MEASURED. Released v0.14.0 does not include this development-main successor
+path or a Store-native reusable-guidance surface.
 
 ---
 
@@ -380,9 +386,13 @@ post-final review supports multiple append-only, independently Human-authorized
 assessments on one finalized lineage, with explicit result selection for the
 secured local Review Session and append-only Human dispositions, edited drafts,
 and separate guidance approvals. Generation 2 and later are explicit only;
-policy drift never auto-runs or redials. Utility is NOT MEASURED; findings never
-affect Gate/finalize/delivery/Core truth, and approved guidance is not consumed
-by later runs.
+policy drift never auto-runs or redials. A separate explicit Human command can
+start a normal same-workspace successor and atomically freeze compatible,
+active approved guidance when `--include-approved-guidance` is present. Only
+Analyst and Editor receive that immutable context. Utility is NOT MEASURED;
+guidance never supplies evidence or changes Claim Ledger, Gate, finalize,
+delivery, repair, or Core truth. There is no automatic learning or implicit
+next-run reuse.
 
 Released v0.14.0 entrypoints:
 
@@ -412,6 +422,11 @@ Development-main-only LAJ continuation controls are explicit and Store-native:
   --policy-revision-id <id> --human-actor-id <id> --human-request-id <id>
   --assessment-purpose <purpose>` emits a complete non-secret request for
   `assessment-run` without SQL, internal fingerprints, credentials, or writes.
+- `briefloop runtime successor-start --workspace <path> --direction-json
+  '<strict RunDirection JSON>' --run-id <new-run-id>
+  --include-approved-guidance` explicitly starts a normal successor and opts
+  into compatible active-approved guidance. Omit the final flag for an empty
+  snapshot; neither form calls a provider or role.
 
 Old development workspaces are unsupported when the Store schema changes;
 create a fresh workspace on the current schema. BriefLoop does not ship an
@@ -459,13 +474,14 @@ include:
   approval, recommended authoritative actions, or next-action authority, and
   evaluator efficacy is not measured
 - reader-quality warning/projection surfaces for template conformance,
-  materiality selection, support-calibrated wording, citation profiles,
-  coverage/omission, and scoped final-abstract diagnostics
+  materiality selection, citation profiles, coverage/omission, and scoped
+  final-abstract diagnostics
 - trajectory-regulation decision narrowing for repeated retry/repair/blocker
   loops
-- proposal-only Semantic Support Auditor surfaces and human adjudication records
-  that do not create support truth, gates, delivery approval, or release
-  authority
+- optional Semantic Assessment Report schema and reference validation only;
+  its producer, status projection, and adjudication writer are retired, and the
+  remaining contract creates no support truth, gates, delivery approval, or
+  release authority
 - public-safe reference, synthetic regression, minimal comparative evaluation,
   launch smoke, and release checklist guardrails
 

@@ -26,6 +26,7 @@ from multi_agent_brief.control_store.errors import ControlStoreError
 from multi_agent_brief.control_store.serialization import canonical_json_bytes
 from multi_agent_brief.control_store.sqlite_store import SQLiteControlStore
 from multi_agent_brief.core_run_v2.next_action import classify_core_run_next_action
+from multi_agent_brief.core_run_v2.errors import CoreRunError
 from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
 from multi_agent_brief.product.post_final_assessment import (
     PostFinalAssessmentError,
@@ -40,7 +41,7 @@ from multi_agent_brief.product.post_final_assessment_projection import (
     build_post_final_assessment_projection,
 )
 from multi_agent_brief.runtime_host_v2.projections import (
-    build_finalized_local_review_projection,
+    build_finalized_local_review_projection_from_history,
 )
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
 
@@ -51,6 +52,7 @@ POST_FINAL_GUIDANCE_DRAFT_INPUT_SCHEMA = "briefloop.post_final_guidance_draft_in
 POST_FINAL_GUIDANCE_STATUS_INPUT_SCHEMA = (
     "briefloop.post_final_guidance_status_input.v1"
 )
+NEXT_RUN_CONSUMPTION_STATUS = "explicit_opt_in_successor_only"
 
 
 class PostFinalReviewError(RuntimeError):
@@ -115,10 +117,13 @@ class PostFinalReviewService:
         workspace: str | Path,
         assessment_result_id: str,
         assessment_result_fingerprint: str,
+        *,
+        allow_historical: bool = False,
     ) -> None:
         self.workspace = Path(workspace).expanduser().resolve()
         self.assessment_result_id = assessment_result_id
         self.assessment_result_fingerprint = assessment_result_fingerprint
+        self.allow_historical = allow_historical
 
     @property
     def _database_path(self) -> Path:
@@ -126,29 +131,60 @@ class PostFinalReviewService:
 
     def _load(self) -> dict[str, Any]:
         try:
-            facts = build_finalized_local_review_projection(self.workspace).facts
             with SQLiteControlStore.open(self._database_path) as store:
                 history = store.load_history()
-                verified = CoreRunDomainVerifier().verify_loaded_history(
-                    history, facts.run_id
-                )
-                action = _require_current_finalized_action(
-                    facts, classify_core_run_next_action(verified)
-                )
-                snapshot = history.snapshot_at_revision(
-                    facts.run_id, history.store_revision
-                )
-                series = resolve_post_final_assessment_series(
-                    history, snapshot, facts, action
-                )
+            selected = [
+                item
+                for run_snapshot in history.snapshots
+                for item in run_snapshot.post_final_assessment_results
+                if item.assessment_result_id == self.assessment_result_id
+            ]
+            if len(selected) != 1:
+                raise PostFinalReviewError("post_final_review_selection_invalid")
+            selected_result = selected[0]
+            if selected_result.result_fingerprint != self.assessment_result_fingerprint:
+                raise PostFinalReviewError("post_final_review_binding_invalid")
+            if not self.allow_historical:
+                current_heads = {
+                    item.workspace_run_head.current_run_id
+                    for item in history.snapshots
+                    if item.workspace_run_head is not None
+                }
+                if current_heads != {selected_result.run_id}:
+                    raise PostFinalReviewError(
+                        "post_final_review_current_head_required"
+                    )
+            facts = build_finalized_local_review_projection_from_history(
+                self.workspace,
+                history,
+                run_id=selected_result.run_id,
+                require_current_head=False,
+            ).facts
+            verified = CoreRunDomainVerifier().verify_loaded_history(
+                history,
+                facts.run_id,
+                require_current_head=False,
+            )
+            action = _require_current_finalized_action(
+                facts, classify_core_run_next_action(verified)
+            )
+            snapshot = history.snapshot_at_revision(
+                facts.run_id, history.store_revision
+            )
+            series = resolve_post_final_assessment_series(
+                history, snapshot, facts, action
+            )
             projection = build_post_final_assessment_projection(
                 self.workspace,
                 assessment_result_id=self.assessment_result_id,
                 assessment_result_fingerprint=self.assessment_result_fingerprint,
+                loaded_history=history,
             )
         except (
             ControlStoreError,
+            CoreRunError,
             PostFinalAssessmentError,
+            PostFinalReviewError,
             RuntimeHostError,
             OSError,
             ValueError,
@@ -753,7 +789,7 @@ class PostFinalReviewService:
             "dispositions": dispositions,
             "guidance_drafts": drafts,
             "guidance_statuses": statuses,
-            "next_run_consumption": "not_shipped",
+            "next_run_consumption": NEXT_RUN_CONSUMPTION_STATUS,
             "provider_calls": 0,
         }
 
@@ -765,6 +801,7 @@ __all__ = [
     "POST_FINAL_DISPOSITION_INPUT_SCHEMA",
     "POST_FINAL_GUIDANCE_DRAFT_INPUT_SCHEMA",
     "POST_FINAL_GUIDANCE_STATUS_INPUT_SCHEMA",
+    "NEXT_RUN_CONSUMPTION_STATUS",
     "PostFinalReviewError",
     "PostFinalReviewService",
 ]

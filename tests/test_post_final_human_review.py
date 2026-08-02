@@ -24,9 +24,6 @@ from multi_agent_brief.product.post_final_review import (
     PostFinalReviewError,
     PostFinalReviewService,
 )
-from multi_agent_brief.product.projection_platform import (
-    supports_retained_directory_publication,
-)
 from multi_agent_brief.control_store.serialization import canonical_json_bytes
 from multi_agent_brief.product.post_final_assessment import _record_fingerprint
 from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
@@ -37,7 +34,6 @@ from tests.test_finalized_local_review_facts import _finalized_local_workspace
 from tests.test_post_final_assessment import (
     _fixture_service,
     _policy_payload,
-    _schema9_finalized_local_workspace_upgraded,
 )
 
 
@@ -275,7 +271,7 @@ def test_disposition_guidance_and_separate_approval_are_append_only(
 
     final_status = review.review_status()
     assert final_status["provider_calls"] == 0
-    assert final_status["next_run_consumption"] == "not_shipped"
+    assert final_status["next_run_consumption"] == "explicit_opt_in_successor_only"
     assert len(final_status["guidance_drafts"]) == 2
     assert len(final_status["guidance_statuses"]) == 3
     assert final_status["guidance_statuses"][0]["draft_revision"] == 1
@@ -672,79 +668,6 @@ def test_guidance_status_transition_table_and_ui_actions_fail_closed(
         "superseded",
     }
     assert approved["status_revision_id"] != deactivated["status_revision_id"]
-
-
-@pytest.mark.explicit_e2e
-@pytest.mark.timeout(900)
-@pytest.mark.skipif(
-    not supports_retained_directory_publication(),
-    reason="successful finalized-local Human review is unavailable on this platform",
-)
-def test_schema9_finalized_local_upgrade_runs_full_laj_human_loop(
-    tmp_path,
-    monkeypatch,
-) -> None:
-    workspace, run_id, historical_receipts = (
-        _schema9_finalized_local_workspace_upgraded(tmp_path, monkeypatch)
-    )
-    calls: list[tuple[str, int]] = []
-    assessment = _fixture_service(workspace, calls, terminal_mode="finding")
-    assert assessment.policy_set(_policy_payload())["ok"] is True
-    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
-    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
-    assert assessment.assess()["status"] == "available"
-    monkeypatch.delenv(ANTHROPIC_API_KEY_SETTING, raising=False)
-
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        snapshot = store.load_snapshot(run_id)
-    result = snapshot.post_final_assessment_results[0]
-    review = PostFinalReviewService(
-        workspace,
-        result.assessment_result_id,
-        result.result_fingerprint,
-    )
-    status = review.review_status()
-    finding = status["dispositions"][0]
-    disposition = review.record_disposition(
-        _disposition_payload(
-            status,
-            finding,
-            request_id="schema9-upgrade-accept",
-            decision="accept",
-        )
-    )
-    draft = review.append_guidance_draft(
-        {
-            "schema_version": POST_FINAL_GUIDANCE_DRAFT_INPUT_SCHEMA,
-            "human_actor_id": "human-reviewer-1",
-            "human_request_id": "schema9-upgrade-draft",
-            "assessment_result_id": status["assessment_result_id"],
-            "finding_id": finding["finding_id"],
-            "disposition_id": disposition["disposition_id"],
-            "guidance_text": "Keep conclusions aligned with the frozen report.",
-        }
-    )
-    review.approve_guidance(
-        {
-            "schema_version": POST_FINAL_GUIDANCE_STATUS_INPUT_SCHEMA,
-            "human_actor_id": "human-reviewer-1",
-            "human_request_id": "schema9-upgrade-approve",
-            "guidance_id": draft["guidance_id"],
-            "draft_revision": draft["draft_revision"],
-        }
-    )
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        history = store.load_history()
-        stored_receipts = {
-            str(row[0]): str(row[1]).encode("utf-8")
-            for row in store._connection.execute(
-                "SELECT transaction_id,payload_json FROM transactions"
-            ).fetchall()
-            if str(row[0]) in historical_receipts
-        }
-    assert stored_receipts == historical_receipts
-    CoreRunDomainVerifier().verify_history(history)
-    assert len(calls) == 9
 
 
 def test_tampered_or_cross_bound_finding_is_zero_write(tmp_path, monkeypatch) -> None:

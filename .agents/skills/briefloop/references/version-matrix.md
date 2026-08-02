@@ -43,10 +43,17 @@ quality guarantee.
 The local static four-tab HTML and init web wizard are read-only interaction
 surfaces in the v0.14.0 release target. Brief shows the verified Store-bound
 `finalized_local` reader, Quality is deterministic, LAJ is optional advisory
-and NOT MEASURED, and Improvement is unavailable because no Store-native
-writer/lifecycle is active. They do not create authority, approval, packaging,
-delivery, publication, persistent-server behavior, automatic evaluation, or
-learning.
+and NOT MEASURED, and the released Improvement tab has no Store-native
+writer/lifecycle. They do not create authority, approval, packaging, delivery,
+publication, persistent-server behavior, automatic evaluation, or learning.
+
+On unreleased development main, Store-native post-final Human review records
+disposition, edited guidance, and separate approval/status. A separate explicit
+`briefloop runtime successor-start` transaction can freeze compatible
+active-approved guidance for Analyst/Editor only when
+`--include-approved-guidance` is present. Current direction and evidence govern;
+utility is NOT MEASURED and guidance has no Claim Ledger, Gate, repair,
+finalize/delivery, or Core authority.
 
 ## Unsupported And Retired
 
@@ -56,6 +63,8 @@ learning.
 - legacy handoff, state, gates, repair, finalize, delivery, controls,
   provenance, feedback, improvement, and source-mutator commands on SQLite
 - `eval-cases` and `experiments 080`
+- legacy Improvement JSON/JSONL files, `improve` mutators, fast-rerun, and the
+  Semantic Assessment Report producer/projection/adjudication stack
 - direct agent writes to SQL, receipts, ledger rows, canonical artifacts,
   frozen revisions, approval, gates, or delivery
 - reconstructing legality from status, HTML, Markdown, JSON/JSONL, Quality

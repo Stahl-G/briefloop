@@ -5,7 +5,7 @@
      tab 1 brief    — exact Store-bound local reader Markdown
      tab 2 quality  — deterministic Store projection (green = pass only)
      tab 3 review   — LAJ semantic advisory view (purple; never PASS wording)
-     tab 4 feedback — Store-native Human guidance state (next-run use unshipped)
+     tab 4 feedback — Store-native Human guidance state (explicit successor opt-in)
    Static exports remain read-only. A secured loopback Review Session may expose
    strict Human commands; DOM uses createElement/textContent only.
    ========================================================================== */
@@ -66,11 +66,11 @@
             reason_codes_title: "reason_codes",
             disclaimer_title: "免责声明",
             fb_title: "反馈与下一轮改进",
-            fb_sub: "Improvement Ledger 尚未提供 Store 原生的权威记录位置；本页如实呈现不可用状态，不臆造任何记录。",
-            fb_available_sub: "以下为 Store 原生、人工编辑并单独批准的 guidance；下一轮消费尚未实现。",
+            fb_sub: "当前报告或所选 assessment 暂无可展示的 Store-qualified 人类审阅或已批准 guidance；本页不会臆造记录。",
+            fb_available_sub: "以下为 Store 原生、人工编辑并单独批准的 guidance；仅在人类显式选择复用并启动后继 run 时消费。",
             recorded_title: "已记录的反馈",
             recorded_none: "（暂无记录）",
-            il_unavailable: "Improvement Ledger 不可用：尚无权威记录面。",
+            il_unavailable: "当前报告或所选 assessment 暂无 Store-qualified 人类审阅或已批准 guidance。",
             disposition_title: "人工处置",
             disposition_accept: "接受",
             disposition_reject: "拒绝",
@@ -147,11 +147,11 @@
             reason_codes_title: "reason_codes",
             disclaimer_title: "Disclaimer",
             fb_title: "Feedback & next-run improvement",
-            fb_sub: "No Store-native authoritative home for the Improvement Ledger exists yet; this page reports that honestly and fabricates nothing.",
-            fb_available_sub: "Store-native Human-edited, separately approved guidance is shown below; next-run consumption is not shipped.",
+            fb_sub: "No Store-qualified Human review or approved guidance is available to display for this report or selected assessment; this page fabricates nothing.",
+            fb_available_sub: "Store-native Human-edited, separately approved guidance is shown below; it is consumed only by a Human-started successor with explicit reuse opt-in.",
             recorded_title: "Recorded feedback",
             recorded_none: "(no records)",
-            il_unavailable: "Improvement Ledger unavailable: no authoritative record surface exists.",
+            il_unavailable: "No Store-qualified Human review or approved guidance is available for this report or selected assessment.",
             disposition_title: "Human disposition",
             disposition_accept: "Accept",
             disposition_reject: "Reject",

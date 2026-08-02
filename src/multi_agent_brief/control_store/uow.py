@@ -58,6 +58,9 @@ from multi_agent_brief.contracts.v2 import (
     RunSourceAcquisitionAttemptAuthorization,
     RunSourceDiscoveryAuthorization,
     RunIdentity,
+    RunGuidanceSelectionDecisionRecord,
+    RunGuidanceSnapshotItemRecord,
+    RunGuidanceSnapshotRecord,
     RunIntegrityRecord,
     RunArchiveArtifactBinding,
     RunArchiveRecord,
@@ -207,6 +210,11 @@ class ControlUnitOfWork:
         self._post_final_guidance_statuses: dict[
             str, PostFinalGuidanceStatusRevision
         ] = {}
+        self._run_guidance_snapshots: dict[str, RunGuidanceSnapshotRecord] = {}
+        self._run_guidance_selection_decisions: dict[
+            str, RunGuidanceSelectionDecisionRecord
+        ] = {}
+        self._run_guidance_snapshot_items: dict[str, RunGuidanceSnapshotItemRecord] = {}
         self._checkout_revisions: dict[str, CheckoutRevisionRecord] = {}
         self._checkout_revision_members: dict[
             tuple[str, int], CheckoutRevisionMember
@@ -761,6 +769,47 @@ class ControlUnitOfWork:
             snapshot,
         )
 
+    def put_run_guidance_snapshot(self, record: RunGuidanceSnapshotRecord) -> None:
+        snapshot = self._snapshot_record(record, RunGuidanceSnapshotRecord)
+        self._require_run(snapshot)
+        if (
+            snapshot.workspace_id != self._store.workspace_id
+            or snapshot.accepted_transaction_id != self.transaction_id
+        ):
+            raise ControlStoreConflict("relational_integrity_conflict")
+        self._put_unique(
+            self._run_guidance_snapshots,
+            snapshot.snapshot_id,
+            snapshot,
+        )
+
+    def put_run_guidance_selection_decision(
+        self,
+        record: RunGuidanceSelectionDecisionRecord,
+    ) -> None:
+        snapshot = self._snapshot_record(
+            record,
+            RunGuidanceSelectionDecisionRecord,
+        )
+        self._require_run(snapshot)
+        self._put_unique(
+            self._run_guidance_selection_decisions,
+            snapshot.decision_id,
+            snapshot,
+        )
+
+    def put_run_guidance_snapshot_item(
+        self,
+        record: RunGuidanceSnapshotItemRecord,
+    ) -> None:
+        snapshot = self._snapshot_record(record, RunGuidanceSnapshotItemRecord)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._run_guidance_snapshot_items,
+            snapshot.item_id,
+            snapshot,
+        )
+
     def put_checkout_revision(self, record: CheckoutRevisionRecord) -> None:
         snapshot = self._snapshot_record(record, CheckoutRevisionRecord)
         self._require_run(snapshot)
@@ -1056,6 +1105,18 @@ class ControlUnitOfWork:
             "post_final_guidance_statuses": [
                 self._record_payload(self._post_final_guidance_statuses[key])
                 for key in sorted(self._post_final_guidance_statuses)
+            ],
+            "run_guidance_snapshots": [
+                self._record_payload(self._run_guidance_snapshots[key])
+                for key in sorted(self._run_guidance_snapshots)
+            ],
+            "run_guidance_selection_decisions": [
+                self._record_payload(self._run_guidance_selection_decisions[key])
+                for key in sorted(self._run_guidance_selection_decisions)
+            ],
+            "run_guidance_snapshot_items": [
+                self._record_payload(self._run_guidance_snapshot_items[key])
+                for key in sorted(self._run_guidance_snapshot_items)
             ],
             "checkout_revisions": [
                 self._record_payload(self._checkout_revisions[key])

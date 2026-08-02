@@ -49,6 +49,8 @@ from multi_agent_brief.contracts.v2 import (
     RuntimeAdapterBinding,
     RuntimeSourceRouteBinding,
     RuntimeWebSearchAcquisitionSpec,
+    RunDirection,
+    RunSuccessorStartRequest,
     ScreenedCandidatesProposal,
     SourceCommitRequest,
     SourceAcquisitionAttemptAuthorizeRequest,
@@ -90,6 +92,8 @@ from multi_agent_brief.core_run_v2.policy import (
 )
 from multi_agent_brief.core_run_v2.publication_platform import capability_profile
 from multi_agent_brief.core_run_v2.service import CoreRunService
+from multi_agent_brief.core_run_v2.service import workspace_input_fingerprints
+from multi_agent_brief.core_run_v2.successor import CoreRunSuccessorService
 from multi_agent_brief.core_run_v2.recovery import (
     CoreRunRecoveryService,
     classify_recovery_legality,
@@ -126,6 +130,8 @@ from multi_agent_brief.outputs.reader_projection import (
 )
 
 from .contracts import (
+    FrozenGuidanceContext,
+    FrozenGuidanceItem,
     FrozenSourceManifestEntry,
     GateRepairStartRequest,
     HumanSourceMaterialRequest,
@@ -860,6 +866,164 @@ class RuntimeHostService:
             ),
         )
 
+    def start_successor(
+        self,
+        *,
+        successor_run_id: str,
+        run_direction: RunDirection,
+        include_approved_guidance: bool,
+    ):
+        """Start one normal reference successor from the exact finalized head."""
+
+        current = initialize_or_open_runtime(
+            self.workspace,
+            adapter_loader=self._adapter_loader,
+        )
+        replay_request = self._existing_successor_request(
+            successor_run_id=successor_run_id,
+            run_direction=run_direction,
+            include_approved_guidance=include_approved_guidance,
+        )
+        if replay_request is not None:
+            return self._apply_successor_request(replay_request)
+        action = current.action
+        if (
+            action.action_kind != "complete"
+            or action.effect_kind != "finalized_local"
+            or action.reason_code != "local_finalization_complete"
+        ):
+            raise RuntimeHostError("successor_run_not_ready")
+        snapshot = current.verified.snapshot
+        head = snapshot.workspace_run_head
+        if head is None or head.current_run_id != snapshot.run.run_id:
+            raise RuntimeHostError("control_store_integrity_invalid")
+        try:
+            workspace_sha, sources_sha = workspace_input_fingerprints(self.workspace)
+            request_id = derived_id(
+                "REQ-HOST-SUCCESSOR",
+                snapshot.workspace_id,
+                snapshot.run.run_id,
+                successor_run_id,
+            )
+            payload = {
+                "schema_version": RunSuccessorStartRequest.schema_id,
+                "request_id": request_id,
+                "predecessor_run_id": snapshot.run.run_id,
+                "successor_run_id": successor_run_id,
+                "workspace_id": snapshot.workspace_id,
+                "runtime": snapshot.run.runtime,
+                "expected_head_run_id": head.current_run_id,
+                "expected_store_revision": snapshot.store_revision,
+                "expected_workspace_revision": snapshot.store_revision,
+                "run_direction": run_direction.model_dump(mode="json"),
+                "workspace_config_sha256": workspace_sha,
+                "sources_config_sha256": sources_sha,
+                "role_topology": current.verified.binding.role_topology,
+                "gate_strictness": current.verified.binding.gate_strictness,
+                "input_governance_required": (
+                    current.verified.binding.input_governance_required
+                ),
+                "include_approved_guidance": include_approved_guidance,
+            }
+            payload["request_fingerprint"] = canonical_fingerprint(payload)
+            request = RunSuccessorStartRequest.model_validate(payload, strict=True)
+        except (CoreRunError, ValidationError, ValueError) as exc:
+            raise RuntimeHostError("runtime_successor_request_invalid") from exc
+        return self._apply_successor_request(request)
+
+    def _apply_successor_request(self, request: RunSuccessorStartRequest):
+        result = CoreRunSuccessorService(self.workspace).start_successor(request)
+        if result.status == "commit_outcome_unknown":
+            result = CoreRunSuccessorService(self.workspace).start_successor(request)
+        if result.status not in {"committed", "replayed"}:
+            raise RuntimeHostError(
+                result.error_code or "control_store_integrity_invalid"
+            )
+        return result
+
+    def _existing_successor_request(
+        self,
+        *,
+        successor_run_id: str,
+        run_direction: RunDirection,
+        include_approved_guidance: bool,
+    ) -> RunSuccessorStartRequest | None:
+        """Reconstruct one frozen request so the public command can replay exactly."""
+
+        try:
+            with SQLiteControlStore.open(self.workspace / "briefloop.db") as store:
+                history = store.load_history()
+            matches = [
+                item
+                for item in history.snapshots
+                if item.run.run_id == successor_run_id
+            ]
+            if not matches:
+                return None
+            if len(matches) != 1:
+                raise RuntimeHostError("control_store_integrity_invalid")
+            snapshot = matches[0]
+            CoreRunDomainVerifier().verify_history(history)
+            verified = CoreRunDomainVerifier().verify_loaded_history(
+                history,
+                successor_run_id,
+                require_current_head=False,
+            )
+            transitions = [
+                item
+                for item in snapshot.run_head_transitions
+                if item.successor_run_id == successor_run_id
+                and item.reason_code == "human_started_successor"
+                and item.successor_disposition == "reference"
+            ]
+            if (
+                len(transitions) != 1
+                or len(snapshot.run_guidance_snapshots) != 1
+                or len(snapshot.run_contract_bindings) != 1
+            ):
+                raise RuntimeHostError("control_store_integrity_invalid")
+            transition = transitions[0]
+            guidance = snapshot.run_guidance_snapshots[0]
+            receipts = [
+                item
+                for item in snapshot.transactions
+                if item.transaction_id == transition.accepted_transaction_id
+            ]
+            if (
+                len(receipts) != 1
+                or guidance.accepted_transaction_id
+                != transition.accepted_transaction_id
+                or guidance.request_fingerprint != transition.request_fingerprint
+            ):
+                raise RuntimeHostError("control_store_integrity_invalid")
+            receipt = receipts[0]
+            payload = {
+                "schema_version": RunSuccessorStartRequest.schema_id,
+                "request_id": transition.accepted_transaction_id,
+                "predecessor_run_id": transition.predecessor_run_id,
+                "successor_run_id": successor_run_id,
+                "workspace_id": snapshot.workspace_id,
+                "runtime": snapshot.run.runtime,
+                "expected_head_run_id": transition.predecessor_run_id,
+                "expected_store_revision": receipt.prior_revision,
+                "expected_workspace_revision": (transition.prior_workspace_revision),
+                "run_direction": run_direction.model_dump(mode="json"),
+                "workspace_config_sha256": verified.binding.workspace_config_sha256,
+                "sources_config_sha256": verified.binding.sources_config_sha256,
+                "role_topology": verified.binding.role_topology,
+                "gate_strictness": verified.binding.gate_strictness,
+                "input_governance_required": (
+                    verified.binding.input_governance_required
+                ),
+                "include_approved_guidance": include_approved_guidance,
+            }
+            payload["request_fingerprint"] = canonical_fingerprint(payload)
+            return RunSuccessorStartRequest.model_validate(payload, strict=True)
+        except RuntimeHostError:
+            raise
+        except (ControlStoreError, CoreRunError, ValidationError, ValueError) as exc:
+            raise RuntimeHostError("control_store_integrity_invalid") from exc
+
     @staticmethod
     def _invocation_role_for_action(action: CoreRunNextAction) -> str | None:
         if action.action_kind == "delegate":
@@ -1026,6 +1190,17 @@ class RuntimeHostService:
                 f"{task_instructions} Repair only the exact audited_brief scope "
                 "in gate_repair_context; do not change sources, claims, or run direction."
             )
+        frozen_guidance_context = RuntimeHostService._frozen_guidance_context(
+            verified,
+            role_id=role_id,
+        )
+        if frozen_guidance_context is not None:
+            task_instructions = (
+                f"{task_instructions} Use frozen guidance only for audience fit, "
+                "structure, style, and expression. Current RunDirection and evidence "
+                "govern. Guidance is not a fact, source, Claim Ledger input, Gate rule, "
+                "repair command, or delivery authority."
+            )
         return RoleTaskEnvelope.model_validate(
             {
                 "schema_version": RoleTaskEnvelope.schema_id,
@@ -1051,6 +1226,73 @@ class RuntimeHostService:
                 "dispatch_instruction": dispatch_instruction,
                 "task_instructions": task_instructions,
                 "gate_repair_context": gate_repair_context,
+                "frozen_guidance_context": frozen_guidance_context,
+            },
+            strict=True,
+        )
+
+    @staticmethod
+    def _frozen_guidance_context(verified, *, role_id: str):
+        if role_id not in {"analyst", "editor"}:
+            return None
+        snapshots = verified.snapshot.run_guidance_snapshots
+        if not snapshots:
+            return None
+        if len(snapshots) != 1:
+            raise RuntimeHostError("runtime_envelope_invalid")
+        snapshot = snapshots[0]
+        items = sorted(
+            verified.snapshot.run_guidance_snapshot_items,
+            key=lambda item: item.position,
+        )
+        if (
+            snapshot.run_id != verified.snapshot.run.run_id
+            or snapshot.selected_count != len(items)
+            or [item.item_id for item in items] != snapshot.selected_item_ids
+        ):
+            raise RuntimeHostError("runtime_envelope_invalid")
+        if not items:
+            return None
+        frozen_items = [
+            FrozenGuidanceItem.model_validate(
+                {
+                    "item_id": item.item_id,
+                    "position": item.position,
+                    "source_run_id": item.source_run_id,
+                    "finalized_lineage_fingerprint": (
+                        item.finalized_lineage_fingerprint
+                    ),
+                    "assessment_result_id": item.assessment_result_id,
+                    "assessment_result_fingerprint": (
+                        item.assessment_result_fingerprint
+                    ),
+                    "finding_id": item.finding_id,
+                    "finding_fingerprint": item.finding_fingerprint,
+                    "disposition_id": item.disposition_id,
+                    "disposition_fingerprint": item.disposition_fingerprint,
+                    "guidance_id": item.guidance_id,
+                    "draft_revision": item.draft_revision,
+                    "draft_fingerprint": item.draft_fingerprint,
+                    "status_revision_id": item.status_revision_id,
+                    "status_fingerprint": item.status_fingerprint,
+                    "guidance_text": item.guidance_text,
+                    "guidance_sha256": item.guidance_sha256,
+                    "reuse_scope": item.reuse_scope.model_dump(mode="json"),
+                    "item_fingerprint": item.item_fingerprint,
+                },
+                strict=True,
+            )
+            for item in items
+        ]
+        return FrozenGuidanceContext.model_validate(
+            {
+                "run_id": snapshot.run_id,
+                "snapshot_id": snapshot.snapshot_id,
+                "snapshot_fingerprint": snapshot.snapshot_fingerprint,
+                "items": [
+                    item.model_dump(mode="json", exclude_unset=False)
+                    for item in frozen_items
+                ],
             },
             strict=True,
         )

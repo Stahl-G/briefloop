@@ -8,7 +8,10 @@ from typing import Any
 
 from multi_agent_brief.contracts.v2 import PostFinalAssessmentResultRecord
 from multi_agent_brief.control_store.errors import ControlStoreError
-from multi_agent_brief.control_store.sqlite_store import SQLiteControlStore
+from multi_agent_brief.control_store.sqlite_store import (
+    ControlStoreHistory,
+    SQLiteControlStore,
+)
 from multi_agent_brief.core_run_v2.errors import CoreRunError
 from multi_agent_brief.core_run_v2.next_action import classify_core_run_next_action
 from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
@@ -20,7 +23,7 @@ from multi_agent_brief.product.post_final_assessment import (
 )
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
 from multi_agent_brief.runtime_host_v2.projections import (
-    build_finalized_local_review_projection,
+    build_finalized_local_review_projection_from_history,
 )
 from multi_agent_brief.semantic_evaluator.archive import (
     trial_archive_path,
@@ -114,30 +117,83 @@ def build_post_final_assessment_projection(
     *,
     assessment_result_id: str | None = None,
     assessment_result_fingerprint: str | None = None,
+    loaded_history: ControlStoreHistory | None = None,
 ) -> PostFinalAssessmentProjection:
     """Return one explicitly selected Store-qualified result, or zero advice."""
 
     root = Path(workspace).expanduser().resolve()
+    selected_result: PostFinalAssessmentResultRecord | None = None
     try:
-        facts = build_finalized_local_review_projection(root).facts
-        with SQLiteControlStore.open(root / "briefloop.db") as store:
-            history = store.load_history()
-            verified = CoreRunDomainVerifier().verify_loaded_history(
-                history,
-                facts.run_id,
-            )
-            action = classify_core_run_next_action(verified)
-            snapshot = history.snapshot_at_revision(
-                facts.run_id, history.store_revision
-            )
-            if facts.store_revision != snapshot.store_revision:
+        if loaded_history is None:
+            with SQLiteControlStore.open(root / "briefloop.db") as store:
+                history = store.load_history()
+        else:
+            history = loaded_history
+        if assessment_result_id is None:
+            if assessment_result_fingerprint is not None:
+                return _empty(
+                    lifecycle_present=True,
+                    status="invalid",
+                    reason_code="post_final_assessment_selection_invalid",
+                )
+            heads = {
+                item.workspace_run_head.current_run_id
+                for item in history.snapshots
+                if item.workspace_run_head is not None
+            }
+            if len(heads) != 1:
                 raise PostFinalAssessmentError("control_store_integrity_invalid")
-            series = resolve_post_final_assessment_series(
-                history,
-                snapshot,
-                facts,
-                action,
-            )
+            selected_run_id = next(iter(heads))
+            require_current_head = True
+        else:
+            if assessment_result_fingerprint is None:
+                return _empty(
+                    lifecycle_present=True,
+                    status="invalid",
+                    reason_code="post_final_assessment_selection_invalid",
+                )
+            matches = [
+                item
+                for run_snapshot in history.snapshots
+                for item in run_snapshot.post_final_assessment_results
+                if item.assessment_result_id == assessment_result_id
+            ]
+            if len(matches) != 1:
+                return _empty(
+                    lifecycle_present=True,
+                    status="invalid",
+                    reason_code="post_final_assessment_selection_invalid",
+                )
+            selected_result = matches[0]
+            if selected_result.result_fingerprint != assessment_result_fingerprint:
+                return _empty(
+                    lifecycle_present=True,
+                    status="invalid",
+                    reason_code="post_final_assessment_selection_invalid",
+                )
+            selected_run_id = selected_result.run_id
+            require_current_head = False
+        facts = build_finalized_local_review_projection_from_history(
+            root,
+            history,
+            run_id=selected_run_id,
+            require_current_head=require_current_head,
+        ).facts
+        verified = CoreRunDomainVerifier().verify_loaded_history(
+            history,
+            facts.run_id,
+            require_current_head=require_current_head,
+        )
+        action = classify_core_run_next_action(verified)
+        snapshot = history.snapshot_at_revision(facts.run_id, history.store_revision)
+        if facts.store_revision != snapshot.store_revision:
+            raise PostFinalAssessmentError("control_store_integrity_invalid")
+        series = resolve_post_final_assessment_series(
+            history,
+            snapshot,
+            facts,
+            action,
+        )
     except RuntimeHostError as exc:
         # A run that has not reached finalized_local has no PF-LAJ lifecycle at
         # all.  Keep the existing explicit ``quality html --laj-view``
@@ -187,12 +243,6 @@ def build_post_final_assessment_projection(
         == series[0].finalized_lineage_fingerprint
     ]
     if assessment_result_id is None:
-        if assessment_result_fingerprint is not None:
-            return _empty(
-                lifecycle_present=True,
-                status="invalid",
-                reason_code="post_final_assessment_selection_invalid",
-            )
         if len(run_results) > 1:
             return _empty(
                 lifecycle_present=True,
@@ -201,27 +251,14 @@ def build_post_final_assessment_projection(
             )
         result = run_results[0] if run_results else None
     else:
-        matches = [
-            item
-            for item in run_results
-            if item.assessment_result_id == assessment_result_id
-        ]
-        if len(matches) != 1:
+        matches = [item for item in run_results if item == selected_result]
+        if len(matches) != 1 or selected_result is None:
             return _empty(
                 lifecycle_present=True,
                 status="invalid",
                 reason_code="post_final_assessment_selection_invalid",
             )
-        result = matches[0]
-        if (
-            assessment_result_fingerprint is None
-            or result.result_fingerprint != assessment_result_fingerprint
-        ):
-            return _empty(
-                lifecycle_present=True,
-                status="invalid",
-                reason_code="post_final_assessment_selection_invalid",
-            )
+        result = selected_result
     request = (
         next(
             (

@@ -128,7 +128,8 @@ BriefLoop 可以记住一些写作偏好，但它不应该偷偷学习。
 
 最重要的原则是：
 
-> 系统可以观察和建议，但只有你批准过的偏好，才会影响未来 run。
+> 系统可以观察和建议，但不会自动学习。批准是必要条件；是否进入未来 run，仍需
+> Human 在启动正常 successor 时另行显式选择。
 
 例如 reviewer 说：
 
@@ -141,22 +142,20 @@ BriefLoop 可以记住一些写作偏好，但它不应该偷偷学习。
 
 这些不是事实，而是写作偏好或读者偏好。
 
-BriefLoop 可以把它们整理成 guidance，但只有经过确认后，才会进入未来的 memory snapshot。
+BriefLoop 可以把它们整理成 guidance，但只有 compatible、active 且经 Human 批准的
+guidance，才可能在 `--include-approved-guidance` 明确 opt-in 后进入 successor snapshot。
 
-你通常可以在这些地方看到：
-
-```text
-improvement/ledger.jsonl
-improvement/memory.md
-output/intermediate/improvement_memory_snapshot.md
-output/intermediate/runtime_manifest.json
-```
+你通常可以通过精确 assessment result 的 Store-native post-final review status、
+`briefloop runtime successor-start` Receipt，以及 Analyst/Editor 的不可变
+`RoleTaskEnvelope.frozen_guidance_context` 查看。旧 Improvement JSON/JSONL ledger、
+memory projection 与 Markdown snapshot 已退役且 inert。
 
 这套机制要保护的是：
 
 - 未批准建议不会影响未来输出；
-- 已批准 guidance 只影响后续 run；
-- 被撤销的 guidance 应该从后续 snapshot 中消失；
+- approval 本身不会产生后续 run effect，Human 必须在启动 successor 时显式 opt-in；
+- inactive、reverted、superseded 或 scope-mismatched guidance 不会被消费；
+- successor snapshot 一旦冻结，后续 live status 变化不能改写它；
 - 系统不能把一次偶然反馈偷偷升级成永久规则。
 
 用更简单的话说：
@@ -213,9 +212,9 @@ output/intermediate/repair_plan.json
 
 | 用户说的话 | 系统应该理解成 | 可能进入哪里 |
 |---|---|---|
-| 以后先讲对公司的影响 | 写作偏好 | memory guidance |
+| 以后先讲对公司的影响 | 写作偏好 | approved guidance candidate |
 | 每条 news item 都固定三段 | 固定格式候选 | template 或 checkable rule candidate |
-| 不要替管理层下决策 | 风格边界 | memory guidance 或 checklist |
+| 不要替管理层下决策 | 风格边界 | approved guidance candidate 或 checklist |
 | 这个价格/日期/来源错了 | 事实或来源核查 | fact review |
 | 来源附录必须有 | 交付检查 | delivery gate |
 
@@ -273,7 +272,7 @@ BriefLoop 有控制面、有账本、有 gate，但这不等于它能自动保�
 
 - 某条 approved guidance 被记录过；
 - 某个 snapshot 被冻结过；
-- 某次 run 引用了哪个 snapshot；
+- 某次显式启动的 successor 引用了哪个 snapshot；
 - 某个 gate report 被写出过；
 - 某个 claim 有对应 source；
 - 某条 feedback 被结构化处理过。
@@ -287,6 +286,9 @@ BriefLoop 有控制面、有账本、有 gate，但这不等于它能自动保�
 - 输出可以不经人工判断直接发送。
 
 这些需要独立 evaluation、reference runs 和人工 review。
+
+Guidance 效用是 NOT MEASURED。snapshot 只给 Analyst/Editor 作为 presentation
+context；它不是 evidence、Gate rule、repair command 或 finalize/delivery/Core authority。
 
 特别是 IR、合规、披露、法律或投资相关材料，BriefLoop 只能作为起草和审阅辅助，不能替代专业审查。
 
@@ -388,9 +390,9 @@ output/intermediate/repair_plan.json
 ### 用户偏好和 memory
 
 ```text
-improvement/ledger.jsonl
-improvement/memory.md
-output/intermediate/improvement_memory_snapshot.md
+Store-native post-final guidance lifecycle
+successor Receipt and immutable snapshot
+RoleTaskEnvelope.frozen_guidance_context (Analyst / Editor only)
 ```
 
 ### Contracts 和 policies
