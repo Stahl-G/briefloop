@@ -708,7 +708,12 @@ def handle_quality(args: argparse.Namespace) -> int:
             "boundary",
             "experimental_advisory_human_review_not_gate_delivery_or_next_run_consumption",
         )
-        _print_payload("quality laj", payload, as_json=getattr(args, "json", False))
+        label = (
+            "quality laj assessment-list"
+            if getattr(args, "laj_action", "") == "assessment-list"
+            else "quality laj"
+        )
+        _print_payload(label, payload, as_json=getattr(args, "json", False))
         return 0 if payload.get("ok") else 1
     if action == "html":
         from multi_agent_brief.product.brief_html import (
@@ -999,6 +1004,31 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
             )
         else:
             print(payload.get("error"))
+    elif label == "quality laj assessment-list":
+        if payload.get("ok"):
+            for item in payload.get("assessments", []):
+                print(
+                    f"- assessment_generation={item.get('assessment_generation')} "
+                    f"assessment_purpose={item.get('assessment_purpose')} "
+                    f"requested_model_id={item.get('requested_model_id')} "
+                    f"terminal_evidence_class={item.get('terminal_evidence_class')}"
+                )
+                print(
+                    f"  assessment_result_id={item.get('assessment_result_id')} "
+                    "assessment_result_fingerprint="
+                    f"{item.get('assessment_result_fingerprint')}"
+                )
+                print(
+                    f"  assessed_unit_count={item.get('assessed_unit_count')} "
+                    f"finding_count={item.get('finding_count')} "
+                    "withheld_finding_count="
+                    f"{item.get('withheld_finding_count')} "
+                    f"abstention_count={item.get('abstention_count')} "
+                    f"reason_codes={item.get('reason_codes')}"
+                )
+        else:
+            print(f"status: {payload.get('status')}")
+            print(f"reason_code: {payload.get('reason_code')}")
     else:
         print(f"report_pack: {payload.get('report_pack')}")
         print(f"resolved_policy_profile: {payload.get('resolved_policy_profile')}")
