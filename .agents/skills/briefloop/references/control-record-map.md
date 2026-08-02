@@ -14,10 +14,8 @@ Do not edit directly:
 - `output/intermediate/gates/*_quality_gate_report.json`
 - `output/intermediate/quality_gate_report.json`
 - `output/intermediate/claim_ledger.json`
-- `output/intermediate/improvement_memory_snapshot.md`
 - `output/intermediate/human_approval_ledger.json`
 - `output/intermediate/release_readiness_report.json`
-- `output/intermediate/semantic_support_acceptance_ledger.json`
 - `output/intermediate/quality_panel.json`
 - `output/intermediate/quality_summary.md`
 - `output/intermediate/quality_panel.html`
@@ -40,16 +38,6 @@ Owning commands for recent control-tool projections:
   writes a fresh `release_readiness_report.json` with event-log linkage and
   configured `branding_context` metadata. Do not treat a readiness report as
   refreshed merely because an approval was recorded.
-- `briefloop semantic-support bind --workspace <workspace>` seals
-  `semantic_assessment_report.json` checked-input hashes after the auditor writes
-  the report and before human adjudication. This binding is trace metadata only,
-  not support truth.
-- `briefloop semantic-support adjudicate` writes
-  `semantic_support_acceptance_ledger.json` with event-log linkage for human
-  accept/reject decisions on valid, fresh, checked-input-bound Semantic
-  Assessment Report proposal rows. It records adjudication only; it does not
-  write Claim-Support Matrix rows, gate reports, workflow state, repair routes,
-  delivery state, or release state.
 - `briefloop finalize` writes `finalize_report.json` (including
   `delivery_promotion`), the single delivery-truth
   record: staged-candidate reader projection results, `delivery_artifacts`,
@@ -89,6 +77,22 @@ Owning commands for recent control-tool projections:
 These files are operator/audit projections or approval records. They are not
 agent draft surfaces, not final reader content, and not repair shortcuts.
 
+## Store-Owned Guidance Records
+
+Do not write SQL or edit these through files. `PostFinalReviewService` is the
+sole Human-review writer for finding disposition, guidance draft, and guidance
+status records. The Core successor transaction is the sole writer for
+`RunGuidanceSnapshotRecord`, selection decisions, selected snapshot items, and
+their Receipt/event relations.
+
+`briefloop runtime successor-start` is the only normal same-workspace successor
+entry. Reuse requires the explicit `--include-approved-guidance` flag. Analyst
+and Editor may receive the same immutable
+`RoleTaskEnvelope.frozen_guidance_context`; every other role receives none.
+Never substitute a live guidance head or the retired Improvement JSON/JSONL
+files. The optional Semantic Assessment Report retains schema/reference
+validation only and has no current producer, projection, or adjudication writer.
+
 ## Agent-Owned Draft Surfaces
 
 Agents may write only before the owning completion transaction freezes them:
@@ -105,7 +109,8 @@ After freeze, use owner-stage repair.
 
 Human approval owns:
 
-- Improvement Ledger approval/rejection/revert decisions
+- LAJ finding disposition, Human-edited guidance, separate approval/status,
+  and explicit successor opt-in
 - delivery intent
 - internal release-mode approval decisions recorded through
   `approval init` / `approval record`

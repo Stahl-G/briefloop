@@ -43,8 +43,29 @@ read-only `presentation`. Its relative static file is
 path, while `projection_unavailable` has no path because no safe projection
 was written. Neither failure changes terminal truth. The HTML uses the exact Store-bound `reader_brief` and
 is not approval, packaging, delivery, publication, or a persistent localhost
-service. LAJ remains explicit hash-bound advisory input and Improvement Ledger
-remains unavailable.
+service. LAJ remains explicit hash-bound advisory input. Any Improvement tab is
+a read-only Store-native Human-guidance projection, not a legacy ledger or reuse
+action.
+
+After a verified `finalized_local` head, only the root host may run the
+separate explicit Human transaction:
+
+```bash
+briefloop runtime successor-start --workspace <workspace> \
+  --direction-json '<strict RunDirection JSON>' \
+  --run-id <new-run-id> \
+  --include-approved-guidance
+```
+
+This is not a `CoreRunNextAction` kind or recovery reset. The final flag is the
+explicit reuse opt-in. Python atomically freezes compatible active-approved
+guidance within 16 items / 65,536 UTF-8 bytes; replay is exact and no provider
+or role is called. Analyst/Editor may use an envelope
+`FrozenGuidanceContext` only for audience fit, structure, style, and
+expression. Current `RunDirection` and evidence govern; guidance is not fact,
+source, Claim Ledger input, Gate, repair, or delivery authority. All other
+roles receive none, and no role reads live guidance or retired Improvement
+files.
 
 The Store-derived `CoreRunNextAction` is the only sequence authority. Always
 snapshot the exact current action JSON, then dispatch only its `action_kind`:

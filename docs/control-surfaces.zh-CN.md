@@ -39,8 +39,8 @@ MABW 的控制面可以按不同粒度统计：
 
 | Surface | 作用 | 写者 | 状态 | 冻结 / 重置规则 |
 |---|---|---|---|---|
-| `runtime_manifest.json` | 记录 run identity、runtime、路径，以及 improvement snapshot 等 manifest 指针。 | Python | 已实现 | 由 runtime state 初始化和 handoff flow 重算。 |
-| `runtime_manifest.json.improvement` | 记录本 run 的 ledger hash、memory projection hash、snapshot hash 和 `materialized_entry_ids`。 | Python | 已实现 | 对本 run 冻结；后续 ledger 变化不使旧 snapshot 失效。 |
+| `runtime_manifest.json` | legacy/projection run identity 与 path metadata。 | Python | SQLite 下仅为 projection/legacy | 不拥有 runtime authority；以 Store Receipt 与 relation 为准。 |
+| `runtime_manifest.json.improvement` | 旧 file-ledger/memory snapshot metadata。 | 无 | 已退役 (LD2-3) | inert；Store-native successor snapshot 是独立 SQLite record。 |
 | `workflow_state.json` | 当前 stage、stage status、last decision、next allowed decisions，以及当前 stage 预算耗尽时的 trajectory decision narrowing。 | Python，经 state commands | 已实现 | 通过 runtime state commands 更新；agent 不应手改。 |
 | `event_log.jsonl` | append-only runtime/control events。 | Python | 已实现 | 只追加；记录控制决策、状态迁移和 trajectory narrowing。 |
 | `artifact_registry.json` | 记录 workflow artifacts 的观测和基础验证状态。 | Python | 已实现 | 由 state check 和 artifact observation 更新。 |
@@ -66,24 +66,27 @@ MABW 的控制面可以按不同粒度统计：
 | `source_appendix.md` | 已追加进交付 Markdown/DOCX 的来源附录审计/控制副本。 | Python finalize | 已实现 | reader projection copy；不是 source evidence 本身，也不是单独交付文件。 |
 | `provenance_graph.json` | 从现有 control files 派生的 workspace-local audit/debug projection。 | Python | 已实现投影 | 不 fetch sources、不 replay runtime、不证明语义真实。 |
 
-## Workspace 级品味与记忆
+## Workspace 级品味与已批准 guidance
 
-这些 surface 跨 run 存续。它们只能通过显式 projection 和 per-run freezing 影响后续 run。
+当前 guidance lifecycle 是 Store-native。只有显式 Human disposition、draft、
+approval/status，再加上独立 successor opt-in，才能产生持久 effect；agent 与
+projection 都不写权威状态。
 
 | Surface | 作用 | 写者 | 状态 | 边界 |
 |---|---|---|---|---|
 | `audience_profile.md` | human-editable workspace-local audience profile。 | Human / init defaults | 已实现 | 只作为 taste context；不是 source evidence 或 correctness contract。 |
 | `output/intermediate/audience_profile_snapshot.md` | 当前 run 的 frozen audience context。 | Python | 已实现投影 | 中途编辑 `audience_profile.md` 只影响后续 run。 |
-| `improvement/ledger.jsonl` | append-only human-governed reader guidance ledger。 | Python CLI，来自 human approval | 已实现 | 记录 governance lifecycle，不证明 runtime effect 或 output quality。 |
-| `improvement/memory.md` | 从 approved materializable guidance 派生的 deterministic projection。 | Python | 已实现投影 | 从 ledger 派生，不是手写真理源。 |
-| `output/intermediate/improvement_memory_snapshot.md` | 当前 run 的 frozen improvement memory。 | Python | 已实现投影 | Runtime 读取 snapshot，不读取 live `improvement/memory.md`。 |
-| `improvement/intake.jsonl` | 原始 feedback intake 和 derivation links。 | Python | 延后 | 无 lifecycle state；不是第二本 ledger。 |
-| `improvement/candidates.jsonl` | preference/rule/fact review routes 的 candidate parking lot。 | Python validator，来自 agent/human proposals | 延后至 v0.7.3+ | candidate 不影响 runtime，除非下游 promote 并 approve。 |
+| legacy `improvement/ledger.jsonl`、`improvement/memory.md`、`output/intermediate/improvement_memory_snapshot.md` | 旧 file-based ledger、projection 与 run snapshot。 | 无 | 已退役 (LD2-3) | inert；无 reader、writer、migration 或 fallback。 |
+| Post-final finding disposition、guidance draft 与 guidance status records | 与一个已验证 assessment result 和历史 source run 绑定的 append-only Human review lifecycle。 | `PostFinalReviewService`，接受 strict Human request | development main 实验性 | accept/reject/defer、Human-edited text 与独立 approval/status；approval 本身不产生后续 run effect。 |
+| `RunGuidanceSnapshotRecord`、selection decisions 与 selected snapshot items | successor run 对完整兼容 active-approved 集合的不可变副本。 | Core successor transaction | development main 实验性 | 与正常 successor 原子写入；exact replay 幂等，conflict/limit failure 零写入，后续 live status 不能改写。 |
+| `RoleTaskEnvelope.frozen_guidance_context` | Analyst 与 Editor 共用的同一份有序不可变 snapshot context。 | RuntimeHost 从 Store snapshot bytes 投影 | development main 实验性 | 其他角色收到 `None`；当前 direction/evidence 优先，不拥有 Claim Ledger、Gate、repair、finalize、delivery 或 Core 权限。 |
+| `improvement/intake.jsonl` / `improvement/candidates.jsonl` | 旧 file-memory 扩展。 | 无 | 已退役/未交付 | 无当前 promotion 或 runtime 路径。 |
 | `reference_samples/manifest.jsonl` | accepted samples 作为 taste evidence 的 manifest。 | Python / human workspace management | 计划 v0.8 | non-evidence；不得作为 source material 被扫描。 |
 
 ## Run 级偏好评估
 
-这个未来 surface 用来衡量 approved guidance 是否在输出中体现。它不是交付 gate。
+Guidance 效用与 manifestation 均为 NOT MEASURED。已退役 manifestation projection
+不是 delivery Gate，successor snapshot 也不会打分或证明模型遵循了 guidance、输出得到改善。
 
 | Surface | 作用 | 写者 | 状态 | 边界 |
 |---|---|---|---|---|
@@ -103,15 +106,17 @@ MABW 的控制面可以按不同粒度统计：
 | `docs/architecture-status.md` | 当前实现状态与 roadmap goals 的区分。 | Maintainers | 已实现 |
 | `docs/red-lines-and-anti-patterns.md` | Public red lines 和 misuse patterns。 | Maintainers | 已实现 |
 
-## v0.11.0 冻结清单
+## 历史 v0.11.0 冻结清单
 
-冻结意味着 schema 或命令族获得向后兼容承诺，并由 CI 看守。一个 surface 可以已经实现，但尚未冻结。
+本表仅保留 v0.11 的历史规划记录，不代表当前 capability 或 compatibility；
+当前事实以上方 Store-native 与已退役条目为准。在原规划中，“冻结”意味着 schema
+或命令族将获得向后兼容承诺，并由 CI 看守。
 
 | Surface | v0.11.0 冻结前提 |
 |---|---|
 | `event_log.jsonl` schema 和 event types | v0.7.2 completion transaction events 和 trajectory narrowing events 必须在冻结前保持稳定。 |
 | `workflow_state.json` 和 decision vocabulary | `stage-complete` / `finalize-complete` 语义已纳入；topology-satisfied stages 会作为显式 workflow / event 记录，而不是隐藏跳过。 |
-| `runtime_manifest.json` | `improvement` 和 `recipe` 的单写者保留必须继续有回归覆盖。`operator_reported_model` 延后至 v0.7.3 / v0.8；在此之前 reference-run summary 手工记录 model identity。 |
+| `runtime_manifest.json` | 历史 JSON projection 规划；它不是当前 Store authority，旧 `improvement` / `recipe` 字段也不是 compatibility surface。 |
 | `artifact_registry.json` | default / strict topology 下 artifact 名称保持稳定：Scout 可以满足 Screener，但 `candidate_claims.json` 和 `screened_candidates.json` 仍是两个独立 artifacts。 |
 | `stage_specs.yaml` / stage order | 已实现 topology satisfaction：default topology 可由 Scout 满足 Screener；strict topology 仍保留独立 Screener。 |
 | `artifact_contracts.yaml` | artifact contract 集合跨 topology 模式保持不变；candidate/screened coverage anchor 仍是显式迁移前的不变量。 |
@@ -119,16 +124,16 @@ MABW 的控制面可以按不同粒度统计：
 | Gate report schema 和 gate ids | Reader-final / process-residue gates 以及 coverage-side gates 需先稳定。 |
 | Policy pack schema | 至少需要第二个 pack 证明泛化能力。Pack 内容不冻结，它是调参层。 |
 | `feedback_issues.json` / `repair_plan.json` | repair path 回归覆盖稳定后可进入冻结候选。 |
-| Improvement Ledger schema | v0.7.2 已实现 schema hygiene：`supersedes_id`、duplicate warning、approved supersession fork rejection、revert re-expose warning。Generic ledger provenance field 与 `intake.jsonl` / `candidates.jsonl` 一起延后至 v0.7.3+。 |
+| Improvement Ledger schema | 已随 legacy file-state stack 退役；无冻结或兼容承诺。 |
 | `origin_runtime` | 已实现为 audit/rendering metadata；不参与 filtering、routing 或 materialization。 |
-| `improvement/intake.jsonl` / `improvement/candidates.jsonl` | 延后至 v0.7.3+，太年轻，不进入 v0.11.0 冻结。 |
-| `improvement/memory.md` / improvement snapshot 渲染 | 需等 ledger schema 稳定后冻结。 |
+| `improvement/intake.jsonl` / `improvement/candidates.jsonl` | 已退役的 legacy 规划面；无当前 reader、writer 或冻结承诺。 |
+| `improvement/memory.md` / improvement snapshot 渲染 | 已退役的 legacy file surface；Store-native successor snapshot 是独立的 fresh-schema-only 记录。 |
 | Runtime handoff 格式 | 最终 usage rules 和 v0.8 precedence table 定稿后再冻结。 |
-| 五动词 writer entrypoint 与核心 CLI families | 五个 writer verbs、completion transactions、gates、finalize、feedback、improve 命令族必须在 support matrix 和 help 中一致。 |
+| 五动词 writer entrypoint 与核心 CLI families | 仅为历史规划；`improve` 命令族已退役，不属于当前 CLI compatibility 承诺。 |
 | Eval-case schema 和 runner actions | 需覆盖最终 v0.7.2 control actions 和 v0.8 evaluation-only surfaces。 |
 | `audience_profile.md` 格式 | 格式可冻结；profile 内容由人编辑，永不冻结。 |
 | Reference sample manifest | 计划 v0.8；至少一个真实使用周期前保持 experimental。 |
-| Manifestation report | 计划 v0.8，仅 evaluation-only；不得成为 runtime blocker。 |
+| Manifestation report | 已退役的 diagnostic projection；无当前 reader、writer 或 runtime authority。 |
 | Mode registry / role topology | 已实现 supported default / strict role-topology contract。default topology 只有在 candidate 和 screened artifacts 都存在时，才允许 Scout 满足 Screener；strict topology 保留独立 Screener。这是 workflow shape control，不是速度或输出质量声明。 |
 | Support matrix | 它定义冻结承诺范围；每个冻结 surface 都必须同步更新。 |
 

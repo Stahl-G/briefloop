@@ -73,6 +73,7 @@ class CoreEffect(str, Enum):
     REPAIR_COMPLETE = "repair_complete"
     RECOVERY_COMPLETE = "recovery_complete"
     RUN_RESET = "run_reset"
+    RUN_SUCCESSOR_START = "run_successor_start"
     FINALIZE_RENDER = "finalize_render"
     FINALIZE_GATE = "finalize_gate"
     FINALIZE_COMPLETE = "finalize_complete"
@@ -883,7 +884,9 @@ class CoreRunRecoveryService:
         with SQLiteControlStore.open(
             self.workspace / "briefloop.db", clock=self._clock
         ) as store:
-            replay = self._replay(store, request.run_id, request.request_id, fingerprint)
+            replay = self._replay(
+                store, request.run_id, request.request_id, fingerprint
+            )
             if replay is not None:
                 return replay
             try:
@@ -907,15 +910,15 @@ class CoreRunRecoveryService:
         with SQLiteControlStore.open(
             self.workspace / "briefloop.db", clock=self._clock
         ) as store:
-            replay = self._replay(store, request.run_id, request.request_id, fingerprint)
+            replay = self._replay(
+                store, request.run_id, request.request_id, fingerprint
+            )
             if replay is not None:
                 return replay
             verified = self._verified_current(
                 store, request.run_id, request.expected_store_revision
             )
-            source = self._exact_revision(
-                verified.snapshot, request.historical_source
-            )
+            source = self._exact_revision(verified.snapshot, request.historical_source)
             try:
                 content = store.read_artifact_revision_bytes(
                     request.run_id, source.artifact_id, source.revision
@@ -977,13 +980,21 @@ class CoreRunRecoveryService:
             raise CoreRunError("repair_history_invalid")
         authorization = classify_effect_authorization(
             verified.snapshot,
-            CoreEffect.ARTIFACT_REVERT if source is not None else CoreEffect.ARTIFACT_SUPERSEDE,
-            CoreEffectSubject(repair_id=request.repair_id, artifact_id=artifact.artifact_id),
+            CoreEffect.ARTIFACT_REVERT
+            if source is not None
+            else CoreEffect.ARTIFACT_SUPERSEDE,
+            CoreEffectSubject(
+                repair_id=request.repair_id, artifact_id=artifact.artifact_id
+            ),
         ).require_allowed()
         if authorization.repair_id != request.repair_id:
             raise CoreRunError("repair_scope_invalid")
         repair = next(
-            (item for item in verified.snapshot.repair_cycles if item.repair_id == request.repair_id),
+            (
+                item
+                for item in verified.snapshot.repair_cycles
+                if item.repair_id == request.repair_id
+            ),
             None,
         )
         if repair is None or artifact.artifact_id not in repair.permitted_artifact_ids:
@@ -993,10 +1004,16 @@ class CoreRunRecoveryService:
         successor_number = prior.revision + 1
         supersession_id = derived_id("SUPERSESSION", request.request_id, fingerprint)
         event_id = derived_id("EVT-SUPERSESSION", request.request_id, fingerprint)
-        owned_event_id = derived_id("EVT-REPAIR-ARTIFACT", request.request_id, fingerprint)
+        owned_event_id = derived_id(
+            "EVT-REPAIR-ARTIFACT", request.request_id, fingerprint
+        )
         submission_id = derived_id("SUBMISSION-REPAIR", request.request_id, digest)
         updated = ArtifactRecord.model_validate(
-            {**artifact.model_dump(mode="json", exclude_unset=False), "current_revision": successor_number, "status": "valid"},
+            {
+                **artifact.model_dump(mode="json", exclude_unset=False),
+                "current_revision": successor_number,
+                "status": "valid",
+            },
             strict=True,
         )
         successor = ArtifactRevision.model_validate(
@@ -1046,7 +1063,10 @@ class CoreRunRecoveryService:
                 "repair_id": request.repair_id,
                 "mode": request.mode,
                 "prior_artifact": prior_ref,
-                "successor_artifact": {"artifact_id": artifact.artifact_id, "revision": successor_number},
+                "successor_artifact": {
+                    "artifact_id": artifact.artifact_id,
+                    "revision": successor_number,
+                },
                 "reason_code": request.reason_code,
                 "created_at": now,
                 "accepted_event_id": event_id,
@@ -1072,8 +1092,29 @@ class CoreRunRecoveryService:
         unit.put_artifact_revision(successor, content)
         unit.put_owned_artifact_submission(submission)
         unit.put_artifact_supersession(relation)
-        unit.append_event(self._event(owned_event_id, request, fingerprint, "owned_artifact_accepted", submission_id, repair.owner_stage_id, artifact.artifact_id, bind=False))
-        unit.append_event(self._event(event_id, request, fingerprint, "repair_stage_superseded", supersession_id, repair.owner_stage_id, artifact.artifact_id))
+        unit.append_event(
+            self._event(
+                owned_event_id,
+                request,
+                fingerprint,
+                "owned_artifact_accepted",
+                submission_id,
+                repair.owner_stage_id,
+                artifact.artifact_id,
+                bind=False,
+            )
+        )
+        unit.append_event(
+            self._event(
+                event_id,
+                request,
+                fingerprint,
+                "repair_stage_superseded",
+                supersession_id,
+                repair.owner_stage_id,
+                artifact.artifact_id,
+            )
+        )
         stage_checkout_effect(unit, checkout)
         verifier = CoreRunDomainVerifier()
         receipt = unit.commit(
@@ -1083,8 +1124,12 @@ class CoreRunRecoveryService:
             workspace=self.workspace, store=store, prepared=checkout
         )
         if not published:
-            return CoreRunResult(status="commit_outcome_unknown", error_code="commit_outcome_unknown")
-        return CoreRunResult(status="committed", receipt=receipt, primary_record_id=supersession_id)
+            return CoreRunResult(
+                status="commit_outcome_unknown", error_code="commit_outcome_unknown"
+            )
+        return CoreRunResult(
+            status="committed", receipt=receipt, primary_record_id=supersession_id
+        )
 
     def _complete_repair(self, request: RepairCompleteRequest):
         from .checkout import prepare_checkout_effect, stage_checkout_effect
@@ -1098,7 +1143,9 @@ class CoreRunRecoveryService:
         with SQLiteControlStore.open(
             self.workspace / "briefloop.db", clock=self._clock
         ) as store:
-            replay = self._replay(store, request.run_id, request.request_id, fingerprint)
+            replay = self._replay(
+                store, request.run_id, request.request_id, fingerprint
+            )
             if replay is not None:
                 return replay
             verified = self._verified_current(
@@ -1132,10 +1179,14 @@ class CoreRunRecoveryService:
                     for relation in supersessions
                     for submission in verified.snapshot.owned_artifact_submissions
                     if submission.artifact_id == relation.successor_artifact.artifact_id
-                    and submission.artifact_revision == relation.successor_artifact.revision
+                    and submission.artifact_revision
+                    == relation.successor_artifact.revision
                 }
             )
-            if not owner_stages or sorted(request.expected_stage_revisions) != owner_stages:
+            if (
+                not owner_stages
+                or sorted(request.expected_stage_revisions) != owner_stages
+            ):
                 raise CoreRunError("repair_history_invalid")
             stages = {
                 item.stage_id: item
@@ -1144,13 +1195,18 @@ class CoreRunRecoveryService:
             }
             if any(
                 stage_id not in stages
-                or stages[stage_id].revision != request.expected_stage_revisions[stage_id]
+                or stages[stage_id].revision
+                != request.expected_stage_revisions[stage_id]
                 for stage_id in owner_stages
             ):
                 raise CoreRunError("repair_history_invalid")
             now = self._now()
-            completion_id = derived_id("REPAIR-COMPLETION", request.request_id, fingerprint)
-            completion_event_id = derived_id("EVT-REPAIR-COMPLETE", request.request_id, fingerprint)
+            completion_id = derived_id(
+                "REPAIR-COMPLETION", request.request_id, fingerprint
+            )
+            completion_event_id = derived_id(
+                "EVT-REPAIR-COMPLETE", request.request_id, fingerprint
+            )
             transitions: list[StageTransitionRecord] = []
             for stage_id in owner_stages:
                 prior = stages[stage_id]
@@ -1199,7 +1255,9 @@ class CoreRunRecoveryService:
                     "repair_id": request.repair_id,
                     "contamination_revision": legality.latest_contamination_revision,
                     "supersession_ids": request.supersession_ids,
-                    "reopened_transition_ids": [item.transition_id for item in transitions],
+                    "reopened_transition_ids": [
+                        item.transition_id for item in transitions
+                    ],
                     "completed_at": now,
                     "completion_event_id": completion_event_id,
                     "accepted_transaction_id": request.request_id,
@@ -1259,9 +1317,13 @@ class CoreRunRecoveryService:
             stage_checkout_effect(unit, checkout)
             verifier = CoreRunDomainVerifier()
             receipt = unit.commit(
-                _postcommit_observer=lambda _receipt: verifier.verify(store, request.run_id)
+                _postcommit_observer=lambda _receipt: verifier.verify(
+                    store, request.run_id
+                )
             )
-            return CoreRunResult(status="committed", receipt=receipt, primary_record_id=completion_id)
+            return CoreRunResult(
+                status="committed", receipt=receipt, primary_record_id=completion_id
+            )
 
     def _complete_recovery(self, request: RecoveryCompleteRequest):
         from .checkout import prepare_checkout_effect, stage_checkout_effect
@@ -1275,10 +1337,14 @@ class CoreRunRecoveryService:
         with SQLiteControlStore.open(
             self.workspace / "briefloop.db", clock=self._clock
         ) as store:
-            replay = self._replay(store, request.run_id, request.request_id, fingerprint)
+            replay = self._replay(
+                store, request.run_id, request.request_id, fingerprint
+            )
             if replay is not None:
                 return replay
-            verified = self._verified_current(store, request.run_id, request.expected_store_revision)
+            verified = self._verified_current(
+                store, request.run_id, request.expected_store_revision
+            )
             legality = classify_recovery_legality(verified.snapshot)
             latest_integrity = verified.snapshot.run_integrity_records[-1]
             classify_effect_authorization(
@@ -1289,14 +1355,18 @@ class CoreRunRecoveryService:
             if (
                 legality.state != "rerun_required"
                 or latest_integrity.status != "contaminated"
-                or latest_integrity.integrity_revision
-                != request.contamination_revision
+                or latest_integrity.integrity_revision != request.contamination_revision
                 or legality.repair_completion_id != request.repair_completion_id
-                or legality.latest_contamination_revision != request.contamination_revision
-                or request.rerun_transition_ids != sorted(set(request.rerun_transition_ids))
-                or request.gate_evaluation_ids != sorted(set(request.gate_evaluation_ids))
-                or request.rerun_transition_ids != list(legality.required_rerun_transition_ids)
-                or request.gate_evaluation_ids != list(legality.required_gate_evaluation_ids)
+                or legality.latest_contamination_revision
+                != request.contamination_revision
+                or request.rerun_transition_ids
+                != sorted(set(request.rerun_transition_ids))
+                or request.gate_evaluation_ids
+                != sorted(set(request.gate_evaluation_ids))
+                or request.rerun_transition_ids
+                != list(legality.required_rerun_transition_ids)
+                or request.gate_evaluation_ids
+                != list(legality.required_gate_evaluation_ids)
             ):
                 raise CoreRunError("repair_history_invalid")
             completion = next(
@@ -1361,14 +1431,20 @@ class CoreRunRecoveryService:
             unit.put_recovery_completion(recovery)
             unit.append_run_integrity_record(clean_integrity)
             unit.append_event(
-                self._event(event_id, request, fingerprint, "decision_recorded", recovery_id)
+                self._event(
+                    event_id, request, fingerprint, "decision_recorded", recovery_id
+                )
             )
             stage_checkout_effect(unit, checkout)
             verifier = CoreRunDomainVerifier()
             receipt = unit.commit(
-                _postcommit_observer=lambda _receipt: verifier.verify(store, request.run_id)
+                _postcommit_observer=lambda _receipt: verifier.verify(
+                    store, request.run_id
+                )
             )
-            return CoreRunResult(status="committed", receipt=receipt, primary_record_id=recovery_id)
+            return CoreRunResult(
+                status="committed", receipt=receipt, primary_record_id=recovery_id
+            )
 
     def _reset_run(self, request: RunResetRequest):
         from .checkout import (
@@ -1441,14 +1517,18 @@ class CoreRunRecoveryService:
                 or request.expected_workspace_revision != snapshot.store_revision
             ):
                 raise CoreRunError("repair_history_invalid")
-            classify_effect_authorization(snapshot, CoreEffect.RUN_RESET).require_allowed()
+            classify_effect_authorization(
+                snapshot, CoreEffect.RUN_RESET
+            ).require_allowed()
             now = self._now()
             adapter_payload = verified.runtime_adapter.model_dump(
                 mode="json", exclude_unset=False
             )
             adapter_payload.update(run_id=request.successor_run_id)
             adapter_payload.pop("binding_fingerprint", None)
-            adapter_payload["binding_fingerprint"] = canonical_fingerprint(adapter_payload)
+            adapter_payload["binding_fingerprint"] = canonical_fingerprint(
+                adapter_payload
+            )
             adapter_bytes = canonical_json_bytes(adapter_payload)
             source_plan = _derive_runtime_source_plan(
                 sources_content,
@@ -1457,9 +1537,7 @@ class CoreRunRecoveryService:
                 run_direction=request.run_direction,
                 workspace_root=self.workspace,
             )
-            source_payload = source_plan.model_dump(
-                mode="json", exclude_unset=False
-            )
+            source_payload = source_plan.model_dump(mode="json", exclude_unset=False)
             source_bytes = canonical_json_bytes(source_payload)
             frozen_payloads = (
                 store.read_artifact_revision_bytes(
@@ -1518,7 +1596,9 @@ class CoreRunRecoveryService:
                 accepted_transaction_id=request.request_id,
                 request_fingerprint=fingerprint,
             )
-            initialized_event_id = derived_id("EVT-RESET-INIT", request.request_id, fingerprint)
+            initialized_event_id = derived_id(
+                "EVT-RESET-INIT", request.request_id, fingerprint
+            )
             contract_values["initialization_event_id"] = initialized_event_id
             contract_values["contract_fingerprint"] = run_contract_fingerprint(
                 runtime=request.runtime,
@@ -1530,9 +1610,15 @@ class CoreRunRecoveryService:
                 policy_pack_name=verified.binding.policy_pack_name,
                 policy_pack_sha256=verified.binding.policy_pack_sha256,
                 runtime_adapter_sha256=contract_values["runtime_adapter_sha256"],
-                runtime_adapter_fingerprint=contract_values["runtime_adapter_fingerprint"],
-                runtime_source_plan_sha256=contract_values["runtime_source_plan_sha256"],
-                runtime_source_plan_fingerprint=contract_values["runtime_source_plan_fingerprint"],
+                runtime_adapter_fingerprint=contract_values[
+                    "runtime_adapter_fingerprint"
+                ],
+                runtime_source_plan_sha256=contract_values[
+                    "runtime_source_plan_sha256"
+                ],
+                runtime_source_plan_fingerprint=contract_values[
+                    "runtime_source_plan_fingerprint"
+                ],
                 run_direction=request.run_direction.model_dump(mode="json"),
                 workspace_config_sha256=workspace_config_sha256,
                 sources_config_sha256=sources_config_sha256,
@@ -1540,7 +1626,9 @@ class CoreRunRecoveryService:
                 gate_strictness=request.gate_strictness,
                 input_governance_required=request.input_governance_required,
             )
-            contract = type(verified.binding).model_validate(contract_values, strict=True)
+            contract = type(verified.binding).model_validate(
+                contract_values, strict=True
+            )
             transition_id = derived_id("HEAD-RESET", request.request_id, fingerprint)
             reset_event_id = derived_id("EVT-RESET", request.request_id, fingerprint)
             transition = RunHeadTransitionRecord.model_validate(
@@ -1551,7 +1639,8 @@ class CoreRunRecoveryService:
                     "predecessor_run_id": request.predecessor_run_id,
                     "successor_run_id": request.successor_run_id,
                     "prior_workspace_revision": request.expected_workspace_revision,
-                    "successor_workspace_revision": request.expected_workspace_revision + 1,
+                    "successor_workspace_revision": request.expected_workspace_revision
+                    + 1,
                     "reason_code": "run_reset",
                     "successor_disposition": "non_reference",
                     "created_at": now,
@@ -1625,7 +1714,9 @@ class CoreRunRecoveryService:
                 stage_id = str(stage_contract["stage_id"])
                 status = "ready" if position == 0 else "pending"
                 event_id = derived_id("EVT-RESET-STAGE", request.request_id, stage_id)
-                stage_transition_id = derived_id("TRANSITION-RESET", request.request_id, stage_id)
+                stage_transition_id = derived_id(
+                    "TRANSITION-RESET", request.request_id, stage_id
+                )
                 unit.put_stage_state(
                     StageState.model_validate(
                         {
@@ -1707,12 +1798,34 @@ class CoreRunRecoveryService:
                 )
             )
             unit.put_run_head_transition(transition)
-            unit.append_event(self._reset_event(initialized_event_id, request, fingerprint, "run_initialized", "doctor", None, bind=False))
-            unit.append_event(self._reset_event(reset_event_id, request, fingerprint, "run_reset", None, transition_id, bind=True))
+            unit.append_event(
+                self._reset_event(
+                    initialized_event_id,
+                    request,
+                    fingerprint,
+                    "run_initialized",
+                    "doctor",
+                    None,
+                    bind=False,
+                )
+            )
+            unit.append_event(
+                self._reset_event(
+                    reset_event_id,
+                    request,
+                    fingerprint,
+                    "run_reset",
+                    None,
+                    transition_id,
+                    bind=True,
+                )
+            )
             stage_checkout_effect(unit, checkout)
             verifier = CoreRunDomainVerifier()
             receipt = unit.commit(
-                _postcommit_observer=lambda _receipt: verifier.verify(store, request.successor_run_id)
+                _postcommit_observer=lambda _receipt: verifier.verify(
+                    store, request.successor_run_id
+                )
             )
             published, _warnings = publish_checkout_effect(
                 workspace=self.workspace,
@@ -1724,9 +1837,13 @@ class CoreRunRecoveryService:
                     status="commit_outcome_unknown",
                     error_code="commit_outcome_unknown",
                 )
-            return CoreRunResult(status="committed", receipt=receipt, primary_record_id=transition_id)
+            return CoreRunResult(
+                status="committed", receipt=receipt, primary_record_id=transition_id
+            )
 
-    def _reset_event(self, event_id, request, fingerprint, event_type, stage_id, primary_id, *, bind):
+    def _reset_event(
+        self, event_id, request, fingerprint, event_type, stage_id, primary_id, *, bind
+    ):
         return EventEnvelope.model_validate(
             {
                 "schema_version": EventEnvelope.schema_id,
@@ -1746,17 +1863,22 @@ class CoreRunRecoveryService:
                     effect_kind="run_head_transition",
                     primary_record_id=primary_id,
                     outcome="committed",
-                ) if bind else None,
+                )
+                if bind
+                else None,
             },
             strict=True,
         )
 
     @staticmethod
-    def _exact_revision(snapshot, reference: ArtifactRevisionReference) -> ArtifactRevision:
+    def _exact_revision(
+        snapshot, reference: ArtifactRevisionReference
+    ) -> ArtifactRevision:
         matches = [
             item
             for item in snapshot.artifact_revisions
-            if item.artifact_id == reference.artifact_id and item.revision == reference.revision
+            if item.artifact_id == reference.artifact_id
+            and item.revision == reference.revision
         ]
         if len(matches) != 1:
             raise CoreRunError("repair_history_invalid")

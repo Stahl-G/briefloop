@@ -5902,6 +5902,7 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
         "repair_complete",
         "recovery_complete",
         "run_head_transition",
+        "run_successor_start",
         "finalize_render",
         "finalize_complete",
         "internal_approval",
@@ -5934,6 +5935,7 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
         "repair_complete": None,
         "recovery_complete": (("decision_recorded", 1),),
         "run_head_transition": None,
+        "run_successor_start": None,
         "finalize_render": (("owned_artifact_accepted", 1),),
         "finalize_complete": (
             ("stage_status_changed", 1),
@@ -6036,6 +6038,19 @@ def test_core_effect_receipt_binding_table_is_exact() -> None:
                 "stage_transitions",
                 "run_integrity_records",
                 "run_head_transitions",
+            }
+        ),
+        "run_successor_start": frozenset(
+            {
+                "artifact_revisions",
+                "artifact_identities",
+                "run_contract_bindings",
+                "stage_transitions",
+                "run_integrity_records",
+                "run_head_transitions",
+                "run_guidance_snapshots",
+                "run_guidance_selection_decisions",
+                "run_guidance_snapshot_items",
             }
         ),
         "finalize_render": frozenset(

@@ -267,3 +267,4 @@ def test_improvement_page_is_honest_unavailable(tmp_path: Path) -> None:
     assert improvement["recorded"] == []
     assert improvement["consumption_note"] == IMPROVEMENT_CONSUMPTION_NOTE
     assert improvement["planned_note"] == IMPROVEMENT_PLANNED_NOTE
+    assert improvement["next_run_consumption"] == "explicit_opt_in_successor_only"

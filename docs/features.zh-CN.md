@@ -22,6 +22,7 @@ BriefLoop 的功能很多，因为它不是一个单点报告生成器，而是�
 | 产品工作区骨架 | 从受支持的 baseline ReportPack 创建 conservative local-first workspace 和 `report_spec.yaml` | 受支持基线 | `briefloop new industry-weekly <workspace>`, `briefloop new management-monthly <workspace>`, `briefloop new document-review <workspace>` |
 | Claude writer 命令 | 给写作者提供五动词入口 | 可选启用，一等 writer 路径 | `/briefloop new`, `/briefloop run`, `/briefloop status`, `/briefloop feedback`, `/briefloop deliver`；`/mabw` 保留为兼容 alias |
 | Runtime handoff | 为外部 orchestrator 和 subagents 生成执行交接面 | 默认在场 | `briefloop run --workspace <workspace> --runtime operator` |
+| 同 workspace 正常 successor | 从已 finalized 的当前 head 启动新 run；只有显式 opt-in 时才原子冻结兼容、active-approved 的 Human guidance | development main 实验性 | `briefloop runtime successor-start --workspace <workspace> --direction-json <json> --run-id <id> --include-approved-guidance`；仅 Analyst/Editor，效用 NOT MEASURED |
 | 状态查看 | 查看当前 stage、blocker、artifact、计时 bucket 和下一步安全动作 | 默认在场 | `/briefloop status`, `briefloop status` |
 | 交付包 | 在 finalize 检查后输出读者可见 Markdown 和 DOCX | 默认在场 | `/briefloop deliver`, `briefloop finalize`, `state finalize-complete` |
 
@@ -60,14 +61,15 @@ BriefLoop 的功能很多，因为它不是一个单点报告生成器，而是�
 | Run integrity contamination | 显式标记 frozen artifact 被改、replay 风险和完整性违例 | 默认在场 | contaminated run 不是干净 reference evidence |
 | Repair routing | 把 blocker 和 finding 分配给有边界的 repair 路径 | 已支持，仍在改进 | repair 不抹掉原始 trace |
 
-## 反馈和已批准记忆
+## 反馈和已批准 guidance
 
 | 功能 | 做什么 | 状态 | 边界 |
 |---|---|---|---|
 | Feedback capture | 记录用户反馈，用于 review、repair 或 intake | 已支持 | feedback 不自动等于 memory |
-| Improvement Ledger | 保存人工批准的读者偏好，append-only、可审计 | 使用时默认在场 | 不是自动学习 |
-| Improvement Memory snapshot | 把已批准 guidance 冻结进下一次 run 的 runtime surface | 使用 Improvement Ledger 时默认在场 | 只影响后续 run，不追溯当前 run |
-| Supersede / revert hygiene | 防止明显 guidance 腐化，并保留可撤销性 | 已支持 | 人类控制 |
+| Store-native post-final guidance lifecycle | 把显式 Human disposition、人工编辑 guidance 与独立 approval/status 记录为 append-only SQLite Receipt | development main 实验性 | approval 不等于自动复用，也不是 evidence |
+| Successor guidance snapshot | 只有 successor 显式 opt-in 时，冻结兼容 active-approved guidance，并给 Analyst 与 Editor 同一份不可变 context | development main 实验性 | 当前 direction/evidence 优先；其他角色、Gate、finalize、delivery、repair、Core 均无此权限 |
+| 历史 deactivate / revert / supersede | successor 成为当前 head 后，旧 run guidance lifecycle 仍可显式寻址 | development main 实验性 | 精确 result binding；browser `review-open` 仍只支持当前 head |
+| Legacy Improvement 文件与命令 | 旧 JSON/JSONL ledger、projection、snapshot 与 `improve` mutator | 已退役 | inert；无 reader、writer、migration 或 fallback |
 
 ## 实验性支持记录控制面
 
@@ -78,7 +80,7 @@ BriefLoop 的功能很多，因为它不是一个单点报告生成器，而是�
 | Atomic Claim Graph | Claim Ledger 条目的可选 atom-level 分解 | 实验性 | 自动 atomization 正确 |
 | Evidence Span Registry | 可选 source-pack byte binding 和 span trace record | 实验性 | 语义支撑证明 |
 | Claim-Support Matrix | 可选 atom-to-evidence support rows，以及 validation 和 gate/status projection | 实验性 | 自动支撑评估、真理证明或 release eligibility |
-| Semantic support assessment proposals | 面向 support label 的结构化多评估者 proposal layer | 路线图 | 单个模型 judge 决定真伪 |
+| Semantic Assessment Report contract | 可选 schema 与 machine-checkable reference validation | 仅实验性 schema | 无当前 producer、proposal/status projection、adjudication writer、support truth 或 Gate authority |
 | Human adjudication queue | 人类解决有争议的 support assessment | 路线图 | 自动裁决 |
 | Release eligibility | 根据 support 和评估记录进行显式 reference/release 分类 | 路线图 | 隐藏质量声明 |
 
@@ -89,7 +91,7 @@ BriefLoop 的功能很多，因为它不是一个单点报告生成器，而是�
 | 确定性测试集 | 在 CI 中运行 1,000+ 个不调用 LLM 的测试 | 默认在场 | 测控制行为和契约，不测模型质量 |
 | Synthetic demos | 用安全合成材料展示证据链 | 已支持 | demo 不等于生产质量声明 |
 | Reference run reports | 发布 public-safe integration / failure studies | 已支持 | 每份 report 都说明能证明什么、不能证明什么 |
-| MABW-080 / BriefLoop-090 experiments | 复现和审计已归档的受控实验 run | 已归档实验性 | pilot 级观察，不是通用质量证明 |
+| MABW-080 / BriefLoop-090 experiments | 历史 guide、git history 与冻结 reference-run record | 工具已退役 | 无当前命令；归档观察不是通用质量证明 |
 
 ## 输出格式
 

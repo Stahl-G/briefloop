@@ -686,6 +686,10 @@ def test_first_user_docs_overclaims_fail_public_claim_scan(
         text = "\n".join(phrases)
         if rel_path == "docs/getting-started.md":
             text += "\nBriefLoop proves every claim is true.\n"
+            text += "BriefLoop automatically learns from feedback.\n"
+            text += "BriefLoop guarantees improvement.\n"
+            text += "AI approves guidance.\n"
+            text += "Guidance is evidence and deterministic policy.\n"
         path.write_text(text, encoding="utf-8")
     monkeypatch.setattr(module, "ROOT", tmp_path)
 
@@ -698,6 +702,34 @@ def test_first_user_docs_overclaims_fail_public_claim_scan(
     assert "docs/getting-started.md:" in overclaim_check["detail"]
     assert "proves_truth" in overclaim_check["detail"]
     assert "proves every claim is true" in overclaim_check["detail"]
+    assert "automatic_learning" in overclaim_check["detail"]
+    assert "guaranteed_improvement" in overclaim_check["detail"]
+    assert "ai_guidance_approval" in overclaim_check["detail"]
+    assert "guidance_as_evidence_or_policy" in overclaim_check["detail"]
+
+
+def test_public_docs_guard_rejects_stale_guidance_carry_claim(
+    tmp_path, monkeypatch
+) -> None:
+    module = _load_product_baseline_module()
+    _write_product_boundary_fixture(module, tmp_path)
+    support_path = tmp_path / "docs" / "support-matrix.md"
+    support_path.write_text(
+        support_path.read_text(encoding="utf-8")
+        + "\nFast-rerun fact-layer import is an experimental control transaction.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    checks: list[dict[str, str]] = []
+    module._check_cli_and_docs_boundaries(checks)
+    checks_by_id = {item["id"]: item for item in checks}
+
+    stale_check = checks_by_id[
+        "docs.docs/support-matrix.md.guidance_carry_current_truth"
+    ]
+    assert stale_check["status"] == "fail"
+    assert "Fast-rerun fact-layer import" in stale_check["detail"]
 
 
 def test_golden_path_guard_rejects_experiment_surface_drift(

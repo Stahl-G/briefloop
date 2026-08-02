@@ -426,6 +426,14 @@ def prepare_cross_run_checkout_effect(
     if not provisional_members:
         return PreparedCheckoutEffect(pre, post, binding, None, None, ())
     profile = preflight_publication(Path(workspace), provisional_members)
+    from .integrity import verify_publication_preimage
+
+    verify_publication_preimage(
+        Path(workspace),
+        pre.members,
+        provisional_members,
+        profile,
+    )
     intent, members = build_publication_intent(
         identity=identity,
         pre=pre,

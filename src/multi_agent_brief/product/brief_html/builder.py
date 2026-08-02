@@ -4,8 +4,8 @@ The Brief, run state, quality summary, and frozen reader bytes all come from
 one strict runtime-host read model built from one verified ControlStore
 history.  LAJ is rendered only when an explicit hash-bound view is supplied.
 Store-native Human dispositions and approved guidance are projected read-only;
-next-run guidance consumption remains unavailable.  No legacy JSON fold-in is
-read.
+reuse occurs only through a separate explicit successor transaction. No legacy
+JSON fold-in is read.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from multi_agent_brief.product.post_final_assessment_projection import (
     build_post_final_assessment_projection,
 )
 from multi_agent_brief.product.post_final_review import (
+    NEXT_RUN_CONSUMPTION_STATUS,
     PostFinalReviewError,
     PostFinalReviewService,
 )
@@ -44,12 +45,12 @@ LAJ_EXPERIMENTAL_BANNER = (
     "or proof of correctness. Utility NOT MEASURED."
 )
 IMPROVEMENT_CONSUMPTION_NOTE = (
-    "Approved guidance is Store-native, but no current or future run consumes "
-    "it until the separate next-run snapshot unit ships."
+    "Approved guidance remains advisory here. A Human may explicitly opt into "
+    "freezing compatible guidance when starting a separate successor run."
 )
 IMPROVEMENT_PLANNED_NOTE = (
-    "Human disposition, edited guidance and separate approval are available; "
-    "next-run consumption is not shipped."
+    "Human disposition, edited guidance, separate approval, and explicit "
+    "successor-only reuse are available."
 )
 
 
@@ -297,7 +298,7 @@ def _improvement_page(
             "guidance_statuses": status["guidance_statuses"],
             "consumption_note": IMPROVEMENT_CONSUMPTION_NOTE,
             "planned_note": IMPROVEMENT_PLANNED_NOTE,
-            "next_run_consumption": "not_shipped",
+            "next_run_consumption": NEXT_RUN_CONSUMPTION_STATUS,
         }
     return {
         "status": "unavailable",
@@ -306,7 +307,7 @@ def _improvement_page(
         "guidance_statuses": [],
         "consumption_note": IMPROVEMENT_CONSUMPTION_NOTE,
         "planned_note": IMPROVEMENT_PLANNED_NOTE,
-        "next_run_consumption": "not_shipped",
+        "next_run_consumption": NEXT_RUN_CONSUMPTION_STATUS,
     }
 
 

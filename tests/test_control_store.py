@@ -62,6 +62,11 @@ _POST_FINAL_RECEIPT_RELATION_FIELDS = (
     "post_final_guidance_drafts",
     "post_final_guidance_statuses",
 )
+_GUIDANCE_RECEIPT_RELATION_FIELDS = (
+    "run_guidance_snapshots",
+    "run_guidance_selection_decisions",
+    "run_guidance_snapshot_items",
+)
 
 
 _CRASH_SUBPROCESS = r"""
@@ -512,6 +517,26 @@ def test_historical_receipt_projection_accepts_only_the_exact_legacy_shape() -> 
             canonical_json_bytes(unknown).decode("utf-8"),
             receipt_committed_revision=receipt.committed_revision,
             legacy_receipt_max_committed_revision=receipt.committed_revision,
+        )
+
+
+@pytest.mark.parametrize("field", _GUIDANCE_RECEIPT_RELATION_FIELDS)
+def test_schema13_receipt_requires_guidance_relation_fields(field: str) -> None:
+    receipt = TransactionReceipt.model_validate(
+        TransactionReceipt.minimal_example,
+        strict=True,
+    )
+    payload = receipt.model_dump(mode="json", exclude_unset=False)
+    assert payload.pop(field) == []
+
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_not_canonical",
+    ):
+        _decode_record(
+            TransactionReceipt,
+            canonical_json_bytes(payload).decode("utf-8"),
+            receipt_committed_revision=receipt.committed_revision,
         )
 
 
@@ -1330,6 +1355,14 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "transaction_post_final_finding_dispositions",
         "transaction_post_final_guidance_drafts",
         "transaction_post_final_guidance_statuses",
+        "run_guidance_snapshots",
+        "run_guidance_selection_decisions",
+        "run_guidance_snapshot_items",
+        "run_guidance_snapshot_decisions",
+        "run_guidance_snapshot_selected_items",
+        "transaction_run_guidance_snapshots",
+        "transaction_run_guidance_selection_decisions",
+        "transaction_run_guidance_snapshot_items",
         "post_final_assessment_abandonment_compatibility_boundaries",
         "post_final_assessment_abandonments",
         "transaction_post_final_assessment_abandonments",
@@ -1351,7 +1384,7 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         assert store._connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert store._connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert store._connection.execute("PRAGMA synchronous").fetchone()[0] == 2
-        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 12
+        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 13
         tables = {
             row[0]
             for row in store._connection.execute(
@@ -2808,11 +2841,27 @@ def test_future_schema_fails_closed(tmp_path: Path) -> None:
     store = _create_store(tmp_path)
     store.close()
     connection = sqlite3.connect(tmp_path / "control.db")
-    connection.execute("PRAGMA user_version = 13")
+    connection.execute("PRAGMA user_version = 14")
     connection.close()
     with pytest.raises(ControlStoreSchemaError) as error:
         SQLiteControlStore.open(tmp_path / "control.db")
     assert error.value.code == "future_schema_version"
+
+
+def test_schema_v12_is_rejected_without_automatic_upgrade(tmp_path: Path) -> None:
+    store = _create_store(tmp_path)
+    store.close()
+    connection = sqlite3.connect(tmp_path / "control.db")
+    connection.execute("PRAGMA user_version = 12")
+    connection.close()
+
+    with pytest.raises(ControlStoreSchemaError) as error:
+        SQLiteControlStore.open(tmp_path / "control.db")
+    assert error.value.code == "unsupported_schema_version"
+
+    connection = sqlite3.connect(tmp_path / "control.db")
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 12
+    connection.close()
 
 
 def test_schema_v1_store_is_rejected_without_automatic_upgrade(tmp_path: Path) -> None:

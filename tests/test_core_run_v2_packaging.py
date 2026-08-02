@@ -1644,3 +1644,402 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             '"gate_count": 6, "legacy_file_zero_truth": true, '
             '"receipt_count": 28}\n'
         )
+
+
+_SUCCESSOR_GUIDANCE_PROBE = r"""
+from contextlib import redirect_stdout
+import io
+import json
+from pathlib import Path
+import sqlite3
+import sys
+
+import multi_agent_brief
+from multi_agent_brief.cli.main import main
+from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
+from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
+
+
+mode = sys.argv[1]
+workspace = Path(sys.argv[2])
+expected_package_root = Path(sys.argv[3]).resolve()
+direction = json.loads(Path(sys.argv[4]).read_text(encoding="utf-8"))
+successor_run_id = sys.argv[5]
+expected_guidance = sys.argv[6]
+package_file = Path(multi_agent_brief.__file__).resolve()
+
+
+def require(condition, message):
+    if not condition:
+        raise RuntimeError(message)
+
+
+require(
+    package_file.is_relative_to(expected_package_root),
+    f"package root mismatch: {package_file} not under {expected_package_root}",
+)
+database = workspace / "briefloop.db"
+with sqlite3.connect(database) as connection:
+    schema_before = connection.execute("PRAGMA user_version").fetchone()[0]
+with SQLiteControlStore.open(database) as store:
+    revision_before = store.current_revision
+database_before = database.read_bytes()
+
+output = io.StringIO()
+with redirect_stdout(output):
+    return_code = main(
+        [
+            "runtime",
+            "successor-start",
+            "--workspace",
+            str(workspace),
+            "--direction-json",
+            json.dumps(direction, sort_keys=True, separators=(",", ":")),
+            "--run-id",
+            successor_run_id,
+            "--include-approved-guidance",
+        ]
+    )
+lines = [line for line in output.getvalue().splitlines() if line.strip()]
+require(return_code == 0, f"successor command failed: {output.getvalue()}")
+require(len(lines) == 1, f"successor command output drift: {lines!r}")
+command_result = json.loads(lines[0])
+require(
+    command_result.get("status") == ("committed" if mode == "source" else "replayed"),
+    f"successor command status drift: {command_result!r}",
+)
+
+with sqlite3.connect(database) as connection:
+    schema_after = connection.execute("PRAGMA user_version").fetchone()[0]
+with SQLiteControlStore.open(database) as store:
+    revision_after = store.current_revision
+    history = store.load_history()
+verified = CoreRunDomainVerifier().verify_loaded_history(history, successor_run_id)
+snapshot = verified.snapshot
+require(len(snapshot.run_guidance_snapshots) == 1, "missing guidance snapshot")
+guidance = snapshot.run_guidance_snapshots[0]
+decisions = tuple(snapshot.run_guidance_selection_decisions)
+items = tuple(snapshot.run_guidance_snapshot_items)
+require(guidance.reuse_requested, "guidance opt-in was not frozen")
+require(guidance.selected_count == len(items) == 1, "selected guidance count drift")
+require(guidance.omitted_count == 0, "compatible approved guidance was omitted")
+require(len(decisions) == 1 and decisions[0].selected, "selection decision drift")
+require(decisions[0].reason_code == "approved_scope_match", "selection reason drift")
+require(items[0].guidance_text == expected_guidance, "frozen guidance text drift")
+require(
+    guidance.selected_item_ids == [items[0].item_id]
+    and guidance.decision_ids == [decisions[0].decision_id],
+    "snapshot relation order drift",
+)
+receipts = [
+    item
+    for item in snapshot.transactions
+    if item.transaction_id == guidance.accepted_transaction_id
+]
+require(len(receipts) == 1, "missing successor Receipt")
+receipt = receipts[0]
+require(
+    [item.snapshot_id for item in receipt.run_guidance_snapshots]
+    == [guidance.snapshot_id],
+    "Receipt snapshot relation drift",
+)
+require(
+    [item.decision_id for item in receipt.run_guidance_selection_decisions]
+    == [decisions[0].decision_id],
+    "Receipt decision relation drift",
+)
+require(
+    [item.item_id for item in receipt.run_guidance_snapshot_items]
+    == [items[0].item_id],
+    "Receipt selected-item relation drift",
+)
+
+role_ids = (
+    "source-planner",
+    "source-provider",
+    "scout",
+    "screener",
+    "claim-ledger",
+    "analyst",
+    "editor",
+    "auditor",
+    "formatter",
+)
+contexts = {}
+for role_id in role_ids:
+    context = RuntimeHostService._frozen_guidance_context(verified, role_id=role_id)
+    contexts[role_id] = (
+        None
+        if context is None
+        else context.model_dump(mode="json", exclude_unset=False)
+    )
+require(contexts["analyst"] is not None, "analyst guidance context missing")
+require(contexts["editor"] == contexts["analyst"], "analyst/editor context drift")
+require(
+    all(
+        contexts[role_id] is None
+        for role_id in role_ids
+        if role_id not in {"analyst", "editor"}
+    ),
+    "guidance leaked to a forbidden role",
+)
+
+print(
+    json.dumps(
+        {
+            "mode": mode,
+            "optimize": sys.flags.optimize,
+            "command_status": command_result["status"],
+            "primary_record_id": command_result.get("primary_record_id"),
+            "schema_before": schema_before,
+            "schema_after": schema_after,
+            "revision_before": revision_before,
+            "revision_after": revision_after,
+            "database_unchanged": database.read_bytes() == database_before,
+            "snapshot": guidance.model_dump(mode="json", exclude_unset=False),
+            "decisions": [
+                item.model_dump(mode="json", exclude_unset=False)
+                for item in decisions
+            ],
+            "items": [
+                item.model_dump(mode="json", exclude_unset=False)
+                for item in items
+            ],
+            "receipt_relations": {
+                "snapshots": [
+                    item.model_dump(mode="json", exclude_unset=False)
+                    for item in receipt.run_guidance_snapshots
+                ],
+                "decisions": [
+                    item.model_dump(mode="json", exclude_unset=False)
+                    for item in receipt.run_guidance_selection_decisions
+                ],
+                "items": [
+                    item.model_dump(mode="json", exclude_unset=False)
+                    for item in receipt.run_guidance_snapshot_items
+                ],
+            },
+            "contexts": contexts,
+        },
+        sort_keys=True,
+    )
+)
+"""
+
+
+def _run_successor_guidance_probe(
+    *,
+    mode: str,
+    workspace: Path,
+    package_root: Path,
+    direction_path: Path,
+    successor_run_id: str,
+    expected_guidance: str,
+    script_path: Path,
+    cwd: Path,
+) -> dict[str, object]:
+    command = [sys.executable]
+    if sys.flags.optimize:
+        command.append("-" + ("O" * sys.flags.optimize))
+    command.extend(
+        (
+            str(script_path),
+            mode,
+            str(workspace),
+            str(package_root),
+            str(direction_path),
+            successor_run_id,
+            expected_guidance,
+        )
+    )
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = os.pathsep.join((str(package_root), str(ROOT)))
+    run = subprocess.run(
+        command,
+        cwd=cwd,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if run.returncode:
+        raise AssertionError(run.stdout + run.stderr)
+    return json.loads(run.stdout)
+
+
+@pytest.mark.timeout(900)
+@pytest.mark.skipif(
+    not supports_retained_directory_publication(),
+    reason="normal successor checkout publication is unavailable on this platform",
+)
+def test_source_and_non_editable_wheel_replay_guidance_successor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fresh schema-13 successor reuse is one installed, replay-safe product path."""
+
+    from multi_agent_brief.control_store import SQLiteControlStore
+    from multi_agent_brief.product.post_final_review import PostFinalReviewService
+    from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+        ANTHROPIC_API_KEY_SETTING,
+    )
+    import multi_agent_brief.semantic_evaluator.runner as runner_module
+    from tests.test_post_final_assessment import _fixture_service, _policy_payload
+    from tests.test_post_final_human_review import _disposition_payload
+
+    workspace = _real_finalized_local_workspace(tmp_path / "seed", monkeypatch)
+    provider_calls: list[tuple[str, int]] = []
+    assessment = _fixture_service(
+        workspace,
+        provider_calls,
+        terminal_mode="finding",
+    )
+    assert assessment.policy_set(_policy_payload())["ok"] is True
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+    assessed = assessment.assess()
+    monkeypatch.delenv(ANTHROPIC_API_KEY_SETTING, raising=False)
+    assert assessed["status"] == "available"
+    assert assessed["finding_count"] >= 1
+    assert len(provider_calls) == 9
+    review = PostFinalReviewService(
+        workspace,
+        str(assessed["assessment_result_id"]),
+        str(assessed["assessment_result_fingerprint"]),
+    )
+    status = review.review_status()
+    finding = status["dispositions"][0]
+    accepted = review.record_disposition(
+        _disposition_payload(
+            status,
+            finding,
+            request_id="packaging-successor-accept-1",
+            decision="accept",
+        )
+    )
+    guidance_text = "Lead with the decision and keep evidence obligations explicit."
+    draft = review.append_guidance_draft(
+        {
+            "schema_version": "briefloop.post_final_guidance_draft_input.v1",
+            "human_actor_id": "packaging-human",
+            "human_request_id": "packaging-successor-draft-1",
+            "assessment_result_id": status["assessment_result_id"],
+            "finding_id": finding["finding_id"],
+            "disposition_id": accepted["disposition_id"],
+            "guidance_text": guidance_text,
+        }
+    )
+    approved = review.approve_guidance(
+        {
+            "schema_version": "briefloop.post_final_guidance_status_input.v1",
+            "human_actor_id": "packaging-human",
+            "human_request_id": "packaging-successor-approve-1",
+            "guidance_id": draft["guidance_id"],
+            "draft_revision": draft["draft_revision"],
+        }
+    )
+    assert approved["replayed"] is False
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        predecessor = store.load_snapshot(head.current_run_id)
+    assert predecessor.run_contract_bindings
+    direction = predecessor.run_contract_bindings[0].run_direction.model_dump(
+        mode="json",
+        exclude_unset=False,
+    )
+    direction.update(
+        {
+            "subject_name": "Successor public brief",
+            "brief_title": "Successor public brief",
+            "task_objective": "Prepare the next public-safe recurring brief.",
+        }
+    )
+    direction_path = tmp_path / "successor-direction.json"
+    direction_path.write_text(
+        json.dumps(direction, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+
+    build_root = tmp_path / "build-root-successor"
+    build_root.mkdir()
+    shutil.copy2(ROOT / "pyproject.toml", build_root / "pyproject.toml")
+    shutil.copy2(ROOT / "README.md", build_root / "README.md")
+    shutil.copytree(ROOT / "src", build_root / "src")
+    wheel_dir = tmp_path / "wheel-successor"
+    wheel_dir.mkdir()
+    build = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            ".",
+            "--no-deps",
+            "--no-build-isolation",
+            "--wheel-dir",
+            str(wheel_dir),
+        ],
+        cwd=build_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert build.returncode == 0, build.stdout + build.stderr
+    wheel_path = next(wheel_dir.glob("briefloop-*.whl"))
+    installed = tmp_path / "installed-successor"
+    installed.mkdir()
+    with zipfile.ZipFile(wheel_path) as archive:
+        archive.extractall(installed)
+        assert (
+            "multi_agent_brief/control_store/migrations/0013.sql" in archive.namelist()
+        )
+
+    script_path = tmp_path / "successor_guidance_probe.py"
+    script_path.write_text(
+        textwrap.dedent(_SUCCESSOR_GUIDANCE_PROBE),
+        encoding="utf-8",
+    )
+    successor_run_id = "RUN-PACKAGING-SUCCESSOR-001"
+    source = _run_successor_guidance_probe(
+        mode="source",
+        workspace=workspace,
+        package_root=ROOT / "src",
+        direction_path=direction_path,
+        successor_run_id=successor_run_id,
+        expected_guidance=guidance_text,
+        script_path=script_path,
+        cwd=tmp_path,
+    )
+    wheel = _run_successor_guidance_probe(
+        mode="wheel",
+        workspace=workspace,
+        package_root=installed,
+        direction_path=direction_path,
+        successor_run_id=successor_run_id,
+        expected_guidance=guidance_text,
+        script_path=script_path,
+        cwd=tmp_path,
+    )
+
+    assert source["optimize"] == wheel["optimize"] == sys.flags.optimize
+    assert source["schema_before"] == source["schema_after"] == 13
+    assert wheel["schema_before"] == wheel["schema_after"] == 13
+    assert source["command_status"] == "committed"
+    assert source["revision_after"] == source["revision_before"] + 1
+    assert wheel["command_status"] == "replayed"
+    assert wheel["revision_after"] == wheel["revision_before"]
+    assert wheel["database_unchanged"] is True
+    stable_keys = (
+        "primary_record_id",
+        "snapshot",
+        "decisions",
+        "items",
+        "receipt_relations",
+        "contexts",
+    )
+    assert {key: source[key] for key in stable_keys} == {
+        key: wheel[key] for key in stable_keys
+    }

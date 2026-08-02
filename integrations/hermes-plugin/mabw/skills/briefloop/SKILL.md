@@ -32,7 +32,7 @@ next release target.
 Use this skill for:
 
 - `briefloop run --workspace <workspace> --runtime codex`
-- `briefloop runtime next`, `continue`, `diagnose`, `invocation-start`,
+- `briefloop runtime next`, `continue`, `successor-start`, `diagnose`, `invocation-start`,
   `invocation-accept`, `invocation-fail`, or `apply`
 - Codex role dispatch and invocation scratch proposals
 - package-ready, human approval, delivery authorization, or delivery status
@@ -104,8 +104,34 @@ path, while `projection_unavailable` has no path because no safe projection
 was written. Neither result changes finalization truth. The file contains the exact Store-bound
 `reader_brief`, not mutable workspace Markdown, and is not approval, packaging,
 delivery, publication, or a persistent localhost service. LAJ appears only
-when an explicit hash-bound advisory view is supplied; Improvement Ledger
-remains unavailable.
+when an explicit hash-bound advisory view is supplied. Any Improvement tab is a
+read-only projection of Store-native Human guidance state; it is not a legacy
+Improvement Ledger, approval action, successor request, or proof of reuse.
+
+After a verified `finalized_local` head, a Human may explicitly start a normal
+same-workspace successor with:
+
+```bash
+briefloop runtime successor-start --workspace <workspace> \
+  --direction-json '<strict RunDirection JSON>' \
+  --run-id <new-run-id> \
+  --include-approved-guidance
+```
+
+This is a separate root-host Human transaction, not a sixth
+`CoreRunNextAction` kind and not recovery reset. The final flag is the explicit
+reuse opt-in; without it the successor freezes an empty guidance snapshot.
+Python atomically creates the successor and freezes the complete compatible,
+active Human-approved set within the 16-item / 65,536-byte bounds. Exact replay
+returns the original Receipt/snapshot; conflicts and limit failures write
+nothing and no provider or role is called.
+
+When an Analyst or Editor `RoleTaskEnvelope` contains
+`FrozenGuidanceContext`, use it only for audience fit, structure, style, and
+expression. Current `RunDirection` and evidence govern. Guidance is not a fact,
+source, Claim Ledger input, Gate rule, repair command, or delivery authority.
+All other roles receive no guidance context. Never reread a live guidance head
+or retired Improvement file; replay uses the immutable Store snapshot.
 
 Hard boundaries:
 
@@ -122,6 +148,9 @@ Hard boundaries:
   in the current `RoleTaskEnvelope.task_instructions` before acceptance.
 - Never replace exact-role delegation with root drafting, or replace
   current-session execution with a subagent.
+- Never infer successor guidance reuse from approval, prior chat, status, or a
+  live ledger. It requires the explicit Human successor request and exact
+  frozen envelope context.
 - Never fall back to legacy JSON, `operator`, migration, dual read/write, or
   another runtime.
 - Treat `runtime_action_stale`, invalid envelopes, Store integrity failures,
@@ -139,4 +168,6 @@ Include:
 - whether the next step is Codex role work, deterministic host work, a strict
   human request, a block, or a terminal report
 - all fixed reason codes or unsupported boundaries encountered
+- successor snapshot identity when a normal successor or frozen guidance
+  context is in scope
 - the explicit statement that projections were not used to decide legality

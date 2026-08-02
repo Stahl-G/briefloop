@@ -26,6 +26,7 @@ from multi_agent_brief.control_store.errors import ControlStoreError
 from multi_agent_brief.control_store.serialization import canonical_json_bytes
 from multi_agent_brief.control_store.sqlite_store import SQLiteControlStore
 from multi_agent_brief.core_run_v2.next_action import classify_core_run_next_action
+from multi_agent_brief.core_run_v2.errors import CoreRunError
 from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
 from multi_agent_brief.product.post_final_assessment import (
     PostFinalAssessmentError,
@@ -40,7 +41,7 @@ from multi_agent_brief.product.post_final_assessment_projection import (
     build_post_final_assessment_projection,
 )
 from multi_agent_brief.runtime_host_v2.projections import (
-    build_finalized_local_review_projection,
+    build_finalized_local_review_projection_from_history,
 )
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
 
@@ -51,6 +52,7 @@ POST_FINAL_GUIDANCE_DRAFT_INPUT_SCHEMA = "briefloop.post_final_guidance_draft_in
 POST_FINAL_GUIDANCE_STATUS_INPUT_SCHEMA = (
     "briefloop.post_final_guidance_status_input.v1"
 )
+NEXT_RUN_CONSUMPTION_STATUS = "explicit_opt_in_successor_only"
 
 
 class PostFinalReviewError(RuntimeError):
@@ -115,10 +117,13 @@ class PostFinalReviewService:
         workspace: str | Path,
         assessment_result_id: str,
         assessment_result_fingerprint: str,
+        *,
+        allow_historical: bool = False,
     ) -> None:
         self.workspace = Path(workspace).expanduser().resolve()
         self.assessment_result_id = assessment_result_id
         self.assessment_result_fingerprint = assessment_result_fingerprint
+        self.allow_historical = allow_historical
 
     @property
     def _database_path(self) -> Path:
@@ -126,29 +131,60 @@ class PostFinalReviewService:
 
     def _load(self) -> dict[str, Any]:
         try:
-            facts = build_finalized_local_review_projection(self.workspace).facts
             with SQLiteControlStore.open(self._database_path) as store:
                 history = store.load_history()
-                verified = CoreRunDomainVerifier().verify_loaded_history(
-                    history, facts.run_id
-                )
-                action = _require_current_finalized_action(
-                    facts, classify_core_run_next_action(verified)
-                )
-                snapshot = history.snapshot_at_revision(
-                    facts.run_id, history.store_revision
-                )
-                series = resolve_post_final_assessment_series(
-                    history, snapshot, facts, action
-                )
+            selected = [
+                item
+                for run_snapshot in history.snapshots
+                for item in run_snapshot.post_final_assessment_results
+                if item.assessment_result_id == self.assessment_result_id
+            ]
+            if len(selected) != 1:
+                raise PostFinalReviewError("post_final_review_selection_invalid")
+            selected_result = selected[0]
+            if selected_result.result_fingerprint != self.assessment_result_fingerprint:
+                raise PostFinalReviewError("post_final_review_binding_invalid")
+            if not self.allow_historical:
+                current_heads = {
+                    item.workspace_run_head.current_run_id
+                    for item in history.snapshots
+                    if item.workspace_run_head is not None
+                }
+                if current_heads != {selected_result.run_id}:
+                    raise PostFinalReviewError(
+                        "post_final_review_current_head_required"
+                    )
+            facts = build_finalized_local_review_projection_from_history(
+                self.workspace,
+                history,
+                run_id=selected_result.run_id,
+                require_current_head=False,
+            ).facts
+            verified = CoreRunDomainVerifier().verify_loaded_history(
+                history,
+                facts.run_id,
+                require_current_head=False,
+            )
+            action = _require_current_finalized_action(
+                facts, classify_core_run_next_action(verified)
+            )
+            snapshot = history.snapshot_at_revision(
+                facts.run_id, history.store_revision
+            )
+            series = resolve_post_final_assessment_series(
+                history, snapshot, facts, action
+            )
             projection = build_post_final_assessment_projection(
                 self.workspace,
                 assessment_result_id=self.assessment_result_id,
                 assessment_result_fingerprint=self.assessment_result_fingerprint,
+                loaded_history=history,
             )
         except (
             ControlStoreError,
+            CoreRunError,
             PostFinalAssessmentError,
+            PostFinalReviewError,
             RuntimeHostError,
             OSError,
             ValueError,
@@ -236,6 +272,35 @@ class PostFinalReviewService:
             return model.model_validate(value, strict=True)
         except (TypeError, ValidationError, ValueError) as exc:
             raise PostFinalReviewError("post_final_review_request_invalid") from exc
+
+    @staticmethod
+    def _require_quiescent_current_head(store: SQLiteControlStore) -> int:
+        """Bind a Human write to one live current-head quiescence snapshot."""
+
+        history = store.load_history()
+        current_run_ids = {
+            item.workspace_run_head.current_run_id
+            for item in history.snapshots
+            if item.workspace_run_head is not None
+        }
+        if len(current_run_ids) != 1:
+            raise PostFinalReviewError("post_final_review_request_conflict")
+        current_run_id = next(iter(current_run_ids))
+        current = next(
+            (item for item in history.snapshots if item.run.run_id == current_run_id),
+            None,
+        )
+        if current is None or any(
+            item.status == "active" for item in current.invocations
+        ):
+            raise PostFinalReviewError("post_final_review_request_conflict")
+        return history.store_revision
+
+    @staticmethod
+    def _write_error(exc: ControlStoreError) -> PostFinalReviewError:
+        if str(exc) == "store_revision_conflict":
+            return PostFinalReviewError("post_final_review_request_conflict")
+        return PostFinalReviewError(str(exc))
 
     def record_disposition(self, value: Mapping[str, object]) -> dict[str, object]:
         command = self._validate(FindingDispositionInput, value)
@@ -344,17 +409,18 @@ class PostFinalReviewService:
         )
         try:
             with SQLiteControlStore.open(self._database_path) as store:
+                expected_revision = self._require_quiescent_current_head(store)
                 with store.begin(
                     result.run_id,
                     transaction_id,
                     "post_final_finding_disposition",
-                    store.current_revision,
+                    expected_revision,
                 ) as uow:
                     uow.append_event(event)
                     uow.put_post_final_finding_disposition(record)
                     receipt = uow.commit()
         except ControlStoreError as exc:
-            raise PostFinalReviewError(str(exc)) from exc
+            raise self._write_error(exc) from exc
         return {
             "ok": True,
             "replayed": False,
@@ -482,17 +548,18 @@ class PostFinalReviewService:
         )
         try:
             with SQLiteControlStore.open(self._database_path) as store:
+                expected_revision = self._require_quiescent_current_head(store)
                 with store.begin(
                     result.run_id,
                     transaction_id,
                     "post_final_guidance_draft",
-                    store.current_revision,
+                    expected_revision,
                 ) as uow:
                     uow.append_event(event)
                     uow.put_post_final_guidance_draft(record)
                     receipt = uow.commit()
         except ControlStoreError as exc:
-            raise PostFinalReviewError(str(exc)) from exc
+            raise self._write_error(exc) from exc
         return {
             "ok": True,
             "replayed": False,
@@ -632,17 +699,18 @@ class PostFinalReviewService:
         )
         try:
             with SQLiteControlStore.open(self._database_path) as store:
+                expected_revision = self._require_quiescent_current_head(store)
                 with store.begin(
                     result.run_id,
                     transaction_id,
                     "post_final_guidance_status",
-                    store.current_revision,
+                    expected_revision,
                 ) as uow:
                     uow.append_event(event)
                     uow.put_post_final_guidance_status(record)
                     receipt = uow.commit()
         except ControlStoreError as exc:
-            raise PostFinalReviewError(str(exc)) from exc
+            raise self._write_error(exc) from exc
         return {
             "ok": True,
             "replayed": False,
@@ -753,7 +821,7 @@ class PostFinalReviewService:
             "dispositions": dispositions,
             "guidance_drafts": drafts,
             "guidance_statuses": statuses,
-            "next_run_consumption": "not_shipped",
+            "next_run_consumption": NEXT_RUN_CONSUMPTION_STATUS,
             "provider_calls": 0,
         }
 
@@ -765,6 +833,7 @@ __all__ = [
     "POST_FINAL_DISPOSITION_INPUT_SCHEMA",
     "POST_FINAL_GUIDANCE_DRAFT_INPUT_SCHEMA",
     "POST_FINAL_GUIDANCE_STATUS_INPUT_SCHEMA",
+    "NEXT_RUN_CONSUMPTION_STATUS",
     "PostFinalReviewError",
     "PostFinalReviewService",
 ]

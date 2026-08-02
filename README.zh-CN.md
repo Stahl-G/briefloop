@@ -143,7 +143,7 @@ BriefLoop 适合：
 | 哪些动作真正生效了？ | 被接受的 strict request、transaction receipt 和 invocation lineage | 通过受支持的 status/runtime view 查看 `briefloop.db` |
 | 什么在替你把关？ | Store-backed gate evaluation、package readiness 和显式人工批准 | Receipt-backed runtime action 与只读状态投影 |
 
-Agent 可以观察和提议；只有通过严格校验并被确定性服务接受的请求才会改变 Store，交付仍由人控制。在尚未发布的 development main 上，实验性 post-final 审阅可在同一 finalized lineage 上记录多个、彼此独立且由 Human 授权的 append-only assessment；审阅必须显式选择 result，并可记录 accept/reject/defer、人工编辑的 guidance 和独立 approval Receipt。generation 2 及以后只能由显式 Human 操作创建，policy 漂移不会自动运行或重拨；后续 run 尚不消费这些 guidance，完整的 Improvement Ledger 下一轮闭环仍未交付。v0.14.0 的发布边界是：当前尚未交付 Store-native 的可复用 guidance 或 Improvement Ledger。
+Agent 可以观察和提议；只有通过严格校验并被确定性服务接受的请求才会改变 Store，交付仍由人控制。在尚未发布的 development main 上，实验性 post-final 审阅可在同一 finalized lineage 上记录多个、彼此独立且由 Human 授权的 append-only assessment；审阅必须显式选择 result，并可记录 accept/reject/defer、人工编辑的 guidance 和独立 approval Receipt。generation 2 及以后只能由显式 Human 操作创建，policy 漂移不会自动运行或重拨。Human 随后可以通过 `briefloop runtime successor-start` 显式启动同一 workspace 的正常 successor，提供新的 `RunDirection`，并用 `--include-approved-guidance` 明确选择复用。一个确定性事务只为 successor 冻结兼容、active 且经 Human 批准的 guidance，且仅 Analyst 和 Editor 收到同一份不可变 context。当前 direction 与 evidence 始终优先；guidance 不进入 Claim Ledger，也不拥有 Gate、finalize、delivery、repair 或 Core 权限；效用 NOT MEASURED。已发布 v0.14.0 不包含这条 development-main successor 路径或 Store-native 可复用 guidance surface。
 
 ---
 
@@ -348,8 +348,11 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 post-final 审阅可在一个 finalized lineage 上执行多个、彼此独立且由 Human
 授权的 advisory assessment；必须显式选择 result，随后打开受保护的本地 Review
 Session，并追加人工处置、编辑草稿和独立 guidance approval。generation 2 及以后
-只能显式创建，policy 漂移不会自动运行或重拨。效用 NOT MEASURED；finding 不影响
-Gate/finalize/delivery/Core，已批准 guidance 尚不进入后续 run。
+只能显式创建，policy 漂移不会自动运行或重拨。独立的 Human 命令可以启动同一
+workspace 的正常 successor；只有显式带上 `--include-approved-guidance` 时，一个
+原子事务才会冻结兼容、active 且已批准的 guidance。只有 Analyst 和 Editor 收到
+同一份不可变 context。效用 NOT MEASURED；guidance 不提供 evidence，不改变 Claim
+Ledger、Gate、finalize、delivery、repair 或 Core，也不存在自动学习或隐式复用。
 
 v0.14.0 已发布入口：
 
@@ -375,6 +378,11 @@ v0.14.0 已发布入口：
   --policy-revision-id <id> --human-actor-id <id> --human-request-id <id>
   --assessment-purpose <purpose>`：只读生成可直接交给 `assessment-run` 的完整
   非秘密请求，不需要 SQL、内部 fingerprint、credential 或写入。
+- `briefloop runtime successor-start --workspace <path> --direction-json
+  '<strict RunDirection JSON>' --run-id <new-run-id>
+  --include-approved-guidance`：显式启动正常 successor，并选择复用兼容的
+  active-approved guidance。不带最后一个 flag 时冻结空 snapshot；两种形式都不
+  调用 provider 或 role。
 
 Store schema 变化后，旧 development workspace 不受支持；请用当前 schema 新建
 workspace。BriefLoop 不提供 development schema 的产品内升级路径。
@@ -412,12 +420,13 @@ v0.14.0 完成 SQLite-only 切换，并增加只读交互面：
   delivery、repair、approval、权威建议动作或 next-action authority，且 evaluator
   efficacy 尚未测量
 - reader-quality warning / projection surface：template conformance、
-  materiality selection、support-calibrated wording、citation profile、
-  coverage/omission 和 scoped final-abstract diagnostics
+  materiality selection、citation profile、coverage/omission 和 scoped
+  final-abstract diagnostics
 - repeated retry / repair / blocker loop 的 trajectory-regulation decision
   narrowing
-- proposal-only Semantic Support Auditor surface 和 human adjudication record；
-  这些记录不创建 support truth、gate、delivery approval 或 release authority
+- 可选 Semantic Assessment Report schema 与 reference validation；producer、
+  status projection 和 adjudication writer 已退役，剩余 contract 不创建 support
+  truth、gate、delivery approval 或 release authority
 - 公开安全的 reference、synthetic regression、minimal comparative evaluation、
   launch smoke 和 release checklist guardrail
 

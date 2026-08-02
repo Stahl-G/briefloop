@@ -52,7 +52,15 @@ def test_skill_descriptions_are_routing_descriptions():
 
 
 def test_skills_use_contract_structure():
-    required = ["## Scope", "## Purpose", "## Use When", "## Inputs", "## Outputs", "## Work", "## Handoff"]
+    required = [
+        "## Scope",
+        "## Purpose",
+        "## Use When",
+        "## Inputs",
+        "## Outputs",
+        "## Work",
+        "## Handoff",
+    ]
     for skill in SKILL_ROOT.glob("*/SKILL.md"):
         text = _read(skill)
         for heading in required:
@@ -86,8 +94,14 @@ def test_source_writer_skills_lock_source_metadata_fields():
     assert "`source_category` is reader-facing evidence category" in scout
 
     assert "`source_url` is only for HTTP(S) URLs" in claim_ledger
-    assert "Do not put titles, source names, source IDs, search queries, or local paths" in claim_ledger
-    assert "`source_path` plus `source_title` or `source_name` and `source_category`" in claim_ledger
+    assert (
+        "Do not put titles, source names, source IDs, search queries, or local paths"
+        in claim_ledger
+    )
+    assert (
+        "`source_path` plus `source_title` or `source_name` and `source_category`"
+        in claim_ledger
+    )
 
 
 def test_hermes_skill_uses_progressive_disclosure():
@@ -108,3 +122,64 @@ def test_hermes_frontmatter_is_routable():
     assert "Use when" in fm["description"]
     assert len(fm["description"]) <= 1024
     assert "delegate_task" in fm["description"]
+
+
+def test_briefloop_skill_locks_explicit_successor_guidance_boundary():
+    canonical = SKILL_ROOT / "briefloop"
+    plugin = ROOT / "integrations" / "hermes-plugin" / "mabw" / "skills" / "briefloop"
+    packaged = (
+        ROOT
+        / "src"
+        / "multi_agent_brief"
+        / "runtime_kits"
+        / "codex"
+        / "skills"
+        / "briefloop"
+    )
+    corpora = [
+        _read(canonical / "SKILL.md")
+        + "\n"
+        + _read(canonical / "references" / "codex-controlstore-v2.md"),
+        _read(plugin / "SKILL.md")
+        + "\n"
+        + _read(plugin / "references" / "codex-controlstore-v2.md"),
+        _read(packaged / "SKILL.md")
+        + "\n"
+        + _read(packaged / "references" / "controlstore-v2.md"),
+    ]
+    for corpus in corpora:
+        normalized = " ".join(corpus.split())
+        for phrase in (
+            "briefloop runtime successor-start",
+            "--include-approved-guidance",
+            "FrozenGuidanceContext",
+            "audience fit, structure, style, and expression",
+            "Current `RunDirection` and evidence govern",
+            "review-open` remains current-head-only",
+        ):
+            assert phrase in normalized
+        assert re.search(
+            r"16(?:-item| items).*65,536(?:-byte|[^.]*UTF-8 bytes)",
+            normalized,
+        )
+        assert (
+            "not a sixth `CoreRunNextAction` kind" in normalized
+            or "not a `CoreRunNextAction` kind" in normalized
+        )
+
+    assert (canonical / "references" / "codex-controlstore-v2.md").read_bytes() == (
+        plugin / "references" / "codex-controlstore-v2.md"
+    ).read_bytes()
+    assert (canonical / "references" / "codex-controlstore-v2.md").read_bytes() == (
+        packaged / "references" / "controlstore-v2.md"
+    ).read_bytes()
+
+
+def test_auditor_skill_does_not_restore_semantic_report_producer():
+    text = _read(SKILL_ROOT / "auditor" / "SKILL.md").lower()
+    assert "semantic_assessment_report.json" in text
+    assert "producer" in text and "retired" in text
+    assert "do not create" in text
+    assert (
+        "write only `output/intermediate/semantic_assessment_report.json`" not in text
+    )

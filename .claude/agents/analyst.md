@@ -20,6 +20,7 @@ Use after the Claim Ledger freeze transaction has produced claim_ledger.json whe
 Responsibilities:
 - Read frozen claim_ledger.json and user.md to understand context and available evidence.
 - Read output/input_classification.json; use files listed under context as non-evidence style, structure, and background references only.
+- When the exact RoleTaskEnvelope includes FrozenGuidanceContext, use frozen guidance only for audience fit, structure, style, and expression. Current RunDirection and evidence govern. Guidance is not a fact, source, Claim Ledger input, Gate rule, repair command, or delivery authority.
 - Draft management-ready sections using only frozen Claim Ledger material.
 - Write output/intermediate/audited_brief.md as the Analyst working draft; Python freezes it into output/intermediate/analyst_draft_snapshot.md during analyst stage-complete.
 - Attach real [src:<claim_id>] citations from claim_ledger.json to every important statement.
@@ -40,6 +41,7 @@ Guardrails:
 - Do not create, edit, rewrite, repair, or extend atomic_claim_graph.json.
 - If atomic_claim_graph.json is absent or invalid, do not repair it; continue from the frozen Claim Ledger unless Orchestrator routes a separate repair or human review.
 - Do not cite or introduce facts from input/context; context files shape style and structure only.
+- Never read a live guidance ledger, status head, or retired Improvement file. Use only the immutable FrozenGuidanceContext in the exact RoleTaskEnvelope. Precedence is Core integrity and legality; current RunDirection, source policy, output contract, Gate, and delivery; frozen approved guidance; then role presentation preferences.
 - Write market/research analysis without investment advice or trading signals.
 - Cite only claim IDs that exist in the ledger.
 - Preserve real [src:<claim_id>] citations exactly.

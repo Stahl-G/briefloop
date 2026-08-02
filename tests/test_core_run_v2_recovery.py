@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import sys
 from types import SimpleNamespace
 
@@ -2392,7 +2393,43 @@ def test_recovery_service_reset_is_cross_run_and_historical_replay_safe(
             strict=True,
         )
 
-    first_request = request_for(RUN_ID, "RUN-RECOVERY-SERVICE-RESET-002", "REQ-RECOVERY-SERVICE-RESET-001")
+    first_request = request_for(
+        RUN_ID,
+        "RUN-RECOVERY-SERVICE-RESET-002",
+        "REQ-RECOVERY-SERVICE-RESET-001",
+    )
+    tampered_workspace = tmp_path / "tampered-reset-preimage"
+    shutil.copytree(workspace, tampered_workspace)
+    tampered_database = tampered_workspace / "briefloop.db"
+    tampered_projection = tampered_workspace / predecessor_artifact.path
+    tampered_projection.write_text(
+        "sources:\n  - SRC-RESET-TAMPERED\n",
+        encoding="utf-8",
+    )
+    tampered_database_before = tampered_database.read_bytes()
+    with SQLiteControlStore.open(tampered_database, clock=CLOCK) as store:
+        tampered_revision_before = store.current_revision
+        tampered_history_before = store.load_history()
+        tampered_head_before = store.load_workspace_run_head()
+
+    tampered_result = CoreRunRecoveryService(
+        tampered_workspace,
+        clock=CLOCK,
+    ).reset_run(first_request)
+
+    assert (tampered_result.status, tampered_result.error_code) == (
+        "failed_uncommitted",
+        "checkout_projection_preimage_restore_required",
+    )
+    assert tampered_database.read_bytes() == tampered_database_before
+    assert tampered_projection.read_text(encoding="utf-8") == (
+        "sources:\n  - SRC-RESET-TAMPERED\n"
+    )
+    with SQLiteControlStore.open(tampered_database, clock=CLOCK) as store:
+        assert store.current_revision == tampered_revision_before
+        assert store.load_workspace_run_head() == tampered_head_before
+        assert store.load_history() == tampered_history_before
+
     first = service.reset_run(first_request)
     assert first.status == "committed", first.to_dict()
     assert not predecessor_projection.exists()

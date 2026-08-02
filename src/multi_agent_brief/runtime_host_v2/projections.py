@@ -269,21 +269,51 @@ def _local_run_presentation(
     )
 
 
-def _load_presentation_context(workspace: str | Path) -> _PresentationContext:
+def _presentation_context_from_history(
+    root: Path,
+    history: ControlStoreHistory,
+    *,
+    run_id: str,
+    require_current_head: bool,
+) -> _PresentationContext:
+    """Project one explicitly selected run from one already-loaded history."""
+
+    try:
+        verified = CoreRunDomainVerifier().verify_loaded_history(
+            history,
+            run_id,
+            require_current_head=require_current_head,
+        )
+        presentation = _local_run_presentation(history, verified)
+    except RuntimeHostError:
+        raise
+    except (ControlStoreError, CoreRunError, RuntimeError, ValueError) as exc:
+        raise RuntimeHostError("control_store_integrity_invalid") from exc
+    return _PresentationContext(root, history, verified, presentation)
+
+
+def _load_presentation_context(
+    workspace: str | Path,
+    *,
+    run_id: str | None = None,
+) -> _PresentationContext:
     """Load and verify one immutable Store history for all presentation facts."""
 
     try:
         root = Path(workspace).expanduser().resolve(strict=True)
         with SQLiteControlStore.open(root / "briefloop.db") as store:
             history = store.load_history()
-        run_id = _current_run_id(history)
-        verified = CoreRunDomainVerifier().verify_loaded_history(history, run_id)
-        presentation = _local_run_presentation(history, verified)
+        selected_run_id = run_id if run_id is not None else _current_run_id(history)
     except RuntimeHostError:
         raise
     except (ControlStoreError, CoreRunError, OSError, RuntimeError, ValueError) as exc:
         raise RuntimeHostError("control_store_integrity_invalid") from exc
-    return _PresentationContext(root, history, verified, presentation)
+    return _presentation_context_from_history(
+        root,
+        history,
+        run_id=selected_run_id,
+        require_current_head=run_id is None,
+    )
 
 
 def build_local_run_presentation(
@@ -365,14 +395,22 @@ def _single_receipt(
 def _finalized_local_lineage(
     history: ControlStoreHistory,
     verified: VerifiedCoreRun,
+    *,
+    require_current_head: bool,
 ):
     """Return the exact Core receipts and records that bind finalized-local."""
 
     snapshot = verified.snapshot
+    current_run_id = _current_run_id(history)
     if (
         snapshot.workspace_id != history.workspace_id
         or snapshot.store_revision != history.store_revision
-        or snapshot.run.run_id != _current_run_id(history)
+        or (require_current_head and snapshot.run.run_id != current_run_id)
+        or (
+            not require_current_head
+            and snapshot.workspace_run_head is not None
+            and snapshot.workspace_run_head.current_run_id != current_run_id
+        )
     ):
         raise RuntimeHostError("control_store_integrity_invalid")
     finalizations = [
@@ -557,17 +595,13 @@ def _finalized_local_report(
         raise RuntimeHostError("final_report_revision_invalid") from exc
 
 
-def build_finalized_local_review_projection(
-    workspace: str | Path,
+def _finalized_local_review_projection_from_context(
+    context: _PresentationContext,
+    *,
+    require_current_head: bool,
 ) -> FinalizedLocalReviewProjection:
-    """Project one exact finalized-local lineage from one verified Store history."""
+    """Build one finalized-local projection from one verified history context."""
 
-    try:
-        context = _load_presentation_context(workspace)
-    except RuntimeHostError as exc:
-        if str(exc) == "reader_brief_projection_invalid":
-            raise RuntimeHostError("final_report_revision_invalid") from exc
-        raise
     action, terminal = _exact_finalized_local_action(context.verified)
     (
         finalization,
@@ -575,7 +609,11 @@ def build_finalized_local_review_projection(
         render,
         render_receipt,
         gate_bindings,
-    ) = _finalized_local_lineage(context.history, context.verified)
+    ) = _finalized_local_lineage(
+        context.history,
+        context.verified,
+        require_current_head=require_current_head,
+    )
     if not (
         action.action_kind == "complete"
         and action.effect_kind == "finalized_local"
@@ -628,6 +666,58 @@ def build_finalized_local_review_projection(
         )
     except ValueError as exc:
         raise RuntimeHostError("finalized_local_lineage_invalid") from exc
+
+
+def build_finalized_local_review_projection_from_history(
+    workspace: str | Path,
+    history: ControlStoreHistory,
+    *,
+    run_id: str,
+    require_current_head: bool,
+) -> FinalizedLocalReviewProjection:
+    """Project one explicit run without reopening its verified Store history."""
+
+    try:
+        root = Path(workspace).expanduser().resolve(strict=True)
+        context = _presentation_context_from_history(
+            root,
+            history,
+            run_id=run_id,
+            require_current_head=require_current_head,
+        )
+        return _finalized_local_review_projection_from_context(
+            context,
+            require_current_head=require_current_head,
+        )
+    except RuntimeHostError as exc:
+        if str(exc) == "reader_brief_projection_invalid":
+            raise RuntimeHostError("final_report_revision_invalid") from exc
+        raise
+    except OSError as exc:
+        raise RuntimeHostError("control_store_integrity_invalid") from exc
+
+
+def build_finalized_local_review_projection(
+    workspace: str | Path,
+    *,
+    run_id: str | None = None,
+) -> FinalizedLocalReviewProjection:
+    """Project one exact finalized-local lineage from one verified Store history."""
+
+    try:
+        context = (
+            _load_presentation_context(workspace)
+            if run_id is None
+            else _load_presentation_context(workspace, run_id=run_id)
+        )
+    except RuntimeHostError as exc:
+        if str(exc) == "reader_brief_projection_invalid":
+            raise RuntimeHostError("final_report_revision_invalid") from exc
+        raise
+    return _finalized_local_review_projection_from_context(
+        context,
+        require_current_head=run_id is None,
+    )
 
 
 def build_store_status_projection(workspace: str | Path) -> dict[str, object]:
@@ -841,6 +931,7 @@ def _replace_projection(path: Path, payload: bytes) -> None:
 
 __all__ = [
     "build_finalized_local_review_projection",
+    "build_finalized_local_review_projection_from_history",
     "build_local_run_presentation",
     "build_quality_projection_from_local_run",
     "build_store_quality_projection",

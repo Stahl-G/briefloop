@@ -632,7 +632,7 @@ def test_source_and_non_editable_wheel_replay_the_same_pf_laj_result(
         "current_decision": "defer",
         "guidance_draft_count": 1,
         "guidance_status_count": 1,
-        "next_run_consumption": "not_shipped",
+        "next_run_consumption": "explicit_opt_in_successor_only",
         "provider_calls": 0,
         "improvement_status": "available",
     }

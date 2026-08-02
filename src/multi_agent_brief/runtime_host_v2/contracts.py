@@ -13,6 +13,7 @@ from multi_agent_brief.contracts.v2 import (
     ContractId,
     CleanText,
     CoreRunNextAction,
+    GuidanceReuseScopeV1,
     GateId,
     HttpUrlString,
     IsoDate,
@@ -225,6 +226,59 @@ class RuntimeSourceAcquisitionRecoveryRequest(StrictModel):
         return self
 
 
+class FrozenGuidanceItem(StrictModel):
+    """One Human-authored guidance item copied into a successor snapshot."""
+
+    item_id: ContractId
+    position: NonNegativeInt
+    source_run_id: ContractId
+    finalized_lineage_fingerprint: Sha256
+    assessment_result_id: ContractId
+    assessment_result_fingerprint: Sha256
+    finding_id: ContractId
+    finding_fingerprint: Sha256
+    disposition_id: ContractId
+    disposition_fingerprint: Sha256
+    guidance_id: ContractId
+    draft_revision: PositiveInt
+    draft_fingerprint: Sha256
+    status_revision_id: ContractId
+    status_fingerprint: Sha256
+    guidance_text: CleanText
+    guidance_sha256: Sha256
+    reuse_scope: GuidanceReuseScopeV1
+    item_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def copied_text_is_exact(self) -> "FrozenGuidanceItem":
+        if (
+            self.guidance_sha256
+            != hashlib.sha256(self.guidance_text.encode("utf-8")).hexdigest()
+        ):
+            raise ValueError("frozen guidance text hash mismatch")
+        return self
+
+
+class FrozenGuidanceContext(StrictModel):
+    """The complete immutable approved-guidance context for one role."""
+
+    run_id: ContractId
+    snapshot_id: ContractId
+    snapshot_fingerprint: Sha256
+    items: list[FrozenGuidanceItem] = Field(min_length=1, max_length=16)
+
+    @model_validator(mode="after")
+    def items_are_canonical_and_bounded(self) -> "FrozenGuidanceContext":
+        if [item.position for item in self.items] != list(range(len(self.items))):
+            raise ValueError("frozen guidance positions are not canonical")
+        identities = [item.item_fingerprint for item in self.items]
+        if len(identities) != len(set(identities)):
+            raise ValueError("duplicate frozen guidance identity")
+        if sum(len(item.guidance_text.encode("utf-8")) for item in self.items) > 65_536:
+            raise ValueError("frozen guidance context exceeds byte limit")
+        return self
+
+
 class RoleTaskEnvelope(StrictModel):
     schema_id = "briefloop.role_task_envelope.v2"
 
@@ -261,6 +315,7 @@ class RoleTaskEnvelope(StrictModel):
     ]
     task_instructions: CleanText
     gate_repair_context: GateRepairContext | None = None
+    frozen_guidance_context: FrozenGuidanceContext | None = None
 
     @model_validator(mode="after")
     def exact_action_binding(self) -> "RoleTaskEnvelope":
@@ -279,6 +334,12 @@ class RoleTaskEnvelope(StrictModel):
             self.stage_id != "editor" or self.role_id != "editor"
         ):
             raise ValueError("Gate repair context belongs only to the editor")
+        if self.frozen_guidance_context is not None and (
+            self.role_id not in {"analyst", "editor"}
+            or self.stage_id not in {"analyst", "editor"}
+            or self.frozen_guidance_context.run_id != self.run_id
+        ):
+            raise ValueError("frozen guidance belongs only to analyst and editor")
         return self
 
 
@@ -627,6 +688,8 @@ class RepairContentInput(StrictModel):
 
 
 __all__ = [
+    "FrozenGuidanceContext",
+    "FrozenGuidanceItem",
     "FrozenSourceManifestEntry",
     "FinalizedLocalGateBinding",
     "FinalizedLocalReportBinding",

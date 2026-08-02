@@ -54,8 +54,8 @@ These surfaces describe the state of a specific run. They live under `output/int
 
 | Surface | Role | Writer | Status | Freeze / Reset Rule |
 |---|---|---|---|---|
-| `runtime_manifest.json` | Run identity, runtime, paths, and manifest-level pointers such as improvement snapshot metadata. | Python | Implemented | Recomputed by runtime state initialization and handoff flows. |
-| `runtime_manifest.json.improvement` | Ledger hash, memory projection hash, snapshot hash, and `materialized_entry_ids` for this run. | Python | Implemented | Frozen for the run; later ledger changes do not invalidate prior snapshots. |
+| `runtime_manifest.json` | Legacy/projection run identity and path metadata. | Python | Projection/legacy only on SQLite | Never runtime authority; Store receipts and relations govern. |
+| `runtime_manifest.json.improvement` | Former file-ledger/memory snapshot metadata. | None | Retired (LD2-3) | Inert; the Store-native successor snapshot is a distinct SQLite record. |
 | `workflow_state.json` | Current stage, stage statuses, last decision, next allowed decisions, and current-stage trajectory decision narrowing when budgets are exhausted. | Python via state commands | Implemented | Updated through runtime state commands; should not be hand-edited by agents. |
 | `event_log.jsonl` | Append-only runtime/control events. | Python | Implemented | Append-only; records control decisions, transitions, and trajectory narrowing. |
 | `artifact_registry.json` | Observed workflow artifacts and basic validation state. | Python | Implemented | Rebuilt/updated by state checks and artifact observation. |
@@ -81,24 +81,28 @@ These surfaces separate content from evidence. LLMs may draft content artifacts,
 | `source_appendix.md` | Audit/control copy of the source appendix appended into delivery Markdown/DOCX. | Python finalize | Implemented | Reader projection copy; not source evidence itself or a separate delivery file. |
 | `provenance_graph.json` | Workspace-local audit/debug projection from existing control files. | Python | Implemented projection | Does not fetch sources, replay runtime, or prove semantic truth. |
 
-## Workspace-Scoped Taste And Memory
+## Workspace-Scoped Taste And Approved Guidance
 
-These surfaces persist across runs. They can influence later runs only through explicit projection and per-run freezing.
+The current guidance lifecycle is Store-native. Persistent effect requires
+explicit Human disposition, draft, approval/status, and a separate successor
+opt-in; no agent or projection writes authority.
 
 | Surface | Role | Writer | Status | Boundary |
 |---|---|---|---|---|
 | `audience_profile.md` | Human-editable workspace-local audience profile. | Human / init defaults | Implemented | Taste context only; not source evidence or a correctness contract. |
 | `output/intermediate/audience_profile_snapshot.md` | Frozen audience context for the current run. | Python | Implemented projection | Mid-run edits to `audience_profile.md` apply to later runs only. |
-| `improvement/ledger.jsonl` | Append-only human-governed reader guidance ledger. | Python CLI from human approval | Implemented | Stores governance lifecycle, not runtime effect or output quality proof. |
-| `improvement/memory.md` | Deterministic projection of approved materializable guidance. | Python | Implemented projection | Projection from ledger; not hand-authored source of truth. |
-| `output/intermediate/improvement_memory_snapshot.md` | Frozen improvement memory for the current run. | Python | Implemented projection | Runtime reads this snapshot, not live `improvement/memory.md`. |
-| `improvement/intake.jsonl` | Raw feedback intake and derivation links. | Python | Deferred | No lifecycle state; not a second ledger. |
-| `improvement/candidates.jsonl` | Candidate parking lot for preferences/rules/fact review routes. | Python validator from agent/human proposals | Deferred v0.7.3+ | Candidates do not affect runtime until promoted and approved downstream. |
+| Legacy `improvement/ledger.jsonl`, `improvement/memory.md`, and `output/intermediate/improvement_memory_snapshot.md` | Former file-based ledger, projection, and run snapshot. | None | Retired (LD2-3) | Inert; no reader, writer, migration, or fallback. |
+| Post-final finding disposition, guidance draft, and guidance status records | Append-only Human review lifecycle bound to one verified assessment result and historical source run. | `PostFinalReviewService` from strict Human requests | Experimental development main | Accept/reject/defer, Human-edited text, and separate approval/status; approval alone has no later-run effect. |
+| `RunGuidanceSnapshotRecord`, selection decisions, and selected snapshot items | Immutable successor-run copy of the complete compatible active-approved set. | Core successor transaction | Experimental development main | Written atomically with the normal successor; exact replay is idempotent, conflicts/limit failures write nothing, and later live status changes cannot rewrite it. |
+| `RoleTaskEnvelope.frozen_guidance_context` | Same ordered immutable snapshot context for Analyst and Editor. | RuntimeHost projection from Store snapshot bytes | Experimental development main | Other roles receive `None`; current direction/evidence govern, with no Claim Ledger, Gate, repair, finalize, delivery, or Core authority. |
+| `improvement/intake.jsonl` / `improvement/candidates.jsonl` | Former file-memory extensions. | None | Retired/not shipped | No current promotion or runtime path. |
 | `reference_samples/manifest.jsonl` | Manifest for accepted samples used as taste evidence. | Python / human workspace management | Planned v0.8 | Non-evidence; must not be scanned as source material. |
 
 ## Run-Scoped Preference Evaluation
 
-This future surface measures whether approved guidance manifested in output. It is not a delivery gate.
+Guidance utility and manifestation are NOT MEASURED. The retired manifestation
+projection is not a delivery Gate, and the successor snapshot does not score or
+prove that a model followed guidance or that output improved.
 
 | Surface | Role | Writer | Status | Boundary |
 |---|---|---|---|---|
@@ -118,16 +122,18 @@ These surfaces belong to the repository and change through versioned development
 | `docs/architecture-status.md` | Current implementation state versus roadmap goals. | Maintainers | Implemented |
 | `docs/red-lines-and-anti-patterns.md` | Public red lines and misuse patterns. | Maintainers | Implemented |
 
-## v0.11.0 Freeze List
+## Historical v0.11.0 Freeze List
 
-Freeze means the schema or command family receives a backwards-compatibility
-promise and CI guards. Surfaces can remain implemented without being frozen.
+This table preserves the v0.11 planning record. It is not current capability
+or compatibility truth; the Store-native and retired rows above govern. In the
+original plan, freeze meant that a schema or command family would receive a
+backwards-compatibility promise and CI guards.
 
 | Surface | v0.11.0 freeze prerequisite |
 |---|---|
 | `event_log.jsonl` schema and event types | v0.7.2 completion transaction events and trajectory narrowing events must remain stable before freeze. |
 | `workflow_state.json` and decision vocabulary | `stage-complete` / `finalize-complete` semantics are included; topology-satisfied stages are recorded as explicit workflow/event records, not hidden skips. |
-| `runtime_manifest.json` | Single-writer preservation for `improvement` and `recipe` must stay covered. `operator_reported_model` is deferred to v0.7.3 / v0.8; reference-run summaries record model identity manually until then. |
+| `runtime_manifest.json` | Historical JSON-projection plan. It is not current Store authority, and its former `improvement` / `recipe` fields are not compatibility surfaces. |
 | `artifact_registry.json` | Artifact names remain stable across default and strict topology: Scout may satisfy Screener, but `candidate_claims.json` and `screened_candidates.json` stay distinct artifacts. |
 | `stage_specs.yaml` / stage order | Implemented topology satisfaction lets default topology mark Screener satisfied by Scout while strict topology keeps Screener independent. |
 | `artifact_contracts.yaml` | The artifact contract set is preserved across topology modes; the candidate/screened coverage anchor remains an invariant unless migrated explicitly. |
@@ -135,16 +141,16 @@ promise and CI guards. Surfaces can remain implemented without being frozen.
 | Gate report schema and gate ids | Reader-final / process-residue gates and coverage-side gates must be settled before freeze. |
 | Policy pack schema | Needs at least a second pack to prove generality. Pack contents are not frozen; they are a tuning layer. |
 | `feedback_issues.json` / `repair_plan.json` | Current schema is eligible for freeze once repair-path regression coverage is stable. |
-| Improvement Ledger schema | v0.7.2 schema hygiene is implemented: `supersedes_id`, duplicate warning, approved supersession fork rejection, and revert re-expose warning. Generic ledger provenance fields are deferred with `intake.jsonl` / `candidates.jsonl` to v0.7.3+. |
+| Improvement Ledger schema | Retired with the legacy file-state stack; no freeze or compatibility promise. |
 | `origin_runtime` | Implemented as audit/rendering metadata only. It is not filtering, routing, or materialization logic. |
-| `improvement/intake.jsonl` / `improvement/candidates.jsonl` | Deferred to v0.7.3+ and too young for v0.11.0 freeze. |
-| `improvement/memory.md` / improvement snapshot rendering | Can freeze only after the ledger schema is stable. |
+| `improvement/intake.jsonl` / `improvement/candidates.jsonl` | Retired legacy planning surfaces; no current reader, writer, or freeze promise. |
+| `improvement/memory.md` / improvement snapshot rendering | Retired legacy file surface; the Store-native successor snapshot is distinct and fresh-schema-only. |
 | Runtime handoff format | Must include final usage rules and any v0.8 precedence table before freeze. |
-| Five-verb writer entrypoint and core CLI families | Five writer verbs, completion transactions, gates, finalize, feedback, and improve command families must be reflected in support matrix and help before freeze. |
+| Five-verb writer entrypoint and core CLI families | Historical plan only; the `improve` command family is retired and is not a current CLI compatibility promise. |
 | Eval-case schema and runner actions | Needs final v0.7.2 control actions plus v0.8 evaluation-only surfaces before freeze. |
 | `audience_profile.md` format | Format may freeze, but profile content remains human-editable and never freezes. |
 | Reference sample manifest | Planned v0.8; experimental until at least one real usage cycle. |
-| Manifestation report | Planned v0.8 evaluation-only. It must never become a runtime blocker. |
+| Manifestation report | Retired diagnostic projection; it has no current reader, writer, or runtime authority. |
 | Mode registry / role topology | Implemented for the supported default/strict role-topology contract. The default topology lets Scout satisfy Screener only when both candidate and screened artifacts exist; strict topology keeps Screener independent. This is workflow-shape control, not a speed or output-quality claim. |
 | Support matrix | It defines the freeze promise and must be updated with every frozen surface. |
 

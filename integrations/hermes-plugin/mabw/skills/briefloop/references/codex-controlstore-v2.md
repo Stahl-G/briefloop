@@ -73,8 +73,53 @@ Neither result can change Store revision, finalization, the next action, or
 Gate truth. The file is not approval, packaging, delivery,
 publication, or a persistent localhost service. Regenerate it explicitly with
 `briefloop quality html --workspace <workspace>` when needed. LAJ is rendered
-only from an explicit hash-bound advisory view; no Improvement Ledger authority
-is available.
+only from an explicit hash-bound advisory view. Any Improvement tab is a
+read-only Store-native Human-guidance projection, not a legacy ledger, writer,
+approval action, or successor request.
+
+### Start A Normal Successor
+
+After the exact current head is verified `finalized_local`, a Human may start a
+normal successor in the same workspace:
+
+```bash
+briefloop runtime successor-start --workspace <workspace> \
+  --direction-json '<strict RunDirection JSON>' \
+  --run-id <new-run-id> \
+  --include-approved-guidance
+```
+
+The Human supplies the new run ID and complete strict `RunDirection`.
+`--include-approved-guidance` is the separate reuse opt-in; omitting it freezes
+an empty guidance snapshot. This command is a root-host Human transaction, not
+a sixth `CoreRunNextAction` kind, not recovery reset, and not permission for an
+agent, provider, or role to run.
+
+One Core transaction atomically creates the successor and copies the complete
+compatible active-approved set into immutable Store records. Selection is
+deterministic and bounded at 16 items / 65,536 combined UTF-8 bytes. It never
+truncates, summarizes, semantically ranks, or silently omits items. Exact replay
+returns the original Receipt and snapshot; changed input, a competing successor,
+invalid history, or a limit breach fails with no successor write.
+
+Analyst and Editor receive the same ordered `FrozenGuidanceContext` in their
+exact `RoleTaskEnvelope`; all other roles receive `None`. Use frozen guidance
+only for audience fit, structure, style, and expression. Current
+`RunDirection` and evidence govern. Guidance is not a fact, source, Claim
+Ledger input, Gate rule, repair command, or delivery authority. Precedence is:
+
+```text
+Core integrity and legality
+> current RunDirection, source policy, output contract, Gate and delivery
+> frozen approved guidance
+> role presentation preferences
+```
+
+Never reread a live guidance head or retired Improvement file. Later
+deactivation, revert, or supersession cannot change an existing successor
+snapshot. The explicit status/deactivate/revert/supersede CLI path may resolve
+an exact historical assessment result after the head advances; browser
+`review-open` remains current-head-only.
 
 ## 2. Snapshot The Exact Action
 

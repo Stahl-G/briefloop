@@ -54,8 +54,13 @@
 - 司乐师 控制台 可以给出 deterministic control recommendations，并记录 enable/defer/reject selections；selection 不会自动执行对应 control。
 - Finalize 会把 reader delivery bundle 写入 `output/delivery/`，并把来源附录追加到交付 Markdown/DOCX 末尾；`output/source_appendix.md` 继续作为 audit/control copy 保留。Reader-facing appendix 可以展示安全的 source identity 和 taxonomy labels；`output/source_appendix_trace.md` 可以承载内部 claim/source/span IDs、source paths、source byte hashes 和 metadata completeness warnings 供 audit review。交付产物不得暴露内部 claim IDs、source IDs、evidence text、本地路径或 file URL。
 - Runtime asset availability 已显式区分：package install 包含 契约 configs 和 public-safe eval fixtures；`.agents/`、`.claude/`、`.opencode/`、`.codex/` 以及 Hermes plugin 文件属于 source-clone-only，除非通过 `briefloop runtime install` 复制到 workspace。
-- legacy Improvement Ledger lifecycle 已在 LD2-3 退役；其 JSON/JSONL 文件保持 inert 且无读写方。实验性 post-final 人工审阅现把 finding 处置、人工编辑 guidance 草稿和独立 approval/status revision 记录为 append-only SQLite Receipt。后续 run 的 snapshot/precedence 单元尚未交付，因此不会消费已批准 guidance。
-- Packaged public-safe evaluation cases 已覆盖 Improvement Memory 控制行为：未批准 entry 不物化，已批准 guidance 会冻结，reverted entry 会从下一次 snapshot 中移除。
+- legacy Improvement Ledger lifecycle 已在 LD2-3 退役；其 JSON/JSONL 文件保持
+  inert 且无读写方。实验性 post-final 人工审阅把 finding 处置、人工编辑 guidance
+  草稿和独立 approval/status revision 记录为 append-only SQLite Receipt。在
+  development main 上，Human 可以提供新的 `RunDirection` 并用
+  `--include-approved-guidance` 显式启动同一 workspace 的正常 successor；Core
+  事务会原子冻结兼容、active 且经 Human 批准的 guidance。Analyst 和 Editor 收到
+  同一份不可变 context；其他角色不收到，commit 后也不会读取 live ledger 或退役文件。
 - 实验性 Atomic Claim Graph 控制可以校验可选
   `output/intermediate/atomic_claim_graph.json`，检查 whole-ledger coverage 和
   deterministic Claim Ledger type consistency，暴露 Analyst/Editor
@@ -74,13 +79,22 @@
   投影为 status summaries 和 quality-gate findings。这只是 support-record
   control plane，不是 automatic support assessment、semantic proof、release
   eligibility 或 support-sufficiency gate。
-- 实验性 Semantic Assessment Report 控制可以校验可选
-  `output/intermediate/semantic_assessment_report.json` schema，校验其对 Claim
-  Ledger claims、Atomic Claim Graph atoms 和 Evidence Span Registry spans 的
-  machine-checkable references，把 rows 投影为 proposal-only Claim-Support
-  Matrix delta candidates，并暴露 read-only status counts。这只是 proposal
-  surface，不是 accepted support truth、adjudication queue creation、delivery
-  gate、release authority 或 semantic proof。
+- 可选的 `output/intermediate/semantic_assessment_report.json` contract 与
+  machine-checkable reference validation 仍是实验性能力。它的 producer、proposal
+  projection、status visibility 和 adjudication writer 已随 legacy stack 退役；
+  当前 runtime role 不会被指示创建它。剩余 schema 不阻断流程，也不会创建 support
+  truth、Claim-Support Matrix row、repair route、Gate、delivery decision、release
+  authority 或 semantic proof。
+- development main 的 Store-qualified post-final LAJ 仍要求显式选择 result，并以
+  append-only Receipt 记录 Human accept/reject/defer、人工编辑 draft 和独立
+  approval/status。独立的 `briefloop runtime successor-start` 命令只有在 Human
+  提供新 run ID、严格 `RunDirection` 并显式选择复用时，才会创建正常的同 workspace
+  successor。Core 事务原子冻结完整的兼容 active-approved 集合，只交给 Analyst 与
+  Editor；上限为 16 条、合计 65,536 UTF-8 bytes，超限直接失败且不截断。guidance
+  仅是 advisory presentation context；当前 direction 与 evidence 优先，它不改变
+  Claim Ledger、Gate、finalization、delivery、repair 或 Core next-action。效用
+  NOT MEASURED，也不构成自动学习。schema 变化后旧 development SQLite workspace
+  不受支持，必须按当前 schema 新建。
 - v0.11 product baseline 已支持三个面向用户的 workspace 入口：
   `briefloop new industry-weekly`、`briefloop new management-monthly` 和
   `briefloop new document-review`。它们分别映射到内部 canonical ReportPack id

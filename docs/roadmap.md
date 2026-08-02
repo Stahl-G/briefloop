@@ -26,6 +26,25 @@ Two design principles guide the next phases:
 - Stage boundaries are contract boundaries. Some gates are machine-only, some require human semantic approval, and some combine machine findings with Orchestrator judgment.
 - Memory is workspace-local and human-governed. The project may add agent-proposed memory updates and frozen per-run snapshots, but it will not become a full long-term-memory or RAG platform before the v0.11.0 product baseline.
 
+## Current Development Correction
+
+The versioned milestones below are historical roadmap records. Current
+development truth is fresh SQLite schema 13: legacy Improvement JSON/JSONL,
+fast-rerun, and MABW-080 command tooling are retired, with git history and
+archived/reference-run material retained only as historical evidence. The
+Semantic Assessment Report keeps optional schema/reference validation only;
+its producer, proposal/status projection, and adjudication writer are retired.
+
+On development main, a Human can explicitly start a normal successor in the
+same workspace with a new strict `RunDirection` through
+`briefloop runtime successor-start`. Approved-guidance reuse occurs only when
+`--include-approved-guidance` is present. Python atomically freezes compatible,
+active Human-approved guidance for Analyst and Editor only; other roles receive
+none. Current direction and evidence govern. Utility is NOT MEASURED, and
+guidance is not evidence, Claim Ledger input, a Gate rule, repair command,
+finalize/delivery authority, Core next-action authority, automatic learning, or
+proof of quality.
+
 ## Completed Baseline
 
 ### v0.5.7

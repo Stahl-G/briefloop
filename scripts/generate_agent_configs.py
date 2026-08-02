@@ -12,6 +12,7 @@ Usage:
     python scripts/generate_agent_configs.py --target opencode --write
     python scripts/generate_agent_configs.py --target docs --write
 """
+
 from __future__ import annotations
 
 import argparse
@@ -70,25 +71,40 @@ PACKAGED_CODEX_ROLE_IDS = (
 )
 
 SENSITIVE_PATTERNS = [
-    "api_key", "password",
+    "api_key",
+    "password",
 ]
 
 SENSITIVE_CONTEXT_PATTERNS = [
-    "credential", "token", "webhook", "private path", "customer name",
-    "internal report", "secret",
+    "credential",
+    "token",
+    "webhook",
+    "private path",
+    "customer name",
+    "internal report",
+    "secret",
 ]
 
 # Lines containing these guardrail phrases are allowed to mention sensitive words
 SENSITIVE_EXEMPTIONS = [
-    "do not commit", "do not store", "do not expose", "do not put",
-    "do not place", "do not import", "do not migrate", "do not copy",
-    "do not save", "do not include", "do not provide",
+    "do not commit",
+    "do not store",
+    "do not expose",
+    "do not put",
+    "do not place",
+    "do not import",
+    "do not migrate",
+    "do not copy",
+    "do not save",
+    "do not include",
+    "do not provide",
 ]
 
 
 # ---------------------------------------------------------------------------
 # Manifest I/O
 # ---------------------------------------------------------------------------
+
 
 def load_manifest(path: Path = MANIFEST_PATH) -> dict[str, Any]:
     if yaml is None:
@@ -108,12 +124,29 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
 
     project = manifest["project"]
     pipeline = project.get("pipeline", [])
-    expected_pipeline = ["scout", "screener", "claim-ledger", "analyst", "editor", "auditor", "formatter"]
+    expected_pipeline = [
+        "scout",
+        "screener",
+        "claim-ledger",
+        "analyst",
+        "editor",
+        "auditor",
+        "formatter",
+    ]
     if pipeline != expected_pipeline:
-        raise ValueError(f"Subagent workflow mismatch: got {pipeline}, expected {expected_pipeline}")
+        raise ValueError(
+            f"Subagent workflow mismatch: got {pipeline}, expected {expected_pipeline}"
+        )
 
     roles = manifest["roles"]
-    required_fields = ["stage", "tool_profile", "description", "trigger", "responsibilities", "hard_rules"]
+    required_fields = [
+        "stage",
+        "tool_profile",
+        "description",
+        "trigger",
+        "responsibilities",
+        "hard_rules",
+    ]
     for name, role in roles.items():
         for field in required_fields:
             if field not in role:
@@ -126,6 +159,7 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _join_lines(items: list[str], indent: str = "- ") -> str:
     return "\n".join(f"{indent}{item}" for item in items)
@@ -169,13 +203,16 @@ def _toml_literal_multiline_string(value: str) -> str:
     backslashes as escapes. Literal strings keep the instructions byte-for-byte.
     """
     if "'''" in value:
-        raise ValueError("Codex developer_instructions cannot contain TOML literal string delimiter.")
+        raise ValueError(
+            "Codex developer_instructions cannot contain TOML literal string delimiter."
+        )
     return "'''\n" + value.rstrip() + "\n'''"
 
 
 # ---------------------------------------------------------------------------
 # Codex config.toml
 # ---------------------------------------------------------------------------
+
 
 def render_codex_config(manifest: dict) -> str:
     return textwrap.dedent(f"""\
@@ -191,6 +228,7 @@ def render_codex_config(manifest: dict) -> str:
 # Codex agent TOML
 # ---------------------------------------------------------------------------
 
+
 def render_codex_agent(role_name: str, role: dict, manifest: dict) -> str:
     profiles = manifest["tool_profiles"]
     mode = _role_codex_mode(role, profiles)
@@ -202,7 +240,9 @@ def render_codex_agent(role_name: str, role: dict, manifest: dict) -> str:
     trigger = role["trigger"]
 
     if role_name == "orchestrator":
-        role_intro = "You are the Orchestrator main agent for multi-agent-brief-workflow."
+        role_intro = (
+            "You are the Orchestrator main agent for multi-agent-brief-workflow."
+        )
         workflow_title = "Orchestrator control loop:"
         workflow_text = ORCHESTRATOR_LOOP_TEXT
         repository_rules = (
@@ -282,6 +322,7 @@ def render_packaged_codex_agent(role_name: str, role: dict) -> str:
 # Claude Code agent .md
 # ---------------------------------------------------------------------------
 
+
 def render_claude_agent(role_name: str, role: dict, manifest: dict) -> str:
     profiles = manifest["tool_profiles"]
     tools = _role_tools(role, profiles)
@@ -295,7 +336,9 @@ def render_claude_agent(role_name: str, role: dict, manifest: dict) -> str:
     rules = "\n".join(f"- {r}" for r in role["hard_rules"])
 
     if role_name == "orchestrator":
-        role_intro = "You are the Orchestrator main agent for `multi-agent-brief-workflow`."
+        role_intro = (
+            "You are the Orchestrator main agent for `multi-agent-brief-workflow`."
+        )
         workflow_title = "Orchestrator control loop:"
         workflow_text = ORCHESTRATOR_LOOP_TEXT
         repository_rules = (
@@ -349,6 +392,7 @@ def render_claude_agent(role_name: str, role: dict, manifest: dict) -> str:
 # ---------------------------------------------------------------------------
 # Docs
 # ---------------------------------------------------------------------------
+
 
 def render_docs(manifest: dict) -> dict[str, str]:
     roles = manifest["roles"]
@@ -413,8 +457,7 @@ def render_docs(manifest: dict) -> dict[str, str]:
 
     # docs/agents/codex.md
     codex_roles = "\n".join(
-        f"- `{name}.toml` — {role['description']}"
-        for name, role in roles.items()
+        f"- `{name}.toml` — {role['description']}" for name, role in roles.items()
     )
     codex = textwrap.dedent(f"""\
         {AUTOGEN_HEADER_MD}
@@ -451,8 +494,7 @@ def render_docs(manifest: dict) -> dict[str, str]:
 
     # docs/agents/claude-code.md
     claude_roles = "\n".join(
-        f"- `{name}.md` — {role['description']}"
-        for name, role in roles.items()
+        f"- `{name}.md` — {role['description']}" for name, role in roles.items()
     )
     claude = textwrap.dedent(f"""\
         {AUTOGEN_HEADER_MD}
@@ -487,8 +529,7 @@ def render_docs(manifest: dict) -> dict[str, str]:
 
     # docs/agents/opencode.md
     opencode_roles = "\n".join(
-        f"- `brief-{name}.md` — {role['description']}"
-        for name, role in roles.items()
+        f"- `brief-{name}.md` — {role['description']}" for name, role in roles.items()
     )
     opencode = textwrap.dedent(f"""\
         {AUTOGEN_HEADER_MD}
@@ -534,7 +575,7 @@ def render_docs(manifest: dict) -> dict[str, str]:
         Purpose:
 
         ```text
-        auditor subagent -> CompositeAuditAgent -> DeterministicAuditAgent -> QualityHarnessAuditAgent -> optional semantic audit adapter
+        auditor subagent -> CompositeAuditAgent -> DeterministicAuditAgent -> QualityHarnessAuditAgent
         ```
 
         Responsible subagent:
@@ -605,15 +646,18 @@ def render_docs(manifest: dict) -> dict[str, str]:
     # docs/agents/manifest.md
     pipeline_roles = "\n".join(
         f"- **{name}** ({role['stage']})"
-        for name, role in roles.items() if role["stage"] == "pipeline"
+        for name, role in roles.items()
+        if role["stage"] == "pipeline"
     )
     harness_roles = "\n".join(
         f"- **{name}** ({role['stage']})"
-        for name, role in roles.items() if role["stage"] == "harness"
+        for name, role in roles.items()
+        if role["stage"] == "harness"
     )
     coord_roles = "\n".join(
         f"- **{name}** ({role['stage']})"
-        for name, role in roles.items() if role["stage"] == "coordination"
+        for name, role in roles.items()
+        if role["stage"] == "coordination"
     )
     manifest_doc = (
         f"{AUTOGEN_HEADER_MD}\n"
@@ -718,7 +762,12 @@ def _opencode_tool_profile_to_permission(tp: dict, role_name: str) -> dict:
         edit_allow: list[str] = []
         if role_name in ("formatter",):
             edit_allow.append("output/**")
-        elif role_name in ("auditor", "draft-audit-harness", "final-quality-harness", "rendered-output-harness"):
+        elif role_name in (
+            "auditor",
+            "draft-audit-harness",
+            "final-quality-harness",
+            "rendered-output-harness",
+        ):
             edit_allow.append("output/intermediate/audit_report.json")
             edit_allow.append("output/intermediate/audited_brief.md")
         elif role_name in ("source-provider", "source-planner"):
@@ -770,7 +819,9 @@ def render_opencode_agent(role_name: str, role: dict, manifest: dict) -> str:
 
     # Build permission block
     permission = _opencode_tool_profile_to_permission(tp, role_name)
-    permission_yaml = yaml.dump(permission, default_flow_style=False, sort_keys=False).strip()
+    permission_yaml = yaml.dump(
+        permission, default_flow_style=False, sort_keys=False
+    ).strip()
 
     lines = ["---"]
     lines.append(f"description: {desc}")
@@ -784,7 +835,9 @@ def render_opencode_agent(role_name: str, role: dict, manifest: dict) -> str:
     lines.append("---")
     lines.append("")
     if role_name == "orchestrator":
-        lines.append("You are the Orchestrator main agent for multi-agent-brief-workflow.")
+        lines.append(
+            "You are the Orchestrator main agent for multi-agent-brief-workflow."
+        )
         lines.append("")
         lines.append("Orchestrator control loop:")
         lines.append("")
@@ -946,10 +999,10 @@ def render_opencode_command_generate_brief(manifest: dict) -> str:
         "`$ARGUMENTS/output/intermediate/claim_ledger.json`.\n"
         "\n"
         "14. Check `audit_report.json`, then run quality gates and refresh runtime state before finalize:\n"
-        "    - Confirm quality gate selection in `control_selections.json`, or record it with `briefloop controls select --workspace $ARGUMENTS --control quality_gates --selection enable --reason \"Use quality gates before finalize.\"`\n"
+        '    - Confirm quality gate selection in `control_selections.json`, or record it with `briefloop controls select --workspace $ARGUMENTS --control quality_gates --selection enable --reason "Use quality gates before finalize."`\n'
         "    - Run: `briefloop gates check --workspace $ARGUMENTS --stage auditor`\n"
         "    - Run: `briefloop state check --workspace $ARGUMENTS --strict`\n"
-        "    - If state is not blocked, run: `briefloop state stage-complete --workspace $ARGUMENTS --stage auditor --reason \"Audit and quality gates passed.\"`\n"
+        '    - If state is not blocked, run: `briefloop state stage-complete --workspace $ARGUMENTS --stage auditor --reason "Audit and quality gates passed."`\n'
         "    - If state is blocked, do not edit artifacts directly and do not finalize.\n"
         "    - Do not edit frozen artifacts directly. Direct edits will mark the run contaminated and non-reference-eligible.\n"
         "    - Run: `briefloop gates show --workspace $ARGUMENTS --json` and follow its required_commands.\n"
@@ -961,7 +1014,7 @@ def render_opencode_command_generate_brief(manifest: dict) -> str:
         "      2. Delegate only the reported repair_owner role.\n"
         "      3. Allow edits only to the reported allowed_artifacts.\n"
         "      4. Do not edit blocked_direct_edits or any frozen artifact outside allowed_artifacts.\n"
-        "      5. After the owner role finishes, run: `briefloop repair complete --workspace $ARGUMENTS --reason \"<reason>\" --json`\n"
+        '      5. After the owner role finishes, run: `briefloop repair complete --workspace $ARGUMENTS --reason "<reason>" --json`\n'
         "      6. Resume from must_rerun_from. If must_rerun_from is auditor, rerun Auditor and then gates/state check.\n"
         "    - If no deterministic current-gate repair route is available, choose request_human_review or block_run.\n"
         "    - Never use state decide delegate_repair to authorize artifact edits.\n"
@@ -970,9 +1023,9 @@ def render_opencode_command_generate_brief(manifest: dict) -> str:
         "15. Finalize only after the gates/state completion path passes:\n"
         "    - Run: `briefloop finalize --config $ARGUMENTS/config.yaml`\n"
         "    - Finalize is a transactional reader projection: it stages a candidate, checks reader-clean, and only successful reader-clean promotes `output/brief.md` and `output/delivery/`; a failed reader-clean writes a failed `finalize_report.json` and leaves any prior delivery unchanged.\n"
-        "    - Proceed only when `output/intermediate/finalize_report.json` reports `delivery_promotion: \"promoted\"`; if promotion was skipped or reader-clean failed, stop and route repair instead of running the finalize gate or finalize-complete.\n"
+        '    - Proceed only when `output/intermediate/finalize_report.json` reports `delivery_promotion: "promoted"`; if promotion was skipped or reader-clean failed, stop and route repair instead of running the finalize gate or finalize-complete.\n'
         "    - After finalize promotes delivery artifacts, run: `briefloop gates check --workspace $ARGUMENTS --stage finalize --brief $ARGUMENTS/output/brief.md`.\n"
-        "    - Then run: `briefloop state finalize-complete --workspace $ARGUMENTS --reason \"Reader-facing artifacts passed finalize checks.\"`\n"
+        '    - Then run: `briefloop state finalize-complete --workspace $ARGUMENTS --reason "Reader-facing artifacts passed finalize checks."`\n'
         "    - Verify delivery truth with the Store-native status projection `briefloop status --workspace $ARGUMENTS --json`; do not claim delivery unless it reports `delivered=true` for the current run, and do not infer delivery from file existence or projection files. The legacy `workbuddy diagnose` surface is retired.\n"
         "    - Confirm `output/delivery/<named>.docx` exists if DOCX is configured.\n"
         "    - Confirm `output/source_appendix.md` remains an audit/control copy when configured and does not expose raw claim IDs, source IDs, evidence text, local paths, or file:// URLs.\n"
@@ -1000,12 +1053,13 @@ def render_opencode_jsonc() -> str:
     return (
         "{\n"
         '  "$schema": "https://opencode.ai/config.json",\n'
-        '  // OpenCode configuration for multi-agent-brief-workflow\n'
-        '  // Generated by scripts/generate_agent_configs.py\n'
-        '  // Agents are auto-discovered from .opencode/agents/\n'
-        '  // Commands are auto-discovered from .opencode/commands/\n'
+        "  // OpenCode configuration for multi-agent-brief-workflow\n"
+        "  // Generated by scripts/generate_agent_configs.py\n"
+        "  // Agents are auto-discovered from .opencode/agents/\n"
+        "  // Commands are auto-discovered from .opencode/commands/\n"
         "}\n"
     )
+
 
 def write_or_check(path: Path, content: str, check: bool) -> bool:
     """Write content to path, or check if it matches. Returns True if OK."""
@@ -1036,7 +1090,10 @@ def write_or_check(path: Path, content: str, check: bool) -> bool:
 # Main generation
 # ---------------------------------------------------------------------------
 
-def generate_all(manifest: dict, check: bool = False, target: str | None = None) -> bool:
+
+def generate_all(
+    manifest: dict, check: bool = False, target: str | None = None
+) -> bool:
     validate_manifest(manifest)
     roles = manifest["roles"]
     profiles = manifest["tool_profiles"]
@@ -1112,18 +1169,29 @@ def generate_all(manifest: dict, check: bool = False, target: str | None = None)
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="generate_agent_configs",
         description="Generate platform-specific agent adapter files from agent_roles.yaml. AGENTS.md and .agents/skills are hand-maintained operating contracts.",
     )
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--write", action="store_true", help="Generate platform adapter files")
-    group.add_argument("--check", action="store_true", help="Check if platform adapter files are up to date")
-    parser.add_argument("--target", choices=sorted(TARGETS),
-                        help="Generate only a specific target: codex, claude, docs, or opencode.")
-    parser.add_argument("--manifest", type=Path, default=MANIFEST_PATH,
-                        help="Path to agent_roles.yaml")
+    group.add_argument(
+        "--write", action="store_true", help="Generate platform adapter files"
+    )
+    group.add_argument(
+        "--check",
+        action="store_true",
+        help="Check if platform adapter files are up to date",
+    )
+    parser.add_argument(
+        "--target",
+        choices=sorted(TARGETS),
+        help="Generate only a specific target: codex, claude, docs, or opencode.",
+    )
+    parser.add_argument(
+        "--manifest", type=Path, default=MANIFEST_PATH, help="Path to agent_roles.yaml"
+    )
 
     args = parser.parse_args(argv)
 
@@ -1138,7 +1206,9 @@ def main(argv: list[str] | None = None) -> int:
         if ok:
             print("All generated files are up to date.")
         else:
-            print("Generated adapter files are stale. Run: python scripts/generate_agent_configs.py --write")
+            print(
+                "Generated adapter files are stale. Run: python scripts/generate_agent_configs.py --write"
+            )
         return 0 if ok else 1
     else:
         print("Generated platform adapter configs.")

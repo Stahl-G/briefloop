@@ -385,6 +385,9 @@ _AUTHORITATIVE_RECEIPT_RELATION_FAMILIES = frozenset(
         "post_final_finding_dispositions",
         "post_final_guidance_drafts",
         "post_final_guidance_statuses",
+        "run_guidance_snapshots",
+        "run_guidance_selection_decisions",
+        "run_guidance_snapshot_items",
     }
 )
 
@@ -542,6 +545,25 @@ _CORE_EFFECT_BINDING_RULES = {
                 "stage_transitions",
                 "run_integrity_records",
                 "run_head_transitions",
+            }
+        ),
+    ),
+    "run_successor_start": _CoreEffectBindingRule(
+        transaction_type_for("run_successor_start"),
+        frozenset({"run_successor_started"}),
+        "run_successor_start",
+        None,
+        frozenset(
+            {
+                "artifact_revisions",
+                "artifact_identities",
+                "run_contract_bindings",
+                "stage_transitions",
+                "run_integrity_records",
+                "run_head_transitions",
+                "run_guidance_snapshots",
+                "run_guidance_selection_decisions",
+                "run_guidance_snapshot_items",
             }
         ),
     ),
@@ -1362,6 +1384,8 @@ def _receipt_effect_authorization_subject(
         return None, CoreEffectSubject(stage_id="editor"), None
     if effect_kind == "run_head_transition":
         return CoreEffect.RUN_RESET, CoreEffectSubject(), None
+    if effect_kind == "run_successor_start":
+        return CoreEffect.RUN_SUCCESSOR_START, CoreEffectSubject(), None
     if effect_kind == "finalize_render":
         records = [
             item for item in snapshot.finalize_renders if item.render_id == primary_id
@@ -1613,6 +1637,8 @@ class CoreRunDomainVerifier:
         self,
         history: ControlStoreHistory,
         run_id: str,
+        *,
+        require_current_head: bool = True,
     ) -> VerifiedCoreRun:
         """Verify one run from an already loaded immutable Store history."""
 
@@ -1627,8 +1653,8 @@ class CoreRunDomainVerifier:
         head = snapshot.workspace_run_head
         if (
             head is None
-            or head.current_run_id != run_id
             or head.workspace_id != snapshot.run.workspace_id
+            or (require_current_head and head.current_run_id != run_id)
             or binding.run_id != run_id
             or binding.workspace_id != snapshot.run.workspace_id
             or binding.runtime != snapshot.run.runtime
@@ -2555,7 +2581,10 @@ class CoreRunDomainVerifier:
                 or binding.post_run_id != receipt.run_id
             ):
                 raise CoreRunError("checkout_revision_invalid")
-            if receipt.transaction_type != "core-v2-run-reset" and (
+            if receipt.transaction_type not in {
+                "core-v2-run-reset",
+                transaction_type_for("run_successor_start"),
+            } and (
                 binding.pre_run_id != receipt.run_id
                 or binding.post_run_id != receipt.run_id
             ):
@@ -2614,8 +2643,11 @@ class CoreRunDomainVerifier:
                 or receipt.prior_revision != receipt.committed_revision - 1
             ):
                 raise CoreRunError("historical_prefix_invalid")
-            if effect is CoreEffect.RUN_RESET:
-                self._verify_reset_history(history, snapshot, receipt)
+            if effect in {CoreEffect.RUN_RESET, CoreEffect.RUN_SUCCESSOR_START}:
+                if effect is CoreEffect.RUN_RESET:
+                    self._verify_reset_history(history, snapshot, receipt)
+                else:
+                    self._verify_successor_history(history, snapshot, receipt)
                 transition_id = binding.primary_record_id
                 transitions = [
                     item
@@ -2795,7 +2827,7 @@ class CoreRunDomainVerifier:
                     or action.stage_id != "editor"
                 ):
                     raise CoreRunError("historical_prefix_invalid")
-            elif effect is not None:
+            elif effect is not None and effect is not CoreEffect.RUN_SUCCESSOR_START:
                 classify_effect_authorization(
                     pre,
                     effect,
@@ -2815,7 +2847,7 @@ class CoreRunDomainVerifier:
         if terminal.terminal_state == "invalid":
             raise CoreRunError("historical_prefix_invalid")
         if receipt.run_head_transitions:
-            if effect is not CoreEffect.RUN_RESET:
+            if effect not in {CoreEffect.RUN_RESET, CoreEffect.RUN_SUCCESSOR_START}:
                 raise CoreRunError("historical_prefix_invalid")
         if receipt.finalize_renders:
             self._verify_finalize_render_prefix(history, snapshot, receipt)
@@ -2967,6 +2999,68 @@ class CoreRunDomainVerifier:
             )
         ):
             raise CoreRunError("reset_history_invalid")
+
+    @staticmethod
+    def _verify_successor_history(
+        history: ControlStoreHistory,
+        post: ControlStoreSnapshot,
+        receipt: TransactionReceipt,
+    ) -> None:
+        if (
+            receipt.committed_revision <= 1
+            or len(receipt.run_head_transitions) != 1
+            or len(receipt.run_guidance_snapshots) != 1
+        ):
+            raise CoreRunError("successor_history_invalid")
+        transition_ref = receipt.run_head_transitions[0]
+        transitions = [
+            item
+            for item in post.run_head_transitions
+            if item.head_transition_id == transition_ref.head_transition_id
+        ]
+        snapshots = [
+            item
+            for item in post.run_guidance_snapshots
+            if item.snapshot_id == receipt.run_guidance_snapshots[0].snapshot_id
+        ]
+        if len(transitions) != 1 or len(snapshots) != 1:
+            raise CoreRunError("successor_history_invalid")
+        transition = transitions[0]
+        guidance = snapshots[0]
+        try:
+            pre = history.snapshot_at_revision(
+                transition.predecessor_run_id,
+                receipt.prior_revision,
+            )
+        except Exception as exc:
+            raise CoreRunError("successor_history_invalid") from exc
+        pre_head = pre.workspace_run_head
+        post_head = post.workspace_run_head
+        recovery = classify_recovery_legality(pre)
+        terminal = classify_terminal_legality(pre)
+        if (
+            receipt.transaction_type != transaction_type_for("run_successor_start")
+            or receipt.run_id != transition.successor_run_id
+            or transition.accepted_transaction_id != receipt.transaction_id
+            or transition.reason_code != "human_started_successor"
+            or transition.successor_disposition != "reference"
+            or transition.prior_workspace_revision != receipt.prior_revision
+            or transition.successor_workspace_revision != receipt.committed_revision
+            or pre_head is None
+            or pre_head.current_run_id != transition.predecessor_run_id
+            or post_head is None
+            or post_head.current_run_id != transition.successor_run_id
+            or post.run.run_id != transition.successor_run_id
+            or recovery.state != "not_required"
+            or terminal.terminal_state != "finalized_local"
+            or guidance.run_id != transition.successor_run_id
+            or guidance.predecessor_run_id != transition.predecessor_run_id
+            or guidance.accepted_transaction_id != receipt.transaction_id
+            or any(
+                item.run_id != transition.successor_run_id for item in post.transactions
+            )
+        ):
+            raise CoreRunError("successor_history_invalid")
 
     @staticmethod
     def _verify_finalize_render_prefix(
@@ -6102,7 +6196,7 @@ def _verified_core_receipt_binding(
             != sorted(records[0].reopened_transition_ids)
         ):
             raise CoreRunError("control_store_integrity_invalid")
-    elif rule.primary_family == "run_head_transition":
+    elif rule.primary_family in {"run_head_transition", "run_successor_start"}:
         refs = [item.head_transition_id for item in receipt.run_head_transitions]
         records = [
             item
@@ -6420,8 +6514,14 @@ def _verify_core_receipt_event_set(
         ):
             raise CoreRunError("control_store_integrity_invalid")
         return
-    if rule.primary_family == "run_head_transition":
+    if rule.primary_family in {"run_head_transition", "run_successor_start"}:
         reset_events = [item for item in events if item.event_type == "run_reset"]
+        successor_events = [
+            item for item in events if item.event_type == "run_successor_started"
+        ]
+        snapshot_events = [
+            item for item in events if item.event_type == "run_guidance_snapshot_frozen"
+        ]
         initialized_events = [
             item for item in events if item.event_type == "run_initialized"
         ]
@@ -6444,8 +6544,19 @@ def _verify_core_receipt_event_set(
             for item in snapshot.run_head_transitions
             if item.accepted_transaction_id == receipt.transaction_id
         ]
+        primary_events = (
+            reset_events
+            if rule.primary_family == "run_head_transition"
+            else successor_events
+        )
+        expected_snapshot_events = (
+            0 if rule.primary_family == "run_head_transition" else 1
+        )
         if (
-            len(reset_events) != 1
+            len(primary_events) != 1
+            or len(snapshot_events) != expected_snapshot_events
+            or (rule.primary_family == "run_head_transition" and successor_events)
+            or (rule.primary_family == "run_successor_start" and reset_events)
             or len(initialized_events) != 1
             or len(transitions) != len(transition_ids)
             or len(stage_events) != len(transitions)
@@ -6454,11 +6565,12 @@ def _verify_core_receipt_event_set(
             or {item.transition_event_id for item in transitions}
             != {item.event_id for item in stage_events}
             or contracts[0].initialization_event_id != initialized_events[0].event_id
-            or head_transitions[0].transition_event_id != reset_events[0].event_id
+            or head_transitions[0].transition_event_id != primary_events[0].event_id
             or set(receipt.event_ids)
             != {
-                reset_events[0].event_id,
+                primary_events[0].event_id,
                 initialized_events[0].event_id,
+                *{item.event_id for item in snapshot_events},
                 *{item.transition_event_id for item in transitions},
             }
         ):

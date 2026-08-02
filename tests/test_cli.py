@@ -214,11 +214,11 @@ def test_quality_html_help_states_the_truthful_four_tab_boundary(capsys):
     assert "deterministic Quality" in normalized
     assert "optional advisory LAJ (NOT MEASURED)" in normalized
     assert "Store- native Human guidance state" in normalized
-    assert "next-run consumption is not shipped" in normalized
+    assert "reuse requires an explicit successor-start opt-in" in normalized
     assert "three-page" not in normalized
 
 
-def test_quality_laj_help_exposes_actionable_human_review_without_unit_c(capsys):
+def test_quality_laj_help_exposes_review_and_explicit_successor_reuse(capsys):
     parser = build_parser()
 
     with pytest.raises(SystemExit) as exc:
@@ -243,7 +243,9 @@ def test_quality_laj_help_exposes_actionable_human_review_without_unit_c(capsys)
         assert command in output
     assert "store-upgrade" not in output
     assert "snapshot" not in output
-    assert "not consumed by later runs" in output
+    assert "reuse" in output
+    assert "successor-start" in output
+    assert "opt-in" in output
 
 
 def test_quality_laj_cli_executes_assessment_next_request(
@@ -474,7 +476,10 @@ def test_public_docs_require_fresh_workspace_instead_of_store_upgrade() -> None:
     assert all("store-upgrade" not in text for text in public_docs.values())
     assert "Old development workspaces are unsupported" in public_docs["README.md"]
     assert "旧 development workspace 不受支持" in public_docs["README.zh-CN.md"]
-    assert "create a fresh workspace" in public_docs["docs/MIGRATION.md"]
+    migration = public_docs["docs/MIGRATION.md"]
+    assert "fresh current-schema workspaces" in migration
+    assert "Older development" in migration
+    assert "workspaces are unsupported" in migration
 
 
 def test_quality_html_reports_unsupported_publication_without_effects(

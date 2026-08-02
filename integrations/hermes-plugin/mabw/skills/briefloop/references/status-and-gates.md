@@ -52,18 +52,12 @@ span IDs, local paths, or hashes. Audit bundles keep trace artifacts when
 present. Citation profiles do not prove support, relax gates, remove audit
 trace, approve delivery, decide release readiness, or create a quality score.
 
-Semantic support proposal adjudication is human-owned and event-recorded. After
-the auditor writes `semantic_assessment_report.json`, run
-`semantic-support bind --workspace <workspace>` before any human adjudication to
-seal the report's checked-input hashes. Then use
-`semantic-support adjudicate --workspace <workspace> --proposal-id <id>` to
-record an explicit human accept/reject decision for a valid, fresh, bound
-proposal row. Adjudication writes `semantic_support_acceptance_ledger.json` and
-an event-log record only; it does not edit the Semantic Assessment Report, write
-Claim-Support Matrix rows, route repair, run gates, block or approve delivery,
-authorize release, or prove truth. If a later repair changes audited inputs,
-the bound report becomes stale; rerun the auditor and bind the new report before
-adjudicating again.
+The optional `semantic_assessment_report.json` contract retains schema and
+machine-checkable reference validation only. Its producer, proposal/status
+projection, and adjudication writer are retired. Do not ask Auditor to create
+it and do not route `semantic-support bind` or `adjudicate`; those are not
+current SQLite actions. A present optional report remains non-blocking and has
+no Claim-Support Matrix, repair, Gate, delivery, release, or truth authority.
 
 ## Gates
 

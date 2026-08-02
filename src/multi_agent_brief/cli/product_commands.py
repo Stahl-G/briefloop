@@ -268,7 +268,7 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
         "Write a local, static, read-only four-tab view: verified "
         "local-finalized Brief, deterministic Quality, optional advisory "
         "LAJ (NOT MEASURED), and Store-native Human guidance state whose "
-        "next-run consumption is not shipped."
+        "reuse requires an explicit successor-start opt-in."
     )
     html_parser = actions.add_parser(
         "html",
@@ -298,7 +298,7 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
         "laj",
         help=(
             "Experimental post-final LAJ and Human review controls; advisory only, "
-            "not a Gate, and approved guidance is not yet consumed by later runs."
+            "not a Gate, with reuse only through explicit successor-start opt-in."
         ),
     )
     laj_actions = laj_parser.add_subparsers(dest="laj_action", required=True)
@@ -368,7 +368,7 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
         "review-open",
         help=(
             "Open the secured local Human Review Session; LAJ remains advisory "
-            "and approved guidance is not consumed by later runs."
+            "and reuse requires a separate explicit successor-start opt-in."
         ),
     )
     review_open_parser.add_argument("--workspace", required=True)
@@ -587,6 +587,7 @@ def handle_quality(args: argparse.Namespace) -> int:
             PostFinalAssessmentService,
         )
         from multi_agent_brief.product.post_final_review import (
+            NEXT_RUN_CONSUMPTION_STATUS,
             PostFinalReviewError,
             PostFinalReviewService,
         )
@@ -641,7 +642,7 @@ def handle_quality(args: argparse.Namespace) -> int:
                     "status": launched.reason_code,
                     "url": launched.url,
                     "runtime_authority": False,
-                    "next_run_consumption": "not_shipped",
+                    "next_run_consumption": NEXT_RUN_CONSUMPTION_STATUS,
                 }
                 _print_payload(
                     "quality laj",
@@ -658,6 +659,7 @@ def handle_quality(args: argparse.Namespace) -> int:
                     workspace,
                     args.assessment_result_id,
                     args.assessment_result_fingerprint,
+                    allow_historical=True,
                 ).review_status()
             elif laj_action in {
                 "disposition",
@@ -679,6 +681,7 @@ def handle_quality(args: argparse.Namespace) -> int:
                     workspace,
                     args.assessment_result_id,
                     args.assessment_result_fingerprint,
+                    allow_historical=True,
                 )
                 if laj_action == "disposition":
                     payload = review.record_disposition(value)
@@ -701,12 +704,12 @@ def handle_quality(args: argparse.Namespace) -> int:
                 "reason_code": str(exc),
                 "boundary": (
                     "experimental_advisory_human_review_not_gate_delivery_or_"
-                    "next_run_consumption"
+                    "implicit_reuse"
                 ),
             }
         payload.setdefault(
             "boundary",
-            "experimental_advisory_human_review_not_gate_delivery_or_next_run_consumption",
+            "experimental_advisory_human_review_not_gate_delivery_or_implicit_reuse",
         )
         label = (
             "quality laj assessment-list"
