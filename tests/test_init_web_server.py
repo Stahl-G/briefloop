@@ -1027,7 +1027,7 @@ def test_source_upload_is_session_bound_and_server_hashed(tmp_path: Path) -> Non
                 "acquisition_method": "manual_upload",
                 "material_kind": "uploaded_file",
                 "provider": None,
-                "original_url": None,
+                "original_url": "https://example.com/public-source",
                 "title": "Public source",
                 "publisher": None,
                 "published_at": "2026-07-22",
@@ -1070,6 +1070,10 @@ def test_source_upload_is_session_bound_and_server_hashed(tmp_path: Path) -> Non
         assert preview["source_preview"][0]["observed_filename"] == "source.txt"
         assert preview["source_preview"][0]["observed_sha256"] == payload["sha256"]
         assert preview["source_preview"][0]["byte_count"] == len(content)
+        assert (
+            preview["source_preview"][0]["original_url"]
+            == "https://example.com/public-source"
+        )
         assert preview["routing_bindings"] == [
             {"metadata_index": 0, "upload_handle": payload["upload_handle"]}
         ]

@@ -422,7 +422,9 @@ class InitWebSubmitter:
                     "publisher": member.publisher,
                     "published_at": member.published_at,
                     "original_url": (
-                        member.locator.url if member.locator.kind == "web" else None
+                        str(member.locator.url)
+                        if member.locator.kind == "web"
+                        else None
                     ),
                     "document_kind": member.document_kind,
                     "opened_at": member.opened_at,
