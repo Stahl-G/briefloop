@@ -236,6 +236,14 @@ def test_matrix_pytest_harness_excludes_explicit_e2e_and_is_diagnostic() -> None
     assert "-o faulthandler_timeout=600" in command
     assert "--timeout=" not in command
 
+    release_step = next(
+        step for step in test_job["steps"]
+        if step.get("name") == "Release consistency check"
+    )
+    assert release_step["if"] == (
+        "matrix.os == 'ubuntu-latest' && matrix.shard == 1"
+    )
+
     pyproject = PYPROJECT_PATH.read_text(encoding="utf-8")
     assert '  "pytest-timeout>=2.4,<3",' in pyproject
     assert '  "pytest-split>=0.10,<1",' in pyproject

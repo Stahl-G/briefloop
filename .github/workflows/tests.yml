@@ -294,6 +294,7 @@ jobs:
         run: python scripts/generate_agent_configs.py --check
 
       - name: Release consistency check
+        if: matrix.os == 'ubuntu-latest' && matrix.shard == 1
         run: python scripts/check_release_consistency.py
 
       - name: Version consistency check
