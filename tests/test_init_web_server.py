@@ -1176,6 +1176,7 @@ def test_server_survives_success_when_exit_disabled(server) -> None:
     assert server._thread is not None and server._thread.is_alive()
 
 
+@pytest.mark.explicit_e2e
 def test_real_submitter_end_to_end(tmp_path: Path) -> None:
     instance = create_init_web_server(
         InitWebSubmitter(base_dir=tmp_path), exit_on_success=True
