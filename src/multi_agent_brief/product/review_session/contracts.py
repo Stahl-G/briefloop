@@ -32,6 +32,11 @@ READER_REVIEW_SELECTION_SCHEMA_ID = (
     "briefloop.post_final_review.reader_review_selection.v1"
 )
 READER_REVIEW_REFRESH_SCHEMA_ID = "briefloop.post_final_review.refresh.v1"
+HUMAN_OBSERVATION_INPUT_SCHEMA_ID = "briefloop.post_final_human_observation_input.v1"
+HUMAN_OBSERVATION_SUPERSEDE_INPUT_SCHEMA_ID = (
+    "briefloop.post_final_human_observation_supersede_input.v1"
+)
+HUMAN_GUIDANCE_DRAFT_INPUT_SCHEMA_ID = "briefloop.post_final_guidance_draft_input.v1"
 
 QualityStatus = Literal["pass", "warning", "block", "incomplete"]
 SemanticReviewStatus = Literal[
@@ -90,6 +95,185 @@ FindingRecommendedHumanAction = Literal[
     "review_o3_evidence",
     "inspect_manually",
 ]
+
+
+class HumanObservationSpan(StrictModel):
+    """Exact report span reference accepted by Human observations."""
+
+    schema_version: Literal["briefloop.post_final_human_observation_report_span.v1"]
+    report_sha256: Sha256
+    block_id: ContractId
+    start_char: NonNegativeInt
+    end_char: PositiveInt
+    excerpt_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_offsets(self) -> "HumanObservationSpan":
+        if self.start_char >= self.end_char:
+            raise ValueError("span offsets must be ordered")
+        return self
+
+
+class HumanObservationInput(StrictModel):
+    """Strict loopback/CLI envelope for an independent Human observation.
+
+    The finalized report lineage is always resolved by the Store service.  A
+    selected assessment may be supplied by the page, but it is optional so a
+    Human can record an observation when Reader Review was not run or did not
+    produce a qualified result.  References are identifiers only; the
+    deterministic service validates each one against the frozen report.
+    """
+
+    schema_version: Literal[HUMAN_OBSERVATION_INPUT_SCHEMA_ID]
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    observation_text: Annotated[str, StringConstraints(min_length=1, max_length=12000)]
+    assessment_result_id: ContractId | None = None
+    assessment_result_fingerprint: Sha256 | None = None
+    reader_view_sha256: Sha256 | None = None
+    requirement_id: ContractId | None = None
+    claim_id: ContractId | None = None
+    report_span: HumanObservationSpan | None = None
+    scope_class: FindingScopeClass | None = None
+    dimension_id: ContractId | None = None
+
+    @model_validator(mode="after")
+    def validate_observation_input(self) -> "HumanObservationInput":
+        if not self.observation_text.strip():
+            raise ValueError("observation_text must not be blank")
+        selected = (
+            self.assessment_result_id,
+            self.assessment_result_fingerprint,
+            self.reader_view_sha256,
+        )
+        if any(value is not None for value in selected) and not all(
+            value is not None for value in selected
+        ):
+            raise ValueError("selected assessment binding must be complete")
+        if (self.scope_class is None) != (self.dimension_id is None):
+            raise ValueError("scope_class and dimension_id must be paired")
+        return self
+
+
+class HumanObservationSupersedeInput(StrictModel):
+    """Strict append-only supersede command for one Human observation.
+
+    Superseding is a new observation revision, not a status update.  It uses
+    the same text/reference fields as append and adds the exact predecessor
+    binding required by the Store transaction.
+    """
+
+    schema_version: Literal[HUMAN_OBSERVATION_SUPERSEDE_INPUT_SCHEMA_ID]
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    observation_text: Annotated[str, StringConstraints(min_length=1, max_length=12000)]
+    assessment_result_id: ContractId | None = None
+    assessment_result_fingerprint: Sha256 | None = None
+    reader_view_sha256: Sha256 | None = None
+    requirement_id: ContractId | None = None
+    claim_id: ContractId | None = None
+    report_span: HumanObservationSpan | None = None
+    scope_class: FindingScopeClass | None = None
+    dimension_id: ContractId | None = None
+    previous_observation_id: ContractId
+    previous_observation_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def validate_supersede_input(self) -> "HumanObservationSupersedeInput":
+        if not self.observation_text.strip():
+            raise ValueError("observation_text must not be blank")
+        selected = (
+            self.assessment_result_id,
+            self.assessment_result_fingerprint,
+            self.reader_view_sha256,
+        )
+        if any(value is not None for value in selected) and not all(
+            value is not None for value in selected
+        ):
+            raise ValueError("selected assessment binding must be complete")
+        if (self.scope_class is None) != (self.dimension_id is None):
+            raise ValueError("scope_class and dimension_id must be paired")
+        return self
+
+
+class HumanGuidanceDraftInput(StrictModel):
+    """Transport DTO for the tagged guidance provenance union.
+
+    The Store remains the authority for eligibility and persistence.  The
+    session transport nevertheless rejects ambiguous provenance before a
+    request reaches the service: accepted model findings require the existing
+    finding/disposition pair, while a Human observation requires only its
+    exact observation id.
+    """
+
+    schema_version: Literal[HUMAN_GUIDANCE_DRAFT_INPUT_SCHEMA_ID]
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    provenance_kind: Literal["accepted_model_finding", "human_observation"]
+    guidance_text: Annotated[str, StringConstraints(min_length=1, max_length=12000)]
+    assessment_result_id: ContractId | None = None
+    assessment_result_fingerprint: Sha256 | None = None
+    finding_id: ContractId | None = None
+    finding_fingerprint: Sha256 | None = None
+    disposition_id: ContractId | None = None
+    disposition_fingerprint: Sha256 | None = None
+    observation_id: ContractId | None = None
+    observation_fingerprint: Sha256 | None = None
+
+    @model_validator(mode="after")
+    def validate_provenance(self) -> "HumanGuidanceDraftInput":
+        if not self.guidance_text.strip():
+            raise ValueError("guidance_text must not be blank")
+        if self.provenance_kind == "accepted_model_finding":
+            if not all(
+                item is not None
+                for item in (
+                    self.assessment_result_id,
+                    self.assessment_result_fingerprint,
+                    self.finding_id,
+                    self.finding_fingerprint,
+                    self.disposition_id,
+                    self.disposition_fingerprint,
+                )
+            ):
+                raise ValueError(
+                    "accepted finding provenance requires result/finding/disposition"
+                )
+            if self.observation_id is not None:
+                raise ValueError(
+                    "accepted finding provenance cannot include observation"
+                )
+            if self.observation_fingerprint is not None:
+                raise ValueError(
+                    "accepted finding provenance cannot include observation fingerprint"
+                )
+            if self.finding_fingerprint is None or self.disposition_fingerprint is None:
+                raise ValueError(
+                    "accepted finding provenance requires finding/disposition fingerprints"
+                )
+        else:
+            if self.observation_id is None or self.observation_fingerprint is None:
+                raise ValueError(
+                    "Human observation provenance requires observation id/fingerprint"
+                )
+            if self.finding_id is not None or self.disposition_id is not None:
+                raise ValueError("Human observation provenance cannot include finding")
+            if (
+                self.finding_fingerprint is not None
+                or self.disposition_fingerprint is not None
+            ):
+                raise ValueError(
+                    "Human observation provenance cannot include finding fingerprints"
+                )
+            result_fields = (
+                self.assessment_result_id,
+                self.assessment_result_fingerprint,
+            )
+            if any(value is not None for value in result_fields) and not all(
+                value is not None for value in result_fields
+            ):
+                raise ValueError("Human observation result binding must be complete")
+        return self
 
 
 class ReviewFindingSpan(StrictModel):
@@ -356,6 +540,8 @@ class ReviewSessionCommand(StrictModel):
         "run_reader_review",
         "select_result",
         "refresh",
+        "append_observation",
+        "supersede_observation",
         "accept",
         "reject",
         "defer",
@@ -376,4 +562,10 @@ class ReviewSessionCommand(StrictModel):
             ReaderReviewResultSelection.model_validate(self.payload, strict=True)
         elif self.action == "refresh":
             ReaderReviewRefresh.model_validate(self.payload, strict=True)
+        elif self.action == "append_observation":
+            HumanObservationInput.model_validate(self.payload, strict=True)
+        elif self.action == "supersede_observation":
+            HumanObservationSupersedeInput.model_validate(self.payload, strict=True)
+        elif self.action == "draft":
+            HumanGuidanceDraftInput.model_validate(self.payload, strict=True)
         return self

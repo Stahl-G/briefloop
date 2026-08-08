@@ -188,6 +188,9 @@ def _semantic_page(
     ]
     review_status = qualified.review_status
     dispositions = review_status.get("dispositions", []) if review_status else []
+    human_observations = (
+        review_status.get("human_observations", []) if review_status else []
+    )
     review_by_finding = {
         item["finding_id"]: item
         for item in dispositions
@@ -293,6 +296,7 @@ def _semantic_page(
         "request_template": request_template,
         "run_action_available": qualified.run_action_available,
         "review_actions_available": review_status is not None,
+        "human_observations": human_observations,
         "assessment_result_id": (
             review_status["assessment_result_id"] if review_status is not None else None
         ),
@@ -343,15 +347,74 @@ def _brief_page(local: Any) -> dict[str, Any]:
 
 
 def _improvement_page(
+    local: Any,
     qualified: PostFinalAssessmentProjection,
 ) -> dict[str, Any]:
+    """Build the feedback projection without making assessment a prerequisite.
+
+    A finalized report is sufficient for a report-bound Human observation.  A
+    selected Reader Review result adds an exact result binding, but a missing,
+    failed, unavailable, or zero-finding assessment must not hide the Human
+    observation affordance.  All persisted rows still come from the optional
+    Store review status; this function never invents a row.
+    """
+
+    reader = local.reader_brief
+    report_available = (
+        local.view_state == "finalized"
+        and reader.state == "available"
+        and reader.sha256 is not None
+    )
     status = qualified.review_status
     if status is not None:
         return {
             "status": "available",
             "reason_code": None,
-            "recorded": status["guidance_drafts"],
-            "guidance_statuses": status["guidance_statuses"],
+            "recorded": status.get("guidance_drafts", []),
+            "guidance_statuses": status.get("guidance_statuses", []),
+            "human_observations": status.get("human_observations", []),
+            "observation_allowed": report_available,
+            "observation_binding_mode": (
+                "selected_result"
+                if qualified.selected_result_id is not None
+                else "report_bound"
+            ),
+            "report_binding": {
+                "run_id": local.run_id,
+                "artifact_id": reader.artifact_id,
+                "revision": reader.revision,
+                "sha256": reader.sha256,
+            },
+            "selected_result": (
+                {
+                    "assessment_result_id": qualified.selected_result_id,
+                    "assessment_result_fingerprint": (
+                        qualified.selected_result_fingerprint
+                    ),
+                }
+                if qualified.selected_result_id is not None
+                else None
+            ),
+            "consumption_note": IMPROVEMENT_CONSUMPTION_NOTE,
+            "planned_note": IMPROVEMENT_PLANNED_NOTE,
+            "next_run_consumption": qualified.next_run_consumption,
+        }
+    if report_available:
+        return {
+            "status": "available",
+            "reason_code": None,
+            "recorded": [],
+            "guidance_statuses": [],
+            "human_observations": [],
+            "observation_allowed": True,
+            "observation_binding_mode": "report_bound",
+            "report_binding": {
+                "run_id": local.run_id,
+                "artifact_id": reader.artifact_id,
+                "revision": reader.revision,
+                "sha256": reader.sha256,
+            },
+            "selected_result": None,
             "consumption_note": IMPROVEMENT_CONSUMPTION_NOTE,
             "planned_note": IMPROVEMENT_PLANNED_NOTE,
             "next_run_consumption": qualified.next_run_consumption,
@@ -361,6 +424,11 @@ def _improvement_page(
         "reason_code": "post_final_review_not_available",
         "recorded": [],
         "guidance_statuses": [],
+        "human_observations": [],
+        "observation_allowed": False,
+        "observation_binding_mode": "unavailable",
+        "report_binding": None,
+        "selected_result": None,
         "consumption_note": IMPROVEMENT_CONSUMPTION_NOTE,
         "planned_note": IMPROVEMENT_PLANNED_NOTE,
         "next_run_consumption": qualified.next_run_consumption,
@@ -414,7 +482,7 @@ def build_brief_pages_data(
             laj_view_path,
             qualified=qualified,
         ),
-        "improvement": _improvement_page(qualified),
+        "improvement": _improvement_page(local, qualified),
     }
 
 

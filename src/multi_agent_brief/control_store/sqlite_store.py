@@ -68,6 +68,8 @@ from multi_agent_brief.contracts.v2 import (
     PostFinalAssessmentResultReference,
     PostFinalFindingDispositionRecord,
     PostFinalFindingDispositionReference,
+    PostFinalHumanObservationRecord,
+    PostFinalHumanObservationReference,
     PostFinalGuidanceDraftRevision,
     PostFinalGuidanceDraftReference,
     PostFinalGuidanceStatusRevision,
@@ -137,6 +139,7 @@ _POST_FINAL_RECEIPT_RELATION_FIELDS = (
     "post_final_assessment_requests",
     "post_final_assessment_results",
     "post_final_finding_dispositions",
+    "post_final_human_observations",
     "post_final_guidance_drafts",
     "post_final_guidance_statuses",
 )
@@ -153,6 +156,7 @@ _POST_FINAL_RECEIPT_TRANSACTION_TYPES = frozenset(
         "post_final_assessment_series_claim",
         "post_final_assessment_result",
         "post_final_finding_disposition",
+        "post_final_human_observation",
         "post_final_guidance_draft",
         "post_final_guidance_status",
     }
@@ -213,6 +217,7 @@ _EXTENDED_RECORD_MODELS = (
     PostFinalAssessmentAbandonmentRecord,
     PostFinalAssessmentResultRecord,
     PostFinalFindingDispositionRecord,
+    PostFinalHumanObservationRecord,
     PostFinalGuidanceDraftRevision,
     PostFinalGuidanceStatusRevision,
     RunGuidanceSelectionDecisionRecord,
@@ -579,6 +584,7 @@ class ControlStoreSnapshot:
     post_final_assessment_abandonments: tuple[PostFinalAssessmentAbandonmentRecord, ...]
     post_final_assessment_results: tuple[PostFinalAssessmentResultRecord, ...]
     post_final_finding_dispositions: tuple[PostFinalFindingDispositionRecord, ...]
+    post_final_human_observations: tuple[PostFinalHumanObservationRecord, ...]
     post_final_guidance_drafts: tuple[PostFinalGuidanceDraftRevision, ...]
     post_final_guidance_statuses: tuple[PostFinalGuidanceStatusRevision, ...]
     run_guidance_snapshots: tuple[RunGuidanceSnapshotRecord, ...]
@@ -1004,6 +1010,11 @@ class ControlStoreHistory:
             ("disposition_id",),
             full.post_final_finding_dispositions,
         )
+        post_final_human_observations = selected(
+            "post_final_human_observations",
+            ("observation_id",),
+            full.post_final_human_observations,
+        )
         post_final_guidance_drafts = selected(
             "post_final_guidance_drafts",
             ("guidance_id", "draft_revision"),
@@ -1132,6 +1143,7 @@ class ControlStoreHistory:
             post_final_assessment_abandonments=post_final_assessment_abandonments,
             post_final_assessment_results=post_final_assessment_results,
             post_final_finding_dispositions=post_final_finding_dispositions,
+            post_final_human_observations=post_final_human_observations,
             post_final_guidance_drafts=post_final_guidance_drafts,
             post_final_guidance_statuses=post_final_guidance_statuses,
             run_guidance_snapshots=run_guidance_snapshots,
@@ -1212,8 +1224,8 @@ class ControlStoreHistory:
 class _GuidanceCandidateAtRevision:
     draft: PostFinalGuidanceDraftRevision
     status: PostFinalGuidanceStatusRevision | None
-    result: PostFinalAssessmentResultRecord
-    disposition: PostFinalFindingDispositionRecord
+    result: PostFinalAssessmentResultRecord | None
+    disposition: PostFinalFindingDispositionRecord | None
     source_scope: GuidanceReuseScopeV1
     reason_code: str
 
@@ -2860,50 +2872,98 @@ class SQLiteControlStore:
             if source is None or len(source.run_contract_bindings) != 1:
                 raise ControlStoreIntegrityError("control_store_integrity_invalid")
             source_scope = _guidance_reuse_scope(source.run_contract_bindings[0])
-            results = tuple(
-                item
-                for item in source.post_final_assessment_results
-                if item.assessment_result_id == draft.assessment_result_id
-                and existed_at_cutoff(item)
-            )
-            dispositions = tuple(
-                item
-                for item in source.post_final_finding_dispositions
-                if item.disposition_id == draft.disposition_id
-                and existed_at_cutoff(item)
-            )
-            if len(results) != 1 or len(dispositions) != 1:
-                raise ControlStoreIntegrityError("control_store_integrity_invalid")
-            result = results[0]
-            disposition = dispositions[0]
-            if (
-                disposition.decision != "accept"
-                or disposition.run_id != draft.run_id
-                or disposition.assessment_result_id != draft.assessment_result_id
-                or disposition.assessment_result_fingerprint
-                != draft.assessment_result_fingerprint
-                or disposition.finding_id != draft.finding_id
-                or disposition.finding_fingerprint != draft.finding_fingerprint
-                or disposition.disposition_fingerprint != draft.disposition_fingerprint
-                or result.run_id != draft.run_id
-                or result.result_fingerprint != draft.assessment_result_fingerprint
-                or result.finalized_lineage_fingerprint
-                != draft.finalized_lineage_fingerprint
-            ):
-                raise ControlStoreIntegrityError("control_store_integrity_invalid")
-            try:
-                current_disposition = _current_post_final_disposition_at_cutoff(
-                    tuple(source.post_final_finding_dispositions),
-                    receipt_revisions=receipt_revisions,
-                    run_id=draft.run_id,
-                    assessment_result_id=draft.assessment_result_id,
-                    finding_id=draft.finding_id,
-                    cutoff_revision=cutoff_revision,
+            if draft.provenance_kind == "human_observation":
+                observations = tuple(
+                    item
+                    for item in source.post_final_human_observations
+                    if item.observation_id == draft.observation_id
+                    and existed_at_cutoff(item)
                 )
-            except ValueError as exc:
-                raise ControlStoreIntegrityError(
-                    "control_store_integrity_invalid"
-                ) from exc
+                if len(observations) != 1:
+                    raise ControlStoreIntegrityError("control_store_integrity_invalid")
+                observation = observations[0]
+                result = None
+                if draft.assessment_result_id is not None:
+                    result_rows = tuple(
+                        item
+                        for item in source.post_final_assessment_results
+                        if item.assessment_result_id == draft.assessment_result_id
+                        and existed_at_cutoff(item)
+                    )
+                    if len(result_rows) != 1:
+                        raise ControlStoreIntegrityError(
+                            "control_store_integrity_invalid"
+                        )
+                    result = result_rows[0]
+                if (
+                    observation.observation_fingerprint != draft.observation_fingerprint
+                    or observation.finalized_lineage_fingerprint
+                    != draft.finalized_lineage_fingerprint
+                    or (
+                        result is not None
+                        and (
+                            observation.assessment_result_id
+                            != result.assessment_result_id
+                            or observation.assessment_result_fingerprint
+                            != result.result_fingerprint
+                        )
+                    )
+                ):
+                    raise ControlStoreIntegrityError("control_store_integrity_invalid")
+                disposition = None
+                current_disposition = None
+                observation_successor = any(
+                    item.previous_observation_id == observation.observation_id
+                    and existed_at_cutoff(item)
+                    for item in source.post_final_human_observations
+                )
+            else:
+                results = tuple(
+                    item
+                    for item in source.post_final_assessment_results
+                    if item.assessment_result_id == draft.assessment_result_id
+                    and existed_at_cutoff(item)
+                )
+                dispositions = tuple(
+                    item
+                    for item in source.post_final_finding_dispositions
+                    if item.disposition_id == draft.disposition_id
+                    and existed_at_cutoff(item)
+                )
+                if len(results) != 1 or len(dispositions) != 1:
+                    raise ControlStoreIntegrityError("control_store_integrity_invalid")
+                result = results[0]
+                disposition = dispositions[0]
+                if (
+                    disposition.decision != "accept"
+                    or disposition.run_id != draft.run_id
+                    or disposition.assessment_result_id != draft.assessment_result_id
+                    or disposition.assessment_result_fingerprint
+                    != draft.assessment_result_fingerprint
+                    or disposition.finding_id != draft.finding_id
+                    or disposition.finding_fingerprint != draft.finding_fingerprint
+                    or disposition.disposition_fingerprint
+                    != draft.disposition_fingerprint
+                    or result.run_id != draft.run_id
+                    or result.result_fingerprint != draft.assessment_result_fingerprint
+                    or result.finalized_lineage_fingerprint
+                    != draft.finalized_lineage_fingerprint
+                ):
+                    raise ControlStoreIntegrityError("control_store_integrity_invalid")
+                try:
+                    current_disposition = _current_post_final_disposition_at_cutoff(
+                        tuple(source.post_final_finding_dispositions),
+                        receipt_revisions=receipt_revisions,
+                        run_id=draft.run_id,
+                        assessment_result_id=draft.assessment_result_id,
+                        finding_id=draft.finding_id,
+                        cutoff_revision=cutoff_revision,
+                    )
+                except ValueError as exc:
+                    raise ControlStoreIntegrityError(
+                        "control_store_integrity_invalid"
+                    ) from exc
+                observation_successor = False
             statuses = tuple(
                 item
                 for item in source.post_final_guidance_statuses
@@ -2937,7 +2997,11 @@ class SQLiteControlStore:
                 reason = "guidance_superseded"
             elif current_status.status != "approved":
                 reason = "guidance_unapproved"
-            elif (
+            elif draft.provenance_kind == "human_observation" and observation_successor:
+                reason = "guidance_superseded"
+            elif draft.provenance_kind == "human_observation" and observation is None:
+                reason = "guidance_unapproved"
+            elif draft.provenance_kind != "human_observation" and (
                 current_disposition is None
                 or current_disposition.disposition_id != draft.disposition_id
                 or current_disposition.decision != "accept"
@@ -2990,6 +3054,9 @@ class SQLiteControlStore:
                 "guidance_id": candidate.draft.guidance_id,
                 "draft_revision": candidate.draft.draft_revision,
                 "draft_fingerprint": candidate.draft.draft_fingerprint,
+                "provenance_kind": candidate.draft.provenance_kind,
+                "observation_id": candidate.draft.observation_id,
+                "observation_fingerprint": candidate.draft.observation_fingerprint,
                 "status_revision_id": (
                     None
                     if candidate.status is None
@@ -3043,14 +3110,36 @@ class SQLiteControlStore:
                 or decision.guidance_id != candidate.draft.guidance_id
                 or decision.draft_revision != candidate.draft.draft_revision
                 or decision.status_revision_id != status_id
+                or decision.provenance_kind != candidate.draft.provenance_kind
                 or decision.assessment_result_id
-                != candidate.result.assessment_result_id
+                != (
+                    None
+                    if candidate.result is None
+                    else candidate.result.assessment_result_id
+                )
                 or decision.finding_id != candidate.draft.finding_id
-                or decision.disposition_id != candidate.disposition.disposition_id
-                or decision.result_fingerprint != candidate.result.result_fingerprint
+                or decision.disposition_id
+                != (
+                    None
+                    if candidate.disposition is None
+                    else candidate.disposition.disposition_id
+                )
+                or decision.result_fingerprint
+                != (
+                    None
+                    if candidate.result is None
+                    else candidate.result.result_fingerprint
+                )
                 or decision.finding_fingerprint != candidate.draft.finding_fingerprint
                 or decision.disposition_fingerprint
-                != candidate.disposition.disposition_fingerprint
+                != (
+                    None
+                    if candidate.disposition is None
+                    else candidate.disposition.disposition_fingerprint
+                )
+                or decision.observation_id != candidate.draft.observation_id
+                or decision.observation_fingerprint
+                != candidate.draft.observation_fingerprint
                 or decision.draft_fingerprint != candidate.draft.draft_fingerprint
                 or decision.status_fingerprint != status_fingerprint
                 or decision.source_scope_fingerprint
@@ -3079,14 +3168,36 @@ class SQLiteControlStore:
                 or item.source_run_id != candidate.draft.run_id
                 or item.finalized_lineage_fingerprint
                 != candidate.draft.finalized_lineage_fingerprint
-                or item.assessment_result_id != candidate.result.assessment_result_id
+                or item.provenance_kind != candidate.draft.provenance_kind
+                or item.assessment_result_id
+                != (
+                    None
+                    if candidate.result is None
+                    else candidate.result.assessment_result_id
+                )
                 or item.assessment_result_fingerprint
-                != candidate.result.result_fingerprint
+                != (
+                    None
+                    if candidate.result is None
+                    else candidate.result.result_fingerprint
+                )
                 or item.finding_id != candidate.draft.finding_id
                 or item.finding_fingerprint != candidate.draft.finding_fingerprint
-                or item.disposition_id != candidate.disposition.disposition_id
+                or item.disposition_id
+                != (
+                    None
+                    if candidate.disposition is None
+                    else candidate.disposition.disposition_id
+                )
                 or item.disposition_fingerprint
-                != candidate.disposition.disposition_fingerprint
+                != (
+                    None
+                    if candidate.disposition is None
+                    else candidate.disposition.disposition_fingerprint
+                )
+                or item.observation_id != candidate.draft.observation_id
+                or item.observation_fingerprint
+                != candidate.draft.observation_fingerprint
                 or item.guidance_id != candidate.draft.guidance_id
                 or item.draft_revision != candidate.draft.draft_revision
                 or item.draft_fingerprint != candidate.draft.draft_fingerprint
@@ -3458,6 +3569,8 @@ class SQLiteControlStore:
                 return {item.assessment_result_id: item for item in models}
             if model_type is PostFinalFindingDispositionRecord:
                 return {item.disposition_id: item for item in models}
+            if model_type is PostFinalHumanObservationRecord:
+                return {item.observation_id: item for item in models}
             if model_type is PostFinalGuidanceDraftRevision:
                 return {
                     (item.guidance_id, item.draft_revision): item for item in models
@@ -3512,6 +3625,14 @@ class SQLiteControlStore:
 
         available_dispositions = dict(existing_dispositions)
         available_dispositions.update(staged_dispositions)
+        existing_observations = load_models(
+            PostFinalHumanObservationRecord, "post_final_human_observations"
+        )
+        staged_observations = uow._post_final_human_observations
+        if len(staged_observations) > 1:
+            raise ControlStoreConflict("relational_integrity_conflict")
+        available_observations = dict(existing_observations)
+        available_observations.update(staged_observations)
         existing_drafts = load_models(
             PostFinalGuidanceDraftRevision, "post_final_guidance_drafts"
         )
@@ -3523,26 +3644,52 @@ class SQLiteControlStore:
             draft_heads[guidance_id] = max(draft_heads.get(guidance_id, 0), revision)
         for record in staged_drafts.values():
             disposition = available_dispositions.get(record.disposition_id)
+            observation = available_observations.get(record.observation_id)
             expected_revision = draft_heads.get(record.guidance_id, 0) + 1
             disposition_key = (
                 record.assessment_result_id,
                 record.finding_id,
             )
+            model_draft_valid = (
+                record.provenance_kind == "accepted_model_finding"
+                and disposition is not None
+                and disposition.decision == "accept"
+                and disposition.disposition_fingerprint
+                == record.disposition_fingerprint
+                and disposition.assessment_result_id == record.assessment_result_id
+                and disposition.assessment_result_fingerprint
+                == record.assessment_result_fingerprint
+                and disposition.finding_id == record.finding_id
+                and disposition.finding_fingerprint == record.finding_fingerprint
+                and disposition.finalized_lineage_fingerprint
+                == record.finalized_lineage_fingerprint
+                and disposition_heads.get(disposition_key) == record.disposition_id
+            )
+            observation_draft_valid = (
+                record.provenance_kind == "human_observation"
+                and observation is not None
+                and observation.observation_fingerprint
+                == record.observation_fingerprint
+                and observation.finalized_lineage_fingerprint
+                == record.finalized_lineage_fingerprint
+                and (
+                    record.assessment_result_id is None
+                    or (
+                        observation.assessment_result_id == record.assessment_result_id
+                        and observation.assessment_result_fingerprint
+                        == record.assessment_result_fingerprint
+                    )
+                )
+                and not any(
+                    item.previous_observation_id == observation.observation_id
+                    for item in available_observations.values()
+                )
+            )
             if (
                 record.accepted_transaction_id != uow.transaction_id
                 or record.draft_event_id not in staged_events
                 or (record.guidance_id, record.draft_revision) in existing_drafts
-                or disposition is None
-                or disposition.decision != "accept"
-                or disposition.disposition_fingerprint != record.disposition_fingerprint
-                or disposition.assessment_result_id != record.assessment_result_id
-                or disposition.assessment_result_fingerprint
-                != record.assessment_result_fingerprint
-                or disposition.finding_id != record.finding_id
-                or disposition.finding_fingerprint != record.finding_fingerprint
-                or disposition.finalized_lineage_fingerprint
-                != record.finalized_lineage_fingerprint
-                or disposition_heads.get(disposition_key) != record.disposition_id
+                or not (model_draft_valid or observation_draft_valid)
                 or record.draft_revision != expected_revision
             ):
                 raise ControlStoreConflict("relational_integrity_conflict")
@@ -3582,6 +3729,11 @@ class SQLiteControlStore:
                 if draft is not None
                 else None
             )
+            current_observation = (
+                available_observations.get(draft.observation_id)
+                if draft is not None
+                else None
+            )
             disposition_key = (
                 (draft.assessment_result_id, draft.finding_id)
                 if draft is not None
@@ -3598,10 +3750,23 @@ class SQLiteControlStore:
                 or (
                     record.status == "approved"
                     and (
-                        current_disposition is None
-                        or current_disposition.decision != "accept"
-                        or disposition_heads.get(disposition_key)
-                        != draft.disposition_id
+                        (
+                            draft.provenance_kind == "human_observation"
+                            and (
+                                current_observation is None
+                                or current_observation.observation_fingerprint
+                                != draft.observation_fingerprint
+                            )
+                        )
+                        or (
+                            draft.provenance_kind != "human_observation"
+                            and (
+                                current_disposition is None
+                                or current_disposition.decision != "accept"
+                                or disposition_heads.get(disposition_key)
+                                != draft.disposition_id
+                            )
+                        )
                     )
                 )
                 or record.previous_status_revision_id
@@ -3610,10 +3775,18 @@ class SQLiteControlStore:
                     current_status,
                     record,
                     approval_eligible=(
-                        current_disposition is not None
-                        and current_disposition.decision == "accept"
-                        and disposition_heads.get(disposition_key)
-                        == draft.disposition_id
+                        (
+                            current_observation is not None
+                            and current_observation.observation_fingerprint
+                            == draft.observation_fingerprint
+                        )
+                        if draft.provenance_kind == "human_observation"
+                        else (
+                            current_disposition is not None
+                            and current_disposition.decision == "accept"
+                            and disposition_heads.get(disposition_key)
+                            == draft.disposition_id
+                        )
                     ),
                 )
             ):
@@ -3808,6 +3981,10 @@ class SQLiteControlStore:
                     "post_final_finding_dispositions": [
                         {"disposition_id": key}
                         for key in sorted(uow._post_final_finding_dispositions)
+                    ],
+                    "post_final_human_observations": [
+                        {"observation_id": key}
+                        for key in sorted(uow._post_final_human_observations)
                     ],
                     "post_final_guidance_drafts": [
                         {"guidance_id": key[0], "draft_revision": key[1]}
@@ -5529,22 +5706,66 @@ class SQLiteControlStore:
                     _canonical_record_text(record),
                 ),
             )
+        for record in uow._post_final_human_observations.values():
+            self._connection.execute(
+                "INSERT INTO post_final_human_observations VALUES "
+                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record.run_id,
+                    record.observation_id,
+                    record.schema_version,
+                    record.origin,
+                    record.observation_revision,
+                    record.finalized_lineage_fingerprint,
+                    record.report_revision,
+                    record.report_artifact_id,
+                    record.report_sha256,
+                    record.assessment_result_id,
+                    record.assessment_result_fingerprint,
+                    record.reader_view_sha256,
+                    record.observation_text,
+                    record.observation_sha256,
+                    record.requirement_id,
+                    record.claim_id,
+                    (
+                        "null"
+                        if record.report_span is None
+                        else canonical_json_bytes(
+                            record.report_span.model_dump(mode="json")
+                        ).decode("utf-8")
+                    ),
+                    record.scope_class,
+                    record.dimension_id,
+                    record.previous_observation_id,
+                    record.previous_observation_fingerprint,
+                    record.human_actor_id,
+                    record.human_request_id,
+                    record.recorded_at,
+                    record.observation_event_id,
+                    record.accepted_transaction_id,
+                    record.observation_fingerprint,
+                    _canonical_record_text(record),
+                ),
+            )
         for record in uow._post_final_guidance_drafts.values():
             self._connection.execute(
                 "INSERT INTO post_final_guidance_drafts VALUES "
-                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     record.run_id,
                     record.guidance_id,
                     record.draft_revision,
                     record.schema_version,
                     record.finalized_lineage_fingerprint,
+                    record.provenance_kind,
                     record.assessment_result_id,
                     record.assessment_result_fingerprint,
                     record.finding_id,
                     record.finding_fingerprint,
                     record.disposition_id,
                     record.disposition_fingerprint,
+                    record.observation_id,
+                    record.observation_fingerprint,
                     record.previous_draft_revision,
                     record.guidance_scope,
                     record.guidance_text,
@@ -5611,7 +5832,7 @@ class SQLiteControlStore:
         for record in uow._run_guidance_selection_decisions.values():
             self._connection.execute(
                 "INSERT INTO run_guidance_selection_decisions VALUES "
-                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     record.run_id,
                     record.decision_id,
@@ -5621,12 +5842,15 @@ class SQLiteControlStore:
                     record.guidance_id,
                     record.draft_revision,
                     record.status_revision_id,
+                    record.provenance_kind,
                     record.assessment_result_id,
                     record.finding_id,
                     record.disposition_id,
                     record.result_fingerprint,
                     record.finding_fingerprint,
                     record.disposition_fingerprint,
+                    record.observation_id,
+                    record.observation_fingerprint,
                     record.draft_fingerprint,
                     record.status_fingerprint,
                     record.source_scope_fingerprint,
@@ -5640,7 +5864,7 @@ class SQLiteControlStore:
         for record in uow._run_guidance_snapshot_items.values():
             self._connection.execute(
                 "INSERT INTO run_guidance_snapshot_items VALUES "
-                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     record.run_id,
                     record.item_id,
@@ -5649,12 +5873,15 @@ class SQLiteControlStore:
                     record.source_run_id,
                     record.schema_version,
                     record.finalized_lineage_fingerprint,
+                    record.provenance_kind,
                     record.assessment_result_id,
                     record.assessment_result_fingerprint,
                     record.finding_id,
                     record.finding_fingerprint,
                     record.disposition_id,
                     record.disposition_fingerprint,
+                    record.observation_id,
+                    record.observation_fingerprint,
                     record.guidance_id,
                     record.draft_revision,
                     record.draft_fingerprint,
@@ -6130,6 +6357,11 @@ class SQLiteControlStore:
                 "transaction_post_final_finding_dispositions",
                 receipt.post_final_finding_dispositions,
                 "disposition_id",
+            ),
+            (
+                "transaction_post_final_human_observations",
+                receipt.post_final_human_observations,
+                "observation_id",
             ),
             (
                 "transaction_post_final_guidance_statuses",
@@ -7682,6 +7914,40 @@ class SQLiteControlStore:
                     "disposition_fingerprint": "disposition_fingerprint",
                 },
             ),
+            post_final_human_observations=self._load_for_run(
+                PostFinalHumanObservationRecord,
+                "post_final_human_observations",
+                run_id,
+                "recorded_at, observation_id",
+                {
+                    "run_id": "run_id",
+                    "observation_id": "observation_id",
+                    "schema_version": "schema_version",
+                    "origin": "origin",
+                    "observation_revision": "observation_revision",
+                    "finalized_lineage_fingerprint": "finalized_lineage_fingerprint",
+                    "report_revision": "report_revision",
+                    "report_artifact_id": "report_artifact_id",
+                    "report_sha256": "report_sha256",
+                    "assessment_result_id": "assessment_result_id",
+                    "assessment_result_fingerprint": "assessment_result_fingerprint",
+                    "reader_view_sha256": "reader_view_sha256",
+                    "observation_text": "observation_text",
+                    "observation_sha256": "observation_sha256",
+                    "requirement_id": "requirement_id",
+                    "claim_id": "claim_id",
+                    "scope_class": "scope_class",
+                    "dimension_id": "dimension_id",
+                    "previous_observation_id": "previous_observation_id",
+                    "previous_observation_fingerprint": "previous_observation_fingerprint",
+                    "human_actor_id": "human_actor_id",
+                    "human_request_id": "human_request_id",
+                    "recorded_at": "recorded_at",
+                    "observation_event_id": "observation_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "observation_fingerprint": "observation_fingerprint",
+                },
+            ),
             post_final_guidance_drafts=self._load_for_run(
                 PostFinalGuidanceDraftRevision,
                 "post_final_guidance_drafts",
@@ -7693,12 +7959,15 @@ class SQLiteControlStore:
                     "draft_revision": "draft_revision",
                     "schema_version": "schema_version",
                     "finalized_lineage_fingerprint": "finalized_lineage_fingerprint",
+                    "provenance_kind": "provenance_kind",
                     "assessment_result_id": "assessment_result_id",
                     "assessment_result_fingerprint": "assessment_result_fingerprint",
                     "finding_id": "finding_id",
                     "finding_fingerprint": "finding_fingerprint",
                     "disposition_id": "disposition_id",
                     "disposition_fingerprint": "disposition_fingerprint",
+                    "observation_id": "observation_id",
+                    "observation_fingerprint": "observation_fingerprint",
                     "previous_draft_revision": "previous_draft_revision",
                     "guidance_scope": "guidance_scope",
                     "guidance_text": "guidance_text",
@@ -7774,10 +8043,12 @@ class SQLiteControlStore:
                     "schema_version": "schema_version",
                     "guidance_id": "guidance_id",
                     "draft_revision": "draft_revision",
+                    "provenance_kind": "provenance_kind",
                     "status_revision_id": "status_revision_id",
                     "assessment_result_id": "assessment_result_id",
                     "finding_id": "finding_id",
                     "disposition_id": "disposition_id",
+                    "observation_id": "observation_id",
                     "result_fingerprint": "result_fingerprint",
                     "finding_fingerprint": "finding_fingerprint",
                     "disposition_fingerprint": "disposition_fingerprint",
@@ -7803,12 +8074,15 @@ class SQLiteControlStore:
                     "source_run_id": "source_run_id",
                     "schema_version": "schema_version",
                     "finalized_lineage_fingerprint": ("finalized_lineage_fingerprint"),
+                    "provenance_kind": "provenance_kind",
                     "assessment_result_id": "assessment_result_id",
                     "assessment_result_fingerprint": ("assessment_result_fingerprint"),
                     "finding_id": "finding_id",
                     "finding_fingerprint": "finding_fingerprint",
                     "disposition_id": "disposition_id",
                     "disposition_fingerprint": "disposition_fingerprint",
+                    "observation_id": "observation_id",
+                    "observation_fingerprint": "observation_fingerprint",
                     "guidance_id": "guidance_id",
                     "draft_revision": "draft_revision",
                     "draft_fingerprint": "draft_fingerprint",
@@ -8059,6 +8333,7 @@ class SQLiteControlStore:
             snapshot.post_final_assessment_abandonments,
             snapshot.post_final_assessment_results,
             snapshot.post_final_finding_dispositions,
+            snapshot.post_final_human_observations,
             snapshot.post_final_guidance_drafts,
             snapshot.post_final_guidance_statuses,
         )
@@ -8086,6 +8361,9 @@ class SQLiteControlStore:
             item.disposition_id: item
             for item in snapshot.post_final_finding_dispositions
         }
+        observations = {
+            item.observation_id: item for item in snapshot.post_final_human_observations
+        }
         drafts = {
             (item.guidance_id, item.draft_revision): item
             for item in snapshot.post_final_guidance_drafts
@@ -8100,6 +8378,7 @@ class SQLiteControlStore:
             or len(abandonments) != len(snapshot.post_final_assessment_abandonments)
             or len(results) != len(snapshot.post_final_assessment_results)
             or len(dispositions) != len(snapshot.post_final_finding_dispositions)
+            or len(observations) != len(snapshot.post_final_human_observations)
             or len(drafts) != len(snapshot.post_final_guidance_drafts)
             or len(statuses) != len(snapshot.post_final_guidance_statuses)
         ):
@@ -8286,6 +8565,113 @@ class SQLiteControlStore:
                 ):
                     raise ControlStoreIntegrityError("control_store_integrity_invalid")
 
+        observation_chains: dict[
+            tuple[str, str], list[tuple[int, PostFinalHumanObservationRecord]]
+        ] = {}
+        for observation in observations.values():
+            receipt = receipts.get(observation.accepted_transaction_id)
+            event = events.get(observation.observation_event_id)
+            result = (
+                None
+                if observation.assessment_result_id is None
+                else results.get(observation.assessment_result_id)
+            )
+            report_revisions = {
+                (item.artifact_id, item.revision, item.sha256)
+                for item in snapshot.artifact_revisions
+            }
+            finalized_reader_refs = {
+                (reference.artifact_id, reference.revision)
+                for render in snapshot.finalize_renders
+                for reference in render.reader_artifacts
+            }
+            report_binding_valid = (
+                observation.report_artifact_id,
+                observation.report_revision,
+                observation.report_sha256,
+            ) in report_revisions and (
+                observation.report_artifact_id,
+                observation.report_revision,
+            ) in finalized_reader_refs
+            result_request = (
+                None if result is None else requests.get(result.assessment_request_id)
+            )
+            if (
+                observation.run_id != snapshot.run.run_id
+                or observation.origin != "human"
+                or not report_binding_valid
+                or receipt is None
+                or event is None
+                or event.transaction_id != receipt.transaction_id
+                or event.event_type != "post_final_human_observation_recorded"
+                or event.core_run_binding is not None
+                or len(receipt.post_final_human_observations) != 1
+                or receipt.post_final_human_observations[0].observation_id
+                != observation.observation_id
+                or (
+                    result is not None
+                    and (
+                        result.result_fingerprint
+                        != observation.assessment_result_fingerprint
+                        or result.reader_view_sha256 != observation.reader_view_sha256
+                        or result.finalized_lineage_fingerprint
+                        != observation.finalized_lineage_fingerprint
+                    )
+                )
+                or (
+                    result is not None
+                    and (
+                        result_request is None
+                        or result_request.report_artifact_id
+                        != observation.report_artifact_id
+                        or result_request.report_revision != observation.report_revision
+                        or result_request.report_sha256 != observation.report_sha256
+                        or result_request.finalized_lineage_fingerprint
+                        != observation.finalized_lineage_fingerprint
+                    )
+                )
+                or (observation.assessment_result_id is not None and result is None)
+            ):
+                raise ControlStoreIntegrityError("control_store_integrity_invalid")
+            if observation.previous_observation_id is not None:
+                predecessor = observations.get(observation.previous_observation_id)
+                if (
+                    predecessor is None
+                    or predecessor.observation_fingerprint
+                    != observation.previous_observation_fingerprint
+                    or predecessor.finalized_lineage_fingerprint
+                    != observation.finalized_lineage_fingerprint
+                    or predecessor.report_revision != observation.report_revision
+                    or predecessor.report_artifact_id != observation.report_artifact_id
+                    or predecessor.report_sha256 != observation.report_sha256
+                    or observation.observation_revision
+                    != predecessor.observation_revision + 1
+                ):
+                    raise ControlStoreIntegrityError("control_store_integrity_invalid")
+            elif observation.observation_revision != 1:
+                raise ControlStoreIntegrityError("control_store_integrity_invalid")
+            root_id = observation.observation_id
+            seen_ids: set[str] = set()
+            cursor = observation
+            while cursor.previous_observation_id is not None:
+                if cursor.observation_id in seen_ids:
+                    raise ControlStoreIntegrityError("control_store_integrity_invalid")
+                seen_ids.add(cursor.observation_id)
+                predecessor = observations.get(cursor.previous_observation_id)
+                if predecessor is None:
+                    raise ControlStoreIntegrityError("control_store_integrity_invalid")
+                root_id = predecessor.observation_id
+                cursor = predecessor
+            observation_chains.setdefault(
+                (observation.finalized_lineage_fingerprint, root_id), []
+            ).append((receipt.committed_revision, observation))
+        for rows in observation_chains.values():
+            rows.sort(key=lambda item: item[1].observation_revision)
+            if [item.observation_revision for _revision, item in rows] != list(
+                range(1, len(rows) + 1)
+            ):
+                raise ControlStoreIntegrityError("control_store_integrity_invalid")
+
         disposition_chains: dict[
             tuple[str, str], list[tuple[int, PostFinalFindingDispositionRecord]]
         ] = {}
@@ -8327,18 +8713,38 @@ class SQLiteControlStore:
             receipt = receipts.get(draft.accepted_transaction_id)
             event = events.get(draft.draft_event_id)
             disposition = dispositions.get(draft.disposition_id)
+            observation = observations.get(draft.observation_id)
+            accepted_model_valid = (
+                draft.provenance_kind == "accepted_model_finding"
+                and disposition is not None
+                and disposition.decision == "accept"
+                and disposition.disposition_fingerprint == draft.disposition_fingerprint
+                and disposition.assessment_result_id == draft.assessment_result_id
+                and disposition.assessment_result_fingerprint
+                == draft.assessment_result_fingerprint
+                and disposition.finding_id == draft.finding_id
+                and disposition.finding_fingerprint == draft.finding_fingerprint
+                and disposition.finalized_lineage_fingerprint
+                == draft.finalized_lineage_fingerprint
+            )
+            human_observation_valid = (
+                draft.provenance_kind == "human_observation"
+                and observation is not None
+                and observation.observation_fingerprint == draft.observation_fingerprint
+                and observation.finalized_lineage_fingerprint
+                == draft.finalized_lineage_fingerprint
+                and (
+                    draft.assessment_result_id is None
+                    or (
+                        observation.assessment_result_id == draft.assessment_result_id
+                        and observation.assessment_result_fingerprint
+                        == draft.assessment_result_fingerprint
+                    )
+                )
+            )
             if (
                 draft.run_id != snapshot.run.run_id
-                or disposition is None
-                or disposition.decision != "accept"
-                or disposition.disposition_fingerprint != draft.disposition_fingerprint
-                or disposition.assessment_result_id != draft.assessment_result_id
-                or disposition.assessment_result_fingerprint
-                != draft.assessment_result_fingerprint
-                or disposition.finding_id != draft.finding_id
-                or disposition.finding_fingerprint != draft.finding_fingerprint
-                or disposition.finalized_lineage_fingerprint
-                != draft.finalized_lineage_fingerprint
+                or not (accepted_model_valid or human_observation_valid)
                 or receipt is None
                 or event is None
                 or event.transaction_id != receipt.transaction_id
@@ -8393,22 +8799,60 @@ class SQLiteControlStore:
                 draft = drafts.get((status.guidance_id, status.draft_revision))
                 approval_eligible = False
                 if draft is not None:
-                    disposition_rows = disposition_chains.get(
-                        (draft.assessment_result_id, draft.finding_id),
-                        [],
-                    )
-                    prior_dispositions = [
-                        disposition
-                        for committed_revision, disposition in disposition_rows
-                        if committed_revision
-                        <= receipts[status.accepted_transaction_id].prior_revision
-                    ]
-                    if prior_dispositions:
-                        current_disposition = prior_dispositions[-1]
-                        approval_eligible = (
-                            current_disposition.disposition_id == draft.disposition_id
-                            and current_disposition.decision == "accept"
+                    if draft.provenance_kind == "human_observation":
+                        observation = observations.get(draft.observation_id)
+                        status_receipt = receipts.get(status.accepted_transaction_id)
+                        observation_receipt = (
+                            None
+                            if observation is None
+                            else receipts.get(observation.accepted_transaction_id)
                         )
+                        successors_at_cutoff = {
+                            item.previous_observation_id
+                            for item in observations.values()
+                            if item.previous_observation_id is not None
+                            and (
+                                (
+                                    child_receipt := receipts.get(
+                                        item.accepted_transaction_id
+                                    )
+                                )
+                                is not None
+                                and status_receipt is not None
+                                and child_receipt.committed_revision
+                                <= status_receipt.prior_revision
+                            )
+                        }
+                        approval_eligible = (
+                            observation is not None
+                            and observation.finalized_lineage_fingerprint
+                            == draft.finalized_lineage_fingerprint
+                            and observation.observation_fingerprint
+                            == draft.observation_fingerprint
+                            and observation_receipt is not None
+                            and status_receipt is not None
+                            and observation_receipt.committed_revision
+                            <= status_receipt.prior_revision
+                            and observation.observation_id not in successors_at_cutoff
+                        )
+                    else:
+                        disposition_rows = disposition_chains.get(
+                            (draft.assessment_result_id, draft.finding_id),
+                            [],
+                        )
+                        prior_dispositions = [
+                            disposition
+                            for committed_revision, disposition in disposition_rows
+                            if committed_revision
+                            <= receipts[status.accepted_transaction_id].prior_revision
+                        ]
+                        if prior_dispositions:
+                            current_disposition = prior_dispositions[-1]
+                            approval_eligible = (
+                                current_disposition.disposition_id
+                                == draft.disposition_id
+                                and current_disposition.decision == "accept"
+                            )
                 if (
                     status.previous_status_revision_id != previous
                     or not post_final_guidance_status_transition_allowed(
@@ -9825,6 +10269,16 @@ class SQLiteControlStore:
             source_ids_text = canonical_json_bytes(model.source_ids).decode("utf-8")
             if row["source_ids_json"] != source_ids_text:
                 raise ControlStoreIntegrityError("stored_payload_identity_mismatch")
+        elif model_type is PostFinalHumanObservationRecord:
+            span_text = (
+                "null"
+                if model.report_span is None
+                else canonical_json_bytes(
+                    model.report_span.model_dump(mode="json")
+                ).decode("utf-8")
+            )
+            if row["report_span_json"] != span_text:
+                raise ControlStoreIntegrityError("stored_payload_identity_mismatch")
         return model
 
     def _legacy_receipt_cutoff(self) -> int:
@@ -10367,6 +10821,14 @@ class SQLiteControlStore:
                 tuple(
                     (item.disposition_id,)
                     for item in receipt.post_final_finding_dispositions
+                ),
+            ),
+            (
+                "transaction_post_final_human_observations",
+                ("observation_id",),
+                tuple(
+                    (item.observation_id,)
+                    for item in receipt.post_final_human_observations
                 ),
             ),
             (

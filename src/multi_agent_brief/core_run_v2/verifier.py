@@ -386,6 +386,7 @@ _AUTHORITATIVE_RECEIPT_RELATION_FAMILIES = frozenset(
         "post_final_assessment_abandonments",
         "post_final_assessment_results",
         "post_final_finding_dispositions",
+        "post_final_human_observations",
         "post_final_guidance_drafts",
         "post_final_guidance_statuses",
         "run_guidance_snapshots",
@@ -766,6 +767,14 @@ _POST_FINAL_ASSESSMENT_RECEIPT_RULES = {
         "post_final_finding_dispositions",
         "disposition_id",
         "disposition_event_id",
+    ),
+    "post_final_human_observation": _PostFinalAssessmentReceiptRule(
+        "post_final_human_observation_recorded",
+        "post_final_human_observations",
+        "observation_id",
+        "post_final_human_observations",
+        "observation_id",
+        "observation_event_id",
     ),
     "post_final_guidance_draft": _PostFinalAssessmentReceiptRule(
         "post_final_guidance_draft_recorded",

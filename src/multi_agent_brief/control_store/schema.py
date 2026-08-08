@@ -12,7 +12,7 @@ from multi_agent_brief.control_store.errors import (
 )
 
 
-SCHEMA_VERSION = 14
+SCHEMA_VERSION = 15
 MIGRATION_NAME = "0001"
 MIGRATIONS = (
     (1, "0001"),
@@ -29,6 +29,7 @@ MIGRATIONS = (
     (12, "0012"),
     (13, "0013"),
     (14, "0014"),
+    (15, "0015"),
 )
 _SCHEMA_OBJECT_TYPES = ("index", "table", "trigger", "view")
 

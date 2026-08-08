@@ -5,7 +5,7 @@
      tab 1 brief    — exact Store-bound local reader Markdown
      tab 2 quality  — deterministic Store projection (green = pass only)
      tab 3 review   — LAJ semantic advisory view (purple; never PASS wording)
-     tab 4 feedback — Store-native Human guidance state (explicit successor opt-in)
+     tab 4 feedback — Store-native Human observation history and guidance state
    Static exports remain read-only. A secured loopback Review Session may expose
    strict Human commands; DOM uses createElement/textContent only.
    ========================================================================== */
@@ -119,6 +119,32 @@
             guidance_deactivate: "停用",
             guidance_revert: "撤回",
             guidance_supersede: "标记被替代",
+            observation_title: "人工独立观察",
+            observation_sub: "记录你对终稿的独立观察。它始终绑定冻结终稿；若当前正在查看某个 Reader Review 结果，也会绑定该 exact result。它不是 model finding，不会自动进入评估输入或 guidance。",
+            observation_text_label: "观察内容",
+            observation_origin: "origin=Human",
+            observation_submit: "记录人工观察",
+            observation_refs: "可选引用（留空也可以）",
+            observation_requirement: "Requirement ID",
+            observation_claim: "Claim ID",
+            observation_scope: "O1/O2",
+            observation_dimension: "Dimension",
+            observation_span: "Report span（需完整填写）",
+            observation_span_report: "Report SHA-256",
+            observation_span_block: "Block ID",
+            observation_span_start: "起始字符",
+            observation_span_end: "结束字符",
+            observation_span_excerpt: "Excerpt SHA-256",
+            observation_history: "人工观察历史",
+            observation_none: "（暂无人工观察）",
+            observation_supersede: "替代此观察",
+            observation_supersede_text: "新的观察内容",
+            observation_supersede_submit: "记录替代版本",
+            observation_guidance: "从此观察创建 guidance 草稿",
+            observation_binding_report: "report-bound（未选择 Reader Review 结果）",
+            observation_binding_result: "已绑定所选 Reader Review 结果",
+            observation_invalid_refs: "span 必须完整填写，O1/O2 与 dimension 必须成对填写。",
+            observation_not_allowed: "只有 Store 确认的 finalized 终稿才能记录人工观察。",
             command_pending: "正在记录…",
             command_failed: "记录失败",
             command_saved: "已由 Store Receipt 记录",
@@ -238,6 +264,32 @@
             guidance_deactivate: "Deactivate",
             guidance_revert: "Revert",
             guidance_supersede: "Mark superseded",
+            observation_title: "Independent Human observation",
+            observation_sub: "Record an independent observation about the finalized brief. It always binds the frozen report; when a Reader Review result is selected, it also binds that exact result. It is not a model finding, does not enter evaluator input, and never becomes guidance automatically.",
+            observation_text_label: "Observation",
+            observation_origin: "origin=Human",
+            observation_submit: "Record Human observation",
+            observation_refs: "Optional references (you may leave these blank)",
+            observation_requirement: "Requirement ID",
+            observation_claim: "Claim ID",
+            observation_scope: "O1/O2",
+            observation_dimension: "Dimension",
+            observation_span: "Report span (fill every field)",
+            observation_span_report: "Report SHA-256",
+            observation_span_block: "Block ID",
+            observation_span_start: "Start character",
+            observation_span_end: "End character",
+            observation_span_excerpt: "Excerpt SHA-256",
+            observation_history: "Human observation history",
+            observation_none: "(no Human observations)",
+            observation_supersede: "Supersede this observation",
+            observation_supersede_text: "New observation text",
+            observation_supersede_submit: "Record replacement",
+            observation_guidance: "Create guidance draft from this observation",
+            observation_binding_report: "report-bound (no Reader Review result selected)",
+            observation_binding_result: "Bound to the selected Reader Review result",
+            observation_invalid_refs: "A report span must be complete; O1/O2 and dimension must be supplied together.",
+            observation_not_allowed: "A Human observation requires a Store-confirmed finalized brief.",
             command_pending: "Recording…",
             command_failed: "Command failed",
             command_saved: "Recorded by Store Receipt",
@@ -965,9 +1017,13 @@
                         schema_version: "briefloop.post_final_guidance_draft_input.v1",
                         human_actor_id: "local-human-reviewer",
                         human_request_id: request,
+                        provenance_kind: "accepted_model_finding",
                         assessment_result_id: DATA.semantic.assessment_result_id,
+                        assessment_result_fingerprint: DATA.semantic.assessment_result_fingerprint,
                         finding_id: f.finding_id,
+                        finding_fingerprint: f.finding_fingerprint,
                         disposition_id: f.human_disposition.disposition_id,
+                        disposition_fingerprint: f.human_disposition.disposition_fingerprint,
                         guidance_text: guidance.value
                     }, commandStatus);
                 });
@@ -979,7 +1035,264 @@
         return card;
     }
 
-    /* ---- feedback tab (inert; honest unavailable surface) ---- */
+    function observationInput(parent, labelKey, maxLength, type) {
+        var label = el("label", "observation-field");
+        label.appendChild(el("span", "fb-k", t(labelKey)));
+        var input = document.createElement("input");
+        input.type = type || "text";
+        if (maxLength) input.maxLength = maxLength;
+        input.autocomplete = "off";
+        input.spellcheck = false;
+        label.appendChild(input);
+        parent.appendChild(label);
+        return input;
+    }
+
+    function observationPayload(form) {
+        var text = form.text.value.trim();
+        if (!text) return null;
+        var payload = {
+            schema_version: "briefloop.post_final_human_observation_input.v1",
+            human_actor_id: "local-human-reviewer",
+            human_request_id: requestId("human-observation"),
+            observation_text: text
+        };
+        if (!payload.human_request_id) return null;
+        var sem = DATA.semantic || {};
+        if (sem.selected_result_id && sem.selected_result_fingerprint &&
+                sem.reader_view_sha256) {
+            payload.assessment_result_id = sem.selected_result_id;
+            payload.assessment_result_fingerprint = sem.selected_result_fingerprint;
+            payload.reader_view_sha256 = sem.reader_view_sha256;
+        }
+        if (form.requirement.value.trim()) payload.requirement_id = form.requirement.value.trim();
+        if (form.claim.value.trim()) payload.claim_id = form.claim.value.trim();
+        var scope = form.scope.value;
+        var dimension = form.dimension.value.trim();
+        if (scope || dimension) {
+            if (!scope || !dimension) return null;
+            payload.scope_class = scope;
+            payload.dimension_id = dimension;
+        }
+        var spanValues = [
+            form.spanReport.value.trim(), form.spanBlock.value.trim(),
+            form.spanStart.value.trim(), form.spanEnd.value.trim(),
+            form.spanExcerpt.value.trim()
+        ];
+        var spanAny = spanValues.some(function (value) { return Boolean(value); });
+        if (spanAny) {
+            if (spanValues.some(function (value) { return !value; })) return null;
+            var start = Number(form.spanStart.value);
+            var end = Number(form.spanEnd.value);
+            if (!Number.isInteger(start) || !Number.isInteger(end) || start < 0 || end <= start) {
+                return null;
+            }
+            payload.report_span = {
+                schema_version: "briefloop.post_final_human_observation_report_span.v1",
+                report_sha256: spanValues[0],
+                block_id: spanValues[1],
+                start_char: start,
+                end_char: end,
+                excerpt_sha256: spanValues[4]
+            };
+        }
+        return payload;
+    }
+
+    function renderObservationComposer(zone, imp) {
+        var card = el("section", "observation-card");
+        card.appendChild(el("h3", null, t("observation_title")));
+        card.appendChild(el("p", "section-muted", t("observation_sub")));
+        var binding = el("p", "observation-binding");
+        binding.appendChild(el("span", "badge badge-info", t("observation_origin")));
+        binding.appendChild(el("span", null, " · " +
+            (imp.observation_binding_mode === "selected_result" ?
+                t("observation_binding_result") : t("observation_binding_report"))));
+        card.appendChild(binding);
+        var textLabel = el("label", "observation-field");
+        textLabel.appendChild(el("span", "fb-k", t("observation_text_label")));
+        var text = document.createElement("textarea");
+        text.className = "fb-textarea";
+        text.maxLength = 12000;
+        textLabel.appendChild(text);
+        card.appendChild(textLabel);
+        var refs = el("details", "observation-refs");
+        refs.appendChild(el("summary", null, t("observation_refs")));
+        var grid = el("div", "observation-grid");
+        var requirement = observationInput(grid, "observation_requirement", 160);
+        var claim = observationInput(grid, "observation_claim", 160);
+        var scopeLabel = el("label", "observation-field");
+        scopeLabel.appendChild(el("span", "fb-k", t("observation_scope")));
+        var scope = document.createElement("select");
+        scope.appendChild(el("option", null, ""));
+        ["O1", "O2"].forEach(function (value) {
+            var option = el("option", null, value);
+            option.value = value;
+            scope.appendChild(option);
+        });
+        scopeLabel.appendChild(scope);
+        grid.appendChild(scopeLabel);
+        var dimension = observationInput(grid, "observation_dimension", 160);
+        refs.appendChild(grid);
+        refs.appendChild(el("p", "section-muted", t("observation_span")));
+        var spanGrid = el("div", "observation-grid");
+        var spanReport = observationInput(spanGrid, "observation_span_report", 64);
+        var spanBlock = observationInput(spanGrid, "observation_span_block", 32);
+        var spanStart = observationInput(spanGrid, "observation_span_start", 12, "number");
+        var spanEnd = observationInput(spanGrid, "observation_span_end", 12, "number");
+        var spanExcerpt = observationInput(spanGrid, "observation_span_excerpt", 64);
+        refs.appendChild(spanGrid);
+        card.appendChild(refs);
+        var status = el("p", "reader-review-command-status");
+        var submit = el("button", "btn-primary", t("observation_submit"));
+        submit.type = "button";
+        submit.addEventListener("click", function () {
+            var payload = observationPayload({
+                text: text,
+                requirement: requirement,
+                claim: claim,
+                scope: scope,
+                dimension: dimension,
+                spanReport: spanReport,
+                spanBlock: spanBlock,
+                spanStart: spanStart,
+                spanEnd: spanEnd,
+                spanExcerpt: spanExcerpt
+            });
+            if (!payload) {
+                status.textContent = t("observation_invalid_refs");
+                return;
+            }
+            sendReviewCommand("append_observation", payload, status, submit);
+        });
+        card.appendChild(submit);
+        card.appendChild(status);
+        zone.appendChild(card);
+    }
+
+    function renderObservationHistory(zone, observations) {
+        var wrap = el("div", "observation-history");
+        wrap.appendChild(el("h3", null, t("observation_history")));
+        if (!observations.length) {
+            wrap.appendChild(el("p", "section-muted", t("observation_none")));
+            zone.appendChild(wrap);
+            return;
+        }
+        observations.forEach(function (row) {
+            if (!row || typeof row !== "object") return;
+            var entry = el("article", "rec-entry observation-entry");
+            var head = el("div", "re-head");
+            head.appendChild(el("span", "badge badge-info", t("observation_origin")));
+            head.appendChild(el("span", "badge badge-advisory", String(row.status || "recorded")));
+            entry.appendChild(head);
+            entry.appendChild(el("div", "re-text", String(
+                row.observation_text || row.observation || "")));
+            var meta = el("div", "re-meta");
+            var refs = [];
+            ["observation_id", "observation_fingerprint", "requirement_id", "claim_id",
+             "report_span_id", "dimension_id", "scope_class", "recorded_at"].forEach(function (key) {
+                if (row[key] != null) refs.push(key + "=" + String(row[key]));
+            });
+            meta.textContent = refs.join(" · ");
+            entry.appendChild(meta);
+            if (ACTION_SESSION && row.observation_id && row.observation_fingerprint &&
+                    row.status !== "superseded") {
+                var controls = el("div", "observation-actions");
+                var guidanceText = document.createElement("textarea");
+                guidanceText.className = "fb-textarea";
+                guidanceText.maxLength = 12000;
+                guidanceText.setAttribute("aria-label", t("observation_guidance"));
+                controls.appendChild(guidanceText);
+                var guidanceButton = el("button", "btn-ghost", t("observation_guidance"));
+                guidanceButton.type = "button";
+                var commandStatus = el("p", "reader-review-command-status");
+                guidanceButton.addEventListener("click", function () {
+                    var request = requestId("human-guidance-draft");
+                    if (!request || !guidanceText.value.trim()) {
+                        commandStatus.textContent = t("command_failed");
+                        return;
+                    }
+                    var sem = DATA.semantic || {};
+                    sendReviewCommand("draft", {
+                        schema_version: "briefloop.post_final_guidance_draft_input.v1",
+                        human_actor_id: "local-human-reviewer",
+                        human_request_id: request,
+                        provenance_kind: "human_observation",
+                        assessment_result_id: sem.selected_result_id || null,
+                        assessment_result_fingerprint: sem.selected_result_fingerprint || null,
+                        observation_id: row.observation_id,
+                        observation_fingerprint: row.observation_fingerprint,
+                        guidance_text: guidanceText.value.trim()
+                    }, commandStatus, guidanceButton);
+                });
+                controls.appendChild(guidanceButton);
+                var replacementText = document.createElement("textarea");
+                replacementText.className = "fb-textarea";
+                replacementText.maxLength = 12000;
+                replacementText.value = String(row.observation_text || row.observation || "");
+                replacementText.setAttribute("aria-label", t("observation_supersede_text"));
+                controls.appendChild(replacementText);
+                var supersede = el("button", "btn-ghost", t("observation_supersede"));
+                supersede.type = "button";
+                supersede.addEventListener("click", function () {
+                    var request = requestId("human-observation-supersede");
+                    if (!request) {
+                        commandStatus.textContent = t("command_failed");
+                        return;
+                    }
+                    var sem = DATA.semantic || {};
+                    var replacementPayload = {
+                        schema_version: "briefloop.post_final_human_observation_supersede_input.v1",
+                        human_actor_id: "local-human-reviewer",
+                        human_request_id: request,
+                        observation_text: replacementText.value.trim(),
+                        previous_observation_id: row.observation_id,
+                        previous_observation_fingerprint: row.observation_fingerprint
+                    };
+                    if (row.assessment_result_id && row.assessment_result_fingerprint &&
+                            row.reader_view_sha256) {
+                        replacementPayload.assessment_result_id = row.assessment_result_id;
+                        replacementPayload.assessment_result_fingerprint = row.assessment_result_fingerprint;
+                        replacementPayload.reader_view_sha256 = row.reader_view_sha256;
+                    } else if (sem.selected_result_id && sem.selected_result_fingerprint &&
+                            sem.reader_view_sha256) {
+                        replacementPayload.assessment_result_id = sem.selected_result_id;
+                        replacementPayload.assessment_result_fingerprint = sem.selected_result_fingerprint;
+                        replacementPayload.reader_view_sha256 = sem.reader_view_sha256;
+                    }
+                    ["requirement_id", "claim_id", "scope_class", "dimension_id"].forEach(function (key) {
+                        if (row[key] != null) replacementPayload[key] = row[key];
+                    });
+                    if (row.report_span && typeof row.report_span === "object") {
+                        replacementPayload.report_span = row.report_span;
+                    }
+                    sendReviewCommand("supersede_observation", {
+                        schema_version: replacementPayload.schema_version,
+                        human_actor_id: replacementPayload.human_actor_id,
+                        human_request_id: replacementPayload.human_request_id,
+                        observation_text: replacementPayload.observation_text,
+                        previous_observation_id: replacementPayload.previous_observation_id,
+                        previous_observation_fingerprint: replacementPayload.previous_observation_fingerprint,
+                        assessment_result_id: replacementPayload.assessment_result_id,
+                        assessment_result_fingerprint: replacementPayload.assessment_result_fingerprint,
+                        reader_view_sha256: replacementPayload.reader_view_sha256,
+                        requirement_id: replacementPayload.requirement_id,
+                        claim_id: replacementPayload.claim_id,
+                        report_span: replacementPayload.report_span,
+                        scope_class: replacementPayload.scope_class,
+                        dimension_id: replacementPayload.dimension_id
+                    }, commandStatus, supersede);
+                });
+                controls.appendChild(supersede);
+                controls.appendChild(commandStatus);
+                entry.appendChild(controls);
+            }
+            wrap.appendChild(entry);
+        });
+        zone.appendChild(wrap);
+    }
+
+    /* ---- feedback tab: read-only exports show history; loopback sessions add commands ---- */
     function renderFeedback(main) {
         var imp = DATA.improvement || {};
         renderIdentityCompact(main);
@@ -988,6 +1301,14 @@
         zone.appendChild(el("h2", null, t("fb_title")));
         zone.appendChild(el("p", "feedback-sub",
             t(imp.status === "available" ? "fb_available_sub" : "fb_sub")));
+
+        if (ACTION_SESSION && imp.observation_allowed === true) {
+            renderObservationComposer(zone, imp);
+        } else if (ACTION_SESSION && imp.observation_allowed !== true) {
+            var unavailableObservation = el("p", "section-muted", t("observation_not_allowed"));
+            zone.appendChild(unavailableObservation);
+        }
+        renderObservationHistory(zone, imp.human_observations || []);
 
         var wrap = el("div", "recorded-list");
         wrap.appendChild(el("h3", null, t("recorded_title")));

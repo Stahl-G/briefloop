@@ -1262,6 +1262,7 @@ class RuntimeHostService:
                     "finalized_lineage_fingerprint": (
                         item.finalized_lineage_fingerprint
                     ),
+                    "provenance_kind": item.provenance_kind,
                     "assessment_result_id": item.assessment_result_id,
                     "assessment_result_fingerprint": (
                         item.assessment_result_fingerprint
@@ -1270,6 +1271,8 @@ class RuntimeHostService:
                     "finding_fingerprint": item.finding_fingerprint,
                     "disposition_id": item.disposition_id,
                     "disposition_fingerprint": item.disposition_fingerprint,
+                    "observation_id": item.observation_id,
+                    "observation_fingerprint": item.observation_fingerprint,
                     "guidance_id": item.guidance_id,
                     "draft_revision": item.draft_revision,
                     "draft_fingerprint": item.draft_fingerprint,

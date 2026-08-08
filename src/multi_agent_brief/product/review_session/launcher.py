@@ -154,6 +154,19 @@ def launch_actionable_review_session(
 
     update_selection(data)
 
+    def review_service() -> PostFinalReviewService:
+        """Resolve one Store-native review writer for the current page state.
+
+        A selected result keeps the exact result binding.  Human observations
+        are also legal in report-bound mode, so the service is intentionally
+        constructed without a result when no selection exists; the service
+        then resolves the finalized lineage deterministically from SQLite.
+        """
+
+        if selected[0] is None:
+            return PostFinalReviewService(root)
+        return PostFinalReviewService(root, *selected[0])
+
     def handle(command: ReviewSessionCommand) -> dict[str, object]:
         with command_lock:
             try:
@@ -187,9 +200,22 @@ def launch_actionable_review_session(
                         "page_data": refreshed,
                     }
 
-                if selected[0] is None:
+                payload_provenance = payload.get("provenance_kind")
+                report_bound_action = command.action in {
+                    "append_observation",
+                    "supersede_observation",
+                    "status",
+                } or (
+                    command.action == "draft"
+                    and payload_provenance == "human_observation"
+                )
+                if selected[0] is None and not report_bound_action:
                     raise PostFinalReviewError("post_final_review_selection_required")
-                service = PostFinalReviewService(root, *selected[0])
+                service = review_service()
+                if command.action == "append_observation":
+                    result = service.record_human_observation(payload)
+                elif command.action == "supersede_observation":
+                    result = service.supersede_human_observation(payload)
                 if command.action in {"accept", "reject", "defer"}:
                     payload["decision"] = command.action
                     result = service.record_disposition(payload)
@@ -203,7 +229,7 @@ def launch_actionable_review_session(
                     result = service.revert_guidance(payload)
                 elif command.action == "supersede":
                     result = service.supersede_guidance(payload)
-                else:
+                elif command.action == "status":
                     result = service.review_status()
                 refreshed = rebuild(None)
                 return {

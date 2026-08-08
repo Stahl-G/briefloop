@@ -531,6 +531,74 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .feedback-zone > h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
 .feedback-sub { font-size: 12.5px; color: var(--bl-muted); margin: 0 0 14px; }
 
+.observation-card {
+    margin: 14px 0 20px;
+    padding: 16px 18px;
+    border: 1px solid var(--sem-action-line);
+    border-left-width: 3px;
+    border-radius: var(--bl-radius-sm);
+    background: var(--sem-action-wash);
+}
+.observation-card h3, .observation-history h3 {
+    margin: 0 0 6px;
+    font-size: 14px;
+    font-weight: 600;
+}
+.observation-binding {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0 12px;
+    color: var(--bl-muted);
+    font-size: 12px;
+}
+.observation-field { display: block; margin-top: 10px; }
+.observation-field .fb-k {
+    display: block;
+    margin-bottom: 4px;
+    font-family: var(--bl-font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--bl-faint);
+}
+.observation-field input, .observation-field select {
+    width: 100%;
+    font: inherit;
+    font-size: 12.5px;
+    color: var(--bl-ink);
+    background: var(--bl-surface);
+    border: 1px solid var(--bl-line);
+    border-radius: 6px;
+    padding: 7px 9px;
+}
+.observation-field select { min-height: 34px; }
+.observation-refs {
+    margin-top: 12px;
+    border-top: 1px solid var(--bl-line-soft);
+    padding-top: 10px;
+}
+.observation-refs summary {
+    cursor: pointer;
+    color: var(--bl-muted);
+    font-size: 12px;
+}
+.observation-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 12px;
+}
+.observation-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+}
+.observation-actions textarea { flex: 1 1 100%; min-height: 64px; }
+.observation-history { margin-top: 20px; }
+.observation-entry { border-left: 2px solid var(--sem-action-line); }
+
 .fb-textarea {
     width: 100%;
     min-height: 92px;

@@ -418,6 +418,7 @@ EVENT_TYPES = {
     "post_final_finding_disposition_recorded",
     "post_final_guidance_draft_recorded",
     "post_final_guidance_status_recorded",
+    "post_final_human_observation_recorded",
     "source_acquisition_attempt_authorized",
 }
 
@@ -3359,12 +3360,17 @@ class RunGuidanceSelectionDecisionRecord(StrictModel):
     guidance_id: ContractId
     draft_revision: PositiveInt
     status_revision_id: Optional[ContractId] = None
-    assessment_result_id: ContractId
-    finding_id: ContractId
-    disposition_id: ContractId
-    result_fingerprint: Sha256
-    finding_fingerprint: Sha256
-    disposition_fingerprint: Sha256
+    provenance_kind: Literal["accepted_model_finding", "human_observation"] = (
+        "accepted_model_finding"
+    )
+    assessment_result_id: Optional[ContractId] = None
+    finding_id: Optional[ContractId] = None
+    disposition_id: Optional[ContractId] = None
+    result_fingerprint: Optional[Sha256] = None
+    finding_fingerprint: Optional[Sha256] = None
+    disposition_fingerprint: Optional[Sha256] = None
+    observation_id: Optional[ContractId] = None
+    observation_fingerprint: Optional[Sha256] = None
     draft_fingerprint: Sha256
     status_fingerprint: Optional[Sha256] = None
     source_scope_fingerprint: Sha256
@@ -3382,6 +3388,29 @@ class RunGuidanceSelectionDecisionRecord(StrictModel):
 
     @model_validator(mode="after")
     def decision_identity_is_exact(self) -> "RunGuidanceSelectionDecisionRecord":
+        result_fields = (self.assessment_result_id, self.result_fingerprint)
+        finding_fields = (self.finding_id, self.finding_fingerprint)
+        disposition_fields = (self.disposition_id, self.disposition_fingerprint)
+        observation_fields = (self.observation_id, self.observation_fingerprint)
+        if self.provenance_kind == "accepted_model_finding":
+            if not all(
+                item is not None
+                for item in (*result_fields, *finding_fields, *disposition_fields)
+            ):
+                raise ValueError("accepted model finding selection is incomplete")
+            if any(item is not None for item in observation_fields):
+                raise ValueError("model finding selection cannot bind observation")
+        else:
+            if not all(item is not None for item in observation_fields):
+                raise ValueError("human observation selection is incomplete")
+            if any(item is not None for item in finding_fields + disposition_fields):
+                raise ValueError("human observation selection cannot bind finding")
+            if any(item is not None for item in result_fields) and not all(
+                item is not None for item in result_fields
+            ):
+                raise ValueError(
+                    "human observation selection result binding is partial"
+                )
         if self.selected != (self.reason_code == "approved_scope_match"):
             raise ValueError("guidance selection verdict does not match reason")
         if (self.status_revision_id is None) != (self.status_fingerprint is None):
@@ -3407,12 +3436,17 @@ class RunGuidanceSnapshotItemRecord(StrictModel):
     position: NonNegativeInt
     source_run_id: ContractId
     finalized_lineage_fingerprint: Sha256
-    assessment_result_id: ContractId
-    assessment_result_fingerprint: Sha256
-    finding_id: ContractId
-    finding_fingerprint: Sha256
-    disposition_id: ContractId
-    disposition_fingerprint: Sha256
+    provenance_kind: Literal["accepted_model_finding", "human_observation"] = (
+        "accepted_model_finding"
+    )
+    assessment_result_id: Optional[ContractId] = None
+    assessment_result_fingerprint: Optional[Sha256] = None
+    finding_id: Optional[ContractId] = None
+    finding_fingerprint: Optional[Sha256] = None
+    disposition_id: Optional[ContractId] = None
+    disposition_fingerprint: Optional[Sha256] = None
+    observation_id: Optional[ContractId] = None
+    observation_fingerprint: Optional[Sha256] = None
     guidance_id: ContractId
     draft_revision: PositiveInt
     draft_fingerprint: Sha256
@@ -3425,6 +3459,27 @@ class RunGuidanceSnapshotItemRecord(StrictModel):
 
     @model_validator(mode="after")
     def snapshot_item_identity_is_exact(self) -> "RunGuidanceSnapshotItemRecord":
+        result_fields = (self.assessment_result_id, self.assessment_result_fingerprint)
+        finding_fields = (self.finding_id, self.finding_fingerprint)
+        disposition_fields = (self.disposition_id, self.disposition_fingerprint)
+        observation_fields = (self.observation_id, self.observation_fingerprint)
+        if self.provenance_kind == "accepted_model_finding":
+            if not all(
+                item is not None
+                for item in (*result_fields, *finding_fields, *disposition_fields)
+            ):
+                raise ValueError("accepted model finding snapshot item is incomplete")
+            if any(item is not None for item in observation_fields):
+                raise ValueError("model finding snapshot item cannot bind observation")
+        else:
+            if not all(item is not None for item in observation_fields):
+                raise ValueError("human observation snapshot item is incomplete")
+            if any(item is not None for item in finding_fields + disposition_fields):
+                raise ValueError("human observation snapshot item cannot bind finding")
+            if any(item is not None for item in result_fields) and not all(
+                item is not None for item in result_fields
+            ):
+                raise ValueError("human observation snapshot result binding is partial")
         if (
             self.guidance_sha256
             != hashlib.sha256(self.guidance_text.encode("utf-8")).hexdigest()
@@ -4337,6 +4392,98 @@ class PostFinalFindingDispositionRecord(StrictModel):
         return self
 
 
+class HumanObservationReportSpan(StrictModel):
+    """Strict, report-bound span reference supplied by a Human observer."""
+
+    schema_id = "briefloop.post_final_human_observation_report_span.v1"
+
+    schema_version: Literal["briefloop.post_final_human_observation_report_span.v1"]
+    report_sha256: Sha256
+    block_id: ContractId
+    start_char: NonNegativeInt
+    end_char: PositiveInt
+    excerpt_sha256: Sha256
+
+    @model_validator(mode="after")
+    def span_offsets_are_ordered(self) -> "HumanObservationReportSpan":
+        if self.start_char >= self.end_char:
+            raise ValueError("human observation span offsets must be ordered")
+        return self
+
+
+class PostFinalHumanObservationRecord(StrictModel):
+    """One append-only, report-bound Human observation.
+
+    A Human observation is deliberately not a model finding: it never carries a
+    finding identity.  Superseding creates a new observation identity linked to
+    the prior record; no row is updated in place.
+    """
+
+    schema_id = "briefloop.post_final_human_observation_record.v1"
+
+    schema_version: Literal["briefloop.post_final_human_observation_record.v1"]
+    origin: Literal["human"]
+    observation_id: ContractId
+    observation_revision: PositiveInt
+    run_id: ContractId
+    finalized_lineage_fingerprint: Sha256
+    report_revision: PositiveInt
+    report_artifact_id: ContractId
+    report_sha256: Sha256
+    assessment_result_id: Optional[ContractId] = None
+    assessment_result_fingerprint: Optional[Sha256] = None
+    reader_view_sha256: Optional[Sha256] = None
+    observation_text: CleanText
+    observation_sha256: Sha256
+    requirement_id: Optional[ContractId] = None
+    claim_id: Optional[ContractId] = None
+    report_span: Optional[HumanObservationReportSpan] = None
+    scope_class: Optional[Literal["O1", "O2"]] = None
+    dimension_id: Optional[ContractId] = None
+    previous_observation_id: Optional[ContractId] = None
+    previous_observation_fingerprint: Optional[Sha256] = None
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    recorded_at: IsoDateTime
+    observation_event_id: ContractId
+    accepted_transaction_id: ContractId
+    observation_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def observation_identity_is_exact(self) -> "PostFinalHumanObservationRecord":
+        result_fields = (
+            self.assessment_result_id,
+            self.assessment_result_fingerprint,
+            self.reader_view_sha256,
+        )
+        if any(item is not None for item in result_fields) and not all(
+            item is not None for item in result_fields
+        ):
+            raise ValueError("human observation assessment binding must be total")
+        if (self.scope_class is None) != (self.dimension_id is None):
+            raise ValueError("human observation dimension binding must be total")
+        if (self.previous_observation_id is None) != (
+            self.previous_observation_fingerprint is None
+        ):
+            raise ValueError("human observation predecessor binding must be total")
+        if self.observation_revision == 1 and self.previous_observation_id is not None:
+            raise ValueError("first human observation revision cannot have predecessor")
+        if self.observation_revision > 1 and self.previous_observation_id is None:
+            raise ValueError("superseding human observation requires predecessor")
+        if (
+            self.observation_sha256
+            != hashlib.sha256(self.observation_text.encode("utf-8")).hexdigest()
+        ):
+            raise ValueError("human observation text hash mismatch")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"observation_fingerprint"}),
+            field="observation_fingerprint",
+        )
+        if self.observation_fingerprint != expected:
+            raise ValueError("human observation fingerprint mismatch")
+        return self
+
+
 def _current_post_final_disposition_at_cutoff(
     records: tuple[PostFinalFindingDispositionRecord, ...],
     *,
@@ -4383,14 +4530,19 @@ class PostFinalGuidanceDraftRevision(StrictModel):
     draft_revision: PositiveInt
     run_id: ContractId
     finalized_lineage_fingerprint: Sha256
-    assessment_result_id: ContractId
-    assessment_result_fingerprint: Sha256
-    finding_id: ContractId
-    finding_fingerprint: Sha256
-    disposition_id: ContractId
-    disposition_fingerprint: Sha256
+    provenance_kind: Literal["accepted_model_finding", "human_observation"] = (
+        "accepted_model_finding"
+    )
+    assessment_result_id: Optional[ContractId] = None
+    assessment_result_fingerprint: Optional[Sha256] = None
+    finding_id: Optional[ContractId] = None
+    finding_fingerprint: Optional[Sha256] = None
+    disposition_id: Optional[ContractId] = None
+    disposition_fingerprint: Optional[Sha256] = None
+    observation_id: Optional[ContractId] = None
+    observation_fingerprint: Optional[Sha256] = None
     previous_draft_revision: Optional[PositiveInt] = None
-    guidance_scope: Literal["finding_only"]
+    guidance_scope: Literal["finding_only", "observation_only"]
     guidance_text: CleanText
     guidance_sha256: Sha256
     human_actor_id: ContractId
@@ -4402,6 +4554,34 @@ class PostFinalGuidanceDraftRevision(StrictModel):
 
     @model_validator(mode="after")
     def guidance_draft_identity_is_exact(self) -> "PostFinalGuidanceDraftRevision":
+        result_fields = (
+            self.assessment_result_id,
+            self.assessment_result_fingerprint,
+        )
+        finding_fields = (self.finding_id, self.finding_fingerprint)
+        disposition_fields = (self.disposition_id, self.disposition_fingerprint)
+        observation_fields = (self.observation_id, self.observation_fingerprint)
+        if self.provenance_kind == "accepted_model_finding":
+            if not all(
+                item is not None
+                for item in (*result_fields, *finding_fields, *disposition_fields)
+            ):
+                raise ValueError("accepted model finding provenance is incomplete")
+            if any(item is not None for item in observation_fields):
+                raise ValueError("model finding guidance cannot bind observation")
+            if self.guidance_scope != "finding_only":
+                raise ValueError("model finding guidance scope is invalid")
+        else:
+            if not all(item is not None for item in observation_fields):
+                raise ValueError("human observation provenance is incomplete")
+            if any(item is not None for item in finding_fields + disposition_fields):
+                raise ValueError("human observation guidance cannot bind finding")
+            if any(item is not None for item in result_fields) and not all(
+                item is not None for item in result_fields
+            ):
+                raise ValueError("human observation result binding must be total")
+            if self.guidance_scope != "observation_only":
+                raise ValueError("human observation guidance scope is invalid")
         if (
             self.guidance_sha256
             != hashlib.sha256(self.guidance_text.encode("utf-8")).hexdigest()
@@ -5299,6 +5479,10 @@ class PostFinalFindingDispositionReference(StrictModel):
     disposition_id: ContractId
 
 
+class PostFinalHumanObservationReference(StrictModel):
+    observation_id: ContractId
+
+
 class PostFinalGuidanceDraftReference(StrictModel):
     guidance_id: ContractId
     draft_revision: PositiveInt
@@ -5427,6 +5611,9 @@ class TransactionReceipt(StrictModel):
     post_final_finding_dispositions: list[PostFinalFindingDispositionReference] = Field(
         default_factory=list
     )
+    post_final_human_observations: list[PostFinalHumanObservationReference] = Field(
+        default_factory=list
+    )
     post_final_guidance_drafts: list[PostFinalGuidanceDraftReference] = Field(
         default_factory=list
     )
@@ -5508,6 +5695,7 @@ class TransactionReceipt(StrictModel):
             self.post_final_assessment_abandonments,
             self.post_final_assessment_results,
             self.post_final_finding_dispositions,
+            self.post_final_human_observations,
             self.post_final_guidance_drafts,
             self.post_final_guidance_statuses,
             self.run_guidance_snapshots,
@@ -6901,6 +7089,7 @@ _GUIDANCE_DECISION_EXAMPLE = {
     "guidance_id": "GUIDANCE-001",
     "draft_revision": 1,
     "status_revision_id": "GUIDANCE-STATUS-001",
+    "provenance_kind": "accepted_model_finding",
     "assessment_result_id": "PFLAJ-RESULT-001",
     "finding_id": "FINDING-001",
     "disposition_id": "DISPOSITION-001",
@@ -6930,6 +7119,7 @@ _GUIDANCE_ITEM_EXAMPLE = {
     "position": 0,
     "source_run_id": _RUN,
     "finalized_lineage_fingerprint": _SHA_A,
+    "provenance_kind": "accepted_model_finding",
     "assessment_result_id": "PFLAJ-RESULT-001",
     "assessment_result_fingerprint": _SHA_B,
     "finding_id": "FINDING-001",
@@ -7672,12 +7862,58 @@ _PFLAJ_DISPOSITION["disposition_fingerprint"] = _contract_fingerprint(
 PostFinalFindingDispositionRecord.minimal_example = deepcopy(_PFLAJ_DISPOSITION)
 PostFinalFindingDispositionRecord.full_example = deepcopy(_PFLAJ_DISPOSITION)
 
+_HUMAN_OBSERVATION_SPAN = {
+    "schema_version": HumanObservationReportSpan.schema_id,
+    "report_sha256": _SHA_C,
+    "block_id": "BLOCK-PFLAJ-001",
+    "start_char": 0,
+    "end_char": 12,
+    "excerpt_sha256": hashlib.sha256(b"Human note.").hexdigest(),
+}
+HumanObservationReportSpan.minimal_example = deepcopy(_HUMAN_OBSERVATION_SPAN)
+HumanObservationReportSpan.full_example = deepcopy(_HUMAN_OBSERVATION_SPAN)
+_PFLAJ_HUMAN_OBSERVATION = {
+    "schema_version": PostFinalHumanObservationRecord.schema_id,
+    "origin": "human",
+    "observation_id": "PFLAJ-HUMAN-OBSERVATION-001",
+    "observation_revision": 1,
+    "run_id": _RUN,
+    "finalized_lineage_fingerprint": _SHA_B,
+    "report_revision": 1,
+    "report_artifact_id": "reader_brief",
+    "report_sha256": _SHA_C,
+    "assessment_result_id": None,
+    "assessment_result_fingerprint": None,
+    "reader_view_sha256": None,
+    "observation_text": "Human note.",
+    "observation_sha256": hashlib.sha256(b"Human note.").hexdigest(),
+    "requirement_id": None,
+    "claim_id": None,
+    "report_span": _HUMAN_OBSERVATION_SPAN,
+    "scope_class": None,
+    "dimension_id": None,
+    "previous_observation_id": None,
+    "previous_observation_fingerprint": None,
+    "human_actor_id": "HUMAN-001",
+    "human_request_id": "PFLAJ-HUMAN-OBSERVATION-REQUEST-001",
+    "recorded_at": _NOW,
+    "observation_event_id": "EVENT-PFLAJ-HUMAN-OBSERVATION-001",
+    "accepted_transaction_id": "TX-PFLAJ-HUMAN-OBSERVATION-001",
+    "observation_fingerprint": _SHA_A,
+}
+_PFLAJ_HUMAN_OBSERVATION["observation_fingerprint"] = _contract_fingerprint(
+    _PFLAJ_HUMAN_OBSERVATION, field="observation_fingerprint"
+)
+PostFinalHumanObservationRecord.minimal_example = deepcopy(_PFLAJ_HUMAN_OBSERVATION)
+PostFinalHumanObservationRecord.full_example = deepcopy(_PFLAJ_HUMAN_OBSERVATION)
+
 _PFLAJ_GUIDANCE_DRAFT = {
     "schema_version": PostFinalGuidanceDraftRevision.schema_id,
     "guidance_id": "PFLAJ-GUIDANCE-001",
     "draft_revision": 1,
     "run_id": _RUN,
     "finalized_lineage_fingerprint": _SHA_B,
+    "provenance_kind": "accepted_model_finding",
     "assessment_result_id": _PFLAJ_RESULT["assessment_result_id"],
     "assessment_result_fingerprint": _PFLAJ_RESULT["result_fingerprint"],
     "finding_id": _PFLAJ_DISPOSITION["finding_id"],
@@ -7819,6 +8055,8 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     PostFinalAssessmentRequestRecord,
     PostFinalAssessmentResultRecord,
     PostFinalFindingDispositionRecord,
+    HumanObservationReportSpan,
+    PostFinalHumanObservationRecord,
     PostFinalGuidanceDraftRevision,
     PostFinalGuidanceStatusRevision,
     RepairStartRequest,

@@ -29,6 +29,7 @@ from multi_agent_brief.product.post_final_assessment_projection import (
 from multi_agent_brief.product.post_final_review import (
     POST_FINAL_GUIDANCE_DRAFT_INPUT_SCHEMA,
     POST_FINAL_GUIDANCE_STATUS_INPUT_SCHEMA,
+    POST_FINAL_HUMAN_OBSERVATION_INPUT_SCHEMA,
     PostFinalReviewError,
     PostFinalReviewService,
 )
@@ -552,6 +553,95 @@ def test_approved_guidance_is_scope_selected_frozen_and_role_bounded(
         for entry in mismatch.run_guidance_selection_decisions
     ] == [(False, "guidance_scope_mismatch")]
     assert len(provider_calls) == provider_call_count
+
+
+def test_human_observation_guidance_freezes_tagged_provenance_without_finding(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, predecessor_run_id, _calls, review, status, _finding = _qualified_review(
+        tmp_path,
+        monkeypatch,
+    )
+    observed = review.record_human_observation(
+        {
+            "schema_version": POST_FINAL_HUMAN_OBSERVATION_INPUT_SCHEMA,
+            "human_actor_id": "human-reviewer-observer",
+            "human_request_id": "human-observation-successor-1",
+            "observation_text": "The management conclusion omits the stated downside condition.",
+            "assessment_result_id": status["assessment_result_id"],
+            "assessment_result_fingerprint": status["assessment_result_fingerprint"],
+            "reader_view_sha256": status["reader_view_sha256"],
+        }
+    )
+    draft = review.append_guidance_draft(
+        {
+            "schema_version": POST_FINAL_GUIDANCE_DRAFT_INPUT_SCHEMA,
+            "human_actor_id": "human-reviewer-observer",
+            "human_request_id": "human-observation-guidance-1",
+            "provenance_kind": "human_observation",
+            "assessment_result_id": status["assessment_result_id"],
+            "assessment_result_fingerprint": status["assessment_result_fingerprint"],
+            "observation_id": observed["observation_id"],
+            "observation_fingerprint": observed["observation_fingerprint"],
+            "guidance_text": "Check the downside condition before drafting the recommendation.",
+        }
+    )
+    review.approve_guidance(
+        {
+            "schema_version": POST_FINAL_GUIDANCE_STATUS_INPUT_SCHEMA,
+            "human_actor_id": "human-reviewer-observer",
+            "human_request_id": "human-observation-guidance-approve-1",
+            "guidance_id": draft["guidance_id"],
+            "draft_revision": draft["draft_revision"],
+        }
+    )
+
+    direction = _verified(workspace, predecessor_run_id).binding.run_direction
+    successor_run_id = "RUN-HUMAN-OBSERVATION-GUIDANCE-002"
+    assert (
+        _start_successor(
+            workspace,
+            successor_run_id=successor_run_id,
+            run_direction=direction,
+            include_approved_guidance=True,
+        ).status
+        == "committed"
+    )
+    successor = _verified(workspace, successor_run_id).snapshot
+    decision = successor.run_guidance_selection_decisions[0]
+    item = successor.run_guidance_snapshot_items[0]
+    assert decision.provenance_kind == item.provenance_kind == "human_observation"
+    assert decision.observation_id == item.observation_id == observed["observation_id"]
+    assert (
+        decision.observation_fingerprint
+        == item.observation_fingerprint
+        == observed["observation_fingerprint"]
+    )
+    assert (
+        decision.assessment_result_id
+        == item.assessment_result_id
+        == status["assessment_result_id"]
+    )
+    assert decision.finding_id is None
+    assert decision.finding_fingerprint is None
+    assert decision.disposition_id is None
+    assert decision.disposition_fingerprint is None
+    assert item.finding_id is None
+    assert item.finding_fingerprint is None
+    assert item.disposition_id is None
+    assert item.disposition_fingerprint is None
+
+    verified = _verified(workspace, successor_run_id)
+    context = RuntimeHostService._frozen_guidance_context(
+        verified,
+        role_id="analyst",
+    )
+    assert context is not None
+    assert context.items[0].provenance_kind == "human_observation"
+    assert context.items[0].observation_id == observed["observation_id"]
+    assert context.items[0].finding_id is None
+    assert context.items[0].disposition_id is None
 
 
 @pytest.mark.parametrize("decision", ["reject", "defer"])

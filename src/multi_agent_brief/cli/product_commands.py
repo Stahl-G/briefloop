@@ -388,6 +388,35 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
         help="Print the loopback URL and keep the session alive without opening a browser.",
     )
     review_open_parser.add_argument("--json", action="store_true")
+    observation_parser = laj_actions.add_parser(
+        "observation",
+        aliases=["observation-record"],
+        help=(
+            "Append one report-bound Human observation. No Reader Review result, "
+            "policy JSON, provider, or internal fingerprint is required."
+        ),
+    )
+    observation_parser.add_argument("--workspace", required=True)
+    observation_parser.add_argument(
+        "--request-json",
+        required=True,
+        help="Strict Human observation JSON; provider secrets are rejected.",
+    )
+    observation_parser.add_argument("--json", action="store_true")
+    observation_supersede_parser = laj_actions.add_parser(
+        "observation-supersede",
+        help=(
+            "Append a replacement revision for one exact Human observation "
+            "using its predecessor identity."
+        ),
+    )
+    observation_supersede_parser.add_argument("--workspace", required=True)
+    observation_supersede_parser.add_argument(
+        "--request-json",
+        required=True,
+        help="Strict Human observation replacement JSON.",
+    )
+    observation_supersede_parser.add_argument("--json", action="store_true")
     for action, help_text in (
         ("disposition", "Record one accept/reject/defer finding disposition."),
         ("draft", "Append one Human-edited guidance draft for an accepted finding."),
@@ -662,6 +691,22 @@ def handle_quality(args: argparse.Namespace) -> int:
                 except KeyboardInterrupt:
                     launched.server.close()
                 return 0
+            elif laj_action in {
+                "observation",
+                "observation-record",
+                "observation-supersede",
+            }:
+                value = json.loads(args.request_json)
+                if type(value) is not dict:
+                    raise PostFinalReviewError("post_final_review_request_invalid")
+                # Report-bound observations intentionally do not require an
+                # assessment result selection.  If the request carries an
+                # exact selected result tuple, the Store service validates it.
+                review = PostFinalReviewService(workspace)
+                if laj_action in {"observation", "observation-record"}:
+                    payload = review.record_human_observation(value)
+                else:
+                    payload = review.supersede_human_observation(value)
             elif laj_action == "review-status":
                 payload = PostFinalReviewService(
                     workspace,

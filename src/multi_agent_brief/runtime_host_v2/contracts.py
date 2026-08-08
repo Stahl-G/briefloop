@@ -227,18 +227,29 @@ class RuntimeSourceAcquisitionRecoveryRequest(StrictModel):
 
 
 class FrozenGuidanceItem(StrictModel):
-    """One Human-authored guidance item copied into a successor snapshot."""
+    """One approved guidance item copied into a successor snapshot.
+
+    The provenance is a tagged union.  A Human observation is deliberately
+    not represented as a model finding or disposition; its optional result
+    pair is retained only when the Human observation selected one exact
+    assessment result.
+    """
 
     item_id: ContractId
     position: NonNegativeInt
     source_run_id: ContractId
     finalized_lineage_fingerprint: Sha256
-    assessment_result_id: ContractId
-    assessment_result_fingerprint: Sha256
-    finding_id: ContractId
-    finding_fingerprint: Sha256
-    disposition_id: ContractId
-    disposition_fingerprint: Sha256
+    provenance_kind: Literal["accepted_model_finding", "human_observation"] = (
+        "accepted_model_finding"
+    )
+    assessment_result_id: ContractId | None = None
+    assessment_result_fingerprint: Sha256 | None = None
+    finding_id: ContractId | None = None
+    finding_fingerprint: Sha256 | None = None
+    disposition_id: ContractId | None = None
+    disposition_fingerprint: Sha256 | None = None
+    observation_id: ContractId | None = None
+    observation_fingerprint: Sha256 | None = None
     guidance_id: ContractId
     draft_revision: PositiveInt
     draft_fingerprint: Sha256
@@ -251,6 +262,27 @@ class FrozenGuidanceItem(StrictModel):
 
     @model_validator(mode="after")
     def copied_text_is_exact(self) -> "FrozenGuidanceItem":
+        result_fields = (self.assessment_result_id, self.assessment_result_fingerprint)
+        finding_fields = (self.finding_id, self.finding_fingerprint)
+        disposition_fields = (self.disposition_id, self.disposition_fingerprint)
+        observation_fields = (self.observation_id, self.observation_fingerprint)
+        if self.provenance_kind == "accepted_model_finding":
+            if not all(
+                item is not None
+                for item in (*result_fields, *finding_fields, *disposition_fields)
+            ):
+                raise ValueError("frozen model finding guidance is incomplete")
+            if any(item is not None for item in observation_fields):
+                raise ValueError("frozen model guidance cannot bind observation")
+        else:
+            if not all(item is not None for item in observation_fields):
+                raise ValueError("frozen human observation guidance is incomplete")
+            if any(item is not None for item in finding_fields + disposition_fields):
+                raise ValueError("frozen observation guidance cannot bind finding")
+            if any(item is not None for item in result_fields) and not all(
+                item is not None for item in result_fields
+            ):
+                raise ValueError("frozen observation result binding is partial")
         if (
             self.guidance_sha256
             != hashlib.sha256(self.guidance_text.encode("utf-8")).hexdigest()

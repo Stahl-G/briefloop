@@ -39,6 +39,7 @@ _POST_FINAL_ASSESSMENT_RECEIPT_TYPES = frozenset(
         "post_final_assessment_series_claim",
         "post_final_assessment_result",
         "post_final_finding_disposition",
+        "post_final_human_observation",
         "post_final_guidance_draft",
         "post_final_guidance_status",
     }

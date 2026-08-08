@@ -22,6 +22,7 @@ from multi_agent_brief.core_run_v2.next_action import classify_core_run_next_act
 from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
 from multi_agent_brief.product.post_final_assessment_read_model import (
     PostFinalAssessmentError,
+    finalized_lineage_fingerprint,
     post_final_assessment_archive_root,
     resolve_current_post_final_assessment_result,
     resolve_post_final_assessment_series,
@@ -177,6 +178,7 @@ def _empty(
     requirement_labels: tuple[ReaderReviewRequirementLabel, ...] = (),
     request_template: ReaderReviewRequestTemplate | None = None,
     run_action_available: bool = False,
+    review_status: Mapping[str, object] | None = None,
 ) -> PostFinalAssessmentProjection:
     return PostFinalAssessmentProjection(
         lifecycle_present=lifecycle_present,
@@ -190,12 +192,144 @@ def _empty(
         requirement_labels=requirement_labels,
         selected_result_id=None,
         selected_result_fingerprint=None,
-        review_status=None,
+        review_status=review_status,
         request_template=request_template,
         next_run_consumption=NEXT_RUN_CONSUMPTION,
         run_action_available=run_action_available,
         selection_required=user_status == "selection_required",
     )
+
+
+def _build_human_observation_status(
+    *,
+    snapshot: Any,
+    run_id: str,
+    finalized_lineage: str,
+    assessment_result_id: str | None = None,
+    assessment_result_fingerprint: str | None = None,
+    reader_view_sha256: str | None = None,
+) -> Mapping[str, object]:
+    """Project append-only Human observations for any finalized report state.
+
+    Unlike model finding dispositions, a Human observation is legal before a
+    Reader Review result exists and after a terminal failure.  The rows remain
+    strictly lineage-bound and are only a read projection; no finding or
+    evaluator input is synthesized here.
+    """
+
+    receipts = {
+        item.transaction_id: item for item in getattr(snapshot, "transactions", ())
+    }
+
+    def receipt_revision(item: Any) -> int:
+        receipt = receipts.get(getattr(item, "accepted_transaction_id", None))
+        return receipt.committed_revision if receipt is not None else 0
+
+    records = [
+        item
+        for item in getattr(snapshot, "post_final_human_observations", ())
+        if item.run_id == run_id
+        and item.finalized_lineage_fingerprint == finalized_lineage
+    ]
+    records.sort(key=lambda item: (item.observation_revision, receipt_revision(item)))
+    by_observation_id = {item.observation_id: item for item in records}
+    superseded = {
+        item.previous_observation_id
+        for item in records
+        if item.previous_observation_id is not None
+    }
+    observations: list[dict[str, object]] = []
+    for item in records:
+        payload = item.model_dump(mode="json", exclude_unset=False)
+        payload["origin"] = "human"
+        payload["status"] = (
+            "superseded" if item.observation_id in superseded else "recorded"
+        )
+        observations.append(payload)
+
+    def current_status(guidance_id: str) -> Any | None:
+        rows = [
+            item
+            for item in getattr(snapshot, "post_final_guidance_statuses", ())
+            if item.run_id == run_id
+            and item.finalized_lineage_fingerprint == finalized_lineage
+            and item.guidance_id == guidance_id
+        ]
+        rows.sort(key=receipt_revision)
+        return rows[-1] if rows else None
+
+    human_drafts = sorted(
+        (
+            item
+            for item in getattr(snapshot, "post_final_guidance_drafts", ())
+            if item.run_id == run_id
+            and item.finalized_lineage_fingerprint == finalized_lineage
+            and item.provenance_kind == "human_observation"
+        ),
+        key=lambda item: (
+            item.guidance_id,
+            item.draft_revision,
+            receipt_revision(item),
+        ),
+    )
+    latest_drafts = {
+        item.guidance_id: max(
+            candidate.draft_revision
+            for candidate in human_drafts
+            if candidate.guidance_id == item.guidance_id
+        )
+        for item in human_drafts
+    }
+    guidance_drafts: list[dict[str, object]] = []
+    for item in human_drafts:
+        observation = by_observation_id.get(item.observation_id)
+        approval_eligible = (
+            observation is not None
+            and observation.observation_fingerprint == item.observation_fingerprint
+            and observation.observation_id not in superseded
+        )
+        legal_statuses = post_final_guidance_legal_actions(
+            current_status(item.guidance_id),
+            target_draft_revision=item.draft_revision,
+            approval_eligible=approval_eligible,
+        )
+        payload = item.model_dump(mode="json", exclude_unset=False)
+        payload["legal_actions"] = (
+            [
+                {
+                    "approved": "approve",
+                    "deactivated": "deactivate",
+                    "reverted": "revert",
+                    "superseded": "supersede",
+                }[status]
+                for status in legal_statuses
+            ]
+            if item.draft_revision == latest_drafts[item.guidance_id]
+            else []
+        )
+        guidance_drafts.append(payload)
+    guidance_ids = {item.guidance_id for item in human_drafts}
+    guidance_statuses = [
+        item.model_dump(mode="json", exclude_unset=False)
+        for item in getattr(snapshot, "post_final_guidance_statuses", ())
+        if item.run_id == run_id
+        and item.finalized_lineage_fingerprint == finalized_lineage
+        and item.guidance_id in guidance_ids
+    ]
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "finalized_lineage_fingerprint": finalized_lineage,
+        "assessment_result_id": assessment_result_id,
+        "assessment_result_fingerprint": assessment_result_fingerprint,
+        "reader_view_sha256": reader_view_sha256,
+        "dispositions": [],
+        "guidance_drafts": guidance_drafts,
+        "guidance_statuses": guidance_statuses,
+        "human_observations": observations,
+        "next_run_consumption": NEXT_RUN_CONSUMPTION,
+        "provider_calls": 0,
+    }
 
 
 def _terminal_class(view: LajReaderView) -> str:
@@ -406,8 +540,16 @@ def _build_review_status(
     result: PostFinalAssessmentResultRecord,
     view: LajReaderView,
 ) -> Mapping[str, object] | None:
+    human_status = _build_human_observation_status(
+        snapshot=snapshot,
+        run_id=result.run_id,
+        finalized_lineage=result.finalized_lineage_fingerprint,
+        assessment_result_id=result.assessment_result_id,
+        assessment_result_fingerprint=result.result_fingerprint,
+        reader_view_sha256=view.view_sha256,
+    )
     if view.status != "available" or view.binding is None:
-        return None
+        return human_status
     receipts = {item.transaction_id: item for item in snapshot.transactions}
 
     def current_disposition(finding_id: str) -> Any | None:
@@ -453,7 +595,8 @@ def _build_review_status(
         (
             item
             for item in snapshot.post_final_guidance_drafts
-            if item.assessment_result_id == result.assessment_result_id
+            if item.provenance_kind == "accepted_model_finding"
+            and item.assessment_result_id == result.assessment_result_id
         ),
         key=lambda item: (item.guidance_id, item.draft_revision),
     )
@@ -499,6 +642,8 @@ def _build_review_status(
         for item in snapshot.post_final_guidance_statuses
         if item.guidance_id in guidance_ids
     ]
+    drafts.extend(human_status["guidance_drafts"])
+    statuses.extend(human_status["guidance_statuses"])
     return {
         "ok": True,
         "run_id": result.run_id,
@@ -509,6 +654,7 @@ def _build_review_status(
         "dispositions": dispositions,
         "guidance_drafts": drafts,
         "guidance_statuses": statuses,
+        "human_observations": human_status["human_observations"],
         "next_run_consumption": NEXT_RUN_CONSUMPTION,
         "provider_calls": 0,
     }
@@ -549,6 +695,7 @@ def build_post_final_assessment_projection(
     assessment_result_id: str | None = None,
     assessment_result_fingerprint: str | None = None,
     loaded_history: ControlStoreHistory | None = None,
+    allow_historical: bool = False,
 ) -> PostFinalAssessmentProjection:
     """Return one explicitly selected Store-qualified result, or zero advice."""
 
@@ -579,11 +726,29 @@ def build_post_final_assessment_projection(
         }
         if len(heads) != 1:
             raise PostFinalAssessmentError("control_store_integrity_invalid")
-        # Selection never chooses the run. Bind current finalized head first;
-        # an old-run or cross-lineage identifier is merely an incompatible
-        # candidate and cannot pivot this read projection onto historical state.
-        selected_run_id = next(iter(heads))
-        require_current_head = True
+        # The default selection is always current-head-bound.  The explicit
+        # historical product surface may read one exact predecessor result,
+        # but it still chooses the run only from the uniquely bound result row
+        # (and never from a caller-provided run identifier).
+        if allow_historical and assessment_result_id is not None:
+            historical_matches = [
+                item
+                for run_snapshot in history.snapshots
+                for item in run_snapshot.post_final_assessment_results
+                if item.assessment_result_id == assessment_result_id
+                and item.result_fingerprint == assessment_result_fingerprint
+            ]
+            if len(historical_matches) != 1:
+                return _empty(
+                    lifecycle_present=True,
+                    status="invalid",
+                    reason_code="reader_review_selection_incompatible",
+                )
+            selected_run_id = historical_matches[0].run_id
+            require_current_head = False
+        else:
+            selected_run_id = next(iter(heads))
+            require_current_head = True
         facts = build_finalized_local_review_projection_from_history(
             root,
             history,
@@ -599,6 +764,14 @@ def build_post_final_assessment_projection(
         snapshot = history.snapshot_at_revision(facts.run_id, history.store_revision)
         if facts.store_revision != snapshot.store_revision:
             raise PostFinalAssessmentError("control_store_integrity_invalid")
+        finalized_lineage = finalized_lineage_fingerprint(facts, action)
+        human_review_status = _build_human_observation_status(
+            snapshot=snapshot,
+            run_id=facts.run_id,
+            finalized_lineage=finalized_lineage,
+            assessment_result_id=assessment_result_id,
+            assessment_result_fingerprint=assessment_result_fingerprint,
+        )
         if assessment_result_id is not None:
             matches = [
                 item
@@ -614,6 +787,7 @@ def build_post_final_assessment_projection(
                     lifecycle_present=True,
                     status="invalid",
                     reason_code="reader_review_selection_incompatible",
+                    review_status=human_review_status,
                 )
             selected_result = matches[0]
         series = resolve_post_final_assessment_series(
@@ -673,6 +847,7 @@ def build_post_final_assessment_projection(
             status="unsupported",
             reason_code="reader_review_not_supported",
             user_status="not_assessed",
+            review_status=human_review_status,
         )
     if not series and not policies:
         if request_template is None:
@@ -681,6 +856,7 @@ def build_post_final_assessment_projection(
                 status="unsupported",
                 reason_code="reader_review_not_supported",
                 user_status="not_assessed",
+                review_status=human_review_status,
             )
         return _empty(
             lifecycle_present=False,
@@ -689,6 +865,7 @@ def build_post_final_assessment_projection(
             user_status="not_assessed",
             request_template=request_template,
             run_action_available=request_template is not None,
+            review_status=human_review_status,
         )
     if not series:
         return _empty(
@@ -698,6 +875,7 @@ def build_post_final_assessment_projection(
             user_status="not_assessed",
             request_template=request_template,
             run_action_available=request_template is not None,
+            review_status=human_review_status,
         )
     run_results = [
         item
@@ -728,6 +906,7 @@ def build_post_final_assessment_projection(
                 lifecycle_present=True,
                 status="invalid",
                 reason_code="post_final_assessment_archive_invalid",
+                review_status=human_review_status,
             )
         archive, view = verified_archive
         if not _reader_review_result_matches_archive(
@@ -740,6 +919,7 @@ def build_post_final_assessment_projection(
                 lifecycle_present=True,
                 status="invalid",
                 reason_code="post_final_assessment_binding_invalid",
+                review_status=human_review_status,
             )
         verified_reader_archives[result_item.assessment_result_id] = (
             archive,
@@ -767,6 +947,7 @@ def build_post_final_assessment_projection(
                 user_status="selection_required",
                 compatible_result_options=compatible_options,
                 request_template=request_template,
+                review_status=human_review_status,
             )
         result = compatible_pairs[0][0] if compatible_pairs else None
     else:
@@ -780,6 +961,7 @@ def build_post_final_assessment_projection(
                 reason_code="reader_review_selection_incompatible",
                 compatible_result_options=compatible_options,
                 request_template=request_template,
+                review_status=human_review_status,
             )
         result = selected_result
     if result is None and not compatible_pending:
@@ -793,6 +975,7 @@ def build_post_final_assessment_projection(
             run_action_available=(
                 request_template is not None and assessment_result_id is None
             ),
+            review_status=human_review_status,
         )
     request = (
         next(
@@ -812,6 +995,7 @@ def build_post_final_assessment_projection(
             lifecycle_present=True,
             status="invalid",
             reason_code="post_final_assessment_selection_invalid",
+            review_status=human_review_status,
         )
     policy_matches = [
         item
@@ -835,6 +1019,7 @@ def build_post_final_assessment_projection(
             lifecycle_present=True,
             status="invalid",
             reason_code="control_store_integrity_invalid",
+            review_status=human_review_status,
         )
     try:
         requirement_labels = (
@@ -849,6 +1034,7 @@ def build_post_final_assessment_projection(
             reason_code="post_final_assessment_binding_invalid",
             compatible_result_options=compatible_options,
             request_template=request_template,
+            review_status=human_review_status,
         )
     if result is not None:
         try:
@@ -858,12 +1044,14 @@ def build_post_final_assessment_projection(
                 lifecycle_present=True,
                 status="invalid",
                 reason_code=str(exc),
+                review_status=human_review_status,
             )
         if resolved != result:
             return _empty(
                 lifecycle_present=True,
                 status="invalid",
                 reason_code="post_final_assessment_selection_invalid",
+                review_status=human_review_status,
             )
     if result is None:
         return _empty(
@@ -874,6 +1062,7 @@ def build_post_final_assessment_projection(
             compatible_result_options=compatible_options,
             requirement_labels=requirement_labels,
             request_template=request_template,
+            review_status=human_review_status,
         )
     if result.schema_version == PostFinalAssessmentResultRecord.reader_review_schema_id:
         verified_archive = verified_reader_archives.get(result.assessment_result_id)
@@ -884,6 +1073,7 @@ def build_post_final_assessment_projection(
                 reason_code="post_final_assessment_archive_invalid",
                 compatible_result_options=compatible_options,
                 request_template=request_template,
+                review_status=human_review_status,
             )
         _archive, archive_view = verified_archive
         projected_view = archive_view
@@ -899,6 +1089,7 @@ def build_post_final_assessment_projection(
                     status="invalid",
                     reason_code="post_final_assessment_binding_invalid",
                     request_template=request_template,
+                    review_status=human_review_status,
                 )
             if stored_view.model_dump(
                 mode="json", warnings="error"
@@ -911,6 +1102,7 @@ def build_post_final_assessment_projection(
                     status="invalid",
                     reason_code="post_final_assessment_binding_invalid",
                     request_template=request_template,
+                    review_status=human_review_status,
                 )
             # The Store payload remains the reader-facing projection; the
             # verified archive above is the eligibility check, not a second
@@ -949,6 +1141,7 @@ def build_post_final_assessment_projection(
                 reason_code="post_final_assessment_binding_invalid",
                 compatible_result_options=compatible_options,
                 request_template=request_template,
+                review_status=human_review_status,
             )
         return PostFinalAssessmentProjection(
             lifecycle_present=True,
@@ -981,7 +1174,14 @@ def build_post_final_assessment_projection(
             requirement_labels=requirement_labels,
             selected_result_id=result.assessment_result_id,
             selected_result_fingerprint=result.result_fingerprint,
-            review_status=None,
+            review_status=_build_human_observation_status(
+                snapshot=snapshot,
+                run_id=result.run_id,
+                finalized_lineage=result.finalized_lineage_fingerprint,
+                assessment_result_id=result.assessment_result_id,
+                assessment_result_fingerprint=result.result_fingerprint,
+                reader_view_sha256=result.reader_view_sha256,
+            ),
             request_template=request_template,
             next_run_consumption=NEXT_RUN_CONSUMPTION,
             run_action_available=False,
@@ -997,6 +1197,7 @@ def build_post_final_assessment_projection(
             lifecycle_present=True,
             status="invalid",
             reason_code="post_final_assessment_archive_invalid",
+            review_status=human_review_status,
         )
     archive, view = verified_archive
     if (
@@ -1022,6 +1223,7 @@ def build_post_final_assessment_projection(
             lifecycle_present=True,
             status="invalid",
             reason_code="post_final_assessment_binding_invalid",
+            review_status=human_review_status,
         )
     return PostFinalAssessmentProjection(
         lifecycle_present=True,
