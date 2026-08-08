@@ -19,7 +19,7 @@
             session_badge: "本机审阅会话 · 人工操作写入 SQLite",
             tab_brief: "简报",
             tab_quality: "质量状态",
-            tab_review: "AI 语义复盘",
+            tab_review: "AI 第二意见",
             tab_feedback: "反馈与改进",
             eyebrow: "审计附件 · AUDIT ATTACHMENT",
             panel_title: "质量面板",
@@ -39,20 +39,20 @@
             reason_code: "原因码",
             unavailable: "不可用",
             actions_none: "（无推荐动作）",
-            laj_title: "AI 语义复盘（实验）",
+            laj_title: "AI 第二意见（实验）",
             laj_sub: "以下为冻结仪器对当前终稿的语义层建议，不构成质量分数或交付裁决。",
             laj_not_run: "LAJ 未运行",
             laj_not_run_note: "本工作区没有可绑定的 LAJ reader 视图；此处不臆造任何评估结果。",
             laj_status: "视图状态",
-            reader_review_status_title: "Reader Review 状态",
-            status_finding_returned: "Reader Review 返回了一个或多个供人工判断的 finding。",
+            reader_review_status_title: "AI 第二意见状态",
+            status_finding_returned: "AI 第二意见返回了一个或多个供人工判断的 finding。",
             status_no_finding_returned_in_completed_supported_checks: "已完成的受支持检查没有返回 finding。",
             status_partially_assessed: "只完成了部分受支持检查；不得据此推断没有 finding。",
-            status_unable_to_assess: "Reader Review 无法完成受支持检查；不得据此推断没有 finding。",
-            status_not_assessed: "此终稿尚未运行 Reader Review。",
+            status_unable_to_assess: "AI 第二意见无法完成受支持检查；不得据此推断没有 finding。",
+            status_not_assessed: "此终稿尚未运行 AI 第二意见。",
             status_selection_required: "存在多个兼容结果。请选择要展示的结果；系统不会隐式选择最新结果。",
             disclosure_title: "运行前披露与明确授权",
-            disclosure_sub: "Reader Review 只检查 O1 内部一致性与 O2 冻结用户意图/需求覆盖。它是实验性建议，不是 Gate、质量评分或交付决定。",
+            disclosure_sub: "AI 第二意见只检查 O1 内部一致性与 O2 冻结用户意图/需求覆盖。它是实验性建议，不是 Gate、质量评分或交付决定。",
             disclosure_provider: "兼容协议 / endpoint 类别",
             disclosure_profile: "固定 profile",
             disclosure_scope: "发送范围",
@@ -67,13 +67,13 @@
             expected_model_label: "Expected model identity",
             confirm_disclosure: "我已阅读并确认上述 profile、发送范围、预算、费用未知、无自动重试及 advisory/no-Gate 边界。",
             attest_egress: "我确认终稿与冻结需求可按 public-safe_report 范围发送至上述提供方。",
-            run_reader_review: "授权并运行一次 Reader Review",
+            run_reader_review: "授权并运行一次 AI 第二意见",
             refresh_projection: "刷新 Store-qualified 状态",
             run_fields_required: "请填写全部 endpoint/model identity 字段并勾选两项确认。",
             command_outcome_unknown: "响应未能确认，外部调用可能已发生。再次操作会复用同一 Human request ID，并先由 Store 解析结果；不会自动重试。",
-            pending_external_effect: "Reader Review 请求已被 Store 认领，但尚无 Store-qualified 结果；外部调用可能已经发生。系统不会自动重试。请先刷新或检查 Store 状态。",
-            selection_title: "选择兼容的 Reader Review 结果",
-            selection_sub: "下列选项均由 Store 对当前终稿 lineage 和固定 Reader Review profile 重新限定。内部 ID 与 fingerprint 不作为页面权威，也不显示。",
+            pending_external_effect: "AI 第二意见请求已被 Store 认领，但尚无 Store-qualified 结果；外部调用可能已经发生。系统不会自动重试。请先刷新或检查 Store 状态。",
+            selection_title: "选择兼容的 AI 第二意见结果",
+            selection_sub: "下列选项均由 Store 对当前终稿 lineage 和固定 AI 第二意见 profile 重新限定。内部 ID 与 fingerprint 不作为页面权威，也不显示。",
             selection_choose: "选择此结果",
             result_generation: "Generation",
             result_model: "Model",
@@ -120,7 +120,7 @@
             guidance_revert: "撤回",
             guidance_supersede: "标记被替代",
             observation_title: "人工独立观察",
-            observation_sub: "记录你对终稿的独立观察。它始终绑定冻结终稿；若当前正在查看某个 Reader Review 结果，也会绑定该 exact result。它不是 model finding，不会自动进入评估输入或 guidance。",
+            observation_sub: "记录你对终稿的独立观察。它始终绑定冻结终稿；若当前正在查看某个 AI 第二意见结果，也会绑定该 exact result。它不是 model finding，不会自动进入评估输入或 guidance。",
             observation_text_label: "观察内容",
             observation_origin: "origin=Human",
             observation_submit: "记录人工观察",
@@ -141,13 +141,25 @@
             observation_supersede_text: "新的观察内容",
             observation_supersede_submit: "记录替代版本",
             observation_guidance: "从此观察创建 guidance 草稿",
-            observation_binding_report: "report-bound（未选择 Reader Review 结果）",
-            observation_binding_result: "已绑定所选 Reader Review 结果",
+            observation_binding_report: "report-bound（未选择 AI 第二意见结果）",
+            observation_binding_result: "已绑定所选 AI 第二意见结果",
             observation_invalid_refs: "span 必须完整填写，O1/O2 与 dimension 必须成对填写。",
             observation_not_allowed: "只有 Store 确认的 finalized 终稿才能记录人工观察。",
             command_pending: "正在记录…",
             command_failed: "记录失败",
             command_saved: "已由 Store Receipt 记录",
+            successor_title: "开始下一轮",
+            successor_sub: "从当前冻结终稿启动一个新的 BriefLoop run。当前 RunDirection 会由 Store 预填并再次核验。",
+            successor_run_id: "下一轮 run ID",
+            successor_direction: "冻结的 RunDirection",
+            successor_guidance: "可复用的已批准 guidance",
+            successor_no_guidance: "当前没有可复用的已批准 guidance。",
+            successor_include: "我明确选择将这些 guidance 带入下一轮",
+            successor_exclude: "不带入 guidance（默认）",
+            successor_start: "启动下一轮",
+            successor_id_required: "请输入安全的下一轮 run ID。",
+            successor_direction_changed: "RunDirection 已变化；请刷新页面后重试。",
+            successor_started: "下一轮已由 Core Store transaction 启动；页面已刷新。",
             consumption_label: "下一轮消费边界 · ",
             planned_label: "planned",
             footer_boundary: "静态导出边界：本页永远是只读投影；不含任何命令端点或写入能力。",
@@ -164,7 +176,7 @@
             session_badge: "Local Review Session · Human actions write SQLite",
             tab_brief: "Brief",
             tab_quality: "Quality status",
-            tab_review: "AI semantic review",
+            tab_review: "AI Second Opinion",
             tab_feedback: "Feedback & improvement",
             eyebrow: "Audit attachment",
             panel_title: "Quality Panel",
@@ -184,20 +196,20 @@
             reason_code: "Reason code",
             unavailable: "unavailable",
             actions_none: "(no recommended actions)",
-            laj_title: "AI semantic review (experimental)",
+            laj_title: "AI Second Opinion (experimental)",
             laj_sub: "Semantic-layer suggestions from the frozen instrument on the current reader. Not a quality score, not a delivery verdict.",
             laj_not_run: "LAJ not run",
             laj_not_run_note: "No bindable LAJ reader view exists for this workspace; nothing is fabricated here.",
             laj_status: "View status",
-            reader_review_status_title: "Reader Review status",
-            status_finding_returned: "Reader Review returned one or more advisory findings for Human judgment.",
+            reader_review_status_title: "AI Second Opinion status",
+            status_finding_returned: "AI Second Opinion returned one or more advisory findings for Human judgment.",
             status_no_finding_returned_in_completed_supported_checks: "The completed supported checks returned no finding.",
             status_partially_assessed: "Only part of the supported checks completed. Do not infer that no finding exists.",
-            status_unable_to_assess: "Reader Review could not complete the supported checks. Do not infer that no finding exists.",
-            status_not_assessed: "Reader Review has not been run for this finalized brief.",
+            status_unable_to_assess: "AI Second Opinion could not complete the supported checks. Do not infer that no finding exists.",
+            status_not_assessed: "AI Second Opinion has not been run for this finalized brief.",
             status_selection_required: "Multiple compatible results exist. Choose which result to display; no latest result is selected implicitly.",
             disclosure_title: "Pre-run disclosure and explicit authorization",
-            disclosure_sub: "Reader Review checks only O1 internal consistency and O2 frozen user-intent/requirement coverage. It is experimental advice, not a Gate, quality score, or delivery decision.",
+            disclosure_sub: "AI Second Opinion checks only O1 internal consistency and O2 frozen user-intent/requirement coverage. It is experimental advice, not a Gate, quality score, or delivery decision.",
             disclosure_provider: "Compatible protocol / endpoint class",
             disclosure_profile: "Fixed profile",
             disclosure_scope: "Sent scope",
@@ -212,13 +224,13 @@
             expected_model_label: "Expected model identity",
             confirm_disclosure: "I have read and confirm the profile, sent scope, budget, unmeasured cost, no-auto-retry rule, and advisory/no-Gate boundary above.",
             attest_egress: "I attest that the final brief and frozen requirements may be sent to this provider under the public_safe_report scope.",
-            run_reader_review: "Authorize and run one Reader Review",
+            run_reader_review: "Authorize and run one AI Second Opinion",
             refresh_projection: "Refresh Store-qualified status",
             run_fields_required: "Complete every endpoint/model identity field and both confirmations.",
             command_outcome_unknown: "The response could not be confirmed; an external call may have occurred. A repeated click reuses the same Human request ID and resolves Store state first; there is no automatic retry.",
-            pending_external_effect: "Store has claimed a Reader Review request, but no Store-qualified result is available. An external call may have occurred. BriefLoop will not retry automatically; refresh or inspect Store state first.",
-            selection_title: "Choose a compatible Reader Review result",
-            selection_sub: "Every option below was re-qualified by Store against the current final lineage and fixed Reader Review profile. Internal IDs and fingerprints are neither displayed nor treated as page authority.",
+            pending_external_effect: "Store has claimed an AI Second Opinion request, but no Store-qualified result is available. An external call may have occurred. BriefLoop will not retry automatically; refresh or inspect Store state first.",
+            selection_title: "Choose a compatible AI Second Opinion result",
+            selection_sub: "Every option below was re-qualified by Store against the current final lineage and fixed AI Second Opinion profile. Internal IDs and fingerprints are neither displayed nor treated as page authority.",
             selection_choose: "Use this result",
             result_generation: "Generation",
             result_model: "Model",
@@ -265,7 +277,7 @@
             guidance_revert: "Revert",
             guidance_supersede: "Mark superseded",
             observation_title: "Independent Human observation",
-            observation_sub: "Record an independent observation about the finalized brief. It always binds the frozen report; when a Reader Review result is selected, it also binds that exact result. It is not a model finding, does not enter evaluator input, and never becomes guidance automatically.",
+            observation_sub: "Record an independent observation about the finalized brief. It always binds the frozen report; when an AI Second Opinion result is selected, it also binds that exact result. It is not a model finding, does not enter evaluator input, and never becomes guidance automatically.",
             observation_text_label: "Observation",
             observation_origin: "origin=Human",
             observation_submit: "Record Human observation",
@@ -286,13 +298,25 @@
             observation_supersede_text: "New observation text",
             observation_supersede_submit: "Record replacement",
             observation_guidance: "Create guidance draft from this observation",
-            observation_binding_report: "report-bound (no Reader Review result selected)",
-            observation_binding_result: "Bound to the selected Reader Review result",
+            observation_binding_report: "report-bound (no AI Second Opinion result selected)",
+            observation_binding_result: "Bound to the selected AI Second Opinion result",
             observation_invalid_refs: "A report span must be complete; O1/O2 and dimension must be supplied together.",
             observation_not_allowed: "A Human observation requires a Store-confirmed finalized brief.",
             command_pending: "Recording…",
             command_failed: "Command failed",
             command_saved: "Recorded by Store Receipt",
+            successor_title: "Start the next run",
+            successor_sub: "Start a new BriefLoop run from this frozen final brief. Store pre-fills and re-verifies the current RunDirection.",
+            successor_run_id: "Successor run ID",
+            successor_direction: "Frozen RunDirection",
+            successor_guidance: "Approved guidance available for reuse",
+            successor_no_guidance: "No approved guidance is available for reuse.",
+            successor_include: "I explicitly choose to carry this guidance into the next run",
+            successor_exclude: "Do not carry guidance (default)",
+            successor_start: "Start successor run",
+            successor_id_required: "Enter a safe successor run ID.",
+            successor_direction_changed: "RunDirection changed; refresh the page and try again.",
+            successor_started: "Core Store transaction started the successor; the page was refreshed.",
             consumption_label: "next-run consumption · ",
             planned_label: "planned",
             footer_boundary: "Static export boundary: this page is always a read-only projection; it contains no command endpoint and no write affordance.",
@@ -398,6 +422,9 @@
             }
             if (result.page_data) {
                 renderAll();
+            } else if (action === "start_successor") {
+                statusNode.textContent = t("successor_started");
+                if (button) button.disabled = true;
             } else {
                 statusNode.textContent = t("command_saved");
                 if (button) button.disabled = false;
@@ -1292,6 +1319,110 @@
         zone.appendChild(wrap);
     }
 
+    function successorRunId(predecessor) {
+        var now = new Date();
+        var stamp = now.toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
+        var suffix = requestId("run") || "run-manual";
+        return "successor-" + stamp + "-" + suffix.slice(-8);
+    }
+
+    function renderSuccessorComposer(zone, successor) {
+        var card = el("section", "successor-card");
+        card.appendChild(el("h3", null, t("successor_title")));
+        card.appendChild(el("p", "section-muted", t("successor_sub")));
+        var direction = successor.run_direction || {};
+        var directionDetails = el("details", "successor-direction");
+        directionDetails.open = false;
+        directionDetails.appendChild(el("summary", null, t("successor_direction")));
+        var directionRows = el("dl", "successor-direction-list");
+        [
+            ["subject_name", direction.subject_name],
+            ["brief_title", direction.brief_title],
+            ["task_objective", direction.task_objective],
+            ["audience", direction.audience],
+            ["output_language", direction.output_language],
+            ["source_profile", direction.source_profile],
+            ["report_date", direction.report_date]
+        ].forEach(function (pair) {
+            if (pair[1] == null) return;
+            directionRows.appendChild(el("dt", null, pair[0]));
+            directionRows.appendChild(el("dd", null, String(pair[1])));
+        });
+        directionDetails.appendChild(directionRows);
+        card.appendChild(directionDetails);
+
+        var approved = successor.approved_guidance || [];
+        var guidance = el("div", "successor-guidance");
+        guidance.appendChild(el("strong", null, t("successor_guidance")));
+        if (!approved.length) {
+            guidance.appendChild(el("p", "section-muted", t("successor_no_guidance")));
+        } else {
+            var list = el("ul", "successor-guidance-list");
+            approved.forEach(function (item) {
+                var li = el("li");
+                li.appendChild(el("span", "badge badge-advisory", String(item.guidance_scope || "guidance")));
+                li.appendChild(el("span", null, String(item.guidance_text || "")));
+                list.appendChild(li);
+            });
+            guidance.appendChild(list);
+        }
+        card.appendChild(guidance);
+
+        var fields = el("div", "successor-fields");
+        var idLabel = el("label", "observation-field");
+        idLabel.appendChild(el("span", "fb-k", t("successor_run_id")));
+        var idInput = document.createElement("input");
+        idInput.type = "text";
+        idInput.maxLength = 160;
+        idInput.autocomplete = "off";
+        idInput.value = successorRunId(successor.predecessor_run_id);
+        idLabel.appendChild(idInput);
+        fields.appendChild(idLabel);
+        var choice = el("div", "successor-choice");
+        var excludeLabel = el("label", "reader-review-confirmation");
+        var exclude = document.createElement("input");
+        exclude.type = "radio";
+        exclude.name = "successor-guidance-choice";
+        exclude.value = "exclude";
+        exclude.checked = successor.include_default !== true;
+        excludeLabel.appendChild(exclude);
+        excludeLabel.appendChild(el("span", null, t("successor_exclude")));
+        choice.appendChild(excludeLabel);
+        var includeLabel = el("label", "reader-review-confirmation");
+        var include = document.createElement("input");
+        include.type = "radio";
+        include.name = "successor-guidance-choice";
+        include.value = "include";
+        include.checked = successor.include_default === true;
+        include.disabled = approved.length === 0;
+        includeLabel.appendChild(include);
+        includeLabel.appendChild(el("span", null, t("successor_include")));
+        choice.appendChild(includeLabel);
+        fields.appendChild(choice);
+        card.appendChild(fields);
+
+        var status = el("p", "reader-review-command-status");
+        var start = el("button", "btn-primary", t("successor_start"));
+        start.type = "button";
+        start.addEventListener("click", function () {
+            var runId = String(idInput.value || "").trim();
+            if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(runId) ||
+                    !successor.run_direction) {
+                status.textContent = t("successor_id_required");
+                return;
+            }
+            sendReviewCommand("start_successor", {
+                schema_version: "briefloop.post_final_successor_start_input.v1",
+                successor_run_id: runId,
+                run_direction: successor.run_direction,
+                include_approved_guidance: include.checked
+            }, status, start);
+        });
+        card.appendChild(start);
+        card.appendChild(status);
+        zone.appendChild(card);
+    }
+
     /* ---- feedback tab: read-only exports show history; loopback sessions add commands ---- */
     function renderFeedback(main) {
         var imp = DATA.improvement || {};
@@ -1382,6 +1513,11 @@
         planned.appendChild(el("span", "badge badge-missing", t("planned_label")));
         planned.appendChild(el("span", null, " " + String(imp.planned_note || "")));
         zone.appendChild(planned);
+
+        var successor = DATA.successor || {};
+        if (ACTION_SESSION && successor.available === true) {
+            renderSuccessorComposer(zone, successor);
+        }
 
         main.appendChild(zone);
     }

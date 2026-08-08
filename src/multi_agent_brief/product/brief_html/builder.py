@@ -21,6 +21,7 @@ from multi_agent_brief.product.review_session.contracts import FindingDimensionI
 from multi_agent_brief.product.post_final_assessment_projection import (
     PostFinalAssessmentProjection,
     build_post_final_assessment_projection,
+    build_successor_start_projection,
 )
 from multi_agent_brief.runtime_host_v2.projections import (
     build_local_run_presentation,
@@ -455,6 +456,7 @@ def build_brief_pages_data(
         assessment_result_id=assessment_result_id,
         assessment_result_fingerprint=assessment_result_fingerprint,
     )
+    improvement = _improvement_page(local, qualified)
     return {
         "schema_version": BRIEF_PAGES_DATA_SCHEMA,
         "generated_at": generated_at or _utc_now(),
@@ -482,7 +484,8 @@ def build_brief_pages_data(
             laj_view_path,
             qualified=qualified,
         ),
-        "improvement": _improvement_page(local, qualified),
+        "improvement": improvement,
+        "successor": build_successor_start_projection(root, local, improvement),
     }
 
 

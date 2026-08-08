@@ -13,7 +13,9 @@ from multi_agent_brief.product.review_session.contracts import (
     HumanObservationInput,
     HumanObservationSupersedeInput,
     ReviewSessionCommand,
+    SuccessorStartInput,
 )
+from multi_agent_brief.contracts.v2 import RunDirection
 from multi_agent_brief.product.brief_html.builder import (
     _improvement_page,
     build_brief_pages_data,
@@ -114,6 +116,52 @@ def test_session_commands_validate_observation_actions_before_service() -> None:
             },
             strict=True,
         )
+
+
+def test_successor_command_requires_explicit_guidance_choice_and_direction() -> None:
+    direction = {
+        "schema_version": "briefloop.run_direction.v2",
+        "subject_name": "Example Co",
+        "industry_or_theme": "Technology",
+        "brief_title": "Monthly management brief",
+        "report_type": "management_monthly",
+        "task_objective": "Explain the current operating picture.",
+        "audience": "Management",
+        "audience_profile": "Executive decision makers",
+        "output_language": "en",
+        "source_handling": "Public sources only",
+        "cadence": "monthly",
+        "focus_areas": ["Operations"],
+        "excluded_topics": ["Personnel"],
+        "forbidden_sources": [],
+        "source_profile": "public_web",
+        "web_search_mode": "disabled",
+        "output_formats": ["markdown"],
+        "report_date": "2026-08-08",
+        "target_terms": ["revenue"],
+    }
+    payload = {
+        "schema_version": "briefloop.post_final_successor_start_input.v1",
+        "successor_run_id": "successor-20260808-management-1",
+        "run_direction": direction,
+        "include_approved_guidance": False,
+    }
+    successor = SuccessorStartInput.model_validate(payload, strict=True)
+    assert successor.include_approved_guidance is False
+    command = ReviewSessionCommand.model_validate(
+        {
+            "schema_version": "briefloop.post_final_review.command.v1",
+            "action": "start_successor",
+            "payload": payload,
+        },
+        strict=True,
+    )
+    assert command.action == "start_successor"
+
+    missing_choice = dict(payload)
+    missing_choice.pop("include_approved_guidance")
+    with pytest.raises(ValidationError):
+        SuccessorStartInput.model_validate(missing_choice, strict=True)
 
 
 def test_guidance_provenance_union_is_complete_and_disjoint() -> None:
@@ -321,3 +369,186 @@ def test_static_export_contains_human_observation_copy_but_no_write_transport() 
     # Static exports have no session token and therefore never enable these
     # command controls; the canonical app only sends over the secured route.
     assert '"/api/v1/command?session_id="' in app
+    assert "AI 第二意见" in app
+    assert "AI Second Opinion" in app
+    assert 'sendReviewCommand("start_successor"' in app
+    assert "include_approved_guidance" in app
+
+
+def test_successor_handler_uses_frozen_direction_and_no_post_commit_rebuild(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    direction = RunDirection.model_validate(
+        {
+            "schema_version": "briefloop.run_direction.v2",
+            "subject_name": "Example Co",
+            "brief_title": "Monthly management brief",
+            "task_objective": "Explain the current operating picture.",
+            "audience": "Management",
+            "audience_profile": "Executive decision makers",
+            "output_language": "en",
+            "source_handling": "Public sources only",
+            "cadence": "monthly",
+            "focus_areas": ["Operations"],
+            "excluded_topics": ["Personnel"],
+            "forbidden_sources": [],
+            "source_profile": "public_web",
+            "web_search_mode": "disabled",
+            "output_formats": ["markdown"],
+            "report_date": "2026-08-08",
+            "target_terms": ["revenue"],
+        },
+        strict=True,
+    )
+    page_data = {
+        "schema_version": "briefloop.brief_pages.data.v2",
+        "workspace": {"run_id": "run-1"},
+        "semantic": {
+            "selected_result_id": None,
+            "selected_result_fingerprint": None,
+            "status": "not_run",
+            "compatible_result_options": [],
+        },
+        "improvement": {
+            "next_run_consumption": "explicit_opt_in_successor_only",
+        },
+        "successor": {
+            "available": True,
+            "predecessor_run_id": "run-1",
+            "run_direction": direction.model_dump(mode="json", exclude_unset=False),
+            "approved_guidance": [],
+            "include_default": False,
+        },
+    }
+    monkeypatch.setattr(
+        "multi_agent_brief.product.brief_html.builder.build_brief_pages_data",
+        lambda *_args, **_kwargs: page_data,
+    )
+    monkeypatch.setattr(
+        "multi_agent_brief.product.brief_html.render.render_brief_pages_html",
+        lambda _data: (
+            b"<html><head><style>x</style></head><body><script>0</script></body></html>"
+        ),
+    )
+
+    class _Snapshot:
+        workspace_run_head = SimpleNamespace(current_run_id="run-1")
+        run_contract_bindings = (SimpleNamespace(run_direction=direction),)
+
+    class _History:
+        snapshots = (_Snapshot(),)
+        store_revision = 1
+
+        def snapshot_at_revision(self, _run_id: str, _revision: int):
+            return self.snapshots[0]
+
+    class _Store:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def load_history(self):
+            return _History()
+
+    monkeypatch.setattr(
+        "multi_agent_brief.control_store.SQLiteControlStore.open",
+        lambda *_args, **_kwargs: _Store(),
+    )
+    calls: list[bool] = []
+
+    class _Result:
+        status = "committed"
+        error_code = None
+
+        def to_dict(self):
+            return {"status": self.status, "successor_run_id": "successor-1"}
+
+    class _Runtime:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def start_successor(self, **kwargs):
+            calls.append(kwargs["include_approved_guidance"])
+            return _Result()
+
+    monkeypatch.setattr(
+        "multi_agent_brief.runtime_host_v2.codex.workspace_codex_adapter_loader",
+        lambda _workspace: object(),
+    )
+    monkeypatch.setattr(
+        "multi_agent_brief.runtime_host_v2.service.RuntimeHostService", _Runtime
+    )
+    captured: dict[str, object] = {}
+
+    class _Server:
+        url = "http://127.0.0.1:9"
+
+        def start(self):
+            return None
+
+    def server_factory(*_args, **kwargs):
+        captured["handler"] = kwargs["command_handler"]
+        return _Server()
+
+    monkeypatch.setattr(
+        "multi_agent_brief.product.review_session.launcher.create_review_session_server",
+        server_factory,
+    )
+    launched = __import__(
+        "multi_agent_brief.product.review_session.launcher",
+        fromlist=["launch_actionable_review_session"],
+    ).launch_actionable_review_session(tmp_path, open_browser=False)
+    assert launched.url == "http://127.0.0.1:9"
+    handler = captured["handler"]
+    for index, include in enumerate((False, True), start=1):
+        command = ReviewSessionCommand.model_validate(
+            {
+                "schema_version": "briefloop.post_final_review.command.v1",
+                "action": "start_successor",
+                "payload": {
+                    "schema_version": "briefloop.post_final_successor_start_input.v1",
+                    "successor_run_id": f"successor-{index}",
+                    "run_direction": direction.model_dump(
+                        mode="json", exclude_unset=False
+                    ),
+                    "include_approved_guidance": include,
+                },
+            },
+            strict=True,
+        )
+        response = handler(command)
+        assert response["ok"] is True
+        assert "page_data" not in response
+    assert calls == [False, True]
+
+    class _FailedRuntime(_Runtime):
+        def start_successor(self, **_kwargs):
+            result = _Result()
+            result.status = "failed"
+            result.error_code = "successor_start_failed"
+            return result
+
+    monkeypatch.setattr(
+        "multi_agent_brief.runtime_host_v2.service.RuntimeHostService", _FailedRuntime
+    )
+    failed = handler(
+        ReviewSessionCommand.model_validate(
+            {
+                "schema_version": "briefloop.post_final_review.command.v1",
+                "action": "start_successor",
+                "payload": {
+                    "schema_version": "briefloop.post_final_successor_start_input.v1",
+                    "successor_run_id": "successor-failed",
+                    "run_direction": direction.model_dump(
+                        mode="json", exclude_unset=False
+                    ),
+                    "include_approved_guidance": False,
+                },
+            },
+            strict=True,
+        )
+    )
+    assert failed["ok"] is False
+    assert failed["reason_code"] == "successor_start_failed"

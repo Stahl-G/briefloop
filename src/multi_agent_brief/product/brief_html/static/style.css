@@ -599,6 +599,30 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .observation-history { margin-top: 20px; }
 .observation-entry { border-left: 2px solid var(--sem-action-line); }
 
+.successor-card {
+    margin: 22px 0 0;
+    padding: 16px 18px;
+    border: 1px solid var(--sem-action-line);
+    border-left-width: 3px;
+    border-radius: var(--bl-radius-sm);
+    background: var(--sem-action-wash);
+}
+.successor-card h3 { margin: 0 0 6px; font-size: 14px; font-weight: 600; }
+.successor-direction { margin-top: 12px; border-top: 1px solid var(--bl-line-soft); padding-top: 10px; }
+.successor-direction summary { cursor: pointer; color: var(--bl-muted); font-size: 12px; }
+.successor-direction-list {
+    display: grid; grid-template-columns: minmax(110px, 0.3fr) 1fr;
+    gap: 6px 12px; margin: 10px 0 0; font-size: 12px;
+}
+.successor-direction-list dt { color: var(--bl-faint); font-family: var(--bl-font-mono); }
+.successor-direction-list dd { margin: 0; color: var(--bl-ink); }
+.successor-guidance { margin-top: 14px; }
+.successor-guidance-list { margin: 8px 0 0; padding-left: 20px; }
+.successor-guidance-list li { margin: 7px 0; display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; }
+.successor-fields { margin-top: 12px; }
+.successor-choice { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.successor-fields .reader-review-confirmation { margin-top: 12px; }
+
 .fb-textarea {
     width: 100%;
     min-height: 92px;

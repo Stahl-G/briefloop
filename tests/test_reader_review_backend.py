@@ -774,8 +774,25 @@ def test_explicit_selection_binds_current_head_before_historical_lookup(
 
     def current_facts(_root, _history, *, run_id: str, require_current_head: bool):
         observed.append((run_id, require_current_head))
+        action_fingerprint = "2" * 64
         return SimpleNamespace(
-            facts=SimpleNamespace(run_id="run-current", store_revision=42)
+            facts=SimpleNamespace(
+                workspace_id="workspace-current",
+                run_id="run-current",
+                store_revision=42,
+                terminal_state="finalized_local",
+                terminal_action_fingerprint=action_fingerprint,
+                finalization_id="finalization-current",
+                finalization_receipt_id="receipt-current",
+                finalize_gate_batch_id="gate-current",
+                gate_bindings=(),
+                report=SimpleNamespace(
+                    artifact_id="artifact-current",
+                    artifact_revision=1,
+                    sha256="3" * 64,
+                    size_bytes=10,
+                ),
+            )
         )
 
     monkeypatch.setattr(
@@ -791,7 +808,19 @@ def test_explicit_selection_binds_current_head_before_historical_lookup(
     monkeypatch.setattr(
         projection_module,
         "classify_core_run_next_action",
-        lambda _verified: SimpleNamespace(),
+        lambda _verified: SimpleNamespace(
+            run_id="run-current",
+            store_revision=42,
+            action_kind="complete",
+            effect_kind="finalized_local",
+            reason_code="local_finalization_complete",
+            stage_id=None,
+            role_id=None,
+            source_route_id=None,
+            source_provider_id=None,
+            request_schema_id=None,
+            action_fingerprint="2" * 64,
+        ),
     )
     before = list(tmp_path.iterdir())
     projected = build_post_final_assessment_projection(
@@ -861,7 +890,14 @@ def test_reader_review_result_replay_and_projection_require_exact_archive(
         assert projected.status == "invalid"
         assert projected.reason_code == "post_final_assessment_archive_invalid"
         assert projected.selected_result_id is None
-        assert projected.review_status is None
+        assert projected.review_status is not None
+        assert projected.review_status["ok"] is True
+        assert projected.review_status["run_id"] == run_id
+        assert len(projected.review_status["finalized_lineage_fingerprint"]) == 64
+        assert projected.review_status["assessment_result_id"] is None
+        assert projected.review_status["human_observations"] == []
+        assert projected.review_status["guidance_drafts"] == []
+        assert projected.review_status["provider_calls"] == 0
         assert projected.view.findings == []
         assert projected.view.requirement_assessments == []
         assert (workspace / "briefloop.db").read_bytes() == database_before

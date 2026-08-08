@@ -8,10 +8,13 @@ from threading import Lock
 from typing import Callable
 import webbrowser
 
+from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
+
 from .contracts import (
     PostFinalReviewReadModel,
     ReaderReviewResultSelection,
     ReviewSessionCommand,
+    SuccessorStartInput,
 )
 from .server import ReviewSessionServer, create_review_session_server
 
@@ -107,6 +110,31 @@ def launch_actionable_review_session(
     command_lock = Lock()
     selected: list[tuple[str, str] | None] = [None]
 
+    def current_run_direction(expected_run_id: str):
+        """Return the exact current frozen direction from the Store head."""
+
+        from multi_agent_brief.control_store import SQLiteControlStore
+
+        try:
+            with SQLiteControlStore.open(root / "briefloop.db") as store:
+                history = store.load_history()
+            heads = {
+                snapshot.workspace_run_head.current_run_id
+                for snapshot in history.snapshots
+                if snapshot.workspace_run_head is not None
+            }
+            if heads != {expected_run_id}:
+                raise ValueError("successor_run_stale")
+            snapshot = history.snapshot_at_revision(
+                expected_run_id, history.store_revision
+            )
+            bindings = snapshot.run_contract_bindings
+            if len(bindings) != 1:
+                raise ValueError("successor_run_direction_unavailable")
+            return bindings[0].run_direction
+        except Exception as exc:
+            raise PostFinalReviewError(str(exc)) from exc
+
     def update_selection(page_data: dict[str, object]) -> None:
         semantic = page_data.get("semantic")
         if not isinstance(semantic, dict):
@@ -199,6 +227,38 @@ def launch_actionable_review_session(
                         "reason_code": "reader_review_projection_refreshed",
                         "page_data": refreshed,
                     }
+                if command.action == "start_successor":
+                    successor = SuccessorStartInput.model_validate(payload, strict=True)
+                    frozen_direction = current_run_direction(run_id)
+                    if successor.run_direction != frozen_direction:
+                        raise PostFinalReviewError("successor_run_direction_mismatch")
+                    from multi_agent_brief.runtime_host_v2.codex import (
+                        workspace_codex_adapter_loader,
+                    )
+                    from multi_agent_brief.runtime_host_v2.service import (
+                        RuntimeHostService,
+                    )
+
+                    result = RuntimeHostService(
+                        root,
+                        adapter_loader=workspace_codex_adapter_loader(root),
+                    ).start_successor(
+                        successor_run_id=successor.successor_run_id,
+                        run_direction=frozen_direction,
+                        include_approved_guidance=successor.include_approved_guidance,
+                    )
+                    if result.status not in {"committed", "replayed"}:
+                        return {
+                            "ok": False,
+                            "reason_code": result.error_code
+                            or "successor_start_not_committed",
+                            "result": result.to_dict(),
+                        }
+                    return {
+                        "ok": True,
+                        "reason_code": "successor_started",
+                        "result": result.to_dict(),
+                    }
 
                 payload_provenance = payload.get("provenance_kind")
                 report_bound_action = command.action in {
@@ -242,6 +302,7 @@ def launch_actionable_review_session(
                 BriefPagesError,
                 PostFinalAssessmentError,
                 PostFinalReviewError,
+                RuntimeHostError,
             ) as exc:
                 return {
                     "ok": False,

@@ -13,6 +13,7 @@ from multi_agent_brief.contracts.v2 import (
     NonNegativeInt,
     PositiveInt,
     ReaderReviewAssessmentInput,
+    RunDirection,
     Sha256,
     StrictModel,
 )
@@ -37,6 +38,7 @@ HUMAN_OBSERVATION_SUPERSEDE_INPUT_SCHEMA_ID = (
     "briefloop.post_final_human_observation_supersede_input.v1"
 )
 HUMAN_GUIDANCE_DRAFT_INPUT_SCHEMA_ID = "briefloop.post_final_guidance_draft_input.v1"
+SUCCESSOR_START_INPUT_SCHEMA_ID = "briefloop.post_final_successor_start_input.v1"
 
 QualityStatus = Literal["pass", "warning", "block", "incomplete"]
 SemanticReviewStatus = Literal[
@@ -532,6 +534,21 @@ class ReaderReviewRefresh(StrictModel):
     schema_version: Literal[READER_REVIEW_REFRESH_SCHEMA_ID]
 
 
+class SuccessorStartInput(StrictModel):
+    """Human-facing successor choice for the secured Review Session.
+
+    The page carries the complete frozen RunDirection as a readable payload so
+    the runtime can re-validate it against SQLite before the Core successor
+    writer is invoked.  No Store fingerprints or hidden authority fields are
+    accepted here; the runtime derives those from the verified predecessor.
+    """
+
+    schema_version: Literal[SUCCESSOR_START_INPUT_SCHEMA_ID]
+    successor_run_id: ContractId
+    run_direction: RunDirection
+    include_approved_guidance: StrictBool
+
+
 class ReviewSessionCommand(StrictModel):
     """Ephemeral transport envelope; nested domain DTOs remain Store-service owned."""
 
@@ -540,6 +557,7 @@ class ReviewSessionCommand(StrictModel):
         "run_reader_review",
         "select_result",
         "refresh",
+        "start_successor",
         "append_observation",
         "supersede_observation",
         "accept",
@@ -562,6 +580,8 @@ class ReviewSessionCommand(StrictModel):
             ReaderReviewResultSelection.model_validate(self.payload, strict=True)
         elif self.action == "refresh":
             ReaderReviewRefresh.model_validate(self.payload, strict=True)
+        elif self.action == "start_successor":
+            SuccessorStartInput.model_validate(self.payload, strict=True)
         elif self.action == "append_observation":
             HumanObservationInput.model_validate(self.payload, strict=True)
         elif self.action == "supersede_observation":

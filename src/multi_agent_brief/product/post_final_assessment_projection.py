@@ -163,6 +163,101 @@ class PostFinalAssessmentProjection:
     selection_required: bool
 
 
+def build_successor_start_projection(
+    root: Path,
+    local: Any,
+    improvement: Mapping[str, object],
+) -> dict[str, object]:
+    """Build the Store-derived successor choice for the secured review page.
+
+    This keeps SQLite access in the existing read-model/projection layer.  The
+    Brief HTML builder remains a pure consumer of this DTO and never opens the
+    ControlStore itself.  Only frozen RunDirection and approved guidance text
+    cross the page boundary; Core request fingerprints are intentionally absent.
+    """
+
+    unavailable: dict[str, object] = {
+        "available": False,
+        "reason_code": "successor_run_not_ready",
+        "predecessor_run_id": local.run_id,
+        "run_direction": None,
+        "approved_guidance": [],
+        "include_default": False,
+        "next_run_consumption": NEXT_RUN_CONSUMPTION,
+    }
+    if local.view_state != "finalized" or local.reader_brief.state != "available":
+        return unavailable
+    try:
+        with SQLiteControlStore.open(root / "briefloop.db") as store:
+            history = store.load_history()
+        heads = {
+            snapshot.workspace_run_head.current_run_id
+            for snapshot in history.snapshots
+            if snapshot.workspace_run_head is not None
+        }
+        if heads != {local.run_id}:
+            return {**unavailable, "reason_code": "successor_run_stale"}
+        snapshot = history.snapshot_at_revision(local.run_id, history.store_revision)
+        bindings = snapshot.run_contract_bindings
+        if len(bindings) != 1:
+            return {
+                **unavailable,
+                "reason_code": "successor_run_direction_unavailable",
+            }
+        direction = bindings[0].run_direction.model_dump(
+            mode="json", exclude_unset=False
+        )
+
+        drafts = [
+            row
+            for row in improvement.get("recorded", ())
+            if isinstance(row, dict) and row.get("guidance_id")
+        ]
+        statuses = {
+            row.get("guidance_id"): row
+            for row in improvement.get("guidance_statuses", ())
+            if isinstance(row, dict) and row.get("guidance_id")
+        }
+        latest: dict[str, dict[str, object]] = {}
+        for row in drafts:
+            guidance_id = str(row["guidance_id"])
+            current = latest.get(guidance_id)
+            if current is None or int(row.get("draft_revision", 0)) > int(
+                current.get("draft_revision", 0)
+            ):
+                latest[guidance_id] = row
+        approved: list[dict[str, object]] = []
+        for guidance_id, row in sorted(latest.items()):
+            status = statuses.get(guidance_id)
+            if not status or status.get("status") != "approved":
+                continue
+            if status.get("guidance_sha256") != row.get("guidance_sha256"):
+                continue
+            approved.append(
+                {
+                    "guidance_id": guidance_id,
+                    "draft_revision": row.get("draft_revision"),
+                    "guidance_scope": row.get("guidance_scope"),
+                    "provenance_kind": row.get("provenance_kind"),
+                    "guidance_text": row.get("guidance_text"),
+                }
+            )
+        return {
+            "available": True,
+            "reason_code": None,
+            "predecessor_run_id": local.run_id,
+            "run_direction": direction,
+            "approved_guidance": approved,
+            "include_default": False,
+            "next_run_consumption": NEXT_RUN_CONSUMPTION,
+        }
+    except (ControlStoreError, OSError, TypeError, ValueError):
+        return {
+            **unavailable,
+            "reason_code": "successor_run_projection_unavailable",
+        }
+
+
 def _empty(
     *,
     lifecycle_present: bool,

@@ -470,6 +470,22 @@ def test_new_report_pack_workspace_accepts_product_aliases(
         assert config["selector"]["max_items"] >= config["brief_quality"]["min_items"]
 
 
+def test_new_management_monthly_binds_reader_review_direction(
+    tmp_path: Path, capsys
+) -> None:
+    workspace = tmp_path / "management-monthly-reader-review"
+
+    assert (
+        main(["new", "management-monthly", str(workspace), "--language", "en-US"]) == 0
+    )
+    capsys.readouterr()
+
+    config = yaml.safe_load((workspace / "config.yaml").read_text(encoding="utf-8"))
+    direction = config["controlstore_v2"]["run_direction"]
+    assert direction["report_type"] == "management_monthly"
+    assert direction["output_language"] == "en"
+
+
 def test_new_report_pack_workspace_overrides_are_written_to_report_spec(
     tmp_path: Path,
     capsys,

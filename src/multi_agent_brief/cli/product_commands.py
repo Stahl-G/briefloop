@@ -1211,14 +1211,21 @@ def _create_report_pack_workspace(
         else ["markdown", "docx"]
     )
 
+    # The ordinary management-monthly entry is the supported Reader Review
+    # identity.  Keep this normalization local to that product shortcut so
+    # other init paths and report packs retain their existing language values.
+    reader_review_direction = (
+        pack.report_type == "management_monthly" and language == "en-US"
+    )
     profile = InitProfile(
         interface_language=language,
-        output_language=language,
+        output_language="en" if reader_review_direction else language,
         company=args.company,
         role="report_owner",
         industry=industry_text,
         industry_text=industry_text,
         brief_title=title,
+        report_type=pack.report_type if reader_review_direction else None,
         audience=reader_label,
         audience_profile="management",
         focus_areas=[pack.display_name, "source-backed claims", "reader-ready brief"],
