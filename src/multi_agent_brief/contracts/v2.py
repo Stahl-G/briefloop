@@ -17,7 +17,7 @@ import math
 from pathlib import PurePosixPath
 import re
 from types import MappingProxyType
-from typing import Annotated, Any, ClassVar, Literal, Optional, Union
+from typing import Annotated, Any, ClassVar, Iterable, Literal, Optional, Union
 
 from pydantic import (
     AfterValidator,
@@ -183,6 +183,8 @@ def canonical_run_direction_for_binding(
     canonical = dict(payload)
     if canonical.get("output_contract") is None:
         canonical.pop("output_contract", None)
+    if canonical.get("report_type") is None:
+        canonical.pop("report_type", None)
     return canonical
 
 
@@ -1654,6 +1656,7 @@ class RunDirection(StrictModel):
     subject_name: CleanText
     industry_or_theme: Optional[CleanText] = None
     brief_title: CleanText
+    report_type: Optional[ContractId] = None
     task_objective: CleanText
     audience: CleanText
     audience_profile: CleanText
@@ -3715,12 +3718,35 @@ def _canonical_json_sha256(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+class ReaderReviewAssessmentInput(StrictModel):
+    """The complete Human-supplied command for one paid Reader Review."""
+
+    schema_id: ClassVar[str] = "briefloop.reader_review_assessment_input.v1"
+
+    schema_version: Literal["briefloop.reader_review_assessment_input.v1"]
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    disclosure_confirmed: Literal[True]
+    messages_endpoint: CleanText
+    requested_model_id: CleanText
+    model_version: CleanText
+    expected_model_identity: CleanText
+    public_safe_egress_attested: Literal[True]
+    cost_status: Literal["not_measured"]
+
+
 class PostFinalAssessmentPolicyRevision(StrictModel):
     """One Human-recorded, non-secret advisory assessment policy revision."""
 
     schema_id = "briefloop.post_final_assessment_policy_revision.v2"
+    reader_review_schema_id: ClassVar[str] = (
+        "briefloop.post_final_assessment_policy_revision.v3"
+    )
 
-    schema_version: Literal["briefloop.post_final_assessment_policy_revision.v2"]
+    schema_version: Literal[
+        "briefloop.post_final_assessment_policy_revision.v2",
+        "briefloop.post_final_assessment_policy_revision.v3",
+    ]
     policy_revision_id: ContractId
     run_id: ContractId
     previous_policy_revision_id: Optional[ContractId] = None
@@ -3733,7 +3759,10 @@ class PostFinalAssessmentPolicyRevision(StrictModel):
     requested_model_id: CleanText
     model_version: CleanText
     expected_model_identity: CleanText
-    profile_id: Literal["research_design_report_zh_v1"]
+    profile_id: Literal[
+        "research_design_report_zh_v1",
+        "management_brief_en_v1",
+    ]
     instrument_config: dict[str, JsonValue]
     instrument_config_sha256: Sha256
     bounded_context: dict[str, JsonValue]
@@ -3753,9 +3782,21 @@ class PostFinalAssessmentPolicyRevision(StrictModel):
     policy_event_id: ContractId
     accepted_transaction_id: ContractId
     policy_fingerprint: Sha256
+    assessment_kind: Optional[Literal["reader_review"]] = None
+    report_type: Optional[Literal["management_monthly"]] = None
+    language: Optional[Literal["en"]] = None
+    disclosure_confirmed: Optional[Literal[True]] = None
+    cost_status: Optional[Literal["not_measured"]] = None
 
     @model_validator(mode="after")
     def policy_identity_is_exact(self) -> "PostFinalAssessmentPolicyRevision":
+        reader_fields = {
+            "assessment_kind",
+            "report_type",
+            "language",
+            "disclosure_confirmed",
+            "cost_status",
+        }
         if (
             self.messages_endpoint_sha256
             != hashlib.sha256(self.messages_endpoint.encode("utf-8")).hexdigest()
@@ -3766,8 +3807,33 @@ class PostFinalAssessmentPolicyRevision(StrictModel):
             or (self.enabled and not self.public_safe_egress_attested)
         ):
             raise ValueError("post-final assessment policy identity is invalid")
+        if self.schema_version == self.schema_id:
+            if self.profile_id != "research_design_report_zh_v1" or any(
+                getattr(self, field) is not None for field in reader_fields
+            ):
+                raise ValueError("historical post-final policy fields are invalid")
+            fingerprint_payload = self.model_dump(
+                mode="json",
+                exclude={"policy_fingerprint", *reader_fields},
+            )
+        else:
+            if (
+                self.profile_id != "management_brief_en_v1"
+                or self.assessment_kind != "reader_review"
+                or self.report_type != "management_monthly"
+                or self.language != "en"
+                or self.disclosure_confirmed is not True
+                or self.cost_status != "not_measured"
+                or not self.enabled
+                or self.auto_run
+                or self.auto_open
+            ):
+                raise ValueError("Reader Review policy binding is invalid")
+            fingerprint_payload = self.model_dump(
+                mode="json", exclude={"policy_fingerprint"}
+            )
         expected = _contract_fingerprint(
-            self.model_dump(mode="json", exclude={"policy_fingerprint"}),
+            fingerprint_payload,
             field="policy_fingerprint",
         )
         if self.policy_fingerprint != expected:
@@ -3782,10 +3848,14 @@ class PostFinalAssessmentRequestRecord(StrictModel):
     series_schema_id: ClassVar[str] = (
         "briefloop.post_final_assessment_request_record.v3"
     )
+    reader_review_schema_id: ClassVar[str] = (
+        "briefloop.post_final_assessment_request_record.v4"
+    )
 
     schema_version: Literal[
         "briefloop.post_final_assessment_request_record.v2",
         "briefloop.post_final_assessment_request_record.v3",
+        "briefloop.post_final_assessment_request_record.v4",
     ]
     assessment_request_id: ContractId
     run_id: ContractId
@@ -3803,12 +3873,15 @@ class PostFinalAssessmentRequestRecord(StrictModel):
     messages_endpoint_sha256: Sha256
     requested_model_id: CleanText
     expected_model_identity: CleanText
-    profile_id: Literal["research_design_report_zh_v1"]
+    profile_id: Literal[
+        "research_design_report_zh_v1",
+        "management_brief_en_v1",
+    ]
     instrument_config_sha256: Sha256
     bounded_context_sha256: Sha256
     input_binding_sha256: Sha256
     assessment_plan_sha256: Sha256
-    ordered_prompt_request_sha256s: list[Sha256] = Field(min_length=9, max_length=9)
+    ordered_prompt_request_sha256s: list[Sha256] = Field(min_length=1, max_length=9)
     prompt_count: PositiveInt
     provider_call_ceiling: PositiveInt
     total_input_token_upper_bound: PositiveInt
@@ -3834,9 +3907,31 @@ class PostFinalAssessmentRequestRecord(StrictModel):
     human_actor_id: Optional[ContractId] = None
     human_request_id: Optional[ContractId] = None
     authorization_fingerprint: Optional[Sha256] = None
+    assessment_kind: Optional[Literal["reader_review"]] = None
+    report_type: Optional[Literal["management_monthly"]] = None
+    language: Optional[Literal["en"]] = None
+    model_version: Optional[CleanText] = None
+    parser_version: Optional[ContractId] = None
+    projection_version: Optional[ContractId] = None
+    disclosure_confirmed: Optional[Literal[True]] = None
+    public_safe_egress_attested: Optional[Literal[True]] = None
+    cost_status: Optional[Literal["not_measured"]] = None
+    reader_review_authorization_fingerprint: Optional[Sha256] = None
 
     @model_validator(mode="after")
     def request_identity_is_exact(self) -> "PostFinalAssessmentRequestRecord":
+        reader_fields = {
+            "assessment_kind",
+            "report_type",
+            "language",
+            "model_version",
+            "parser_version",
+            "projection_version",
+            "disclosure_confirmed",
+            "public_safe_egress_attested",
+            "cost_status",
+            "reader_review_authorization_fingerprint",
+        }
         if (
             len(set(self.ordered_prompt_request_sha256s))
             != len(self.ordered_prompt_request_sha256s)
@@ -3844,6 +3939,28 @@ class PostFinalAssessmentRequestRecord(StrictModel):
             or self.output_tokens_per_call > self.total_output_token_upper_bound
         ):
             raise ValueError("post-final assessment request identity is invalid")
+        if self.schema_version != self.reader_review_schema_id and (
+            self.profile_id != "research_design_report_zh_v1"
+            or len(self.ordered_prompt_request_sha256s) != 9
+            or any(getattr(self, field) is not None for field in reader_fields)
+        ):
+            raise ValueError("historical assessment request fields invalid")
+        if self.schema_version == self.reader_review_schema_id and (
+            self.profile_id != "management_brief_en_v1"
+            or self.assessment_kind != "reader_review"
+            or self.report_type != "management_monthly"
+            or self.language != "en"
+            or self.model_version is None
+            or self.parser_version is None
+            or self.projection_version is None
+            or self.disclosure_confirmed is not True
+            or self.public_safe_egress_attested is not True
+            or self.cost_status != "not_measured"
+            or self.reader_review_authorization_fingerprint is None
+            or self.prompt_count != 2
+            or self.assessment_purpose != "post_final_review"
+        ):
+            raise ValueError("Reader Review request binding is invalid")
         series_fields = {
             "assessment_generation",
             "predecessor_assessment_request_id",
@@ -3874,7 +3991,7 @@ class PostFinalAssessmentRequestRecord(StrictModel):
                 raise ValueError("historical assessment request series fields invalid")
             payload = self.model_dump(
                 mode="json",
-                exclude={"request_fingerprint", *series_fields},
+                exclude={"request_fingerprint", *series_fields, *reader_fields},
             )
         else:
             result_predecessor = (
@@ -3913,7 +4030,14 @@ class PostFinalAssessmentRequestRecord(StrictModel):
                 and any(value is not None for value in abandonment_predecessor)
             ):
                 raise ValueError("assessment predecessor binding is invalid")
-            payload = self.model_dump(mode="json", exclude={"request_fingerprint"})
+            payload = self.model_dump(
+                mode="json",
+                exclude=(
+                    {"request_fingerprint", *reader_fields}
+                    if self.schema_version == self.series_schema_id
+                    else {"request_fingerprint"}
+                ),
+            )
         expected = _contract_fingerprint(
             payload,
             field="request_fingerprint",
@@ -3957,12 +4081,73 @@ class PostFinalAssessmentAbandonmentRecord(StrictModel):
         return self
 
 
+ReaderReviewResultStatus = Literal[
+    "finding_returned",
+    "no_finding_returned_in_completed_supported_checks",
+    "partially_assessed",
+    "unable_to_assess",
+]
+
+
+def derive_reader_review_result_status(
+    *,
+    terminal_evidence_class: str,
+    assessed_unit_count: int,
+    finding_count: int,
+    withheld_finding_count: int,
+    abstention_count: int,
+    requirement_states: Iterable[str],
+) -> str:
+    """Derive the limited Reader Review outcome vocabulary from stored facts."""
+
+    states = tuple(requirement_states)
+    if terminal_evidence_class == "available":
+        if (
+            withheld_finding_count > 0
+            or abstention_count > 0
+            or "unable_to_assess" in states
+        ):
+            return "partially_assessed"
+        if finding_count > 0:
+            return "finding_returned"
+        return "no_finding_returned_in_completed_supported_checks"
+    if terminal_evidence_class == "incomplete" and assessed_unit_count > 0:
+        return "partially_assessed"
+    return "unable_to_assess"
+
+
+def _contains_reader_review_secret_key(value: object) -> bool:
+    forbidden = {
+        "api_key",
+        "authorization",
+        "credential",
+        "credentials",
+        "password",
+        "secret",
+        "token",
+    }
+    if isinstance(value, dict):
+        return any(
+            key.lower() in forbidden or _contains_reader_review_secret_key(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_reader_review_secret_key(item) for item in value)
+    return False
+
+
 class PostFinalAssessmentResultRecord(StrictModel):
     """One qualified, archive-bound advisory outcome; never raw provider data."""
 
     schema_id = "briefloop.post_final_assessment_result_record.v2"
+    reader_review_schema_id: ClassVar[str] = (
+        "briefloop.post_final_assessment_result_record.v3"
+    )
 
-    schema_version: Literal["briefloop.post_final_assessment_result_record.v2"]
+    schema_version: Literal[
+        "briefloop.post_final_assessment_result_record.v2",
+        "briefloop.post_final_assessment_result_record.v3",
+    ]
     assessment_result_id: ContractId
     run_id: ContractId
     assessment_request_id: ContractId
@@ -3993,19 +4178,123 @@ class PostFinalAssessmentResultRecord(StrictModel):
     result_event_id: ContractId
     accepted_transaction_id: ContractId
     result_fingerprint: Sha256
+    assessment_kind: Optional[Literal["reader_review"]] = None
+    report_type: Optional[Literal["management_monthly"]] = None
+    language: Optional[Literal["en"]] = None
+    profile_id: Optional[Literal["management_brief_en_v1"]] = None
+    model_version: Optional[CleanText] = None
+    expected_model_identity: Optional[CleanText] = None
+    parser_version: Optional[Literal["strict_dimension_json_v3"]] = None
+    projection_version: Optional[Literal["reader_review_projection_v1"]] = None
+    reader_review_status: Optional[ReaderReviewResultStatus] = None
+    reader_view_payload: Optional[dict[str, JsonValue]] = None
 
     @model_validator(mode="after")
     def result_identity_and_non_effect_are_exact(
         self,
     ) -> "PostFinalAssessmentResultRecord":
+        reader_fields = {
+            "assessment_kind",
+            "report_type",
+            "language",
+            "profile_id",
+            "model_version",
+            "expected_model_identity",
+            "parser_version",
+            "projection_version",
+            "reader_review_status",
+            "reader_view_payload",
+        }
         if self.reason_codes != sorted(set(self.reason_codes)):
             raise ValueError("post-final assessment reason codes are not canonical")
         if self.terminal_evidence_class != "available" and (
             self.finding_count != 0 or self.withheld_finding_count != 0
         ):
             raise ValueError("unavailable assessment cannot expose findings")
+        if self.schema_version == self.schema_id:
+            if any(getattr(self, field) is not None for field in reader_fields):
+                raise ValueError("historical assessment result fields are invalid")
+            fingerprint_payload = self.model_dump(
+                mode="json",
+                exclude={"result_fingerprint", *reader_fields},
+            )
+        else:
+            view = self.reader_view_payload
+            allowed_view_keys = {
+                "schema_version",
+                "status",
+                "boundary",
+                "advisory_only",
+                "shadow_only",
+                "runtime_authority",
+                "authority_effect",
+                "archive_verified",
+                "binding",
+                "run_status",
+                "validation_status",
+                "reason_codes",
+                "assessed_unit_count",
+                "finding_count",
+                "withheld_finding_count",
+                "abstention_count",
+                "findings",
+                "requirement_assessments",
+                "disclaimer",
+                "view_sha256",
+            }
+            if (
+                self.assessment_kind != "reader_review"
+                or self.report_type != "management_monthly"
+                or self.language != "en"
+                or self.profile_id != "management_brief_en_v1"
+                or self.model_version is None
+                or self.expected_model_identity is None
+                or self.model_version != self.expected_model_identity
+                or self.parser_version != "strict_dimension_json_v3"
+                or self.projection_version != "reader_review_projection_v1"
+                or view is None
+                or set(view) != allowed_view_keys
+                or _contains_reader_review_secret_key(view)
+                or view.get("view_sha256") != self.reader_view_sha256
+                or _canonical_json_sha256(
+                    {key: item for key, item in view.items() if key != "view_sha256"}
+                )
+                != self.reader_view_sha256
+                or view.get("finding_count") != self.finding_count
+                or view.get("withheld_finding_count") != self.withheld_finding_count
+                or view.get("abstention_count") != self.abstention_count
+                or view.get("assessed_unit_count") != self.assessed_unit_count
+                or view.get("reason_codes") != self.reason_codes
+            ):
+                raise ValueError("Reader Review result binding is invalid")
+            assessments = view.get("requirement_assessments")
+            if not isinstance(assessments, list) or any(
+                not isinstance(item, dict)
+                or item.get("state")
+                not in {
+                    "fulfilled",
+                    "unfulfilled_transparent",
+                    "unfulfilled_undisclosed",
+                    "unable_to_assess",
+                }
+                for item in assessments
+            ):
+                raise ValueError("Reader Review requirement states are invalid")
+            expected_status = derive_reader_review_result_status(
+                terminal_evidence_class=self.terminal_evidence_class,
+                assessed_unit_count=self.assessed_unit_count,
+                finding_count=self.finding_count,
+                withheld_finding_count=self.withheld_finding_count,
+                abstention_count=self.abstention_count,
+                requirement_states=(str(item["state"]) for item in assessments),
+            )
+            if self.reader_review_status != expected_status:
+                raise ValueError("Reader Review result status is invalid")
+            fingerprint_payload = self.model_dump(
+                mode="json", exclude={"result_fingerprint"}
+            )
         expected = _contract_fingerprint(
-            self.model_dump(mode="json", exclude={"result_fingerprint"}),
+            fingerprint_payload,
             field="result_fingerprint",
         )
         if self.result_fingerprint != expected:
@@ -7709,6 +7998,7 @@ __all__ = [
     "DeliveryResultObservation",
     "DeliveryResultReference",
     "DeliveryResultRequest",
+    "derive_reader_review_result_status",
     "EventEnvelope",
     "GATE_ID_VALUES",
     "GateArtifactBinding",
@@ -7738,6 +8028,7 @@ __all__ = [
     "OwnedArtifactSubmissionRecord",
     "OwnedArtifactSubmitRequest",
     "ProposalSourceBinding",
+    "ReaderReviewAssessmentInput",
     "PackageArtifactBinding",
     "PackageArtifactBindingReference",
     "PackageReadyRecord",
@@ -7748,6 +8039,7 @@ __all__ = [
     "PostFinalAssessmentRequestReference",
     "PostFinalAssessmentResultRecord",
     "PostFinalAssessmentResultReference",
+    "ReaderReviewResultStatus",
     "PostFinalFindingDispositionRecord",
     "PostFinalFindingDispositionReference",
     "PostFinalGuidanceDraftRevision",

@@ -44,6 +44,7 @@ def _body(request_id: str, target: str, **overrides: object) -> dict[str, object
         "workspace_target": target,
         "selections": {
             "company": "ExampleCo",
+            "report_type": "management_monthly",
             "industry_or_theme": "manufacturing",
             "task_objective": "Prepare the weekly manufacturing brief.",
             "brief_title": "ExampleCo weekly brief",
@@ -1485,6 +1486,23 @@ def test_missing_required_selection_is_rejected(tmp_path: Path) -> None:
         submitter.submit(body)
     assert exc_info.value.error_code == "submission_company_required"
     assert not (tmp_path / "web-ws").exists()
+
+
+def test_report_type_is_required_and_frozen_into_run_direction(
+    tmp_path: Path,
+) -> None:
+    missing = _body("REQ-REPORT-TYPE-MISSING", "missing-report-type")
+    missing["payload"]["selections"]["report_type"] = ""  # type: ignore[index]
+    with pytest.raises(SubmissionError) as exc_info:
+        InitWebSubmitter(base_dir=tmp_path).submit(missing)
+    assert exc_info.value.error_code == "submission_report_type_required"
+    assert not (tmp_path / "missing-report-type").exists()
+
+    body = _body("REQ-REPORT-TYPE-FROZEN", "report-type-ws")
+    response = _submit_ok(InitWebSubmitter(base_dir=tmp_path), body)
+    with SQLiteControlStore.open(tmp_path / "report-type-ws" / "briefloop.db") as store:
+        binding = store.load_snapshot(response["run_id"]).run_contract_bindings[0]
+    assert binding.run_direction.report_type == "management_monthly"
 
 
 @pytest.mark.parametrize("extent", ["unknown", None])

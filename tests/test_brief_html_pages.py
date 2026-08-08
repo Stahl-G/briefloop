@@ -15,6 +15,11 @@ from multi_agent_brief.product.brief_html.builder import (
     IMPROVEMENT_PLANNED_NOTE,
     LAJ_EXPERIMENTAL_BANNER,
 )
+from multi_agent_brief.product.post_final_assessment_projection import (
+    PostFinalAssessmentProjection,
+    ReaderReviewRequirementLabel,
+    ReaderReviewRequestTemplate,
+)
 from multi_agent_brief.runtime_host_v2.projections import (
     build_local_run_presentation,
     build_store_quality_projection,
@@ -23,6 +28,8 @@ from multi_agent_brief.runtime_host_v2.contracts import LocalReaderBrief
 from multi_agent_brief.semantic_evaluator.reader import (
     LAJ_READER_BOUNDARY,
     LAJ_READER_SCHEMA_ID,
+    LajReaderView,
+    build_empty_laj_reader_view,
 )
 from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
     ANTHROPIC_API_KEY_SETTING,
@@ -91,6 +98,7 @@ def _laj_view_payload(report_sha256: str) -> dict[str, object]:
         "withheld_finding_count": 0,
         "abstention_count": 0,
         "findings": [_finding(report_sha256)],
+        "requirement_assessments": [],
         "disclaimer": "Experimental advisory assessment.",
     }
     payload["view_sha256"] = canonical_sha256(payload)
@@ -178,6 +186,136 @@ def test_semantic_page_is_honest_not_run_without_laj(tmp_path: Path) -> None:
     assert "never trigger Gates" in semantic["handoff_note"]
 
 
+def test_supported_reader_review_without_policy_is_not_assessed_with_run_action(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = initialize_workspace(tmp_path / "ws")
+    template = ReaderReviewRequestTemplate(
+        schema_version="briefloop.reader_review_assessment_input.v1",
+        assessment_kind="reader_review",
+        report_type="management_monthly",
+        language="en",
+        profile_id="management_brief_en_v1",
+        protocol="anthropic_messages_compatible",
+        endpoint_class="explicit_messages_api",
+        egress_scope="public_safe_report",
+        report_scope="final_reader_markdown",
+        context_scope="frozen_run_direction_requirements",
+        disclosure_confirmed=True,
+        public_safe_egress_attested=True,
+        cost_status="not_measured",
+        provider_call_ceiling=2,
+        total_input_token_ceiling=400000,
+        total_output_token_ceiling=8192,
+        output_tokens_per_call=4096,
+        automatic_retry=False,
+        advisory_only=True,
+        authority_effect="none",
+    )
+    projection = PostFinalAssessmentProjection(
+        lifecycle_present=False,
+        status="not_requested",
+        reason_code="laj_not_run",
+        view=build_empty_laj_reader_view(
+            status="not_available", reason_code="laj_not_run"
+        ),
+        user_status="not_assessed",
+        compatible_result_options=(),
+        requirement_labels=(),
+        selected_result_id=None,
+        selected_result_fingerprint=None,
+        review_status=None,
+        request_template=template,
+        next_run_consumption="explicit_opt_in_successor_only",
+        run_action_available=True,
+        selection_required=False,
+    )
+    monkeypatch.setattr(
+        "multi_agent_brief.product.brief_html.builder."
+        "build_post_final_assessment_projection",
+        lambda *_args, **_kwargs: projection,
+    )
+
+    semantic = build_brief_pages_data(workspace)["semantic"]
+
+    assert semantic["status"] == "not_assessed"
+    assert semantic["run_action_available"] is True
+    assert semantic["request_template"]["protocol"] == ("anthropic_messages_compatible")
+
+
+def test_o2_requirement_assessment_uses_binding_verified_human_label(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = initialize_workspace(tmp_path / "ws")
+    report_sha256 = "1" * 64
+    payload = _laj_view_payload(report_sha256)
+    payload["finding_count"] = 0
+    payload["findings"] = []
+    payload["requirement_assessments"] = [
+        {
+            "assessment_unit_id": "AU-0123456789ab",
+            "requirement_id": "requirement-audience-1",
+            "state": "unfulfilled_transparent",
+            "attention_status": "attention_needed",
+            "report_spans": [
+                {
+                    "report_sha256": report_sha256,
+                    "block_id": "B000001",
+                    "start_char": 0,
+                    "end_char": 12,
+                    "excerpt_sha256": "a" * 64,
+                }
+            ],
+            "rationale": "The brief discloses that the requirement is unmet.",
+        }
+    ]
+    payload.pop("view_sha256")
+    payload["view_sha256"] = canonical_sha256(payload)
+    view = LajReaderView.model_validate(payload, strict=True)
+    projection = PostFinalAssessmentProjection(
+        lifecycle_present=True,
+        status="available",
+        reason_code=None,
+        view=view,
+        user_status="no_finding_returned_in_completed_supported_checks",
+        compatible_result_options=(),
+        requirement_labels=(
+            ReaderReviewRequirementLabel(
+                requirement_id="requirement-audience-1",
+                requirement_type="audience_need",
+                text="State the unresolved decision dependency for management.",
+                source_locator="run_direction.audience",
+            ),
+        ),
+        selected_result_id="assessment-result-reader-review-1",
+        selected_result_fingerprint="b" * 64,
+        review_status=None,
+        request_template=None,
+        next_run_consumption="explicit_opt_in_successor_only",
+        run_action_available=False,
+        selection_required=False,
+    )
+    monkeypatch.setattr(
+        "multi_agent_brief.product.brief_html.builder."
+        "build_post_final_assessment_projection",
+        lambda *_args, **_kwargs: projection,
+    )
+
+    semantic = build_brief_pages_data(workspace)["semantic"]
+    assessment = semantic["requirement_assessments"][0]
+
+    assert assessment["state"] == "unfulfilled_transparent"
+    assert assessment["attention_status"] == "attention_needed"
+    assert assessment["requirement_type"] == "audience_need"
+    assert assessment["requirement_text"] == (
+        "State the unresolved decision dependency for management."
+    )
+    assert "not a quality pass" in semantic["disclaimer"]
+    assert "does not verify facts" in semantic["disclaimer"]
+
+
 def test_semantic_page_renders_bound_findings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -252,7 +390,7 @@ def test_semantic_page_prefers_store_qualified_assessment_over_manual_view(
     semantic = build_brief_pages_data(workspace, laj_view_path=manual)["semantic"]
 
     assert semantic["store_qualified"] is True
-    assert semantic["status"] == "available"
+    assert semantic["status"] == "not_assessed"
     assert semantic["coverage"]["finding_count"] == 0
     assert semantic["findings"] == []
     assert semantic["reason_codes"] != ["assessment_completed"]

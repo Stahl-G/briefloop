@@ -44,6 +44,45 @@
             laj_not_run: "LAJ 未运行",
             laj_not_run_note: "本工作区没有可绑定的 LAJ reader 视图；此处不臆造任何评估结果。",
             laj_status: "视图状态",
+            reader_review_status_title: "Reader Review 状态",
+            status_finding_returned: "Reader Review 返回了一个或多个供人工判断的 finding。",
+            status_no_finding_returned_in_completed_supported_checks: "已完成的受支持检查没有返回 finding。",
+            status_partially_assessed: "只完成了部分受支持检查；不得据此推断没有 finding。",
+            status_unable_to_assess: "Reader Review 无法完成受支持检查；不得据此推断没有 finding。",
+            status_not_assessed: "此终稿尚未运行 Reader Review。",
+            status_selection_required: "存在多个兼容结果。请选择要展示的结果；系统不会隐式选择最新结果。",
+            disclosure_title: "运行前披露与明确授权",
+            disclosure_sub: "Reader Review 只检查 O1 内部一致性与 O2 冻结用户意图/需求覆盖。它是实验性建议，不是 Gate、质量评分或交付决定。",
+            disclosure_provider: "兼容协议 / endpoint 类别",
+            disclosure_profile: "固定 profile",
+            disclosure_scope: "发送范围",
+            disclosure_budget: "调用与 token 上限",
+            disclosure_cost: "费用状态",
+            disclosure_retry: "自动重试",
+            disclosure_effect: "权威效果",
+            disclosure_no_secret: "本页不接收、保存、渲染或记录 API key。凭证只由本机运行环境解析。",
+            endpoint_label: "Messages endpoint",
+            requested_model_label: "Requested model ID",
+            model_version_label: "Model version",
+            expected_model_label: "Expected model identity",
+            confirm_disclosure: "我已阅读并确认上述 profile、发送范围、预算、费用未知、无自动重试及 advisory/no-Gate 边界。",
+            attest_egress: "我确认终稿与冻结需求可按 public-safe_report 范围发送至上述提供方。",
+            run_reader_review: "授权并运行一次 Reader Review",
+            refresh_projection: "刷新 Store-qualified 状态",
+            run_fields_required: "请填写全部 endpoint/model identity 字段并勾选两项确认。",
+            command_outcome_unknown: "响应未能确认，外部调用可能已发生。再次操作会复用同一 Human request ID，并先由 Store 解析结果；不会自动重试。",
+            pending_external_effect: "Reader Review 请求已被 Store 认领，但尚无 Store-qualified 结果；外部调用可能已经发生。系统不会自动重试。请先刷新或检查 Store 状态。",
+            selection_title: "选择兼容的 Reader Review 结果",
+            selection_sub: "下列选项均由 Store 对当前终稿 lineage 和固定 Reader Review profile 重新限定。内部 ID 与 fingerprint 不作为页面权威，也不显示。",
+            selection_choose: "选择此结果",
+            result_generation: "Generation",
+            result_model: "Model",
+            result_recorded: "Recorded",
+            result_counts: "Coverage",
+            o2_title: "O2 冻结需求覆盖",
+            o2_none: "当前选中结果没有可展示的 O2 requirement assessment。",
+            o2_attention: "需要关注",
+            o2_rationale: "评估理由",
             cov_assessed: "已评估单元",
             cov_findings: "findings",
             cov_withheld: "被扣留 findings",
@@ -51,7 +90,6 @@
             dim_title: "九个维度概览（按评估单元状态，无分数）",
             dim_finding_reported: "报告了 finding",
             dim_not_assessed: "本视图未评估",
-            findings_none: "本视图没有 finding。",
             f_unit: "评估单元",
             f_observation: "观察",
             f_rationale: "理由",
@@ -125,6 +163,45 @@
             laj_not_run: "LAJ not run",
             laj_not_run_note: "No bindable LAJ reader view exists for this workspace; nothing is fabricated here.",
             laj_status: "View status",
+            reader_review_status_title: "Reader Review status",
+            status_finding_returned: "Reader Review returned one or more advisory findings for Human judgment.",
+            status_no_finding_returned_in_completed_supported_checks: "The completed supported checks returned no finding.",
+            status_partially_assessed: "Only part of the supported checks completed. Do not infer that no finding exists.",
+            status_unable_to_assess: "Reader Review could not complete the supported checks. Do not infer that no finding exists.",
+            status_not_assessed: "Reader Review has not been run for this finalized brief.",
+            status_selection_required: "Multiple compatible results exist. Choose which result to display; no latest result is selected implicitly.",
+            disclosure_title: "Pre-run disclosure and explicit authorization",
+            disclosure_sub: "Reader Review checks only O1 internal consistency and O2 frozen user-intent/requirement coverage. It is experimental advice, not a Gate, quality score, or delivery decision.",
+            disclosure_provider: "Compatible protocol / endpoint class",
+            disclosure_profile: "Fixed profile",
+            disclosure_scope: "Sent scope",
+            disclosure_budget: "Call and token ceilings",
+            disclosure_cost: "Cost status",
+            disclosure_retry: "Automatic retry",
+            disclosure_effect: "Authority effect",
+            disclosure_no_secret: "This page never accepts, stores, renders, or logs an API key. Credentials are resolved only by the local runtime environment.",
+            endpoint_label: "Messages endpoint",
+            requested_model_label: "Requested model ID",
+            model_version_label: "Model version",
+            expected_model_label: "Expected model identity",
+            confirm_disclosure: "I have read and confirm the profile, sent scope, budget, unmeasured cost, no-auto-retry rule, and advisory/no-Gate boundary above.",
+            attest_egress: "I attest that the final brief and frozen requirements may be sent to this provider under the public_safe_report scope.",
+            run_reader_review: "Authorize and run one Reader Review",
+            refresh_projection: "Refresh Store-qualified status",
+            run_fields_required: "Complete every endpoint/model identity field and both confirmations.",
+            command_outcome_unknown: "The response could not be confirmed; an external call may have occurred. A repeated click reuses the same Human request ID and resolves Store state first; there is no automatic retry.",
+            pending_external_effect: "Store has claimed a Reader Review request, but no Store-qualified result is available. An external call may have occurred. BriefLoop will not retry automatically; refresh or inspect Store state first.",
+            selection_title: "Choose a compatible Reader Review result",
+            selection_sub: "Every option below was re-qualified by Store against the current final lineage and fixed Reader Review profile. Internal IDs and fingerprints are neither displayed nor treated as page authority.",
+            selection_choose: "Use this result",
+            result_generation: "Generation",
+            result_model: "Model",
+            result_recorded: "Recorded",
+            result_counts: "Coverage",
+            o2_title: "O2 frozen-requirement coverage",
+            o2_none: "The selected result has no displayable O2 requirement assessment.",
+            o2_attention: "Attention needed",
+            o2_rationale: "Assessment rationale",
             cov_assessed: "assessed units",
             cov_findings: "findings",
             cov_withheld: "withheld findings",
@@ -132,7 +209,6 @@
             dim_title: "Nine dimensions by unit status (no scores)",
             dim_finding_reported: "finding reported",
             dim_not_assessed: "not assessed in view",
-            findings_none: "No findings in this view.",
             f_unit: "Assessment unit",
             f_observation: "Observation",
             f_rationale: "Rationale",
@@ -201,8 +277,12 @@
     }
 
     var ACTION_SESSION = readActionSession();
-    var LANG = "zh";
+    var LANG = (
+        DATA && DATA.semantic && DATA.semantic.request_template &&
+        DATA.semantic.request_template.language === "en"
+    ) ? "en" : "zh";
     var STATE = { tab: ACTION_SESSION ? "review" : "brief" };
+    var RUN_REQUEST_ID = null;
 
     function t(key) { return (MESSAGES[LANG] && MESSAGES[LANG][key]) || MESSAGES.zh[key] || key; }
     function el(tag, cls, text) {
@@ -228,26 +308,14 @@
         }).join("");
     }
 
-    function applyReviewStatus(status) {
-        if (!status || status.ok !== true) return;
-        var byFinding = {};
-        (status.dispositions || []).forEach(function (row) {
-            byFinding[row.finding_id] = row;
-        });
-        ((DATA.semantic || {}).findings || []).forEach(function (finding) {
-            var row = byFinding[finding.finding_id];
-            if (row) {
-                finding.finding_fingerprint = row.finding_fingerprint;
-                finding.human_disposition = row.current;
-            }
-        });
-        DATA.improvement.status = "available";
-        DATA.improvement.recorded = status.guidance_drafts || [];
-        DATA.improvement.guidance_statuses = status.guidance_statuses || [];
+    function isOutcomeUnknownReason(reason) {
+        return reason === "post_final_assessment_pending" ||
+            reason === "post_final_assessment_predecessor_outcome_unknown";
     }
 
-    function sendReviewCommand(action, payload, statusNode) {
+    function sendReviewCommand(action, payload, statusNode, button) {
         if (!ACTION_SESSION) return;
+        if (button) button.disabled = true;
         statusNode.textContent = t("command_pending");
         fetch("/api/v1/command?session_id=" + encodeURIComponent(ACTION_SESSION.session), {
             method: "POST",
@@ -265,10 +333,27 @@
             if (!response.ok) throw new Error("command rejected");
             return response.json();
         }).then(function (result) {
-            applyReviewStatus(result.review_status);
-            renderAll();
+            if (result.page_data && typeof result.page_data === "object" &&
+                    result.page_data.schema_version === "briefloop.brief_pages.data.v2") {
+                DATA = result.page_data;
+            }
+            if (result.ok !== true) {
+                statusNode.textContent = isOutcomeUnknownReason(result.reason_code) ?
+                    t("pending_external_effect") :
+                    String(result.reason_code || t("command_failed"));
+                if (button) button.disabled = false;
+                return;
+            }
+            if (result.page_data) {
+                renderAll();
+            } else {
+                statusNode.textContent = t("command_saved");
+                if (button) button.disabled = false;
+            }
         }).catch(function () {
-            statusNode.textContent = t("command_failed");
+            statusNode.textContent = action === "run_reader_review" ?
+                t("command_outcome_unknown") : t("command_failed");
+            if (button) button.disabled = false;
         });
     }
 
@@ -486,6 +571,209 @@
         main.appendChild(strip);
     }
 
+    function disclosureFact(labelKey, value) {
+        var row = el("div", "disclosure-fact");
+        row.appendChild(el("span", "fb-k", t(labelKey)));
+        row.appendChild(el("span", null, String(value)));
+        return row;
+    }
+
+    function labeledTextInput(parent, labelKey, maxLength) {
+        var label = el("label", "reader-review-field");
+        label.appendChild(el("span", "fb-k", t(labelKey)));
+        var input = document.createElement("input");
+        input.type = "text";
+        input.maxLength = maxLength;
+        input.autocomplete = "off";
+        input.spellcheck = false;
+        label.appendChild(input);
+        parent.appendChild(label);
+        return input;
+    }
+
+    function labeledConfirmation(parent, labelKey) {
+        var label = el("label", "reader-review-confirmation");
+        var input = document.createElement("input");
+        input.type = "checkbox";
+        label.appendChild(input);
+        label.appendChild(el("span", null, t(labelKey)));
+        parent.appendChild(label);
+        return input;
+    }
+
+    function renderResultSelection(parent, sem) {
+        if (!(ACTION_SESSION && sem.selection_required === true)) return;
+        var section = el("section", "result-selection-card");
+        section.appendChild(el("h3", null, t("selection_title")));
+        section.appendChild(el("p", "section-muted", t("selection_sub")));
+        var commandStatus = el("p", "reader-review-command-status");
+        (sem.compatible_result_options || []).forEach(function (option) {
+            var row = el("div", "result-option");
+            var details = el("div", "result-option-details");
+            details.appendChild(el("strong", null,
+                t("result_generation") + " " + String(option.assessment_generation)));
+            details.appendChild(el("span", null,
+                t("result_model") + " · " + String(option.requested_model_id || "") +
+                " / " + String(option.model_version || "")));
+            details.appendChild(el("span", null,
+                t("result_recorded") + " · " + String(option.recorded_at || "")));
+            details.appendChild(el("span", null,
+                t("result_counts") + " · " +
+                String(option.assessed_unit_count || 0) + " assessed · " +
+                String(option.finding_count || 0) + " findings · " +
+                String(option.withheld_finding_count || 0) + " withheld · " +
+                String(option.abstention_count || 0) + " abstentions · " +
+                String(option.terminal_evidence_class || "")));
+            row.appendChild(details);
+            var choose = el("button", "reader-review-action secondary", t("selection_choose"));
+            choose.type = "button";
+            choose.addEventListener("click", function () {
+                sendReviewCommand("select_result", {
+                    schema_version: "briefloop.post_final_review.reader_review_selection.v1",
+                    assessment_result_id: option.assessment_result_id,
+                    assessment_result_fingerprint: option.assessment_result_fingerprint
+                }, commandStatus, choose);
+            });
+            row.appendChild(choose);
+            section.appendChild(row);
+        });
+        section.appendChild(commandStatus);
+        parent.appendChild(section);
+    }
+
+    function renderReaderReviewControl(parent, sem) {
+        var status = String(sem.status || "not_assessed");
+        var statusCard = el("section", "reader-review-status");
+        statusCard.appendChild(el("span", "fb-k", t("reader_review_status_title")));
+        statusCard.appendChild(el("strong", null, status));
+        statusCard.appendChild(el("p", null, t("status_" + status)));
+        if ((sem.reason_codes || []).some(isOutcomeUnknownReason)) {
+            statusCard.appendChild(el("p", "outcome-unknown-note",
+                t("pending_external_effect")));
+        }
+        if (ACTION_SESSION) {
+            var refreshStatus = el("span", "reader-review-command-status");
+            var refresh = el("button", "reader-review-action secondary", t("refresh_projection"));
+            refresh.type = "button";
+            refresh.addEventListener("click", function () {
+                sendReviewCommand("refresh", {
+                    schema_version: "briefloop.post_final_review.refresh.v1"
+                }, refreshStatus, refresh);
+            });
+            statusCard.appendChild(refresh);
+            statusCard.appendChild(refreshStatus);
+        }
+        parent.appendChild(statusCard);
+
+        renderResultSelection(parent, sem);
+
+        var template = sem.request_template;
+        if (!template) return;
+        var disclosure = el("section", "reader-review-disclosure");
+        disclosure.appendChild(el("h3", null, t("disclosure_title")));
+        disclosure.appendChild(el("p", "advisory-sub", t("disclosure_sub")));
+        var facts = el("div", "disclosure-grid");
+        facts.appendChild(disclosureFact("disclosure_provider",
+            String(template.protocol) + " · " + String(template.endpoint_class)));
+        facts.appendChild(disclosureFact("disclosure_profile",
+            String(template.assessment_kind) + " · " + String(template.report_type) +
+            " · " + String(template.language) + " · " + String(template.profile_id)));
+        facts.appendChild(disclosureFact("disclosure_scope",
+            String(template.egress_scope) + " · " + String(template.report_scope) +
+            " · " + String(template.context_scope)));
+        facts.appendChild(disclosureFact("disclosure_budget",
+            String(template.provider_call_ceiling) + " calls · " +
+            String(template.total_input_token_ceiling) + " input · " +
+            String(template.total_output_token_ceiling) + " output total · " +
+            String(template.output_tokens_per_call) + " output/call"));
+        facts.appendChild(disclosureFact("disclosure_cost", template.cost_status));
+        facts.appendChild(disclosureFact("disclosure_retry",
+            template.automatic_retry === false ? "none" : String(template.automatic_retry)));
+        facts.appendChild(disclosureFact("disclosure_effect",
+            "advisory_only=" + String(template.advisory_only) +
+            " · authority_effect=" + String(template.authority_effect) + " · not a Gate"));
+        disclosure.appendChild(facts);
+        disclosure.appendChild(el("p", "credential-boundary", t("disclosure_no_secret")));
+
+        if (ACTION_SESSION && sem.run_action_available === true &&
+                status === "not_assessed") {
+            var fields = el("div", "reader-review-fields");
+            var endpoint = labeledTextInput(fields, "endpoint_label", 2048);
+            var requestedModel = labeledTextInput(fields, "requested_model_label", 512);
+            var modelVersion = labeledTextInput(fields, "model_version_label", 512);
+            var expectedModel = labeledTextInput(fields, "expected_model_label", 512);
+            disclosure.appendChild(fields);
+            var confirmed = labeledConfirmation(disclosure, "confirm_disclosure");
+            var egress = labeledConfirmation(disclosure, "attest_egress");
+            var commandStatus = el("p", "reader-review-command-status");
+            var run = el("button", "reader-review-action primary", t("run_reader_review"));
+            run.type = "button";
+            run.addEventListener("click", function () {
+                var values = [endpoint.value, requestedModel.value,
+                    modelVersion.value, expectedModel.value].map(function (value) {
+                    return String(value || "").trim();
+                });
+                if (values.some(function (value) { return !value; }) ||
+                        !confirmed.checked || !egress.checked) {
+                    commandStatus.textContent = t("run_fields_required");
+                    return;
+                }
+                if (!RUN_REQUEST_ID) RUN_REQUEST_ID = requestId("reader-review");
+                if (!RUN_REQUEST_ID) {
+                    commandStatus.textContent = t("command_failed");
+                    return;
+                }
+                sendReviewCommand("run_reader_review", {
+                    schema_version: "briefloop.reader_review_assessment_input.v1",
+                    human_actor_id: "local-human-reviewer",
+                    human_request_id: RUN_REQUEST_ID,
+                    disclosure_confirmed: confirmed.checked,
+                    messages_endpoint: values[0],
+                    requested_model_id: values[1],
+                    model_version: values[2],
+                    expected_model_identity: values[3],
+                    public_safe_egress_attested: egress.checked,
+                    cost_status: "not_measured"
+                }, commandStatus, run);
+            });
+            disclosure.appendChild(run);
+            disclosure.appendChild(commandStatus);
+        }
+        parent.appendChild(disclosure);
+    }
+
+    function renderRequirementAssessments(parent, sem) {
+        var assessments = sem.requirement_assessments || [];
+        if (!assessments.length) return;
+        parent.appendChild(el("h2", null, t("o2_title")));
+        var list = el("div", "requirement-assessment-list");
+        assessments.forEach(function (assessment) {
+            var attention = assessment.attention_status !== "none";
+            var card = el("article", "requirement-assessment" +
+                (attention ? " attention" : ""));
+            var head = el("div", "finding-head");
+            head.appendChild(el("strong", null,
+                String(assessment.requirement_type || "frozen_requirement")));
+            head.appendChild(el("span", "badge badge-advisory", String(assessment.state || "")));
+            if (attention) {
+                head.appendChild(el("span", "badge badge-missing",
+                    t("o2_attention") + " · " + String(assessment.attention_status)));
+            }
+            card.appendChild(head);
+            card.appendChild(el("p", "requirement-text",
+                String(assessment.requirement_text || "")));
+            var rationale = el("p", "requirement-rationale");
+            rationale.appendChild(el("span", "fb-k", t("o2_rationale") + " · "));
+            rationale.appendChild(el("span", null, String(assessment.rationale || "")));
+            card.appendChild(rationale);
+            card.appendChild(el("code", "requirement-meta",
+                String(assessment.requirement_id || "") + " · " +
+                String(assessment.source_locator || "")));
+            list.appendChild(card);
+        });
+        parent.appendChild(list);
+    }
+
     function renderReview(main) {
         var sem = DATA.semantic || {};
         renderIdentityCompact(main);
@@ -499,6 +787,10 @@
         var body = el("div", "advisory-body");
         body.appendChild(el("h2", null, t("laj_title")));
         body.appendChild(el("p", "advisory-sub", t("laj_sub") + " " + String(sem.boundary || "")));
+        if (sem.request_template || sem.store_qualified ||
+                (sem.compatible_result_options || []).length) {
+            renderReaderReviewControl(body, sem);
+        }
 
         if (sem.status === "not_run") {
             var card = el("div", "unavailable-card");
@@ -542,10 +834,8 @@
         body.appendChild(dims);
 
         var findings = sem.findings || [];
-        if (!findings.length) {
-            body.appendChild(el("p", "section-muted", t("findings_none")));
-        }
         findings.forEach(function (f) { body.appendChild(findingCard(f)); });
+        renderRequirementAssessments(body, sem);
 
         var ho = el("p", "handoff-note");
         ho.appendChild(el("strong", null, t("handoff_title") + " · "));
@@ -842,6 +1132,22 @@
     /* ---- language ---- */
     var langBtn = document.getElementById("btn-lang-toggle");
     var langMenu = document.getElementById("lang-menu");
+    function syncLanguageChrome() {
+        document.documentElement.lang = LANG === "en" ? "en" : "zh-CN";
+        langMenu.querySelectorAll("li").forEach(function (item) {
+            var selected = item.dataset.lang === LANG;
+            item.setAttribute("aria-selected", selected ? "true" : "false");
+            if (selected) {
+                document.getElementById("lang-current").textContent = item.textContent;
+            }
+        });
+        document.querySelectorAll("[data-i18n]").forEach(function (node) {
+            var key = node.dataset.i18n;
+            node.textContent = t(
+                ACTION_SESSION && key === "top_badge" ? "session_badge" : key
+            );
+        });
+    }
     langBtn.addEventListener("click", function () {
         var open = !langMenu.hidden;
         langMenu.hidden = open;
@@ -850,19 +1156,9 @@
     langMenu.querySelectorAll("li").forEach(function (li) {
         li.addEventListener("click", function () {
             LANG = li.dataset.lang;
-            document.getElementById("lang-current").textContent = li.textContent;
-            document.documentElement.lang = LANG === "en" ? "en" : "zh-CN";
-            langMenu.querySelectorAll("li").forEach(function (x) {
-                x.setAttribute("aria-selected", x === li ? "true" : "false");
-            });
+            syncLanguageChrome();
             langMenu.hidden = true;
             langBtn.setAttribute("aria-expanded", "false");
-            document.querySelectorAll("[data-i18n]").forEach(function (node) {
-                var key = node.dataset.i18n;
-                node.textContent = t(
-                    ACTION_SESSION && key === "top_badge" ? "session_badge" : key
-                );
-            });
             renderAll();
         });
     });
@@ -872,10 +1168,8 @@
     if (!ACTION_SESSION) {
         try { initialHash = location.hash.replace("#", ""); } catch (e) { /* ignore */ }
         if (TABS.some(function (tb) { return tb[0] === initialHash; })) STATE.tab = initialHash;
-    } else {
-        var topBadge = document.querySelector("[data-i18n='top_badge']");
-        if (topBadge) topBadge.textContent = t("session_badge");
     }
+    syncLanguageChrome();
     window.addEventListener("hashchange", function () {
         if (ACTION_SESSION) return;
         var h = "";

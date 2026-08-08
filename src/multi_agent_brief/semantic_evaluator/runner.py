@@ -76,6 +76,7 @@ from multi_agent_brief.semantic_evaluator.prompt_sizer import (
     OpenAITiktokenPromptSizerV1,
     SyntheticFixturePromptSizerV1,
 )
+from multi_agent_brief.semantic_evaluator.profile import load_profile, profile_ids
 from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_json_bytes,
     canonical_sha256,
@@ -99,7 +100,7 @@ from multi_agent_brief.semantic_evaluator.validator import (
 )
 
 
-RUNNER_VERSION = "semantic_evaluator_shadow_runner_v5"
+RUNNER_VERSION = "semantic_evaluator_shadow_runner_v6"
 DEFAULT_TIMEOUT_SECONDS = SHADOW_TIMEOUT_SECONDS
 PROFILE_ID = "research_design_report_zh_v1"
 _MAX_JSON_INPUT_BYTES = 8 * 1024 * 1024
@@ -306,7 +307,7 @@ def _strict_inputs(
     trial_id: str,
     archive_root: str | Path,
 ) -> tuple[bytes, BoundedContext, InstrumentConfig, str, Path, Path]:
-    if profile != PROFILE_ID or type(trial_id) is not str:
+    if profile not in profile_ids() or type(trial_id) is not str:
         raise SemanticEvaluatorError("shadow_request_invalid")
     report_path = _input_path(report)
     context_path = _input_path(bounded_context)
@@ -389,6 +390,7 @@ def _prepared_shadow_run_from_values(
     archive_root: Path,
     workspace_root: Path,
     messages_endpoint: str | None,
+    profile_id: str = PROFILE_ID,
 ) -> PreparedShadowRun:
     """Admit immutable values without touching an archive, SDK, key, or adapter."""
 
@@ -432,6 +434,7 @@ def _prepared_shadow_run_from_values(
             raise SemanticEvaluatorError("shadow_request_invalid")
     elif messages_endpoint is not None:
         raise SemanticEvaluatorError("shadow_request_invalid")
+    loaded_profile = load_profile(profile_id)
     admission = admit_inputs(
         {
             "schema_version": ADMISSION_REQUEST_SCHEMA_ID,
@@ -448,6 +451,7 @@ def _prepared_shadow_run_from_values(
             "workspace_root": str(workspace_root),
         },
         prompt_sizer=prompt_sizer,
+        loaded_profile=loaded_profile,
     )
     if not admission.admitted:
         raise SemanticEvaluatorError(
@@ -474,6 +478,7 @@ def prepare_shadow_run_from_bytes(
     archive_root: str | Path,
     workspace_root: str | Path,
     messages_endpoint: str | None,
+    profile_id: str = PROFILE_ID,
 ) -> PreparedShadowRun | ShadowRunResult:
     """Prepare a product-owned immutable run without reading caller files or env."""
 
@@ -488,6 +493,7 @@ def prepare_shadow_run_from_bytes(
             archive_root=root,
             workspace_root=workspace,
             messages_endpoint=messages_endpoint,
+            profile_id=profile_id,
         )
     except SemanticEvaluatorError as exc:
         return _failure(exc.reason_code)
@@ -1087,6 +1093,7 @@ def prepare_shadow_run(
             archive_root=root,
             workspace_root=common_input_root,
             messages_endpoint=messages_endpoint,
+            profile_id=profile,
         )
     except SemanticEvaluatorError as exc:
         return _failure(exc.reason_code)
@@ -1174,6 +1181,7 @@ def execute_prepared_shadow_run(
             report_evidence=admission.report_evidence,
             reader_artifact=admission.reader.artifact,
             bounded_context=admission.bounded_context,
+            loaded_profile=(admission._instrument_snapshot.resources.loaded_profile),
         )
         baseline = matched.baseline_payload
         actual = compose_actual_laj(assembled.witness)

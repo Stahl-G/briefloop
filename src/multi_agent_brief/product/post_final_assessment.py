@@ -25,7 +25,9 @@ from multi_agent_brief.contracts.v2 import (
     PostFinalAssessmentPolicyRevision,
     PostFinalAssessmentRequestRecord,
     PostFinalAssessmentResultRecord,
+    ReaderReviewAssessmentInput,
     StrictModel,
+    derive_reader_review_result_status,
 )
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
 from multi_agent_brief.control_store.errors import ControlStoreError
@@ -37,6 +39,22 @@ from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
 from multi_agent_brief.runtime_host_v2.projections import (
     build_finalized_local_review_projection,
+)
+from multi_agent_brief.product.post_final_assessment_read_model import (
+    PostFinalAssessmentError,
+    _ARCHIVE_DIRECTORY,
+    _canonical_sha256,
+    _require_current_finalized_action,
+    _record_fingerprint,
+    _resolve_current_post_final_assessment_policy,
+    finalized_lineage_fingerprint,
+    post_final_assessment_archive_root,
+    reassessed_facts_fingerprint,
+    resolve_current_post_final_assessment_policy,
+    resolve_current_post_final_assessment_request,
+    resolve_current_post_final_assessment_result,
+    resolve_post_final_assessment_request_by_id,
+    resolve_post_final_assessment_series,
 )
 from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
     ANTHROPIC_ADAPTER_ID,
@@ -54,6 +72,8 @@ from multi_agent_brief.semantic_evaluator.contracts import (
 )
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.normalization import freeze_bounded_context
+from multi_agent_brief.semantic_evaluator.parser import PARSER_VERSION
+from multi_agent_brief.semantic_evaluator.profile import READER_REVIEW_PROFILE_ID
 from multi_agent_brief.semantic_evaluator.reader import (
     build_laj_reader_view,
     render_laj_reader_json,
@@ -65,33 +85,18 @@ from multi_agent_brief.semantic_evaluator.runner import (
     prepared_shadow_budget,
     prepare_shadow_run_from_bytes,
 )
-from multi_agent_brief.semantic_evaluator.serialization import canonical_json_bytes
 
 
 POST_FINAL_ASSESSMENT_POLICY_SCHEMA = "briefloop.post_final_assessment_policy_set.v1"
 POST_FINAL_ASSESSMENT_RUN_SCHEMA = "briefloop.post_final_assessment_run.v1"
-# The evaluator's frozen admission boundary intentionally rejects archive roots
-# beneath a declared workspace.  Keep this local evidence outside that input
-# tree, while deriving it solely from the resolved workspace identity; no CLI
-# path or persisted local path becomes authority.
-_ARCHIVE_DIRECTORY = ".briefloop-post-final-laj"
-_FINALIZED_LINEAGE_SCHEMA = "briefloop.post_final_assessment_finalized_lineage.v2"
-_FINALIZED_REPORT_MEDIA_TYPE = "text/markdown"
-_POST_FINAL_ASSESSMENT_RECEIPT_TYPES = frozenset(
-    {
-        "post_final_assessment_policy",
-        "post_final_assessment_claim",
-        "post_final_assessment_series_claim",
-        "post_final_assessment_result",
-        "post_final_finding_disposition",
-        "post_final_guidance_draft",
-        "post_final_guidance_status",
-    }
-)
-
-
-class PostFinalAssessmentError(RuntimeError):
-    """Stable, value-free product failure."""
+READER_REVIEW_ASSESSMENT_KIND = "reader_review"
+READER_REVIEW_REPORT_TYPE = "management_monthly"
+READER_REVIEW_LANGUAGE = "en"
+READER_REVIEW_PROJECTION_VERSION = "reader_review_projection_v1"
+READER_REVIEW_MAX_PROVIDER_CALLS = 2
+READER_REVIEW_MAX_TOTAL_INPUT_TOKENS = 400_000
+READER_REVIEW_MAX_TOTAL_OUTPUT_TOKENS = 8_192
+READER_REVIEW_MAX_OUTPUT_TOKENS_PER_CALL = 4_096
 
 
 class PostFinalAssessmentPolicyInput(StrictModel):
@@ -113,6 +118,11 @@ class PostFinalAssessmentPolicyInput(StrictModel):
     max_total_output_tokens: int
     max_output_tokens_per_call: int
     public_safe_egress_attested: bool
+    assessment_kind: Optional[str] = None
+    report_type: Optional[str] = None
+    language: Optional[str] = None
+    disclosure_confirmed: Optional[bool] = None
+    cost_status: Optional[str] = None
 
 
 class PostFinalAssessmentRunInput(StrictModel):
@@ -139,6 +149,7 @@ class PostFinalAssessmentRunInput(StrictModel):
     max_total_input_tokens: int
     max_total_output_tokens: int
     max_output_tokens_per_call: int
+    reader_review_authorization_fingerprint: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -167,6 +178,7 @@ def _build_next_assessment_command(
     human_request_id: str,
     assessment_purpose: str,
     abandon_predecessor: bool,
+    reader_review_authorization_fingerprint: str | None = None,
 ) -> PostFinalAssessmentRunInput:
     """Build the strict next-run authorization from verified read inputs only."""
 
@@ -229,6 +241,9 @@ def _build_next_assessment_command(
         "max_total_input_tokens": policy.max_total_input_tokens,
         "max_total_output_tokens": policy.max_total_output_tokens,
         "max_output_tokens_per_call": policy.max_output_tokens_per_call,
+        "reader_review_authorization_fingerprint": (
+            reader_review_authorization_fingerprint
+        ),
     }
     try:
         return PostFinalAssessmentRunInput.model_validate(payload, strict=True)
@@ -245,37 +260,8 @@ def _utc_now() -> str:
     )
 
 
-def _canonical_sha256(value: object) -> str:
-    return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
-
-
 def _id(prefix: str, value: object) -> str:
     return f"{prefix}-{_canonical_sha256(value)[:24]}"
-
-
-def _record_fingerprint(payload: Mapping[str, object], field: str) -> str:
-    canonical = dict(payload)
-    canonical.pop(field, None)
-    return _canonical_sha256(canonical)
-
-
-def post_final_assessment_archive_root(workspace: str | Path) -> Path:
-    """Derive the sole local evidence root without making it product authority.
-
-    The frozen evaluator admission boundary rejects a root inside the declared
-    BriefLoop workspace. This package-owned sibling location is therefore
-    derived only from the resolved workspace placement; callers cannot select
-    it and the resulting local path is never recorded in Store evidence.
-    """
-
-    resolved_workspace = Path(workspace).expanduser().resolve()
-    workspace_identity = _canonical_sha256(
-        {
-            "schema": "briefloop.post_final_assessment_archive_root.v1",
-            "workspace_path": str(resolved_workspace),
-        }
-    )
-    return resolved_workspace.parent / _ARCHIVE_DIRECTORY / workspace_identity
 
 
 def _event(
@@ -304,7 +290,12 @@ def _event(
     )
 
 
-def _bounded_context_from_direction(binding: Any, *, run_id: str) -> BoundedContext:
+def _bounded_context_from_direction(
+    binding: Any,
+    *,
+    run_id: str,
+    language: str = "zh-CN",
+) -> BoundedContext:
     direction = binding.run_direction
     rows: list[tuple[str, str, str, str]] = [
         (
@@ -348,6 +339,7 @@ def _bounded_context_from_direction(binding: Any, *, run_id: str) -> BoundedCont
         context_id=_id("pf-laj-context", {"run_id": run_id, "rows": rows}),
         data_class="public",
         requirements=requirements,
+        language=language,
     )
 
 
@@ -366,390 +358,25 @@ def _terminal_class(view: Any) -> str:
     return "unavailable"
 
 
-def _require_current_finalized_action(
-    facts: Any,
-    action: CoreRunNextAction,
-) -> CoreRunNextAction:
-    """Require the current verified Core action to be exact finalized-local."""
+def _require_reader_review_direction(binding: Any) -> None:
+    """Require the frozen RunDirection supported by Reader Review v3.
 
-    if (
-        facts.terminal_state != "finalized_local"
-        or action.run_id != facts.run_id
-        or action.store_revision != facts.store_revision
-        or action.action_kind != "complete"
-        or action.effect_kind != "finalized_local"
-        or action.reason_code != "local_finalization_complete"
-        or action.stage_id is not None
-        or action.role_id is not None
-        or action.source_route_id is not None
-        or action.source_provider_id is not None
-        or action.request_schema_id is not None
-        or action.action_fingerprint != facts.terminal_action_fingerprint
-    ):
-        raise PostFinalAssessmentError("control_store_integrity_invalid")
-    return action
-
-
-def finalized_lineage_fingerprint(
-    facts: Any,
-    action: CoreRunNextAction,
-) -> str:
-    """Return the PF-LAJ request-slot identity for immutable finalized facts.
-
-    ``FinalizedLocalReviewFacts.facts_fingerprint`` deliberately includes the
-    current Store revision.  This PF-LAJ-owned digest binds only the immutable
-    finalized-local lineage and never replaces the strict facts fingerprint.
+    Reader Review is an exact profile admission, not a request-field hint.  A
+    caller can enter through ``policy_set`` or the generic assessment command
+    APIs, so every such path must consult the same frozen direction before it
+    is allowed to prepare or recover evaluator evidence.
     """
 
-    _require_current_finalized_action(facts, action)
     try:
-        gate_bindings = [
-            item.model_dump(mode="json", exclude_unset=False)
-            for item in facts.gate_bindings
-        ]
-        if gate_bindings != sorted(
-            gate_bindings,
-            key=lambda item: (item["gate_id"], item["evaluation_id"]),
-        ):
-            raise ValueError("gate bindings are not canonical")
-        payload = {
-            "schema_version": _FINALIZED_LINEAGE_SCHEMA,
-            "workspace_id": facts.workspace_id,
-            "run_id": facts.run_id,
-            "terminal_state": "finalized_local",
-            "terminal_action_kind": "complete",
-            "terminal_effect_kind": "finalized_local",
-            "terminal_reason_code": "local_finalization_complete",
-            "finalization_id": facts.finalization_id,
-            "finalization_receipt_id": facts.finalization_receipt_id,
-            "finalize_gate_batch_id": facts.finalize_gate_batch_id,
-            "gate_bindings": gate_bindings,
-            "report": {
-                "artifact_id": facts.report.artifact_id,
-                "artifact_revision": facts.report.artifact_revision,
-                "sha256": facts.report.sha256,
-                "media_type": _FINALIZED_REPORT_MEDIA_TYPE,
-                "size_bytes": facts.report.size_bytes,
-            },
-        }
-    except (AttributeError, KeyError, TypeError, ValueError) as exc:
-        raise PostFinalAssessmentError("control_store_integrity_invalid") from exc
-    return _canonical_sha256(payload)
-
-
-def reassessed_facts_fingerprint(
-    facts: Any,
-    action: CoreRunNextAction,
-    *,
-    claim_prior_revision: int,
-) -> str:
-    """Reconstruct the exact facts digest assessed immediately before claim."""
-
-    if (
-        type(claim_prior_revision) is not int
-        or claim_prior_revision < 1
-        or claim_prior_revision > facts.store_revision
-    ):
-        raise PostFinalAssessmentError("control_store_integrity_invalid")
-    _require_current_finalized_action(facts, action)
-    try:
-        action_payload = action.model_dump(mode="json", exclude_unset=False)
-        action_payload["store_revision"] = claim_prior_revision
-        action_payload.pop("action_fingerprint", None)
-        action_payload["action_fingerprint"] = canonical_fingerprint(action_payload)
-        assessed_action = CoreRunNextAction.model_validate(action_payload, strict=True)
-        payload = facts.model_dump(mode="json", exclude={"facts_fingerprint"})
-        payload["store_revision"] = claim_prior_revision
-        payload["terminal_action_fingerprint"] = assessed_action.action_fingerprint
-        return type(facts).fingerprint_for(payload)
-    except (AttributeError, TypeError, ValidationError, ValueError) as exc:
-        raise PostFinalAssessmentError("control_store_integrity_invalid") from exc
-
-
-def _request_has_exact_finalized_bindings(
-    request: PostFinalAssessmentRequestRecord,
-    facts: Any,
-    action: CoreRunNextAction,
-) -> bool:
-    return (
-        request.run_id == facts.run_id
-        and request.report_artifact_id == facts.report.artifact_id
-        and request.report_revision == facts.report.artifact_revision
-        and request.report_sha256 == facts.report.sha256
-        and request.finalization_id == facts.finalization_id
-        and request.finalization_receipt_id == facts.finalization_receipt_id
-        and request.finalize_gate_batch_id == facts.finalize_gate_batch_id
-        and request.finalized_lineage_fingerprint
-        == finalized_lineage_fingerprint(facts, action)
-    )
-
-
-def _require_advisory_only_receipt_suffix(
-    snapshot: Any,
-    facts: Any,
-    claim_receipt: Any,
-) -> None:
-    """Reject any post-claim run receipt outside the PF-LAJ advisory family."""
-
-    suffix = sorted(
-        (
-            item
-            for item in snapshot.transactions
-            if item.run_id == facts.run_id
-            and item.committed_revision > claim_receipt.prior_revision
-        ),
-        key=lambda item: item.committed_revision,
-    )
-    if not suffix or suffix[0].transaction_id != claim_receipt.transaction_id:
-        raise PostFinalAssessmentError("control_store_integrity_invalid")
-    if any(
-        item.transaction_type not in _POST_FINAL_ASSESSMENT_RECEIPT_TYPES
-        for item in suffix
-    ):
-        raise PostFinalAssessmentError("control_store_integrity_invalid")
-
-
-def resolve_post_final_assessment_series(
-    history: Any,
-    snapshot: Any,
-    facts: Any,
-    action: CoreRunNextAction,
-) -> tuple[PostFinalAssessmentRequestRecord, ...]:
-    """Resolve and reverify the complete request series for one stable lineage."""
-
-    lineage = finalized_lineage_fingerprint(facts, action)
-    requests = list(snapshot.post_final_assessment_requests)
-    matches = [
-        item for item in requests if item.finalized_lineage_fingerprint == lineage
-    ]
-    if not matches:
-        if requests:
-            raise PostFinalAssessmentError("post_final_assessment_stale")
-        return ()
-    matches.sort(key=lambda item: item.assessment_generation)
-    if [item.assessment_generation for item in matches] != list(
-        range(1, len(matches) + 1)
-    ):
-        raise PostFinalAssessmentError("control_store_integrity_invalid")
-    results_by_request = {
-        item.assessment_request_id: item
-        for item in snapshot.post_final_assessment_results
-        if item.finalized_lineage_fingerprint == lineage
-    }
-    abandonments_by_request = {
-        item.assessment_request_id: item
-        for item in snapshot.post_final_assessment_abandonments
-        if item.finalized_lineage_fingerprint == lineage
-    }
-    if set(results_by_request) & set(abandonments_by_request):
-        raise PostFinalAssessmentError("control_store_integrity_invalid")
-    for index, request in enumerate(matches):
-        if not _request_has_exact_finalized_bindings(request, facts, action):
-            raise PostFinalAssessmentError("control_store_integrity_invalid")
-        receipts = [
-            item
-            for item in snapshot.transactions
-            if item.transaction_id == request.accepted_transaction_id
-        ]
-        if len(receipts) != 1:
-            raise PostFinalAssessmentError("control_store_integrity_invalid")
-        receipt = receipts[0]
-        references = [
-            item
-            for item in receipt.post_final_assessment_requests
-            if item.assessment_request_id == request.assessment_request_id
-        ]
-        if (
-            receipt.run_id != request.run_id
-            or receipt.transaction_type
-            not in {
-                "post_final_assessment_claim",
-                "post_final_assessment_series_claim",
-            }
-            or receipt.prior_revision + 1 != receipt.committed_revision
-            or len(receipt.post_final_assessment_requests) != 1
-            or len(references) != 1
-        ):
-            raise PostFinalAssessmentError("control_store_integrity_invalid")
-        _require_advisory_only_receipt_suffix(snapshot, facts, receipt)
-        if (
-            reassessed_facts_fingerprint(
-                facts,
-                action,
-                claim_prior_revision=receipt.prior_revision,
-            )
-            != request.finalized_facts_fingerprint
-        ):
-            raise PostFinalAssessmentError("control_store_integrity_invalid")
-        try:
-            claim_snapshot = history.snapshot_at_revision(
-                request.run_id,
-                receipt.committed_revision,
-            )
-        except Exception as exc:
-            raise PostFinalAssessmentError("control_store_integrity_invalid") from exc
-        if not any(
-            item.assessment_request_id == request.assessment_request_id
-            and item.request_fingerprint == request.request_fingerprint
-            for item in claim_snapshot.post_final_assessment_requests
-        ):
-            raise PostFinalAssessmentError("control_store_integrity_invalid")
-        if index == 0:
-            if request.predecessor_assessment_request_id is not None:
-                raise PostFinalAssessmentError("control_store_integrity_invalid")
-            continue
-        predecessor = matches[index - 1]
-        result = results_by_request.get(predecessor.assessment_request_id)
-        abandonment = abandonments_by_request.get(predecessor.assessment_request_id)
-        if (
-            request.predecessor_assessment_request_id
-            != predecessor.assessment_request_id
-            or request.predecessor_assessment_request_fingerprint
-            != predecessor.request_fingerprint
-            or (result is None) == (abandonment is None)
-        ):
-            raise PostFinalAssessmentError("control_store_integrity_invalid")
-        if result is not None and (
-            request.predecessor_assessment_result_id != result.assessment_result_id
-            or request.predecessor_result_fingerprint != result.result_fingerprint
-            or request.predecessor_abandonment_id is not None
-        ):
-            raise PostFinalAssessmentError("control_store_integrity_invalid")
-        if abandonment is not None and (
-            request.predecessor_abandonment_id != abandonment.abandonment_id
-            or request.predecessor_abandonment_fingerprint
-            != abandonment.abandonment_fingerprint
-            or request.predecessor_assessment_result_id is not None
-        ):
-            raise PostFinalAssessmentError("control_store_integrity_invalid")
-    return tuple(matches)
-
-
-def resolve_current_post_final_assessment_request(
-    history: Any,
-    snapshot: Any,
-    facts: Any,
-    action: CoreRunNextAction,
-) -> PostFinalAssessmentRequestRecord | None:
-    """Resolve generation one only; automatic observation never advances a series."""
-
-    series = resolve_post_final_assessment_series(
-        history,
-        snapshot,
-        facts,
-        action,
-    )
-    return None if not series else series[0]
-
-
-def resolve_post_final_assessment_request_by_id(
-    history: Any,
-    snapshot: Any,
-    facts: Any,
-    action: CoreRunNextAction,
-    assessment_request_id: str,
-) -> PostFinalAssessmentRequestRecord:
-    """Resolve one explicit request without any implicit head/latest selection."""
-
-    matches = [
-        item
-        for item in resolve_post_final_assessment_series(
-            history, snapshot, facts, action
+        direction = binding.run_direction
+        supported = (
+            direction.report_type == READER_REVIEW_REPORT_TYPE
+            and direction.output_language == READER_REVIEW_LANGUAGE
         )
-        if item.assessment_request_id == assessment_request_id
-    ]
-    if len(matches) != 1:
-        raise PostFinalAssessmentError("assessment_request_not_found")
-    return matches[0]
-
-
-def resolve_current_post_final_assessment_result(
-    snapshot: Any,
-    request: PostFinalAssessmentRequestRecord,
-) -> PostFinalAssessmentResultRecord | None:
-    """Resolve one exact Store-qualified result without touching its archive."""
-
-    matches = [
-        item
-        for item in snapshot.post_final_assessment_results
-        if item.assessment_request_id == request.assessment_request_id
-    ]
-    if len(matches) > 1:
-        raise PostFinalAssessmentError("control_store_integrity_invalid")
-    if any(
-        item.assessment_request_id == request.assessment_request_id
-        for item in snapshot.post_final_assessment_abandonments
-    ):
-        if matches:
-            raise PostFinalAssessmentError("control_store_integrity_invalid")
-        return None
-    if not matches:
-        return None
-    result = matches[0]
-    if (
-        result.policy_revision_id != request.policy_revision_id
-        or result.finalized_facts_fingerprint != request.finalized_facts_fingerprint
-        or result.finalized_lineage_fingerprint != request.finalized_lineage_fingerprint
-        or result.result_fingerprint
-        != _record_fingerprint(
-            result.model_dump(mode="json", warnings="error"),
-            "result_fingerprint",
-        )
-    ):
-        raise PostFinalAssessmentError("post_final_assessment_binding_invalid")
-    return result
-
-
-def _resolve_current_post_final_assessment_policy(
-    snapshot: Any,
-    run_id: str,
-) -> PostFinalAssessmentPolicyRevision | None:
-    """Return the one current policy by receipt order, never wall-clock ties."""
-
-    policies = [
-        item
-        for item in snapshot.post_final_assessment_policy_revisions
-        if item.run_id == run_id
-    ]
-    if not policies:
-        return None
-    receipts = {item.transaction_id: item for item in snapshot.transactions}
-    ordered: list[tuple[int, PostFinalAssessmentPolicyRevision]] = []
-    try:
-        for policy in policies:
-            receipt = receipts.get(policy.accepted_transaction_id)
-            if (
-                receipt is None
-                or receipt.run_id != run_id
-                or receipt.transaction_type != "post_final_assessment_policy"
-                or receipt.prior_revision + 1 != receipt.committed_revision
-            ):
-                raise ValueError("policy receipt is invalid")
-            ordered.append((receipt.committed_revision, policy))
-        ordered.sort(key=lambda item: item[0])
-        if len({revision for revision, _policy in ordered}) != len(ordered):
-            raise ValueError("policy receipts are not unique")
-        previous_policy_id: str | None = None
-        for _revision, policy in ordered:
-            if policy.previous_policy_revision_id != previous_policy_id:
-                raise ValueError("policy chain is not append-only")
-            previous_policy_id = policy.policy_revision_id
-    except (AttributeError, TypeError, ValueError) as exc:
-        raise PostFinalAssessmentError("control_store_integrity_invalid") from exc
-    return ordered[-1][1]
-
-
-def resolve_current_post_final_assessment_policy(
-    snapshot: Any,
-    facts: Any,
-) -> PostFinalAssessmentPolicyRevision | None:
-    """Return the current policy for the finalized-facts run."""
-
-    try:
-        run_id = facts.run_id
-    except AttributeError as exc:
-        raise PostFinalAssessmentError("control_store_integrity_invalid") from exc
-    return _resolve_current_post_final_assessment_policy(snapshot, run_id)
+    except AttributeError:
+        supported = False
+    if not supported:
+        raise PostFinalAssessmentError("reader_review_not_supported")
 
 
 class PostFinalAssessmentService:
@@ -966,6 +593,16 @@ class PostFinalAssessmentService:
             or request.max_output_tokens_per_call < 1
             or request.max_output_tokens_per_call > request.max_total_output_tokens
             or not request.public_safe_egress_attested
+            or (
+                request.reader_review_authorization_fingerprint is not None
+                and (
+                    len(request.reader_review_authorization_fingerprint) != 64
+                    or any(
+                        character not in "0123456789abcdef"
+                        for character in request.reader_review_authorization_fingerprint
+                    )
+                )
+            )
         )
         predecessor_values = (
             request.predecessor_assessment_request_id,
@@ -1027,6 +664,21 @@ class PostFinalAssessmentService:
         command = self._validate_run_input(command.model_dump(mode="json"))
         if any(item.human_request_id == command.human_request_id for item in series):
             raise PostFinalAssessmentError("assessment_human_request_conflict")
+        policy = self._policy_by_id(
+            snapshot,
+            facts.run_id,
+            command.policy_revision_id,
+            command.policy_fingerprint,
+        )
+        reader_review = (
+            policy.schema_version
+            == PostFinalAssessmentPolicyRevision.reader_review_schema_id
+        )
+        if reader_review:
+            # This must precede every predecessor archive probe below.  The
+            # frozen direction, not a request/profile field, is the authority
+            # for Reader Review admission.
+            _require_reader_review_direction(binding)
         if (
             facts.store_revision != command.expected_store_revision
             or command.finalized_lineage_fingerprint
@@ -1084,9 +736,13 @@ class PostFinalAssessmentService:
                 or command.abandon_predecessor
             ):
                 raise PostFinalAssessmentError("assessment_predecessor_conflict")
-            # A Store-qualified zero-advice result has no evidence-bearing
-            # archive to reopen. Nonzero results remain archive-bound.
-            if not self._result_has_zero_advice(predecessor_result):
+            # Generic legacy zero-advice results have no evidence-bearing
+            # archive to reopen. Reader Review results remain archive-bound,
+            # including a completed run with zero findings.
+            if not (
+                self._result_has_zero_advice(predecessor_result)
+                and not self._is_reader_review_result(predecessor_result)
+            ):
                 verified = self._qualify_archive(
                     facts,
                     predecessor,
@@ -1136,15 +792,6 @@ class PostFinalAssessmentService:
                 )
             create_abandonment = True
 
-        try:
-            policy = self._policy_by_id(
-                snapshot,
-                facts.run_id,
-                command.policy_revision_id,
-                command.policy_fingerprint,
-            )
-        except PostFinalAssessmentError:
-            raise
         if (
             not policy.enabled
             or not policy.public_safe_egress_attested
@@ -1163,7 +810,17 @@ class PostFinalAssessmentService:
             )
         ):
             raise PostFinalAssessmentError("post_final_assessment_policy_conflict")
-        context = _bounded_context_from_direction(binding, run_id=facts.run_id)
+        if (
+            policy.schema_version
+            == PostFinalAssessmentPolicyRevision.reader_review_schema_id
+            and command.reader_review_authorization_fingerprint is None
+        ):
+            raise PostFinalAssessmentError("reader_review_authorization_invalid")
+        context = _bounded_context_from_direction(
+            binding,
+            run_id=facts.run_id,
+            language=policy.language or "zh-CN",
+        )
         if (
             policy.bounded_context_sha256 != context.context_sha256
             or policy.bounded_context != context.model_dump(mode="json")
@@ -1192,6 +849,7 @@ class PostFinalAssessmentService:
                 archive_root=self._archive_root,
                 workspace_root=self.workspace,
                 messages_endpoint=policy.messages_endpoint,
+                profile_id=policy.profile_id,
             )
         except (SemanticEvaluatorError, ValidationError, ValueError) as exc:
             raise PostFinalAssessmentError("preflight_invalid") from exc
@@ -1287,7 +945,11 @@ class PostFinalAssessmentService:
             request.policy_revision_id,
             request.policy_fingerprint,
         )
-        context = _bounded_context_from_direction(binding, run_id=facts.run_id)
+        context = _bounded_context_from_direction(
+            binding,
+            run_id=facts.run_id,
+            language=policy.language or "zh-CN",
+        )
         if (
             policy.bounded_context_sha256 != context.context_sha256
             or policy.bounded_context != context.model_dump(mode="json")
@@ -1305,6 +967,7 @@ class PostFinalAssessmentService:
             archive_root=self._archive_root,
             workspace_root=self.workspace,
             messages_endpoint=policy.messages_endpoint,
+            profile_id=policy.profile_id,
         )
 
     def _validate_policy_input(
@@ -1324,6 +987,7 @@ class PostFinalAssessmentService:
             raise PostFinalAssessmentError(
                 "post_final_assessment_policy_invalid"
             ) from exc
+        reader_review = request.assessment_kind is not None
         if (
             config.provider_id != ANTHROPIC_PROVIDER_ID
             or config.model_id != request.requested_model_id
@@ -1339,16 +1003,388 @@ class PostFinalAssessmentService:
             or request.max_output_tokens_per_call < 1
             or request.max_output_tokens_per_call > request.max_total_output_tokens
             or (request.enabled and not request.public_safe_egress_attested)
+            or (
+                reader_review
+                and (
+                    request.assessment_kind != READER_REVIEW_ASSESSMENT_KIND
+                    or request.report_type != READER_REVIEW_REPORT_TYPE
+                    or request.language != READER_REVIEW_LANGUAGE
+                    or request.disclosure_confirmed is not True
+                    or request.cost_status != "not_measured"
+                    or config.language != READER_REVIEW_LANGUAGE
+                    or request.enabled is not True
+                    or request.auto_run
+                    or request.auto_open
+                    or request.max_provider_calls != READER_REVIEW_MAX_PROVIDER_CALLS
+                    or request.max_total_input_tokens
+                    != READER_REVIEW_MAX_TOTAL_INPUT_TOKENS
+                    or request.max_total_output_tokens
+                    != READER_REVIEW_MAX_TOTAL_OUTPUT_TOKENS
+                    or request.max_output_tokens_per_call
+                    != READER_REVIEW_MAX_OUTPUT_TOKENS_PER_CALL
+                )
+            )
+            or (
+                not reader_review
+                and (
+                    any(
+                        item is not None
+                        for item in (
+                            request.report_type,
+                            request.language,
+                            request.disclosure_confirmed,
+                            request.cost_status,
+                        )
+                    )
+                    or config.language != "zh-CN"
+                )
+            )
         ):
             raise PostFinalAssessmentError("post_final_assessment_policy_invalid")
         return request, config
+
+    @staticmethod
+    def _validate_reader_review_input(
+        value: Mapping[str, object],
+    ) -> ReaderReviewAssessmentInput:
+        try:
+            request = ReaderReviewAssessmentInput.model_validate(value, strict=True)
+            if (
+                canonical_messages_endpoint_v1(request.messages_endpoint)
+                != request.messages_endpoint
+                or request.expected_model_identity != request.model_version
+            ):
+                raise ValueError("reader_review_request_invalid")
+        except (TypeError, ValidationError, ValueError) as exc:
+            raise PostFinalAssessmentError("reader_review_request_invalid") from exc
+        return request
+
+    @staticmethod
+    def _reader_review_instrument(
+        request: ReaderReviewAssessmentInput,
+    ) -> InstrumentConfig:
+        payload = {
+            "schema_version": InstrumentConfig.schema_id,
+            "instrument_config_id": _id(
+                "reader-review-instrument",
+                {
+                    "model_id": request.requested_model_id,
+                    "model_version": request.model_version,
+                },
+            ),
+            "provider_id": ANTHROPIC_PROVIDER_ID,
+            "model_id": request.requested_model_id,
+            "model_version": request.model_version,
+            "language": READER_REVIEW_LANGUAGE,
+            "decoding": {
+                "temperature": 1.0,
+                "top_p": 1.0,
+                "max_output_tokens": READER_REVIEW_MAX_OUTPUT_TOKENS_PER_CALL,
+                "seed": None,
+            },
+            "retry_policy": {
+                "max_attempts": 1,
+                "retryable_reason_codes": [],
+                "backoff_schedule_ms": [],
+            },
+            "prompt_sizer": {
+                "sizer_id": "anthropic_utf8_bytes_conservative_v1",
+                "sizer_version": "anthropic_utf8_bytes_conservative_v1",
+                "max_context_tokens": 200_000,
+                "reserved_output_tokens": (READER_REVIEW_MAX_OUTPUT_TOKENS_PER_CALL),
+            },
+            "transport_policy": {
+                "provider_transport_only": True,
+                "model_tools": False,
+                "browser": False,
+                "cross_run_memory": False,
+                "provider_file_search": False,
+            },
+        }
+        try:
+            return InstrumentConfig.model_validate(payload, strict=True)
+        except ValidationError as exc:
+            raise PostFinalAssessmentError("reader_review_request_invalid") from exc
+
+    @staticmethod
+    def _reader_review_authorization_fingerprint(
+        request: ReaderReviewAssessmentInput,
+        *,
+        facts: Any,
+        action: CoreRunNextAction,
+    ) -> str:
+        return _canonical_sha256(
+            {
+                "schema_version": "briefloop.reader_review_authorization.v1",
+                "command": request.model_dump(mode="json", warnings="error"),
+                "finalized_lineage_fingerprint": finalized_lineage_fingerprint(
+                    facts, action
+                ),
+                "report_artifact_id": facts.report.artifact_id,
+                "report_revision": facts.report.artifact_revision,
+                "report_sha256": facts.report.sha256,
+                "assessment_kind": READER_REVIEW_ASSESSMENT_KIND,
+                "report_type": READER_REVIEW_REPORT_TYPE,
+                "language": READER_REVIEW_LANGUAGE,
+                "profile_id": READER_REVIEW_PROFILE_ID,
+                "parser_version": PARSER_VERSION,
+                "projection_version": READER_REVIEW_PROJECTION_VERSION,
+                "max_provider_calls": READER_REVIEW_MAX_PROVIDER_CALLS,
+                "max_total_input_tokens": (READER_REVIEW_MAX_TOTAL_INPUT_TOKENS),
+                "max_total_output_tokens": (READER_REVIEW_MAX_TOTAL_OUTPUT_TOKENS),
+                "max_output_tokens_per_call": (
+                    READER_REVIEW_MAX_OUTPUT_TOKENS_PER_CALL
+                ),
+            }
+        )
+
+    def run_reader_review(
+        self,
+        value: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Run one exact, disclosed Reader Review; replay never redials."""
+
+        try:
+            request = self._validate_reader_review_input(value)
+            facts, snapshot, binding, _workspace_id, history, action = self._load()
+        except PostFinalAssessmentError as exc:
+            return {
+                "ok": False,
+                "status": "invalid",
+                "user_status": "not_assessed",
+                "reason_code": str(exc),
+            }
+        try:
+            _require_reader_review_direction(binding)
+        except PostFinalAssessmentError as exc:
+            return {
+                "ok": False,
+                "status": "unsupported",
+                "user_status": "not_assessed",
+                "reason_code": str(exc),
+            }
+        try:
+            series = self._series_for_facts(history, snapshot, facts, action)
+        except PostFinalAssessmentError as exc:
+            return {
+                "ok": False,
+                "status": "invalid",
+                "user_status": "not_assessed",
+                "reason_code": str(exc),
+            }
+        authorization = self._reader_review_authorization_fingerprint(
+            request,
+            facts=facts,
+            action=action,
+        )
+        existing = next(
+            (
+                item
+                for item in series
+                if item.human_request_id == request.human_request_id
+            ),
+            None,
+        )
+        if existing is not None:
+            if (
+                existing.schema_version
+                != PostFinalAssessmentRequestRecord.reader_review_schema_id
+                or existing.human_actor_id != request.human_actor_id
+                or existing.reader_review_authorization_fingerprint != authorization
+            ):
+                return {
+                    "ok": False,
+                    "status": "conflict",
+                    "user_status": "not_assessed",
+                    "reason_code": "reader_review_human_request_conflict",
+                }
+            stored = next(
+                (
+                    item
+                    for item in snapshot.post_final_assessment_results
+                    if item.assessment_request_id == existing.assessment_request_id
+                ),
+                None,
+            )
+            if stored is not None:
+                return self._qualify_archive(
+                    facts,
+                    existing,
+                    str(trial_archive_path(self._archive_root, existing.trial_id)),
+                )
+            replay = self.retry(existing.assessment_request_id)
+            return {
+                **replay,
+                "user_status": replay.get(
+                    "user_status",
+                    (
+                        "unable_to_assess"
+                        if replay.get("status") == "pending"
+                        else "not_assessed"
+                    ),
+                ),
+            }
+
+        if series:
+            predecessor = series[-1]
+            has_result = any(
+                item.assessment_request_id == predecessor.assessment_request_id
+                for item in snapshot.post_final_assessment_results
+            )
+            has_abandonment = any(
+                item.assessment_request_id == predecessor.assessment_request_id
+                for item in snapshot.post_final_assessment_abandonments
+            )
+            if not has_result and not has_abandonment:
+                return {
+                    "ok": False,
+                    "status": "needs_human",
+                    "user_status": "not_assessed",
+                    "reason_code": (
+                        "post_final_assessment_predecessor_outcome_unknown"
+                    ),
+                }
+
+        config = self._reader_review_instrument(request)
+        context = _bounded_context_from_direction(
+            binding,
+            run_id=facts.run_id,
+            language=READER_REVIEW_LANGUAGE,
+        )
+        preflight = prepare_shadow_run_from_bytes(
+            report_bytes=facts.report.markdown_utf8,
+            bounded_context=context,
+            instrument_config=config,
+            trial_id=_id("reader-review-preflight", authorization),
+            archive_root=self._archive_root,
+            workspace_root=self.workspace,
+            messages_endpoint=request.messages_endpoint,
+            profile_id=READER_REVIEW_PROFILE_ID,
+        )
+        if isinstance(preflight, ShadowRunResult):
+            return {
+                "ok": False,
+                "status": "invalid",
+                "user_status": "not_assessed",
+                "reason_code": (
+                    preflight.reason_codes[0]
+                    if preflight.reason_codes
+                    else "preflight_invalid"
+                ),
+            }
+        budget = prepared_shadow_budget(preflight)
+        if (
+            budget.prompt_count != 2
+            or budget.provider_call_ceiling > READER_REVIEW_MAX_PROVIDER_CALLS
+            or budget.total_input_token_upper_bound
+            > READER_REVIEW_MAX_TOTAL_INPUT_TOKENS
+            or budget.total_output_token_upper_bound
+            > READER_REVIEW_MAX_TOTAL_OUTPUT_TOKENS
+            or budget.per_call_output_token_cap
+            > READER_REVIEW_MAX_OUTPUT_TOKENS_PER_CALL
+        ):
+            return {
+                "ok": False,
+                "status": "budget_blocked",
+                "user_status": "not_assessed",
+                "reason_code": "budget_exceeded",
+            }
+        policy_request_id = _id(
+            "reader-review-policy-request",
+            {
+                "human_request_id": request.human_request_id,
+                "authorization": authorization,
+            },
+        )
+        policy_payload = {
+            "schema_version": POST_FINAL_ASSESSMENT_POLICY_SCHEMA,
+            "human_actor_id": request.human_actor_id,
+            "human_request_id": policy_request_id,
+            "enabled": True,
+            "auto_run": False,
+            "auto_open": False,
+            "messages_endpoint": request.messages_endpoint,
+            "requested_model_id": request.requested_model_id,
+            "model_version": request.model_version,
+            "expected_model_identity": request.expected_model_identity,
+            "instrument_config": config.model_dump(mode="json", warnings="error"),
+            "max_provider_calls": READER_REVIEW_MAX_PROVIDER_CALLS,
+            "max_total_input_tokens": READER_REVIEW_MAX_TOTAL_INPUT_TOKENS,
+            "max_total_output_tokens": READER_REVIEW_MAX_TOTAL_OUTPUT_TOKENS,
+            "max_output_tokens_per_call": (READER_REVIEW_MAX_OUTPUT_TOKENS_PER_CALL),
+            "public_safe_egress_attested": True,
+            "assessment_kind": READER_REVIEW_ASSESSMENT_KIND,
+            "report_type": READER_REVIEW_REPORT_TYPE,
+            "language": READER_REVIEW_LANGUAGE,
+            "disclosure_confirmed": True,
+            "cost_status": "not_measured",
+        }
+        try:
+            policy_result = self.policy_set(policy_payload)
+            if not policy_result.get("ok"):
+                raise PostFinalAssessmentError("post_final_assessment_policy_invalid")
+            facts, snapshot, _binding, _workspace_id, history, action = self._load()
+            series = self._series_for_facts(history, snapshot, facts, action)
+            policy_matches = [
+                item
+                for item in snapshot.post_final_assessment_policy_revisions
+                if item.policy_revision_id == str(policy_result["policy_revision_id"])
+            ]
+            if len(policy_matches) != 1:
+                raise PostFinalAssessmentError("post_final_assessment_policy_conflict")
+            policy = policy_matches[0]
+            results = {
+                item.assessment_request_id: item
+                for item in snapshot.post_final_assessment_results
+            }
+            abandonments = {
+                item.assessment_request_id: item
+                for item in snapshot.post_final_assessment_abandonments
+            }
+            command = _build_next_assessment_command(
+                facts=facts,
+                action=action,
+                policy=policy,
+                series=series,
+                results=results,
+                abandonments=abandonments,
+                human_actor_id=request.human_actor_id,
+                human_request_id=request.human_request_id,
+                assessment_purpose="post_final_review",
+                abandon_predecessor=False,
+                reader_review_authorization_fingerprint=authorization,
+            )
+        except (AttributeError, KeyError, PostFinalAssessmentError) as exc:
+            return {
+                "ok": False,
+                "status": "invalid",
+                "user_status": "not_assessed",
+                "reason_code": str(exc),
+            }
+        result = self.assessment_run(command.model_dump(mode="json", warnings="error"))
+        if "user_status" not in result:
+            result = {
+                **result,
+                "user_status": (
+                    "unable_to_assess"
+                    if result.get("status") == "pending"
+                    else "not_assessed"
+                ),
+            }
+        return result
 
     def policy_set(self, value: Mapping[str, object]) -> dict[str, object]:
         """Append or exactly replay one strict Human policy revision; no provider."""
 
         request, config = self._validate_policy_input(value)
         run_id, snapshot, binding = self._load_policy_context()
-        context = _bounded_context_from_direction(binding, run_id=run_id)
+        if request.assessment_kind == READER_REVIEW_ASSESSMENT_KIND:
+            _require_reader_review_direction(binding)
+        context = _bounded_context_from_direction(
+            binding,
+            run_id=run_id,
+            language=config.language,
+        )
         existing = next(
             (
                 item
@@ -1373,6 +1409,17 @@ class PostFinalAssessmentService:
             "max_output_tokens_per_call": request.max_output_tokens_per_call,
             "public_safe_egress_attested": request.public_safe_egress_attested,
         }
+        reader_review = request.assessment_kind == READER_REVIEW_ASSESSMENT_KIND
+        if reader_review:
+            semantic.update(
+                {
+                    "assessment_kind": READER_REVIEW_ASSESSMENT_KIND,
+                    "report_type": READER_REVIEW_REPORT_TYPE,
+                    "language": READER_REVIEW_LANGUAGE,
+                    "disclosure_confirmed": True,
+                    "cost_status": "not_measured",
+                }
+            )
         if existing is not None:
             existing_semantic = {
                 "enabled": existing.enabled,
@@ -1390,6 +1437,19 @@ class PostFinalAssessmentService:
                 "max_output_tokens_per_call": existing.max_output_tokens_per_call,
                 "public_safe_egress_attested": existing.public_safe_egress_attested,
             }
+            if (
+                existing.schema_version
+                == PostFinalAssessmentPolicyRevision.reader_review_schema_id
+            ):
+                existing_semantic.update(
+                    {
+                        "assessment_kind": existing.assessment_kind,
+                        "report_type": existing.report_type,
+                        "language": existing.language,
+                        "disclosure_confirmed": existing.disclosure_confirmed,
+                        "cost_status": existing.cost_status,
+                    }
+                )
             if existing_semantic != semantic:
                 raise PostFinalAssessmentError("post_final_assessment_policy_conflict")
             receipt = next(
@@ -1416,7 +1476,11 @@ class PostFinalAssessmentService:
         transaction_id = _id("pf-laj-policy-tx", identity)
         event_id = _id("pf-laj-policy-event", identity)
         payload: dict[str, object] = {
-            "schema_version": PostFinalAssessmentPolicyRevision.schema_id,
+            "schema_version": (
+                PostFinalAssessmentPolicyRevision.reader_review_schema_id
+                if reader_review
+                else PostFinalAssessmentPolicyRevision.schema_id
+            ),
             "policy_revision_id": policy_revision_id,
             "run_id": run_id,
             "previous_policy_revision_id": (
@@ -1429,7 +1493,11 @@ class PostFinalAssessmentService:
             "messages_endpoint_sha256": hashlib.sha256(
                 request.messages_endpoint.encode("utf-8")
             ).hexdigest(),
-            "profile_id": "research_design_report_zh_v1",
+            "profile_id": (
+                READER_REVIEW_PROFILE_ID
+                if reader_review
+                else "research_design_report_zh_v1"
+            ),
             "instrument_config_sha256": _canonical_sha256(
                 config.model_dump(mode="json")
             ),
@@ -1584,7 +1652,23 @@ class PostFinalAssessmentService:
                 )
             except PostFinalAssessmentError as exc:
                 return {"ok": False, "status": "invalid", "reason_code": str(exc)}
-        context = _bounded_context_from_direction(binding, run_id=facts.run_id)
+        if (
+            policy.schema_version
+            == PostFinalAssessmentPolicyRevision.reader_review_schema_id
+        ):
+            try:
+                _require_reader_review_direction(binding)
+            except PostFinalAssessmentError as exc:
+                return {
+                    "ok": False,
+                    "status": "unsupported",
+                    "reason_code": str(exc),
+                }
+        context = _bounded_context_from_direction(
+            binding,
+            run_id=facts.run_id,
+            language=policy.language or "zh-CN",
+        )
         if (
             policy.bounded_context_sha256 != context.context_sha256
             or policy.bounded_context != context.model_dump(mode="json")
@@ -1603,7 +1687,9 @@ class PostFinalAssessmentService:
             except PostFinalAssessmentError as exc:
                 return {"ok": False, "status": "invalid", "reason_code": str(exc)}
             if stored_result is not None:
-                if self._result_has_zero_advice(stored_result):
+                if self._result_has_zero_advice(
+                    stored_result
+                ) and not self._is_reader_review_result(stored_result):
                     return self._stored_result_replay(stored_result)
                 return self._qualify_archive(
                     facts,
@@ -1628,6 +1714,7 @@ class PostFinalAssessmentService:
                 archive_root=self._archive_root,
                 workspace_root=self.workspace,
                 messages_endpoint=policy.messages_endpoint,
+                profile_id=policy.profile_id,
             )
         except (SemanticEvaluatorError, ValidationError, ValueError) as exc:
             return {
@@ -1824,6 +1911,8 @@ class PostFinalAssessmentService:
                 "ok": False,
                 "status": "needs_human"
                 if str(exc) == "post_final_assessment_predecessor_outcome_unknown"
+                else "unsupported"
+                if str(exc) == "reader_review_not_supported"
                 else "invalid",
                 "reason_code": str(exc),
             }
@@ -1865,6 +1954,18 @@ class PostFinalAssessmentService:
             ),
             None,
         )
+        if existing is not None and (
+            existing.schema_version
+            == PostFinalAssessmentRequestRecord.reader_review_schema_id
+        ):
+            try:
+                _require_reader_review_direction(binding)
+            except PostFinalAssessmentError as exc:
+                return {
+                    "ok": False,
+                    "status": "unsupported",
+                    "reason_code": str(exc),
+                }
         if existing is not None:
             if (
                 existing.authorization_fingerprint != authorization_fingerprint
@@ -1911,6 +2012,8 @@ class PostFinalAssessmentService:
                 }
                 else "budget_blocked"
                 if reason_code == "budget_exceeded"
+                else "unsupported"
+                if reason_code == "reader_review_not_supported"
                 else "unavailable"
                 if reason_code
                 in {"preflight_invalid", "checkout_publication_unsupported"}
@@ -1978,7 +2081,23 @@ class PostFinalAssessmentService:
             )
         except PostFinalAssessmentError as exc:
             return {"ok": False, "status": "invalid", "reason_code": str(exc)}
-        context = _bounded_context_from_direction(binding, run_id=facts.run_id)
+        if (
+            policy.schema_version
+            == PostFinalAssessmentPolicyRevision.reader_review_schema_id
+        ):
+            try:
+                _require_reader_review_direction(binding)
+            except PostFinalAssessmentError as exc:
+                return {
+                    "ok": False,
+                    "status": "unsupported",
+                    "reason_code": str(exc),
+                }
+        context = _bounded_context_from_direction(
+            binding,
+            run_id=facts.run_id,
+            language=policy.language or "zh-CN",
+        )
         if (
             policy.bounded_context_sha256 != context.context_sha256
             or policy.bounded_context != context.model_dump(mode="json")
@@ -2000,7 +2119,9 @@ class PostFinalAssessmentService:
             # bind, so it replays directly. Anything else must be qualified
             # against the archive on disk, or a different self-valid archive
             # would replay a result bound to evidence it does not contain.
-            if self._result_has_zero_advice(stored_result):
+            if self._result_has_zero_advice(
+                stored_result
+            ) and not self._is_reader_review_result(stored_result):
                 return self._stored_result_replay(stored_result)
             return self._qualify_archive(
                 facts,
@@ -2234,8 +2355,16 @@ class PostFinalAssessmentService:
             )
             predecessor_abandonment = abandonment
         admission = prepared.admission
+        reader_review = (
+            policy.schema_version
+            == PostFinalAssessmentPolicyRevision.reader_review_schema_id
+        )
         payload: dict[str, object] = {
-            "schema_version": PostFinalAssessmentRequestRecord.series_schema_id,
+            "schema_version": (
+                PostFinalAssessmentRequestRecord.reader_review_schema_id
+                if reader_review
+                else PostFinalAssessmentRequestRecord.series_schema_id
+            ),
             "assessment_request_id": request_id,
             "run_id": facts.run_id,
             "finalized_facts_fingerprint": facts.facts_fingerprint,
@@ -2305,6 +2434,23 @@ class PostFinalAssessmentService:
             "human_request_id": command.human_request_id,
             "authorization_fingerprint": authorization_fingerprint,
         }
+        if reader_review:
+            payload.update(
+                {
+                    "assessment_kind": READER_REVIEW_ASSESSMENT_KIND,
+                    "report_type": READER_REVIEW_REPORT_TYPE,
+                    "language": READER_REVIEW_LANGUAGE,
+                    "model_version": policy.model_version,
+                    "parser_version": PARSER_VERSION,
+                    "projection_version": READER_REVIEW_PROJECTION_VERSION,
+                    "disclosure_confirmed": True,
+                    "public_safe_egress_attested": True,
+                    "cost_status": "not_measured",
+                    "reader_review_authorization_fingerprint": (
+                        command.reader_review_authorization_fingerprint
+                    ),
+                }
+            )
         payload["request_fingerprint"] = _record_fingerprint(
             payload,
             "request_fingerprint",
@@ -2478,6 +2624,11 @@ class PostFinalAssessmentService:
                 "status": existing.terminal_evidence_class,
                 "assessment_result_id": existing.assessment_result_id,
                 "assessment_result_fingerprint": existing.result_fingerprint,
+                **(
+                    {"user_status": existing.reader_review_status}
+                    if existing.reader_review_status is not None
+                    else {}
+                ),
             }
         try:
             with SQLiteControlStore.open(self._database_path) as store:
@@ -2489,8 +2640,16 @@ class PostFinalAssessmentService:
                 result_id = _id("pf-laj-result", identity)
                 transaction_id = _id("pf-laj-result-tx", identity)
                 event_id = _id("pf-laj-result-event", identity)
+                reader_review = (
+                    request.schema_version
+                    == PostFinalAssessmentRequestRecord.reader_review_schema_id
+                )
                 payload: dict[str, object] = {
-                    "schema_version": PostFinalAssessmentResultRecord.schema_id,
+                    "schema_version": (
+                        PostFinalAssessmentResultRecord.reader_review_schema_id
+                        if reader_review
+                        else PostFinalAssessmentResultRecord.schema_id
+                    ),
                     "assessment_result_id": result_id,
                     "run_id": facts.run_id,
                     "assessment_request_id": request.assessment_request_id,
@@ -2514,6 +2673,38 @@ class PostFinalAssessmentService:
                     "result_event_id": event_id,
                     "accepted_transaction_id": transaction_id,
                 }
+                if reader_review:
+                    view_payload = view.model_dump(mode="json", warnings="error")
+                    requirement_states = [
+                        item.state for item in view.requirement_assessments
+                    ]
+                    payload.update(
+                        {
+                            "assessment_kind": READER_REVIEW_ASSESSMENT_KIND,
+                            "report_type": READER_REVIEW_REPORT_TYPE,
+                            "language": READER_REVIEW_LANGUAGE,
+                            "profile_id": READER_REVIEW_PROFILE_ID,
+                            "model_version": request.model_version,
+                            "expected_model_identity": (
+                                request.expected_model_identity
+                            ),
+                            "parser_version": PARSER_VERSION,
+                            "projection_version": (READER_REVIEW_PROJECTION_VERSION),
+                            "reader_review_status": (
+                                derive_reader_review_result_status(
+                                    terminal_evidence_class=_terminal_class(view),
+                                    assessed_unit_count=view.assessed_unit_count,
+                                    finding_count=view.finding_count,
+                                    withheld_finding_count=(
+                                        view.withheld_finding_count
+                                    ),
+                                    abstention_count=view.abstention_count,
+                                    requirement_states=requirement_states,
+                                )
+                            ),
+                            "reader_view_payload": view_payload,
+                        }
+                    )
                 payload["result_fingerprint"] = _record_fingerprint(
                     payload, "result_fingerprint"
                 )
@@ -2569,12 +2760,24 @@ class PostFinalAssessmentService:
             "assessment_result_id": record.assessment_result_id,
             "assessment_result_fingerprint": record.result_fingerprint,
             "finding_count": record.finding_count,
+            **(
+                {"user_status": record.reader_review_status}
+                if record.reader_review_status is not None
+                else {}
+            ),
             "presentation": presentation,
         }
 
     @staticmethod
     def _result_has_zero_advice(result: PostFinalAssessmentResultRecord) -> bool:
         return result.finding_count == 0 and result.withheld_finding_count == 0
+
+    @staticmethod
+    def _is_reader_review_result(result: PostFinalAssessmentResultRecord) -> bool:
+        return (
+            result.schema_version
+            == PostFinalAssessmentResultRecord.reader_review_schema_id
+        )
 
     @staticmethod
     def _stored_result_replay(
@@ -2586,6 +2789,11 @@ class PostFinalAssessmentService:
             "status": result.terminal_evidence_class,
             "assessment_result_id": result.assessment_result_id,
             "assessment_result_fingerprint": result.result_fingerprint,
+            **(
+                {"user_status": result.reader_review_status}
+                if result.reader_review_status is not None
+                else {}
+            ),
         }
 
     @staticmethod
@@ -2620,12 +2828,37 @@ class PostFinalAssessmentService:
             and result.finding_count == view.finding_count
             and result.withheld_finding_count == view.withheld_finding_count
             and result.abstention_count == view.abstention_count
+            and (
+                result.schema_version
+                != PostFinalAssessmentResultRecord.reader_review_schema_id
+                or (
+                    request.schema_version
+                    == PostFinalAssessmentRequestRecord.reader_review_schema_id
+                    and result.assessment_kind == READER_REVIEW_ASSESSMENT_KIND
+                    and result.report_type == READER_REVIEW_REPORT_TYPE
+                    and result.language == READER_REVIEW_LANGUAGE
+                    and result.profile_id == READER_REVIEW_PROFILE_ID
+                    and result.model_version == request.model_version
+                    and result.expected_model_identity
+                    == request.expected_model_identity
+                    and result.parser_version == PARSER_VERSION
+                    and result.projection_version == READER_REVIEW_PROJECTION_VERSION
+                    and result.reader_view_payload
+                    == view.model_dump(mode="json", warnings="error")
+                )
+            )
         )
 
 
 __all__ = [
     "POST_FINAL_ASSESSMENT_POLICY_SCHEMA",
     "POST_FINAL_ASSESSMENT_RUN_SCHEMA",
+    "READER_REVIEW_ASSESSMENT_KIND",
+    "READER_REVIEW_LANGUAGE",
+    "READER_REVIEW_PROFILE_ID",
+    "READER_REVIEW_PROJECTION_VERSION",
+    "READER_REVIEW_REPORT_TYPE",
+    "ReaderReviewAssessmentInput",
     "PostFinalAssessmentError",
     "PostFinalAssessmentPolicyInput",
     "PostFinalAssessmentRunInput",

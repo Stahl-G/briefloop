@@ -1083,15 +1083,25 @@ def test_same_lineage_supports_same_model_and_cross_model_human_runs(
         assert _listed_assessment_result_readout(item) == (
             _assessment_result_readout(stored_result)
         )
-    assert build_post_final_assessment_projection(workspace).status == "invalid"
+    unselected = build_post_final_assessment_projection(workspace)
+    assert (
+        unselected.status,
+        unselected.reason_code,
+        unselected.user_status,
+    ) == (
+        "unsupported",
+        "reader_review_not_supported",
+        "not_assessed",
+    )
     for result in (generation_one, generation_two):
         selected = build_post_final_assessment_projection(
             workspace,
             assessment_result_id=str(result["assessment_result_id"]),
             assessment_result_fingerprint=str(result["assessment_result_fingerprint"]),
         )
-        assert selected.status == "available"
-        assert selected.view.finding_count >= 1
+        assert selected.status == "invalid"
+        assert selected.reason_code == "reader_review_selection_incompatible"
+        assert selected.view.finding_count == 0
 
     changed_policy = _policy_payload()
     changed_policy["human_request_id"] = "pf-laj-policy-request-2"
@@ -1935,7 +1945,21 @@ def test_terminal_action_revision_attests_exact_assessed_facts_and_replays(
         tmp_path / "other-workspace"
     )
     before = build_post_final_assessment_projection(workspace)
-    assert before.status == "not_requested"
+    assert (
+        before.lifecycle_present,
+        before.status,
+        before.reason_code,
+        before.user_status,
+        before.request_template,
+        before.run_action_available,
+    ) == (
+        False,
+        "unsupported",
+        "reader_review_not_supported",
+        "not_assessed",
+        None,
+        False,
+    )
     before_facts = build_finalized_local_review_projection(workspace).facts
 
     policy = service.policy_set(_policy_payload())
@@ -2004,7 +2028,11 @@ def test_terminal_action_revision_attests_exact_assessed_facts_and_replays(
         )
     archive_path = trial_archive_path(archive_root, request.trial_id)
     assert archive_path.is_dir()
-    assert build_post_final_assessment_projection(workspace).status == "available"
+    projection = build_post_final_assessment_projection(workspace)
+    assert (projection.status, projection.reason_code) == (
+        "unsupported",
+        "reader_review_not_supported",
+    )
     persisted = json.dumps(
         {
             "policies": [
@@ -2111,7 +2139,8 @@ def test_terminal_action_revision_attests_exact_assessed_facts_and_replays(
         revision_before_tamper_retry = store.current_revision
     tampered_projection = build_post_final_assessment_projection(workspace)
     assert tampered_projection.lifecycle_present is True
-    assert tampered_projection.status == "invalid"
+    assert tampered_projection.status == "unsupported"
+    assert tampered_projection.reason_code == "reader_review_not_supported"
     assert tampered_projection.view.finding_count == 0
     tampered_retry = replay.retry(request.assessment_request_id)
     assert tampered_retry == {
@@ -2341,9 +2370,9 @@ def test_existing_result_rejects_a_different_self_valid_archive_before_replay(
     assert replay.assess() == expected_invalid
     assert replay.retry(request.assessment_request_id) == expected_invalid
     projection = build_post_final_assessment_projection(workspace)
-    assert projection.status == "invalid"
+    assert projection.status == "unsupported"
     assert projection.view.finding_count == 0
-    assert projection.reason_code == "post_final_assessment_binding_invalid"
+    assert projection.reason_code == "reader_review_not_supported"
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         assert store.current_revision == revision_before
         current = store.load_snapshot(run_id)
@@ -2447,8 +2476,10 @@ def test_terminal_provider_evidence_is_qualified_without_advice_or_redial(
     assert len(calls) == 9
     projection = build_post_final_assessment_projection(workspace)
     assert projection.lifecycle_present is True
-    assert projection.status == expected_class
-    assert projection.view.status == "unavailable"
+    assert projection.status == "unsupported"
+    assert projection.reason_code == "reader_review_not_supported"
+    assert projection.user_status == "not_assessed"
+    assert projection.view.status == "not_available"
     assert projection.view.archive_verified is False
     assert projection.view.binding is None
     assert projection.view.finding_count == 0
@@ -2461,7 +2492,7 @@ def test_terminal_provider_evidence_is_qualified_without_advice_or_redial(
     result = snapshot.post_final_assessment_results[0]
     assert result.terminal_evidence_class == expected_class
     assert result.finding_count == result.withheld_finding_count == 0
-    assert projection.view.reason_codes == result.reason_codes
+    assert projection.view.reason_codes == ["reader_review_not_supported"]
     database_before = (workspace / "briefloop.db").read_bytes()
     listing = service.assessment_list()
     assert (workspace / "briefloop.db").read_bytes() == database_before
@@ -2505,15 +2536,17 @@ def test_terminal_provider_evidence_is_qualified_without_advice_or_redial(
     assert retry["status"] == expected_class
     assert replay.assessment_list() == listing
     replayed_projection = build_post_final_assessment_projection(workspace)
-    assert replayed_projection.status == expected_class
+    assert replayed_projection.status == "unsupported"
+    assert replayed_projection.reason_code == "reader_review_not_supported"
     assert replayed_projection.view.archive_verified is False
-    assert replayed_projection.view.reason_codes == result.reason_codes
+    assert replayed_projection.view.reason_codes == ["reader_review_not_supported"]
     semantic = build_brief_pages_data(workspace)["semantic"]
-    assert semantic["status"] == expected_class
+    assert semantic["status"] == "not_assessed"
+    assert semantic["assessment_status"] == "unsupported"
     assert semantic["store_qualified"] is True
     assert semantic["coverage"]["finding_count"] == 0
     assert semantic["findings"] == []
-    assert semantic["reason_codes"] == result.reason_codes
+    assert semantic["reason_codes"] == ["reader_review_not_supported"]
     assert semantic["review_actions_available"] is False
     assert (workspace / "briefloop.db").read_bytes() == database_before
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:

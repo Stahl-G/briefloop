@@ -367,15 +367,20 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
     review_open_parser = laj_actions.add_parser(
         "review-open",
         help=(
-            "Open the secured local Human Review Session; LAJ remains advisory "
-            "and reuse requires a separate explicit successor-start opt-in."
+            "Open the secured local Post-final Review page. The ordinary path "
+            "needs no policy JSON, request JSON, generation ID, fingerprint, or "
+            "archive path; AI Second Opinion remains advisory and explicit, and "
+            "guidance reuse requires a separate successor-start opt-in."
         ),
     )
     review_open_parser.add_argument("--workspace", required=True)
-    review_open_parser.add_argument("--assessment-result-id", required=True)
+    review_open_parser.add_argument(
+        "--assessment-result-id",
+        help="Advanced exact compatible-result selection; requires its fingerprint.",
+    )
     review_open_parser.add_argument(
         "--assessment-result-fingerprint",
-        required=True,
+        help="Advanced exact compatible-result selection; requires its result ID.",
     )
     review_open_parser.add_argument(
         "--no-browser",
@@ -587,7 +592,6 @@ def handle_quality(args: argparse.Namespace) -> int:
             PostFinalAssessmentService,
         )
         from multi_agent_brief.product.post_final_review import (
-            NEXT_RUN_CONSUMPTION_STATUS,
             PostFinalReviewError,
             PostFinalReviewService,
         )
@@ -640,9 +644,13 @@ def handle_quality(args: argparse.Namespace) -> int:
                 payload = {
                     "ok": True,
                     "status": launched.reason_code,
+                    "user_status": launched.user_status,
+                    "compatible_result_count": launched.compatible_result_count,
+                    "selection_required": launched.user_status == "selection_required",
+                    "run_action_available": launched.run_action_available,
                     "url": launched.url,
                     "runtime_authority": False,
-                    "next_run_consumption": NEXT_RUN_CONSUMPTION_STATUS,
+                    "next_run_consumption": launched.next_run_consumption,
                 }
                 _print_payload(
                     "quality laj",

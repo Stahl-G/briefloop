@@ -3171,6 +3171,17 @@ class SQLiteControlStore:
                 (run_id,),
             ).fetchall()
         }
+        existing_policy_records = {
+            record.policy_revision_id: record
+            for record in (
+                _decode_record(PostFinalAssessmentPolicyRevision, str(row[0]))
+                for row in self._connection.execute(
+                    "SELECT payload_json FROM post_final_assessment_policy_revisions "
+                    "WHERE run_id=?",
+                    (run_id,),
+                ).fetchall()
+            )
+        }
         existing_request_records = {
             record.assessment_request_id: record
             for record in (
@@ -3247,6 +3258,8 @@ class SQLiteControlStore:
         available_policies.update(
             {key: value.policy_fingerprint for key, value in staged_policies.items()}
         )
+        available_policy_records = dict(existing_policy_records)
+        available_policy_records.update(staged_policies)
         available_results = dict(existing_result_records)
         available_results.update(staged_results)
         available_abandonments = dict(existing_abandonment_records)
@@ -3283,6 +3296,7 @@ class SQLiteControlStore:
             ).append(request)
         for record in staged_requests.values():
             policy_fingerprint = available_policies.get(record.policy_revision_id)
+            policy_record = available_policy_records.get(record.policy_revision_id)
             series = sorted(
                 existing_series.get(record.finalized_lineage_fingerprint, []),
                 key=lambda item: item.assessment_generation,
@@ -3319,6 +3333,27 @@ class SQLiteControlStore:
                 or record.request_event_id not in staged_events
                 or record.assessment_request_id in existing_request_records
                 or policy_fingerprint != record.policy_fingerprint
+                or (
+                    record.schema_version
+                    == PostFinalAssessmentRequestRecord.reader_review_schema_id
+                    and (
+                        policy_record is None
+                        or policy_record.schema_version
+                        != PostFinalAssessmentPolicyRevision.reader_review_schema_id
+                        or policy_record.assessment_kind != record.assessment_kind
+                        or policy_record.report_type != record.report_type
+                        or policy_record.language != record.language
+                        or policy_record.profile_id != record.profile_id
+                        or policy_record.model_version != record.model_version
+                        or policy_record.expected_model_identity
+                        != record.expected_model_identity
+                        or policy_record.disclosure_confirmed
+                        != record.disclosure_confirmed
+                        or policy_record.public_safe_egress_attested
+                        != record.public_safe_egress_attested
+                        or policy_record.cost_status != record.cost_status
+                    )
+                )
                 or record.assessment_generation != len(series) + 1
                 or (
                     predecessor is None
@@ -3389,6 +3424,23 @@ class SQLiteControlStore:
                 or request.policy_revision_id != record.policy_revision_id
                 or request.finalized_facts_fingerprint
                 != record.finalized_facts_fingerprint
+                or (
+                    record.schema_version
+                    == PostFinalAssessmentResultRecord.reader_review_schema_id
+                    and (
+                        request.schema_version
+                        != PostFinalAssessmentRequestRecord.reader_review_schema_id
+                        or request.assessment_kind != record.assessment_kind
+                        or request.report_type != record.report_type
+                        or request.language != record.language
+                        or request.profile_id != record.profile_id
+                        or request.model_version != record.model_version
+                        or request.expected_model_identity
+                        != record.expected_model_identity
+                        or request.parser_version != record.parser_version
+                        or request.projection_version != record.projection_version
+                    )
+                )
                 or any(
                     abandonment.assessment_request_id == record.assessment_request_id
                     for abandonment in available_abandonments.values()

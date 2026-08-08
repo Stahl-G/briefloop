@@ -6,7 +6,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 PACKAGE = ROOT / "src" / "multi_agent_brief" / "product" / "review_session"
-BRIDGE = ROOT / "src" / "multi_agent_brief" / "semantic_evaluator" / "post_final_bridge.py"
+BRIDGE = (
+    ROOT / "src" / "multi_agent_brief" / "semantic_evaluator" / "post_final_bridge.py"
+)
 
 
 # `improvement` and `orchestrator.runtime_state` below were deleted in LD2-3.
@@ -41,7 +43,10 @@ def test_review_session_and_laj_bridge_have_zero_runtime_authority_imports() -> 
     assert not {
         name
         for name in imports
-        if any(name == prefix or name.startswith(prefix + ".") for prefix in FORBIDDEN_PREFIXES)
+        if any(
+            name == prefix or name.startswith(prefix + ".")
+            for prefix in FORBIDDEN_PREFIXES
+        )
     }
     source = "\n".join(path.read_text(encoding="utf-8") for path in paths)
     assert "sqlite3" not in source
@@ -49,3 +54,9 @@ def test_review_session_and_laj_bridge_have_zero_runtime_authority_imports() -> 
     assert "improvement/ledger.jsonl" not in source
     assert "run_shadow(" not in source
     assert "OpenAI" not in source
+
+
+def test_review_session_contract_uses_only_the_neutral_reader_review_dto() -> None:
+    imports = _imports(PACKAGE / "contracts.py")
+    assert "multi_agent_brief.contracts.v2" in imports
+    assert "multi_agent_brief.product.post_final_assessment" not in imports

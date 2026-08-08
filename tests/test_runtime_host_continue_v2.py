@@ -99,6 +99,7 @@ def _body(*, authorized: bool) -> dict[str, object]:
         "workspace_target": "workspace",
         "selections": {
             "company": "ExampleCo",
+            "report_type": "management_monthly",
             "industry_or_theme": "manufacturing",
             "task_objective": "Prepare a public-safe manufacturing brief.",
             "brief_title": "ExampleCo brief",

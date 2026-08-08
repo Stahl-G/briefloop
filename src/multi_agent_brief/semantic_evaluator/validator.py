@@ -30,6 +30,7 @@ from multi_agent_brief.semantic_evaluator.contracts import (
     InstrumentConfig,
     InstrumentManifest,
     LajCompositionWitness,
+    O2RequirementAssessment,
     O3Handoff,
     O3HandoffDraft,
     ReaderArtifact,
@@ -79,7 +80,7 @@ from multi_agent_brief.semantic_evaluator.unit_planner import (
 )
 
 
-VALIDATOR_VERSION = "dimension_validator_v3"
+VALIDATOR_VERSION = "dimension_validator_v4"
 _CONTRACT_ID_ADAPTER = TypeAdapter(ContractId)
 
 
@@ -94,6 +95,7 @@ class DimensionValidationResult:
     accepted_findings: tuple[FindingProposal, ...]
     rejected_finding_ids: tuple[str, ...]
     handoffs: tuple[O3Handoff, ...]
+    requirement_assessments: tuple[O2RequirementAssessment, ...]
     reason_codes: tuple[str, ...]
 
     @property
@@ -306,7 +308,13 @@ def validate_dimension_response(
         != compute_bounded_context_sha256(bounded_context)
     ):
         reasons.add("run_binding_mismatch")
-    if canonical_json_bytes(raw_object) != canonical_json_bytes(response):
+    response_payload = response.model_dump(mode="json", warnings="error")
+    if (
+        "requirement_assessments" not in raw_object
+        and response_payload.get("requirement_assessments") == []
+    ):
+        response_payload.pop("requirement_assessments")
+    if canonical_json_bytes(raw_object) != canonical_json_bytes(response_payload):
         reasons.add("raw_response_binding_mismatch")
     if find_forbidden_keys(raw_object, FORBIDDEN_AUTHORITY_KEYS):
         reasons.add("authority_output_forbidden")
@@ -403,6 +411,65 @@ def validate_dimension_response(
             )
         )
 
+    requirement_assessments: tuple[O2RequirementAssessment, ...] = ()
+    profile_id = getattr(getattr(_loaded_profile, "profile", None), "profile_id", None)
+    if profile_id == "management_brief_en_v1":
+        expected_pairs = {
+            (unit.assessment_unit_id, requirement.requirement_id)
+            for unit in expected_units
+            if unit.scope_class == "O2"
+            for requirement in bounded_context.requirements
+            if requirement.type in set(unit.eligible_requirement_types)
+        }
+        observed_pairs = {
+            (item.assessment_unit_id, item.requirement_id)
+            for item in response.requirement_assessments
+        }
+        if observed_pairs != expected_pairs or len(observed_pairs) != len(
+            response.requirement_assessments
+        ):
+            reasons.add("requirement_assessment_set_mismatch")
+        requirement_map = {
+            item.requirement_id: item for item in bounded_context.requirements
+        }
+        accepted_by_pair = {
+            (finding.assessment_unit_id, requirement_id)
+            for finding in accepted_findings
+            for requirement_id in finding.context_requirement_ids
+        }
+        for item in response.requirement_assessments:
+            unit = expected_by_id.get(item.assessment_unit_id)
+            requirement = requirement_map.get(item.requirement_id)
+            if (
+                unit is None
+                or unit.scope_class != "O2"
+                or requirement is None
+                or requirement.type not in set(unit.eligible_requirement_types)
+            ):
+                reasons.add("requirement_assessment_binding_mismatch")
+            if any(
+                _span_reason(reader_artifact, span) is not None
+                for span in item.report_spans
+            ):
+                reasons.add("requirement_assessment_span_invalid")
+            pair = (item.assessment_unit_id, item.requirement_id)
+            if (
+                item.state
+                in {
+                    "unfulfilled_transparent",
+                    "unfulfilled_undisclosed",
+                }
+                and pair not in accepted_by_pair
+            ):
+                reasons.add("unfulfilled_requirement_finding_missing")
+            if item.state == "fulfilled" and pair in accepted_by_pair:
+                reasons.add("fulfilled_requirement_finding_conflict")
+            if item.state == "unable_to_assess" and pair in accepted_by_pair:
+                reasons.add("unable_requirement_finding_conflict")
+        requirement_assessments = tuple(response.requirement_assessments)
+    elif response.requirement_assessments:
+        reasons.add("requirement_assessment_profile_mismatch")
+
     return DimensionValidationResult(
         trial_id=plan.trial_id,
         report_sha256=reader_artifact.report_sha256,
@@ -413,6 +480,7 @@ def validate_dimension_response(
         accepted_findings=tuple(accepted_findings),
         rejected_finding_ids=tuple(sorted(set(rejected_ids))),
         handoffs=tuple(handoffs),
+        requirement_assessments=requirement_assessments,
         reason_codes=tuple(sorted(reasons)),
     )
 
@@ -819,10 +887,12 @@ def _verify_root_bundle(
             verify_instrument_manifest,
         )
         from multi_agent_brief.semantic_evaluator.admission import build_input_binding
+        from multi_agent_brief.semantic_evaluator.profile import load_profile_by_sha256
 
         snapshot = (
             _acquire_instrument_snapshot(
                 config,
+                loaded_profile=load_profile_by_sha256(binding.profile_sha256),
                 include_baseline=include_baseline,
             )
             if instrument_snapshot is None
@@ -1147,6 +1217,9 @@ def _derive_projection(
     outcomes = [item for result in results for item in result.unit_outcomes]
     findings = [item for result in results for item in result.accepted_findings]
     handoffs = [item for result in results for item in result.handoffs]
+    requirement_assessments = [
+        item for result in results for item in result.requirement_assessments
+    ]
     rejected_ids = [item for result in results for item in result.rejected_finding_ids]
     _global_id_preflight(outcomes)
     if len({item.assessment_unit_id for item in outcomes}) != len(outcomes):
@@ -1199,6 +1272,7 @@ def _derive_projection(
             assessment_units=outcomes,
             findings=findings,
             handoffs=handoffs,
+            requirement_assessments=requirement_assessments,
             attempt_refs=attempts,
             event_stream_sha256=sha256_bytes(event_stream_bytes(events)),
         )

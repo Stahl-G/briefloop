@@ -15,8 +15,11 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RESOURCE_PATHS = (
     ("profiles", "research_design_report_zh_v1.yaml"),
+    ("profiles", "management_brief_en_v1.yaml"),
     ("prompts", "system_v1.txt"),
     ("prompts", "dimension_v1.txt"),
+    ("prompts", "system_reader_review_en_v1.txt"),
+    ("prompts", "dimension_reader_review_en_v1.txt"),
     ("baselines", "structured_checklist_zh_v1.yaml"),
     ("fixtures", "synthetic_shadow_v1", "manifest.json"),
     ("fixtures", "synthetic_shadow_v1", "bounded_context.json"),
@@ -1428,6 +1431,323 @@ print(canonical_json_text(payload))
 """
 
 
+READER_REVIEW_WHEEL_PROBE = r"""
+from pathlib import Path
+import json
+import os
+import sys
+
+import pytest
+
+import multi_agent_brief
+from multi_agent_brief.contracts.v2 import (
+    CoreRunInitializeRequest,
+    ReaderReviewAssessmentInput,
+)
+from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.product.post_final_assessment import (
+    PostFinalAssessmentService,
+)
+from multi_agent_brief.semantic_evaluator.archive import (
+    trial_archive_path,
+    verify_shadow_archive,
+)
+from multi_agent_brief.semantic_evaluator.profile import (
+    READER_REVIEW_PROFILE_ID,
+    load_profile,
+)
+from multi_agent_brief.semantic_evaluator.resources import resource_sha256
+from multi_agent_brief.semantic_evaluator.runner import (
+    execute_prepared_shadow_run,
+)
+from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+    ANTHROPIC_API_KEY_SETTING,
+)
+import multi_agent_brief.semantic_evaluator.runner as runner_module
+from tests.test_reader_review_backend import (
+    _reader_input,
+    _reader_service,
+)
+from tests.test_core_run_v2_packaging import _real_finalized_local_workspace
+
+
+mode = sys.argv[1]
+workspace = Path(sys.argv[2])
+expected_package_root = Path(sys.argv[3]).resolve()
+package_file = Path(multi_agent_brief.__file__).resolve()
+if not package_file.is_relative_to(expected_package_root):
+    raise RuntimeError("package root mismatch")
+
+
+def _profile_and_prompt_identity() -> dict[str, object]:
+    loaded = load_profile(READER_REVIEW_PROFILE_ID)
+    profile = loaded.profile
+    return {
+        "profile_id": profile.profile_id,
+        "profile_sha256": loaded.profile_sha256,
+        "profile_resource_sha256": resource_sha256(
+            "profiles", "management_brief_en_v1.yaml"
+        ),
+        "report_type": profile.report_type,
+        "language": profile.language,
+        "dimensions": [
+            {
+                "dimension_id": item.dimension_id,
+                "scope_class": item.scope_class,
+                "sub_aspects": [sub.sub_aspect_id for sub in item.sub_aspects],
+            }
+            for item in profile.dimensions
+        ],
+        "prompt_resources": {
+            "system": resource_sha256(
+                "prompts", "system_reader_review_en_v1.txt"
+            ),
+            "dimension": resource_sha256(
+                "prompts", "dimension_reader_review_en_v1.txt"
+            ),
+        },
+    }
+
+
+def _archive_identity(archive_path: Path) -> dict[str, object]:
+    profile_payload = json.loads((archive_path / "profile.json").read_bytes())
+    prompt_payloads = [
+        json.loads(path.read_bytes())
+        for path in sorted((archive_path / "prompts").glob("*.json"))
+    ]
+    return {
+        "archive_profile_id": profile_payload["profile"]["profile_id"],
+        "archive_profile_sha256": profile_payload["profile_sha256"],
+        "archive_prompt_count": len(prompt_payloads),
+        "archive_prompt_dimensions": [item["dimension_id"] for item in prompt_payloads],
+        "archive_prompt_request_sha256s": [
+            item["request_sha256"] for item in prompt_payloads
+        ],
+    }
+
+
+def _archive_replay(
+    service: PostFinalAssessmentService,
+    request,
+):
+    facts, snapshot, binding, _workspace_id, _history, action = service._load()
+    prepared = service._prepare_request_replay(
+        facts=facts,
+        snapshot=snapshot,
+        binding=binding,
+        request=request,
+    )
+    return execute_prepared_shadow_run(
+        prepared,
+        replay_only=True,
+        adapter_factory=lambda _execution: (_ for _ in ()).throw(
+            AssertionError("archive replay touched adapter")
+        ),
+    )
+
+
+provider_calls = 0
+provider_invocations: list[str] = []
+metadata_calls: list[str] = []
+profile_identity = _profile_and_prompt_identity()
+
+if mode == "source":
+    patch = pytest.MonkeyPatch()
+    try:
+        direction = CoreRunInitializeRequest.minimal_example.get("run_direction")
+        if not isinstance(direction, dict):
+            raise RuntimeError("missing run direction fixture")
+        patch.setitem(direction, "report_type", "management_monthly")
+        workspace = _real_finalized_local_workspace(workspace.parent, patch)
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            head = store.load_workspace_run_head()
+        if head is None:
+            raise RuntimeError("missing Store head")
+        run_id = head.current_run_id
+        calls: list[tuple[str, int]] = []
+        valid_payload = _reader_input("reader-review-packaging-1")
+        validated = ReaderReviewAssessmentInput.model_validate(
+            valid_payload,
+            strict=True,
+        )
+        invalid = _reader_service(workspace, calls).run_reader_review(
+            {**valid_payload, "unexpected": "strictly-forbidden"}
+        )
+        if invalid != {
+            "ok": False,
+            "status": "invalid",
+            "user_status": "not_assessed",
+            "reason_code": "reader_review_request_invalid",
+        }:
+            raise RuntimeError(f"strict Reader Review admission drift: {invalid!r}")
+        patch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+        patch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+        service = _reader_service(workspace, calls)
+        assessed = service.run_reader_review(
+            validated.model_dump(mode="json", warnings="error")
+        )
+        if (
+            not assessed.get("ok")
+            or assessed.get("status") != "available"
+            or assessed.get("user_status")
+            != "no_finding_returned_in_completed_supported_checks"
+        ):
+            raise RuntimeError(f"Reader Review synthetic result failed: {assessed!r}")
+        provider_calls = len(calls)
+        if calls != [
+            ("cross_section_consistency", 1),
+            ("brief_requirement_coverage", 1),
+        ]:
+            raise RuntimeError(f"Reader Review call budget drift: {calls!r}")
+    finally:
+        # Keep the finalized-workspace gate fixture patches active through the
+        # source-clone replay below; the child process exits after this probe.
+        pass
+elif mode == "wheel":
+    workspace, run_id = workspace, None
+    os.environ.pop(ANTHROPIC_API_KEY_SETTING, None)
+    sys.modules["anthropic"] = None
+
+    def unavailable_metadata(name):
+        metadata_calls.append(name)
+        raise AssertionError("Reader Review replay touched SDK metadata")
+
+    runner_module.metadata.version = unavailable_metadata
+
+    valid_payload = _reader_input("reader-review-packaging-1")
+    validated = ReaderReviewAssessmentInput.model_validate(valid_payload, strict=True)
+
+    def unavailable_adapter(_execution):
+        provider_invocations.append("adapter")
+        raise AssertionError("Reader Review replay touched provider")
+
+    service = PostFinalAssessmentService(
+        workspace,
+        adapter_factory=unavailable_adapter,
+    )
+    assessed = service.run_reader_review(
+        validated.model_dump(mode="json", warnings="error")
+    )
+    if not assessed.get("ok") or not assessed.get("replayed"):
+        raise RuntimeError(f"Reader Review Store replay failed: {assessed!r}")
+else:
+    raise RuntimeError("unknown mode")
+
+with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+    head = store.load_workspace_run_head()
+    if head is None:
+        raise RuntimeError("missing Store head")
+    snapshot = store.load_snapshot(head.current_run_id)
+    requests = snapshot.post_final_assessment_requests
+    results = snapshot.post_final_assessment_results
+if len(requests) != 1 or len(results) != 1:
+    raise RuntimeError(f"unexpected Reader Review Store rows: {len(requests)}, {len(results)}")
+request = requests[0]
+result = results[0]
+if (
+    request.profile_id != READER_REVIEW_PROFILE_ID
+    or result.assessment_kind != "reader_review"
+    or result.report_type != "management_monthly"
+    or result.language != "en"
+    or result.profile_id != READER_REVIEW_PROFILE_ID
+    or result.reader_review_status
+    != "no_finding_returned_in_completed_supported_checks"
+    or result.finding_count != 0
+    or result.withheld_finding_count != 0
+    or result.assessed_unit_count != 12
+):
+    raise RuntimeError(f"Reader Review result truth drift: {result!r}")
+archive_path = trial_archive_path(
+    PostFinalAssessmentService(workspace)._archive_root,
+    request.trial_id,
+)
+verified = verify_shadow_archive(archive_path)
+if not verified.ok or verified.receipt.receipt_id != result.archive_receipt_id:
+    raise RuntimeError("Reader Review archive qualification drift")
+archive_identity = _archive_identity(archive_path)
+if (
+    archive_identity["archive_profile_id"] != READER_REVIEW_PROFILE_ID
+    or archive_identity["archive_prompt_count"] != 2
+    or archive_identity["archive_prompt_dimensions"]
+    != ["brief_requirement_coverage", "cross_section_consistency"]
+):
+    raise RuntimeError(f"Reader Review packaged prompt drift: {archive_identity!r}")
+
+database_before_replay = (workspace / "briefloop.db").read_bytes()
+if mode == "wheel":
+    replay = _archive_replay(service, request)
+    retry = service.retry(request.assessment_request_id)
+    if not replay.replayed or replay.receipt_id != result.archive_receipt_id:
+        raise RuntimeError(f"Reader Review archive replay failed: {replay!r}")
+    if not retry.get("ok") or not retry.get("replayed"):
+        raise RuntimeError(f"Reader Review retry replay failed: {retry!r}")
+    if metadata_calls or provider_invocations:
+        raise RuntimeError(
+            f"Reader Review replay crossed unavailable boundary: {metadata_calls!r}, {provider_invocations!r}"
+        )
+    provider_calls = len(provider_invocations)
+else:
+    # Exercise the same replay boundary in the source clone after the one
+    # synthetic execution, so the wheel and source assertions cover the same
+    # Store/archive paths.
+    provider_invocations = []
+    metadata_calls = []
+    os.environ.pop(ANTHROPIC_API_KEY_SETTING, None)
+    sys.modules["anthropic"] = None
+    runner_module.metadata.version = lambda name: metadata_calls.append(name) or (
+        (_ for _ in ()).throw(AssertionError("source replay touched SDK metadata"))
+    )
+    replay_service = PostFinalAssessmentService(
+        workspace,
+        adapter_factory=lambda _execution: provider_invocations.append("adapter")
+        or (_ for _ in ()).throw(AssertionError("source replay touched provider")),
+    )
+    replay = _archive_replay(replay_service, request)
+    retry = replay_service.retry(request.assessment_request_id)
+    if not replay.replayed or not retry.get("replayed"):
+        raise RuntimeError("source Reader Review replay failed")
+    if metadata_calls or provider_invocations:
+        raise RuntimeError("source Reader Review replay crossed unavailable boundary")
+
+if (workspace / "briefloop.db").read_bytes() != database_before_replay:
+    raise RuntimeError("Reader Review replay changed Store bytes")
+if any(
+    b"public-synthetic-key" in path.read_bytes()
+    for path in workspace.rglob("*")
+    if path.is_file()
+):
+    raise RuntimeError("Reader Review credential leaked into Store/archive")
+
+print(
+    json.dumps(
+        {
+            "optimize": sys.flags.optimize,
+            "provider_calls": provider_calls,
+            "store_replayed": bool(retry.get("replayed")),
+            "archive_replayed": bool(replay.replayed),
+            "archive_receipt_id": result.archive_receipt_id,
+            "result": {
+                "assessment_kind": result.assessment_kind,
+                "assessed_unit_count": result.assessed_unit_count,
+                "finding_count": result.finding_count,
+                "language": result.language,
+                "profile_id": result.profile_id,
+                "reader_review_status": result.reader_review_status,
+                "report_type": result.report_type,
+                "terminal_evidence_class": result.terminal_evidence_class,
+                "user_status": assessed.get("user_status"),
+            },
+            "profile": profile_identity,
+            "archive": archive_identity,
+        },
+        sort_keys=True,
+    )
+)
+if mode == "source":
+    patch.undo()
+"""
+
+
 def _run_wheel_probe(
     *,
     cwd: Path,
@@ -1453,6 +1773,37 @@ def _run_wheel_probe(
     stderr = probe.stderr.decode("utf-8")
     assert probe.returncode == 0, stdout + stderr
     return stdout.splitlines()[-1]
+
+
+def _run_reader_review_probe(
+    *,
+    mode: str,
+    workspace: Path,
+    package_root: Path,
+    script: Path,
+    cwd: Path,
+    optimized: bool,
+) -> dict[str, object]:
+    command = [sys.executable]
+    if optimized:
+        command.append("-O")
+    command.extend((str(script), mode, str(workspace), str(package_root)))
+    environment = os.environ.copy()
+    environment.pop("BRIEFLOOP_LAJ_MESSAGES_API_KEY", None)
+    environment["PYTHONUTF8"] = "1"
+    environment["PYTHONIOENCODING"] = "utf-8"
+    environment["PYTHONPATH"] = os.pathsep.join((str(package_root), str(REPO_ROOT)))
+    probe = subprocess.run(
+        command,
+        cwd=cwd,
+        env=environment,
+        check=False,
+        capture_output=True,
+    )
+    stdout = probe.stdout.decode("utf-8")
+    stderr = probe.stderr.decode("utf-8")
+    assert probe.returncode == 0, stdout + stderr
+    return json.loads(stdout)
 
 
 def _source_identity() -> str:
@@ -1773,3 +2124,114 @@ def test_se2r_14_wheel_contains_all_resources_and_matches_source_identity(
         )
         assert wheel_identity == source_identity
         assert json.loads(wheel_identity) == json.loads(source_identity)
+
+
+@pytest.mark.explicit_e2e
+@pytest.mark.timeout(900)
+def test_mu15a_reader_review_source_and_non_editable_wheel_replay_parity(
+    tmp_path: Path,
+) -> None:
+    """Reader Review stays strict and truthful after a fresh wheel install."""
+
+    build_root = tmp_path / "build-root"
+    build_root.mkdir()
+    shutil.copy2(REPO_ROOT / "pyproject.toml", build_root / "pyproject.toml")
+    shutil.copy2(REPO_ROOT / "README.md", build_root / "README.md")
+    shutil.copytree(REPO_ROOT / "src", build_root / "src")
+    wheel_dir = tmp_path / "wheel"
+    wheel_dir.mkdir()
+    build_python = os.environ.get(
+        "SEMANTIC_EVALUATOR_BUILD_PYTHON",
+        sys.executable,
+    )
+    build = subprocess.run(
+        [
+            build_python,
+            "-m",
+            "pip",
+            "wheel",
+            ".",
+            "--no-deps",
+            "--no-build-isolation",
+            "--wheel-dir",
+            str(wheel_dir),
+        ],
+        cwd=build_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert build.returncode == 0, build.stdout + build.stderr
+    wheels = sorted(wheel_dir.glob("briefloop-*.whl"))
+    assert len(wheels) == 1
+
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    with zipfile.ZipFile(wheels[0]) as archive:
+        names = set(archive.namelist())
+        assert {
+            "multi_agent_brief/semantic_evaluator/profiles/management_brief_en_v1.yaml",
+            "multi_agent_brief/semantic_evaluator/prompts/system_reader_review_en_v1.txt",
+            "multi_agent_brief/semantic_evaluator/prompts/dimension_reader_review_en_v1.txt",
+        } <= names
+        archive.extractall(installed)
+
+    script = tmp_path / "reader_review_wheel_probe.py"
+    script.write_text(READER_REVIEW_WHEEL_PROBE, encoding="utf-8")
+
+    for optimized in (False, True):
+        workspace = tmp_path / ("optimized" if optimized else "normal") / "workspace"
+        source = _run_reader_review_probe(
+            mode="source",
+            workspace=workspace,
+            package_root=REPO_ROOT / "src",
+            script=script,
+            cwd=tmp_path,
+            optimized=optimized,
+        )
+        wheel = _run_reader_review_probe(
+            mode="wheel",
+            workspace=workspace,
+            package_root=installed,
+            script=script,
+            cwd=tmp_path,
+            optimized=optimized,
+        )
+
+        assert source["optimize"] == wheel["optimize"] == int(optimized)
+        assert source["provider_calls"] == 2
+        assert wheel["provider_calls"] == 0
+        assert {key: source[key] for key in source if key != "provider_calls"} == {
+            key: wheel[key] for key in wheel if key != "provider_calls"
+        }
+        assert wheel["store_replayed"] is True
+        assert wheel["archive_replayed"] is True
+        result = wheel["result"]
+        assert result == {
+            "assessment_kind": "reader_review",
+            "assessed_unit_count": 12,
+            "finding_count": 0,
+            "language": "en",
+            "profile_id": "management_brief_en_v1",
+            "reader_review_status": (
+                "no_finding_returned_in_completed_supported_checks"
+            ),
+            "report_type": "management_monthly",
+            "terminal_evidence_class": "available",
+            "user_status": "no_finding_returned_in_completed_supported_checks",
+        }
+        profile = wheel["profile"]
+        assert profile["profile_id"] == "management_brief_en_v1"
+        assert profile["report_type"] == "management_monthly"
+        assert profile["language"] == "en"
+        assert profile["prompt_resources"] == {
+            "system": source["profile"]["prompt_resources"]["system"],
+            "dimension": source["profile"]["prompt_resources"]["dimension"],
+        }
+        archive = wheel["archive"]
+        assert archive["archive_profile_id"] == "management_brief_en_v1"
+        assert archive["archive_prompt_count"] == 2
+        assert archive["archive_prompt_dimensions"] == [
+            "brief_requirement_coverage",
+            "cross_section_consistency",
+        ]

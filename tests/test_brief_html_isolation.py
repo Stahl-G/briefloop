@@ -12,7 +12,10 @@ material, legacy fold-ins, or open raw sockets/sqlite/subprocess.
 from __future__ import annotations
 
 import ast
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 ROOT = Path(__file__).parents[1]
 SRC_ROOT = ROOT / "src" / "multi_agent_brief"
@@ -30,9 +33,6 @@ ALLOWED_IMPORTS = {
         "multi_agent_brief.core_run_v2.verifier",
         "multi_agent_brief.product.review_session.contracts",
         "multi_agent_brief.product.post_final_assessment_projection",
-        # Builder calls only review_status(); Human writes stay behind the
-        # secured loopback command dispatcher in review_session.
-        "multi_agent_brief.product.post_final_review",
         "multi_agent_brief.runtime_host_v2.errors",
         "multi_agent_brief.runtime_host_v2.projections",
         "multi_agent_brief.semantic_evaluator.reader",
@@ -132,6 +132,41 @@ def test_brief_html_imports_are_pinned_to_read_only_projection() -> None:
     _check_package(BRIEF_HTML)
 
 
+def test_brief_html_runtime_import_does_not_load_assessment_writer_or_evaluator() -> (
+    None
+):
+    script = """
+import sys
+
+from multi_agent_brief.product.brief_html import builder
+
+forbidden_prefixes = (
+    "multi_agent_brief.product.post_final_assessment",
+    "multi_agent_brief.semantic_evaluator.archive",
+    "multi_agent_brief.semantic_evaluator.runner",
+    "multi_agent_brief.semantic_evaluator.adapters",
+)
+loaded = sorted(
+    name
+    for name in sys.modules
+    if any(name == prefix or name.startswith(prefix + ".") for prefix in forbidden_prefixes)
+)
+if loaded:
+    raise SystemExit("forbidden runtime imports: " + ", ".join(loaded))
+"""
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "src")
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
 def test_init_web_imports_are_pinned_to_sanctioned_bootstrap() -> None:
     _check_package(INIT_WEB)
 
@@ -148,3 +183,26 @@ def test_brief_html_static_export_has_no_write_affordance() -> None:
     assert b"<form" not in index and b"<form" not in app
     assert b"innerHTML" not in app
     assert b"eval(" not in app
+
+
+def test_brief_html_reader_review_controls_are_session_bound_and_secret_free() -> None:
+    app = (BRIEF_HTML / "static" / "app.js").read_bytes()
+
+    assert b"if (!(ACTION_SESSION && sem.selection_required === true)) return;" in app
+    assert b'status === "not_assessed"' in app
+    assert b'sendReviewCommand("run_reader_review"' in app
+    assert b'sendReviewCommand("select_result"' in app
+    assert b'sendReviewCommand("refresh"' in app
+    assert b"DATA = result.page_data;" in app
+    assert b"RUN_REQUEST_ID" in app
+    assert b"automatic_retry" in app
+    assert b"requirement_assessments" in app
+    assert b"template.protocol" in app
+    assert b"assessment.requirement_text" in app
+    assert b"post_final_assessment_pending" in app
+    assert b"post_final_assessment_predecessor_outcome_unknown" in app
+    assert b"An external call may have occurred" in app
+    assert b"will not retry automatically" in app
+    assert b"No findings in this view" not in app
+    assert b"api_key" not in app.lower()
+    assert b'input.type = "password"' not in app

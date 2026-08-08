@@ -370,6 +370,7 @@ def test_actual_app_binds_explicit_search_topic() -> None:
     assert isinstance(payload, dict)
     selections = payload["selections"]
     assert isinstance(selections, dict)
+    assert selections["report_type"] == "industry_weekly"
     assert selections["industry_or_theme"] == "grid-scale energy storage"
     assert selections["task_objective"] == _LONG_PUBLIC_WEB_TASK_OBJECTIVE
     assert selections["focus_areas"] == ["Industry weekly"]
@@ -1192,6 +1193,7 @@ def test_real_submitter_end_to_end(tmp_path: Path) -> None:
                     "workspace_target": "web-ws",
                     "selections": {
                         "company": "ExampleCo",
+                        "report_type": "management_monthly",
                         "industry_or_theme": "manufacturing",
                         "task_objective": "Prepare the weekly manufacturing brief.",
                         "audience": "management",

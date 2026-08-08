@@ -78,7 +78,7 @@ HexBytes = Annotated[str, StringConstraints(pattern=r"^(?:[0-9a-f]{2})*$")]
 AbsolutePathText = Annotated[str, StringConstraints(min_length=1)]
 JsonObject = dict[str, JsonValue]
 
-Language = Literal["zh-CN"]
+Language = Literal["zh-CN", "en"]
 DataClass = Literal["public", "synthetic"]
 ScopeClass = Literal["O1", "O2"]
 RequirementType = Literal[
@@ -145,6 +145,18 @@ RecommendedHumanAction = Literal[
     "address_requirement",
     "review_o3_evidence",
     "inspect_manually",
+]
+O2RequirementState = Literal[
+    "fulfilled",
+    "unfulfilled_transparent",
+    "unfulfilled_undisclosed",
+    "unable_to_assess",
+]
+O2AttentionStatus = Literal[
+    "none",
+    "attention_needed",
+    "material_issue",
+    "unable_to_assess",
 ]
 
 
@@ -298,8 +310,11 @@ class DimensionProfile(StrictModel):
 class EvaluatorProfile(StrictModel):
     schema_id: ClassVar[str] = PROFILE_SCHEMA_ID
     schema_version: Literal[PROFILE_SCHEMA_ID]
-    profile_id: Literal["research_design_report_zh_v1"]
-    report_type: Literal["research_design_report"]
+    profile_id: Literal[
+        "research_design_report_zh_v1",
+        "management_brief_en_v1",
+    ]
+    report_type: Literal["research_design_report", "management_monthly"]
     language: Language
     allowed_scope_classes: list[ScopeClass]
     dimensions: list[DimensionProfile] = Field(min_length=1)
@@ -311,6 +326,12 @@ class EvaluatorProfile(StrictModel):
         _require_unique(
             [item.dimension_id for item in self.dimensions], "dimension ids"
         )
+        expected_binding = {
+            "research_design_report_zh_v1": ("research_design_report", "zh-CN"),
+            "management_brief_en_v1": ("management_monthly", "en"),
+        }[self.profile_id]
+        if (self.report_type, self.language) != expected_binding:
+            raise ValueError("profile report type and language binding mismatch")
         return self
 
 
@@ -559,6 +580,38 @@ class SpanLocator(StrictModel):
         return self
 
 
+class O2RequirementAssessment(StrictModel):
+    """One model-proposed state for one frozen operative requirement."""
+
+    assessment_unit_id: AssessmentUnitId
+    requirement_id: ContractId
+    state: O2RequirementState
+    attention_status: O2AttentionStatus
+    report_spans: list[SpanLocator]
+    rationale: CleanText
+
+    @model_validator(mode="after")
+    def state_and_attention_are_exact(self) -> "O2RequirementAssessment":
+        allowed = {
+            "fulfilled": {"none"},
+            "unfulfilled_transparent": {"attention_needed"},
+            "unfulfilled_undisclosed": {
+                "attention_needed",
+                "material_issue",
+            },
+            "unable_to_assess": {"unable_to_assess"},
+        }
+        if self.attention_status not in allowed[self.state]:
+            raise ValueError("O2 requirement state and attention mismatch")
+        if self.state == "unfulfilled_transparent" and not self.report_spans:
+            raise ValueError("transparent unmet requirements require a disclosure span")
+        if self.state == "unable_to_assess" and self.report_spans:
+            raise ValueError(
+                "unable requirement assessments cannot assert report spans"
+            )
+        return self
+
+
 class FindingDraft(StrictModel):
     assessment_unit_id: AssessmentUnitId
     scope_class: ScopeClass
@@ -661,11 +714,18 @@ class DimensionResponse(StrictModel):
     trial_id: ContractId
     dimension_id: DimensionId
     unit_results: list[UnitResult] = Field(min_length=1)
+    requirement_assessments: list[O2RequirementAssessment] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_response_inventory(self) -> "DimensionResponse":
         unit_ids = [item.assessment_unit_id for item in self.unit_results]
         _require_unique(unit_ids, "unit result ids")
+        requirement_pairs = [
+            (item.assessment_unit_id, item.requirement_id)
+            for item in self.requirement_assessments
+        ]
+        if len(requirement_pairs) != len(set(requirement_pairs)):
+            raise ValueError("O2 requirement assessment bindings must be unique")
         for result in self.unit_results:
             if isinstance(result, FindingEmittedResult):
                 for finding in result.findings:
@@ -726,6 +786,7 @@ class SemanticAssessmentRun(StrictModel):
     assessment_units: list[AssessmentUnitOutcome]
     findings: list[FindingProposal]
     handoffs: list[O3Handoff]
+    requirement_assessments: list[O2RequirementAssessment] = Field(default_factory=list)
     attempt_refs: list[AttemptRef]
     event_stream_sha256: Sha256
 
@@ -740,6 +801,12 @@ class SemanticAssessmentRun(StrictModel):
         _require_unique(
             [item.attempt_ref for item in self.attempt_refs], "attempt refs"
         )
+        requirement_pairs = [
+            (item.assessment_unit_id, item.requirement_id)
+            for item in self.requirement_assessments
+        ]
+        if len(requirement_pairs) != len(set(requirement_pairs)):
+            raise ValueError("run O2 requirement assessment bindings must be unique")
         return self
 
 
@@ -983,7 +1050,10 @@ class BaselinePayload(StrictModel):
     report_sha256: Sha256
     bounded_context_sha256: Sha256
     profile_sha256: Sha256
-    checklist_id: Literal["structured_checklist_zh_v1"]
+    checklist_id: Literal[
+        "structured_checklist_zh_v1",
+        "management_brief_reader_review_v1",
+    ]
     lint_id: Literal["deterministic_lint_v1"]
     checklist_items: list[ChecklistItem]
     lint_items: list[LintItem]
@@ -1571,6 +1641,9 @@ __all__ = [
     "NoFindingResult",
     "O3Handoff",
     "O3HandoffDraft",
+    "O2AttentionStatus",
+    "O2RequirementAssessment",
+    "O2RequirementState",
     "PresentationRecord",
     "PromptSizerConfig",
     "ReaderArtifact",

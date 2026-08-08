@@ -1,4 +1,4 @@
-"""Strict read-only contracts for the post-final Human Review Session."""
+"""Strict read models and zero-authority command envelopes for Review Session."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from multi_agent_brief.contracts.v2 import (
     IsoDateTime,
     NonNegativeInt,
     PositiveInt,
+    ReaderReviewAssessmentInput,
     Sha256,
     StrictModel,
 )
@@ -27,6 +28,10 @@ IMPROVEMENT_PROJECTION_SCHEMA_ID = "briefloop.post_final_review.improvement.v1"
 POST_FINAL_REVIEW_READ_MODEL_SCHEMA_ID = "briefloop.post_final_review.read_model.v1"
 REVIEW_SESSION_DESCRIPTOR_SCHEMA_ID = "briefloop.post_final_review.session.v1"
 REVIEW_SESSION_COMMAND_SCHEMA_ID = "briefloop.post_final_review.command.v1"
+READER_REVIEW_SELECTION_SCHEMA_ID = (
+    "briefloop.post_final_review.reader_review_selection.v1"
+)
+READER_REVIEW_REFRESH_SCHEMA_ID = "briefloop.post_final_review.refresh.v1"
 
 QualityStatus = Literal["pass", "warning", "block", "incomplete"]
 SemanticReviewStatus = Literal[
@@ -329,11 +334,28 @@ class ReviewSessionStatus(StrictModel):
     reason_code: ContractId
 
 
+class ReaderReviewResultSelection(StrictModel):
+    """Ephemeral display selection; Store qualification remains projection-owned."""
+
+    schema_version: Literal[READER_REVIEW_SELECTION_SCHEMA_ID]
+    assessment_result_id: ContractId
+    assessment_result_fingerprint: Sha256
+
+
+class ReaderReviewRefresh(StrictModel):
+    """Zero-authority request to rebuild the canonical read-only projection."""
+
+    schema_version: Literal[READER_REVIEW_REFRESH_SCHEMA_ID]
+
+
 class ReviewSessionCommand(StrictModel):
     """Ephemeral transport envelope; nested domain DTOs remain Store-service owned."""
 
     schema_version: Literal["briefloop.post_final_review.command.v1"]
     action: Literal[
+        "run_reader_review",
+        "select_result",
+        "refresh",
         "accept",
         "reject",
         "defer",
@@ -345,3 +367,13 @@ class ReviewSessionCommand(StrictModel):
         "status",
     ]
     payload: dict[str, object]
+
+    @model_validator(mode="after")
+    def validate_payload_contract(self) -> "ReviewSessionCommand":
+        if self.action == "run_reader_review":
+            ReaderReviewAssessmentInput.model_validate(self.payload, strict=True)
+        elif self.action == "select_result":
+            ReaderReviewResultSelection.model_validate(self.payload, strict=True)
+        elif self.action == "refresh":
+            ReaderReviewRefresh.model_validate(self.payload, strict=True)
+        return self

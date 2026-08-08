@@ -129,6 +129,9 @@ def _profile_from_payload(payload: dict[str, Any]) -> InitProfile:
         _require_text(selections.get(key), f"submission_{key}_required")
     formats = selections.get("output_formats") or ["markdown"]
     company = _require_text(selections["company"], "submission_company_required")
+    report_type = _require_text(
+        selections.get("report_type"), "submission_report_type_required"
+    )
     output_language = selections.get("output_language") or "zh"
     output_extent = selections.get("output_extent")
     if output_extent not in {"compact", "balanced", "detailed"}:
@@ -174,6 +177,7 @@ def _profile_from_payload(payload: dict[str, Any]) -> InitProfile:
             selections["industry_or_theme"], "submission_industry_or_theme_required"
         ),
         brief_title=selections.get("brief_title") or f"{company} brief",
+        report_type=report_type,
         task_objective=_require_text(
             selections["task_objective"], "submission_task_objective_required"
         ),

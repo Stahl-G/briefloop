@@ -43,7 +43,7 @@ from multi_agent_brief.semantic_evaluator.unit_planner import (
 )
 
 
-PROMPT_ASSEMBLER_VERSION = "dimension_prompt_assembler_v4"
+PROMPT_ASSEMBLER_VERSION = "dimension_prompt_assembler_v5"
 CANARY_DERIVATION_VERSION = "semantic_evaluator_canary_v1"
 
 

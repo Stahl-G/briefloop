@@ -29,9 +29,14 @@ class InitProfile:
     industry: str = ""
     industry_text: str = ""  # raw user description, preserved in user.md
     brief_title: str = "Weekly Industry Brief"
+    report_type: str | None = None
     audience: str = "management"
-    audience_profile: str = ""  # mapped profile ID (management, research, ir, legal_compliance, default)
-    focus_areas: list[str] = field(default_factory=lambda: ["policy", "competitor", "market", "customer_demand"])
+    audience_profile: str = (
+        ""  # mapped profile ID (management, research, ir, legal_compliance, default)
+    )
+    focus_areas: list[str] = field(
+        default_factory=lambda: ["policy", "competitor", "market", "customer_demand"]
+    )
     task_objective: str = ""  # free-text task description
     forbidden_sources: list[str] = field(default_factory=list)
     cadence: str = "weekly"
@@ -41,15 +46,25 @@ class InitProfile:
     retrieval_provider: str = "ollama"
     retrieval_model: str = "nomic-embed-text"
     output_formats: list[str] = field(
-        default_factory=lambda: ["markdown", "docx", "claim_ledger", "audit_report", "source_appendix"]
+        default_factory=lambda: [
+            "markdown",
+            "docx",
+            "claim_ledger",
+            "audit_report",
+            "source_appendix",
+        ]
     )
     source_profile: str = "llm_decide"
     source_decision_mode: str = "agent_decide"
     optional_seed_pack: str = ""  # registered pack key or empty
     tavily_enabled: bool = False  # legacy flag, kept for backward compatibility
     web_search_enabled: bool = True
-    web_search_mode: str = "configure_later"  # disabled, runtime_tool, external_api, configure_later
-    search_backend: str = ""  # tavily, exa, brave, firecrawl, serper (only when mode=external_api)
+    web_search_mode: str = (
+        "configure_later"  # disabled, runtime_tool, external_api, configure_later
+    )
+    search_backend: str = (
+        ""  # tavily, exa, brave, firecrawl, serper (only when mode=external_api)
+    )
     initial_news_backfill_enabled: bool = False
     initial_news_backfill_days: int = 7
     initial_news_backfill_daily_max_results: int = 20
@@ -93,7 +108,9 @@ def build_controlstore_bootstrap(
     task_objective = profile.task_objective.strip()
     if not task_objective:
         raise ValueError("task_objective is required for ControlStore v2")
-    industry_or_theme = profile.industry_text.strip() or profile.industry.strip() or None
+    industry_or_theme = (
+        profile.industry_text.strip() or profile.industry.strip() or None
+    )
     search_backend = (
         profile.search_backend.strip()
         if profile.web_search_mode == "external_api"
@@ -120,6 +137,11 @@ def build_controlstore_bootstrap(
             "subject_name": profile.company.strip(),
             "industry_or_theme": industry_or_theme,
             "brief_title": profile.brief_title.strip(),
+            "report_type": (
+                profile.report_type.strip()
+                if profile.report_type is not None and profile.report_type.strip()
+                else None
+            ),
             "task_objective": task_objective,
             "audience": profile.audience.strip(),
             "audience_profile": (

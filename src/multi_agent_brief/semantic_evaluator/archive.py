@@ -872,10 +872,10 @@ def verify_shadow_archive(
         raise SemanticEvaluatorError("shadow_archive_invalid")
     if not _REQUIRED_PAYLOAD_FILES.issubset(expected_payload_paths):
         raise SemanticEvaluatorError("shadow_archive_invalid")
-    if (
-        len([item for item in expected_payload_paths if item.startswith("prompts/")])
-        != 9
-    ):
+    prompt_member_count = len(
+        [item for item in expected_payload_paths if item.startswith("prompts/")]
+    )
+    if not 1 <= prompt_member_count <= 9:
         raise SemanticEvaluatorError("shadow_archive_invalid")
 
     payloads: dict[str, bytes] = {}
@@ -886,6 +886,8 @@ def verify_shadow_archive(
         payloads[member.path] = raw
 
     request = _parse_model(payloads["request.json"], ShadowRunRequest)
+    if prompt_member_count != len(request.ordered_prompt_request_sha256s):
+        raise SemanticEvaluatorError("shadow_archive_invalid")
     execution = _parse_model(
         payloads["execution_manifest.json"], ShadowExecutionManifest
     )

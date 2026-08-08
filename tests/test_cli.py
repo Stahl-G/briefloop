@@ -248,6 +248,81 @@ def test_quality_laj_help_exposes_review_and_explicit_successor_reuse(capsys):
     assert "opt-in" in output
 
 
+def test_review_open_is_an_ordinary_headless_path_without_internal_ids(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import multi_agent_brief.product.review_session as review_session
+
+    observed: dict[str, object] = {}
+
+    class _Server:
+        def wait(self) -> None:
+            observed["waited"] = True
+
+        def close(self) -> None:
+            observed["closed"] = True
+
+    class _Launch:
+        server = _Server()
+        reason_code = "review_session_headless"
+        user_status = "not_assessed"
+        compatible_result_count = 0
+        run_action_available = True
+        next_run_consumption = "explicit_opt_in_successor_only"
+        url = "http://127.0.0.1:43123/index.html#ephemeral"
+
+    def _launch(
+        workspace,
+        assessment_result_id=None,
+        assessment_result_fingerprint=None,
+        *,
+        open_browser=True,
+    ):
+        observed.update(
+            {
+                "workspace": workspace,
+                "assessment_result_id": assessment_result_id,
+                "assessment_result_fingerprint": assessment_result_fingerprint,
+                "open_browser": open_browser,
+            }
+        )
+        return _Launch()
+
+    monkeypatch.setattr(review_session, "launch_actionable_review_session", _launch)
+    workspace = initialize_workspace(tmp_path / "fresh-current-schema")
+
+    assert (
+        main(
+            [
+                "quality",
+                "laj",
+                "review-open",
+                "--workspace",
+                str(workspace),
+                "--no-browser",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["user_status"] == "not_assessed"
+    assert payload["compatible_result_count"] == 0
+    assert payload["run_action_available"] is True
+    assert payload["selection_required"] is False
+    assert payload["runtime_authority"] is False
+    assert payload["next_run_consumption"] == "explicit_opt_in_successor_only"
+    assert observed == {
+        "workspace": workspace.resolve(),
+        "assessment_result_id": None,
+        "assessment_result_fingerprint": None,
+        "open_browser": False,
+        "waited": True,
+    }
+
+
 def test_quality_laj_cli_executes_assessment_next_request(
     tmp_path: Path,
     capsys,

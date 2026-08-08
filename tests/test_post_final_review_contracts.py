@@ -5,18 +5,23 @@ from copy import deepcopy
 import pytest
 from pydantic import ValidationError
 
+from multi_agent_brief.contracts.v2 import ReaderReviewAssessmentInput
+
 from multi_agent_brief.product.review_session.contracts import (
     IMPROVEMENT_PROJECTION_SCHEMA_ID,
     POST_FINAL_REVIEW_CONTEXT_SCHEMA_ID,
     POST_FINAL_REVIEW_POLICY_SCHEMA_ID,
     POST_FINAL_REVIEW_READ_MODEL_SCHEMA_ID,
     QUALITY_PROJECTION_SCHEMA_ID,
+    READER_REVIEW_REFRESH_SCHEMA_ID,
+    READER_REVIEW_SELECTION_SCHEMA_ID,
     SEMANTIC_REVIEW_SCHEMA_ID,
     ImprovementProjection,
     PostFinalReviewContext,
     PostFinalReviewPolicyBinding,
     PostFinalReviewReadModel,
     QualityProjection,
+    ReviewSessionCommand,
     SemanticReviewProjection,
 )
 from multi_agent_brief.semantic_evaluator.post_final_bridge import (
@@ -60,15 +65,30 @@ def quality_payload() -> dict[str, object]:
         "overall_status": "warning",
         "source_fingerprint": "3" * 64,
         "metrics": [
-            {"metric_id": "gate-blockers", "label": "Gate blockers", "value": 0, "status": "pass"},
-            {"metric_id": "gate-warnings", "label": "Gate warnings", "value": 1, "status": "warning"},
+            {
+                "metric_id": "gate-blockers",
+                "label": "Gate blockers",
+                "value": 0,
+                "status": "pass",
+            },
+            {
+                "metric_id": "gate-warnings",
+                "label": "Gate warnings",
+                "value": 1,
+                "status": "warning",
+            },
         ],
         "sections": [
             {
                 "section_id": "control-integrity",
                 "title": "Control integrity",
                 "items": [
-                    {"item_id": "run-integrity", "label": "Run integrity", "status": "pass", "detail": "Verified by the upstream deterministic projector."}
+                    {
+                        "item_id": "run-integrity",
+                        "label": "Run integrity",
+                        "status": "pass",
+                        "detail": "Verified by the upstream deterministic projector.",
+                    }
                 ],
             }
         ],
@@ -128,6 +148,7 @@ def reader_view(*, report_sha256: str = "1" * 64) -> LajReaderView:
         "withheld_finding_count": 0,
         "abstention_count": 0,
         "findings": [],
+        "requirement_assessments": [],
         "disclaimer": "Advisory only; no finding is neutral and never PASS.",
     }
     payload["view_sha256"] = canonical_sha256(payload)
@@ -191,7 +212,11 @@ def test_read_model_requires_exact_upstream_quality_binding() -> None:
     payload["quality"]["source_fingerprint"] = "9" * 64
     payload["quality"]["projection_fingerprint"] = "9" * 64
     payload["read_model_fingerprint"] = canonical_sha256(
-        {key: value for key, value in payload.items() if key != "read_model_fingerprint"}
+        {
+            key: value
+            for key, value in payload.items()
+            if key != "read_model_fingerprint"
+        }
     )
     with pytest.raises(ValidationError, match="quality projection binding mismatch"):
         PostFinalReviewReadModel.model_validate(payload)
@@ -226,3 +251,96 @@ def test_non_available_semantic_state_cannot_carry_findings_or_unknown_fields() 
     payload["unexpected"] = "authority"
     with pytest.raises(ValidationError):
         SemanticReviewProjection.model_validate(payload)
+
+
+def test_reader_review_selection_and_refresh_commands_are_strict_and_inert() -> None:
+    selected = ReviewSessionCommand.model_validate(
+        {
+            "schema_version": "briefloop.post_final_review.command.v1",
+            "action": "select_result",
+            "payload": {
+                "schema_version": READER_REVIEW_SELECTION_SCHEMA_ID,
+                "assessment_result_id": "assessment-result-1",
+                "assessment_result_fingerprint": "a" * 64,
+            },
+        },
+        strict=True,
+    )
+    assert selected.action == "select_result"
+
+    refreshed = ReviewSessionCommand.model_validate(
+        {
+            "schema_version": "briefloop.post_final_review.command.v1",
+            "action": "refresh",
+            "payload": {"schema_version": READER_REVIEW_REFRESH_SCHEMA_ID},
+        },
+        strict=True,
+    )
+    assert refreshed.action == "refresh"
+
+    for malformed in (
+        {
+            "schema_version": READER_REVIEW_SELECTION_SCHEMA_ID,
+            "assessment_result_id": "assessment-result-1",
+            "assessment_result_fingerprint": "not-a-fingerprint",
+        },
+        {
+            "schema_version": READER_REVIEW_SELECTION_SCHEMA_ID,
+            "assessment_result_id": "assessment-result-1",
+            "assessment_result_fingerprint": "a" * 64,
+            "lineage_id": "must-not-enter-the-session",
+        },
+    ):
+        with pytest.raises(ValidationError):
+            ReviewSessionCommand.model_validate(
+                {
+                    "schema_version": "briefloop.post_final_review.command.v1",
+                    "action": "select_result",
+                    "payload": malformed,
+                },
+                strict=True,
+            )
+
+
+def test_reader_review_run_command_reuses_neutral_strict_dto_and_rejects_secret() -> (
+    None
+):
+    payload = {
+        "schema_version": ReaderReviewAssessmentInput.schema_id,
+        "human_actor_id": "local-human-reviewer",
+        "human_request_id": "reader-review-request-1",
+        "disclosure_confirmed": True,
+        "messages_endpoint": "https://api.example.invalid/v1/messages",
+        "requested_model_id": "opaque-model-id",
+        "model_version": "model-version",
+        "expected_model_identity": "expected-opaque-model",
+        "public_safe_egress_attested": True,
+        "cost_status": "not_measured",
+    }
+    command = ReviewSessionCommand.model_validate(
+        {
+            "schema_version": "briefloop.post_final_review.command.v1",
+            "action": "run_reader_review",
+            "payload": payload,
+        },
+        strict=True,
+    )
+    assert command.action == "run_reader_review"
+
+    for field, value in (
+        ("disclosure_confirmed", False),
+        ("public_safe_egress_attested", False),
+        ("cost_status", "measured"),
+        ("api_key", "must-never-enter-the-command"),
+    ):
+        malformed = dict(payload)
+        malformed[field] = value
+        with pytest.raises(ValidationError):
+            ReviewSessionCommand.model_validate(
+                {
+                    "schema_version": "briefloop.post_final_review.command.v1",
+                    "action": "run_reader_review",
+                    "payload": malformed,
+                },
+                strict=True,
+            )

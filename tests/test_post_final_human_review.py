@@ -30,27 +30,29 @@ from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
     ANTHROPIC_API_KEY_SETTING,
 )
 import multi_agent_brief.semantic_evaluator.runner as runner_module
-from tests.test_finalized_local_review_facts import _finalized_local_workspace
-from tests.test_post_final_assessment import (
-    _fixture_service,
-    _policy_payload,
+from tests.test_reader_review_backend import (
+    _reader_input,
+    _reader_service,
+    _reader_workspace,
 )
 
 
 def _qualified_review(tmp_path, monkeypatch):
-    workspace, run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
+    workspace, run_id = _reader_workspace(tmp_path, monkeypatch)
     provider_calls: list[tuple[str, int]] = []
-    assessment = _fixture_service(
+    assessment = _reader_service(
         workspace,
         provider_calls,
         terminal_mode="finding",
     )
-    assert assessment.policy_set(_policy_payload())["ok"] is True
     monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
     monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
-    outcome = assessment.assess()
+    outcome = assessment.run_reader_review(
+        _reader_input("reader-review-human-loop-request-1")
+    )
     assert outcome["ok"] is True, outcome
     assert outcome["status"] == "available"
+    assert outcome["user_status"] == "finding_returned"
     assert outcome["finding_count"] >= 1
     monkeypatch.delenv(ANTHROPIC_API_KEY_SETTING, raising=False)
     review = PostFinalReviewService(
@@ -275,7 +277,7 @@ def test_disposition_guidance_and_separate_approval_are_append_only(
     assert len(final_status["guidance_drafts"]) == 2
     assert len(final_status["guidance_statuses"]) == 3
     assert final_status["guidance_statuses"][0]["draft_revision"] == 1
-    assert len(provider_calls) == 9
+    assert len(provider_calls) == 2
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         after = store.load_history()
         snapshot = store.load_snapshot(run_id)
@@ -700,7 +702,7 @@ def test_tampered_or_cross_bound_finding_is_zero_write(tmp_path, monkeypatch) ->
         assert store.current_revision == before
         snapshot = store.load_snapshot(run_id)
     assert snapshot.post_final_finding_dispositions == ()
-    assert len(provider_calls) == 9
+    assert len(provider_calls) == 2
 
 
 def test_advisory_receipt_relation_smuggling_and_unknown_family_fail_closed(
@@ -815,4 +817,4 @@ def test_headless_cli_uses_the_same_store_review_service(
     recorded = json.loads(capsys.readouterr().out)
     assert recorded["ok"] is True
     assert recorded["replayed"] is False
-    assert len(provider_calls) == 9
+    assert len(provider_calls) == 2
