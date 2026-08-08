@@ -464,6 +464,268 @@ def test_reader_review_v3_entrypoints_stop_on_unsupported_frozen_direction(
     assert (workspace / "briefloop.db").read_bytes() == before_run
 
 
+def test_reader_review_assessment_next_rebuilds_authorization_after_unknown(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An outcome-unknown v3 predecessor can be explicitly abandoned read-only."""
+
+    workspace, _run_id = _reader_workspace(tmp_path / "unknown", monkeypatch)
+    calls: list[tuple[str, int]] = []
+    service = _reader_service(workspace, calls)
+    policy = service.policy_set(
+        _reader_policy_payload(service, "reader-review-v3-unknown-policy")
+    )
+    assert policy["ok"] is True
+
+    first = service.assessment_next(
+        policy_revision_id=str(policy["policy_revision_id"]),
+        human_actor_id="human-reader-review-next",
+        human_request_id="reader-review-v3-unknown-first",
+        assessment_purpose="post_final_review",
+    )
+    assert first["ok"] is True
+    first_request = first["request"]
+    assert isinstance(first_request, dict)
+    authorization = first_request["reader_review_authorization_fingerprint"]
+    assert isinstance(authorization, str) and len(authorization) == 64
+
+    facts, snapshot, _binding, _workspace_id, history, action = service._load()
+    policy_record = next(
+        item
+        for item in snapshot.post_final_assessment_policy_revisions
+        if item.policy_revision_id == policy["policy_revision_id"]
+    )
+    reconstructed = service._reader_review_input_from_policy(
+        policy_record,
+        human_actor_id="human-reader-review-next",
+        human_request_id="reader-review-v3-unknown-first",
+    )
+    assert authorization == service._reader_review_authorization_fingerprint(
+        reconstructed,
+        facts=facts,
+        action=action,
+    )
+
+    class _ProcessStop(BaseException):
+        pass
+
+    original_execute = assessment_module.execute_prepared_shadow_run
+    monkeypatch.setattr(
+        assessment_module,
+        "execute_prepared_shadow_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(_ProcessStop()),
+    )
+    with pytest.raises(_ProcessStop):
+        service.assessment_run(first_request)
+    monkeypatch.setattr(
+        assessment_module,
+        "execute_prepared_shadow_run",
+        original_execute,
+    )
+
+    before_preview = (workspace / "briefloop.db").read_bytes()
+    second = service.assessment_next(
+        policy_revision_id=str(policy["policy_revision_id"]),
+        human_actor_id="human-reader-review-next",
+        human_request_id="reader-review-v3-unknown-abandon",
+        assessment_purpose="post_final_review",
+        abandon_predecessor=True,
+    )
+    assert second["ok"] is True
+    second_request = second["request"]
+    assert isinstance(second_request, dict)
+    assert second_request["abandon_predecessor"] is True
+    assert isinstance(second_request["reader_review_authorization_fingerprint"], str)
+    assert calls == []
+    assert (workspace / "briefloop.db").read_bytes() == before_preview
+
+    assert (
+        service.assessment_next(
+            policy_revision_id=str(policy["policy_revision_id"]),
+            human_actor_id="human-reader-review-next",
+            human_request_id="reader-review-v3-unknown-abandon",
+            assessment_purpose="post_final_review",
+            abandon_predecessor=True,
+        )
+        == second
+    )
+
+
+def test_reader_review_status_follows_latest_assessment_generation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Status must report the verified series head, not an abandoned predecessor."""
+
+    workspace, _run_id = _reader_workspace(tmp_path / "status-series", monkeypatch)
+    calls: list[tuple[str, int]] = []
+    service = _reader_service(workspace, calls)
+    policy = service.policy_set(
+        _reader_policy_payload(service, "reader-review-status-series-policy")
+    )
+    assert policy["ok"] is True
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+
+    class _ProcessStop(BaseException):
+        pass
+
+    def run_unknown(request: dict[str, object]) -> None:
+        original_execute = assessment_module.execute_prepared_shadow_run
+        original_retry = service.retry
+        original_archive_probe = service._archive_recovery_available
+        monkeypatch.setattr(
+            assessment_module,
+            "execute_prepared_shadow_run",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(_ProcessStop()),
+        )
+        monkeypatch.setattr(
+            service,
+            "retry",
+            lambda assessment_request_id: {
+                "ok": False,
+                "status": "pending",
+                "assessment_request_id": assessment_request_id,
+            },
+        )
+        monkeypatch.setattr(
+            service,
+            "_archive_recovery_available",
+            lambda *_args, **_kwargs: False,
+        )
+        try:
+            with pytest.raises(_ProcessStop):
+                service.assessment_run(request)
+        finally:
+            monkeypatch.setattr(
+                assessment_module,
+                "execute_prepared_shadow_run",
+                original_execute,
+            )
+            monkeypatch.setattr(service, "retry", original_retry)
+            monkeypatch.setattr(
+                service,
+                "_archive_recovery_available",
+                original_archive_probe,
+            )
+
+    first = service.assessment_next(
+        policy_revision_id=str(policy["policy_revision_id"]),
+        human_actor_id="human-reader-review-status-series",
+        human_request_id="reader-review-status-series-first",
+        assessment_purpose="post_final_review",
+    )
+    assert first["ok"] is True
+    first_request = first["request"]
+    assert isinstance(first_request, dict)
+    run_unknown(first_request)
+
+    second = service.assessment_next(
+        policy_revision_id=str(policy["policy_revision_id"]),
+        human_actor_id="human-reader-review-status-series",
+        human_request_id="reader-review-status-series-second",
+        assessment_purpose="post_final_review",
+        abandon_predecessor=True,
+    )
+    assert second["ok"] is True
+    second_request = second["request"]
+    assert isinstance(second_request, dict)
+    run_unknown(second_request)
+
+    third = service.assessment_next(
+        policy_revision_id=str(policy["policy_revision_id"]),
+        human_actor_id="human-reader-review-status-series",
+        human_request_id="reader-review-status-series-third",
+        assessment_purpose="post_final_review",
+        abandon_predecessor=True,
+    )
+    assert third["ok"] is True
+    third_request = third["request"]
+    assert isinstance(third_request, dict)
+    third_result = service.assessment_run(third_request)
+    assert third_result["ok"] is True
+    assert third_result["status"] == "available"
+
+    listing = service.assessment_list()
+    assert [item["terminal_evidence_class"] for item in listing["assessments"]] == [
+        "abandoned",
+        "abandoned",
+        "available",
+    ]
+    status = service.status()
+    assert status["status"] == "available"
+    assert (
+        status["assessment_request_id"]
+        == listing["assessments"][-1]["assessment_request_id"]
+    )
+    assert (
+        status["assessment_result_id"]
+        == listing["assessments"][-1]["assessment_result_id"]
+    )
+
+
+def test_reader_review_assessment_run_preflights_sdk_before_claim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing live SDK identity cannot create a claimed request."""
+
+    workspace, run_id = _reader_workspace(tmp_path / "sdk-preflight", monkeypatch)
+    factory_calls: list[object] = []
+
+    def forbidden_factory(execution: object) -> object:
+        factory_calls.append(execution)
+        raise AssertionError("SDK preflight reached provider factory")
+
+    service = PostFinalAssessmentService(
+        workspace,
+        adapter_factory=forbidden_factory,
+    )
+    policy = service.policy_set(
+        _reader_policy_payload(service, "reader-review-sdk-preflight-policy")
+    )
+    assert policy["ok"] is True
+    preview = service.assessment_next(
+        policy_revision_id=str(policy["policy_revision_id"]),
+        human_actor_id="human-reader-review-preflight",
+        human_request_id="reader-review-sdk-preflight-run",
+        assessment_purpose="post_final_review",
+    )
+    assert preview["ok"] is True
+    request = preview["request"]
+    assert isinstance(request, dict)
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+        before_snapshot = store.load_snapshot(run_id)
+        assert before_snapshot.post_final_assessment_requests == ()
+
+    metadata_calls: list[str] = []
+
+    def unavailable_metadata(name: str) -> str:
+        metadata_calls.append(name)
+        raise RuntimeError("optional SDK is not installed")
+
+    monkeypatch.setattr(runner_module.metadata, "version", unavailable_metadata)
+    before_db = (workspace / "briefloop.db").read_bytes()
+    result = service.assessment_run(request)
+
+    assert result == {
+        "ok": False,
+        "status": "unavailable",
+        "reason_code": "preflight_invalid",
+    }
+    assert metadata_calls == ["anthropic"]
+    assert factory_calls == []
+    assert (workspace / "briefloop.db").read_bytes() == before_db
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(run_id)
+        assert store.current_revision == before_revision
+        assert snapshot.post_final_assessment_requests == ()
+        assert snapshot.post_final_assessment_results == ()
+
+
 def test_o2_four_state_contract_and_unable_finding_conflict_are_deterministic(
     tmp_path: Path,
 ) -> None:

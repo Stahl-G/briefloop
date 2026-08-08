@@ -84,6 +84,7 @@ from multi_agent_brief.semantic_evaluator.runner import (
     execute_prepared_shadow_run,
     prepared_shadow_budget,
     prepare_shadow_run_from_bytes,
+    resolve_prepared_shadow_identity,
 )
 
 
@@ -1138,6 +1139,44 @@ class PostFinalAssessmentService:
             }
         )
 
+    @classmethod
+    def _reader_review_input_from_policy(
+        cls,
+        policy: PostFinalAssessmentPolicyRevision,
+        *,
+        human_actor_id: str,
+        human_request_id: str,
+    ) -> ReaderReviewAssessmentInput:
+        """Reconstruct the strict Reader Review command for a next generation.
+
+        ``assessment_next`` is a read-only projection, so it cannot reuse the
+        original paid command object.  The v3 policy is the authoritative
+        source for the endpoint/model and the already-attested disclosure,
+        egress, and cost terms; the next Human request supplies only its new
+        actor/request identity.  Revalidate through the same strict input
+        boundary used by the first-generation command before fingerprinting.
+        """
+
+        try:
+            return cls._validate_reader_review_input(
+                {
+                    "schema_version": ReaderReviewAssessmentInput.schema_id,
+                    "human_actor_id": human_actor_id,
+                    "human_request_id": human_request_id,
+                    "disclosure_confirmed": policy.disclosure_confirmed,
+                    "messages_endpoint": policy.messages_endpoint,
+                    "requested_model_id": policy.requested_model_id,
+                    "model_version": policy.model_version,
+                    "expected_model_identity": policy.expected_model_identity,
+                    "public_safe_egress_attested": (policy.public_safe_egress_attested),
+                    "cost_status": policy.cost_status,
+                }
+            )
+        except PostFinalAssessmentError as exc:
+            raise PostFinalAssessmentError(
+                "reader_review_authorization_invalid"
+            ) from exc
+
     def run_reader_review(
         self,
         value: Mapping[str, object],
@@ -1584,7 +1623,13 @@ class PostFinalAssessmentService:
             return {"ok": False, "status": "unavailable", "reason_code": str(exc)}
         policy = self._policy_for_facts(snapshot, facts)
         try:
-            request = self._request_for_facts(history, snapshot, facts, action)
+            # Status observes the head of the verified multi-assessment series.
+            # Keep ``_request_for_facts`` generation-one-only for the legacy
+            # single-run/automatic-observer path; selecting that resolver here
+            # makes an abandoned predecessor look pending after a successor
+            # has already produced a result.
+            series = self._series_for_facts(history, snapshot, facts, action)
+            request = series[-1] if series else None
         except PostFinalAssessmentError as exc:
             return {
                 "ok": False,
@@ -1603,13 +1648,26 @@ class PostFinalAssessmentService:
                 "status": "invalid",
                 "reason_code": str(exc),
             }
+        abandonment = (
+            next(
+                (
+                    item
+                    for item in snapshot.post_final_assessment_abandonments
+                    if request is not None
+                    and item.assessment_request_id == request.assessment_request_id
+                ),
+                None,
+            )
+            if request is not None
+            else None
+        )
         status = (
             "not_requested"
             if policy is None or not policy.enabled
-            else "available"
-            if result is not None and result.terminal_evidence_class == "available"
-            else "unavailable"
+            else result.terminal_evidence_class
             if result is not None
+            else "abandoned"
+            if abandonment is not None
             else "pending"
             if request is not None
             else "not_requested"
@@ -1882,6 +1940,23 @@ class PostFinalAssessmentService:
                 item.assessment_request_id: item
                 for item in snapshot.post_final_assessment_abandonments
             }
+            reader_review_authorization_fingerprint = None
+            if (
+                policy.schema_version
+                == PostFinalAssessmentPolicyRevision.reader_review_schema_id
+            ):
+                reader_review_request = self._reader_review_input_from_policy(
+                    policy,
+                    human_actor_id=human_actor_id,
+                    human_request_id=human_request_id,
+                )
+                reader_review_authorization_fingerprint = (
+                    self._reader_review_authorization_fingerprint(
+                        reader_review_request,
+                        facts=facts,
+                        action=action,
+                    )
+                )
             command = _build_next_assessment_command(
                 facts=facts,
                 action=action,
@@ -1893,6 +1968,9 @@ class PostFinalAssessmentService:
                 human_request_id=human_request_id,
                 assessment_purpose=assessment_purpose,
                 abandon_predecessor=abandon_predecessor,
+                reader_review_authorization_fingerprint=(
+                    reader_review_authorization_fingerprint
+                ),
             )
             self._admit_assessment(
                 command=command,
@@ -2029,6 +2107,17 @@ class PostFinalAssessmentService:
                     "status": "predecessor_recovered",
                     "reason_code": "assessment_predecessor_result_available",
                 }
+        try:
+            resolved_identity = resolve_prepared_shadow_identity(readiness.prepared)
+        except SemanticEvaluatorError:
+            # Resolve the live execution identity before the claim transaction.
+            # This only inspects the local archive and distribution metadata; the
+            # credential/provider boundary remains after the claim below.
+            return {
+                "ok": False,
+                "status": "unavailable",
+                "reason_code": "preflight_invalid",
+            }
         claim = self._claim_series_request(
             facts=facts,
             policy=readiness.policy,
@@ -2046,6 +2135,7 @@ class PostFinalAssessmentService:
         result = execute_prepared_shadow_run(
             readiness.prepared,
             adapter_factory=self._adapter_factory,
+            resolved_identity=resolved_identity,
         )
         if not result.archive_complete or result.archive_path is None:
             return {
