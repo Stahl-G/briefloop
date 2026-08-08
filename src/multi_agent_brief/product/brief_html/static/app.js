@@ -147,6 +147,8 @@
             observation_not_allowed: "只有 Store 确认的 finalized 终稿才能记录人工观察。",
             command_pending: "正在记录…",
             command_failed: "记录失败",
+            session_reopen: "审阅会话已过期或已关闭。请重新打开审阅页面，先检查 Store 状态，再决定是否重放；不要盲目重试。",
+            session_disconnected: "审阅会话连接已断开。请重新打开审阅页面，先检查 Store 状态，再决定是否重放；不要盲目重试。",
             command_saved: "已由 Store Receipt 记录",
             successor_title: "开始下一轮",
             successor_sub: "从当前冻结终稿启动一个新的 BriefLoop run。当前 RunDirection 会由 Store 预填并再次核验。",
@@ -304,6 +306,8 @@
             observation_not_allowed: "A Human observation requires a Store-confirmed finalized brief.",
             command_pending: "Recording…",
             command_failed: "Command failed",
+            session_reopen: "The review session has expired or closed. Reopen the review page, inspect Store state first, then decide whether to replay; do not blindly retry.",
+            session_disconnected: "The review session connection was lost. Reopen the review page, inspect Store state first, then decide whether to replay; do not blindly retry.",
             command_saved: "Recorded by Store Receipt",
             successor_title: "Start the next run",
             successor_sub: "Start a new BriefLoop run from this frozen final brief. Store pre-fills and re-verifies the current RunDirection.",
@@ -389,7 +393,18 @@
             reason === "post_final_assessment_predecessor_outcome_unknown";
     }
 
-    function sendReviewCommand(action, payload, statusNode, button) {
+    function isClosedSessionReason(reason) {
+        return reason === "review_session_expired" ||
+            reason === "review_session_replaced";
+    }
+
+    function commandFailureMessage(reason, action) {
+        if (isClosedSessionReason(reason)) return t("session_reopen");
+        if (action === "run_reader_review") return t("command_outcome_unknown");
+        return t("command_failed");
+    }
+
+    function sendReviewCommand(action, payload, statusNode, button, onSuccess) {
         if (!ACTION_SESSION) return;
         if (button) button.disabled = true;
         statusNode.textContent = t("command_pending");
@@ -406,8 +421,19 @@
                 payload: payload
             })
         }).then(function (response) {
-            if (!response.ok) throw new Error("command rejected");
-            return response.json();
+            return response.text().then(function (body) {
+                var result = null;
+                try { result = body ? JSON.parse(body) : null; } catch (e) { /* value-free */ }
+                if (!response.ok) {
+                    var rejected = new Error("command rejected");
+                    rejected.reasonCode = result && result.reason_code;
+                    throw rejected;
+                }
+                if (!result || typeof result !== "object") {
+                    throw new Error("command response invalid");
+                }
+                return result;
+            });
         }).then(function (result) {
             if (result.page_data && typeof result.page_data === "object" &&
                     result.page_data.schema_version === "briefloop.brief_pages.data.v2") {
@@ -420,6 +446,7 @@
                 if (button) button.disabled = false;
                 return;
             }
+            if (onSuccess) onSuccess(result);
             if (result.page_data) {
                 renderAll();
             } else if (action === "start_successor") {
@@ -429,9 +456,11 @@
                 statusNode.textContent = t("command_saved");
                 if (button) button.disabled = false;
             }
-        }).catch(function () {
-            statusNode.textContent = action === "run_reader_review" ?
-                t("command_outcome_unknown") : t("command_failed");
+        }).catch(function (error) {
+            statusNode.textContent = error && error.reasonCode ?
+                commandFailureMessage(error.reasonCode, action) :
+                (action === "run_reader_review" ?
+                    t("command_outcome_unknown") : t("session_disconnected"));
             if (button) button.disabled = false;
         });
     }
@@ -1081,7 +1110,7 @@
         var payload = {
             schema_version: "briefloop.post_final_human_observation_input.v1",
             human_actor_id: "local-human-reviewer",
-            human_request_id: requestId("human-observation"),
+            human_request_id: form.requestId || requestId("human-observation"),
             observation_text: text
         };
         if (!payload.human_request_id) return null;
@@ -1128,6 +1157,7 @@
 
     function renderObservationComposer(zone, imp) {
         var card = el("section", "observation-card");
+        var pendingRequestId = null;
         card.appendChild(el("h3", null, t("observation_title")));
         card.appendChild(el("p", "section-muted", t("observation_sub")));
         var binding = el("p", "observation-binding");
@@ -1174,8 +1204,10 @@
         var submit = el("button", "btn-primary", t("observation_submit"));
         submit.type = "button";
         submit.addEventListener("click", function () {
+            if (!pendingRequestId) pendingRequestId = requestId("human-observation");
             var payload = observationPayload({
                 text: text,
+                requestId: pendingRequestId,
                 requirement: requirement,
                 claim: claim,
                 scope: scope,
@@ -1190,7 +1222,8 @@
                 status.textContent = t("observation_invalid_refs");
                 return;
             }
-            sendReviewCommand("append_observation", payload, status, submit);
+            sendReviewCommand("append_observation", payload, status, submit,
+                function () { pendingRequestId = null; });
         });
         card.appendChild(submit);
         card.appendChild(status);

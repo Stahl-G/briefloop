@@ -34,6 +34,13 @@ CSRF_TOKEN_HEADER = "X-BriefLoop-CSRF-Token"
 MAX_JSON_BODY_BYTES = 64 * 1024
 DEFAULT_SESSION_TTL_SECONDS = 15 * 60
 DEFAULT_SESSION_IDLE_SECONDS = 5 * 60
+# Actionable sessions are deliberately longer-lived than the dormant
+# read-only review session.  A Human may need to read the frozen brief,
+# inspect the AI second opinion, and compose an observation before the first
+# write.  These remain bounded local loopback sessions; callers can still pass
+# explicit values for tests or a stricter embedding.
+ACTIONABLE_SESSION_TTL_SECONDS = 60 * 60
+ACTIONABLE_SESSION_IDLE_SECONDS = 30 * 60
 CONTENT_SECURITY_POLICY = (
     "default-src 'none'; script-src 'self'; style-src 'self'; "
     "img-src 'self' data:; connect-src 'self'; font-src 'none'; "
@@ -172,18 +179,36 @@ def create_review_session_server(
     brief_html: bytes | None = None,
     run_id: str | None = None,
     command_handler: Callable[[ReviewSessionCommand], dict[str, object]] | None = None,
-    ttl_seconds: int = DEFAULT_SESSION_TTL_SECONDS,
-    idle_timeout_seconds: int = DEFAULT_SESSION_IDLE_SECONDS,
+    ttl_seconds: int | None = None,
+    idle_timeout_seconds: int | None = None,
     clock: Callable[[], datetime] = _utcnow,
 ) -> ReviewSessionServer:
     """Create a bound loopback server; caller explicitly starts or closes it."""
 
-    if type(ttl_seconds) is not int or ttl_seconds < 1 or ttl_seconds > 24 * 60 * 60:
+    default_ttl = (
+        ACTIONABLE_SESSION_TTL_SECONDS
+        if brief_html is not None
+        else DEFAULT_SESSION_TTL_SECONDS
+    )
+    default_idle_timeout = (
+        ACTIONABLE_SESSION_IDLE_SECONDS
+        if brief_html is not None
+        else DEFAULT_SESSION_IDLE_SECONDS
+    )
+    effective_ttl = default_ttl if ttl_seconds is None else ttl_seconds
+    effective_idle_timeout = (
+        default_idle_timeout if idle_timeout_seconds is None else idle_timeout_seconds
+    )
+    if (
+        type(effective_ttl) is not int
+        or effective_ttl < 1
+        or effective_ttl > 24 * 60 * 60
+    ):
         raise ValueError("review_session_ttl_invalid")
     if (
-        type(idle_timeout_seconds) is not int
-        or idle_timeout_seconds < 1
-        or idle_timeout_seconds > 24 * 60 * 60
+        type(effective_idle_timeout) is not int
+        or effective_idle_timeout < 1
+        or effective_idle_timeout > 24 * 60 * 60
     ):
         raise ValueError("review_session_idle_timeout_invalid")
     if read_model is not None:
@@ -207,14 +232,14 @@ def create_review_session_server(
     csrf_token = secrets.token_urlsafe(32)
     session_id = f"review-{secrets.token_hex(16)}"
     created_at = clock()
-    expires_at = created_at + timedelta(seconds=ttl_seconds)
+    expires_at = created_at + timedelta(seconds=effective_ttl)
     activity_lock = Lock()
     last_activity = [created_at]
 
     def is_expired() -> bool:
         now = clock()
         with activity_lock:
-            idle_at = last_activity[0] + timedelta(seconds=idle_timeout_seconds)
+            idle_at = last_activity[0] + timedelta(seconds=effective_idle_timeout)
         return now >= expires_at or now >= idle_at
 
     def touch() -> None:
@@ -453,6 +478,8 @@ def create_review_session_server(
 
 
 __all__ = [
+    "ACTIONABLE_SESSION_IDLE_SECONDS",
+    "ACTIONABLE_SESSION_TTL_SECONDS",
     "CONTENT_SECURITY_POLICY",
     "CSRF_TOKEN_HEADER",
     "DEFAULT_SESSION_IDLE_SECONDS",

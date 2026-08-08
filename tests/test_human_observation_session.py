@@ -366,6 +366,11 @@ def test_static_export_contains_human_observation_copy_but_no_write_transport() 
     assert 'sendReviewCommand("supersede_observation"' in app
     assert "origin=Human" in app
     assert "local-human-reviewer" in app
+    assert "session_reopen" in app
+    assert "session_disconnected" in app
+    assert "response.text()" in app
+    assert "pendingRequestId" in app
+    assert 'human_request_id: form.requestId || requestId("human-observation")' in app
     # Static exports have no session token and therefore never enable these
     # command controls; the canonical app only sends over the secured route.
     assert '"/api/v1/command?session_id="' in app

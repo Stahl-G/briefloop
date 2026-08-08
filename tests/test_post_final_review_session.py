@@ -220,6 +220,39 @@ def test_expiry_and_bounded_nonexistent_command_surface() -> None:
         server.close()
 
 
+def test_actionable_session_defaults_leave_human_time_to_review_before_expiry() -> None:
+    now = [datetime(2026, 7, 19, tzinfo=timezone.utc)]
+    page = (
+        b"<html><head><style>body{color:black}</style></head>"
+        b"<body><script>0</script></body></html>"
+    )
+    server = create_review_session_server(
+        None,
+        brief_html=page,
+        run_id="run-actionable-expiry-1",
+        command_handler=lambda _command: {"ok": True},
+        clock=lambda: now[0],
+    )
+    try:
+        created = datetime.fromisoformat(
+            server.descriptor.created_at.replace("Z", "+00:00")
+        )
+        expires = datetime.fromisoformat(
+            server.descriptor.expires_at.replace("Z", "+00:00")
+        )
+        assert expires - created == timedelta(hours=1)
+        server.start()
+        _token, _session_id, port = _credentials(server.url)
+        now[0] += timedelta(minutes=6)
+        assert _request(port, "/index.html")[0] == 200
+        now[0] += timedelta(minutes=30)
+        expired_status, _, expired_body = _request(port, "/index.html")
+        assert expired_status == 410
+        assert json.loads(expired_body)["reason_code"] == "review_session_expired"
+    finally:
+        server.close()
+
+
 def test_launcher_browser_failure_is_ephemeral_headless_fallback() -> None:
     result = launch_review_session(
         build_read_model(),
