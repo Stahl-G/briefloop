@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional
 
@@ -22,6 +23,7 @@ from multi_agent_brief.contracts.v2 import (
     CoreRunNextAction,
     EventEnvelope,
     PostFinalAssessmentAbandonmentRecord,
+    PostFinalAssessmentExecutionRecord,
     PostFinalAssessmentPolicyRevision,
     PostFinalAssessmentRequestRecord,
     PostFinalAssessmentResultRecord,
@@ -58,10 +60,12 @@ from multi_agent_brief.product.post_final_assessment_read_model import (
 )
 from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
     ANTHROPIC_ADAPTER_ID,
+    ANTHROPIC_API_KEY_SETTING,
     ANTHROPIC_PROVIDER_ID,
     canonical_messages_endpoint_v1,
 )
 from multi_agent_brief.semantic_evaluator.archive import (
+    resolve_existing_execution_evidence,
     trial_archive_path,
     verify_shadow_archive,
 )
@@ -81,6 +85,7 @@ from multi_agent_brief.semantic_evaluator.reader import (
 from multi_agent_brief.semantic_evaluator.runner import (
     PreparedShadowRun,
     ShadowRunResult,
+    derive_existing_execution_evidence,
     execute_prepared_shadow_run,
     prepared_shadow_budget,
     prepare_shadow_run_from_bytes,
@@ -93,11 +98,21 @@ POST_FINAL_ASSESSMENT_RUN_SCHEMA = "briefloop.post_final_assessment_run.v1"
 READER_REVIEW_ASSESSMENT_KIND = "reader_review"
 READER_REVIEW_REPORT_TYPE = "management_monthly"
 READER_REVIEW_LANGUAGE = "en"
+READER_REVIEW_PROFILE_BINDINGS: dict[tuple[str, str], str] = {
+    ("management_monthly", "en"): "management_brief_en_v1",
+    ("industry_weekly", "zh"): "industry_weekly_zh_v1",
+}
 READER_REVIEW_PROJECTION_VERSION = "reader_review_projection_v1"
 READER_REVIEW_MAX_PROVIDER_CALLS = 2
 READER_REVIEW_MAX_TOTAL_INPUT_TOKENS = 400_000
-READER_REVIEW_MAX_TOTAL_OUTPUT_TOKENS = 8_192
-READER_REVIEW_MAX_OUTPUT_TOKENS_PER_CALL = 4_096
+READER_REVIEW_MAX_TOTAL_OUTPUT_TOKENS = 16_384
+READER_REVIEW_MAX_OUTPUT_TOKENS_PER_CALL = 8_192
+
+
+def _semantic_language(language: str) -> str:
+    """Map ordinary RunDirection language labels to evaluator Language values."""
+
+    return "zh-CN" if language == "zh" else language
 
 
 class PostFinalAssessmentPolicyInput(StrictModel):
@@ -298,32 +313,62 @@ def _bounded_context_from_direction(
     language: str = "zh-CN",
 ) -> BoundedContext:
     direction = binding.run_direction
-    rows: list[tuple[str, str, str, str]] = [
-        (
-            "objective",
-            "must_answer",
-            direction.task_objective,
-            "run_direction.objective",
-        ),
-        ("audience", "audience_need", direction.audience, "run_direction.audience"),
-    ]
-    rows.extend(
-        (f"focus-{index}", "must_include", value, f"run_direction.focus.{index}")
-        for index, value in enumerate(direction.focus_areas, start=1)
+    # Keep reader-relevant direction in the evaluator context, while leaving
+    # provider/search policy out of O2.  The old implementation only copied
+    # objective/audience/focus/terms, which omitted the actual subject and
+    # reporting frame used by the human brief.  Text de-duplication is
+    # deterministic; the first (stronger) requirement wins.
+    rows: list[tuple[str, str, str, str]] = []
+    seen_text: set[str] = set()
+
+    def add(name: str, requirement_type: str, text: str, locator: str) -> None:
+        normalized = " ".join(text.split()).casefold()
+        if not normalized or normalized in seen_text:
+            return
+        seen_text.add(normalized)
+        rows.append((name, requirement_type, text, locator))
+
+    add("objective", "must_answer", direction.task_objective, "run_direction.objective")
+    add("audience", "audience_need", direction.audience, "run_direction.audience")
+    add(
+        "subject",
+        "scope_included",
+        direction.subject_name,
+        "run_direction.subject_name",
     )
-    rows.extend(
-        (
+    if direction.industry_or_theme:
+        add(
+            "industry-theme",
+            "scope_included",
+            direction.industry_or_theme,
+            "run_direction.industry_or_theme",
+        )
+    add("title", "must_include", direction.brief_title, "run_direction.brief_title")
+    add("cadence", "decision_use", direction.cadence, "run_direction.cadence")
+    add(
+        "report-date",
+        "decision_use",
+        direction.report_date,
+        "run_direction.report_date",
+    )
+    if direction.report_window_start and direction.report_window_end:
+        add(
+            "report-window",
+            "decision_use",
+            f"{direction.report_window_start}..{direction.report_window_end}",
+            "run_direction.report_window",
+        )
+    for index, value in enumerate(direction.focus_areas, start=1):
+        add(f"focus-{index}", "must_include", value, f"run_direction.focus.{index}")
+    for index, value in enumerate(direction.excluded_topics, start=1):
+        add(
             f"excluded-{index}",
             "scope_excluded",
             value,
             f"run_direction.excluded.{index}",
         )
-        for index, value in enumerate(direction.excluded_topics, start=1)
-    )
-    rows.extend(
-        (f"term-{index}", "scope_included", value, f"run_direction.term.{index}")
-        for index, value in enumerate(direction.target_terms, start=1)
-    )
+    for index, value in enumerate(direction.target_terms, start=1):
+        add(f"term-{index}", "scope_included", value, f"run_direction.term.{index}")
     requirements = [
         BoundedRequirement.model_validate(
             {
@@ -359,7 +404,7 @@ def _terminal_class(view: Any) -> str:
     return "unavailable"
 
 
-def _require_reader_review_direction(binding: Any) -> None:
+def _require_reader_review_direction(binding: Any) -> tuple[str, str, str]:
     """Require the frozen RunDirection supported by Reader Review v3.
 
     Reader Review is an exact profile admission, not a request-field hint.  A
@@ -370,14 +415,15 @@ def _require_reader_review_direction(binding: Any) -> None:
 
     try:
         direction = binding.run_direction
-        supported = (
-            direction.report_type == READER_REVIEW_REPORT_TYPE
-            and direction.output_language == READER_REVIEW_LANGUAGE
-        )
+        report_type = direction.report_type
+        language = direction.output_language
+        profile_id = READER_REVIEW_PROFILE_BINDINGS.get((report_type, language))
     except AttributeError:
-        supported = False
-    if not supported:
+        profile_id = None
+        report_type = language = ""
+    if profile_id is None:
         raise PostFinalAssessmentError("reader_review_not_supported")
+    return profile_id, report_type, language
 
 
 class PostFinalAssessmentService:
@@ -679,7 +725,11 @@ class PostFinalAssessmentService:
             # This must precede every predecessor archive probe below.  The
             # frozen direction, not a request/profile field, is the authority
             # for Reader Review admission.
-            _require_reader_review_direction(binding)
+            review_profile_id, _review_report_type, _review_language = (
+                _require_reader_review_direction(binding)
+            )
+            if policy.profile_id != review_profile_id:
+                raise PostFinalAssessmentError("reader_review_not_supported")
         if (
             facts.store_revision != command.expected_store_revision
             or command.finalized_lineage_fingerprint
@@ -820,7 +870,7 @@ class PostFinalAssessmentService:
         context = _bounded_context_from_direction(
             binding,
             run_id=facts.run_id,
-            language=policy.language or "zh-CN",
+            language=_semantic_language(policy.language or "zh-CN"),
         )
         if (
             policy.bounded_context_sha256 != context.context_sha256
@@ -949,7 +999,7 @@ class PostFinalAssessmentService:
         context = _bounded_context_from_direction(
             binding,
             run_id=facts.run_id,
-            language=policy.language or "zh-CN",
+            language=_semantic_language(policy.language or "zh-CN"),
         )
         if (
             policy.bounded_context_sha256 != context.context_sha256
@@ -989,6 +1039,13 @@ class PostFinalAssessmentService:
                 "post_final_assessment_policy_invalid"
             ) from exc
         reader_review = request.assessment_kind is not None
+        reader_binding = (
+            READER_REVIEW_PROFILE_BINDINGS.get(
+                (request.report_type or "", request.language or "")
+            )
+            if reader_review
+            else None
+        )
         if (
             config.provider_id != ANTHROPIC_PROVIDER_ID
             or config.model_id != request.requested_model_id
@@ -1008,11 +1065,10 @@ class PostFinalAssessmentService:
                 reader_review
                 and (
                     request.assessment_kind != READER_REVIEW_ASSESSMENT_KIND
-                    or request.report_type != READER_REVIEW_REPORT_TYPE
-                    or request.language != READER_REVIEW_LANGUAGE
+                    or reader_binding is None
                     or request.disclosure_confirmed is not True
                     or request.cost_status != "not_measured"
-                    or config.language != READER_REVIEW_LANGUAGE
+                    or config.language != _semantic_language(request.language or "")
                     or request.enabled is not True
                     or request.auto_run
                     or request.auto_open
@@ -1063,6 +1119,8 @@ class PostFinalAssessmentService:
     @staticmethod
     def _reader_review_instrument(
         request: ReaderReviewAssessmentInput,
+        *,
+        language: str = READER_REVIEW_LANGUAGE,
     ) -> InstrumentConfig:
         payload = {
             "schema_version": InstrumentConfig.schema_id,
@@ -1076,7 +1134,7 @@ class PostFinalAssessmentService:
             "provider_id": ANTHROPIC_PROVIDER_ID,
             "model_id": request.requested_model_id,
             "model_version": request.model_version,
-            "language": READER_REVIEW_LANGUAGE,
+            "language": language,
             "decoding": {
                 "temperature": 1.0,
                 "top_p": 1.0,
@@ -1113,6 +1171,9 @@ class PostFinalAssessmentService:
         *,
         facts: Any,
         action: CoreRunNextAction,
+        profile_id: str = READER_REVIEW_PROFILE_ID,
+        report_type: str = READER_REVIEW_REPORT_TYPE,
+        language: str = READER_REVIEW_LANGUAGE,
     ) -> str:
         return _canonical_sha256(
             {
@@ -1125,9 +1186,9 @@ class PostFinalAssessmentService:
                 "report_revision": facts.report.artifact_revision,
                 "report_sha256": facts.report.sha256,
                 "assessment_kind": READER_REVIEW_ASSESSMENT_KIND,
-                "report_type": READER_REVIEW_REPORT_TYPE,
-                "language": READER_REVIEW_LANGUAGE,
-                "profile_id": READER_REVIEW_PROFILE_ID,
+                "report_type": report_type,
+                "language": language,
+                "profile_id": profile_id,
                 "parser_version": PARSER_VERSION,
                 "projection_version": READER_REVIEW_PROJECTION_VERSION,
                 "max_provider_calls": READER_REVIEW_MAX_PROVIDER_CALLS,
@@ -1194,7 +1255,9 @@ class PostFinalAssessmentService:
                 "reason_code": str(exc),
             }
         try:
-            _require_reader_review_direction(binding)
+            review_profile_id, review_report_type, review_language = (
+                _require_reader_review_direction(binding)
+            )
         except PostFinalAssessmentError as exc:
             return {
                 "ok": False,
@@ -1215,6 +1278,9 @@ class PostFinalAssessmentService:
             request,
             facts=facts,
             action=action,
+            profile_id=review_profile_id,
+            report_type=review_report_type,
+            language=review_language,
         )
         existing = next(
             (
@@ -1284,11 +1350,14 @@ class PostFinalAssessmentService:
                     ),
                 }
 
-        config = self._reader_review_instrument(request)
+        config = self._reader_review_instrument(
+            request,
+            language=_semantic_language(review_language),
+        )
         context = _bounded_context_from_direction(
             binding,
             run_id=facts.run_id,
-            language=READER_REVIEW_LANGUAGE,
+            language=_semantic_language(review_language),
         )
         preflight = prepare_shadow_run_from_bytes(
             report_bytes=facts.report.markdown_utf8,
@@ -1298,7 +1367,7 @@ class PostFinalAssessmentService:
             archive_root=self._archive_root,
             workspace_root=self.workspace,
             messages_endpoint=request.messages_endpoint,
-            profile_id=READER_REVIEW_PROFILE_ID,
+            profile_id=review_profile_id,
         )
         if isinstance(preflight, ShadowRunResult):
             return {
@@ -1353,8 +1422,8 @@ class PostFinalAssessmentService:
             "max_output_tokens_per_call": (READER_REVIEW_MAX_OUTPUT_TOKENS_PER_CALL),
             "public_safe_egress_attested": True,
             "assessment_kind": READER_REVIEW_ASSESSMENT_KIND,
-            "report_type": READER_REVIEW_REPORT_TYPE,
-            "language": READER_REVIEW_LANGUAGE,
+            "report_type": review_report_type,
+            "language": review_language,
             "disclosure_confirmed": True,
             "cost_status": "not_measured",
         }
@@ -1417,8 +1486,20 @@ class PostFinalAssessmentService:
 
         request, config = self._validate_policy_input(value)
         run_id, snapshot, binding = self._load_policy_context()
+        review_profile_id: str | None = None
+        review_report_type: str | None = None
+        review_language: str | None = None
         if request.assessment_kind == READER_REVIEW_ASSESSMENT_KIND:
-            _require_reader_review_direction(binding)
+            (
+                review_profile_id,
+                review_report_type,
+                review_language,
+            ) = _require_reader_review_direction(binding)
+            if (request.report_type, request.language) != (
+                review_report_type,
+                review_language,
+            ):
+                raise PostFinalAssessmentError("reader_review_not_supported")
         context = _bounded_context_from_direction(
             binding,
             run_id=run_id,
@@ -1453,8 +1534,8 @@ class PostFinalAssessmentService:
             semantic.update(
                 {
                     "assessment_kind": READER_REVIEW_ASSESSMENT_KIND,
-                    "report_type": READER_REVIEW_REPORT_TYPE,
-                    "language": READER_REVIEW_LANGUAGE,
+                    "report_type": review_report_type,
+                    "language": review_language,
                     "disclosure_confirmed": True,
                     "cost_status": "not_measured",
                 }
@@ -1533,9 +1614,7 @@ class PostFinalAssessmentService:
                 request.messages_endpoint.encode("utf-8")
             ).hexdigest(),
             "profile_id": (
-                READER_REVIEW_PROFILE_ID
-                if reader_review
-                else "research_design_report_zh_v1"
+                review_profile_id if reader_review else "research_design_report_zh_v1"
             ),
             "instrument_config_sha256": _canonical_sha256(
                 config.model_dump(mode="json")
@@ -1715,7 +1794,11 @@ class PostFinalAssessmentService:
             == PostFinalAssessmentPolicyRevision.reader_review_schema_id
         ):
             try:
-                _require_reader_review_direction(binding)
+                review_profile_id, _review_report_type, _review_language = (
+                    _require_reader_review_direction(binding)
+                )
+                if policy.profile_id != review_profile_id:
+                    raise PostFinalAssessmentError("reader_review_not_supported")
             except PostFinalAssessmentError as exc:
                 return {
                     "ok": False,
@@ -1725,7 +1808,7 @@ class PostFinalAssessmentService:
         context = _bounded_context_from_direction(
             binding,
             run_id=facts.run_id,
-            language=policy.language or "zh-CN",
+            language=_semantic_language(policy.language or "zh-CN"),
         )
         if (
             policy.bounded_context_sha256 != context.context_sha256
@@ -1823,11 +1906,20 @@ class PostFinalAssessmentService:
             prepared, adapter_factory=self._adapter_factory
         )
         if not result.archive_complete or result.archive_path is None:
-            return {
+            failure: dict[str, object] = {
                 "ok": False,
-                "status": "pending",
+                "status": (
+                    "local_derivation_failed"
+                    if result.execution_archive_path is not None
+                    else "pending"
+                ),
                 "assessment_request_id": claim.assessment_request_id,
+                "reason_codes": list(result.reason_codes),
             }
+            if result.execution_archive_path is not None:
+                failure["execution_archive_path"] = result.execution_archive_path
+                failure["recovery"] = "local_only_no_provider_retry"
+            return failure
         return self._qualify_archive(facts, claim, result.archive_path)
 
     def assessment_list(self) -> dict[str, object]:
@@ -1955,6 +2047,9 @@ class PostFinalAssessmentService:
                         reader_review_request,
                         facts=facts,
                         action=action,
+                        profile_id=policy.profile_id,
+                        report_type=policy.report_type or READER_REVIEW_REPORT_TYPE,
+                        language=policy.language or READER_REVIEW_LANGUAGE,
                     )
                 )
             command = _build_next_assessment_command(
@@ -2037,7 +2132,11 @@ class PostFinalAssessmentService:
             == PostFinalAssessmentRequestRecord.reader_review_schema_id
         ):
             try:
-                _require_reader_review_direction(binding)
+                review_profile_id, _review_report_type, _review_language = (
+                    _require_reader_review_direction(binding)
+                )
+                if existing.profile_id != review_profile_id:
+                    raise PostFinalAssessmentError("reader_review_not_supported")
             except PostFinalAssessmentError as exc:
                 return {
                     "ok": False,
@@ -2118,6 +2217,14 @@ class PostFinalAssessmentService:
                 "status": "unavailable",
                 "reason_code": "preflight_invalid",
             }
+        if self._adapter_factory is None:
+            api_key = os.environ.get(ANTHROPIC_API_KEY_SETTING)
+            if type(api_key) is not str or not api_key:
+                return {
+                    "ok": False,
+                    "status": "unavailable",
+                    "reason_code": "shadow_adapter_unavailable",
+                }
         claim = self._claim_series_request(
             facts=facts,
             policy=readiness.policy,
@@ -2137,13 +2244,162 @@ class PostFinalAssessmentService:
             adapter_factory=self._adapter_factory,
             resolved_identity=resolved_identity,
         )
+        execution_record = self._record_execution_evidence(
+            facts=facts,
+            request=claim,
+            prepared=readiness.prepared,
+            result=result,
+        )
+        if execution_record is not None:
+            execution_status = execution_record.execution_status
+        else:
+            execution_status = None
         if not result.archive_complete or result.archive_path is None:
+            reason_codes = list(result.reason_codes)
             return {
                 "ok": False,
-                "status": "pending",
+                "status": (
+                    "local_derivation_failed"
+                    if execution_status == "local_derivation_failed"
+                    else "unavailable"
+                ),
                 "assessment_request_id": claim.assessment_request_id,
+                "reason_code": (
+                    reason_codes[0] if reason_codes else "shadow_archive_incomplete"
+                ),
+                "reason_codes": reason_codes,
+                "failure_phase": (
+                    execution_record.failure_phase
+                    if execution_record is not None
+                    else None
+                ),
+                "execution_evidence_recorded": execution_record is not None,
             }
         return self._qualify_archive(facts, claim, result.archive_path)
+
+    def _record_execution_evidence(
+        self,
+        *,
+        facts: Any,
+        request: PostFinalAssessmentRequestRecord,
+        prepared: PreparedShadowRun,
+        result: ShadowRunResult,
+    ) -> PostFinalAssessmentExecutionRecord | None:
+        """Commit one value-free execution witness before result qualification."""
+
+        evidence_path = result.execution_archive_path
+        if evidence_path is None:
+            try:
+                evidence = resolve_existing_execution_evidence(
+                    archive_root=prepared.archive_root,
+                    trial_id=prepared.trial_id,
+                )
+            except SemanticEvaluatorError:
+                evidence = None
+            if evidence is None:
+                return None
+        else:
+            try:
+                evidence = resolve_existing_execution_evidence(
+                    archive_root=Path(evidence_path).parent.parent,
+                    trial_id=prepared.trial_id,
+                )
+            except SemanticEvaluatorError:
+                evidence = None
+            if evidence is None:
+                return None
+        manifest = dict(evidence.manifest)
+        raw_status = str(manifest.get("status", "local_derivation_failed"))
+        status = (
+            "complete"
+            if result.archive_complete
+            else "provider_failed"
+            if raw_status == "provider_failed"
+            else "local_derivation_failed"
+        )
+        reason_codes = sorted(
+            {
+                str(code)
+                for code in manifest.get("reason_codes", [])
+                if isinstance(code, str)
+            }
+            | {str(code) for code in result.reason_codes}
+        )
+        phase: str | None = None
+        if status != "complete":
+            reason = reason_codes[0] if reason_codes else "local_derivation_failed"
+            if status == "provider_failed" or reason.startswith("provider_"):
+                phase = "provider_execution"
+            elif "baseline" in reason:
+                phase = "baseline_derivation"
+            elif "composition" in reason or "checklist" in reason:
+                phase = "composition_derivation"
+            elif "archive" in reason:
+                phase = "archive_publication"
+            else:
+                phase = "run_assembly"
+        execution_id = _id(
+            "pf-laj-execution",
+            {"request": request.assessment_request_id, "trial": request.trial_id},
+        )
+        transaction_id = _id("pf-laj-execution-tx", execution_id)
+        execution_event_id = _id("pf-laj-execution-event", execution_id)
+        payload: dict[str, object] = {
+            "schema_version": PostFinalAssessmentExecutionRecord.schema_id,
+            "execution_id": execution_id,
+            "run_id": request.run_id,
+            "assessment_request_id": request.assessment_request_id,
+            "assessment_request_fingerprint": request.request_fingerprint,
+            "trial_id": request.trial_id,
+            "finalized_lineage_fingerprint": request.finalized_lineage_fingerprint,
+            "execution_archive_manifest_sha256": _canonical_sha256(manifest),
+            "execution_receipt_id": str(
+                manifest.get(
+                    "execution_receipt_id", f"execution-receipt-{execution_id}"
+                )
+            ),
+            "execution_status": status,
+            "run_status": result.run_status,
+            "validation_status": result.validation_status,
+            "failure_phase": phase,
+            "reason_codes": reason_codes,
+            "recorded_at": _utc_now(),
+            "execution_event_id": execution_event_id,
+            "accepted_transaction_id": transaction_id,
+        }
+        payload["execution_fingerprint"] = _record_fingerprint(
+            payload, "execution_fingerprint"
+        )
+        record = PostFinalAssessmentExecutionRecord.model_validate(payload, strict=True)
+        event = _event(
+            run_id=request.run_id,
+            event_id=execution_event_id,
+            event_type="post_final_assessment_execution_recorded",
+            transaction_id=transaction_id,
+            decision=record.execution_id,
+            metadata={
+                "execution_status": status,
+                "failure_phase": phase,
+                "reason_codes": reason_codes,
+            },
+        )
+        expected_revision = facts.store_revision + 1
+        try:
+            with SQLiteControlStore.open(self._database_path) as store:
+                with store.begin(
+                    request.run_id,
+                    transaction_id,
+                    "post_final_assessment_execution",
+                    expected_revision,
+                ) as uow:
+                    uow.append_event(event)
+                    uow.put_post_final_assessment_execution(record)
+                    receipt = uow.commit()
+        except ControlStoreError:
+            return None
+        if receipt.committed_revision != expected_revision + 1:
+            return None
+        return record
 
     def retry(self, assessment_request_id: str) -> dict[str, object]:
         """Recovery-only archive qualification; never makes a paid provider call."""
@@ -2176,7 +2432,11 @@ class PostFinalAssessmentService:
             == PostFinalAssessmentPolicyRevision.reader_review_schema_id
         ):
             try:
-                _require_reader_review_direction(binding)
+                review_profile_id, _review_report_type, _review_language = (
+                    _require_reader_review_direction(binding)
+                )
+                if policy.profile_id != review_profile_id:
+                    raise PostFinalAssessmentError("reader_review_not_supported")
             except PostFinalAssessmentError as exc:
                 return {
                     "ok": False,
@@ -2186,7 +2446,7 @@ class PostFinalAssessmentService:
         context = _bounded_context_from_direction(
             binding,
             run_id=facts.run_id,
-            language=policy.language or "zh-CN",
+            language=_semantic_language(policy.language or "zh-CN"),
         )
         if (
             policy.bounded_context_sha256 != context.context_sha256
@@ -2528,8 +2788,8 @@ class PostFinalAssessmentService:
             payload.update(
                 {
                     "assessment_kind": READER_REVIEW_ASSESSMENT_KIND,
-                    "report_type": READER_REVIEW_REPORT_TYPE,
-                    "language": READER_REVIEW_LANGUAGE,
+                    "report_type": policy.report_type,
+                    "language": policy.language,
                     "model_version": policy.model_version,
                     "parser_version": PARSER_VERSION,
                     "projection_version": READER_REVIEW_PROJECTION_VERSION,
@@ -2594,6 +2854,41 @@ class PostFinalAssessmentService:
         facts: Any,
         request: PostFinalAssessmentRequestRecord,
     ) -> dict[str, object]:
+        # A provider-phase evidence receipt is authoritative that the call
+        # already happened.  Never turn a missing/invalid derived archive into
+        # another paid call; a later local derivation worker may consume this
+        # sidecar without credentials or SDK metadata.
+        try:
+            evidence = resolve_existing_execution_evidence(
+                archive_root=prepared.archive_root,
+                trial_id=prepared.trial_id,
+            )
+        except SemanticEvaluatorError:
+            evidence = None
+        if evidence is not None:
+            derived = derive_existing_execution_evidence(
+                archive_root=prepared.archive_root,
+                trial_id=prepared.trial_id,
+            )
+            if derived.archive_complete and derived.archive_path is not None:
+                return self._qualify_archive(
+                    facts,
+                    request,
+                    derived.archive_path,
+                )
+            reason_codes = [
+                str(code)
+                for code in evidence.manifest.get("reason_codes", [])
+                if isinstance(code, str)
+            ]
+            return {
+                "ok": False,
+                "status": "local_derivation_failed",
+                "assessment_request_id": request.assessment_request_id,
+                "reason_codes": sorted(set(reason_codes + ["local_derivation_failed"])),
+                "execution_archive_path": str(evidence.path),
+                "recovery": "local_only_no_provider_retry",
+            }
         try:
             result = execute_prepared_shadow_run(prepared, replay_only=True)
         except Exception:
@@ -2771,9 +3066,9 @@ class PostFinalAssessmentService:
                     payload.update(
                         {
                             "assessment_kind": READER_REVIEW_ASSESSMENT_KIND,
-                            "report_type": READER_REVIEW_REPORT_TYPE,
-                            "language": READER_REVIEW_LANGUAGE,
-                            "profile_id": READER_REVIEW_PROFILE_ID,
+                            "report_type": request.report_type,
+                            "language": request.language,
+                            "profile_id": request.profile_id,
                             "model_version": request.model_version,
                             "expected_model_identity": (
                                 request.expected_model_identity
@@ -2925,9 +3220,9 @@ class PostFinalAssessmentService:
                     request.schema_version
                     == PostFinalAssessmentRequestRecord.reader_review_schema_id
                     and result.assessment_kind == READER_REVIEW_ASSESSMENT_KIND
-                    and result.report_type == READER_REVIEW_REPORT_TYPE
-                    and result.language == READER_REVIEW_LANGUAGE
-                    and result.profile_id == READER_REVIEW_PROFILE_ID
+                    and result.report_type == request.report_type
+                    and result.language == request.language
+                    and result.profile_id == request.profile_id
                     and result.model_version == request.model_version
                     and result.expected_model_identity
                     == request.expected_model_identity

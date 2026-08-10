@@ -78,7 +78,9 @@ INTAKE_LANES = MappingProxyType(
 _SOURCE_COMPATIBILITY = MappingProxyType(
     {
         ("uploaded_file", "manual_upload"): (
-            frozenset({"uploaded_file"}),
+            # Init Web permits uploaded bytes to be classified as full content;
+            # both values remain bounded to this durable manual-upload lane.
+            frozenset({"full_content", "uploaded_file"}),
             "forbidden",
             "forbidden",
         ),

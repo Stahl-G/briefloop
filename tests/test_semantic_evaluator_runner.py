@@ -40,6 +40,10 @@ from multi_agent_brief.semantic_evaluator.adapters.openai_responses import (
     synthetic_openai_response_bytes_v4,
 )
 from multi_agent_brief.semantic_evaluator.contracts import DIMENSION_RESPONSE_SCHEMA_ID
+from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
+from multi_agent_brief.semantic_evaluator.archive import (
+    resolve_existing_execution_evidence,
+)
 from multi_agent_brief.semantic_evaluator.prompt_sizer import (
     ANTHROPIC_PROMPT_SIZER_ID,
     ANTHROPIC_PROMPT_SIZER_VERSION,
@@ -49,6 +53,7 @@ from multi_agent_brief.semantic_evaluator.prompt_sizer import (
 from multi_agent_brief.semantic_evaluator.runner import (
     PROFILE_ID,
     PreparedShadowRun,
+    derive_existing_execution_evidence,
     execute_prepared_shadow_run,
     prepare_shadow_run,
     run_shadow,
@@ -350,6 +355,12 @@ class _AnthropicFixtureAdapter:
         )
 
 
+class _AnthropicRaisingAdapter(_AnthropicFixtureAdapter):
+    def invoke(self, request):
+        self.calls += 1
+        raise RuntimeError("private transport detail")
+
+
 def test_se2r_01_synthetic_run_preserves_exact_25_unit_accounting(
     tmp_path: Path,
 ) -> None:
@@ -364,6 +375,78 @@ def test_se2r_01_synthetic_run_preserves_exact_25_unit_accounting(
     assert len(run["assessment_units"]) == 25
     assert {item["disposition"] for item in run["assessment_units"]} == {"no_finding"}
     assert len(list((archive / "attempts").glob("*/*/transport.json"))) == 9
+    assert (
+        archive.parent.parent.parent.parent
+        / "executions"
+        / "trial-runner-v4"
+        / "COMPLETE"
+    ).is_file()
+
+
+def test_provider_evidence_survives_local_derivation_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A composition failure must not erase provider request/response evidence."""
+
+    from multi_agent_brief.semantic_evaluator import runner
+
+    invocation = _invocation(tmp_path)
+    original_composition = runner.compose_matched_non_llm
+
+    def fail_composition(**_kwargs):
+        raise SemanticEvaluatorError("composition_record_mismatch")
+
+    monkeypatch.setattr(runner, "compose_matched_non_llm", fail_composition)
+    result = run_shadow(**invocation, sleep=lambda _seconds: None)
+
+    assert result.ok is False
+    assert result.reason_codes == ("composition_record_mismatch",)
+    evidence = Path(result.execution_archive_path or "")
+    assert evidence.is_dir()
+    assert (evidence / "COMPLETE").is_file()
+    manifest = json.loads((evidence / "evidence_manifest.json").read_bytes())
+    assert manifest["status"] == "complete"
+    assert manifest["payload_file_count"] > 0
+    assert (evidence / "attempts").is_dir()
+    assert list(evidence.glob("attempts/*/*/response.body"))
+    reopened = resolve_existing_execution_evidence(
+        archive_root=Path(result.execution_archive_path).parents[1],
+        trial_id="trial-runner-v4",
+    )
+    assert reopened is not None
+    assert "laj_composition_witness.json" in reopened.payloads
+    assert not result.archive_complete
+    monkeypatch.setattr(runner, "compose_matched_non_llm", original_composition)
+    derived = derive_existing_execution_evidence(
+        archive_root=Path(invocation["archive_root"]),
+        trial_id="trial-runner-v4",
+    )
+    assert derived.ok is True
+    assert derived.archive_complete is True
+
+
+def test_provider_evidence_survives_run_assembly_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from multi_agent_brief.semantic_evaluator import runner
+
+    monkeypatch.setattr(
+        runner,
+        "assemble_semantic_assessment_run",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            SemanticEvaluatorError("composition_witness_mismatch")
+        ),
+    )
+    result = run_shadow(**_invocation(tmp_path), sleep=lambda _seconds: None)
+    assert result.reason_codes == ("composition_witness_mismatch",)
+    evidence = Path(result.execution_archive_path or "")
+    assert evidence.is_dir()
+    assert json.loads((evidence / "evidence_manifest.json").read_bytes())["status"] == (
+        "local_derivation_failed"
+    )
+    assert list(evidence.glob("attempts/*/*/response.body"))
 
 
 def test_cliproxy_run_is_distinct_nonqualifying_and_replay_is_credential_free(
@@ -495,6 +578,39 @@ def test_anthropic_generic_key_never_substitutes_for_dedicated_key(
     result = run_shadow(**invocation)
     assert result.reason_codes == ("shadow_adapter_unavailable",)
     assert constructor_calls == 0
+
+
+def test_execution_failure_is_not_misreported_as_archive_publish_failure(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """A pre-publication execution exception keeps its own stable boundary."""
+
+    from multi_agent_brief.semantic_evaluator import runner
+
+    invocation = _invocation(tmp_path)
+    prepared = prepare_shadow_run(
+        report=invocation["report"],
+        bounded_context=invocation["bounded_context"],
+        profile=invocation["profile"],
+        instrument=invocation["instrument"],
+        trial_id=invocation["trial_id"],
+        archive_root=invocation["archive_root"],
+    )
+    assert isinstance(prepared, PreparedShadowRun)
+    monkeypatch.setattr(
+        runner,
+        "_execute_dimensions",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("synthetic failure")),
+    )
+
+    result = execute_prepared_shadow_run(
+        prepared,
+        adapter_factory=lambda _execution: SyntheticFixtureAdapterV4(),
+    )
+
+    assert result.archive_complete is False
+    assert result.reason_codes == ("shadow_execution_failed",)
 
 
 def test_anthropic_generic_endpoint_never_substitutes_for_dedicated_endpoint(
@@ -636,6 +752,33 @@ def test_anthropic_invalid_endpoint_fails_before_sdk_key_archive_or_provider(
     assert result.reason_codes == ("shadow_request_invalid",)
     assert metadata_calls == []
     assert not Path(invocation["archive_root"]).exists()
+
+
+def test_anthropic_transport_failure_publishes_verifiable_archive_without_sdk_projection(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from multi_agent_brief.semantic_evaluator import runner
+
+    monkeypatch.setattr(runner.metadata, "version", lambda _name: "0.104.1")
+    invocation = _anthropic_invocation(tmp_path, monkeypatch)
+    captures: list[_AnthropicRaisingAdapter] = []
+
+    def factory(execution):
+        adapter = _AnthropicRaisingAdapter(execution)
+        captures.append(adapter)
+        return adapter
+
+    result = run_shadow(**invocation, adapter_factory=factory)
+    assert result.ok is False
+    assert result.archive_complete is True
+    assert result.reason_codes == ("provider_failed",)
+    assert len(captures) == 1
+    archive = Path(result.archive_path or "")
+    transport = next(archive.glob("attempts/*/*/transport.json"))
+    prefix = transport.parent
+    assert not (prefix / "sdk_projection.json").exists()
+    assert json.loads(transport.read_bytes())["facts"]["envelope"]["state"] == "absent"
 
 
 def test_anthropic_exact_opaque_model_change_creates_distinct_request_identity(

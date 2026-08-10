@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 import hashlib
 from pathlib import Path
 from typing import Any, Literal, Mapping
@@ -92,9 +92,9 @@ class ReaderReviewRequirementLabel(_DataclassMapping):
 class ReaderReviewRequestTemplate(_DataclassMapping):
     schema_version: Literal["briefloop.reader_review_assessment_input.v1"]
     assessment_kind: Literal["reader_review"]
-    report_type: Literal["management_monthly"]
-    language: Literal["en"]
-    profile_id: Literal["management_brief_en_v1"]
+    report_type: Literal["management_monthly", "industry_weekly"]
+    language: Literal["en", "zh"]
+    profile_id: Literal["management_brief_en_v1", "industry_weekly_zh_v1"]
     protocol: Literal["anthropic_messages_compatible"]
     endpoint_class: Literal["explicit_messages_api"]
     egress_scope: Literal["public_safe_report"]
@@ -105,11 +105,108 @@ class ReaderReviewRequestTemplate(_DataclassMapping):
     cost_status: Literal["not_measured"]
     provider_call_ceiling: Literal[2]
     total_input_token_ceiling: Literal[400000]
-    total_output_token_ceiling: Literal[8192]
-    output_tokens_per_call: Literal[4096]
+    total_output_token_ceiling: Literal[16384]
+    output_tokens_per_call: Literal[8192]
     automatic_retry: Literal[False]
     advisory_only: Literal[True]
     authority_effect: Literal["none"]
+
+
+@dataclass(frozen=True)
+class ReaderReviewAssessmentUnitStatus(_DataclassMapping):
+    """Archive-derived status for one frozen assessment-plan unit.
+
+    These are deliberately projection-only values.  They are reconstructed from
+    the verified archive's plan, run, and terminal attempts; a failed provider
+    response never contributes a fabricated outcome here.
+    """
+
+    assessment_unit_id: str
+    scope_class: str
+    dimension_id: str
+    sub_aspect_id: str
+    state: Literal[
+        "completed_no_finding",
+        "finding_reported",
+        "finding_withheld",
+        "abstained",
+        "unable_to_assess",
+        "not_assessed",
+    ]
+    disposition: str | None = None
+    attempt_ref: str | None = None
+    attempt_status: str | None = None
+    reason_code: str | None = None
+
+
+@dataclass(frozen=True)
+class ReaderReviewAssessmentScopeStatus(_DataclassMapping):
+    """Aggregate status for the real O1/O2 scope inventory."""
+
+    scope_class: str
+    state: Literal[
+        "completed_no_finding",
+        "finding_reported",
+        "partially_assessed",
+        "unable_to_assess",
+        "not_assessed",
+    ]
+    planned_unit_count: int
+    completed_unit_count: int
+    unable_unit_count: int
+    finding_unit_count: int
+    withheld_unit_count: int
+    abstention_unit_count: int
+    assessment_unit_ids: tuple[str, ...]
+    note_code: Literal[
+        "completed_no_finding_not_pass",
+        "provider_attempt_incomplete",
+        "finding_reported",
+        "partial_scope",
+        "not_assessed",
+    ]
+    reason_code: str | None = None
+
+
+@dataclass(frozen=True)
+class ReaderReviewProviderCall(_DataclassMapping):
+    """Safe metadata for one provider call; no prompt/response bytes."""
+
+    dimension_id: str
+    status: str
+    reason_code: str | None
+    prompt_request_sha256: str
+
+
+@dataclass(frozen=True)
+class ReaderReviewRunEvidence(_DataclassMapping):
+    """Non-secret, verified metadata explaining one Reader Review run."""
+
+    trigger: Literal["explicit_human_authorization"]
+    surface: Literal["not_recorded"]
+    human_actor_id: str
+    human_request_id: str
+    assessment_generation: int
+    assessment_request_id: str
+    assessment_request_fingerprint: str
+    policy_revision_id: str
+    policy_fingerprint: str
+    requested_model_id: str
+    model_version: str
+    expected_model_identity: str
+    profile_id: str
+    claimed_at: str
+    auto_run: bool
+    auto_open: bool
+    ordered_prompt_request_sha256s: tuple[str, ...]
+    system_prompt_sha256: str
+    dimension_prompt_sha256: str
+    assessment_plan_sha256: str
+    input_binding_sha256: str
+    instrument_sha256: str
+    provider_call_count: int
+    automatic_retry: Literal[False]
+    calls: tuple[ReaderReviewProviderCall, ...]
 
 
 _REQUEST_TEMPLATE = ReaderReviewRequestTemplate(
@@ -128,12 +225,22 @@ _REQUEST_TEMPLATE = ReaderReviewRequestTemplate(
     cost_status="not_measured",
     provider_call_ceiling=2,
     total_input_token_ceiling=400000,
-    total_output_token_ceiling=8192,
-    output_tokens_per_call=4096,
+    total_output_token_ceiling=16384,
+    output_tokens_per_call=8192,
     automatic_retry=False,
     advisory_only=True,
     authority_effect="none",
 )
+
+_REQUEST_TEMPLATES = {
+    ("management_monthly", "en"): _REQUEST_TEMPLATE,
+    ("industry_weekly", "zh"): replace(
+        _REQUEST_TEMPLATE,
+        report_type="industry_weekly",
+        language="zh",
+        profile_id="industry_weekly_zh_v1",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -161,6 +268,9 @@ class PostFinalAssessmentProjection:
     next_run_consumption: Literal["explicit_opt_in_successor_only"]
     run_action_available: bool
     selection_required: bool
+    assessment_scopes: tuple[ReaderReviewAssessmentScopeStatus, ...] = ()
+    assessment_units: tuple[ReaderReviewAssessmentUnitStatus, ...] = ()
+    run_evidence: ReaderReviewRunEvidence | None = None
 
 
 def build_successor_start_projection(
@@ -440,6 +550,209 @@ def _terminal_class(view: LajReaderView) -> str:
     return "provider_failed" if reasons else "unavailable"
 
 
+def _archive_assessment_projection(
+    *,
+    archive: Any,
+    request: Any,
+    policy: Any,
+) -> tuple[
+    tuple[ReaderReviewAssessmentScopeStatus, ...],
+    tuple[ReaderReviewAssessmentUnitStatus, ...],
+    ReaderReviewRunEvidence | None,
+]:
+    """Derive truthful profile inventory from one verified archive.
+
+    ``LajReaderView`` intentionally contains only the reader-safe result.  For
+    an incomplete run that view drops the failed dimension, which made the HTML
+    fall back to the unrelated nine-dimension legacy inventory.  This helper
+    reads only verified witness metadata (plan, run outcomes, and attempt refs)
+    and never parses retained provider bytes.
+    """
+
+    witness = archive.witness
+    plan = witness.assessment_plan
+    run = witness.run
+    terminal_reasons = tuple(str(item) for item in archive.reason_codes)
+    specific_reason = next(
+        (
+            item
+            for item in terminal_reasons
+            if item in {"provider_incomplete", "provider_refused"}
+        ),
+        None,
+    )
+    outcomes = {item.assessment_unit_id: item for item in run.assessment_units}
+    attempts = {item.dimension_id: item for item in run.attempt_refs}
+    failed_dimensions = {
+        item.dimension_id for item in run.attempt_refs if item.status == "failed"
+    }
+    unit_rows: list[ReaderReviewAssessmentUnitStatus] = []
+    for unit in plan.units:
+        outcome = outcomes.get(unit.assessment_unit_id)
+        attempt = attempts.get(unit.dimension_id)
+        reason_code = None
+        if attempt is not None and attempt.status == "failed":
+            reason_code = (
+                specific_reason
+                if specific_reason is not None and len(failed_dimensions) == 1
+                else attempt.reason_code
+            )
+        if attempt is not None and attempt.status == "failed":
+            # A terminal failed attempt dominates any retained body.  The
+            # validator does not admit that body as an assessment outcome.
+            state = "unable_to_assess"
+            disposition = None
+        elif outcome is None:
+            if run.run_status != "completed" and unit.scope_class == "O2":
+                state = "unable_to_assess"
+                if reason_code is None and specific_reason is not None:
+                    reason_code = specific_reason
+            else:
+                state = "not_assessed"
+            disposition = None
+        else:
+            disposition = str(outcome.disposition)
+            if disposition == "no_finding":
+                state = "completed_no_finding"
+            elif disposition == "finding_emitted":
+                # In a non-terminal archive, findings are not reader-visible;
+                # preserve that boundary rather than exposing hidden content.
+                state = (
+                    "finding_withheld"
+                    if run.run_status != "completed"
+                    else "finding_reported"
+                )
+            elif disposition.startswith("abstain_"):
+                state = "abstained"
+            else:
+                state = "not_assessed"
+        unit_rows.append(
+            ReaderReviewAssessmentUnitStatus(
+                assessment_unit_id=unit.assessment_unit_id,
+                scope_class=unit.scope_class,
+                dimension_id=unit.dimension_id,
+                sub_aspect_id=unit.sub_aspect_id,
+                state=state,
+                disposition=disposition,
+                attempt_ref=(attempt.attempt_ref if attempt is not None else None),
+                attempt_status=(attempt.status if attempt is not None else None),
+                reason_code=reason_code,
+            )
+        )
+
+    scope_rows: list[ReaderReviewAssessmentScopeStatus] = []
+    scope_order = {"O1": 0, "O2": 1}
+    grouped: dict[str, list[ReaderReviewAssessmentUnitStatus]] = {}
+    for row in unit_rows:
+        grouped.setdefault(row.scope_class, []).append(row)
+    for scope_class in sorted(
+        grouped, key=lambda item: (scope_order.get(item, 9), item)
+    ):
+        rows = grouped[scope_class]
+        completed_count = sum(row.state == "completed_no_finding" for row in rows)
+        unable_count = sum(row.state == "unable_to_assess" for row in rows)
+        finding_count = sum(row.state == "finding_reported" for row in rows)
+        withheld_count = sum(row.state == "finding_withheld" for row in rows)
+        abstention_count = sum(row.state == "abstained" for row in rows)
+        scope_reasons = {row.reason_code for row in rows if row.reason_code is not None}
+        states = {row.state for row in rows}
+        if states == {"completed_no_finding"}:
+            scope_state = "completed_no_finding"
+            note_code = "completed_no_finding_not_pass"
+        elif states == {"unable_to_assess"}:
+            scope_state = "unable_to_assess"
+            note_code = "provider_attempt_incomplete"
+        elif "finding_reported" in states:
+            scope_state = "finding_reported"
+            note_code = "finding_reported"
+        elif "finding_withheld" in states or len(states) > 1:
+            scope_state = "partially_assessed"
+            note_code = "partial_scope"
+        else:
+            scope_state = "not_assessed"
+            note_code = "not_assessed"
+        scope_rows.append(
+            ReaderReviewAssessmentScopeStatus(
+                scope_class=scope_class,
+                state=scope_state,
+                planned_unit_count=len(rows),
+                completed_unit_count=completed_count,
+                unable_unit_count=unable_count,
+                finding_unit_count=finding_count,
+                withheld_unit_count=withheld_count,
+                abstention_unit_count=abstention_count,
+                assessment_unit_ids=tuple(row.assessment_unit_id for row in rows),
+                note_code=note_code,
+                reason_code=(
+                    next(iter(scope_reasons)) if len(scope_reasons) == 1 else None
+                ),
+            )
+        )
+
+    run_evidence: ReaderReviewRunEvidence | None = None
+    # v4 Reader Review requests are the only requests with a Human actor/request
+    # and a policy-level auto-run boundary.  ``surface`` remains explicitly
+    # unknown; the archive proves authorization, not that a user clicked a UI.
+    if (
+        getattr(request, "schema_version", None)
+        == "briefloop.post_final_assessment_request_record.v4"
+        and getattr(request, "human_actor_id", None)
+        and getattr(request, "human_request_id", None)
+        and getattr(policy, "schema_version", None)
+        == "briefloop.post_final_assessment_policy_revision.v3"
+        and getattr(policy, "auto_run", True) is False
+        and getattr(policy, "auto_open", True) is False
+    ):
+        calls = tuple(
+            ReaderReviewProviderCall(
+                dimension_id=item.dimension_id,
+                status=item.status,
+                reason_code=(
+                    (
+                        specific_reason
+                        if specific_reason is not None and len(failed_dimensions) == 1
+                        else item.reason_code
+                    )
+                    if item.status == "failed"
+                    else None
+                ),
+                prompt_request_sha256=item.prompt_request_sha256,
+            )
+            for item in witness.dimension_attempt_evidence
+        )
+        manifest = witness.instrument_manifest
+        run_evidence = ReaderReviewRunEvidence(
+            trigger="explicit_human_authorization",
+            surface="not_recorded",
+            human_actor_id=request.human_actor_id,
+            human_request_id=request.human_request_id,
+            assessment_generation=request.assessment_generation,
+            assessment_request_id=request.assessment_request_id,
+            assessment_request_fingerprint=request.request_fingerprint,
+            policy_revision_id=policy.policy_revision_id,
+            policy_fingerprint=policy.policy_fingerprint,
+            requested_model_id=request.requested_model_id,
+            model_version=request.model_version,
+            expected_model_identity=request.expected_model_identity,
+            profile_id=request.profile_id,
+            claimed_at=request.claimed_at,
+            auto_run=policy.auto_run,
+            auto_open=policy.auto_open,
+            ordered_prompt_request_sha256s=tuple(
+                archive.request.ordered_prompt_request_sha256s
+            ),
+            system_prompt_sha256=manifest.system_prompt_sha256,
+            dimension_prompt_sha256=manifest.dimension_prompt_sha256,
+            assessment_plan_sha256=plan.assessment_plan_sha256,
+            input_binding_sha256=witness.input_binding.input_binding_sha256,
+            instrument_sha256=manifest.instrument_sha256,
+            provider_call_count=len(calls),
+            automatic_retry=False,
+            calls=calls,
+        )
+    return tuple(scope_rows), tuple(unit_rows), run_evidence
+
+
 def _recorded_zero_advice_view(
     result: PostFinalAssessmentResultRecord,
 ) -> LajReaderView:
@@ -480,9 +793,9 @@ def _reader_review_request_is_compatible(request: Any) -> bool:
     return (
         request.schema_version == "briefloop.post_final_assessment_request_record.v4"
         and request.assessment_kind == "reader_review"
-        and request.report_type == "management_monthly"
-        and request.language == "en"
-        and request.profile_id == "management_brief_en_v1"
+        and (request.report_type, request.language) in _REQUEST_TEMPLATES
+        and request.profile_id
+        == _REQUEST_TEMPLATES[(request.report_type, request.language)].profile_id
         and request.parser_version == "strict_dimension_json_v3"
         and request.projection_version == "reader_review_projection_v1"
         and request.disclosure_confirmed is True
@@ -760,7 +1073,7 @@ def _load_verified_archive_view(
     request: Any,
     expected_report_sha256: str,
 ) -> tuple[Any, LajReaderView] | None:
-    """Load archive evidence only when a projection needs the legacy fallback."""
+    """Load and verify archive evidence for Store projection/fallback reads."""
 
     from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 
@@ -920,11 +1233,8 @@ def build_post_final_assessment_projection(
             reason_code="post_final_assessment_unavailable",
         )
     direction = snapshot.run_contract_bindings[0].run_direction
-    request_template = (
-        _REQUEST_TEMPLATE
-        if direction.report_type == "management_monthly"
-        and direction.output_language == "en"
-        else None
+    request_template = _REQUEST_TEMPLATES.get(
+        (direction.report_type, direction.output_language)
     )
     policies = list(snapshot.post_final_assessment_policy_revisions)
     if request_template is None and (
@@ -1171,6 +1481,13 @@ def build_post_final_assessment_projection(
                 review_status=human_review_status,
             )
         _archive, archive_view = verified_archive
+        assessment_scopes, assessment_units, run_evidence = (
+            _archive_assessment_projection(
+                archive=_archive,
+                request=request,
+                policy=policy,
+            )
+        )
         projected_view = archive_view
         if result.reader_view_payload is not None:
             try:
@@ -1222,6 +1539,9 @@ def build_post_final_assessment_projection(
             next_run_consumption=NEXT_RUN_CONSUMPTION,
             run_action_available=False,
             selection_required=False,
+            assessment_scopes=assessment_scopes,
+            assessment_units=assessment_units,
+            run_evidence=run_evidence,
         )
     if result.reader_view_payload is not None:
         try:
@@ -1348,8 +1668,12 @@ def build_post_final_assessment_projection(
 __all__ = [
     "NEXT_RUN_CONSUMPTION",
     "PostFinalAssessmentProjection",
+    "ReaderReviewAssessmentScopeStatus",
+    "ReaderReviewAssessmentUnitStatus",
     "ReaderReviewCompatibleResultOption",
+    "ReaderReviewProviderCall",
     "ReaderReviewRequirementLabel",
     "ReaderReviewRequestTemplate",
+    "ReaderReviewRunEvidence",
     "build_post_final_assessment_projection",
 ]

@@ -90,12 +90,19 @@ def _reader_input(human_request_id: str) -> dict[str, object]:
 def _reader_policy_payload(
     service: PostFinalAssessmentService,
     human_request_id: str,
+    *,
+    report_type: str = READER_REVIEW_REPORT_TYPE,
+    language: str = READER_REVIEW_LANGUAGE,
+    instrument_language: str | None = None,
 ) -> dict[str, object]:
     request = ReaderReviewAssessmentInput.model_validate(
         _reader_input(f"{human_request_id}-authorization"),
         strict=True,
     )
-    config = service._reader_review_instrument(request)
+    config = service._reader_review_instrument(
+        request,
+        language=instrument_language or ("zh-CN" if language == "zh" else language),
+    )
     return {
         "schema_version": POST_FINAL_ASSESSMENT_POLICY_SCHEMA,
         "human_actor_id": request.human_actor_id,
@@ -114,8 +121,8 @@ def _reader_policy_payload(
         "max_output_tokens_per_call": READER_REVIEW_MAX_OUTPUT_TOKENS_PER_CALL,
         "public_safe_egress_attested": True,
         "assessment_kind": "reader_review",
-        "report_type": READER_REVIEW_REPORT_TYPE,
-        "language": READER_REVIEW_LANGUAGE,
+        "report_type": report_type,
+        "language": language,
         "disclosure_confirmed": True,
         "cost_status": "not_measured",
     }
@@ -250,6 +257,30 @@ def _reader_workspace(
     return workspace, run_id
 
 
+def _industry_reader_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, str]:
+    direction = CoreRunInitializeRequest.minimal_example["run_direction"]
+    assert isinstance(direction, dict)
+    monkeypatch.setitem(direction, "report_type", "industry_weekly")
+    # Init Web's ordinary-user canonical value is ``zh``; the evaluator maps
+    # it to its internal ``zh-CN`` language contract after admission.
+    monkeypatch.setitem(direction, "output_language", "zh")
+    monkeypatch.setitem(direction, "subject_name", "Toyo solar")
+    monkeypatch.setitem(direction, "industry_or_theme", "美国光伏市场")
+    monkeypatch.setitem(direction, "brief_title", "美国光伏市场周报")
+    monkeypatch.setitem(direction, "task_objective", "跟踪市场和投融资并购动向")
+    monkeypatch.setitem(direction, "audience", "Board / executive")
+    monkeypatch.setitem(direction, "cadence", "weekly")
+    monkeypatch.setitem(direction, "focus_areas", ["Industry weekly"])
+    monkeypatch.setitem(direction, "excluded_topics", [])
+    monkeypatch.setitem(direction, "report_date", "2026-08-08")
+    monkeypatch.setitem(direction, "target_terms", ["Industry weekly"])
+    workspace, run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
+    return workspace, run_id
+
+
 def _unsupported_reader_workspace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -313,6 +344,13 @@ def test_reader_review_input_profile_and_result_vocabulary_are_exact() -> None:
         "scope_included",
         "scope_excluded",
     }
+    industry = load_profile("industry_weekly_zh_v1")
+    assert (industry.profile.report_type, industry.profile.language) == (
+        "industry_weekly",
+        "zh-CN",
+    )
+    assert [item.scope_class for item in industry.profile.dimensions] == ["O1", "O2"]
+    assert sum(len(item.sub_aspects) for item in industry.profile.dimensions) == 12
     assert (
         derive_reader_review_result_status(
             terminal_evidence_class="available",
@@ -345,6 +383,104 @@ def test_reader_review_input_profile_and_result_vocabulary_are_exact() -> None:
             requirement_states=(),
         )
         == "unable_to_assess"
+    )
+    assert (
+        derive_reader_review_result_status(
+            terminal_evidence_class="incomplete",
+            assessed_unit_count=5,
+            finding_count=0,
+            withheld_finding_count=0,
+            abstention_count=0,
+            requirement_states=(),
+        )
+        == "unable_to_assess"
+    )
+
+
+def test_industry_weekly_zh_policy_admits_exact_init_web_direction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace, _run_id = _industry_reader_workspace(tmp_path, monkeypatch)
+    service = PostFinalAssessmentService(workspace)
+    result = service.policy_set(
+        _reader_policy_payload(
+            service,
+            "reader-review-industry-weekly-zh-policy",
+            report_type="industry_weekly",
+            language="zh",
+            instrument_language="zh-CN",
+        )
+    )
+    assert result["ok"] is True, result
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        policy = store.load_snapshot(_run_id).post_final_assessment_policy_revisions
+    assert len(policy) == 1
+    assert (
+        policy[0].profile_id,
+        policy[0].report_type,
+        policy[0].language,
+    ) == ("industry_weekly_zh_v1", "industry_weekly", "zh")
+
+
+def test_industry_weekly_zh_reader_review_composes_and_projects_all_units(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The profile that triggered the dogfood failure must publish a real archive."""
+
+    workspace, _run_id = _industry_reader_workspace(tmp_path, monkeypatch)
+    calls: list[tuple[str, int]] = []
+    service = _reader_service(workspace, calls)
+    policy = service.policy_set(
+        _reader_policy_payload(
+            service,
+            "reader-review-industry-weekly-zh-run",
+            report_type="industry_weekly",
+            language="zh",
+            instrument_language="zh-CN",
+        )
+    )
+    assert policy["ok"] is True
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        stored_policy = store.load_snapshot(
+            _run_id
+        ).post_final_assessment_policy_revisions[-1]
+    requirements = stored_policy.bounded_context["requirements"]
+    assert [item["text"] for item in requirements] == [
+        "跟踪市场和投融资并购动向",
+        "Board / executive",
+        "Toyo solar",
+        "美国光伏市场",
+        "美国光伏市场周报",
+        "weekly",
+        "2026-08-08",
+        "2026-07-07..2026-07-14",
+        "Industry weekly",
+    ]
+    assert sum(item["text"] == "Industry weekly" for item in requirements) == 1
+
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    result = service.run_reader_review(
+        _reader_input("reader-review-industry-weekly-zh-run")
+    )
+    assert result["ok"] is True, result
+    assert result["status"] in {
+        "available",
+        "no_finding_returned_in_completed_supported_checks",
+    }
+    assert calls == [
+        ("cross_section_consistency", 1),
+        ("brief_requirement_coverage", 1),
+    ]
+
+    projection = build_post_final_assessment_projection(workspace)
+    assert projection.assessment_scopes is not None
+    assert [item.scope_class for item in projection.assessment_scopes] == ["O1", "O2"]
+    assert projection.assessment_units is not None
+    assert len(projection.assessment_units) == 12
+    assert all(
+        item.state == "completed_no_finding" for item in projection.assessment_units
     )
 
 
@@ -510,6 +646,15 @@ def test_reader_review_assessment_next_rebuilds_authorization_after_unknown(
     class _ProcessStop(BaseException):
         pass
 
+    # The assessment runner resolves the live first-party SDK identity before
+    # the provider boundary.  Keep this test deterministic so the injected
+    # process-stop sentinel reaches the mocked execution call instead of
+    # failing closed on the host's installed-package metadata.
+    monkeypatch.setattr(
+        runner_module.metadata,
+        "version",
+        lambda _name: "0.104.1",
+    )
     original_execute = assessment_module.execute_prepared_shadow_run
     monkeypatch.setattr(
         assessment_module,
@@ -722,6 +867,54 @@ def test_reader_review_assessment_run_preflights_sdk_before_claim(
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         snapshot = store.load_snapshot(run_id)
         assert store.current_revision == before_revision
+        assert snapshot.post_final_assessment_requests == ()
+        assert snapshot.post_final_assessment_results == ()
+
+
+def test_reader_review_assessment_run_preflights_credential_before_claim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing dedicated credential cannot create an outcome-unknown claim."""
+
+    workspace, run_id = _reader_workspace(
+        tmp_path / "credential-preflight",
+        monkeypatch,
+    )
+    service = PostFinalAssessmentService(workspace)
+    policy = service.policy_set(
+        _reader_policy_payload(service, "reader-review-credential-preflight-policy")
+    )
+    assert policy["ok"] is True
+    preview = service.assessment_next(
+        policy_revision_id=str(policy["policy_revision_id"]),
+        human_actor_id="human-reader-review-preflight",
+        human_request_id="reader-review-credential-preflight-run",
+        assessment_purpose="post_final_review",
+    )
+    assert preview["ok"] is True
+    request = preview["request"]
+    assert isinstance(request, dict)
+
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.delenv(ANTHROPIC_API_KEY_SETTING, raising=False)
+    monkeypatch.setattr(
+        assessment_module,
+        "execute_prepared_shadow_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("credential preflight reached provider execution")
+        ),
+    )
+    before_db = (workspace / "briefloop.db").read_bytes()
+
+    assert service.assessment_run(request) == {
+        "ok": False,
+        "status": "unavailable",
+        "reason_code": "shadow_adapter_unavailable",
+    }
+    assert (workspace / "briefloop.db").read_bytes() == before_db
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(run_id)
         assert snapshot.post_final_assessment_requests == ()
         assert snapshot.post_final_assessment_results == ()
 
@@ -974,6 +1167,20 @@ def test_reader_review_claim_recovery_replay_and_selection_matrix(
     )
     assert selected.selected_result_id == first_result.assessment_result_id
     assert selected.user_status == ("no_finding_returned_in_completed_supported_checks")
+    assert [item.scope_class for item in selected.assessment_scopes] == ["O1", "O2"]
+    assert [item.state for item in selected.assessment_scopes] == [
+        "completed_no_finding",
+        "completed_no_finding",
+    ]
+    assert len(selected.assessment_units) == 12
+    assert {item.state for item in selected.assessment_units} == {
+        "completed_no_finding"
+    }
+    assert selected.run_evidence is not None
+    assert selected.run_evidence.trigger == "explicit_human_authorization"
+    assert selected.run_evidence.surface == "not_recorded"
+    assert selected.run_evidence.provider_call_count == 2
+    assert len(selected.run_evidence.calls) == 2
     assert "does not mean the report is correct" in selected.view.disclaimer
     expected_labels = [
         (

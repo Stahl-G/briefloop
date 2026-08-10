@@ -615,6 +615,8 @@ class IntakeService:
         rejection_counts: dict[str, int] | None = None
         claims_eligible_count: int | None = None
         observation: TavilyAcquisitionObservation | None = None
+        transport_phase: str | None = None
+        transport_error_class: str | None = None
         if input.provider_response is None:
             if (
                 input.provider_status_code is not None
@@ -673,7 +675,18 @@ class IntakeService:
                 ):
                     raise IntakeError("source_provider_result_invalid")
                 claims_eligible_count = 0
-                failure_class = "provider_search_failed"
+                if (
+                    observation.bundle.status == "search_response_unavailable"
+                    and observation.bundle.search.status_code is None
+                    and observation.bundle.search.transport_error_class is not None
+                ):
+                    failure_class = "provider_transport_unavailable"
+                    transport_phase = observation.bundle.search.operation
+                    transport_error_class = (
+                        observation.bundle.search.transport_error_class
+                    )
+                else:
+                    failure_class = "provider_search_failed"
             elif observation.bundle.status == "search_results_empty":
                 if (
                     input.manifest is not None
@@ -702,11 +715,24 @@ class IntakeService:
                     raise IntakeError("source_provider_result_invalid")
                 claims_eligible_count = 0
                 rejection_counts = {"extract_not_succeeded": observed_results}
-                failure_class = (
-                    "provider_results_without_durable_content"
-                    if observation.bundle.status == "extract_results_all_failed"
-                    else "provider_extract_failed"
-                )
+                if (
+                    observation.bundle.status == "extract_response_unavailable"
+                    and observation.bundle.extract is not None
+                    and observation.bundle.extract.status_code is None
+                    and observation.bundle.extract.transport_error_class is not None
+                ):
+                    failure_class = "provider_transport_unavailable"
+                    transport_phase = observation.bundle.extract.operation
+                    transport_error_class = (
+                        observation.bundle.extract.transport_error_class
+                    )
+                    rejection_counts = None
+                else:
+                    failure_class = (
+                        "provider_results_without_durable_content"
+                        if observation.bundle.status == "extract_results_all_failed"
+                        else "provider_extract_failed"
+                    )
             else:
                 if input.manifest is None or input.source_manifest_sha256 is None:
                     raise IntakeError("source_provider_result_invalid")
@@ -740,7 +766,8 @@ class IntakeService:
                 )
         reason_code = (
             "child_failed"
-            if failure_class == "provider_response_unavailable"
+            if failure_class
+            in {"provider_response_unavailable", "provider_transport_unavailable"}
             else "proposal_invalid"
         )
         request = InvocationFailureRequest.model_validate(
@@ -788,6 +815,8 @@ class IntakeService:
                 ),
                 "provider_response_sha256": response_sha256,
                 "provider_response_size_bytes": response_size,
+                "transport_phase": transport_phase,
+                "transport_error_class": transport_error_class,
                 "result_count": input.result_count,
                 "durable_content_count": input.durable_content_count,
                 "claims_eligible_count": claims_eligible_count,

@@ -37,7 +37,7 @@ from multi_agent_brief.control_store import (
     ControlStoreStateError,
     SQLiteControlStore,
 )
-from multi_agent_brief.control_store.schema import migration_sql
+from multi_agent_brief.control_store.schema import SCHEMA_VERSION, migration_sql
 from multi_agent_brief.control_store.serialization import (
     canonical_json_bytes,
     canonical_model_text,
@@ -1346,12 +1346,14 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "post_final_assessment_policy_revisions",
         "post_final_assessment_requests",
         "post_final_assessment_results",
+        "post_final_human_observations",
         "post_final_finding_dispositions",
         "post_final_guidance_drafts",
         "post_final_guidance_statuses",
         "transaction_post_final_assessment_policy_revisions",
         "transaction_post_final_assessment_requests",
         "transaction_post_final_assessment_results",
+        "transaction_post_final_human_observations",
         "transaction_post_final_finding_dispositions",
         "transaction_post_final_guidance_drafts",
         "transaction_post_final_guidance_statuses",
@@ -1365,6 +1367,7 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "transaction_run_guidance_snapshot_items",
         "post_final_assessment_abandonment_compatibility_boundaries",
         "post_final_assessment_abandonments",
+        "post_final_assessment_executions",
         "transaction_post_final_assessment_abandonments",
         "source_acquisition_attempt_compatibility_boundaries",
         "run_source_acquisition_attempt_authorizations",
@@ -1384,7 +1387,10 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         assert store._connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert store._connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert store._connection.execute("PRAGMA synchronous").fetchone()[0] == 2
-        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 13
+        assert (
+            store._connection.execute("PRAGMA user_version").fetchone()[0]
+            == SCHEMA_VERSION
+        )
         tables = {
             row[0]
             for row in store._connection.execute(
@@ -2841,7 +2847,7 @@ def test_future_schema_fails_closed(tmp_path: Path) -> None:
     store = _create_store(tmp_path)
     store.close()
     connection = sqlite3.connect(tmp_path / "control.db")
-    connection.execute("PRAGMA user_version = 14")
+    connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
     connection.close()
     with pytest.raises(ControlStoreSchemaError) as error:
         SQLiteControlStore.open(tmp_path / "control.db")

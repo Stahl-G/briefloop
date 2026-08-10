@@ -60,6 +60,8 @@ from multi_agent_brief.contracts.v2 import (
     PackageReadyRecord,
     PostFinalAssessmentAbandonmentRecord,
     PostFinalAssessmentAbandonmentReference,
+    PostFinalAssessmentExecutionRecord,
+    PostFinalAssessmentExecutionReference,
     PostFinalAssessmentPolicyRevision,
     PostFinalAssessmentPolicyRevisionReference,
     PostFinalAssessmentRequestRecord,
@@ -154,6 +156,7 @@ _POST_FINAL_RECEIPT_TRANSACTION_TYPES = frozenset(
         "post_final_assessment_policy",
         "post_final_assessment_claim",
         "post_final_assessment_series_claim",
+        "post_final_assessment_execution",
         "post_final_assessment_result",
         "post_final_finding_disposition",
         "post_final_human_observation",
@@ -215,6 +218,7 @@ _EXTENDED_RECORD_MODELS = (
     PostFinalAssessmentPolicyRevision,
     PostFinalAssessmentRequestRecord,
     PostFinalAssessmentAbandonmentRecord,
+    PostFinalAssessmentExecutionRecord,
     PostFinalAssessmentResultRecord,
     PostFinalFindingDispositionRecord,
     PostFinalHumanObservationRecord,
@@ -582,6 +586,7 @@ class ControlStoreSnapshot:
     ]
     post_final_assessment_requests: tuple[PostFinalAssessmentRequestRecord, ...]
     post_final_assessment_abandonments: tuple[PostFinalAssessmentAbandonmentRecord, ...]
+    post_final_assessment_executions: tuple[PostFinalAssessmentExecutionRecord, ...]
     post_final_assessment_results: tuple[PostFinalAssessmentResultRecord, ...]
     post_final_finding_dispositions: tuple[PostFinalFindingDispositionRecord, ...]
     post_final_human_observations: tuple[PostFinalHumanObservationRecord, ...]
@@ -1000,6 +1005,18 @@ class ControlStoreHistory:
             ("abandonment_id",),
             full.post_final_assessment_abandonments,
         )
+        # Execution witnesses are owned by their dedicated append-only table,
+        # not by a TransactionReceipt relation list.  This keeps schema17
+        # receipts byte-compatible with workspaces created before the witness
+        # table existed while still projecting only rows committed by this
+        # historical prefix.
+        committed_transaction_ids = {receipt.transaction_id for receipt in transactions}
+        post_final_assessment_executions = tuple(
+            item
+            for item in full.post_final_assessment_executions
+            if item.run_id == run_id
+            and item.accepted_transaction_id in committed_transaction_ids
+        )
         post_final_assessment_results = selected(
             "post_final_assessment_results",
             ("assessment_result_id",),
@@ -1141,6 +1158,7 @@ class ControlStoreHistory:
             ),
             post_final_assessment_requests=post_final_assessment_requests,
             post_final_assessment_abandonments=post_final_assessment_abandonments,
+            post_final_assessment_executions=post_final_assessment_executions,
             post_final_assessment_results=post_final_assessment_results,
             post_final_finding_dispositions=post_final_finding_dispositions,
             post_final_human_observations=post_final_human_observations,
@@ -3326,15 +3344,28 @@ class SQLiteControlStore:
                 ).fetchall()
             )
         }
+        existing_execution_records = {
+            record.execution_id: record
+            for record in (
+                _decode_record(PostFinalAssessmentExecutionRecord, str(row[0]))
+                for row in self._connection.execute(
+                    "SELECT payload_json FROM post_final_assessment_executions "
+                    "WHERE run_id=?",
+                    (run_id,),
+                ).fetchall()
+            )
+        }
         staged_policies = uow._post_final_assessment_policy_revisions
         staged_requests = uow._post_final_assessment_requests
         staged_abandonments = uow._post_final_assessment_abandonments
+        staged_executions = uow._post_final_assessment_executions
         staged_results = uow._post_final_assessment_results
 
         if (
             len(staged_policies) > 1
             or len(staged_requests) > 1
             or len(staged_abandonments) > 1
+            or len(staged_executions) > 1
             or len(staged_results) > 1
         ):
             raise ControlStoreConflict("relational_integrity_conflict")
@@ -3375,8 +3406,24 @@ class SQLiteControlStore:
         available_results.update(staged_results)
         available_abandonments = dict(existing_abandonment_records)
         available_abandonments.update(staged_abandonments)
+        available_executions = dict(existing_execution_records)
+        available_executions.update(staged_executions)
         available_requests = dict(existing_request_records)
         available_requests.update(staged_requests)
+
+        for record in staged_executions.values():
+            request = available_requests.get(record.assessment_request_id)
+            if (
+                record.accepted_transaction_id != uow.transaction_id
+                or record.execution_event_id not in staged_events
+                or record.execution_id in existing_execution_records
+                or request is None
+                or request.request_fingerprint != record.assessment_request_fingerprint
+                or request.trial_id != record.trial_id
+                or request.finalized_lineage_fingerprint
+                != record.finalized_lineage_fingerprint
+            ):
+                raise ControlStoreConflict("relational_integrity_conflict")
 
         for record in staged_abandonments.values():
             request = available_requests.get(record.assessment_request_id)
@@ -5658,6 +5705,31 @@ class SQLiteControlStore:
                     _canonical_record_text(record),
                 ),
             )
+        for record in uow._post_final_assessment_executions.values():
+            self._connection.execute(
+                """
+                INSERT INTO post_final_assessment_executions VALUES
+                (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    record.run_id,
+                    record.execution_id,
+                    record.schema_version,
+                    record.assessment_request_id,
+                    record.trial_id,
+                    record.execution_archive_manifest_sha256,
+                    record.execution_receipt_id,
+                    record.execution_status,
+                    record.run_status,
+                    record.validation_status,
+                    record.reason_codes_json,
+                    record.execution_fingerprint,
+                    record.recorded_at,
+                    record.execution_event_id,
+                    record.accepted_transaction_id,
+                    _canonical_record_text(record),
+                ),
+            )
         for record in uow._post_final_assessment_results.values():
             self._connection.execute(
                 """
@@ -7868,6 +7940,29 @@ class SQLiteControlStore:
                     "accepted_transaction_id": "accepted_transaction_id",
                 },
             ),
+            post_final_assessment_executions=self._load_for_run(
+                PostFinalAssessmentExecutionRecord,
+                "post_final_assessment_executions",
+                run_id,
+                "recorded_at, execution_id",
+                {
+                    "run_id": "run_id",
+                    "execution_id": "execution_id",
+                    "schema_version": "schema_version",
+                    "assessment_request_id": "assessment_request_id",
+                    "trial_id": "trial_id",
+                    "execution_archive_manifest_sha256": "execution_archive_manifest_sha256",
+                    "execution_receipt_id": "execution_receipt_id",
+                    "execution_status": "execution_status",
+                    "run_status": "run_status",
+                    "validation_status": "validation_status",
+                    "reason_codes_json": "reason_codes_json",
+                    "recorded_at": "recorded_at",
+                    "execution_event_id": "execution_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "execution_fingerprint": "execution_fingerprint",
+                },
+            ),
             post_final_assessment_results=self._load_for_run(
                 PostFinalAssessmentResultRecord,
                 "post_final_assessment_results",
@@ -8331,6 +8426,7 @@ class SQLiteControlStore:
             snapshot.post_final_assessment_policy_revisions,
             snapshot.post_final_assessment_requests,
             snapshot.post_final_assessment_abandonments,
+            snapshot.post_final_assessment_executions,
             snapshot.post_final_assessment_results,
             snapshot.post_final_finding_dispositions,
             snapshot.post_final_human_observations,
@@ -8352,6 +8448,10 @@ class SQLiteControlStore:
         abandonments = {
             item.abandonment_id: item
             for item in snapshot.post_final_assessment_abandonments
+        }
+        executions = {
+            item.execution_id: item
+            for item in snapshot.post_final_assessment_executions
         }
         results = {
             item.assessment_result_id: item
@@ -8376,6 +8476,7 @@ class SQLiteControlStore:
             len(policies) != len(snapshot.post_final_assessment_policy_revisions)
             or len(requests) != len(snapshot.post_final_assessment_requests)
             or len(abandonments) != len(snapshot.post_final_assessment_abandonments)
+            or len(executions) != len(snapshot.post_final_assessment_executions)
             or len(results) != len(snapshot.post_final_assessment_results)
             or len(dispositions) != len(snapshot.post_final_finding_dispositions)
             or len(observations) != len(snapshot.post_final_human_observations)
@@ -8486,6 +8587,25 @@ class SQLiteControlStore:
             ):
                 raise ControlStoreIntegrityError("control_store_integrity_invalid")
             abandonment_request_ids.add(abandonment.assessment_request_id)
+        for execution in executions.values():
+            receipt = receipts.get(execution.accepted_transaction_id)
+            event = events.get(execution.execution_event_id)
+            request = requests.get(execution.assessment_request_id)
+            if (
+                execution.run_id != snapshot.run.run_id
+                or request is None
+                or request.request_fingerprint
+                != execution.assessment_request_fingerprint
+                or request.trial_id != execution.trial_id
+                or request.finalized_lineage_fingerprint
+                != execution.finalized_lineage_fingerprint
+                or receipt is None
+                or event is None
+                or event.transaction_id != receipt.transaction_id
+                or event.event_type != "post_final_assessment_execution_recorded"
+                or event.core_run_binding is not None
+            ):
+                raise ControlStoreIntegrityError("control_store_integrity_invalid")
         for result in results.values():
             receipt = receipts.get(result.accepted_transaction_id)
             event = events.get(result.result_event_id)

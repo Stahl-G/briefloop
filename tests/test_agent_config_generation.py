@@ -1,4 +1,5 @@
 """Tests for agent config generation from agent_roles.yaml manifest."""
+
 from __future__ import annotations
 
 import subprocess
@@ -6,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
@@ -22,6 +24,7 @@ from generate_agent_configs import (
     validate_manifest,
     render_codex_config,
     render_codex_agent,
+    render_packaged_codex_agent,
     render_claude_agent,
     render_docs,
     render_opencode_agent,
@@ -34,10 +37,29 @@ from generate_agent_configs import (
     HARNESS_TEXT,
 )
 
-PIPELINE_ROLES = ["scout", "screener", "claim-ledger", "analyst", "editor", "auditor", "formatter"]
-HARNESS_ROLES = ["draft-audit-harness", "final-quality-harness", "rendered-output-harness"]
+PIPELINE_ROLES = [
+    "scout",
+    "screener",
+    "claim-ledger",
+    "analyst",
+    "editor",
+    "auditor",
+    "formatter",
+]
+HARNESS_ROLES = [
+    "draft-audit-harness",
+    "final-quality-harness",
+    "rendered-output-harness",
+]
 ALL_ROLES = PIPELINE_ROLES + HARNESS_ROLES + ["orchestrator"]
-REQUIRED_ROLE_FIELDS = ["stage", "tool_profile", "description", "trigger", "responsibilities", "hard_rules"]
+REQUIRED_ROLE_FIELDS = [
+    "stage",
+    "tool_profile",
+    "description",
+    "trigger",
+    "responsibilities",
+    "hard_rules",
+]
 
 
 @pytest.fixture
@@ -46,6 +68,7 @@ def manifest():
 
 
 # --- Manifest validation ---
+
 
 def test_manifest_loads():
     manifest = load_manifest(MANIFEST_PATH)
@@ -73,7 +96,9 @@ def test_manifest_roles_have_required_fields(manifest):
 def test_manifest_roles_use_valid_tool_profiles(manifest):
     profiles = manifest["tool_profiles"]
     for name, role in manifest["roles"].items():
-        assert role["tool_profile"] in profiles, f"Role '{name}' uses unknown profile: {role['tool_profile']}"
+        assert role["tool_profile"] in profiles, (
+            f"Role '{name}' uses unknown profile: {role['tool_profile']}"
+        )
 
 
 def test_manifest_validate_passes(manifest):
@@ -82,6 +107,7 @@ def test_manifest_validate_passes(manifest):
 
 # --- Read-only agents must not have edit tools ---
 
+
 def test_read_only_agents_no_edit_tools(manifest):
     profiles = manifest["tool_profiles"]
     for name, role in manifest["roles"].items():
@@ -89,11 +115,14 @@ def test_read_only_agents_no_edit_tools(manifest):
         if not tp["may_edit"]:
             tools = tp["claude_tools"]
             assert "Edit" not in tools, f"Read-only role '{name}' has Edit tool"
-            assert "MultiEdit" not in tools, f"Read-only role '{name}' has MultiEdit tool"
+            assert "MultiEdit" not in tools, (
+                f"Read-only role '{name}' has MultiEdit tool"
+            )
             assert "Write" not in tools, f"Read-only role '{name}' has Write tool"
 
 
 # --- Generated content checks ---
+
 
 def test_codex_config_valid_toml(manifest):
     content = render_codex_config(manifest)
@@ -144,7 +173,10 @@ def test_generated_orchestrator_is_main_agent(manifest):
         assert "Orchestrator main agent" in content
         assert "司乐师（Orchestrator）" in content
         assert "Orchestrator control loop" in content
-        assert "contract references" in content.lower() or "configs/orchestrator_contract.yaml" in content
+        assert (
+            "contract references" in content.lower()
+            or "configs/orchestrator_contract.yaml" in content
+        )
         assert "retry_stage" in content
         assert "request_human_review" in content
         assert "block_run" in content
@@ -154,11 +186,13 @@ def test_generated_orchestrator_is_main_agent(manifest):
 
 def test_generated_source_planner_stays_lightweight_plan_only(manifest):
     role = manifest["roles"]["source-planner"]
-    rendered = "\n".join([
-        render_codex_agent("source-planner", role, manifest),
-        render_claude_agent("source-planner", role, manifest),
-        render_opencode_agent("source-planner", role, manifest),
-    ])
+    rendered = "\n".join(
+        [
+            render_codex_agent("source-planner", role, manifest),
+            render_claude_agent("source-planner", role, manifest),
+            render_opencode_agent("source-planner", role, manifest),
+        ]
+    )
 
     assert "lightweight" in rendered
     assert "source plan, not evidence" in rendered
@@ -169,33 +203,74 @@ def test_generated_source_planner_stays_lightweight_plan_only(manifest):
     assert "Ensures all sources are public, citable, and timestamped" not in rendered
 
 
+def test_source_provider_v2_is_proposal_only_and_network_denied(manifest):
+    role = manifest["roles"]["source-provider"]
+    rendered = "\n".join(
+        [
+            render_codex_agent("source-provider", role, manifest),
+            render_packaged_codex_agent("source-provider", role),
+            render_claude_agent("source-provider", role, manifest),
+            render_opencode_agent("source-provider", role, manifest),
+        ]
+    )
+
+    assert "sole provider-I/O owner" in rendered
+    assert "must not call Tavily" in rendered
+    assert "must not" in rendered and "read credentials" in rendered
+    opencode = render_opencode_agent("source-provider", role, manifest)
+    assert "network:\n    '*': deny" in opencode
+    assert "source_candidates.yaml: allow" not in opencode
+    assert "sources.yaml: allow" not in opencode
+
+
 def test_generated_scout_and_screener_are_topology_aware(manifest):
     scout_role = manifest["roles"]["scout"]
     screener_role = manifest["roles"]["screener"]
-    scout_rendered = "\n".join([
-        render_codex_agent("scout", scout_role, manifest),
-        render_claude_agent("scout", scout_role, manifest),
-        render_opencode_agent("scout", scout_role, manifest),
-    ])
-    screener_rendered = "\n".join([
-        render_codex_agent("screener", screener_role, manifest),
-        render_claude_agent("screener", screener_role, manifest),
-        render_opencode_agent("screener", screener_role, manifest),
-    ])
+    scout_rendered = "\n".join(
+        [
+            render_codex_agent("scout", scout_role, manifest),
+            render_claude_agent("scout", scout_role, manifest),
+            render_opencode_agent("scout", scout_role, manifest),
+        ]
+    )
+    screener_rendered = "\n".join(
+        [
+            render_codex_agent("screener", screener_role, manifest),
+            render_claude_agent("screener", screener_role, manifest),
+            render_opencode_agent("screener", screener_role, manifest),
+        ]
+    )
 
-    assert "In default topology, produce both candidate_claims.json and screened_candidates.json" in scout_rendered
-    assert "also output screened_candidates.json before Scout stage completion" in scout_rendered
+    assert (
+        "In default topology, produce both candidate_claims.json and screened_candidates.json"
+        in scout_rendered
+    )
+    assert (
+        "also output screened_candidates.json before Scout stage completion"
+        in scout_rendered
+    )
     assert "Strict: Scout -> Screener" in scout_rendered
-    assert "chunk outputs are scratch/intermediate runtime material, not workflow artifacts" in scout_rendered
-    assert "Join all chunk outputs deterministically before writing workflow artifacts" in scout_rendered
+    assert (
+        "chunk outputs are scratch/intermediate runtime material, not workflow artifacts"
+        in scout_rendered
+    )
+    assert (
+        "Join all chunk outputs deterministically before writing workflow artifacts"
+        in scout_rendered
+    )
     assert "not completion order" in scout_rendered
     assert "Do not append to candidate_claims.json from chunk workers" in scout_rendered
     assert "read the already-joined candidate_claims.json" in scout_rendered
     assert "stable candidate_id" in scout_rendered
-    assert "source_url for HTTP(S) web sources or source_path for local/package sources" in scout_rendered
+    assert (
+        "source_url for HTTP(S) web sources or source_path for local/package sources"
+        in scout_rendered
+    )
     assert "Never place a title, search query" in scout_rendered
     assert "Treat source_type as provider/storage type" in scout_rendered
-    assert "Treat source_category as the reader-facing evidence category" in scout_rendered
+    assert (
+        "Treat source_category as the reader-facing evidence category" in scout_rendered
+    )
     assert "Use only when role_topology is strict" in screener_rendered
     assert "Default topology uses Scout to perform screening" in screener_rendered
     assert "Do not rediscover source material" in screener_rendered
@@ -203,33 +278,46 @@ def test_generated_scout_and_screener_are_topology_aware(manifest):
 
 def test_generated_editor_uses_delivery_editor_alias(manifest):
     role = manifest["roles"]["editor"]
-    rendered = "\n".join([
-        render_codex_agent("editor", role, manifest),
-        render_claude_agent("editor", role, manifest),
-        render_opencode_agent("editor", role, manifest),
-    ])
+    rendered = "\n".join(
+        [
+            render_codex_agent("editor", role, manifest),
+            render_claude_agent("editor", role, manifest),
+            render_opencode_agent("editor", role, manifest),
+        ]
+    )
 
     assert "Delivery Editor alias" in rendered
     assert "stage id remains editor" in rendered
     assert "Own the final auditable output/intermediate/audited_brief.md" in rendered
-    assert "output/intermediate/analyst_draft_snapshot.md as the factual boundary" in rendered
-    assert "Do not add new facts, numbers, named entities, dates, causal claims, or citations" in rendered
+    assert (
+        "output/intermediate/analyst_draft_snapshot.md as the factual boundary"
+        in rendered
+    )
+    assert (
+        "Do not add new facts, numbers, named entities, dates, causal claims, or citations"
+        in rendered
+    )
 
 
 def test_generated_analyst_and_editor_explain_audited_brief_ownership(manifest):
     analyst = manifest["roles"]["analyst"]
     editor = manifest["roles"]["editor"]
-    rendered = "\n".join([
-        render_codex_agent("analyst", analyst, manifest),
-        render_claude_agent("analyst", analyst, manifest),
-        render_opencode_agent("analyst", analyst, manifest),
-        render_codex_agent("editor", editor, manifest),
-        render_claude_agent("editor", editor, manifest),
-        render_opencode_agent("editor", editor, manifest),
-    ])
+    rendered = "\n".join(
+        [
+            render_codex_agent("analyst", analyst, manifest),
+            render_claude_agent("analyst", analyst, manifest),
+            render_opencode_agent("analyst", analyst, manifest),
+            render_codex_agent("editor", editor, manifest),
+            render_claude_agent("editor", editor, manifest),
+            render_opencode_agent("editor", editor, manifest),
+        ]
+    )
 
     assert "Analyst working draft" in rendered
-    assert "Python freezes it into output/intermediate/analyst_draft_snapshot.md" in rendered
+    assert (
+        "Python freezes it into output/intermediate/analyst_draft_snapshot.md"
+        in rendered
+    )
     assert "Do not edit output/intermediate/analyst_draft_snapshot.md" in rendered
     assert "Own the final auditable output/intermediate/audited_brief.md" in rendered
     assert "Use plain Markdown headings" in rendered
@@ -239,22 +327,32 @@ def test_generated_analyst_and_editor_explain_audited_brief_ownership(manifest):
 def test_generated_analyst_and_editor_use_optional_atomic_graph_boundary(manifest):
     analyst = manifest["roles"]["analyst"]
     editor = manifest["roles"]["editor"]
-    rendered = "\n".join([
-        render_codex_agent("analyst", analyst, manifest),
-        render_claude_agent("analyst", analyst, manifest),
-        render_opencode_agent("analyst", analyst, manifest),
-        render_codex_agent("editor", editor, manifest),
-        render_claude_agent("editor", editor, manifest),
-        render_opencode_agent("editor", editor, manifest),
-    ])
+    rendered = "\n".join(
+        [
+            render_codex_agent("analyst", analyst, manifest),
+            render_claude_agent("analyst", analyst, manifest),
+            render_opencode_agent("analyst", analyst, manifest),
+            render_codex_agent("editor", editor, manifest),
+            render_claude_agent("editor", editor, manifest),
+            render_opencode_agent("editor", editor, manifest),
+        ]
+    )
 
     assert "output/intermediate/atomic_claim_graph.json" in rendered
     assert "optional experimental structural decomposition aid" in rendered
     assert "not source evidence or proof of support" in rendered
-    assert "Do not create, edit, rewrite, repair, or extend atomic_claim_graph.json" in rendered
-    assert "If atomic_claim_graph.json is absent or invalid, do not repair it" in rendered
+    assert (
+        "Do not create, edit, rewrite, repair, or extend atomic_claim_graph.json"
+        in rendered
+    )
+    assert (
+        "If atomic_claim_graph.json is absent or invalid, do not repair it" in rendered
+    )
     assert "Do not cite atom IDs in reader-facing prose" in rendered
-    assert "Do not introduce material atoms absent from frozen claim_ledger.json" in rendered
+    assert (
+        "Do not introduce material atoms absent from frozen claim_ledger.json"
+        in rendered
+    )
     assert "Claim-Support Matrix" not in rendered
     assert "Evidence Span Registry" not in rendered
     assert "support sufficiency" not in rendered.lower()
@@ -262,11 +360,13 @@ def test_generated_analyst_and_editor_use_optional_atomic_graph_boundary(manifes
 
 def test_generated_formatter_preserves_frozen_audited_brief_boundary(manifest):
     role = manifest["roles"]["formatter"]
-    rendered = "\n".join([
-        render_codex_agent("formatter", role, manifest),
-        render_claude_agent("formatter", role, manifest),
-        render_opencode_agent("formatter", role, manifest),
-    ])
+    rendered = "\n".join(
+        [
+            render_codex_agent("formatter", role, manifest),
+            render_claude_agent("formatter", role, manifest),
+            render_opencode_agent("formatter", role, manifest),
+        ]
+    )
 
     assert "Treat output/intermediate/audited_brief.md as frozen input" in rendered
     assert "never edit, rewrite, or patch it during formatter/finalize work" in rendered
@@ -277,11 +377,13 @@ def test_generated_formatter_preserves_frozen_audited_brief_boundary(manifest):
 def test_generated_assets_scope_claim_freeze_to_claim_ledger_runtime_protocol(manifest):
     rendered_parts: list[str] = [render_opencode_command_generate_brief(manifest)]
     for name, role in manifest["roles"].items():
-        rendered_parts.extend([
-            render_codex_agent(name, role, manifest),
-            render_claude_agent(name, role, manifest),
-            render_opencode_agent(name, role, manifest),
-        ])
+        rendered_parts.extend(
+            [
+                render_codex_agent(name, role, manifest),
+                render_claude_agent(name, role, manifest),
+                render_opencode_agent(name, role, manifest),
+            ]
+        )
     rendered_parts.extend(render_docs(manifest).values())
     rendered = "\n".join(rendered_parts)
 
@@ -289,25 +391,29 @@ def test_generated_assets_scope_claim_freeze_to_claim_ledger_runtime_protocol(ma
     assert "claim_drafts.json" in rendered
     assert "freeze-claim-ledger" in rendered
 
-    analyst_auditor = "\n".join([
-        render_codex_agent("analyst", manifest["roles"]["analyst"], manifest),
-        render_claude_agent("analyst", manifest["roles"]["analyst"], manifest),
-        render_opencode_agent("analyst", manifest["roles"]["analyst"], manifest),
-        render_codex_agent("auditor", manifest["roles"]["auditor"], manifest),
-        render_claude_agent("auditor", manifest["roles"]["auditor"], manifest),
-        render_opencode_agent("auditor", manifest["roles"]["auditor"], manifest),
-    ])
+    analyst_auditor = "\n".join(
+        [
+            render_codex_agent("analyst", manifest["roles"]["analyst"], manifest),
+            render_claude_agent("analyst", manifest["roles"]["analyst"], manifest),
+            render_opencode_agent("analyst", manifest["roles"]["analyst"], manifest),
+            render_codex_agent("auditor", manifest["roles"]["auditor"], manifest),
+            render_claude_agent("auditor", manifest["roles"]["auditor"], manifest),
+            render_opencode_agent("auditor", manifest["roles"]["auditor"], manifest),
+        ]
+    )
     assert "Do not read claim_drafts.json" in analyst_auditor
     assert "freeze-claim-ledger" not in analyst_auditor
 
 
 def test_generated_claim_ledger_preserves_source_metadata_contract(manifest):
     role = manifest["roles"]["claim-ledger"]
-    rendered = "\n".join([
-        render_codex_agent("claim-ledger", role, manifest),
-        render_claude_agent("claim-ledger", role, manifest),
-        render_opencode_agent("claim-ledger", role, manifest),
-    ])
+    rendered = "\n".join(
+        [
+            render_codex_agent("claim-ledger", role, manifest),
+            render_claude_agent("claim-ledger", role, manifest),
+            render_opencode_agent("claim-ledger", role, manifest),
+        ]
+    )
 
     assert "source_url is only for HTTP(S) URLs" in rendered
     assert "Do not put titles, source names, search" in rendered
@@ -316,61 +422,89 @@ def test_generated_claim_ledger_preserves_source_metadata_contract(manifest):
 
 
 def test_generated_analyst_and_auditor_use_frozen_ledger_contract(manifest):
-    analyst_rendered = "\n".join([
-        render_codex_agent("analyst", manifest["roles"]["analyst"], manifest),
-        render_claude_agent("analyst", manifest["roles"]["analyst"], manifest),
-        render_opencode_agent("analyst", manifest["roles"]["analyst"], manifest),
-    ])
-    auditor_rendered = "\n".join([
-        render_codex_agent("auditor", manifest["roles"]["auditor"], manifest),
-        render_claude_agent("auditor", manifest["roles"]["auditor"], manifest),
-        render_opencode_agent("auditor", manifest["roles"]["auditor"], manifest),
-    ])
+    analyst_rendered = "\n".join(
+        [
+            render_codex_agent("analyst", manifest["roles"]["analyst"], manifest),
+            render_claude_agent("analyst", manifest["roles"]["analyst"], manifest),
+            render_opencode_agent("analyst", manifest["roles"]["analyst"], manifest),
+        ]
+    )
+    auditor_rendered = "\n".join(
+        [
+            render_codex_agent("auditor", manifest["roles"]["auditor"], manifest),
+            render_claude_agent("auditor", manifest["roles"]["auditor"], manifest),
+            render_opencode_agent("auditor", manifest["roles"]["auditor"], manifest),
+        ]
+    )
 
     assert "Read frozen claim_ledger.json" in analyst_rendered
-    assert "Read only frozen claim_ledger.json as the Claim Ledger input" in analyst_rendered
+    assert (
+        "Read only frozen claim_ledger.json as the Claim Ledger input"
+        in analyst_rendered
+    )
     assert "Do not read claim_drafts.json" in analyst_rendered
-    assert "Do not create, edit, rewrite, or repair claim_ledger.json" in analyst_rendered
+    assert (
+        "Do not create, edit, rewrite, or repair claim_ledger.json" in analyst_rendered
+    )
 
     assert "Check overstatement" in auditor_rendered
     assert "support-strength calibration" in auditor_rendered
     assert "evidence_relation" in auditor_rendered
     assert "confidence mismatch" in auditor_rendered
     assert "Do not read claim_drafts.json" in auditor_rendered
-    assert "Do not create, edit, rewrite, or repair claim_ledger.json" in auditor_rendered
+    assert (
+        "Do not create, edit, rewrite, or repair claim_ledger.json" in auditor_rendered
+    )
 
 
 def test_generated_orchestrator_separates_runtime_and_repo_development_modes(manifest):
     role = manifest["roles"]["orchestrator"]
-    rendered = "\n".join([
-        render_codex_agent("orchestrator", role, manifest),
-        render_claude_agent("orchestrator", role, manifest),
-        render_opencode_agent("orchestrator", role, manifest),
-    ])
+    rendered = "\n".join(
+        [
+            render_codex_agent("orchestrator", role, manifest),
+            render_claude_agent("orchestrator", role, manifest),
+            render_opencode_agent("orchestrator", role, manifest),
+        ]
+    )
 
     assert "Determine the active mode before acting" in rendered
     assert "Brief-runtime mode coordinates one workspace run" in rendered
     assert "repo-development mode changes contracts" in rendered
     assert "In brief-runtime mode, do not edit repository files" in rendered
-    assert "run repo validation commands unless the user explicitly switches" in rendered
+    assert (
+        "run repo validation commands unless the user explicitly switches" in rendered
+    )
     assert "only in repo-development mode" in rendered
-    assert "Audit warnings, overstatement findings, support-calibration findings" in rendered
+    assert (
+        "Audit warnings, overstatement findings, support-calibration findings"
+        in rendered
+    )
     assert "do not authorize direct edits to frozen artifacts" in rendered
 
 
-def test_generated_auditor_does_not_treat_audit_report_as_input_or_coordinator(manifest):
+def test_generated_auditor_does_not_treat_audit_report_as_input_or_coordinator(
+    manifest,
+):
     role = manifest["roles"]["auditor"]
-    rendered = "\n".join([
-        render_codex_agent("auditor", role, manifest),
-        render_claude_agent("auditor", role, manifest),
-        render_opencode_agent("auditor", role, manifest),
-    ])
+    rendered = "\n".join(
+        [
+            render_codex_agent("auditor", role, manifest),
+            render_claude_agent("auditor", role, manifest),
+            render_opencode_agent("auditor", role, manifest),
+        ]
+    )
 
-    assert "Review output/intermediate/audited_brief.md against claim_ledger.json" in rendered
+    assert (
+        "Review output/intermediate/audited_brief.md against claim_ledger.json"
+        in rendered
+    )
     assert "current audit_report.json is this stage's output, not input" in rendered
     assert "Do not coordinate other agents" in rendered
     assert "Report audit readiness only" in rendered
-    assert "Review final brief against claim_ledger.json and audit_report.json" not in rendered
+    assert (
+        "Review final brief against claim_ledger.json and audit_report.json"
+        not in rendered
+    )
     assert "Coordinate draft and final harness agents" not in rendered
     assert "Mark reports distribution-ready" not in rendered
 
@@ -386,13 +520,20 @@ def test_claude_read_only_agents_no_edit_tools(manifest):
                 if line.startswith("tools:"):
                     tools_str = line.split(":", 1)[1].strip()
                     tools = [t.strip() for t in tools_str.split(",")]
-                    assert "Edit" not in tools, f"Read-only Claude agent '{name}' has Edit"
-                    assert "MultiEdit" not in tools, f"Read-only Claude agent '{name}' has MultiEdit"
-                    assert "Write" not in tools, f"Read-only Claude agent '{name}' has Write"
+                    assert "Edit" not in tools, (
+                        f"Read-only Claude agent '{name}' has Edit"
+                    )
+                    assert "MultiEdit" not in tools, (
+                        f"Read-only Claude agent '{name}' has MultiEdit"
+                    )
+                    assert "Write" not in tools, (
+                        f"Read-only Claude agent '{name}' has Write"
+                    )
                     break
 
 
 # --- Harness docs ---
+
 
 def test_harness_docs_contain_delivery_contract(manifest):
     docs = render_docs(manifest)
@@ -411,6 +552,7 @@ def test_docs_contain_pipeline(manifest):
 
 # --- Sensitivity checks ---
 
+
 def _check_no_sensitive(text: str, context: str):
     hits = _sensitive_check(text, context)
     assert not hits, f"Sensitive content found: {hits}"
@@ -419,16 +561,25 @@ def _check_no_sensitive(text: str, context: str):
 def test_no_sensitive_content_in_generated_files(manifest):
     _check_no_sensitive(render_codex_config(manifest), "codex config")
     for name, role in manifest["roles"].items():
-        _check_no_sensitive(render_codex_agent(name, role, manifest), f"codex/{name}.toml")
-        _check_no_sensitive(render_claude_agent(name, role, manifest), f"claude/{name}.md")
-        _check_no_sensitive(render_opencode_agent(name, role, manifest), f"opencode/{name}.md")
-    _check_no_sensitive(render_opencode_command_generate_brief(manifest), "opencode/generate-brief.md")
+        _check_no_sensitive(
+            render_codex_agent(name, role, manifest), f"codex/{name}.toml"
+        )
+        _check_no_sensitive(
+            render_claude_agent(name, role, manifest), f"claude/{name}.md"
+        )
+        _check_no_sensitive(
+            render_opencode_agent(name, role, manifest), f"opencode/{name}.md"
+        )
+    _check_no_sensitive(
+        render_opencode_command_generate_brief(manifest), "opencode/generate-brief.md"
+    )
     _check_no_sensitive(render_opencode_jsonc(), "opencode.jsonc")
     for key, content in render_docs(manifest).items():
         _check_no_sensitive(content, key)
 
 
 # --- write_or_check ---
+
 
 def test_write_or_check_write_mode(tmp_path):
     path = tmp_path / "test.txt"
@@ -455,10 +606,13 @@ def test_write_or_check_check_mode_fails_on_stale(tmp_path):
 
 # --- CLI ---
 
+
 def test_generate_check_passes_after_write():
     result = subprocess.run(
         [sys.executable, str(GENERATOR), "--check"],
-        capture_output=True, text=True, cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
     )
     assert result.returncode == 0, f"--check failed: {result.stdout}\n{result.stderr}"
 
@@ -466,12 +620,16 @@ def test_generate_check_passes_after_write():
 def test_generate_write_then_check_roundtrip():
     result = subprocess.run(
         [sys.executable, str(GENERATOR), "--write"],
-        capture_output=True, text=True, cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
     )
     assert result.returncode == 0
     result = subprocess.run(
         [sys.executable, str(GENERATOR), "--check"],
-        capture_output=True, text=True, cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
     )
     assert result.returncode == 0
 
@@ -479,13 +637,16 @@ def test_generate_write_then_check_roundtrip():
 def test_generate_target_codex_only():
     result = subprocess.run(
         [sys.executable, str(GENERATOR), "--write", "--target", "codex"],
-        capture_output=True, text=True, cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
     )
     assert result.returncode == 0
     assert "Generated" in result.stdout
 
 
 # --- OpenCode ---
+
 
 def test_opencode_agent_has_frontmatter(manifest):
     for name, role in manifest["roles"].items():
@@ -516,7 +677,10 @@ def test_opencode_command_has_correct_agent(manifest):
     assert "Orchestrator main agent" in content
     assert "configs/orchestrator_contract.yaml" in content
     assert "Check the expected artifact before continuing" in content
-    assert "briefloop run --workspace $ARGUMENTS --runtime opencode --skip-doctor" in content
+    assert (
+        "briefloop run --workspace $ARGUMENTS --runtime opencode --skip-doctor"
+        in content
+    )
     assert "output/intermediate/audience_profile_snapshot.md" in content
     assert "output/intermediate/orchestrator_control_switchboard.json" in content
     assert "briefloop controls select" in content
@@ -537,7 +701,9 @@ def test_opencode_jsonc_is_valid(manifest):
 def test_generate_target_opencode_only():
     result = subprocess.run(
         [sys.executable, str(GENERATOR), "--write", "--target", "opencode"],
-        capture_output=True, text=True, cwd=str(ROOT),
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
     )
     assert result.returncode == 0
     assert "Generated" in result.stdout
@@ -546,6 +712,8 @@ def test_generate_target_opencode_only():
 def test_opencode_agents_have_permission_block(manifest):
     for name, role in manifest["roles"].items():
         content = render_opencode_agent(name, role, manifest)
-        assert "permission:" in content, f"OpenCode agent '{name}' missing permission block"
+        assert "permission:" in content, (
+            f"OpenCode agent '{name}' missing permission block"
+        )
         if name == "orchestrator":
             assert "brief-*" in content, "Orchestrator should allow brief-* tasks"

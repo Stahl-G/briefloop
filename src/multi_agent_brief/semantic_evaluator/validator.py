@@ -413,7 +413,7 @@ def validate_dimension_response(
 
     requirement_assessments: tuple[O2RequirementAssessment, ...] = ()
     profile_id = getattr(getattr(_loaded_profile, "profile", None), "profile_id", None)
-    if profile_id == "management_brief_en_v1":
+    if profile_id in {"management_brief_en_v1", "industry_weekly_zh_v1"}:
         expected_pairs = {
             (unit.assessment_unit_id, requirement.requirement_id)
             for unit in expected_units

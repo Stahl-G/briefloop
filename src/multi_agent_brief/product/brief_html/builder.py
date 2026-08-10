@@ -71,6 +71,16 @@ def _row(label: str, value: Any, tone: str = "neutral") -> dict[str, Any]:
     return {"label": label, "value": value, "tone": tone}
 
 
+def _projection_mapping(value: Any) -> dict[str, Any]:
+    """Convert a projection DTO to JSON-safe primitive values."""
+
+    row = dict(value)
+    return {
+        key: list(item) if isinstance(item, tuple) else item
+        for key, item in row.items()
+    }
+
+
 def _quality_groups(
     local: Any,
 ) -> dict[str, list[dict[str, Any]]]:
@@ -182,6 +192,10 @@ def _semantic_page(
                     status="invalid", reason_code="laj_reader_view_invalid"
                 )
 
+    # Store-qualified management Reader Review has a profile-specific plan
+    # (O1/O2 with 12 units).  The legacy nine-dimension inventory is only a
+    # presentation fallback when no archive-derived profile plan is present;
+    # an explicitly supplied standalone LAJ view remains the main legacy path.
     dimension_ids = list(get_args(FindingDimensionId))
     findings = [
         finding.model_dump(mode="json", exclude_unset=False)
@@ -203,17 +217,20 @@ def _semantic_page(
             review["finding_fingerprint"] if review is not None else None
         )
         finding["human_disposition"] = review["current"] if review is not None else None
-    dimensions = [
-        {
-            "dimension_id": dimension,
-            "state": (
-                "finding_reported"
-                if any(item["dimension_id"] == dimension for item in findings)
-                else "not_assessed_in_view"
-            ),
-        }
-        for dimension in dimension_ids
-    ]
+    if qualified.lifecycle_present and qualified.assessment_units:
+        dimensions: list[dict[str, Any]] = []
+    else:
+        dimensions = [
+            {
+                "dimension_id": dimension,
+                "state": (
+                    "finding_reported"
+                    if any(item["dimension_id"] == dimension for item in findings)
+                    else "not_assessed_in_view"
+                ),
+            }
+            for dimension in dimension_ids
+        ]
     status = (
         qualified.user_status
         if qualified.lifecycle_present or qualified.request_template is not None
@@ -221,6 +238,12 @@ def _semantic_page(
         if view.reason_codes == ["laj_not_run"]
         else view.status
     )
+    run_evidence = None
+    if qualified.run_evidence is not None:
+        run_evidence = _projection_mapping(qualified.run_evidence)
+        run_evidence["calls"] = [
+            _projection_mapping(item) for item in qualified.run_evidence.calls
+        ]
     compatible_result_options = [
         {
             "assessment_result_id": item.assessment_result_id,
@@ -283,6 +306,13 @@ def _semantic_page(
             "abstention_count": view.abstention_count,
         },
         "dimensions": dimensions,
+        "assessment_scopes": [
+            _projection_mapping(item) for item in qualified.assessment_scopes
+        ],
+        "assessment_units": [
+            _projection_mapping(item) for item in qualified.assessment_units
+        ],
+        "run_evidence": run_evidence,
         "findings": findings,
         "requirement_assessments": _requirement_assessment_rows(view, qualified),
         "handoff_note": (

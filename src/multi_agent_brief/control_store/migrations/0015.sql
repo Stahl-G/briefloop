@@ -1,8 +1,9 @@
 BEGIN IMMEDIATE;
 
--- V15-B is a fresh current-schema cut.  Runtime opening never applies this
--- file to an existing v14 Store.  The old empty definitions are retained
--- under an explicit suffix so no data-destructive migration is possible.
+-- V15-B is a fresh current-schema cut. Runtime opening never applies this
+-- file to an existing v14 Store. The renamed v14 definitions are temporary
+-- scaffolding while the fresh schema is rebuilt, then are removed; a fresh
+-- initialization cannot contain historical rows to preserve.
 PRAGMA legacy_alter_table=ON;
 ALTER TABLE post_final_guidance_drafts RENAME TO post_final_guidance_drafts_v14;
 ALTER TABLE post_final_guidance_statuses RENAME TO post_final_guidance_statuses_v14;
@@ -174,6 +175,20 @@ CREATE TABLE transaction_run_guidance_snapshot_items (
     FOREIGN KEY(run_id,transaction_id) REFERENCES transactions(run_id,transaction_id) DEFERRABLE INITIALLY DEFERRED,
     FOREIGN KEY(run_id,item_id) REFERENCES run_guidance_snapshot_items(run_id,item_id) DEFERRABLE INITIALLY DEFERRED
 );
+
+-- Fresh-only means no legacy authority or dormant compatibility tables remain
+-- in the current schema. Drop children before their referenced parents.
+DROP TABLE transaction_run_guidance_snapshot_items_v14;
+DROP TABLE transaction_run_guidance_selection_decisions_v14;
+DROP TABLE transaction_run_guidance_snapshots_v14;
+DROP TABLE run_guidance_snapshot_selected_items_v14;
+DROP TABLE run_guidance_snapshot_decisions_v14;
+DROP TABLE run_guidance_snapshot_items_v14;
+DROP TABLE run_guidance_selection_decisions_v14;
+DROP TABLE transaction_post_final_guidance_statuses_v14;
+DROP TABLE transaction_post_final_guidance_drafts_v14;
+DROP TABLE post_final_guidance_statuses_v14;
+DROP TABLE post_final_guidance_drafts_v14;
 
 CREATE TRIGGER post_final_human_observations_no_update BEFORE UPDATE ON post_final_human_observations BEGIN SELECT RAISE(ABORT,'append_only'); END;
 CREATE TRIGGER post_final_human_observations_no_delete BEFORE DELETE ON post_final_human_observations BEGIN SELECT RAISE(ABORT,'append_only'); END;

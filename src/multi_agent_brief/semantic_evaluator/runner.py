@@ -55,8 +55,11 @@ from multi_agent_brief.semantic_evaluator.adapters.synthetic_fixture import (
 from multi_agent_brief.semantic_evaluator.archive import (
     ARCHIVE_VERSION,
     VerifiedShadowArchive,
+    execution_evidence_path,
     prepare_archive_root,
+    publish_execution_evidence,
     publish_shadow_archive,
+    resolve_existing_execution_evidence,
     resolve_existing_archive,
 )
 from multi_agent_brief.semantic_evaluator.composition import (
@@ -68,6 +71,7 @@ from multi_agent_brief.semantic_evaluator.contracts import (
     ADMISSION_REQUEST_SCHEMA_ID,
     BoundedContext,
     InstrumentConfig,
+    LajCompositionWitness,
 )
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.prompt_sizer import (
@@ -97,6 +101,7 @@ from multi_agent_brief.semantic_evaluator.validator import (
     assemble_semantic_assessment_run,
     event_stream_bytes,
     make_dimension_attempt_evidence,
+    verify_laj_composition_witness,
 )
 
 
@@ -132,6 +137,7 @@ class ShadowRunResult:
     replayed: bool
     archive_complete: bool
     archive_path: str | None
+    execution_archive_path: str | None
     receipt_id: str | None
     run_status: str | None
     validation_status: str | None
@@ -146,6 +152,7 @@ class ShadowRunResult:
             "replayed": self.replayed,
             "archive_complete": self.archive_complete,
             "archive_path": self.archive_path,
+            "execution_archive_path": self.execution_archive_path,
             "receipt_id": self.receipt_id,
             "run_status": self.run_status,
             "validation_status": self.validation_status,
@@ -195,12 +202,16 @@ class _ArchivedAttempt:
     record: ProviderAttemptRecord
 
 
-def _failure(*reason_codes: str) -> ShadowRunResult:
+def _failure(
+    *reason_codes: str,
+    execution_archive_path: str | None = None,
+) -> ShadowRunResult:
     return ShadowRunResult(
         ok=False,
         replayed=False,
         archive_complete=False,
         archive_path=None,
+        execution_archive_path=execution_archive_path,
         receipt_id=None,
         run_status=None,
         validation_status=None,
@@ -215,12 +226,14 @@ def _from_archive(
     archive: VerifiedShadowArchive,
     *,
     replayed: bool,
+    execution_archive_path: str | None = None,
 ) -> ShadowRunResult:
     return ShadowRunResult(
         ok=archive.ok,
         replayed=replayed,
         archive_complete=True,
         archive_path=str(archive.path),
+        execution_archive_path=execution_archive_path,
         receipt_id=archive.receipt.receipt_id,
         run_status=archive.receipt.run_status,
         validation_status=archive.receipt.validation_status,
@@ -1002,6 +1015,42 @@ def _archive_payloads(
         value.model_dump(mode="json", warnings="error")
     )
     profile = admission._instrument_snapshot.resources.loaded_profile
+    payloads: dict[str, bytes] = _execution_payloads(
+        admission=admission,
+        request=request,
+        execution=execution,
+        archived_attempts=archived_attempts,
+    )
+    payloads.update(
+        {
+            "run.json": model(assembled.run),
+            "validation_report.json": model(assembled.validation_report),
+            "events.jsonl": event_stream_bytes(assembled.events),
+            "laj_composition_witness.json": model(assembled.witness),
+            "baseline.json": model(baseline),
+            "composition_matched.json": model(matched),
+            "composition_actual.json": model(actual),
+            "presentation_matched.json": model(presentation_matched),
+            "presentation_actual.json": model(presentation_actual),
+        }
+    )
+    return payloads
+
+
+def _execution_payloads(
+    *,
+    admission: Any,
+    request: ShadowRunRequest,
+    execution: ShadowExecutionManifest,
+    archived_attempts: list[_ArchivedAttempt],
+    assembled: Any | None = None,
+) -> dict[str, bytes]:
+    """Build the provider-phase evidence set, before local derivation."""
+
+    model = lambda value: canonical_json_bytes(
+        value.model_dump(mode="json", warnings="error")
+    )
+    profile = admission._instrument_snapshot.resources.loaded_profile
     payloads: dict[str, bytes] = {
         "request.json": model(request),
         "execution_manifest.json": model(execution),
@@ -1017,15 +1066,6 @@ def _archive_payloads(
         "instrument_config.json": model(admission.instrument_config),
         "instrument_manifest.json": model(admission.instrument_manifest),
         "assessment_plan.json": model(admission.assessment_plan),
-        "run.json": model(assembled.run),
-        "validation_report.json": model(assembled.validation_report),
-        "events.jsonl": event_stream_bytes(assembled.events),
-        "laj_composition_witness.json": model(assembled.witness),
-        "baseline.json": model(baseline),
-        "composition_matched.json": model(matched),
-        "composition_actual.json": model(actual),
-        "presentation_matched.json": model(presentation_matched),
-        "presentation_actual.json": model(presentation_actual),
     }
     for prompt in admission.prompts:
         payloads[f"prompts/{prompt.dimension_id}.json"] = canonical_json_bytes(
@@ -1051,11 +1091,151 @@ def _archive_payloads(
             payloads[f"{prefix}/response.body"] = archived.raw.raw_transport_response
         if archived.raw.extracted_output is not None:
             payloads[f"{prefix}/output.txt"] = archived.raw.extracted_output
-        if archived.raw.sdk_projection_bytes is not None:
+        # A transport failure has no provider response.  Retaining a synthetic
+        # SDK projection for that attempt makes the derived archive violate
+        # the archive contract (SDK projections are response-bound).
+        if (
+            archived.raw.sdk_projection_bytes is not None
+            and archived.raw.raw_transport_response is not None
+        ):
             payloads[f"{prefix}/sdk_projection.json"] = (
                 archived.raw.sdk_projection_bytes
             )
+    if assembled is not None:
+        payloads.update(
+            {
+                "run.json": model(assembled.run),
+                "validation_report.json": model(assembled.validation_report),
+                "events.jsonl": event_stream_bytes(assembled.events),
+                "laj_composition_witness.json": model(assembled.witness),
+            }
+        )
     return payloads
+
+
+def derive_existing_execution_evidence(
+    *,
+    archive_root: Path,
+    trial_id: str,
+) -> ShadowRunResult:
+    """Derive a qualified archive locally from a retained execution receipt.
+
+    This path intentionally never resolves SDK metadata, credentials, or an
+    adapter.  It succeeds only when the provider phase retained an assembled
+    witness; an earlier assembly failure remains diagnosable but cannot be
+    reconstructed from absent deterministic roots.
+    """
+
+    try:
+        evidence = resolve_existing_execution_evidence(
+            archive_root=archive_root,
+            trial_id=trial_id,
+        )
+        if evidence is None:
+            return _failure("shadow_archive_incomplete")
+        payloads = dict(evidence.payloads)
+        # Older execution receipts could contain a value-free SDK projection
+        # beside a timeout/transport attempt.  Keep the frozen execution
+        # receipt untouched, but normalize this derived qualification input so
+        # archive verification sees the response-bound projection contract.
+        for path in tuple(payloads):
+            if not path.startswith("attempts/") or not path.endswith(
+                "/sdk_projection.json"
+            ):
+                continue
+            transport_path = f"{path.rsplit('/', 1)[0]}/transport.json"
+            try:
+                transport = json.loads(payloads[transport_path])
+                envelope_state = transport["facts"]["envelope"]["state"]
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if envelope_state == "absent":
+                payloads.pop(path, None)
+        witness_raw = payloads.get("laj_composition_witness.json")
+        if witness_raw is None:
+            return _failure(
+                "local_derivation_failed",
+                execution_archive_path=str(evidence.path),
+            )
+        witness = verify_laj_composition_witness(
+            LajCompositionWitness.model_validate(json.loads(witness_raw))
+        )
+        execution = ShadowExecutionManifest.model_validate(
+            json.loads(payloads["execution_manifest.json"])
+        )
+        request = ShadowRunRequest.model_validate(json.loads(payloads["request.json"]))
+        profile_payload = json.loads(payloads["profile.json"])
+        profile_id = profile_payload["profile"]["profile_id"]
+        loaded_profile = load_profile(profile_id)
+        if loaded_profile.profile_sha256 != profile_payload.get("profile_sha256"):
+            raise SemanticEvaluatorError("local_derivation_failed")
+        matched = compose_matched_non_llm(
+            report_evidence=witness.report_evidence,
+            reader_artifact=witness.reader_artifact,
+            bounded_context=witness.bounded_context,
+            loaded_profile=loaded_profile,
+        )
+        actual = compose_actual_laj(witness)
+        presentation_matched = build_presentation(
+            matched,
+            report_evidence=witness.report_evidence,
+            reader_artifact=witness.reader_artifact,
+            bounded_context=witness.bounded_context,
+        )
+        presentation_actual = build_presentation(actual, witness=witness)
+        payloads.update(
+            {
+                "baseline.json": canonical_json_bytes(
+                    matched.baseline_payload.model_dump(mode="json", warnings="error")
+                ),
+                "composition_matched.json": canonical_json_bytes(
+                    matched.model_dump(mode="json", warnings="error")
+                ),
+                "composition_actual.json": canonical_json_bytes(
+                    actual.model_dump(mode="json", warnings="error")
+                ),
+                "presentation_matched.json": canonical_json_bytes(
+                    presentation_matched.model_dump(mode="json", warnings="error")
+                ),
+                "presentation_actual.json": canonical_json_bytes(
+                    presentation_actual.model_dump(mode="json", warnings="error")
+                ),
+            }
+        )
+        published = publish_shadow_archive(
+            archive_root=archive_root,
+            request=request,
+            execution_manifest=execution,
+            payloads=payloads,
+            run=witness.run,
+            validation_report=witness.validation_report,
+            created_at=(
+                str(evidence.manifest.get("recorded_at"))
+                if evidence.manifest.get("recorded_at")
+                else _utc_now()
+            ),
+        )
+        return _from_archive(
+            published,
+            replayed=False,
+            execution_archive_path=(
+                str(evidence.path) if evidence is not None else None
+            ),
+        )
+    except SemanticEvaluatorError as exc:
+        return _failure(
+            exc.reason_code,
+            execution_archive_path=(
+                str(evidence.path) if "evidence" in locals() and evidence else None
+            ),
+        )
+    except Exception:
+        return _failure(
+            "local_derivation_failed",
+            execution_archive_path=(
+                str(evidence.path) if "evidence" in locals() and evidence else None
+            ),
+        )
 
 
 def prepare_shadow_run(
@@ -1145,6 +1325,7 @@ def execute_prepared_shadow_run(
         return _failure(exc.reason_code)
     execution = expected_execution
     request = expected_request
+    execution_archive: Path | None = None
     if resolved.replay is not None:
         return _from_archive(resolved.replay, replayed=True)
     try:
@@ -1173,10 +1354,79 @@ def execute_prepared_shadow_run(
             clock=clock,
             sleep=sleep,
         )
-        assembled = assemble_semantic_assessment_run(
-            admission=admission,
-            dimension_attempt_evidence=evidence,
+        try:
+            assembled = assemble_semantic_assessment_run(
+                admission=admission,
+                dimension_attempt_evidence=evidence,
+            )
+        except SemanticEvaluatorError as exc:
+            execution_archive = publish_execution_evidence(
+                archive_root=root,
+                request=request,
+                execution_manifest=execution,
+                payloads=_execution_payloads(
+                    admission=admission,
+                    request=request,
+                    execution=execution,
+                    archived_attempts=archived_attempts,
+                ),
+                status="local_derivation_failed",
+                reason_codes=(exc.reason_code,),
+                recorded_at=clock(),
+            )
+            return _failure(
+                exc.reason_code,
+                execution_archive_path=str(execution_archive),
+            )
+        except Exception:
+            execution_archive = publish_execution_evidence(
+                archive_root=root,
+                request=request,
+                execution_manifest=execution,
+                payloads=_execution_payloads(
+                    admission=admission,
+                    request=request,
+                    execution=execution,
+                    archived_attempts=archived_attempts,
+                ),
+                status="local_derivation_failed",
+                reason_codes=("shadow_execution_failed",),
+                recorded_at=clock(),
+            )
+            return _failure(
+                "shadow_execution_failed",
+                execution_archive_path=str(execution_archive),
+            )
+        evidence_reason_codes = tuple(
+            sorted(
+                {
+                    record.kernel_reason
+                    for archived in archived_attempts
+                    for record in (archived.record,)
+                    if record.attempt_status == "failed" and record.kernel_reason
+                }
+            )
         )
+        execution_status = "provider_failed" if evidence_reason_codes else "complete"
+        execution_payloads = _execution_payloads(
+            admission=admission,
+            request=request,
+            execution=execution,
+            archived_attempts=archived_attempts,
+            assembled=assembled,
+        )
+        try:
+            execution_archive = publish_execution_evidence(
+                archive_root=root,
+                request=request,
+                execution_manifest=execution,
+                payloads=execution_payloads,
+                status=execution_status,
+                reason_codes=evidence_reason_codes,
+                recorded_at=clock(),
+            )
+        except SemanticEvaluatorError as exc:
+            return _failure(exc.reason_code)
         matched = compose_matched_non_llm(
             report_evidence=admission.report_evidence,
             reader_artifact=admission.reader.artifact,
@@ -1207,6 +1457,21 @@ def execute_prepared_shadow_run(
             presentation_matched=presentation_matched,
             presentation_actual=presentation_actual,
         )
+    except SemanticEvaluatorError as exc:
+        return _failure(
+            exc.reason_code,
+            execution_archive_path=(
+                str(execution_archive) if execution_archive is not None else None
+            ),
+        )
+    except Exception:
+        return _failure(
+            "shadow_execution_failed",
+            execution_archive_path=(
+                str(execution_archive) if execution_archive is not None else None
+            ),
+        )
+    try:
         published = publish_shadow_archive(
             archive_root=root,
             request=request,
@@ -1222,10 +1487,26 @@ def execute_prepared_shadow_run(
             if exc.reason_code.startswith("shadow_archive_")
             else "shadow_archive_publish_failed"
         )
-        return _failure(reason)
+        return _failure(
+            reason,
+            execution_archive_path=(
+                str(execution_archive) if execution_archive is not None else None
+            ),
+        )
     except Exception:
-        return _failure("shadow_archive_publish_failed")
-    return _from_archive(published, replayed=False)
+        return _failure(
+            "shadow_archive_publish_failed",
+            execution_archive_path=(
+                str(execution_archive) if execution_archive is not None else None
+            ),
+        )
+    return _from_archive(
+        published,
+        replayed=False,
+        execution_archive_path=(
+            str(execution_archive) if execution_archive is not None else None
+        ),
+    )
 
 
 def run_shadow(
@@ -1269,6 +1550,7 @@ __all__ = [
     "ResolvedPreparedShadowRun",
     "RUNNER_VERSION",
     "ShadowRunResult",
+    "derive_existing_execution_evidence",
     "execute_prepared_shadow_run",
     "prepared_shadow_budget",
     "prepare_shadow_run",

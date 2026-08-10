@@ -42,6 +42,7 @@ from multi_agent_brief.contracts.v2 import (
     PackageArtifactBinding,
     PackageReadyRecord,
     PostFinalAssessmentAbandonmentRecord,
+    PostFinalAssessmentExecutionRecord,
     PostFinalAssessmentPolicyRevision,
     PostFinalAssessmentRequestRecord,
     PostFinalAssessmentResultRecord,
@@ -198,6 +199,9 @@ class ControlUnitOfWork:
         ] = {}
         self._post_final_assessment_abandonments: dict[
             str, PostFinalAssessmentAbandonmentRecord
+        ] = {}
+        self._post_final_assessment_executions: dict[
+            str, PostFinalAssessmentExecutionRecord
         ] = {}
         self._post_final_assessment_results: dict[
             str, PostFinalAssessmentResultRecord
@@ -726,6 +730,17 @@ class ControlUnitOfWork:
         self._put_unique(
             self._post_final_assessment_results,
             snapshot.assessment_result_id,
+            snapshot,
+        )
+
+    def put_post_final_assessment_execution(
+        self, record: PostFinalAssessmentExecutionRecord
+    ) -> None:
+        snapshot = self._snapshot_record(record, PostFinalAssessmentExecutionRecord)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._post_final_assessment_executions,
+            snapshot.execution_id,
             snapshot,
         )
 

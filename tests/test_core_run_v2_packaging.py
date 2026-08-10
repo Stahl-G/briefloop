@@ -19,6 +19,7 @@ from tests.test_runtime_host_continue_v2 import (
 )
 
 from multi_agent_brief.cli.init_wizard import create_demo_workspace
+from multi_agent_brief.control_store.schema import SCHEMA_VERSION
 from multi_agent_brief.product.projection_platform import (
     supports_retained_directory_publication,
 )
@@ -2025,8 +2026,8 @@ def test_source_and_non_editable_wheel_replay_guidance_successor(
     )
 
     assert source["optimize"] == wheel["optimize"] == sys.flags.optimize
-    assert source["schema_before"] == source["schema_after"] == 13
-    assert wheel["schema_before"] == wheel["schema_after"] == 13
+    assert source["schema_before"] == source["schema_after"] == SCHEMA_VERSION
+    assert wheel["schema_before"] == wheel["schema_after"] == SCHEMA_VERSION
     assert source["command_status"] == "committed"
     assert source["revision_after"] == source["revision_before"] + 1
     assert wheel["command_status"] == "replayed"

@@ -313,8 +313,13 @@ class EvaluatorProfile(StrictModel):
     profile_id: Literal[
         "research_design_report_zh_v1",
         "management_brief_en_v1",
+        "industry_weekly_zh_v1",
     ]
-    report_type: Literal["research_design_report", "management_monthly"]
+    report_type: Literal[
+        "research_design_report",
+        "management_monthly",
+        "industry_weekly",
+    ]
     language: Language
     allowed_scope_classes: list[ScopeClass]
     dimensions: list[DimensionProfile] = Field(min_length=1)
@@ -329,6 +334,7 @@ class EvaluatorProfile(StrictModel):
         expected_binding = {
             "research_design_report_zh_v1": ("research_design_report", "zh-CN"),
             "management_brief_en_v1": ("management_monthly", "en"),
+            "industry_weekly_zh_v1": ("industry_weekly", "zh-CN"),
         }[self.profile_id]
         if (self.report_type, self.language) != expected_binding:
             raise ValueError("profile report type and language binding mismatch")
@@ -1050,10 +1056,11 @@ class BaselinePayload(StrictModel):
     report_sha256: Sha256
     bounded_context_sha256: Sha256
     profile_sha256: Sha256
-    checklist_id: Literal[
-        "structured_checklist_zh_v1",
-        "management_brief_reader_review_v1",
-    ]
+    # The profile-owned resource snapshot is the authority for checklist
+    # identity.  Keep this as a typed contract id instead of a second,
+    # manually maintained allow-list: adding a profile must not make its
+    # baseline impossible to serialize after provider execution.
+    checklist_id: ContractId
     lint_id: Literal["deterministic_lint_v1"]
     checklist_items: list[ChecklistItem]
     lint_items: list[LintItem]

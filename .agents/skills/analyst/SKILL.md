@@ -45,6 +45,10 @@ Use after the Claim Ledger freeze transaction has produced `claim_ledger.json`.
   artifact, not Analyst evidence.
 - Use `input/context/` files listed in `output/input_classification.json` only as
   non-evidence style, structure, and background references.
+- Read the exact RoleTaskEnvelope task instructions and preserve every frozen
+  configured RunDirection target term verbatim in the executive summary. These
+  terms are RunDirection framing only, not evidence; do not invent supporting
+  facts or citations solely to satisfy target visibility.
 - Attach valid [src:<claim_id>] citations to important factual statements, using
   only claim IDs that exist in the Claim Ledger.
 - Include dates, numbers, locations, parties, and caveats when the ledger supports them.

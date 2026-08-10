@@ -776,6 +776,14 @@ _POST_FINAL_ASSESSMENT_RECEIPT_RULES = {
         "observation_id",
         "observation_event_id",
     ),
+    "post_final_assessment_execution": _PostFinalAssessmentReceiptRule(
+        "post_final_assessment_execution_recorded",
+        "post_final_assessment_executions",
+        "execution_id",
+        "post_final_assessment_executions",
+        "execution_id",
+        "execution_event_id",
+    ),
     "post_final_guidance_draft": _PostFinalAssessmentReceiptRule(
         "post_final_guidance_draft_recorded",
         "post_final_guidance_drafts",
@@ -903,6 +911,40 @@ def _verified_post_final_assessment_receipt(
                 or record.accepted_transaction_id != receipt.transaction_id
             ):
                 raise CoreRunError("control_store_integrity_invalid")
+        return
+    if receipt.transaction_type == "post_final_assessment_execution":
+        # Schema17 keeps this witness in one append-only execution table.  It
+        # is intentionally not duplicated in the receipt relation graph: the
+        # event/record foreign keys and the immutable payload are the single
+        # source of truth for execution evidence.
+        _verify_authoritative_receipt_relation_families(receipt, frozenset())
+        if receipt.run_id != snapshot.run.run_id or len(receipt.event_ids) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        event_id = receipt.event_ids[0]
+        events = [item for item in snapshot.events if item.event_id == event_id]
+        records = [
+            item
+            for item in snapshot.post_final_assessment_executions
+            if item.execution_event_id == event_id
+        ]
+        if len(events) != 1 or len(records) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        event = events[0]
+        record = records[0]
+        if (
+            event.run_id != receipt.run_id
+            or event.transaction_id != receipt.transaction_id
+            or event.event_type != "post_final_assessment_execution_recorded"
+            or event.intake_binding is not None
+            or event.core_run_binding is not None
+            or event.stage_id is not None
+            or event.artifact_id is not None
+            or event.decision != record.execution_id
+            or event.reason != event.event_type
+            or record.run_id != receipt.run_id
+            or record.accepted_transaction_id != receipt.transaction_id
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
         return
     rule = _POST_FINAL_ASSESSMENT_RECEIPT_RULES.get(receipt.transaction_type)
     if rule is None or receipt.run_id != snapshot.run.run_id:
@@ -2164,7 +2206,12 @@ class CoreRunDomainVerifier:
                 reference.artifact_id != expected_artifact_id
                 or reference.revision != 1
                 or event.artifact_id != expected_artifact_id
-                or binding.reason_code != "proposal_invalid"
+                or binding.reason_code
+                != (
+                    "child_failed"
+                    if evidence.failure_class == "provider_transport_unavailable"
+                    else "proposal_invalid"
+                )
                 or len(artifacts) != 1
                 or len(revisions) != 1
             ):
@@ -2187,24 +2234,51 @@ class CoreRunDomainVerifier:
                 durable_count = observation.durable_content_count
             except Exception as exc:
                 raise CoreRunError("control_store_integrity_invalid") from exc
-            expected_failure_classes = {
-                "search_response_unavailable": {"provider_search_failed"},
-                "search_response_invalid": {"provider_search_failed"},
-                "search_results_empty": {"provider_results_empty"},
-                "extract_response_unavailable": {"provider_extract_failed"},
-                "extract_response_invalid": {"provider_extract_failed"},
-                "extract_results_all_failed": {
-                    "provider_results_without_durable_content"
-                },
-                "extract_results_partial": {
+            if observation.bundle.status == "search_response_unavailable":
+                expected_failure_classes = (
+                    {"provider_transport_unavailable"}
+                    if (
+                        observation.bundle.search.status_code is None
+                        and observation.bundle.search.transport_error_class is not None
+                    )
+                    else {"provider_search_failed"}
+                )
+            elif observation.bundle.status == "search_response_invalid":
+                expected_failure_classes = {"provider_search_failed"}
+            elif observation.bundle.status == "search_results_empty":
+                expected_failure_classes = {"provider_results_empty"}
+            elif observation.bundle.status == "extract_response_unavailable":
+                extract = observation.bundle.extract
+                expected_failure_classes = (
+                    {"provider_transport_unavailable"}
+                    if (
+                        extract is not None
+                        and extract.status_code is None
+                        and extract.transport_error_class is not None
+                    )
+                    else {"provider_extract_failed"}
+                )
+            elif observation.bundle.status == "extract_response_invalid":
+                expected_failure_classes = {"provider_extract_failed"}
+            elif observation.bundle.status == "extract_results_all_failed":
+                expected_failure_classes = {"provider_results_without_durable_content"}
+            else:
+                expected_failure_classes = {
                     "intake_rejected_no_eligible_source",
                     "source_pack_validation_rejected",
-                },
-                "extract_results_succeeded": {
-                    "intake_rejected_no_eligible_source",
-                    "source_pack_validation_rejected",
-                },
-            }
+                }
+            expected_transport_phase = None
+            expected_transport_error_class = None
+            if "provider_transport_unavailable" in expected_failure_classes:
+                exchange = (
+                    observation.bundle.search
+                    if observation.bundle.status == "search_response_unavailable"
+                    else observation.bundle.extract
+                )
+                if exchange is None:
+                    raise CoreRunError("control_store_integrity_invalid")
+                expected_transport_phase = exchange.operation
+                expected_transport_error_class = exchange.transport_error_class
             if (
                 sha256_hex(response_bytes) != evidence.provider_response_sha256
                 or len(response_bytes) != evidence.provider_response_size_bytes
@@ -2220,8 +2294,9 @@ class CoreRunDomainVerifier:
                 or revision.producer_id != "source-discovery"
                 or result_count != evidence.result_count
                 or durable_count != evidence.durable_content_count
-                or evidence.failure_class
-                not in expected_failure_classes[observation.bundle.status]
+                or evidence.failure_class not in expected_failure_classes
+                or evidence.transport_phase != expected_transport_phase
+                or evidence.transport_error_class != expected_transport_error_class
             ):
                 raise CoreRunError("control_store_integrity_invalid")
 
