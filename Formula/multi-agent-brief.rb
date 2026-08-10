@@ -3,8 +3,8 @@ class MultiAgentBrief < Formula
 
   desc "Source-grounded, audit-ready multi-agent workflow for business briefs"
   homepage "https://github.com/Stahl-G/briefloop"
-  url "https://github.com/Stahl-G/briefloop/archive/refs/tags/v0.14.0.tar.gz"
-  sha256 "9ad344ed214568bbcd4b1a704d633a19a75b75e0d2bbf858284c950b3a856f3e"
+  url "https://github.com/Stahl-G/briefloop/archive/refs/tags/v0.15.2.tar.gz"
+  sha256 "5f7ed120250e8b75ae9e7524ca8fe12e485b1ba263c0366c8b9fdde5776c81da"
   license "MIT"
   head "https://github.com/Stahl-G/briefloop.git", branch: "main"
 
