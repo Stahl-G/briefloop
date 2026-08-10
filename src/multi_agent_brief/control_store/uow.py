@@ -59,6 +59,8 @@ from multi_agent_brief.contracts.v2 import (
     RunExecutionAuthorization,
     RunSourceAcquisitionAttemptAuthorization,
     RunSourceDiscoveryAuthorization,
+    RuntimeSourceSearchPlanV2,
+    TavilyAcquisitionBundleRecordV2,
     RunIdentity,
     RunGuidanceSelectionDecisionRecord,
     RunGuidanceSnapshotItemRecord,
@@ -155,6 +157,10 @@ class ControlUnitOfWork:
         ] = {}
         self._referenced_source_discovery_authorizations: dict[
             str, RunSourceDiscoveryAuthorization
+        ] = {}
+        self._runtime_source_search_plans: dict[str, RuntimeSourceSearchPlanV2] = {}
+        self._tavily_acquisition_bundle_records: dict[
+            str, TavilyAcquisitionBundleRecordV2
         ] = {}
         self._owned_artifact_submissions: dict[str, OwnedArtifactSubmissionRecord] = {}
         self._stage_transitions: dict[str, StageTransitionRecord] = {}
@@ -711,6 +717,26 @@ class ControlUnitOfWork:
             snapshot,
         )
 
+    def put_runtime_source_search_plan(self, record: RuntimeSourceSearchPlanV2) -> None:
+        snapshot = self._snapshot_record(record, RuntimeSourceSearchPlanV2)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._runtime_source_search_plans,
+            snapshot.search_plan_id,
+            snapshot,
+        )
+
+    def put_tavily_acquisition_bundle_record(
+        self, record: TavilyAcquisitionBundleRecordV2
+    ) -> None:
+        snapshot = self._snapshot_record(record, TavilyAcquisitionBundleRecordV2)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._tavily_acquisition_bundle_records,
+            snapshot.bundle_record_id,
+            snapshot,
+        )
+
     def put_post_final_assessment_request(
         self, record: PostFinalAssessmentRequestRecord
     ) -> None:
@@ -1107,6 +1133,14 @@ class ControlUnitOfWork:
             "delivery_results": [
                 self._record_payload(self._delivery_results[key])
                 for key in sorted(self._delivery_results)
+            ],
+            "runtime_source_search_plans": [
+                self._record_payload(self._runtime_source_search_plans[key])
+                for key in sorted(self._runtime_source_search_plans)
+            ],
+            "tavily_acquisition_bundle_records": [
+                self._record_payload(self._tavily_acquisition_bundle_records[key])
+                for key in sorted(self._tavily_acquisition_bundle_records)
             ],
             "post_final_assessment_policy_revisions": [
                 self._record_payload(self._post_final_assessment_policy_revisions[key])

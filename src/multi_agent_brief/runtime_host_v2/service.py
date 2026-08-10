@@ -49,7 +49,7 @@ from multi_agent_brief.contracts.v2 import (
     OwnedArtifactSubmitRequest,
     RuntimeAdapterBinding,
     RuntimeSourceRouteBinding,
-    RuntimeWebSearchAcquisitionSpec,
+    RuntimeWebSearchAcquisitionSpecV3,
     RunDirection,
     RunSuccessorStartRequest,
     ScreenedCandidatesProposal,
@@ -122,6 +122,7 @@ from multi_agent_brief.sources.search_backends.base import SearchBackendError
 from multi_agent_brief.sources.tavily_acquisition import (
     TavilyAcquisitionBundleError,
     TavilyAcquisitionObservation,
+    TavilyMultiAcquisitionObservation,
     parse_tavily_acquisition_bundle,
     tavily_observation_matches_spec,
 )
@@ -2950,6 +2951,7 @@ class RuntimeHostService:
                     provider_response_bytes=collection.provider_response,
                     provider_status_code=collection.provider_status_code,
                     stage_kind="provider_outcome",
+                    capacity_profile="multi_tavily_v2",
                 )
                 (
                     staged_manifest,
@@ -3258,7 +3260,7 @@ class RuntimeHostService:
         spec = route.acquisition_spec
         if (
             route.provider_id != "tavily"
-            or not isinstance(spec, RuntimeWebSearchAcquisitionSpec)
+            or not isinstance(spec, RuntimeWebSearchAcquisitionSpecV3)
             or not tavily_observation_matches_spec(observation, spec)
         ):
             raise RuntimeHostError("runtime_source_staging_invalid")
@@ -3323,7 +3325,9 @@ class RuntimeHostService:
         return observation.result_count, observation.durable_content_count
 
     @staticmethod
-    def _tavily_observation(payload: bytes) -> TavilyAcquisitionObservation:
+    def _tavily_observation(
+        payload: bytes,
+    ) -> TavilyAcquisitionObservation | TavilyMultiAcquisitionObservation:
         try:
             return parse_tavily_acquisition_bundle(payload)
         except TavilyAcquisitionBundleError as exc:

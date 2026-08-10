@@ -800,35 +800,38 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
         provider_requests,
     )
     assert continuation["current_stage"] == "scout"
-    assert [path for path, _payload in provider_requests] == ["/search", "/extract"]
-    provider_request = provider_requests[0][1]
-    assert provider_request["query"] == "grid-scale energy storage"
-    assert "Loopback ExampleCo" not in provider_request["query"]
-    assert _LONG_PUBLIC_WEB_TASK_OBJECTIVE not in provider_request["query"]
-    assert provider_request["max_results"] == 5
-    assert provider_request["include_raw_content"] is False
-    assert provider_request["auto_parameters"] is False
-    assert provider_request["search_depth"] == "basic"
-    assert provider_request["time_range"] == "month"
-    assert "days" not in provider_request
-    assert provider_request["include_domains"] == ["openai.com"]
-    assert provider_request["include_answer"] is False
-    assert "api_key" not in provider_request
-    extract_request = provider_requests[1][1]
+    assert [path for path, _payload in provider_requests] == ["/search"] * 20 + [
+        "/extract"
+    ]
+    search_requests = [payload for _path, payload in provider_requests[:20]]
+    assert len({str(item["query"]) for item in search_requests}) == 20
+    assert all(
+        _LONG_PUBLIC_WEB_TASK_OBJECTIVE not in str(item["query"])
+        for item in search_requests
+    )
+    assert all(item["max_results"] == 20 for item in search_requests)
+    assert all(item["include_raw_content"] is False for item in search_requests)
+    assert all(item["auto_parameters"] is False for item in search_requests)
+    assert all(item["search_depth"] == "advanced" for item in search_requests)
+    assert all(item["time_range"] == "week" for item in search_requests)
+    assert all("days" not in item for item in search_requests)
+    assert all(item["include_domains"] == ["openai.com"] for item in search_requests)
+    assert all(item["include_answer"] is False for item in search_requests)
+    assert all("api_key" not in item for item in search_requests)
+    extract_request = provider_requests[20][1]
     assert extract_request == {
         "urls": [
             "https://openai.com/public-durable",
             "https://openai.com/public-failed",
         ],
-        "query": "grid-scale energy storage",
         "chunks_per_source": 5,
-        "extract_depth": "basic",
+        "extract_depth": "advanced",
         "include_images": False,
         "include_favicon": False,
         "format": "markdown",
         "include_usage": True,
     }
-    assert provider_authorizations == [f"Bearer {sentinel}", f"Bearer {sentinel}"]
+    assert provider_authorizations == [f"Bearer {sentinel}"] * 21
     db_bytes = db_path.read_bytes()
     with SQLiteControlStore.open(db_path) as store:
         head = store.load_workspace_run_head()
@@ -862,7 +865,7 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
     assert main(handoff.removeprefix("briefloop ").split()) == 0
     replayed_runtime = json.loads(capsys.readouterr().out)
     assert replayed_runtime["status"] == "role_work_required"
-    assert len(provider_requests) == 2
+    assert len(provider_requests) == 21
     assert db_path.read_bytes() == db_bytes
     initial_env_mtime = env_path.stat().st_mtime_ns
 
@@ -989,7 +992,7 @@ def test_real_loopback_public_web_tavily_replays_before_credential_or_provider(
 
     assert not env_path.exists()
     assert db_path.read_bytes() == db_bytes
-    assert len(provider_requests) == 2
+    assert len(provider_requests) == 21
     assert all(sentinel.encode("utf-8") not in raw for raw in response_bytes)
     provider_server.server_close()
 

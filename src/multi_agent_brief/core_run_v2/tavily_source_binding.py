@@ -10,6 +10,8 @@ from multi_agent_brief.contracts.v2 import (
     AcceptedSourceRecord,
     ExecutionSourceManifest,
     ExecutionSourceManifestMember,
+    MultiTavilyExecutionSourceManifest,
+    MultiTavilySourcePackCommitRequest,
     SourcePackCommitMember,
     SourcePackCommitRequest,
     SourceProposal,
@@ -21,6 +23,7 @@ from multi_agent_brief.control_store.serialization import (
 )
 from multi_agent_brief.sources.tavily_acquisition import (
     TavilyAcquisitionObservation,
+    TavilyMultiAcquisitionObservation,
 )
 
 from .policy import derived_id
@@ -36,7 +39,7 @@ class ExpectedTavilySource:
 
 @dataclass(frozen=True)
 class ExpectedTavilySourcePack:
-    manifest: ExecutionSourceManifest
+    manifest: ExecutionSourceManifest | MultiTavilyExecutionSourceManifest
     manifest_sha256: str
     sources: tuple[ExpectedTavilySource, ...]
 
@@ -55,7 +58,7 @@ class ExpectedTavilySourcePack:
 
 @dataclass(frozen=True)
 class ExpectedTavilyIntakeSubmission:
-    request: SourcePackCommitRequest
+    request: SourcePackCommitRequest | MultiTavilySourcePackCommitRequest
     request_fingerprint: str
 
 
@@ -65,7 +68,7 @@ def _provider_item_id(url: str, search_title: str) -> str:
 
 
 def expected_tavily_source_pack(
-    observation: TavilyAcquisitionObservation,
+    observation: TavilyAcquisitionObservation | TavilyMultiAcquisitionObservation,
     *,
     run_id: str,
     invocation_id: str,
@@ -74,14 +77,13 @@ def expected_tavily_source_pack(
 ) -> ExpectedTavilySourcePack:
     """Derive complete proposal, manifest, content, and raw identities."""
 
-    if (
-        observation.bundle.status
-        not in {
-            "extract_results_partial",
-            "extract_results_succeeded",
-        }
-        or not observation.sources
-    ):
+    committable_statuses = {
+        "extract_results_partial",
+        "extract_results_succeeded",
+        "complete",
+        "partial",
+    }
+    if observation.bundle.status not in committable_statuses or not observation.sources:
         raise ValueError("Tavily observation has no committable Extract source")
 
     base: list[ExpectedTavilySource] = []
@@ -167,13 +169,21 @@ def expected_tavily_source_pack(
         )
         for item in ordered
     ]
-    manifest = ExecutionSourceManifest.model_validate(
-        {
-            "schema_version": ExecutionSourceManifest.schema_id,
-            "members": [
-                item.model_dump(mode="json", exclude_unset=False) for item in members
-            ],
-        },
+    manifest_model = (
+        MultiTavilyExecutionSourceManifest
+        if isinstance(observation, TavilyMultiAcquisitionObservation)
+        else ExecutionSourceManifest
+    )
+    manifest_payload: dict[str, Any] = {
+        "schema_version": manifest_model.schema_id,
+        "members": [
+            item.model_dump(mode="json", exclude_unset=False) for item in members
+        ],
+    }
+    if manifest_model is MultiTavilyExecutionSourceManifest:
+        manifest_payload["capacity_profile"] = "multi_tavily_v2"
+    manifest = manifest_model.model_validate(
+        manifest_payload,
         strict=True,
     )
     manifest_sha256 = sha256_hex(
@@ -243,9 +253,13 @@ def expected_tavily_intake_submission(
         )
         for item in pack.sources
     )
-    request = SourcePackCommitRequest.model_validate(
-        {
-            "schema_version": SourcePackCommitRequest.schema_id,
+    request_model = (
+        MultiTavilySourcePackCommitRequest
+        if isinstance(pack.manifest, MultiTavilyExecutionSourceManifest)
+        else SourcePackCommitRequest
+    )
+    request_payload: dict[str, Any] = {
+            "schema_version": request_model.schema_id,
             "request_id": request_id,
             "run_id": run_id,
             "invocation_id": invocation_id,
@@ -255,7 +269,11 @@ def expected_tavily_intake_submission(
             "manifest_path": f"scratch/{invocation_id}/source_manifest.json",
             "expected_manifest_sha256": pack.manifest_sha256,
             "expected_store_revision": expected_store_revision,
-        },
+        }
+    if request_model is MultiTavilySourcePackCommitRequest:
+        request_payload["capacity_profile"] = "multi_tavily_v2"
+    request = request_model.model_validate(
+        request_payload,
         strict=True,
     )
     request_fingerprint = canonical_fingerprint(

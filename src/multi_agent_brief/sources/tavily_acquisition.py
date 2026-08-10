@@ -1,4 +1,9 @@
-"""Shared deterministic validation for frozen Tavily acquisition bundles."""
+"""Deterministic validation for frozen Tavily acquisition evidence.
+
+The v1 single-Search parser is read-only support for immutable historical
+receipts.  It is not an executable acquisition strategy and has no producer.
+All current Tavily execution emits the v2 multi-Search/batch-Extract bundle.
+"""
 
 from __future__ import annotations
 
@@ -15,7 +20,9 @@ from urllib.parse import urlsplit
 if TYPE_CHECKING:
     from multi_agent_brief.contracts.v2 import (
         RuntimeWebSearchAcquisitionSpec,
+        RuntimeWebSearchAcquisitionSpecV3,
         TavilyAcquisitionBundle,
+        TavilyAcquisitionBundleV2,
     )
 
 
@@ -56,6 +63,7 @@ class TavilyExtractedSource:
     title: str
     publisher: str
     published_at: str | None
+    discovery_task_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -64,6 +72,31 @@ class TavilyAcquisitionObservation:
 
     bundle: TavilyAcquisitionBundle
     request: TavilySearchRequestFacts
+    result_count: int
+    durable_content_count: int
+    sources: tuple[TavilyExtractedSource, ...]
+
+
+@dataclass(frozen=True)
+class TavilyMultiSearchRequestFacts:
+    """One exact task/phase request reconstructed from provider bytes."""
+
+    task_id: str
+    phase: str
+    query: str
+    domains: tuple[str, ...]
+    max_results: int
+    time_range: str
+    topic: str
+    search_depth: str
+
+
+@dataclass(frozen=True)
+class TavilyMultiAcquisitionObservation:
+    """Recomputed facts for a multi-task, multi-batch acquisition."""
+
+    bundle: TavilyAcquisitionBundleV2
+    requests: tuple[TavilyMultiSearchRequestFacts, ...]
     result_count: int
     durable_content_count: int
     sources: tuple[TavilyExtractedSource, ...]
@@ -278,7 +311,62 @@ def _extract_request(
         raise TavilyAcquisitionBundleError("invalid batch Extract request")
 
 
-def parse_tavily_acquisition_bundle(
+def _multi_search_request(payload: bytes) -> dict[str, Any]:
+    request = _json_object(payload)
+    allowed = {
+        "query",
+        "max_results",
+        "topic",
+        "search_depth",
+        "include_answer",
+        "include_raw_content",
+        "auto_parameters",
+        "time_range",
+        "include_domains",
+    }
+    domains = request.get("include_domains")
+    if (
+        set(request) - allowed
+        or type(request.get("query")) is not str
+        or not request["query"].strip()
+        or request.get("max_results") != 20
+        or request.get("topic") not in {"news", "general"}
+        or request.get("search_depth") != "advanced"
+        or request.get("include_answer") is not False
+        or request.get("include_raw_content") is not False
+        or request.get("auto_parameters") is not False
+        or request.get("time_range") not in {"week", "month"}
+        or (
+            domains is not None
+            and (
+                type(domains) is not list
+                or not domains
+                or domains != sorted(set(domains))
+                or any(type(item) is not str or not item.strip() for item in domains)
+            )
+        )
+        or payload != _canonical_json_bytes(request)
+    ):
+        raise TavilyAcquisitionBundleError("invalid multi-Search request")
+    return request
+
+
+def _multi_extract_request(payload: bytes, *, urls: list[str]) -> None:
+    request = _json_object(payload)
+    expected = {
+        "urls": urls,
+        "chunks_per_source": 5,
+        "extract_depth": "advanced",
+        "include_images": False,
+        "include_favicon": False,
+        "format": "markdown",
+        "include_usage": True,
+    }
+    if request != expected or payload != _canonical_json_bytes(request):
+        raise TavilyAcquisitionBundleError("invalid multi-batch Extract request")
+
+
+def _parse_tavily_acquisition_bundle_v1(
     payload: bytes,
 ) -> TavilyAcquisitionObservation:
     """Parse and cross-bind one canonical bundle, including response-item hashes."""
@@ -435,12 +523,259 @@ def parse_tavily_acquisition_bundle(
     )
 
 
+def _parse_tavily_acquisition_bundle_v2(
+    payload: bytes,
+) -> TavilyMultiAcquisitionObservation:
+    from multi_agent_brief.contracts.v2 import TavilyAcquisitionBundleV2
+
+    raw_bundle = _json_object(payload)
+    try:
+        bundle = TavilyAcquisitionBundleV2.model_validate(raw_bundle, strict=True)
+    except Exception as exc:
+        raise TavilyAcquisitionBundleError(
+            "invalid multi-acquisition bundle"
+        ) from exc
+    if payload != _canonical_json_bytes(bundle.model_dump(mode="json")):
+        raise TavilyAcquisitionBundleError(
+            "multi-acquisition bundle is not canonical"
+        )
+
+    requests: list[TavilyMultiSearchRequestFacts] = []
+    search_by_url: dict[str, dict[str, Any]] = {}
+    url_tasks: dict[str, set[str]] = {}
+    task_search_ordinals: dict[str, dict[str, int]] = {}
+    for ordinal, item in enumerate(bundle.searches, start=1):
+        request_bytes = _exchange_bytes(item.exchange.request_body_base64)
+        if request_bytes is None:  # pragma: no cover - strict exchange closes
+            raise TavilyAcquisitionBundleError("missing multi-Search request")
+        request = _multi_search_request(request_bytes)
+        requests.append(
+            TavilyMultiSearchRequestFacts(
+                task_id=item.task_id,
+                phase=item.phase,
+                query=request["query"],
+                domains=tuple(request.get("include_domains", ())),
+                max_results=20,
+                time_range=request["time_range"],
+                topic=request["topic"],
+                search_depth=request["search_depth"],
+            )
+        )
+        phases = task_search_ordinals.setdefault(item.task_id, {})
+        if item.phase in phases:
+            raise TavilyAcquisitionBundleError("duplicate task Search phase")
+        phases[item.phase] = ordinal
+        response_bytes = _exchange_bytes(item.exchange.response_body_base64)
+        if item.status == "unavailable":
+            if response_bytes is not None:
+                raise TavilyAcquisitionBundleError(
+                    "unavailable Search carries response bytes"
+                )
+            continue
+        if response_bytes is None or item.exchange.status_code != 200:
+            raise TavilyAcquisitionBundleError("missing HTTP 200 task Search")
+        if item.status == "invalid":
+            continue
+        urls, by_url = _search_results(response_bytes, max_results=20)
+        if item.status == "empty":
+            if urls:
+                raise TavilyAcquisitionBundleError("non-empty task Search marked empty")
+            continue
+        if urls != item.discovered_urls:
+            raise TavilyAcquisitionBundleError("task Search URL identity mismatch")
+        for url in urls:
+            url_tasks.setdefault(url, set()).add(item.task_id)
+            search_by_url.setdefault(url, by_url[url])
+
+    if sorted(search_by_url) != bundle.unique_urls:
+        raise TavilyAcquisitionBundleError(
+            "multi-acquisition URL universe does not match Search evidence"
+        )
+
+    sources: dict[str, TavilyExtractedSource] = {}
+    succeeded_urls: set[str] = set()
+    unavailable_urls: set[str] = set()
+    for batch in bundle.extract_batches:
+        request_bytes = _exchange_bytes(batch.exchange.request_body_base64)
+        if request_bytes is None:  # pragma: no cover - strict exchange closes
+            raise TavilyAcquisitionBundleError("missing batch Extract request")
+        _multi_extract_request(request_bytes, urls=batch.urls)
+        response_bytes = _exchange_bytes(batch.exchange.response_body_base64)
+        if batch.status == "unavailable":
+            if response_bytes is not None:
+                raise TavilyAcquisitionBundleError(
+                    "unavailable Extract carries response bytes"
+                )
+            unavailable_urls.update(batch.urls)
+            continue
+        if response_bytes is None or batch.exchange.status_code != 200:
+            raise TavilyAcquisitionBundleError("missing HTTP 200 batch Extract")
+        if batch.status == "invalid":
+            unavailable_urls.update(batch.urls)
+            continue
+        response = _json_object(response_bytes)
+        successes = response.get("results")
+        failures = response.get("failed_results")
+        if type(successes) is not list or type(failures) is not list:
+            raise TavilyAcquisitionBundleError("invalid batch Extract result lists")
+        observed: dict[str, tuple[str, str, bytes | None, dict[str, Any] | None]] = {}
+        for raw_item in successes:
+            if type(raw_item) is not dict:
+                raise TavilyAcquisitionBundleError("invalid batch Extract success")
+            url = _http_url(raw_item.get("url"))
+            raw_content = raw_item.get("raw_content")
+            if (
+                type(raw_content) not in {str, type(None)}
+                or url not in batch.urls
+                or url in observed
+            ):
+                raise TavilyAcquisitionBundleError("invalid batch Extract success")
+            content = raw_content.strip().encode("utf-8") if raw_content else b""
+            observed[url] = (
+                "succeeded" if content else "empty_content",
+                hashlib.sha256(_canonical_json_bytes(raw_item)).hexdigest(),
+                content or None,
+                raw_item,
+            )
+        for raw_item in failures:
+            if type(raw_item) is not dict:
+                raise TavilyAcquisitionBundleError("invalid batch Extract failure")
+            url = _http_url(raw_item.get("url"))
+            if url not in batch.urls or url in observed:
+                raise TavilyAcquisitionBundleError("duplicate batch Extract outcome")
+            observed[url] = (
+                "provider_failed",
+                hashlib.sha256(_canonical_json_bytes(raw_item)).hexdigest(),
+                None,
+                raw_item,
+            )
+        if set(observed) != set(batch.urls):
+            raise TavilyAcquisitionBundleError("batch Extract outcomes are not total")
+        outcomes = {item.url: item for item in batch.outcomes}
+        if set(outcomes) != set(batch.urls):
+            raise TavilyAcquisitionBundleError("bundle batch outcomes are not total")
+        for url in batch.urls:
+            status, item_hash, content, raw_item = observed[url]
+            outcome = outcomes[url]
+            if outcome.status != status or outcome.response_item_sha256 != item_hash:
+                raise TavilyAcquisitionBundleError(
+                    "batch Extract outcome identity mismatch"
+                )
+            if content is None:
+                continue
+            if (
+                outcome.content_sha256 != hashlib.sha256(content).hexdigest()
+                or outcome.content_size_bytes != len(content)
+                or raw_item is None
+            ):
+                raise TavilyAcquisitionBundleError(
+                    "batch Extract content identity mismatch"
+                )
+            discovery = search_by_url[url]
+            task_ids = tuple(sorted(url_tasks[url]))
+            succeeded_urls.add(url)
+            sources[url] = TavilyExtractedSource(
+                url=url,
+                projection=_canonical_json_bytes(
+                    {
+                        "schema_version": "briefloop.tavily_extract_source_projection.v2",
+                        "discovery_task_ids": list(task_ids),
+                        "search_result": tavily_search_discovery_projection(discovery),
+                        "extract_result": raw_item,
+                    }
+                ),
+                content=content,
+                search_title=discovery["title"],
+                title=discovery["title"].strip() or url.split("/")[2],
+                publisher=url.split("/")[2],
+                published_at=_normalized_published_date(
+                    discovery.get("published_date") or ""
+                ),
+                discovery_task_ids=task_ids,
+            )
+
+    task_statuses = {item.task_id: item for item in bundle.task_statuses}
+    if set(task_statuses) != set(task_search_ordinals):
+        raise TavilyAcquisitionBundleError("task status universe mismatch")
+    for task_id, status in task_statuses.items():
+        ordinals = task_search_ordinals[task_id]
+        discovered = {url for url, tasks in url_tasks.items() if task_id in tasks}
+        extracted = discovered & succeeded_urls
+        if (
+            ordinals.get("primary") != status.primary_search_ordinal
+            or ordinals.get("backfill") != status.backfill_search_ordinal
+            or len(discovered) != status.discovered_unique_url_count
+            or len(extracted) != status.extracted_success_count
+            or (
+                status.status == "extract_unavailable"
+                and not (discovered & unavailable_urls)
+            )
+        ):
+            raise TavilyAcquisitionBundleError("task coverage projection mismatch")
+
+    ordered_sources = tuple(sources[url] for url in bundle.unique_urls if url in sources)
+    return TavilyMultiAcquisitionObservation(
+        bundle=bundle,
+        requests=tuple(requests),
+        result_count=len(bundle.unique_urls),
+        durable_content_count=len(ordered_sources),
+        sources=ordered_sources,
+    )
+
+
+def parse_tavily_acquisition_bundle(
+    payload: bytes,
+) -> TavilyAcquisitionObservation | TavilyMultiAcquisitionObservation:
+    """Dispatch one exact frozen Tavily bundle by its declared schema."""
+
+    raw = _json_object(payload)
+    schema_version = raw.get("schema_version")
+    if schema_version == "briefloop.tavily_acquisition_bundle.v1":
+        return _parse_tavily_acquisition_bundle_v1(payload)
+    if schema_version == "briefloop.tavily_acquisition_bundle.v2":
+        return _parse_tavily_acquisition_bundle_v2(payload)
+    raise TavilyAcquisitionBundleError("unsupported acquisition bundle schema")
+
+
 def tavily_observation_matches_spec(
-    observation: TavilyAcquisitionObservation,
-    spec: RuntimeWebSearchAcquisitionSpec,
+    observation: TavilyAcquisitionObservation | TavilyMultiAcquisitionObservation,
+    spec: RuntimeWebSearchAcquisitionSpec | RuntimeWebSearchAcquisitionSpecV3,
 ) -> bool:
     """Bind exchange request bytes to the exact Store-frozen Tavily route."""
 
+    from multi_agent_brief.contracts.v2 import RuntimeWebSearchAcquisitionSpecV3
+
+    if isinstance(spec, RuntimeWebSearchAcquisitionSpecV3):
+        if not isinstance(observation, TavilyMultiAcquisitionObservation):
+            return False
+        expected: list[TavilyMultiSearchRequestFacts] = []
+        by_task = {item.task_id: item for item in spec.tasks}
+        for observed in observation.requests:
+            task = by_task.get(observed.task_id)
+            if task is None:
+                return False
+            request = task if observed.phase == "primary" else task.backfill
+            expected.append(
+                TavilyMultiSearchRequestFacts(
+                    task_id=task.task_id,
+                    phase=observed.phase,
+                    query=request.query,
+                    domains=tuple(request.domains),
+                    max_results=20,
+                    time_range="week" if observed.phase == "primary" else "month",
+                    topic=task.topic,
+                    search_depth="advanced",
+                )
+            )
+        primary_ids = [item.task_id for item in observation.requests if item.phase == "primary"]
+        return (
+            primary_ids == [item.task_id for item in spec.tasks]
+            and tuple(expected) == observation.requests
+            and observation.bundle.unique_urls
+            == sorted(observation.bundle.unique_urls)
+        )
+    if not isinstance(observation, TavilyAcquisitionObservation):
+        return False
     if spec.provider_id != "tavily" or len(spec.requests) != 1:
         return False
     request = spec.requests[0]
@@ -462,6 +797,8 @@ def tavily_observation_matches_spec(
 __all__ = [
     "TavilyAcquisitionBundleError",
     "TavilyAcquisitionObservation",
+    "TavilyMultiAcquisitionObservation",
+    "TavilyMultiSearchRequestFacts",
     "TavilyExtractedSource",
     "TavilySearchRequestFacts",
     "parse_tavily_acquisition_bundle",

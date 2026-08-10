@@ -15,6 +15,7 @@ from multi_agent_brief.contracts.v2 import (
     RuntimeSourcePlanBinding,
     RuntimeSourceRouteBinding,
     RuntimeWebSearchAcquisitionSpec,
+    RuntimeWebSearchAcquisitionSpecV3,
     SourceProposal,
 )
 from multi_agent_brief.control_store.serialization import (
@@ -29,6 +30,7 @@ from multi_agent_brief.sources.cached_package import CachedPackageProvider
 from multi_agent_brief.sources.tavily_acquisition import (
     TavilyAcquisitionBundleError,
     TavilyAcquisitionObservation,
+    TavilyMultiAcquisitionObservation,
     parse_tavily_acquisition_bundle,
     tavily_observation_matches_spec,
 )
@@ -112,20 +114,41 @@ def collect_frozen_source_pack(
     items: list[SourceItem] = []
     provider_response: bytes | None = None
     provider_status_code: int | None = None
-    tavily_observation: TavilyAcquisitionObservation | None = None
-    if isinstance(spec, RuntimeWebSearchAcquisitionSpec):
-        if route.provider_id == "tavily" and (
-            len(spec.requests) != 1
-            or spec.requests[0].max_results != 5
-            or spec.requests[0].recency_days not in {7, 30}
-        ):
+    tavily_observation: (
+        TavilyAcquisitionObservation | TavilyMultiAcquisitionObservation | None
+    ) = None
+    if isinstance(spec, RuntimeWebSearchAcquisitionSpecV3):
+        if route.provider_id != "tavily":
+            raise RuntimeHostError("runtime_source_plan_invalid")
+        provider = factory("web_search")
+        if not isinstance(provider, WebSearchProvider):
+            raise RuntimeHostError("runtime_source_plan_invalid")
+        collected = provider.collect_with_response(
+            SourceQuery(keywords=[], max_results=800, recency_days=7),
+            {
+                "enabled": True,
+                "mode": "external_api",
+                "backend": "tavily",
+                "_workspace_dir": str(workspace),
+                "acquisition_mode": "multi_search_batch_extract",
+                "max_unique_urls": spec.max_unique_urls,
+                "extract_batch_size": spec.extract_batch_size,
+                "search_tasks": [
+                    item.model_dump(mode="json", exclude_unset=False)
+                    for item in spec.tasks
+                ],
+            },
+        )
+        provider_response = collected.raw_response
+        provider_status_code = collected.status_code
+        items.extend(collected.items)
+    elif isinstance(spec, RuntimeWebSearchAcquisitionSpec):
+        if route.provider_id == "tavily":
             raise RuntimeHostError("runtime_source_plan_invalid")
         provider = factory("web_search")
         for request in spec.requests:
-            if route.provider_id == "tavily":
-                if not isinstance(provider, WebSearchProvider):
-                    raise RuntimeHostError("runtime_source_plan_invalid")
-                collected = provider.collect_with_response(
+            items.extend(
+                provider.collect(
                     SourceQuery(
                         keywords=[],
                         max_results=request.max_results,
@@ -138,11 +161,6 @@ def collect_frozen_source_pack(
                         "_workspace_dir": str(workspace),
                         "max_results": request.max_results,
                         "recency_days": request.recency_days,
-                        "topic": "news",
-                        "search_depth": "basic",
-                        "time_range": (
-                            "week" if request.recency_days == 7 else "month"
-                        ),
                         "search_tasks": [
                             {
                                 "query": request.query,
@@ -151,35 +169,7 @@ def collect_frozen_source_pack(
                         ],
                     },
                 )
-                if provider_response is not None:
-                    raise RuntimeHostError("runtime_source_plan_invalid")
-                provider_response = collected.raw_response
-                provider_status_code = collected.status_code
-                items.extend(collected.items)
-            else:
-                items.extend(
-                    provider.collect(
-                        SourceQuery(
-                            keywords=[],
-                            max_results=request.max_results,
-                            recency_days=request.recency_days or 0,
-                        ),
-                        {
-                            "enabled": True,
-                            "mode": "external_api",
-                            "backend": spec.provider_id,
-                            "_workspace_dir": str(workspace),
-                            "max_results": request.max_results,
-                            "recency_days": request.recency_days,
-                            "search_tasks": [
-                                {
-                                    "query": request.query,
-                                    "domains": request.domains,
-                                }
-                            ],
-                        },
-                    )
-                )
+            )
     elif isinstance(spec, RuntimeNewsApiAcquisitionSpec):
         provider = factory("newsapi")
         items = provider.collect(
@@ -222,7 +212,10 @@ def collect_frozen_source_pack(
             provider_response is None
             or not provider_response
             or provider_status_code != 200
-            or len(spec.requests) != 1
+            or (
+                isinstance(spec, RuntimeWebSearchAcquisitionSpec)
+                and len(spec.requests) != 1
+            )
         ):
             raise RuntimeHostError("source_provider_result_invalid")
         try:
@@ -240,7 +233,16 @@ def collect_frozen_source_pack(
             )
     try:
         canonical_items = (
-            [] if material_validation_failed else _canonical_source_items(items)
+            []
+            if material_validation_failed
+            else _canonical_source_items(
+                items,
+                max_members=(
+                    800
+                    if isinstance(spec, RuntimeWebSearchAcquisitionSpecV3)
+                    else MAX_SOURCE_PACK_MEMBERS
+                ),
+            )
         )
         ordered = sorted(
             canonical_items,
@@ -310,10 +312,12 @@ def _validated_cached_paths(workspace: Path, paths: list[str]) -> list[Path]:
     return result
 
 
-def _canonical_source_items(items: list[SourceItem]) -> list[SourceItem]:
+def _canonical_source_items(
+    items: list[SourceItem], *, max_members: int = MAX_SOURCE_PACK_MEMBERS
+) -> list[SourceItem]:
     """Close count and duplicate identity before any authoritative mutation."""
 
-    if len(items) > MAX_SOURCE_PACK_MEMBERS:
+    if len(items) > max_members:
         raise RuntimeHostError("runtime_source_pack_invalid")
     by_identity: dict[str, tuple[bytes, SourceItem]] = {}
     for item in items:
@@ -324,7 +328,7 @@ def _canonical_source_items(items: list[SourceItem]) -> list[SourceItem]:
         elif previous[0] != payload:
             raise RuntimeHostError("runtime_source_pack_invalid")
     canonical = [value[1] for value in by_identity.values()]
-    if len(canonical) > MAX_SOURCE_PACK_MEMBERS:
+    if len(canonical) > max_members:
         raise RuntimeHostError("runtime_source_pack_invalid")
     return canonical
 
@@ -453,7 +457,7 @@ def _has_durable_tavily_content(item: SourceItem) -> bool:
 
 def _items_match_tavily_observation(
     items: list[SourceItem],
-    observation: TavilyAcquisitionObservation,
+    observation: TavilyAcquisitionObservation | TavilyMultiAcquisitionObservation,
 ) -> bool:
     """Bind every and only successful Extract item to its frozen projection."""
 

@@ -17,7 +17,11 @@ from multi_agent_brief.contracts import SchemaRegistry
 from multi_agent_brief.contracts.v2 import (
     InvocationStartRequest,
     SourceProposal,
+    TavilyAcquisitionBundleV2,
+    TavilyExtractBatchExchange,
     TavilyExtractUrlOutcome,
+    TavilySearchTaskExchange,
+    TavilyTaskAcquisitionStatus,
 )
 from multi_agent_brief.control_store import SQLiteControlStore
 from multi_agent_brief.control_store.serialization import (
@@ -276,6 +280,7 @@ def _external_workspace(tmp_path: Path) -> Path:
                 "workspace_target": workspace.name,
                 "selections": {
                     "company": "ExampleCo",
+                    "report_type": "management_monthly",
                     "industry_or_theme": "manufacturing",
                     "task_objective": "Prepare the ExampleCo brief.",
                     "brief_title": "ExampleCo brief",
@@ -793,7 +798,10 @@ def test_restart_recovers_original_invocation_action_and_envelope(
             strict=True,
         )
     )
-    assert committed.status == "committed"
+    assert committed.status == "committed", (
+        committed.next_action.reason_code,
+        committed.next_action.effect_kind,
+    )
     assert committed.receipt is not None
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         revision = store.current_revision
@@ -1781,11 +1789,9 @@ def _provider_collection(items: list[SourceItem]) -> WebSearchCollection:
 def _durable_tavily_collection(
     items: list[SourceItem],
     *,
-    query: str,
-    time_range: str,
-    domains: tuple[str, ...] = (),
+    search_tasks: list[dict[str, object]],
 ) -> WebSearchCollection:
-    """Build one canonical Search + batch Extract success bundle."""
+    """Build one schema18 multi-search + batch Extract success bundle."""
 
     search_rows = [
         {
@@ -1797,70 +1803,124 @@ def _durable_tavily_collection(
         }
         for position, item in enumerate(items, start=1)
     ]
-    search_payload: dict[str, object] = {
-        "query": query,
-        "max_results": 5,
-        "topic": "news",
-        "search_depth": "basic",
-        "include_answer": False,
-        "include_raw_content": False,
-        "auto_parameters": False,
-        "time_range": time_range,
-    }
-    if domains:
-        search_payload["include_domains"] = list(domains)
-    search_request = canonical_json_bytes(search_payload)
-    search_response = canonical_json_bytes({"results": search_rows})
-    search_exchange = TavilyBackend._exchange(
-        "search",
-        search_request,
-        response_body=search_response,
-        status_code=200,
-    )
+    searches: list[TavilySearchTaskExchange] = []
+    task_statuses: list[TavilyTaskAcquisitionStatus] = []
+    task_ids_by_url: dict[str, str] = {}
+    for ordinal, task in enumerate(search_tasks, start=1):
+        task_rows = search_rows[(ordinal - 1) * 20 : ordinal * 20]
+        search_payload: dict[str, object] = {
+            "query": task["query"],
+            "max_results": 20,
+            "topic": task["topic"],
+            "search_depth": "advanced",
+            "include_answer": False,
+            "include_raw_content": False,
+            "auto_parameters": False,
+            "time_range": "week",
+        }
+        domains = task.get("domains") or []
+        if domains:
+            search_payload["include_domains"] = domains
+        exchange = TavilyBackend._exchange(
+            "search",
+            canonical_json_bytes(search_payload),
+            response_body=canonical_json_bytes({"results": task_rows}),
+            status_code=200,
+        )
+        task_id = str(task["task_id"])
+        for row in task_rows:
+            task_ids_by_url[str(row["url"])] = task_id
+        searches.append(
+            TavilySearchTaskExchange.model_validate(
+                {
+                    "task_id": task_id,
+                    "phase": "primary",
+                    "status": "succeeded" if task_rows else "empty",
+                    "exchange": exchange.model_dump(mode="json"),
+                    "discovered_urls": sorted(row["url"] for row in task_rows),
+                },
+                strict=True,
+            )
+        )
+        success_count = len(task_rows)
+        minimum = int(task["minimum_extract_successes"])
+        task_statuses.append(
+            TavilyTaskAcquisitionStatus.model_validate(
+                {
+                    "task_id": task_id,
+                    "primary_search_ordinal": ordinal,
+                    "discovered_unique_url_count": len(task_rows),
+                    "extracted_success_count": success_count,
+                    "minimum_extract_successes": minimum,
+                    "status": (
+                        "covered"
+                        if success_count >= minimum
+                        else "coverage_insufficient"
+                    ),
+                },
+                strict=True,
+            )
+        )
 
     extract_urls = sorted(item.url for item in items)
-    extract_request = canonical_json_bytes(
-        {
-            "urls": extract_urls,
-            "query": query,
-            "chunks_per_source": 5,
-            "extract_depth": "basic",
-            "include_images": False,
-            "include_favicon": False,
-            "format": "markdown",
-            "include_usage": True,
-        }
-    )
     extract_rows = [
         {"url": item.url, "raw_content": item.content.strip()}
         for item in sorted(items, key=lambda value: value.url)
     ]
-    extract_response = canonical_json_bytes(
-        {"results": extract_rows, "failed_results": []}
-    )
-    extract_exchange = TavilyBackend._exchange(
-        "extract",
-        extract_request,
-        response_body=extract_response,
-        status_code=200,
-    )
-    outcomes = tuple(
-        TavilyExtractUrlOutcome.model_validate(
-            {
-                "url": row["url"],
-                "status": "succeeded",
-                "response_item_sha256": hashlib.sha256(
-                    canonical_json_bytes(row)
-                ).hexdigest(),
-                "content_sha256": hashlib.sha256(
-                    row["raw_content"].encode("utf-8")
-                ).hexdigest(),
-                "content_size_bytes": len(row["raw_content"].encode("utf-8")),
-            },
-            strict=True,
+    extract_batches: list[TavilyExtractBatchExchange] = []
+    for batch_ordinal, start in enumerate(range(0, len(extract_rows), 20), start=1):
+        batch_rows = extract_rows[start : start + 20]
+        batch_urls = [str(row["url"]) for row in batch_rows]
+        extract_exchange = TavilyBackend._exchange(
+            "extract",
+            canonical_json_bytes(
+                {
+                    "urls": batch_urls,
+                    "chunks_per_source": 5,
+                    "extract_depth": "advanced",
+                    "include_images": False,
+                    "include_favicon": False,
+                    "format": "markdown",
+                    "include_usage": True,
+                }
+            ),
+            response_body=canonical_json_bytes(
+                {"results": batch_rows, "failed_results": []}
+            ),
+            status_code=200,
         )
-        for row in extract_rows
-    )
+        outcomes = tuple(
+            TavilyExtractUrlOutcome.model_validate(
+                {
+                    "url": row["url"],
+                    "status": "succeeded",
+                    "response_item_sha256": hashlib.sha256(
+                        canonical_json_bytes(row)
+                    ).hexdigest(),
+                    "content_sha256": hashlib.sha256(
+                        str(row["raw_content"]).encode("utf-8")
+                    ).hexdigest(),
+                    "content_size_bytes": len(
+                        str(row["raw_content"]).encode("utf-8")
+                    ),
+                },
+                strict=True,
+            )
+            for row in batch_rows
+        )
+        extract_batches.append(
+            TavilyExtractBatchExchange.model_validate(
+                {
+                    "phase": "primary",
+                    "batch_ordinal": batch_ordinal,
+                    "status": "succeeded",
+                    "exchange": extract_exchange.model_dump(mode="json"),
+                    "urls": batch_urls,
+                    "outcomes": [item.model_dump(mode="json") for item in outcomes],
+                },
+                strict=True,
+            )
+        )
     search_by_url = {row["url"]: row for row in search_rows}
     extract_by_url = {row["url"]: row for row in extract_rows}
     normalized = tuple(
@@ -1874,25 +1934,35 @@ def _durable_tavily_collection(
                 "has_raw_content": True,
                 "evidence_quality": "partial_extract",
                 "provider_projection": {
-                    "schema_version": ("briefloop.tavily_extract_source_projection.v1"),
+                    "schema_version": ("briefloop.tavily_extract_source_projection.v2"),
                     "search_result": search_by_url[item.url],
                     "extract_result": extract_by_url[item.url],
+                    "discovery_task_ids": [task_ids_by_url[item.url]],
                 },
             },
         )
         for item in items
     )
-    bundle = TavilyBackend._bundle_response(
-        "extract_results_succeeded",
-        search_exchange,
-        extract=extract_exchange,
-        extract_urls=extract_urls,
-        outcomes=outcomes,
+    bundle = TavilyAcquisitionBundleV2.model_validate(
+        {
+            "schema_version": TavilyAcquisitionBundleV2.schema_id,
+            "provider_id": "tavily",
+            "status": "partial",
+            "searches": [item.model_dump(mode="json") for item in searches],
+            "extract_batches": [
+                item.model_dump(mode="json") for item in extract_batches
+            ],
+            "unique_urls": extract_urls,
+            "task_statuses": [
+                item.model_dump(mode="json") for item in task_statuses
+            ],
+        },
+        strict=True,
     )
     return WebSearchCollection(
         items=normalized,
-        raw_response=bundle.raw_response,
-        status_code=bundle.status_code,
+        raw_response=canonical_json_bytes(bundle.model_dump(mode="json")),
+        status_code=200,
     )
 
 
@@ -2014,7 +2084,7 @@ def test_provider_result_over_bound_records_one_failed_invocation(
     }
 
 
-def test_provider_max_five_commits_once_and_store_replay_skips_second_call(
+def test_multi_tavily_commits_all_extracted_sources_and_store_replay_skips_redial(
     tmp_path: Path,
     capsys,
     monkeypatch,
@@ -2029,12 +2099,9 @@ def test_provider_max_five_commits_once_and_store_replay_skips_second_call(
     def bounded(_provider, _query, config):
         nonlocal calls
         calls += 1
-        task = config["search_tasks"][0]
         return _durable_tavily_collection(
-            [_provider_item(position) for position in range(5)],
-            query=task["query"],
-            time_range=config["time_range"],
-            domains=tuple(task["domains"]),
+            [_provider_item(position) for position in range(25)],
+            search_tasks=config["search_tasks"],
         )
 
     monkeypatch.setattr(
@@ -2045,7 +2112,10 @@ def test_provider_max_five_commits_once_and_store_replay_skips_second_call(
     committed = host.apply_current(expected_action=action)
     replayed = host.apply_current(expected_action=action)
 
-    assert committed.status == "committed"
+    assert committed.status == "committed", (
+        committed.next_action.reason_code,
+        committed.next_action.effect_kind,
+    )
     assert replayed.status == "replayed"
     assert replayed.transaction_id == committed.transaction_id
     assert replayed.store_revision == committed.store_revision
@@ -2061,8 +2131,8 @@ def test_provider_max_five_commits_once_and_store_replay_skips_second_call(
         if item.transaction_id == committed.transaction_id
     )
     assert len(provider_invocations) == 1
-    assert len(snapshot.sources) == 5
-    assert len(receipt.source_ids) == 5
+    assert len(snapshot.sources) == 25
+    assert len(receipt.source_ids) == 25
 
 
 def test_provider_duplicate_identity_is_rejected_after_one_call(
@@ -2366,12 +2436,9 @@ def test_source_pack_commit_outcome_unknown_replays_identical_request(
     def one_result(_provider, _query, config):
         nonlocal provider_calls
         provider_calls += 1
-        task = config["search_tasks"][0]
         return _durable_tavily_collection(
             [_provider_item(1)],
-            query=task["query"],
-            time_range=config["time_range"],
-            domains=tuple(task["domains"]),
+            search_tasks=config["search_tasks"],
         )
 
     monkeypatch.setattr(

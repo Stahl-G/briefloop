@@ -90,7 +90,7 @@
             review_path_k: "工作区位置",
             review_authorized_boundary: "这将创建并授权一个本地 run，完成目标为 finalized_local，修复预算为 1。它会返回初始化 Receipt，并把控制权交回当前 Codex 会话。它不会对外交付，也不会显示最终报告。",
             review_manual_boundary: "这将创建一个没有 RunExecutionAuthorization 的本地工作区/run。后续保持手动继续。它不会对外交付，也不会显示最终报告。",
-            review_web_boundary: "这将记录一个实验性的 Tavily 运行时获取方向。Human 明确填写的检索主题会原样成为唯一 Tavily 检索词，并在初始化时冻结；公司 / 组织名称、完整任务目标和报告类型都不会改写它。每个由 Human 单独确认并记录到 Store 的 attempt 最多发出 1 次 Search，再对最多 5 个去重 URL 发出 1 次批量 Extract。Search 只发现 URL 与 snippet；snippet 永不具备 claims eligibility。仅批量 Extract 成功返回的非空正文可成为 claims-eligible 来源，部分成功只提交成功 URL。零 Search 结果或 Extract 全失败不产生 source 或 execution authorization。失败不会自动重试；Human 可另行授权下一 attempt 或提供 HumanSourcePack，但 HumanSourcePack 不算 Tavily 成功。成本、覆盖率、成功率和到 finalized_local 的表现均为 NOT MEASURED；不会对外交付。",
+            review_web_boundary: "这将记录一个实验性的 Tavily 运行时获取方向。初始化会冻结原子检索任务矩阵，而不是把全部主题压成一个宽查询。每个任务请求 20 条 advanced Search 结果；全部合格唯一 URL 按每批 20 条执行 Batch Extract；覆盖不足的任务可执行一次确定性的 30 日定向 backfill。Search 只发现 URL 与 snippet；snippet 永不具备 claims eligibility。仅 Extract 成功返回的非空正文可成为 claims-eligible 来源。失败不会自动重试；Human 可另行授权下一 attempt 或提供 HumanSourcePack，但 HumanSourcePack 不算 Tavily 成功。成本、覆盖率、成功率和到 finalized_local 的表现均为 NOT MEASURED；不会对外交付。",
             review_manifest_hash: "已确认 canonical manifest SHA-256",
             review_accept: "接受",
             review_discard: "丢弃",
@@ -129,7 +129,7 @@
             source_ready: "来源文件与清单已逐项匹配",
             err_source_pack: "请先选择来源文件并确认有效清单。",
             web_search_title: "确认 Tavily 运行时获取（实验性）",
-            web_search_note: "Human 明确填写的检索主题会原样成为唯一 Tavily 检索词并在初始化时冻结，Search max_results 固定为 5。每个 Human/Store 授权 attempt 最多 1 次 Search + 1 次对最多 5 个去重 URL 的批量 Extract。Search snippet 永不具备 claims eligibility；只有 Extract 成功返回的非空正文可进入来源包，部分成功只提交成功 URL。Key 写入新工作区的私有 .env，并保留到 Human 显式轮换或移除；不进入 Store、日志或报告。成本、覆盖率与成功率均为 NOT MEASURED。",
+            web_search_note: "初始化冻结原子 Tavily 检索任务矩阵；每个任务请求 20 条 advanced Search 结果，全部合格唯一 URL 按每批 20 条执行 Batch Extract，覆盖不足的任务可执行一次确定性的 30 日定向 backfill。Search snippet 永不具备 claims eligibility；只有 Extract 成功返回的非空正文可进入来源包。Key 写入新工作区的私有 .env，并保留到 Human 显式轮换或移除；不进入 Store、日志或报告。成本、覆盖率与成功率均为 NOT MEASURED。",
             search_domains_label: "可选检索域名（逗号或换行分隔）",
             search_domains_placeholder: "例如 openai.com",
             search_domains_note: "留空表示通用搜索。这里只接受 DNS 域名，不接受 URL、路径、端口、通配符或 IP。",
@@ -161,7 +161,7 @@
             cf_close: "关闭，修改后重试",
             cf_note: "目标为 finalized_local，预授权编辑修复预算为 1。此页仅确认初始化；已启动的 Codex 控制器会在命令行继续。",
             cf_note_manual: "本次初始化没有 RunExecutionAuthorization；后续为手动继续，不声明 finalized_local 或修复预算。",
-            cf_note_discovery: "本次初始化具有独立的 RunSourceDiscoveryAuthorization 和 attempt #1 授权。每个 attempt 在平台与凭据预检后最多发出 1 次 Search + 1 次最多 5 URL 的批量 Extract。Search snippet 永不具备 claims eligibility；只有 Extract 成功返回的非空正文才可进入来源包。失败不会自动重试，HumanSourcePack 也不算 Tavily 成功。"
+            cf_note_discovery: "本次初始化具有独立的 RunSourceDiscoveryAuthorization 和 attempt #1 授权。attempt 执行冻结的原子任务矩阵：每个任务 20 条 advanced Search，全部合格唯一 URL 分批 Extract，覆盖不足时每任务最多一次 30 日定向 backfill。Search snippet 永不具备 claims eligibility；只有 Extract 成功返回的非空正文才可进入来源包。失败不会自动重试，HumanSourcePack 也不算 Tavily 成功。"
         },
         en: {
             panel_title: "Create report workspace",
@@ -217,7 +217,7 @@
             review_path_k: "Workspace location",
             review_authorized_boundary: "This creates and authorizes a local run with completion target finalized_local and repair budget 1. It returns an initialization Receipt and hands control back to the current Codex session. It does not deliver externally or display the final report.",
             review_manual_boundary: "This creates a local workspace/run without RunExecutionAuthorization. Continuation remains manual. It does not deliver externally or display the final report.",
-            review_web_boundary: "This records an Experimental Tavily runtime-acquisition direction. Each separately Human-confirmed, Store-recorded attempt makes at most one Search request followed by one batch Extract request over at most five deduplicated URLs. Search discovers URLs and snippets only; snippets are never claims-eligible. Only non-empty content from successful Extract results can enter the source pack, and partial success commits successful URLs only. Zero Search results or all-failed Extract creates no source or execution authorization. Failures never auto-retry; a HumanSourcePack is a separate recovery path and never counts as Tavily success. Cost, coverage, success rate, and acquisition-to-finalized_local performance are NOT MEASURED. It does not deliver externally.",
+            review_web_boundary: "This records an Experimental Tavily runtime-acquisition direction. Initialization freezes an atomic task matrix instead of collapsing the brief into one broad query. Every task requests 20 advanced Search results; all eligible unique URLs are Batch Extracted in groups of 20; and an under-covered task may receive one deterministic 30-day targeted backfill. Search discovers URLs and snippets only; snippets are never claims-eligible. Only non-empty content from successful Extract results can enter the source pack. Failures never auto-retry; a HumanSourcePack is a separate recovery path and never counts as Tavily success. Cost, coverage, success rate, and acquisition-to-finalized_local performance are NOT MEASURED. It does not deliver externally.",
             review_manifest_hash: "Confirmed canonical manifest SHA-256",
             review_accept: "Accept",
             review_discard: "Discard",
@@ -256,7 +256,7 @@
             source_ready: "Every manifest member matches one selected file",
             err_source_pack: "Select source files and confirm a valid manifest first.",
             web_search_title: "Confirm Tavily runtime acquisition (Experimental)",
-            web_search_note: "The confirmed Human-entered search topic becomes the sole Tavily query unchanged and is frozen at initialization, with Search max_results fixed at 5. Each Human/Store-authorized attempt makes at most one Search plus one batch Extract over at most five deduplicated URLs. Search snippets are never claims-eligible; only non-empty successful Extract content enters the source pack, and partial success commits successful URLs only. The key remains in private .env and never enters the Store, logs, or report. Cost, coverage, and success rate are NOT MEASURED.",
+            web_search_note: "Initialization freezes an atomic Tavily task matrix. Every task requests 20 advanced Search results; all eligible unique URLs are Batch Extracted in groups of 20; and an under-covered task may receive one deterministic 30-day targeted backfill. Search snippets are never claims-eligible; only non-empty successful Extract content enters the source pack. The key remains in private .env and never enters the Store, logs, or report. Cost, coverage, and success rate are NOT MEASURED.",
             search_domains_label: "Optional search domains (comma or newline separated)",
             search_domains_placeholder: "e.g. openai.com",
             search_domains_note: "Leave empty for general search. DNS domains only; URLs, paths, ports, wildcards, and IP addresses are rejected.",
@@ -288,7 +288,7 @@
             cf_close: "Close, change something, retry",
             cf_note: "The target is finalized_local with one preauthorized editor repair. This page confirms initialization only; the initiating Codex controller continues in the terminal.",
             cf_note_manual: "This initialization has no RunExecutionAuthorization; continuation is manual and does not claim finalized_local or a repair budget.",
-            cf_note_discovery: "This initialization has a distinct RunSourceDiscoveryAuthorization and attempt #1 authorization. Each attempt makes at most one Search plus one batch Extract over at most five URLs after preflight. Search snippets are never claims-eligible; only non-empty successful Extract content enters the source pack. Failures never auto-retry, and a HumanSourcePack never counts as Tavily success."
+            cf_note_discovery: "This initialization has a distinct RunSourceDiscoveryAuthorization and attempt #1 authorization. The attempt executes the frozen atomic task matrix: 20 advanced Search results per task, all eligible unique URLs extracted in batches, and at most one 30-day targeted backfill per under-covered task. Search snippets are never claims-eligible; only non-empty successful Extract content enters the source pack. Failures never auto-retry, and a HumanSourcePack never counts as Tavily success."
         }
     };
 
@@ -320,7 +320,7 @@
             { id: "bilingual", zh: ["中英对照", ""], en: ["Bilingual", ""] }
         ],
         sources: [
-            { id: "public_web", zh: ["公开网页（Tavily 运行时获取）", "每个授权 attempt 至多 1 次 Search + 1 次批量 Extract"], en: ["Public web (Tavily runtime acquisition)", "At most one Search plus one batch Extract per authorized attempt"] },
+            { id: "public_web", zh: ["公开网页（Tavily 运行时获取）", "原子任务矩阵 · 每任务 20 条 · 全量分批 Extract"], en: ["Public web (Tavily runtime acquisition)", "Atomic task matrix · 20 per task · batch Extract all eligible URLs"] },
             { id: "local_only", zh: ["仅本地材料", "离线，不上网"], en: ["Local material only", "Offline"] },
         ],
         formats: [

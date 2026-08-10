@@ -87,6 +87,8 @@ from multi_agent_brief.contracts.v2 import (
     RunExecutionAuthorization,
     RunSourceAcquisitionAttemptAuthorization,
     RunSourceDiscoveryAuthorization,
+    RuntimeSourceSearchPlanV2,
+    TavilyAcquisitionBundleRecordV2,
     RunIdentity,
     RunGuidanceSelectionDecisionRecord,
     RunGuidanceSelectionDecisionReference,
@@ -186,6 +188,8 @@ _EXTENDED_RECORD_MODELS = (
     RunExecutionAuthorization,
     RunSourceDiscoveryAuthorization,
     RunSourceAcquisitionAttemptAuthorization,
+    RuntimeSourceSearchPlanV2,
+    TavilyAcquisitionBundleRecordV2,
     OwnedArtifactSubmissionRecord,
     StageTransitionRecord,
     StageArtifactBinding,
@@ -552,6 +556,8 @@ class ControlStoreSnapshot:
     run_source_acquisition_attempt_authorizations: tuple[
         RunSourceAcquisitionAttemptAuthorization, ...
     ]
+    runtime_source_search_plans: tuple[RuntimeSourceSearchPlanV2, ...]
+    tavily_acquisition_bundle_records: tuple[TavilyAcquisitionBundleRecordV2, ...]
     owned_artifact_submissions: tuple[OwnedArtifactSubmissionRecord, ...]
     stage_transitions: tuple[StageTransitionRecord, ...]
     stage_artifact_bindings: tuple[StageArtifactBinding, ...]
@@ -884,6 +890,17 @@ class ControlStoreHistory:
             ("attempt_authorization_id",),
             full.run_source_acquisition_attempt_authorizations,
         )
+        committed_transaction_ids = {receipt.transaction_id for receipt in transactions}
+        runtime_source_search_plans = tuple(
+            item
+            for item in full.runtime_source_search_plans
+            if item.accepted_transaction_id in committed_transaction_ids
+        )
+        tavily_acquisition_bundle_records = tuple(
+            item
+            for item in full.tavily_acquisition_bundle_records
+            if item.accepted_transaction_id in committed_transaction_ids
+        )
         stage_artifact_bindings = selected(
             "stage_artifact_bindings",
             ("transition_id", "position"),
@@ -1010,7 +1027,6 @@ class ControlStoreHistory:
         # receipts byte-compatible with workspaces created before the witness
         # table existed while still projecting only rows committed by this
         # historical prefix.
-        committed_transaction_ids = {receipt.transaction_id for receipt in transactions}
         post_final_assessment_executions = tuple(
             item
             for item in full.post_final_assessment_executions
@@ -1124,6 +1140,8 @@ class ControlStoreHistory:
             run_source_acquisition_attempt_authorizations=(
                 run_source_acquisition_attempt_authorizations
             ),
+            runtime_source_search_plans=runtime_source_search_plans,
+            tavily_acquisition_bundle_records=tavily_acquisition_bundle_records,
             owned_artifact_submissions=owned_artifact_submissions,
             stage_transitions=stage_transitions,
             stage_artifact_bindings=stage_artifact_bindings,
@@ -1921,6 +1939,12 @@ class SQLiteControlStore:
                 self._insert_run_source_acquisition_attempt_authorization(
                     uow._run_source_acquisition_attempt_authorization
                 )
+                self._insert_runtime_source_search_plans(
+                    uow._runtime_source_search_plans.values()
+                )
+                self._insert_tavily_acquisition_bundle_records(
+                    uow._tavily_acquisition_bundle_records.values()
+                )
                 self._insert_owned_artifact_submissions(
                     uow._owned_artifact_submissions.values()
                 )
@@ -2397,7 +2421,7 @@ class SQLiteControlStore:
             previous_rows = self._connection.execute(
                 """
                 SELECT payload_json
-                FROM run_source_acquisition_attempt_authorizations
+                FROM run_source_acquisition_attempt_authorizations_v2
                 WHERE run_id=?
                 ORDER BY attempt_ordinal
                 """,
@@ -2446,7 +2470,7 @@ class SQLiteControlStore:
                 continue
             row = self._connection.execute(
                 "SELECT payload_json "
-                "FROM run_source_acquisition_attempt_authorizations "
+                "FROM run_source_acquisition_attempt_authorizations_v2 "
                 "WHERE run_id=? AND attempt_authorization_id=?",
                 (run_id, attempt_id),
             ).fetchone()
@@ -4796,7 +4820,7 @@ class SQLiteControlStore:
             return
         self._connection.execute(
             """
-            INSERT INTO run_source_acquisition_attempt_authorizations(
+            INSERT INTO run_source_acquisition_attempt_authorizations_v2(
                 run_id, attempt_authorization_id, attempt_ordinal, workspace_id,
                 schema_version, discovery_authorization_id,
                 run_contract_fingerprint, run_direction_fingerprint,
@@ -5217,6 +5241,7 @@ class SQLiteControlStore:
                         evaluation_id,
                     ),
                 )
+
             for position, finding in enumerate(record.blocking_findings):
                 self._connection.execute(
                     "INSERT INTO gate_repair_cycle_findings VALUES (?,?,?,?,?)",
@@ -5279,6 +5304,70 @@ class SQLiteControlStore:
                     "INSERT INTO gate_repair_outcome_evaluations VALUES (?,?,?,?)",
                     (record.run_id, record.outcome_id, position, evaluation_id),
                 )
+
+    def _insert_runtime_source_search_plans(
+        self, records: Iterable[RuntimeSourceSearchPlanV2]
+    ) -> None:
+        for record in records:
+            self._connection.execute(
+                """
+                INSERT INTO runtime_source_search_plans(
+                    run_id, search_plan_id, schema_version, plan_revision,
+                    report_type, task_count, acquisition_spec_fingerprint,
+                    plan_fingerprint, record_event_id, accepted_transaction_id,
+                    created_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.run_id,
+                    record.search_plan_id,
+                    record.schema_version,
+                    record.plan_revision,
+                    record.report_type,
+                    record.task_count,
+                    record.acquisition_spec_fingerprint,
+                    record.plan_fingerprint,
+                    record.record_event_id,
+                    record.accepted_transaction_id,
+                    record.created_at,
+                    _canonical_record_text(record),
+                ),
+            )
+
+    def _insert_tavily_acquisition_bundle_records(
+        self, records: Iterable[TavilyAcquisitionBundleRecordV2]
+    ) -> None:
+        for record in records:
+            self._connection.execute(
+                """
+                INSERT INTO tavily_acquisition_bundle_records(
+                    run_id, bundle_record_id, schema_version,
+                    attempt_authorization_id, provider_response_artifact_id,
+                    provider_response_sha256, bundle_status, search_count,
+                    extract_batch_count, unique_url_count, durable_content_count,
+                    record_fingerprint, record_event_id, accepted_transaction_id,
+                    recorded_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.run_id,
+                    record.bundle_record_id,
+                    record.schema_version,
+                    record.attempt_authorization_id,
+                    record.provider_response_artifact_id,
+                    record.provider_response_sha256,
+                    record.bundle_status,
+                    record.search_count,
+                    record.extract_batch_count,
+                    record.unique_url_count,
+                    record.durable_content_count,
+                    record.record_fingerprint,
+                    record.record_event_id,
+                    record.accepted_transaction_id,
+                    record.recorded_at,
+                    _canonical_record_text(record),
+                ),
+            )
 
     def _insert_pr4b_records(self, uow: "ControlUnitOfWork") -> None:
         for record in uow._repair_cycles.values():
@@ -6180,7 +6269,7 @@ class SQLiteControlStore:
         ):
             self._connection.execute(
                 """
-                INSERT INTO transaction_run_source_acquisition_attempt_authorizations(
+                INSERT INTO transaction_run_source_acquisition_attempt_authorizations_v2(
                     run_id, transaction_id, position, attempt_authorization_id
                 ) VALUES (?, ?, ?, ?)
                 """,
@@ -7239,7 +7328,7 @@ class SQLiteControlStore:
             ),
             run_source_acquisition_attempt_authorizations=self._load_for_run(
                 RunSourceAcquisitionAttemptAuthorization,
-                "run_source_acquisition_attempt_authorizations",
+                "run_source_acquisition_attempt_authorizations_v2",
                 run_id,
                 "attempt_ordinal",
                 {
@@ -7268,6 +7357,52 @@ class SQLiteControlStore:
                     "accepted_transaction_id": "accepted_transaction_id",
                     "request_fingerprint": "request_fingerprint",
                     "created_at": "created_at",
+                },
+            ),
+            runtime_source_search_plans=self._load_for_run(
+                RuntimeSourceSearchPlanV2,
+                "runtime_source_search_plans",
+                run_id,
+                "plan_revision, search_plan_id",
+                {
+                    "run_id": "run_id",
+                    "search_plan_id": "search_plan_id",
+                    "schema_version": "schema_version",
+                    "plan_revision": "plan_revision",
+                    "report_type": "report_type",
+                    "task_count": "task_count",
+                    "acquisition_spec_fingerprint": (
+                        "acquisition_spec_fingerprint"
+                    ),
+                    "plan_fingerprint": "plan_fingerprint",
+                    "record_event_id": "record_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "created_at": "created_at",
+                },
+            ),
+            tavily_acquisition_bundle_records=self._load_for_run(
+                TavilyAcquisitionBundleRecordV2,
+                "tavily_acquisition_bundle_records",
+                run_id,
+                "recorded_at, bundle_record_id",
+                {
+                    "run_id": "run_id",
+                    "bundle_record_id": "bundle_record_id",
+                    "schema_version": "schema_version",
+                    "attempt_authorization_id": "attempt_authorization_id",
+                    "provider_response_artifact_id": (
+                        "provider_response_artifact_id"
+                    ),
+                    "provider_response_sha256": "provider_response_sha256",
+                    "bundle_status": "bundle_status",
+                    "search_count": "search_count",
+                    "extract_batch_count": "extract_batch_count",
+                    "unique_url_count": "unique_url_count",
+                    "durable_content_count": "durable_content_count",
+                    "record_fingerprint": "record_fingerprint",
+                    "record_event_id": "record_event_id",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "recorded_at": "recorded_at",
                 },
             ),
             owned_artifact_submissions=self._load_for_run(
@@ -8333,12 +8468,106 @@ class SQLiteControlStore:
             transactions=self._load_transactions(run_id),
         )
         self._verify_core_snapshot_structure(snapshot)
+        self._verify_runtime_source_search_snapshot_structure(snapshot)
         self._verify_gate_repair_snapshot_structure(snapshot)
         self._verify_post_final_assessment_snapshot_structure(snapshot)
         if _verify_guidance:
             self._verify_guidance_snapshot_structure(snapshot)
         self._verify_checkout_snapshot_structure(snapshot)
         return snapshot
+
+    @staticmethod
+    def _verify_runtime_source_search_snapshot_structure(
+        snapshot: ControlStoreSnapshot,
+    ) -> None:
+        """Verify the schema18 atomic search-plan and bundle evidence graph."""
+
+        plans = sorted(
+            snapshot.runtime_source_search_plans,
+            key=lambda item: item.plan_revision,
+        )
+        bundles = snapshot.tavily_acquisition_bundle_records
+        if not plans and not bundles:
+            return
+        if len(snapshot.run_contract_bindings) != 1:
+            raise ControlStoreIntegrityError("runtime_source_search_graph_invalid")
+        binding = snapshot.run_contract_bindings[0]
+        if binding.run_direction.report_type is None:
+            raise ControlStoreIntegrityError("runtime_source_search_graph_invalid")
+        if [item.plan_revision for item in plans] != list(
+            range(1, len(plans) + 1)
+        ):
+            raise ControlStoreIntegrityError("runtime_source_search_graph_invalid")
+
+        transactions = {
+            item.transaction_id: item for item in snapshot.transactions
+        }
+        events = {item.event_id: item for item in snapshot.events}
+        attempts = {
+            item.attempt_authorization_id: item
+            for item in snapshot.run_source_acquisition_attempt_authorizations
+        }
+        artifacts = {item.artifact_id: item for item in snapshot.artifacts}
+        revisions_by_artifact: dict[str, list[ArtifactRevision]] = {}
+        for revision in snapshot.artifact_revisions:
+            revisions_by_artifact.setdefault(revision.artifact_id, []).append(
+                revision
+            )
+        plan_fingerprints: set[str] = set()
+        for plan in plans:
+            event = events.get(plan.record_event_id)
+            if (
+                plan.run_id != snapshot.run.run_id
+                or plan.report_type != binding.run_direction.report_type
+                or plan.accepted_transaction_id not in transactions
+                or event is None
+                or event.run_id != plan.run_id
+                or event.transaction_id != plan.accepted_transaction_id
+                or event.event_type != "runtime_source_search_plan_recorded"
+                or not any(
+                    attempt.provider_request_fingerprint
+                    == plan.acquisition_spec_fingerprint
+                    for attempt in attempts.values()
+                )
+            ):
+                raise ControlStoreIntegrityError(
+                    "runtime_source_search_graph_invalid"
+                )
+            plan_fingerprints.add(plan.acquisition_spec_fingerprint)
+
+        seen_attempts: set[str] = set()
+        for bundle in bundles:
+            event = events.get(bundle.record_event_id)
+            attempt = attempts.get(bundle.attempt_authorization_id)
+            artifact = artifacts.get(bundle.provider_response_artifact_id)
+            revisions = revisions_by_artifact.get(
+                bundle.provider_response_artifact_id,
+                [],
+            )
+            matching_revisions = [
+                item
+                for item in revisions
+                if item.sha256 == bundle.provider_response_sha256
+                and item.frozen
+            ]
+            if (
+                bundle.run_id != snapshot.run.run_id
+                or bundle.attempt_authorization_id in seen_attempts
+                or bundle.accepted_transaction_id not in transactions
+                or event is None
+                or event.run_id != bundle.run_id
+                or event.transaction_id != bundle.accepted_transaction_id
+                or event.event_type != "tavily_acquisition_bundle_recorded"
+                or event.artifact_id != bundle.provider_response_artifact_id
+                or attempt is None
+                or attempt.provider_request_fingerprint not in plan_fingerprints
+                or artifact is None
+                or not matching_revisions
+            ):
+                raise ControlStoreIntegrityError(
+                    "runtime_source_search_graph_invalid"
+                )
+            seen_attempts.add(bundle.attempt_authorization_id)
 
     def _verify_gate_repair_snapshot_structure(
         self,
@@ -10707,7 +10936,7 @@ class SQLiteControlStore:
                 ),
             ),
             (
-                "transaction_run_source_acquisition_attempt_authorizations",
+                "transaction_run_source_acquisition_attempt_authorizations_v2",
                 ("attempt_authorization_id",),
                 tuple(
                     (item.attempt_authorization_id,)
@@ -11555,12 +11784,12 @@ class SQLiteControlStore:
                 raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
         attempt_rows = self._connection.execute(
             "SELECT run_id,attempt_authorization_id,accepted_transaction_id "
-            "FROM run_source_acquisition_attempt_authorizations"
+            "FROM run_source_acquisition_attempt_authorizations_v2"
         ).fetchall()
         for run_id, attempt_id, accepted_transaction_id in attempt_rows:
             owner = self._connection.execute(
                 "SELECT 1 "
-                "FROM transaction_run_source_acquisition_attempt_authorizations "
+                "FROM transaction_run_source_acquisition_attempt_authorizations_v2 "
                 "WHERE run_id=? AND transaction_id=? "
                 "AND attempt_authorization_id=?",
                 (run_id, accepted_transaction_id, attempt_id),

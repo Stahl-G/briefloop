@@ -83,9 +83,11 @@ work and call it again. Stop on `proposal_invalid`, `needs_human`,
 request or repair. During discovery-only continuation, the host may run the
 doctor, source planner, and exact bound Tavily route. The workspace credential
 remains local until the Human rotates/removes it, but each attempt needs one
-distinct Human/Store authorization and permits at most one Search followed by
-one batch Extract over at most five deduplicated URLs. Exact replay never redials and
-failures never auto-retry. A typed recovery action requires the Human to
+distinct Human/Store authorization for a frozen atomic task matrix. Every task
+requests 20 advanced Search results; all eligible unique URLs are Batch Extracted
+in groups of 20; and an under-covered task may receive one deterministic 30-day
+backfill. Solar Stock Periodic freezes 20 primary tasks. Exact replay never
+redials and failures never auto-retry. A typed recovery action requires the Human to
 authorize another attempt or provide a HumanSourcePack. HumanSourcePack never
 counts as Tavily success. Search snippets remain ineligible; only non-empty
 successful Extract content can participate in the single atomic

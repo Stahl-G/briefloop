@@ -29,6 +29,7 @@ EXPECTED_V2_CONTRACT_IDS = (
     "briefloop.source_proposal.v2",
     "briefloop.source_commit_request.v2",
     "briefloop.source_pack_commit_request.v2",
+    "briefloop.multi_tavily_source_pack_commit_request.v1",
     "briefloop.candidate_claims_proposal.v2",
     "briefloop.screened_candidates_proposal.v2",
     "briefloop.claim_drafts_proposal.v2",
@@ -50,19 +51,25 @@ EXPECTED_V2_CONTRACT_IDS = (
     "briefloop.transaction_receipt.v2",
     "briefloop.run_direction.v2",
     "briefloop.execution_source_manifest.v2",
+    "briefloop.multi_tavily_execution_source_manifest.v1",
     "briefloop.run_execution_authorization_input.v2",
     "briefloop.run_execution_authorization_bootstrap.v2",
     "briefloop.run_execution_authorization.v2",
     "briefloop.run_source_discovery_authorization_input.v2",
     "briefloop.run_source_discovery_authorization_bootstrap.v2",
     "briefloop.run_source_discovery_authorization.v2",
-    "briefloop.run_source_acquisition_attempt_authorization.v1",
+    "briefloop.run_source_acquisition_attempt_authorization.v2",
     "briefloop.tavily_acquisition_bundle.v1",
+    "briefloop.tavily_acquisition_bundle.v2",
+    "briefloop.tavily_acquisition_bundle_record.v2",
     "briefloop.source_acquisition_attempt_authorize_request.v1",
     "briefloop.workspace_controlstore_bootstrap.v2",
     "briefloop.runtime_adapter_binding.v2",
     "briefloop.runtime_web_search_request_spec.v2",
     "briefloop.runtime_web_search_acquisition_spec.v2",
+    "briefloop.runtime_web_search_task_spec.v3",
+    "briefloop.runtime_web_search_acquisition_spec.v3",
+    "briefloop.runtime_source_search_plan.v2",
     "briefloop.runtime_cached_package_acquisition_spec.v2",
     "briefloop.runtime_newsapi_acquisition_spec.v2",
     "briefloop.runtime_source_route_binding.v2",
@@ -115,8 +122,11 @@ EXPECTED_V2_CONTRACT_IDS = (
     "briefloop.delivery_result_observation.v2",
     "briefloop.post_final_assessment_policy_revision.v2",
     "briefloop.post_final_assessment_request_record.v2",
+    "briefloop.post_final_assessment_execution.v1",
     "briefloop.post_final_assessment_result_record.v2",
     "briefloop.post_final_finding_disposition_record.v2",
+    "briefloop.post_final_human_observation_report_span.v1",
+    "briefloop.post_final_human_observation_record.v1",
     "briefloop.post_final_guidance_draft_revision.v2",
     "briefloop.post_final_guidance_status_revision.v2",
     "briefloop.repair_start_request.v2",
@@ -145,8 +155,8 @@ EXPECTED_V2_CONTRACT_IDS = (
 
 def test_v2_contract_inventory_is_exact_and_uses_existing_registry() -> None:
     assert V2_CONTRACT_IDS == EXPECTED_V2_CONTRACT_IDS
-    assert len(V2_CONTRACT_MODELS) == 114
-    assert len(set(V2_CONTRACT_IDS)) == 114
+    assert len(V2_CONTRACT_MODELS) == 124
+    assert len(set(V2_CONTRACT_IDS)) == 124
     for contract_id, model in zip(V2_CONTRACT_IDS, V2_CONTRACT_MODELS):
         assert SchemaRegistry.get(contract_id) is model
 
@@ -158,9 +168,9 @@ def test_strict_model_contract_is_strict_and_forbids_extra_fields() -> None:
     assert config["allow_inf_nan"] is False
 
 
-def test_tavily_attempt_authority_freezes_one_search_and_one_batch_extract() -> None:
+def test_tavily_attempt_authority_freezes_multi_search_and_batch_extract() -> None:
     attempt = SchemaRegistry.example(
-        "briefloop.run_source_acquisition_attempt_authorization.v1",
+        "briefloop.run_source_acquisition_attempt_authorization.v2",
         "minimal",
     )
 
@@ -170,7 +180,13 @@ def test_tavily_attempt_authority_freezes_one_search_and_one_batch_extract() -> 
         attempt["max_extract_calls"],
         attempt["max_extract_urls"],
         attempt["provider_call_sequence"],
-    ) == (2, 1, 1, 5, "search_then_batch_extract")
+    ) == (
+        4,
+        2,
+        2,
+        40,
+        "primary_search_extract_then_conditional_backfill_search_extract",
+    )
 
 
 @pytest.mark.parametrize("model", V2_CONTRACT_MODELS, ids=V2_CONTRACT_IDS)

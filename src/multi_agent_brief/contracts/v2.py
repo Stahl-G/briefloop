@@ -421,6 +421,8 @@ EVENT_TYPES = {
     "post_final_guidance_status_recorded",
     "post_final_human_observation_recorded",
     "source_acquisition_attempt_authorized",
+    "runtime_source_search_plan_recorded",
+    "tavily_acquisition_bundle_recorded",
 }
 
 # Release-mode approval vocabulary and boundary. DTO truth source;
@@ -712,7 +714,7 @@ class TavilyExtractUrlOutcome(StrictModel):
 
 
 class TavilyAcquisitionBundle(StrictModel):
-    """Canonical exact-byte Search + optional batch Extract acquisition evidence."""
+    """Historical v1 single-Search evidence; read-only and never newly emitted."""
 
     schema_id = "briefloop.tavily_acquisition_bundle.v1"
 
@@ -785,6 +787,180 @@ class TavilyAcquisitionBundle(StrictModel):
         )
         if self.status != expected:
             raise ValueError("bundle status does not match Extract outcomes")
+        return self
+
+
+class TavilySearchTaskExchange(StrictModel):
+    """One exact primary or backfill Search in a multi-task acquisition."""
+
+    task_id: ContractId
+    phase: Literal["primary", "backfill"]
+    status: Literal["succeeded", "empty", "unavailable", "invalid"]
+    exchange: TavilyAcquisitionExchange
+    discovered_urls: list[CleanText] = Field(max_length=20)
+
+    @model_validator(mode="after")
+    def task_search_shape(self) -> "TavilySearchTaskExchange":
+        if self.exchange.operation != "search":
+            raise ValueError("task Search exchange is invalid")
+        if self.discovered_urls != sorted(set(self.discovered_urls)):
+            raise ValueError("task Search URLs must be sorted and unique")
+        if self.status in {"unavailable", "invalid", "empty"} and self.discovered_urls:
+            raise ValueError("terminal task Search cannot claim discovered URLs")
+        if self.status == "unavailable" and self.exchange.status_code == 200:
+            raise ValueError("unavailable task Search cannot be HTTP 200")
+        if self.status in {"succeeded", "empty", "invalid"} and (
+            self.exchange.status_code != 200
+        ):
+            raise ValueError("parsed task Search requires HTTP 200")
+        if self.status == "succeeded" and not self.discovered_urls:
+            raise ValueError("successful task Search requires discovered URLs")
+        return self
+
+
+class TavilyExtractBatchExchange(StrictModel):
+    """One exact technical batch of at most twenty Extract URLs."""
+
+    phase: Literal["primary", "backfill"]
+    batch_ordinal: PositiveInt
+    status: Literal["succeeded", "partial", "all_failed", "unavailable", "invalid"]
+    exchange: TavilyAcquisitionExchange
+    urls: list[CleanText] = Field(min_length=1, max_length=20)
+    outcomes: list[TavilyExtractUrlOutcome] = Field(max_length=20)
+
+    @model_validator(mode="after")
+    def extract_batch_shape(self) -> "TavilyExtractBatchExchange":
+        if self.exchange.operation != "extract":
+            raise ValueError("batch Extract exchange is invalid")
+        if self.urls != sorted(set(self.urls)):
+            raise ValueError("batch Extract URLs must be sorted and unique")
+        outcome_urls = [item.url for item in self.outcomes]
+        if outcome_urls != sorted(set(outcome_urls)):
+            raise ValueError("batch Extract outcomes must be sorted and unique")
+        if self.status in {"unavailable", "invalid"}:
+            if self.outcomes:
+                raise ValueError("unusable Extract batch cannot claim outcomes")
+            if self.status == "unavailable" and self.exchange.status_code == 200:
+                raise ValueError("unavailable Extract batch cannot be HTTP 200")
+            if self.status == "invalid" and self.exchange.status_code != 200:
+                raise ValueError("invalid Extract batch requires HTTP 200")
+            return self
+        if self.exchange.status_code != 200 or set(self.urls) != set(outcome_urls):
+            raise ValueError("Extract batch outcomes must cover the exact URL batch")
+        succeeded = sum(item.status == "succeeded" for item in self.outcomes)
+        expected = (
+            "all_failed"
+            if succeeded == 0
+            else "succeeded"
+            if succeeded == len(self.outcomes)
+            else "partial"
+        )
+        if self.status != expected:
+            raise ValueError("Extract batch status does not match outcomes")
+        return self
+
+
+class TavilyTaskAcquisitionStatus(StrictModel):
+    """Value-free final coverage status for one frozen search task."""
+
+    task_id: ContractId
+    primary_search_ordinal: PositiveInt
+    backfill_search_ordinal: PositiveInt | None = None
+    discovered_unique_url_count: NonNegativeInt
+    extracted_success_count: NonNegativeInt
+    minimum_extract_successes: PositiveInt
+    status: Literal[
+        "covered",
+        "coverage_insufficient",
+        "search_unavailable",
+        "extract_unavailable",
+    ]
+
+    @model_validator(mode="after")
+    def coverage_status_matches_counts(self) -> "TavilyTaskAcquisitionStatus":
+        covered = self.extracted_success_count >= self.minimum_extract_successes
+        if covered != (self.status == "covered"):
+            if self.status not in {"search_unavailable", "extract_unavailable"}:
+                raise ValueError("task coverage status does not match counts")
+            if covered:
+                raise ValueError("failed task cannot meet its coverage threshold")
+        return self
+
+
+class TavilyAcquisitionBundleV2(StrictModel):
+    """Exact multi-Search and multi-batch Extract execution evidence."""
+
+    schema_id = "briefloop.tavily_acquisition_bundle.v2"
+
+    schema_version: Literal["briefloop.tavily_acquisition_bundle.v2"]
+    provider_id: Literal["tavily"]
+    status: Literal["complete", "partial", "failed"]
+    searches: list[TavilySearchTaskExchange] = Field(min_length=1, max_length=40)
+    extract_batches: list[TavilyExtractBatchExchange] = Field(max_length=40)
+    unique_urls: list[CleanText] = Field(max_length=800)
+    task_statuses: list[TavilyTaskAcquisitionStatus] = Field(
+        min_length=1, max_length=20
+    )
+
+    @model_validator(mode="after")
+    def multi_acquisition_shape(self) -> "TavilyAcquisitionBundleV2":
+        if self.unique_urls != sorted(set(self.unique_urls)):
+            raise ValueError("multi-acquisition URLs must be sorted and unique")
+        if [item.task_id for item in self.task_statuses] != sorted(
+            {item.task_id for item in self.task_statuses}
+        ):
+            raise ValueError("task statuses must be sorted and unique")
+        if [item.batch_ordinal for item in self.extract_batches] != list(
+            range(1, len(self.extract_batches) + 1)
+        ):
+            raise ValueError("Extract batch ordinals must be contiguous")
+        batch_urls = [url for batch in self.extract_batches for url in batch.urls]
+        if len(batch_urls) != len(set(batch_urls)) or sorted(batch_urls) != self.unique_urls:
+            raise ValueError("Extract batches must partition every unique URL")
+        covered = sum(item.status == "covered" for item in self.task_statuses)
+        expected = (
+            "complete"
+            if covered == len(self.task_statuses)
+            else "failed"
+            if covered == 0
+            else "partial"
+        )
+        if self.status != expected:
+            raise ValueError("multi-acquisition status does not match task coverage")
+        return self
+
+
+class TavilyAcquisitionBundleRecordV2(StrictModel):
+    """Receipt-owned Store identity for one frozen multi-Tavily bundle."""
+
+    schema_id = "briefloop.tavily_acquisition_bundle_record.v2"
+
+    schema_version: Literal["briefloop.tavily_acquisition_bundle_record.v2"]
+    bundle_record_id: ContractId
+    run_id: ContractId
+    attempt_authorization_id: ContractId
+    provider_response_artifact_id: ContractId
+    provider_response_sha256: Sha256
+    bundle_status: Literal["complete", "partial", "failed"]
+    search_count: Annotated[int, Field(ge=1, le=40)]
+    extract_batch_count: Annotated[int, Field(ge=0, le=40)]
+    unique_url_count: Annotated[int, Field(ge=0, le=800)]
+    durable_content_count: Annotated[int, Field(ge=0, le=800)]
+    record_event_id: ContractId
+    accepted_transaction_id: ContractId
+    recorded_at: IsoDateTime
+    record_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def bundle_record_identity_is_exact(self) -> "TavilyAcquisitionBundleRecordV2":
+        if self.durable_content_count > self.unique_url_count:
+            raise ValueError("durable content count exceeds the URL universe")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"record_fingerprint"}),
+            field="record_fingerprint",
+        )
+        if self.record_fingerprint != expected:
+            raise ValueError("Tavily bundle record fingerprint mismatch")
         return self
 
 
@@ -1164,6 +1340,58 @@ class SourcePackCommitRequest(StrictModel):
             )
         if len(paths) != len(set(paths)):
             raise ValueError("source pack paths must be unique")
+        return self
+
+
+class MultiTavilySourcePackCommitRequest(StrictModel):
+    """Core-only atomic request for the schema18 multi-Tavily stage profile."""
+
+    schema_id = "briefloop.multi_tavily_source_pack_commit_request.v1"
+
+    schema_version: Literal[
+        "briefloop.multi_tavily_source_pack_commit_request.v1"
+    ]
+    capacity_profile: Literal["multi_tavily_v2"]
+    request_id: ContractId
+    run_id: ContractId
+    invocation_id: ContractId
+    members: list[SourcePackCommitMember] = Field(min_length=1, max_length=800)
+    manifest_path: WorkspacePath
+    expected_manifest_sha256: Sha256
+    expected_store_revision: NonNegativeInt
+
+    @model_validator(mode="after")
+    def pack_is_ordered_unique_and_invocation_scoped(
+        self,
+    ) -> "MultiTavilySourcePackCommitRequest":
+        expected_manifest = (
+            PurePosixPath("scratch") / self.invocation_id / "source_manifest.json"
+        )
+        if PurePosixPath(self.manifest_path) != expected_manifest:
+            raise ValueError("multi-Tavily manifest path must be invocation scoped")
+        member_ids = [item.member_id for item in self.members]
+        if member_ids != sorted(set(member_ids)):
+            raise ValueError("multi-Tavily members must be sorted and unique")
+        expected_root = PurePosixPath("scratch") / self.invocation_id / "sources"
+        paths: list[str] = []
+        for item in self.members:
+            proposal = PurePosixPath(item.proposal_path)
+            if (
+                proposal.parent.parent != expected_root
+                or proposal.parent.name != item.member_id
+            ):
+                raise ValueError("multi-Tavily member path is not invocation scoped")
+            paths.extend(
+                value
+                for value in (
+                    item.proposal_path,
+                    item.content_path,
+                    item.raw_payload_path,
+                )
+                if value is not None
+            )
+        if len(paths) != len(set(paths)):
+            raise ValueError("multi-Tavily member paths must be unique")
         return self
 
 
@@ -1838,6 +2066,38 @@ class ExecutionSourceManifest(StrictModel):
         return self
 
 
+class MultiTavilyExecutionSourceManifest(StrictModel):
+    """Core-only manifest for up to 800 successfully extracted Tavily URLs."""
+
+    schema_id = "briefloop.multi_tavily_execution_source_manifest.v1"
+
+    schema_version: Literal[
+        "briefloop.multi_tavily_execution_source_manifest.v1"
+    ]
+    capacity_profile: Literal["multi_tavily_v2"]
+    members: list[ExecutionSourceManifestMember] = Field(
+        min_length=1, max_length=800
+    )
+
+    @model_validator(mode="after")
+    def members_are_tavily_ordered_and_unique(
+        self,
+    ) -> "MultiTavilyExecutionSourceManifest":
+        source_ids = [member.source_id for member in self.members]
+        input_paths = [member.input_path for member in self.members]
+        if source_ids != sorted(set(source_ids)):
+            raise ValueError("multi-Tavily members must be sorted and unique")
+        if len(input_paths) != len(set(input_paths)):
+            raise ValueError("multi-Tavily input paths must be unique")
+        if any(
+            member.provider != "tavily"
+            or member.acquisition_method != "provider_extract"
+            for member in self.members
+        ):
+            raise ValueError("multi-Tavily manifest contains a non-Tavily member")
+        return self
+
+
 class RunExecutionAuthorizationInput(StrictModel):
     """Strict bootstrap input; Core turns it into the sole durable authority."""
 
@@ -1961,11 +2221,11 @@ class RunSourceDiscoveryAuthorization(StrictModel):
 
 
 class RunSourceAcquisitionAttemptAuthorization(StrictModel):
-    """Receipt-owned permission for one Search then one bounded batch Extract."""
+    """Receipt-owned ceiling for one frozen multi-task Tavily acquisition."""
 
-    schema_id = "briefloop.run_source_acquisition_attempt_authorization.v1"
+    schema_id = "briefloop.run_source_acquisition_attempt_authorization.v2"
 
-    schema_version: Literal["briefloop.run_source_acquisition_attempt_authorization.v1"]
+    schema_version: Literal["briefloop.run_source_acquisition_attempt_authorization.v2"]
     attempt_authorization_id: ContractId
     attempt_ordinal: PositiveInt
     run_id: ContractId
@@ -1978,11 +2238,13 @@ class RunSourceAcquisitionAttemptAuthorization(StrictModel):
     provider_request_fingerprint: Sha256
     provider_id: Literal["tavily"]
     route_id: Literal["web-search"]
-    max_provider_calls: Literal[2]
-    max_search_calls: Literal[1]
-    max_extract_calls: Literal[1]
-    max_extract_urls: Literal[5]
-    provider_call_sequence: Literal["search_then_batch_extract"]
+    max_provider_calls: Annotated[int, Field(ge=4, le=80)]
+    max_search_calls: Annotated[int, Field(ge=2, le=40)]
+    max_extract_calls: Annotated[int, Field(ge=2, le=40)]
+    max_extract_urls: Annotated[int, Field(ge=40, le=800)]
+    provider_call_sequence: Literal[
+        "primary_search_extract_then_conditional_backfill_search_extract"
+    ]
     provider_cost_status: Literal["not_reported_acknowledged"]
     previous_attempt_authorization_id: ContractId | None = None
     human_request_id: ContractId
@@ -1997,6 +2259,12 @@ class RunSourceAcquisitionAttemptAuthorization(StrictModel):
             self.previous_attempt_authorization_id is None
         ):
             raise ValueError("attempt predecessor does not match ordinal")
+        if (
+            self.max_provider_calls
+            != self.max_search_calls + self.max_extract_calls
+            or self.max_extract_calls != (self.max_extract_urls + 19) // 20
+        ):
+            raise ValueError("attempt call ceilings are inconsistent")
         return self
 
 
@@ -2195,7 +2463,7 @@ class RuntimeWebSearchRequestSpec(StrictModel):
 
 
 class RuntimeWebSearchAcquisitionSpec(StrictModel):
-    """Executable external-web plan without credentials or mutable config."""
+    """Generic external-web plan; its Tavily variant is historical read-only."""
 
     schema_id = "briefloop.runtime_web_search_acquisition_spec.v2"
 
@@ -2213,6 +2481,137 @@ class RuntimeWebSearchAcquisitionSpec(StrictModel):
         )
         if self.acquisition_spec_fingerprint != expected:
             raise ValueError("web acquisition fingerprint mismatch")
+        return self
+
+
+class RuntimeWebSearchBackfillSpecV1(StrictModel):
+    """One deterministic fallback request for an under-covered primary task."""
+
+    enabled: Literal[True]
+    query: CleanText
+    domains: list[CleanText]
+    max_results: Literal[20]
+    recency_days: Literal[30]
+    search_depth: Literal["advanced"]
+
+    @model_validator(mode="after")
+    def canonical_domains(self) -> "RuntimeWebSearchBackfillSpecV1":
+        if self.domains != sorted(set(self.domains)) or any(
+            item != item.lower() for item in self.domains
+        ):
+            raise ValueError("backfill domains must be lowercase, sorted and unique")
+        return self
+
+
+class RuntimeWebSearchTaskSpecV3(StrictModel):
+    """One frozen atomic discovery cell in the Solar Stock product plan."""
+
+    schema_id = "briefloop.runtime_web_search_task_spec.v3"
+
+    schema_version: Literal["briefloop.runtime_web_search_task_spec.v3"]
+    task_id: ContractId
+    task_category: Literal[
+        "listed_company",
+        "event_entity",
+        "industry_prices",
+        "us_policy",
+        "china_policy",
+        "capital_markets",
+        "general",
+    ]
+    entity_id: CleanText | None = None
+    query: CleanText
+    topic: Literal["news", "general"]
+    domains: list[CleanText]
+    max_results: Literal[20]
+    recency_days: Literal[7]
+    search_depth: Literal["advanced"]
+    minimum_extract_successes: Annotated[int, Field(ge=1, le=20)]
+    backfill: RuntimeWebSearchBackfillSpecV1
+
+    @model_validator(mode="after")
+    def atomic_task_shape(self) -> "RuntimeWebSearchTaskSpecV3":
+        if self.domains != sorted(set(self.domains)) or any(
+            item != item.lower() for item in self.domains
+        ):
+            raise ValueError("task domains must be lowercase, sorted and unique")
+        company_task = self.task_category in {"listed_company", "event_entity"}
+        if company_task != (self.entity_id is not None):
+            raise ValueError("entity identity does not match task category")
+        return self
+
+
+class RuntimeWebSearchAcquisitionSpecV3(StrictModel):
+    """Multi-task, coverage-first Tavily acquisition plan."""
+
+    schema_id = "briefloop.runtime_web_search_acquisition_spec.v3"
+
+    schema_version: Literal["briefloop.runtime_web_search_acquisition_spec.v3"]
+    kind: Literal["web_search_multi"]
+    provider_id: Literal["tavily"]
+    tasks: list[RuntimeWebSearchTaskSpecV3] = Field(min_length=1, max_length=20)
+    max_primary_search_calls: Annotated[int, Field(ge=1, le=20)]
+    max_backfill_search_calls: Annotated[int, Field(ge=1, le=20)]
+    max_extract_calls: Annotated[int, Field(ge=1, le=40)]
+    max_unique_urls: Annotated[int, Field(ge=40, le=800)]
+    extract_batch_size: Literal[20]
+    acquisition_spec_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def canonical_spec(self) -> "RuntimeWebSearchAcquisitionSpecV3":
+        if [item.task_id for item in self.tasks] != sorted(
+            {item.task_id for item in self.tasks}
+        ):
+            raise ValueError("multi-search tasks must be sorted and unique")
+        expected_urls = min(800, len(self.tasks) * 40)
+        if (
+            self.max_primary_search_calls != len(self.tasks)
+            or self.max_backfill_search_calls != len(self.tasks)
+            or self.max_unique_urls != expected_urls
+            or self.max_extract_calls != (expected_urls + 19) // 20
+        ):
+            raise ValueError("multi-search limits do not match the task matrix")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude_unset=False),
+            field="acquisition_spec_fingerprint",
+        )
+        if self.acquisition_spec_fingerprint != expected:
+            raise ValueError("multi-search acquisition fingerprint mismatch")
+        return self
+
+
+class RuntimeSourceSearchPlanV2(StrictModel):
+    """Append-only identity for the exact atomic search plan actually executed."""
+
+    schema_id = "briefloop.runtime_source_search_plan.v2"
+
+    schema_version: Literal["briefloop.runtime_source_search_plan.v2"]
+    search_plan_id: ContractId
+    run_id: ContractId
+    plan_revision: PositiveInt
+    report_type: CleanText
+    acquisition_spec: RuntimeWebSearchAcquisitionSpecV3
+    task_count: Annotated[int, Field(ge=1, le=20)]
+    acquisition_spec_fingerprint: Sha256
+    record_event_id: ContractId
+    accepted_transaction_id: ContractId
+    created_at: IsoDateTime
+    plan_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def search_plan_identity_is_exact(self) -> "RuntimeSourceSearchPlanV2":
+        if (
+            self.task_count != len(self.acquisition_spec.tasks)
+            or self.acquisition_spec_fingerprint
+            != self.acquisition_spec.acquisition_spec_fingerprint
+        ):
+            raise ValueError("runtime source search plan spec identity mismatch")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"plan_fingerprint"}),
+            field="plan_fingerprint",
+        )
+        if self.plan_fingerprint != expected:
+            raise ValueError("runtime source search plan fingerprint mismatch")
         return self
 
 
@@ -2284,6 +2683,7 @@ class RuntimeNewsApiAcquisitionSpec(StrictModel):
 RuntimeSourceAcquisitionSpec = Annotated[
     Union[
         RuntimeWebSearchAcquisitionSpec,
+        RuntimeWebSearchAcquisitionSpecV3,
         RuntimeCachedPackageAcquisitionSpec,
         RuntimeNewsApiAcquisitionSpec,
     ],
@@ -2376,7 +2776,8 @@ class RuntimeSourceRouteBinding(StrictModel):
         if self.acquisition_spec is not None:
             if self.route_kind == "external_api" and self.route_id == "web-search":
                 if (
-                    self.acquisition_spec.kind != "web_search"
+                    self.acquisition_spec.kind
+                    not in {"web_search", "web_search_multi"}
                     or self.acquisition_spec.provider_id != self.provider_id
                 ):
                     raise ValueError("source route acquisition spec mismatch")
@@ -5931,6 +6332,27 @@ SourcePackCommitRequest.minimal_example = {
     "expected_store_revision": 1,
 }
 SourcePackCommitRequest.full_example = deepcopy(SourcePackCommitRequest.minimal_example)
+MultiTavilySourcePackCommitRequest.minimal_example = {
+    "schema_version": MultiTavilySourcePackCommitRequest.schema_id,
+    "capacity_profile": "multi_tavily_v2",
+    "request_id": "REQ-MULTI-TAVILY-PACK-001",
+    "run_id": "RUN-001",
+    "invocation_id": "INV-SOURCE-001",
+    "members": [
+        {
+            "member_id": "SRC-MEMBER-0001",
+            "proposal_path": "scratch/INV-SOURCE-001/sources/SRC-MEMBER-0001/source_proposal.json",
+            "content_path": "scratch/INV-SOURCE-001/sources/SRC-MEMBER-0001/source_content.txt",
+            "raw_payload_path": "scratch/INV-SOURCE-001/sources/SRC-MEMBER-0001/source_raw.json",
+        }
+    ],
+    "manifest_path": "scratch/INV-SOURCE-001/source_manifest.json",
+    "expected_manifest_sha256": _SHA_A,
+    "expected_store_revision": 1,
+}
+MultiTavilySourcePackCommitRequest.full_example = deepcopy(
+    MultiTavilySourcePackCommitRequest.minimal_example
+)
 
 _CANDIDATE = {
     "candidate_id": "CAND-001",
@@ -6334,6 +6756,26 @@ _EXECUTION_SOURCE_MANIFEST = {
 }
 ExecutionSourceManifest.minimal_example = deepcopy(_EXECUTION_SOURCE_MANIFEST)
 ExecutionSourceManifest.full_example = deepcopy(_EXECUTION_SOURCE_MANIFEST)
+_MULTI_TAVILY_EXECUTION_SOURCE_MEMBER = {
+    **deepcopy(_EXECUTION_SOURCE_MEMBER),
+    "origin_type": "provider_response",
+    "acquisition_method": "provider_extract",
+    "provider": "tavily",
+    "locator": {"kind": "web", "url": "https://example.com/report"},
+    "retrieval_source_type": "paper_page",
+    "raw_underlying_evidence_type": "provider-extracted-document",
+}
+_MULTI_TAVILY_EXECUTION_SOURCE_MANIFEST = {
+    "schema_version": MultiTavilyExecutionSourceManifest.schema_id,
+    "capacity_profile": "multi_tavily_v2",
+    "members": [deepcopy(_MULTI_TAVILY_EXECUTION_SOURCE_MEMBER)],
+}
+MultiTavilyExecutionSourceManifest.minimal_example = deepcopy(
+    _MULTI_TAVILY_EXECUTION_SOURCE_MANIFEST
+)
+MultiTavilyExecutionSourceManifest.full_example = deepcopy(
+    _MULTI_TAVILY_EXECUTION_SOURCE_MANIFEST
+)
 _EXECUTION_SOURCE_MANIFEST_SHA = hashlib.sha256(
     json.dumps(
         _EXECUTION_SOURCE_MANIFEST,
@@ -6458,11 +6900,13 @@ RunSourceAcquisitionAttemptAuthorization.minimal_example = {
     "provider_request_fingerprint": _SHA_A,
     "provider_id": "tavily",
     "route_id": "web-search",
-    "max_provider_calls": 2,
-    "max_search_calls": 1,
-    "max_extract_calls": 1,
-    "max_extract_urls": 5,
-    "provider_call_sequence": "search_then_batch_extract",
+    "max_provider_calls": 4,
+    "max_search_calls": 2,
+    "max_extract_calls": 2,
+    "max_extract_urls": 40,
+    "provider_call_sequence": (
+        "primary_search_extract_then_conditional_backfill_search_extract"
+    ),
     "provider_cost_status": "not_reported_acknowledged",
     "previous_attempt_authorization_id": None,
     "human_request_id": "REQ-INIT-001",
@@ -6511,6 +6955,101 @@ _TAVILY_ACQUISITION_BUNDLE_EXAMPLE = {
 }
 TavilyAcquisitionBundle.minimal_example = deepcopy(_TAVILY_ACQUISITION_BUNDLE_EXAMPLE)
 TavilyAcquisitionBundle.full_example = deepcopy(_TAVILY_ACQUISITION_BUNDLE_EXAMPLE)
+_TAVILY_MULTI_SEARCH_REQUEST_EXAMPLE = b'{"auto_parameters":false,"include_answer":false,"include_raw_content":false,"max_results":20,"query":"ExampleCo catalyst","search_depth":"advanced","time_range":"week","topic":"news"}'
+_TAVILY_MULTI_SEARCH_EXCHANGE_EXAMPLE = {
+    "operation": "search",
+    "endpoint": "/search",
+    "request_body_base64": base64.b64encode(
+        _TAVILY_MULTI_SEARCH_REQUEST_EXAMPLE
+    ).decode("ascii"),
+    "request_body_sha256": hashlib.sha256(
+        _TAVILY_MULTI_SEARCH_REQUEST_EXAMPLE
+    ).hexdigest(),
+    "request_body_size_bytes": len(_TAVILY_MULTI_SEARCH_REQUEST_EXAMPLE),
+    "response_body_base64": None,
+    "response_body_sha256": None,
+    "response_body_size_bytes": None,
+    "status_code": None,
+    "transport_error_class": "timeout",
+}
+TavilySearchTaskExchange.minimal_example = {
+    "task_id": "solar-stock-task-01",
+    "phase": "primary",
+    "status": "unavailable",
+    "exchange": deepcopy(_TAVILY_MULTI_SEARCH_EXCHANGE_EXAMPLE),
+    "discovered_urls": [],
+}
+TavilySearchTaskExchange.full_example = deepcopy(
+    TavilySearchTaskExchange.minimal_example
+)
+TavilyExtractBatchExchange.minimal_example = {
+    "phase": "primary",
+    "batch_ordinal": 1,
+    "status": "unavailable",
+    "exchange": {
+        **deepcopy(_TAVILY_MULTI_SEARCH_EXCHANGE_EXAMPLE),
+        "operation": "extract",
+        "endpoint": "/extract",
+    },
+    "urls": ["https://example.com/report"],
+    "outcomes": [],
+}
+TavilyExtractBatchExchange.full_example = deepcopy(
+    TavilyExtractBatchExchange.minimal_example
+)
+TavilyTaskAcquisitionStatus.minimal_example = {
+    "task_id": "solar-stock-task-01",
+    "primary_search_ordinal": 1,
+    "backfill_search_ordinal": None,
+    "discovered_unique_url_count": 0,
+    "extracted_success_count": 0,
+    "minimum_extract_successes": 2,
+    "status": "search_unavailable",
+}
+TavilyTaskAcquisitionStatus.full_example = deepcopy(
+    TavilyTaskAcquisitionStatus.minimal_example
+)
+TavilyAcquisitionBundleV2.minimal_example = {
+    "schema_version": TavilyAcquisitionBundleV2.schema_id,
+    "provider_id": "tavily",
+    "status": "failed",
+    "searches": [deepcopy(TavilySearchTaskExchange.minimal_example)],
+    "extract_batches": [],
+    "unique_urls": [],
+    "task_statuses": [deepcopy(TavilyTaskAcquisitionStatus.minimal_example)],
+}
+TavilyAcquisitionBundleV2.full_example = deepcopy(
+    TavilyAcquisitionBundleV2.minimal_example
+)
+_TAVILY_ACQUISITION_BUNDLE_RECORD_V2 = {
+    "schema_version": TavilyAcquisitionBundleRecordV2.schema_id,
+    "bundle_record_id": "TAVILY-BUNDLE-RECORD-001",
+    "run_id": _RUN,
+    "attempt_authorization_id": "ATTEMPT-AUTH-001",
+    "provider_response_artifact_id": "ARTIFACT-PROVIDER-RESPONSE-001",
+    "provider_response_sha256": _SHA_A,
+    "bundle_status": "failed",
+    "search_count": 1,
+    "extract_batch_count": 0,
+    "unique_url_count": 0,
+    "durable_content_count": 0,
+    "record_event_id": "EVT-TAVILY-BUNDLE-001",
+    "accepted_transaction_id": "TXN-TAVILY-BUNDLE-001",
+    "recorded_at": _NOW,
+    "record_fingerprint": "0" * 64,
+}
+_TAVILY_ACQUISITION_BUNDLE_RECORD_V2["record_fingerprint"] = (
+    _contract_fingerprint(
+        _TAVILY_ACQUISITION_BUNDLE_RECORD_V2,
+        field="record_fingerprint",
+    )
+)
+TavilyAcquisitionBundleRecordV2.minimal_example = deepcopy(
+    _TAVILY_ACQUISITION_BUNDLE_RECORD_V2
+)
+TavilyAcquisitionBundleRecordV2.full_example = deepcopy(
+    _TAVILY_ACQUISITION_BUNDLE_RECORD_V2
+)
 SourceAcquisitionAttemptAuthorizeRequest.minimal_example = {
     "schema_version": SourceAcquisitionAttemptAuthorizeRequest.schema_id,
     "request_id": "REQ-ATTEMPT-002",
@@ -6592,7 +7131,7 @@ _WEB_REQUEST_SPEC = {
     "schema_version": RuntimeWebSearchRequestSpec.schema_id,
     "query": "ExampleCo operations",
     "domains": ["example.com"],
-    "max_results": 5,
+    "max_results": 20,
     "recency_days": 7,
 }
 RuntimeWebSearchRequestSpec.minimal_example = deepcopy(_WEB_REQUEST_SPEC)
@@ -6601,7 +7140,7 @@ RuntimeWebSearchRequestSpec.full_example = deepcopy(_WEB_REQUEST_SPEC)
 _WEB_ACQUISITION_SPEC = {
     "schema_version": RuntimeWebSearchAcquisitionSpec.schema_id,
     "kind": "web_search",
-    "provider_id": "tavily",
+    "provider_id": "exa",
     "requests": [deepcopy(_WEB_REQUEST_SPEC)],
     "acquisition_spec_fingerprint": "0" * 64,
 }
@@ -6611,6 +7150,85 @@ _WEB_ACQUISITION_SPEC["acquisition_spec_fingerprint"] = _contract_fingerprint(
 )
 RuntimeWebSearchAcquisitionSpec.minimal_example = deepcopy(_WEB_ACQUISITION_SPEC)
 RuntimeWebSearchAcquisitionSpec.full_example = deepcopy(_WEB_ACQUISITION_SPEC)
+
+_WEB_BACKFILL_SPEC_V1 = {
+    "enabled": True,
+    "query": "ExampleCo official filing investor relations",
+    "domains": ["example.com"],
+    "max_results": 20,
+    "recency_days": 30,
+    "search_depth": "advanced",
+}
+RuntimeWebSearchBackfillSpecV1.minimal_example = deepcopy(_WEB_BACKFILL_SPEC_V1)
+RuntimeWebSearchBackfillSpecV1.full_example = deepcopy(_WEB_BACKFILL_SPEC_V1)
+_WEB_TASK_SPEC_V3 = {
+    "schema_version": RuntimeWebSearchTaskSpecV3.schema_id,
+    "task_id": "solar-stock-task-01",
+    "task_category": "listed_company",
+    "entity_id": "EXMPL",
+    "query": "ExampleCo catalyst",
+    "topic": "news",
+    "domains": [],
+    "max_results": 20,
+    "recency_days": 7,
+    "search_depth": "advanced",
+    "minimum_extract_successes": 2,
+    "backfill": deepcopy(_WEB_BACKFILL_SPEC_V1),
+}
+RuntimeWebSearchTaskSpecV3.minimal_example = deepcopy(_WEB_TASK_SPEC_V3)
+RuntimeWebSearchTaskSpecV3.full_example = deepcopy(_WEB_TASK_SPEC_V3)
+_WEB_MULTI_TASKS_V3 = [
+    {
+        **deepcopy(_WEB_TASK_SPEC_V3),
+        "task_id": f"solar-stock-task-{position:02d}",
+        "query": f"ExampleCo catalyst {position:02d}",
+    }
+    for position in range(1, 21)
+]
+_WEB_ACQUISITION_SPEC_V3 = {
+    "schema_version": RuntimeWebSearchAcquisitionSpecV3.schema_id,
+    "kind": "web_search_multi",
+    "provider_id": "tavily",
+    "tasks": _WEB_MULTI_TASKS_V3,
+    "max_primary_search_calls": 20,
+    "max_backfill_search_calls": 20,
+    "max_extract_calls": 40,
+    "max_unique_urls": 800,
+    "extract_batch_size": 20,
+    "acquisition_spec_fingerprint": "0" * 64,
+}
+_WEB_ACQUISITION_SPEC_V3["acquisition_spec_fingerprint"] = _contract_fingerprint(
+    _WEB_ACQUISITION_SPEC_V3,
+    field="acquisition_spec_fingerprint",
+)
+RuntimeWebSearchAcquisitionSpecV3.minimal_example = deepcopy(
+    _WEB_ACQUISITION_SPEC_V3
+)
+RuntimeWebSearchAcquisitionSpecV3.full_example = deepcopy(_WEB_ACQUISITION_SPEC_V3)
+_RUNTIME_SOURCE_SEARCH_PLAN_V2 = {
+    "schema_version": RuntimeSourceSearchPlanV2.schema_id,
+    "search_plan_id": "SOURCE-SEARCH-PLAN-001",
+    "run_id": _RUN,
+    "plan_revision": 1,
+    "report_type": "solar_stock_periodic",
+    "acquisition_spec": deepcopy(_WEB_ACQUISITION_SPEC_V3),
+    "task_count": 20,
+    "acquisition_spec_fingerprint": _WEB_ACQUISITION_SPEC_V3[
+        "acquisition_spec_fingerprint"
+    ],
+    "record_event_id": "EVT-SOURCE-SEARCH-PLAN-001",
+    "accepted_transaction_id": "TXN-SOURCE-SEARCH-PLAN-001",
+    "created_at": _NOW,
+    "plan_fingerprint": "0" * 64,
+}
+_RUNTIME_SOURCE_SEARCH_PLAN_V2["plan_fingerprint"] = _contract_fingerprint(
+    _RUNTIME_SOURCE_SEARCH_PLAN_V2,
+    field="plan_fingerprint",
+)
+RuntimeSourceSearchPlanV2.minimal_example = deepcopy(
+    _RUNTIME_SOURCE_SEARCH_PLAN_V2
+)
+RuntimeSourceSearchPlanV2.full_example = deepcopy(_RUNTIME_SOURCE_SEARCH_PLAN_V2)
 
 _CACHED_ACQUISITION_SPEC = {
     "schema_version": RuntimeCachedPackageAcquisitionSpec.schema_id,
@@ -8134,6 +8752,7 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     SourceProposal,
     SourceCommitRequest,
     SourcePackCommitRequest,
+    MultiTavilySourcePackCommitRequest,
     CandidateClaimsProposal,
     ScreenedCandidatesProposal,
     ClaimDraftsProposal,
@@ -8155,6 +8774,7 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     TransactionReceipt,
     RunDirection,
     ExecutionSourceManifest,
+    MultiTavilyExecutionSourceManifest,
     RunExecutionAuthorizationInput,
     RunExecutionAuthorizationBootstrap,
     RunExecutionAuthorization,
@@ -8163,11 +8783,16 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     RunSourceDiscoveryAuthorization,
     RunSourceAcquisitionAttemptAuthorization,
     TavilyAcquisitionBundle,
+    TavilyAcquisitionBundleV2,
+    TavilyAcquisitionBundleRecordV2,
     SourceAcquisitionAttemptAuthorizeRequest,
     WorkspaceControlStoreBootstrapV2,
     RuntimeAdapterBinding,
     RuntimeWebSearchRequestSpec,
     RuntimeWebSearchAcquisitionSpec,
+    RuntimeWebSearchTaskSpecV3,
+    RuntimeWebSearchAcquisitionSpecV3,
+    RuntimeSourceSearchPlanV2,
     RuntimeCachedPackageAcquisitionSpec,
     RuntimeNewsApiAcquisitionSpec,
     RuntimeSourceRouteBinding,
@@ -8393,6 +9018,8 @@ __all__ = [
     "CoreRunNextAction",
     "ExecutionSourceManifest",
     "ExecutionSourceManifestMember",
+    "MultiTavilyExecutionSourceManifest",
+    "MultiTavilySourcePackCommitRequest",
     "Delivery",
     "DeliveryAttemptRecord",
     "DeliveryAttemptReference",
@@ -8488,6 +9115,11 @@ __all__ = [
     "TavilyAcquisitionExchange",
     "TavilyExtractUrlOutcome",
     "TavilyAcquisitionBundle",
+    "TavilySearchTaskExchange",
+    "TavilyExtractBatchExchange",
+    "TavilyTaskAcquisitionStatus",
+    "TavilyAcquisitionBundleV2",
+    "TavilyAcquisitionBundleRecordV2",
     "SourceAcquisitionAttemptAuthorizeRequest",
     "RunSourceDiscoveryAuthorizationBootstrap",
     "RunSourceDiscoveryAuthorizationInput",
@@ -8500,8 +9132,12 @@ __all__ = [
     "RUNTIME_SOURCE_ROUTE_IDS",
     "RUNTIME_SOURCE_WEB_PROVIDER_IDS",
     "RuntimeSourcePlanBinding",
+    "RuntimeSourceSearchPlanV2",
     "RuntimeSourceRouteBinding",
     "RuntimeWebSearchAcquisitionSpec",
+    "RuntimeWebSearchBackfillSpecV1",
+    "RuntimeWebSearchTaskSpecV3",
+    "RuntimeWebSearchAcquisitionSpecV3",
     "RuntimeWebSearchRequestSpec",
     "RunIdentity",
     "RunIntegrityRecord",

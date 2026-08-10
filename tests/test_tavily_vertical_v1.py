@@ -25,9 +25,9 @@ def test_runtime_references_are_byte_identical_and_truthful() -> None:
     assert payloads[0] == payloads[1] == payloads[2]
     text = payloads[0].decode("utf-8")
     assert "RunSourceDiscoveryAuthorization" in text
-    assert (
-        "one exact Human-confirmed Tavily Search followed by one batch Extract" in text
-    )
+    assert "frozen atomic task matrix" in text
+    assert "20 advanced Search results" in text
+    assert "deterministic 30-day backfill" in text
     assert "Search snippets are" in text
     assert "never source-pack members or claims-eligible" in text
     assert "successful Extract content is claims-eligible" in text

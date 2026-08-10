@@ -31,8 +31,11 @@ from multi_agent_brief.contracts.v2 import (
     IntegrityCheckRequest,
     SourceCommitRequest,
     SourceProposal,
-    TavilyAcquisitionBundle,
+    TavilyAcquisitionBundleV2,
+    TavilyExtractBatchExchange,
     TavilyExtractUrlOutcome,
+    TavilySearchTaskExchange,
+    TavilyTaskAcquisitionStatus,
 )
 from multi_agent_brief.control_store import (
     ControlStoreIntegrityError,
@@ -75,8 +78,8 @@ from multi_agent_brief.runtime_host_v2.submission import (
 )
 from multi_agent_brief.sources.base import SourceItem
 from multi_agent_brief.sources.search_backends.tavily import (
-    TAVILY_ACQUISITION_BUNDLE_BYTE_CAP,
-    TAVILY_RESPONSE_BYTE_BUDGET,
+    TAVILY_MULTI_ACQUISITION_BUNDLE_BYTE_CAP,
+    TAVILY_MULTI_EXCHANGE_RESPONSE_BYTE_CAP,
     TavilyBackend,
 )
 from multi_agent_brief.sources.tavily_acquisition import (
@@ -694,9 +697,9 @@ def _tavily_collection(
     ]
     search_payload: dict[str, object] = {
         "query": query,
-        "max_results": 5,
+        "max_results": 20,
         "topic": "news",
-        "search_depth": "basic",
+        "search_depth": "advanced",
         "include_answer": False,
         "include_raw_content": False,
         "auto_parameters": False,
@@ -704,32 +707,59 @@ def _tavily_collection(
     }
     if domains:
         search_payload["include_domains"] = list(domains)
-    search_request = canonical_json_bytes(search_payload)
-    search_response = canonical_json_bytes({"results": search_rows})
     search_exchange = TavilyBackend._exchange(
         "search",
-        search_request,
-        response_body=search_response,
+        canonical_json_bytes(search_payload),
+        response_body=canonical_json_bytes({"results": search_rows}),
         status_code=200,
     )
+    task_id = "source-search-001"
+    search_record = TavilySearchTaskExchange.model_validate(
+        {
+            "task_id": task_id,
+            "phase": "primary",
+            "status": "succeeded" if items else "empty",
+            "exchange": search_exchange.model_dump(mode="json"),
+            "discovered_urls": sorted({item.url for item in items}),
+        },
+        strict=True,
+    )
     if not items:
-        envelope = TavilyBackend._bundle_response(
-            "search_results_empty",
-            search_exchange,
+        task_status = TavilyTaskAcquisitionStatus.model_validate(
+            {
+                "task_id": task_id,
+                "primary_search_ordinal": 1,
+                "discovered_unique_url_count": 0,
+                "extracted_success_count": 0,
+                "minimum_extract_successes": 1,
+                "status": "coverage_insufficient",
+            },
+            strict=True,
+        )
+        bundle = TavilyAcquisitionBundleV2.model_validate(
+            {
+                "schema_version": TavilyAcquisitionBundleV2.schema_id,
+                "provider_id": "tavily",
+                "status": "failed",
+                "searches": [search_record.model_dump(mode="json")],
+                "extract_batches": [],
+                "unique_urls": [],
+                "task_statuses": [task_status.model_dump(mode="json")],
+            },
+            strict=True,
         )
         return WebSearchCollection(
             items=(),
-            raw_response=envelope.raw_response,
-            status_code=envelope.status_code,
+            raw_response=canonical_json_bytes(bundle.model_dump(mode="json")),
+            status_code=200,
         )
 
     extract_urls = sorted({item.url for item in items})
     extract_request = canonical_json_bytes(
         {
             "urls": extract_urls,
-            "query": query,
             "chunks_per_source": 5,
-            "extract_depth": "basic",
+            "extract_depth": "advanced",
             "include_images": False,
             "include_favicon": False,
             "format": "markdown",
@@ -746,13 +776,12 @@ def _tavily_collection(
         for item in items
         if item.metadata.get("has_raw_content") is not True
     ]
-    extract_response = canonical_json_bytes(
-        {"results": successes, "failed_results": failures}
-    )
     extract_exchange = TavilyBackend._exchange(
         "extract",
         extract_request,
-        response_body=extract_response,
+        response_body=canonical_json_bytes(
+            {"results": successes, "failed_results": failures}
+        ),
         status_code=200,
     )
     outcomes: list[TavilyExtractUrlOutcome] = []
@@ -774,7 +803,48 @@ def _tavily_collection(
                 }
             )
         outcomes.append(TavilyExtractUrlOutcome.model_validate(payload, strict=True))
-
+    batch_status = (
+        "all_failed"
+        if not successes
+        else "succeeded"
+        if len(successes) == len(extract_urls)
+        else "partial"
+    )
+    extract_batch = TavilyExtractBatchExchange.model_validate(
+        {
+            "phase": "primary",
+            "batch_ordinal": 1,
+            "status": batch_status,
+            "exchange": extract_exchange.model_dump(mode="json"),
+            "urls": extract_urls,
+            "outcomes": [item.model_dump(mode="json") for item in outcomes],
+        },
+        strict=True,
+    )
+    covered = bool(successes)
+    task_status = TavilyTaskAcquisitionStatus.model_validate(
+        {
+            "task_id": task_id,
+            "primary_search_ordinal": 1,
+            "discovered_unique_url_count": len(extract_urls),
+            "extracted_success_count": len(successes),
+            "minimum_extract_successes": 1,
+            "status": "covered" if covered else "coverage_insufficient",
+        },
+        strict=True,
+    )
+    bundle = TavilyAcquisitionBundleV2.model_validate(
+        {
+            "schema_version": TavilyAcquisitionBundleV2.schema_id,
+            "provider_id": "tavily",
+            "status": "complete" if covered else "failed",
+            "searches": [search_record.model_dump(mode="json")],
+            "extract_batches": [extract_batch.model_dump(mode="json")],
+            "unique_urls": extract_urls,
+            "task_statuses": [task_status.model_dump(mode="json")],
+        },
+        strict=True,
+    )
     search_by_url = {row["url"]: row for row in search_rows}
     extract_by_url = {row["url"]: row for row in successes}
     normalized = [
@@ -783,64 +853,80 @@ def _tavily_collection(
             metadata={
                 **item.metadata,
                 "provider_projection": {
-                    "schema_version": ("briefloop.tavily_extract_source_projection.v1"),
+                    "schema_version": (
+                        "briefloop.tavily_extract_source_projection.v1"
+                    ),
                     "search_result": search_by_url[item.url],
                     "extract_result": extract_by_url[item.url],
+                    "discovery_task_ids": [task_id],
                 },
             },
         )
         for item in items
         if item.metadata.get("has_raw_content") is True
     ]
-    status = (
-        "extract_results_all_failed"
-        if not normalized
-        else "extract_results_succeeded"
-        if len(normalized) == len(extract_urls)
-        else "extract_results_partial"
-    )
-    envelope = TavilyBackend._bundle_response(
-        status,
-        search_exchange,
-        extract=extract_exchange,
-        extract_urls=extract_urls,
-        outcomes=tuple(outcomes),
-    )
     return WebSearchCollection(
         items=tuple(normalized),
-        raw_response=envelope.raw_response,
-        status_code=envelope.status_code,
+        raw_response=canonical_json_bytes(bundle.model_dump(mode="json")),
+        status_code=200,
     )
 
 
 def _tavily_search_invalid_collection() -> WebSearchCollection:
-    search_request = canonical_json_bytes(
-        {
-            "query": "manufacturing",
-            "max_results": 5,
-            "topic": "news",
-            "search_depth": "basic",
-            "include_answer": False,
-            "include_raw_content": False,
-            "auto_parameters": False,
-            "time_range": "week",
-        }
-    )
-    invalid_response = canonical_json_bytes({"results": "not-a-list"})
     search_exchange = TavilyBackend._exchange(
         "search",
-        search_request,
-        response_body=invalid_response,
+        canonical_json_bytes(
+            {
+                "query": "manufacturing",
+                "max_results": 20,
+                "topic": "news",
+                "search_depth": "advanced",
+                "include_answer": False,
+                "include_raw_content": False,
+                "auto_parameters": False,
+                "time_range": "week",
+            }
+        ),
+        response_body=canonical_json_bytes({"results": "not-a-list"}),
         status_code=200,
     )
-    envelope = TavilyBackend._bundle_response(
-        "search_response_invalid",
-        search_exchange,
+    search_record = TavilySearchTaskExchange.model_validate(
+        {
+            "task_id": "source-search-001",
+            "phase": "primary",
+            "status": "invalid",
+            "exchange": search_exchange.model_dump(mode="json"),
+            "discovered_urls": [],
+        },
+        strict=True,
+    )
+    task_status = TavilyTaskAcquisitionStatus.model_validate(
+        {
+            "task_id": "source-search-001",
+            "primary_search_ordinal": 1,
+            "discovered_unique_url_count": 0,
+            "extracted_success_count": 0,
+            "minimum_extract_successes": 1,
+            "status": "search_unavailable",
+        },
+        strict=True,
+    )
+    bundle = TavilyAcquisitionBundleV2.model_validate(
+        {
+            "schema_version": TavilyAcquisitionBundleV2.schema_id,
+            "provider_id": "tavily",
+            "status": "failed",
+            "searches": [search_record.model_dump(mode="json")],
+            "extract_batches": [],
+            "unique_urls": [],
+            "task_statuses": [task_status.model_dump(mode="json")],
+        },
+        strict=True,
     )
     return WebSearchCollection(
         items=(),
-        raw_response=envelope.raw_response,
-        status_code=envelope.status_code,
+        raw_response=canonical_json_bytes(bundle.model_dump(mode="json")),
+        status_code=200,
     )
 
 
@@ -1723,7 +1809,13 @@ def test_discovery_partial_extract_promotes_only_success_and_keeps_failure(
         attempt.max_extract_calls,
         attempt.max_extract_urls,
         attempt.provider_call_sequence,
-    ) == (2, 1, 1, 5, "search_then_batch_extract")
+    ) == (
+        4,
+        2,
+        2,
+        40,
+        "primary_search_extract_then_conditional_backfill_search_extract",
+    )
     assert len(snapshot.run_execution_authorizations) == 1
     assert len(snapshot.sources) == 1
     assert snapshot.sources[0].claims_eligible is True
@@ -1795,22 +1887,7 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
         },
         separators=(",", ":"),
     ).encode("utf-8")
-    empty_extract_response = json.dumps(
-        {
-            "results": [
-                {
-                    "url": "https://example.com/durable",
-                    "raw_content": "",
-                }
-            ],
-            "failed_results": [],
-        },
-        separators=(",", ":"),
-    ).encode("utf-8")
-    remaining_response_budget = TAVILY_RESPONSE_BYTE_BUDGET - len(search_response_bytes)
-    durable_content = "x" * (
-        remaining_response_budget - len(empty_extract_response) - 128
-    )
+    durable_content = "x" * 1000
     extract_response_bytes = json.dumps(
         {
             "results": [
@@ -1823,7 +1900,6 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
         },
         separators=(",", ":"),
     ).encode("utf-8")
-    assert 0 < remaining_response_budget - len(extract_response_bytes) < 256
 
     class _Response:
         status = 200
@@ -1861,29 +1937,25 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
     result = service.apply_current(action)
 
     assert result.status == "committed"
-    assert len(calls) == 2
-    assert calls[0]["include_raw_content"] is False
-    assert calls[0]["include_answer"] is False
-    assert calls[0]["auto_parameters"] is False
-    assert calls[0]["search_depth"] == "basic"
-    assert calls[0]["max_results"] == 5
-    assert calls[0]["time_range"] == "week"
-    assert "days" not in calls[0]
-    assert "api_key" not in calls[0]
-    assert calls[1] == {
+    assert len(calls) == 21
+    assert all(item["include_raw_content"] is False for item in calls[:20])
+    assert all(item["include_answer"] is False for item in calls[:20])
+    assert all(item["auto_parameters"] is False for item in calls[:20])
+    assert all(item["search_depth"] == "advanced" for item in calls[:20])
+    assert all(item["max_results"] == 20 for item in calls[:20])
+    assert all(item["time_range"] == "week" for item in calls[:20])
+    assert all("days" not in item for item in calls[:20])
+    assert all("api_key" not in item for item in calls[:20])
+    assert calls[20] == {
         "urls": ["https://example.com/durable"],
-        "query": "manufacturing",
         "chunks_per_source": 5,
-        "extract_depth": "basic",
+        "extract_depth": "advanced",
         "include_images": False,
         "include_favicon": False,
         "format": "markdown",
         "include_usage": True,
     }
-    assert authorization_headers == [
-        "Bearer tvly-runtime-secret-sentinel",
-        "Bearer tvly-runtime-secret-sentinel",
-    ]
+    assert authorization_headers == ["Bearer tvly-runtime-secret-sentinel"] * 21
     assert "TAVILY_API_KEY" not in os.environ
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         head = store.load_workspace_run_head()
@@ -1924,14 +1996,16 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
     assert source.claims_eligible is True
     assert source.published_at is None
     observation = parse_tavily_acquisition_bundle(provider_bytes)
-    assert len(provider_bytes) <= TAVILY_ACQUISITION_BUNDLE_BYTE_CAP
-    assert observation.bundle.status == "extract_results_succeeded"
+    assert len(provider_bytes) <= TAVILY_MULTI_ACQUISITION_BUNDLE_BYTE_CAP
+    assert observation.bundle.status == "complete"
     assert observation.result_count == observation.durable_content_count == 1
     assert source_content == durable_content.encode("utf-8")
     assert json.loads(raw_projection)["search_result"]["published_date"] == (
         " 2026-07-23"
     )
     assert len(snapshot.run_execution_authorizations) == 1
+    assert len(snapshot.runtime_source_search_plans) == 1
+    assert len(snapshot.tavily_acquisition_bundle_records) == 1
     handoff = service.continue_authorized()
     assert handoff.status == "role_work_required"
     database = (workspace / "briefloop.db").read_bytes()
@@ -1941,7 +2015,7 @@ def test_discovery_workspace_env_reaches_real_tavily_boundary_once(
     replayed = service.continue_authorized()
 
     assert replayed.status == "role_work_required"
-    assert len(calls) == 2
+    assert len(calls) == 21
     assert _revision(workspace) == revision
     assert (workspace / "briefloop.db").read_bytes() == database
     assert b"tvly-runtime-secret-sentinel" not in database
@@ -1983,7 +2057,7 @@ def test_discovery_overbound_provider_response_never_reaches_stage_or_store(
     workspace = _discovery_workspace(tmp_path)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     sentinel = b"overbound-provider-body-must-not-persist"
-    provider_body = sentinel + (b"x" * TAVILY_RESPONSE_BYTE_BUDGET)
+    provider_body = sentinel + (b"x" * TAVILY_MULTI_EXCHANGE_RESPONSE_BYTE_CAP)
     read_limits: list[int] = []
     provider_calls = 0
 
@@ -2018,8 +2092,8 @@ def test_discovery_overbound_provider_response_never_reaches_stage_or_store(
 
     assert result.status == "needs_human"
     assert result.reason_code == "source_acquisition_recovery_decision_required"
-    assert provider_calls == 1
-    assert read_limits == [TAVILY_RESPONSE_BYTE_BUDGET + 1]
+    assert provider_calls == 40
+    assert read_limits == [TAVILY_MULTI_EXCHANGE_RESPONSE_BYTE_CAP + 1] * 40
     assert not source_stage_root(workspace, stage_identity).exists()
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         head = store.load_workspace_run_head()
@@ -2034,12 +2108,16 @@ def test_discovery_overbound_provider_response_never_reaches_stage_or_store(
             evidence.provider_response_artifact.artifact_id,
             evidence.provider_response_artifact.revision,
         )
-    bundle = TavilyAcquisitionBundle.model_validate_json(provider_bytes, strict=True)
-    assert bundle.status == "search_response_unavailable"
-    assert bundle.search.response_body_base64 is None
-    assert len(provider_bytes) <= TAVILY_ACQUISITION_BUNDLE_BYTE_CAP
+    bundle = TavilyAcquisitionBundleV2.model_validate_json(
+        provider_bytes, strict=True
+    )
+    assert bundle.status == "failed"
+    assert all(item.exchange.response_body_base64 is None for item in bundle.searches)
+    assert len(provider_bytes) <= TAVILY_MULTI_ACQUISITION_BUNDLE_BYTE_CAP
     assert snapshot.sources == ()
     assert snapshot.run_execution_authorizations == ()
+    assert len(snapshot.runtime_source_search_plans) == 1
+    assert len(snapshot.tavily_acquisition_bundle_records) == 1
     assert sentinel not in provider_bytes
     assert sentinel not in (workspace / "briefloop.db").read_bytes()
     assert sentinel.decode("ascii") not in caplog.text

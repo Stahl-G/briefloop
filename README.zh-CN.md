@@ -240,7 +240,9 @@ URL 与事件 `opened_at` 元数据。workspace 内的 Codex kit 也会被哈希
 窄范围 Tavily runtime-first 路径仍是 Experimental。凭据会保留在工作区私有
 `.env` 中，直到 Human 显式轮换或移除；凭据存在本身不构成 provider spend
 authority。每个由 Human 单独确认并记录到 Store 的 acquisition attempt 至多
-允许 1 次 Tavily Search，随后对最多 5 个去重 URL 发出 1 次批量 Extract。
+执行冻结的 Tavily 原子任务矩阵：每个任务请求 20 条 advanced Search 结果，全部
+合格唯一 URL 按每批 20 条执行 Batch Extract，覆盖不足的任务可执行一次确定性的
+30 日定向 backfill；Solar Stock Periodic 默认冻结 20 个首轮任务。
 Search 只发现 URL 与摘要；摘要永不具备 claims eligibility。只有 Extract 成功
 返回的非空正文进入 Intake source pack；部分成功只提交成功 URL，同时在一个
 哈希绑定的 acquisition bundle 中保留准确的 request/response bytes 与逐 URL

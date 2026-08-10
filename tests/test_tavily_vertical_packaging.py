@@ -129,29 +129,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             },
             separators=(",", ":"),
         ).encode("utf-8")
-        empty_extract_response = json.dumps(
-            {
-                "results": [
-                    {
-                        "url": "https://openai.com/public-durable",
-                        "raw_content": "",
-                    }
-                ],
-                "failed_results": [
-                    {
-                        "url": "https://openai.com/public-failed",
-                        "error": "unavailable",
-                    }
-                ],
-            },
-            separators=(",", ":"),
-        ).encode("utf-8")
-        remaining_response_budget = (
-            tavily_module.TAVILY_RESPONSE_BYTE_BUDGET - len(search_response_bytes)
-        )
-        durable_content = "x" * (
-            remaining_response_budget - len(empty_extract_response) - 128
-        )
+        durable_content = "x" * 1000
         extract_response_bytes = json.dumps(
             {
                 "results": [
@@ -169,11 +147,6 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             },
             separators=(",", ":"),
         ).encode("utf-8")
-        require(
-            0 < remaining_response_budget - len(extract_response_bytes) < 256,
-            "Extract response is not near the shared response budget",
-        )
-
         class TavilyHandler(BaseHTTPRequestHandler):
             def do_POST(self):
                 length = int(self.headers["Content-Length"])
@@ -255,9 +228,10 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
                 "request_id": "REQ-WHEEL-TAVILY-VERTICAL-001",
                 "payload": {
                     "workspace_target": target_name,
-                    "selections": {
-                        "company": "Wheel ExampleCo",
-                        "industry_or_theme": "grid-scale energy storage",
+                        "selections": {
+                            "company": "Wheel ExampleCo",
+                            "report_type": "management_monthly",
+                            "industry_or_theme": "grid-scale energy storage",
                         "task_objective": (
                             "Prepare a public evidence brief about grid-scale "
                             "energy storage developments."
@@ -371,25 +345,28 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         )
         require(continuation["current_stage"] == "scout", "scout stage mismatch")
         require(
-            [path for path, _body in provider_requests] == ["/search", "/extract"],
+            [path for path, _body in provider_requests]
+            == ["/search"] * 20 + ["/extract"],
             "provider phase count/order mismatch",
         )
-        search_request = provider_requests[0][1]
-        extract_request = provider_requests[1][1]
+        search_requests = [body for _path, body in provider_requests[:20]]
+        extract_request = provider_requests[20][1]
         require(
-            search_request
-            == {
-                "query": "grid-scale energy storage",
-                "max_results": 5,
-                "topic": "news",
-                "search_depth": "basic",
-                "include_answer": False,
-                "include_raw_content": False,
-                "auto_parameters": False,
-                "time_range": "month",
-                "include_domains": ["openai.com"],
-            },
-            "Search request mismatch",
+            len({item["query"] for item in search_requests}) == 20,
+            "atomic Search tasks collapsed",
+        )
+        require(
+            all(
+                item["max_results"] == 20
+                and item["search_depth"] == "advanced"
+                and item["time_range"] == "week"
+                and item["include_answer"] is False
+                and item["include_raw_content"] is False
+                and item["auto_parameters"] is False
+                and item["include_domains"] == ["openai.com"]
+                for item in search_requests
+            ),
+            "Search request bounds mismatch",
         )
         require(
             extract_request
@@ -398,9 +375,8 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
                     "https://openai.com/public-durable",
                     "https://openai.com/public-failed",
                 ],
-                "query": "grid-scale energy storage",
                 "chunks_per_source": 5,
-                "extract_depth": "basic",
+                "extract_depth": "advanced",
                 "include_images": False,
                 "include_favicon": False,
                 "format": "markdown",
@@ -409,8 +385,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             "Extract request mismatch",
         )
         require(
-            provider_authorizations
-            == [f"Bearer {sentinel}", f"Bearer {sentinel}"],
+            provider_authorizations == [f"Bearer {sentinel}"] * 21,
             "provider authorization mismatch",
         )
 
@@ -456,22 +431,27 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         observation = parse_tavily_acquisition_bundle(provider_bytes)
         require(
             len(provider_bytes)
-            <= tavily_module.TAVILY_ACQUISITION_BUNDLE_BYTE_CAP,
+            <= tavily_module.TAVILY_MULTI_ACQUISITION_BUNDLE_BYTE_CAP,
             "canonical acquisition bundle exceeds the stage-safe cap",
         )
         require(
-            observation.bundle.status == "extract_results_partial",
-            "partial Extract status missing",
+            observation.bundle.status == "complete",
+            "multi-task coverage status missing",
         )
         require(observation.result_count == 2, "Search URL count mismatch")
         require(observation.durable_content_count == 1, "durable count mismatch")
         require(
-            base64.b64decode(observation.bundle.search.response_body_base64)
+            base64.b64decode(
+                observation.bundle.searches[0].exchange.response_body_base64
+            )
             == search_response_bytes,
             "exact Search response bytes missing from acquisition bundle",
         )
         require(
-            [item.status for item in observation.bundle.outcomes]
+            [
+                item.status
+                for item in observation.bundle.extract_batches[0].outcomes
+            ]
             == ["succeeded", "provider_failed"],
             "per-URL Extract outcomes missing",
         )
@@ -482,7 +462,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         projection = json.loads(source_projection)
         require(
             projection["schema_version"]
-            == "briefloop.tavily_extract_source_projection.v1",
+            == "briefloop.tavily_extract_source_projection.v2",
             "source projection schema mismatch",
         )
         require(
@@ -519,7 +499,7 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
             replayed["status"] == "role_work_required",
             "committed replay lost role handoff",
         )
-        require(len(provider_requests) == 2, "replay redialed provider")
+        require(len(provider_requests) == 21, "replay redialed provider")
         require(db_path.read_bytes() == db_bytes, "replay changed Store")
 
         secret_bytes = sentinel.encode("utf-8")
@@ -592,11 +572,11 @@ def test_tavily_vertical_real_loopback_source_and_wheel_parity(
         raise AssertionError("child optimization level did not match parent")
     if source_payload["capable"]:
         expected = {
-            "capable": True,
-            "durable_sources": 1,
-            "optimize": sys.flags.optimize,
-            "provider_calls": 2,
-            "provider_phases": ["/search", "/extract"],
+                "capable": True,
+                "durable_sources": 1,
+                "optimize": sys.flags.optimize,
+                "provider_calls": 21,
+                "provider_phases": ["/search"] * 20 + ["/extract"],
             "role": "scout",
             "search_urls": 2,
             "sources": 1,

@@ -54,6 +54,7 @@ from multi_agent_brief.product.template_registry import ReportTemplateRegistry
 SPECIALIZED_REPORT_PACK_POLICY_PROFILES = {
     "evidence_extract": "evidence_extract_default",
     "solar_industry_periodic": "solar_manufacturing_default",
+    "solar_stock_periodic": "solar_stock_default",
 }
 EVIDENCE_EXTRACT_BINARY_EXTENSIONS = {
     ".pdf",
@@ -1217,6 +1218,30 @@ def _create_report_pack_workspace(
     reader_review_direction = (
         pack.report_type == "management_monthly" and language == "en-US"
     )
+    solar_stock_direction = pack.report_type == "solar_stock_periodic"
+    focus_areas = (
+        [
+            "TOYO Solar",
+            "listed solar equities",
+            "earnings and valuation",
+            "orders financing M&A capacity and asset events",
+            "solar input prices",
+            "45X FEOC AD/CVD and anti-involution policy",
+            "company PR and external media sentiment",
+        ]
+        if solar_stock_direction
+        else [pack.display_name, "source-backed claims", "reader-ready brief"]
+    )
+    task_objective = (
+        "Prepare a capital-markets Solar Stock Periodic report with two equity "
+        "comparison tables, event-to-trading-day mapping, policy and input-price "
+        "tracking, sentiment separation, and explicit implications for TOYO."
+        if solar_stock_direction
+        else (
+            f"Prepare a {pack.display_name} using local-first sources and the "
+            "BriefLoop control spine."
+        )
+    )
     profile = InitProfile(
         interface_language=language,
         output_language="en" if reader_review_direction else language,
@@ -1225,14 +1250,15 @@ def _create_report_pack_workspace(
         industry=industry_text,
         industry_text=industry_text,
         brief_title=title,
-        report_type=pack.report_type if reader_review_direction else None,
+        report_type=(
+            pack.report_type
+            if reader_review_direction or solar_stock_direction
+            else None
+        ),
         audience=reader_label,
         audience_profile="management",
-        focus_areas=[pack.display_name, "source-backed claims", "reader-ready brief"],
-        task_objective=(
-            f"Prepare a {pack.display_name} using local-first sources and the "
-            "BriefLoop control spine."
-        ),
+        focus_areas=focus_areas,
+        task_objective=task_objective,
         forbidden_sources=[
             "confidential material not approved for this workspace",
             "private messages",
@@ -1240,6 +1266,7 @@ def _create_report_pack_workspace(
             "material non-public information",
         ],
         cadence=cadence,
+        max_source_age_days=7 if solar_stock_direction else 14,
         selector_max_items=PRODUCT_WORKSPACE_SELECTOR_MAX_ITEMS,
         output_formats=[str(item) for item in outputs],
         source_profile="conservative",
@@ -1247,6 +1274,9 @@ def _create_report_pack_workspace(
         web_search_enabled=True,
         web_search_mode="configure_later",
         search_backend="",
+        optional_seed_pack=(
+            "solar_stock_periodic" if solar_stock_direction else ""
+        ),
     )
     web_search_mode = getattr(args, "web_search_mode", None)
     if web_search_mode:

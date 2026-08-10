@@ -245,14 +245,21 @@ def test_external_source_plan_freezes_executable_non_secret_requests(
         if item.route_id == "web-search"
     )
     spec = route.acquisition_spec
-    assert spec is not None and spec.kind == "web_search"
+    assert spec is not None and spec.kind == "web_search_multi"
     assert spec.provider_id == "tavily"
-    assert [item.query for item in spec.requests] == ["manufacturing"]
-    assert all("ExampleCo" not in item.query for item in spec.requests)
+    assert len(spec.tasks) == 20
+    assert len({item.query for item in spec.tasks}) == 20
     assert all(
-        _LONG_EXTERNAL_TASK_OBJECTIVE not in item.query for item in spec.requests
+        _LONG_EXTERNAL_TASK_OBJECTIVE not in item.query for item in spec.tasks
     )
-    assert all(item.max_results == 5 for item in spec.requests)
+    assert all(item.max_results == 20 for item in spec.tasks)
+    assert all(item.recency_days == 7 for item in spec.tasks)
+    assert all(item.search_depth == "advanced" for item in spec.tasks)
+    assert all(item.backfill.recency_days == 30 for item in spec.tasks)
+    assert spec.max_primary_search_calls == 20
+    assert spec.max_backfill_search_calls == 20
+    assert spec.max_unique_urls == 800
+    assert spec.extract_batch_size == 20
     assert "TAVILY_API_KEY" not in str(spec.model_dump(mode="json"))
     fingerprint = first.verified.source_plan.source_plan_fingerprint
 
@@ -267,143 +274,6 @@ def test_external_source_plan_freezes_executable_non_secret_requests(
     assert reopened_route.acquisition_spec == spec
 
 
-@pytest.mark.parametrize(
-    ("max_source_age_days", "expected_time_range"),
-    [(7, "week"), (30, "month")],
-)
-def test_tavily_query_projection_preserves_transport_window_semantics(
-    tmp_path: Path,
-    max_source_age_days: int,
-    expected_time_range: str | None,
-) -> None:
-    workspace = _external_web_workspace(
-        tmp_path,
-        max_source_age_days=max_source_age_days,
-    )
-    initialized = initialize_or_open_runtime(workspace, adapter_loader=_adapter)
-    route = next(
-        item
-        for item in initialized.verified.source_plan.routes
-        if item.route_id == "web-search"
-    )
-    assert route.acquisition_spec is not None
-    request = route.acquisition_spec.requests[0]
-    assert request.query == "manufacturing"
-    assert "ExampleCo" not in request.query
-    assert _LONG_EXTERNAL_TASK_OBJECTIVE not in request.query
-
-    captured_configs: list[dict[str, object]] = []
-    from tests.test_runtime_host_continue_v2 import _tavily_collection
-
-    provider = WebSearchProvider()
-
-    def _collect_with_response(
-        _query: object,
-        config: dict[str, object],
-    ) -> WebSearchCollection:
-        captured_configs.append(config)
-        return _tavily_collection([])
-
-    provider.collect_with_response = _collect_with_response  # type: ignore[method-assign]
-    assert (
-        collect_frozen_sources(
-            workspace,
-            run_id=initialized.verified.snapshot.run.run_id,
-            invocation_id=f"INV-WINDOW-{max_source_age_days}",
-            route=route,
-            provider_factory=lambda _kind: provider,
-        )
-        == ()
-    )
-    assert len(captured_configs) == 1
-    config = captured_configs[0]
-    assert config["recency_days"] == max_source_age_days
-    assert config["time_range"] == expected_time_range
-    assert config["search_tasks"] == [{"query": "manufacturing", "domains": []}]
-
-
-def test_tavily_route_commits_only_extract_success_and_keeps_partial_failure(
-    tmp_path: Path,
-) -> None:
-    from tests.test_runtime_host_continue_v2 import (
-        _tavily_collection,
-        _tavily_item,
-    )
-
-    workspace = _external_web_workspace(tmp_path)
-    initialized = initialize_or_open_runtime(workspace, adapter_loader=_adapter)
-    route = next(
-        item
-        for item in initialized.verified.source_plan.routes
-        if item.route_id == "web-search"
-    )
-
-    collection = _tavily_collection(
-        [_tavily_item(durable=True), _tavily_item(durable=False)]
-    )
-    provider = WebSearchProvider()
-    provider.collect_with_response = lambda *_args, **_kwargs: collection
-
-    materials = collect_frozen_sources(
-        workspace,
-        run_id=initialized.verified.snapshot.run.run_id,
-        invocation_id="INV-DURABLE-CONTENT",
-        route=route,
-        provider_factory=lambda _kind: provider,
-    )
-
-    assert len(materials) == 1
-    durable = materials[0]
-    assert durable.content == b"durable provider content"
-    assert durable.proposal.origin_type == "provider_response"
-    assert durable.proposal.acquisition_method == "provider_extract"
-    assert durable.proposal.material_kind == "partial_extract"
-    assert evaluate_source_eligibility(
-        durable.proposal,
-        raw_payload_present=True,
-    ) == (True, "eligible_durable_source_content")
-    assert collection.raw_response is not None
-    observation = parse_tavily_acquisition_bundle(collection.raw_response)
-    assert observation.bundle.status == "extract_results_partial"
-    assert [(item.url, item.status) for item in observation.bundle.outcomes] == [
-        ("https://example.com/durable", "succeeded"),
-        ("https://example.com/snippet", "provider_failed"),
-    ]
-
-
-@pytest.mark.parametrize("max_source_age_days", [14, 90])
-def test_tavily_rejects_unsupported_windows_before_provider_effect(
-    tmp_path: Path,
-    max_source_age_days: int,
-) -> None:
-    workspace = _external_web_workspace(
-        tmp_path,
-        max_source_age_days=max_source_age_days,
-    )
-    calls = 0
-
-    def provider_factory(_kind: str) -> WebSearchProvider:
-        nonlocal calls
-        calls += 1
-        return WebSearchProvider()
-
-    with pytest.raises(RuntimeHostError, match="runtime_initialization_input_invalid"):
-        initialized = initialize_or_open_runtime(workspace, adapter_loader=_adapter)
-        route = next(
-            item
-            for item in initialized.verified.source_plan.routes
-            if item.route_id == "web-search"
-        )
-        collect_frozen_sources(
-            workspace,
-            run_id=initialized.verified.snapshot.run.run_id,
-            invocation_id="INV-UNSUPPORTED-WINDOW",
-            route=route,
-            provider_factory=provider_factory,
-        )
-    assert calls == 0
-
-
 def test_tavily_source_plan_uses_direction_and_fixed_bounds(
     tmp_path: Path,
 ) -> None:
@@ -415,13 +285,13 @@ def test_tavily_source_plan_uses_direction_and_fixed_bounds(
         workspace = _external_web_workspace(tmp_path / name)
         path = workspace / "sources.yaml"
         payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-        payload["web_search"]["search_tasks"] = [
-            {"query": "ignored legacy task", "domains": ["ignored.example"]}
-        ]
-        payload["web_search"]["news_source_domains"]["preferred_domains"] = (
+        payload["web_search"]["search_tasks"][0]["domains"] = list(
             preferred_domains
         )
-        payload["web_search"]["max_results"] = 5
+        payload["web_search"]["news_source_domains"]["preferred_domains"] = (
+            list(preferred_domains)
+        )
+        payload["web_search"]["max_results"] = 20
         path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
         initialized = initialize_or_open_runtime(workspace, adapter_loader=_adapter)
         route = next(

@@ -1,3 +1,9 @@
+"""Read-only replay tests for historical Tavily v1 frozen evidence.
+
+Current Tavily producers are covered by ``test_solar_stock_tavily_strategy``
+and must never emit this single-Search/five-URL schema.
+"""
+
 from __future__ import annotations
 
 import base64

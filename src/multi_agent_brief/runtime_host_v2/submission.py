@@ -33,6 +33,8 @@ MAX_SOURCE_MEMBER_BYTES = 16 * 1024 * 1024
 MAX_SOURCE_PACK_BYTES = 256 * 1024 * 1024
 MAX_SOURCE_MANIFEST_BYTES = 4 * 1024 * 1024
 MAX_PROVIDER_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_MULTI_TAVILY_SOURCE_PACK_MEMBERS = 800
+MAX_MULTI_TAVILY_PROVIDER_RESPONSE_BYTES = 256 * 1024 * 1024
 SOURCE_STREAM_CHUNK_BYTES = 1024 * 1024
 _MAX_STAGE_CONTRACT_BYTES = 1024 * 1024
 _STAGE_FORMAT = "briefloop-runtime-source-stage/v1"
@@ -94,17 +96,23 @@ class _StageAttestation(BaseModel):
 
     format: Literal["briefloop-runtime-source-stage/v1"]
     stage_kind: Literal["source_pack", "provider_outcome"]
+    capacity_profile: Literal["standard", "multi_tavily_v2"] = "standard"
     request_fingerprint: str
     manifest_sha256: str | None
     provider_response_sha256: str | None = None
     provider_status_code: int | None = None
     members: tuple[_StageMember, ...] = Field(
         min_length=0,
-        max_length=MAX_SOURCE_PACK_MEMBERS,
+        max_length=MAX_MULTI_TAVILY_SOURCE_PACK_MEMBERS,
     )
 
     @model_validator(mode="after")
     def identities_are_canonical(self) -> "_StageAttestation":
+        if (
+            self.capacity_profile == "standard"
+            and len(self.members) > MAX_SOURCE_PACK_MEMBERS
+        ):
+            raise ValueError("standard stage member count exceeds its envelope")
         member_ids = [item.member_id for item in self.members]
         if member_ids != sorted(set(member_ids)):
             raise ValueError("stage member identities are not canonical")
@@ -617,6 +625,9 @@ def load_source_stage(
     request_fingerprint: str,
     expected_manifest_sha256: str | None,
     expected_stage_kind: Literal["source_pack", "provider_outcome"] = "source_pack",
+    expected_capacity_profile: Literal[
+        "standard", "multi_tavily_v2"
+    ] = "standard",
 ) -> VerifiedSourceStage | None:
     """Reverify an existing inert stage without consulting mutable inputs."""
 
@@ -637,6 +648,8 @@ def load_source_stage(
             if attestation.request_fingerprint != request_fingerprint:
                 raise RuntimeHostError("submission_replay_conflict")
             if attestation.stage_kind != expected_stage_kind:
+                raise RuntimeHostError("runtime_source_staging_invalid")
+            if attestation.capacity_profile != expected_capacity_profile:
                 raise RuntimeHostError("runtime_source_staging_invalid")
             if attestation.manifest_sha256 != expected_manifest_sha256:
                 raise RuntimeHostError("runtime_source_staging_invalid")
@@ -665,7 +678,11 @@ def load_source_stage(
             if attestation.provider_response_sha256 is not None:
                 provider_response_bytes = reader.read_root_file(
                     "provider_response.json",
-                    max_size=MAX_PROVIDER_RESPONSE_BYTES,
+                    max_size=(
+                        MAX_MULTI_TAVILY_PROVIDER_RESPONSE_BYTES
+                        if attestation.capacity_profile == "multi_tavily_v2"
+                        else MAX_PROVIDER_RESPONSE_BYTES
+                    ),
                 )
                 if (
                     not provider_response_bytes
@@ -855,6 +872,7 @@ def stage_source_pack_bytes(
     provider_response_bytes: bytes | None = None,
     provider_status_code: int | None = None,
     stage_kind: Literal["source_pack", "provider_outcome"] = "source_pack",
+    capacity_profile: Literal["standard", "multi_tavily_v2"] = "standard",
 ) -> VerifiedSourceStage:
     """Bound and stage one deterministic provider result set."""
 
@@ -864,16 +882,27 @@ def stage_source_pack_bytes(
         request_fingerprint=request_fingerprint,
         expected_manifest_sha256=None,
         expected_stage_kind=stage_kind,
+        expected_capacity_profile=capacity_profile,
     )
     if existing is not None:
         return existing
-    if len(members) > MAX_SOURCE_PACK_MEMBERS:
+    max_members = (
+        MAX_MULTI_TAVILY_SOURCE_PACK_MEMBERS
+        if capacity_profile == "multi_tavily_v2"
+        else MAX_SOURCE_PACK_MEMBERS
+    )
+    max_provider_response_bytes = (
+        MAX_MULTI_TAVILY_PROVIDER_RESPONSE_BYTES
+        if capacity_profile == "multi_tavily_v2"
+        else MAX_PROVIDER_RESPONSE_BYTES
+    )
+    if len(members) > max_members:
         raise RuntimeHostError("runtime_source_pack_invalid")
     if (
         provider_response_bytes is not None
         and (
             not provider_response_bytes
-            or len(provider_response_bytes) > MAX_PROVIDER_RESPONSE_BYTES
+            or len(provider_response_bytes) > max_provider_response_bytes
             or provider_status_code != 200
         )
     ) or (provider_response_bytes is None and provider_status_code is not None):
@@ -962,6 +991,7 @@ def stage_source_pack_bytes(
             provider_response_sha256=provider_response_sha256,
             provider_status_code=provider_status_code,
             members=tuple(staged_members),
+            capacity_profile=capacity_profile,
         )
         _publish_stage(building, root)
     except Exception:
@@ -973,6 +1003,7 @@ def stage_source_pack_bytes(
         request_fingerprint=request_fingerprint,
         expected_manifest_sha256=None,
         expected_stage_kind=stage_kind,
+        expected_capacity_profile=capacity_profile,
     )
     if loaded is None:  # pragma: no cover - guarded by publish
         raise RuntimeHostError("runtime_source_staging_invalid")
@@ -1030,10 +1061,12 @@ def _finish_stage(
     provider_response_sha256: str | None = None,
     provider_status_code: int | None = None,
     members: tuple[_StageMember, ...],
+    capacity_profile: Literal["standard", "multi_tavily_v2"] = "standard",
 ) -> None:
     attestation = _StageAttestation(
         format=_STAGE_FORMAT,
         stage_kind=stage_kind,
+        capacity_profile=capacity_profile,
         request_fingerprint=request_fingerprint,
         manifest_sha256=manifest_sha256,
         provider_response_sha256=provider_response_sha256,

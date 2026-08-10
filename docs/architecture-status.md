@@ -30,8 +30,9 @@ page describes implemented runtime capability, not a breaking deep rename.
   Store-frozen Human-confirmed discovery authorization. `runtime continue`
   keeps the credential in private workspace `.env` until Human
   rotation/removal, while every separately Human-confirmed, Store-recorded
-  attempt permits at most one Search followed by one batch Extract over at most
-  five deduplicated URLs. Exact replay never
+  attempt executes a frozen atomic task matrix. Every task requests 20 advanced
+  Search results, all eligible unique URLs are Batch Extracted in groups of 20,
+  and an under-covered task may receive one deterministic 30-day backfill. Exact replay never
   redials and failures never auto-retry. Safe failed responses remain
   receipt-owned audit evidence without source or execution authority. A
   successful attempt freezes both exact request/response exchanges and per-URL

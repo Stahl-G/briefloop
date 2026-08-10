@@ -207,8 +207,12 @@ class WebSearchProvider(SourceProvider):
 
         backend = self._get_backend(config)
         queries, task_meta = self._build_queries(query, config)
-        if backend.name == "tavily" and len(queries) != 1:
-            raise RuntimeError("exactly one Tavily Search task is required")
+        multi_tavily = (
+            backend.name == "tavily"
+            and config.get("acquisition_mode") == "multi_search_batch_extract"
+        )
+        if backend.name == "tavily" and not multi_tavily:
+            raise RuntimeError("Tavily requires the frozen multi-search acquisition path")
         with temporary_workspace_api_key_env(backend, config):
             if not backend.is_available():
                 return WebSearchCollection(
@@ -224,33 +228,40 @@ class WebSearchProvider(SourceProvider):
             max_results = config.get("max_results", 20)
             recency_days = config.get("recency_days")
 
+            if multi_tavily:
+                multi_acquisition_call = getattr(
+                    backend, "multi_acquisition_response", None
+                )
+                if not callable(multi_acquisition_call):
+                    raise RuntimeError("Tavily multi-acquisition envelope unavailable")
+                envelope: SearchResponse = multi_acquisition_call(
+                    list(config.get("search_tasks") or []),
+                    max_unique_urls=int(config.get("max_unique_urls", 800)),
+                    extract_batch_size=int(config.get("extract_batch_size", 20)),
+                )
+                raw_response = envelope.raw_response
+                status_code = envelope.status_code
+                for result in envelope.results:
+                    all_items.append(
+                        self._result_to_source_item(
+                            result,
+                            "frozen_multi_task_plan",
+                            backend_name,
+                        )
+                    )
+                return WebSearchCollection(
+                    items=tuple(all_items),
+                    raw_response=raw_response,
+                    status_code=status_code,
+                )
+
             for q, domains in queries:
-                if backend.name == "tavily":
-                    acquisition_response = getattr(
-                        backend, "acquisition_response", None
-                    )
-                    if not callable(acquisition_response):
-                        raise RuntimeError("tavily acquisition envelope unavailable")
-                    envelope: SearchResponse = acquisition_response(
-                        q,
-                        max_results=max_results,
-                        domains=domains,
-                        time_range=config.get("time_range"),
-                        start_date=config.get("start_date"),
-                        end_date=config.get("end_date"),
-                        topic=config.get("topic", "news"),
-                        search_depth="basic",
-                    )
-                    raw_response = envelope.raw_response
-                    status_code = envelope.status_code
-                    results = list(envelope.results)
-                else:
-                    results = backend.search(
-                        q,
-                        max_results=max_results,
-                        domains=domains,
-                        days=recency_days,
-                    )
+                results = backend.search(
+                    q,
+                    max_results=max_results,
+                    domains=domains,
+                    days=recency_days,
+                )
                 task_metadata = task_meta.get(q)
                 for r in results:
                     item = self._result_to_source_item(

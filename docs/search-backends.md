@@ -154,23 +154,26 @@ a new run.
 
 ## Configuration
 
-### Current (single backend)
+### Current Tavily weekly acquisition
 
 ```yaml
 web_search:
   enabled: true
   backend: tavily
   api_key_env: TAVILY_API_KEY
-  max_results: 5
+  max_results: 20
   recency_days: 7
+  search_depth: advanced
   news_source_domains:
     preferred_domains:
       - reuters.com
 ```
 
-The Tavily query for this path is the exact frozen Human-confirmed
-`industry_or_theme` topic described above; `search_tasks` is not an executable
-query override.
+Weekly Tavily products execute the exact frozen atomic `search_tasks` matrix.
+Every task requests 20 results, all eligible unique URLs are Batch Extracted
+in groups of 20, and under-covered tasks may receive one deterministic 30-day
+domain-targeted backfill. A single reconstructed industry query and a five-URL
+product cap are not supported execution modes.
 
 ### Example: Exa
 
@@ -232,7 +235,7 @@ web_search:
     - name: tavily
       role: fast_agent_search
       api_key_env: TAVILY_API_KEY
-      max_results: 5
+      max_results: 20
     - name: exa
       role: semantic_research
       api_key_env: EXA_API_KEY

@@ -26,7 +26,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 if TYPE_CHECKING:
     from multi_agent_brief.contracts.v2 import (
         TavilyAcquisitionExchange,
+        TavilyExtractBatchExchange,
         TavilyExtractUrlOutcome,
+        TavilySearchTaskExchange,
+        TavilyTaskAcquisitionStatus,
     )
 from multi_agent_brief.sources.search_backends.base import (
     SearchBackend,
@@ -45,32 +48,12 @@ from multi_agent_brief.sources.tavily_acquisition import (
 TAVILY_API_URL = "https://api.tavily.com/search"
 TAVILY_EXTRACT_API_URL = "https://api.tavily.com/extract"
 DEFAULT_API_KEY_ENV = "TAVILY_API_KEY"
-# The complete canonical acquisition bundle is later staged as one provider
-# response.  Search and Extract therefore share one raw-response budget; two
-# independent per-call caps can exceed the stage even when each call is valid.
-TAVILY_ACQUISITION_BUNDLE_BYTE_CAP = 4 * 1024 * 1024
 TAVILY_REQUEST_BODY_BYTE_CAP = 64 * 1024
-TAVILY_RESPONSE_BYTE_BUDGET = 2_400_000
-_TAVILY_BUNDLE_STRUCTURAL_RESERVE_BYTES = 512 * 1024
+TAVILY_SINGLE_HTTP_RESPONSE_BYTE_CAP = 2_400_000
+TAVILY_MULTI_EXCHANGE_RESPONSE_BYTE_CAP = 4 * 1024 * 1024
+TAVILY_MULTI_ACQUISITION_BUNDLE_BYTE_CAP = 256 * 1024 * 1024
 TAVILY_TIMEOUT_SECONDS = 30
 _ORIGINAL_URLOPEN = urllib.request.urlopen
-
-
-def _base64_size(byte_count: int) -> int:
-    return 4 * ((byte_count + 2) // 3)
-
-
-# The response budget may be split across two exchanges, adding at most one
-# extra base64 quantum.  The reserve covers the fixed schema plus the bounded
-# five URL/outcome projections.  Keep this proof next to the producer limits.
-if (
-    _base64_size(TAVILY_RESPONSE_BYTE_BUDGET)
-    + 4
-    + (2 * _base64_size(TAVILY_REQUEST_BODY_BYTE_CAP))
-    + _TAVILY_BUNDLE_STRUCTURAL_RESERVE_BYTES
-    > TAVILY_ACQUISITION_BUNDLE_BYTE_CAP
-):  # pragma: no cover - constant invariant
-    raise RuntimeError("invalid Tavily acquisition byte budget")
 
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -378,55 +361,19 @@ class TavilyBackend(SearchBackend):
         return TavilyAcquisitionExchange.model_validate(payload, strict=True)
 
     @staticmethod
-    def _bundle_response(
-        status: str,
-        search: TavilyAcquisitionExchange,
-        *,
-        extract: TavilyAcquisitionExchange | None = None,
-        extract_urls: list[str] | None = None,
-        outcomes: tuple[TavilyExtractUrlOutcome, ...] = (),
-        results: tuple[SearchResult, ...] = (),
-    ) -> SearchResponse:
-        from multi_agent_brief.contracts.v2 import TavilyAcquisitionBundle
-
-        bundle = TavilyAcquisitionBundle.model_validate(
-            {
-                "schema_version": TavilyAcquisitionBundle.schema_id,
-                "provider_id": "tavily",
-                "status": status,
-                "search": search.model_dump(mode="json"),
-                "extract": None if extract is None else extract.model_dump(mode="json"),
-                "extract_urls": extract_urls or [],
-                "outcomes": [item.model_dump(mode="json") for item in outcomes],
-            },
-            strict=True,
-        )
-        bundle_bytes = _canonical_json_bytes(bundle.model_dump(mode="json"))
-        if len(bundle_bytes) > TAVILY_ACQUISITION_BUNDLE_BYTE_CAP:
-            raise SearchBackendError(
-                "Tavily acquisition failed",
-                backend="tavily",
-            ) from None
-        return SearchResponse(
-            raw_response=bundle_bytes,
-            status_code=200,
-            results=results,
-        )
-
-    @staticmethod
     def _post_json(
         endpoint: str,
         payload: dict[str, Any],
         api_key: str,
         *,
-        response_byte_cap: int = TAVILY_RESPONSE_BYTE_BUDGET,
+        response_byte_cap: int = TAVILY_SINGLE_HTTP_RESPONSE_BYTE_CAP,
     ) -> tuple[bytes, int, bytes]:
         request_body = _canonical_json_bytes(payload)
         if (
             not request_body
             or len(request_body) > TAVILY_REQUEST_BODY_BYTE_CAP
             or response_byte_cap < 0
-            or response_byte_cap > TAVILY_RESPONSE_BYTE_BUDGET
+            or response_byte_cap > TAVILY_MULTI_EXCHANGE_RESPONSE_BYTE_CAP
         ):
             raise SearchBackendError(
                 "Tavily request failed",
@@ -629,287 +576,442 @@ class TavilyBackend(SearchBackend):
             results=tuple(results[:max_results]),
         )
 
-    def acquisition_response(
-        self,
-        query: str,
-        max_results: int = 5,
+    @staticmethod
+    def _multi_bundle_response(
         *,
-        domains: list[str] | None = None,
-        **kwargs: Any,
+        searches: list[TavilySearchTaskExchange],
+        extract_batches: list[TavilyExtractBatchExchange],
+        unique_urls: list[str],
+        task_statuses: list[TavilyTaskAcquisitionStatus],
+        results: list[SearchResult],
     ) -> SearchResponse:
-        """Execute one Search then at most one batch Extract and freeze both."""
+        from multi_agent_brief.contracts.v2 import TavilyAcquisitionBundleV2
 
-        if max_results < 1 or max_results > 5:
-            raise SearchBackendError("Tavily acquisition failed", backend="tavily")
-        time_range = kwargs.get("time_range")
-        if (
-            time_range not in {"week", "month"}
-            or kwargs.get("start_date") is not None
-            or kwargs.get("end_date") is not None
-        ):
-            raise SearchBackendError("Tavily acquisition failed", backend="tavily")
-        search_payload = self._search_payload(
-            query,
-            max_results,
-            domains=domains,
-            topic=str(kwargs.get("topic", "news")),
-            search_depth=str(kwargs.get("search_depth", "basic")),
-            time_range=time_range,
-            start_date=kwargs.get("start_date"),
-            end_date=kwargs.get("end_date"),
+        covered = sum(item.status == "covered" for item in task_statuses)
+        status = (
+            "complete"
+            if covered == len(task_statuses)
+            else "failed"
+            if covered == 0
+            else "partial"
         )
+        bundle = TavilyAcquisitionBundleV2.model_validate(
+            {
+                "schema_version": TavilyAcquisitionBundleV2.schema_id,
+                "provider_id": "tavily",
+                "status": status,
+                "searches": [item.model_dump(mode="json") for item in searches],
+                "extract_batches": [
+                    item.model_dump(mode="json") for item in extract_batches
+                ],
+                "unique_urls": unique_urls,
+                "task_statuses": [
+                    item.model_dump(mode="json") for item in task_statuses
+                ],
+            },
+            strict=True,
+        )
+        bundle_bytes = _canonical_json_bytes(bundle.model_dump(mode="json"))
+        if len(bundle_bytes) > TAVILY_MULTI_ACQUISITION_BUNDLE_BYTE_CAP:
+            raise SearchBackendError(
+                "Tavily multi-acquisition failed",
+                backend="tavily",
+            ) from None
+        return SearchResponse(
+            raw_response=bundle_bytes,
+            status_code=200,
+            results=tuple(sorted(results, key=lambda item: item.url)),
+        )
+
+    def multi_acquisition_response(
+        self,
+        tasks: list[dict[str, Any]],
+        *,
+        max_unique_urls: int = 800,
+        extract_batch_size: int = 20,
+    ) -> SearchResponse:
+        """Execute the frozen Solar Stock task matrix without budget pruning."""
+
+        from multi_agent_brief.contracts.v2 import (
+            TavilyExtractBatchExchange,
+            TavilyExtractUrlOutcome,
+            TavilySearchTaskExchange,
+            TavilyTaskAcquisitionStatus,
+        )
+
+        if (
+            not 1 <= len(tasks) <= 20
+            or max_unique_urls != min(800, len(tasks) * 40)
+            or extract_batch_size != 20
+            or [item.get("task_id") for item in tasks]
+            != sorted({item.get("task_id") for item in tasks})
+        ):
+            raise SearchBackendError(
+                "Tavily multi-acquisition failed", backend="tavily"
+            )
         api_key = os.environ.get(self._api_key_env, "")
         if not api_key:
             return SearchResponse(raw_response=b"", status_code=0, results=())
-        search_request = _canonical_json_bytes(search_payload)
-        try:
-            search_request, search_status, search_response = self._post_json(
-                TAVILY_API_URL,
-                search_payload,
-                api_key,
-                response_byte_cap=TAVILY_RESPONSE_BYTE_BUDGET,
-            )
-        except SearchBackendError as exc:
-            return self._bundle_response(
-                "search_response_unavailable",
-                self._exchange(
-                    "search",
-                    search_request,
-                    transport_error_class=exc.error_class,
-                ),
-            )
-        search_exchange = self._exchange(
-            "search",
-            search_request,
-            response_body=search_response,
-            status_code=search_status,
-        )
-        if search_status != 200:
-            return self._bundle_response(
-                "search_response_unavailable",
-                search_exchange,
-            )
-        invalid_search = False
-        try:
-            decoded_search = _json_object_without_duplicate_keys(search_response)
-            search_data = _TavilyResponse.model_validate(decoded_search, strict=True)
-            if len(search_data.results) > max_results:
-                raise ValueError("invalid Search result count")
-        except Exception:
-            invalid_search = True
-            decoded_search = {}
-            search_data = None
-        if invalid_search or search_data is None:
-            return self._bundle_response("search_response_invalid", search_exchange)
-        search_by_url: dict[str, tuple[_TavilyResult, dict[str, Any]]] = {}
-        raw_results = decoded_search.get("results")
-        if not isinstance(raw_results, list):
-            return self._bundle_response("search_response_invalid", search_exchange)
-        for raw_item, item in zip(raw_results, search_data.results, strict=True):
-            if not isinstance(raw_item, dict):
-                return self._bundle_response("search_response_invalid", search_exchange)
-            search_by_url.setdefault(item.url, (item, raw_item))
-        extract_urls = sorted(search_by_url)[:max_results]
-        if not extract_urls:
-            return self._bundle_response("search_results_empty", search_exchange)
 
-        extract_payload: dict[str, Any] = {
-            "urls": extract_urls,
-            "query": query,
-            "chunks_per_source": 5,
-            "extract_depth": "basic",
-            "include_images": False,
-            "include_favicon": False,
-            "format": "markdown",
-            "include_usage": True,
+        searches: list[TavilySearchTaskExchange] = []
+        batches: list[TavilyExtractBatchExchange] = []
+        task_urls: dict[str, set[str]] = {
+            str(item["task_id"]): set() for item in tasks
         }
-        extract_request = _canonical_json_bytes(extract_payload)
-        remaining_response_budget = TAVILY_RESPONSE_BYTE_BUDGET - len(search_response)
-        try:
-            extract_request, extract_status, extract_response = self._post_json(
-                TAVILY_EXTRACT_API_URL,
-                extract_payload,
-                api_key,
-                response_byte_cap=remaining_response_budget,
-            )
-        except SearchBackendError as exc:
-            extract_exchange = self._exchange(
-                "extract",
-                extract_request,
-                transport_error_class=exc.error_class,
-            )
-            return self._bundle_response(
-                "extract_response_unavailable",
-                search_exchange,
-                extract=extract_exchange,
-                extract_urls=extract_urls,
-            )
-        extract_exchange = self._exchange(
-            "extract",
-            extract_request,
-            response_body=extract_response,
-            status_code=extract_status,
-        )
-        if extract_status != 200:
-            return self._bundle_response(
-                "extract_response_unavailable",
-                search_exchange,
-                extract=extract_exchange,
-                extract_urls=extract_urls,
-            )
-        invalid_extract = False
-        try:
-            decoded_extract = _json_object_without_duplicate_keys(extract_response)
-            extract_data = _TavilyExtractResponse.model_validate(
-                decoded_extract, strict=True
-            )
-            raw_successes = decoded_extract.get("results")
-            raw_failures = decoded_extract.get("failed_results")
-            if not isinstance(raw_successes, list) or not isinstance(
-                raw_failures, list
-            ):
-                raise ValueError("invalid Extract result lists")
-            if len(raw_successes) != len(extract_data.results) or len(
-                raw_failures
-            ) != len(extract_data.failed_results):
-                raise ValueError("invalid Extract result counts")
-        except Exception:
-            invalid_extract = True
-            decoded_extract = {}
-            extract_data = None
-            raw_successes = None
-            raw_failures = None
-        if (
-            invalid_extract
-            or extract_data is None
-            or not isinstance(raw_successes, list)
-            or not isinstance(raw_failures, list)
-        ):
-            return self._bundle_response(
-                "extract_response_invalid",
-                search_exchange,
-                extract=extract_exchange,
-                extract_urls=extract_urls,
-            )
-
-        outcome_payloads: dict[str, dict[str, Any]] = {}
+        search_items: dict[str, tuple[_TavilyResult, dict[str, Any]]] = {}
+        url_tasks: dict[str, set[str]] = {}
+        extract_outcomes: dict[str, TavilyExtractUrlOutcome] = {}
         successful_results: dict[str, SearchResult] = {}
-        for raw_item, item in zip(raw_successes, extract_data.results, strict=True):
-            if not isinstance(raw_item, dict) or item.url not in search_by_url:
-                return self._bundle_response(
-                    "extract_response_invalid",
-                    search_exchange,
-                    extract=extract_exchange,
-                    extract_urls=extract_urls,
-                )
-            if item.url in outcome_payloads:
-                return self._bundle_response(
-                    "extract_response_invalid",
-                    search_exchange,
-                    extract=extract_exchange,
-                    extract_urls=extract_urls,
-                )
-            content = item.raw_content.strip() if item.raw_content else ""
-            response_item_sha256 = _sha256_hex(_canonical_json_bytes(raw_item))
-            if not content:
-                outcome_payloads[item.url] = {
-                    "url": item.url,
-                    "status": "empty_content",
-                    "response_item_sha256": response_item_sha256,
-                }
-                continue
-            outcome_payloads[item.url] = {
-                "url": item.url,
-                "status": "succeeded",
-                "response_item_sha256": response_item_sha256,
-                "content_sha256": _sha256_hex(content.encode("utf-8")),
-                "content_size_bytes": len(content.encode("utf-8")),
-            }
-            search_item, raw_search_item = search_by_url[item.url]
-            raw_published = search_item.published_date or ""
-            published_at = _normalized_published_date(raw_published)
-            successful_results[item.url] = SearchResult(
-                title=search_item.title,
-                url=item.url,
-                snippet=search_item.content,
-                raw_content=content,
-                published_at=published_at,
-                source_name=_extract_domain(item.url),
-                raw_projection={
-                    "schema_version": "briefloop.tavily_extract_source_projection.v1",
-                    "search_result": tavily_search_discovery_projection(
-                        raw_search_item
-                    ),
-                    "extract_result": raw_item,
-                },
-                metadata={
-                    "backend": "tavily",
-                    "query": query,
-                    "date_status": "published_at_present"
-                    if published_at
-                    else "missing_published_at",
-                    "source_temporality": "published"
-                    if published_at
-                    else "retrieved_only",
-                    "content_shape": "provider_extract_content",
-                    "evidence_quality": "partial_extract",
-                    "vertical": search_payload["topic"],
-                    "raw_score": search_item.score,
-                    "has_raw_content": True,
-                },
-            )
-        for raw_item, item in zip(
-            raw_failures, extract_data.failed_results, strict=True
-        ):
-            if not isinstance(raw_item, dict) or item.url not in search_by_url:
-                return self._bundle_response(
-                    "extract_response_invalid",
-                    search_exchange,
-                    extract=extract_exchange,
-                    extract_urls=extract_urls,
-                )
-            if item.url in outcome_payloads:
-                return self._bundle_response(
-                    "extract_response_invalid",
-                    search_exchange,
-                    extract=extract_exchange,
-                    extract_urls=extract_urls,
-                )
-            outcome_payloads[item.url] = {
-                "url": item.url,
-                "status": "provider_failed",
-                "response_item_sha256": _sha256_hex(_canonical_json_bytes(raw_item)),
-            }
-        if set(outcome_payloads) != set(extract_urls):
-            return self._bundle_response(
-                "extract_response_invalid",
-                search_exchange,
-                extract=extract_exchange,
-                extract_urls=extract_urls,
-            )
-        from multi_agent_brief.contracts.v2 import TavilyExtractUrlOutcome
+        search_statuses: dict[str, list[str]] = {
+            str(item["task_id"]): [] for item in tasks
+        }
+        extract_unavailable_urls: set[str] = set()
 
-        outcomes = tuple(
-            TavilyExtractUrlOutcome.model_validate(outcome_payloads[url], strict=True)
-            for url in extract_urls
-        )
-        succeeded = len(successful_results)
-        status = (
-            "extract_results_all_failed"
-            if succeeded == 0
-            else "extract_results_succeeded"
-            if succeeded == len(extract_urls)
-            else "extract_results_partial"
-        )
-        return self._bundle_response(
-            status,
-            search_exchange,
-            extract=extract_exchange,
-            extract_urls=extract_urls,
-            outcomes=outcomes,
-            results=tuple(
-                successful_results[url]
-                for url in extract_urls
-                if url in successful_results
-            ),
+        def execute_search(
+            task: dict[str, Any], *, phase: str, ordinal: int
+        ) -> None:
+            task_id = str(task["task_id"])
+            request = task if phase == "primary" else task["backfill"]
+            payload = self._search_payload(
+                str(request["query"]),
+                20,
+                domains=list(request.get("domains") or []),
+                topic=str(task["topic"]),
+                search_depth="advanced",
+                time_range="week" if phase == "primary" else "month",
+                start_date=None,
+                end_date=None,
+            )
+            request_bytes = _canonical_json_bytes(payload)
+            try:
+                request_bytes, status_code, response_bytes = self._post_json(
+                    TAVILY_API_URL,
+                    payload,
+                    api_key,
+                    response_byte_cap=TAVILY_MULTI_EXCHANGE_RESPONSE_BYTE_CAP,
+                )
+            except SearchBackendError as exc:
+                exchange = self._exchange(
+                    "search",
+                    request_bytes,
+                    transport_error_class=exc.error_class,
+                )
+                status = "unavailable"
+                discovered: list[str] = []
+            else:
+                exchange = self._exchange(
+                    "search",
+                    request_bytes,
+                    response_body=response_bytes,
+                    status_code=status_code,
+                )
+                status = "unavailable"
+                discovered = []
+                if status_code == 200:
+                    try:
+                        decoded = _json_object_without_duplicate_keys(response_bytes)
+                        parsed = _TavilyResponse.model_validate(decoded, strict=True)
+                        raw_results = decoded.get("results")
+                        if (
+                            len(parsed.results) > 20
+                            or not isinstance(raw_results, list)
+                            or len(raw_results) != len(parsed.results)
+                        ):
+                            raise ValueError("invalid result count")
+                        by_url: dict[str, tuple[_TavilyResult, dict[str, Any]]] = {}
+                        for raw_item, item in zip(
+                            raw_results, parsed.results, strict=True
+                        ):
+                            if not isinstance(raw_item, dict):
+                                raise ValueError("invalid result")
+                            by_url.setdefault(item.url, (item, raw_item))
+                        discovered = sorted(by_url)
+                        status = "succeeded" if discovered else "empty"
+                        for url, pair in by_url.items():
+                            task_urls[task_id].add(url)
+                            url_tasks.setdefault(url, set()).add(task_id)
+                            search_items.setdefault(url, pair)
+                    except Exception:
+                        status = "invalid"
+                        discovered = []
+            searches.append(
+                TavilySearchTaskExchange.model_validate(
+                    {
+                        "task_id": task_id,
+                        "phase": phase,
+                        "status": status,
+                        "exchange": exchange.model_dump(mode="json"),
+                        "discovered_urls": discovered,
+                    },
+                    strict=True,
+                )
+            )
+            search_statuses[task_id].append(status)
+
+        def execute_extracts(urls: list[str], *, phase: str) -> None:
+            for start in range(0, len(urls), extract_batch_size):
+                batch_urls = sorted(urls[start : start + extract_batch_size])
+                payload: dict[str, Any] = {
+                    "urls": batch_urls,
+                    "chunks_per_source": 5,
+                    "extract_depth": "advanced",
+                    "include_images": False,
+                    "include_favicon": False,
+                    "format": "markdown",
+                    "include_usage": True,
+                }
+                request_bytes = _canonical_json_bytes(payload)
+                try:
+                    request_bytes, status_code, response_bytes = self._post_json(
+                        TAVILY_EXTRACT_API_URL,
+                        payload,
+                        api_key,
+                        response_byte_cap=TAVILY_MULTI_EXCHANGE_RESPONSE_BYTE_CAP,
+                    )
+                except SearchBackendError as exc:
+                    exchange = self._exchange(
+                        "extract",
+                        request_bytes,
+                        transport_error_class=exc.error_class,
+                    )
+                    batch_status = "unavailable"
+                    outcomes: list[TavilyExtractUrlOutcome] = []
+                    extract_unavailable_urls.update(batch_urls)
+                else:
+                    exchange = self._exchange(
+                        "extract",
+                        request_bytes,
+                        response_body=response_bytes,
+                        status_code=status_code,
+                    )
+                    outcomes = []
+                    if status_code != 200:
+                        batch_status = "unavailable"
+                        extract_unavailable_urls.update(batch_urls)
+                    else:
+                        try:
+                            decoded = _json_object_without_duplicate_keys(
+                                response_bytes
+                            )
+                            parsed = _TavilyExtractResponse.model_validate(
+                                decoded, strict=True
+                            )
+                            raw_successes = decoded.get("results")
+                            raw_failures = decoded.get("failed_results")
+                            if not isinstance(raw_successes, list) or not isinstance(
+                                raw_failures, list
+                            ):
+                                raise ValueError("invalid extract result lists")
+                            observed: dict[str, TavilyExtractUrlOutcome] = {}
+                            for raw_item, item in zip(
+                                raw_successes, parsed.results, strict=True
+                            ):
+                                if (
+                                    not isinstance(raw_item, dict)
+                                    or item.url not in batch_urls
+                                    or item.url in observed
+                                ):
+                                    raise ValueError("invalid extract success")
+                                content = (
+                                    item.raw_content.strip()
+                                    if item.raw_content
+                                    else ""
+                                )
+                                item_sha = _sha256_hex(
+                                    _canonical_json_bytes(raw_item)
+                                )
+                                outcome_payload: dict[str, Any] = {
+                                    "url": item.url,
+                                    "status": "succeeded"
+                                    if content
+                                    else "empty_content",
+                                    "response_item_sha256": item_sha,
+                                }
+                                if content:
+                                    content_bytes = content.encode("utf-8")
+                                    outcome_payload.update(
+                                        {
+                                            "content_sha256": _sha256_hex(
+                                                content_bytes
+                                            ),
+                                            "content_size_bytes": len(content_bytes),
+                                        }
+                                    )
+                                    search_item, raw_search_item = search_items[
+                                        item.url
+                                    ]
+                                    published_at = _normalized_published_date(
+                                        search_item.published_date or ""
+                                    )
+                                    successful_results[item.url] = SearchResult(
+                                        title=search_item.title,
+                                        url=item.url,
+                                        snippet=search_item.content,
+                                        raw_content=content,
+                                        published_at=published_at,
+                                        source_name=_extract_domain(item.url),
+                                        raw_projection={
+                                            "schema_version": "briefloop.tavily_extract_source_projection.v2",
+                                            "discovery_task_ids": sorted(
+                                                url_tasks[item.url]
+                                            ),
+                                            "search_result": tavily_search_discovery_projection(
+                                                raw_search_item
+                                            ),
+                                            "extract_result": raw_item,
+                                        },
+                                        metadata={
+                                            "backend": "tavily",
+                                            "discovery_task_ids": sorted(
+                                                url_tasks[item.url]
+                                            ),
+                                            "date_status": "published_at_present"
+                                            if published_at
+                                            else "missing_published_at",
+                                            "source_temporality": "published"
+                                            if published_at
+                                            else "retrieved_only",
+                                            "content_shape": "provider_extract_content",
+                                            "evidence_quality": "partial_extract",
+                                            "has_raw_content": True,
+                                        },
+                                    )
+                                observed[item.url] = (
+                                    TavilyExtractUrlOutcome.model_validate(
+                                        outcome_payload, strict=True
+                                    )
+                                )
+                            for raw_item, item in zip(
+                                raw_failures, parsed.failed_results, strict=True
+                            ):
+                                if (
+                                    not isinstance(raw_item, dict)
+                                    or item.url not in batch_urls
+                                    or item.url in observed
+                                ):
+                                    raise ValueError("invalid extract failure")
+                                observed[item.url] = (
+                                    TavilyExtractUrlOutcome.model_validate(
+                                        {
+                                            "url": item.url,
+                                            "status": "provider_failed",
+                                            "response_item_sha256": _sha256_hex(
+                                                _canonical_json_bytes(raw_item)
+                                            ),
+                                        },
+                                        strict=True,
+                                    )
+                                )
+                            if set(observed) != set(batch_urls):
+                                raise ValueError("extract outcomes are not total")
+                            outcomes = [observed[url] for url in batch_urls]
+                            for outcome in outcomes:
+                                extract_outcomes[outcome.url] = outcome
+                            succeeded = sum(
+                                item.status == "succeeded" for item in outcomes
+                            )
+                            batch_status = (
+                                "all_failed"
+                                if succeeded == 0
+                                else "succeeded"
+                                if succeeded == len(outcomes)
+                                else "partial"
+                            )
+                        except Exception:
+                            batch_status = "invalid"
+                            outcomes = []
+                            extract_unavailable_urls.update(batch_urls)
+                batches.append(
+                    TavilyExtractBatchExchange.model_validate(
+                        {
+                            "phase": phase,
+                            "batch_ordinal": len(batches) + 1,
+                            "status": batch_status,
+                            "exchange": exchange.model_dump(mode="json"),
+                            "urls": batch_urls,
+                            "outcomes": [
+                                item.model_dump(mode="json") for item in outcomes
+                            ],
+                        },
+                        strict=True,
+                    )
+                )
+
+        for ordinal, task in enumerate(tasks, start=1):
+            execute_search(task, phase="primary", ordinal=ordinal)
+        primary_urls = sorted(search_items)[:max_unique_urls]
+        execute_extracts(primary_urls, phase="primary")
+
+        backfill_tasks = [
+            task
+            for task in tasks
+            if sum(
+                extract_outcomes.get(url) is not None
+                and extract_outcomes[url].status == "succeeded"
+                for url in task_urls[str(task["task_id"])]
+            )
+            < int(task["minimum_extract_successes"])
+        ]
+        for task in backfill_tasks:
+            execute_search(
+                task,
+                phase="backfill",
+                ordinal=len(searches) + 1,
+            )
+        backfill_urls = sorted(set(search_items) - set(primary_urls))
+        if len(primary_urls) + len(backfill_urls) > max_unique_urls:
+            raise SearchBackendError(
+                "Tavily multi-acquisition failed", backend="tavily"
+            )
+        execute_extracts(backfill_urls, phase="backfill")
+
+        task_statuses: list[TavilyTaskAcquisitionStatus] = []
+        for primary_ordinal, task in enumerate(tasks, start=1):
+            task_id = str(task["task_id"])
+            urls = task_urls[task_id]
+            success_count = sum(
+                extract_outcomes.get(url) is not None
+                and extract_outcomes[url].status == "succeeded"
+                for url in urls
+            )
+            threshold = int(task["minimum_extract_successes"])
+            if success_count >= threshold:
+                status = "covered"
+            elif all(
+                item in {"unavailable", "invalid"}
+                for item in search_statuses[task_id]
+            ):
+                status = "search_unavailable"
+            elif urls & extract_unavailable_urls:
+                status = "extract_unavailable"
+            else:
+                status = "coverage_insufficient"
+            backfill_exchange = next(
+                (
+                    index
+                    for index, item in enumerate(searches, start=1)
+                    if item.task_id == task_id and item.phase == "backfill"
+                ),
+                None,
+            )
+            task_statuses.append(
+                TavilyTaskAcquisitionStatus.model_validate(
+                    {
+                        "task_id": task_id,
+                        "primary_search_ordinal": primary_ordinal,
+                        "backfill_search_ordinal": backfill_exchange,
+                        "discovered_unique_url_count": len(urls),
+                        "extracted_success_count": success_count,
+                        "minimum_extract_successes": threshold,
+                        "status": status,
+                    },
+                    strict=True,
+                )
+            )
+        return self._multi_bundle_response(
+            searches=searches,
+            extract_batches=batches,
+            unique_urls=sorted(set(primary_urls) | set(backfill_urls)),
+            task_statuses=task_statuses,
+            results=list(successful_results.values()),
         )

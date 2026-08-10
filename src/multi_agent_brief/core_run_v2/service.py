@@ -17,6 +17,7 @@ from multi_agent_brief.contracts.v2 import (
     CoreRunEventBinding,
     CoreRunInitializeRequest,
     ExecutionSourceManifest,
+    MultiTavilyExecutionSourceManifest,
     EventEnvelope,
     IntegrityCheckRequest,
     Invocation,
@@ -36,6 +37,8 @@ from multi_agent_brief.contracts.v2 import (
     RuntimeSourcePlanBinding,
     RuntimeSourceRouteBinding,
     RuntimeWebSearchAcquisitionSpec,
+    RuntimeWebSearchAcquisitionSpecV3,
+    RuntimeWebSearchTaskSpecV3,
     RuntimeWebSearchRequestSpec,
     ReceiptCheckoutBinding,
     StageArtifactBinding,
@@ -60,6 +63,7 @@ from multi_agent_brief.contracts.runtime_contracts import (
     load_runtime_contract_payloads,
 )
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
+from multi_agent_brief.intake_v2.scratch import parse_json_object
 from multi_agent_brief.sources.doctor import run_doctor
 
 from .errors import CoreRunError, CoreRunResult, core_run_failure_result
@@ -264,8 +268,16 @@ class CoreRunService:
                     authorization.source_manifest_artifact.artifact_id,
                     authorization.source_manifest_artifact.revision,
                 )
-                manifest = ExecutionSourceManifest.model_validate_json(
-                    manifest_bytes, strict=True
+                manifest_payload = parse_json_object(manifest_bytes)
+                manifest_model = (
+                    MultiTavilyExecutionSourceManifest
+                    if manifest_payload.get("schema_version")
+                    == MultiTavilyExecutionSourceManifest.schema_id
+                    else ExecutionSourceManifest
+                )
+                manifest = manifest_model.model_validate(
+                    manifest_payload,
+                    strict=True,
                 )
             except Exception as exc:
                 raise CoreRunError("control_store_integrity_invalid") from exc
@@ -678,11 +690,9 @@ class CoreRunService:
                         ),
                         "provider_id": source_discovery_authorization.provider_id,
                         "route_id": source_discovery_authorization.route_id,
-                        "max_provider_calls": 2,
-                        "max_search_calls": 1,
-                        "max_extract_calls": 1,
-                        "max_extract_urls": 5,
-                        "provider_call_sequence": "search_then_batch_extract",
+                        **_tavily_attempt_call_limits(
+                            discovery_route.acquisition_spec
+                        ),
                         "provider_cost_status": ("not_reported_acknowledged"),
                         "previous_attempt_authorization_id": None,
                         "human_request_id": request.request_id,
@@ -1096,11 +1106,7 @@ class CoreRunService:
                     ),
                     "provider_id": discovery.provider_id,
                     "route_id": discovery.route_id,
-                    "max_provider_calls": 2,
-                    "max_search_calls": 1,
-                    "max_extract_calls": 1,
-                    "max_extract_urls": 5,
-                    "provider_call_sequence": "search_then_batch_extract",
+                    **_tavily_attempt_call_limits(route.acquisition_spec),
                     "provider_cost_status": request.provider_cost_status,
                     "previous_attempt_authorization_id": (
                         previous.attempt_authorization_id
@@ -1435,12 +1441,20 @@ class CoreRunService:
                 if manifest_revision is None:
                     raise CoreRunError("control_store_integrity_invalid")
                 try:
-                    manifest = ExecutionSourceManifest.model_validate_json(
-                        store.read_artifact_revision_bytes(
-                            snapshot.run.run_id,
-                            authorization.source_manifest_artifact.artifact_id,
-                            authorization.source_manifest_artifact.revision,
-                        ),
+                    manifest_bytes = store.read_artifact_revision_bytes(
+                        snapshot.run.run_id,
+                        authorization.source_manifest_artifact.artifact_id,
+                        authorization.source_manifest_artifact.revision,
+                    )
+                    manifest_payload = parse_json_object(manifest_bytes)
+                    manifest_model = (
+                        MultiTavilyExecutionSourceManifest
+                        if manifest_payload.get("schema_version")
+                        == MultiTavilyExecutionSourceManifest.schema_id
+                        else ExecutionSourceManifest
+                    )
+                    manifest = manifest_model.model_validate(
+                        manifest_payload,
                         strict=True,
                     )
                 except Exception as exc:
@@ -2610,6 +2624,25 @@ _WEB_CREDENTIAL_ENV = {
 }
 
 
+def _tavily_attempt_call_limits(
+    spec: object,
+) -> dict[str, object]:
+    if not isinstance(spec, RuntimeWebSearchAcquisitionSpecV3):
+        raise CoreRunError("runtime_source_plan_invalid")
+    max_search_calls = (
+        spec.max_primary_search_calls + spec.max_backfill_search_calls
+    )
+    return {
+        "max_provider_calls": max_search_calls + spec.max_extract_calls,
+        "max_search_calls": max_search_calls,
+        "max_extract_calls": spec.max_extract_calls,
+        "max_extract_urls": spec.max_unique_urls,
+        "provider_call_sequence": (
+            "primary_search_extract_then_conditional_backfill_search_extract"
+        ),
+    }
+
+
 def _source_acquisition_spec(
     *,
     route_id: str,
@@ -2678,12 +2711,19 @@ def _source_acquisition_spec(
         if set(web) - allowed:
             raise CoreRunError("runtime_source_plan_invalid")
         backfill = web.get("initial_news_backfill", {})
-        if type(backfill) is not dict or backfill.get("enabled", False) is not False:
+        if type(backfill) is not dict:
             raise CoreRunError("runtime_source_plan_invalid")
-        if (
-            web.get("topic", "news") != "news"
-            or web.get("search_depth", "basic") != "basic"
-        ):
+        tavily_multi = provider_id == "tavily"
+        if tavily_multi:
+            if (
+                backfill.get("enabled") is not True
+                or backfill.get("mode") != "conditional_per_task"
+                or backfill.get("recency_days") != 30
+                or backfill.get("max_results_per_task") != 20
+                or web.get("search_depth") != "advanced"
+            ):
+                raise CoreRunError("runtime_source_plan_invalid")
+        elif backfill.get("enabled", False) is not False:
             raise CoreRunError("runtime_source_plan_invalid")
         configured_env = web.get("api_key_env")
         if configured_env not in {None, "", _WEB_CREDENTIAL_ENV[provider_id]}:
@@ -2700,22 +2740,115 @@ def _source_acquisition_spec(
         if type(tasks) is not list:
             raise CoreRunError("runtime_source_plan_invalid")
         requests: list[dict[str, object]] = []
-        if provider_id == "tavily":
+        if tavily_multi:
             if (
-                run_direction is None
-                or run_direction.industry_or_theme is None
-                or max_results != 5
-                or recency_days not in {7, 30}
+                max_results != 20
+                or recency_days != 7
+                or not 1 <= len(tasks) <= 20
+                or backfill.get("max_additional_tasks") != len(tasks)
             ):
                 raise CoreRunError("runtime_source_plan_invalid")
-            requests = [
-                _web_request_payload(
-                    query=run_direction.industry_or_theme,
-                    domains=domains,
-                    max_results=max_results,
-                    recency_days=recency_days,
-                )
-            ]
+            task_payloads: list[dict[str, object]] = []
+            solar_task_fields = {
+                "task_id",
+                "task_category",
+                "entity_id",
+                "query",
+                "topic",
+                "domains",
+                "max_results",
+                "recency_days",
+                "search_depth",
+                "minimum_extract_successes",
+                "backfill",
+            }
+            simple_task_fields = {
+                "query",
+                "domains",
+                "topic",
+                "market",
+                "language",
+                "platform_group",
+                "signal_type",
+            }
+            for index, task in enumerate(tasks):
+                if type(task) is not dict:
+                    raise CoreRunError("runtime_source_plan_invalid")
+                if set(task) == solar_task_fields:
+                    task_payload = {
+                        "schema_version": RuntimeWebSearchTaskSpecV3.schema_id,
+                        **task,
+                    }
+                elif not set(task) - simple_task_fields:
+                    query = task.get("query")
+                    task_domains = task.get("domains", domains)
+                    incoming_topic = str(task.get("topic", "news")).lower()
+                    topic = (
+                        "general"
+                        if incoming_topic
+                        in {"policy", "prices", "price", "regulation", "official"}
+                        else "news"
+                    )
+                    if (
+                        type(query) is not str
+                        or not query.strip()
+                        or type(task_domains) is not list
+                        or any(type(item) is not str for item in task_domains)
+                    ):
+                        raise CoreRunError("runtime_source_plan_invalid")
+                    task_id = f"source-search-{index + 1:03d}"
+                    canonical_domains = sorted(set(task_domains))
+                    task_payload = {
+                        "schema_version": RuntimeWebSearchTaskSpecV3.schema_id,
+                        "task_id": task_id,
+                        "task_category": "general",
+                        "entity_id": None,
+                        "query": query.strip(),
+                        "topic": topic,
+                        "domains": canonical_domains,
+                        "max_results": 20,
+                        "recency_days": 7,
+                        "search_depth": "advanced",
+                        "minimum_extract_successes": 1,
+                        "backfill": {
+                            "enabled": True,
+                            "query": f"{query.strip()} official filing press release",
+                            "domains": canonical_domains,
+                            "max_results": 20,
+                            "recency_days": 30,
+                            "search_depth": "advanced",
+                        },
+                    }
+                else:
+                    raise CoreRunError("runtime_source_plan_invalid")
+                try:
+                    task_payloads.append(
+                        RuntimeWebSearchTaskSpecV3.model_validate(
+                            task_payload, strict=True
+                        ).model_dump(mode="json", exclude_unset=False)
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise CoreRunError("runtime_source_plan_invalid") from exc
+            task_payloads.sort(key=lambda item: str(item["task_id"]))
+            max_unique_urls = min(800, len(task_payloads) * 40)
+            payload = {
+                "schema_version": RuntimeWebSearchAcquisitionSpecV3.schema_id,
+                "kind": "web_search_multi",
+                "provider_id": "tavily",
+                "tasks": task_payloads,
+                "max_primary_search_calls": len(task_payloads),
+                "max_backfill_search_calls": len(task_payloads),
+                "max_extract_calls": (max_unique_urls + 19) // 20,
+                "max_unique_urls": max_unique_urls,
+                "extract_batch_size": 20,
+            }
+            payload["acquisition_spec_fingerprint"] = canonical_fingerprint(payload)
+            try:
+                return RuntimeWebSearchAcquisitionSpecV3.model_validate(
+                    payload, strict=True
+                ).model_dump(mode="json", exclude_unset=False)
+            except (TypeError, ValueError) as exc:
+                raise CoreRunError("runtime_source_plan_invalid") from exc
         else:
             for task in tasks:
                 if type(task) is not dict or set(task) - {

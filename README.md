@@ -278,13 +278,15 @@ through the runtime-host route (`run --runtime codex` → `runtime next`).
 The narrow Tavily runtime-first path is Experimental. Its credential remains
 in the private workspace `.env` until the Human rotates or removes it, but
 credential presence is not provider-spend authority. Each separately
-Human-confirmed, Store-recorded acquisition attempt permits at most one Tavily
-Search followed by one batch Extract over at most five deduplicated URLs. The
-Search request discovers URLs and snippets only; its snippets are never
+Human-confirmed, Store-recorded acquisition attempt executes a frozen Tavily
+atomic task matrix. Every task requests 20 advanced Search results; all eligible
+unique URLs are Batch Extracted in groups of 20; and an under-covered task may
+receive one deterministic 30-day targeted backfill. Solar Stock Periodic freezes
+20 primary tasks. Search requests discover URLs and snippets only; snippets are never
 claims-eligible. Only non-empty content from successful Extract results enters
 the Intake source pack. Partial Extract success commits successful URLs only,
 while retaining exact request/response bytes and per-URL outcomes in one
-hash-bound acquisition bundle. Zero Search results or all-failed Extract creates
+hash-bound acquisition bundle. All-failed Extract creates
 neither source nor execution authorization. Exact replay never redials and
 failures never auto-retry. A HumanSourcePack remains a separate Human source
 path and never counts as Tavily success. Synthetic loopback transport is tested.

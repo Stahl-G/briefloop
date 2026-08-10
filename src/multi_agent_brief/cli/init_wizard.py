@@ -1119,6 +1119,10 @@ def build_sources(profile: InitProfile) -> dict[str, Any]:
     # Add seed_tasks if available and backend is configured
     if seed_tasks and web_search_config.get("mode") == "external_api":
         web_search_config["search_tasks"] = seed_tasks
+        if web_search_config.get("backend") == "tavily":
+            web_search_config["initial_news_backfill"]["max_additional_tasks"] = len(
+                seed_tasks
+            )
 
     return {
         "source_strategy": {
@@ -1151,6 +1155,46 @@ def build_sources(profile: InitProfile) -> dict[str, Any]:
             "note": "Disabled by default. Set enabled: true and add tickers to activate SEC filing resolution.",
         },
     }
+
+
+def _default_tavily_atomic_search_tasks(profile: InitProfile) -> list[dict[str, Any]]:
+    """Return the deterministic twenty-cell baseline for a Tavily weekly run."""
+
+    company = profile.company.strip()
+    industry = (profile.industry_text or profile.industry).strip()
+    focus = " ".join(item.strip() for item in profile.focus_areas if item.strip())
+    domains = sorted(set(profile.preferred_news_domains))
+    rows = (
+        (f"{company} official earnings results guidance", "news"),
+        (f"{company} orders contracts customers backlog", "news"),
+        (f"{company} debt equity financing capital markets", "news"),
+        (f"{company} M&A asset sale management change", "news"),
+        (f"{company} capacity manufacturing product launch", "news"),
+        (f"{company} press release external media coverage", "news"),
+        (f"{industry} competitors peer company weekly news", "news"),
+        (f"{industry} market demand shipments installations", "news"),
+        (f"{industry} prices input costs weekly", "prices"),
+        (f"{industry} supply chain capacity utilization", "news"),
+        (f"{industry} customer demand end market signals", "news"),
+        (f"{industry} technology product innovation", "news"),
+        (f"{industry} United States policy regulation official", "policy"),
+        (f"{industry} China policy regulation official", "policy"),
+        (f"{industry} trade tariff antidumping customs", "policy"),
+        (f"{industry} tax credit subsidy incentive", "policy"),
+        (f"{industry} financing M&A capital transactions", "news"),
+        (f"{industry} factory workforce capacity event", "news"),
+        (f"{industry} media sentiment controversy reputation", "news"),
+        (
+            f"{company} {focus} operational update"
+            if focus
+            else f"{company} operational risks opportunities update",
+            "news",
+        ),
+    )
+    return [
+        {"query": query, "domains": list(domains), "topic": topic}
+        for query, topic in rows
+    ]
 
 
 def _build_web_search_config(profile: InitProfile) -> dict[str, Any]:
@@ -1199,15 +1243,29 @@ def _build_web_search_config(profile: InitProfile) -> dict[str, Any]:
             "mode": "external_api",
             "backend": backend,
             "api_key_env": backend_info.get("env_key", ""),
-            "max_results": 5,
+            "max_results": 20,
             "recency_days": profile.max_source_age_days,
             "initial_news_backfill": _build_initial_news_backfill_config(profile),
             "news_source_domains": _build_news_source_domain_config(profile),
         }
         # Add backend-specific options (only Tavily supports these)
         if backend == "tavily":
+            atomic_tasks = _default_tavily_atomic_search_tasks(profile)
+            config["recency_days"] = 7
             config["topic"] = "news"
-            config["search_depth"] = "basic"
+            config["search_depth"] = "advanced"
+            config["search_tasks"] = atomic_tasks
+            config["initial_news_backfill"] = {
+                "enabled": True,
+                "mode": "conditional_per_task",
+                "recency_days": 30,
+                "max_additional_tasks": len(atomic_tasks),
+                "max_results_per_task": 20,
+                "note": (
+                    "Runtime executes at most one deterministic backfill for each "
+                    "frozen task whose extracted-source coverage is insufficient."
+                ),
+            }
         return config
     else:
         # configure_later: enabled but no backend configured

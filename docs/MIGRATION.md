@@ -23,8 +23,10 @@ This page explains the public architecture migration from older Python-pipeline 
 - Tavily discovery authority is distinct from execution authority. The
   Experimental runtime-first route keeps the credential in workspace `.env`
   until explicit Human rotation/removal, but each separately Human-confirmed,
-  Store-recorded attempt permits at most one Search and one batch Extract over
-  at most five deduplicated URLs. Exact replay does not redial, failures do not
+  Store-recorded attempt executes a frozen atomic task matrix. Every task
+  requests 20 advanced Search results, all eligible unique URLs are Batch
+  Extracted in groups of 20, and an under-covered task may receive one
+  deterministic 30-day backfill. Exact replay does not redial, failures do not
   auto-retry, and the canonical acquisition bundle retains the exact safe
   exchanges plus per-URL outcomes. Only successful non-empty Extract content
   enters the one Intake transaction; Search snippets are never claims-eligible,

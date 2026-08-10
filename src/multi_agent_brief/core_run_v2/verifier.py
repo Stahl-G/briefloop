@@ -13,6 +13,7 @@ from multi_agent_brief.contracts.v2 import (
     CoreRunEventBinding,
     EventEnvelope,
     ExecutionSourceManifest,
+    MultiTavilyExecutionSourceManifest,
     GateRepairArtifactBinding,
     GateRepairCycleRecord,
     GateRepairOutcomeRecord,
@@ -23,7 +24,7 @@ from multi_agent_brief.contracts.v2 import (
     RunSourceDiscoveryAuthorization,
     RuntimeAdapterBinding,
     RuntimeSourcePlanBinding,
-    RuntimeWebSearchAcquisitionSpec,
+    RuntimeWebSearchAcquisitionSpecV3,
     ScreenedCandidatesProposal,
     SourceAcquisitionAttemptAuthorizeRequest,
     SourceAcquisitionFailureEvidence,
@@ -51,6 +52,7 @@ from multi_agent_brief.quality_gates.contract import GATE_IDS
 from multi_agent_brief.sources.tavily_acquisition import (
     TavilyAcquisitionBundleError,
     TavilyAcquisitionObservation,
+    TavilyMultiAcquisitionObservation,
     parse_tavily_acquisition_bundle,
     tavily_observation_matches_spec,
 )
@@ -1013,16 +1015,46 @@ def _verified_intake_receipt_effect(
         raise CoreRunError("control_store_integrity_invalid")
     typed_events = [event for event in events if event is not None]
     source_events = typed_events
-    if rule.effect is CoreEffect.SOURCE_INTAKE:
+    if rule.effect in {CoreEffect.SOURCE_INTAKE, CoreEffect.INTAKE_REJECTION}:
+        source_control_event_types = {
+            "runtime_source_search_plan_recorded",
+            "tavily_acquisition_bundle_recorded",
+        }
         source_events = [
             item for item in typed_events if item.event_type == rule.event_type
         ]
-        classification_events = [
+        classification_events = (
+            [
+                item
+                for item in typed_events
+                if item.event_type == "input_classification_committed"
+            ]
+            if rule.effect is CoreEffect.SOURCE_INTAKE
+            else []
+        )
+        source_control_events = [
             item
             for item in typed_events
-            if item.event_type == "input_classification_committed"
+            if item.event_type in source_control_event_types
         ]
-        if len(source_events) + len(classification_events) != len(typed_events):
+        if (
+            len(source_events)
+            + len(classification_events)
+            + len(source_control_events)
+            != len(typed_events)
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        if any(
+            item.run_id != receipt.run_id
+            or item.transaction_id != receipt.transaction_id
+            or item.event_type not in source_control_event_types
+            or item.stage_id not in rule.allowed_stages
+            or item.core_run_binding is not None
+            or item.intake_binding is not None
+            or item.decision != "committed"
+            or item.reason != ""
+            for item in source_control_events
+        ):
             raise CoreRunError("control_store_integrity_invalid")
     for item in source_events:
         item_binding = item.intake_binding
@@ -1164,9 +1196,9 @@ def _verified_intake_receipt_effect(
                 ),
             ),
         )
-    if len(typed_events) != 1:
+    if len(source_events) != 1:
         raise CoreRunError("control_store_integrity_invalid")
-    event = typed_events[0]
+    event = source_events[0]
     binding = event.intake_binding
     if binding is None:
         raise CoreRunError("control_store_integrity_invalid")
@@ -1882,7 +1914,14 @@ class CoreRunDomainVerifier:
                 record.source_manifest_artifact.artifact_id,
                 record.source_manifest_artifact.revision,
             )
-            manifest = ExecutionSourceManifest.model_validate_json(payload, strict=True)
+            raw_manifest = parse_json_object(payload)
+            manifest_model = (
+                MultiTavilyExecutionSourceManifest
+                if raw_manifest.get("schema_version")
+                == MultiTavilyExecutionSourceManifest.schema_id
+                else ExecutionSourceManifest
+            )
+            manifest = manifest_model.model_validate(raw_manifest, strict=True)
         except Exception as exc:
             raise CoreRunError("control_store_integrity_invalid") from exc
         if (
@@ -2000,6 +2039,14 @@ class CoreRunDomainVerifier:
         provider_request_fingerprint = routes[
             0
         ].acquisition_spec.acquisition_spec_fingerprint
+        route_spec = routes[0].acquisition_spec
+        if not isinstance(route_spec, RuntimeWebSearchAcquisitionSpecV3):
+            raise CoreRunError("control_store_integrity_invalid")
+        expected_search_calls = (
+            route_spec.max_primary_search_calls
+            + route_spec.max_backfill_search_calls
+        )
+        expected_extract_calls = route_spec.max_extract_calls
         receipts = {item.transaction_id: item for item in snapshot.transactions}
         events = {item.event_id: item for item in snapshot.events}
         for position, attempt in enumerate(attempts, start=1):
@@ -2020,11 +2067,13 @@ class CoreRunDomainVerifier:
                 or attempt.provider_request_fingerprint != provider_request_fingerprint
                 or attempt.provider_id != discovery.provider_id
                 or attempt.route_id != discovery.route_id
-                or attempt.max_provider_calls != 2
-                or attempt.max_search_calls != 1
-                or attempt.max_extract_calls != 1
-                or attempt.max_extract_urls != 5
-                or attempt.provider_call_sequence != "search_then_batch_extract"
+                or attempt.max_provider_calls
+                != expected_search_calls + expected_extract_calls
+                or attempt.max_search_calls != expected_search_calls
+                or attempt.max_extract_calls != expected_extract_calls
+                or attempt.max_extract_urls != route_spec.max_unique_urls
+                or attempt.provider_call_sequence
+                != "primary_search_extract_then_conditional_backfill_search_extract"
                 or attempt.provider_cost_status != "not_reported_acknowledged"
                 or attempt.previous_attempt_authorization_id
                 != (
@@ -2226,7 +2275,7 @@ class CoreRunDomainVerifier:
                 )
                 observation = CoreRunDomainVerifier._tavily_observation(response_bytes)
                 route_spec = routes[0].acquisition_spec
-                if not isinstance(route_spec, RuntimeWebSearchAcquisitionSpec) or not (
+                if not isinstance(route_spec, RuntimeWebSearchAcquisitionSpecV3) or not (
                     tavily_observation_matches_spec(observation, route_spec)
                 ):
                     raise CoreRunError("control_store_integrity_invalid")
@@ -2234,7 +2283,58 @@ class CoreRunDomainVerifier:
                 durable_count = observation.durable_content_count
             except Exception as exc:
                 raise CoreRunError("control_store_integrity_invalid") from exc
-            if observation.bundle.status == "search_response_unavailable":
+            expected_transport_phase = None
+            expected_transport_error_class = None
+            if isinstance(observation, TavilyMultiAcquisitionObservation):
+                transport_search = next(
+                    (
+                        item.exchange
+                        for item in observation.bundle.searches
+                        if item.status == "unavailable"
+                        and item.exchange.status_code is None
+                        and item.exchange.transport_error_class is not None
+                    ),
+                    None,
+                )
+                transport_extract = next(
+                    (
+                        item.exchange
+                        for item in observation.bundle.extract_batches
+                        if item.status == "unavailable"
+                        and item.exchange.status_code is None
+                        and item.exchange.transport_error_class is not None
+                    ),
+                    None,
+                )
+                if durable_count > 0:
+                    expected_failure_classes = {
+                        "intake_rejected_no_eligible_source",
+                        "source_pack_validation_rejected",
+                    }
+                elif transport_search is not None or transport_extract is not None:
+                    exchange = transport_search or transport_extract
+                    if exchange is None:  # pragma: no cover - guarded above
+                        raise CoreRunError("control_store_integrity_invalid")
+                    expected_failure_classes = {"provider_transport_unavailable"}
+                    expected_transport_phase = exchange.operation
+                    expected_transport_error_class = exchange.transport_error_class
+                elif result_count == 0 and any(
+                    item.status in {"unavailable", "invalid"}
+                    for item in observation.bundle.searches
+                ):
+                    expected_failure_classes = {"provider_search_failed"}
+                elif result_count == 0:
+                    expected_failure_classes = {"provider_results_empty"}
+                elif any(
+                    item.status in {"unavailable", "invalid"}
+                    for item in observation.bundle.extract_batches
+                ):
+                    expected_failure_classes = {"provider_extract_failed"}
+                else:
+                    expected_failure_classes = {
+                        "provider_results_without_durable_content"
+                    }
+            elif observation.bundle.status == "search_response_unavailable":
                 expected_failure_classes = (
                     {"provider_transport_unavailable"}
                     if (
@@ -2267,9 +2367,10 @@ class CoreRunDomainVerifier:
                     "intake_rejected_no_eligible_source",
                     "source_pack_validation_rejected",
                 }
-            expected_transport_phase = None
-            expected_transport_error_class = None
-            if "provider_transport_unavailable" in expected_failure_classes:
+            if (
+                not isinstance(observation, TavilyMultiAcquisitionObservation)
+                and "provider_transport_unavailable" in expected_failure_classes
+            ):
                 exchange = (
                     observation.bundle.search
                     if observation.bundle.status == "search_response_unavailable"
@@ -2306,7 +2407,9 @@ class CoreRunDomainVerifier:
         return observation.result_count, observation.durable_content_count
 
     @staticmethod
-    def _tavily_observation(payload: bytes) -> TavilyAcquisitionObservation:
+    def _tavily_observation(
+        payload: bytes,
+    ) -> TavilyAcquisitionObservation | TavilyMultiAcquisitionObservation:
         try:
             return parse_tavily_acquisition_bundle(payload)
         except TavilyAcquisitionBundleError as exc:
@@ -2318,7 +2421,7 @@ class CoreRunDomainVerifier:
         snapshot: ControlStoreSnapshot,
         binding: RunContractBinding,
         authorization: RunExecutionAuthorization,
-        manifest: ExecutionSourceManifest,
+        manifest: ExecutionSourceManifest | MultiTavilyExecutionSourceManifest,
     ) -> None:
         """Close the authorized manifest/source/classification receipt triangle."""
 
@@ -2430,7 +2533,7 @@ class CoreRunDomainVerifier:
         sources: tuple[Any, ...],
         discovery: list[RunSourceDiscoveryAuthorization],
         binding: RunContractBinding,
-        manifest: ExecutionSourceManifest,
+        manifest: ExecutionSourceManifest | MultiTavilyExecutionSourceManifest,
     ) -> None:
         """Bind exact Tavily response bytes to every accepted member projection."""
 
@@ -2449,11 +2552,6 @@ class CoreRunDomainVerifier:
             len(attempt_refs) != 1
             or len(attempts) != 1
             or attempts[0].discovery_authorization_id != discovery[0].authorization_id
-            or attempts[0].max_provider_calls != 2
-            or attempts[0].max_search_calls != 1
-            or attempts[0].max_extract_calls != 1
-            or attempts[0].max_extract_urls != 5
-            or attempts[0].provider_call_sequence != "search_then_batch_extract"
         ):
             raise CoreRunError("control_store_integrity_invalid")
         invocation_ids = {source.invocation_id for source in sources}
@@ -2500,22 +2598,33 @@ class CoreRunDomainVerifier:
             if route.route_fingerprint == discovery[0].source_route_fingerprint
             and route.route_id == "web-search"
             and route.provider_id == "tavily"
-            and isinstance(route.acquisition_spec, RuntimeWebSearchAcquisitionSpec)
+            and isinstance(route.acquisition_spec, RuntimeWebSearchAcquisitionSpecV3)
             and route.acquisition_spec.acquisition_spec_fingerprint
             == attempts[0].provider_request_fingerprint
         ]
         if (
-            observation.bundle.status
-            not in {
-                "extract_results_partial",
-                "extract_results_succeeded",
-            }
+            observation.bundle.status not in {"complete", "partial"}
             or len(sources) != observation.durable_content_count
         ):
             raise CoreRunError("control_store_integrity_invalid")
         if len(route_specs) != 1 or not tavily_observation_matches_spec(
             observation,
             route_specs[0],
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        route_spec = route_specs[0]
+        expected_search_calls = (
+            route_spec.max_primary_search_calls
+            + route_spec.max_backfill_search_calls
+        )
+        if (
+            attempts[0].max_provider_calls
+            != expected_search_calls + route_spec.max_extract_calls
+            or attempts[0].max_search_calls != expected_search_calls
+            or attempts[0].max_extract_calls != route_spec.max_extract_calls
+            or attempts[0].max_extract_urls != route_spec.max_unique_urls
+            or attempts[0].provider_call_sequence
+            != "primary_search_extract_then_conditional_backfill_search_extract"
         ):
             raise CoreRunError("control_store_integrity_invalid")
         try:
