@@ -12,10 +12,11 @@ Status labels:
 - **Experimental**: implemented but not yet a stable v0.11.0 contract.
 - **Roadmap**: planned or scoped, not an implemented capability.
 
-Current product baseline: **v0.13.0 supported baseline entries for
-`industry-weekly`, `management-monthly`, and `document-review`**. Wider
+Current product baseline: **v0.15.1** carries the supported baseline entries for
+`industry-weekly`, `management-monthly`, and `document-review`. Wider
 Product OS surfaces remain experimental unless this page or the support matrix
-marks them supported.
+marks them supported. `solar-stock-periodic` is an experimental schema-18
+ReportPack, not a stable product baseline.
 
 ## Start And Operate A Brief
 
@@ -23,6 +24,7 @@ marks them supported.
 |---|---|---|---|
 | Workspace onboarding | Collects brief purpose, audience, cadence, source mode, and output preferences before creating a workspace | Always on | `briefloop onboard`, `briefloop init --from-onboarding` |
 | Product workspace skeleton | Creates a conservative local-first workspace and `report_spec.yaml` from a supported baseline ReportPack | Supported baseline | `briefloop new industry-weekly <workspace>`, `briefloop new management-monthly <workspace>`, `briefloop new document-review <workspace>` |
+| Solar Stock Periodic workspace | Creates a fresh schema-18 experimental capital-markets weekly contract with a 20-task Tavily discovery plan | Experimental | `briefloop new solar-stock-periodic <workspace>`; live prices/valuation require a separate frozen market-data snapshot |
 | Claude writer command | Gives writers a five-verb interface for normal work | Optional, first-class writer path | `/briefloop new`, `/briefloop run`, `/briefloop status`, `/briefloop feedback`, `/briefloop deliver`; `/mabw` remains a compatibility alias |
 | Runtime handoff | Builds the runtime handoff for the external orchestrator and subagents | Always on | `briefloop run --workspace <workspace> --runtime operator` |
 | Normal same-workspace successor | Starts a new run from a finalized current head and atomically freezes compatible active-approved Human guidance only after explicit opt-in | Experimental development main | `briefloop runtime successor-start --workspace <workspace> --direction-json <json> --run-id <id> --include-approved-guidance`; Analyst/Editor only, utility NOT MEASURED |
@@ -39,6 +41,7 @@ marks them supported.
 | Cached source packages | Reuses pre-downloaded public or private source packs | Optional | Useful for repeatable runs |
 | Runtime web search | Lets the active agent runtime gather sources through its own search tool | Optional | No BriefLoop API key required |
 | External search APIs | Uses configured search backends such as Tavily, Exa, Brave, Firecrawl, or Serper | Optional | Requires API keys |
+| Solar Stock Periodic multi-query Tavily route | Executes the frozen 20-task equity/event/theme plan, with up to 20 results per task, grouped Extract batches, and one conditional targeted backfill | Experimental | Search snippets are not evidence; live usefulness and coverage are NOT MEASURED |
 | RSS and news feeds | Monitors configured feeds and news APIs | Optional | Useful for weekly tracking |
 | SEC / filing tools | Pulls filings and resolves ticker/XBRL filing sources | Optional | Useful for company and investor-relations workflows |
 | Feishu / Lark source integration | Pulls configured Feishu/Lark materials through local tooling | Optional | Requires local integration setup |

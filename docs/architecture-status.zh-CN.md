@@ -95,6 +95,12 @@
   Claim Ledger、Gate、finalization、delivery、repair 或 Core next-action。效用
   NOT MEASURED，也不构成自动学习。schema 变化后旧 development SQLite workspace
   不受支持，必须按当前 schema 新建。
+- 实验性 `solar-stock-periodic` 是 schema-18、fresh-only 的 TOYO/全球太阳能资本
+  市场周报 ReportPack。运行时冻结 20 条独立 Tavily 发现任务（11 家上市公司、5 个
+  事件主体、4 条主题），每条最多 20 个 advanced Search 结果，合格 URL 按每批 20
+  条 Extract；覆盖不足时最多一次确定性的 30 日定向 backfill，安全包络为 800 个
+  唯一 URL。Search 摘要不是证据，失败任务和逐 URL 结果会保留；没有冻结行情快照时，
+  不提供或臆造价格、收益率和估值字段。
 - v0.11 product baseline 已支持三个面向用户的 workspace 入口：
   `briefloop new industry-weekly`、`briefloop new management-monthly` 和
   `briefloop new document-review`。它们分别映射到内部 canonical ReportPack id

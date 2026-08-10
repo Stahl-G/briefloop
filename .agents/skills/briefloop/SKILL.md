@@ -84,9 +84,11 @@ request or repair. During discovery-only continuation, the host may run the
 doctor, source planner, and exact bound Tavily route. The workspace credential
 remains local until the Human rotates/removes it, but each attempt needs one
 distinct Human/Store authorization for a frozen atomic task matrix. Every task
-requests 20 advanced Search results; all eligible unique URLs are Batch Extracted
+requests up to 20 advanced Search results; all eligible unique URLs are Batch Extracted
 in groups of 20; and an under-covered task may receive one deterministic 30-day
-backfill. Solar Stock Periodic freezes 20 primary tasks. Exact replay never
+backfill. Solar Stock Periodic freezes 20 independent tasks (11 listed companies,
+5 event-only entities, and 4 themes) and retains up to 800 unique URLs within
+the safety envelope. Exact replay never
 redials and failures never auto-retry. A typed recovery action requires the Human to
 authorize another attempt or provide a HumanSourcePack. HumanSourcePack never
 counts as Tavily success. Search snippets remain ineligible; only non-empty

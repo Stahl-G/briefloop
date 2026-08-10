@@ -46,9 +46,11 @@ briefloop runtime continue --workspace <workspace>
 The command re-verifies Store and a fresh action before every effect. For the
 narrow discovery authorization it accepts the source-planner proposal and uses
 the exact Store-recorded attempt authorization. Each authorization executes a
-frozen atomic task matrix: every task requests 20 advanced Search results, all
-eligible unique URLs are Batch Extracted in groups of 20, and an under-covered
-task may receive one deterministic 30-day backfill. Exact replay never redials
+frozen atomic task matrix: every task requests up to 20 advanced Search results,
+all eligible unique URLs are Batch Extracted in groups of 20, and an under-covered
+task may receive one deterministic 30-day backfill. Solar Stock Periodic freezes
+20 independent equity/event/theme tasks within an 800-unique-URL safety envelope.
+Exact replay never redials
 and a failure never auto-retries. A recovery action requires an explicit Human choice to authorize
 another attempt or provide a HumanSourcePack. HumanSourcePack never counts as
 Tavily success. A successful attempt freezes the canonical exact-byte acquisition

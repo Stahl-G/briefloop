@@ -20,6 +20,10 @@
 - Schema 13 为 fresh current-schema workspace 增加正常 successor run 与不可变的
   approved-guidance snapshot relation。development schema 变化后请新建 workspace；
   产品内不提供旧 development workspace 升级路径。
+- Schema 18 为 `solar-stock-periodic` 增加 fresh-only 的冻结多任务搜索计划、Tavily
+  acquisition bundle、逐任务结果和行情快照边界。Schema-17 workspace 不迁移、不
+  dual-read，也不原地升级；要运行 Solar Stock Periodic，必须新建 schema-18
+  workspace。缺少行情快照时保持缺失，不用伪造价格或估值倍数填空。
 - legacy Improvement JSON/JSONL 与对应 mutator、fast-rerun/080 命令均已退役。
   可选 Semantic Assessment Report 只保留非阻断的 schema/reference validation；
   producer、status/proposal projection 与 adjudication writer 已退役。

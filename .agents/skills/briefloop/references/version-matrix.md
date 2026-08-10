@@ -8,14 +8,14 @@ explicitly classified historical or compatibility surfaces.
 
 ## Release Lines
 
-- Prior release line: `v0.13.0`.
-- Prepared release line: `v0.14.0`.
-- Treat v0.14.0 as a release target until both its tag and non-draft GitHub
-  Release exist. After they exist, treat v0.14.0 as the current release. Do
+- Prior release line: `v0.14.0`.
+- Prepared release line: `v0.15.1`.
+- Treat v0.15.1 as a release target until both its tag and non-draft GitHub
+  Release exist. After they exist, treat v0.15.1 as the current release. Do
   not infer release status from this file alone.
 
-This skill is verified against the post-v0.13 source tree that is being cut as
-v0.14.0. The skill deliberately contains both version strings so the same
+This skill is verified against the post-v0.14 source tree that is being cut as
+v0.15.1. The skill deliberately contains both version strings so the same
 contract check remains valid before and after the version-only release cut.
 
 ## Active Runtime Contract
@@ -41,7 +41,7 @@ quality guarantee.
 ## Read-Only Product Surfaces
 
 The local static four-tab HTML and init web wizard are read-only interaction
-surfaces in the v0.14.0 release target. Brief shows the verified Store-bound
+surfaces in the v0.15.1 release target. Brief shows the verified Store-bound
 `finalized_local` reader, Quality is deterministic, LAJ is optional advisory
 and NOT MEASURED, and the released Improvement tab has no Store-native
 writer/lifecycle. They do not create authority, approval, packaging, delivery,
@@ -54,6 +54,12 @@ active-approved guidance for Analyst/Editor only when
 `--include-approved-guidance` is present. Current direction and evidence govern;
 utility is NOT MEASURED and guidance has no Claim Ledger, Gate, repair,
 finalize/delivery, or Core authority.
+
+The experimental `solar-stock-periodic` ReportPack is schema-18 and fresh-only.
+Its Tavily source plan freezes 20 independent equity/event/theme tasks, up to
+20 results per task, grouped Extract batches, one conditional 30-day backfill,
+and an 800-unique-URL safety envelope. It does not claim a Yahoo market-data
+adapter or fill absent price/valuation fields.
 
 ## Unsupported And Retired
 

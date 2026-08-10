@@ -16,7 +16,7 @@ default_report_spec:
     label: management and capital-markets reader
     language: zh-CN
   source_policy:
-    mode: governed_external_api
+    mode: runtime_handoff
     hidden_autonomous_crawling: false
   control_spine:
     claim_ledger: true

@@ -13,7 +13,7 @@ default_report_spec:
   title: TOYO Solar Capital Markets Weekly
   cadence: weekly
   audience: {label: management and capital-markets reader, language: zh-CN}
-  source_policy: {mode: governed_external_api, hidden_autonomous_crawling: false}
+  source_policy: {mode: runtime_handoff, hidden_autonomous_crawling: false}
   control_spine: {claim_ledger: true, artifact_registry: true, quality_gates: true, event_log: true, archive: true, source_appendix: true, support_records: true, human_delivery_approval: true, frozen_artifact_integrity: true}
   outputs: [markdown, docx]
   metadata:

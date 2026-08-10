@@ -24,6 +24,7 @@ EXPECTED_PACK_IDS = {
     "market_weekly",
     "management_monthly",
     "solar_industry_periodic",
+    "solar_stock_periodic",
 }
 
 

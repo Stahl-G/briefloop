@@ -170,10 +170,16 @@ web_search:
 ```
 
 Weekly Tavily products execute the exact frozen atomic `search_tasks` matrix.
-Every task requests 20 results, all eligible unique URLs are Batch Extracted
-in groups of 20, and under-covered tasks may receive one deterministic 30-day
-domain-targeted backfill. A single reconstructed industry query and a five-URL
-product cap are not supported execution modes.
+Solar Stock Periodic freezes 20 independent tasks: 11 company-specific equity
+tasks, 5 event-only entity tasks, and 4 industry/policy/financing themes. Each
+task uses `search_depth=advanced` and requests up to 20 results; news tasks use
+`topic=news`, while policy, price, and official-material tasks use
+`topic=general`. All eligible unique URLs are Batch Extracted in groups of 20,
+with one deterministic 30-day domain-targeted backfill allowed only for an
+under-covered task. The total safety envelope is 800 unique URLs, not a
+five-result product cap. A single reconstructed industry query is not a
+supported execution mode. Search summaries remain discovery-only; only
+successful non-empty Extract content can become evidence.
 
 ### Example: Exa
 

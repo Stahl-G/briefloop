@@ -279,10 +279,11 @@ The narrow Tavily runtime-first path is Experimental. Its credential remains
 in the private workspace `.env` until the Human rotates or removes it, but
 credential presence is not provider-spend authority. Each separately
 Human-confirmed, Store-recorded acquisition attempt executes a frozen Tavily
-atomic task matrix. Every task requests 20 advanced Search results; all eligible
+atomic task matrix. Every task requests up to 20 advanced Search results; all eligible
 unique URLs are Batch Extracted in groups of 20; and an under-covered task may
 receive one deterministic 30-day targeted backfill. Solar Stock Periodic freezes
-20 primary tasks. Search requests discover URLs and snippets only; snippets are never
+20 independent tasks (11 listed companies, 5 event-only entities, and 4 themes)
+within an 800-unique-URL safety envelope. Search requests discover URLs and snippets only; snippets are never
 claims-eligible. Only non-empty content from successful Extract results enters
 the Intake source pack. Partial Extract success commits successful URLs only,
 while retaining exact request/response bytes and per-URL outcomes in one
@@ -381,22 +382,21 @@ The demos use synthetic materials. They show the evidence chain and gate behavio
 
 ## 🧭 Current status
 
-Current version: **v0.14.0**
+Current version: **v0.15.1**
 
-Unreleased development-main experiment (not part of v0.14.0): Store-qualified
-post-final review supports multiple append-only, independently Human-authorized
-assessments on one finalized lineage, with explicit result selection for the
-secured local Review Session and append-only Human dispositions, edited drafts,
-and separate guidance approvals. Generation 2 and later are explicit only;
-policy drift never auto-runs or redials. A separate explicit Human command can
-start a normal same-workspace successor and atomically freeze compatible,
-active approved guidance when `--include-approved-guidance` is present. Only
-Analyst and Editor receive that immutable context. Utility is NOT MEASURED;
-guidance never supplies evidence or changes Claim Ledger, Gate, finalize,
-delivery, repair, or Core truth. There is no automatic learning or implicit
-next-run reuse.
+The v0.15.1 candidate includes Store-qualified post-final review: multiple
+append-only, independently Human-authorized assessments on one finalized
+lineage, exact result selection for the secured local Review Session, and
+Human-originated observations with separate guidance approvals. Generation 2
+and later are explicit only; policy drift never auto-runs or redials. A
+separate explicit Human command can start a normal same-workspace successor
+and atomically freeze compatible, active approved guidance when
+`--include-approved-guidance` is present. Only Analyst and Editor receive that
+immutable context. Utility is NOT MEASURED; guidance never supplies evidence
+or changes Claim Ledger, Gate, finalize, delivery, repair, or Core truth.
+There is no automatic learning or implicit next-run reuse.
 
-Released v0.14.0 entrypoints:
+v0.15.1 entrypoints:
 
 - CLI: `briefloop`
 - Experimental SQLite-only Codex runtime: `briefloop run --workspace <path>
@@ -417,6 +417,11 @@ Released v0.14.0 entrypoints:
   and standalone JSON/Markdown/HTML presentation; an explicitly supplied
   current-report-bound `laj.json` may be displayed read-only with
   `briefloop quality html --workspace <path> --laj-view <laj.json>`
+- experimental Solar Stock Periodic ReportPack:
+  `briefloop new solar-stock-periodic <workspace>`. Use a fresh schema-18
+  workspace and the Store-frozen Tavily route for its 20-task discovery plan.
+  Search snippets remain discovery-only, exact replay never redials, and
+  failed tasks remain visible rather than being reported as “no events”.
 
 Development-main-only LAJ continuation controls are explicit and Store-native:
 
@@ -434,8 +439,25 @@ Old development workspaces are unsupported when the Store schema changes;
 create a fresh workspace on the current schema. BriefLoop does not ship an
 in-product development-schema upgrade path.
 
-v0.14.0 completes the SQLite-only cutover and adds read-only interaction
-surfaces:
+v0.15.1 carries the SQLite-only cutover forward and adds experimental
+post-final review and multi-query source-discovery surfaces:
+
+- Store-qualified AI Second Opinion supports multiple Human-authorized,
+  append-only assessment generations, exact archive-bound replay/projection,
+  and Human-originated observations with separate guidance approval. It is
+  advisory only; it does not affect Gates, finalization, delivery, or Core
+  next-action authority.
+- schema 18 adds fresh-only Store records for the frozen Solar Stock Periodic
+  search plan, per-task Tavily Search/Extract outcomes, and immutable
+  acquisition bundles. Existing schema-17 workspaces are not migrated or
+  upgraded in place.
+- The executable Tavily route no longer reconstructs one broad industry query
+  or applies a five-URL product cap. It runs each frozen task independently,
+  allows one deterministic 30-day targeted backfill when a task is
+  under-covered, and caps only the safe envelope of 800 unique URLs.
+
+The v0.14.0 release completed the SQLite-only cutover and added the original
+read-only interaction surfaces:
 
 - SQLite ControlStore (`briefloop.db`), accepted strict requests, Receipts, and
   ledger relations are the sole runtime authority. JSON-only workspaces are
@@ -453,8 +475,8 @@ surfaces:
   Quality is deterministic; LAJ is optional advisory and NOT MEASURED; and
   Improvement reports unavailable because no released Store-native lifecycle
   is active.
-- the v0.14 engineering changes were implemented and tested with Codex. Human
-  maintainers authorized the merges and release.
+- v0.15.1 engineering changes are experimental and fresh-only. Human
+  maintainers must authorize any release tag and GitHub Release separately.
 
 The carried-forward supported report tooling and advisory quality surfaces
 include:
@@ -556,6 +578,8 @@ First-user path:
 Architecture reference and contributor docs:
 
 - [Function Map](docs/features.md)
+- [v0.15.1 prepared release target](docs/releases/v0.15.1.md)
+- [Support Matrix](docs/support-matrix.md)
 - [Golden Path](docs/golden-path.md)
 - [Architecture Status](docs/architecture-status.md)
 - [Naming and compatibility](docs/briefloop-naming.md)

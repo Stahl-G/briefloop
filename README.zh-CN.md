@@ -240,9 +240,10 @@ URL 与事件 `opened_at` 元数据。workspace 内的 Codex kit 也会被哈希
 窄范围 Tavily runtime-first 路径仍是 Experimental。凭据会保留在工作区私有
 `.env` 中，直到 Human 显式轮换或移除；凭据存在本身不构成 provider spend
 authority。每个由 Human 单独确认并记录到 Store 的 acquisition attempt 至多
-执行冻结的 Tavily 原子任务矩阵：每个任务请求 20 条 advanced Search 结果，全部
+执行冻结的 Tavily 原子任务矩阵：每个任务最多请求 20 条 advanced Search 结果，全部
 合格唯一 URL 按每批 20 条执行 Batch Extract，覆盖不足的任务可执行一次确定性的
-30 日定向 backfill；Solar Stock Periodic 默认冻结 20 个首轮任务。
+30 日定向 backfill；Solar Stock Periodic 默认冻结 20 条独立任务（11 家上市公司、
+5 个事件主体、4 条主题），安全包络为 800 个唯一 URL。
 Search 只发现 URL 与摘要；摘要永不具备 claims eligibility。只有 Extract 成功
 返回的非空正文进入 Intake source pack；部分成功只提交成功 URL，同时在一个
 哈希绑定的 acquisition bundle 中保留准确的 request/response bytes 与逐 URL
@@ -344,19 +345,19 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 
 ## 🧭 当前状态
 
-当前版本：**v0.14.0**
+当前版本：**v0.15.1**
 
-尚未发布的 development-main 实验（不属于 v0.14.0）：Store-qualified
-post-final 审阅可在一个 finalized lineage 上执行多个、彼此独立且由 Human
-授权的 advisory assessment；必须显式选择 result，随后打开受保护的本地 Review
-Session，并追加人工处置、编辑草稿和独立 guidance approval。generation 2 及以后
-只能显式创建，policy 漂移不会自动运行或重拨。独立的 Human 命令可以启动同一
-workspace 的正常 successor；只有显式带上 `--include-approved-guidance` 时，一个
-原子事务才会冻结兼容、active 且已批准的 guidance。只有 Analyst 和 Editor 收到
-同一份不可变 context。效用 NOT MEASURED；guidance 不提供 evidence，不改变 Claim
-Ledger、Gate、finalize、delivery、repair 或 Core，也不存在自动学习或隐式复用。
+v0.15.1 包含 Store-qualified post-final 审阅：同一 finalized lineage 可执行多个、
+彼此独立且由 Human 授权的 append-only advisory assessment；必须显式选择 result，
+随后打开受保护的本地 Review Session，并追加人工处置、编辑草稿和独立 guidance
+approval。generation 2 及以后只能显式创建，policy 漂移不会自动运行或重拨。独立
+的 Human 命令可以启动同一 workspace 的正常 successor；只有显式带上
+`--include-approved-guidance` 时，一个原子事务才会冻结兼容、active 且已批准的
+guidance。只有 Analyst 和 Editor 收到同一份不可变 context。效用 NOT MEASURED；
+guidance 不提供 evidence，不改变 Claim Ledger、Gate、finalize、delivery、repair
+或 Core，也不存在自动学习或隐式复用。
 
-v0.14.0 已发布入口：
+v0.15.1 入口：
 
 - CLI：`briefloop`
 - Experimental SQLite-only Codex runtime：`briefloop run --workspace <path>
@@ -373,6 +374,10 @@ v0.14.0 已发布入口：
   独立 JSON/Markdown/HTML 展示；也可通过
   `briefloop quality html --workspace <path> --laj-view <laj.json>` 只读展示
   显式提供且与当前报告绑定的 `laj.json`
+- 实验性 Solar Stock Periodic ReportPack：`briefloop new solar-stock-periodic
+  <workspace>`。请使用 fresh schema-18 workspace，并通过 Store 冻结的 Tavily
+  路径执行 20 条发现任务；Search 摘要仍不能作为证据，精确重放不会重拨，失败
+  任务会保留为可见状态，而不是伪装成“本周无事件”。
 
 仅限 development-main 的 LAJ continuation controls：
 
@@ -389,7 +394,18 @@ v0.14.0 已发布入口：
 Store schema 变化后，旧 development workspace 不受支持；请用当前 schema 新建
 workspace。BriefLoop 不提供 development schema 的产品内升级路径。
 
-v0.14.0 完成 SQLite-only 切换，并增加只读交互面：
+v0.15.1 延续 SQLite-only 切换，并增加实验性的 post-final 审阅与多任务来源发现：
+
+- Store-qualified AI 第二意见支持多代 Human 授权、append-only assessment、精确
+  archive-bound replay/projection，以及人工来源观察记录和独立 guidance approval。
+  它只是 advisory，不改变 Gate、finalize、delivery 或 Core next-action 权威。
+- schema 18 新增 Solar Stock Periodic 的冻结搜索计划、逐任务 Tavily Search/Extract
+  结果和不可变 acquisition bundle。已有 schema-17 workspace 不迁移、不原地升级。
+- 可执行 Tavily 路径不再重建一个宽泛行业查询，也不再使用五个 URL 的产品上限；
+  它逐条执行冻结任务，任务覆盖不足时最多做一次确定性的 30 日定向 backfill，安全
+  包络上限为 800 个唯一 URL。
+
+v0.14.0 完成 SQLite-only 切换，并增加原有只读交互面：
 
 - SQLite ControlStore（`briefloop.db`）、已接受的 strict request、Receipt 与
   ledger relation 是唯一运行时权威。JSON-only workspace 不受支持；没有导入、
@@ -403,7 +419,8 @@ v0.14.0 完成 SQLite-only 切换，并增加只读交互面：
   Store 验证的 `finalized_local` reader，Quality 为确定性投影；LAJ 仍为可选
   advisory、效用 NOT MEASURED；Improvement Ledger 因已发布版本没有
   Store-native writer/lifecycle 而如实显示 unavailable。
-- v0.14 工程改动由 Codex 实现和测试；人类维护者授权合并与发布。
+- v0.15.1 工程改动仍属于实验性、fresh-only 能力；发布 tag 和 GitHub Release
+  仍须由人类维护者单独授权。
 
 延续的受支持报告工具与 advisory quality surface 包括：
 
@@ -497,6 +514,8 @@ BriefLoop 想把软件工程里的那套“可追踪、可回滚、可审计、�
 架构参考和贡献者文档：
 
 - [功能地图](docs/features.zh-CN.md)
+- [v0.15.1 准备中的 release target](docs/releases/v0.15.1.md)
+- [支持矩阵](docs/support-matrix.md)
 - [黄金路径](docs/golden-path.zh-CN.md)
 - [WorkBuddy 指南](docs/workbuddy.zh-CN.md)
 - [我每周怎么用 BriefLoop](docs/weekly-use.zh-CN.md)

@@ -49,6 +49,17 @@ page describes implemented runtime capability, not a breaking deep rename.
   `checkout_publication_unsupported` stop with zero provider/network access,
   no source promotion, and no later execution, finalization, approval,
   package, or delivery authority.
+- Experimental `solar-stock-periodic` is a schema-18, fresh-only ReportPack for
+  a TOYO/global solar capital-markets weekly. Its runtime freezes 20 independent
+  Tavily discovery tasks (11 listed companies, 5 event-only entities, and 4
+  themes), requests up to 20 advanced Search results per task, permits one
+  deterministic 30-day targeted backfill for under-covered tasks, and extracts
+  all eligible unique URLs in groups of 20 up to an 800-URL safety envelope.
+  Search snippets remain discovery-only; task failures and per-URL outcomes are
+  retained as evidence, and only successful non-empty Extract content enters
+  the Claim Ledger path. The Pack does not yet provide a Yahoo market-data
+  adapter or invent price/valuation fields when a frozen market-data snapshot
+  is absent.
 - The workspace-local Codex kit is execution input, not decoration: `run` and
   runtime commands verify its exact config, Skill, reference, and role-file
   inventory against the Store-bound adapter identity.

@@ -493,7 +493,7 @@ def test_quality_laj_cli_executes_assessment_next_request(
     assert len(calls) == calls_before_replay
 
 
-def test_readmes_keep_unreleased_laj_human_loop_outside_v014_claims() -> None:
+def test_readmes_bind_v0151_candidate_and_keep_v014_historical_boundary() -> None:
     def require(condition: bool, message: str) -> None:
         if not condition:
             raise AssertionError(message)
@@ -504,29 +504,29 @@ def test_readmes_keep_unreleased_laj_human_loop_outside_v014_claims() -> None:
     readme_en = (root / "README_en.md").read_text(encoding="utf-8")
 
     require(
-        "Unreleased development-main experiment (not part of v0.14.0)" in english,
-        "English README does not label A+B as unreleased",
+        "The v0.15.1 candidate includes Store-qualified post-final review" in english,
+        "English README does not bind AI Second Opinion to the v0.15.1 candidate",
     )
-    released_english = english.split(
-        "v0.14.0 completes the SQLite-only cutover",
+    historical_english = english.split(
+        "The v0.14.0 release completed the SQLite-only cutover",
         1,
     )[1].split("The carried-forward supported report tooling", 1)[0]
     require(
-        "secured post-final Review Sessions can record" not in released_english,
-        "English README attributes A+B to v0.14.0",
+        "Store-qualified AI Second Opinion" not in historical_english,
+        "English README attributes v0.15.1 AI Second Opinion to v0.14.0",
     )
 
     require(
-        "尚未发布的 development-main 实验（不属于 v0.14.0）" in chinese,
-        "Chinese README does not label A+B as unreleased",
+        "v0.15.1 包含 Store-qualified post-final 审阅" in chinese,
+        "Chinese README does not bind AI Second Opinion to the v0.15.1 candidate",
     )
-    released_chinese = chinese.split(
+    historical_chinese = chinese.split(
         "v0.14.0 完成 SQLite-only 切换",
         1,
     )[1].split("延续的受支持报告工具", 1)[0]
     require(
-        "post-final Review Session 可记录" not in released_chinese,
-        "Chinese README attributes A+B to v0.14.0",
+        "AI 第二意见" not in historical_chinese,
+        "Chinese README attributes v0.15.1 AI Second Opinion to v0.14.0",
     )
 
     require(

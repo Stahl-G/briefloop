@@ -39,6 +39,12 @@ This page explains the public architecture migration from older Python-pipeline 
   snapshot relations for fresh current-schema workspaces. Older development
   SQLite workspaces are unsupported when the schema changes; create a fresh
   workspace. There is no in-product development-schema upgrade path.
+- Schema 18 adds the fresh-only Solar Stock Periodic search-plan,
+  multi-search acquisition-bundle, per-task outcome, and market-data snapshot
+  boundaries. Schema-17 workspaces are not migrated, dual-read, or upgraded in
+  place. `solar-stock-periodic` must be initialized in a new schema-18
+  workspace; missing market-data snapshots remain missing rather than being
+  filled with invented prices or valuation multiples.
 - Legacy Improvement JSON/JSONL remains inert. Experimental post-final review
   supports multiple independently Human-authorized append-only assessments on
   one finalized lineage, explicit result selection, Human accept/reject/defer,

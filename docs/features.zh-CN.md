@@ -10,9 +10,10 @@ BriefLoop 的功能很多，因为它不是一个单点报告生成器，而是�
 - **实验性**：已实现，但还不是 v0.11.0 稳定契约。
 - **路线图**：已规划或已定边界，但不是已实现能力。
 
-当前产品基线：**v0.13.0 支持的 baseline 入口：`industry-weekly`、
-`management-monthly`、`document-review`**。更宽的 Product OS surface 仍是实验性，
-除非本页或 support matrix 明确标为受支持。
+当前产品基线：**v0.15.1** 延续 `industry-weekly`、`management-monthly`、
+`document-review` 的受支持 baseline 入口。更宽的 Product OS surface 仍是实验性，
+除非本页或 support matrix 明确标为受支持。`solar-stock-periodic` 是实验性的
+schema-18 ReportPack，不是稳定产品基线。
 
 ## 启动和运行一份简报
 
@@ -20,6 +21,7 @@ BriefLoop 的功能很多，因为它不是一个单点报告生成器，而是�
 |---|---|---|---|
 | 工作区 onboarding | 收集简报目标、读者、节奏、来源模式和输出偏好，再创建 workspace | 默认在场 | `briefloop onboard`, `briefloop init --from-onboarding` |
 | 产品工作区骨架 | 从受支持的 baseline ReportPack 创建 conservative local-first workspace 和 `report_spec.yaml` | 受支持基线 | `briefloop new industry-weekly <workspace>`, `briefloop new management-monthly <workspace>`, `briefloop new document-review <workspace>` |
+| Solar Stock Periodic 工作区 | 创建 fresh schema-18 的实验性资本市场周报契约和 20 条 Tavily 发现计划 | 实验性 | `briefloop new solar-stock-periodic <workspace>`；实时价格/估值需要单独冻结的行情快照 |
 | Claude writer 命令 | 给写作者提供五动词入口 | 可选启用，一等 writer 路径 | `/briefloop new`, `/briefloop run`, `/briefloop status`, `/briefloop feedback`, `/briefloop deliver`；`/mabw` 保留为兼容 alias |
 | Runtime handoff | 为外部 orchestrator 和 subagents 生成执行交接面 | 默认在场 | `briefloop run --workspace <workspace> --runtime operator` |
 | 同 workspace 正常 successor | 从已 finalized 的当前 head 启动新 run；只有显式 opt-in 时才原子冻结兼容、active-approved 的 Human guidance | development main 实验性 | `briefloop runtime successor-start --workspace <workspace> --direction-json <json> --run-id <id> --include-approved-guidance`；仅 Analyst/Editor，效用 NOT MEASURED |
@@ -34,6 +36,7 @@ BriefLoop 的功能很多，因为它不是一个单点报告生成器，而是�
 | 缓存 source pack | 复用已经下载好的公开或私有来源包 | 可选启用 | 适合可复跑 run |
 | Runtime web search | 让当前 agent runtime 用自己的搜索工具找来源 | 可选启用 | 不需要 BriefLoop API key |
 | 外部搜索 API | 使用 Tavily、Exa、Brave、Firecrawl、Serper 等搜索后端 | 可选启用 | 需要 API key |
+| Solar Stock Periodic 多任务 Tavily 路径 | 执行冻结的上市公司/事件主体/主题 20 任务计划；每条最多 20 个结果，分批 Extract，覆盖不足时定向补搜一次 | 实验性 | Search 摘要不是证据；实时有效性与覆盖率 NOT MEASURED |
 | RSS / 新闻源 | 跟踪配置好的 RSS 和新闻 API | 可选启用 | 适合周度监控 |
 | SEC / filing 工具 | 拉取 filing，并解析 ticker / XBRL 来源 | 可选启用 | 适合公司跟踪和 IR 场景 |
 | 飞书 / Lark 来源集成 | 通过本地工具拉取配置好的飞书材料 | 可选启用 | 需要本地集成配置 |

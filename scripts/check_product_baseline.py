@@ -49,6 +49,7 @@ EXPECTED_BASELINE_PRODUCT_ENTRIES = {
 }
 EXPECTED_EXPERIMENTAL_PRODUCT_ENTRIES = {
     "solar-periodic": "solar_industry_periodic",
+    "solar-stock-periodic": "solar_stock_periodic",
 }
 EXPECTED_PRODUCT_ENTRIES = {
     **EXPECTED_BASELINE_PRODUCT_ENTRIES,
@@ -69,6 +70,7 @@ EXPECTED_REPORT_PACK_STATUSES = {
     "management_monthly": "supported",
     "evidence_extract": "supported",
     "solar_industry_periodic": "experimental",
+    "solar_stock_periodic": "experimental",
 }
 REQUIRED_CONTROL_SPINE = {
     "claim_ledger",
@@ -101,7 +103,8 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "--include-approved-guidance",
         "Analyst and Editor",
         "Utility is NOT MEASURED",
-        "Released v0.14.0 does not include",
+        "v0.15.1 candidate includes Store-qualified",
+        "solar-stock-periodic",
         "development-main successor",
     ],
     "README_en.md": [
@@ -130,7 +133,8 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "--include-approved-guidance",
         "Analyst 和 Editor",
         "效用 NOT MEASURED",
-        "已发布 v0.14.0 不包含这条 development-main successor 路径",
+        "v0.15.1 包含 Store-qualified",
+        "solar-stock-periodic",
     ],
     "docs/roadmap.md": [
         "v0.11.0 — Stable Weekly/Monthly Brief Product",
@@ -158,7 +162,7 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
     ],
     "docs/features.md": [
         "Current product baseline:",
-        "v0.13.0 supported baseline entries",
+        "v0.15.1",
         "industry-weekly",
         "management-monthly",
         "document-review",
@@ -170,7 +174,7 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
     ],
     "docs/features.zh-CN.md": [
         "当前产品基线",
-        "v0.13.0 支持的 baseline 入口",
+        "v0.15.1",
         "industry-weekly",
         "management-monthly",
         "document-review",
