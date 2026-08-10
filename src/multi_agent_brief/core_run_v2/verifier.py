@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from typing import Any, Literal
 
@@ -992,6 +993,51 @@ def _verified_post_final_assessment_receipt(
         or record.run_id != receipt.run_id
         or record.accepted_transaction_id != receipt.transaction_id
         or getattr(record, rule.record_event_id_field) != event.event_id
+    ):
+        raise CoreRunError("control_store_integrity_invalid")
+
+
+def _verified_market_data_snapshot_receipt(
+    snapshot: ControlStoreSnapshot,
+    receipt: TransactionReceipt,
+) -> None:
+    """Verify one exact Store-native zero-effect market data receipt.
+
+    A market data snapshot is deterministic acquisition evidence, neither an
+    Intake nor a Core effect.  The receipt carries exactly one control event
+    and no authoritative relation families.
+    """
+
+    if (
+        receipt.transaction_type != "market_data_snapshot"
+        or receipt.run_id != snapshot.run.run_id
+    ):
+        raise CoreRunError("control_store_integrity_invalid")
+    _verify_authoritative_receipt_relation_families(receipt, frozenset())
+    if len(receipt.event_ids) != 1:
+        raise CoreRunError("control_store_integrity_invalid")
+    events = [item for item in snapshot.events if item.event_id == receipt.event_ids[0]]
+    records = [
+        item
+        for item in snapshot.market_data_snapshots
+        if item.accepted_transaction_id == receipt.transaction_id
+    ]
+    if len(events) != 1 or len(records) != 1:
+        raise CoreRunError("control_store_integrity_invalid")
+    event = events[0]
+    record = records[0]
+    if (
+        event.run_id != receipt.run_id
+        or event.transaction_id != receipt.transaction_id
+        or event.event_type != "market_data_snapshot_recorded"
+        or event.intake_binding is not None
+        or event.core_run_binding is not None
+        or event.stage_id is not None
+        or event.artifact_id is not None
+        or event.decision != record.market_data_snapshot_id
+        or event.reason != event.event_type
+        or record.run_id != receipt.run_id
+        or record.record_event_id != event.event_id
     ):
         raise CoreRunError("control_store_integrity_invalid")
 
@@ -2800,10 +2846,19 @@ class CoreRunDomainVerifier:
         if receipt.transaction_type in _POST_FINAL_ASSESSMENT_RECEIPT_RULES or (
             receipt.transaction_type == "post_final_assessment_series_claim"
         ):
-            self._verify_historical_post_final_assessment_prefix(
+            self._verify_historical_zero_effect_prefix(
                 history,
                 snapshot,
                 receipt,
+                _verified_post_final_assessment_receipt,
+            )
+            return
+        if receipt.transaction_type == "market_data_snapshot":
+            self._verify_historical_zero_effect_prefix(
+                history,
+                snapshot,
+                receipt,
+                _verified_market_data_snapshot_receipt,
             )
             return
         if receipt.transaction_type in _INTAKE_EFFECT_RULES:
@@ -3061,20 +3116,24 @@ class CoreRunDomainVerifier:
         ):
             self._verify_archive_package_reconstruction(history, snapshot, receipt)
 
-    def _verify_historical_post_final_assessment_prefix(
+    def _verify_historical_zero_effect_prefix(
         self,
         history: ControlStoreHistory,
         snapshot: ControlStoreSnapshot,
         receipt: TransactionReceipt,
+        receipt_rule: Callable[
+            [ControlStoreSnapshot, TransactionReceipt],
+            None,
+        ],
     ) -> None:
-        """Verify the non-Core PF-LAJ receipt without granting an effect."""
+        """Verify one non-Core zero-effect receipt without granting an effect."""
 
         if (
             receipt.committed_revision <= 1
             or receipt.prior_revision != receipt.committed_revision - 1
         ):
             raise CoreRunError("historical_prefix_invalid")
-        _verified_post_final_assessment_receipt(snapshot, receipt)
+        receipt_rule(snapshot, receipt)
         try:
             pre = history.snapshot_at_revision(
                 receipt.run_id,
@@ -3083,7 +3142,7 @@ class CoreRunDomainVerifier:
         except Exception as exc:
             raise CoreRunError("historical_prefix_invalid") from exc
 
-        # Reverify both immutable Core snapshots.  The advisory receipt may
+        # Reverify both immutable Core snapshots.  A zero-effect receipt may
         # coexist with finalized-local history, but it must not mask a broken
         # pre- or post-commit Core graph or become a transition authority.
         pre_verified = self._verify_snapshot(history, pre)

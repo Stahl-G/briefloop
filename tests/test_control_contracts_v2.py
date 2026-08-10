@@ -62,6 +62,7 @@ EXPECTED_V2_CONTRACT_IDS = (
     "briefloop.tavily_acquisition_bundle.v1",
     "briefloop.tavily_acquisition_bundle.v2",
     "briefloop.tavily_acquisition_bundle_record.v2",
+    "briefloop.market_data_snapshot.v1",
     "briefloop.source_acquisition_attempt_authorize_request.v1",
     "briefloop.workspace_controlstore_bootstrap.v2",
     "briefloop.runtime_adapter_binding.v2",
@@ -155,8 +156,8 @@ EXPECTED_V2_CONTRACT_IDS = (
 
 def test_v2_contract_inventory_is_exact_and_uses_existing_registry() -> None:
     assert V2_CONTRACT_IDS == EXPECTED_V2_CONTRACT_IDS
-    assert len(V2_CONTRACT_MODELS) == 124
-    assert len(set(V2_CONTRACT_IDS)) == 124
+    assert len(V2_CONTRACT_MODELS) == 125
+    assert len(set(V2_CONTRACT_IDS)) == 125
     for contract_id, model in zip(V2_CONTRACT_IDS, V2_CONTRACT_MODELS):
         assert SchemaRegistry.get(contract_id) is model
 

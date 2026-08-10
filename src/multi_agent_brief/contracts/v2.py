@@ -423,6 +423,7 @@ EVENT_TYPES = {
     "source_acquisition_attempt_authorized",
     "runtime_source_search_plan_recorded",
     "tavily_acquisition_bundle_recorded",
+    "market_data_snapshot_recorded",
 }
 
 # Release-mode approval vocabulary and boundary. DTO truth source;
@@ -961,6 +962,96 @@ class TavilyAcquisitionBundleRecordV2(StrictModel):
         )
         if self.record_fingerprint != expected:
             raise ValueError("Tavily bundle record fingerprint mismatch")
+        return self
+
+
+class MarketDataSecurityV1(StrictModel):
+    """One exact weekly equity quote inside a frozen market data snapshot.
+
+    Quote and valuation fields are explicit nulls when the provider response
+    or manual input file does not carry them; nothing is estimated,
+    interpolated, or backfilled.
+    """
+
+    ticker: ContractId
+    exchange: CleanText
+    currency: Annotated[str, StringConstraints(pattern=r"^[A-Z]{3}$")]
+    as_of: IsoDate
+    data_origin: Literal["yahoo_chart_api", "manual_input"]
+    week_open: Optional[Annotated[float, Field(gt=0)]]
+    week_high: Optional[Annotated[float, Field(gt=0)]]
+    week_low: Optional[Annotated[float, Field(gt=0)]]
+    week_close: Annotated[float, Field(gt=0)]
+    week_volume: Optional[NonNegativeInt]
+    weekly_change_pct: Optional[float]
+    market_cap: Optional[Annotated[float, Field(ge=0)]]
+    trailing_pe: Optional[Annotated[float, Field(gt=0)]]
+
+    @model_validator(mode="after")
+    def weekly_bar_is_coherent(self) -> "MarketDataSecurityV1":
+        if (
+            self.week_high is not None
+            and self.week_low is not None
+            and self.week_high < self.week_low
+        ):
+            raise ValueError("weekly high is below weekly low")
+        return self
+
+
+class MarketDataSecurityGapV1(StrictModel):
+    """Value-free record of one security that could not be quoted."""
+
+    ticker: ContractId
+    failure_class: Literal[
+        "transport_unavailable",
+        "http_error",
+        "response_invalid",
+        "symbol_data_missing",
+        "manual_record_invalid",
+    ]
+
+
+class MarketDataSnapshotV1(StrictModel):
+    """Append-only weekly market data snapshot for one run and as-of date.
+
+    The Store enforces one snapshot per (run_id, as_of_date) and rejects any
+    in-place change; a correction requires a later as-of date.  Missing
+    securities appear only as value-free gaps, never as fabricated quotes.
+    """
+
+    schema_id = "briefloop.market_data_snapshot.v1"
+
+    schema_version: Literal["briefloop.market_data_snapshot.v1"]
+    market_data_snapshot_id: ContractId
+    run_id: ContractId
+    as_of_date: IsoDate
+    security_count: Annotated[int, Field(ge=1, le=11)]
+    provider_id: Literal["yahoo_finance_chart"]
+    securities: list[MarketDataSecurityV1] = Field(min_length=1, max_length=11)
+    gaps: list[MarketDataSecurityGapV1] = Field(max_length=11)
+    record_event_id: ContractId
+    accepted_transaction_id: ContractId
+    recorded_at: IsoDateTime
+    snapshot_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def snapshot_identity_is_exact(self) -> "MarketDataSnapshotV1":
+        tickers = [item.ticker for item in self.securities]
+        if tickers != sorted(set(tickers)):
+            raise ValueError("market data securities must be sorted and unique")
+        if self.security_count != len(self.securities):
+            raise ValueError("market data security count mismatch")
+        gap_tickers = [item.ticker for item in self.gaps]
+        if gap_tickers != sorted(set(gap_tickers)):
+            raise ValueError("market data gaps must be sorted and unique")
+        if set(tickers) & set(gap_tickers):
+            raise ValueError("market data gap tickers must not carry a quote")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"snapshot_fingerprint"}),
+            field="snapshot_fingerprint",
+        )
+        if self.snapshot_fingerprint != expected:
+            raise ValueError("market data snapshot fingerprint mismatch")
         return self
 
 
@@ -7230,6 +7321,47 @@ RuntimeSourceSearchPlanV2.minimal_example = deepcopy(
 )
 RuntimeSourceSearchPlanV2.full_example = deepcopy(_RUNTIME_SOURCE_SEARCH_PLAN_V2)
 
+_MARKET_DATA_SECURITY_V1 = {
+    "ticker": "TOYO",
+    "exchange": "NasdaqCM",
+    "currency": "USD",
+    "as_of": "2026-08-07",
+    "data_origin": "yahoo_chart_api",
+    "week_open": 10.4,
+    "week_high": 10.9,
+    "week_low": 10.1,
+    "week_close": 10.62,
+    "week_volume": 1523400,
+    "weekly_change_pct": 2.31,
+    "market_cap": 812000000.0,
+    "trailing_pe": None,
+}
+_MARKET_DATA_SNAPSHOT_V1 = {
+    "schema_version": MarketDataSnapshotV1.schema_id,
+    "market_data_snapshot_id": "MARKET-DATA-SNAPSHOT-001",
+    "run_id": _RUN,
+    "as_of_date": "2026-08-07",
+    "security_count": 1,
+    "provider_id": "yahoo_finance_chart",
+    "securities": [deepcopy(_MARKET_DATA_SECURITY_V1)],
+    "gaps": [
+        {
+            "ticker": "DQ",
+            "failure_class": "transport_unavailable",
+        }
+    ],
+    "record_event_id": "EVT-MARKET-DATA-SNAPSHOT-001",
+    "accepted_transaction_id": "TXN-MARKET-DATA-SNAPSHOT-001",
+    "recorded_at": _NOW,
+    "snapshot_fingerprint": "0" * 64,
+}
+_MARKET_DATA_SNAPSHOT_V1["snapshot_fingerprint"] = _contract_fingerprint(
+    _MARKET_DATA_SNAPSHOT_V1,
+    field="snapshot_fingerprint",
+)
+MarketDataSnapshotV1.minimal_example = deepcopy(_MARKET_DATA_SNAPSHOT_V1)
+MarketDataSnapshotV1.full_example = deepcopy(_MARKET_DATA_SNAPSHOT_V1)
+
 _CACHED_ACQUISITION_SPEC = {
     "schema_version": RuntimeCachedPackageAcquisitionSpec.schema_id,
     "kind": "cached_package",
@@ -8793,6 +8925,7 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     TavilyAcquisitionBundle,
     TavilyAcquisitionBundleV2,
     TavilyAcquisitionBundleRecordV2,
+    MarketDataSnapshotV1,
     SourceAcquisitionAttemptAuthorizeRequest,
     WorkspaceControlStoreBootstrapV2,
     RuntimeAdapterBinding,
@@ -9128,6 +9261,9 @@ __all__ = [
     "TavilyTaskAcquisitionStatus",
     "TavilyAcquisitionBundleV2",
     "TavilyAcquisitionBundleRecordV2",
+    "MarketDataSecurityV1",
+    "MarketDataSecurityGapV1",
+    "MarketDataSnapshotV1",
     "SourceAcquisitionAttemptAuthorizeRequest",
     "RunSourceDiscoveryAuthorizationBootstrap",
     "RunSourceDiscoveryAuthorizationInput",

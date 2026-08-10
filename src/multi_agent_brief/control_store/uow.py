@@ -61,6 +61,7 @@ from multi_agent_brief.contracts.v2 import (
     RunSourceDiscoveryAuthorization,
     RuntimeSourceSearchPlanV2,
     TavilyAcquisitionBundleRecordV2,
+    MarketDataSnapshotV1,
     RunIdentity,
     RunGuidanceSelectionDecisionRecord,
     RunGuidanceSnapshotItemRecord,
@@ -162,6 +163,7 @@ class ControlUnitOfWork:
         self._tavily_acquisition_bundle_records: dict[
             str, TavilyAcquisitionBundleRecordV2
         ] = {}
+        self._market_data_snapshots: dict[str, MarketDataSnapshotV1] = {}
         self._owned_artifact_submissions: dict[str, OwnedArtifactSubmissionRecord] = {}
         self._stage_transitions: dict[str, StageTransitionRecord] = {}
         self._stage_artifact_bindings: dict[tuple[str, int], StageArtifactBinding] = {}
@@ -737,6 +739,15 @@ class ControlUnitOfWork:
             snapshot,
         )
 
+    def put_market_data_snapshot(self, record: MarketDataSnapshotV1) -> None:
+        snapshot = self._snapshot_record(record, MarketDataSnapshotV1)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._market_data_snapshots,
+            snapshot.market_data_snapshot_id,
+            snapshot,
+        )
+
     def put_post_final_assessment_request(
         self, record: PostFinalAssessmentRequestRecord
     ) -> None:
@@ -1141,6 +1152,10 @@ class ControlUnitOfWork:
             "tavily_acquisition_bundle_records": [
                 self._record_payload(self._tavily_acquisition_bundle_records[key])
                 for key in sorted(self._tavily_acquisition_bundle_records)
+            ],
+            "market_data_snapshots": [
+                self._record_payload(self._market_data_snapshots[key])
+                for key in sorted(self._market_data_snapshots)
             ],
             "post_final_assessment_policy_revisions": [
                 self._record_payload(self._post_final_assessment_policy_revisions[key])

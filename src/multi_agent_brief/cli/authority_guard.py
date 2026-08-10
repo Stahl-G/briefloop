@@ -17,6 +17,7 @@ SQLITE_ACTIVE_COMMANDS = frozenset(
         "core-v2",
         "doctor",
         "intake-v2",
+        "market-data",
     }
 )
 

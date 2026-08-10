@@ -89,6 +89,7 @@ from multi_agent_brief.contracts.v2 import (
     RunSourceDiscoveryAuthorization,
     RuntimeSourceSearchPlanV2,
     TavilyAcquisitionBundleRecordV2,
+    MarketDataSnapshotV1,
     RunIdentity,
     RunGuidanceSelectionDecisionRecord,
     RunGuidanceSelectionDecisionReference,
@@ -190,6 +191,7 @@ _EXTENDED_RECORD_MODELS = (
     RunSourceAcquisitionAttemptAuthorization,
     RuntimeSourceSearchPlanV2,
     TavilyAcquisitionBundleRecordV2,
+    MarketDataSnapshotV1,
     OwnedArtifactSubmissionRecord,
     StageTransitionRecord,
     StageArtifactBinding,
@@ -558,6 +560,7 @@ class ControlStoreSnapshot:
     ]
     runtime_source_search_plans: tuple[RuntimeSourceSearchPlanV2, ...]
     tavily_acquisition_bundle_records: tuple[TavilyAcquisitionBundleRecordV2, ...]
+    market_data_snapshots: tuple[MarketDataSnapshotV1, ...]
     owned_artifact_submissions: tuple[OwnedArtifactSubmissionRecord, ...]
     stage_transitions: tuple[StageTransitionRecord, ...]
     stage_artifact_bindings: tuple[StageArtifactBinding, ...]
@@ -901,6 +904,11 @@ class ControlStoreHistory:
             for item in full.tavily_acquisition_bundle_records
             if item.accepted_transaction_id in committed_transaction_ids
         )
+        market_data_snapshots = tuple(
+            item
+            for item in full.market_data_snapshots
+            if item.accepted_transaction_id in committed_transaction_ids
+        )
         stage_artifact_bindings = selected(
             "stage_artifact_bindings",
             ("transition_id", "position"),
@@ -1142,6 +1150,7 @@ class ControlStoreHistory:
             ),
             runtime_source_search_plans=runtime_source_search_plans,
             tavily_acquisition_bundle_records=tavily_acquisition_bundle_records,
+            market_data_snapshots=market_data_snapshots,
             owned_artifact_submissions=owned_artifact_submissions,
             stage_transitions=stage_transitions,
             stage_artifact_bindings=stage_artifact_bindings,
@@ -1944,6 +1953,9 @@ class SQLiteControlStore:
                 )
                 self._insert_tavily_acquisition_bundle_records(
                     uow._tavily_acquisition_bundle_records.values()
+                )
+                self._insert_market_data_snapshots(
+                    uow._market_data_snapshots.values()
                 )
                 self._insert_owned_artifact_submissions(
                     uow._owned_artifact_submissions.values()
@@ -5369,6 +5381,32 @@ class SQLiteControlStore:
                 ),
             )
 
+    def _insert_market_data_snapshots(
+        self, records: Iterable[MarketDataSnapshotV1]
+    ) -> None:
+        for record in records:
+            self._connection.execute(
+                """
+                INSERT INTO market_data_snapshots(
+                    run_id, market_data_snapshot_id, schema_version, as_of_date,
+                    security_count, provider_id, snapshot_fingerprint,
+                    accepted_transaction_id, recorded_at, payload_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record.run_id,
+                    record.market_data_snapshot_id,
+                    record.schema_version,
+                    record.as_of_date,
+                    record.security_count,
+                    record.provider_id,
+                    record.snapshot_fingerprint,
+                    record.accepted_transaction_id,
+                    record.recorded_at,
+                    _canonical_record_text(record),
+                ),
+            )
+
     def _insert_pr4b_records(self, uow: "ControlUnitOfWork") -> None:
         for record in uow._repair_cycles.values():
             self._connection.execute(
@@ -7405,6 +7443,23 @@ class SQLiteControlStore:
                     "recorded_at": "recorded_at",
                 },
             ),
+            market_data_snapshots=self._load_for_run(
+                MarketDataSnapshotV1,
+                "market_data_snapshots",
+                run_id,
+                "recorded_at, market_data_snapshot_id",
+                {
+                    "run_id": "run_id",
+                    "market_data_snapshot_id": "market_data_snapshot_id",
+                    "schema_version": "schema_version",
+                    "as_of_date": "as_of_date",
+                    "security_count": "security_count",
+                    "provider_id": "provider_id",
+                    "snapshot_fingerprint": "snapshot_fingerprint",
+                    "accepted_transaction_id": "accepted_transaction_id",
+                    "recorded_at": "recorded_at",
+                },
+            ),
             owned_artifact_submissions=self._load_for_run(
                 OwnedArtifactSubmissionRecord,
                 "owned_artifact_submissions",
@@ -8469,6 +8524,7 @@ class SQLiteControlStore:
         )
         self._verify_core_snapshot_structure(snapshot)
         self._verify_runtime_source_search_snapshot_structure(snapshot)
+        self._verify_market_data_snapshot_structure(snapshot)
         self._verify_gate_repair_snapshot_structure(snapshot)
         self._verify_post_final_assessment_snapshot_structure(snapshot)
         if _verify_guidance:
@@ -8568,6 +8624,40 @@ class SQLiteControlStore:
                     "runtime_source_search_graph_invalid"
                 )
             seen_attempts.add(bundle.attempt_authorization_id)
+
+    @staticmethod
+    def _verify_market_data_snapshot_structure(
+        snapshot: ControlStoreSnapshot,
+    ) -> None:
+        """Verify the append-only market data snapshot evidence graph."""
+
+        records = snapshot.market_data_snapshots
+        if not records:
+            return
+        transactions = {
+            item.transaction_id: item for item in snapshot.transactions
+        }
+        events = {item.event_id: item for item in snapshot.events}
+        seen_ids: set[str] = set()
+        seen_dates: set[str] = set()
+        for record in records:
+            event = events.get(record.record_event_id)
+            if (
+                record.run_id != snapshot.run.run_id
+                or record.market_data_snapshot_id in seen_ids
+                or record.as_of_date in seen_dates
+                or record.accepted_transaction_id not in transactions
+                or event is None
+                or event.run_id != record.run_id
+                or event.transaction_id != record.accepted_transaction_id
+                or event.event_type != "market_data_snapshot_recorded"
+                or event.decision != record.market_data_snapshot_id
+            ):
+                raise ControlStoreIntegrityError(
+                    "market_data_snapshot_graph_invalid"
+                )
+            seen_ids.add(record.market_data_snapshot_id)
+            seen_dates.add(record.as_of_date)
 
     def _verify_gate_repair_snapshot_structure(
         self,

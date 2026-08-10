@@ -382,7 +382,12 @@ guidance 不提供 evidence，不改变 Claim Ledger、Gate、finalize、deliver
 - 实验性 Solar Stock Periodic ReportPack：`briefloop new solar-stock-periodic
   <workspace>`。请使用 fresh schema-18 workspace，并通过 Store 冻结的 Tavily
   路径执行 20 条发现任务；Search 摘要仍不能作为证据，精确重放不会重拨，失败
-  任务会保留为可见状态，而不是伪装成“本周无事件”。
+  任务会保留为可见状态，而不是伪装成“本周无事件”。`briefloop market-data
+  fetch|ingest|project` 每个 run、每个 as-of 日期只冻结一份 append-only
+  周度行情快照（有界 Yahoo chart API 适配器，单只证券失败隔离为显式缺口；
+  `input/market_data/` 下的手工 JSON/CSV 优先于 API），并投影出带显式
+  `NOT AVAILABLE` 行的股权对比表；缺失数据绝不会用编造的价格或估值倍数
+  填补。
 
 仅限 development-main 的 LAJ continuation controls：
 

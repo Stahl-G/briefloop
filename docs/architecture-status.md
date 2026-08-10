@@ -57,9 +57,15 @@ page describes implemented runtime capability, not a breaking deep rename.
   all eligible unique URLs in groups of 20 up to an 800-URL safety envelope.
   Search snippets remain discovery-only; task failures and per-URL outcomes are
   retained as evidence, and only successful non-empty Extract content enters
-  the Claim Ledger path. The Pack does not yet provide a Yahoo market-data
-  adapter or invent price/valuation fields when a frozen market-data snapshot
-  is absent.
+  the Claim Ledger path. The `market-data` CLI channel freezes one append-only
+  snapshot per run and as-of date through a single Store transaction: a
+  bounded, no-redirect Yahoo chart-API adapter isolates each security
+  failure as a value-free gap, manual `input/market_data/` JSON/CSV intake
+  takes precedence through the same contract, and a deterministic projection
+  renders the primary/overseas equity comparison tables to
+  `output/intermediate/market_data_tables.md` with explicit `NOT AVAILABLE`
+  rows. The channel never invents price/valuation fields when a frozen
+  market-data snapshot is absent.
 - The workspace-local Codex kit is execution input, not decoration: `run` and
   runtime commands verify its exact config, Skill, reference, and role-file
   inventory against the Store-bound adapter identity.

@@ -435,6 +435,12 @@ Current entrypoints:
   workspace and the Store-frozen Tavily route for its 20-task discovery plan.
   Search snippets remain discovery-only, exact replay never redials, and
   failed tasks remain visible rather than being reported as “no events”.
+  `briefloop market-data fetch|ingest|project` freezes one append-only weekly
+  quote snapshot per run and as-of date (bounded Yahoo chart-API adapter with
+  per-security failure isolation; manual `input/market_data/` JSON/CSV files
+  take precedence) and projects the equity comparison tables with explicit
+  `NOT AVAILABLE` rows; missing data is never filled with invented prices or
+  valuation multiples.
 
 Development-main-only LAJ continuation controls are explicit and Store-native:
 
