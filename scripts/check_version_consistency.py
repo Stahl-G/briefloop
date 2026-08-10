@@ -140,31 +140,7 @@ def main() -> int:
                     _error(f"{file} says current version {found}, expected {version}")
                     errors.append(f"{file}:{found}")
 
-    # 8. Hermes adapter
-    adapter = _read(ROOT / "src" / "multi_agent_brief" / "hermes" / "adapter.py")
-    hermes_ok = True
-    if f'version="{tag}"' not in adapter:
-        _error(f"hermes/adapter.py missing version={tag}")
-        hermes_ok = False
-    if f"version: {version}" not in adapter:
-        _error(f"hermes/adapter.py skill metadata missing version {version}")
-        hermes_ok = False
-    if hermes_ok:
-        _ok("hermes/adapter.py version")
-    else:
-        errors.append("hermes/adapter.py")
-
-    # 9. Hermes skill SKILL.md
-    skill_path = ROOT / ".agents" / "hermes-skills" / "multi-agent-brief-hermes" / "SKILL.md"
-    if skill_path.exists():
-        skill_text = _read(skill_path)
-        if f"version: {version}" in skill_text:
-            _ok("Hermes skill SKILL.md")
-        else:
-            _error(f"Hermes skill SKILL.md version mismatch")
-            errors.append("SKILL.md")
-
-    # 10. Homebrew Formula source archive tag
+    # 8. Homebrew Formula source archive tag
     formula_path = ROOT / "Formula" / "multi-agent-brief.rb"
     if formula_path.exists():
         formula = _read(formula_path)

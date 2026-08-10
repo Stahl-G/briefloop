@@ -10,9 +10,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 CANONICAL = ROOT / ".agents" / "skills" / "briefloop"
-HERMES_PLUGIN_PROJECTION = (
-    ROOT / "integrations" / "hermes-plugin" / "mabw" / "skills" / "briefloop"
-)
 PACKAGED_CODEX = (
     ROOT / "src" / "multi_agent_brief" / "runtime_kits" / "codex" / "skills" / "briefloop"
 )
@@ -49,8 +46,8 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
     ],
     "references/version-matrix.md": [
         "briefloop-codex-skill-v0.3.0",
-        "Prior release line: `v0.13.0`",
-        "Prepared release line: `v0.14.0`",
+        "Prior release line: `v0.14.0`",
+        "Prepared release line: `v0.15.2`",
         "Codex is the only active fresh runtime",
         "Strict Pydantic requests are the only write boundary",
         "Experimental",
@@ -93,7 +90,6 @@ def main() -> int:
     checks: list[dict[str, str]] = []
     _check_required_phrases(checks)
     _check_packaged_phrases(checks)
-    _check_projection_parity(checks)
 
     ok = all(item["status"] == "pass" for item in checks)
     payload = {
@@ -147,32 +143,6 @@ def _check_packaged_phrases(checks: list[dict[str, str]]) -> None:
         prefix="packaged_codex",
         requirements=PACKAGED_REQUIRED_PHRASES,
     )
-
-
-def _check_projection_parity(checks: list[dict[str, str]]) -> None:
-    errors = _projection_errors(CANONICAL, HERMES_PLUGIN_PROJECTION)
-    _append_check(
-        checks,
-        "hermes_plugin.briefloop_skill_projection",
-        not errors,
-        "; ".join(errors) if errors else "canonical and plugin projection match",
-    )
-
-
-def _projection_errors(source: Path, target: Path) -> list[str]:
-    if not target.exists():
-        return [f"missing projection directory: {_display_path(target)}"]
-    errors: list[str] = []
-    source_files = set(_relative_files(source))
-    target_files = set(_relative_files(target))
-    for rel_path in sorted(source_files - target_files):
-        errors.append(f"missing file: {_display_path(target / rel_path)}")
-    for rel_path in sorted(target_files - source_files):
-        errors.append(f"extra file: {_display_path(target / rel_path)}")
-    for rel_path in sorted(source_files & target_files):
-        if (source / rel_path).read_bytes() != (target / rel_path).read_bytes():
-            errors.append(f"differs: {_display_path(target / rel_path)}")
-    return errors
 
 
 def _display_path(path: Path) -> str:

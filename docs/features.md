@@ -23,10 +23,9 @@ marks them supported.
 |---|---|---|---|
 | Workspace onboarding | Collects brief purpose, audience, cadence, source mode, and output preferences before creating a workspace | Always on | `briefloop onboard`, `briefloop init --from-onboarding` |
 | Product workspace skeleton | Creates a conservative local-first workspace and `report_spec.yaml` from a supported baseline ReportPack | Supported baseline | `briefloop new industry-weekly <workspace>`, `briefloop new management-monthly <workspace>`, `briefloop new document-review <workspace>` |
-| Claude writer command | Gives writers a five-verb interface for normal work | Optional, first-class writer path | `/briefloop new`, `/briefloop run`, `/briefloop status`, `/briefloop feedback`, `/briefloop deliver`; `/mabw` remains a compatibility alias |
-| Runtime handoff | Builds the runtime handoff for the external orchestrator and subagents | Always on | `briefloop run --workspace <workspace> --runtime operator` |
-| Status view | Shows current stage, blockers, artifacts, timing buckets, and next safe actions | Always on | `/briefloop status`, `briefloop status` |
-| Delivery bundle | Produces reader-facing Markdown and DOCX outputs after finalize checks | Always on | `/briefloop deliver`, `briefloop finalize`, `state finalize-complete` |
+| Runtime handoff | Bootstraps the SQLite ControlStore and returns the Store-derived next action | Always on | `briefloop run --workspace <workspace> --runtime codex`, `briefloop runtime next` |
+| Status view | Shows the Store-derived stage, action, package readiness, and delivery state | Always on | `briefloop status --workspace <workspace> --json` |
+| Delivery bundle | Produces reader-facing Markdown and DOCX outputs through Store-backed delivery | Always on | `briefloop runtime apply` (delivery actions), Store-native status |
 | Delivery/audit bundle projection | Writes a manifest that separates reader delivery artifacts from audit/control artifacts by hash | Experimental | `briefloop packs bundle --workspace <workspace>` |
 
 ## Source And Input Collection

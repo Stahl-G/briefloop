@@ -59,35 +59,7 @@ def main() -> int:
         changed += 1
         print("  Updated README.zh-CN.md current version")
 
-    # 6. Hermes adapter
-    changed += _replace_in_file(
-        ROOT / "src" / "multi_agent_brief" / "hermes" / "adapter.py",
-        r'version="v\d+\.\d+\.\d+"',
-        f'version="{tag}"',
-        "hermes/adapter.py",
-    )
-    changed += _replace_in_file(
-        ROOT / "src" / "multi_agent_brief" / "hermes" / "adapter.py",
-        r'version: \d+\.\d+\.\d+',
-        f'version: {version}',
-        "hermes/adapter.py (metadata)",
-    )
-    changed += _replace_in_file(
-        ROOT / "src" / "multi_agent_brief" / "hermes" / "adapter.py",
-        r'version: str = "v\d+\.\d+\.\d+"',
-        f'version: str = "{tag}"',
-        "hermes/adapter.py (default)",
-    )
-
-    # 7. Hermes skill metadata
-    changed += _replace_in_file(
-        ROOT / ".agents" / "hermes-skills" / "multi-agent-brief-hermes" / "SKILL.md",
-        r'version: \d+\.\d+\.\d+',
-        f'version: {version}',
-        "Hermes skill SKILL.md",
-    )
-
-    # 8. Homebrew Formula stays on the last published archive until the new
+    # 6. Homebrew Formula stays on the last published archive until the new
     # GitHub tag exists and the release archive can be hashed.
     print("  Homebrew formula (no update before tag/archive checksum exists)")
 

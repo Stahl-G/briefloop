@@ -746,9 +746,9 @@ def test_packs_bundle_public_cli_is_retired_with_zero_writes(tmp_path: Path, cap
         out = capsys.readouterr().out
 
         # retired public `packs bundle` command and its typed
-        # legacy-workspace rejection with zero writes.
+        # rejection with zero writes (workspace authority guard).
         assert rc == 1
-        assert out == "legacy_workspace_unsupported\n"
+        assert out == "runtime_command_unsupported\n"
         after = {
             path.relative_to(ws).as_posix(): path.read_bytes()
             for path in ws.rglob("*")

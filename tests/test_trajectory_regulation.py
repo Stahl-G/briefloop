@@ -5,6 +5,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.product.trajectory_regulation import (
     project_workspace_trajectory_regulation,
@@ -124,10 +126,10 @@ def test_state_operator_cli_is_retired_with_typed_rejection(tmp_path: Path, caps
     )
 
     for argv in retired_commands:
-        # retired public `state` operator CLI; typed rejection
-        # with zero writes replaces the pre-CX stage/decision transactions.
-        assert main(list(argv)) == 1
-        assert capsys.readouterr().out == "runtime_command_unsupported\n"
+        # retired public `state` operator CLI no longer exists; argparse
+        # rejects the unknown verb with zero writes.
+        with pytest.raises(SystemExit):
+            main(list(argv))
         assert (ws / "briefloop.db").read_bytes() == database_before
         assert _workspace_file_bytes(ws) == files_before
 

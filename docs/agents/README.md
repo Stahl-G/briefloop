@@ -58,8 +58,6 @@ Strict: Scout -> Screener -> Claim Ledger -> Analyst -> Delivery Editor -> Audit
 
         | Platform | Location | Format |
         |----------|----------|--------|
-        | Codex agents | `.codex/agents/*.toml` | TOML |
+        | Packaged Codex runtime kit | `src/multi_agent_brief/runtime_kits/codex/` | TOML |
         | Skills | `.agents/skills/*/SKILL.md` | Markdown + YAML frontmatter, hand-maintained |
-        | Claude Code | `.claude/agents/*.md` | Markdown + YAML frontmatter |
-        | OpenCode | `.opencode/agents/*.md` | Markdown + YAML frontmatter |
         | Project instructions | `AGENTS.md` | Markdown, hand-maintained |

@@ -208,13 +208,9 @@ class TestSecretsImport:
 
     def test_writer_surfaces_do_not_instruct_copying_api_key_values(self):
         surfaces = [
-            Path(".claude/commands/mabw.md"),
-            Path(".claude/commands/briefloop.md"),
             Path(".claude/commands/init-brief.md"),
             Path(".agents/skills/briefloop/SKILL.md"),
-            Path(".agents/skills/source-provider/SKILL.md"),
             Path("src/multi_agent_brief/runtime_assets.py"),
-            Path("src/multi_agent_brief/hermes/adapter.py"),
         ]
         forbidden = [
             "cat ~/.env",

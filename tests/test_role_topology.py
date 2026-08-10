@@ -16,9 +16,6 @@ from multi_agent_brief.contracts.role_topology import (
     resolve_role_topology,
 )
 from multi_agent_brief.contracts.validator import validate_contract_registry
-from multi_agent_brief.orchestrator.role_topology import (
-    stage_satisfaction_rules_for_topology,
-)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,33 +25,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 
-def test_human_assisted_topology_declares_writer_satisfaction_hooks():
-    rules = stage_satisfaction_rules_for_topology(
-        stages=_stage_specs(),
-        policy_pack={"policy": {"role_topology": "human_assisted"}},
-    )
-
-    assert rules["screener"]["satisfied_by"] == "scout"
-    assert rules["analyst"] == {
-        "topology": "human_assisted",
-        "satisfied_by": "writer",
-        "required_artifacts": ["audited_brief"],
-    }
-    assert rules["editor"] == {
-        "topology": "human_assisted",
-        "satisfied_by": "writer",
-        "required_artifacts": ["audited_brief"],
-    }
-
 
 def test_missing_role_topology_defaults_to_default():
     policy_pack = {"policy_pack": {"name": "legacy"}}
 
     assert resolve_role_topology(policy_pack) == "default"
-    assert stage_satisfaction_rules_for_topology(
-        stages=_stage_specs(),
-        policy_pack=policy_pack,
-    )["screener"]["satisfied_by"] == "scout"
 
 
 def test_unknown_role_topology_raises_for_layer_d_projection():

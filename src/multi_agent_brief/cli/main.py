@@ -16,32 +16,14 @@ from multi_agent_brief.cli import (
     run_commands,
     onboard_commands,
     init_commands,
-    hermes_commands,
     sources_commands,
     competitors_commands,
-    audit_commands,
-    finalize_commands,
-    deliver_commands,
-    analysis_commands,
     capability_commands,
-    input_commands,
     status_commands,
-    state_commands,
-    feedback_commands,
-    repair_commands,
-    gates_commands,
-    claude_commands,
-    provenance_commands,
-    controls_commands,
     runtime_commands,
-    improve_commands,
     experiments_commands,
     product_commands,
     secrets_commands,
-    approval_commands,
-    release_commands,
-    workbuddy_commands,
-    semantic_support_commands,
     contract_commands,
     intake_v2_commands,
     core_v2_commands,
@@ -72,48 +54,17 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
     # Competitor universe
     competitors_commands.register(subparsers)
 
-    # Quality gates
-    audit_commands.register(subparsers)
-    finalize_commands.register(subparsers)
-    deliver_commands.register(subparsers)
-
-    # Analysis tooling
-    analysis_commands.register_analysis_blocks(subparsers)
-    analysis_commands.register_limitation_hygiene(subparsers)
-
     # Capability discovery and setup
     capability_commands.register_features(subparsers)
     capability_commands.register_capability(subparsers)
     capability_commands.register_recommend(subparsers)
     capability_commands.register_setup(subparsers)
 
-    # Input governance
-    input_commands.register(subparsers)
-
     # Read-only writer-facing workspace status
     status_commands.register(subparsers)
 
-    # Orchestrator runtime state
-    state_commands.register(subparsers)
-
-    # Feedback and repair planning
-    feedback_commands.register(subparsers)
-    repair_commands.register(subparsers)
-
-    # Deterministic quality gate controls
-    gates_commands.register(subparsers)
-
     # Experimental measurement harnesses
     experiments_commands.register(subparsers)
-
-    # Deterministic provenance projection
-    provenance_commands.register(subparsers)
-
-    # Orchestrator control switchboard
-    controls_commands.register(subparsers)
-
-    # Improvement Ledger lifecycle
-    improve_commands.register(subparsers)
 
     # Workspace runtime kit install
     runtime_commands.register(subparsers)
@@ -124,22 +75,6 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
     product_commands.register_validate_report_spec(subparsers)
     product_commands.register_extract(subparsers)
     product_commands.register_quality(subparsers)
-
-    # Internal review release modes and human approval ledger
-    approval_commands.register(subparsers)
-    release_commands.register(subparsers)
-
-    # Claude Code install helpers
-    claude_commands.register(subparsers)
-
-    # Hermes runtime
-    hermes_commands.register(subparsers)
-
-    # WorkBuddy source-clone Skill packaging
-    workbuddy_commands.register(subparsers)
-
-    # Human adjudication for semantic support proposals
-    semantic_support_commands.register(subparsers)
 
     # Read-only strict contract schemas and examples
     contract_commands.register(subparsers)
@@ -178,9 +113,6 @@ def _dispatch(args: argparse.Namespace) -> int:
     if cmd == "init":
         return init_commands.handle(args)
 
-    if cmd == "hermes":
-        return hermes_commands.handle(args)
-
     if cmd == "doctor":
         return sources_commands.handle_doctor(args)
 
@@ -190,29 +122,8 @@ def _dispatch(args: argparse.Namespace) -> int:
     if cmd == "secrets":
         return secrets_commands.handle(args)
 
-    if cmd == "approval":
-        return approval_commands.handle(args)
-
-    if cmd == "release":
-        return release_commands.handle(args)
-
     if cmd == "competitors":
         return competitors_commands.handle(args)
-
-    if cmd == "audit":
-        return audit_commands.handle(args)
-
-    if cmd == "finalize":
-        return finalize_commands.handle(args)
-
-    if cmd == "deliver":
-        return deliver_commands.handle(args)
-
-    if cmd == "analysis-blocks":
-        return analysis_commands.handle_analysis_blocks(args)
-
-    if cmd == "limitation-hygiene":
-        return analysis_commands.handle_limitation_hygiene(args)
 
     if cmd in ("features", "capability"):
         return capability_commands.handle_features_capability(args)
@@ -223,35 +134,11 @@ def _dispatch(args: argparse.Namespace) -> int:
     if cmd == "setup":
         return capability_commands.handle_setup(args)
 
-    if cmd == "inputs":
-        return input_commands.handle(args)
-
     if cmd == "status":
         return status_commands.handle(args)
 
-    if cmd == "state":
-        return state_commands.handle(args)
-
-    if cmd == "feedback":
-        return feedback_commands.handle(args)
-
-    if cmd == "repair":
-        return repair_commands.handle(args)
-
-    if cmd == "gates":
-        return gates_commands.handle(args)
-
     if cmd == "experiments":
         return experiments_commands.handle(args)
-
-    if cmd == "provenance":
-        return provenance_commands.handle(args)
-
-    if cmd == "controls":
-        return controls_commands.handle(args)
-
-    if cmd == "improve":
-        return improve_commands.handle(args)
 
     if cmd == "runtime":
         return runtime_commands.handle(args)
@@ -270,15 +157,6 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "quality":
         return product_commands.handle_quality(args)
-
-    if cmd == "claude":
-        return claude_commands.handle(args)
-
-    if cmd == "workbuddy":
-        return workbuddy_commands.handle(args)
-
-    if cmd == "semantic-support":
-        return semantic_support_commands.handle(args)
 
     if cmd == "contract":
         return contract_commands.handle(args)

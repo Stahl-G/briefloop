@@ -8,14 +8,14 @@ explicitly classified historical or compatibility surfaces.
 
 ## Release Lines
 
-- Prior release line: `v0.13.0`.
-- Prepared release line: `v0.14.0`.
-- Treat v0.14.0 as a release target until both its tag and non-draft GitHub
-  Release exist. After they exist, treat v0.14.0 as the current release. Do
+- Prior release line: `v0.14.0`.
+- Prepared release line: `v0.15.2`.
+- Treat v0.15.2 as a release target until both its tag and non-draft GitHub
+  Release exist. After they exist, treat v0.15.2 as the current release. Do
   not infer release status from this file alone.
 
-This skill is verified against the post-v0.13 source tree that is being cut as
-v0.14.0. The skill deliberately contains both version strings so the same
+This skill is verified against the post-v0.14 source tree that is being cut as
+v0.15.2. The skill deliberately contains both version strings so the same
 contract check remains valid before and after the version-only release cut.
 
 ## Active Runtime Contract
@@ -41,7 +41,7 @@ quality guarantee.
 ## Read-Only Product Surfaces
 
 The three-page Brief HTML and init web wizard are read-only interaction
-surfaces in the v0.14.0 release target. They do not create authority. LAJ
+surfaces in the v0.15.2 release target. They do not create authority. LAJ
 remains Experimental and NOT MEASURED. The Improvement Ledger lifecycle is
 retired; a page that reports it unavailable is not a write path.
 

@@ -330,7 +330,7 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 
 ## 🧭 当前状态
 
-当前版本：**v0.14.0**
+当前版本：**v0.15.2**
 
 当前主要入口：
 
@@ -346,7 +346,12 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
   `briefloop quality summarize --laj-view <laj.json>` 只读展示显式提供且与当前
   报告绑定的 `laj.json`
 
-v0.14.0 完成 SQLite-only 切换，并增加只读交互面：
+v0.15.2 移除 legacy JSON control-plane 运行时。原有 Claude/Hermes/OpenCode/
+CodeBuddy/operator 路径及其 workspace 资产、role skills、writer 命令和 JSON
+control 文件均已删除；仅保留 SQLite Codex ControlStore 运行时。此版本同时
+移除已退役的 JSON runtime-state 栈及其 dead consumer。
+
+此前的 v0.14.0 完成 SQLite-only 切换，并增加只读交互面：
 
 - SQLite ControlStore（`briefloop.db`）、已接受的 strict request、Receipt 与
   ledger relation 是唯一运行时权威。JSON-only workspace 不受支持；没有导入、

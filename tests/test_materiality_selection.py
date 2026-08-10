@@ -6,6 +6,8 @@ from pathlib import Path
 
 import yaml
 
+import pytest
+
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.product.materiality_selection import (
     MATERIALITY_SELECTION_RUNTIME_EFFECT,
@@ -385,7 +387,7 @@ def test_materiality_selection_validator_rejects_authority_shape(tmp_path: Path)
 
 
 def test_state_init_operator_public_surface_is_retired_without_writes(tmp_path: Path, capsys) -> None:
-    """`state init --runtime operator` is retired: typed rejection, zero writes."""
+    """`state` CLI no longer exists: the operator bootstrap surface is removed."""
     ws = _workspace(tmp_path)
     before_files = {
         path.relative_to(ws).as_posix(): path.read_bytes()
@@ -393,13 +395,9 @@ def test_state_init_operator_public_surface_is_retired_without_writes(tmp_path: 
         if path.is_file()
     }
 
-    rc = main(["state", "init", "--runtime", "operator", "--workspace", str(ws)])
+    with pytest.raises(SystemExit):
+        main(["state", "init", "--runtime", "operator", "--workspace", str(ws)])
 
-    # retired public `state init --runtime operator` bootstrap
-    # surface and its output/intermediate runtime-state artifacts; the Codex
-    # SQLite ControlStore runtime is the sole runtime authority.
-    assert rc == 1
-    assert capsys.readouterr().out == "runtime_command_unsupported\n"
     after_files = {
         path.relative_to(ws).as_posix(): path.read_bytes()
         for path in ws.rglob("*")

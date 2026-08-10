@@ -9,8 +9,6 @@ import pytest
 from multi_agent_brief.contracts.base import Contract, SchemaRegistry
 from multi_agent_brief.contracts.errors import ContractError, FieldViolation
 from multi_agent_brief.contracts.source_metadata import source_url_error
-from multi_agent_brief.contracts.schemas.source_item import SourceItemContract
-from multi_agent_brief.contracts.schemas.candidate_item import CandidateItemContract
 from multi_agent_brief.contracts.schemas.atomic_claim_graph import AtomicClaimGraphContract
 from multi_agent_brief.contracts.schemas.claim_draft import ClaimDraftContract, claim_draft_diagnostics
 from multi_agent_brief.contracts.schemas.claim import ClaimContract
@@ -18,10 +16,6 @@ from multi_agent_brief.contracts.schemas.claim_support_matrix import ClaimSuppor
 from multi_agent_brief.contracts.schemas.evidence_span_registry import EvidenceSpanRegistryContract
 from multi_agent_brief.contracts.schemas.semantic_assessment_report import SemanticAssessmentReportContract
 from multi_agent_brief.contracts.schemas.audit_report import AuditReportContract
-from multi_agent_brief.contracts.schemas.analysis_pack import (
-    MarketEventContract,
-    AnalysisCardContract,
-)
 from multi_agent_brief.contracts.migrations.claim_v1_to_v2 import migrate_claim_v1_to_v2
 
 
@@ -30,7 +24,6 @@ from multi_agent_brief.contracts.migrations.claim_v1_to_v2 import migrate_claim_
 
 class TestSchemaRegistry:
     def test_register_and_get(self):
-        assert SchemaRegistry.get("source_item") is SourceItemContract
         assert SchemaRegistry.get("claim") is ClaimContract
         assert SchemaRegistry.get("claim_drafts") is ClaimDraftContract
         assert SchemaRegistry.get("claim_support_matrix") is ClaimSupportMatrixContract
@@ -44,88 +37,6 @@ class TestSchemaRegistry:
     def test_validate_unknown_schema_raises(self):
         with pytest.raises(KeyError, match="Unknown schema"):
             SchemaRegistry.validate("nonexistent", {})
-
-
-# ── SourceItemContract ──
-
-
-class TestSourceItemContract:
-    def test_valid_source_passes(self):
-        data = {
-            "source_id": "S1", "source_name": "Test",
-            "source_type": "local_file", "title": "T", "content": "C",
-            "source_category": "peer_reviewed_paper",
-        }
-        assert SourceItemContract.is_valid(data)
-        assert SourceItemContract.validate(data) == []
-
-    def test_invalid_source_category_fails(self):
-        data = {
-            "source_id": "S1",
-            "source_name": "Test",
-            "source_type": "local_file",
-            "title": "T",
-            "content": "C",
-            "source_category": "blog_post",
-        }
-        violations = SourceItemContract.validate(data)
-        assert any(v.field == "source_category" for v in violations)
-
-    @pytest.mark.parametrize(
-        ("field", "value"),
-        [
-            ("retrieval_source_type", "magazine_page"),
-            ("underlying_evidence_type", "blog_opinion"),
-        ],
-    )
-    def test_invalid_source_taxonomy_fails(self, field, value):
-        data = {
-            "source_id": "S1",
-            "source_name": "Test",
-            "source_type": "local_file",
-            "title": "T",
-            "content": "C",
-            "source_category": "news_media",
-            field: value,
-        }
-
-        violations = SourceItemContract.validate(data)
-
-        assert any(v.field == field for v in violations)
-
-    def test_missing_required_field_fails(self):
-        data = {"source_id": "S1"}  # missing source_name, source_type, title, content
-        violations = SourceItemContract.validate(data)
-        error_fields = [v.field for v in violations if v.severity == "error"]
-        assert "source_name" in error_fields
-        assert "source_type" in error_fields
-
-    def test_unknown_field_warning(self):
-        data = {
-            "source_id": "S1", "source_name": "Test",
-            "source_type": "local_file", "title": "T", "content": "C",
-            "custom_field": "value",
-        }
-        violations = SourceItemContract.validate(data)
-        warnings = [v for v in violations if v.severity == "warning"]
-        assert any(v.field == "custom_field" for v in warnings)
-
-
-# ── CandidateItemContract ──
-
-
-class TestCandidateItemContract:
-    def test_valid_candidate_passes(self):
-        data = {"item_id": "C1", "title": "T", "summary": "S", "source_id": "S1"}
-        assert CandidateItemContract.is_valid(data)
-
-    def test_empty_title_fails(self):
-        data = {"item_id": "C1", "title": "", "summary": "S", "source_id": "S1"}
-        violations = CandidateItemContract.validate(data)
-        assert any(v.field == "title" for v in violations)
-
-
-# ── ClaimContract ──
 
 
 class TestClaimContract:
@@ -1245,37 +1156,6 @@ class TestAuditReportContract:
 
 
 # ── AnalysisPack Contracts ──
-
-
-class TestMarketEventContract:
-    def test_valid_market_event_passes(self):
-        data = {"event_id": "E1", "entity_ids": ["ENT1"], "event_type": "product_launch"}
-        assert MarketEventContract.is_valid(data)
-
-    def test_invalid_event_type_fails(self):
-        data = {"event_id": "E1", "entity_ids": ["ENT1"], "event_type": "invalid"}
-        violations = MarketEventContract.validate(data)
-        assert any(v.field == "event_type" for v in violations)
-
-
-class TestAnalysisCardContract:
-    def test_valid_analysis_card_passes(self):
-        data = {
-            "analysis_id": "A1", "finding_type": "risk",
-            "headline": "H", "observation": "O",
-        }
-        assert AnalysisCardContract.is_valid(data)
-
-    def test_invalid_finding_type_fails(self):
-        data = {
-            "analysis_id": "A1", "finding_type": "invalid",
-            "headline": "H", "observation": "O",
-        }
-        violations = AnalysisCardContract.validate(data)
-        assert any(v.field == "finding_type" for v in violations)
-
-
-# ── Claim Migration ──
 
 
 class TestClaimMigration:
