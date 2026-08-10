@@ -44,9 +44,15 @@ EXPECTED_PACKAGE_FILES = {
     "post_final_bridge.py",
     "profile.py",
     "prompt_sizer.py",
+    "profiles/industry_weekly_zh_v1.yaml",
+    "profiles/management_brief_en_v1.yaml",
     "profiles/research_design_report_zh_v1.yaml",
     "prompts.py",
+    "prompts/dimension_reader_review_en_v1.txt",
+    "prompts/dimension_reader_review_zh_v1.txt",
     "prompts/dimension_v1.txt",
+    "prompts/system_reader_review_en_v1.txt",
+    "prompts/system_reader_review_zh_v1.txt",
     "prompts/system_v1.txt",
     "resources.py",
     "reader.py",
@@ -94,6 +100,10 @@ POST_FINAL_ASSESSMENT_WRITER = SRC_ROOT / "product" / "post_final_assessment.py"
 POST_FINAL_ASSESSMENT_READ_ONLY_PROJECTION = (
     SRC_ROOT / "product" / "post_final_assessment_projection.py"
 )
+POST_FINAL_ASSESSMENT_READ_MODEL = (
+    SRC_ROOT / "product" / "post_final_assessment_read_model.py"
+)
+POST_FINAL_REVIEW_COORDINATOR = SRC_ROOT / "product" / "post_final_review.py"
 READ_ONLY_LAJ_CONSUMERS = {
     EXPERIMENT_ENTRYPOINT,
     QUALITY_PANEL_READ_ONLY_CONSUMER,
@@ -103,6 +113,11 @@ READ_ONLY_LAJ_CONSUMERS = {
     # reverse direction; these consumers cannot alter Core/Gate/run truth.
     POST_FINAL_ASSESSMENT_WRITER,
     POST_FINAL_ASSESSMENT_READ_ONLY_PROJECTION,
+    # The v0.15 reader-review loop reuses evaluator contracts, normalization,
+    # profile loading, and serialization as read-only primitives from the
+    # same post-final product layer.
+    POST_FINAL_ASSESSMENT_READ_MODEL,
+    POST_FINAL_REVIEW_COORDINATOR,
 }
 NETWORK_IMPORT_ALLOWLIST = {
     "adapters/anthropic_messages.py": {"anthropic"},

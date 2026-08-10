@@ -1091,12 +1091,16 @@ def _execution_payloads(
             payloads[f"{prefix}/response.body"] = archived.raw.raw_transport_response
         if archived.raw.extracted_output is not None:
             payloads[f"{prefix}/output.txt"] = archived.raw.extracted_output
-        # A transport failure has no provider response.  Retaining a synthetic
-        # SDK projection for that attempt makes the derived archive violate
-        # the archive contract (SDK projections are response-bound).
-        if (
-            archived.raw.sdk_projection_bytes is not None
-            and archived.raw.raw_transport_response is not None
+        # SDK projections are response-bound, with one exception: an
+        # http_error attempt whose response body is unreadable derives its
+        # facts from the projection itself, so the projection is the only
+        # evidence and must be retained for archive self-verification.
+        if archived.raw.sdk_projection_bytes is not None and (
+            archived.raw.raw_transport_response is not None
+            or (
+                archived.raw.facts.transport_kind == "http_error"
+                and archived.raw.facts.status.state != "absent"
+            )
         ):
             payloads[f"{prefix}/sdk_projection.json"] = (
                 archived.raw.sdk_projection_bytes

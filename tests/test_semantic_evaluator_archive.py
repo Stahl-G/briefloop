@@ -483,7 +483,10 @@ def test_atomic_publish_accepts_same_request_cooperative_winner(
 
     def winner(source, destination):
         real_rename(source, destination)
-        raise FileExistsError
+        # Only the qualified shadow archive has a cooperative-winner race; the
+        # append-only execution evidence publish completes without contention.
+        if Path(destination).parent.name == "trials":
+            raise FileExistsError
 
     monkeypatch.setattr(archive_module.os, "rename", winner)
     archive, _root = _run(tmp_path, trial_id="trial-cooperative-winner-v4")

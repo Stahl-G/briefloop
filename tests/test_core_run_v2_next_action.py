@@ -73,7 +73,9 @@ def test_next_action_recovers_only_exact_discovery_reservation(
     monkeypatch.setattr(
         WebSearchProvider,
         "collect_with_response",
-        lambda *_args, **_kwargs: _tavily_collection([_tavily_item(durable=True)]),
+        lambda _provider, _query, _config: _tavily_collection(
+            [_tavily_item(durable=True)], tasks=_config["search_tasks"]
+        ),
     )
 
     def crash_before_promotion(*_args, **_kwargs):

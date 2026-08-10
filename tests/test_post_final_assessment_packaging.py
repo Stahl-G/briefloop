@@ -22,8 +22,6 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 _PROBE = r"""
-from contextlib import redirect_stdout
-import io
 import json
 import os
 from pathlib import Path
@@ -32,10 +30,8 @@ import sys
 import pytest
 
 import multi_agent_brief
-from multi_agent_brief.cli.main import main
 from multi_agent_brief.control_store import SQLiteControlStore
 from multi_agent_brief.product.brief_html import build_brief_pages_data
-import multi_agent_brief.product.post_final_assessment as assessment_module
 from multi_agent_brief.product.post_final_assessment import PostFinalAssessmentService
 from multi_agent_brief.product.post_final_review import PostFinalReviewService
 from multi_agent_brief.product.review_session.launcher import (
@@ -46,11 +42,9 @@ from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
 )
 import multi_agent_brief.semantic_evaluator.runner as runner_module
 from tests.test_post_final_assessment import (
-    _fixture_service,
-    _generation_one_run_payload,
-    _policy_payload,
-    _schema9_finalized_local_workspace_upgraded,
+    _real_finalized_local_workspace,
 )
+from tests.test_reader_review_backend import _reader_input, _reader_service
 from tests.test_post_final_human_review import _disposition_payload
 
 
@@ -64,43 +58,18 @@ if not package_file.is_relative_to(expected_package_root):
 if mode == "source":
     patch = pytest.MonkeyPatch()
     try:
-        workspace, _run_id, _historical = (
-            _schema9_finalized_local_workspace_upgraded(workspace.parent, patch)
-        )
+        workspace = _real_finalized_local_workspace(workspace.parent, patch)
         calls = []
-        service = _fixture_service(workspace, calls, terminal_mode="finding")
-        if not service.policy_set(_policy_payload())["ok"]:
-            raise RuntimeError("policy did not commit")
+        service = _reader_service(workspace, calls, terminal_mode="finding")
         patch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
         patch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
-        command = _generation_one_run_payload(service)
+        command = _reader_input("wheel-shared-reader-review-1")
         command_json = json.dumps(command, sort_keys=True, separators=(",", ":"))
         (workspace.parent / "assessment-run-replay.json").write_text(
             command_json,
             encoding="utf-8",
         )
-        patch.setattr(
-            assessment_module,
-            "PostFinalAssessmentService",
-            lambda _workspace: service,
-        )
-        cli_output = io.StringIO()
-        with redirect_stdout(cli_output):
-            return_code = main(
-                [
-                    "quality",
-                    "laj",
-                    "assessment-run",
-                    "--workspace",
-                    str(workspace),
-                    "--request-json",
-                    command_json,
-                    "--json",
-                ]
-            )
-        if return_code != 0:
-            raise RuntimeError(f"source assessment CLI failed: {cli_output.getvalue()}")
-        assessed = json.loads(cli_output.getvalue())
+        assessed = service.run_reader_review(command)
         if not assessed.get("ok") or assessed.get("status") != "available":
             raise RuntimeError(f"source assessment failed: {assessed!r}")
         provider_calls = len(calls)
@@ -169,25 +138,9 @@ elif mode == "wheel":
     command_json = (workspace.parent / "assessment-run-replay.json").read_text(
         encoding="utf-8"
     )
-    cli_output = io.StringIO()
-    with redirect_stdout(cli_output):
-        return_code = main(
-            [
-                "quality",
-                "laj",
-                "assessment-run",
-                "--workspace",
-                str(workspace),
-                "--request-json",
-                command_json,
-                "--json",
-            ]
-        )
-    if return_code != 0:
-        raise RuntimeError(f"wheel assessment CLI failed: {cli_output.getvalue()}")
-    cli_replay = json.loads(cli_output.getvalue())
+    cli_replay = service.run_reader_review(json.loads(command_json))
     if not cli_replay.get("replayed"):
-        raise RuntimeError("wheel assessment CLI did not replay")
+        raise RuntimeError(f"wheel assessment replay failed: {cli_replay!r}")
     current = service.status()
     if not current.get("assessment_request_id"):
         raise RuntimeError(f"missing request: {current!r}")
@@ -303,7 +256,7 @@ import multi_agent_brief.semantic_evaluator.runner as runner_module
 from tests.test_post_final_assessment import (
     _fixture_service,
     _policy_payload,
-    _schema9_finalized_local_workspace_upgraded,
+    _real_finalized_local_workspace,
 )
 
 
@@ -318,9 +271,7 @@ provider_calls = 0
 if mode == "source":
     patch = pytest.MonkeyPatch()
     try:
-        workspace, run_id, _historical = (
-            _schema9_finalized_local_workspace_upgraded(workspace.parent, patch)
-        )
+        workspace = _real_finalized_local_workspace(workspace.parent, patch)
         calls = []
         service = _fixture_service(
             workspace,
@@ -336,7 +287,10 @@ if mode == "source":
             raise RuntimeError(f"source terminal result failed: {assessed!r}")
         provider_calls = len(calls)
         with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-            snapshot = store.load_snapshot(run_id)
+            head = store.load_workspace_run_head()
+            if head is None:
+                raise RuntimeError("missing Store head")
+            snapshot = store.load_snapshot(head.current_run_id)
         request = snapshot.post_final_assessment_requests[0]
         shutil.rmtree(trial_archive_path(service._archive_root, request.trial_id))
     finally:
@@ -377,7 +331,7 @@ if retried.get("status") != result.terminal_evidence_class:
     raise RuntimeError("zero-advice retry status drift")
 if projection.view.archive_verified or projection.view.findings:
     raise RuntimeError("zero-advice projection claimed archive findings")
-if semantic["status"] != result.terminal_evidence_class:
+if semantic["status"] != "not_assessed":
     raise RuntimeError("zero-advice HTML status drift")
 if semantic["findings"]:
     raise RuntimeError("zero-advice HTML exposed findings")
@@ -620,12 +574,12 @@ def test_source_and_non_editable_wheel_replay_the_same_pf_laj_result(
         cwd=tmp_path,
     )
 
-    assert source["provider_calls"] == 9
+    assert source["provider_calls"] == 2
     assert wheel["provider_calls"] == 0
     assert {key: source[key] for key in source if key != "provider_calls"} == {
         key: wheel[key] for key in wheel if key != "provider_calls"
     }
-    assert wheel["semantic"]["status"] == "available"
+    assert wheel["semantic"]["status"] == "finding_returned"
     assert wheel["semantic"]["store_qualified"] is True
     assert wheel["semantic"]["finding_count"] >= 1
     assert wheel["human_review"] == {

@@ -408,6 +408,7 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         r"""
         from contextlib import redirect_stdout
         from copy import deepcopy
+        from datetime import date, timedelta
         import hashlib
         from importlib import resources
         import io
@@ -592,7 +593,7 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             "original_url": None,
             "title": "Packaged init source",
             "publisher": "Example publisher",
-            "published_at": "2026-07-22",
+            "published_at": (date.today() - timedelta(days=1)).isoformat(),
             "retrieved_at": "2026-07-23T00:00:00Z",
             "source_category": "other",
             "retrieval_source_type": "local_file",
@@ -1798,24 +1799,26 @@ def test_source_and_non_editable_wheel_replay_guidance_successor(
         ANTHROPIC_API_KEY_SETTING,
     )
     import multi_agent_brief.semantic_evaluator.runner as runner_module
-    from tests.test_post_final_assessment import _fixture_service, _policy_payload
     from tests.test_post_final_human_review import _disposition_payload
+    from tests.test_reader_review_backend import _reader_input, _reader_service
 
     workspace = _real_finalized_local_workspace(tmp_path / "seed", monkeypatch)
     provider_calls: list[tuple[str, int]] = []
-    assessment = _fixture_service(
+    assessment = _reader_service(
         workspace,
         provider_calls,
         terminal_mode="finding",
     )
-    assert assessment.policy_set(_policy_payload())["ok"] is True
     monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
     monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
-    assessed = assessment.assess()
+    assessed = assessment.run_reader_review(
+        _reader_input("packaging-successor-reader-review-1")
+    )
     monkeypatch.delenv(ANTHROPIC_API_KEY_SETTING, raising=False)
+    assert assessed["ok"] is True
     assert assessed["status"] == "available"
     assert assessed["finding_count"] >= 1
-    assert len(provider_calls) == 9
+    assert len(provider_calls) == 2
     review = PostFinalReviewService(
         workspace,
         str(assessed["assessment_result_id"]),

@@ -226,6 +226,19 @@ def _revision(workspace: Path) -> int:
         return store.load_snapshot(head.current_run_id).store_revision
 
 
+def _source_acquisition_failure_evidence(snapshot):
+    """Return the single recorded acquisition failure, wherever it sits."""
+
+    failures = [
+        event.intake_binding.source_acquisition_failure
+        for event in snapshot.events
+        if event.intake_binding is not None
+        and event.intake_binding.source_acquisition_failure is not None
+    ]
+    assert len(failures) == 1
+    return failures[0]
+
+
 def _service(workspace: Path) -> RuntimeHostService:
     return RuntimeHostService(
         workspace,
@@ -602,7 +615,13 @@ def _transferred_discovery_source_action(workspace: Path) -> CoreRunNextAction:
         action,
         request_id=invocation_request_id,
     )
-    collection = _tavily_collection([_tavily_item(durable=True)])
+    collection = _tavily_collection(
+        [_tavily_item(durable=True)],
+        tasks=[
+            task.model_dump(mode="json", exclude_unset=False)
+            for task in route.acquisition_spec.tasks
+        ],
+    )
     material = _material_from_item(
         workspace=workspace,
         run_id=action.run_id,
@@ -652,6 +671,7 @@ def _transferred_discovery_source_action(workspace: Path) -> CoreRunNextAction:
         provider_response_bytes=collection.raw_response,
         provider_status_code=collection.status_code,
         stage_kind="provider_outcome",
+        capacity_profile="multi_tavily_v2",
     )
     return action
 
@@ -681,10 +701,17 @@ def _tavily_item(*, durable: bool) -> SourceItem:
 def _tavily_collection(
     items: list[SourceItem],
     *,
-    query: str = "manufacturing",
+    tasks: list[dict[str, object]],
+    query: str | None = None,
     time_range: str = "week",
-    domains: tuple[str, ...] = (),
+    domains: tuple[str, ...] | None = None,
 ) -> WebSearchCollection:
+    """Build one spec-bound multi-task bundle for the frozen V3 acquisition.
+
+    Every frozen task gets one primary Search exchange returning ``items``;
+    the overrides ``query``/``time_range``/``domains`` forge request bytes that
+    no longer match the frozen spec (rejection-path tests).
+    """
     search_rows = [
         {
             "title": item.title,
@@ -695,56 +722,63 @@ def _tavily_collection(
         }
         for item in items
     ]
-    search_payload: dict[str, object] = {
-        "query": query,
-        "max_results": 20,
-        "topic": "news",
-        "search_depth": "advanced",
-        "include_answer": False,
-        "include_raw_content": False,
-        "auto_parameters": False,
-        "time_range": time_range,
-    }
-    if domains:
-        search_payload["include_domains"] = list(domains)
-    search_exchange = TavilyBackend._exchange(
-        "search",
-        canonical_json_bytes(search_payload),
-        response_body=canonical_json_bytes({"results": search_rows}),
-        status_code=200,
-    )
-    task_id = "source-search-001"
-    search_record = TavilySearchTaskExchange.model_validate(
-        {
-            "task_id": task_id,
-            "phase": "primary",
-            "status": "succeeded" if items else "empty",
-            "exchange": search_exchange.model_dump(mode="json"),
-            "discovered_urls": sorted({item.url for item in items}),
-        },
-        strict=True,
-    )
-    if not items:
-        task_status = TavilyTaskAcquisitionStatus.model_validate(
-            {
-                "task_id": task_id,
-                "primary_search_ordinal": 1,
-                "discovered_unique_url_count": 0,
-                "extracted_success_count": 0,
-                "minimum_extract_successes": 1,
-                "status": "coverage_insufficient",
-            },
-            strict=True,
+    search_records: list[TavilySearchTaskExchange] = []
+    for task in tasks:
+        search_payload: dict[str, object] = {
+            "query": query if query is not None else task["query"],
+            "max_results": 20,
+            "topic": task["topic"],
+            "search_depth": "advanced",
+            "include_answer": False,
+            "include_raw_content": False,
+            "auto_parameters": False,
+            "time_range": time_range,
+        }
+        task_domains = domains if domains is not None else tuple(task["domains"])
+        if task_domains:
+            search_payload["include_domains"] = sorted(set(task_domains))
+        search_exchange = TavilyBackend._exchange(
+            "search",
+            canonical_json_bytes(search_payload),
+            response_body=canonical_json_bytes({"results": search_rows}),
+            status_code=200,
         )
+        search_records.append(
+            TavilySearchTaskExchange.model_validate(
+                {
+                    "task_id": task["task_id"],
+                    "phase": "primary",
+                    "status": "succeeded" if items else "empty",
+                    "exchange": search_exchange.model_dump(mode="json"),
+                    "discovered_urls": sorted({item.url for item in items}),
+                },
+                strict=True,
+            )
+        )
+    task_ids = [str(task["task_id"]) for task in tasks]
+    if not items:
         bundle = TavilyAcquisitionBundleV2.model_validate(
             {
                 "schema_version": TavilyAcquisitionBundleV2.schema_id,
                 "provider_id": "tavily",
                 "status": "failed",
-                "searches": [search_record.model_dump(mode="json")],
+                "searches": [record.model_dump(mode="json") for record in search_records],
                 "extract_batches": [],
                 "unique_urls": [],
-                "task_statuses": [task_status.model_dump(mode="json")],
+                "task_statuses": [
+                    TavilyTaskAcquisitionStatus.model_validate(
+                        {
+                            "task_id": task_id,
+                            "primary_search_ordinal": ordinal,
+                            "discovered_unique_url_count": 0,
+                            "extracted_success_count": 0,
+                            "minimum_extract_successes": 1,
+                            "status": "coverage_insufficient",
+                        },
+                        strict=True,
+                    ).model_dump(mode="json")
+                    for ordinal, task_id in enumerate(task_ids, start=1)
+                ],
             },
             strict=True,
         )
@@ -822,26 +856,28 @@ def _tavily_collection(
         strict=True,
     )
     covered = bool(successes)
-    task_status = TavilyTaskAcquisitionStatus.model_validate(
-        {
-            "task_id": task_id,
-            "primary_search_ordinal": 1,
-            "discovered_unique_url_count": len(extract_urls),
-            "extracted_success_count": len(successes),
-            "minimum_extract_successes": 1,
-            "status": "covered" if covered else "coverage_insufficient",
-        },
-        strict=True,
-    )
     bundle = TavilyAcquisitionBundleV2.model_validate(
         {
             "schema_version": TavilyAcquisitionBundleV2.schema_id,
             "provider_id": "tavily",
             "status": "complete" if covered else "failed",
-            "searches": [search_record.model_dump(mode="json")],
+            "searches": [record.model_dump(mode="json") for record in search_records],
             "extract_batches": [extract_batch.model_dump(mode="json")],
             "unique_urls": extract_urls,
-            "task_statuses": [task_status.model_dump(mode="json")],
+            "task_statuses": [
+                TavilyTaskAcquisitionStatus.model_validate(
+                    {
+                        "task_id": task_id,
+                        "primary_search_ordinal": ordinal,
+                        "discovered_unique_url_count": len(extract_urls),
+                        "extracted_success_count": len(successes),
+                        "minimum_extract_successes": 1,
+                        "status": "covered" if covered else "coverage_insufficient",
+                    },
+                    strict=True,
+                ).model_dump(mode="json")
+                for ordinal, task_id in enumerate(task_ids, start=1)
+            ],
         },
         strict=True,
     )
@@ -854,11 +890,11 @@ def _tavily_collection(
                 **item.metadata,
                 "provider_projection": {
                     "schema_version": (
-                        "briefloop.tavily_extract_source_projection.v1"
+                        "briefloop.tavily_extract_source_projection.v2"
                     ),
+                    "discovery_task_ids": task_ids,
                     "search_result": search_by_url[item.url],
                     "extract_result": extract_by_url[item.url],
-                    "discovery_task_ids": [task_id],
                 },
             },
         )
@@ -872,54 +908,70 @@ def _tavily_collection(
     )
 
 
-def _tavily_search_invalid_collection() -> WebSearchCollection:
-    search_exchange = TavilyBackend._exchange(
-        "search",
-        canonical_json_bytes(
-            {
-                "query": "manufacturing",
-                "max_results": 20,
-                "topic": "news",
-                "search_depth": "advanced",
-                "include_answer": False,
-                "include_raw_content": False,
-                "auto_parameters": False,
-                "time_range": "week",
-            }
-        ),
-        response_body=canonical_json_bytes({"results": "not-a-list"}),
-        status_code=200,
-    )
-    search_record = TavilySearchTaskExchange.model_validate(
-        {
-            "task_id": "source-search-001",
-            "phase": "primary",
-            "status": "invalid",
-            "exchange": search_exchange.model_dump(mode="json"),
-            "discovered_urls": [],
-        },
-        strict=True,
-    )
-    task_status = TavilyTaskAcquisitionStatus.model_validate(
-        {
-            "task_id": "source-search-001",
-            "primary_search_ordinal": 1,
-            "discovered_unique_url_count": 0,
-            "extracted_success_count": 0,
-            "minimum_extract_successes": 1,
-            "status": "search_unavailable",
-        },
-        strict=True,
-    )
+def _tavily_search_invalid_collection(
+    *, tasks: list[dict[str, object]]
+) -> WebSearchCollection:
+    """One invalid first-task Search; every other frozen task returns empty."""
+
+    search_records: list[TavilySearchTaskExchange] = []
+    for index, task in enumerate(tasks):
+        valid = index != 0
+        search_exchange = TavilyBackend._exchange(
+            "search",
+            canonical_json_bytes(
+                {
+                    "query": task["query"],
+                    "max_results": 20,
+                    "topic": task["topic"],
+                    "search_depth": "advanced",
+                    "include_answer": False,
+                    "include_raw_content": False,
+                    "auto_parameters": False,
+                    "time_range": "week",
+                }
+            ),
+            response_body=canonical_json_bytes(
+                {"results": [] if valid else "not-a-list"}
+            ),
+            status_code=200,
+        )
+        search_records.append(
+            TavilySearchTaskExchange.model_validate(
+                {
+                    "task_id": task["task_id"],
+                    "phase": "primary",
+                    "status": "empty" if valid else "invalid",
+                    "exchange": search_exchange.model_dump(mode="json"),
+                    "discovered_urls": [],
+                },
+                strict=True,
+            )
+        )
     bundle = TavilyAcquisitionBundleV2.model_validate(
         {
             "schema_version": TavilyAcquisitionBundleV2.schema_id,
             "provider_id": "tavily",
             "status": "failed",
-            "searches": [search_record.model_dump(mode="json")],
+            "searches": [record.model_dump(mode="json") for record in search_records],
             "extract_batches": [],
             "unique_urls": [],
-            "task_statuses": [task_status.model_dump(mode="json")],
+            "task_statuses": [
+                TavilyTaskAcquisitionStatus.model_validate(
+                    {
+                        "task_id": task["task_id"],
+                        "primary_search_ordinal": ordinal,
+                        "discovered_unique_url_count": 0,
+                        "extracted_success_count": 0,
+                        "minimum_extract_successes": 1,
+                        "status": (
+                            "coverage_insufficient" if ordinal != 1
+                            else "search_unavailable"
+                        ),
+                    },
+                    strict=True,
+                ).model_dump(mode="json")
+                for ordinal, task in enumerate(tasks, start=1)
+            ],
         },
         strict=True,
     )
@@ -939,7 +991,9 @@ def _active_discovery_stage_for_recovery(
 
     def collect(_provider, _query, _config):
         provider_calls["count"] += 1
-        return _tavily_collection([_tavily_item(durable=True)])
+        return _tavily_collection(
+            [_tavily_item(durable=True)], tasks=_config["search_tasks"]
+        )
 
     def crash_before_promotion(_instance, _input):
         raise RuntimeHostError("simulated_post_invocation_crash")
@@ -1147,7 +1201,9 @@ def test_discovery_missing_runtime_secret_is_zero_write(
     def collect(_provider, _query, _config):
         nonlocal calls
         calls += 1
-        return _tavily_collection([_tavily_item(durable=True)])
+        return _tavily_collection(
+            [_tavily_item(durable=True)], tasks=_config["search_tasks"]
+        )
 
     monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
 
@@ -1763,7 +1819,8 @@ def test_discovery_partial_extract_promotes_only_success_and_keeps_failure(
     ) -> WebSearchCollection:
         calls.append("tavily")
         return _tavily_collection(
-            [_tavily_item(durable=True), _tavily_item(durable=False)]
+            [_tavily_item(durable=True), _tavily_item(durable=False)],
+            tasks=_config["search_tasks"],
         )
 
     monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
@@ -1810,10 +1867,10 @@ def test_discovery_partial_extract_promotes_only_success_and_keeps_failure(
         attempt.max_extract_urls,
         attempt.provider_call_sequence,
     ) == (
-        4,
-        2,
-        2,
+        80,
         40,
+        40,
+        800,
         "primary_search_extract_then_conditional_backfill_search_extract",
     )
     assert len(snapshot.run_execution_authorizations) == 1
@@ -2100,7 +2157,7 @@ def test_discovery_overbound_provider_response_never_reaches_stage_or_store(
         assert head is not None
         snapshot = store.load_snapshot(head.current_run_id)
         history = store.load_history()
-        evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
+        evidence = _source_acquisition_failure_evidence(snapshot)
         assert evidence is not None
         assert evidence.provider_response_artifact is not None
         provider_bytes = store.read_artifact_revision_bytes(
@@ -2135,7 +2192,9 @@ def test_discovery_exact_receipt_replay_precedes_secret_and_provider(
     def collect(_provider, _query, _config):
         nonlocal calls
         calls += 1
-        return _tavily_collection([_tavily_item(durable=True)])
+        return _tavily_collection(
+            [_tavily_item(durable=True)], tasks=_config["search_tasks"]
+        )
 
     monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
     action = _advance_discovery_to_source_action(workspace)
@@ -2164,7 +2223,9 @@ def test_discovery_precommit_crash_reuses_staged_bytes_before_secret_or_provider
     def collect(_provider, _query, _config):
         nonlocal provider_calls
         provider_calls += 1
-        return _tavily_collection([_tavily_item(durable=True)])
+        return _tavily_collection(
+            [_tavily_item(durable=True)], tasks=_config["search_tasks"]
+        )
 
     monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
     action = _advance_discovery_to_source_action(workspace)
@@ -2218,7 +2279,9 @@ def test_discovery_restart_without_stage_consumes_attempt_without_redial(
     def collect(_provider, _query, _config):
         nonlocal provider_calls
         provider_calls += 1
-        return _tavily_collection([_tavily_item(durable=True)])
+        return _tavily_collection(
+            [_tavily_item(durable=True)], tasks=_config["search_tasks"]
+        )
 
     def crash_before_stage(*_args, **_kwargs):
         raise SimulatedProcessExit
@@ -2750,7 +2813,9 @@ def test_discovery_post_snapshot_replacement_commits_only_immutable_bytes(
     def collect(_provider, _query, _config):
         nonlocal provider_calls
         provider_calls += 1
-        return _tavily_collection([_tavily_item(durable=True)])
+        return _tavily_collection(
+            [_tavily_item(durable=True)], tasks=_config["search_tasks"]
+        )
 
     original_stage = host_service.stage_source_pack_bytes
     saved_root: Path | None = None
@@ -2805,7 +2870,9 @@ def test_discovery_active_invocation_reuses_receipt_owned_stage_without_provider
     def collect(_provider, _query, _config):
         nonlocal provider_calls
         provider_calls += 1
-        return _tavily_collection([_tavily_item(durable=True)])
+        return _tavily_collection(
+            [_tavily_item(durable=True)], tasks=_config["search_tasks"]
+        )
 
     def crash_before_promotion(_instance, _input):
         raise RuntimeHostError("simulated_post_invocation_crash")
@@ -2859,7 +2926,9 @@ def test_discovery_active_invocation_missing_vs_tampered_stage_is_fail_closed(
     def collect(_provider, _query, _config):
         nonlocal provider_calls
         provider_calls += 1
-        return _tavily_collection([_tavily_item(durable=True)])
+        return _tavily_collection(
+            [_tavily_item(durable=True)], tasks=_config["search_tasks"]
+        )
 
     def crash_before_promotion(_instance, _input):
         raise RuntimeHostError("simulated_post_invocation_crash")
@@ -3015,7 +3084,9 @@ def test_discovery_tampered_precommit_stage_fails_closed_without_provider_recall
     def collect(_provider, _query, _config):
         nonlocal provider_calls
         provider_calls += 1
-        return _tavily_collection([_tavily_item(durable=True)])
+        return _tavily_collection(
+            [_tavily_item(durable=True)], tasks=_config["search_tasks"]
+        )
 
     monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
     action = _advance_discovery_to_source_action(workspace)
@@ -3064,7 +3135,9 @@ def test_discovery_commit_outcome_unknown_replays_without_provider_recall(
     def collect(_provider, _query, _config):
         nonlocal provider_calls
         provider_calls += 1
-        return _tavily_collection([_tavily_item(durable=True)])
+        return _tavily_collection(
+            [_tavily_item(durable=True)], tasks=_config["search_tasks"]
+        )
 
     original = IntakeService._commit_discovery_source_pack_from_core
 
@@ -3108,7 +3181,7 @@ def test_discovery_promotion_failure_rolls_back_all_authority_rows(
         WebSearchProvider,
         "collect_with_response",
         lambda _provider, _query, _config: _tavily_collection(
-            [_tavily_item(durable=True)]
+            [_tavily_item(durable=True)], tasks=_config["search_tasks"]
         ),
     )
     original_init = IntakeService.__init__
@@ -3170,7 +3243,9 @@ def test_discovery_extract_all_failed_is_terminal_without_automatic_retry(
     def collect(_provider, _query, _config):
         nonlocal provider_calls
         provider_calls += 1
-        return _tavily_collection([_tavily_item(durable=False)])
+        return _tavily_collection(
+            [_tavily_item(durable=False)], tasks=_config["search_tasks"]
+        )
 
     monkeypatch.setattr(
         WebSearchProvider,
@@ -3195,7 +3270,7 @@ def test_discovery_extract_all_failed_is_terminal_without_automatic_retry(
         snapshot = store.load_snapshot(head.current_run_id)
     assert snapshot.sources == ()
     assert snapshot.run_execution_authorizations == ()
-    evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
+    evidence = _source_acquisition_failure_evidence(snapshot)
     assert evidence is not None
     assert evidence.failure_class == "provider_results_without_durable_content"
     assert evidence.result_count == 1
@@ -3237,7 +3312,7 @@ def test_discovery_invalid_search_is_terminal_without_automatic_retry(
     def collect(_provider, _query, _config):
         nonlocal provider_calls
         provider_calls += 1
-        return _tavily_search_invalid_collection()
+        return _tavily_search_invalid_collection(tasks=_config["search_tasks"])
 
     monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
     action = _advance_discovery_to_source_action(workspace)
@@ -3255,7 +3330,7 @@ def test_discovery_invalid_search_is_terminal_without_automatic_retry(
         snapshot = store.load_snapshot(head.current_run_id)
     assert snapshot.sources == ()
     assert snapshot.run_execution_authorizations == ()
-    evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
+    evidence = _source_acquisition_failure_evidence(snapshot)
     assert evidence is not None
     assert evidence.failure_class == "provider_search_failed"
     assert evidence.result_count == 0
@@ -3284,7 +3359,9 @@ def test_discovery_empty_provider_result_fails_without_promotion(
     monkeypatch.setattr(
         WebSearchProvider,
         "collect_with_response",
-        lambda _provider, _query, _config: _tavily_collection([]),
+        lambda _provider, _query, _config: _tavily_collection(
+            [], tasks=_config["search_tasks"]
+        ),
     )
     action = _advance_discovery_to_source_action(workspace)
 
@@ -3299,7 +3376,7 @@ def test_discovery_empty_provider_result_fails_without_promotion(
         snapshot = store.load_snapshot(head.current_run_id)
     assert snapshot.sources == ()
     assert snapshot.run_execution_authorizations == ()
-    evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
+    evidence = _source_acquisition_failure_evidence(snapshot)
     assert evidence is not None
     assert evidence.failure_class == "provider_results_empty"
     assert evidence.result_count == 0
@@ -3330,7 +3407,7 @@ def test_discovery_empty_provider_result_replays_stable_recovery_choice(
         provider_calls += 1
         if provider_calls != 1:
             pytest.fail("human source fallback must not recall the provider")
-        return _tavily_collection([])
+        return _tavily_collection([], tasks=_config["search_tasks"])
 
     monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
     _advance_discovery_to_source_action(workspace)
@@ -3397,7 +3474,8 @@ def test_discovery_next_attempt_requires_exact_human_authorization_and_replays(
         nonlocal provider_calls
         provider_calls += 1
         return _tavily_collection(
-            [] if provider_calls == 1 else [_tavily_item(durable=True)]
+            [] if provider_calls == 1 else [_tavily_item(durable=True)],
+            tasks=_config["search_tasks"],
         )
 
     monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
@@ -3508,7 +3586,9 @@ def test_discovery_attempt_is_cross_process_serialized_before_provider_call(
             provider_calls.value += 1
         provider_entered.set()
         assert provider_release.wait(timeout=10)
-        return _tavily_collection([_tavily_item(durable=True)])
+        return _tavily_collection(
+            [_tavily_item(durable=True)], tasks=_config["search_tasks"]
+        )
 
     original_apply = RuntimeHostService._apply_discovery_source_acquire
 
@@ -3567,7 +3647,7 @@ def test_discovery_recovery_accepts_explicit_human_source_pack_without_redial(
     def collect(_provider, _query, _config):
         nonlocal provider_calls
         provider_calls += 1
-        return _tavily_collection([])
+        return _tavily_collection([], tasks=_config["search_tasks"])
 
     monkeypatch.setattr(WebSearchProvider, "collect_with_response", collect)
     _advance_discovery_to_source_action(workspace)
@@ -3691,19 +3771,25 @@ def test_discovery_malformed_provider_result_fails_without_promotion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     workspace = _discovery_workspace(tmp_path)
-    collection = _tavily_collection([_tavily_item(durable=True)])
-    conflicting = replace(
-        collection.items[0],
-        content="conflicting durable content",
-    )
-    monkeypatch.setattr(
-        WebSearchProvider,
-        "collect_with_response",
-        lambda _provider, _query, _config: WebSearchCollection(
+
+    def collect(_provider, _query, _config):
+        collection = _tavily_collection(
+            [_tavily_item(durable=True)], tasks=_config["search_tasks"]
+        )
+        conflicting = replace(
+            collection.items[0],
+            content="conflicting durable content",
+        )
+        return WebSearchCollection(
             items=(conflicting,),
             raw_response=collection.raw_response,
             status_code=collection.status_code,
-        ),
+        )
+
+    monkeypatch.setattr(
+        WebSearchProvider,
+        "collect_with_response",
+        collect,
     )
     action = _advance_discovery_to_source_action(workspace)
 
@@ -3718,7 +3804,7 @@ def test_discovery_malformed_provider_result_fails_without_promotion(
         snapshot = store.load_snapshot(head.current_run_id)
     assert snapshot.sources == ()
     assert snapshot.run_execution_authorizations == ()
-    evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
+    evidence = _source_acquisition_failure_evidence(snapshot)
     assert evidence is not None
     assert evidence.failure_class == "source_pack_validation_rejected"
     assert evidence.provider_response_artifact is not None
@@ -3749,6 +3835,7 @@ def test_discovery_rehashed_bundle_cannot_change_frozen_search_direction(
             pytest.fail("frozen-spec rejection must not redial the provider")
         return _tavily_collection(
             [_tavily_item(durable=True)],
+            tasks=_config["search_tasks"],
             query="unapproved replacement query",
             time_range="month",
             domains=("unapproved.example",),
@@ -3771,7 +3858,7 @@ def test_discovery_rehashed_bundle_cannot_change_frozen_search_direction(
         snapshot = store.load_snapshot(head.current_run_id)
     assert snapshot.sources == ()
     assert snapshot.run_execution_authorizations == ()
-    assert snapshot.events[-1].intake_binding.source_acquisition_failure is not None
+    assert _source_acquisition_failure_evidence(snapshot) is not None
     assert provider_calls == 1
     database = (workspace / "briefloop.db").read_bytes()
     revision = snapshot.store_revision
@@ -3799,7 +3886,9 @@ def test_discovery_staged_proposal_is_derived_from_bundle_and_invocation(
         provider_calls += 1
         if provider_calls != 1:
             pytest.fail("forged-proposal rejection must not redial the provider")
-        return _tavily_collection([_tavily_item(durable=True)])
+        return _tavily_collection(
+            [_tavily_item(durable=True)], tasks=_config["search_tasks"]
+        )
 
     original_stage = host_service.stage_source_pack_bytes
 
@@ -3900,7 +3989,7 @@ def test_discovery_provider_failure_records_one_typed_failure(
         assert head is not None
         snapshot = store.load_snapshot(head.current_run_id)
         history = store.load_history()
-    assert calls == 1
+    assert calls == 40  # 20 primary + 20 conditional backfill Search calls
     assert snapshot.sources == ()
     assert snapshot.run_execution_authorizations == ()
     assert len(snapshot.artifacts) == len(artifacts_before) + 1
@@ -3911,7 +4000,7 @@ def test_discovery_provider_failure_records_one_typed_failure(
     ]
     assert len(failures) == 1
     assert failures[0].failure_reason == "child_failed"
-    evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
+    evidence = _source_acquisition_failure_evidence(snapshot)
     assert evidence is not None
     assert evidence.failure_class == "provider_transport_unavailable"
     assert evidence.provider_status_class == "acquisition_bundle_retained"
@@ -3980,7 +4069,7 @@ def test_discovery_provider_credential_echo_keeps_only_value_free_failure_bundle
 
     result = _service(workspace).continue_authorized()
 
-    assert calls == 1
+    assert calls == 40  # 20 primary + 20 conditional backfill Search calls
     assert result.status == "needs_human"
     assert result.reason_code == "source_acquisition_recovery_decision_required"
     assert sentinel not in repr(result)
@@ -3996,7 +4085,7 @@ def test_discovery_provider_credential_echo_keeps_only_value_free_failure_bundle
     assert snapshot.sources == ()
     assert snapshot.run_execution_authorizations == ()
     assert len(snapshot.artifacts) == len(artifacts_before) + 1
-    evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
+    evidence = _source_acquisition_failure_evidence(snapshot)
     assert evidence is not None
     assert evidence.failure_class == "provider_search_failed"
     assert evidence.provider_status_class == "acquisition_bundle_retained"

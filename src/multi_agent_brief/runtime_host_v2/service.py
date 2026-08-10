@@ -2821,6 +2821,7 @@ class RuntimeHostService:
                 request_fingerprint=stage_fingerprint,
                 expected_manifest_sha256=None,
                 expected_stage_kind="provider_outcome",
+                expected_capacity_profile="multi_tavily_v2",
             )
         except RuntimeHostError as exc:
             if str(exc) == "submission_replay_conflict":

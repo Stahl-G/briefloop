@@ -633,12 +633,31 @@ def _validate_anthropic_usage(
 ) -> None:
     if record.adapter_id != ANTHROPIC_ADAPTER_ID:
         return
-    # A transport/adapter failure has no HTTP response and therefore no SDK
-    # projection to retain.  Usage validation applies only once the provider
-    # returned a response; requiring an SDK projection for an absent response
-    # turned a typed provider failure into a misleading archive failure.
     if response_raw is None:
-        if sdk_projection_raw is not None:
+        # A plain transport failure has no HTTP response and no projection.
+        # An http_error attempt whose response body is unreadable retains
+        # only its projection; usage fields must equal the projection-derived
+        # nulls exactly.
+        if sdk_projection_raw is None:
+            return
+        try:
+            projection = project_anthropic_attempt_v1(
+                raw=None,
+                sdk_projection_raw=sdk_projection_raw,
+                provider_id=record.provider_id,
+            )
+        except Exception:
+            raise SemanticEvaluatorError("shadow_archive_invalid") from None
+        expected = (
+            projection.input_tokens,
+            projection.output_tokens,
+            projection.total_tokens,
+        )
+        if (
+            record.input_tokens,
+            record.output_tokens,
+            record.total_tokens,
+        ) != expected:
             raise SemanticEvaluatorError("shadow_archive_invalid")
         return
     if sdk_projection_raw is None:
@@ -788,13 +807,17 @@ def _attempt_records(
         if has_response:
             expected_paths.add(response_path)
         has_sdk_projection = sdk_projection_path in payloads
-        # A provider response processed by an SDK has a projection; a
-        # transport/adapter failure has no response and therefore no SDK
-        # projection to retain.  Requiring the projection unconditionally
-        # made value-free Anthropic transport failures unverifiable.
-        expects_sdk_projection = (
-            record.adapter_id in _SDK_PROJECTED_ADAPTER_IDS
-            and record.raw_transport_response_sha256 is not None
+        # A provider response processed by an SDK has a projection.  An
+        # http_error attempt whose response body is unreadable also retains
+        # its projection because the recorded facts were derived from it (the
+        # projection is then the sole evidence); a plain transport failure
+        # has absent facts and no projection to retain.
+        expects_sdk_projection = record.adapter_id in _SDK_PROJECTED_ADAPTER_IDS and (
+            record.raw_transport_response_sha256 is not None
+            or (
+                record.facts.transport_kind == "http_error"
+                and record.facts.status.state != "absent"
+            )
         )
         if has_sdk_projection != expects_sdk_projection:
             raise SemanticEvaluatorError("shadow_archive_invalid")

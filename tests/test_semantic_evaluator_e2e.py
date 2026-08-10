@@ -35,6 +35,7 @@ def test_se2r_01_public_synthetic_archive_is_complete_and_nonqualifying(
         "replayed": False,
         "archive_complete": True,
         "archive_path": result.archive_path,
+        "execution_archive_path": result.execution_archive_path,
         "receipt_id": result.receipt_id,
         "run_status": "completed",
         "validation_status": "accepted",

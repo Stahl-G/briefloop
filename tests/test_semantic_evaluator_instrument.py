@@ -104,10 +104,10 @@ def test_manifest_binds_exact_frozen_resources_schemas_and_source_components() -
         item.component_id: item.implementation_version
         for item in manifest.implementation_components
     }
-    assert PARSER_VERSION == "strict_dimension_json_v2"
-    assert VALIDATOR_VERSION == "dimension_validator_v3"
-    assert PROMPT_ASSEMBLER_VERSION == "dimension_prompt_assembler_v4"
-    assert PROMPT_ASSEMBLER_VERSION != "dimension_prompt_assembler_v3"
+    assert PARSER_VERSION == "strict_dimension_json_v3"
+    assert VALIDATOR_VERSION == "dimension_validator_v4"
+    assert PROMPT_ASSEMBLER_VERSION == "dimension_prompt_assembler_v5"
+    assert PROMPT_ASSEMBLER_VERSION != "dimension_prompt_assembler_v4"
     assert versions["validator"] == VALIDATOR_VERSION
     assert versions["parser"] == PARSER_VERSION
     assert versions["prompt_assembler"] == PROMPT_ASSEMBLER_VERSION
@@ -148,7 +148,7 @@ def test_each_representative_bound_component_change_rotates_instrument_hash(
     assert prompt_changed.instrument_sha256 != original.instrument_sha256
 
 
-def test_prompt_assembler_v4_cannot_collide_with_v3_identity(monkeypatch) -> None:
+def test_prompt_assembler_v5_cannot_collide_with_v4_identity(monkeypatch) -> None:
     current = build_instrument_manifest(_config())
     monkeypatch.setattr(
         instrument,
@@ -157,7 +157,7 @@ def test_prompt_assembler_v4_cannot_collide_with_v3_identity(monkeypatch) -> Non
             (
                 component_id,
                 (
-                    "dimension_prompt_assembler_v3"
+                    "dimension_prompt_assembler_v4"
                     if component_id == "prompt_assembler"
                     else version
                 ),
@@ -172,11 +172,11 @@ def test_prompt_assembler_v4_cannot_collide_with_v3_identity(monkeypatch) -> Non
     assert {
         item.component_id: item.implementation_version
         for item in current.implementation_components
-    }["prompt_assembler"] == "dimension_prompt_assembler_v4"
+    }["prompt_assembler"] == "dimension_prompt_assembler_v5"
     assert {
         item.component_id: item.implementation_version
         for item in predecessor.implementation_components
-    }["prompt_assembler"] == "dimension_prompt_assembler_v3"
+    }["prompt_assembler"] == "dimension_prompt_assembler_v4"
 
 
 def test_prompt_assembler_source_change_rotates_identity_without_resource_change(

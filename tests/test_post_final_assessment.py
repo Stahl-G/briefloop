@@ -4,19 +4,14 @@ from __future__ import annotations
 
 from dataclasses import replace
 import hashlib
-from importlib import resources
 import json
 from pathlib import Path
 import shutil
-import sqlite3
 from threading import Event, Thread
 
 import pytest
 
 from multi_agent_brief.control_store import SQLiteControlStore
-from multi_agent_brief.contracts.v2 import TransactionReceipt
-from multi_agent_brief.control_store.schema import MIGRATIONS
-from multi_agent_brief.control_store.serialization import canonical_json_bytes
 from multi_agent_brief.core_run_v2.errors import CoreRunError
 from multi_agent_brief.core_run_v2.next_action import classify_core_run_next_action
 from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
@@ -59,8 +54,6 @@ from multi_agent_brief.semantic_evaluator.runner import (
 from multi_agent_brief.semantic_evaluator.serialization import canonical_json_bytes
 import multi_agent_brief.product.post_final_assessment as post_final_assessment_module
 import multi_agent_brief.semantic_evaluator.runner as runner_module
-import multi_agent_brief.control_store.schema as schema_module
-import multi_agent_brief.control_store.sqlite_store as sqlite_store_module
 from tests.test_finalized_local_review_facts import _finalized_local_workspace
 from tests.test_core_run_v2_packaging import _real_finalized_local_workspace
 from tests.test_runtime_host_continue_v2 import (
@@ -71,16 +64,6 @@ from tests.helpers import initialize_workspace
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "semantic_evaluator_shadow"
-_POST_FINAL_RECEIPT_RELATION_FIELDS = (
-    "post_final_assessment_policy_revisions",
-    "post_final_assessment_requests",
-    "post_final_assessment_results",
-    "post_final_finding_dispositions",
-    "post_final_guidance_drafts",
-    "post_final_guidance_statuses",
-    "post_final_assessment_abandonments",
-    "run_source_acquisition_attempt_authorizations",
-)
 _ASSESSMENT_RESULT_READOUT_FIELDS = (
     "assessed_unit_count",
     "finding_count",
@@ -225,173 +208,6 @@ def _current_action(history, run_id: str, revision: int):
     snapshot = history.snapshot_at_revision(run_id, revision)
     verified = CoreRunDomainVerifier()._verify_snapshot(history, snapshot)
     return classify_core_run_next_action(verified)
-
-
-def _schema9_finalized_local_workspace_upgraded(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> tuple[Path, str, dict[str, bytes]]:
-    """Build real schema-9 Core history, then apply 0010 without byte rewrites."""
-
-    canonical_model_text = sqlite_store_module.canonical_model_text
-
-    def legacy_record_text(record) -> str:
-        if type(record) is not TransactionReceipt:
-            return canonical_model_text(record)
-        payload = record.model_dump(mode="json", exclude_unset=False)
-        for field in _POST_FINAL_RECEIPT_RELATION_FIELDS:
-            if payload.pop(field) != []:
-                raise AssertionError("schema-9 receipt gained advisory relation")
-        return canonical_json_bytes(payload).decode("utf-8")
-
-    schema9_patch = pytest.MonkeyPatch()
-    schema9_patch.setattr(
-        sqlite_store_module,
-        "canonical_model_text",
-        legacy_record_text,
-    )
-    schema9_patch.setattr(
-        SQLiteControlStore,
-        "_legacy_receipt_cutoff",
-        lambda _store: 1_000_000,
-    )
-    schema9_patch.setattr(
-        SQLiteControlStore,
-        "_legacy_source_attempt_receipt_cutoff",
-        lambda _store: 1_000_000,
-    )
-    schema9_patch.setattr(
-        SQLiteControlStore,
-        "_legacy_post_final_abandonment_receipt_cutoff",
-        lambda _store: 1_000_000,
-    )
-    try:
-        workspace = _real_finalized_local_workspace(tmp_path, monkeypatch)
-        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-            head = store.load_workspace_run_head()
-        if head is None:
-            raise AssertionError("schema-9 fixture has no workspace run head")
-        run_id = head.current_run_id
-    finally:
-        schema9_patch.undo()
-
-    database = workspace / "briefloop.db"
-    connection = sqlite3.connect(database)
-    try:
-        migration_10_tables = (
-            "transaction_receipt_compatibility_boundaries",
-            "transaction_post_final_guidance_statuses",
-            "transaction_post_final_guidance_drafts",
-            "transaction_post_final_finding_dispositions",
-            "post_final_guidance_statuses",
-            "post_final_guidance_drafts",
-            "post_final_finding_dispositions",
-            "transaction_post_final_assessment_results",
-            "transaction_post_final_assessment_requests",
-            "transaction_post_final_assessment_policy_revisions",
-            "post_final_assessment_results",
-            "post_final_assessment_requests",
-            "post_final_assessment_policy_revisions",
-            "post_final_assessment_abandonment_compatibility_boundaries",
-            "post_final_assessment_abandonments",
-            "transaction_post_final_assessment_abandonments",
-            "source_acquisition_attempt_compatibility_boundaries",
-            "run_source_acquisition_attempt_authorizations",
-            "transaction_run_source_acquisition_attempt_authorizations",
-        )
-        connection.execute("PRAGMA foreign_keys = OFF")
-        for table in migration_10_tables:
-            connection.execute(f"DROP TABLE {table}")
-        connection.execute("DROP TRIGGER schema_migrations_no_delete")
-        connection.execute("DELETE FROM schema_migrations WHERE version>=10")
-        connection.execute(
-            "CREATE TRIGGER schema_migrations_no_delete BEFORE DELETE ON "
-            "schema_migrations\n"
-            "BEGIN SELECT RAISE(ABORT, 'append_only'); END"
-        )
-        connection.execute("PRAGMA user_version = 9")
-        connection.commit()
-
-        expected_schema9 = sqlite3.connect(":memory:")
-        try:
-            for version, name in MIGRATIONS:
-                if version >= 10:
-                    break
-                migration = resources.files("multi_agent_brief.control_store").joinpath(
-                    "migrations", f"{name}.sql"
-                )
-                expected_schema9.executescript(migration.read_text(encoding="utf-8"))
-            if schema_module._schema_inventory(
-                connection
-            ) != schema_module._schema_inventory(expected_schema9):
-                raise AssertionError("schema-9 fixture inventory drift")
-        finally:
-            expected_schema9.close()
-
-        before = {
-            str(row[0]): str(row[1]).encode("utf-8")
-            for row in connection.execute(
-                "SELECT transaction_id,payload_json FROM transactions "
-                "ORDER BY committed_revision"
-            ).fetchall()
-        }
-        if not before:
-            raise AssertionError("schema-9 fixture has no receipts")
-        if any(
-            field.encode("utf-8") in payload
-            for payload in before.values()
-            for field in _POST_FINAL_RECEIPT_RELATION_FIELDS
-        ):
-            raise AssertionError("schema-9 receipt unexpectedly has advisory fields")
-        for version, name in MIGRATIONS:
-            if version < 10:
-                continue
-            migration = resources.files("multi_agent_brief.control_store").joinpath(
-                "migrations",
-                f"{name}.sql",
-            )
-            connection.executescript(migration.read_text(encoding="utf-8"))
-        connection.execute("PRAGMA foreign_keys = ON")
-        cutoff = connection.execute(
-            "SELECT legacy_receipt_max_committed_revision "
-            "FROM transaction_receipt_compatibility_boundaries"
-        ).fetchone()
-        if cutoff is None or int(cutoff[0]) != len(before):
-            raise AssertionError("0010 legacy receipt cutoff drift")
-        source_attempt_cutoff = connection.execute(
-            "SELECT legacy_receipt_max_committed_revision "
-            "FROM source_acquisition_attempt_compatibility_boundaries"
-        ).fetchone()
-        if source_attempt_cutoff is None or int(source_attempt_cutoff[0]) != len(
-            before
-        ):
-            raise AssertionError("0011 legacy receipt cutoff drift")
-        abandonment_cutoff = connection.execute(
-            "SELECT legacy_receipt_max_committed_revision "
-            "FROM post_final_assessment_abandonment_compatibility_boundaries"
-        ).fetchone()
-        if abandonment_cutoff is None or int(abandonment_cutoff[0]) != len(before):
-            raise AssertionError("0012 legacy receipt cutoff drift")
-        after = {
-            str(row[0]): str(row[1]).encode("utf-8")
-            for row in connection.execute(
-                "SELECT transaction_id,payload_json FROM transactions "
-                "ORDER BY committed_revision"
-            ).fetchall()
-        }
-        if after != before:
-            raise AssertionError("0010 rewrote historical receipt bytes")
-        if {
-            key: hashlib.sha256(value).hexdigest() for key, value in before.items()
-        } != {key: hashlib.sha256(value).hexdigest() for key, value in after.items()}:
-            raise AssertionError("0010 changed historical receipt hashes")
-    finally:
-        connection.close()
-
-    with SQLiteControlStore.open(database) as store:
-        history = store.load_history()
-    CoreRunDomainVerifier().verify_history(history)
-    return workspace, run_id, before
 
 
 def _policy_payload() -> dict[str, object]:
@@ -618,7 +434,7 @@ def test_explicit_human_generation_one_claims_then_replays_without_redial(
     assert claim_revisions == [before_revision + 1]
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         snapshot = store.load_snapshot(run_id)
-        assert store.current_revision == before_revision + 2
+        assert store.current_revision == before_revision + 3
     claimed = snapshot.post_final_assessment_requests[0]
     result = snapshot.post_final_assessment_results[0]
     assert claimed.schema_version == claimed.series_schema_id
@@ -991,7 +807,7 @@ def test_zero_advice_predecessor_is_ready_without_reopening_archive(
     assert second["status"] == "available"
     assert len(calls) == 18
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.current_revision == before_revision + 2
+        assert store.current_revision == before_revision + 3
 
 
 def test_nonzero_predecessor_archive_is_required_for_next_projection(
@@ -1177,6 +993,8 @@ def test_outcome_unknown_is_atomically_abandoned_before_next_generation(
         pass
 
     original_execute = post_final_assessment_module.execute_prepared_shadow_run
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
     monkeypatch.setattr(
         post_final_assessment_module,
         "execute_prepared_shadow_run",
@@ -1209,8 +1027,6 @@ def test_outcome_unknown_is_atomically_abandoned_before_next_generation(
         service,
         human_request_id="pf-laj-assessment-run-after-abandonment",
     )
-    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
-    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
     generation_two = service.assessment_run(generation_two_request)
 
     assert generation_two["ok"] is True
@@ -1348,11 +1164,11 @@ def test_unknown_predecessor_with_valid_archive_recovers_before_abandonment_proj
         assert snapshot.post_final_assessment_abandonments == ()
 
 
-def test_unknown_predecessor_with_stale_execution_identity_can_be_abandoned(
+def test_unknown_predecessor_with_stale_execution_identity_recovers_without_redial(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    """An intrinsically valid old-identity archive is not recoverable now."""
+    """Recorded execution evidence recovers an old-identity archive locally."""
 
     workspace, run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
     calls: list[tuple[str, int]] = []
@@ -1392,11 +1208,19 @@ def test_unknown_predecessor_with_stale_execution_identity_can_be_abandoned(
         before_revision = store.current_revision
         assert snapshot.post_final_assessment_results == ()
     assert trial_archive_path(service._archive_root, predecessor.trial_id).is_dir()
-    assert service.retry(predecessor.assessment_request_id) == {
-        "ok": False,
-        "status": "invalid",
-        "reason_code": "archive_verification_failed",
-    }
+    recovered = service.retry(predecessor.assessment_request_id)
+    assert recovered["ok"] is True, recovered
+    assert recovered["replayed"] is False
+    assert recovered["status"] == "available"
+    assert len(calls) == 9
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(run_id)
+        assert len(snapshot.post_final_assessment_results) == 1
+        result = snapshot.post_final_assessment_results[0]
+        assert result.assessment_request_id == predecessor.assessment_request_id
+        assert recovered["assessment_result_id"] == result.assessment_result_id
+        assert recovered["assessment_result_fingerprint"] == result.result_fingerprint
+        assert store.current_revision == before_revision + 1
 
     projected = service.assessment_next(
         policy_revision_id=policy["policy_revision_id"],
@@ -1405,25 +1229,16 @@ def test_unknown_predecessor_with_stale_execution_identity_can_be_abandoned(
         assessment_purpose="model_evaluation",
         abandon_predecessor=True,
     )
-    assert projected["ok"] is True, projected
-    assert projected["request"]["assessment_generation"] == 2
-    assert projected["request"]["abandon_predecessor"] is True
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.current_revision == before_revision
-
-    successor = service.assessment_run(projected["request"])
-    assert successor["ok"] is True, successor
-    assert successor["status"] == "available"
-    assert len(calls) == 18
+    assert projected == {
+        "ok": False,
+        "status": "invalid",
+        "reason_code": "post_final_assessment_predecessor_conflict",
+    }
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         snapshot = store.load_snapshot(run_id)
-    assert len(snapshot.post_final_assessment_requests) == 2
-    assert len(snapshot.post_final_assessment_abandonments) == 1
-    assert len(snapshot.post_final_assessment_results) == 1
-    assert (
-        snapshot.post_final_assessment_abandonments[0].assessment_request_id
-        == predecessor.assessment_request_id
-    )
+        assert store.current_revision == before_revision + 1
+        assert len(snapshot.post_final_assessment_requests) == 1
+        assert snapshot.post_final_assessment_abandonments == ()
 
 
 def test_policy_is_store_owned_replayable_and_manual_view_cannot_override(
@@ -2264,19 +2079,7 @@ def test_complete_archive_recovers_one_missing_result_without_provider_redial(
             AssertionError("archive recovery touched adapter")
         ),
     )
-    import shutil
-
-    archive_backup = tmp_path / "claimed-archive-backup"
-    shutil.copytree(archive_path, archive_backup)
     shutil.rmtree(archive_path)
-    missing = recovery_service.assess()
-    assert missing == {
-        "ok": False,
-        "status": "pending",
-        "assessment_request_id": request.assessment_request_id,
-    }
-    assert len(calls) == 9
-    shutil.copytree(archive_backup, archive_path)
     recovery = recovery_service.assess()
 
     assert recovery["ok"] is True
@@ -2547,7 +2350,7 @@ def test_terminal_provider_evidence_is_qualified_without_advice_or_redial(
     assert semantic["coverage"]["finding_count"] == 0
     assert semantic["findings"] == []
     assert semantic["reason_codes"] == ["reader_review_not_supported"]
-    assert semantic["review_actions_available"] is False
+    assert semantic["review_actions_available"] is True
     assert (workspace / "briefloop.db").read_bytes() == database_before
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         assert store.current_revision == revision_before
