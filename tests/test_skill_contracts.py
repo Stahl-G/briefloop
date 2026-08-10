@@ -5,7 +5,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SKILL_ROOT = ROOT / ".agents" / "skills"
-HERMES_SKILL = ROOT / ".agents" / "hermes-skills" / "multi-agent-brief-hermes"
 
 
 def _read(path: Path) -> str:
@@ -75,36 +74,3 @@ def test_skills_do_not_restore_old_generic_contracts():
             assert phrase not in text, f"{skill} contains old generic phrase: {phrase}"
 
 
-def test_source_writer_skills_lock_source_metadata_fields():
-    scout = _read(SKILL_ROOT / "scout" / "SKILL.md")
-    claim_ledger = _read(SKILL_ROOT / "claim-ledger" / "SKILL.md")
-
-    assert "source_url` for HTTP(S) web sources" in scout
-    assert "source_path` for local/package sources" in scout
-    assert "Never put a title, search query" in scout
-    assert "`source_type` is provider/storage type" in scout
-    assert "`source_category` is reader-facing evidence category" in scout
-
-    assert "`source_url` is only for HTTP(S) URLs" in claim_ledger
-    assert "Do not put titles, source names, source IDs, search queries, or local paths" in claim_ledger
-    assert "`source_path` plus `source_title` or `source_name` and `source_category`" in claim_ledger
-
-
-def test_hermes_skill_uses_progressive_disclosure():
-    skill = HERMES_SKILL / "SKILL.md"
-    text = _read(skill)
-    assert len(text.splitlines()) <= 140
-    assert "references/delegate-task-sequence.md" in text
-    assert "references/source-cache-contract.md" in text
-    assert "references/cron-patterns.md" in text
-    assert (HERMES_SKILL / "references" / "delegate-task-sequence.md").exists()
-    assert (HERMES_SKILL / "references" / "source-cache-contract.md").exists()
-    assert (HERMES_SKILL / "references" / "cron-patterns.md").exists()
-
-
-def test_hermes_frontmatter_is_routable():
-    fm = _frontmatter(_read(HERMES_SKILL / "SKILL.md"))
-    assert fm["name"] == "multi-agent-brief-hermes"
-    assert "Use when" in fm["description"]
-    assert len(fm["description"]) <= 1024
-    assert "delegate_task" in fm["description"]

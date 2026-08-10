@@ -118,7 +118,6 @@ def test_public_product_rename_scan_is_limited_to_requested_paths(tmp_path) -> N
 def test_public_product_rename_default_scan_reports_missing_target(tmp_path, monkeypatch) -> None:
     module = _load_module()
     monkeypatch.setattr(module, "TARGET_FILES", ["missing-first-user-doc.md"])
-    monkeypatch.setattr(module, "PRIMARY_CLI_FILES", [])
     monkeypatch.setattr(module, "NAMING_AUTHORITY_FILES", [])
     monkeypatch.setattr(module, "NAMING_CONSUMER_FILES", [])
     monkeypatch.setattr(module, "CLI_HELP_COMMANDS", [])
@@ -162,8 +161,6 @@ def test_operator_naming_consumer_surface_is_ratchet_locked() -> None:
     assert module.NAMING_CONSUMER_FILES == [
         ".agents/skills/briefloop/references/naming-and-compatibility.md",
         ".agents/skills/briefloop/references/version-matrix.md",
-        "integrations/hermes-plugin/mabw/skills/briefloop/references/naming-and-compatibility.md",
-        "integrations/hermes-plugin/mabw/skills/briefloop/references/version-matrix.md",
     ]
 
 
@@ -171,50 +168,11 @@ def test_active_runtime_primary_cli_surface_is_ratchet_locked() -> None:
     module = _load_module()
 
     expected = {
-        "HERMES.md",
         ".agents/skills/brief-onboarding/SKILL.md",
-        ".agents/skills/claim-ledger/SKILL.md",
-        ".agents/skills/orchestrator/SKILL.md",
-        "integrations/hermes-plugin/mabw/schemas.py",
-        "integrations/hermes-plugin/mabw/skills/mabw-workflow/SKILL.md",
-        "integrations/hermes-plugin/mabw/skills/mabw-workflow/references/artifact-contract.md",
-        "integrations/hermes-plugin/mabw/skills/mabw-workflow/references/delegated-workflow.md",
     }
 
     assert expected <= set(module.TARGET_FILES)
 
-
-def test_hermes_new_brief_flow_uses_only_the_classified_plugin_command(tmp_path) -> None:
-    module = _load_module()
-    target = tmp_path / "HERMES.md"
-    target.write_text(
-        module.CLASSIFIED_HERMES_PLUGIN_COMMAND + "\n",
-        encoding="utf-8",
-    )
-
-    assert module.scan_file(target) == []
-
-    target.write_text(
-        "4. For a new Hermes brief, run `/mabw run <workspace>`.\n",
-        encoding="utf-8",
-    )
-    assert [finding.kind for finding in module.scan_file(target)] == ["slash_mabw"]
-
-
-def test_hermes_new_brief_flow_does_not_route_to_reportpack_new() -> None:
-    text = (ROOT / "HERMES.md").read_text(encoding="utf-8")
-
-    assert "Hermes plugin command `/mabw new`" in text
-    assert "not the `briefloop new` ReportPack initializer" in text
-
-
-def test_legacy_hermes_plugin_primary_cli_surface_is_ratchet_locked() -> None:
-    module = _load_module()
-
-    assert module.PRIMARY_CLI_FILES == [
-        "integrations/hermes-plugin/README.md",
-        "integrations/hermes-plugin/mabw/__init__.py",
-    ]
 
 
 def test_operator_naming_consumer_rejects_equivalent_aliases(tmp_path) -> None:
@@ -258,7 +216,6 @@ def test_operator_naming_consumer_rejects_equivalent_aliases(tmp_path) -> None:
         "mabw.claim_drafts.v1",
         ".mabw-onboarding",
         "MABW_BIN",
-        "integrations/hermes-plugin/mabw/skills/mabw-workflow",
         "mabw-workflow",
     ],
     ids=[
@@ -268,7 +225,6 @@ def test_operator_naming_consumer_rejects_equivalent_aliases(tmp_path) -> None:
         "dotfile",
         "environment-variable",
         "path",
-        "plugin-id",
     ],
 )
 def test_operator_naming_consumer_allows_classified_literals(
@@ -296,7 +252,6 @@ def test_operator_naming_consumer_allows_classified_literals(
         "`MABW` is the internal architecture.",
         "`/mabw-architecture` is the current command.",
         "`/MABW-architecture` is the current command.",
-        "`integrations/hermes-plugin/mabw-architecture` is the current path.",
     ],
     ids=[
         "quoted-lower-hyphen-alias",
@@ -305,7 +260,6 @@ def test_operator_naming_consumer_allows_classified_literals(
         "quoted-upper-bare-name",
         "quoted-lower-command-suffix",
         "quoted-upper-command-suffix",
-        "path-prefix-is-not-path-literal",
     ],
 )
 def test_operator_naming_consumer_rejects_quoted_or_suffixed_aliases(
@@ -341,22 +295,6 @@ def test_operator_naming_consumer_rejects_unclassified_hyphen_alias(tmp_path) ->
     findings = module.scan_naming_consumer_file(target)
 
     assert [finding.kind for finding in findings] == ["retired_project_name_alias"]
-
-
-def test_operator_naming_consumer_mirrors_are_exact() -> None:
-    source_root = ROOT / ".agents" / "skills" / "briefloop" / "references"
-    hermes_root = (
-        ROOT
-        / "integrations"
-        / "hermes-plugin"
-        / "mabw"
-        / "skills"
-        / "briefloop"
-        / "references"
-    )
-
-    for filename in ["naming-and-compatibility.md", "version-matrix.md"]:
-        assert (source_root / filename).read_bytes() == (hermes_root / filename).read_bytes()
 
 
 def test_naming_authority_rejects_implementation_lineage_alias(tmp_path) -> None:
@@ -405,7 +343,6 @@ def test_naming_authority_allows_classified_compatibility_literals(tmp_path) -> 
 def test_default_scan_reports_missing_naming_authority(tmp_path, monkeypatch) -> None:
     module = _load_module()
     monkeypatch.setattr(module, "TARGET_FILES", [])
-    monkeypatch.setattr(module, "PRIMARY_CLI_FILES", [])
     monkeypatch.setattr(module, "NAMING_AUTHORITY_FILES", ["docs/missing-authority.md"])
     monkeypatch.setattr(module, "NAMING_CONSUMER_FILES", [])
     monkeypatch.setattr(module, "CLI_HELP_COMMANDS", [])
@@ -431,24 +368,6 @@ def test_public_product_rename_path_help_is_replacement_only() -> None:
     assert "Additional or replacement" not in result.stdout
 
 
-def test_installed_briefloop_command_passes_public_rename_guard(tmp_path, capsys) -> None:
-    module = _load_module()
-    target = tmp_path / "claude"
-
-    rc = main(["claude", "install", "--repo-workdir", str(ROOT), "--target", str(target)])
-
-    assert rc == 0
-    capsys.readouterr()
-    installed_briefloop = target / "commands" / "briefloop.md"
-    installed_mabw = target / "commands" / "mabw.md"
-    assert installed_briefloop.exists()
-    assert installed_mabw.exists()
-    findings = module.scan(paths=[installed_briefloop])
-    assert findings == [], "\n".join(finding.format(ROOT) for finding in findings)
-    first_screen = installed_briefloop.read_text(encoding="utf-8").split("## Routing", maxsplit=1)[0]
-    assert "/mabw" not in first_screen
-
-
 def test_public_product_rename_guard_scans_briefloop_cli_help() -> None:
     module = _load_module()
 
@@ -461,17 +380,17 @@ def test_public_product_rename_guard_scans_briefloop_cli_help() -> None:
     assert findings == [], "\n".join(finding.format(ROOT) for finding in findings)
 
 
-def test_claude_first_response_uses_briefloop_writer_command() -> None:
+def test_claude_first_response_uses_codex_runtime_path() -> None:
     text = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
     first_response = text.split("## Standard Claude Code Path", maxsplit=1)[0]
 
-    assert "/briefloop new" in first_response
-    assert "/briefloop run <workspace>" in first_response
-    assert "/briefloop status <workspace>" in first_response
-    assert "/briefloop feedback <workspace>" in first_response
-    assert "/briefloop deliver <workspace>" in first_response
+    assert "briefloop init <workspace> --from-onboarding onboarding.json" in first_response
+    assert "briefloop runtime install --workspace <workspace> --runtime codex" in first_response
+    assert "briefloop run --workspace <workspace> --runtime codex" in first_response
+    assert "briefloop runtime next --workspace <workspace>" in first_response
     assert "/mabw" not in first_response
     assert "MABW" not in first_response
+    assert "/briefloop new" not in first_response
 
 
 def test_compatibility_quarantine_classifies_remaining_legacy_names() -> None:
@@ -519,22 +438,6 @@ def test_deep_rename_deferral_documents_non_blockers() -> None:
     assert "user friction or packaging evidence" in normalized
     assert "non-editable install smoke coverage" in normalized
     assert "must not rewrite frozen archives or schema ids in place" in normalized
-
-
-def test_compatibility_surfaces_remain_available_but_not_first_user() -> None:
-    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'briefloop = "multi_agent_brief.cli.main:main"' in pyproject
-    assert 'multi-agent-brief = "multi_agent_brief.cli.main:main"' in pyproject
-
-    mabw_command = (ROOT / ".claude" / "commands" / "mabw.md").read_text(encoding="utf-8")
-    assert "The command name `/mabw` is retained for compatibility" in mabw_command
-    assert "BRIEFLOOP_CLI=multi-agent-brief" in mabw_command
-
-    briefloop_command = (ROOT / ".claude" / "commands" / "briefloop.md").read_text(encoding="utf-8")
-    first_screen = briefloop_command.split("## Routing", maxsplit=1)[0]
-    assert "/briefloop new" in first_screen
-    assert "/mabw" not in first_screen
-    assert "multi-agent-brief" not in first_screen
 
 
 def test_packaging_wheel_smoke_exercises_public_and_compatibility_scripts() -> None:

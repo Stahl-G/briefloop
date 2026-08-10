@@ -126,31 +126,6 @@ def test_retired_operator_public_surfaces_reject_without_writes(tmp_path, capsys
             ],
             "[run] runtime_adapter_unsupported\n",
         ),
-        (
-            lambda ws: [
-                "state", "init", "--runtime", "operator",
-                "--workspace", str(ws),
-                "--repo-workdir", str(ROOT),
-            ],
-            "runtime_command_unsupported\n",
-        ),
-        (
-            lambda ws: ["state", "check", "--workspace", str(ws), "--repo-workdir", str(ROOT)],
-            "runtime_command_unsupported\n",
-        ),
-        (
-            lambda ws: [
-                "state", "init", "--runtime", "operator",
-                "--workspace", str(ws),
-                "--repo-workdir", str(ROOT),
-                "--reset-state",
-            ],
-            "runtime_command_unsupported\n",
-        ),
-        (
-            lambda ws: ["inputs", "classify", "--config", str(ws / "config.yaml"), "--quiet"],
-            "runtime_command_unsupported\n",
-        ),
     ]
     for index, (argv_for, token) in enumerate(cases):
         ws = _write_workspace(tmp_path / f"case-{index}")
@@ -158,9 +133,8 @@ def test_retired_operator_public_surfaces_reject_without_writes(tmp_path, capsys
 
         rc = main(argv_for(ws))
 
-        # retired public `run --runtime operator`, `state`, and
-        # `inputs classify` surfaces; the Codex SQLite ControlStore runtime is
-        # the sole runtime authority.
+        # retired public `run --runtime operator` surface; the Codex SQLite
+        # ControlStore runtime is the sole runtime authority.
         assert rc == 1
         assert capsys.readouterr().out == token
         assert _workspace_file_bytes(ws) == before_files

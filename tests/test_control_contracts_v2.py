@@ -549,22 +549,17 @@ def test_local_identity_duplicates_fail_without_migrating_business_authority() -
 
 def test_legacy_inventory_is_exact_and_each_result_is_opaque_read_only() -> None:
     assert tuple(LEGACY_READ_ONLY_CONTRACTS) == (
-        "analysis_card",
         "atomic_claim_graph",
         "audit_report",
         "candidate_claims",
-        "candidate_item",
         "claim",
         "claim_drafts",
         "claim_support_matrix",
         "evidence_span_registry",
-        "market_event",
         "policy_profile",
         "report_spec",
         "screened_candidates",
         "semantic_assessment_report",
-        "source_evidence_pack_manifest",
-        "source_item",
     )
     for legacy_id in LEGACY_READ_ONLY_CONTRACTS:
         result = read_contract_payload(legacy_id, {"legacy": [1, {"ok": True}]})
@@ -619,13 +614,13 @@ def test_unknown_or_non_json_legacy_payload_is_invalid_and_value_free() -> None:
         ("schema_id", "unknown v2 contract")
     ]
 
-    invalid_legacy = read_contract_payload("source_item", {"bad": object()})
+    invalid_legacy = read_contract_payload("claim", {"bad": object()})
     assert invalid_legacy.classification == "invalid"
     assert [(item.field, item.error) for item in invalid_legacy.violations] == [
         ("$", "must contain finite JSON-compatible values")
     ]
 
-    non_finite_legacy = read_contract_payload("source_item", {"bad": math.nan})
+    non_finite_legacy = read_contract_payload("claim", {"bad": math.nan})
     assert non_finite_legacy.classification == "invalid"
     assert [(item.field, item.error) for item in non_finite_legacy.violations] == [
         ("$", "must contain finite JSON-compatible values")
@@ -633,19 +628,4 @@ def test_unknown_or_non_json_legacy_payload_is_invalid_and_value_free() -> None:
 
 
 def test_legacy_contract_class_remains_registered_and_compatible() -> None:
-    from multi_agent_brief.contracts.schemas.source_item import SourceItemContract
-
-    assert SchemaRegistry.get("source_item") is SourceItemContract
-    assert (
-        SchemaRegistry.validate(
-            "source_item",
-            {
-                "source_id": "S1",
-                "source_name": "Test",
-                "source_type": "local_file",
-                "title": "Title",
-                "content": "Body",
-            },
-        )
-        == []
-    )
+    assert SchemaRegistry.get("claim") is not None

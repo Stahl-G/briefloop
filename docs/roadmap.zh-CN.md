@@ -171,12 +171,6 @@ Non-goals:
 
 v0.7.0 之后的公开顺序转向 FrictionStore、policy packs、reference workflows 和 runtime parity，同时继续保持 subagent-first runtime boundary。
 
-公开实施概览：
-
-- [Implementation overview index](implementation/README.md)
-- [v0.5.9 司乐师 Contract Preparation](implementation/v0.5.9-orchestrator-prep.md)
-- [v0.6.0 Explicit 司乐师 Contract](implementation/v0.6.0-explicit-orchestrator-contract.md)
-
 Non-goals:
 
 - 不实现完整 DAG runtime。

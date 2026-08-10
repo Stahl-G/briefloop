@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -708,7 +709,7 @@ def test_new_report_pack_workspace_does_not_overwrite_report_spec_without_force(
 def test_briefloop_alias_help_uses_alias_program_name(monkeypatch) -> None:
     monkeypatch.setattr(sys, "argv", ["/tmp/briefloop"])
 
-    help_text = build_parser().format_help()
+    help_text = re.sub(r"\x1b\[[0-9;]*m", "", build_parser().format_help())
 
     assert help_text.startswith("usage: briefloop ")
     assert not help_text.startswith("usage: multi-agent-brief ")

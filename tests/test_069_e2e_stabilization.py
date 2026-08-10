@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.control_store import SQLiteControlStore
 
@@ -83,8 +85,8 @@ def test_public_safe_runtime_handoff_control_selection_and_finalize_e2e(
     assert snapshot.transactions[-1].committed_revision == before_revision
 
     database_before = (workspace / "briefloop.db").read_bytes()
-    assert main(["finalize", "--config", str(workspace / "config.yaml")]) == 1
-    assert capsys.readouterr().out == "runtime_command_unsupported\n"
+    with pytest.raises(SystemExit):
+        main(["finalize", "--config", str(workspace / "config.yaml")])
     assert (workspace / "briefloop.db").read_bytes() == database_before
     assert all(not (intermediate / name).exists() for name in legacy_controls)
 

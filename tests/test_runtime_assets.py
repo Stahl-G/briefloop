@@ -46,86 +46,6 @@ def _assert_frontmatter_first(path: Path) -> None:
     assert INSTALL_MARKER in text
 
 
-def test_runtime_install_opencode_workspace_kit_is_local(tmp_path: Path, capsys) -> None:
-    ws = _workspace(tmp_path)
-
-    rc = main([
-        "runtime",
-        "install",
-        "--workspace",
-        str(ws),
-        "--runtime",
-        "opencode",
-        "--repo-workdir",
-        str(ROOT),
-    ])
-
-    assert rc == 0
-    assert "Installed workspace runtime kit for opencode" in capsys.readouterr().out
-    assert (ws / "AGENTS.md").exists()
-    assert (ws / ".opencode" / "commands" / "generate-brief.md").exists()
-    assert (ws / ".opencode" / "commands" / "capability.md").exists()
-    assert (ws / ".opencode" / "agents" / "brief-orchestrator.md").exists()
-    assert (ws / ".opencode" / "skills" / "multi-agent-brief-workflow" / "SKILL.md").exists()
-    assert (ws / ".opencode" / "skills" / "multi-agent-brief-workflow" / "references" / "runtime-workflow.md").exists()
-    assert (ws / "opencode.jsonc").exists()
-    assert (ws / "opencode.jsonc").read_text(encoding="utf-8").startswith(
-        JSONC_INSTALL_MARKER
-    )
-    _assert_frontmatter_first(ws / ".opencode" / "commands" / "generate-brief.md")
-    _assert_frontmatter_first(ws / ".opencode" / "commands" / "capability.md")
-    _assert_frontmatter_first(ws / ".opencode" / "agents" / "brief-orchestrator.md")
-    _assert_frontmatter_first(
-        ws / ".opencode" / "skills" / "multi-agent-brief-workflow" / "SKILL.md"
-    )
-    assert (ws / "audience_profile.md").read_text(encoding="utf-8") == "Do not overwrite me.\n"
-    assert (ws / "config.yaml").read_text(encoding="utf-8") == "project:\n  name: Runtime Kit\n"
-
-    combined = "\n".join(path.read_text(encoding="utf-8") for path in _all_text_files(ws))
-    assert ROOT.as_posix() not in combined
-    assert "briefloop run --workspace" in combined
-    assert "Do not assume this workspace" in combined
-
-
-def test_runtime_install_claude_workspace_kit_is_local(tmp_path: Path, capsys) -> None:
-    ws = _workspace(tmp_path)
-
-    rc = main([
-        "runtime",
-        "install",
-        "--workspace",
-        str(ws),
-        "--runtime",
-        "claude",
-        "--repo-workdir",
-        str(ROOT),
-    ])
-
-    assert rc == 0
-    assert "Installed workspace runtime kit for claude" in capsys.readouterr().out
-    assert (ws / "CLAUDE.md").exists()
-    assert (ws / ".claude" / "commands" / "mabw.md").exists()
-    assert (ws / ".claude" / "commands" / "generate-brief.md").exists()
-    assert (ws / ".claude" / "commands" / "capability.md").exists()
-    assert (ws / ".claude" / "commands" / "init-brief.md").exists()
-    assert (ws / ".claude" / "commands" / "propose-competitors.md").exists()
-    assert (ws / ".claude" / "agents" / "orchestrator.md").exists()
-    assert (ws / ".claude" / "skills" / "multi-agent-brief-workflow" / "SKILL.md").exists()
-    assert (ws / ".claude" / "skills" / "multi-agent-brief-workflow" / "references" / "artifact-boundary.md").exists()
-    _assert_frontmatter_first(ws / ".claude" / "commands" / "mabw.md")
-    _assert_frontmatter_first(ws / ".claude" / "commands" / "generate-brief.md")
-    _assert_frontmatter_first(ws / ".claude" / "commands" / "capability.md")
-    _assert_frontmatter_first(ws / ".claude" / "commands" / "propose-competitors.md")
-    _assert_frontmatter_first(ws / ".claude" / "agents" / "orchestrator.md")
-    _assert_frontmatter_first(
-        ws / ".claude" / "skills" / "multi-agent-brief-workflow" / "SKILL.md"
-    )
-
-    combined = "\n".join(path.read_text(encoding="utf-8") for path in _all_text_files(ws))
-    assert ROOT.as_posix() not in combined
-    assert "briefloop run --workspace" in combined
-
-
 def test_runtime_install_codex_workspace_kit_is_local(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
 
@@ -136,8 +56,6 @@ def test_runtime_install_codex_workspace_kit_is_local(tmp_path: Path, capsys) ->
         str(ws),
         "--runtime",
         "codex",
-        "--repo-workdir",
-        str(ROOT),
     ])
 
     assert rc == 0
@@ -230,31 +148,6 @@ def test_runtime_install_codex_workspace_kit_is_local(tmp_path: Path, capsys) ->
     assert "briefloop run --workspace" in combined
 
 
-def test_runtime_install_dry_run_does_not_write_files(tmp_path: Path, capsys) -> None:
-    ws = _workspace(tmp_path)
-
-    rc = main([
-        "runtime",
-        "install",
-        "--workspace",
-        str(ws),
-        "--runtime",
-        "all",
-        "--repo-workdir",
-        str(ROOT),
-        "--dry-run",
-    ])
-
-    assert rc == 0
-    out = _portable_output(capsys.readouterr().out)
-    assert "would write" in out
-    assert out.count("/AGENTS.md") == 1
-    assert not (ws / "AGENTS.md").exists()
-    assert not (ws / "CLAUDE.md").exists()
-    assert not (ws / ".opencode").exists()
-    assert not (ws / ".codex").exists()
-
-
 def test_runtime_install_codex_dry_run_lists_assets(tmp_path: Path, capsys) -> None:
     ws = _workspace(tmp_path)
 
@@ -265,8 +158,6 @@ def test_runtime_install_codex_dry_run_lists_assets(tmp_path: Path, capsys) -> N
         str(ws),
         "--runtime",
         "codex",
-        "--repo-workdir",
-        str(ROOT),
         "--dry-run",
     ])
 
@@ -279,27 +170,6 @@ def test_runtime_install_codex_dry_run_lists_assets(tmp_path: Path, capsys) -> N
     assert ".codex/agents/briefloop-scout.toml" in out
     assert not (ws / ".codex").exists()
     assert not (ws / ".claude").exists()
-
-
-def test_runtime_install_refuses_non_mabw_existing_file(tmp_path: Path, capsys) -> None:
-    ws = _workspace(tmp_path)
-    (ws / "AGENTS.md").write_text("User-owned agent notes.\n", encoding="utf-8")
-
-    rc = main([
-        "runtime",
-        "install",
-        "--workspace",
-        str(ws),
-        "--runtime",
-        "opencode",
-        "--repo-workdir",
-        str(ROOT),
-    ])
-
-    assert rc == 1
-    out = capsys.readouterr().out
-    assert "Refusing to overwrite existing non-generated file without --force" in out
-    assert (ws / "AGENTS.md").read_text(encoding="utf-8") == "User-owned agent notes.\n"
 
 
 def test_runtime_install_codex_refuses_non_mabw_agent_file(tmp_path: Path, capsys) -> None:
@@ -315,8 +185,6 @@ def test_runtime_install_codex_refuses_non_mabw_agent_file(tmp_path: Path, capsy
         str(ws),
         "--runtime",
         "codex",
-        "--repo-workdir",
-        str(ROOT),
     ])
 
     assert rc == 1
@@ -376,20 +244,3 @@ def test_runtime_install_codex_resumes_exact_partial_generated_kit(
     assert missing.read_bytes() == expected
 
 
-def test_runtime_install_refreshes_generated_files(tmp_path: Path) -> None:
-    ws = _workspace(tmp_path)
-    (ws / "AGENTS.md").write_text(f"{INSTALL_MARKER}\nold\n", encoding="utf-8")
-
-    rc = main([
-        "runtime",
-        "install",
-        "--workspace",
-        str(ws),
-        "--runtime",
-        "opencode",
-        "--repo-workdir",
-        str(ROOT),
-    ])
-
-    assert rc == 0
-    assert "old" not in (ws / "AGENTS.md").read_text(encoding="utf-8")

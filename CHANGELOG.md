@@ -5,6 +5,23 @@ All notable changes to the multi-agent-brief-workflow project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.2] — 2026-08-10
+
+### Removed
+
+- **Breaking:** the legacy JSON control-plane runtime is deleted. The
+  `state`, `gates`, `feedback`, `repair`, `improve`, `provenance`, `controls`,
+  `approval`, `release`, `inputs`, `semantic-support`, `audit`, `finalize`,
+  `deliver`, `analysis-blocks`, `claude`, `hermes`, and `workbuddy` CLI command
+  modules are removed, along with their JSON control files, role skills,
+  generated platform role agents (`.claude/agents/`, `.codex/agents/`,
+  `.opencode/`, `.codebuddy/`), the five-verb writer command (`/briefloop`),
+  and the Hermes / OpenCode / CodeBuddy / WorkBuddy runtime assets.
+- Workspace authority now classifies only fresh / sqlite / invalid_sqlite; a
+  legacy JSON-only workspace is treated as fresh and must be bootstrapped to
+  SQLite. The active runtime is the packaged Codex ControlStore kit
+  (`briefloop runtime install --runtime codex`).
+
 ## [0.14.0] — 2026-07-22
 
 ### Added

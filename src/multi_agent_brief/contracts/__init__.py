@@ -14,13 +14,10 @@ from multi_agent_brief.contracts.registry import (
 from multi_agent_brief.contracts.schemas import (
     AuditReportContract,
     AtomicClaimGraphContract,
-    CandidateItemContract,
     ClaimDraftContract,
     ClaimContract,
     EvidenceSpanRegistryContract,
     ReportSpecContract,
-    SourceEvidencePackManifestContract,
-    SourceItemContract,
 )
 from multi_agent_brief.contracts.migrations import migrate_claim_v1_to_v2
 from multi_agent_brief.contracts.v2 import (
@@ -134,13 +131,10 @@ __all__ = [
     "StageSpec",
     "AuditReportContract",
     "AtomicClaimGraphContract",
-    "CandidateItemContract",
     "ClaimDraftContract",
     "ClaimContract",
     "EvidenceSpanRegistryContract",
     "ReportSpecContract",
-    "SourceEvidencePackManifestContract",
-    "SourceItemContract",
     "Approval",
     "ApprovalPackageBinding",
     "ArtifactIdentityRecord",

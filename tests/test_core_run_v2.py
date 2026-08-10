@@ -3715,45 +3715,6 @@ def test_secret_bearing_workspace_input_is_rejected_before_store_creation(
     assert not (workspace / "briefloop.db").exists()
 
 
-@pytest.mark.parametrize(
-    "relative_path",
-    [
-        "output/intermediate/runtime_manifest.json",
-        "output/intermediate/workflow_state.json",
-        "output/intermediate/artifact_registry.json",
-        "output/intermediate/event_log.jsonl",
-        "output/intermediate/finalize_report.json",
-    ],
-)
-def test_legacy_json_control_workspace_cannot_become_fresh_v2(
-    tmp_path: Path,
-    relative_path: str,
-) -> None:
-    workspace = _workspace(tmp_path)
-    marker = workspace / relative_path
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text('{"legacy":true}', encoding="utf-8")
-    payload = deepcopy(CoreRunInitializeRequest.minimal_example)
-    payload.update(
-        request_id="REQ-INIT-LEGACY-STATE",
-        workspace_id=WORKSPACE_ID,
-        run_id=RUN_ID,
-        input_governance_required=False,
-        workspace_config_sha256=read_workspace_file(workspace, "config.yaml").sha256,
-        sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
-    )
-    result = CoreRunService(workspace, clock=CLOCK).initialize(
-        CoreRunInitializeRequest.model_validate(_bind_init_payload(payload), strict=True)
-    )
-
-    assert result.to_dict() == {
-        "status": "failed_uncommitted",
-        "error_code": "legacy_workspace_unsupported",
-    }
-    assert not (workspace / "briefloop.db").exists()
-    assert marker.read_text(encoding="utf-8") == '{"legacy":true}'
-
-
 @pytest.mark.parametrize("filename", ["config.yaml", "sources.yaml"])
 def test_workspace_input_byte_change_blocks_doctor_without_stage_effect(
     tmp_path: Path,

@@ -22,7 +22,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
 
     install = actions.add_parser(
         "install",
-        help="Install OpenCode/Claude Code/Codex runtime kit files into a workspace.",
+        help="Install the packaged Codex runtime kit into a workspace.",
     )
     install.add_argument(
         "--workspace",
@@ -32,15 +32,8 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     install.add_argument(
         "--runtime",
         required=True,
-        choices=("opencode", "claude", "codex", "all"),
+        choices=("codex", "all"),
         help="Runtime kit to install.",
-    )
-    install.add_argument(
-        "--repo-workdir",
-        help=(
-            "MABW source repository root. Required when the package install "
-            "cannot discover source-clone runtime assets."
-        ),
     )
     install.add_argument(
         "--force",

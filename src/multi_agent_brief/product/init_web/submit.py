@@ -42,10 +42,7 @@ def _runtime_submission_error(exc: RuntimeHostError) -> SubmissionError:
     error_code = str(exc)
     if error_code == "runtime_initialization_input_invalid":
         http_status = 422
-    elif error_code in {
-        "legacy_workspace_unsupported",
-        "runtime_adapter_binding_mismatch",
-    }:
+    elif error_code == "runtime_adapter_binding_mismatch":
         http_status = 409
     else:
         http_status = 500

@@ -77,23 +77,11 @@ def _workspace_file_bytes(ws: Path) -> dict[str, bytes]:
     ("argv", "expected_line"),
     [
         (
-            ["inputs", "classify", "--config", "{config}", "--quiet"],
-            "runtime_command_unsupported",
-        ),
-        (
-            ["inputs", "extract", "--config", "{config}", "--quiet"],
-            "runtime_command_unsupported",
-        ),
-        (
-            ["finalize", "--config", "{config}"],
-            "runtime_command_unsupported",
-        ),
-        (
             ["run", "--runtime", "operator", "--workspace", "{ws}", "--skip-doctor"],
             "[run] runtime_adapter_unsupported",
         ),
     ],
-    ids=["inputs-classify", "inputs-extract", "finalize", "run-operator-runtime"],
+    ids=["run-operator-runtime"],
 )
 def test_retired_public_cli_paths_fail_closed_with_zero_writes(
     tmp_path: Path,
@@ -101,8 +89,7 @@ def test_retired_public_cli_paths_fail_closed_with_zero_writes(
     argv: list[str],
     expected_line: str,
 ) -> None:
-    # retired public inputs/finalize/operator-run CLI surfaces;
-    # their semantics now live only in the direct deterministic seams below.
+    # non-codex runtimes are refused on every workspace (SQLite-only runtime).
     ws = _write_workspace(tmp_path)
     before_files = _workspace_file_bytes(ws)
 

@@ -12,7 +12,6 @@ ROOT = Path(__file__).resolve().parent.parent
 CANONICAL = ROOT / ".agents" / "skills" / "briefloop"
 SKILL = CANONICAL / "SKILL.md"
 CLAUDE_WRAPPER = ROOT / ".claude" / "skills" / "briefloop" / "SKILL.md"
-HERMES_PLUGIN_PROJECTION = ROOT / "integrations" / "hermes-plugin" / "mabw" / "skills" / "briefloop"
 VERSION_MATRIX = CANONICAL / "references" / "version-matrix.md"
 PUBLIC_CLAIMS = CANONICAL / "references" / "public-claims.md"
 CODEX_REFERENCE = CANONICAL / "references" / "codex-controlstore-v2.md"
@@ -58,8 +57,6 @@ def main() -> int:
         errors.append(_error("canonical .agents/skills/briefloop/SKILL.md is missing"))
     if not CLAUDE_WRAPPER.exists():
         errors.append(_error("Claude briefloop skill wrapper is missing"))
-    if not HERMES_PLUGIN_PROJECTION.exists():
-        errors.append(_error("Hermes plugin briefloop skill projection is missing"))
     if not VERSION_MATRIX.exists():
         errors.append(_error("version-matrix.md is missing"))
     if not CODEX_REFERENCE.exists():
@@ -92,7 +89,6 @@ def main() -> int:
         errors.append(_error("Claude wrapper routes operators to future 090 readiness framing"))
     if "archived MABW-080 / BriefLoop-090 experiment tooling" not in wrapper_text:
         errors.append(_error("Claude wrapper does not describe MABW-080 / BriefLoop-090 as archived tooling"))
-    errors.extend(_check_projection(CANONICAL, HERMES_PLUGIN_PROJECTION, label="Hermes plugin briefloop skill"))
 
     version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
     expected_version = f"v{version}"

@@ -21,7 +21,7 @@ BriefLoop 的功能很多，因为它不是一个单点报告生成器，而是�
 | 工作区 onboarding | 收集简报目标、读者、节奏、来源模式和输出偏好，再创建 workspace | 默认在场 | `briefloop onboard`, `briefloop init --from-onboarding` |
 | 产品工作区骨架 | 从受支持的 baseline ReportPack 创建 conservative local-first workspace 和 `report_spec.yaml` | 受支持基线 | `briefloop new industry-weekly <workspace>`, `briefloop new management-monthly <workspace>`, `briefloop new document-review <workspace>` |
 | Claude writer 命令 | 给写作者提供五动词入口 | 可选启用，一等 writer 路径 | `/briefloop new`, `/briefloop run`, `/briefloop status`, `/briefloop feedback`, `/briefloop deliver`；`/mabw` 保留为兼容 alias |
-| Runtime handoff | 为外部 orchestrator 和 subagents 生成执行交接面 | 默认在场 | `briefloop run --workspace <workspace> --runtime operator` |
+| Runtime handoff | 为外部 orchestrator 和 subagents 生成执行交接面 | 默认在场 | `briefloop run --workspace <workspace> --runtime codex` |
 | 状态查看 | 查看当前 stage、blocker、artifact、计时 bucket 和下一步安全动作 | 默认在场 | `/briefloop status`, `briefloop status` |
 | 交付包 | 在 finalize 检查后输出读者可见 Markdown 和 DOCX | 默认在场 | `/briefloop deliver`, `briefloop finalize`, `state finalize-complete` |
 

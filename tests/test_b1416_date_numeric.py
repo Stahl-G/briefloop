@@ -36,29 +36,6 @@ class TestB14RecencyByReportDate:
             "B14 fix should add report_date parameter"
         )
 
-    def test_report_date_passed_to_screener(self):
-        """Screener's exclusion_reason uses context.report_date, not system time.
-        This is correct — verify it works."""
-        from multi_agent_brief.core.selection import exclusion_reason
-        from multi_agent_brief.core.schemas import PipelineContext
-
-        context = PipelineContext(
-            project_name="Test",
-            input_dir="/tmp",
-            output_dir="/tmp",
-            report_date="2026-06-02",
-            max_source_age_days=7,
-        )
-        claim = Claim(
-            claim_id="TEST", statement="Old claim",
-            source_id="SRC", evidence_text="Old",
-            metadata={"published_at": "2026-05-20"},  # 13 days before report_date
-        )
-        reason = exclusion_reason(claim, context)
-        assert reason == "stale_source", (
-            "B14: May 20 is 13 days before June 2, should be stale with max_age=7"
-        )
-
     def test_auditor_uses_report_date_for_staleness(self):
         """Auditor's deterministic audit uses report_date for stale checks."""
         ledger = ClaimLedger()
@@ -206,24 +183,3 @@ class TestB16NumericConfigValidation:
             "B16 FAIL: recency_days=0 should pass all items through"
         )
 
-    def test_selection_slice_zero_max_claims(self):
-        """When max_claims=0, Screener should select zero claims."""
-        from multi_agent_brief.core.selection import select_reportable_claims
-        from multi_agent_brief.core.schemas import Claim, PipelineContext
-
-        ledger = ClaimLedger()
-        ledger.add_claim(Claim(
-            claim_id="TEST", statement="A claim",
-            source_id="SRC", evidence_text="A claim",
-            metadata={"published_at": "2026-06-01"},
-        ))
-        context = PipelineContext(
-            project_name="Test",
-            input_dir="/tmp", output_dir="/tmp",
-            report_date="2026-06-02",
-            max_claims=0,
-        )
-        result = select_reportable_claims(ledger, context)
-        assert result.stats["selected_claims"] == 0, (
-            "B16 FAIL: max_claims=0 should select zero claims, not default to 160"
-        )

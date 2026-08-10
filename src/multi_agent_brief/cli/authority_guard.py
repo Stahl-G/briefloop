@@ -8,14 +8,6 @@ import stat
 from typing import Literal
 
 
-LEGACY_CONTROL_PATHS = (
-    "output/intermediate/runtime_manifest.json",
-    "output/intermediate/workflow_state.json",
-    "output/intermediate/artifact_registry.json",
-    "output/intermediate/event_log.jsonl",
-    "output/intermediate/finalize_report.json",
-)
-
 SQLITE_ACTIVE_COMMANDS = frozenset(
     {
         "run",
@@ -37,7 +29,7 @@ FRESH_BOOTSTRAP_COMMANDS = frozenset(
 
 @dataclass(frozen=True)
 class WorkspaceAuthority:
-    kind: Literal["fresh", "sqlite", "legacy", "invalid_sqlite"]
+    kind: Literal["fresh", "sqlite", "invalid_sqlite"]
     database_path: Path
 
 
@@ -53,14 +45,6 @@ def classify_workspace_authority(workspace: Path) -> WorkspaceAuthority:
         if not stat.S_ISREG(mode):
             return WorkspaceAuthority("invalid_sqlite", database)
         return WorkspaceAuthority("sqlite", database)
-    for relative in LEGACY_CONTROL_PATHS:
-        try:
-            (workspace / relative).lstat()
-        except FileNotFoundError:
-            continue
-        except OSError:
-            return WorkspaceAuthority("legacy", database)
-        return WorkspaceAuthority("legacy", database)
     return WorkspaceAuthority("fresh", database)
 
 
@@ -88,8 +72,6 @@ def active_command_authority_error(
     """Fail closed before dispatch when a workspace has the wrong authority."""
 
     authority = classify_workspace_authority(workspace)
-    if authority.kind == "legacy":
-        return "legacy_workspace_unsupported"
     if authority.kind == "invalid_sqlite":
         return "control_store_integrity_invalid"
     if (
@@ -106,7 +88,6 @@ def active_command_authority_error(
 
 
 __all__ = [
-    "LEGACY_CONTROL_PATHS",
     "FRESH_BOOTSTRAP_COMMANDS",
     "SQLITE_ACTIVE_COMMANDS",
     "WorkspaceAuthority",

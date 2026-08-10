@@ -176,9 +176,6 @@ def _run_launcher(args: argparse.Namespace) -> int:
     from multi_agent_brief.cli.authority_guard import classify_workspace_authority
 
     authority = classify_workspace_authority(workspace_path)
-    if authority.kind == "legacy":
-        print(f"{prefix} legacy_workspace_unsupported")
-        return 1
     if authority.kind == "invalid_sqlite":
         print(f"{prefix} control_store_integrity_invalid")
         return 1

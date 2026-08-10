@@ -290,18 +290,24 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 
 ---
 
-## 🤖 Runtime transition
+## 🤖 Runtime
 
-The former Claude/Hermes/OpenCode/operator JSON-control paths are not entrypoints
-for a new SQLite run. Their retained assets are historical surfaces pending the
-separate legacy deletion unit. Do not use them to continue or migrate a
-JSON-only workspace.
+The active runtime is the SQLite-only Codex ControlStore path. The former
+Claude/Hermes/OpenCode/operator JSON-control paths and their workspace assets
+are deleted; JSON-only workspaces are unsupported and are never imported or
+migrated.
 
-For the active Experimental Codex path, install the packaged workspace kit:
+For the active path, install the packaged workspace kit:
 
 ```bash
 briefloop runtime install --workspace <workspace> --runtime codex
 briefloop run --workspace <workspace> --runtime codex
+```
+
+Then follow the Store-derived next action:
+
+```bash
+briefloop runtime next --workspace <workspace>
 ```
 
 Good next reads:
@@ -309,7 +315,7 @@ Good next reads:
 - [Getting Started](docs/getting-started.md)
 - [Weekly Loop](docs/weekly-loop.md)
 - [Troubleshooting](docs/troubleshooting.md)
-- [Claude Code quickstart](docs/claude-code-quickstart.md)
+- [Golden Path](docs/golden-path.md)
 
 ---
 
@@ -354,7 +360,7 @@ The demos use synthetic materials. They show the evidence chain and gate behavio
 
 ## 🧭 Current status
 
-Current version: **v0.14.0**
+Current version: **v0.15.2**
 
 Current main entrypoints:
 
@@ -371,25 +377,24 @@ Current main entrypoints:
   current-report-bound `laj.json` may be displayed read-only with
   `briefloop quality summarize --laj-view <laj.json>`
 
-v0.14.0 completes the SQLite-only cutover and adds read-only interaction
-surfaces:
+v0.15.2 removes the legacy JSON control-plane runtime. The former
+Claude/Hermes/OpenCode/CodeBuddy/operator paths and their workspace assets,
+role skills, writer commands, and JSON control files are deleted; only the
+SQLite Codex ControlStore runtime remains. This release also removes the
+retired JSON runtime state stack and its dead consumers.
+
+Prior v0.14.0 completed the SQLite-only cutover and added read-only
+interaction surfaces:
 
 - SQLite ControlStore (`briefloop.db`), accepted strict requests, Receipts, and
   ledger relations are the sole runtime authority. JSON-only workspaces are
   unsupported, with no importer, migration, dual read/write, or fallback.
-- the legacy JSON runtime-state stack and its dead consumers are deleted;
-  legacy control files and report/status/Quality Panel exports are
-  non-authoritative projections. Strict action, envelope, and human-request
-  JSON payloads are revalidated against the Store and are not authority by
-  themselves.
 - the packaged Codex Skill follows the exact Store-derived next action and
   Receipt-backed invocation protocol. It does not fall back to `operator` or
   another runtime.
 - the loopback init wizard and three-page HTML are read-only interaction
   surfaces. LAJ remains Experimental and NOT MEASURED; the Improvement Ledger
   page reports unavailable and cannot write guidance into a later run.
-- the v0.14 engineering changes were implemented and tested with Codex. Human
-  maintainers authorized the merges and release.
 
 The carried-forward supported report tooling and advisory quality surfaces
 include:
