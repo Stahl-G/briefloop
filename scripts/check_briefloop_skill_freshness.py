@@ -46,8 +46,8 @@ REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
     ],
     "references/version-matrix.md": [
         "briefloop-codex-skill-v0.3.0",
-        "Prior release line: `v0.13.0`",
-        "Prepared release line: `v0.14.0`",
+        "Prior release line: `v0.14.0`",
+        "Prepared release line: `v0.15.2`",
         "Codex is the only active fresh runtime",
         "Strict Pydantic requests are the only write boundary",
         "Experimental",
