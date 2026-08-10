@@ -14,7 +14,7 @@ from multi_agent_brief.semantic_evaluator.contracts import DimensionResponse, Js
 from multi_agent_brief.semantic_evaluator.errors import value_free_violations
 
 
-PARSER_VERSION = "strict_dimension_json_v2"
+PARSER_VERSION = "strict_dimension_json_v3"
 
 _CANARY_RE = re.compile(r"^BLSE_CANARY_V1_[0-9a-f]{64}$")
 _HEX_BYTES = frozenset(b"0123456789abcdefABCDEF")

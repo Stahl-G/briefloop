@@ -18,7 +18,7 @@ import stat
 import tempfile
 from typing import ClassVar, Literal
 
-from pydantic import TypeAdapter, model_validator
+from pydantic import Field, TypeAdapter, model_validator
 
 from multi_agent_brief.contracts.v2 import (
     CleanText,
@@ -27,8 +27,11 @@ from multi_agent_brief.contracts.v2 import (
     Sha256,
     StrictModel,
 )
-from multi_agent_brief.semantic_evaluator.archive import verify_shadow_archive
-from multi_agent_brief.semantic_evaluator.contracts import FindingProposal, RunStatus
+from multi_agent_brief.semantic_evaluator.contracts import (
+    FindingProposal,
+    O2RequirementAssessment,
+    RunStatus,
+)
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_json_bytes,
@@ -101,6 +104,7 @@ class LajReaderView(StrictModel):
     withheld_finding_count: NonNegativeInt
     abstention_count: NonNegativeInt
     findings: list[FindingProposal]
+    requirement_assessments: list[O2RequirementAssessment] = Field(default_factory=list)
     disclaimer: CleanText
     view_sha256: Sha256
 
@@ -110,8 +114,16 @@ class LajReaderView(StrictModel):
             raise ValueError("reader reason codes must be sorted and unique")
         if self.finding_count != len(self.findings):
             raise ValueError("reader finding count mismatch")
-        if self.status != "available" and self.findings:
-            raise ValueError("non-available reader views cannot display findings")
+        pairs = [
+            (item.assessment_unit_id, item.requirement_id)
+            for item in self.requirement_assessments
+        ]
+        if len(pairs) != len(set(pairs)):
+            raise ValueError("reader requirement assessment bindings must be unique")
+        if self.status != "available" and (
+            self.findings or self.requirement_assessments
+        ):
+            raise ValueError("non-available reader views cannot display advice")
         if self.findings and self.binding is None:
             raise ValueError("reader findings require an exact report binding")
         if self.binding is not None and any(
@@ -120,6 +132,12 @@ class LajReaderView(StrictModel):
             for span in finding.report_spans
         ):
             raise ValueError("reader finding span report binding mismatch")
+        if self.binding is not None and any(
+            span.report_sha256 != self.binding.report_sha256
+            for assessment in self.requirement_assessments
+            for span in assessment.report_spans
+        ):
+            raise ValueError("reader requirement span report binding mismatch")
         if self.archive_verified:
             if (
                 self.binding is None
@@ -136,14 +154,23 @@ class LajReaderView(StrictModel):
             self.run_status != "completed" or self.validation_status != "accepted"
         ):
             raise ValueError("displayable reader status requires accepted completion")
-        expected = canonical_sha256(
-            self.model_dump(
-                mode="json",
-                exclude={"view_sha256"},
-                warnings="error",
-            )
+        identity = self.model_dump(
+            mode="json",
+            exclude={"view_sha256"},
+            warnings="error",
         )
-        if self.view_sha256 != expected:
+        expected_hashes = {canonical_sha256(identity)}
+        # Preserve verification of v1 views frozen before the additive
+        # requirement-assessment projection existed. New writers always emit
+        # the explicit empty list; old bytes remain byte-identifiable.
+        if (
+            "requirement_assessments" not in self.model_fields_set
+            and not self.requirement_assessments
+        ):
+            legacy_identity = dict(identity)
+            legacy_identity.pop("requirement_assessments")
+            expected_hashes.add(canonical_sha256(legacy_identity))
+        if self.view_sha256 not in expected_hashes:
             raise ValueError("reader view hash mismatch")
         return self
 
@@ -182,6 +209,7 @@ def _empty_view(*, status: ReaderStatus, reason_code: str) -> LajReaderView:
         "withheld_finding_count": 0,
         "abstention_count": 0,
         "findings": [],
+        "requirement_assessments": [],
         "disclaimer": (
             "Experimental advisory assessment is not available. No workflow, "
             "Gate, finalization, delivery, repair, approval, or next-action effect."
@@ -236,6 +264,7 @@ def bind_laj_reader_view_to_report(
             "finding_count": 0,
             "withheld_finding_count": view.withheld_finding_count + view.finding_count,
             "findings": [],
+            "requirement_assessments": [],
             "disclaimer": (
                 "Experimental advisory assessment is unavailable, invalid, stale, or "
                 "abstained. No workflow, Gate, finalization, delivery, repair, approval, "
@@ -260,6 +289,8 @@ def build_laj_reader_view(
         except Exception:
             raise SemanticEvaluatorError("shadow_request_invalid") from None
     try:
+        from multi_agent_brief.semantic_evaluator.archive import verify_shadow_archive
+
         verified = verify_shadow_archive(Path(archive_path))
     except SemanticEvaluatorError as exc:
         status: ReaderStatus = (
@@ -342,6 +373,14 @@ def build_laj_reader_view(
         "findings": [
             item.model_dump(mode="json", warnings="error") for item in findings
         ],
+        "requirement_assessments": (
+            [
+                item.model_dump(mode="json", warnings="error")
+                for item in witness.run.requirement_assessments
+            ]
+            if status == "available"
+            else []
+        ),
         "disclaimer": disclaimer,
     }
     return _finalize_view(payload)

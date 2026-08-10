@@ -42,10 +42,12 @@ from multi_agent_brief.contracts.v2 import (
     PackageArtifactBinding,
     PackageReadyRecord,
     PostFinalAssessmentAbandonmentRecord,
+    PostFinalAssessmentExecutionRecord,
     PostFinalAssessmentPolicyRevision,
     PostFinalAssessmentRequestRecord,
     PostFinalAssessmentResultRecord,
     PostFinalFindingDispositionRecord,
+    PostFinalHumanObservationRecord,
     PostFinalGuidanceDraftRevision,
     PostFinalGuidanceStatusRevision,
     RecoveryCompletionRecord,
@@ -198,11 +200,17 @@ class ControlUnitOfWork:
         self._post_final_assessment_abandonments: dict[
             str, PostFinalAssessmentAbandonmentRecord
         ] = {}
+        self._post_final_assessment_executions: dict[
+            str, PostFinalAssessmentExecutionRecord
+        ] = {}
         self._post_final_assessment_results: dict[
             str, PostFinalAssessmentResultRecord
         ] = {}
         self._post_final_finding_dispositions: dict[
             str, PostFinalFindingDispositionRecord
+        ] = {}
+        self._post_final_human_observations: dict[
+            str, PostFinalHumanObservationRecord
         ] = {}
         self._post_final_guidance_drafts: dict[
             tuple[str, int], PostFinalGuidanceDraftRevision
@@ -725,6 +733,17 @@ class ControlUnitOfWork:
             snapshot,
         )
 
+    def put_post_final_assessment_execution(
+        self, record: PostFinalAssessmentExecutionRecord
+    ) -> None:
+        snapshot = self._snapshot_record(record, PostFinalAssessmentExecutionRecord)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._post_final_assessment_executions,
+            snapshot.execution_id,
+            snapshot,
+        )
+
     def put_post_final_assessment_abandonment(
         self, record: PostFinalAssessmentAbandonmentRecord
     ) -> None:
@@ -744,6 +763,17 @@ class ControlUnitOfWork:
         self._put_unique(
             self._post_final_finding_dispositions,
             snapshot.disposition_id,
+            snapshot,
+        )
+
+    def put_post_final_human_observation(
+        self, record: PostFinalHumanObservationRecord
+    ) -> None:
+        snapshot = self._snapshot_record(record, PostFinalHumanObservationRecord)
+        self._require_run(snapshot)
+        self._put_unique(
+            self._post_final_human_observations,
+            snapshot.observation_id,
             snapshot,
         )
 
@@ -1097,6 +1127,10 @@ class ControlUnitOfWork:
             "post_final_finding_dispositions": [
                 self._record_payload(self._post_final_finding_dispositions[key])
                 for key in sorted(self._post_final_finding_dispositions)
+            ],
+            "post_final_human_observations": [
+                self._record_payload(self._post_final_human_observations[key])
+                for key in sorted(self._post_final_human_observations)
             ],
             "post_final_guidance_drafts": [
                 self._record_payload(self._post_final_guidance_drafts[key])

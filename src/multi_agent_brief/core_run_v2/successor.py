@@ -91,6 +91,17 @@ def _latest_by_revision(records, *, key):
     return selected
 
 
+def _observation_is_chain_head(observations, observation) -> bool:
+    """Return whether an immutable Human observation has no successor."""
+
+    child_ids = {
+        item.previous_observation_id
+        for item in observations
+        if item.previous_observation_id is not None
+    }
+    return observation.observation_id not in child_ids
+
+
 def build_run_guidance_snapshot(
     *,
     history,
@@ -141,7 +152,15 @@ def build_run_guidance_snapshot(
     )
 
     candidate_payloads: list[dict[str, object]] = []
-    staged: list[tuple[object, object | None, GuidanceReuseScopeV1, str]] = []
+    staged: list[
+        tuple[
+            object,
+            object | None,
+            GuidanceReuseScopeV1,
+            str,
+            object | None,
+        ]
+    ] = []
     for draft in candidates:
         source = source_snapshots.get(draft.run_id)
         if source is None or len(source.run_contract_bindings) != 1:
@@ -159,46 +178,92 @@ def build_run_guidance_snapshot(
             for item in source.post_final_assessment_results
             if item.assessment_result_id == draft.assessment_result_id
         ]
+        observations = [
+            item
+            for item in source.post_final_human_observations
+            if item.observation_id == draft.observation_id
+        ]
         statuses = [
             item
             for item in source.post_final_guidance_statuses
             if item.guidance_id == draft.guidance_id
         ]
-        if len(dispositions) != 1 or len(results) != 1:
-            raise CoreRunError("guidance_binding_invalid")
-        disposition = dispositions[0]
-        result = results[0]
-        if any(
-            (item.run_id, item.accepted_transaction_id) not in receipts
-            for item in (draft, disposition, result)
-        ):
-            raise CoreRunError("guidance_binding_invalid")
-        if (
-            disposition.decision != "accept"
-            or disposition.run_id != draft.run_id
-            or disposition.assessment_result_id != draft.assessment_result_id
-            or disposition.assessment_result_fingerprint
-            != draft.assessment_result_fingerprint
-            or disposition.finding_id != draft.finding_id
-            or disposition.finding_fingerprint != draft.finding_fingerprint
-            or disposition.disposition_fingerprint != draft.disposition_fingerprint
-            or result.run_id != draft.run_id
-            or result.result_fingerprint != draft.assessment_result_fingerprint
-            or result.finalized_lineage_fingerprint
-            != draft.finalized_lineage_fingerprint
-        ):
-            raise CoreRunError("guidance_binding_invalid")
-        try:
-            current_disposition = _current_post_final_disposition_at_cutoff(
-                tuple(source.post_final_finding_dispositions),
-                receipt_revisions=receipt_revisions,
-                run_id=draft.run_id,
-                assessment_result_id=draft.assessment_result_id,
-                finding_id=draft.finding_id,
-                cutoff_revision=request.expected_store_revision,
-            )
-        except ValueError as exc:
-            raise CoreRunError("guidance_binding_invalid") from exc
+        disposition = None
+        result = None
+        observation = None
+        current_disposition = None
+        if draft.provenance_kind == "human_observation":
+            if len(observations) != 1:
+                raise CoreRunError("guidance_binding_invalid")
+            observation = observations[0]
+            if (
+                observation.origin != "human"
+                or observation.run_id != draft.run_id
+                or observation.observation_fingerprint != draft.observation_fingerprint
+                or observation.finalized_lineage_fingerprint
+                != draft.finalized_lineage_fingerprint
+                or observation.assessment_result_id != draft.assessment_result_id
+                or observation.assessment_result_fingerprint
+                != draft.assessment_result_fingerprint
+            ):
+                raise CoreRunError("guidance_binding_invalid")
+            receipt_items = [draft, observation]
+            if observation.assessment_result_id is not None:
+                receipt_items.append(results[0] if len(results) == 1 else None)
+            if any(
+                item is None
+                or (item.run_id, item.accepted_transaction_id) not in receipts
+                for item in receipt_items
+            ):
+                raise CoreRunError("guidance_binding_invalid")
+            if observation.assessment_result_id is not None:
+                if len(results) != 1:
+                    raise CoreRunError("guidance_binding_invalid")
+                result = results[0]
+                if (
+                    result.run_id != draft.run_id
+                    or result.result_fingerprint
+                    != observation.assessment_result_fingerprint
+                    or result.finalized_lineage_fingerprint
+                    != draft.finalized_lineage_fingerprint
+                ):
+                    raise CoreRunError("guidance_binding_invalid")
+        else:
+            if len(dispositions) != 1 or len(results) != 1:
+                raise CoreRunError("guidance_binding_invalid")
+            disposition = dispositions[0]
+            result = results[0]
+            if any(
+                (item.run_id, item.accepted_transaction_id) not in receipts
+                for item in (draft, disposition, result)
+            ):
+                raise CoreRunError("guidance_binding_invalid")
+            if (
+                disposition.decision != "accept"
+                or disposition.run_id != draft.run_id
+                or disposition.assessment_result_id != draft.assessment_result_id
+                or disposition.assessment_result_fingerprint
+                != draft.assessment_result_fingerprint
+                or disposition.finding_id != draft.finding_id
+                or disposition.finding_fingerprint != draft.finding_fingerprint
+                or disposition.disposition_fingerprint != draft.disposition_fingerprint
+                or result.run_id != draft.run_id
+                or result.result_fingerprint != draft.assessment_result_fingerprint
+                or result.finalized_lineage_fingerprint
+                != draft.finalized_lineage_fingerprint
+            ):
+                raise CoreRunError("guidance_binding_invalid")
+            try:
+                current_disposition = _current_post_final_disposition_at_cutoff(
+                    tuple(source.post_final_finding_dispositions),
+                    receipt_revisions=receipt_revisions,
+                    run_id=draft.run_id,
+                    assessment_result_id=draft.assessment_result_id,
+                    finding_id=draft.finding_id,
+                    cutoff_revision=request.expected_store_revision,
+                )
+            except ValueError as exc:
+                raise CoreRunError("guidance_binding_invalid") from exc
         current_status = None
         if statuses:
             try:
@@ -221,6 +286,15 @@ def build_run_guidance_snapshot(
         if not request.include_approved_guidance:
             reason = "reuse_not_requested"
         elif (
+            draft.provenance_kind == "human_observation"
+            and observation is not None
+            and not _observation_is_chain_head(
+                source.post_final_human_observations,
+                observation,
+            )
+        ):
+            reason = "guidance_superseded"
+        elif (
             current_status is None
             or current_status.draft_revision != draft.draft_revision
         ):
@@ -231,7 +305,7 @@ def build_run_guidance_snapshot(
             reason = "guidance_superseded"
         elif current_status.status != "approved":
             reason = "guidance_unapproved"
-        elif (
+        elif draft.provenance_kind != "human_observation" and (
             current_disposition is None
             or current_disposition.disposition_id != draft.disposition_id
             or current_disposition.decision != "accept"
@@ -247,6 +321,13 @@ def build_run_guidance_snapshot(
                 "guidance_id": draft.guidance_id,
                 "draft_revision": draft.draft_revision,
                 "draft_fingerprint": draft.draft_fingerprint,
+                "provenance_kind": draft.provenance_kind,
+                "observation_id": (
+                    None if observation is None else observation.observation_id
+                ),
+                "observation_fingerprint": (
+                    None if observation is None else observation.observation_fingerprint
+                ),
                 "status_revision_id": (
                     None
                     if current_status is None
@@ -261,23 +342,46 @@ def build_run_guidance_snapshot(
                 "reason_code": reason,
             }
         )
-        staged.append((draft, current_status, source_scope, reason))
+        staged.append((draft, current_status, source_scope, reason, observation))
 
     candidate_set_fingerprint = canonical_fingerprint(
         {"candidates": candidate_payloads}
     )
     decisions: list[RunGuidanceSelectionDecisionRecord] = []
     items: list[RunGuidanceSnapshotItemRecord] = []
-    for draft, current_status, source_scope, reason in staged:
-        disposition = next(
-            item
-            for item in source_snapshots[draft.run_id].post_final_finding_dispositions
-            if item.disposition_id == draft.disposition_id
+    for draft, current_status, source_scope, reason, observation in staged:
+        source = source_snapshots[draft.run_id]
+        disposition = None
+        result = None
+        if draft.provenance_kind == "human_observation":
+            if observation is None:
+                raise CoreRunError("guidance_binding_invalid")
+            if observation.assessment_result_id is not None:
+                result = next(
+                    item
+                    for item in source.post_final_assessment_results
+                    if item.assessment_result_id == observation.assessment_result_id
+                )
+        else:
+            disposition = next(
+                item
+                for item in source.post_final_finding_dispositions
+                if item.disposition_id == draft.disposition_id
+            )
+            result = next(
+                item
+                for item in source.post_final_assessment_results
+                if item.assessment_result_id == draft.assessment_result_id
+            )
+        assessment_result_id = None if result is None else result.assessment_result_id
+        result_fingerprint = None if result is None else result.result_fingerprint
+        finding_id = None if disposition is None else disposition.finding_id
+        finding_fingerprint = (
+            None if disposition is None else disposition.finding_fingerprint
         )
-        result = next(
-            item
-            for item in source_snapshots[draft.run_id].post_final_assessment_results
-            if item.assessment_result_id == draft.assessment_result_id
+        disposition_id = None if disposition is None else disposition.disposition_id
+        disposition_fingerprint = (
+            None if disposition is None else disposition.disposition_fingerprint
         )
         decision_id = derived_id(
             "GUIDANCE-DECISION",
@@ -297,12 +401,19 @@ def build_run_guidance_snapshot(
             "status_revision_id": (
                 None if current_status is None else current_status.status_revision_id
             ),
-            "assessment_result_id": result.assessment_result_id,
-            "finding_id": draft.finding_id,
-            "disposition_id": disposition.disposition_id,
-            "result_fingerprint": result.result_fingerprint,
-            "finding_fingerprint": draft.finding_fingerprint,
-            "disposition_fingerprint": disposition.disposition_fingerprint,
+            "provenance_kind": draft.provenance_kind,
+            "assessment_result_id": assessment_result_id,
+            "finding_id": finding_id,
+            "disposition_id": disposition_id,
+            "result_fingerprint": result_fingerprint,
+            "finding_fingerprint": finding_fingerprint,
+            "disposition_fingerprint": disposition_fingerprint,
+            "observation_id": (
+                None if observation is None else observation.observation_id
+            ),
+            "observation_fingerprint": (
+                None if observation is None else observation.observation_fingerprint
+            ),
             "draft_fingerprint": draft.draft_fingerprint,
             "status_fingerprint": (
                 None if current_status is None else current_status.status_fingerprint
@@ -338,12 +449,19 @@ def build_run_guidance_snapshot(
             "position": len(items),
             "source_run_id": draft.run_id,
             "finalized_lineage_fingerprint": draft.finalized_lineage_fingerprint,
-            "assessment_result_id": result.assessment_result_id,
-            "assessment_result_fingerprint": result.result_fingerprint,
-            "finding_id": draft.finding_id,
-            "finding_fingerprint": draft.finding_fingerprint,
-            "disposition_id": disposition.disposition_id,
-            "disposition_fingerprint": disposition.disposition_fingerprint,
+            "provenance_kind": draft.provenance_kind,
+            "assessment_result_id": assessment_result_id,
+            "assessment_result_fingerprint": result_fingerprint,
+            "finding_id": finding_id,
+            "finding_fingerprint": finding_fingerprint,
+            "disposition_id": disposition_id,
+            "disposition_fingerprint": disposition_fingerprint,
+            "observation_id": (
+                None if observation is None else observation.observation_id
+            ),
+            "observation_fingerprint": (
+                None if observation is None else observation.observation_fingerprint
+            ),
             "guidance_id": draft.guidance_id,
             "draft_revision": draft.draft_revision,
             "draft_fingerprint": draft.draft_fingerprint,

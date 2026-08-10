@@ -7,7 +7,7 @@
         Located in `.claude/agents/`:
 
         - `orchestrator.md` — Acts as the runtime main agent that controls delegated BriefLoop stages, contract references, decisions, and artifact handoffs.
-- `source-provider.md` — Configures, validates, and collects information sources from manual inputs, RSS feeds, web search, APIs, and MCP/CLI tools.
+- `source-provider.md` — Configures and validates source inputs, then normalizes provider outputs supplied by the deterministic runtime host.
 - `source-planner.md` — Lightweight Source Planner for choosing source-discovery categories, domains, and search tasks from the user/config profile. Writes source_candidates.yaml as a plan only, not evidence.
 - `scout.md` — Discovers source-grounded candidate items and, in default topology, screens them in one stage while keeping candidate_claims and screened_candidates as distinct artifacts.
 - `screener.md` — Strict-topology independent screening role that filters, ranks, deduplicates, freshness-checks, and capacity-caps Scout candidates before Claim Ledger.

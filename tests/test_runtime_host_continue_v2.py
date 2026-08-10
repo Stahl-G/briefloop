@@ -99,6 +99,7 @@ def _body(*, authorized: bool) -> dict[str, object]:
         "workspace_target": "workspace",
         "selections": {
             "company": "ExampleCo",
+            "report_type": "management_monthly",
             "industry_or_theme": "manufacturing",
             "task_objective": "Prepare a public-safe manufacturing brief.",
             "brief_title": "ExampleCo brief",
@@ -3831,12 +3832,14 @@ def test_discovery_provider_failure_records_one_typed_failure(
         if item.role_id == "source-provider" and item.status == "failed"
     ]
     assert len(failures) == 1
-    assert failures[0].failure_reason == "proposal_invalid"
+    assert failures[0].failure_reason == "child_failed"
     evidence = snapshot.events[-1].intake_binding.source_acquisition_failure
     assert evidence is not None
-    assert evidence.failure_class == "provider_search_failed"
+    assert evidence.failure_class == "provider_transport_unavailable"
     assert evidence.provider_status_class == "acquisition_bundle_retained"
     assert evidence.provider_response_artifact is not None
+    assert evidence.transport_phase == "search"
+    assert evidence.transport_error_class == "other"
     assert sentinel not in repr(snapshot)
     assert sentinel not in repr(history.transactions)
     assert sentinel.encode() not in (workspace / "briefloop.db").read_bytes()

@@ -1,13 +1,21 @@
-"""Best-effort browser launcher for an already-built Review Session model."""
+"""Best-effort launchers for dormant and actionable local Review Sessions."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 from typing import Callable
 import webbrowser
 
-from .contracts import PostFinalReviewReadModel, ReviewSessionCommand
+from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
+
+from .contracts import (
+    PostFinalReviewReadModel,
+    ReaderReviewResultSelection,
+    ReviewSessionCommand,
+    SuccessorStartInput,
+)
 from .server import ReviewSessionServer, create_review_session_server
 
 
@@ -19,6 +27,10 @@ class ReviewLaunchResult:
     reason_code: str
     static_quality_panel_path: str | None
     runtime_authority: bool = False
+    user_status: str | None = None
+    compatible_result_count: int = 0
+    run_action_available: bool = False
+    next_run_consumption: str | None = None
 
 
 def launch_review_session(
@@ -56,55 +68,247 @@ __all__ = ["ReviewLaunchResult", "launch_review_session"]
 
 def launch_actionable_review_session(
     workspace: str | Path,
-    assessment_result_id: str,
-    assessment_result_fingerprint: str,
+    assessment_result_id: str | None = None,
+    assessment_result_fingerprint: str | None = None,
     *,
     open_browser: bool = True,
     browser_open: Callable[[str], bool] = webbrowser.open,
 ) -> ReviewLaunchResult:
     """Serve the canonical brief_html page with strict local command transport."""
 
-    from multi_agent_brief.product.brief_html.builder import build_brief_pages_data
+    from multi_agent_brief.product.brief_html.builder import (
+        BriefPagesError,
+        build_brief_pages_data,
+    )
     from multi_agent_brief.product.brief_html.render import render_brief_pages_html
-    from multi_agent_brief.product.post_final_review import PostFinalReviewService
+    from multi_agent_brief.product.post_final_assessment import (
+        PostFinalAssessmentError,
+        PostFinalAssessmentService,
+    )
+    from multi_agent_brief.product.post_final_review import (
+        PostFinalReviewError,
+        PostFinalReviewService,
+    )
 
     root = Path(workspace).expanduser().resolve()
-    service = PostFinalReviewService(
-        root,
-        assessment_result_id,
-        assessment_result_fingerprint,
-    )
-    service.review_status()
     data = build_brief_pages_data(
         root,
         assessment_result_id=assessment_result_id,
         assessment_result_fingerprint=assessment_result_fingerprint,
     )
+    if (assessment_result_id is None) != (assessment_result_fingerprint is None):
+        raise PostFinalAssessmentError("post_final_assessment_selection_invalid")
+    if assessment_result_id is not None and (
+        data["semantic"].get("selected_result_id") != assessment_result_id
+        or data["semantic"].get("selected_result_fingerprint")
+        != assessment_result_fingerprint
+    ):
+        raise PostFinalAssessmentError("post_final_assessment_selection_invalid")
     run_id = str(data["workspace"]["run_id"])
     html = render_brief_pages_html(data)
+    assessment_service = PostFinalAssessmentService(root)
+    command_lock = Lock()
+    selected: list[tuple[str, str] | None] = [None]
+
+    def current_run_direction(expected_run_id: str):
+        """Return the exact current frozen direction from the Store head."""
+
+        from multi_agent_brief.control_store import SQLiteControlStore
+
+        try:
+            with SQLiteControlStore.open(root / "briefloop.db") as store:
+                history = store.load_history()
+            heads = {
+                snapshot.workspace_run_head.current_run_id
+                for snapshot in history.snapshots
+                if snapshot.workspace_run_head is not None
+            }
+            if heads != {expected_run_id}:
+                raise ValueError("successor_run_stale")
+            snapshot = history.snapshot_at_revision(
+                expected_run_id, history.store_revision
+            )
+            bindings = snapshot.run_contract_bindings
+            if len(bindings) != 1:
+                raise ValueError("successor_run_direction_unavailable")
+            return bindings[0].run_direction
+        except Exception as exc:
+            raise PostFinalReviewError(str(exc)) from exc
+
+    def update_selection(page_data: dict[str, object]) -> None:
+        semantic = page_data.get("semantic")
+        if not isinstance(semantic, dict):
+            selected[0] = None
+            return
+        result_id = semantic.get("selected_result_id")
+        fingerprint = semantic.get("selected_result_fingerprint")
+        selected[0] = (
+            (result_id, fingerprint)
+            if isinstance(result_id, str) and isinstance(fingerprint, str)
+            else None
+        )
+
+    def rebuild(
+        selection: ReaderReviewResultSelection | None = None,
+    ) -> dict[str, object]:
+        selected_result_id = (
+            selection.assessment_result_id
+            if selection is not None
+            else selected[0][0]
+            if selected[0] is not None
+            else None
+        )
+        selected_fingerprint = (
+            selection.assessment_result_fingerprint
+            if selection is not None
+            else selected[0][1]
+            if selected[0] is not None
+            else None
+        )
+        refreshed = build_brief_pages_data(
+            root,
+            assessment_result_id=selected_result_id,
+            assessment_result_fingerprint=selected_fingerprint,
+        )
+        semantic = refreshed["semantic"]
+        if selection is not None and (
+            semantic.get("selected_result_id") != selection.assessment_result_id
+            or semantic.get("selected_result_fingerprint")
+            != selection.assessment_result_fingerprint
+        ):
+            raise PostFinalAssessmentError("post_final_assessment_selection_invalid")
+        update_selection(refreshed)
+        return refreshed
+
+    update_selection(data)
+
+    def review_service() -> PostFinalReviewService:
+        """Resolve one Store-native review writer for the current page state.
+
+        A selected result keeps the exact result binding.  Human observations
+        are also legal in report-bound mode, so the service is intentionally
+        constructed without a result when no selection exists; the service
+        then resolves the finalized lineage deterministically from SQLite.
+        """
+
+        if selected[0] is None:
+            return PostFinalReviewService(root)
+        return PostFinalReviewService(root, *selected[0])
 
     def handle(command: ReviewSessionCommand) -> dict[str, object]:
-        payload = dict(command.payload)
-        if command.action in {"accept", "reject", "defer"}:
-            payload["decision"] = command.action
-            result = service.record_disposition(payload)
-        elif command.action == "draft":
-            result = service.append_guidance_draft(payload)
-        elif command.action == "approve":
-            result = service.approve_guidance(payload)
-        elif command.action == "deactivate":
-            result = service.deactivate_guidance(payload)
-        elif command.action == "revert":
-            result = service.revert_guidance(payload)
-        elif command.action == "supersede":
-            result = service.supersede_guidance(payload)
-        else:
-            result = service.review_status()
-        return {
-            "ok": True,
-            "result": result,
-            "review_status": service.review_status(),
-        }
+        with command_lock:
+            try:
+                payload = dict(command.payload)
+                if command.action == "run_reader_review":
+                    result = assessment_service.run_reader_review(payload)
+                    selected[0] = None
+                    refreshed = rebuild(None)
+                    return {
+                        "ok": result.get("ok") is True,
+                        "reason_code": result.get("reason_code"),
+                        "reason_codes": result.get("reason_codes", []),
+                        "result": result,
+                        "page_data": refreshed,
+                    }
+                if command.action == "select_result":
+                    selection = ReaderReviewResultSelection.model_validate(
+                        payload, strict=True
+                    )
+                    refreshed = rebuild(selection)
+                    return {
+                        "ok": True,
+                        "reason_code": "reader_review_selection_refreshed",
+                        "page_data": refreshed,
+                    }
+                if command.action == "refresh":
+                    refreshed = rebuild(None)
+                    return {
+                        "ok": True,
+                        "reason_code": "reader_review_projection_refreshed",
+                        "page_data": refreshed,
+                    }
+                if command.action == "start_successor":
+                    successor = SuccessorStartInput.model_validate(payload, strict=True)
+                    frozen_direction = current_run_direction(run_id)
+                    if successor.run_direction != frozen_direction:
+                        raise PostFinalReviewError("successor_run_direction_mismatch")
+                    from multi_agent_brief.runtime_host_v2.codex import (
+                        workspace_codex_adapter_loader,
+                    )
+                    from multi_agent_brief.runtime_host_v2.service import (
+                        RuntimeHostService,
+                    )
+
+                    result = RuntimeHostService(
+                        root,
+                        adapter_loader=workspace_codex_adapter_loader(root),
+                    ).start_successor(
+                        successor_run_id=successor.successor_run_id,
+                        run_direction=frozen_direction,
+                        include_approved_guidance=successor.include_approved_guidance,
+                    )
+                    if result.status not in {"committed", "replayed"}:
+                        return {
+                            "ok": False,
+                            "reason_code": result.error_code
+                            or "successor_start_not_committed",
+                            "result": result.to_dict(),
+                        }
+                    return {
+                        "ok": True,
+                        "reason_code": "successor_started",
+                        "result": result.to_dict(),
+                    }
+
+                payload_provenance = payload.get("provenance_kind")
+                report_bound_action = command.action in {
+                    "append_observation",
+                    "supersede_observation",
+                    "status",
+                } or (
+                    command.action == "draft"
+                    and payload_provenance == "human_observation"
+                )
+                if selected[0] is None and not report_bound_action:
+                    raise PostFinalReviewError("post_final_review_selection_required")
+                service = review_service()
+                if command.action == "append_observation":
+                    result = service.record_human_observation(payload)
+                elif command.action == "supersede_observation":
+                    result = service.supersede_human_observation(payload)
+                if command.action in {"accept", "reject", "defer"}:
+                    payload["decision"] = command.action
+                    result = service.record_disposition(payload)
+                elif command.action == "draft":
+                    result = service.append_guidance_draft(payload)
+                elif command.action == "approve":
+                    result = service.approve_guidance(payload)
+                elif command.action == "deactivate":
+                    result = service.deactivate_guidance(payload)
+                elif command.action == "revert":
+                    result = service.revert_guidance(payload)
+                elif command.action == "supersede":
+                    result = service.supersede_guidance(payload)
+                elif command.action == "status":
+                    result = service.review_status()
+                refreshed = rebuild(None)
+                return {
+                    "ok": True,
+                    "result": result,
+                    "review_status": service.review_status(),
+                    "page_data": refreshed,
+                }
+            except (
+                BriefPagesError,
+                PostFinalAssessmentError,
+                PostFinalReviewError,
+                RuntimeHostError,
+            ) as exc:
+                return {
+                    "ok": False,
+                    "reason_code": str(exc),
+                    "reason_codes": [str(exc)],
+                }
 
     server = create_review_session_server(
         None,
@@ -129,6 +333,12 @@ def launch_actionable_review_session(
         browser_opened=opened,
         reason_code=reason,
         static_quality_panel_path=None,
+        user_status=str(data["semantic"]["status"]),
+        compatible_result_count=len(
+            data["semantic"].get("compatible_result_options", [])
+        ),
+        run_action_available=data["semantic"].get("run_action_available") is True,
+        next_run_consumption=str(data["improvement"]["next_run_consumption"]),
     )
 
 

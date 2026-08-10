@@ -17,7 +17,7 @@ import math
 from pathlib import PurePosixPath
 import re
 from types import MappingProxyType
-from typing import Annotated, Any, ClassVar, Literal, Optional, Union
+from typing import Annotated, Any, ClassVar, Iterable, Literal, Optional, Union
 
 from pydantic import (
     AfterValidator,
@@ -183,6 +183,8 @@ def canonical_run_direction_for_binding(
     canonical = dict(payload)
     if canonical.get("output_contract") is None:
         canonical.pop("output_contract", None)
+    if canonical.get("report_type") is None:
+        canonical.pop("report_type", None)
     return canonical
 
 
@@ -412,10 +414,12 @@ EVENT_TYPES = {
     "post_final_assessment_policy_recorded",
     "post_final_assessment_claimed",
     "post_final_assessment_abandoned",
+    "post_final_assessment_execution_recorded",
     "post_final_assessment_result_recorded",
     "post_final_finding_disposition_recorded",
     "post_final_guidance_draft_recorded",
     "post_final_guidance_status_recorded",
+    "post_final_human_observation_recorded",
     "source_acquisition_attempt_authorized",
 }
 
@@ -630,6 +634,21 @@ class TavilyAcquisitionExchange(StrictModel):
     response_body_sha256: Sha256 | None = None
     response_body_size_bytes: NonNegativeInt | None = None
     status_code: Annotated[int, Field(ge=100, le=599)] | None = None
+    # Present only when no HTTP response was received.  Keep this projection
+    # value-free: it is a coarse stdlib transport class, never an exception
+    # message, URL, host, or credential.
+    transport_error_class: (
+        Literal[
+            "dns",
+            "tls",
+            "connect",
+            "timeout",
+            "proxy",
+            "network_permission_denied",
+            "other",
+        ]
+        | None
+    ) = Field(default=None, exclude_if=lambda value: value is None)
 
     @staticmethod
     def _decode_exact(value: str) -> bytes:
@@ -662,6 +681,8 @@ class TavilyAcquisitionExchange(StrictModel):
             return self
         if any(value is None for value in response_fields):
             raise ValueError("exchange response identity is incomplete")
+        if self.transport_error_class is not None:
+            raise ValueError("transport error cannot accompany an HTTP response")
         response = self._decode_exact(self.response_body_base64 or "")
         if (
             len(response) != self.response_body_size_bytes
@@ -784,6 +805,7 @@ class SourceAcquisitionFailureEvidence(StrictModel):
     provider_request_fingerprint: Sha256
     request_fingerprint: Sha256
     failure_class: Literal[
+        "provider_transport_unavailable",
         "provider_search_failed",
         "provider_extract_failed",
         "provider_results_empty",
@@ -799,6 +821,21 @@ class SourceAcquisitionFailureEvidence(StrictModel):
     provider_response_artifact: SourceAcquisitionArtifactReference | None = None
     provider_response_sha256: Sha256 | None = None
     provider_response_size_bytes: PositiveInt | None = None
+    transport_phase: Literal["search", "extract"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    transport_error_class: (
+        Literal[
+            "dns",
+            "tls",
+            "connect",
+            "timeout",
+            "proxy",
+            "network_permission_denied",
+            "other",
+        ]
+        | None
+    ) = Field(default=None, exclude_if=lambda value: value is None)
     result_count: NonNegativeInt | None = None
     durable_content_count: NonNegativeInt | None = None
     claims_eligible_count: NonNegativeInt | None = None
@@ -829,6 +866,25 @@ class SourceAcquisitionFailureEvidence(StrictModel):
             ):
                 raise ValueError("unavailable response cannot carry response evidence")
             return self
+        if self.failure_class == "provider_transport_unavailable":
+            if (
+                self.provider_status_class != "acquisition_bundle_retained"
+                or any(value is None for value in artifact_values)
+                or self.durable_content_count != 0
+                or self.claims_eligible_count != 0
+                or self.rejection_counts is not None
+                or self.transport_phase is None
+                or self.transport_error_class is None
+                or self.result_count is None
+                or (self.transport_phase == "search" and self.result_count != 0)
+                or (self.transport_phase == "extract" and self.result_count == 0)
+            ):
+                raise ValueError("transport failure evidence is incomplete")
+            return self
+        if self.transport_phase is not None or self.transport_error_class is not None:
+            raise ValueError(
+                "transport classification is only valid for transport failure"
+            )
         if (
             self.provider_status_class != "acquisition_bundle_retained"
             or any(value is None for value in artifact_values)
@@ -1654,6 +1710,7 @@ class RunDirection(StrictModel):
     subject_name: CleanText
     industry_or_theme: Optional[CleanText] = None
     brief_title: CleanText
+    report_type: Optional[ContractId] = None
     task_objective: CleanText
     audience: CleanText
     audience_profile: CleanText
@@ -3356,12 +3413,17 @@ class RunGuidanceSelectionDecisionRecord(StrictModel):
     guidance_id: ContractId
     draft_revision: PositiveInt
     status_revision_id: Optional[ContractId] = None
-    assessment_result_id: ContractId
-    finding_id: ContractId
-    disposition_id: ContractId
-    result_fingerprint: Sha256
-    finding_fingerprint: Sha256
-    disposition_fingerprint: Sha256
+    provenance_kind: Literal["accepted_model_finding", "human_observation"] = (
+        "accepted_model_finding"
+    )
+    assessment_result_id: Optional[ContractId] = None
+    finding_id: Optional[ContractId] = None
+    disposition_id: Optional[ContractId] = None
+    result_fingerprint: Optional[Sha256] = None
+    finding_fingerprint: Optional[Sha256] = None
+    disposition_fingerprint: Optional[Sha256] = None
+    observation_id: Optional[ContractId] = None
+    observation_fingerprint: Optional[Sha256] = None
     draft_fingerprint: Sha256
     status_fingerprint: Optional[Sha256] = None
     source_scope_fingerprint: Sha256
@@ -3379,6 +3441,29 @@ class RunGuidanceSelectionDecisionRecord(StrictModel):
 
     @model_validator(mode="after")
     def decision_identity_is_exact(self) -> "RunGuidanceSelectionDecisionRecord":
+        result_fields = (self.assessment_result_id, self.result_fingerprint)
+        finding_fields = (self.finding_id, self.finding_fingerprint)
+        disposition_fields = (self.disposition_id, self.disposition_fingerprint)
+        observation_fields = (self.observation_id, self.observation_fingerprint)
+        if self.provenance_kind == "accepted_model_finding":
+            if not all(
+                item is not None
+                for item in (*result_fields, *finding_fields, *disposition_fields)
+            ):
+                raise ValueError("accepted model finding selection is incomplete")
+            if any(item is not None for item in observation_fields):
+                raise ValueError("model finding selection cannot bind observation")
+        else:
+            if not all(item is not None for item in observation_fields):
+                raise ValueError("human observation selection is incomplete")
+            if any(item is not None for item in finding_fields + disposition_fields):
+                raise ValueError("human observation selection cannot bind finding")
+            if any(item is not None for item in result_fields) and not all(
+                item is not None for item in result_fields
+            ):
+                raise ValueError(
+                    "human observation selection result binding is partial"
+                )
         if self.selected != (self.reason_code == "approved_scope_match"):
             raise ValueError("guidance selection verdict does not match reason")
         if (self.status_revision_id is None) != (self.status_fingerprint is None):
@@ -3404,12 +3489,17 @@ class RunGuidanceSnapshotItemRecord(StrictModel):
     position: NonNegativeInt
     source_run_id: ContractId
     finalized_lineage_fingerprint: Sha256
-    assessment_result_id: ContractId
-    assessment_result_fingerprint: Sha256
-    finding_id: ContractId
-    finding_fingerprint: Sha256
-    disposition_id: ContractId
-    disposition_fingerprint: Sha256
+    provenance_kind: Literal["accepted_model_finding", "human_observation"] = (
+        "accepted_model_finding"
+    )
+    assessment_result_id: Optional[ContractId] = None
+    assessment_result_fingerprint: Optional[Sha256] = None
+    finding_id: Optional[ContractId] = None
+    finding_fingerprint: Optional[Sha256] = None
+    disposition_id: Optional[ContractId] = None
+    disposition_fingerprint: Optional[Sha256] = None
+    observation_id: Optional[ContractId] = None
+    observation_fingerprint: Optional[Sha256] = None
     guidance_id: ContractId
     draft_revision: PositiveInt
     draft_fingerprint: Sha256
@@ -3422,6 +3512,27 @@ class RunGuidanceSnapshotItemRecord(StrictModel):
 
     @model_validator(mode="after")
     def snapshot_item_identity_is_exact(self) -> "RunGuidanceSnapshotItemRecord":
+        result_fields = (self.assessment_result_id, self.assessment_result_fingerprint)
+        finding_fields = (self.finding_id, self.finding_fingerprint)
+        disposition_fields = (self.disposition_id, self.disposition_fingerprint)
+        observation_fields = (self.observation_id, self.observation_fingerprint)
+        if self.provenance_kind == "accepted_model_finding":
+            if not all(
+                item is not None
+                for item in (*result_fields, *finding_fields, *disposition_fields)
+            ):
+                raise ValueError("accepted model finding snapshot item is incomplete")
+            if any(item is not None for item in observation_fields):
+                raise ValueError("model finding snapshot item cannot bind observation")
+        else:
+            if not all(item is not None for item in observation_fields):
+                raise ValueError("human observation snapshot item is incomplete")
+            if any(item is not None for item in finding_fields + disposition_fields):
+                raise ValueError("human observation snapshot item cannot bind finding")
+            if any(item is not None for item in result_fields) and not all(
+                item is not None for item in result_fields
+            ):
+                raise ValueError("human observation snapshot result binding is partial")
         if (
             self.guidance_sha256
             != hashlib.sha256(self.guidance_text.encode("utf-8")).hexdigest()
@@ -3715,12 +3826,44 @@ def _canonical_json_sha256(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+class ReaderReviewAssessmentInput(StrictModel):
+    """The complete Human-supplied command for one paid Reader Review."""
+
+    schema_id: ClassVar[str] = "briefloop.reader_review_assessment_input.v1"
+
+    schema_version: Literal["briefloop.reader_review_assessment_input.v1"]
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    disclosure_confirmed: Literal[True]
+    messages_endpoint: CleanText
+    requested_model_id: CleanText
+    model_version: CleanText
+    expected_model_identity: CleanText
+    public_safe_egress_attested: Literal[True]
+    cost_status: Literal["not_measured"]
+
+
+_READER_REVIEW_PROFILE_BINDINGS = {
+    "management_brief_en_v1": ("management_monthly", "en"),
+    # ``zh`` is the ordinary Init Web RunDirection value.  The evaluator's
+    # internal Language contract remains the canonical ``zh-CN`` below the
+    # product boundary; Store records retain the user-facing direction value.
+    "industry_weekly_zh_v1": ("industry_weekly", "zh"),
+}
+
+
 class PostFinalAssessmentPolicyRevision(StrictModel):
     """One Human-recorded, non-secret advisory assessment policy revision."""
 
     schema_id = "briefloop.post_final_assessment_policy_revision.v2"
+    reader_review_schema_id: ClassVar[str] = (
+        "briefloop.post_final_assessment_policy_revision.v3"
+    )
 
-    schema_version: Literal["briefloop.post_final_assessment_policy_revision.v2"]
+    schema_version: Literal[
+        "briefloop.post_final_assessment_policy_revision.v2",
+        "briefloop.post_final_assessment_policy_revision.v3",
+    ]
     policy_revision_id: ContractId
     run_id: ContractId
     previous_policy_revision_id: Optional[ContractId] = None
@@ -3733,7 +3876,11 @@ class PostFinalAssessmentPolicyRevision(StrictModel):
     requested_model_id: CleanText
     model_version: CleanText
     expected_model_identity: CleanText
-    profile_id: Literal["research_design_report_zh_v1"]
+    profile_id: Literal[
+        "research_design_report_zh_v1",
+        "management_brief_en_v1",
+        "industry_weekly_zh_v1",
+    ]
     instrument_config: dict[str, JsonValue]
     instrument_config_sha256: Sha256
     bounded_context: dict[str, JsonValue]
@@ -3753,9 +3900,21 @@ class PostFinalAssessmentPolicyRevision(StrictModel):
     policy_event_id: ContractId
     accepted_transaction_id: ContractId
     policy_fingerprint: Sha256
+    assessment_kind: Optional[Literal["reader_review"]] = None
+    report_type: Optional[Literal["management_monthly", "industry_weekly"]] = None
+    language: Optional[Literal["en", "zh"]] = None
+    disclosure_confirmed: Optional[Literal[True]] = None
+    cost_status: Optional[Literal["not_measured"]] = None
 
     @model_validator(mode="after")
     def policy_identity_is_exact(self) -> "PostFinalAssessmentPolicyRevision":
+        reader_fields = {
+            "assessment_kind",
+            "report_type",
+            "language",
+            "disclosure_confirmed",
+            "cost_status",
+        }
         if (
             self.messages_endpoint_sha256
             != hashlib.sha256(self.messages_endpoint.encode("utf-8")).hexdigest()
@@ -3766,8 +3925,33 @@ class PostFinalAssessmentPolicyRevision(StrictModel):
             or (self.enabled and not self.public_safe_egress_attested)
         ):
             raise ValueError("post-final assessment policy identity is invalid")
+        if self.schema_version == self.schema_id:
+            if self.profile_id != "research_design_report_zh_v1" or any(
+                getattr(self, field) is not None for field in reader_fields
+            ):
+                raise ValueError("historical post-final policy fields are invalid")
+            fingerprint_payload = self.model_dump(
+                mode="json",
+                exclude={"policy_fingerprint", *reader_fields},
+            )
+        else:
+            binding = _READER_REVIEW_PROFILE_BINDINGS.get(self.profile_id)
+            if (
+                binding is None
+                or self.assessment_kind != "reader_review"
+                or (self.report_type, self.language) != binding
+                or self.disclosure_confirmed is not True
+                or self.cost_status != "not_measured"
+                or not self.enabled
+                or self.auto_run
+                or self.auto_open
+            ):
+                raise ValueError("Reader Review policy binding is invalid")
+            fingerprint_payload = self.model_dump(
+                mode="json", exclude={"policy_fingerprint"}
+            )
         expected = _contract_fingerprint(
-            self.model_dump(mode="json", exclude={"policy_fingerprint"}),
+            fingerprint_payload,
             field="policy_fingerprint",
         )
         if self.policy_fingerprint != expected:
@@ -3782,10 +3966,14 @@ class PostFinalAssessmentRequestRecord(StrictModel):
     series_schema_id: ClassVar[str] = (
         "briefloop.post_final_assessment_request_record.v3"
     )
+    reader_review_schema_id: ClassVar[str] = (
+        "briefloop.post_final_assessment_request_record.v4"
+    )
 
     schema_version: Literal[
         "briefloop.post_final_assessment_request_record.v2",
         "briefloop.post_final_assessment_request_record.v3",
+        "briefloop.post_final_assessment_request_record.v4",
     ]
     assessment_request_id: ContractId
     run_id: ContractId
@@ -3803,12 +3991,16 @@ class PostFinalAssessmentRequestRecord(StrictModel):
     messages_endpoint_sha256: Sha256
     requested_model_id: CleanText
     expected_model_identity: CleanText
-    profile_id: Literal["research_design_report_zh_v1"]
+    profile_id: Literal[
+        "research_design_report_zh_v1",
+        "management_brief_en_v1",
+        "industry_weekly_zh_v1",
+    ]
     instrument_config_sha256: Sha256
     bounded_context_sha256: Sha256
     input_binding_sha256: Sha256
     assessment_plan_sha256: Sha256
-    ordered_prompt_request_sha256s: list[Sha256] = Field(min_length=9, max_length=9)
+    ordered_prompt_request_sha256s: list[Sha256] = Field(min_length=1, max_length=9)
     prompt_count: PositiveInt
     provider_call_ceiling: PositiveInt
     total_input_token_upper_bound: PositiveInt
@@ -3834,9 +4026,31 @@ class PostFinalAssessmentRequestRecord(StrictModel):
     human_actor_id: Optional[ContractId] = None
     human_request_id: Optional[ContractId] = None
     authorization_fingerprint: Optional[Sha256] = None
+    assessment_kind: Optional[Literal["reader_review"]] = None
+    report_type: Optional[Literal["management_monthly", "industry_weekly"]] = None
+    language: Optional[Literal["en", "zh"]] = None
+    model_version: Optional[CleanText] = None
+    parser_version: Optional[ContractId] = None
+    projection_version: Optional[ContractId] = None
+    disclosure_confirmed: Optional[Literal[True]] = None
+    public_safe_egress_attested: Optional[Literal[True]] = None
+    cost_status: Optional[Literal["not_measured"]] = None
+    reader_review_authorization_fingerprint: Optional[Sha256] = None
 
     @model_validator(mode="after")
     def request_identity_is_exact(self) -> "PostFinalAssessmentRequestRecord":
+        reader_fields = {
+            "assessment_kind",
+            "report_type",
+            "language",
+            "model_version",
+            "parser_version",
+            "projection_version",
+            "disclosure_confirmed",
+            "public_safe_egress_attested",
+            "cost_status",
+            "reader_review_authorization_fingerprint",
+        }
         if (
             len(set(self.ordered_prompt_request_sha256s))
             != len(self.ordered_prompt_request_sha256s)
@@ -3844,6 +4058,28 @@ class PostFinalAssessmentRequestRecord(StrictModel):
             or self.output_tokens_per_call > self.total_output_token_upper_bound
         ):
             raise ValueError("post-final assessment request identity is invalid")
+        if self.schema_version != self.reader_review_schema_id and (
+            self.profile_id != "research_design_report_zh_v1"
+            or len(self.ordered_prompt_request_sha256s) != 9
+            or any(getattr(self, field) is not None for field in reader_fields)
+        ):
+            raise ValueError("historical assessment request fields invalid")
+        binding = _READER_REVIEW_PROFILE_BINDINGS.get(self.profile_id)
+        if self.schema_version == self.reader_review_schema_id and (
+            binding is None
+            or self.assessment_kind != "reader_review"
+            or (self.report_type, self.language) != binding
+            or self.model_version is None
+            or self.parser_version is None
+            or self.projection_version is None
+            or self.disclosure_confirmed is not True
+            or self.public_safe_egress_attested is not True
+            or self.cost_status != "not_measured"
+            or self.reader_review_authorization_fingerprint is None
+            or self.prompt_count != 2
+            or self.assessment_purpose != "post_final_review"
+        ):
+            raise ValueError("Reader Review request binding is invalid")
         series_fields = {
             "assessment_generation",
             "predecessor_assessment_request_id",
@@ -3874,7 +4110,7 @@ class PostFinalAssessmentRequestRecord(StrictModel):
                 raise ValueError("historical assessment request series fields invalid")
             payload = self.model_dump(
                 mode="json",
-                exclude={"request_fingerprint", *series_fields},
+                exclude={"request_fingerprint", *series_fields, *reader_fields},
             )
         else:
             result_predecessor = (
@@ -3913,7 +4149,14 @@ class PostFinalAssessmentRequestRecord(StrictModel):
                 and any(value is not None for value in abandonment_predecessor)
             ):
                 raise ValueError("assessment predecessor binding is invalid")
-            payload = self.model_dump(mode="json", exclude={"request_fingerprint"})
+            payload = self.model_dump(
+                mode="json",
+                exclude=(
+                    {"request_fingerprint", *reader_fields}
+                    if self.schema_version == self.series_schema_id
+                    else {"request_fingerprint"}
+                ),
+            )
         expected = _contract_fingerprint(
             payload,
             field="request_fingerprint",
@@ -3957,12 +4200,145 @@ class PostFinalAssessmentAbandonmentRecord(StrictModel):
         return self
 
 
+PostFinalAssessmentExecutionStatus = Literal[
+    "complete",
+    "provider_failed",
+    "local_derivation_failed",
+]
+
+PostFinalAssessmentFailurePhase = Literal[
+    "provider_execution",
+    "run_assembly",
+    "baseline_derivation",
+    "composition_derivation",
+    "archive_publication",
+]
+
+
+class PostFinalAssessmentExecutionRecord(StrictModel):
+    """Immutable evidence that provider execution reached a known local boundary."""
+
+    # Keep the schema id used by the already-created fresh schema17 workspace.
+    # The row is an execution witness; the complete identity remains in the
+    # immutable payload_json so the table can stay deliberately small.
+    schema_id = "briefloop.post_final_assessment_execution.v1"
+
+    schema_version: Literal["briefloop.post_final_assessment_execution.v1"]
+    execution_id: ContractId
+    run_id: ContractId
+    assessment_request_id: ContractId
+    assessment_request_fingerprint: Sha256
+    trial_id: ContractId
+    finalized_lineage_fingerprint: Sha256
+    execution_archive_manifest_sha256: Sha256
+    execution_receipt_id: ContractId
+    execution_status: PostFinalAssessmentExecutionStatus
+    run_status: Optional[str] = None
+    validation_status: Optional[str] = None
+    failure_phase: Optional[PostFinalAssessmentFailurePhase] = None
+    reason_codes: list[ContractId] = Field(default_factory=list)
+    recorded_at: IsoDateTime
+    execution_event_id: ContractId
+    accepted_transaction_id: ContractId
+    execution_fingerprint: Sha256
+
+    @property
+    def reason_codes_json(self) -> str:
+        """Canonical value mirrored by the compact schema17 table column."""
+
+        return json.dumps(
+            self.reason_codes,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    @model_validator(mode="after")
+    def execution_identity_is_exact(self) -> "PostFinalAssessmentExecutionRecord":
+        if self.reason_codes != sorted(set(self.reason_codes)):
+            raise ValueError("post-final execution reason codes are not canonical")
+        if (self.execution_status == "complete") != (self.failure_phase is None):
+            raise ValueError("post-final execution failure phase is invalid")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"execution_fingerprint"}),
+            field="execution_fingerprint",
+        )
+        if self.execution_fingerprint != expected:
+            raise ValueError("post-final execution fingerprint mismatch")
+        return self
+
+
+ReaderReviewResultStatus = Literal[
+    "finding_returned",
+    "no_finding_returned_in_completed_supported_checks",
+    "partially_assessed",
+    "unable_to_assess",
+]
+
+
+def derive_reader_review_result_status(
+    *,
+    terminal_evidence_class: str,
+    assessed_unit_count: int,
+    finding_count: int,
+    withheld_finding_count: int,
+    abstention_count: int,
+    requirement_states: Iterable[str],
+) -> str:
+    """Derive the limited Reader Review outcome vocabulary from stored facts."""
+
+    states = tuple(requirement_states)
+    if terminal_evidence_class == "available":
+        if (
+            withheld_finding_count > 0
+            or abstention_count > 0
+            or "unable_to_assess" in states
+        ):
+            return "partially_assessed"
+        if finding_count > 0:
+            return "finding_returned"
+        return "no_finding_returned_in_completed_supported_checks"
+    # A terminal incomplete provider attempt never certifies the units whose
+    # response was truncated.  The projection may still expose completed O1
+    # units separately, but the result-level status must remain unable to
+    # assess instead of implying a partial supported conclusion.
+    if terminal_evidence_class == "incomplete":
+        return "unable_to_assess"
+    return "unable_to_assess"
+
+
+def _contains_reader_review_secret_key(value: object) -> bool:
+    forbidden = {
+        "api_key",
+        "authorization",
+        "credential",
+        "credentials",
+        "password",
+        "secret",
+        "token",
+    }
+    if isinstance(value, dict):
+        return any(
+            key.lower() in forbidden or _contains_reader_review_secret_key(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_reader_review_secret_key(item) for item in value)
+    return False
+
+
 class PostFinalAssessmentResultRecord(StrictModel):
     """One qualified, archive-bound advisory outcome; never raw provider data."""
 
     schema_id = "briefloop.post_final_assessment_result_record.v2"
+    reader_review_schema_id: ClassVar[str] = (
+        "briefloop.post_final_assessment_result_record.v3"
+    )
 
-    schema_version: Literal["briefloop.post_final_assessment_result_record.v2"]
+    schema_version: Literal[
+        "briefloop.post_final_assessment_result_record.v2",
+        "briefloop.post_final_assessment_result_record.v3",
+    ]
     assessment_result_id: ContractId
     run_id: ContractId
     assessment_request_id: ContractId
@@ -3993,19 +4369,125 @@ class PostFinalAssessmentResultRecord(StrictModel):
     result_event_id: ContractId
     accepted_transaction_id: ContractId
     result_fingerprint: Sha256
+    assessment_kind: Optional[Literal["reader_review"]] = None
+    report_type: Optional[Literal["management_monthly", "industry_weekly"]] = None
+    language: Optional[Literal["en", "zh"]] = None
+    profile_id: Optional[Literal["management_brief_en_v1", "industry_weekly_zh_v1"]] = (
+        None
+    )
+    model_version: Optional[CleanText] = None
+    expected_model_identity: Optional[CleanText] = None
+    parser_version: Optional[Literal["strict_dimension_json_v3"]] = None
+    projection_version: Optional[Literal["reader_review_projection_v1"]] = None
+    reader_review_status: Optional[ReaderReviewResultStatus] = None
+    reader_view_payload: Optional[dict[str, JsonValue]] = None
 
     @model_validator(mode="after")
     def result_identity_and_non_effect_are_exact(
         self,
     ) -> "PostFinalAssessmentResultRecord":
+        reader_fields = {
+            "assessment_kind",
+            "report_type",
+            "language",
+            "profile_id",
+            "model_version",
+            "expected_model_identity",
+            "parser_version",
+            "projection_version",
+            "reader_review_status",
+            "reader_view_payload",
+        }
         if self.reason_codes != sorted(set(self.reason_codes)):
             raise ValueError("post-final assessment reason codes are not canonical")
         if self.terminal_evidence_class != "available" and (
             self.finding_count != 0 or self.withheld_finding_count != 0
         ):
             raise ValueError("unavailable assessment cannot expose findings")
+        if self.schema_version == self.schema_id:
+            if any(getattr(self, field) is not None for field in reader_fields):
+                raise ValueError("historical assessment result fields are invalid")
+            fingerprint_payload = self.model_dump(
+                mode="json",
+                exclude={"result_fingerprint", *reader_fields},
+            )
+        else:
+            view = self.reader_view_payload
+            allowed_view_keys = {
+                "schema_version",
+                "status",
+                "boundary",
+                "advisory_only",
+                "shadow_only",
+                "runtime_authority",
+                "authority_effect",
+                "archive_verified",
+                "binding",
+                "run_status",
+                "validation_status",
+                "reason_codes",
+                "assessed_unit_count",
+                "finding_count",
+                "withheld_finding_count",
+                "abstention_count",
+                "findings",
+                "requirement_assessments",
+                "disclaimer",
+                "view_sha256",
+            }
+            binding = _READER_REVIEW_PROFILE_BINDINGS.get(self.profile_id)
+            if (
+                self.assessment_kind != "reader_review"
+                or binding is None
+                or (self.report_type, self.language) != binding
+                or self.model_version is None
+                or self.expected_model_identity is None
+                or self.model_version != self.expected_model_identity
+                or self.parser_version != "strict_dimension_json_v3"
+                or self.projection_version != "reader_review_projection_v1"
+                or view is None
+                or set(view) != allowed_view_keys
+                or _contains_reader_review_secret_key(view)
+                or view.get("view_sha256") != self.reader_view_sha256
+                or _canonical_json_sha256(
+                    {key: item for key, item in view.items() if key != "view_sha256"}
+                )
+                != self.reader_view_sha256
+                or view.get("finding_count") != self.finding_count
+                or view.get("withheld_finding_count") != self.withheld_finding_count
+                or view.get("abstention_count") != self.abstention_count
+                or view.get("assessed_unit_count") != self.assessed_unit_count
+                or view.get("reason_codes") != self.reason_codes
+            ):
+                raise ValueError("Reader Review result binding is invalid")
+            assessments = view.get("requirement_assessments")
+            if not isinstance(assessments, list) or any(
+                not isinstance(item, dict)
+                or item.get("state")
+                not in {
+                    "fulfilled",
+                    "unfulfilled_transparent",
+                    "unfulfilled_undisclosed",
+                    "unable_to_assess",
+                }
+                for item in assessments
+            ):
+                raise ValueError("Reader Review requirement states are invalid")
+            expected_status = derive_reader_review_result_status(
+                terminal_evidence_class=self.terminal_evidence_class,
+                assessed_unit_count=self.assessed_unit_count,
+                finding_count=self.finding_count,
+                withheld_finding_count=self.withheld_finding_count,
+                abstention_count=self.abstention_count,
+                requirement_states=(str(item["state"]) for item in assessments),
+            )
+            if self.reader_review_status != expected_status:
+                raise ValueError("Reader Review result status is invalid")
+            fingerprint_payload = self.model_dump(
+                mode="json", exclude={"result_fingerprint"}
+            )
         expected = _contract_fingerprint(
-            self.model_dump(mode="json", exclude={"result_fingerprint"}),
+            fingerprint_payload,
             field="result_fingerprint",
         )
         if self.result_fingerprint != expected:
@@ -4045,6 +4527,98 @@ class PostFinalFindingDispositionRecord(StrictModel):
         )
         if self.disposition_fingerprint != expected:
             raise ValueError("post-final disposition fingerprint mismatch")
+        return self
+
+
+class HumanObservationReportSpan(StrictModel):
+    """Strict, report-bound span reference supplied by a Human observer."""
+
+    schema_id = "briefloop.post_final_human_observation_report_span.v1"
+
+    schema_version: Literal["briefloop.post_final_human_observation_report_span.v1"]
+    report_sha256: Sha256
+    block_id: ContractId
+    start_char: NonNegativeInt
+    end_char: PositiveInt
+    excerpt_sha256: Sha256
+
+    @model_validator(mode="after")
+    def span_offsets_are_ordered(self) -> "HumanObservationReportSpan":
+        if self.start_char >= self.end_char:
+            raise ValueError("human observation span offsets must be ordered")
+        return self
+
+
+class PostFinalHumanObservationRecord(StrictModel):
+    """One append-only, report-bound Human observation.
+
+    A Human observation is deliberately not a model finding: it never carries a
+    finding identity.  Superseding creates a new observation identity linked to
+    the prior record; no row is updated in place.
+    """
+
+    schema_id = "briefloop.post_final_human_observation_record.v1"
+
+    schema_version: Literal["briefloop.post_final_human_observation_record.v1"]
+    origin: Literal["human"]
+    observation_id: ContractId
+    observation_revision: PositiveInt
+    run_id: ContractId
+    finalized_lineage_fingerprint: Sha256
+    report_revision: PositiveInt
+    report_artifact_id: ContractId
+    report_sha256: Sha256
+    assessment_result_id: Optional[ContractId] = None
+    assessment_result_fingerprint: Optional[Sha256] = None
+    reader_view_sha256: Optional[Sha256] = None
+    observation_text: CleanText
+    observation_sha256: Sha256
+    requirement_id: Optional[ContractId] = None
+    claim_id: Optional[ContractId] = None
+    report_span: Optional[HumanObservationReportSpan] = None
+    scope_class: Optional[Literal["O1", "O2"]] = None
+    dimension_id: Optional[ContractId] = None
+    previous_observation_id: Optional[ContractId] = None
+    previous_observation_fingerprint: Optional[Sha256] = None
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    recorded_at: IsoDateTime
+    observation_event_id: ContractId
+    accepted_transaction_id: ContractId
+    observation_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def observation_identity_is_exact(self) -> "PostFinalHumanObservationRecord":
+        result_fields = (
+            self.assessment_result_id,
+            self.assessment_result_fingerprint,
+            self.reader_view_sha256,
+        )
+        if any(item is not None for item in result_fields) and not all(
+            item is not None for item in result_fields
+        ):
+            raise ValueError("human observation assessment binding must be total")
+        if (self.scope_class is None) != (self.dimension_id is None):
+            raise ValueError("human observation dimension binding must be total")
+        if (self.previous_observation_id is None) != (
+            self.previous_observation_fingerprint is None
+        ):
+            raise ValueError("human observation predecessor binding must be total")
+        if self.observation_revision == 1 and self.previous_observation_id is not None:
+            raise ValueError("first human observation revision cannot have predecessor")
+        if self.observation_revision > 1 and self.previous_observation_id is None:
+            raise ValueError("superseding human observation requires predecessor")
+        if (
+            self.observation_sha256
+            != hashlib.sha256(self.observation_text.encode("utf-8")).hexdigest()
+        ):
+            raise ValueError("human observation text hash mismatch")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"observation_fingerprint"}),
+            field="observation_fingerprint",
+        )
+        if self.observation_fingerprint != expected:
+            raise ValueError("human observation fingerprint mismatch")
         return self
 
 
@@ -4094,14 +4668,19 @@ class PostFinalGuidanceDraftRevision(StrictModel):
     draft_revision: PositiveInt
     run_id: ContractId
     finalized_lineage_fingerprint: Sha256
-    assessment_result_id: ContractId
-    assessment_result_fingerprint: Sha256
-    finding_id: ContractId
-    finding_fingerprint: Sha256
-    disposition_id: ContractId
-    disposition_fingerprint: Sha256
+    provenance_kind: Literal["accepted_model_finding", "human_observation"] = (
+        "accepted_model_finding"
+    )
+    assessment_result_id: Optional[ContractId] = None
+    assessment_result_fingerprint: Optional[Sha256] = None
+    finding_id: Optional[ContractId] = None
+    finding_fingerprint: Optional[Sha256] = None
+    disposition_id: Optional[ContractId] = None
+    disposition_fingerprint: Optional[Sha256] = None
+    observation_id: Optional[ContractId] = None
+    observation_fingerprint: Optional[Sha256] = None
     previous_draft_revision: Optional[PositiveInt] = None
-    guidance_scope: Literal["finding_only"]
+    guidance_scope: Literal["finding_only", "observation_only"]
     guidance_text: CleanText
     guidance_sha256: Sha256
     human_actor_id: ContractId
@@ -4113,6 +4692,34 @@ class PostFinalGuidanceDraftRevision(StrictModel):
 
     @model_validator(mode="after")
     def guidance_draft_identity_is_exact(self) -> "PostFinalGuidanceDraftRevision":
+        result_fields = (
+            self.assessment_result_id,
+            self.assessment_result_fingerprint,
+        )
+        finding_fields = (self.finding_id, self.finding_fingerprint)
+        disposition_fields = (self.disposition_id, self.disposition_fingerprint)
+        observation_fields = (self.observation_id, self.observation_fingerprint)
+        if self.provenance_kind == "accepted_model_finding":
+            if not all(
+                item is not None
+                for item in (*result_fields, *finding_fields, *disposition_fields)
+            ):
+                raise ValueError("accepted model finding provenance is incomplete")
+            if any(item is not None for item in observation_fields):
+                raise ValueError("model finding guidance cannot bind observation")
+            if self.guidance_scope != "finding_only":
+                raise ValueError("model finding guidance scope is invalid")
+        else:
+            if not all(item is not None for item in observation_fields):
+                raise ValueError("human observation provenance is incomplete")
+            if any(item is not None for item in finding_fields + disposition_fields):
+                raise ValueError("human observation guidance cannot bind finding")
+            if any(item is not None for item in result_fields) and not all(
+                item is not None for item in result_fields
+            ):
+                raise ValueError("human observation result binding must be total")
+            if self.guidance_scope != "observation_only":
+                raise ValueError("human observation guidance scope is invalid")
         if (
             self.guidance_sha256
             != hashlib.sha256(self.guidance_text.encode("utf-8")).hexdigest()
@@ -5002,12 +5609,20 @@ class PostFinalAssessmentAbandonmentReference(StrictModel):
     abandonment_id: ContractId
 
 
+class PostFinalAssessmentExecutionReference(StrictModel):
+    execution_id: ContractId
+
+
 class PostFinalAssessmentResultReference(StrictModel):
     assessment_result_id: ContractId
 
 
 class PostFinalFindingDispositionReference(StrictModel):
     disposition_id: ContractId
+
+
+class PostFinalHumanObservationReference(StrictModel):
+    observation_id: ContractId
 
 
 class PostFinalGuidanceDraftReference(StrictModel):
@@ -5138,6 +5753,9 @@ class TransactionReceipt(StrictModel):
     post_final_finding_dispositions: list[PostFinalFindingDispositionReference] = Field(
         default_factory=list
     )
+    post_final_human_observations: list[PostFinalHumanObservationReference] = Field(
+        default_factory=list
+    )
     post_final_guidance_drafts: list[PostFinalGuidanceDraftReference] = Field(
         default_factory=list
     )
@@ -5219,6 +5837,7 @@ class TransactionReceipt(StrictModel):
             self.post_final_assessment_abandonments,
             self.post_final_assessment_results,
             self.post_final_finding_dispositions,
+            self.post_final_human_observations,
             self.post_final_guidance_drafts,
             self.post_final_guidance_statuses,
             self.run_guidance_snapshots,
@@ -6612,6 +7231,7 @@ _GUIDANCE_DECISION_EXAMPLE = {
     "guidance_id": "GUIDANCE-001",
     "draft_revision": 1,
     "status_revision_id": "GUIDANCE-STATUS-001",
+    "provenance_kind": "accepted_model_finding",
     "assessment_result_id": "PFLAJ-RESULT-001",
     "finding_id": "FINDING-001",
     "disposition_id": "DISPOSITION-001",
@@ -6641,6 +7261,7 @@ _GUIDANCE_ITEM_EXAMPLE = {
     "position": 0,
     "source_run_id": _RUN,
     "finalized_lineage_fingerprint": _SHA_A,
+    "provenance_kind": "accepted_model_finding",
     "assessment_result_id": "PFLAJ-RESULT-001",
     "assessment_result_fingerprint": _SHA_B,
     "finding_id": "FINDING-001",
@@ -7325,6 +7946,31 @@ _PFLAJ_ABANDONMENT["abandonment_fingerprint"] = _contract_fingerprint(
 PostFinalAssessmentAbandonmentRecord.minimal_example = deepcopy(_PFLAJ_ABANDONMENT)
 PostFinalAssessmentAbandonmentRecord.full_example = deepcopy(_PFLAJ_ABANDONMENT)
 
+_PFLAJ_EXECUTION = {
+    "schema_version": PostFinalAssessmentExecutionRecord.schema_id,
+    "execution_id": "PFLAJ-EXECUTION-001",
+    "run_id": _RUN,
+    "assessment_request_id": _PFLAJ_REQUEST["assessment_request_id"],
+    "assessment_request_fingerprint": _PFLAJ_REQUEST["request_fingerprint"],
+    "trial_id": _PFLAJ_REQUEST["trial_id"],
+    "finalized_lineage_fingerprint": _SHA_B,
+    "execution_archive_manifest_sha256": "f" * 64,
+    "execution_receipt_id": "PFLAJ-EXECUTION-RECEIPT-001",
+    "execution_status": "complete",
+    "failure_phase": None,
+    "reason_codes": [],
+    "recorded_at": _NOW,
+    "execution_event_id": "EVENT-PFLAJ-EXECUTION-001",
+    "accepted_transaction_id": "TX-PFLAJ-EXECUTION-001",
+    "execution_fingerprint": _SHA_A,
+}
+_PFLAJ_EXECUTION["execution_fingerprint"] = _contract_fingerprint(
+    _PFLAJ_EXECUTION,
+    field="execution_fingerprint",
+)
+PostFinalAssessmentExecutionRecord.minimal_example = deepcopy(_PFLAJ_EXECUTION)
+PostFinalAssessmentExecutionRecord.full_example = deepcopy(_PFLAJ_EXECUTION)
+
 _PFLAJ_RESULT = {
     "schema_version": PostFinalAssessmentResultRecord.schema_id,
     "assessment_result_id": "PFLAJ-RESULT-001",
@@ -7383,12 +8029,58 @@ _PFLAJ_DISPOSITION["disposition_fingerprint"] = _contract_fingerprint(
 PostFinalFindingDispositionRecord.minimal_example = deepcopy(_PFLAJ_DISPOSITION)
 PostFinalFindingDispositionRecord.full_example = deepcopy(_PFLAJ_DISPOSITION)
 
+_HUMAN_OBSERVATION_SPAN = {
+    "schema_version": HumanObservationReportSpan.schema_id,
+    "report_sha256": _SHA_C,
+    "block_id": "BLOCK-PFLAJ-001",
+    "start_char": 0,
+    "end_char": 12,
+    "excerpt_sha256": hashlib.sha256(b"Human note.").hexdigest(),
+}
+HumanObservationReportSpan.minimal_example = deepcopy(_HUMAN_OBSERVATION_SPAN)
+HumanObservationReportSpan.full_example = deepcopy(_HUMAN_OBSERVATION_SPAN)
+_PFLAJ_HUMAN_OBSERVATION = {
+    "schema_version": PostFinalHumanObservationRecord.schema_id,
+    "origin": "human",
+    "observation_id": "PFLAJ-HUMAN-OBSERVATION-001",
+    "observation_revision": 1,
+    "run_id": _RUN,
+    "finalized_lineage_fingerprint": _SHA_B,
+    "report_revision": 1,
+    "report_artifact_id": "reader_brief",
+    "report_sha256": _SHA_C,
+    "assessment_result_id": None,
+    "assessment_result_fingerprint": None,
+    "reader_view_sha256": None,
+    "observation_text": "Human note.",
+    "observation_sha256": hashlib.sha256(b"Human note.").hexdigest(),
+    "requirement_id": None,
+    "claim_id": None,
+    "report_span": _HUMAN_OBSERVATION_SPAN,
+    "scope_class": None,
+    "dimension_id": None,
+    "previous_observation_id": None,
+    "previous_observation_fingerprint": None,
+    "human_actor_id": "HUMAN-001",
+    "human_request_id": "PFLAJ-HUMAN-OBSERVATION-REQUEST-001",
+    "recorded_at": _NOW,
+    "observation_event_id": "EVENT-PFLAJ-HUMAN-OBSERVATION-001",
+    "accepted_transaction_id": "TX-PFLAJ-HUMAN-OBSERVATION-001",
+    "observation_fingerprint": _SHA_A,
+}
+_PFLAJ_HUMAN_OBSERVATION["observation_fingerprint"] = _contract_fingerprint(
+    _PFLAJ_HUMAN_OBSERVATION, field="observation_fingerprint"
+)
+PostFinalHumanObservationRecord.minimal_example = deepcopy(_PFLAJ_HUMAN_OBSERVATION)
+PostFinalHumanObservationRecord.full_example = deepcopy(_PFLAJ_HUMAN_OBSERVATION)
+
 _PFLAJ_GUIDANCE_DRAFT = {
     "schema_version": PostFinalGuidanceDraftRevision.schema_id,
     "guidance_id": "PFLAJ-GUIDANCE-001",
     "draft_revision": 1,
     "run_id": _RUN,
     "finalized_lineage_fingerprint": _SHA_B,
+    "provenance_kind": "accepted_model_finding",
     "assessment_result_id": _PFLAJ_RESULT["assessment_result_id"],
     "assessment_result_fingerprint": _PFLAJ_RESULT["result_fingerprint"],
     "finding_id": _PFLAJ_DISPOSITION["finding_id"],
@@ -7528,8 +8220,11 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     DeliveryResultObservation,
     PostFinalAssessmentPolicyRevision,
     PostFinalAssessmentRequestRecord,
+    PostFinalAssessmentExecutionRecord,
     PostFinalAssessmentResultRecord,
     PostFinalFindingDispositionRecord,
+    HumanObservationReportSpan,
+    PostFinalHumanObservationRecord,
     PostFinalGuidanceDraftRevision,
     PostFinalGuidanceStatusRevision,
     RepairStartRequest,
@@ -7709,6 +8404,7 @@ __all__ = [
     "DeliveryResultObservation",
     "DeliveryResultReference",
     "DeliveryResultRequest",
+    "derive_reader_review_result_status",
     "EventEnvelope",
     "GATE_ID_VALUES",
     "GateArtifactBinding",
@@ -7738,6 +8434,7 @@ __all__ = [
     "OwnedArtifactSubmissionRecord",
     "OwnedArtifactSubmitRequest",
     "ProposalSourceBinding",
+    "ReaderReviewAssessmentInput",
     "PackageArtifactBinding",
     "PackageArtifactBindingReference",
     "PackageReadyRecord",
@@ -7746,8 +8443,13 @@ __all__ = [
     "PostFinalAssessmentPolicyRevisionReference",
     "PostFinalAssessmentRequestRecord",
     "PostFinalAssessmentRequestReference",
+    "PostFinalAssessmentExecutionRecord",
+    "PostFinalAssessmentExecutionReference",
+    "PostFinalAssessmentExecutionStatus",
+    "PostFinalAssessmentFailurePhase",
     "PostFinalAssessmentResultRecord",
     "PostFinalAssessmentResultReference",
+    "ReaderReviewResultStatus",
     "PostFinalFindingDispositionRecord",
     "PostFinalFindingDispositionReference",
     "PostFinalGuidanceDraftRevision",

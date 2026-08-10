@@ -40,6 +40,7 @@ from multi_agent_brief.runtime_host_v2.service import (
     _ROLE_OUTPUTS,
     _role_task_instructions,
     _strict_proposal_violations,
+    _target_relevance_task_instruction,
 )
 from multi_agent_brief.runtime_host_v2.submission import source_stage_root
 from multi_agent_brief.runtime_assets import install_runtime_kit
@@ -98,6 +99,21 @@ def test_strict_json_role_instructions_bind_contract_preflight_commands() -> Non
         "INV-PLANNER-001",
     )
     assert "briefloop contract" not in owned_instructions
+
+
+def test_target_relevance_task_instructions_bind_frozen_terms_without_evidence() -> None:
+    terms = ["Toyo solar", "Industry weekly"]
+
+    analyst = _target_relevance_task_instruction("analyst", terms)
+    assert 'target_terms=["Toyo solar", "Industry weekly"]' in analyst
+    assert "executive summary" in analyst
+    assert "verbatim" in analyst
+    assert "not evidence" in analyst
+
+    editor = _target_relevance_task_instruction("editor", terms, gate_repair=True)
+    assert 'target_terms=["Toyo solar", "Industry weekly"]' in editor
+    assert "Gate repair" in editor
+    assert "do not add facts" in editor
 
 
 def test_strict_proposal_preflight_rejects_schema_valid_cross_run_binding() -> None:

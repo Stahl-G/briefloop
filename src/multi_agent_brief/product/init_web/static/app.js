@@ -1462,6 +1462,7 @@
             workspace_target: STATE.workspaceTarget,
             selections: {
                 company: String(c.company || "").trim(),
+                report_type: String(c.report_type || "").trim(),
                 industry_or_theme: c.source === "public_web"
                     ? String(c.search_topic || "").trim()
                     : reportLabel,

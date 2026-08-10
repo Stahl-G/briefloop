@@ -1666,6 +1666,15 @@ def test_audit_requires_current_frozen_same_run_target_revision(tmp_path: Path) 
             "eligible_durable_source_content",
         ),
         (
+            "uploaded_file",
+            "manual_upload",
+            "full_content",
+            None,
+            False,
+            True,
+            "eligible_durable_source_content",
+        ),
+        (
             "manual_evidence",
             "manual_evidence",
             "partial_extract",

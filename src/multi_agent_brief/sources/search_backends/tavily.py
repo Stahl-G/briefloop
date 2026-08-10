@@ -14,6 +14,8 @@ import hashlib
 import json
 import os
 import re
+import socket
+import ssl
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
@@ -87,6 +89,40 @@ def _open_no_redirect(request: urllib.request.Request, *, timeout: int):
     if urllib.request.urlopen is not _ORIGINAL_URLOPEN:
         return urllib.request.urlopen(request, timeout=timeout)
     return _NO_REDIRECT_OPENER.open(request, timeout=timeout)
+
+
+def _transport_error_class(
+    error: BaseException,
+) -> str:
+    """Return a coarse, value-free class for one failed HTTP attempt."""
+
+    # urllib commonly wraps the useful exception in URLError.reason.  Inspect
+    # only exception types; never persist or expose their messages.
+    candidates = (error, getattr(error, "reason", None))
+    names = {type(item).__name__.lower() for item in candidates if item is not None}
+    if any(
+        isinstance(item, PermissionError) for item in candidates if item is not None
+    ):
+        return "network_permission_denied"
+    if any("proxy" in name for name in names):
+        return "proxy"
+    if any(
+        isinstance(item, (TimeoutError, socket.timeout))
+        for item in candidates
+        if item is not None
+    ):
+        return "timeout"
+    if any(isinstance(item, ssl.SSLError) for item in candidates if item is not None):
+        return "tls"
+    if any(
+        isinstance(item, socket.gaierror) for item in candidates if item is not None
+    ):
+        return "dns"
+    if any(
+        isinstance(item, ConnectionError) for item in candidates if item is not None
+    ):
+        return "connect"
+    return "other"
 
 
 _ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
@@ -315,6 +351,7 @@ class TavilyBackend(SearchBackend):
         *,
         response_body: bytes | None = None,
         status_code: int | None = None,
+        transport_error_class: str | None = None,
     ) -> TavilyAcquisitionExchange:
         from multi_agent_brief.contracts.v2 import TavilyAcquisitionExchange
 
@@ -336,6 +373,8 @@ class TavilyBackend(SearchBackend):
                     "status_code": status_code,
                 }
             )
+        if transport_error_class is not None:
+            payload["transport_error_class"] = transport_error_class
         return TavilyAcquisitionExchange.model_validate(payload, strict=True)
 
     @staticmethod
@@ -403,7 +442,7 @@ class TavilyBackend(SearchBackend):
             },
             method="POST",
         )
-        transport_failed = False
+        transport_error_class: str | None = None
         try:
             with _open_no_redirect(request, timeout=TAVILY_TIMEOUT_SECONDS) as response:
                 status_code = int(getattr(response, "status", 200))
@@ -411,14 +450,15 @@ class TavilyBackend(SearchBackend):
         except urllib.error.HTTPError as exc:
             status_code = int(exc.code)
             response_body = exc.read(response_byte_cap + 1)
-        except Exception:
-            transport_failed = True
+        except Exception as exc:
+            transport_error_class = _transport_error_class(exc)
             status_code = 0
             response_body = b""
-        if transport_failed:
+        if transport_error_class is not None:
             raise SearchBackendError(
                 "Tavily request failed",
                 backend="tavily",
+                error_class=transport_error_class,
             ) from None
         if len(response_body) > response_byte_cap:
             raise SearchBackendError(
@@ -629,10 +669,14 @@ class TavilyBackend(SearchBackend):
                 api_key,
                 response_byte_cap=TAVILY_RESPONSE_BYTE_BUDGET,
             )
-        except SearchBackendError:
+        except SearchBackendError as exc:
             return self._bundle_response(
                 "search_response_unavailable",
-                self._exchange("search", search_request),
+                self._exchange(
+                    "search",
+                    search_request,
+                    transport_error_class=exc.error_class,
+                ),
             )
         search_exchange = self._exchange(
             "search",
@@ -688,8 +732,12 @@ class TavilyBackend(SearchBackend):
                 api_key,
                 response_byte_cap=remaining_response_budget,
             )
-        except SearchBackendError:
-            extract_exchange = self._exchange("extract", extract_request)
+        except SearchBackendError as exc:
+            extract_exchange = self._exchange(
+                "extract",
+                extract_request,
+                transport_error_class=exc.error_class,
+            )
             return self._bundle_response(
                 "extract_response_unavailable",
                 search_exchange,

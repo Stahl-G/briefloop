@@ -309,6 +309,13 @@ def render_packaged_codex_agent(role_name: str, role: dict) -> str:
         "before returning; do not guess JSON wrappers, aliases, or fields. "
         "Return control to the root host after the proposal is complete."
     )
+    if role_name == "source-provider":
+        instructions += (
+            " The deterministic runtime host is the sole provider-I/O owner: "
+            "do not call Tavily or any external provider, open a network "
+            "connection, read credentials, or write sources.yaml during this "
+            "v2 invocation."
+        )
     return (
         f"{AUTOGEN_HEADER_TOML}\n\n"
         f'name = "{role_name}"\n'
@@ -770,7 +777,7 @@ def _opencode_tool_profile_to_permission(tp: dict, role_name: str) -> dict:
         ):
             edit_allow.append("output/intermediate/audit_report.json")
             edit_allow.append("output/intermediate/audited_brief.md")
-        elif role_name in ("source-provider", "source-planner"):
+        elif role_name == "source-planner":
             edit_allow.append("source_candidates.yaml")
             edit_allow.append("sources.yaml")
         else:
@@ -788,8 +795,10 @@ def _opencode_tool_profile_to_permission(tp: dict, role_name: str) -> dict:
     else:
         perm["bash"] = {"*": "ask"}
 
-    # Network — only source roles get network
-    if role_name in ("source-provider", "source-planner"):
+    # The v2 source-provider is proposal-only; the deterministic runtime owns
+    # all provider I/O. Source planning may still use its configured discovery
+    # tools, but source-provider itself must never open the network.
+    if role_name == "source-planner":
         perm["network"] = {"*": "allow"}
     else:
         perm["network"] = {"*": "deny"}

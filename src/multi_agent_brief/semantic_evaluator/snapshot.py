@@ -19,12 +19,36 @@ from multi_agent_brief.semantic_evaluator.resources import (
     EvaluatorResourceError,
     resource_text,
 )
-from multi_agent_brief.semantic_evaluator.serialization import sha256_text
+from multi_agent_brief.semantic_evaluator.serialization import (
+    canonical_sha256,
+    sha256_text,
+)
 
 
 SYSTEM_PROMPT_RESOURCE = "system_v1.txt"
 DIMENSION_PROMPT_RESOURCE = "dimension_v1.txt"
+READER_REVIEW_SYSTEM_PROMPT_RESOURCE = "system_reader_review_en_v1.txt"
+READER_REVIEW_DIMENSION_PROMPT_RESOURCE = "dimension_reader_review_en_v1.txt"
+INDUSTRY_WEEKLY_READER_REVIEW_SYSTEM_PROMPT_RESOURCE = "system_reader_review_zh_v1.txt"
+INDUSTRY_WEEKLY_READER_REVIEW_DIMENSION_PROMPT_RESOURCE = (
+    "dimension_reader_review_zh_v1.txt"
+)
 CHECKLIST_RESOURCE = "structured_checklist_zh_v1.yaml"
+
+_PROMPT_RESOURCES = {
+    "research_design_report_zh_v1": (
+        SYSTEM_PROMPT_RESOURCE,
+        DIMENSION_PROMPT_RESOURCE,
+    ),
+    "management_brief_en_v1": (
+        READER_REVIEW_SYSTEM_PROMPT_RESOURCE,
+        READER_REVIEW_DIMENSION_PROMPT_RESOURCE,
+    ),
+    "industry_weekly_zh_v1": (
+        INDUSTRY_WEEKLY_READER_REVIEW_SYSTEM_PROMPT_RESOURCE,
+        INDUSTRY_WEEKLY_READER_REVIEW_DIMENSION_PROMPT_RESOURCE,
+    ),
+}
 
 
 class _ChecklistTemplateItem(StrictModel):
@@ -80,6 +104,39 @@ def _checklist_snapshot(
     *,
     loaded_profile: LoadedProfile,
 ) -> ChecklistResourceSnapshot:
+    if loaded_profile.profile.profile_id in {
+        "management_brief_en_v1",
+        "industry_weekly_zh_v1",
+    }:
+        is_chinese = loaded_profile.profile.profile_id == "industry_weekly_zh_v1"
+        items = tuple(
+            ChecklistResourceItem(
+                dimension_id=item.dimension_id,
+                text=item.positive_criterion,
+            )
+            for item in loaded_profile.profile.dimensions
+        )
+        identity = {
+            "checklist_id": (
+                "industry_weekly_reader_review_zh_v1"
+                if is_chinese
+                else "management_brief_reader_review_v1"
+            ),
+            "language": "zh-CN" if is_chinese else "en",
+            "items": [
+                {"dimension_id": item.dimension_id, "text": item.text} for item in items
+            ],
+        }
+        return ChecklistResourceSnapshot(
+            checklist_id=(
+                "industry_weekly_reader_review_zh_v1"
+                if is_chinese
+                else "management_brief_reader_review_v1"
+            ),
+            language="zh-CN" if is_chinese else "en",
+            items=items,
+            sha256=canonical_sha256(identity),
+        )
     try:
         text = resource_text("baselines", CHECKLIST_RESOURCE)
         payload = yaml.safe_load(text)
@@ -122,10 +179,15 @@ def acquire_resource_snapshot(
         else strict_loaded_profile_copy(loaded_profile)
     )
     try:
-        system_text = resource_text("prompts", SYSTEM_PROMPT_RESOURCE)
-        dimension_text = resource_text("prompts", DIMENSION_PROMPT_RESOURCE)
+        system_resource, dimension_resource = _PROMPT_RESOURCES[
+            profile.profile.profile_id
+        ]
+        system_text = resource_text("prompts", system_resource)
+        dimension_text = resource_text("prompts", dimension_resource)
     except EvaluatorResourceError:
         raise
+    except KeyError:
+        raise EvaluatorResourceError("evaluator_resource_unavailable") from None
     prompt_snapshot = PromptResourceSnapshot(
         system_text=system_text,
         dimension_template_text=dimension_text,
@@ -149,6 +211,10 @@ __all__ = [
     "DIMENSION_PROMPT_RESOURCE",
     "EvaluatorResourceSnapshot",
     "PromptResourceSnapshot",
+    "READER_REVIEW_DIMENSION_PROMPT_RESOURCE",
+    "READER_REVIEW_SYSTEM_PROMPT_RESOURCE",
+    "INDUSTRY_WEEKLY_READER_REVIEW_DIMENSION_PROMPT_RESOURCE",
+    "INDUSTRY_WEEKLY_READER_REVIEW_SYSTEM_PROMPT_RESOURCE",
     "SYSTEM_PROMPT_RESOURCE",
     "acquire_resource_snapshot",
 ]

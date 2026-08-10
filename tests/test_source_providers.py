@@ -7,6 +7,7 @@ import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
+import socket
 from io import BytesIO
 from threading import Thread
 
@@ -943,6 +944,51 @@ def test_tavily_transport_failure_is_stable_and_value_free(monkeypatch):
         assert sentinel not in repr(exc)
     else:
         raise AssertionError("transport failure must remain a typed failure")
+
+
+def test_tavily_acquisition_transport_failure_keeps_value_free_class(monkeypatch):
+    def _raise_dns(request, timeout=30):
+        raise socket.gaierror("private-hostname-must-not-escape")
+
+    monkeypatch.setattr("urllib.request.urlopen", _raise_dns)
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only-tavily-key")
+
+    response = TavilyBackend().acquisition_response(
+        "test query",
+        max_results=1,
+        time_range="week",
+    )
+    bundle = TavilyAcquisitionBundle.model_validate_json(
+        response.raw_response,
+        strict=True,
+    )
+
+    assert bundle.status == "search_response_unavailable"
+    assert bundle.search.status_code is None
+    assert bundle.search.response_body_base64 is None
+    assert bundle.search.transport_error_class == "dns"
+    assert "private-hostname" not in response.raw_response.decode("utf-8")
+
+
+def test_tavily_acquisition_permission_denied_is_value_free(monkeypatch):
+    def _deny_network(request, timeout=30):
+        raise PermissionError("sandbox host and errno must not escape")
+
+    monkeypatch.setattr("urllib.request.urlopen", _deny_network)
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only-tavily-key")
+
+    response = TavilyBackend().acquisition_response(
+        "test query",
+        max_results=1,
+        time_range="week",
+    )
+    bundle = TavilyAcquisitionBundle.model_validate_json(
+        response.raw_response,
+        strict=True,
+    )
+
+    assert bundle.search.transport_error_class == "network_permission_denied"
+    assert "sandbox host" not in response.raw_response.decode("utf-8")
 
 
 def test_tavily_rejects_secret_or_secret_hash_in_ignored_response_field(

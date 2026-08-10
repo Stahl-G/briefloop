@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import hashlib
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,6 +16,12 @@ from multi_agent_brief.product.brief_html.builder import (
     IMPROVEMENT_PLANNED_NOTE,
     LAJ_EXPERIMENTAL_BANNER,
 )
+from multi_agent_brief.product.post_final_assessment_projection import (
+    PostFinalAssessmentProjection,
+    ReaderReviewRequirementLabel,
+    ReaderReviewRequestTemplate,
+    _archive_assessment_projection,
+)
 from multi_agent_brief.runtime_host_v2.projections import (
     build_local_run_presentation,
     build_store_quality_projection,
@@ -23,6 +30,8 @@ from multi_agent_brief.runtime_host_v2.contracts import LocalReaderBrief
 from multi_agent_brief.semantic_evaluator.reader import (
     LAJ_READER_BOUNDARY,
     LAJ_READER_SCHEMA_ID,
+    LajReaderView,
+    build_empty_laj_reader_view,
 )
 from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
     ANTHROPIC_API_KEY_SETTING,
@@ -91,6 +100,7 @@ def _laj_view_payload(report_sha256: str) -> dict[str, object]:
         "withheld_finding_count": 0,
         "abstention_count": 0,
         "findings": [_finding(report_sha256)],
+        "requirement_assessments": [],
         "disclaimer": "Experimental advisory assessment.",
     }
     payload["view_sha256"] = canonical_sha256(payload)
@@ -178,6 +188,136 @@ def test_semantic_page_is_honest_not_run_without_laj(tmp_path: Path) -> None:
     assert "never trigger Gates" in semantic["handoff_note"]
 
 
+def test_supported_reader_review_without_policy_is_not_assessed_with_run_action(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = initialize_workspace(tmp_path / "ws")
+    template = ReaderReviewRequestTemplate(
+        schema_version="briefloop.reader_review_assessment_input.v1",
+        assessment_kind="reader_review",
+        report_type="management_monthly",
+        language="en",
+        profile_id="management_brief_en_v1",
+        protocol="anthropic_messages_compatible",
+        endpoint_class="explicit_messages_api",
+        egress_scope="public_safe_report",
+        report_scope="final_reader_markdown",
+        context_scope="frozen_run_direction_requirements",
+        disclosure_confirmed=True,
+        public_safe_egress_attested=True,
+        cost_status="not_measured",
+        provider_call_ceiling=2,
+        total_input_token_ceiling=400000,
+        total_output_token_ceiling=8192,
+        output_tokens_per_call=4096,
+        automatic_retry=False,
+        advisory_only=True,
+        authority_effect="none",
+    )
+    projection = PostFinalAssessmentProjection(
+        lifecycle_present=False,
+        status="not_requested",
+        reason_code="laj_not_run",
+        view=build_empty_laj_reader_view(
+            status="not_available", reason_code="laj_not_run"
+        ),
+        user_status="not_assessed",
+        compatible_result_options=(),
+        requirement_labels=(),
+        selected_result_id=None,
+        selected_result_fingerprint=None,
+        review_status=None,
+        request_template=template,
+        next_run_consumption="explicit_opt_in_successor_only",
+        run_action_available=True,
+        selection_required=False,
+    )
+    monkeypatch.setattr(
+        "multi_agent_brief.product.brief_html.builder."
+        "build_post_final_assessment_projection",
+        lambda *_args, **_kwargs: projection,
+    )
+
+    semantic = build_brief_pages_data(workspace)["semantic"]
+
+    assert semantic["status"] == "not_assessed"
+    assert semantic["run_action_available"] is True
+    assert semantic["request_template"]["protocol"] == ("anthropic_messages_compatible")
+
+
+def test_o2_requirement_assessment_uses_binding_verified_human_label(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = initialize_workspace(tmp_path / "ws")
+    report_sha256 = "1" * 64
+    payload = _laj_view_payload(report_sha256)
+    payload["finding_count"] = 0
+    payload["findings"] = []
+    payload["requirement_assessments"] = [
+        {
+            "assessment_unit_id": "AU-0123456789ab",
+            "requirement_id": "requirement-audience-1",
+            "state": "unfulfilled_transparent",
+            "attention_status": "attention_needed",
+            "report_spans": [
+                {
+                    "report_sha256": report_sha256,
+                    "block_id": "B000001",
+                    "start_char": 0,
+                    "end_char": 12,
+                    "excerpt_sha256": "a" * 64,
+                }
+            ],
+            "rationale": "The brief discloses that the requirement is unmet.",
+        }
+    ]
+    payload.pop("view_sha256")
+    payload["view_sha256"] = canonical_sha256(payload)
+    view = LajReaderView.model_validate(payload, strict=True)
+    projection = PostFinalAssessmentProjection(
+        lifecycle_present=True,
+        status="available",
+        reason_code=None,
+        view=view,
+        user_status="no_finding_returned_in_completed_supported_checks",
+        compatible_result_options=(),
+        requirement_labels=(
+            ReaderReviewRequirementLabel(
+                requirement_id="requirement-audience-1",
+                requirement_type="audience_need",
+                text="State the unresolved decision dependency for management.",
+                source_locator="run_direction.audience",
+            ),
+        ),
+        selected_result_id="assessment-result-reader-review-1",
+        selected_result_fingerprint="b" * 64,
+        review_status=None,
+        request_template=None,
+        next_run_consumption="explicit_opt_in_successor_only",
+        run_action_available=False,
+        selection_required=False,
+    )
+    monkeypatch.setattr(
+        "multi_agent_brief.product.brief_html.builder."
+        "build_post_final_assessment_projection",
+        lambda *_args, **_kwargs: projection,
+    )
+
+    semantic = build_brief_pages_data(workspace)["semantic"]
+    assessment = semantic["requirement_assessments"][0]
+
+    assert assessment["state"] == "unfulfilled_transparent"
+    assert assessment["attention_status"] == "attention_needed"
+    assert assessment["requirement_type"] == "audience_need"
+    assert assessment["requirement_text"] == (
+        "State the unresolved decision dependency for management."
+    )
+    assert "not a quality pass" in semantic["disclaimer"]
+    assert "does not verify facts" in semantic["disclaimer"]
+
+
 def test_semantic_page_renders_bound_findings(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -252,10 +392,215 @@ def test_semantic_page_prefers_store_qualified_assessment_over_manual_view(
     semantic = build_brief_pages_data(workspace, laj_view_path=manual)["semantic"]
 
     assert semantic["store_qualified"] is True
-    assert semantic["status"] == "available"
+    assert semantic["status"] == "not_assessed"
     assert semantic["coverage"]["finding_count"] == 0
     assert semantic["findings"] == []
     assert semantic["reason_codes"] != ["assessment_completed"]
+
+
+def _archive_inventory_fixture(*, incomplete: bool) -> tuple[object, object, object]:
+    """Build safe metadata-only archive objects for projection regression tests."""
+
+    units: list[SimpleNamespace] = []
+    for ordinal in range(5):
+        units.append(
+            SimpleNamespace(
+                assessment_unit_id=f"unit-o1-{ordinal}",
+                scope_class="O1",
+                dimension_id="cross_section_consistency",
+                sub_aspect_id=f"o1-{ordinal}",
+            )
+        )
+    for ordinal in range(7):
+        units.append(
+            SimpleNamespace(
+                assessment_unit_id=f"unit-o2-{ordinal}",
+                scope_class="O2",
+                dimension_id="brief_requirement_coverage",
+                sub_aspect_id=f"o2-{ordinal}",
+            )
+        )
+    plan = SimpleNamespace(
+        units=units,
+        assessment_plan_sha256="a" * 64,
+    )
+    outcomes = [
+        SimpleNamespace(
+            assessment_unit_id=unit.assessment_unit_id,
+            disposition="no_finding",
+        )
+        for unit in units[:5]
+    ]
+    if not incomplete:
+        outcomes.extend(
+            SimpleNamespace(
+                assessment_unit_id=unit.assessment_unit_id,
+                disposition="no_finding",
+            )
+            for unit in units[5:]
+        )
+    attempts = [
+        SimpleNamespace(
+            dimension_id="cross_section_consistency",
+            attempt_ref="attempt-o1",
+            status="completed",
+            reason_code=None,
+            prompt_request_sha256="1" * 64,
+        ),
+        SimpleNamespace(
+            dimension_id="brief_requirement_coverage",
+            attempt_ref="attempt-o2",
+            status="failed" if incomplete else "completed",
+            reason_code="provider_failed" if incomplete else None,
+            prompt_request_sha256="2" * 64,
+        ),
+    ]
+    evidence = [
+        SimpleNamespace(
+            dimension_id=item.dimension_id,
+            status=item.status,
+            reason_code=item.reason_code,
+            prompt_request_sha256=item.prompt_request_sha256,
+            raw_response_bytes_hex=("not-read" if item.status == "completed" else None),
+        )
+        for item in attempts
+    ]
+    witness = SimpleNamespace(
+        assessment_plan=plan,
+        run=SimpleNamespace(
+            run_status="incomplete" if incomplete else "completed",
+            assessment_units=outcomes,
+            attempt_refs=attempts,
+        ),
+        dimension_attempt_evidence=evidence,
+        instrument_manifest=SimpleNamespace(
+            system_prompt_sha256="3" * 64,
+            dimension_prompt_sha256="4" * 64,
+            instrument_sha256="5" * 64,
+        ),
+        input_binding=SimpleNamespace(input_binding_sha256="6" * 64),
+    )
+    archive = SimpleNamespace(
+        witness=witness,
+        reason_codes=("provider_incomplete",)
+        if incomplete
+        else ("assessment_completed",),
+        request=SimpleNamespace(ordered_prompt_request_sha256s=("1" * 64, "2" * 64)),
+    )
+    request = SimpleNamespace(
+        schema_version="briefloop.post_final_assessment_request_record.v4",
+        human_actor_id="human-1",
+        human_request_id="request-1",
+        assessment_generation=1,
+        assessment_request_id="assessment-request-1",
+        request_fingerprint="7" * 64,
+        policy_revision_id="policy-1",
+        requested_model_id="model-1",
+        model_version="model-version-1",
+        expected_model_identity="model-identity-1",
+        profile_id="management_brief_en_v1",
+        claimed_at="2026-08-08T00:00:00Z",
+    )
+    policy = SimpleNamespace(
+        schema_version="briefloop.post_final_assessment_policy_revision.v3",
+        auto_run=False,
+        auto_open=False,
+        policy_revision_id="policy-1",
+        policy_fingerprint="8" * 64,
+    )
+    return archive, request, policy
+
+
+@pytest.mark.parametrize("incomplete", [True, False])
+def test_archive_projection_uses_profile_plan_and_never_failed_raw_output(
+    incomplete: bool,
+) -> None:
+    archive, request, policy = _archive_inventory_fixture(incomplete=incomplete)
+    if incomplete:
+        # A retained body must not become an outcome when its terminal attempt
+        # failed; emulate the malformed/raw-response temptation explicitly.
+        archive.witness.run.assessment_units.append(
+            SimpleNamespace(
+                assessment_unit_id="unit-o2-0",
+                disposition="no_finding",
+            )
+        )
+    scopes, units, evidence = _archive_assessment_projection(
+        archive=archive,
+        request=request,
+        policy=policy,
+    )
+
+    assert [item.scope_class for item in scopes] == ["O1", "O2"]
+    assert len(units) == 12
+    assert [item.state for item in units[:5]] == ["completed_no_finding"] * 5
+    if incomplete:
+        assert scopes[0].state == "completed_no_finding"
+        assert scopes[0].note_code == "completed_no_finding_not_pass"
+        assert scopes[1].state == "unable_to_assess"
+        assert scopes[1].note_code == "provider_attempt_incomplete"
+        assert scopes[1].reason_code == "provider_incomplete"
+        assert [item.state for item in units[5:]] == ["unable_to_assess"] * 7
+        assert {item.reason_code for item in units[5:]} == {"provider_incomplete"}
+    else:
+        assert [item.state for item in units[5:]] == ["completed_no_finding"] * 7
+        assert [item.state for item in scopes] == [
+            "completed_no_finding",
+            "completed_no_finding",
+        ]
+    assert evidence is not None
+    assert evidence.trigger == "explicit_human_authorization"
+    assert evidence.surface == "not_recorded"
+    assert evidence.provider_call_count == 2
+    assert len(evidence.calls) == 2
+    assert all(not hasattr(item, "raw_response_bytes_hex") for item in evidence.calls)
+
+
+def test_store_semantic_projection_exposes_scopes_without_legacy_dimensions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = initialize_workspace(tmp_path / "ws")
+    archive, request, policy = _archive_inventory_fixture(incomplete=True)
+    scopes, units, evidence = _archive_assessment_projection(
+        archive=archive,
+        request=request,
+        policy=policy,
+    )
+    projection = PostFinalAssessmentProjection(
+        lifecycle_present=True,
+        status="incomplete",
+        reason_code="provider_incomplete",
+        view=build_empty_laj_reader_view(
+            status="not_available", reason_code="provider_incomplete"
+        ),
+        user_status="partially_assessed",
+        compatible_result_options=(),
+        requirement_labels=(),
+        selected_result_id="result-1",
+        selected_result_fingerprint="9" * 64,
+        review_status=None,
+        request_template=None,
+        next_run_consumption="explicit_opt_in_successor_only",
+        run_action_available=False,
+        selection_required=False,
+        assessment_scopes=scopes,
+        assessment_units=units,
+        run_evidence=evidence,
+    )
+    monkeypatch.setattr(
+        "multi_agent_brief.product.brief_html.builder."
+        "build_post_final_assessment_projection",
+        lambda *_args, **_kwargs: projection,
+    )
+
+    semantic = build_brief_pages_data(workspace)["semantic"]
+    assert semantic["dimensions"] == []
+    assert len(semantic["assessment_scopes"]) == 2
+    assert len(semantic["assessment_units"]) == 12
+    assert semantic["assessment_scopes"][1]["state"] == "unable_to_assess"
+    assert semantic["run_evidence"]["surface"] == "not_recorded"
+    assert len(semantic["run_evidence"]["calls"]) == 2
 
 
 def test_improvement_page_is_honest_unavailable(tmp_path: Path) -> None:

@@ -40,6 +40,10 @@ Use after Analyst has written `audited_brief.md` and Python has frozen
 - Own the final `output/intermediate/audited_brief.md` consumed by Auditor and finalize.
 - Use `input/context/` files listed in `output/input_classification.json` only as
   non-evidence style and structure references.
+- On a target-relevance Gate repair, read `gate_repair_context` and the exact
+  RoleTaskEnvelope task instructions. Preserve every frozen configured
+  RunDirection target term verbatim in the executive summary. This is framing
+  only, not new evidence; apart from preserving those terms, do not add facts.
 - Preserve valid [src:<claim_id>] citations, using only claim IDs that exist in
   the Claim Ledger.
 - When present and valid, use `output/intermediate/atomic_claim_graph.json` only

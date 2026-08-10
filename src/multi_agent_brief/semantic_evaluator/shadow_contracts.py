@@ -435,7 +435,7 @@ class ShadowRunRequestV5(StrictModel):
     input_binding_sha256: Sha256
     instrument_sha256: Sha256
     assessment_plan_sha256: Sha256
-    ordered_prompt_request_sha256s: list[Sha256] = Field(min_length=9, max_length=9)
+    ordered_prompt_request_sha256s: list[Sha256] = Field(min_length=1, max_length=9)
     execution_sha256: Sha256
     provider_id: ContractId
     model_id: ContractId

@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import errno
+import json
 import os
 from pathlib import Path
 from pathlib import PurePosixPath
@@ -269,6 +270,35 @@ def _role_task_instructions(
         "status is valid; never guess aliases, wrapper names, or invocation "
         "bindings."
     )
+
+
+def _target_relevance_task_instruction(
+    role_id: str,
+    target_terms: list[str] | tuple[str, ...],
+    *,
+    gate_repair: bool = False,
+) -> str:
+    """Bind frozen target framing to the role task without turning it into evidence."""
+
+    serialized_terms = json.dumps(list(target_terms), ensure_ascii=False)
+    if role_id == "analyst":
+        return (
+            " The Analyst first draft must include an executive summary that "
+            "preserves every frozen RunDirection target term verbatim: "
+            f"target_terms={serialized_terms}. These terms are RunDirection "
+            "framing only, not evidence; do not invent supporting facts or "
+            "citations solely to satisfy target visibility."
+        )
+    if role_id == "editor" and gate_repair:
+        return (
+            " This target-relevance Gate repair requires the executive summary "
+            "to preserve every frozen RunDirection target term verbatim: "
+            f"target_terms={serialized_terms}. This is RunDirection framing "
+            "only, not new evidence; other than preserving these configured "
+            "terms, do not add facts, claims, numbers, named entities, dates, "
+            "causal claims, or citations."
+        )
+    return ""
 
 
 def _strict_proposal_violations(
@@ -1185,11 +1215,29 @@ class RuntimeHostService:
             output,
             invocation_id,
         )
+        if role_id == "analyst":
+            task_instructions = (
+                f"{task_instructions}"
+                f"{_target_relevance_task_instruction(role_id, verified.binding.run_direction.target_terms)}"
+            )
         if gate_repair_context is not None:
             task_instructions = (
                 f"{task_instructions} Repair only the exact audited_brief scope "
                 "in gate_repair_context; do not change sources, claims, or run direction."
             )
+            if any(
+                str(item.get("finding_type"))
+                in {
+                    "target_relevance_gap",
+                    "target_priority_claim_missing_from_summary",
+                }
+                for item in gate_repair_context.get("findings", [])
+                if isinstance(item, dict)
+            ):
+                task_instructions = (
+                    f"{task_instructions}"
+                    f"{_target_relevance_task_instruction('editor', verified.binding.run_direction.target_terms, gate_repair=True)}"
+                )
         frozen_guidance_context = RuntimeHostService._frozen_guidance_context(
             verified,
             role_id=role_id,
@@ -1262,6 +1310,7 @@ class RuntimeHostService:
                     "finalized_lineage_fingerprint": (
                         item.finalized_lineage_fingerprint
                     ),
+                    "provenance_kind": item.provenance_kind,
                     "assessment_result_id": item.assessment_result_id,
                     "assessment_result_fingerprint": (
                         item.assessment_result_fingerprint
@@ -1270,6 +1319,8 @@ class RuntimeHostService:
                     "finding_fingerprint": item.finding_fingerprint,
                     "disposition_id": item.disposition_id,
                     "disposition_fingerprint": item.disposition_fingerprint,
+                    "observation_id": item.observation_id,
+                    "observation_fingerprint": item.observation_fingerprint,
                     "guidance_id": item.guidance_id,
                     "draft_revision": item.draft_revision,
                     "draft_fingerprint": item.draft_fingerprint,

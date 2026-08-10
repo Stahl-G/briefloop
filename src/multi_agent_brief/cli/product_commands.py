@@ -367,15 +367,20 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
     review_open_parser = laj_actions.add_parser(
         "review-open",
         help=(
-            "Open the secured local Human Review Session; LAJ remains advisory "
-            "and reuse requires a separate explicit successor-start opt-in."
+            "Open the secured local Post-final Review page. The ordinary path "
+            "needs no policy JSON, request JSON, generation ID, fingerprint, or "
+            "archive path; AI Second Opinion remains advisory and explicit, and "
+            "guidance reuse requires a separate successor-start opt-in."
         ),
     )
     review_open_parser.add_argument("--workspace", required=True)
-    review_open_parser.add_argument("--assessment-result-id", required=True)
+    review_open_parser.add_argument(
+        "--assessment-result-id",
+        help="Advanced exact compatible-result selection; requires its fingerprint.",
+    )
     review_open_parser.add_argument(
         "--assessment-result-fingerprint",
-        required=True,
+        help="Advanced exact compatible-result selection; requires its result ID.",
     )
     review_open_parser.add_argument(
         "--no-browser",
@@ -383,6 +388,35 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
         help="Print the loopback URL and keep the session alive without opening a browser.",
     )
     review_open_parser.add_argument("--json", action="store_true")
+    observation_parser = laj_actions.add_parser(
+        "observation",
+        aliases=["observation-record"],
+        help=(
+            "Append one report-bound Human observation. No Reader Review result, "
+            "policy JSON, provider, or internal fingerprint is required."
+        ),
+    )
+    observation_parser.add_argument("--workspace", required=True)
+    observation_parser.add_argument(
+        "--request-json",
+        required=True,
+        help="Strict Human observation JSON; provider secrets are rejected.",
+    )
+    observation_parser.add_argument("--json", action="store_true")
+    observation_supersede_parser = laj_actions.add_parser(
+        "observation-supersede",
+        help=(
+            "Append a replacement revision for one exact Human observation "
+            "using its predecessor identity."
+        ),
+    )
+    observation_supersede_parser.add_argument("--workspace", required=True)
+    observation_supersede_parser.add_argument(
+        "--request-json",
+        required=True,
+        help="Strict Human observation replacement JSON.",
+    )
+    observation_supersede_parser.add_argument("--json", action="store_true")
     for action, help_text in (
         ("disposition", "Record one accept/reject/defer finding disposition."),
         ("draft", "Append one Human-edited guidance draft for an accepted finding."),
@@ -587,7 +621,6 @@ def handle_quality(args: argparse.Namespace) -> int:
             PostFinalAssessmentService,
         )
         from multi_agent_brief.product.post_final_review import (
-            NEXT_RUN_CONSUMPTION_STATUS,
             PostFinalReviewError,
             PostFinalReviewService,
         )
@@ -640,9 +673,13 @@ def handle_quality(args: argparse.Namespace) -> int:
                 payload = {
                     "ok": True,
                     "status": launched.reason_code,
+                    "user_status": launched.user_status,
+                    "compatible_result_count": launched.compatible_result_count,
+                    "selection_required": launched.user_status == "selection_required",
+                    "run_action_available": launched.run_action_available,
                     "url": launched.url,
                     "runtime_authority": False,
-                    "next_run_consumption": NEXT_RUN_CONSUMPTION_STATUS,
+                    "next_run_consumption": launched.next_run_consumption,
                 }
                 _print_payload(
                     "quality laj",
@@ -654,6 +691,22 @@ def handle_quality(args: argparse.Namespace) -> int:
                 except KeyboardInterrupt:
                     launched.server.close()
                 return 0
+            elif laj_action in {
+                "observation",
+                "observation-record",
+                "observation-supersede",
+            }:
+                value = json.loads(args.request_json)
+                if type(value) is not dict:
+                    raise PostFinalReviewError("post_final_review_request_invalid")
+                # Report-bound observations intentionally do not require an
+                # assessment result selection.  If the request carries an
+                # exact selected result tuple, the Store service validates it.
+                review = PostFinalReviewService(workspace)
+                if laj_action in {"observation", "observation-record"}:
+                    payload = review.record_human_observation(value)
+                else:
+                    payload = review.supersede_human_observation(value)
             elif laj_action == "review-status":
                 payload = PostFinalReviewService(
                     workspace,
@@ -1158,14 +1211,21 @@ def _create_report_pack_workspace(
         else ["markdown", "docx"]
     )
 
+    # The ordinary management-monthly entry is the supported Reader Review
+    # identity.  Keep this normalization local to that product shortcut so
+    # other init paths and report packs retain their existing language values.
+    reader_review_direction = (
+        pack.report_type == "management_monthly" and language == "en-US"
+    )
     profile = InitProfile(
         interface_language=language,
-        output_language=language,
+        output_language="en" if reader_review_direction else language,
         company=args.company,
         role="report_owner",
         industry=industry_text,
         industry_text=industry_text,
         brief_title=title,
+        report_type=pack.report_type if reader_review_direction else None,
         audience=reader_label,
         audience_profile="management",
         focus_areas=[pack.display_name, "source-backed claims", "reader-ready brief"],

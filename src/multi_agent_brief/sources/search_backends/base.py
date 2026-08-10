@@ -14,11 +14,19 @@ class SearchBackendError(Exception):
     """
 
     def __init__(
-        self, message: str, *, backend: str = "", status_code: int | None = None
+        self,
+        message: str,
+        *,
+        backend: str = "",
+        status_code: int | None = None,
+        error_class: str | None = None,
     ) -> None:
         super().__init__(message)
         self.backend = backend
         self.status_code = status_code
+        # Value-free transport classification only.  Never put an exception
+        # message, URL, host, or credential in this field.
+        self.error_class = error_class
 
 
 @dataclass

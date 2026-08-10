@@ -18,6 +18,10 @@ from multi_agent_brief.semantic_evaluator.contracts import (
 )
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.resources import EvaluatorResourceError
+from multi_agent_brief.semantic_evaluator.profile import (
+    LoadedProfile,
+    load_profile_by_sha256,
+)
 from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_json_bytes,
     canonical_model_sha256,
@@ -39,6 +43,14 @@ NO_FINDING_DISCLAIMER = (
 ADVISORY_DISCLAIMER = (
     "本记录仅供研究复核；候选 finding 不具有 Gate、Finalize、Delivery、"
     "Claim-Support 或发布权威。"
+)
+NO_FINDING_DISCLAIMER_EN = (
+    "No finding was returned in the completed supported checks. This does not "
+    "mean the report is correct, complete, or ready for delivery. "
+)
+ADVISORY_DISCLAIMER_EN = (
+    "This assessment is advisory only. Candidate findings have no Gate, "
+    "finalization, delivery, repair, approval, or next-action authority."
 )
 
 
@@ -108,10 +120,14 @@ def compose_matched_non_llm(
     report_evidence: AdmittedReportEvidence,
     reader_artifact: ReaderArtifact,
     bounded_context: BoundedContext,
+    loaded_profile: LoadedProfile | None = None,
 ) -> CompositionRecord:
     result: CompositionRecord | None = None
     try:
-        resources = acquire_resource_snapshot(include_baseline=True)
+        resources = acquire_resource_snapshot(
+            loaded_profile=loaded_profile,
+            include_baseline=True,
+        )
     except EvaluatorResourceError:
         resources = None
     if resources is not None:
@@ -246,7 +262,12 @@ def _verify_composition_record_with_context(
             raise SemanticEvaluatorError("composition_record_mismatch")
         resources: EvaluatorResourceSnapshot | None = None
         try:
-            resources = acquire_resource_snapshot(include_baseline=True)
+            resources = acquire_resource_snapshot(
+                loaded_profile=load_profile_by_sha256(
+                    strict.baseline_payload.profile_sha256
+                ),
+                include_baseline=True,
+            )
         except EvaluatorResourceError:
             pass
         if resources is None:
@@ -399,15 +420,29 @@ def build_presentation(
         validation_status = None
         failure_reasons = []
     finding_count = len(strict_composition.laj_advice_items)
+    english = (
+        verified_witness is not None
+        and verified_witness.bounded_context.language == "en"
+    )
     if finding_count == 0:
         disclaimer = (
-            f"{NO_FINDING_DISCLAIMER}状态：{run_status or 'matched_non_LLM'}/"
-            f"{validation_status or 'not_applicable'}；已评价 {assessed} 个 assessment "
-            f"units，其中 {abstentions} 个弃权，{failures} 个终态失败，"
-            f"{withheld} 个 finding 被保留但未展示。"
+            (
+                f"{NO_FINDING_DISCLAIMER_EN}Status: "
+                f"{run_status or 'matched_non_LLM'}/"
+                f"{validation_status or 'not_applicable'}; assessed {assessed} "
+                f"units, with {abstentions} abstentions, {failures} terminal "
+                f"failures, and {withheld} withheld findings."
+            )
+            if english
+            else (
+                f"{NO_FINDING_DISCLAIMER}状态：{run_status or 'matched_non_LLM'}/"
+                f"{validation_status or 'not_applicable'}；已评价 {assessed} 个 assessment "
+                f"units，其中 {abstentions} 个弃权，{failures} 个终态失败，"
+                f"{withheld} 个 finding 被保留但未展示。"
+            )
         )
     else:
-        disclaimer = ADVISORY_DISCLAIMER
+        disclaimer = ADVISORY_DISCLAIMER_EN if english else ADVISORY_DISCLAIMER
     identity = [
         strict_composition.composition_sha256,
         witness_sha,
@@ -453,7 +488,9 @@ def build_presentation(
 
 __all__ = [
     "ADVISORY_DISCLAIMER",
+    "ADVISORY_DISCLAIMER_EN",
     "NO_FINDING_DISCLAIMER",
+    "NO_FINDING_DISCLAIMER_EN",
     "build_presentation",
     "compose_actual_laj",
     "compose_matched_non_llm",

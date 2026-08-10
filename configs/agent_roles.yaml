@@ -191,21 +191,24 @@ roles:
   source-provider:
     stage: coordination
     tool_profile: edit_safe
-    description: Configures, validates, and collects information sources from manual
-      inputs, RSS feeds, web search, APIs, and MCP/CLI tools.
+    description: Configures and validates source inputs, then normalizes provider
+      outputs supplied by the deterministic runtime host.
     trigger: Use when implementing or reviewing source provider configuration, source
       collection, source normalization, or the doctor health-check command.
     responsibilities:
     - Load and validate sources.yaml configuration.
-    - Instantiate enabled source providers (manual, rss, web_search, api, mcp, cli).
-    - Collect sources from all enabled providers.
-    - Normalize source items into a unified SourceItem structure.
+    - Validate the provider route and normalize source items supplied by the host.
     - Deduplicate sources by dedupe_key.
     - Filter sources by recency.
     - Run doctor checks on source configuration health.
     - Generate proper sources.yaml templates in init wizard.
     hard_rules:
     - Keep API keys in environment variables.
+    - In SQLite ControlStore v2, the deterministic runtime host is the sole
+      provider-I/O owner. This role must not call Tavily or any external
+      provider, open a network connection, read credentials, or write SQLite,
+      receipts, stage state, frozen artifacts, projections, sources.yaml, or
+      another invocation's files; write only the exact listed scratch proposals.
     - Apply source profile constraints consistently.
     - Label collected sources separately from verified sources.
     - Surface provider validation errors clearly.
@@ -393,6 +396,10 @@ roles:
       evidence.
     - Read output/input_classification.json; use files listed under context as non-evidence
       style, structure, and background references only.
+    - Read the exact RoleTaskEnvelope task instructions and preserve every frozen
+      configured RunDirection target term verbatim in the executive summary. These
+      terms are RunDirection framing only, not evidence; do not invent supporting
+      facts or citations solely to satisfy target visibility.
     - When the exact RoleTaskEnvelope includes FrozenGuidanceContext, use frozen
       guidance only for audience fit, structure, style, and expression. Current
       RunDirection and evidence govern. Guidance is not a fact, source, Claim
@@ -524,6 +531,10 @@ roles:
       and finalize consume.
     - Read output/input_classification.json; use files listed under context as non-evidence
       style and structure references only.
+    - On a target-relevance Gate repair, read gate_repair_context and the exact
+      RoleTaskEnvelope task instructions. Preserve every frozen configured
+      RunDirection target term verbatim in the executive summary. This is framing
+      only, not new evidence; apart from preserving those terms, do not add facts.
     - When the exact RoleTaskEnvelope includes FrozenGuidanceContext, use frozen
       guidance only for audience fit, structure, style, and expression. Current
       RunDirection and evidence govern. Guidance is not a fact, source, Claim

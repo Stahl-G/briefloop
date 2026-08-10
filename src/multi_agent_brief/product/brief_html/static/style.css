@@ -531,6 +531,98 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
 .feedback-zone > h2 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
 .feedback-sub { font-size: 12.5px; color: var(--bl-muted); margin: 0 0 14px; }
 
+.observation-card {
+    margin: 14px 0 20px;
+    padding: 16px 18px;
+    border: 1px solid var(--sem-action-line);
+    border-left-width: 3px;
+    border-radius: var(--bl-radius-sm);
+    background: var(--sem-action-wash);
+}
+.observation-card h3, .observation-history h3 {
+    margin: 0 0 6px;
+    font-size: 14px;
+    font-weight: 600;
+}
+.observation-binding {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0 12px;
+    color: var(--bl-muted);
+    font-size: 12px;
+}
+.observation-field { display: block; margin-top: 10px; }
+.observation-field .fb-k {
+    display: block;
+    margin-bottom: 4px;
+    font-family: var(--bl-font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--bl-faint);
+}
+.observation-field input, .observation-field select {
+    width: 100%;
+    font: inherit;
+    font-size: 12.5px;
+    color: var(--bl-ink);
+    background: var(--bl-surface);
+    border: 1px solid var(--bl-line);
+    border-radius: 6px;
+    padding: 7px 9px;
+}
+.observation-field select { min-height: 34px; }
+.observation-refs {
+    margin-top: 12px;
+    border-top: 1px solid var(--bl-line-soft);
+    padding-top: 10px;
+}
+.observation-refs summary {
+    cursor: pointer;
+    color: var(--bl-muted);
+    font-size: 12px;
+}
+.observation-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 12px;
+}
+.observation-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+}
+.observation-actions textarea { flex: 1 1 100%; min-height: 64px; }
+.observation-history { margin-top: 20px; }
+.observation-entry { border-left: 2px solid var(--sem-action-line); }
+
+.successor-card {
+    margin: 22px 0 0;
+    padding: 16px 18px;
+    border: 1px solid var(--sem-action-line);
+    border-left-width: 3px;
+    border-radius: var(--bl-radius-sm);
+    background: var(--sem-action-wash);
+}
+.successor-card h3 { margin: 0 0 6px; font-size: 14px; font-weight: 600; }
+.successor-direction { margin-top: 12px; border-top: 1px solid var(--bl-line-soft); padding-top: 10px; }
+.successor-direction summary { cursor: pointer; color: var(--bl-muted); font-size: 12px; }
+.successor-direction-list {
+    display: grid; grid-template-columns: minmax(110px, 0.3fr) 1fr;
+    gap: 6px 12px; margin: 10px 0 0; font-size: 12px;
+}
+.successor-direction-list dt { color: var(--bl-faint); font-family: var(--bl-font-mono); }
+.successor-direction-list dd { margin: 0; color: var(--bl-ink); }
+.successor-guidance { margin-top: 14px; }
+.successor-guidance-list { margin: 8px 0 0; padding-left: 20px; }
+.successor-guidance-list li { margin: 7px 0; display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; }
+.successor-fields { margin-top: 12px; }
+.successor-choice { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.successor-fields .reader-review-confirmation { margin-top: 12px; }
+
 .fb-textarea {
     width: 100%;
     min-height: 92px;
@@ -894,4 +986,180 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
     padding: 14px 16px;
     font-size: 13.5px;
     color: var(--sem-block);
+}
+
+/* ---- secured Reader Review controls (inert unless ACTION_SESSION exists) ---- */
+.reader-review-status,
+.reader-review-disclosure,
+.result-selection-card {
+    margin: 16px 0;
+    border: 1px solid var(--sem-advisory-line);
+    border-radius: var(--bl-radius-sm);
+    background: var(--bl-surface);
+    padding: 14px 16px;
+}
+.reader-review-status > .fb-k {
+    display: block;
+    margin-bottom: 4px;
+    font-family: var(--bl-font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--bl-faint);
+}
+.reader-review-status > strong { color: var(--sem-advisory); }
+.reader-review-status > p { margin: 6px 0 10px; color: var(--bl-ink-soft); }
+.reader-review-status > .outcome-unknown-note {
+    border-left: 2px solid var(--sem-warn);
+    background: var(--sem-warn-wash);
+    padding: 8px 10px;
+    color: var(--sem-warn);
+}
+.reader-review-disclosure h3,
+.result-selection-card h3 { margin: 0 0 6px; font-size: 15px; }
+.disclosure-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px 18px;
+    margin: 14px 0;
+}
+.disclosure-fact {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+    font-size: 12.5px;
+    color: var(--bl-ink-soft);
+    overflow-wrap: anywhere;
+}
+.disclosure-fact .fb-k,
+.reader-review-field .fb-k {
+    font-family: var(--bl-font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--bl-faint);
+}
+.credential-boundary {
+    border-left: 2px solid var(--sem-action-line);
+    padding: 6px 0 6px 12px;
+    color: var(--bl-muted);
+    font-size: 12.5px;
+}
+.reader-review-fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px 14px;
+    margin: 14px 0;
+}
+.reader-review-field {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+.reader-review-field input {
+    width: 100%;
+    border: 1px solid var(--bl-line);
+    border-radius: 6px;
+    background: var(--bl-paper);
+    color: var(--bl-ink);
+    font: 12.5px/1.4 var(--bl-font-mono);
+    padding: 8px 9px;
+}
+.reader-review-field input:focus {
+    outline: 2px solid var(--sem-action-line);
+    outline-offset: 1px;
+}
+.reader-review-confirmation {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 9px 0;
+    font-size: 12.5px;
+    color: var(--bl-ink-soft);
+}
+.reader-review-confirmation input { margin-top: 2px; }
+.reader-review-action {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin: 8px 8px 0 0;
+    border: 1px solid var(--sem-action-line);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 12.5px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.reader-review-action.primary {
+    color: white;
+    background: var(--sem-action);
+}
+.reader-review-action.secondary {
+    color: var(--sem-action);
+    background: var(--sem-action-wash);
+}
+.reader-review-action:disabled { cursor: wait; opacity: 0.55; }
+.reader-review-command-status {
+    display: inline-block;
+    margin: 8px 0 0;
+    font-size: 12px;
+    color: var(--sem-warn);
+}
+.result-option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    border-top: 1px solid var(--bl-line-soft);
+    padding: 11px 0;
+}
+.result-option:first-of-type { margin-top: 10px; }
+.result-option-details {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+    font-size: 12px;
+    color: var(--bl-muted);
+}
+.result-option-details strong { color: var(--bl-ink); }
+.requirement-assessment-list { display: grid; gap: 10px; }
+.requirement-assessment {
+    border: 1px solid var(--bl-line-soft);
+    border-radius: var(--bl-radius-sm);
+    padding: 12px 14px;
+    background: var(--bl-surface);
+}
+.requirement-assessment.attention {
+    border-color: var(--sem-warn-line);
+    background: var(--sem-warn-wash);
+}
+.requirement-assessment p {
+    margin: 8px 0 0;
+    font-size: 12.5px;
+    color: var(--bl-ink-soft);
+}
+.requirement-assessment .requirement-text {
+    font-size: 13.5px;
+    color: var(--bl-ink);
+}
+.requirement-rationale .fb-k {
+    font-family: var(--bl-font-mono);
+    font-size: 10.5px;
+    color: var(--bl-faint);
+    text-transform: uppercase;
+}
+.requirement-meta {
+    display: block;
+    margin-top: 8px;
+    color: var(--bl-faint);
+    font: 10.5px/1.5 var(--bl-font-mono);
+    overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+    .disclosure-grid,
+    .reader-review-fields { grid-template-columns: 1fr; }
+    .result-option { align-items: flex-start; flex-direction: column; }
 }
