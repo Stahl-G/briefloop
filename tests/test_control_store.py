@@ -59,6 +59,7 @@ _POST_FINAL_RECEIPT_RELATION_FIELDS = (
     "post_final_assessment_requests",
     "post_final_assessment_results",
     "post_final_finding_dispositions",
+    "post_final_human_observations",
     "post_final_guidance_drafts",
     "post_final_guidance_statuses",
 )
@@ -1382,6 +1383,11 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "transaction_checkout_revisions",
         "transaction_receipt_checkout_bindings",
         "transaction_checkout_publication_intents",
+        "run_source_acquisition_attempt_authorizations_v2",
+        "transaction_run_source_acquisition_attempt_authorizations_v2",
+        "runtime_source_search_plans",
+        "tavily_acquisition_bundle_records",
+        "market_data_snapshots",
     }
     with _create_store(tmp_path) as store:
         assert store._connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
@@ -3187,7 +3193,14 @@ def test_only_dormant_v2_modules_import_control_store() -> None:
         "product/init_web/submit.py",
         "product/post_final_assessment.py",
         "product/post_final_assessment_projection.py",
+        # The read model consumes deterministic serialization helpers only.
+        "product/post_final_assessment_read_model.py",
         "product/post_final_review.py",
+        # The market data service is the sole snapshot writer for the
+        # append-only market_data_snapshots authority surface.
+        "product/market_data_service.py",
+        # The review session launcher reads only the frozen Store head.
+        "product/review_session/launcher.py",
         "runtime_host_v2/codex.py",
         "runtime_host_v2/initialization.py",
         "runtime_host_v2/projections.py",

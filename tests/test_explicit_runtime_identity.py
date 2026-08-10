@@ -64,58 +64,6 @@ def test_run_parser_rejects_noncanonical_runtime_without_writes(
 
 
 
-def test_active_adapter_entrypoints_bind_runtime_literals() -> None:
-    surfaces = {
-        "claude": [
-            ROOT / ".claude/commands/briefloop.md",
-            ROOT / ".claude/commands/generate-brief.md",
-        ],
-        "opencode": [
-            ROOT / ".opencode/commands/briefloop.md",
-            ROOT / ".opencode/commands/generate-brief.md",
-        ],
-        "codebuddy": [
-            ROOT / ".codebuddy/skills/briefloop/SKILL.md",
-            ROOT / "integrations/workbuddy/briefloop/SKILL.md",
-            ROOT / "integrations/workbuddy/assistant/briefloop-assistant-prompt.md",
-        ],
-        "operator": [ROOT / "scripts/demo-deep-dive.sh"],
-    }
-    for runtime, paths in surfaces.items():
-        for path in paths:
-            text = path.read_text(encoding="utf-8")
-            assert f"--runtime {runtime}" in text, path
-            assert "--runtime auto" not in text, path
-            assert "--runtime manual" not in text, path
-
-    hermes_tool = (ROOT / "integrations/hermes-plugin/mabw/tools.py").read_text(
-        encoding="utf-8"
-    )
-    assert '"--runtime", "hermes"' in hermes_tool
-    assert 'args.get("runtime")' not in hermes_tool
-
-    runtime_assets = (ROOT / "src/multi_agent_brief/runtime_assets.py").read_text(
-        encoding="utf-8"
-    )
-    # the generated `_workspace_skill_text(runtime="codex", ...)`
-    # skill left with the retired pre-CX codex kit; the codex workspace kit is
-    # now installed verbatim from the packaged ControlStore v2 assets.
-    assert "_codex_writes" in runtime_assets
-    codex_reference = (
-        ROOT
-        / "src/multi_agent_brief/runtime_kits/codex/skills/briefloop/references/controlstore-v2.md"
-    ).read_text(encoding="utf-8")
-    assert "--runtime codex" in codex_reference
-    assert "--runtime auto" not in codex_reference
-    assert "--runtime manual" not in codex_reference
-    assert "--runtime {runtime}" in runtime_assets
-
-    hermes_schema = (ROOT / "integrations/hermes-plugin/mabw/schemas.py").read_text(
-        encoding="utf-8"
-    )
-    assert '"runtime"' not in hermes_schema
-
-
 def test_active_generic_cli_guidance_requires_explicit_runtime_choice() -> None:
     placeholder = f"--runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}"
     surfaces = {
@@ -123,7 +71,6 @@ def test_active_generic_cli_guidance_requires_explicit_runtime_choice() -> None:
         ROOT / "src/multi_agent_brief/cli/onboard_commands.py": 3,
         ROOT / "src/multi_agent_brief/cli/product_commands.py": 2,
         ROOT / "src/multi_agent_brief/cli/run_commands.py": 0,
-        ROOT / "src/multi_agent_brief/cli/deliver_commands.py": 0,
     }
     for path, expected_count in surfaces.items():
         text = path.read_text(encoding="utf-8")
@@ -135,15 +82,17 @@ def test_active_generic_cli_guidance_requires_explicit_runtime_choice() -> None:
         "--runtime <hermes|claude|opencode|codex|codebuddy|operator>"
     )
 
-    hermes = (ROOT / "src/multi_agent_brief/hermes/adapter.py").read_text(
-        encoding="utf-8"
-    )
-    assert "briefloop run --workspace <workspace> --runtime hermes" in hermes
-
     runtime_assets = (ROOT / "src/multi_agent_brief/runtime_assets.py").read_text(
         encoding="utf-8"
     )
-    assert "--runtime {runtime}" in runtime_assets
+    # the codex workspace kit is installed verbatim from the packaged kit;
+    # the codex runtime install does not interpolate a `{runtime}` template.
+    assert "--runtime {runtime}" not in runtime_assets
+    codex_reference = (
+        ROOT
+        / "src/multi_agent_brief/runtime_kits/codex/skills/briefloop/references/controlstore-v2.md"
+    ).read_text(encoding="utf-8")
+    assert "--runtime codex" in codex_reference
 
 
 def test_active_runtime_docs_do_not_advertise_historical_aliases() -> None:
@@ -156,7 +105,6 @@ def test_active_runtime_docs_do_not_advertise_historical_aliases() -> None:
         ROOT / "docs/orchestrator-architecture.md",
         ROOT / "docs/orchestrator-architecture.zh-CN.md",
         ROOT / "docs/support-matrix.md",
-        ROOT / "docs/implementation/v0.6.0-explicit-orchestrator-contract.md",
     ]
     for path in surfaces:
         text = path.read_text(encoding="utf-8")
@@ -168,9 +116,9 @@ def test_active_runtime_docs_do_not_advertise_historical_aliases() -> None:
         assert "manual` runtime 值只保留为 `operator` 的 cli 兼容别名" not in lowered, path
 
     repo_instructions = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    assert "briefloop run --workspace <workspace> --runtime operator" in repo_instructions
+    assert "briefloop run --workspace <workspace> --runtime codex" in repo_instructions
     assert (
-        "briefloop run --workspace /tmp/briefloop-smoke --runtime operator --skip-doctor"
+        "briefloop run --workspace /tmp/briefloop-smoke --runtime codex"
         in repo_instructions
     )
 
@@ -195,7 +143,7 @@ def test_root_and_packaged_runtime_contracts_are_byte_identical() -> None:
         ["feedback", "plan", "--json"],
     ],
 )
-def test_runtime_consumers_do_not_implicitly_initialize(
+def test_deleted_runtime_commands_do_not_implicitly_initialize(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
     argv: list[str],
@@ -204,11 +152,10 @@ def test_runtime_consumers_do_not_implicitly_initialize(
     before = _files(ws)
     command = [*argv, "--workspace", str(ws)]
 
-    # retired public state/controls/gates/feedback commands. The
-    # fail-closed authority guard rejects them with zero writes on a fresh
-    # workspace, so runtime state is never implicitly initialized.
-    assert main(command) == 1
-    assert capsys.readouterr().out == "runtime_command_unsupported\n"
+    # retired public state/controls/gates/feedback commands no longer exist;
+    # argparse rejects the unknown verb with zero writes.
+    with pytest.raises(SystemExit):
+        main(command)
     assert _files(ws) == before
 
 

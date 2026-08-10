@@ -103,7 +103,7 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "--include-approved-guidance",
         "Analyst and Editor",
         "Utility is NOT MEASURED",
-        "v0.15.1 candidate includes Store-qualified",
+        "v0.15.1 prepared release target",
         "solar-stock-periodic",
         "development-main successor",
     ],
@@ -133,7 +133,7 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "--include-approved-guidance",
         "Analyst 和 Editor",
         "效用 NOT MEASURED",
-        "v0.15.1 包含 Store-qualified",
+        "v0.15.1 prepared release target",
         "solar-stock-periodic",
     ],
     "docs/roadmap.md": [
@@ -162,7 +162,7 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
     ],
     "docs/features.md": [
         "Current product baseline:",
-        "v0.15.1",
+        "v0.15.2",
         "industry-weekly",
         "management-monthly",
         "document-review",
@@ -174,7 +174,7 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
     ],
     "docs/features.zh-CN.md": [
         "当前产品基线",
-        "v0.15.1",
+        "v0.15.2",
         "industry-weekly",
         "management-monthly",
         "document-review",
@@ -212,35 +212,11 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "效用 NOT MEASURED",
         "fast-rerun/080 命令均已退役",
     ],
-    "docs/control-surfaces.md": [
-        "RunGuidanceSnapshotRecord",
-        "RoleTaskEnvelope.frozen_guidance_context",
-        "Other roles receive `None`",
-        "Guidance utility and manifestation are NOT MEASURED",
-    ],
-    "docs/control-surfaces.zh-CN.md": [
-        "RunGuidanceSnapshotRecord",
-        "RoleTaskEnvelope.frozen_guidance_context",
-        "其他角色收到 `None`",
-        "Guidance 效用与 manifestation 均为 NOT MEASURED",
-    ],
     "docs/roadmap.zh-CN.md": [
         "当前 development 校正",
         "briefloop runtime successor-start",
         "--include-approved-guidance",
         "效用 NOT MEASURED",
-    ],
-    "docs/modules/improvement.md": [
-        "Approved Guidance And Successor Snapshots",
-        "briefloop runtime successor-start",
-        "--include-approved-guidance",
-        "Analyst and Editor receive the same ordered",
-        "Utility is **NOT MEASURED**",
-    ],
-    "docs/runtime-recipes.md": [
-        "Retired Fast-Rerun Recipe",
-        "briefloop runtime successor-start",
-        "not evidence reuse or a fast path",
     ],
     "docs/packaging-pipx.md": [
         "not a current install instruction",
@@ -248,53 +224,6 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "Do not add `pipx install briefloop`",
         "does not prove semantic truth",
         "does not approve delivery",
-    ],
-    "docs/workbuddy.md": [
-        "WorkBuddy Skill source bundle",
-        ".agents/skills/briefloop-workbuddy/",
-        "Experimental",
-        "source-clone-only",
-        "not WorkBuddy Marketplace publication",
-        "WorkBuddy Assistant trigger",
-        "WorkBuddy role-agent orchestration",
-        "Use `--runtime codebuddy`",
-        "silently fall back to `--runtime operator`",
-        "does not prove semantic truth",
-        "approve delivery",
-        "authorize release",
-    ],
-    "docs/workbuddy.zh-CN.md": [
-        "WorkBuddy Skill source bundle",
-        ".agents/skills/briefloop-workbuddy/",
-        "Experimental",
-        "source-clone-only",
-        "不是 WorkBuddy Marketplace 发布",
-        "WorkBuddy Assistant trigger",
-        "WorkBuddy role-agent orchestration",
-        "使用 `--runtime codebuddy`",
-        "静默回退到 `--runtime operator`",
-        "不证明语义真实性",
-        "不批准交付",
-        "不授权 release",
-    ],
-    "docs/workbuddy-smoke-checklist.md": [
-        "WorkBuddy Integration Smoke Checklist",
-        "experimental integration smoke",
-        "not runtime proof",
-        "not runtime proof, delegated-agent proof, output-quality proof, semantic proof",
-        ".agents/skills/briefloop-workbuddy/",
-        "-CommandType Application",
-        "$BriefLoop = $BriefLoopCommand.Path",
-        "$BriefLoop -notmatch",
-        "^(?:[A-Za-z]:\\\\|\\\\\\\\[^\\\\]+\\\\[^\\\\]+\\\\)",
-        "& $BriefLoop workbuddy pack-skill --output dist/workbuddy",
-        "& $BriefLoop run",
-        "--runtime codebuddy",
-        '& $BriefLoop status --workspace "<workspace>"',
-        '& $BriefLoop state check --workspace "<workspace>"',
-        '& $BriefLoop quality summarize --workspace "<workspace>"',
-        "must not auto-deliver",
-        "WorkBuddy did not silently fall back to `--runtime operator`",
     ],
 }
 REQUIRED_FIRST_USER_DOC_PHRASES = {
@@ -436,18 +365,6 @@ GUIDANCE_CARRY_STALE_CURRENT_PHRASES = {
         "把已批准 guidance 冻结进下一次 run 的 runtime surface",
         "面向 support label 的结构化多评估者 proposal layer",
     ),
-    "docs/control-surfaces.md": (
-        "Can freeze only after the ledger schema is stable",
-        "improve command families must be reflected",
-    ),
-    "docs/control-surfaces.zh-CN.md": (
-        "需等 ledger schema 稳定后冻结",
-        "improve 命令族必须在 support matrix 和 help 中一致",
-    ),
-    "docs/modules/improvement.md": (
-        "briefloop improve propose",
-        "Approval is not immediate current-run effect",
-    ),
 }
 README_FIRST_USER_DOC_BLOCKS = {
     "README.md": ("First-user path:", "Architecture reference and contributor docs:"),
@@ -466,8 +383,6 @@ README_FIRST_USER_DOC_BLOCK_FORBIDDEN_LINKS = [
     "docs/features.zh-CN.md",
     "docs/golden-path.md",
     "docs/golden-path.zh-CN.md",
-    "docs/workbuddy.md",
-    "docs/workbuddy.zh-CN.md",
     "docs/weekly-use.md",
     "docs/weekly-use.zh-CN.md",
     "docs/architecture-status.md",
@@ -534,8 +449,6 @@ ARCHIVED_EXPERIMENT_FIRST_USER_SURFACES = (
     "CLAUDE.md",
     "README.md",
     "README.zh-CN.md",
-    ".claude/commands/briefloop.md",
-    ".opencode/commands/briefloop.md",
     "docs/15-minute-pilot.md",
     "docs/15-minute-pilot.zh-CN.md",
     "docs/getting-started.md",
@@ -543,18 +456,9 @@ ARCHIVED_EXPERIMENT_FIRST_USER_SURFACES = (
     "docs/golden-path.zh-CN.md",
     "docs/weekly-loop.md",
     "docs/troubleshooting.md",
-    "docs/workbuddy.md",
-    "docs/workbuddy.zh-CN.md",
-    "docs/workbuddy-smoke-checklist.md",
     "examples/reference-workspaces/industry-weekly-demo/README.md",
-    "integrations/workbuddy/assistant/briefloop-assistant-prompt.md",
 )
-ARCHIVED_EXPERIMENT_FIRST_USER_GLOBS = (
-    ".agents/skills/briefloop-workbuddy/**/*.md",
-    ".codebuddy/skills/briefloop/**/*.md",
-    ".codebuddy/agents/briefloop-*.md",
-    "integrations/workbuddy/briefloop/**/*.md",
-)
+ARCHIVED_EXPERIMENT_FIRST_USER_GLOBS = ()
 PIPX_CURRENT_INSTALL_DOCS = [
     "README.md",
     "README.zh-CN.md",
@@ -575,31 +479,6 @@ EXPECTED_SUPPORT_MATRIX_STATUSES = {
     "ReportSpec / ReportPack baseline contracts": "Supported",
     "Wider Product OS extensions": "Experimental",
 }
-REQUIRED_TOPOLOGY_CONVERGENCE_PHRASES = {
-    "docs/control-surfaces.md": [
-        "Implemented topology satisfaction",
-        "default topology mark Screener satisfied by Scout",
-        "strict topology keeps Screener independent",
-        "candidate_claims.json",
-        "screened_candidates.json",
-        "not a speed or output-quality claim",
-    ],
-    "docs/control-surfaces.zh-CN.md": [
-        "已实现 topology satisfaction",
-        "default topology 可由 Scout 满足 Screener",
-        "strict topology 保留独立 Screener",
-        "candidate_claims.json",
-        "screened_candidates.json",
-        "不是速度或输出质量声明",
-    ],
-}
-FORBIDDEN_TOPOLOGY_CONVERGENCE_PHRASES = [
-    "Mode registry / role topology | Planned v0.8+",
-    "not eligible for v0.11.0 freeze until role convergence has been tested",
-    "Role convergence remains v0.8 work",
-    "角色收敛通过真实测试前不冻结",
-    "角色收敛仍属 v0.8 工作",
-]
 REQUIRED_GOLDEN_PATH_PHRASES = {
     "docs/golden-path.md": [
         "v0.11 product baseline",
@@ -834,7 +713,6 @@ def main() -> int:
     _check_first_user_docs_surface(checks)
     _check_golden_path_surface(checks)
     _check_support_matrix_alignment(checks)
-    _check_topology_convergence_surface(checks)
     _check_reference_run_surface(checks)
 
     ok = all(item["status"] == "pass" for item in checks)
@@ -1403,28 +1281,6 @@ def _check_support_matrix_alignment(checks: list[dict[str, str]]) -> None:
         )
 
 
-def _check_topology_convergence_surface(checks: list[dict[str, str]]) -> None:
-    for rel_path, phrases in REQUIRED_TOPOLOGY_CONVERGENCE_PHRASES.items():
-        raw_text = (ROOT / rel_path).read_text(encoding="utf-8")
-        text = raw_text.lower()
-        missing = [phrase for phrase in phrases if phrase.lower() not in text]
-        forbidden = [
-            phrase
-            for phrase in FORBIDDEN_TOPOLOGY_CONVERGENCE_PHRASES
-            if phrase.lower() in text
-        ]
-        _append_check(
-            checks,
-            f"topology_convergence.{rel_path}.required_current_contract",
-            not missing,
-            f"required phrases missing={missing}",
-        )
-        _append_check(
-            checks,
-            f"topology_convergence.{rel_path}.no_stale_planned_wording",
-            not forbidden,
-            f"stale topology wording={forbidden}",
-        )
 
 
 def _check_golden_path_surface(checks: list[dict[str, str]]) -> None:

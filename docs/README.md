@@ -25,7 +25,6 @@ tree is fully bilingual.
 | Windows PowerShell setup | [windows-powershell.md](windows-powershell.md) | [windows-powershell.zh-CN.md](windows-powershell.zh-CN.md) |
 | Golden path | [golden-path.md](golden-path.md) | [golden-path.zh-CN.md](golden-path.zh-CN.md) |
 | Weekly use script | [weekly-use.md](weekly-use.md) | [weekly-use.zh-CN.md](weekly-use.zh-CN.md) |
-| Launch validation checklist | [launch-validation.md](launch-validation.md) | [launch-validation.zh-CN.md](launch-validation.zh-CN.md) |
 | Release checklist | [release-checklist.md](release-checklist.md) | English-first |
 | v1.0 pilot evidence gate | [v1-pilot-evidence.md](v1-pilot-evidence.md) | English-first |
 | Architecture status | [architecture-status.md](architecture-status.md) | [architecture-status.zh-CN.md](architecture-status.zh-CN.md) |
@@ -34,8 +33,6 @@ tree is fully bilingual.
 | Roadmap | [roadmap.md](roadmap.md) | [roadmap.zh-CN.md](roadmap.zh-CN.md) |
 | BriefLoop naming policy | [briefloop-naming.md](briefloop-naming.md) | English-first |
 | Migration notes | [MIGRATION.md](MIGRATION.md) | [MIGRATION.zh-CN.md](MIGRATION.zh-CN.md) |
-| What BriefLoop tracks | [what-mabw-keeps-track-of.md](what-mabw-keeps-track-of.md) | [what-mabw-keeps-track-of.zh-CN.md](what-mabw-keeps-track-of.zh-CN.md) |
-| Archived 080 experiment guide (`MABW-080` legacy ID) | [experiments-080.md](experiments-080.md) | English-first |
 
 `README_en.md` is retained only as a compatibility pointer to `README.md`.
 
@@ -46,16 +43,12 @@ tree is fully bilingual.
 - [Fifteen-minute pilot](15-minute-pilot.md)
 - [Weekly loop](weekly-loop.md)
 - [Troubleshooting](troubleshooting.md)
-- [Claude Code quickstart](claude-code-quickstart.md)
 - [Function map](features.md)
-- [Runtime agent contract](agent-contract.md)
 - [BriefLoop naming policy](briefloop-naming.md)
 - [Evidence Span Registry](evidence-span-registry.md)
 - [Claim-Support Matrix](claim-support-matrix.md)
-- [Archived 080 experiment guide (`MABW-080` legacy ID)](experiments-080.md)
 - [Onboarding](onboarding.md)
 - [Search backends](search-backends.md)
-- [Runtime recipes](runtime-recipes.md)
 - [Support matrix](support-matrix.md)
 - [Red lines and anti-patterns](red-lines-and-anti-patterns.md)
 - [Release checklist](release-checklist.md)

@@ -318,18 +318,24 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 
 ---
 
-## 🤖 Runtime transition
+## 🤖 Runtime
 
-The former Claude/Hermes/OpenCode/operator JSON-control paths are not entrypoints
-for a new SQLite run. Their retained assets are historical surfaces pending the
-separate legacy deletion unit. Do not use them to continue or migrate a
-JSON-only workspace.
+The active runtime is the SQLite-only Codex ControlStore path. The former
+Claude/Hermes/OpenCode/operator JSON-control paths and their workspace assets
+are deleted; JSON-only workspaces are unsupported and are never imported or
+migrated.
 
-For the active Experimental Codex path, install the packaged workspace kit:
+For the active path, install the packaged workspace kit:
 
 ```bash
 briefloop runtime install --workspace <workspace> --runtime codex
 briefloop run --workspace <workspace> --runtime codex
+```
+
+Then follow the Store-derived next action:
+
+```bash
+briefloop runtime next --workspace <workspace>
 ```
 
 Good next reads:
@@ -337,7 +343,7 @@ Good next reads:
 - [Getting Started](docs/getting-started.md)
 - [Weekly Loop](docs/weekly-loop.md)
 - [Troubleshooting](docs/troubleshooting.md)
-- [Claude Code quickstart](docs/claude-code-quickstart.md)
+- [Golden Path](docs/golden-path.md)
 
 ---
 
@@ -382,9 +388,16 @@ The demos use synthetic materials. They show the evidence chain and gate behavio
 
 ## 🧭 Current status
 
-Current version: **v0.15.1**
+Current version: **v0.15.2**
 
-The v0.15.1 candidate includes Store-qualified post-final review: multiple
+v0.15.2 removes the legacy JSON control-plane runtime. The former
+Claude/Hermes/OpenCode/CodeBuddy/operator paths and their workspace assets,
+role skills, writer commands, and JSON control files are deleted; only the
+SQLite Codex ControlStore runtime remains. This release also removes the
+retired JSON runtime state stack and its dead consumers.
+
+The v0.15.1 prepared release target (development main, not yet tagged)
+includes Store-qualified post-final review: multiple
 append-only, independently Human-authorized assessments on one finalized
 lineage, exact result selection for the secured local Review Session, and
 Human-originated observations with separate guidance approvals. Generation 2
@@ -396,7 +409,7 @@ immutable context. Utility is NOT MEASURED; guidance never supplies evidence
 or changes Claim Ledger, Gate, finalize, delivery, repair, or Core truth.
 There is no automatic learning or implicit next-run reuse.
 
-v0.15.1 entrypoints:
+Current entrypoints:
 
 - CLI: `briefloop`
 - Experimental SQLite-only Codex runtime: `briefloop run --workspace <path>
@@ -439,8 +452,8 @@ Old development workspaces are unsupported when the Store schema changes;
 create a fresh workspace on the current schema. BriefLoop does not ship an
 in-product development-schema upgrade path.
 
-v0.15.1 carries the SQLite-only cutover forward and adds experimental
-post-final review and multi-query source-discovery surfaces:
+The v0.15.1 prepared target carries the SQLite-only cutover forward and adds
+experimental post-final review and multi-query source-discovery surfaces:
 
 - Store-qualified AI Second Opinion supports multiple Human-authorized,
   append-only assessment generations, exact archive-bound replay/projection,
@@ -456,17 +469,12 @@ post-final review and multi-query source-discovery surfaces:
   allows one deterministic 30-day targeted backfill when a task is
   under-covered, and caps only the safe envelope of 800 unique URLs.
 
-The v0.14.0 release completed the SQLite-only cutover and added the original
-read-only interaction surfaces:
+Prior v0.14.0 completed the SQLite-only cutover and added read-only
+interaction surfaces:
 
 - SQLite ControlStore (`briefloop.db`), accepted strict requests, Receipts, and
   ledger relations are the sole runtime authority. JSON-only workspaces are
   unsupported, with no importer, migration, dual read/write, or fallback.
-- the legacy JSON runtime-state stack and its dead consumers are deleted;
-  legacy control files and report/status/Quality Panel exports are
-  non-authoritative projections. Strict action, envelope, and human-request
-  JSON payloads are revalidated against the Store and are not authority by
-  themselves.
 - the packaged Codex Skill follows the exact Store-derived next action and
   Receipt-backed invocation protocol. It does not fall back to `operator` or
   another runtime.

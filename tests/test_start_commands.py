@@ -13,16 +13,13 @@ import pytest
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.cli.init_commands import _init_web_wizard
-from multi_agent_brief.orchestrator.fact_layer_import import (
-    require_fast_rerun_handoff_ready,
-)
 from multi_agent_brief.orchestrator_contract import contract_references_exist
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
 from multi_agent_brief.audience_memory import AUDIENCE_MEMORY_FILES
 from multi_agent_brief.controls.contract import CONTROL_SWITCHBOARD_FILES
 from multi_agent_brief.quality_gates.contract import QUALITY_GATE_STATE_FILES
 from multi_agent_brief.provenance.contract import PROVENANCE_STATE_FILES
-from tests.helpers import write_legacy_control_files, sha256_file as _sha256_file
+from tests.helpers import sha256_file as _sha256_file
 from tests.helpers import write_workspace_files_under
 
 
@@ -227,19 +224,8 @@ def test_start_no_workspace_in_non_workspace_dir(tmp_path, monkeypatch, capsys):
 # ---------------------------------------------------------------------------
 
 
-def test_run_fast_rerun_recipe_requires_fact_layer_import(tmp_path):
-    ws = _write_workspace(tmp_path)
 
-    with pytest.raises(ValueError) as excinfo:
-        require_fast_rerun_handoff_ready(ws)
-    message = str(excinfo.value)
-    assert "E_FAST_RERUN_IMPORT_REQUIRED" in message
-    assert (
-        "briefloop state import-fact-layer --workspace <workspace> "
-        "--archive <output/runs/run_id> "
-        "--runtime <hermes|claude|opencode|codex|codebuddy|operator>"
-    ) in message
-    assert not (ws / "output" / "intermediate" / "agent_handoff.json").exists()
+
 
 
 def test_start_rejects_historical_runtime_without_writes(tmp_path):
@@ -434,22 +420,12 @@ def test_retired_launcher_public_paths_reject_without_writes(
         ],
         "runtime_command_unsupported\n",
     )
-    # legacy JSON control-plane workspaces are refused by every command.
-    ws_legacy = _write_workspace(tmp_path / "legacy")
-    write_legacy_control_files(ws_legacy)
+    # non-codex runtimes are refused on every workspace (SQLite-only runtime).
+    ws_fresh = _write_workspace(tmp_path / "fresh")
     assert_rejected(
-        ws_legacy,
-        [
-            "run",
-            "--runtime",
-            "claude",
-            "--workspace",
-            str(ws_legacy),
-            "--skip-doctor",
-            "--venv",
-            venv,
-        ],
-        "legacy_workspace_unsupported\n",
+        ws_fresh,
+        ["run", "--runtime", "claude", "--workspace", str(ws_fresh), "--skip-doctor", "--venv", venv],
+        "[run] runtime_adapter_unsupported\n",
     )
 
 

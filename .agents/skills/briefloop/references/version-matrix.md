@@ -9,14 +9,17 @@ explicitly classified historical or compatibility surfaces.
 ## Release Lines
 
 - Prior release line: `v0.14.0`.
+- Current release line: `v0.15.2`. It removes the legacy JSON control-plane
+  runtime; the SQLite Codex ControlStore runtime is the only active runtime.
 - Prepared release line: `v0.15.1`.
 - Treat v0.15.1 as a release target until both its tag and non-draft GitHub
   Release exist. After they exist, treat v0.15.1 as the current release. Do
   not infer release status from this file alone.
 
-This skill is verified against the post-v0.14 source tree that is being cut as
-v0.15.1. The skill deliberately contains both version strings so the same
-contract check remains valid before and after the version-only release cut.
+This skill is verified against the post-v0.14 source tree whose current
+release is v0.15.2 and whose prepared solar/schema-18 target is v0.15.1. The
+skill deliberately contains all version strings so the same contract check
+remains valid before and after the version-only release cut.
 
 ## Active Runtime Contract
 

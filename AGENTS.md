@@ -10,9 +10,13 @@ Python CLI commands provide onboarding, workspace setup, runtime handoff, source
 
 This repository contains both development code and runtime agent contracts.
 
-In repository development mode, files under `.agents/skills/`, `.agents/hermes-skills/`, `.claude/agents/`, `.codex/agents/`, and `.opencode/agents/` are source assets to inspect, edit, and test. Their role instructions become active only when the corresponding runtime explicitly invokes that role or skill.
+In repository development mode, files under `.agents/skills/` are hand-maintained
+source assets to inspect, edit, and test. Generated platform adapter assets live
+in the packaged Codex runtime kit and `docs/agents/`. Role instructions become
+active only when the active runtime invokes that role.
 
-Use `briefloop run --workspace <workspace> --runtime operator` to create a generic runtime handoff. The handoff artifact, not this repository manual, is the execution contract for a specific brief run.
+Use `briefloop run --workspace <workspace> --runtime codex` to bootstrap the
+SQLite ControlStore; the Store, not this repository manual, is the execution contract for a specific brief run.
 
 For BriefLoop operator protocol, use `.agents/skills/briefloop/SKILL.md`.
 
@@ -47,27 +51,26 @@ For a real brief workspace:
 ```bash
 briefloop onboard
 briefloop init <workspace> --from-onboarding onboarding.json
-briefloop run --workspace <workspace> --runtime operator
+briefloop run --workspace <workspace> --runtime codex
 ```
 
 For demo exploration:
 
 ```bash
 briefloop init <workspace> --demo
-briefloop run --workspace <workspace> --runtime operator
+briefloop run --workspace <workspace> --runtime codex
 ```
 
-`run` is the standard user-facing runtime handoff launcher. Generic CLI users must select one canonical runtime explicitly; dedicated adapters inject their fixed identity. The public CLI is `briefloop`; `multi-agent-brief` remains a compatibility entrypoint with identical behavior for existing scripts and installs.
+`run` is the standard user-facing runtime handoff launcher. Generic CLI users
+must select one canonical runtime explicitly; the active runtime is `codex`. The
+public CLI is `briefloop`; `multi-agent-brief` remains a compatibility
+entrypoint with identical behavior for existing scripts and installs.
 
 ## Runtime Handoff
 
-Supported runtimes:
-
-- `hermes`: Hermes parent agent uses `delegate_task` children.
-- `claude`: Claude Code uses the repository command workflow.
-- `opencode`: OpenCode uses the repository command and agent files.
-- `codex`: Codex uses repository agent instructions and generated configs.
-- `operator`: host-agnostic workflow for environments without a dedicated adapter. Historical `manual` manifests are read-only until an explicit reset records a canonical runtime.
+The active runtime is `codex`, backed by the packaged SQLite ControlStore kit
+(`briefloop runtime install --runtime codex`). The former Hermes / Claude /
+OpenCode / CodeBuddy / operator runtimes and their workspace assets are deleted.
 
 Canonical workflow:
 
@@ -112,9 +115,9 @@ Before implementing a feature or writing a code plan, answer these questions exp
 1. Which architecture layer does this feature belong to?
 2. Is it runtime state?
 3. Is it a workflow artifact?
-4. Should it enter `artifact_registry.json`?
-5. Should it enter `event_log.jsonl`?
-6. Should it enter `provenance_graph.json`?
+4. Is it Store authority, a strict request, or a replaceable projection?
+5. Should it be an audit/control record or an event?
+6. Should it be exposed in read-only status or Quality Panel projections?
 7. Should it enter the Claim Ledger?
 8. If it is missing or invalid, should it block the run? If yes, which stage and which decision?
 9. Who consumes it: Python tool, Orchestrator, specialist role, or final reader?
@@ -127,7 +130,7 @@ Before implementing a feature or writing a code plan, answer these questions exp
 
 ### Version And Release Semantics
 
-- If a branch, PR, README, changelog, or commit title claims a released version such as `v0.6.0`, update the release source files together: `VERSION`, `pyproject.toml`, `README.md`, `README_en.md`, `CHANGELOG.md`, Hermes skill metadata, and any version defaults in code.
+- If a branch, PR, README, changelog, or commit title claims a released version such as `v0.6.0`, update the release source files together: `VERSION`, `pyproject.toml`, `README.md`, `README_en.md`, `CHANGELOG.md`, and any version defaults in code.
 - If the change is only a pre-release architecture slice, do not describe it as the current released version. Use wording such as "planned", "pre-v0.6", or "v0.6 milestone target".
 - The current version line must describe implemented, tested capability. Roadmap goals are not release notes.
 - Run version checks after any release or version wording change.
@@ -156,9 +159,9 @@ Before implementing a feature or writing a code plan, answer these questions exp
 
 - Update source files first, then regenerate/check generated files.
 - Runtime role source is `configs/agent_roles.yaml`.
-- Hand-maintained skills live under `.agents/skills/` and `.agents/hermes-skills/`.
-- CodeBuddy project role agents live under `.codebuddy/agents/briefloop-*.md`; they are hand-maintained, source-clone-only assets.
-- Generated platform assets live under `.claude/agents/`, `.codex/agents/`, `.opencode/agents/`, and `docs/agents/`.
+- Hand-maintained skills live under `.agents/skills/`.
+- Generated platform assets live in the packaged Codex runtime kit
+  (`src/multi_agent_brief/runtime_kits/codex/`) and `docs/agents/`.
 - When generated platform assets change, run `python3 scripts/generate_agent_configs.py --check` before finishing.
 
 ### CI And Smoke Reliability
@@ -175,9 +178,7 @@ Use `briefloop onboard` for requirement capture. It collects company or organiza
 ## Role Details
 
 - `.agents/skills/*/SKILL.md` — runtime capability contracts, hand-maintained.
-- `.agents/hermes-skills/*/SKILL.md` — Hermes runtime skills and reference files, hand-maintained.
-- `.codebuddy/agents/briefloop-*.md` — CodeBuddy project sub-agent definitions, hand-maintained and source-clone-only.
-- `.claude/agents/*.md`, `.codex/agents/*.toml`, `.opencode/agents/*.md` — generated platform adapter role assets.
+- `src/multi_agent_brief/runtime_kits/codex/` — packaged Codex role agents and skill, generated from `configs/agent_roles.yaml`.
 - `docs/agents/` — generated platform adapter documentation.
 
 ## Artifact Contract
@@ -215,5 +216,5 @@ python3 -m venv /tmp/briefloop-install-smoke
 /tmp/briefloop-install-smoke/bin/briefloop init /tmp/briefloop-smoke --demo --force
 /tmp/briefloop-install-smoke/bin/briefloop doctor --config /tmp/briefloop-smoke/config.yaml
 cd /tmp
-/tmp/briefloop-install-smoke/bin/briefloop run --workspace /tmp/briefloop-smoke --runtime operator --skip-doctor
+/tmp/briefloop-install-smoke/bin/briefloop run --workspace /tmp/briefloop-smoke --runtime codex
 ```

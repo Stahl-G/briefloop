@@ -29,6 +29,7 @@ EXPECTED_PROFILE_IDS = {
     "internet_default",
     "manufacturing_default",
     "solar_manufacturing_default",
+    "solar_stock_default",
 }
 
 
@@ -187,6 +188,7 @@ def test_report_pack_default_policy_profile_reference_is_validated() -> None:
         "management_monthly": "manufacturing_default",
         "market_weekly": "manufacturing_default",
         "solar_industry_periodic": "solar_manufacturing_default",
+        "solar_stock_periodic": "solar_stock_default",
     }
     assert report_registry.get("evidence_extract").default_policy_profile == "evidence_extract_default"
     assert report_registry.get("market_weekly").default_policy_profile == "manufacturing_default"

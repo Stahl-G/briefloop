@@ -190,12 +190,6 @@ Public scope:
 
 Public sequencing after v0.7.0 moves toward FrictionStore, policy packs, reference workflows, and runtime parity while preserving the subagent-first runtime boundary.
 
-Public implementation overviews:
-
-- [Implementation overview index](implementation/README.md)
-- [v0.5.9 Orchestrator Contract Preparation](implementation/v0.5.9-orchestrator-prep.md)
-- [v0.6.0 Explicit Orchestrator Contract](implementation/v0.6.0-explicit-orchestrator-contract.md)
-
 Non-goals:
 
 - no full DAG runtime

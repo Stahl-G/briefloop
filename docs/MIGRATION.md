@@ -20,6 +20,15 @@ This page explains the public architecture migration from older Python-pipeline 
 - `config.yaml` and `sources.yaml` are strict initialization inputs. Their exact
   bytes and normalized bindings are frozen into SQLite; later edits cannot
   change run legality.
+- The legacy JSON control-plane runtime is deleted: its CLI command modules
+  (`state`, `gates`, `feedback`, `repair`, `improve`, `provenance`, `controls`,
+  `approval`, `release`, `inputs`, `semantic-support`, `audit`, `finalize`,
+  `deliver`, `analysis-blocks`, `claude`, `hermes`, `workbuddy`), its workspace
+  runtime assets (generated role agents, role skills, writer commands, Hermes,
+  OpenCode, CodeBuddy, WorkBuddy), and its JSON control files are removed.
+  The workspace authority guard classifies only fresh / sqlite / invalid_sqlite.
+- Do not restore the deleted legacy JSON runtime or its fail-closed command
+  stubs. A workspace is either bootstrapped to SQLite or refused.
 - Tavily discovery authority is distinct from execution authority. The
   Experimental runtime-first route keeps the credential in workspace `.env`
   until explicit Human rotation/removal, but each separately Human-confirmed,

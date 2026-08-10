@@ -456,7 +456,8 @@ def test_public_web_submission_freezes_confirmed_report_window(
 
     workspace = tmp_path / target
     sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
-    assert sources["web_search"]["recency_days"] == max_source_age_days
+    assert sources["web_search"]["recency_days"] == 7
+    assert sources["web_search"]["initial_news_backfill"]["recency_days"] == 30
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         head = store.load_workspace_run_head()
         assert head is not None

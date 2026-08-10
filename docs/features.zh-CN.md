@@ -10,7 +10,7 @@ BriefLoop 的功能很多，因为它不是一个单点报告生成器，而是�
 - **实验性**：已实现，但还不是 v0.11.0 稳定契约。
 - **路线图**：已规划或已定边界，但不是已实现能力。
 
-当前产品基线：**v0.15.1** 延续 `industry-weekly`、`management-monthly`、
+当前产品基线：**v0.15.2** 延续 `industry-weekly`、`management-monthly`、
 `document-review` 的受支持 baseline 入口。更宽的 Product OS surface 仍是实验性，
 除非本页或 support matrix 明确标为受支持。`solar-stock-periodic` 是实验性的
 schema-18 ReportPack，不是稳定产品基线。
@@ -22,11 +22,10 @@ schema-18 ReportPack，不是稳定产品基线。
 | 工作区 onboarding | 收集简报目标、读者、节奏、来源模式和输出偏好，再创建 workspace | 默认在场 | `briefloop onboard`, `briefloop init --from-onboarding` |
 | 产品工作区骨架 | 从受支持的 baseline ReportPack 创建 conservative local-first workspace 和 `report_spec.yaml` | 受支持基线 | `briefloop new industry-weekly <workspace>`, `briefloop new management-monthly <workspace>`, `briefloop new document-review <workspace>` |
 | Solar Stock Periodic 工作区 | 创建 fresh schema-18 的实验性资本市场周报契约和 20 条 Tavily 发现计划 | 实验性 | `briefloop new solar-stock-periodic <workspace>`；实时价格/估值需要单独冻结的行情快照 |
-| Claude writer 命令 | 给写作者提供五动词入口 | 可选启用，一等 writer 路径 | `/briefloop new`, `/briefloop run`, `/briefloop status`, `/briefloop feedback`, `/briefloop deliver`；`/mabw` 保留为兼容 alias |
-| Runtime handoff | 为外部 orchestrator 和 subagents 生成执行交接面 | 默认在场 | `briefloop run --workspace <workspace> --runtime operator` |
+| Runtime handoff | 引导 SQLite ControlStore 并返回 Store 推导的下一动作 | 默认在场 | `briefloop run --workspace <workspace> --runtime codex`, `briefloop runtime next` |
 | 同 workspace 正常 successor | 从已 finalized 的当前 head 启动新 run；只有显式 opt-in 时才原子冻结兼容、active-approved 的 Human guidance | development main 实验性 | `briefloop runtime successor-start --workspace <workspace> --direction-json <json> --run-id <id> --include-approved-guidance`；仅 Analyst/Editor，效用 NOT MEASURED |
-| 状态查看 | 查看当前 stage、blocker、artifact、计时 bucket 和下一步安全动作 | 默认在场 | `/briefloop status`, `briefloop status` |
-| 交付包 | 在 finalize 检查后输出读者可见 Markdown 和 DOCX | 默认在场 | `/briefloop deliver`, `briefloop finalize`, `state finalize-complete` |
+| 状态查看 | 查看 Store 推导的 stage、动作、package readiness 和交付状态 | 默认在场 | `briefloop status --workspace <workspace> --json` |
+| 交付包 | 通过 Store 支撑的交付动作输出读者可见 Markdown 和 DOCX | 默认在场 | `briefloop runtime apply`（交付动作），Store 原生状态 |
 
 ## 来源和输入采集
 

@@ -621,7 +621,6 @@ def _init_workspace(args: argparse.Namespace) -> int:
         f"Next: briefloop run --workspace {target}"
         f" --runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}"
     )
-    print(f"Hermes prompt: briefloop hermes prompt --config {target}/config.yaml")
 
     # Print web-search setup guidance if enabled
     if getattr(profile, "web_search_enabled", False) or getattr(

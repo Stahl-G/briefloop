@@ -60,7 +60,6 @@ class TestCheckReleaseConsistency:
         assert "Minimal comparative evaluation packet passes" in result.stdout
         assert "Launch demo smoke passes" in result.stdout
         assert "Public product rename guard passes" in result.stdout
-        assert "CodeBuddy adapter smoke passes" in result.stdout
         assert "v1.0 pilot evidence shape passes" in result.stdout
         assert "ALL CHECKS PASSED" in result.stdout
 
@@ -229,28 +228,6 @@ class TestCheckReleaseConsistency:
         assert "scripts/check_v1_pilot_evidence.py --require-satisfied" in text
         assert "check_v1_rc_readiness.py --require-satisfied" not in text
 
-    def test_codebuddy_adapter_smoke_failure_prints_diagnostics(self, monkeypatch, capsys):
-        spec = importlib.util.spec_from_file_location("release_consistency_test", SCRIPT)
-        assert spec and spec.loader
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-
-        def fake_run(*args, **kwargs):
-            return subprocess.CompletedProcess(
-                args=args,
-                returncode=1,
-                stdout='{"ok": false, "checks": [{"id": "codebuddy.handoff.contract", "status": "fail"}]}\n',
-                stderr="codebuddy smoke failed\n",
-            )
-
-        monkeypatch.setattr(subprocess, "run", fake_run)
-
-        assert module.check_codebuddy_adapter_smoke() is False
-        output = capsys.readouterr().out
-        assert "CodeBuddy adapter smoke failed" in output
-        assert "codebuddy.handoff.contract" in output
-        assert "codebuddy smoke failed" in output
-
 
 def test_release_consistency_rejects_stale_readme_en_with_pointer_sentence(tmp_path, monkeypatch):
     spec = importlib.util.spec_from_file_location("release_consistency_test", SCRIPT)
@@ -267,39 +244,6 @@ def test_release_consistency_rejects_stale_readme_en_with_pointer_sentence(tmp_p
 
     assert module.readme_en_is_pointer() is False
 
-
-def test_check_version_consistency_fails_on_hermes_adapter_mismatch(tmp_path, monkeypatch):
-    spec = importlib.util.spec_from_file_location("check_version_consistency_test", VERSION_SCRIPT)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    root = tmp_path
-    (root / "VERSION").write_text("1.2.3\n", encoding="utf-8")
-    (root / "pyproject.toml").write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
-    (root / "README.md").write_text("Current version: **v1.2.3**\n", encoding="utf-8")
-    (root / "README_en.md").write_text(README_EN_POINTER, encoding="utf-8")
-    (root / "README.zh-CN.md").write_text("当前版本：**v1.2.3**\n", encoding="utf-8")
-    (root / "CHANGELOG.md").write_text("## [1.2.3]\n", encoding="utf-8")
-
-    package_dir = root / "src" / "multi_agent_brief"
-    package_dir.mkdir(parents=True)
-    (package_dir / "__init__.py").write_text(
-        'from importlib.metadata import version\n__version__ = version("briefloop")\n',
-        encoding="utf-8",
-    )
-    hermes_dir = package_dir / "hermes"
-    hermes_dir.mkdir()
-    (hermes_dir / "adapter.py").write_text('version="v9.9.9"\nversion: 9.9.9\n', encoding="utf-8")
-
-    skill_dir = root / ".agents" / "hermes-skills" / "multi-agent-brief-hermes"
-    skill_dir.mkdir(parents=True)
-    (skill_dir / "SKILL.md").write_text("version: 1.2.3\n", encoding="utf-8")
-
-    monkeypatch.setattr(module, "ROOT", root)
-    monkeypatch.setattr(module, "VERSION_FILE", root / "VERSION")
-
-    assert module.main() == 1
 
 
 def test_bump_version_does_not_rewrite_ruff_target_version(tmp_path, monkeypatch):

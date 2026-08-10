@@ -12,7 +12,7 @@ Status labels:
 - **Experimental**: implemented but not yet a stable v0.11.0 contract.
 - **Roadmap**: planned or scoped, not an implemented capability.
 
-Current product baseline: **v0.15.1** carries the supported baseline entries for
+Current product baseline: **v0.15.2** carries the supported baseline entries for
 `industry-weekly`, `management-monthly`, and `document-review`. Wider
 Product OS surfaces remain experimental unless this page or the support matrix
 marks them supported. `solar-stock-periodic` is an experimental schema-18
@@ -25,11 +25,10 @@ ReportPack, not a stable product baseline.
 | Workspace onboarding | Collects brief purpose, audience, cadence, source mode, and output preferences before creating a workspace | Always on | `briefloop onboard`, `briefloop init --from-onboarding` |
 | Product workspace skeleton | Creates a conservative local-first workspace and `report_spec.yaml` from a supported baseline ReportPack | Supported baseline | `briefloop new industry-weekly <workspace>`, `briefloop new management-monthly <workspace>`, `briefloop new document-review <workspace>` |
 | Solar Stock Periodic workspace | Creates a fresh schema-18 experimental capital-markets weekly contract with a 20-task Tavily discovery plan | Experimental | `briefloop new solar-stock-periodic <workspace>`; live prices/valuation require a separate frozen market-data snapshot |
-| Claude writer command | Gives writers a five-verb interface for normal work | Optional, first-class writer path | `/briefloop new`, `/briefloop run`, `/briefloop status`, `/briefloop feedback`, `/briefloop deliver`; `/mabw` remains a compatibility alias |
-| Runtime handoff | Builds the runtime handoff for the external orchestrator and subagents | Always on | `briefloop run --workspace <workspace> --runtime operator` |
+| Runtime handoff | Bootstraps the SQLite ControlStore and returns the Store-derived next action | Always on | `briefloop run --workspace <workspace> --runtime codex`, `briefloop runtime next` |
 | Normal same-workspace successor | Starts a new run from a finalized current head and atomically freezes compatible active-approved Human guidance only after explicit opt-in | Experimental development main | `briefloop runtime successor-start --workspace <workspace> --direction-json <json> --run-id <id> --include-approved-guidance`; Analyst/Editor only, utility NOT MEASURED |
-| Status view | Shows current stage, blockers, artifacts, timing buckets, and next safe actions | Always on | `/briefloop status`, `briefloop status` |
-| Delivery bundle | Produces reader-facing Markdown and DOCX outputs after finalize checks | Always on | `/briefloop deliver`, `briefloop finalize`, `state finalize-complete` |
+| Status view | Shows the Store-derived stage, action, package readiness, and delivery state | Always on | `briefloop status --workspace <workspace> --json` |
+| Delivery bundle | Produces reader-facing Markdown and DOCX outputs through Store-backed delivery | Always on | `briefloop runtime apply` (delivery actions), Store-native status |
 | Delivery/audit bundle projection | Writes a manifest that separates reader delivery artifacts from audit/control artifacts by hash | Experimental | `briefloop packs bundle --workspace <workspace>` |
 
 ## Source And Input Collection

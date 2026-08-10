@@ -421,7 +421,7 @@ def test_duplicate_bootstrap_key_fails_before_store_creation(tmp_path: Path) -> 
     assert not (workspace / "briefloop.db").exists()
 
 
-def test_json_only_workspace_is_rejected_without_writes(tmp_path: Path) -> None:
+def test_legacy_json_files_do_not_block_sqlite_bootstrap(tmp_path: Path) -> None:
     workspace = _workspace(tmp_path)
     legacy = workspace / "output" / "intermediate" / "workflow_state.json"
     legacy.parent.mkdir(parents=True, exist_ok=True)
@@ -430,12 +430,17 @@ def test_json_only_workspace_is_rejected_without_writes(tmp_path: Path) -> None:
         path: path.read_bytes() for path in workspace.rglob("*") if path.is_file()
     }
 
-    with pytest.raises(RuntimeHostError, match="legacy_workspace_unsupported"):
-        initialize_or_open_runtime(workspace, adapter_loader=_adapter)
+    # A workspace without a Store is fresh regardless of leftover JSON control
+    # files; bootstrap commits the SQLite ControlStore and leaves the legacy
+    # files untouched.
+    initialize_or_open_runtime(workspace, adapter_loader=_adapter)
 
-    after = {path: path.read_bytes() for path in workspace.rglob("*") if path.is_file()}
-    assert after == before
-    assert not (workspace / "briefloop.db").exists()
+    assert (workspace / "briefloop.db").exists()
+    assert (
+        build_store_status_projection(workspace)["authority"]
+        == "sqlite_control_store"
+    )
+    assert legacy.read_bytes() == b"{}"
 
 
 def test_store_status_ignores_forged_legacy_projections(tmp_path: Path) -> None:

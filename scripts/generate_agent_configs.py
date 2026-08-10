@@ -8,11 +8,8 @@ Usage:
     python scripts/generate_agent_configs.py --write
     python scripts/generate_agent_configs.py --check
     python scripts/generate_agent_configs.py --target codex --write
-    python scripts/generate_agent_configs.py --target claude --write
-    python scripts/generate_agent_configs.py --target opencode --write
     python scripts/generate_agent_configs.py --target docs --write
 """
-
 from __future__ import annotations
 
 import argparse
@@ -42,23 +39,8 @@ ORCHESTRATOR_LOOP_TEXT = (
     "delegate specialist -> check expected artifact -> decide continue / retry_stage / "
     "delegate_repair / request_human_review / block_run / finalize"
 )
-CODEX_WRITER_FLOW_PROTOCOL = """Codex writer flow protocol:
-        - When the user asks to inspect a folder, produce a Workspace Card before taking action: workspace path, BriefLoop config found/missing, Codex runtime kit installed/not installed, trust status, input source count, demo-looking sources yes/no, existing output/control state, current workflow_state, and recommended next action.
-        - Trust status is one Workspace Card line, not the main answer.
-        - Do not launch the interactive terminal onboarding wizard inside Codex chat.
-        - For workspace creation, collect onboarding fields in one batch, write onboarding.json, show the values to be written, then run briefloop init --from-onboarding.
-        - Before initializing into an existing directory, check output/intermediate/runtime_manifest.json, workflow_state.json, artifact_registry.json, event_log.jsonl, and output/runs/. If present, ask whether to create a new workspace, overwrite config only while keeping old output, or reset old output/control state before running.
-        - After init or config inspection, show a Source Mode Card: manual local files enabled/disabled, runtime WebSearch enabled/disabled, external API search enabled/disabled, existing source files count, and demo-looking source files yes/no.
-        - If using Codex/runtime WebSearch, write collected public sources into input/sources/ as durable source files.
-        - Do not call the retired briefloop sources decide command. Use the current Store-derived runtime action for authorized source acquisition.
-        - Never merge source_plan_only artifacts into evidence or source authority.
-        - source_candidates.yaml is planning/review only, not evidence.
-        - If runtime_tool search and old demo-looking source files both exist, ask whether to keep or remove the old source files before running.
-        - During production runs, report progress after every successful stage-complete transaction in this form: [stage] produced <artifact> -> stage-complete passed -> next <stage>.
-        - Final status must list the delivery bundle and control status: gates, finalize_report, finalize-complete, and archive.
-"""
 
-TARGETS = {"codex", "claude", "docs", "opencode"}
+TARGETS = {"codex", "docs"}
 PACKAGED_CODEX_ROLE_IDS = (
     "source-planner",
     "source-provider",
@@ -71,40 +53,25 @@ PACKAGED_CODEX_ROLE_IDS = (
 )
 
 SENSITIVE_PATTERNS = [
-    "api_key",
-    "password",
+    "api_key", "password",
 ]
 
 SENSITIVE_CONTEXT_PATTERNS = [
-    "credential",
-    "token",
-    "webhook",
-    "private path",
-    "customer name",
-    "internal report",
-    "secret",
+    "credential", "token", "webhook", "private path", "customer name",
+    "internal report", "secret",
 ]
 
 # Lines containing these guardrail phrases are allowed to mention sensitive words
 SENSITIVE_EXEMPTIONS = [
-    "do not commit",
-    "do not store",
-    "do not expose",
-    "do not put",
-    "do not place",
-    "do not import",
-    "do not migrate",
-    "do not copy",
-    "do not save",
-    "do not include",
-    "do not provide",
+    "do not commit", "do not store", "do not expose", "do not put",
+    "do not place", "do not import", "do not migrate", "do not copy",
+    "do not save", "do not include", "do not provide",
 ]
 
 
 # ---------------------------------------------------------------------------
 # Manifest I/O
 # ---------------------------------------------------------------------------
-
 
 def load_manifest(path: Path = MANIFEST_PATH) -> dict[str, Any]:
     if yaml is None:
@@ -124,29 +91,12 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
 
     project = manifest["project"]
     pipeline = project.get("pipeline", [])
-    expected_pipeline = [
-        "scout",
-        "screener",
-        "claim-ledger",
-        "analyst",
-        "editor",
-        "auditor",
-        "formatter",
-    ]
+    expected_pipeline = ["scout", "screener", "claim-ledger", "analyst", "editor", "auditor", "formatter"]
     if pipeline != expected_pipeline:
-        raise ValueError(
-            f"Subagent workflow mismatch: got {pipeline}, expected {expected_pipeline}"
-        )
+        raise ValueError(f"Subagent workflow mismatch: got {pipeline}, expected {expected_pipeline}")
 
     roles = manifest["roles"]
-    required_fields = [
-        "stage",
-        "tool_profile",
-        "description",
-        "trigger",
-        "responsibilities",
-        "hard_rules",
-    ]
+    required_fields = ["stage", "tool_profile", "description", "trigger", "responsibilities", "hard_rules"]
     for name, role in roles.items():
         for field in required_fields:
             if field not in role:
@@ -160,19 +110,8 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 def _join_lines(items: list[str], indent: str = "- ") -> str:
     return "\n".join(f"{indent}{item}" for item in items)
-
-
-def _role_tools(role: dict, profiles: dict) -> list[str]:
-    tp = role["tool_profile"]
-    return profiles[tp]["claude_tools"]
-
-
-def _role_codex_mode(role: dict, profiles: dict) -> str:
-    tp = role["tool_profile"]
-    return profiles[tp]["codex_mode"]
 
 
 def _sensitive_check(text: str, context: str) -> list[str]:
@@ -203,16 +142,13 @@ def _toml_literal_multiline_string(value: str) -> str:
     backslashes as escapes. Literal strings keep the instructions byte-for-byte.
     """
     if "'''" in value:
-        raise ValueError(
-            "Codex developer_instructions cannot contain TOML literal string delimiter."
-        )
+        raise ValueError("Codex developer_instructions cannot contain TOML literal string delimiter.")
     return "'''\n" + value.rstrip() + "\n'''"
 
 
 # ---------------------------------------------------------------------------
 # Codex config.toml
 # ---------------------------------------------------------------------------
-
 
 def render_codex_config(manifest: dict) -> str:
     return textwrap.dedent(f"""\
@@ -227,70 +163,6 @@ def render_codex_config(manifest: dict) -> str:
 # ---------------------------------------------------------------------------
 # Codex agent TOML
 # ---------------------------------------------------------------------------
-
-
-def render_codex_agent(role_name: str, role: dict, manifest: dict) -> str:
-    profiles = manifest["tool_profiles"]
-    mode = _role_codex_mode(role, profiles)
-
-    resp = "\n".join(f"        - {r}" for r in role["responsibilities"])
-    rules = "\n".join(f"        - {r}" for r in role["hard_rules"])
-    title = role_name.replace("-", " ").title()
-    desc = _toml_basic_string(str(role["description"]))
-    trigger = role["trigger"]
-
-    if role_name == "orchestrator":
-        role_intro = (
-            "You are the Orchestrator main agent for multi-agent-brief-workflow."
-        )
-        workflow_title = "Orchestrator control loop:"
-        workflow_text = ORCHESTRATOR_LOOP_TEXT
-        repository_rules = (
-            "        - Keep briefloop run as a handoff launcher.\n"
-            "        - Keep Python as tools, validators, and renderers.\n"
-            "        - Keep public examples synthetic or public-safe.\n"
-            "        - Run python -m pytest -q after behavior changes.\n"
-            "        - On Windows, use .\\scripts\\setup.ps1 and native PowerShell; WSL is optional.\n"
-        )
-    else:
-        role_intro = f"You are the {title} agent for multi-agent-brief-workflow."
-        workflow_title = "Subagent workflow:"
-        workflow_text = PIPELINE_TEXT
-        repository_rules = (
-            "        - Preserve Screener, Claim Ledger, and audit gates.\n"
-            "        - Keep public examples synthetic or public-safe.\n"
-            "        - Run python -m pytest -q after behavior changes.\n"
-            "        - On Windows, use .\\scripts\\setup.ps1 and native PowerShell; WSL is optional.\n"
-        )
-
-    instructions = (
-        f"{role_intro}\n"
-        f"\n"
-        f"{workflow_title}\n"
-        f"{workflow_text}\n"
-        f"\n"
-        f"When to use:\n"
-        f"{trigger}\n"
-        f"\n"
-        f"Responsibilities:\n"
-        f"{resp}\n"
-        f"\n"
-        f"Guardrails:\n"
-        f"{rules}\n"
-        f"\n"
-        f"Repository rules:\n"
-        f"{repository_rules}"
-    )
-    if role_name == "orchestrator":
-        instructions = f"{instructions}\n{CODEX_WRITER_FLOW_PROTOCOL}"
-    return (
-        f"{AUTOGEN_HEADER_TOML}\n"
-        f"\n"
-        f'name = "{role_name}"\n'
-        f"description = {desc}\n"
-        f"developer_instructions = {_toml_literal_multiline_string(instructions)}\n"
-    )
-
 
 def render_packaged_codex_agent(role_name: str, role: dict) -> str:
     description = _toml_basic_string(str(role["description"]))
@@ -309,13 +181,6 @@ def render_packaged_codex_agent(role_name: str, role: dict) -> str:
         "before returning; do not guess JSON wrappers, aliases, or fields. "
         "Return control to the root host after the proposal is complete."
     )
-    if role_name == "source-provider":
-        instructions += (
-            " The deterministic runtime host is the sole provider-I/O owner: "
-            "do not call Tavily or any external provider, open a network "
-            "connection, read credentials, or write sources.yaml during this "
-            "v2 invocation."
-        )
     return (
         f"{AUTOGEN_HEADER_TOML}\n\n"
         f'name = "{role_name}"\n'
@@ -323,84 +188,6 @@ def render_packaged_codex_agent(role_name: str, role: dict) -> str:
         f"developer_instructions = "
         f"{_toml_literal_multiline_string(instructions)}\n"
     )
-
-
-# ---------------------------------------------------------------------------
-# Claude Code agent .md
-# ---------------------------------------------------------------------------
-
-
-def render_claude_agent(role_name: str, role: dict, manifest: dict) -> str:
-    profiles = manifest["tool_profiles"]
-    tools = _role_tools(role, profiles)
-    tools_str = ", ".join(tools)
-    title = role_name.replace("-", " ").title()
-    desc = role["description"]
-    trigger = role["trigger"]
-    model = role.get("model", "inherit")
-
-    resp = "\n".join(f"- {r}" for r in role["responsibilities"])
-    rules = "\n".join(f"- {r}" for r in role["hard_rules"])
-
-    if role_name == "orchestrator":
-        role_intro = (
-            "You are the Orchestrator main agent for `multi-agent-brief-workflow`."
-        )
-        workflow_title = "Orchestrator control loop:"
-        workflow_text = ORCHESTRATOR_LOOP_TEXT
-        repository_rules = (
-            "- Keep `briefloop run` as a handoff launcher.\n"
-            "- Keep Python as tools, validators, and renderers.\n"
-            "- Keep public examples synthetic or public-safe.\n"
-            "- Run `python -m pytest -q` after behavior changes.\n"
-            "- On Windows, use `.\\scripts\\setup.ps1` in native PowerShell; WSL is optional.\n"
-        )
-    else:
-        role_intro = f"You are the {title} subagent for `multi-agent-brief-workflow`."
-        workflow_title = "Subagent workflow:"
-        workflow_text = PIPELINE_TEXT
-        repository_rules = (
-            "- Preserve Screener, Claim Ledger, and audit gates.\n"
-            "- Keep public examples synthetic or public-safe.\n"
-            "- Run `python -m pytest -q` after behavior changes.\n"
-            "- On Windows, use `.\\scripts\\setup.ps1` in native PowerShell; WSL is optional.\n"
-        )
-
-    return (
-        f"---\n"
-        f"name: {role_name}\n"
-        f"description: {desc} {trigger}\n"
-        f"tools: {tools_str}\n"
-        f"model: {model}\n"
-        f"---\n"
-        f"\n"
-        f"{role_intro}\n"
-        f"\n"
-        f"{workflow_title}\n"
-        f"\n"
-        f"```text\n"
-        f"{workflow_text}\n"
-        f"```\n"
-        f"\n"
-        f"When to use:\n"
-        f"{trigger}\n"
-        f"\n"
-        f"Responsibilities:\n"
-        f"{resp}\n"
-        f"\n"
-        f"Guardrails:\n"
-        f"{rules}\n"
-        f"\n"
-        f"Repository rules:\n"
-        f"{repository_rules}"
-    )
-
-
-# ---------------------------------------------------------------------------
-# Docs
-# ---------------------------------------------------------------------------
-
-
 def render_docs(manifest: dict) -> dict[str, str]:
     roles = manifest["roles"]
     project = manifest["project"]
@@ -455,25 +242,27 @@ def render_docs(manifest: dict) -> dict[str, str]:
 
         | Platform | Location | Format |
         |----------|----------|--------|
-        | Codex agents | `.codex/agents/*.toml` | TOML |
+        | Packaged Codex runtime kit | `src/multi_agent_brief/runtime_kits/codex/` | TOML |
         | Skills | `.agents/skills/*/SKILL.md` | Markdown + YAML frontmatter, hand-maintained |
-        | Claude Code | `.claude/agents/*.md` | Markdown + YAML frontmatter |
-        | OpenCode | `.opencode/agents/*.md` | Markdown + YAML frontmatter |
         | Project instructions | `AGENTS.md` | Markdown, hand-maintained |
     """)
 
     # docs/agents/codex.md
     codex_roles = "\n".join(
-        f"- `{name}.toml` — {role['description']}" for name, role in roles.items()
+        f"- `briefloop-{name}.toml` — {roles[name]['description']}"
+        for name in PACKAGED_CODEX_ROLE_IDS
     )
     codex = textwrap.dedent(f"""\
         {AUTOGEN_HEADER_MD}
 
         # Codex Agent Configuration
 
-        ## Custom Agents
+        ## Packaged Runtime Kit
 
-        Located in `.codex/agents/`:
+        The active Codex ControlStore runtime kit lives in
+        `src/multi_agent_brief/runtime_kits/codex/` and is installed into
+        workspaces by `briefloop runtime install --runtime codex`. Its agent
+        inventory is hash-bound into the Store adapter binding.
 
         {codex_roles}
 
@@ -491,81 +280,11 @@ def render_docs(manifest: dict) -> dict[str, str]:
 
         ## Config
 
-        `.codex/config.toml` sets:
+        `config.toml` sets:
 
         ```toml
         max_threads = 6
         max_depth = 1
-        ```
-    """)
-
-    # docs/agents/claude-code.md
-    claude_roles = "\n".join(
-        f"- `{name}.md` — {role['description']}" for name, role in roles.items()
-    )
-    claude = textwrap.dedent(f"""\
-        {AUTOGEN_HEADER_MD}
-
-        # Claude Code Subagent Configuration
-
-        ## Subagents
-
-        Located in `.claude/agents/`:
-
-        {claude_roles}
-
-        Each subagent Markdown file has YAML frontmatter with:
-
-        - `name`
-        - `description`
-        - `tools` (mapped from tool_profiles)
-        - `model: inherit`
-
-        ## Tool Profiles
-
-        | Profile | Tools | Use |
-        |---------|-------|-----|
-        | read_only | Read, Grep, Glob, Bash | Scout |
-        | edit_safe | Read, Grep, Glob, Bash, Edit, MultiEdit, Write | Most workflow agents |
-        | audit_edit | Read, Grep, Glob, Bash, Edit, MultiEdit, Write | Audit and harness agents |
-
-        ## Worktree Isolation
-
-        By default, subagents share the current workspace. For risky parallel implementation tasks, users can enable worktree isolation in the agent definition or at invocation time.
-    """)
-
-    # docs/agents/opencode.md
-    opencode_roles = "\n".join(
-        f"- `brief-{name}.md` — {role['description']}" for name, role in roles.items()
-    )
-    opencode = textwrap.dedent(f"""\
-        {AUTOGEN_HEADER_MD}
-
-        # OpenCode Agent Configuration
-
-        ## Agents
-
-        Located in `.opencode/agents/` with `brief-` prefix:
-
-        {opencode_roles}
-
-        Each agent Markdown file has YAML frontmatter with:
-
-        - `description`
-        - `mode`: primary (brief-orchestrator) or subagent
-        - `hidden`: true for workflow-internal roles
-        - `permission`: mapped from tool_profiles (edit, bash, network, task)
-
-        ## Command
-
-        The BriefLoop command is defined in `.opencode/commands/briefloop.md`.
-        `.opencode/commands/generate-brief.md` remains a compatibility copy.
-
-        ## Generation
-
-        ```bash
-        python scripts/generate_agent_configs.py --target opencode --write
-        python scripts/generate_agent_configs.py --target opencode --check
         ```
     """)
 
@@ -582,7 +301,7 @@ def render_docs(manifest: dict) -> dict[str, str]:
         Purpose:
 
         ```text
-        auditor subagent -> CompositeAuditAgent -> DeterministicAuditAgent -> QualityHarnessAuditAgent
+        auditor subagent -> CompositeAuditAgent -> DeterministicAuditAgent -> QualityHarnessAuditAgent -> optional semantic audit adapter
         ```
 
         Responsible subagent:
@@ -653,18 +372,15 @@ def render_docs(manifest: dict) -> dict[str, str]:
     # docs/agents/manifest.md
     pipeline_roles = "\n".join(
         f"- **{name}** ({role['stage']})"
-        for name, role in roles.items()
-        if role["stage"] == "pipeline"
+        for name, role in roles.items() if role["stage"] == "pipeline"
     )
     harness_roles = "\n".join(
         f"- **{name}** ({role['stage']})"
-        for name, role in roles.items()
-        if role["stage"] == "harness"
+        for name, role in roles.items() if role["stage"] == "harness"
     )
     coord_roles = "\n".join(
         f"- **{name}** ({role['stage']})"
-        for name, role in roles.items()
-        if role["stage"] == "coordination"
+        for name, role in roles.items() if role["stage"] == "coordination"
     )
     manifest_doc = (
         f"{AUTOGEN_HEADER_MD}\n"
@@ -726,348 +442,10 @@ def render_docs(manifest: dict) -> dict[str, str]:
     return {
         "docs/agents/README.md": readme.strip() + "\n",
         "docs/agents/codex.md": codex.strip() + "\n",
-        "docs/agents/claude-code.md": claude.strip() + "\n",
-        "docs/agents/opencode.md": opencode.strip() + "\n",
         "docs/agents/harness-subagents.md": harness.strip() + "\n",
         "docs/agents/manifest.md": manifest_doc.strip() + "\n",
     }
 
-
-def _opencode_agent_name(role_name: str) -> str:
-    """Map a role name to an OpenCode-safe agent name with brief- prefix."""
-    return f"brief-{role_name}"
-
-
-def _opencode_visible_roles() -> set[str]:
-    """Roles that are visible (not hidden) in OpenCode agent list."""
-    return {
-        "orchestrator",
-        "source-provider",
-        "source-planner",
-        "analyst",
-        "auditor",
-        "market-competitor-planner",
-        "market-competitor-analyst",
-        "market-competitor-auditor",
-    }
-
-
-def _opencode_tool_profile_to_permission(tp: dict, role_name: str) -> dict:
-    """Map a tool_profile to OpenCode permission block.
-
-    Returns a dict suitable for YAML serialisation as the 'permission' field.
-    For read-only profiles, restrict edit access. For edit profiles, allow.
-    """
-    may_edit = tp.get("may_edit", False)
-    tools = tp.get("claude_tools", [])
-    has_network = "WebFetch" in tools
-
-    perm: dict[str, Any] = {}
-
-    # Edit permission
-    if may_edit:
-        edit_allow: list[str] = []
-        if role_name in ("formatter",):
-            edit_allow.append("output/**")
-        elif role_name in (
-            "auditor",
-            "draft-audit-harness",
-            "final-quality-harness",
-            "rendered-output-harness",
-        ):
-            edit_allow.append("output/intermediate/audit_report.json")
-            edit_allow.append("output/intermediate/audited_brief.md")
-        elif role_name == "source-planner":
-            edit_allow.append("source_candidates.yaml")
-            edit_allow.append("sources.yaml")
-        else:
-            edit_allow.append("*")
-        # Deny everything else, allow specific paths
-        perm["edit"] = {"*": "deny"}
-        for path in edit_allow:
-            perm["edit"][path] = "allow"
-    else:
-        perm["edit"] = {"*": "deny"}
-
-    # Bash permission — allow for all, but ask for read-only roles
-    if may_edit:
-        perm["bash"] = {"*": "allow"}
-    else:
-        perm["bash"] = {"*": "ask"}
-
-    # The v2 source-provider is proposal-only; the deterministic runtime owns
-    # all provider I/O. Source planning may still use its configured discovery
-    # tools, but source-provider itself must never open the network.
-    if role_name == "source-planner":
-        perm["network"] = {"*": "allow"}
-    else:
-        perm["network"] = {"*": "deny"}
-
-    # Task — orchestrator alone gets to invoke subagents
-    if role_name == "orchestrator":
-        perm["task"] = {"*": "deny", "brief-*": "allow"}
-    else:
-        perm["task"] = {"*": "deny"}
-
-    return perm
-
-
-def render_opencode_agent(role_name: str, role: dict, manifest: dict) -> str:
-    """Render an OpenCode agent in .opencode/agents/<name>.md format."""
-    profiles = manifest["tool_profiles"]
-    tp = profiles[role["tool_profile"]]
-    agent_name = _opencode_agent_name(role_name)
-
-    desc = role["description"]
-    trigger = role["trigger"]
-    opencode_mode = "primary" if role_name == "orchestrator" else "subagent"
-    hidden = role_name not in _opencode_visible_roles()
-
-    resp = "\n".join(f"- {r}" for r in role["responsibilities"])
-    rules = "\n".join(f"- {r}" for r in role["hard_rules"])
-
-    # Build permission block
-    permission = _opencode_tool_profile_to_permission(tp, role_name)
-    permission_yaml = yaml.dump(
-        permission, default_flow_style=False, sort_keys=False
-    ).strip()
-
-    lines = ["---"]
-    lines.append(f"description: {desc}")
-    lines.append(f"mode: {opencode_mode}")
-    if hidden:
-        lines.append("hidden: true")
-    lines.append("permission:")
-    # Indent the permission YAML
-    for perm_line in permission_yaml.splitlines():
-        lines.append(f"  {perm_line}")
-    lines.append("---")
-    lines.append("")
-    if role_name == "orchestrator":
-        lines.append(
-            "You are the Orchestrator main agent for multi-agent-brief-workflow."
-        )
-        lines.append("")
-        lines.append("Orchestrator control loop:")
-        lines.append("")
-        lines.append("```text")
-        lines.append(ORCHESTRATOR_LOOP_TEXT)
-        lines.append("```")
-        lines.append("")
-        lines.append("Contract references:")
-        lines.append("- configs/orchestrator_contract.yaml")
-        lines.append("- configs/stage_specs.yaml")
-        lines.append("- configs/artifact_contracts.yaml")
-        lines.append("- configs/policy_packs/default.yaml")
-    else:
-        lines.append(f"You are the {desc}")
-        lines.append("")
-        lines.append("Subagent workflow:")
-        lines.append("")
-        lines.append("```text")
-        lines.append(PIPELINE_TEXT)
-        lines.append("```")
-    lines.append("")
-    lines.append("When to use:")
-    lines.append(trigger)
-    lines.append("")
-    lines.append("Responsibilities:")
-    lines.append(resp)
-    lines.append("")
-    lines.append("Guardrails:")
-    lines.append(rules)
-
-    return "\n".join(lines) + "\n"
-
-
-def render_opencode_agents(manifest: dict) -> dict[str, str]:
-    """Render all OpenCode agent files. Returns {rel_path: content}."""
-    roles = manifest["roles"]
-    result: dict[str, str] = {}
-    for name, role in roles.items():
-        rel = f".opencode/agents/{_opencode_agent_name(name)}.md"
-        result[rel] = render_opencode_agent(name, role, manifest)
-    return result
-
-
-def render_opencode_command_generate_brief(manifest: dict) -> str:
-    """Render the BriefLoop command for OpenCode."""
-    _ = manifest  # used for future workflow extraction
-    return (
-        "---\n"
-        "description: Generate a real source-grounded and audited brief\n"
-        "agent: brief-orchestrator\n"
-        "subtask: false\n"
-        "---\n"
-        "\n"
-        "You are the Orchestrator main agent generating a real user-facing brief for workspace: $ARGUMENTS\n"
-        "\n"
-        "BriefLoop uses an Orchestrator-led external subagent workflow. Python CLI commands provide setup,\n"
-        "source discovery, input governance, audit checks, validation helpers, and final rendering tools.\n"
-        "\n"
-        "Read contract references before delegation:\n"
-        "\n"
-        "- `configs/orchestrator_contract.yaml`\n"
-        "- `configs/stage_specs.yaml`\n"
-        "- `configs/artifact_contracts.yaml`\n"
-        "- `configs/policy_packs/default.yaml`\n"
-        "\n"
-        "Use this Orchestrator loop for every stage:\n"
-        "\n"
-        "1. Read workspace context, frozen audience profile snapshot, control switchboard, and contract references.\n"
-        "2. Identify the current stage and expected artifact.\n"
-        "3. Delegate the specialist role or run the Python tool.\n"
-        "4. Check the expected artifact before continuing.\n"
-        "5. Decide: continue, retry_stage, delegate_repair, request_human_review, block_run, or finalize.\n"
-        "\n"
-        "Stage sequence:\n"
-        "\n"
-        "1. Initialize runtime handoff/control context:\n"
-        "   - Run: `briefloop run --workspace $ARGUMENTS --runtime opencode --skip-doctor`\n"
-        "   - Read `$ARGUMENTS/output/intermediate/agent_handoff.md`.\n"
-        "   - Read `$ARGUMENTS/output/intermediate/audience_profile_snapshot.md`.\n"
-        "   - Read `$ARGUMENTS/output/intermediate/orchestrator_control_switchboard.json`.\n"
-        "   - Summarize relevant taste guidance for delegated roles.\n"
-        "   - Do not treat `audience_profile.md` as source evidence; mid-run profile edits apply to the next run.\n"
-        "   - Record control choices with `briefloop controls select`; selection is not execution.\n"
-        "   - Do not call `briefloop run` again mid-pipeline to refresh handoff or state. Use `briefloop status`, `state show`, `gates check`, `state check`, and repair commands instead.\n"
-        "\n"
-        "2. Read `$ARGUMENTS/config.yaml`, `$ARGUMENTS/sources.yaml`, `$ARGUMENTS/user.md`, and workspace inputs.\n"
-        "\n"
-        "3. **Source discovery gate (llm_decide only):**\n"
-        "   If `sources.yaml` has `source.mode: llm_decide` and `source_candidates.yaml` "
-        "does not exist or needs refinement:\n"
-        "   - Delegate Source Planner to create or refine `$ARGUMENTS/source_candidates.yaml` as a plan-only artifact.\n"
-        "   - Review the plan, then use the current Store-derived `briefloop runtime continue --workspace $ARGUMENTS` action for authorized acquisition.\n"
-        "   - Never merge the plan through the retired `briefloop sources decide` command.\n"
-        "\n"
-        "4. **Doctor gate:**\n"
-        "   - Run: `briefloop doctor --config $ARGUMENTS/config.yaml`\n"
-        "   - Fix any issues before proceeding.\n"
-        "\n"
-        "5. **Input governance gate:**\n"
-        "   - Run: `briefloop inputs classify --config $ARGUMENTS/config.yaml`\n"
-        "   - Pass only evidence inputs to the scout subagent.\n"
-        "\n"
-        "6. Read `configs/policy_packs/default.yaml` and apply role topology:\n"
-        "   - `default`: Scout performs discovery + screening and writes both `candidate_claims.json` and `screened_candidates.json`.\n"
-        "     Do not delegate Screener and do not call `state stage-complete --stage screener` in default topology.\n"
-        "   - `strict`: Scout writes only `candidate_claims.json`; then Screener writes `screened_candidates.json`.\n"
-        "   - In all modes both artifacts are required before Claim Ledger.\n"
-        "   - Optional chunk parallelism is parent-side only: chunk outputs are scratch/intermediate runtime material, not workflow artifacts.\n"
-        "   - If Scout work is split across chunks or child agents, the parent must join chunks deterministically before writing `candidate_claims.json`, using source identity, source path or URL, source date, topic, and evidence text rather than completion order.\n"
-        "   - Source identity must preserve `source_url` only for HTTP(S) URLs or `source_path` for local/package sources, plus source title/name, publisher when known, source_category, provider source_type, source dates, and evidence text.\n"
-        "   - Never put titles, source names, source IDs, search queries, or local paths in `source_url`.\n"
-        "   - Do not append to `candidate_claims.json` from chunk workers, and do not silently drop duplicate or near-duplicate chunk outputs.\n"
-        "\n"
-        "7. Delegate the **brief-scout** subagent:\n"
-        "   - Read approved source materials, evidence inputs, and cached packages.\n"
-        "   - Extract candidate reportable items.\n"
-        "   - Write `$ARGUMENTS/output/intermediate/candidate_claims.json`.\n"
-        "   - In default topology, screen candidates and write `$ARGUMENTS/output/intermediate/screened_candidates.json` before recording `stage-complete --stage scout`.\n"
-        "   - Do not replay Screener delegation or `stage-complete --stage screener` in default topology.\n"
-        "\n"
-        "8. Strict topology only: check `candidate_claims.json`, then delegate the **brief-screener** subagent:\n"
-        "   - Dedupe, rank, freshness-check, and cap candidates.\n"
-        "   - Write `$ARGUMENTS/output/intermediate/screened_candidates.json`.\n"
-        "\n"
-        "9. Check `screened_candidates.json`, then delegate the **brief-claim-ledger** subagent:\n"
-        "   - Convert screened candidates into source-grounded claim drafts without claim_id fields.\n"
-        "   - Preserve source URL/path, source title/name, publisher, source_category, provider source_type, published/retrieved dates, topic, claim type, confidence, and evidence text.\n"
-        "   - Never put titles, source names, source IDs, search queries, or local paths in `source_url`.\n"
-        "   - Write `$ARGUMENTS/output/intermediate/claim_drafts.json`.\n"
-        "   - Run: `briefloop state freeze-claim-ledger --workspace $ARGUMENTS`.\n"
-        "   - Confirm freeze produced `$ARGUMENTS/output/intermediate/claim_ledger.json` before `stage-complete --stage claim-ledger`.\n"
-        "\n"
-        "10. Read `$ARGUMENTS/output/intermediate/claim_ledger.json` and `$ARGUMENTS/user.md`.\n"
-        "\n"
-        "11. Check `claim_ledger.json`, then delegate the **brief-analyst** subagent:\n"
-        "   - Write the Analyst working draft from `claim_ledger.json` and `user.md`.\n"
-        "   - Use only `claim_ledger.json` as source evidence.\n"
-        "   - If `atomic_claim_graph.json` is present and valid, use it only as an optional experimental structural decomposition aid for frozen Claim Ledger claims; it is not source evidence or proof of support.\n"
-        "   - Preserve all valid [src:<claim_id>] citations that use real Claim Ledger IDs.\n"
-        "   - Do not cite atom IDs in reader-facing prose.\n"
-        "   - Do not introduce material atoms absent from the frozen Claim Ledger and, when present and valid, `atomic_claim_graph.json`.\n"
-        "   - Do not create, edit, rewrite, repair, or extend `$ARGUMENTS/output/intermediate/atomic_claim_graph.json`; if it is absent or invalid, do not repair it.\n"
-        "   - Write the working auditable brief to `$ARGUMENTS/output/intermediate/audited_brief.md`.\n"
-        "   - Do not write `$ARGUMENTS/output/intermediate/analyst_draft_snapshot.md`; Python freezes it during analyst stage-complete.\n"
-        "\n"
-        "12. After analyst stage-complete freezes `analyst_draft_snapshot.md`, delegate the **brief-editor** / Delivery Editor subagent:\n"
-        "    - Read `$ARGUMENTS/output/intermediate/analyst_draft_snapshot.md` as the frozen factual boundary.\n"
-        "    - Own the Editor-owned final auditable brief at `$ARGUMENTS/output/intermediate/audited_brief.md`.\n"
-        "    - Polish for management / research team readability.\n"
-        "    - Do not add new facts, numbers, named entities, dates, causal claims, or citations.\n"
-        "    - If `$ARGUMENTS/output/intermediate/atomic_claim_graph.json` is present and valid, use it only as an optional experimental structural decomposition aid; if it is absent or invalid, do not repair it.\n"
-        "    - Do not create, edit, rewrite, repair, or extend `$ARGUMENTS/output/intermediate/atomic_claim_graph.json`.\n"
-        "    - Do not introduce material atoms absent from the frozen Claim Ledger and, when present and valid, `atomic_claim_graph.json`.\n"
-        "    - Do not cite atom IDs in reader-facing prose.\n"
-        "    - Preserve valid [src:<claim_id>] in `audited_brief.md` that use real Claim Ledger IDs.\n"
-        "\n"
-        "13. Check edited `audited_brief.md`, then delegate the **brief-auditor** subagent:\n"
-        "    - Audit `$ARGUMENTS/output/intermediate/audited_brief.md` against "
-        "`$ARGUMENTS/output/intermediate/claim_ledger.json`.\n"
-        "\n"
-        "14. Check `audit_report.json`, then run quality gates and refresh runtime state before finalize:\n"
-        '    - Confirm quality gate selection in `control_selections.json`, or record it with `briefloop controls select --workspace $ARGUMENTS --control quality_gates --selection enable --reason "Use quality gates before finalize."`\n'
-        "    - Run: `briefloop gates check --workspace $ARGUMENTS --stage auditor`\n"
-        "    - Run: `briefloop state check --workspace $ARGUMENTS --strict`\n"
-        '    - If state is not blocked, run: `briefloop state stage-complete --workspace $ARGUMENTS --stage auditor --reason "Audit and quality gates passed."`\n'
-        "    - If state is blocked, do not edit artifacts directly and do not finalize.\n"
-        "    - Do not edit frozen artifacts directly. Direct edits will mark the run contaminated and non-reference-eligible.\n"
-        "    - Run: `briefloop gates show --workspace $ARGUMENTS --json` and follow its required_commands.\n"
-        "    - Current-gate repair start must be scoped with `--gate-stage` and `--gate-artifact`; do not use unscoped repair start for current-gate blockers.\n"
-        "    - For non-gate owner-stage repair routes from audit_report, finalize_report, artifact_registry, or transaction_integrity, run: `briefloop repair route --workspace $ARGUMENTS --json`.\n"
-        "    - Start the selected non-gate route with `--finding-id <finding_id>` or `--route-index <route_index>`; do not use bare `repair start --workspace $ARGUMENTS`.\n"
-        "    - If the current gate has an owner-stage repair route:\n"
-        "      1. Run the scoped repair start command from `gates show` required_commands.\n"
-        "      2. Delegate only the reported repair_owner role.\n"
-        "      3. Allow edits only to the reported allowed_artifacts.\n"
-        "      4. Do not edit blocked_direct_edits or any frozen artifact outside allowed_artifacts.\n"
-        '      5. After the owner role finishes, run: `briefloop repair complete --workspace $ARGUMENTS --reason "<reason>" --json`\n'
-        "      6. Resume from must_rerun_from. If must_rerun_from is auditor, rerun Auditor and then gates/state check.\n"
-        "    - If no deterministic current-gate repair route is available, choose request_human_review or block_run.\n"
-        "    - Never use state decide delegate_repair to authorize artifact edits.\n"
-        "    - Never manually update artifact_registry.json or frozen hashes.\n"
-        "\n"
-        "15. Finalize only after the gates/state completion path passes:\n"
-        "    - Run: `briefloop finalize --config $ARGUMENTS/config.yaml`\n"
-        "    - Finalize is a transactional reader projection: it stages a candidate, checks reader-clean, and only successful reader-clean promotes `output/brief.md` and `output/delivery/`; a failed reader-clean writes a failed `finalize_report.json` and leaves any prior delivery unchanged.\n"
-        '    - Proceed only when `output/intermediate/finalize_report.json` reports `delivery_promotion: "promoted"`; if promotion was skipped or reader-clean failed, stop and route repair instead of running the finalize gate or finalize-complete.\n'
-        "    - After finalize promotes delivery artifacts, run: `briefloop gates check --workspace $ARGUMENTS --stage finalize --brief $ARGUMENTS/output/brief.md`.\n"
-        '    - Then run: `briefloop state finalize-complete --workspace $ARGUMENTS --reason "Reader-facing artifacts passed finalize checks."`\n'
-        "    - Verify delivery truth with the Store-native status projection `briefloop status --workspace $ARGUMENTS --json`; do not claim delivery unless it reports `delivered=true` for the current run, and do not infer delivery from file existence or projection files. The legacy `workbuddy diagnose` surface is retired.\n"
-        "    - Confirm `output/delivery/<named>.docx` exists if DOCX is configured.\n"
-        "    - Confirm `output/source_appendix.md` remains an audit/control copy when configured and does not expose raw claim IDs, source IDs, evidence text, local paths, or file:// URLs.\n"
-        "    - Do not present Claim Ledger, Audit Report, Audited Brief, named Markdown, or source appendix audit copy as user delivery files.\n"
-        "    - Remember: finalize is not a quality-gate executor.\n"
-        "\n"
-        "16. Optional audit/debug provenance projection after runtime state exists:\n"
-        "    - Run: `briefloop provenance build --workspace $ARGUMENTS`\n"
-        "    - Run: `briefloop provenance show --workspace $ARGUMENTS --json`\n"
-        "    - Run: `briefloop provenance validate --workspace $ARGUMENTS`\n"
-        "    - Treat provenance as citation/control projection, not semantic proof.\n"
-        "\n"
-        "16. **Final response:**\n"
-        "    - Report artifact paths.\n"
-        "    - Report audit status.\n"
-        "    - Report quality gate status.\n"
-        "    - Report switchboard selections.\n"
-        "    - Report optional provenance graph path when created.\n"
-        "    - Report success only when the Store-native status projection (briefloop status --workspace $ARGUMENTS --json) reports delivered=true for the current run; audit status alone is not a delivery claim.\n"
-    )
-
-
-def render_opencode_jsonc() -> str:
-    """Render opencode.jsonc configuration for anomalyco/opencode."""
-    return (
-        "{\n"
-        '  "$schema": "https://opencode.ai/config.json",\n'
-        "  // OpenCode configuration for multi-agent-brief-workflow\n"
-        "  // Generated by scripts/generate_agent_configs.py\n"
-        "  // Agents are auto-discovered from .opencode/agents/\n"
-        "  // Commands are auto-discovered from .opencode/commands/\n"
-        "}\n"
-    )
 
 
 def write_or_check(path: Path, content: str, check: bool) -> bool:
@@ -1099,10 +477,7 @@ def write_or_check(path: Path, content: str, check: bool) -> bool:
 # Main generation
 # ---------------------------------------------------------------------------
 
-
-def generate_all(
-    manifest: dict, check: bool = False, target: str | None = None
-) -> bool:
+def generate_all(manifest: dict, check: bool = False, target: str | None = None) -> bool:
     validate_manifest(manifest)
     roles = manifest["roles"]
     profiles = manifest["tool_profiles"]
@@ -1110,19 +485,8 @@ def generate_all(
 
     targets = set(TARGETS) if target is None else {target}
 
-    # Codex config
+    # Packaged Codex ControlStore runtime kit
     if "codex" in targets:
-        path = ROOT / ".codex" / "config.toml"
-        content = render_codex_config(manifest)
-        if not write_or_check(path, content, check):
-            ok = False
-
-        for name, role in roles.items():
-            path = ROOT / ".codex" / "agents" / f"{name}.toml"
-            content = render_codex_agent(name, role, manifest)
-            if not write_or_check(path, content, check):
-                ok = False
-
         packaged_root = ROOT / "src" / "multi_agent_brief" / "runtime_kits" / "codex"
         if not write_or_check(
             packaged_root / "config.toml",
@@ -1136,14 +500,6 @@ def generate_all(
             if not write_or_check(path, content, check):
                 ok = False
 
-    # Claude Code
-    if "claude" in targets:
-        for name, role in roles.items():
-            path = ROOT / ".claude" / "agents" / f"{name}.md"
-            content = render_claude_agent(name, role, manifest)
-            if not write_or_check(path, content, check):
-                ok = False
-
     # Docs
     if "docs" in targets:
         docs = render_docs(manifest)
@@ -1152,25 +508,6 @@ def generate_all(
             if not write_or_check(path, content, check):
                 ok = False
 
-    # OpenCode
-    if "opencode" in targets:
-        agents = render_opencode_agents(manifest)
-        for rel_path, content in agents.items():
-            path = ROOT / rel_path
-            if not write_or_check(path, content, check):
-                ok = False
-
-        cmd_content = render_opencode_command_generate_brief(manifest)
-        for command_name in ("briefloop.md", "generate-brief.md"):
-            cmd_path = ROOT / ".opencode" / "commands" / command_name
-            if not write_or_check(cmd_path, cmd_content, check):
-                ok = False
-
-        jsonc_path = ROOT / "opencode.jsonc"
-        jsonc_content = render_opencode_jsonc()
-        if not write_or_check(jsonc_path, jsonc_content, check):
-            ok = False
-
     return ok
 
 
@@ -1178,29 +515,18 @@ def generate_all(
 # CLI
 # ---------------------------------------------------------------------------
 
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="generate_agent_configs",
         description="Generate platform-specific agent adapter files from agent_roles.yaml. AGENTS.md and .agents/skills are hand-maintained operating contracts.",
     )
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument(
-        "--write", action="store_true", help="Generate platform adapter files"
-    )
-    group.add_argument(
-        "--check",
-        action="store_true",
-        help="Check if platform adapter files are up to date",
-    )
-    parser.add_argument(
-        "--target",
-        choices=sorted(TARGETS),
-        help="Generate only a specific target: codex, claude, docs, or opencode.",
-    )
-    parser.add_argument(
-        "--manifest", type=Path, default=MANIFEST_PATH, help="Path to agent_roles.yaml"
-    )
+    group.add_argument("--write", action="store_true", help="Generate platform adapter files")
+    group.add_argument("--check", action="store_true", help="Check if platform adapter files are up to date")
+    parser.add_argument("--target", choices=sorted(TARGETS),
+                        help="Generate only a specific target: codex or docs.")
+    parser.add_argument("--manifest", type=Path, default=MANIFEST_PATH,
+                        help="Path to agent_roles.yaml")
 
     args = parser.parse_args(argv)
 
@@ -1215,9 +541,7 @@ def main(argv: list[str] | None = None) -> int:
         if ok:
             print("All generated files are up to date.")
         else:
-            print(
-                "Generated adapter files are stale. Run: python scripts/generate_agent_configs.py --write"
-            )
+            print("Generated adapter files are stale. Run: python scripts/generate_agent_configs.py --write")
         return 0 if ok else 1
     else:
         print("Generated platform adapter configs.")

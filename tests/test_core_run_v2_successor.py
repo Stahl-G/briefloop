@@ -184,8 +184,8 @@ def test_normal_successor_freezes_empty_snapshot_without_inheriting_authority(
     successor_run_id = "RUN-GUIDANCE-EMPTY-002"
 
     with sqlite3.connect(workspace / "briefloop.db") as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 13
-    assert SCHEMA_VERSION == 13
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    assert SCHEMA_VERSION == 18
 
     committed = _start_successor(
         workspace,
@@ -882,9 +882,11 @@ def test_tampered_and_ambiguous_guidance_selection_fail_closed_without_writes(
         assessment_result_fingerprint=result.result_fingerprint,
         loaded_history=ambiguous,
     )
+    # A duplicated Store result row is an integrity anomaly: the projection
+    # fails closed with zero advice instead of selecting anything.
     assert (projection.status, projection.reason_code) == (
-        "invalid",
-        "post_final_assessment_selection_invalid",
+        "unavailable",
+        "post_final_assessment_unavailable",
     )
 
     tampered = tmp_path / "tampered-guidance"
@@ -894,7 +896,7 @@ def test_tampered_and_ambiguous_guidance_selection_fail_closed_without_writes(
         before = connection.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
         trigger = connection.execute(
             "SELECT sql FROM sqlite_master WHERE type='trigger' "
-            "AND name='post_final_guidance_drafts_no_update'"
+            "AND name='post_final_guidance_drafts_v15_no_update'"
         ).fetchone()
         assert trigger is not None
         payload_row = connection.execute(
@@ -905,7 +907,7 @@ def test_tampered_and_ambiguous_guidance_selection_fail_closed_without_writes(
         assert payload_row is not None
         payload = json.loads(payload_row[0])
         payload["guidance_text"] = "tampered after approval"
-        connection.execute("DROP TRIGGER post_final_guidance_drafts_no_update")
+        connection.execute("DROP TRIGGER post_final_guidance_drafts_v15_no_update")
         connection.execute(
             "UPDATE post_final_guidance_drafts SET payload_json=? "
             "WHERE guidance_id=? AND draft_revision=?",

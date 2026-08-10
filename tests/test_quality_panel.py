@@ -39,20 +39,17 @@ from multi_agent_brief.semantic_evaluator.reader import (
 from multi_agent_brief.semantic_evaluator.serialization import canonical_sha256
 from tests.helpers import (
     initialize_workspace,
-    write_legacy_control_files,
     write_minimal_workspace_under,
 )
 
 
 def _workspace(base_path: Path) -> Path:
-    """Build the legacy module fixture without claiming a public CLI path."""
+    """Build the minimal workspace fixture without claiming a public CLI path."""
 
-    workspace = write_minimal_workspace_under(
+    return write_minimal_workspace_under(
         base_path,
         project_name="Quality Panel Test",
     )
-    write_legacy_control_files(workspace)
-    return workspace
 
 
 def _snapshot_workspace_files(ws: Path) -> dict[str, bytes]:
@@ -176,8 +173,8 @@ def test_quality_summarize_public_cli_retired_rejects_typed_without_writes(
     tmp_path: Path,
     capsys,
 ) -> None:
-    # retired public `quality summarize` CLI on JSON control
-    # state; the authority guard answers a typed token and performs zero writes.
+    # retired public `quality summarize` CLI on a non-SQLite workspace;
+    # the authority guard answers a typed token and performs zero writes.
     ws = _workspace(tmp_path)
     reader_target = ws / "output" / "brief.md"
     reader_target.parent.mkdir(parents=True, exist_ok=True)
@@ -202,7 +199,7 @@ def test_quality_summarize_public_cli_retired_rejects_typed_without_writes(
         before = _snapshot_workspace_files(ws)
         rc = main(argv)
         assert rc == 1
-        assert capsys.readouterr().out.strip() == "legacy_workspace_unsupported"
+        assert capsys.readouterr().out.strip() == "runtime_command_unsupported"
         assert _snapshot_workspace_files(ws) == before
 
     sqlite_workspace = initialize_workspace(tmp_path / "sqlite-workspace")
@@ -238,33 +235,6 @@ def test_quality_summarize_public_cli_retired_rejects_typed_without_writes(
     assert not (shell / "output" / "intermediate" / "quality_panel.json").exists()
     assert not (shell / "output" / "intermediate" / "quality_summary.md").exists()
     assert not (shell / "output" / "intermediate" / "quality_panel.html").exists()
-
-
-def test_state_public_cli_retired_rejects_typed_without_writes(
-    tmp_path: Path, capsys
-) -> None:
-    # retired public `state` operator CLI surface; the authority
-    # guard answers a typed token and performs zero writes.
-    ws = _workspace(tmp_path)
-    capsys.readouterr()
-
-    for argv in (
-        ["state", "check", "--workspace", str(ws), "--json"],
-        [
-            "state",
-            "init",
-            "--runtime",
-            "operator",
-            "--workspace",
-            str(ws),
-            "--reset-state",
-        ],
-    ):
-        before = _snapshot_workspace_files(ws)
-        rc = main(argv)
-        assert rc == 1
-        assert capsys.readouterr().out.strip() == "legacy_workspace_unsupported"
-        assert _snapshot_workspace_files(ws) == before
 
 
 def test_quality_summary_validator_rejects_release_authority_shape() -> None:

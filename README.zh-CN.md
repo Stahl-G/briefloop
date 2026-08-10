@@ -345,9 +345,14 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 
 ## 🧭 当前状态
 
-当前版本：**v0.15.1**
+当前版本：**v0.15.2**
 
-v0.15.1 包含 Store-qualified post-final 审阅：同一 finalized lineage 可执行多个、
+v0.15.2 移除 legacy JSON control-plane 运行时。原有 Claude/Hermes/OpenCode/
+CodeBuddy/operator 路径及其 workspace 资产、role skills、writer 命令和 JSON
+control 文件均已删除；仅保留 SQLite Codex ControlStore 运行时。此版本同时
+移除已退役的 JSON runtime-state 栈及其 dead consumer。
+
+v0.15.1 prepared release target（development main，尚未打 tag）包含 Store-qualified post-final 审阅：同一 finalized lineage 可执行多个、
 彼此独立且由 Human 授权的 append-only advisory assessment；必须显式选择 result，
 随后打开受保护的本地 Review Session，并追加人工处置、编辑草稿和独立 guidance
 approval。generation 2 及以后只能显式创建，policy 漂移不会自动运行或重拨。独立
@@ -357,7 +362,7 @@ guidance。只有 Analyst 和 Editor 收到同一份不可变 context。效用 N
 guidance 不提供 evidence，不改变 Claim Ledger、Gate、finalize、delivery、repair
 或 Core，也不存在自动学习或隐式复用。
 
-v0.15.1 入口：
+当前入口：
 
 - CLI：`briefloop`
 - Experimental SQLite-only Codex runtime：`briefloop run --workspace <path>
@@ -394,7 +399,7 @@ v0.15.1 入口：
 Store schema 变化后，旧 development workspace 不受支持；请用当前 schema 新建
 workspace。BriefLoop 不提供 development schema 的产品内升级路径。
 
-v0.15.1 延续 SQLite-only 切换，并增加实验性的 post-final 审阅与多任务来源发现：
+v0.15.1 prepared target 延续 SQLite-only 切换，并增加实验性的 post-final 审阅与多任务来源发现：
 
 - Store-qualified AI 第二意见支持多代 Human 授权、append-only assessment、精确
   archive-bound replay/projection，以及人工来源观察记录和独立 guidance approval。
@@ -405,7 +410,7 @@ v0.15.1 延续 SQLite-only 切换，并增加实验性的 post-final 审阅与�
   它逐条执行冻结任务，任务覆盖不足时最多做一次确定性的 30 日定向 backfill，安全
   包络上限为 800 个唯一 URL。
 
-v0.14.0 完成 SQLite-only 切换，并增加原有只读交互面：
+此前的 v0.14.0 完成 SQLite-only 切换，并增加只读交互面：
 
 - SQLite ControlStore（`briefloop.db`）、已接受的 strict request、Receipt 与
   ledger relation 是唯一运行时权威。JSON-only workspace 不受支持；没有导入、

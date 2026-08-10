@@ -301,7 +301,7 @@ class WorkspaceBootstrap:
 
     def classify_target(
         self,
-    ) -> Literal["fresh", "sqlite", "legacy", "invalid_sqlite"]:
+    ) -> Literal["fresh", "sqlite", "invalid_sqlite"]:
         """Classify target authority behind the bootstrap facade."""
 
         return classify_workspace_authority(self.workspace).kind
@@ -320,8 +320,6 @@ class WorkspaceBootstrap:
         """Materialize a fresh kit or verify the Store-bound installed kit."""
 
         authority_kind = self.classify_target()
-        if authority_kind == "legacy":
-            raise RuntimeHostError("legacy_workspace_unsupported")
         if authority_kind == "invalid_sqlite":
             raise RuntimeHostError("control_store_integrity_invalid")
         if authority_kind == "sqlite":
@@ -369,8 +367,6 @@ class WorkspaceBootstrap:
                 inputs=None,
                 adapter=current.verified.runtime_adapter,
             )
-        if authority_kind == "legacy":
-            raise RuntimeHostError("legacy_workspace_unsupported")
         if authority_kind == "invalid_sqlite":
             raise RuntimeHostError("control_store_integrity_invalid")
 
@@ -436,8 +432,6 @@ class WorkspaceBootstrap:
         authority_kind = self.classify_target()
         if authority_kind == "sqlite":
             return _verify_existing(self.workspace, adapter_loader=adapter_loader)
-        if authority_kind == "legacy":
-            raise RuntimeHostError("legacy_workspace_unsupported")
         if authority_kind == "invalid_sqlite":
             raise RuntimeHostError("control_store_integrity_invalid")
 

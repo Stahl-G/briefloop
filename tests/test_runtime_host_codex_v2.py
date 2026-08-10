@@ -949,13 +949,13 @@ def test_runtime_doctor_then_exact_source_planner_invocation(
         assert store.current_revision == revision
 
 
-def test_cli_authority_guard_blocks_legacy_and_sqlite_legacy_commands(
+def test_cli_authority_guard_blocks_non_sqlite_and_unlisted_commands(
     tmp_path: Path,
     capsys,
 ) -> None:
     fresh = tmp_path / "fresh"
     fresh.mkdir()
-    assert main(["state", "init", "--runtime", "codex", "--workspace", str(fresh)]) == 1
+    assert main(["status", "--workspace", str(fresh), "--json"]) == 1
     assert "runtime_command_unsupported" in capsys.readouterr().out
     assert list(fresh.iterdir()) == []
 
@@ -964,8 +964,10 @@ def test_cli_authority_guard_blocks_legacy_and_sqlite_legacy_commands(
     control.parent.mkdir(parents=True)
     control.write_text("{}\n", encoding="utf-8")
     before_legacy = control.read_bytes()
+    # legacy JSON control files do not create runnable authority; the
+    # non-SQLite workspace is fresh and `status` is refused.
     assert main(["status", "--workspace", str(legacy), "--json"]) == 1
-    assert "legacy_workspace_unsupported" in capsys.readouterr().out
+    assert "runtime_command_unsupported" in capsys.readouterr().out
     assert control.read_bytes() == before_legacy
 
     workspace = _workspace(tmp_path)
@@ -973,7 +975,8 @@ def test_cli_authority_guard_blocks_legacy_and_sqlite_legacy_commands(
     capsys.readouterr()
     database = workspace / "briefloop.db"
     before_database = database.read_bytes()
-    assert main(["state", "check", "--workspace", str(workspace)]) == 1
+    # commands outside the SQLite allowlist are refused on a Store workspace.
+    assert main(["packs", "bundle", "--workspace", str(workspace), "--json"]) == 1
     assert "runtime_command_unsupported" in capsys.readouterr().out
     assert database.read_bytes() == before_database
 
@@ -1010,20 +1013,10 @@ def test_doctor_is_read_only_for_fresh_and_verified_sqlite_workspaces(
         assert store.current_revision == before_revision
 
 
-def test_doctor_rejects_legacy_and_invalid_sqlite_without_writes(
+def test_doctor_rejects_invalid_sqlite_without_writes(
     tmp_path: Path,
     capsys,
 ) -> None:
-    legacy = tmp_path / "legacy"
-    control = legacy / "output" / "intermediate" / "workflow_state.json"
-    control.parent.mkdir(parents=True)
-    control.write_text("{}\n", encoding="utf-8")
-    before_legacy = control.read_bytes()
-    assert main(["doctor", "--config", str(legacy / "config.yaml")]) == 1
-    assert "legacy_workspace_unsupported" in capsys.readouterr().out
-    assert control.read_bytes() == before_legacy
-    assert not (legacy / "briefloop.db").exists()
-
     invalid = tmp_path / "invalid"
     invalid.mkdir()
     (invalid / "briefloop.db").mkdir()

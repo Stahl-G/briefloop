@@ -461,7 +461,7 @@ def test_guidance_status_transition_table_and_ui_actions_fail_closed(
         )
         connection = sqlite3.connect(forged_workspace / "briefloop.db")
         try:
-            connection.execute("DROP TRIGGER post_final_guidance_statuses_no_update")
+            connection.execute("DROP TRIGGER post_final_guidance_statuses_v15_no_update")
             connection.execute(
                 "UPDATE post_final_guidance_statuses "
                 "SET status=?,status_fingerprint=?,payload_json=? "
@@ -475,7 +475,7 @@ def test_guidance_status_transition_table_and_ui_actions_fail_closed(
                 ),
             )
             connection.execute(
-                "CREATE TRIGGER post_final_guidance_statuses_no_update "
+                "CREATE TRIGGER post_final_guidance_statuses_v15_no_update "
                 "BEFORE UPDATE ON post_final_guidance_statuses "
                 "BEGIN SELECT RAISE(ABORT,'append_only'); END"
             )

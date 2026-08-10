@@ -209,27 +209,12 @@ def test_hidden_intake_cli_emits_unknown_and_nonzero_without_values(
     }
 
 
-@pytest.mark.parametrize(
-    ("workspace_kind", "expected_token"),
-    [
-        ("fresh", "runtime_command_unsupported"),
-        ("legacy", "legacy_workspace_unsupported"),
-    ],
-)
 def test_intake_cli_json_only_workspace_never_creates_sqlite_fallback(
     tmp_path: Path,
     capsys,
-    workspace_kind: str,
-    expected_token: str,
 ) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()
-    if workspace_kind == "legacy":
-        legacy_control = (
-            workspace / "output" / "intermediate" / "runtime_manifest.json"
-        )
-        legacy_control.parent.mkdir(parents=True)
-        legacy_control.write_text("{}", encoding="utf-8")
     scratch = workspace / "scratch" / "INV-SOURCE-001"
     scratch.mkdir(parents=True)
     request = scratch / "submit_request.json"
@@ -271,7 +256,7 @@ def test_intake_cli_json_only_workspace_never_creates_sqlite_fallback(
     # the control_store_not_found JSON fallback is removed with
     # the retired store-less intake surface; rejection is now fail-closed.
     assert exit_code == 1
-    assert capsys.readouterr().out == f"{expected_token}\n"
+    assert capsys.readouterr().out == "runtime_command_unsupported\n"
     after_files = {
         path.relative_to(workspace).as_posix(): path.read_bytes()
         for path in workspace.rglob("*")

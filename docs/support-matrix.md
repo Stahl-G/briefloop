@@ -318,26 +318,19 @@ correctness, or generalization claim.
 | Runtime | Status |
 |---|---|
 | Codex (`runtime install`, SQLite ControlStore, `single_session`) | Experimental active path |
-| Hermes / Claude Code / OpenCode / CodeBuddy / Operator | Legacy adapter assets only; not active SQLite runtimes |
+| Hermes / Claude Code / OpenCode / CodeBuddy / Operator | Deleted with the legacy JSON runtime |
 
 Codex is the only active fresh SQLite runtime in this cutover. It remains
 Experimental until a real Codex control trace validates the end-to-end role,
-receipt, Gate, approval and delivery correspondence. Retained adapters do not
-provide a JSON compatibility path and may not be used as fallback.
+receipt, Gate, approval and delivery correspondence. The former runtime
+adapters are deleted and provide no JSON compatibility path and no fallback.
 
-Runtime source assets under `.agents/`, `.claude/`, `.codex/`, `.opencode/`,
-and `integrations/hermes-plugin/` are source-clone assets. Package-only installs
-ship the CLI, packaged contracts, and packaged eval fixtures, but they do not
-ship those source runtime directories as Python package data. Use
-`briefloop runtime install --workspace <workspace> --runtime opencode|claude|codex|all`
-from a source clone to copy OpenCode/Claude Code/Codex workspace-local runtime kits.
-
-CodeBuddy handoff support is experimental and source-clone-based. It uses the
-project Skill under `.codebuddy/skills/briefloop/` and role agents under
-`.codebuddy/agents/briefloop-*.md`. The main CodeBuddy session remains the
-Orchestrator and runs deterministic BriefLoop CLI transactions; role agents only
-draft handoff-assigned artifacts. This does not add gate authority, delivery
-approval, release authority, semantic proof, or output-quality proof.
+Runtime source assets under `.agents/skills/` are hand-maintained source-clone
+assets. Package-only installs ship the CLI, packaged contracts, and packaged
+eval fixtures, but they do not ship source runtime directories as Python package
+data. Use
+`briefloop runtime install --workspace <workspace> --runtime codex`
+from any install to copy the packaged Codex workspace-local runtime kit.
 
 ## Source Providers
 
@@ -423,25 +416,17 @@ approval, release authority, semantic proof, or output-quality proof.
 | Homebrew formula source (`Formula/`) | Experimental; not a primary release path |
 | curl installer (`install.sh`) | Experimental CLI-only installer asset |
 | PowerShell installer (`install.ps1`) | Experimental CLI-only installer asset |
-| Hermes plugin (`integrations/hermes-plugin/`) | Supported |
-| WorkBuddy Skill source bundle (`.agents/skills/briefloop-workbuddy/`) and local zip packaging (`workbuddy pack-skill`) | Experimental; source-clone-only input, generated local Skill zip, not WorkBuddy Marketplace publication or wheel/sdist package data |
-| CodeBuddy project Skill adapter (`.codebuddy/skills/briefloop/`) | Experimental; source-clone-only project Skill used by `--runtime codebuddy`; keeps orchestration in the main CodeBuddy session and is not a forked Skill |
-| CodeBuddy project role agents (`.codebuddy/agents/briefloop-*.md`) | Experimental; source-clone-only project sub-agent assets for role drafting only; main CodeBuddy session still owns deterministic CLI transactions |
+| Hermes plugin (`integrations/hermes-plugin/`) | Deleted with the legacy JSON runtime |
+| WorkBuddy Skill source bundle (`.agents/skills/briefloop-workbuddy/`) and `workbuddy pack-skill` | Deleted with the legacy JSON runtime |
+| CodeBuddy project Skill adapter (`.codebuddy/skills/briefloop/`) | Deleted with the legacy JSON runtime |
+| CodeBuddy project role agents (`.codebuddy/agents/briefloop-*.md`) | Deleted with the legacy JSON runtime |
 
 | Runtime asset | Source clone | Wheel / sdist / PyPI package |
 |---|---|---|
 | Packaged contracts (`configs/*.yaml`) | Supported | Supported |
 | Packaged eval fixtures (`evaluation_cases/fixtures/`) | Supported (data only; runner retired in LD2-3) | Supported (data only; runner retired in LD2-3) |
 | `.agents/skills/**` | Supported | Source-clone-only |
-| `.agents/hermes-skills/**` | Supported | Source-clone-only |
-| `.claude/agents/**` and `.claude/commands/**` | Supported | Source-clone-only |
-| `.opencode/agents/**` and `.opencode/commands/**` | Supported | Source-clone-only |
-| `.codex/config.toml`, Skill/reference, and `.codex/agents/**` | Experimental | Packaged and installable with `runtime install --runtime codex`; the installed workspace inventory is hash-bound and reverified before runtime actions |
-| `integrations/hermes-plugin/**` | Supported | Source-clone-only |
-| `.agents/skills/briefloop-workbuddy/**` | Experimental | Source-clone-only WorkBuddy Skill source; `workbuddy pack-skill` generates a local Skill zip from these files, but wheel/sdist installs still do not include them |
-| `.codebuddy/skills/briefloop/**` | Experimental | Source-clone-only CodeBuddy project Skill adapter. It must stay in the main session, must not use `context: fork`, and does not run gates, approve delivery, or authorize release |
-| `.codebuddy/agents/briefloop-*.md` | Experimental | Source-clone-only CodeBuddy project role sub-agents. They may draft handoff-assigned role artifacts only; they do not write control files, run gates, approve delivery, or authorize release |
-| `integrations/workbuddy/briefloop/**` | Experimental legacy mirror | Source-clone-only compatibility copy; not the canonical WorkBuddy pack source |
+| Packaged Codex runtime kit (`src/multi_agent_brief/runtime_kits/codex/`) | Supported | Packaged and installable with `runtime install --runtime codex`; the installed workspace inventory is hash-bound and reverified before runtime actions |
 | `scripts/install.sh`, `scripts/install.ps1`, `Formula/` | Supported | Source-clone-only |
 
 ## Legacy / Deprecated

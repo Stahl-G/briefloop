@@ -4,58 +4,57 @@
 
 This file is for developing and running BriefLoop inside Claude Code.
 
-For runtime-neutral instructions, see `AGENTS.md`. For Claude Code execution, use the repository slash command and subagents.
+For runtime-neutral instructions, see `AGENTS.md`. The active runtime is the
+SQLite-only Codex ControlStore path; the legacy JSON control plane and its
+Claude Code writer command (`/briefloop`) are removed.
 
 ## First Response In Claude Code
 
 If the user greets you, asks what to do next, or asks how to use BriefLoop from
-Claude Code, point them to the five writer verbs first:
+Claude Code, point them to the Codex runtime path first:
 
 ```text
-/briefloop new
-/briefloop run <workspace>
-/briefloop status <workspace>
-/briefloop feedback <workspace> [text-or-file]
-/briefloop deliver <workspace>
+briefloop init <workspace> --from-onboarding onboarding.json
+briefloop runtime install --workspace <workspace> --runtime codex
+briefloop run --workspace <workspace> --runtime codex
 ```
 
-Do not present `/generate-brief` as the first-screen entrypoint. It remains the
-compatibility command for the full delegated subagent workflow after
-`/briefloop run` has created or refreshed the runtime handoff.
+Then follow the Store-derived next action:
+
+```text
+briefloop runtime next --workspace <workspace>
+```
+
+`run` returns the current `CoreRunNextAction`; `runtime next` / `invocation-*` /
+`apply` drive the SQLite ControlStore runtime. The legacy five-verb writer
+command and `/generate-brief` delegated workflow are removed.
 
 ## Standard Claude Code Path
 
 For a real brief workspace:
 
-```text
-/briefloop new
-/briefloop run ../briefloop-workspace
+```bash
+briefloop onboard
+briefloop init <workspace> --from-onboarding onboarding.json
+briefloop runtime install --workspace <workspace> --runtime codex
+briefloop run --workspace <workspace> --runtime codex
 ```
 
-Then, if the user wants to execute the full delegated subagent workflow, run in
-Claude Code:
+Then operate the run through the Store-derived action:
 
-```text
-/generate-brief ../briefloop-workspace
+```bash
+briefloop runtime next --workspace <workspace>
+briefloop runtime invocation-start --workspace <workspace>
+briefloop runtime invocation-validate --workspace <workspace> --envelope <path>
+briefloop runtime invocation-accept --workspace <workspace> --envelope <path>
+briefloop runtime apply --workspace <workspace> --action <path>
 ```
 
 For a demo workspace:
 
 ```bash
-briefloop init ../briefloop-demo --demo
-```
-
-Then run the writer-facing path:
-
-```text
-/briefloop run ../briefloop-demo
-/briefloop status ../briefloop-demo
-```
-
-To execute the full delegated subagent workflow:
-
-```text
-/generate-brief ../briefloop-demo
+briefloop init <workspace> --demo
+briefloop run --workspace <workspace> --runtime codex
 ```
 
 ## Repository Development Setup
@@ -79,11 +78,11 @@ python -m pytest -q
 ```bash
 briefloop version
 briefloop onboard
-briefloop init ../briefloop-workspace --from-onboarding onboarding.json
-briefloop run --workspace ../briefloop-workspace --runtime claude
-briefloop doctor --config ../briefloop-workspace/config.yaml
-briefloop runtime continue --workspace ../briefloop-workspace
-briefloop finalize --config ../briefloop-workspace/config.yaml
+briefloop init <workspace> --from-onboarding onboarding.json
+briefloop run --workspace <workspace> --runtime codex
+briefloop runtime next --workspace <workspace>
+briefloop status --workspace <workspace> --json
+briefloop doctor --config <workspace>/config.yaml
 python scripts/generate_agent_configs.py --check
 ```
 
@@ -93,22 +92,27 @@ When the user provides a workspace path, treat that path as the workspace even i
 
 Workspace evidence comes from workspace input files, source configuration, collected provider outputs, and intermediate artifacts. Repository docs, examples, README files, and agent configs are development references.
 
-## Subagent Workflow
+## Runtime Roles
 
-Claude Code uses the external subagent workflow:
+The Codex runtime dispatches role invocations from the packaged workspace kit
+(`briefloop runtime install --runtime codex`). The role inventory is the 8-role
+Codex kit:
 
 ```text
 source-planner
+→ source-provider
 → scout
 → screener
 → claim-ledger
 → analyst
 → editor
 → auditor
-→ formatter/finalize
 ```
 
-Python CLI commands provide setup, source discovery, input governance, audit checks, runtime handoff, and final rendering tools. The auditable brief is written by subagents and rendered through `finalize`.
+The role instructions live in `configs/agent_roles.yaml` and the packaged kit
+`src/multi_agent_brief/runtime_kits/codex/`. Python CLI commands provide setup,
+source discovery, validation, control, and rendering; the runtime host binds
+Store-derived actions to deterministic domain services.
 
 ## Generated And Hand-Maintained Files
 
@@ -119,7 +123,8 @@ configs/agent_roles.yaml
 scripts/generate_agent_configs.py
 ```
 
-Generated targets are limited to `.codex/`, `.claude/agents/`, `.opencode/`, and `docs/agents/`.
+Generated targets are limited to the packaged Codex runtime kit
+(`src/multi_agent_brief/runtime_kits/codex/`) and `docs/agents/`.
 
 Hand-maintained operating contracts:
 
@@ -127,8 +132,7 @@ Hand-maintained operating contracts:
 AGENTS.md
 CLAUDE.md
 .agents/AGENTS.md
-.agents/skills/*/SKILL.md
-.agents/hermes-skills/*
+.agents/skills/briefloop/
 ```
 
 Do not regenerate hand-maintained operating contracts from `configs/agent_roles.yaml`.
@@ -138,7 +142,7 @@ Do not regenerate hand-maintained operating contracts from `configs/agent_roles.
 For launcher and runtime handoff changes:
 
 ```bash
-python -m pytest tests/test_start_commands.py tests/test_hermes_adapter.py tests/test_agent_config_generation.py -q
+python -m pytest tests/test_start_commands.py tests/test_runtime_assets.py tests/test_agent_config_generation.py -q
 ```
 
 For onboarding changes:
@@ -150,7 +154,7 @@ python -m pytest tests/test_onboarding*.py tests/test_init*.py -q
 For skill contract changes:
 
 ```bash
-python -m pytest tests/test_skill_contracts.py -q
+python -m pytest tests/test_skill_contracts.py tests/test_briefloop_skill_freshness.py -q
 ```
 
 For final validation:

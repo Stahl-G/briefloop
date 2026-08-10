@@ -116,7 +116,9 @@ def _args(action: str, workspace: Path) -> list[str]:
     (
         ("fresh", "runtime_command_unsupported\n"),
         ("sqlite", "runtime_command_unsupported\n"),
-        ("legacy", "legacy_workspace_unsupported\n"),
+        # Legacy JSON control files no longer change classification: the
+        # workspace is treated as fresh and gets the same typed rejection.
+        ("legacy", "runtime_command_unsupported\n"),
     ),
 )
 def test_retired_sources_public_cli_is_typed_and_zero_write(

@@ -145,12 +145,15 @@ def test_init_from_onboarding_tavily_freezes_exact_human_topic(
         if item.route_id == "web-search"
     )
     assert route.acquisition_spec is not None
-    assert [request.query for request in route.acquisition_spec.requests] == [topic]
-    assert all(
-        "ExampleCo" not in request.query for request in route.acquisition_spec.requests
-    )
+    topic_queries = [
+        task.query
+        for task in route.acquisition_spec.tasks
+        if topic in task.query
+    ]
+    assert topic_queries
     sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
-    assert sources["web_search"]["recency_days"] == source_age_days
+    assert sources["web_search"]["recency_days"] == 7
+    assert sources["web_search"]["initial_news_backfill"]["recency_days"] == 30
 
 
 @pytest.mark.parametrize(

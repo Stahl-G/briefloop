@@ -504,11 +504,12 @@ def test_readmes_bind_v0151_candidate_and_keep_v014_historical_boundary() -> Non
     readme_en = (root / "README_en.md").read_text(encoding="utf-8")
 
     require(
-        "The v0.15.1 candidate includes Store-qualified post-final review" in english,
-        "English README does not bind AI Second Opinion to the v0.15.1 candidate",
+        "The v0.15.1 prepared release target" in english
+        and "includes Store-qualified post-final review" in english,
+        "English README does not bind AI Second Opinion to the v0.15.1 prepared target",
     )
     historical_english = english.split(
-        "The v0.14.0 release completed the SQLite-only cutover",
+        "Prior v0.14.0 completed the SQLite-only cutover",
         1,
     )[1].split("The carried-forward supported report tooling", 1)[0]
     require(
@@ -517,11 +518,12 @@ def test_readmes_bind_v0151_candidate_and_keep_v014_historical_boundary() -> Non
     )
 
     require(
-        "v0.15.1 包含 Store-qualified post-final 审阅" in chinese,
-        "Chinese README does not bind AI Second Opinion to the v0.15.1 candidate",
+        "v0.15.1 prepared release target" in chinese
+        and "包含 Store-qualified post-final 审阅" in chinese,
+        "Chinese README does not bind AI Second Opinion to the v0.15.1 prepared target",
     )
     historical_chinese = chinese.split(
-        "v0.14.0 完成 SQLite-only 切换",
+        "此前的 v0.14.0 完成 SQLite-only 切换",
         1,
     )[1].split("延续的受支持报告工具", 1)[0]
     require(
@@ -677,7 +679,9 @@ def test_retired_sources_help_is_truthful(capsys, argv):
     (
         ("fresh", "runtime_command_unsupported\n"),
         ("sqlite", "runtime_command_unsupported\n"),
-        ("legacy", "legacy_workspace_unsupported\n"),
+        # Legacy JSON control files no longer change classification: the
+        # workspace is treated as fresh and gets the same typed rejection.
+        ("legacy", "runtime_command_unsupported\n"),
     ),
 )
 def test_packs_bundle_public_authority_guard_precedes_projection_without_effects(
@@ -819,84 +823,6 @@ def test_cli_init_rejects_initial_news_backfill_without_llm_decide(tmp_path, cap
     assert not (workspace / "sources.yaml").exists()
 
 
-def test_cli_audit_existing_brief(tmp_path):
-    brief = tmp_path / "brief.md"
-    ledger = tmp_path / "claim_ledger.json"
-    brief.write_text("Revenue grew 5%. [src:CLAIM_TEST_001]\n", encoding="utf-8")
-    ledger.write_text(
-        json.dumps(
-            [
-                {
-                    "claim_id": "CLAIM_TEST_001",
-                    "statement": "Revenue grew 5%.",
-                    "source_id": "SRC001",
-                    "evidence_text": "Revenue grew 5%.",
-                    "source_url": "https://example.com/report",
-                    "source_type": "manual",
-                    "claim_type": "fact",
-                    "confidence": "high",
-                }
-            ]
-        ),
-        encoding="utf-8",
-    )
-
-    audit_output = tmp_path / "audit.json"
-    exit_code = main(
-        [
-            "audit",
-            str(brief),
-            "--ledger",
-            str(ledger),
-            "--output",
-            str(audit_output),
-            "--report-date",
-            "2026-06-02",
-            "--max-source-age-days",
-            "14",
-            "--fail-on-stale-source",
-        ]
-    )
-
-    assert exit_code == 0
-    assert '"audit_status": "warning"' in audit_output.read_text(encoding="utf-8")
-
-
-def test_cli_audit_accepts_wrapped_ledger_and_hyphenated_claim_id(tmp_path):
-    brief = tmp_path / "brief.md"
-    ledger = tmp_path / "claim_ledger.json"
-    brief.write_text("Revenue grew 5%. [src:CLM-001]\n", encoding="utf-8")
-    ledger.write_text(
-        json.dumps(
-            {
-                "metadata": {"generated_by": "synthetic fixture"},
-                "claims": [
-                    {
-                        "claim_id": "CLM-001",
-                        "statement": "Revenue grew 5%.",
-                        "source_id": "SRC001",
-                        "evidence_text": "Revenue grew 5%.",
-                        "source_url": "https://example.com/report",
-                        "source_type": "manual",
-                        "claim_type": "fact",
-                        "confidence": "high",
-                    }
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-
-    audit_output = tmp_path / "audit.json"
-    exit_code = main(
-        ["audit", str(brief), "--ledger", str(ledger), "--output", str(audit_output)]
-    )
-
-    assert exit_code == 0
-    report = json.loads(audit_output.read_text(encoding="utf-8"))
-    assert report["audit_status"] == "pass"
-    assert report["findings"] == []
-
 
 def test_cli_version(capsys):
     assert main(["version"]) == 0
@@ -909,138 +835,6 @@ def test_pyproject_exposes_briefloop_shell_alias():
     entrypoint = '"multi_agent_brief.cli.main:main"'
     assert f"multi-agent-brief = {entrypoint}" in text
     assert f"briefloop = {entrypoint}" in text
-
-
-def test_claude_install_writes_user_command_and_agents(tmp_path, capsys):
-    repo = tmp_path / "repo"
-    command_dir = repo / ".claude" / "commands"
-    agents_dir = repo / ".claude" / "agents"
-    command_dir.mkdir(parents=True)
-    agents_dir.mkdir(parents=True)
-    (command_dir / "generate-brief.md").write_text(
-        "---\ndescription: test\n---\n\n"
-        "You are the Orchestrator main agent generating a real user-facing brief for workspace: $ARGUMENTS.\n\n"
-        "Read shared contract references before delegation:\n\n"
-        "- `configs/orchestrator_contract.yaml`\n"
-        "- `configs/stage_specs.yaml`\n"
-        "- `configs/artifact_contracts.yaml`\n"
-        "- `configs/policy_packs/default.yaml`\n",
-        encoding="utf-8",
-    )
-    (command_dir / "mabw.md").write_text(
-        "---\ndescription: test mabw\n---\n\n"
-        "First-Screen Writer Help\n\n"
-        "/mabw new\n/mabw run <workspace>\n/mabw status <workspace>\n"
-        "/mabw feedback <workspace> [text-or-file]\n/mabw deliver <workspace>\n",
-        encoding="utf-8",
-    )
-    (command_dir / "briefloop.md").write_text(
-        "---\ndescription: test briefloop\n---\n\n"
-        "First-Screen Writer Help\n\n"
-        "/briefloop new\n/briefloop run <workspace>\n/briefloop status <workspace>\n"
-        "/briefloop feedback <workspace> [text-or-file]\n/briefloop deliver <workspace>\n",
-        encoding="utf-8",
-    )
-    (command_dir / "capability.md").write_text("# capability\n", encoding="utf-8")
-    (command_dir / "init-brief.md").write_text("# init\n", encoding="utf-8")
-    (command_dir / "propose-competitors.md").write_text(
-        "# competitors\n", encoding="utf-8"
-    )
-    (agents_dir / "scout.md").write_text(
-        "---\nname: scout\n---\n\nScout.\n", encoding="utf-8"
-    )
-
-    target = tmp_path / "claude"
-    rc = main(
-        ["claude", "install", "--repo-workdir", str(repo), "--target", str(target)]
-    )
-
-    assert rc == 0
-    output = capsys.readouterr().out
-    assert "Installed /briefloop and compatibility Claude Code assets" in output
-    installed_briefloop_command = target / "commands" / "briefloop.md"
-    assert installed_briefloop_command.exists()
-    assert installed_briefloop_command.read_text(encoding="utf-8").startswith("---\n")
-    assert (
-        "Generated by briefloop claude install"
-        in installed_briefloop_command.read_text(encoding="utf-8")
-    )
-    installed_mabw_command = target / "commands" / "mabw.md"
-    assert installed_mabw_command.exists()
-    assert installed_mabw_command.read_text(encoding="utf-8").startswith("---\n")
-    assert "Generated by briefloop claude install" in installed_mabw_command.read_text(
-        encoding="utf-8"
-    )
-    installed_command = target / "commands" / "generate-brief.md"
-    assert installed_command.exists()
-    text = installed_command.read_text(encoding="utf-8")
-    assert text.startswith("---\n")
-    assert "Generated by briefloop claude install" in text
-    assert f"{repo.as_posix()}/configs/orchestrator_contract.yaml" in text
-    assert "If $ARGUMENTS is a relative path" in text
-    assert not (target / "commands" / "capability.md").exists()
-    assert not (target / "commands" / "init-brief.md").exists()
-    assert not (target / "commands" / "propose-competitors.md").exists()
-    installed_agent = target / "agents" / "mabw" / "scout.md"
-    assert installed_agent.exists()
-    assert installed_agent.read_text(encoding="utf-8").startswith("---\n")
-    assert "Generated by briefloop claude install" in installed_agent.read_text(
-        encoding="utf-8"
-    )
-
-
-def test_claude_install_briefloop_command_is_self_contained(tmp_path, capsys):
-    repo = Path(__file__).resolve().parents[1]
-    target = tmp_path / "claude"
-
-    rc = main(
-        ["claude", "install", "--repo-workdir", str(repo), "--target", str(target)]
-    )
-
-    assert rc == 0
-    capsys.readouterr()
-    text = (target / "commands" / "briefloop.md").read_text(encoding="utf-8")
-    assert "Generated by briefloop claude install" in text
-    assert ".claude/commands/mabw.md" not in text
-    assert "## `new`" in text
-    assert "## `run <workspace>`" in text
-    assert "## `status <workspace>`" in text
-    assert "## `feedback <workspace> [text-or-file]`" in text
-    assert "## `deliver <workspace>`" in text
-    assert "status is strictly read-only" in text
-    assert "briefloop deliver --workspace <workspace> --target local" in text
-    assert "do not send audit/control records" in text
-
-
-def test_claude_install_refuses_existing_non_mabw_file_without_force(tmp_path, capsys):
-    repo = tmp_path / "repo"
-    command_dir = repo / ".claude" / "commands"
-    agents_dir = repo / ".claude" / "agents"
-    command_dir.mkdir(parents=True)
-    agents_dir.mkdir(parents=True)
-    (command_dir / "generate-brief.md").write_text("# command\n", encoding="utf-8")
-    (command_dir / "briefloop.md").write_text("# briefloop\n", encoding="utf-8")
-    (command_dir / "mabw.md").write_text("# mabw\n", encoding="utf-8")
-    (command_dir / "capability.md").write_text("# capability\n", encoding="utf-8")
-    (agents_dir / "scout.md").write_text("# scout\n", encoding="utf-8")
-    target = tmp_path / "claude"
-    (target / "commands").mkdir(parents=True)
-    (target / "commands" / "capability.md").write_text(
-        "# user capability\n", encoding="utf-8"
-    )
-    (target / "commands" / "generate-brief.md").write_text(
-        "# existing\n", encoding="utf-8"
-    )
-
-    rc = main(
-        ["claude", "install", "--repo-workdir", str(repo), "--target", str(target)]
-    )
-
-    assert rc == 1
-    assert (
-        "Refusing to overwrite existing non-generated file without --force"
-        in capsys.readouterr().out
-    )
 
 
 def test_cli_run_command_creates_handoff(capsys):

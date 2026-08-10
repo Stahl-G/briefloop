@@ -335,12 +335,6 @@ class CoreRunService:
 
     def _initialize(self, request: CoreRunInitializeRequest) -> CoreRunResult:
         database = self.workspace / "briefloop.db"
-        if (
-            not database.exists()
-            and not database.is_symlink()
-            and _legacy_control_state_present(self.workspace)
-        ):
-            raise CoreRunError("legacy_workspace_unsupported")
         request_fingerprint = canonical_fingerprint(
             request.model_dump(mode="json", exclude_unset=False)
         )
@@ -2212,13 +2206,6 @@ _SECRET_BEARING_INPUT_SUFFIXES = tuple(
 _NON_SECRET_CONTROL_INPUT_KEYS = frozenset(
     {"execution_authorization", "source_discovery_authorization"}
 )
-_LEGACY_CONTROL_PATHS = (
-    "output/intermediate/runtime_manifest.json",
-    "output/intermediate/workflow_state.json",
-    "output/intermediate/artifact_registry.json",
-    "output/intermediate/event_log.jsonl",
-    "output/intermediate/finalize_report.json",
-)
 
 
 def workspace_input_fingerprints(
@@ -2277,19 +2264,6 @@ def _require_non_secret_mapping(content: bytes) -> None:
                 pending.append(child)
         elif type(value) is list:
             pending.extend(value)
-
-
-def _legacy_control_state_present(workspace: Path) -> bool:
-    for relative_path in _LEGACY_CONTROL_PATHS:
-        target = workspace / relative_path
-        try:
-            target.lstat()
-        except FileNotFoundError:
-            continue
-        except OSError:
-            return True
-        return True
-    return False
 
 
 def _initial_transition(

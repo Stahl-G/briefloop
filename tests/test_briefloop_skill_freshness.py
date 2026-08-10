@@ -38,17 +38,14 @@ def test_briefloop_skill_freshness_script_runs_clean() -> None:
         checks["packaged_codex.references/controlstore-v2.md.freshness"]["status"]
         == "pass"
     )
-    assert checks["hermes_plugin.briefloop_skill_projection"]["status"] == "pass"
 
 
 def test_briefloop_skill_freshness_rejects_missing_required_phrase(tmp_path, monkeypatch) -> None:
     module = _load_module()
     canonical = tmp_path / "canonical"
-    hermes = tmp_path / "hermes"
+    canonical.mkdir()
     canonical_refs = canonical / "references"
-    hermes_refs = hermes / "references"
     canonical_refs.mkdir(parents=True)
-    hermes_refs.mkdir(parents=True)
 
     for rel_path, phrases in module.REQUIRED_REFERENCE_PHRASES.items():
         text = "\n".join(phrases)
@@ -57,12 +54,8 @@ def test_briefloop_skill_freshness_rejects_missing_required_phrase(tmp_path, mon
         target = canonical / rel_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
-        mirror = hermes / rel_path
-        mirror.parent.mkdir(parents=True, exist_ok=True)
-        mirror.write_text(text, encoding="utf-8")
 
     monkeypatch.setattr(module, "CANONICAL", canonical)
-    monkeypatch.setattr(module, "HERMES_PLUGIN_PROJECTION", hermes)
 
     checks: list[dict[str, str]] = []
     module._check_required_phrases(checks)
@@ -71,27 +64,6 @@ def test_briefloop_skill_freshness_rejects_missing_required_phrase(tmp_path, mon
     assert "Codex is the only active fresh runtime" in by_id[
         "canonical.references/version-matrix.md.freshness"
     ]["detail"]
-
-
-def test_briefloop_skill_freshness_rejects_projection_drift(tmp_path, monkeypatch) -> None:
-    module = _load_module()
-    canonical = tmp_path / "canonical"
-    hermes = tmp_path / "hermes"
-    canonical.mkdir()
-    hermes.mkdir()
-    (canonical / "SKILL.md").write_text("canonical\n", encoding="utf-8")
-    (hermes / "SKILL.md").write_text("drifted\n", encoding="utf-8")
-
-    monkeypatch.setattr(module, "CANONICAL", canonical)
-    monkeypatch.setattr(module, "HERMES_PLUGIN_PROJECTION", hermes)
-
-    checks: list[dict[str, str]] = []
-    module._check_projection_parity(checks)
-    assert checks == [{
-        "id": "hermes_plugin.briefloop_skill_projection",
-        "status": "fail",
-        "detail": f"differs: {hermes / 'SKILL.md'}",
-    }]
 
 
 def test_briefloop_skill_contract_and_runtime_asset_parity_run_clean() -> None:
@@ -116,11 +88,6 @@ def test_presentation_fallback_contract_is_truthful_in_every_skill_copy() -> Non
         (
             "src/multi_agent_brief/runtime_kits/codex/skills/briefloop/"
             "references/controlstore-v2.md"
-        ),
-        "integrations/hermes-plugin/mabw/skills/briefloop/SKILL.md",
-        (
-            "integrations/hermes-plugin/mabw/skills/briefloop/"
-            "references/codex-controlstore-v2.md"
         ),
     )
     for relative in paths:

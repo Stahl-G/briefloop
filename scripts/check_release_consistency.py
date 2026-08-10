@@ -297,37 +297,6 @@ def check_launch_smoke() -> bool:
     return True
 
 
-def check_workbuddy_skill_pack() -> bool:
-    """Run WorkBuddy Skill pack shape guard and return True if it passes."""
-    result = subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts" / "check_workbuddy_skill_pack.py"), "--json"],
-        capture_output=True, text=True, cwd=str(REPO_ROOT),
-    )
-    stdout = result.stdout.strip()
-    stderr = result.stderr.strip()
-    payload_ok = False
-    if result.returncode == 0 and stdout:
-        try:
-            payload = json.loads(stdout)
-            payload_ok = payload.get("ok") is True
-        except json.JSONDecodeError:
-            payload_ok = False
-    if result.returncode != 0 or not payload_ok:
-        print("  [FAIL] WorkBuddy Skill pack check failed:")
-        if stdout:
-            print("         stdout:")
-            for line in stdout.splitlines():
-                print(f"           {line}")
-        if stderr:
-            print("         stderr:")
-            for line in stderr.splitlines():
-                print(f"           {line}")
-        if not stdout and not stderr:
-            print("         no stdout/stderr captured")
-        return False
-    return True
-
-
 def check_public_product_rename() -> bool:
     """Run public product rename guard and return True if it passes."""
     result = subprocess.run(
@@ -338,37 +307,6 @@ def check_public_product_rename() -> bool:
         print("  [FAIL] Public product rename guard failed:")
         stdout = result.stdout.strip()
         stderr = result.stderr.strip()
-        if stdout:
-            print("         stdout:")
-            for line in stdout.splitlines():
-                print(f"           {line}")
-        if stderr:
-            print("         stderr:")
-            for line in stderr.splitlines():
-                print(f"           {line}")
-        if not stdout and not stderr:
-            print("         no stdout/stderr captured")
-        return False
-    return True
-
-
-def check_codebuddy_adapter_smoke() -> bool:
-    """Run source-clone CodeBuddy adapter smoke and return True if it passes."""
-    result = subprocess.run(
-        [sys.executable, str(REPO_ROOT / "scripts" / "check_codebuddy_adapter_smoke.py"), "--json"],
-        capture_output=True, text=True, cwd=str(REPO_ROOT),
-    )
-    stdout = result.stdout.strip()
-    stderr = result.stderr.strip()
-    payload_ok = False
-    if result.returncode == 0 and stdout:
-        try:
-            payload = json.loads(stdout)
-            payload_ok = payload.get("ok") is True
-        except json.JSONDecodeError:
-            payload_ok = False
-    if result.returncode != 0 or not payload_ok:
-        print("  [FAIL] CodeBuddy adapter smoke failed:")
         if stdout:
             print("         stdout:")
             for line in stdout.splitlines():
@@ -504,22 +442,10 @@ def main(strict: bool = False, check_tag: bool = True) -> int:
         check("Launch demo smoke passes", False, str(exc))
 
     try:
-        workbuddy_pack_ok = check_workbuddy_skill_pack()
-        check("WorkBuddy Skill pack passes", workbuddy_pack_ok)
-    except Exception as exc:
-        check("WorkBuddy Skill pack passes", False, str(exc))
-
-    try:
         public_product_rename_ok = check_public_product_rename()
         check("Public product rename guard passes", public_product_rename_ok)
     except Exception as exc:
         check("Public product rename guard passes", False, str(exc))
-
-    try:
-        codebuddy_adapter_ok = check_codebuddy_adapter_smoke()
-        check("CodeBuddy adapter smoke passes", codebuddy_adapter_ok)
-    except Exception as exc:
-        check("CodeBuddy adapter smoke passes", False, str(exc))
 
     try:
         v1_pilot_evidence_ok = check_v1_pilot_evidence()

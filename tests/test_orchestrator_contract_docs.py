@@ -18,7 +18,6 @@ STAGE_SPECS = ROOT / "configs" / "stage_specs.yaml"
 ARTIFACT_CONTRACTS = ROOT / "configs" / "artifact_contracts.yaml"
 DEFAULT_POLICY_PACK = ROOT / "configs" / "policy_packs" / "default.yaml"
 PACKAGE_CONTRACT_BASE = ROOT / "src" / "multi_agent_brief"
-DRAFT_PROMOTE_MATRIX = ROOT / "docs" / "implementation" / "draft-promote-ownership-matrix.md"
 
 EXPECTED_DECISIONS = {
     "continue",
@@ -253,42 +252,6 @@ def test_evaluation_and_onboarding_modules_do_not_import_cli_layer():
     assert violations == []
 
 
-def test_draft_promote_ownership_matrix_stays_non_authoritative_docs() -> None:
-    text = DRAFT_PROMOTE_MATRIX.read_text(encoding="utf-8")
-
-    for phrase in [
-        "agent-owned draft -> deterministic Python validation/promotion -> authoritative artifact",
-        "`agent_owned_draft`",
-        "`python_promoted_authoritative`",
-        "`python_only_control`",
-        "`human_approval_record`",
-        "`projection_only`",
-        "`reader_delivery`",
-        "`claim_drafts.json`",
-        "`claim_ledger.json`",
-        "`workflow_state.json`",
-        "`event_log.jsonl`",
-        "`quality_panel.json`",
-        "`output/delivery/brief.md`",
-        "does not add a runtime, stage, artifact schema, validator, gate, delivery approval",
-        "make WorkBuddy, operator runtime, or any unadapted host a delegated runtime",
-        "claim output-quality improvement or semantic correctness",
-    ]:
-        assert phrase in text
-
-
-def test_v060_public_overview_uses_precise_boundary():
-    text = (ROOT / "docs" / "implementation" / "v0.6.0-explicit-orchestrator-contract.md").read_text(
-        encoding="utf-8"
-    )
-    assert (
-        "v0.6.0 establishes shared Orchestrator authority, decision vocabulary, "
-        "contract references, and runtime role parity."
-    ) in text
-    assert "It does not persist runtime state or execute artifact registry validation." in text
-    assert "artifact identity" in text
-    assert "producer stage or role" in text
-    assert "consumer stage or role" in text
 
 
 def test_orchestrator_architecture_docs_define_v060_boundary():

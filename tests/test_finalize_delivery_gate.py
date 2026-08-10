@@ -515,56 +515,6 @@ def test_finalize_applies_report_template_order_before_delivery(tmp_path: Path):
     assert report["citation_profile_audit_bundle_keeps_trace"] is True
 
 
-@pytest.mark.parametrize(
-    ("workspace_kind", "expected_token"),
-    [
-        ("fresh", "runtime_command_unsupported"),
-        ("legacy", "legacy_workspace_unsupported"),
-    ],
-)
-def test_finalize_public_cli_is_retired_with_typed_rejection_and_zero_writes(
-    tmp_path: Path,
-    capsys,
-    workspace_kind: str,
-    expected_token: str,
-) -> None:
-    workspace = tmp_path / "workspace"
-    input_dir = workspace / "input"
-    intermediate = workspace / "output" / "intermediate"
-    input_dir.mkdir(parents=True)
-    intermediate.mkdir(parents=True)
-    (input_dir / "source.md").write_text("dummy", encoding="utf-8")
-    (workspace / "config.yaml").write_text(
-        "project:\n"
-        "  name: Retired Finalize Brief\n"
-        "input:\n"
-        "  path: input\n"
-        "output:\n"
-        "  path: output\n"
-        "  formats:\n"
-        "    - markdown\n",
-        encoding="utf-8",
-    )
-    (intermediate / "audited_brief.md").write_text(
-        "# Brief\n\n- Claim [src:CLAIM_123456]\n",
-        encoding="utf-8",
-    )
-    if workspace_kind == "legacy":
-        (intermediate / "workflow_state.json").write_text("{}\n", encoding="utf-8")
-    before = _workspace_file_bytes(workspace)
-
-    rc = main(["finalize", "--config", str(workspace / "config.yaml")])
-    captured = capsys.readouterr()
-
-    # retired public `finalize --config` operator surface; the
-    # workspace authority guard rejects it before dispatch with zero writes.
-    assert rc == 1
-    assert captured.out == f"{expected_token}\n"
-    assert captured.err == ""
-    assert _workspace_file_bytes(workspace) == before
-    assert not (workspace / "briefloop.db").exists()
-
-
 def test_finalize_cli_strips_src_markers_after_subagent_rewrite(tmp_path: Path):
     """Finalization prevents audited [src:...] markers from leaking to final files."""
     workspace = tmp_path / "workspace"
