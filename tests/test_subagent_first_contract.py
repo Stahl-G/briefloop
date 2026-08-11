@@ -55,7 +55,10 @@ def test_user_facing_docs_do_not_present_prepare_as_workflow_runtime():
 
 def test_agents_md_states_python_commands_are_support_tools():
     text = _read("AGENTS.md")
-    assert "Python CLI commands provide onboarding, workspace setup, runtime handoff" in text
+    assert (
+        "Python CLI commands provide onboarding, workspace setup, runtime handoff"
+        in text
+    )
     assert "subagent-first" in text
 
 

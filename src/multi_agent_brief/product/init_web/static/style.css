@@ -1,7 +1,9 @@
 /* ==========================================================================
-   BriefLoop Web Visual System v1 (draft) — setup surface
-   init_web one-shot wizard (production static asset; MIT-derived from the
-   BriefLoop interactive-init prototype).
+   BriefLoop Web Visual System v1 (draft) — setup surface.
+   init_web one-shot wizard production static asset; interaction and layout
+   source adapted under MIT from PPT Master (https://github.com/hugohe3/ppt-master),
+   pinned at 619a954695d866dde970552db9fb1a6640c643c8; source path:
+   skills/ppt-master/scripts/confirm_ui/. Copyright (c) 2025-2026 Hugo He.
    Token layers: foundation → semantic → component → surface(setup).
    No external assets. System font stack only.
    ========================================================================== */
@@ -71,7 +73,7 @@ body {
 button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
 :focus-visible { outline: 2px solid var(--sem-action); outline-offset: 2px; border-radius: 3px; }
 
-/* ---- fullscreen shell (forked from confirm_ui layout, retokenized) ---- */
+/* ---- fullscreen shell (adapted from the pinned PPT Master confirm_ui layout, retokenized) ---- */
 #app {
     display: grid;
     grid-template-columns: minmax(400px, 46%) 1fr;
@@ -526,6 +528,24 @@ textarea.text-input { min-height: 86px; resize: vertical; line-height: 1.6; }
     font-size: 12.5px;
     color: var(--bl-ink-soft);
 }
+
+.source-pack-editor { padding: 16px; border: 1px solid var(--bl-line); border-radius: 10px; }
+.source-input-label { display: block; margin: 10px 0 6px; color: var(--bl-muted); font-size: 12px; }
+.source-file-input, .source-manifest-file { display: block; margin-top: 6px; max-width: 100%; }
+.source-manifest-editor {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 180px;
+    resize: vertical;
+    border: 1px solid var(--bl-line);
+    border-radius: 8px;
+    padding: 10px;
+    font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--bl-ink-soft);
+    background: var(--bl-paper);
+}
+.source-pack-status { margin: 8px 0 0; color: var(--sem-block); font-size: 12px; }
+.source-pack-status.ok { color: var(--sem-action); }
 
 /* actionbar */
 #actionbar {

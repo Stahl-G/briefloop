@@ -136,3 +136,48 @@ def test_v4_attempt_contract_rejects_extra_fields() -> None:
     payload["authority"] = "accepted"
     with pytest.raises(ValidationError):
         ProviderAttemptRecordV5.model_validate(payload)
+
+
+def test_refused_attempt_is_terminal_and_never_output_eligible() -> None:
+    payload = _attempt_payload()
+    status = _text("refused")
+    runtime_facts = make_provider_boundary_facts_v4(
+        envelope=capture_response_envelope_v4(
+            b'{"stop_reason":"refusal"}', present=True
+        ),
+        status=status,
+        response_id=_text("msg-public"),
+        provider_identity=_text("anthropic_messages"),
+        model_identity=_text(EXPECTED_MODEL),
+        output=_text('{"findings":[]}'),
+        http_status=capture_http_status_v4(None, present=False),
+        transport_kind="response",
+    )
+    facts = ProviderBoundaryFactsRecordV4.from_runtime(runtime_facts).model_dump(
+        mode="json"
+    )
+    outcome = classify_provider_outcome_v4(
+        runtime_facts,
+        expected_model_version_utf8=EXPECTED_MODEL.encode(),
+    )
+    payload.update(
+        {
+            "adapter_id": "anthropic_messages_v1",
+            "provider_id": "anthropic_messages",
+            "facts": facts,
+            "attempt_status": outcome.attempt_status,
+            "shadow_reason": outcome.shadow_reason,
+            "kernel_reason": outcome.kernel_reason,
+            "retry_eligible": outcome.retry_eligible,
+            "output_eligible": outcome.output_eligible,
+            "raw_transport_response_sha256": runtime_facts.envelope.raw_sha256,
+            "extracted_output_sha256": None,
+        }
+    )
+    payload["attempt_record_sha256"] = canonical_sha256(
+        {key: item for key, item in payload.items() if key != "attempt_record_sha256"}
+    )
+    record = ProviderAttemptRecordV5.model_validate(payload)
+    assert record.shadow_reason == "provider_refused"
+    assert record.retry_eligible is False
+    assert record.output_eligible is False

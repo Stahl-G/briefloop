@@ -105,6 +105,23 @@ class CurrentAuditPromotion:
     committed_revision: int
 
 
+def audit_promotion_allows_stage_completion(
+    promotion: CurrentAuditPromotion,
+) -> bool:
+    """Return the one shared negative-audit admission predicate.
+
+    The Auditor proposal remains advisory content, but an explicit negative
+    proposal is a fail-closed signal: deterministic control may route it to
+    Human review, never silently complete the stage.  Both next-action
+    classification and Stage completion consume this same derived predicate so
+    they cannot advertise and reject the same effect.
+    """
+
+    return promotion.proposal.decision != "fail" and not any(
+        finding.severity == "error" for finding in promotion.proposal.findings
+    )
+
+
 @dataclass(frozen=True)
 class LineageClassification:
     """One derived view over exactly one structurally verified snapshot."""
@@ -315,8 +332,7 @@ def classify_current_audit_promotion(
 
     artifacts = {item.artifact_id: item for item in snapshot.artifacts}
     revisions = {
-        (item.artifact_id, item.revision): item
-        for item in snapshot.artifact_revisions
+        (item.artifact_id, item.revision): item for item in snapshot.artifact_revisions
     }
     report_artifact = artifacts.get("audit_report")
     if report_artifact is None or report_artifact.current_revision == 0:
@@ -462,9 +478,7 @@ def verify_no_post_seal_records(snapshot: ControlStoreSnapshot) -> None:
         stage_id = invocation_stages[invocation.invocation_id]
         seal = seal_revision_by_stage.get(stage_id)
         accepted = _record_revision(snapshot, invocation.invocation_id)
-        if seal is not None and (
-            invocation.status == "active" or accepted >= seal
-        ):
+        if seal is not None and (invocation.status == "active" or accepted >= seal):
             raise CoreRunError("control_store_integrity_invalid")
     for source in snapshot.sources:
         stage_id = invocation_stages.get(source.invocation_id)
@@ -540,9 +554,7 @@ def _current_gate_batch(snapshot: ControlStoreSnapshot) -> CurrentGateBatch | No
     if len(batches) != 1 or {item.gate_id for item in current} != set(GATE_IDS):
         raise CoreRunError("control_store_integrity_invalid")
     batch_id = next(iter(batches))
-    owning_transaction_ids = {
-        item.accepted_transaction_id for item in current
-    }
+    owning_transaction_ids = {item.accepted_transaction_id for item in current}
     if len(owning_transaction_ids) != 1:
         raise CoreRunError("control_store_integrity_invalid")
     owning_transaction_id = next(iter(owning_transaction_ids))
@@ -570,6 +582,7 @@ __all__ = [
     "LineageClassification",
     "LineageState",
     "canonical_audit_report_bytes",
+    "audit_promotion_allows_stage_completion",
     "classify_current_audit_promotion",
     "classify_current_lineage",
     "require_current_gate_after_audit_promotion",

@@ -70,14 +70,21 @@ SHADOW_SCHEMA_IDS = (
 )
 
 AdapterIdV5 = Literal[
+    "anthropic_messages_v1",
     "local_proxy_responses_v1",
     "openai_responses_v4",
     "synthetic_fixture_v4",
 ]
-ExecutionOriginV5 = Literal["direct_openai", "local_cliproxy", "synthetic_fixture"]
+ExecutionOriginV5 = Literal[
+    "direct_openai",
+    "local_cliproxy",
+    "messages_endpoint",
+    "synthetic_fixture",
+]
 QualificationClassV5 = Literal[
     "direct_openai",
     "local_proxy_experimental",
+    "messages_compatible_experimental",
     "synthetic_only",
 ]
 SHADOW_TIMEOUT_SECONDS = 60
@@ -388,6 +395,11 @@ class ShadowExecutionManifestV5(StrictModel):
         if list(self.shadow_schema_sha256s) != sorted(SHADOW_SCHEMA_IDS):
             raise ValueError("shadow schema hashes must be complete and sorted")
         expected = {
+            "anthropic_messages_v1": (
+                "messages_endpoint",
+                "messages_compatible_experimental",
+                False,
+            ),
             "local_proxy_responses_v1": (
                 "local_cliproxy",
                 "local_proxy_experimental",
@@ -423,7 +435,7 @@ class ShadowRunRequestV5(StrictModel):
     input_binding_sha256: Sha256
     instrument_sha256: Sha256
     assessment_plan_sha256: Sha256
-    ordered_prompt_request_sha256s: list[Sha256] = Field(min_length=9, max_length=9)
+    ordered_prompt_request_sha256s: list[Sha256] = Field(min_length=1, max_length=9)
     execution_sha256: Sha256
     provider_id: ContractId
     model_id: ContractId

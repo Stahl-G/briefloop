@@ -14,6 +14,7 @@ CANONICAL_REPORT_PACK_IDS = (
     "management_monthly",
     "evidence_extract",
     "solar_industry_periodic",
+    "solar_stock_periodic",
 )
 
 RECOMMENDED_REPORT_PACK_ENTRIES = {
@@ -21,6 +22,7 @@ RECOMMENDED_REPORT_PACK_ENTRIES = {
     "management_monthly": "management-monthly",
     "evidence_extract": "document-review",
     "solar_industry_periodic": "solar-periodic",
+    "solar_stock_periodic": "solar-stock-periodic",
 }
 
 REPORT_PACK_ALIASES = {
@@ -31,6 +33,7 @@ REPORT_PACK_ALIASES = {
     "evidence_extract": "evidence_extract",
     "solar_periodic": "solar_industry_periodic",
     "solar_industry_periodic": "solar_industry_periodic",
+    "solar_stock_periodic": "solar_stock_periodic",
 }
 
 

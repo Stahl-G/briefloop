@@ -64,6 +64,13 @@ All backends implement `SearchBackend` (from `sources/search_backends/base.py`):
 | Weaknesses | published_at may be missing, snippets need filtering |
 | Status | **Supported** |
 
+For the current Tavily path, `industry_or_theme` is the explicit Human-authored
+search topic. BriefLoop freezes that value unchanged as the sole runtime source
+query. The company or organization name, selected report type, full task
+objective, agent-written source candidates, and configured `search_tasks` do
+not prefix, suffix, or replace it. Changing the confirmed search topic requires
+a new run.
+
 ### 2. Exa
 
 | Field | Value |
@@ -147,20 +154,32 @@ All backends implement `SearchBackend` (from `sources/search_backends/base.py`):
 
 ## Configuration
 
-### Current (single backend)
+### Current Tavily weekly acquisition
 
 ```yaml
 web_search:
   enabled: true
   backend: tavily
   api_key_env: TAVILY_API_KEY
-  max_results: 5
+  max_results: 20
   recency_days: 7
-  search_tasks:
-    - query: "automotive regulation tariffs safety recalls"
-      domains:
-        - reuters.com
+  search_depth: advanced
+  news_source_domains:
+    preferred_domains:
+      - reuters.com
 ```
+
+Weekly Tavily products execute the exact frozen atomic `search_tasks` matrix.
+Solar Stock Periodic freezes 20 independent tasks: 11 company-specific equity
+tasks, 5 event-only entity tasks, and 4 industry/policy/financing themes. Each
+task uses `search_depth=advanced` and requests up to 20 results; news tasks use
+`topic=news`, while policy, price, and official-material tasks use
+`topic=general`. All eligible unique URLs are Batch Extracted in groups of 20,
+with one deterministic 30-day domain-targeted backfill allowed only for an
+under-covered task. The total safety envelope is 800 unique URLs, not a
+five-result product cap. A single reconstructed industry query is not a
+supported execution mode. Search summaries remain discovery-only; only
+successful non-empty Extract content can become evidence.
 
 ### Example: Exa
 
@@ -222,7 +241,7 @@ web_search:
     - name: tavily
       role: fast_agent_search
       api_key_env: TAVILY_API_KEY
-      max_results: 5
+      max_results: 20
     - name: exa
       role: semantic_research
       api_key_env: EXA_API_KEY

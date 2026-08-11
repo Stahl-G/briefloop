@@ -54,8 +54,13 @@
 - 司乐师 控制台 可以给出 deterministic control recommendations，并记录 enable/defer/reject selections；selection 不会自动执行对应 control。
 - Finalize 会把 reader delivery bundle 写入 `output/delivery/`，并把来源附录追加到交付 Markdown/DOCX 末尾；`output/source_appendix.md` 继续作为 audit/control copy 保留。Reader-facing appendix 可以展示安全的 source identity 和 taxonomy labels；`output/source_appendix_trace.md` 可以承载内部 claim/source/span IDs、source paths、source byte hashes 和 metadata completeness warnings 供 audit review。交付产物不得暴露内部 claim IDs、source IDs、evidence text、本地路径或 file URL。
 - Runtime asset availability 已显式区分：package install 包含 契约 configs 和 public-safe eval fixtures；`.agents/`、`.claude/`、`.opencode/`、`.codex/` 以及 Hermes plugin 文件属于 source-clone-only，除非通过 `briefloop runtime install` 复制到 workspace。
-- Improvement Ledger lifecycle 已在 LD2-3 退役。其投影与每次 run 冻结的代码位于被删除的 legacy stack 中，因此 `improvement/ledger.jsonl`、`improvement/memory.md`、`improvement_memory_snapshot.md` 已无任何代码读写方。`contracts/v2.py` 中的 `improvement_*` 事件词汇表存活。Store-native 替代方案属于 MU-2 工作范围。
-- Packaged public-safe evaluation cases 已覆盖 Improvement Memory 控制行为：未批准 entry 不物化，已批准 guidance 会冻结，reverted entry 会从下一次 snapshot 中移除。
+- legacy Improvement Ledger lifecycle 已在 LD2-3 退役；其 JSON/JSONL 文件保持
+  inert 且无读写方。实验性 post-final 人工审阅把 finding 处置、人工编辑 guidance
+  草稿和独立 approval/status revision 记录为 append-only SQLite Receipt。在
+  development main 上，Human 可以提供新的 `RunDirection` 并用
+  `--include-approved-guidance` 显式启动同一 workspace 的正常 successor；Core
+  事务会原子冻结兼容、active 且经 Human 批准的 guidance。Analyst 和 Editor 收到
+  同一份不可变 context；其他角色不收到，commit 后也不会读取 live ledger 或退役文件。
 - 实验性 Atomic Claim Graph 控制可以校验可选
   `output/intermediate/atomic_claim_graph.json`，检查 whole-ledger coverage 和
   deterministic Claim Ledger type consistency，暴露 Analyst/Editor
@@ -74,13 +79,28 @@
   投影为 status summaries 和 quality-gate findings。这只是 support-record
   control plane，不是 automatic support assessment、semantic proof、release
   eligibility 或 support-sufficiency gate。
-- 实验性 Semantic Assessment Report 控制可以校验可选
-  `output/intermediate/semantic_assessment_report.json` schema，校验其对 Claim
-  Ledger claims、Atomic Claim Graph atoms 和 Evidence Span Registry spans 的
-  machine-checkable references，把 rows 投影为 proposal-only Claim-Support
-  Matrix delta candidates，并暴露 read-only status counts。这只是 proposal
-  surface，不是 accepted support truth、adjudication queue creation、delivery
-  gate、release authority 或 semantic proof。
+- 可选的 `output/intermediate/semantic_assessment_report.json` contract 与
+  machine-checkable reference validation 仍是实验性能力。它的 producer、proposal
+  projection、status visibility 和 adjudication writer 已随 legacy stack 退役；
+  当前 runtime role 不会被指示创建它。剩余 schema 不阻断流程，也不会创建 support
+  truth、Claim-Support Matrix row、repair route、Gate、delivery decision、release
+  authority 或 semantic proof。
+- development main 的 Store-qualified post-final LAJ 仍要求显式选择 result，并以
+  append-only Receipt 记录 Human accept/reject/defer、人工编辑 draft 和独立
+  approval/status。独立的 `briefloop runtime successor-start` 命令只有在 Human
+  提供新 run ID、严格 `RunDirection` 并显式选择复用时，才会创建正常的同 workspace
+  successor。Core 事务原子冻结完整的兼容 active-approved 集合，只交给 Analyst 与
+  Editor；上限为 16 条、合计 65,536 UTF-8 bytes，超限直接失败且不截断。guidance
+  仅是 advisory presentation context；当前 direction 与 evidence 优先，它不改变
+  Claim Ledger、Gate、finalization、delivery、repair 或 Core next-action。效用
+  NOT MEASURED，也不构成自动学习。schema 变化后旧 development SQLite workspace
+  不受支持，必须按当前 schema 新建。
+- 实验性 `solar-stock-periodic` 是 schema-18、fresh-only 的 TOYO/全球太阳能资本
+  市场周报 ReportPack。运行时冻结 20 条独立 Tavily 发现任务（11 家上市公司、5 个
+  事件主体、4 条主题），每条最多 20 个 advanced Search 结果，合格 URL 按每批 20
+  条 Extract；覆盖不足时最多一次确定性的 30 日定向 backfill，安全包络为 800 个
+  唯一 URL。Search 摘要不是证据，失败任务和逐 URL 结果会保留；没有冻结行情快照时，
+  不提供或臆造价格、收益率和估值字段。
 - v0.11 product baseline 已支持三个面向用户的 workspace 入口：
   `briefloop new industry-weekly`、`briefloop new management-monthly` 和
   `briefloop new document-review`。它们分别映射到内部 canonical ReportPack id
@@ -115,14 +135,10 @@
   audit bundle 保留 trace artifacts。这只是 citation surface metadata，不证明
   support、不放松 gates、不移除 audit trace、不批准 delivery，也不决定 release
   readiness。
-  `sources materialize-pack` 可以把显式 manual 或 cached-package source records
-  materialize 到 `input/sources/`，并可写入 hash-validated
-  `source_evidence_pack_manifest.json`，为 recurring reports 提供可归档复现的
-  durable source-evidence layer。Source evidence records 会区分 provider/storage
-  `source_type`、retrieval/page `retrieval_source_type`、reader-facing
-  `source_category` 和 `underlying_evidence_type` metadata；这是 taxonomy
-  normalization，不是 trust scoring、source-policy gate 或 semantic support
-  judgment。
+  旧的 `sources materialize-pack` 命令名只保留为 fail-closed parser surface，
+  统一返回 `runtime_command_unsupported`，不再有当前 source writer。可选的
+  `source_evidence_pack_manifest.json` contract 仍可读取已有 artifact，但不会由
+  该退役命令生成。
   `briefloop extract` 可以在
   `evidence_extract` workspace 中登记显式 extraction scope，并把本地 source
   files 复制到 `input/sources/evidence_extract/`。它还会在
@@ -138,11 +154,10 @@
   不渲染页面做视觉检查、不抽取表格或图、不判断语义支持、不生成 Claim-Support
   Matrix rows、不形成法律或披露结论、不运行 stages、不批准 delivery，也不绕过
   gates。
-  Experimental SourceHub Lite setup commands 可以把本地 text evidence files 复制到
-  `input/sources/sourcehub/`、登记 RSS feeds，并在 `sources.yaml` 中登记
-  `runtime_tool` web-search handoff tasks。这只是 source setup：不会执行 web
-  search、crawl web、把 source candidates 或 search summaries 变成 evidence、
-  生成 Evidence Span Registry entries、运行 stages、批准 delivery 或绕过 gates。
+  旧的 SourceHub Lite `sources add-file/add-rss/add-web-search` 命令名已退役，
+  只保留 fail-closed parser surface；它们返回
+  `runtime_command_unsupported`，不会产生 source、workspace 或 Store effect。
+  当前 source intake 和 public-web acquisition 走 Store-derived runtime action。
   Resolved PolicyProfiles 可以通过有限 adapter 收紧现有 deterministic
   quality-gate strictness 和 reader-final forbidden-phrase checks，但 gates 不会从
   natural-language industry strings 静默推断 policy。
@@ -156,7 +171,9 @@
   `output/intermediate/quality_panel.json`，并可生成 SHA-bound
   `output/intermediate/quality_summary.md` 和 no-JavaScript
   `output/intermediate/quality_panel.html` audit attachment。`quality summarize`
-  会一起写这些 artifacts，report bundle projection 可把它们放进 audit bundle，
+  会一起写这些 legacy audit artifacts；SQLite workspace 通过
+  `quality html --workspace <path> --laj-view <laj.json>` 显式展示与当前报告绑定的
+  LAJ view。report bundle projection 可把这些 artifacts 放进 audit bundle，
   但不会放入 reader-facing delivery bundle。这些 projection 不运行 gates、不创建
   quality score、不替代 gate reports、不决定 release eligibility、不批准
   delivery、不证明 semantic truth，也不执行 repair。

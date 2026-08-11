@@ -12,7 +12,7 @@ notes, or compatibility claims.
 - Claude command: `/briefloop`; deprecated compatibility command: `/mabw`
 - Python module: `multi_agent_brief`
 - Package/distribution: `briefloop`
-- Experiment namespace: MABW-080
+- Archived experiment identifier: `MABW-080`; no current CLI namespace
 - Public README bodies:
   - `README.md` is the canonical English README.
   - `README.zh-CN.md` is the canonical Chinese README.

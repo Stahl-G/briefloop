@@ -49,6 +49,7 @@ EXPECTED_BASELINE_PRODUCT_ENTRIES = {
 }
 EXPECTED_EXPERIMENTAL_PRODUCT_ENTRIES = {
     "solar-periodic": "solar_industry_periodic",
+    "solar-stock-periodic": "solar_stock_periodic",
 }
 EXPECTED_PRODUCT_ENTRIES = {
     **EXPECTED_BASELINE_PRODUCT_ENTRIES,
@@ -69,6 +70,7 @@ EXPECTED_REPORT_PACK_STATUSES = {
     "management_monthly": "supported",
     "evidence_extract": "supported",
     "solar_industry_periodic": "experimental",
+    "solar_stock_periodic": "experimental",
 }
 REQUIRED_CONTROL_SPINE = {
     "claim_ledger",
@@ -97,7 +99,13 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "GPT-5.6",
         "Judge quickstart",
         "SQLite ControlStore is the sole runtime authority",
-        "Improvement Ledger surface is not shipped yet",
+        "briefloop runtime successor-start",
+        "--include-approved-guidance",
+        "Analyst and Editor",
+        "Utility is NOT MEASURED",
+        "v0.15.1 prepared release target",
+        "solar-stock-periodic",
+        "development-main successor",
     ],
     "README_en.md": [
         "English README has moved to [README.md](README.md).",
@@ -121,13 +129,22 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "GPT-5.6",
         "评委快速试用",
         "briefloop.db` 是唯一运行时权威",
-        "当前尚未交付 Store-native 的可复用 guidance 或 Improvement Ledger",
+        "briefloop runtime successor-start",
+        "--include-approved-guidance",
+        "Analyst 和 Editor",
+        "效用 NOT MEASURED",
+        "v0.15.1 prepared release target",
+        "solar-stock-periodic",
     ],
     "docs/roadmap.md": [
         "v0.11.0 — Stable Weekly/Monthly Brief Product",
         "no force-deliver path",
         "no automatic public release or external publication command",
         "local studio preview after the cli product path works",
+        "Current Development Correction",
+        "briefloop runtime successor-start",
+        "--include-approved-guidance",
+        "Utility is NOT MEASURED",
     ],
     "docs/support-matrix.md": [
         "Supported",
@@ -138,24 +155,68 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
         "solar-periodic",
         "force-deliver",
         "Quality Panel projection",
+        "runtime successor-start",
+        "16-item / 65,536-byte bounds",
+        "no current runtime role creates the artifact",
+        "Fast-rerun fact-layer import and the MABW-080 command suite were retired",
     ],
     "docs/features.md": [
         "Current product baseline:",
-        "v0.13.0 supported baseline entries",
+        "v0.15.2",
         "industry-weekly",
         "management-monthly",
         "document-review",
         "Product OS surfaces remain experimental",
         "Traceability, not proof by itself",
+        "Normal same-workspace successor",
+        "Successor guidance snapshot",
+        "Utility NOT MEASURED",
     ],
     "docs/features.zh-CN.md": [
         "当前产品基线",
-        "v0.13.0 支持的 baseline 入口",
+        "v0.15.2",
         "industry-weekly",
         "management-monthly",
         "document-review",
         "更宽的 Product OS surface 仍是实验性",
         "不等于语义证明",
+        "同 workspace 正常 successor",
+        "Successor guidance snapshot",
+        "效用 NOT MEASURED",
+    ],
+    "docs/architecture-status.md": [
+        "briefloop runtime successor-start",
+        "16-item",
+        "65,536-byte",
+        "Utility is NOT MEASURED",
+        "no current runtime role is instructed to create it",
+    ],
+    "docs/architecture-status.zh-CN.md": [
+        "briefloop runtime successor-start",
+        "16 条",
+        "65,536 UTF-8 bytes",
+        "NOT MEASURED",
+        "当前 runtime role 不会被指示创建它",
+    ],
+    "docs/MIGRATION.md": [
+        "Schema 13",
+        "briefloop runtime successor-start",
+        "--include-approved-guidance",
+        "Utility is NOT MEASURED",
+        "fast-rerun/080 commands",
+    ],
+    "docs/MIGRATION.zh-CN.md": [
+        "Schema 13",
+        "briefloop runtime successor-start",
+        "--include-approved-guidance",
+        "效用 NOT MEASURED",
+        "fast-rerun/080 命令均已退役",
+    ],
+    "docs/roadmap.zh-CN.md": [
+        "当前 development 校正",
+        "briefloop runtime successor-start",
+        "--include-approved-guidance",
+        "效用 NOT MEASURED",
     ],
     "docs/packaging-pipx.md": [
         "not a current install instruction",
@@ -264,6 +325,45 @@ README_RETIRED_CURRENT_SURFACE_TERMS = {
         "## 🤖 Claude Code 路径",
         "/briefloop feedback <workspace>",
         "/briefloop deliver <workspace>",
+    ),
+}
+GUIDANCE_CARRY_STALE_CURRENT_PHRASES = {
+    "README.md": (
+        "Later runs do not consume that guidance yet",
+        "approved guidance is not consumed by later runs",
+        "support-calibrated wording",
+    ),
+    "README.zh-CN.md": (
+        "后续 run 尚不消费这些 guidance",
+        "已批准 guidance 尚不进入后续 run",
+        "support-calibrated wording",
+    ),
+    "docs/architecture-status.md": (
+        "Approved guidance is not consumed by a later run",
+        "next-run guidance consumption is not shipped",
+        "project rows into proposal-only",
+    ),
+    "docs/architecture-status.zh-CN.md": (
+        "不会消费已批准 guidance",
+        "把 rows 投影为 proposal-only",
+    ),
+    "docs/MIGRATION.md": (
+        "No approved guidance is consumed by later runs",
+        "Schema 12 adds append-only post-final assessment-series relations",
+    ),
+    "docs/support-matrix.md": (
+        "next-run snapshot/consumption is not shipped",
+        "no Gate/finalize/delivery/Core effect or next-run guidance consumption",
+        "Fast-rerun fact-layer import is an experimental control transaction",
+        "Its commands remain available for explicit controlled",
+    ),
+    "docs/features.md": (
+        "Freezes approved guidance into the next run's runtime surface",
+        "Structured multi-assessor proposal layer for support labels",
+    ),
+    "docs/features.zh-CN.md": (
+        "把已批准 guidance 冻结进下一次 run 的 runtime surface",
+        "面向 support label 的结构化多评估者 proposal layer",
     ),
 }
 README_FIRST_USER_DOC_BLOCKS = {
@@ -509,6 +609,43 @@ FORBIDDEN_PUBLIC_CLAIM_PATTERNS = [
         ),
     ),
     (
+        "automatic_learning",
+        re.compile(
+            r"\b(?:BriefLoop|the\s+system|system)\s+"
+            r"(?:automatically\s+learns?|learns?\s+automatically)\b"
+            r"|\bautomatically\s+learns?\s+from\s+(?:feedback|guidance)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "guaranteed_improvement",
+        re.compile(
+            r"\b(?:BriefLoop|guidance|approved\s+guidance|this\s+mechanism)\s+"
+            r"(?:guarantees?|will\s+guarantee)\s+"
+            r"(?:improvement|better\s+outputs?|improved\s+outputs?|output\s+quality)\b"
+            r"|\bguaranteed\s+(?:improvement|output\s+quality)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "ai_guidance_approval",
+        re.compile(
+            r"\b(?:AI|agent|model)\s+(?:automatically\s+)?"
+            r"(?:approves?|can\s+approve)\s+(?:guidance|findings?|reuse)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "guidance_as_evidence_or_policy",
+        re.compile(
+            r"\bguidance\s+(?:is|becomes|serves\s+as|supplies|provides)\s+"
+            r"(?:source\s+)?evidence\b"
+            r"|\bguidance\s+(?:is|becomes|serves\s+as)\s+"
+            r"(?:a\s+)?deterministic\s+(?:policy|gate)\b",
+            re.IGNORECASE,
+        ),
+    ),
+    (
         "python_semantic_judgment",
         re.compile(
             r"\bPython\s+"
@@ -533,6 +670,15 @@ FORBIDDEN_PUBLIC_CLAIM_PATTERNS = [
             r"(证明语义真实性|证明语义真理|消除幻觉|自动发布|公开发布|绕过人工审核|绕过审核|授权公开发布)"
         ),
     ),
+    (
+        "zh_guidance_overclaim",
+        re.compile(
+            r"(?:BriefLoop|系统|AI|agent|model)[^。；\n]{0,12}"
+            r"(?:自动学习|保证改善|保证提升|保证质量|批准guidance|批准 guidance)"
+            r"|guidance\s*(?:是|成为|充当)\s*(?:source\s*)?evidence"
+            r"|guidance\s*(?:是|成为|充当)\s*确定性(?:policy|策略|gate)"
+        ),
+    ),
     ("zh_auto_publish_report", re.compile(r"自动发布报告")),
 ]
 NEGATING_CONTEXT_TOKENS = (
@@ -553,7 +699,9 @@ NEGATING_CONTEXT_TOKENS = (
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON."
+    )
     args = parser.parse_args()
 
     checks: list[dict[str, str]] = []
@@ -626,11 +774,25 @@ def _check_report_pack_configs(checks: list[dict[str, str]]) -> None:
 
     for pack_id in sorted(STABLE_SCENARIO_PACKS):
         pack = root_packs.get(pack_id) or {}
-        spec = pack.get("default_report_spec") if isinstance(pack.get("default_report_spec"), dict) else {}
+        spec = (
+            pack.get("default_report_spec")
+            if isinstance(pack.get("default_report_spec"), dict)
+            else {}
+        )
         outputs = set(spec.get("outputs") or [])
-        control_spine = spec.get("control_spine") if isinstance(spec.get("control_spine"), dict) else {}
-        spine_missing = sorted(key for key in REQUIRED_CONTROL_SPINE if control_spine.get(key) is not True)
-        source_policy = spec.get("source_policy") if isinstance(spec.get("source_policy"), dict) else {}
+        control_spine = (
+            spec.get("control_spine")
+            if isinstance(spec.get("control_spine"), dict)
+            else {}
+        )
+        spine_missing = sorted(
+            key for key in REQUIRED_CONTROL_SPINE if control_spine.get(key) is not True
+        )
+        source_policy = (
+            spec.get("source_policy")
+            if isinstance(spec.get("source_policy"), dict)
+            else {}
+        )
         _append_check(
             checks,
             f"{pack_id}.markdown_docx_outputs",
@@ -677,7 +839,9 @@ def _check_product_entries(checks: list[dict[str, str]]) -> None:
 
 def _check_packs_cli_surface(checks: list[dict[str, str]]) -> None:
     list_code, list_payload = _run_cli_json(["packs", "list", "--json"])
-    packs = list_payload.get("packs") if isinstance(list_payload.get("packs"), list) else []
+    packs = (
+        list_payload.get("packs") if isinstance(list_payload.get("packs"), list) else []
+    )
     packs_by_id = {
         item.get("pack_id"): item
         for item in packs
@@ -730,7 +894,9 @@ def _check_packs_cli_surface(checks: list[dict[str, str]]) -> None:
     for pack_id, expected_status in EXPECTED_REPORT_PACK_STATUSES.items():
         item = packs_by_id.get(pack_id) or {}
         if item.get("status") != expected_status:
-            status_mismatches.append(f"{pack_id}:{item.get('status')}!={expected_status}")
+            status_mismatches.append(
+                f"{pack_id}:{item.get('status')}!={expected_status}"
+            )
     _append_check(
         checks,
         "packs_list_cli.support_statuses",
@@ -738,7 +904,9 @@ def _check_packs_cli_surface(checks: list[dict[str, str]]) -> None:
         f"status mismatches={status_mismatches}",
     )
 
-    unknown_code, unknown_payload = _run_cli_json(["packs", "show", "unknown-pack", "--json"])
+    unknown_code, unknown_payload = _run_cli_json(
+        ["packs", "show", "unknown-pack", "--json"]
+    )
     recommended = unknown_payload.get("recommended_entries")
     internal = unknown_payload.get("internal_pack_ids")
     _append_check(
@@ -769,7 +937,10 @@ def _check_workspace_creation(checks: list[dict[str, str]]) -> None:
         for entry, expected_pack in EXPECTED_BASELINE_PRODUCT_ENTRIES.items():
             workspace = base / entry
             stdout = io.StringIO()
-            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(io.StringIO()):
+            with (
+                contextlib.redirect_stdout(stdout),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
                 code = cli_main(["new", entry, str(workspace)])
             spec_path = workspace / "report_spec.yaml"
             spec = _load_yaml_file(spec_path) if spec_path.exists() else {}
@@ -782,7 +953,10 @@ def _check_workspace_creation(checks: list[dict[str, str]]) -> None:
             _append_check(
                 checks,
                 f"new.{entry}.local_first_files",
-                all((workspace / name).exists() for name in ("config.yaml", "sources.yaml", "user.md"))
+                all(
+                    (workspace / name).exists()
+                    for name in ("config.yaml", "sources.yaml", "user.md")
+                )
                 and (workspace / "input" / "sources").is_dir(),
                 "workspace skeleton contains config.yaml, sources.yaml, user.md, input/sources",
             )
@@ -826,6 +1000,17 @@ def _check_cli_and_docs_boundaries(checks: list[dict[str, str]]) -> None:
             f"retired current-capability terms present={present}",
         )
 
+    for rel_path, stale_phrases in GUIDANCE_CARRY_STALE_CURRENT_PHRASES.items():
+        text = (ROOT / rel_path).read_text(encoding="utf-8")
+        lowered = text.casefold()
+        present = [phrase for phrase in stale_phrases if phrase.casefold() in lowered]
+        _append_check(
+            checks,
+            f"docs.{rel_path}.guidance_carry_current_truth",
+            not present,
+            f"stale guidance-carry phrases present={present}",
+        )
+
     readme_en_text = (ROOT / "README_en.md").read_text(encoding="utf-8")
     _append_check(
         checks,
@@ -866,7 +1051,8 @@ def _check_first_user_docs_surface(checks: list[dict[str, str]]) -> None:
         checks,
         "first_user_docs.docs/getting-started.md.unix_venv_activation",
         activation_reason == "",
-        activation_reason or "setup.sh followed by source .venv/bin/activate before CLI verification",
+        activation_reason
+        or "setup.sh followed by source .venv/bin/activate before CLI verification",
     )
 
     readme_text = (ROOT / "README.md").read_text(encoding="utf-8")
@@ -875,7 +1061,8 @@ def _check_first_user_docs_surface(checks: list[dict[str, str]]) -> None:
         checks,
         "first_user_docs.README.md.unix_venv_activation",
         readme_activation_reason == "",
-        readme_activation_reason or "setup.sh followed by source .venv/bin/activate before README CLI usage",
+        readme_activation_reason
+        or "setup.sh followed by source .venv/bin/activate before README CLI usage",
     )
 
     pipx_findings = _current_install_pipx_findings()
@@ -887,8 +1074,16 @@ def _check_first_user_docs_surface(checks: list[dict[str, str]]) -> None:
     )
 
     readme_first_screen = _readme_first_screen_text(readme_text)
-    missing_links = [link for link in README_FIRST_SCREEN_REQUIRED_LINKS if link not in readme_first_screen]
-    forbidden_links = [link for link in README_FIRST_SCREEN_FORBIDDEN_LINKS if link in readme_first_screen]
+    missing_links = [
+        link
+        for link in README_FIRST_SCREEN_REQUIRED_LINKS
+        if link not in readme_first_screen
+    ]
+    forbidden_links = [
+        link
+        for link in README_FIRST_SCREEN_FORBIDDEN_LINKS
+        if link in readme_first_screen
+    ]
     _append_check(
         checks,
         "first_user_docs.README.md.first_screen_links",
@@ -913,10 +1108,14 @@ def _check_first_user_route_surfaces(checks: list[dict[str, str]]) -> None:
         raw_text = path.read_text(encoding="utf-8")
         route_text = _section_between(raw_text, start_marker, end_marker)
         missing_entries = [
-            entry for entry in FIRST_USER_ROUTE_REQUIRED_ENTRIES if entry not in route_text
+            entry
+            for entry in FIRST_USER_ROUTE_REQUIRED_ENTRIES
+            if entry not in route_text
         ]
         forbidden_terms = [
-            term for term in FIRST_USER_ROUTE_FORBIDDEN_TERMS if term.lower() in route_text.lower()
+            term
+            for term in FIRST_USER_ROUTE_FORBIDDEN_TERMS
+            if term.lower() in route_text.lower()
         ]
         _append_check(
             checks,
@@ -927,7 +1126,9 @@ def _check_first_user_route_surfaces(checks: list[dict[str, str]]) -> None:
         )
 
 
-def _check_archived_experiment_namespace_quarantine(checks: list[dict[str, str]]) -> None:
+def _check_archived_experiment_namespace_quarantine(
+    checks: list[dict[str, str]],
+) -> None:
     findings: list[str] = []
     for rel_path, path in _archived_experiment_first_user_paths():
         if not path.exists():
@@ -973,17 +1174,26 @@ def _check_readme_first_user_doc_blocks(checks: list[dict[str, str]]) -> None:
                 f"missing README doc block surface: {rel_path}",
             )
             continue
-        block = _section_between(path.read_text(encoding="utf-8"), start_marker, end_marker)
+        block = _section_between(
+            path.read_text(encoding="utf-8"), start_marker, end_marker
+        )
         links = [match.group(1) for match in link_re.finditer(block)]
-        missing_links = [link for link in README_FIRST_USER_DOC_BLOCK_LINKS if link not in links]
+        missing_links = [
+            link for link in README_FIRST_USER_DOC_BLOCK_LINKS if link not in links
+        ]
         forbidden_links = [
-            link for link in README_FIRST_USER_DOC_BLOCK_FORBIDDEN_LINKS if link in links
+            link
+            for link in README_FIRST_USER_DOC_BLOCK_FORBIDDEN_LINKS
+            if link in links
         ]
         extra_links = sorted(set(links) - allowed)
         _append_check(
             checks,
             f"first_user_docs.{rel_path}.three_page_block",
-            bool(block) and not missing_links and not forbidden_links and not extra_links,
+            bool(block)
+            and not missing_links
+            and not forbidden_links
+            and not extra_links,
             "missing_links="
             f"{missing_links} forbidden_links={forbidden_links} extra_links={extra_links}",
         )
@@ -1012,7 +1222,9 @@ def _unix_source_clone_activation_reason(
 ) -> str:
     setup_index = text.find("bash scripts/setup.sh")
     activation_index = text.find("source .venv/bin/activate")
-    cli_indexes = [text.find(marker) for marker in cli_markers if text.find(marker) >= 0]
+    cli_indexes = [
+        text.find(marker) for marker in cli_markers if text.find(marker) >= 0
+    ]
     missing = []
     if setup_index < 0:
         missing.append("bash scripts/setup.sh")
@@ -1038,7 +1250,9 @@ def _current_install_pipx_findings() -> list[str]:
         for index, line in enumerate(lines):
             if not PIPX_INSTALL_BRIEFLOOP_RE.search(line):
                 continue
-            context = "\n".join(lines[max(0, index - 1) : min(len(lines), index + 2)]).lower()
+            context = "\n".join(
+                lines[max(0, index - 1) : min(len(lines), index + 2)]
+            ).lower()
             if any(token in context for token in PIPX_INSTALL_NEGATING_CONTEXT):
                 continue
             findings.append(f"{rel_path}:{index + 1}:{line.strip()}")
@@ -1075,7 +1289,9 @@ def _check_golden_path_surface(checks: list[dict[str, str]]) -> None:
         raw_text = path.read_text(encoding="utf-8")
         text = raw_text.lower()
         missing = [phrase for phrase in phrases if phrase.lower() not in text]
-        forbidden = [phrase for phrase in FORBIDDEN_GOLDEN_PATH_PHRASES if phrase.lower() in text]
+        forbidden = [
+            phrase for phrase in FORBIDDEN_GOLDEN_PATH_PHRASES if phrase.lower() in text
+        ]
         forbidden.extend(
             label
             for label, pattern in FORBIDDEN_GOLDEN_PATH_SHELL_COMMAND_PATTERNS
@@ -1120,7 +1336,10 @@ def _check_reference_run_surface(checks: list[dict[str, str]]) -> None:
     unsafe = []
     for path in files:
         text = path.read_text(encoding="utf-8").lower()
-        if not any(marker in text for marker in ("not proof", "not prove", "not a", "public-safe", "private")):
+        if not any(
+            marker in text
+            for marker in ("not proof", "not prove", "not a", "public-safe", "private")
+        ):
             unsafe.append(path.name)
     _append_check(
         checks,
@@ -1174,7 +1393,10 @@ def _run_cli_json(argv: list[str]) -> tuple[int, dict[str, Any]]:
             "stdout": stdout.getvalue(),
             "stderr": stderr.getvalue(),
         }
-    return code, payload if isinstance(payload, dict) else {"ok": False, "payload": payload}
+    return code, payload if isinstance(payload, dict) else {
+        "ok": False,
+        "payload": payload,
+    }
 
 
 def _public_overclaim_findings(rel_path: str, text: str) -> list[str]:
@@ -1191,12 +1413,12 @@ def _public_overclaim_findings(rel_path: str, text: str) -> list[str]:
 
 def _has_negating_context(lines: list[str], line_idx: int, match_start: int) -> bool:
     line = lines[line_idx]
-    prefix = line[max(0, match_start - 32):match_start].lower()
+    prefix = line[max(0, match_start - 32) : match_start].lower()
     if any(token in prefix for token in NEGATING_CONTEXT_TOKENS):
         return True
     if not line.lstrip().startswith("-"):
         return False
-    for prior in reversed(lines[max(0, line_idx - 4):line_idx]):
+    for prior in reversed(lines[max(0, line_idx - 4) : line_idx]):
         stripped = prior.strip().lower()
         if not stripped:
             continue
@@ -1206,12 +1428,16 @@ def _has_negating_context(lines: list[str], line_idx: int, match_start: int) -> 
     return False
 
 
-def _append_check(checks: list[dict[str, str]], check_id: str, ok: bool, detail: str) -> None:
-    checks.append({
-        "id": check_id,
-        "status": "pass" if ok else "fail",
-        "detail": detail,
-    })
+def _append_check(
+    checks: list[dict[str, str]], check_id: str, ok: bool, detail: str
+) -> None:
+    checks.append(
+        {
+            "id": check_id,
+            "status": "pass" if ok else "fail",
+            "detail": detail,
+        }
+    )
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@
 
 ```mermaid
 flowchart LR
-  A["用户需求<br/>onboarding + init"] --> B["来源治理<br/>sources decide + doctor + inputs extract/classify"]
+  A["用户需求<br/>onboarding + init"] --> B["来源治理<br/>Store-derived runtime action + doctor + inputs extract/classify"]
   B --> C["Scout<br/>信息侦察员"]
   C --> D["Screener<br/>筛选师"]
   D --> E["Claim Ledger<br/>事实账本"]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import date
+import json
 import os
 from pathlib import Path
 
@@ -16,18 +17,37 @@ from multi_agent_brief.contracts.v2 import (
     InternalApprovalRequest,
     RuntimeAdapterBinding,
 )
+from multi_agent_brief.sources.tavily_acquisition import (
+    parse_tavily_acquisition_bundle,
+)
 from multi_agent_brief.control_store import SQLiteControlStore
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
 from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
 from multi_agent_brief.runtime_host_v2 import RuntimeHostError
+from multi_agent_brief.runtime_host_v2.contracts import LocalRunGateSummary
 from multi_agent_brief.runtime_host_v2.initialization import initialize_or_open_runtime
 from multi_agent_brief.runtime_host_v2.projections import (
+    build_local_run_presentation,
     build_store_quality_projection,
     build_store_status_projection,
 )
 from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
+from multi_agent_brief.runtime_host_v2.source_routes import collect_frozen_sources
 from multi_agent_brief.runtime_host_v2.scratch import materialize_host_bytes
+from multi_agent_brief.sources.base import SourceItem, SourceQuery
+from multi_agent_brief.sources.web_search import (
+    WebSearchCollection,
+    WebSearchProvider,
+)
+from multi_agent_brief.intake_v2.policy import evaluate_source_eligibility
 from multi_agent_brief.workspace.init_profile import InitProfile
+
+
+_LONG_EXTERNAL_TASK_OBJECTIVE = (
+    "Produce a detailed evidence review covering policy milestones, deployment "
+    "constraints, capital costs, and management implications across the full "
+    "confirmed reporting window."
+)
 
 
 def _workspace(tmp_path: Path) -> Path:
@@ -129,7 +149,11 @@ def test_host_owned_materialization_is_exactly_replayable(tmp_path: Path) -> Non
     assert first.read_bytes() == b"host-payload"
 
 
-def _external_web_workspace(tmp_path: Path) -> Path:
+def _external_web_workspace(
+    tmp_path: Path,
+    *,
+    max_source_age_days: int = 7,
+) -> Path:
     workspace = tmp_path / "external-workspace"
     ids = iter(("external-workspace", "external-run"))
     create_workspace(
@@ -138,7 +162,7 @@ def _external_web_workspace(tmp_path: Path) -> Path:
             company="ExampleCo",
             industry="manufacturing",
             brief_title="ExampleCo weekly brief",
-            task_objective="Prepare the weekly manufacturing brief.",
+            task_objective=_LONG_EXTERNAL_TASK_OBJECTIVE,
             audience="management",
             audience_profile="management",
             focus_areas=["operations", "policy"],
@@ -146,6 +170,7 @@ def _external_web_workspace(tmp_path: Path) -> Path:
             web_search_mode="external_api",
             web_search_enabled=True,
             search_backend="tavily",
+            max_source_age_days=max_source_age_days,
         ),
         report_date_factory=lambda: date(2026, 7, 19),
         identity_factory=lambda: next(ids),
@@ -220,11 +245,21 @@ def test_external_source_plan_freezes_executable_non_secret_requests(
         if item.route_id == "web-search"
     )
     spec = route.acquisition_spec
-    assert spec is not None and spec.kind == "web_search"
+    assert spec is not None and spec.kind == "web_search_multi"
     assert spec.provider_id == "tavily"
-    assert [item.query for item in spec.requests] == ["operations", "policy"]
-    assert all(item.max_results == 5 for item in spec.requests)
-    assert all(item.recency_days == 7 for item in spec.requests)
+    assert len(spec.tasks) == 20
+    assert len({item.query for item in spec.tasks}) == 20
+    assert all(
+        _LONG_EXTERNAL_TASK_OBJECTIVE not in item.query for item in spec.tasks
+    )
+    assert all(item.max_results == 20 for item in spec.tasks)
+    assert all(item.recency_days == 7 for item in spec.tasks)
+    assert all(item.search_depth == "advanced" for item in spec.tasks)
+    assert all(item.backfill.recency_days == 30 for item in spec.tasks)
+    assert spec.max_primary_search_calls == 20
+    assert spec.max_backfill_search_calls == 20
+    assert spec.max_unique_urls == 800
+    assert spec.extract_batch_size == 20
     assert "TAVILY_API_KEY" not in str(spec.model_dump(mode="json"))
     fingerprint = first.verified.source_plan.source_plan_fingerprint
 
@@ -239,20 +274,24 @@ def test_external_source_plan_freezes_executable_non_secret_requests(
     assert reopened_route.acquisition_spec == spec
 
 
-def test_executable_source_parameters_change_spec_and_route_fingerprints(
+def test_tavily_source_plan_uses_direction_and_fixed_bounds(
     tmp_path: Path,
 ) -> None:
     web_fingerprints: list[tuple[str, str]] = []
-    for name, query, domains, max_results in (
-        ("base", "operations", ["example.com"], 5),
-        ("query", "policy", ["example.com"], 5),
-        ("bounds", "operations", ["example.org"], 9),
+    for name, preferred_domains in (
+        ("base", ["example.com"]),
+        ("domain", ["example.org"]),
     ):
         workspace = _external_web_workspace(tmp_path / name)
         path = workspace / "sources.yaml"
         payload = yaml.safe_load(path.read_text(encoding="utf-8"))
-        payload["web_search"]["search_tasks"] = [{"query": query, "domains": domains}]
-        payload["web_search"]["max_results"] = max_results
+        payload["web_search"]["search_tasks"][0]["domains"] = list(
+            preferred_domains
+        )
+        payload["web_search"]["news_source_domains"]["preferred_domains"] = (
+            list(preferred_domains)
+        )
+        payload["web_search"]["max_results"] = 20
         path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
         initialized = initialize_or_open_runtime(workspace, adapter_loader=_adapter)
         route = next(
@@ -268,6 +307,17 @@ def test_executable_source_parameters_change_spec_and_route_fingerprints(
             )
         )
     assert len(set(web_fingerprints)) == len(web_fingerprints)
+
+    invalid = _external_web_workspace(tmp_path / "invalid-bounds")
+    invalid_path = invalid / "sources.yaml"
+    invalid_payload = yaml.safe_load(invalid_path.read_text(encoding="utf-8"))
+    invalid_payload["web_search"]["max_results"] = 9
+    invalid_path.write_text(
+        yaml.safe_dump(invalid_payload, sort_keys=False),
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeHostError, match="runtime_initialization_input_invalid"):
+        initialize_or_open_runtime(invalid, adapter_loader=_adapter)
 
     cached_fingerprints: list[tuple[str, str]] = []
     for name, logical_path, formats in (
@@ -421,11 +471,58 @@ def test_store_status_ignores_forged_legacy_projections(tmp_path: Path) -> None:
     assert quality == {
         "ok": False,
         "status": "projection_not_available",
-        "reason_code": "package_not_ready",
+        "reason_code": "final_reader_not_available",
         "authority": "sqlite_control_store",
         "run_id": "RUN-run",
         "store_revision": first["store_revision"],
     }
+
+
+def test_local_presentation_uses_one_loaded_history_without_head_reopen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _workspace(tmp_path)
+    initialize_or_open_runtime(workspace, adapter_loader=_adapter)
+    original = SQLiteControlStore.load_history
+    calls = 0
+
+    def counted(store: SQLiteControlStore):
+        nonlocal calls
+        calls += 1
+        return original(store)
+
+    monkeypatch.setattr(SQLiteControlStore, "load_history", counted)
+    monkeypatch.setattr(
+        SQLiteControlStore,
+        "load_workspace_run_head",
+        lambda _store: (_ for _ in ()).throw(AssertionError("head reopened")),
+    )
+
+    presentation = build_local_run_presentation(workspace)
+
+    assert calls == 1
+    assert presentation.view_state == "setup"
+    assert presentation.reader_brief.state == "unavailable"
+    assert presentation.presentation.status == "not_requested"
+
+
+@pytest.mark.parametrize("status", ["pass", "fail", "warning"])
+def test_local_presentation_gate_summary_preserves_every_store_status(
+    status: str,
+) -> None:
+    summary = LocalRunGateSummary.model_validate(
+        {
+            "gate_id": "final_abstract_quality",
+            "evaluation_id": f"EVAL-{status}",
+            "stage_id": "auditor",
+            "status": status,
+            "blocking": status == "fail",
+        },
+        strict=True,
+    )
+
+    assert summary.status == status
 
 
 def _delivery_result_ready_host(

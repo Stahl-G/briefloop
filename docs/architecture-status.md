@@ -26,6 +26,46 @@ page describes implemented runtime capability, not a breaking deep rename.
   one Invocation, one UoW, and one Receipt. The same request hash-binds the
   frozen manifest and preserves source IDs, URLs, and incident temporal
   metadata; partial pack commits are forbidden.
+- The Experimental narrow Tavily runtime-first route starts only from a
+  Store-frozen Human-confirmed discovery authorization. `runtime continue`
+  keeps the credential in private workspace `.env` until Human
+  rotation/removal, while every separately Human-confirmed, Store-recorded
+  attempt executes a frozen atomic task matrix. Every task requests 20 advanced
+  Search results, all eligible unique URLs are Batch Extracted in groups of 20,
+  and an under-covered task may receive one deterministic 30-day backfill. Exact replay never
+  redials and failures never auto-retry. Safe failed responses remain
+  receipt-owned audit evidence without source or execution authority. A
+  successful attempt freezes both exact request/response exchanges and per-URL
+  outcomes in one canonical acquisition bundle, then uses the existing Intake
+  UoW to atomically record only successful non-empty Extract content plus
+  execution authorization before returning the external-role handoff. Search
+  snippets are never claims-eligible; zero Search or all-failed Extract creates
+  no source or execution authorization. HumanSourcePack is a separate Human
+  path and never counts as Tavily success. Synthetic transport is tested; live
+  usefulness, reliability, cost, coverage, success rate, and
+  acquisition-to-`finalized_local` performance are NOT MEASURED.
+  POSIX/macOS retained-publication capability is checked before any Tavily call.
+  On current Windows, `runtime continue` returns the typed
+  `checkout_publication_unsupported` stop with zero provider/network access,
+  no source promotion, and no later execution, finalization, approval,
+  package, or delivery authority.
+- Experimental `solar-stock-periodic` is a schema-18, fresh-only ReportPack for
+  a TOYO/global solar capital-markets weekly. Its runtime freezes 20 independent
+  Tavily discovery tasks (11 listed companies, 5 event-only entities, and 4
+  themes), requests up to 20 advanced Search results per task, permits one
+  deterministic 30-day targeted backfill for under-covered tasks, and extracts
+  all eligible unique URLs in groups of 20 up to an 800-URL safety envelope.
+  Search snippets remain discovery-only; task failures and per-URL outcomes are
+  retained as evidence, and only successful non-empty Extract content enters
+  the Claim Ledger path. The `market-data` CLI channel freezes one append-only
+  snapshot per run and as-of date through a single Store transaction: a
+  bounded, no-redirect Yahoo chart-API adapter isolates each security
+  failure as a value-free gap, manual `input/market_data/` JSON/CSV intake
+  takes precedence through the same contract, and a deterministic projection
+  renders the primary/overseas equity comparison tables to
+  `output/intermediate/market_data_tables.md` with explicit `NOT AVAILABLE`
+  rows. The channel never invents price/valuation fields when a frozen
+  market-data snapshot is absent.
 - The workspace-local Codex kit is execution input, not decoration: `run` and
   runtime commands verify its exact config, Skill, reference, and role-file
   inventory against the Store-bound adapter identity.
@@ -70,8 +110,15 @@ page describes implemented runtime capability, not a breaking deep rename.
 - The Orchestrator control switchboard can surface deterministic control recommendations and record enable/defer/reject selections without executing those controls.
 - Finalize writes the reader delivery bundle under `output/delivery/`, appending the source appendix to delivery Markdown/DOCX while retaining `output/source_appendix.md` as an audit/control copy. Reader-facing appendices can show safe source identity and taxonomy labels, while `output/source_appendix_trace.md` can carry internal claim/source/span IDs, source paths, source byte hashes, and metadata completeness warnings for audit review. Delivery artifacts must not expose internal claim IDs, source IDs, evidence text, local paths, or file URLs.
 - Runtime asset availability is now explicit: packaged installs include contract configs and public-safe eval fixtures, while source runtime assets such as `.agents/`, `.claude/`, `.opencode/`, `.codex/`, `.codebuddy/`, and Hermes plugin files are source-clone-only unless copied into a workspace with `briefloop runtime install` or used directly from a source checkout where documented.
-- The Improvement Ledger lifecycle was retired in LD2-3. Its projection and per-run freeze code lived in the deleted legacy stack, so `improvement/ledger.jsonl`, `improvement/memory.md`, and `improvement_memory_snapshot.md` have no reader or writer. The `improvement_*` event vocabulary in `contracts/v2.py` survives. A Store-native replacement is MU-2 work.
-- Packaged public-safe evaluation cases now cover Improvement Memory control behavior: unapproved entries are not materialized, approved guidance is frozen, and reverted entries disappear from the next snapshot.
+- The legacy Improvement Ledger lifecycle was retired in LD2-3. Its JSON/JSONL
+  files remain inert with no reader or writer. Experimental post-final Human
+  review records finding dispositions, Human-edited guidance drafts, and
+  separate approval/status revisions as append-only SQLite Receipts. On
+  development main, a Human may explicitly start a normal same-workspace
+  successor with a new `RunDirection` and `--include-approved-guidance`; the
+  Core transaction atomically freezes only compatible, active Human-approved
+  guidance. Analyst and Editor receive the same immutable context. Other roles
+  receive none, and no live ledger or retired file is read after commit.
 - Experimental Atomic Claim Graph controls can validate an optional
   `output/intermediate/atomic_claim_graph.json`, check whole-ledger coverage and
   deterministic Claim Ledger type consistency, expose Analyst/Editor
@@ -92,13 +139,13 @@ page describes implemented runtime capability, not a breaking deep rename.
   findings. This is a support-record control plane only, not automatic support
   assessment, semantic proof, release eligibility, or a support-sufficiency
   gate.
-- Experimental Semantic Assessment Report controls can validate an optional
-  `output/intermediate/semantic_assessment_report.json` schema, validate
-  machine-checkable references to Claim Ledger claims, Atomic Claim Graph atoms,
-  and Evidence Span Registry spans, project rows into proposal-only
-  Claim-Support Matrix delta candidates, and surface read-only status counts.
-  This is a proposal surface only, not accepted support truth, adjudication
-  queue creation, delivery gating, release authority, or semantic proof.
+- The optional `output/intermediate/semantic_assessment_report.json` contract
+  and machine-checkable reference validation remain experimental. Its producer,
+  proposal projection, status visibility, and adjudication writer were retired
+  with the legacy stack; no current runtime role is instructed to create it.
+  The remaining schema is non-blocking and creates no support truth, Claim-
+  Support Matrix row, repair route, Gate, delivery decision, release authority,
+  or semantic proof.
 - Experimental offline-shadow LAJ tools can execute or exactly replay one
   public/synthetic Semantic Evaluator trial and deterministically render its
   verified archive as standalone JSON, Markdown, and static HTML. These files
@@ -110,6 +157,27 @@ page describes implemented runtime capability, not a breaking deep rename.
   finalization, delivery, repair, approval, contamination, reference
   eligibility, or next-action authority; evaluator usefulness and efficacy are
   not measured.
+- Experimental Store-qualified post-final LAJ can bind one verified
+  `finalized_local` report to multiple independently Human-authorized,
+  append-only assessment requests, verified evaluator archives, and qualified
+  advisory results. Human review must explicitly select one result. Generation
+  2 and later are explicit only; policy changes never auto-run or redial. The same
+  canonical `brief_html` page is read-only as a static export and becomes
+  actionable only through a secured loopback Review Session, where strict
+  Human commands append accept/reject/defer, edited guidance drafts, and
+  separate approval/status Receipts. Development main also exposes the
+  read-only `assessment-next` request projection; it is not a second assessment
+  writer. A separate public `briefloop runtime successor-start` command can
+  create a normal same-workspace successor only after explicit Human input
+  supplies the new run ID and strict direction. Guidance reuse is separately
+  opt-in. The atomic Core transaction freezes the complete compatible
+  active-approved set for Analyst/Editor only, with fixed 16-item and
+  65,536-byte limits and no truncation. Guidance is advisory presentation
+  context: current direction and evidence govern, and it never changes Claim
+  Ledger, Gate, finalization, delivery, repair, or Core next-action truth.
+  Utility is NOT MEASURED; this is not automatic learning. Older development
+  SQLite workspaces are unsupported when the schema changes and must be
+  recreated on the current schema.
 - The v0.11 product-baseline target has stable product-facing workspace
   entries for `briefloop new industry-weekly`, `briefloop new
   management-monthly`, and `briefloop new document-review`. These entries map
@@ -156,14 +224,11 @@ page describes implemented runtime capability, not a breaking deep rename.
   source labels while audit bundles preserve trace artifacts. This is
   citation-surface metadata only; it does not prove support, relax gates,
   remove audit trace, approve delivery, or decide release readiness.
-  `sources materialize-pack` can materialize explicit manual or cached-package
-  source records into `input/sources/` plus an optional hash-validated
-  `source_evidence_pack_manifest.json`, giving recurring reports a durable
-  source-evidence layer for archive reproducibility. Source evidence records
-  preserve separate provider/storage `source_type`, retrieval/page
-  `retrieval_source_type`, reader-facing `source_category`, and
-  `underlying_evidence_type` metadata; this is taxonomy normalization, not
-  trust scoring, source-policy gating, or semantic support judgment.
+  The legacy `sources materialize-pack` name is retained only as a fail-closed
+  parser surface and returns `runtime_command_unsupported`; it has no current
+  source writer. The optional `source_evidence_pack_manifest.json` contract
+  remains readable for existing artifacts but is not produced by that retired
+  command.
   `briefloop extract` can register an explicit
   extraction scope and copy local source files into an `evidence_extract`
   workspace's `input/sources/evidence_extract/` directory. It also writes a
@@ -181,12 +246,11 @@ page describes implemented runtime capability, not a breaking deep rename.
   inspection, extract tables or figures, judge semantic support, generate
   Claim-Support Matrix rows, create legal or disclosure conclusions, run
   stages, approve delivery, or bypass gates.
-  Experimental SourceHub Lite setup commands can copy local text evidence files
-  into `input/sources/sourcehub/`, register RSS feeds, and register
-  `runtime_tool` web-search handoff tasks in `sources.yaml`. These commands are
-  source setup only: they do not execute web search, crawl the web, turn source
-  candidates or search summaries into evidence, generate Evidence Span Registry
-  entries, run stages, approve delivery, or bypass gates.
+  The legacy SourceHub Lite `sources add-file/add-rss/add-web-search` names are
+  retired fail-closed parser surfaces. They return
+  `runtime_command_unsupported` without source, workspace, or Store effects;
+  current source intake and public-web acquisition use Store-derived runtime
+  actions.
   Resolved PolicyProfiles may tighten existing deterministic quality-gate
   strictness and reader-final forbidden-phrase checks through a limited adapter.
   Internal release-mode approval commands can initialize
@@ -203,7 +267,10 @@ page describes implemented runtime capability, not a breaking deep rename.
   projection from that panel and optional
   `output/intermediate/quality_panel.html` as a static no-JavaScript audit
   attachment. The experimental `quality summarize` command can
-  write these artifacts together, and report bundle projection can include
+  write these legacy audit artifacts together; SQLite workspaces display an
+  explicit current-report-bound LAJ view through
+  `quality html --workspace <path> --laj-view <laj.json>`. Report bundle
+  projection can include
   them in audit bundles while keeping them out of reader-facing delivery
   bundles. These product-quality audit/control
   projections do not run gates, create a quality score, replace gate reports,

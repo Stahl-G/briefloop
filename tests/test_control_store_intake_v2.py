@@ -4,6 +4,7 @@ import ast
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import sqlite3
 
@@ -15,6 +16,7 @@ from multi_agent_brief.contracts.v2 import (
     RunIdentity,
     StageState,
     SourceProposal,
+    SourcePackCommitRequest,
     WorkspaceRunHead,
 )
 from multi_agent_brief.control_store import (
@@ -172,6 +174,95 @@ def _source_request(workspace: Path, *, expected_revision: int = 1) -> Path:
         },
     )
     return request
+
+
+def _replace_with_external_hardlink(path: Path, *, outside: Path) -> bytes:
+    """Replace one workspace leaf with a distinct external hardlink alias."""
+
+    original = path.read_bytes()
+    outside.write_bytes(original)
+    path.unlink()
+    try:
+        os.link(outside, path)
+    except OSError as exc:
+        pytest.skip(f"test filesystem does not support hardlinks: {exc}")
+    outside_info = outside.stat()
+    path_info = path.stat()
+    assert (path_info.st_dev, path_info.st_ino) == (
+        outside_info.st_dev,
+        outside_info.st_ino,
+    )
+    assert path_info.st_nlink > 1
+    return original
+
+
+def _link_target_after_pre_stat_before_open(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    target: Path,
+    outside: Path,
+) -> dict[str, bool]:
+    """Create a real external hardlink only when the reader opens the checked leaf."""
+
+    target_info = target.stat()
+    target_identity = (target_info.st_dev, target_info.st_ino)
+    parent_info = target.parent.stat()
+    parent_identity = (parent_info.st_dev, parent_info.st_ino)
+    original_open = os.open
+    original_open_supports_dir_fd = original_open in os.supports_dir_fd
+    original_read = os.read
+    state = {
+        "hardlink_created": False,
+        "original_open_supports_dir_fd": original_open_supports_dir_fd,
+        "target_body_read": False,
+        "target_open_succeeded": False,
+        "target_open_used_dir_fd": False,
+    }
+
+    def is_target_open(path: object, dir_fd: int | None) -> bool:
+        candidate = os.fspath(path)
+        if dir_fd is None:
+            return isinstance(candidate, str) and Path(candidate) == target
+        if candidate != target.name:
+            return False
+        opened_parent = os.fstat(dir_fd)
+        return (opened_parent.st_dev, opened_parent.st_ino) == parent_identity
+
+    def intercept_open(
+        path: object,
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        target_open = is_target_open(path, dir_fd)
+        if target_open and not state["hardlink_created"]:
+            try:
+                os.link(target, outside)
+            except OSError as exc:
+                raise AssertionError(f"hardlink creation failed: {exc}") from exc
+            if target.stat().st_nlink <= 1:
+                raise AssertionError("target hardlink was not created")
+            state["hardlink_created"] = True
+        if dir_fd is None:
+            descriptor = original_open(path, flags, mode)
+        else:
+            descriptor = original_open(path, flags, mode, dir_fd=dir_fd)
+        if target_open:
+            state["target_open_used_dir_fd"] = dir_fd is not None
+            state["target_open_succeeded"] = True
+        return descriptor
+
+    def intercept_read(descriptor: int, size: int) -> bytes:
+        opened = os.fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) == target_identity:
+            state["target_body_read"] = True
+            raise AssertionError("target body read after hardlink race")
+        return original_read(descriptor, size)
+
+    monkeypatch.setattr(os, "open", intercept_open)
+    monkeypatch.setattr(os, "read", intercept_read)
+    return state
 
 
 def _candidate_request(workspace: Path, *, expected_revision: int = 2) -> Path:
@@ -984,6 +1075,180 @@ def test_stale_store_revision_and_unsafe_scratch_are_zero_write(
         assert store.current_revision == 1
 
 
+@pytest.mark.parametrize(
+    ("leaf_name", "force_absolute_fallback"),
+    [
+        ("submit_request.json", False),
+        ("source_proposal.json", False),
+        ("source_content.pdf", False),
+        ("source_raw.json", False),
+        ("submit_request.json", True),
+        ("source_proposal.json", True),
+        ("source_content.pdf", True),
+        ("source_raw.json", True),
+    ],
+)
+def test_hardlinked_source_intake_leaves_are_uncommitted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    leaf_name: str,
+    force_absolute_fallback: bool,
+) -> None:
+    workspace = tmp_path / "workspace"
+    _seed_workspace(workspace)
+    request_path = (
+        _snippet_source_request(workspace)
+        if leaf_name == "source_raw.json"
+        else _source_request(workspace)
+    )
+    target = request_path.parent / leaf_name
+    original = _replace_with_external_hardlink(
+        target,
+        outside=tmp_path / f"outside-{leaf_name}",
+    )
+    if force_absolute_fallback:
+        monkeypatch.setattr(os, "supports_dir_fd", frozenset())
+    database = workspace / "briefloop.db"
+    before_bytes = database.read_bytes()
+    result = IntakeService(workspace, clock=CLOCK).submit_source(
+        request_path.relative_to(workspace).as_posix()
+    )
+
+    assert result.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "scratch_entry_unsafe",
+    }
+    assert database.read_bytes() == before_bytes
+    assert target.read_bytes() == original
+    with SQLiteControlStore.open(database) as store:
+        assert store.current_revision == 1
+        snapshot = store.load_snapshot(RUN_ID)
+    assert snapshot.sources == ()
+    assert snapshot.artifact_revisions == ()
+    assert snapshot.events == ()
+
+
+@pytest.mark.parametrize("force_absolute_fallback", [False, True])
+def test_hardlinked_source_pack_manifest_is_uncommitted_before_member_reads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    force_absolute_fallback: bool,
+) -> None:
+    workspace = tmp_path / "workspace"
+    _seed_workspace(workspace)
+    scratch = workspace / "scratch" / "INV-SOURCE-001"
+    manifest_path = scratch / "source_manifest.json"
+    manifest_bytes = b'{"members":[]}'
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_bytes(manifest_bytes)
+    request_path = scratch / "submit_request.json"
+    _write_json(
+        request_path,
+        {
+            "schema_version": SourcePackCommitRequest.schema_id,
+            "request_id": "REQ-SOURCE-PACK-HARDLINK-001",
+            "run_id": RUN_ID,
+            "invocation_id": "INV-SOURCE-001",
+            "members": [
+                {
+                    "member_id": "SRC-HARDLINK-001",
+                    "proposal_path": (
+                        "scratch/INV-SOURCE-001/sources/SRC-HARDLINK-001/"
+                        "source_proposal.json"
+                    ),
+                    "content_path": (
+                        "scratch/INV-SOURCE-001/sources/SRC-HARDLINK-001/"
+                        "source_content.bin"
+                    ),
+                    "raw_payload_path": None,
+                }
+            ],
+            "manifest_path": manifest_path.relative_to(workspace).as_posix(),
+            "expected_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "expected_store_revision": 1,
+        },
+    )
+    original = _replace_with_external_hardlink(
+        manifest_path,
+        outside=tmp_path / "outside-manifest.json",
+    )
+    if force_absolute_fallback:
+        monkeypatch.setattr(os, "supports_dir_fd", frozenset())
+    database = workspace / "briefloop.db"
+    before_bytes = database.read_bytes()
+    result = IntakeService(workspace, clock=CLOCK).submit_source_pack(
+        request_path.relative_to(workspace).as_posix()
+    )
+
+    assert result.to_dict() == {
+        "status": "failed_uncommitted",
+        "error_code": "scratch_entry_unsafe",
+    }
+    assert database.read_bytes() == before_bytes
+    assert manifest_path.read_bytes() == original
+    with SQLiteControlStore.open(database) as store:
+        assert store.current_revision == 1
+        snapshot = store.load_snapshot(RUN_ID)
+    assert snapshot.sources == ()
+    assert snapshot.artifact_revisions == ()
+    assert snapshot.events == ()
+
+
+@pytest.mark.parametrize("force_absolute_fallback", [False, True])
+def test_source_intake_rejects_link_created_after_pre_stat_without_body_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    force_absolute_fallback: bool,
+) -> None:
+    workspace = tmp_path / "workspace"
+    _seed_workspace(workspace)
+    request_path = _source_request(workspace)
+    target = request_path.parent / "source_content.pdf"
+    state = _link_target_after_pre_stat_before_open(
+        monkeypatch,
+        target=target,
+        outside=tmp_path / "outside-raced-source-content.pdf",
+    )
+    if not force_absolute_fallback and not state["original_open_supports_dir_fd"]:
+        pytest.skip("native os.open does not support dir_fd")
+    if force_absolute_fallback:
+        monkeypatch.setattr(os, "supports_dir_fd", frozenset())
+    else:
+        monkeypatch.setattr(os, "supports_dir_fd", os.supports_dir_fd | {os.open})
+    if force_absolute_fallback and os.open in os.supports_dir_fd:
+        raise AssertionError("absolute fallback unexpectedly supports patched os.open")
+    if not force_absolute_fallback and os.open not in os.supports_dir_fd:
+        raise AssertionError("dir-fd route does not support patched os.open")
+    database = workspace / "briefloop.db"
+    before_bytes = database.read_bytes()
+
+    result = IntakeService(workspace, clock=CLOCK).submit_source(
+        request_path.relative_to(workspace).as_posix()
+    )
+
+    if result.to_dict() != {
+        "status": "failed_uncommitted",
+        "error_code": "scratch_entry_unsafe",
+    }:
+        raise AssertionError(result.to_dict())
+    if state["hardlink_created"] is not True:
+        raise AssertionError(state)
+    if state["target_open_succeeded"] is not True:
+        raise AssertionError(state)
+    if state["target_body_read"] is not False:
+        raise AssertionError(state)
+    if state["target_open_used_dir_fd"] is not (not force_absolute_fallback):
+        raise AssertionError(state)
+    if database.read_bytes() != before_bytes:
+        raise AssertionError("raced scratch read changed the control store")
+    with SQLiteControlStore.open(database) as store:
+        if store.current_revision != 1:
+            raise AssertionError(store.current_revision)
+        snapshot = store.load_snapshot(RUN_ID)
+    if snapshot.sources or snapshot.artifact_revisions or snapshot.events:
+        raise AssertionError(snapshot)
+
+
 def test_finalized_current_run_requires_new_run_without_consuming_intake(
     tmp_path: Path,
 ) -> None:
@@ -1395,6 +1660,15 @@ def test_audit_requires_current_frozen_same_run_target_revision(tmp_path: Path) 
             "uploaded_file",
             "manual_upload",
             "uploaded_file",
+            None,
+            False,
+            True,
+            "eligible_durable_source_content",
+        ),
+        (
+            "uploaded_file",
+            "manual_upload",
+            "full_content",
             None,
             False,
             True,

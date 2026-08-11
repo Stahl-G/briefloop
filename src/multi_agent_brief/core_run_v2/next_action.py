@@ -2,17 +2,25 @@
 
 from __future__ import annotations
 
-from multi_agent_brief.contracts.v2 import CoreRunNextAction
+from dataclasses import replace
+
+from multi_agent_brief.contracts.v2 import CoreRunNextAction, InvocationStartRequest
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
 from multi_agent_brief.quality_gates.contract import GATE_IDS
 
 from .errors import CoreRunError
+from .gate_repair import classify_gate_repair_legality
 from .gates import EVALUATOR_IMPLEMENTATION, EVALUATOR_VERSION
-from .lineage import classify_current_lineage
+from .lineage import (
+    audit_promotion_allows_stage_completion,
+    classify_current_lineage,
+)
 from .policy import (
-    REQUIRED_AUDITOR_GATES,
     SOURCE_ROUTE_OWNER_ORDER,
     core_role_topology_policy,
+    required_auditor_gates,
+    derived_id,
+    transaction_type_for,
 )
 from .recovery import classify_recovery_legality
 from .terminal import classify_terminal_legality
@@ -51,6 +59,7 @@ def _action(
     request_schema_id: str | None = None,
     source_route_id: str | None = None,
     source_provider_id: str | None = None,
+    source_acquisition_attempt_authorization_id: str | None = None,
 ) -> CoreRunNextAction:
     snapshot = verified.snapshot
     revisions = sorted(
@@ -79,6 +88,9 @@ def _action(
         "role_id": role_id,
         "source_route_id": source_route_id,
         "source_provider_id": source_provider_id,
+        "source_acquisition_attempt_authorization_id": (
+            source_acquisition_attempt_authorization_id
+        ),
         "reason_code": reason_code,
         "input_artifacts": revisions,
         "request_schema_id": request_schema_id,
@@ -96,6 +108,25 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
     """Return exactly one legal category without consulting mutable files."""
 
     snapshot = verified.snapshot
+    gate_repair = None
+    if snapshot.gate_repair_cycles:
+        gate_repair = classify_gate_repair_legality(snapshot)
+        if gate_repair.state == "invalid":
+            raise CoreRunError("control_store_integrity_invalid")
+        if gate_repair.state == "failed_after_attempt":
+            if gate_repair.reason_code is None:
+                raise CoreRunError("control_store_integrity_invalid")
+            return _action(
+                verified,
+                action_kind="human_decision",
+                effect_kind="gate_repair_human_review",
+                reason_code=gate_repair.reason_code,
+                stage_id=(
+                    None
+                    if gate_repair.current_block is None
+                    else gate_repair.current_block.stage_id
+                ),
+            )
     recovery = classify_recovery_legality(snapshot)
     if recovery.state == "invalid":
         raise CoreRunError("control_store_integrity_invalid")
@@ -150,6 +181,39 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
             raise CoreRunError("control_store_integrity_invalid")
         rerun_stage_id = repairs[0].owner_stage_id
 
+    if gate_repair is None:
+        gate_repair = classify_gate_repair_legality(snapshot)
+    if gate_repair.state == "invalid":
+        raise CoreRunError("control_store_integrity_invalid")
+    if gate_repair.state == "eligible":
+        return _action(
+            verified,
+            action_kind="deterministic",
+            effect_kind="gate_repair_start",
+            reason_code="preauthorized_editor_gate_repair_required",
+            stage_id="editor",
+        )
+    if gate_repair.state in {
+        "not_authorized",
+        "budget_exhausted",
+        "source_or_non_editor_block",
+        "mixed_or_ambiguous_scope",
+        "failed_after_attempt",
+    }:
+        if gate_repair.reason_code is None:
+            raise CoreRunError("control_store_integrity_invalid")
+        return _action(
+            verified,
+            action_kind="human_decision",
+            effect_kind="gate_repair_human_review",
+            reason_code=gate_repair.reason_code,
+            stage_id=(
+                None
+                if gate_repair.current_block is None
+                else gate_repair.current_block.stage_id
+            ),
+        )
+
     active = [item for item in snapshot.invocations if item.status == "active"]
     if len(active) > 1:
         raise CoreRunError("control_store_integrity_invalid")
@@ -167,6 +231,21 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
         )
         if event is None or event.stage_id is None:
             raise CoreRunError("control_store_integrity_invalid")
+        discovery_recovery = _discovery_source_acquire_reservation_action(
+            verified,
+            invocation,
+            event,
+        )
+        if discovery_recovery is not None:
+            return discovery_recovery
+        if _is_authorized_source_pack_reservation(verified, invocation, event):
+            return _action(
+                verified,
+                action_kind="deterministic",
+                effect_kind="authorized_source_pack_commit",
+                reason_code="authorized_source_pack_commit_required",
+                stage_id="source-discovery",
+            )
         return _action(
             verified,
             action_kind="deterministic",
@@ -190,6 +269,13 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
             effect_kind="delivered",
             reason_code="delivery_succeeded",
         )
+    if terminal.terminal_state == "finalized_local":
+        return _action(
+            verified,
+            action_kind="complete",
+            effect_kind="finalized_local",
+            reason_code="local_finalization_complete",
+        )
     if (
         terminal.terminal_state == "package_ready"
         and terminal.current_result_status == "bundle_prepared"
@@ -200,7 +286,7 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
             effect_kind="package_ready",
             reason_code="local_delivery_bundle_prepared",
         )
-    if terminal.terminal_state in {
+    if gate_repair.state != "active" and terminal.terminal_state in {
         "auditor_ready",
         "rendered",
         "gate_blocked",
@@ -308,7 +394,11 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
         action = _auditor_action(verified)
         if action is not None:
             return action
-    if _stage_has_current_effect(verified, stage_id):
+    gate_repair_stage_pending = gate_repair.state == "active" and (
+        (stage_id == "editor" and not snapshot.gate_repair_artifact_bindings)
+        or stage_id == "auditor"
+    )
+    if not gate_repair_stage_pending and _stage_has_current_effect(verified, stage_id):
         return _action(
             verified,
             action_kind="deterministic",
@@ -358,6 +448,23 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
 
 def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
     snapshot = verified.snapshot
+    if snapshot.run_execution_authorizations:
+        if snapshot.sources:
+            return _action(
+                verified,
+                action_kind="deterministic",
+                effect_kind="stage_complete",
+                reason_code="current_stage_effect_ready_for_completion",
+                stage_id="source-discovery",
+                request_schema_id="briefloop.stage_complete_request.v2",
+            )
+        return _action(
+            verified,
+            action_kind="deterministic",
+            effect_kind="authorized_source_pack_commit",
+            reason_code="authorized_source_pack_commit_required",
+            stage_id="source-discovery",
+        )
     artifacts = {item.artifact_id: item for item in snapshot.artifacts}
     candidates = artifacts.get("source_candidates")
     if candidates is None or candidates.current_revision == 0:
@@ -388,6 +495,61 @@ def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
         )
         not in verified.exhausted_source_route_keys
     ]
+    if snapshot.run_source_discovery_authorizations:
+        if len(snapshot.run_source_discovery_authorizations) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        discovery = snapshot.run_source_discovery_authorizations[0]
+        authorized_routes = [
+            item
+            for item in verified.source_plan.routes
+            if item.route_id == discovery.route_id
+            and item.provider_id == discovery.provider_id
+            and item.execution_owner == discovery.execution_owner
+            and item.route_fingerprint == discovery.source_route_fingerprint
+        ]
+        if len(authorized_routes) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        routes = [
+            item
+            for item in authorized_routes
+            if item.route_id == discovery.route_id
+            and item.provider_id == discovery.provider_id
+            and item.execution_owner == discovery.execution_owner
+            and item.route_fingerprint == discovery.source_route_fingerprint
+        ]
+        if len(routes) > 1:
+            raise CoreRunError("control_store_integrity_invalid")
+        attempts = list(snapshot.run_source_acquisition_attempt_authorizations)
+        if not attempts:
+            return _action(
+                verified,
+                action_kind="human_decision",
+                effect_kind="source_input_required",
+                reason_code="human_source_material_required",
+                stage_id="source-discovery",
+                request_schema_id="briefloop.runtime_human_source_pack_request.v2",
+            )
+        failed_attempt_ids = {
+            event.intake_binding.source_acquisition_failure.attempt_authorization_id
+            for event in snapshot.events
+            if event.intake_binding is not None
+            and event.intake_binding.source_acquisition_failure is not None
+        }
+        latest_attempt = attempts[-1]
+        if latest_attempt.attempt_authorization_id in failed_attempt_ids:
+            return _action(
+                verified,
+                action_kind="human_decision",
+                effect_kind="source_acquisition_recovery",
+                reason_code="source_acquisition_recovery_decision_required",
+                stage_id="source-discovery",
+                request_schema_id=(
+                    "briefloop.runtime_source_acquisition_recovery_request.v1"
+                ),
+                source_acquisition_attempt_authorization_id=(
+                    latest_attempt.attempt_authorization_id
+                ),
+            )
     if not routes:
         return _action(
             verified,
@@ -411,6 +573,18 @@ def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
         "source_provider_id": route.provider_id,
     }
     if route.execution_owner == "deterministic":
+        if (
+            route.provider_id == "tavily"
+            and not snapshot.run_source_acquisition_attempt_authorizations
+        ):
+            return _action(
+                verified,
+                action_kind="human_decision",
+                effect_kind="source_input_required",
+                reason_code="human_source_material_required",
+                stage_id="source-discovery",
+                request_schema_id="briefloop.runtime_human_source_pack_request.v2",
+            )
         if "source-provider" not in verified.runtime_adapter.role_ids:
             return _action(
                 verified,
@@ -425,6 +599,13 @@ def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
             effect_kind="source_acquire",
             reason_code="deterministic_source_route_required",
             request_schema_id="briefloop.source_pack_commit_request.v2",
+            source_acquisition_attempt_authorization_id=(
+                None
+                if route.provider_id != "tavily"
+                else snapshot.run_source_acquisition_attempt_authorizations[
+                    -1
+                ].attempt_authorization_id
+            ),
             **common,
         )
     if route.execution_owner == "specialist":
@@ -455,6 +636,184 @@ def _source_discovery_action(verified: VerifiedCoreRun) -> CoreRunNextAction:
     )
 
 
+def _is_authorized_source_pack_reservation(
+    verified: VerifiedCoreRun,
+    invocation,
+    event,
+) -> bool:
+    """Recognize the one active Core-owned source-pack reservation.
+
+    This is intentionally derived from the receipt-bound authorization and
+    invocation-start receipt.  An arbitrary active source-provider invocation
+    remains the ordinary accept-or-fail path.
+    """
+
+    snapshot = verified.snapshot
+    if (
+        len(snapshot.run_execution_authorizations) != 1
+        or invocation.role_id != "source-provider"
+        or invocation.runtime != snapshot.run.runtime
+        or event.stage_id != "source-discovery"
+        or event.core_run_binding is None
+    ):
+        return False
+    authorization = snapshot.run_execution_authorizations[0]
+    pack_request_id = derived_id(
+        "REQ-AUTHORIZED-SOURCE-PACK",
+        snapshot.run.run_id,
+        authorization.request_fingerprint,
+    )
+    request_id = derived_id("REQ-AUTHORIZED-SOURCE-PROVIDER", pack_request_id)
+    receipt = next(
+        (item for item in snapshot.transactions if item.transaction_id == request_id),
+        None,
+    )
+    if receipt is None or receipt.transaction_type != transaction_type_for(
+        "invocation_start"
+    ):
+        return False
+    try:
+        request = InvocationStartRequest.model_validate(
+            {
+                "schema_version": InvocationStartRequest.schema_id,
+                "request_id": request_id,
+                "run_id": snapshot.run.run_id,
+                "stage_id": "source-discovery",
+                "role_id": "source-provider",
+                "runtime": snapshot.run.runtime,
+                "expected_store_revision": receipt.prior_revision,
+            },
+            strict=True,
+        )
+    except Exception:
+        return False
+    fingerprint = canonical_fingerprint(
+        request.model_dump(mode="json", exclude_unset=False)
+    )
+    return (
+        event.transaction_id == request_id
+        and event.core_run_binding.request_id == request_id
+        and event.core_run_binding.request_fingerprint == fingerprint
+        and event.core_run_binding.effect_kind == "invocation_start"
+        and event.core_run_binding.primary_record_id
+        == derived_id("INV", request_id, fingerprint)
+        and invocation.invocation_id == event.core_run_binding.primary_record_id
+    )
+
+
+def _discovery_source_acquire_reservation_action(
+    verified: VerifiedCoreRun,
+    invocation,
+    event,
+) -> CoreRunNextAction | None:
+    """Recognize only the receipt-owned deterministic discovery reservation."""
+
+    snapshot = verified.snapshot
+    if (
+        snapshot.run_execution_authorizations
+        or len(snapshot.run_source_discovery_authorizations) != 1
+        or invocation.role_id != "source-provider"
+        or invocation.runtime != snapshot.run.runtime
+        or event.stage_id != "source-discovery"
+        or event.core_run_binding is None
+    ):
+        return None
+    discovery = snapshot.run_source_discovery_authorizations[0]
+    routes = [
+        item
+        for item in verified.source_plan.routes
+        if item.route_id == discovery.route_id
+        and item.provider_id == discovery.provider_id
+        and item.execution_owner == "deterministic"
+        and item.execution_owner == discovery.execution_owner
+        and item.route_fingerprint == discovery.source_route_fingerprint
+    ]
+    if len(routes) != 1:
+        return None
+    receipt = next(
+        (
+            item
+            for item in snapshot.transactions
+            if item.transaction_id == event.transaction_id
+        ),
+        None,
+    )
+    if (
+        receipt is None
+        or receipt.transaction_type != transaction_type_for("invocation_start")
+        or receipt.committed_revision != snapshot.store_revision
+        or receipt.prior_revision != receipt.committed_revision - 1
+        or event.event_id not in receipt.event_ids
+    ):
+        return None
+    historical = replace(
+        verified,
+        snapshot=replace(snapshot, store_revision=receipt.prior_revision),
+    )
+    if not historical.snapshot.run_source_acquisition_attempt_authorizations:
+        return None
+    attempt_authorization_id = (
+        historical.snapshot.run_source_acquisition_attempt_authorizations[
+            -1
+        ].attempt_authorization_id
+    )
+    action = _action(
+        historical,
+        action_kind="deterministic",
+        effect_kind="source_acquire",
+        reason_code="deterministic_source_route_required",
+        stage_id="source-discovery",
+        source_route_id=discovery.route_id,
+        source_provider_id=discovery.provider_id,
+        source_acquisition_attempt_authorization_id=attempt_authorization_id,
+        request_schema_id="briefloop.source_pack_commit_request.v2",
+    )
+    request_id = derived_id(
+        "REQ-HOST-INVOKE",
+        action.run_id,
+        action.action_fingerprint,
+    )
+    try:
+        request = InvocationStartRequest.model_validate(
+            {
+                "schema_version": InvocationStartRequest.schema_id,
+                "request_id": request_id,
+                "run_id": snapshot.run.run_id,
+                "stage_id": "source-discovery",
+                "role_id": "source-provider",
+                "runtime": snapshot.run.runtime,
+                "expected_store_revision": receipt.prior_revision,
+            },
+            strict=True,
+        )
+    except Exception:
+        return None
+    fingerprint = canonical_fingerprint(
+        request.model_dump(mode="json", exclude_unset=False)
+    )
+    binding = event.core_run_binding
+    if (
+        event.transaction_id != request_id
+        or binding.request_id != request_id
+        or binding.request_fingerprint != fingerprint
+        or binding.effect_kind != "invocation_start"
+        or binding.primary_record_id != derived_id("INV", request_id, fingerprint)
+        or invocation.invocation_id != binding.primary_record_id
+    ):
+        return None
+    return _action(
+        verified,
+        action_kind="deterministic",
+        effect_kind="source_acquire",
+        reason_code="active_discovery_source_acquire_requires_resume",
+        stage_id="source-discovery",
+        source_route_id=discovery.route_id,
+        source_provider_id=discovery.provider_id,
+        source_acquisition_attempt_authorization_id=attempt_authorization_id,
+        request_schema_id="briefloop.source_pack_commit_request.v2",
+    )
+
+
 def _claim_ledger_action(verified: VerifiedCoreRun) -> CoreRunNextAction | None:
     snapshot = verified.snapshot
     lineage = classify_current_lineage(snapshot)
@@ -475,6 +834,23 @@ def _auditor_action(verified: VerifiedCoreRun) -> CoreRunNextAction | None:
     lineage = classify_current_lineage(snapshot)
     if lineage.proposals.audit is None:
         return None
+    gate_repair = classify_gate_repair_legality(snapshot)
+    if gate_repair.state == "active":
+        brief = next(
+            (
+                item
+                for item in snapshot.artifacts
+                if item.artifact_id == "audited_brief"
+            ),
+            None,
+        )
+        audit = lineage.proposals.audit
+        if (
+            brief is None
+            or audit.target_artifact_id != brief.artifact_id
+            or audit.target_artifact_revision != brief.current_revision
+        ):
+            return None
     promotion_revision = _current_audit_promotion_revision(verified)
     if promotion_revision is None:
         return _action(
@@ -508,12 +884,13 @@ def _auditor_action(verified: VerifiedCoreRun) -> CoreRunNextAction | None:
             stage_id="auditor",
             request_schema_id="briefloop.gate_check_request.v2",
         )
+    required_gate_ids = required_auditor_gates(verified.binding.run_direction)
     required = {
         item.gate_id: item
         for item in gate.evaluations
-        if item.gate_id in REQUIRED_AUDITOR_GATES
+        if item.gate_id in required_gate_ids
     }
-    if set(required) != set(REQUIRED_AUDITOR_GATES):
+    if set(required) != set(required_gate_ids):
         raise CoreRunError("control_store_integrity_invalid")
     if any(
         item.status not in {"pass", "warning"} or item.blocking
@@ -524,6 +901,25 @@ def _auditor_action(verified: VerifiedCoreRun) -> CoreRunNextAction | None:
             action_kind="blocked",
             effect_kind="auditor_gate_blocked",
             reason_code="current_auditor_gate_blocked",
+            stage_id="auditor",
+        )
+    promotion = verified.current_audit_promotion
+    if promotion is None or not promotion.is_current_lineage:
+        raise CoreRunError("control_store_integrity_invalid")
+    if not audit_promotion_allows_stage_completion(promotion):
+        if gate_repair.state == "passed":
+            return _action(
+                verified,
+                action_kind="human_decision",
+                effect_kind="gate_repair_human_review",
+                reason_code="gate_repair_failed_after_attempt",
+                stage_id="auditor",
+            )
+        return _action(
+            verified,
+            action_kind="human_decision",
+            effect_kind="audit_human_review",
+            reason_code="negative_audit_truth_requires_human_review",
             stage_id="auditor",
         )
     return _action(

@@ -9,14 +9,16 @@ explicitly classified historical or compatibility surfaces.
 ## Release Lines
 
 - Prior release line: `v0.14.0`.
-- Prepared release line: `v0.15.2`.
-- Treat v0.15.2 as a release target until both its tag and non-draft GitHub
-  Release exist. After they exist, treat v0.15.2 as the current release. Do
-  not infer release status from this file alone.
+- Current release line: `v0.15.2`. It removes the legacy JSON control-plane
+  runtime; the SQLite Codex ControlStore runtime is the only active runtime.
+- Prepared release line: `v0.15.2`. The tag and non-draft GitHub Release are
+  the release authority; later development-main capabilities are not silently
+  attributed to the existing tag.
 
-This skill is verified against the post-v0.14 source tree that is being cut as
-v0.15.2. The skill deliberately contains both version strings so the same
-contract check remains valid before and after the version-only release cut.
+This skill is verified against the post-v0.15.2 development tree. Schema-17
+post-final execution evidence and schema-18 solar-stock search/market-data
+controls are development-main capabilities until a later release cut names
+them explicitly.
 
 ## Active Runtime Contract
 
@@ -38,12 +40,27 @@ Support status remains Experimental until a real public-safe Codex run proves
 the end-to-end packaged runtime path. Traceability is not truth proof or a
 quality guarantee.
 
-## Read-Only Product Surfaces
+## Post-Final Product Surfaces
 
-The three-page Brief HTML and init web wizard are read-only interaction
-surfaces in the v0.15.2 release target. They do not create authority. LAJ
-remains Experimental and NOT MEASURED. The Improvement Ledger lifecycle is
-retired; a page that reports it unavailable is not a write path.
+The static Brief and Quality views remain read-only projections. The local
+actionable review session is a separate loopback surface whose Human actions
+enter Store-backed services; editing the exported HTML itself never writes
+authority. AI Second Opinion remains optional advisory and NOT MEASURED.
+
+On unreleased development main, Store-native post-final Human review records
+disposition, edited guidance, and separate approval/status. A separate explicit
+`briefloop runtime successor-start` transaction can freeze compatible
+active-approved guidance for Analyst/Editor only when
+`--include-approved-guidance` is present. Current direction and evidence govern;
+utility is NOT MEASURED and guidance has no Claim Ledger, Gate, repair,
+finalize/delivery, or Core authority.
+
+The experimental `solar-stock-periodic` ReportPack is schema-18 and fresh-only.
+Its Tavily source plan freezes 20 independent equity/event/theme tasks, up to
+20 results per task, grouped Extract batches, one conditional 30-day backfill,
+and an 800-unique-URL safety envelope. Its deterministic market-data channel
+freezes provider/manual inputs and calculated comparison fields; unavailable
+values remain explicit instead of being fabricated.
 
 ## Unsupported And Retired
 
@@ -53,6 +70,8 @@ retired; a page that reports it unavailable is not a write path.
 - legacy handoff, state, gates, repair, finalize, delivery, controls,
   provenance, feedback, improvement, and source-mutator commands on SQLite
 - `eval-cases` and `experiments 080`
+- legacy Improvement JSON/JSONL files, `improve` mutators, fast-rerun, and the
+  Semantic Assessment Report producer/projection/adjudication stack
 - direct agent writes to SQL, receipts, ledger rows, canonical artifacts,
   frozen revisions, approval, gates, or delivery
 - reconstructing legality from status, HTML, Markdown, JSON/JSONL, Quality

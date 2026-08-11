@@ -36,6 +36,21 @@ def test_product_baseline_check_runs_clean() -> None:
     assert "ALL CHECKS PASSED" in result.stdout
 
 
+def test_runtime_first_docs_preserve_platform_boundary_truth() -> None:
+    architecture = (ROOT / "docs" / "architecture-status.md").read_text(
+        encoding="utf-8"
+    )
+    support = (ROOT / "docs" / "support-matrix.md").read_text(encoding="utf-8")
+
+    for text in (architecture, support):
+        assert "POSIX/macOS" in text
+        assert "Windows" in text
+        assert "checkout_publication_unsupported" in text
+        assert "before any Tavily call" in text or "before any provider call" in text
+        assert "no source promotion" in text or "zero source promotion" in text
+        assert "delivery" in text
+
+
 def _write_product_boundary_fixture(module, root: Path) -> None:
     for rel_path, phrases in module.REQUIRED_DOC_BOUNDARY_PHRASES.items():
         path = root / rel_path
@@ -72,7 +87,9 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["new.industry-weekly"]["status"] == "pass"
     assert "report_pack=market_weekly" in checks["new.industry-weekly"]["detail"]
     assert checks["new.management-monthly"]["status"] == "pass"
-    assert "report_pack=management_monthly" in checks["new.management-monthly"]["detail"]
+    assert (
+        "report_pack=management_monthly" in checks["new.management-monthly"]["detail"]
+    )
     assert checks["new.document-review"]["status"] == "pass"
     assert "report_pack=evidence_extract" in checks["new.document-review"]["detail"]
     assert "new.solar-periodic" not in checks
@@ -95,21 +112,34 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert checks["first_user_docs.docs/15-minute-pilot.md"]["status"] == "pass"
     assert checks["first_user_docs.docs/15-minute-pilot.zh-CN.md"]["status"] == "pass"
     assert checks["first_user_docs.docs/getting-started.md"]["status"] == "pass"
-    assert checks["first_user_docs.docs/getting-started.md.unix_venv_activation"]["status"] == "pass"
+    assert (
+        checks["first_user_docs.docs/getting-started.md.unix_venv_activation"]["status"]
+        == "pass"
+    )
     assert checks["first_user_docs.README.md.unix_venv_activation"]["status"] == "pass"
     assert checks["first_user_docs.no_current_pipx_install"]["status"] == "pass"
-    assert checks["first_user_docs.no_archived_experiment_namespace"]["status"] == "pass"
+    assert (
+        checks["first_user_docs.no_archived_experiment_namespace"]["status"] == "pass"
+    )
     assert checks["first_user_docs.docs/weekly-loop.md"]["status"] == "pass"
     assert checks["first_user_docs.docs/troubleshooting.md"]["status"] == "pass"
     assert checks["first_user_docs.README.md.first_screen_links"]["status"] == "pass"
     assert checks["first_user_docs.README.md.three_page_block"]["status"] == "pass"
-    assert checks["first_user_docs.README.zh-CN.md.three_page_block"]["status"] == "pass"
+    assert (
+        checks["first_user_docs.README.zh-CN.md.three_page_block"]["status"] == "pass"
+    )
     assert checks["first_user_route.README.md"]["status"] == "pass"
     assert checks["first_user_route.README.zh-CN.md"]["status"] == "pass"
     assert checks["first_user_route.docs/getting-started.md"]["status"] == "pass"
     assert checks["first_user_route.docs/weekly-loop.md"]["status"] == "pass"
-    assert checks["support_matrix.v0_11_product_facing_workspace_entries"]["status"] == "pass"
-    assert checks["support_matrix.reportspec_reportpack_baseline_contracts"]["status"] == "pass"
+    assert (
+        checks["support_matrix.v0_11_product_facing_workspace_entries"]["status"]
+        == "pass"
+    )
+    assert (
+        checks["support_matrix.reportspec_reportpack_baseline_contracts"]["status"]
+        == "pass"
+    )
     assert checks["support_matrix.wider_product_os_extensions"]["status"] == "pass"
     assert checks["golden_path.docs/golden-path.md.required_product_entries"]["status"] == "pass"
     assert checks["golden_path.docs/golden-path.md.no_experiment_surface"]["status"] == "pass"
@@ -123,7 +153,9 @@ def test_product_baseline_json_locks_v011_entrypoints_and_boundaries() -> None:
     assert "[15 分钟试用](docs/15-minute-pilot.zh-CN.md)" in readme_zh
 
 
-def test_first_user_docs_guard_rejects_architecture_first_readme_links(tmp_path, monkeypatch) -> None:
+def test_first_user_docs_guard_rejects_architecture_first_readme_links(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     for rel_path, phrases in module.REQUIRED_FIRST_USER_DOC_PHRASES.items():
         path = tmp_path / rel_path
@@ -149,7 +181,10 @@ def test_first_user_docs_guard_rejects_architecture_first_readme_links(tmp_path,
     checks_by_id = {item["id"]: item for item in checks}
 
     assert checks_by_id["first_user_docs.docs/15-minute-pilot.md"]["status"] == "pass"
-    assert checks_by_id["first_user_docs.docs/15-minute-pilot.zh-CN.md"]["status"] == "pass"
+    assert (
+        checks_by_id["first_user_docs.docs/15-minute-pilot.zh-CN.md"]["status"]
+        == "pass"
+    )
     assert checks_by_id["first_user_docs.docs/getting-started.md"]["status"] == "pass"
     assert checks_by_id["first_user_docs.docs/weekly-loop.md"]["status"] == "pass"
     assert checks_by_id["first_user_docs.docs/troubleshooting.md"]["status"] == "pass"
@@ -158,7 +193,9 @@ def test_first_user_docs_guard_rejects_architecture_first_readme_links(tmp_path,
     assert "docs/architecture-status.md" in readme_check["detail"]
 
 
-def test_first_user_docs_guard_rejects_extra_links_in_readme_user_block(tmp_path, monkeypatch) -> None:
+def test_first_user_docs_guard_rejects_extra_links_in_readme_user_block(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     (tmp_path / "README.md").write_text(
         "First-user path:\n"
@@ -189,10 +226,15 @@ def test_first_user_docs_guard_rejects_extra_links_in_readme_user_block(tmp_path
     readme_check = checks_by_id["first_user_docs.README.md.three_page_block"]
     assert readme_check["status"] == "fail"
     assert "docs/architecture-status.md" in readme_check["detail"]
-    assert checks_by_id["first_user_docs.README.zh-CN.md.three_page_block"]["status"] == "pass"
+    assert (
+        checks_by_id["first_user_docs.README.zh-CN.md.three_page_block"]["status"]
+        == "pass"
+    )
 
 
-def test_first_user_route_guard_rejects_internal_ids_and_control_vocab(tmp_path, monkeypatch) -> None:
+def test_first_user_route_guard_rejects_internal_ids_and_control_vocab(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     route_blocks = {
         "README.md": (
@@ -256,7 +298,9 @@ def test_first_user_route_guard_rejects_internal_ids_and_control_vocab(tmp_path,
     assert "document-review" in weekly_check["detail"]
 
 
-def test_first_user_docs_guard_requires_unix_activation_before_cli_check(tmp_path, monkeypatch) -> None:
+def test_first_user_docs_guard_requires_unix_activation_before_cli_check(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     for rel_path, phrases in module.REQUIRED_FIRST_USER_DOC_PHRASES.items():
         path = tmp_path / rel_path
@@ -280,12 +324,16 @@ def test_first_user_docs_guard_requires_unix_activation_before_cli_check(tmp_pat
     module._check_first_user_docs_surface(checks)
     checks_by_id = {item["id"]: item for item in checks}
 
-    activation_check = checks_by_id["first_user_docs.docs/getting-started.md.unix_venv_activation"]
+    activation_check = checks_by_id[
+        "first_user_docs.docs/getting-started.md.unix_venv_activation"
+    ]
     assert activation_check["status"] == "fail"
     assert "activate .venv" in activation_check["detail"]
 
 
-def test_first_user_docs_guard_requires_readme_activation_before_cli_usage(tmp_path, monkeypatch) -> None:
+def test_first_user_docs_guard_requires_readme_activation_before_cli_usage(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     for rel_path, phrases in module.REQUIRED_FIRST_USER_DOC_PHRASES.items():
         path = tmp_path / rel_path
@@ -314,7 +362,9 @@ def test_first_user_docs_guard_requires_readme_activation_before_cli_usage(tmp_p
     assert "activate .venv" in activation_check["detail"]
 
 
-def test_first_user_docs_guard_rejects_current_pipx_install_instruction(tmp_path, monkeypatch) -> None:
+def test_first_user_docs_guard_rejects_current_pipx_install_instruction(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     for rel_path, phrases in module.REQUIRED_FIRST_USER_DOC_PHRASES.items():
         path = tmp_path / rel_path
@@ -369,6 +419,10 @@ def test_first_user_docs_overclaims_fail_public_claim_scan(tmp_path, monkeypatch
         text = "\n".join(phrases)
         if rel_path == "docs/getting-started.md":
             text += "\nBriefLoop proves every claim is true.\n"
+            text += "BriefLoop automatically learns from feedback.\n"
+            text += "BriefLoop guarantees improvement.\n"
+            text += "AI approves guidance.\n"
+            text += "Guidance is evidence and deterministic policy.\n"
         path.write_text(text, encoding="utf-8")
     monkeypatch.setattr(module, "ROOT", tmp_path)
 
@@ -381,9 +435,39 @@ def test_first_user_docs_overclaims_fail_public_claim_scan(tmp_path, monkeypatch
     assert "docs/getting-started.md:" in overclaim_check["detail"]
     assert "proves_truth" in overclaim_check["detail"]
     assert "proves every claim is true" in overclaim_check["detail"]
+    assert "automatic_learning" in overclaim_check["detail"]
+    assert "guaranteed_improvement" in overclaim_check["detail"]
+    assert "ai_guidance_approval" in overclaim_check["detail"]
+    assert "guidance_as_evidence_or_policy" in overclaim_check["detail"]
 
 
-def test_golden_path_guard_rejects_experiment_surface_drift(tmp_path, monkeypatch) -> None:
+def test_public_docs_guard_rejects_stale_guidance_carry_claim(
+    tmp_path, monkeypatch
+) -> None:
+    module = _load_product_baseline_module()
+    _write_product_boundary_fixture(module, tmp_path)
+    support_path = tmp_path / "docs" / "support-matrix.md"
+    support_path.write_text(
+        support_path.read_text(encoding="utf-8")
+        + "\nFast-rerun fact-layer import is an experimental control transaction.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(module, "ROOT", tmp_path)
+
+    checks: list[dict[str, str]] = []
+    module._check_cli_and_docs_boundaries(checks)
+    checks_by_id = {item["id"]: item for item in checks}
+
+    stale_check = checks_by_id[
+        "docs.docs/support-matrix.md.guidance_carry_current_truth"
+    ]
+    assert stale_check["status"] == "fail"
+    assert "Fast-rerun fact-layer import" in stale_check["detail"]
+
+
+def test_golden_path_guard_rejects_experiment_surface_drift(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     for rel_path, phrases in module.REQUIRED_GOLDEN_PATH_PHRASES.items():
         path = tmp_path / rel_path
@@ -398,15 +482,27 @@ def test_golden_path_guard_rejects_experiment_surface_drift(tmp_path, monkeypatc
     module._check_golden_path_surface(checks)
     checks_by_id = {item["id"]: item for item in checks}
 
-    assert checks_by_id["golden_path.docs/golden-path.md.required_product_entries"]["status"] == "pass"
+    assert (
+        checks_by_id["golden_path.docs/golden-path.md.required_product_entries"][
+            "status"
+        ]
+        == "pass"
+    )
     drift_check = checks_by_id["golden_path.docs/golden-path.md.no_experiment_surface"]
     assert drift_check["status"] == "fail"
     assert "experiments 080" in drift_check["detail"]
     assert "score-run" in drift_check["detail"]
-    assert checks_by_id["golden_path.docs/golden-path.zh-CN.md.no_experiment_surface"]["status"] == "pass"
+    assert (
+        checks_by_id["golden_path.docs/golden-path.zh-CN.md.no_experiment_surface"][
+            "status"
+        ]
+        == "pass"
+    )
 
 
-def test_reference_run_guard_rejects_stale_briefloop_090_readiness_framing(tmp_path, monkeypatch) -> None:
+def test_reference_run_guard_rejects_stale_briefloop_090_readiness_framing(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     reference_dir = tmp_path / "docs" / "reference-runs"
     reference_dir.mkdir(parents=True)
@@ -427,14 +523,16 @@ def test_reference_run_guard_rejects_stale_briefloop_090_readiness_framing(tmp_p
     assert "run-0.md:future BriefLoop-090 readiness" in framing_check["detail"]
 
 
-def test_golden_path_guard_rejects_non_executable_shell_shorthand(tmp_path, monkeypatch) -> None:
+def test_golden_path_guard_rejects_non_executable_shell_shorthand(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     for rel_path, phrases in module.REQUIRED_GOLDEN_PATH_PHRASES.items():
         path = tmp_path / rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
         text = "\n".join(phrases)
         if rel_path == "docs/golden-path.md":
-            text += "\nbriefloop run ./weekly-brief\nbriefloop feedback ./weekly-brief \"Fix this.\"\n"
+            text += '\nbriefloop run ./weekly-brief\nbriefloop feedback ./weekly-brief "Fix this."\n'
         path.write_text(text, encoding="utf-8")
     monkeypatch.setattr(module, "ROOT", tmp_path)
 
@@ -442,21 +540,32 @@ def test_golden_path_guard_rejects_non_executable_shell_shorthand(tmp_path, monk
     module._check_golden_path_surface(checks)
     checks_by_id = {item["id"]: item for item in checks}
 
-    assert checks_by_id["golden_path.docs/golden-path.md.required_product_entries"]["status"] == "pass"
-    command_check = checks_by_id["golden_path.docs/golden-path.md.no_experiment_surface"]
+    assert (
+        checks_by_id["golden_path.docs/golden-path.md.required_product_entries"][
+            "status"
+        ]
+        == "pass"
+    )
+    command_check = checks_by_id[
+        "golden_path.docs/golden-path.md.no_experiment_surface"
+    ]
     assert command_check["status"] == "fail"
     assert "briefloop run ./" in command_check["detail"]
     assert "briefloop feedback ./" in command_check["detail"]
 
 
-def test_golden_path_guard_allows_slash_command_workspace_shorthand(tmp_path, monkeypatch) -> None:
+def test_golden_path_guard_allows_slash_command_workspace_shorthand(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     for rel_path, phrases in module.REQUIRED_GOLDEN_PATH_PHRASES.items():
         path = tmp_path / rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
         text = "\n".join(phrases)
         if rel_path == "docs/golden-path.md":
-            text += "\n/briefloop run ./weekly-brief\n/briefloop status ./weekly-brief\n"
+            text += (
+                "\n/briefloop run ./weekly-brief\n/briefloop status ./weekly-brief\n"
+            )
         path.write_text(text, encoding="utf-8")
     monkeypatch.setattr(module, "ROOT", tmp_path)
 
@@ -464,11 +573,21 @@ def test_golden_path_guard_allows_slash_command_workspace_shorthand(tmp_path, mo
     module._check_golden_path_surface(checks)
     checks_by_id = {item["id"]: item for item in checks}
 
-    assert checks_by_id["golden_path.docs/golden-path.md.required_product_entries"]["status"] == "pass"
-    assert checks_by_id["golden_path.docs/golden-path.md.no_experiment_surface"]["status"] == "pass"
+    assert (
+        checks_by_id["golden_path.docs/golden-path.md.required_product_entries"][
+            "status"
+        ]
+        == "pass"
+    )
+    assert (
+        checks_by_id["golden_path.docs/golden-path.md.no_experiment_surface"]["status"]
+        == "pass"
+    )
 
 
-def test_support_matrix_alignment_rejects_product_os_overpromotion(tmp_path, monkeypatch) -> None:
+def test_support_matrix_alignment_rejects_product_os_overpromotion(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     support_matrix = tmp_path / "docs" / "support-matrix.md"
     support_matrix.parent.mkdir(parents=True, exist_ok=True)
@@ -486,8 +605,16 @@ def test_support_matrix_alignment_rejects_product_os_overpromotion(tmp_path, mon
     module._check_support_matrix_alignment(checks)
     checks_by_id = {item["id"]: item for item in checks}
 
-    assert checks_by_id["support_matrix.v0_11_product_facing_workspace_entries"]["status"] == "pass"
-    assert checks_by_id["support_matrix.reportspec_reportpack_baseline_contracts"]["status"] == "pass"
+    assert (
+        checks_by_id["support_matrix.v0_11_product_facing_workspace_entries"]["status"]
+        == "pass"
+    )
+    assert (
+        checks_by_id["support_matrix.reportspec_reportpack_baseline_contracts"][
+            "status"
+        ]
+        == "pass"
+    )
     extension_check = checks_by_id["support_matrix.wider_product_os_extensions"]
     assert extension_check["status"] == "fail"
     assert "expected='Experimental'" in extension_check["detail"]
@@ -552,14 +679,19 @@ def test_public_overclaim_guard_fails_doc_boundary_check(tmp_path, monkeypatch) 
     assert "authorize_public_release" in overclaim_check["detail"]
 
 
-def test_readme_en_pointer_shape_rejects_extra_legacy_body(tmp_path, monkeypatch) -> None:
+def test_readme_en_pointer_shape_rejects_extra_legacy_body(
+    tmp_path, monkeypatch
+) -> None:
     module = _load_product_baseline_module()
     for rel_path, phrases in module.REQUIRED_DOC_BOUNDARY_PHRASES.items():
         path = tmp_path / rel_path
         path.parent.mkdir(parents=True, exist_ok=True)
         text = "\n".join(phrases)
         if rel_path == "README_en.md":
-            text = module.README_EN_POINTER + "\nCurrent version: **v0.1.0**\nOld README body.\n"
+            text = (
+                module.README_EN_POINTER
+                + "\nCurrent version: **v0.1.0**\nOld README body.\n"
+            )
         path.write_text(text, encoding="utf-8")
     monkeypatch.setattr(module, "ROOT", tmp_path)
 

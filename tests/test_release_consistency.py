@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check_release_consistency.py"
 VERSION_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check_version_consistency.py"
 BUMP_VERSION_SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "bump_version.py"
@@ -45,6 +47,7 @@ def _bash_executable() -> str:
 
 
 class TestCheckReleaseConsistency:
+    @pytest.mark.explicit_e2e
     def test_script_runs_clean(self):
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--no-tag"],
@@ -60,6 +63,7 @@ class TestCheckReleaseConsistency:
         assert "v1.0 pilot evidence shape passes" in result.stdout
         assert "ALL CHECKS PASSED" in result.stdout
 
+    @pytest.mark.explicit_e2e
     def test_strict_mode_runs(self):
         result = subprocess.run(
             [sys.executable, str(SCRIPT), "--strict", "--no-tag"],

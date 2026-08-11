@@ -27,6 +27,15 @@ from multi_agent_brief.semantic_evaluator.adapter import (
     make_provider_boundary_facts_v4,
 )
 from multi_agent_brief.semantic_evaluator.admission import admit_inputs
+from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+    ANTHROPIC_ADAPTER_ID,
+    ANTHROPIC_ADAPTER_VERSION,
+    ANTHROPIC_API_KEY_SETTING,
+    ANTHROPIC_ENDPOINT_SETTING,
+    ANTHROPIC_PROVIDER_ID,
+    canonical_messages_endpoint_v1,
+    is_supported_anthropic_sdk_version_v1,
+)
 from multi_agent_brief.semantic_evaluator.adapters.openai_responses import (
     OPENAI_ADAPTER_ID,
     OPENAI_ADAPTER_VERSION,
@@ -46,8 +55,11 @@ from multi_agent_brief.semantic_evaluator.adapters.synthetic_fixture import (
 from multi_agent_brief.semantic_evaluator.archive import (
     ARCHIVE_VERSION,
     VerifiedShadowArchive,
+    execution_evidence_path,
     prepare_archive_root,
+    publish_execution_evidence,
     publish_shadow_archive,
+    resolve_existing_execution_evidence,
     resolve_existing_archive,
 )
 from multi_agent_brief.semantic_evaluator.composition import (
@@ -59,13 +71,16 @@ from multi_agent_brief.semantic_evaluator.contracts import (
     ADMISSION_REQUEST_SCHEMA_ID,
     BoundedContext,
     InstrumentConfig,
+    LajCompositionWitness,
 )
 from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 from multi_agent_brief.semantic_evaluator.prompt_sizer import (
+    AnthropicUtf8BytePromptSizerV1,
     CLIProxyUtf8BytePromptSizerV1,
     OpenAITiktokenPromptSizerV1,
     SyntheticFixturePromptSizerV1,
 )
+from multi_agent_brief.semantic_evaluator.profile import load_profile, profile_ids
 from multi_agent_brief.semantic_evaluator.serialization import (
     canonical_json_bytes,
     canonical_sha256,
@@ -86,10 +101,11 @@ from multi_agent_brief.semantic_evaluator.validator import (
     assemble_semantic_assessment_run,
     event_stream_bytes,
     make_dimension_attempt_evidence,
+    verify_laj_composition_witness,
 )
 
 
-RUNNER_VERSION = "semantic_evaluator_shadow_runner_v5"
+RUNNER_VERSION = "semantic_evaluator_shadow_runner_v6"
 DEFAULT_TIMEOUT_SECONDS = SHADOW_TIMEOUT_SECONDS
 PROFILE_ID = "research_design_report_zh_v1"
 _MAX_JSON_INPUT_BYTES = 8 * 1024 * 1024
@@ -121,6 +137,7 @@ class ShadowRunResult:
     replayed: bool
     archive_complete: bool
     archive_path: str | None
+    execution_archive_path: str | None
     receipt_id: str | None
     run_status: str | None
     validation_status: str | None
@@ -135,6 +152,7 @@ class ShadowRunResult:
             "replayed": self.replayed,
             "archive_complete": self.archive_complete,
             "archive_path": self.archive_path,
+            "execution_archive_path": self.execution_archive_path,
             "receipt_id": self.receipt_id,
             "run_status": self.run_status,
             "validation_status": self.validation_status,
@@ -154,6 +172,27 @@ class PreparedShadowRun:
     trial_id: str
     prompt_sizer: Any
     policy: ShadowExecutionPolicy
+    messages_endpoint: str | None
+
+
+@dataclass(frozen=True)
+class PreparedShadowBudget:
+    """Pure, conservative bounds for one already-admitted prompt set."""
+
+    prompt_count: int
+    provider_call_ceiling: int
+    total_input_token_upper_bound: int
+    total_output_token_upper_bound: int
+    per_call_output_token_cap: int
+
+
+@dataclass(frozen=True)
+class ResolvedPreparedShadowRun:
+    """One replay-first exact execution identity for a prepared shadow run."""
+
+    execution_manifest: ShadowExecutionManifest
+    request: ShadowRunRequest
+    replay: VerifiedShadowArchive | None
 
 
 @dataclass(frozen=True)
@@ -163,12 +202,16 @@ class _ArchivedAttempt:
     record: ProviderAttemptRecord
 
 
-def _failure(*reason_codes: str) -> ShadowRunResult:
+def _failure(
+    *reason_codes: str,
+    execution_archive_path: str | None = None,
+) -> ShadowRunResult:
     return ShadowRunResult(
         ok=False,
         replayed=False,
         archive_complete=False,
         archive_path=None,
+        execution_archive_path=execution_archive_path,
         receipt_id=None,
         run_status=None,
         validation_status=None,
@@ -183,12 +226,14 @@ def _from_archive(
     archive: VerifiedShadowArchive,
     *,
     replayed: bool,
+    execution_archive_path: str | None = None,
 ) -> ShadowRunResult:
     return ShadowRunResult(
         ok=archive.ok,
         replayed=replayed,
         archive_complete=True,
         archive_path=str(archive.path),
+        execution_archive_path=execution_archive_path,
         receipt_id=archive.receipt.receipt_id,
         run_status=archive.receipt.run_status,
         validation_status=archive.receipt.validation_status,
@@ -275,7 +320,7 @@ def _strict_inputs(
     trial_id: str,
     archive_root: str | Path,
 ) -> tuple[bytes, BoundedContext, InstrumentConfig, str, Path, Path]:
-    if profile != PROFILE_ID or type(trial_id) is not str:
+    if profile not in profile_ids() or type(trial_id) is not str:
         raise SemanticEvaluatorError("shadow_request_invalid")
     report_path = _input_path(report)
     context_path = _input_path(bounded_context)
@@ -313,6 +358,14 @@ def _prompt_sizer_for(config: InstrumentConfig) -> tuple[str, Any]:
         return OPENAI_ADAPTER_ID, OpenAITiktokenPromptSizerV1(model_id=config.model_id)
     if config.provider_id == CLIPROXY_PROVIDER_ID:
         return CLIPROXY_ADAPTER_ID, CLIProxyUtf8BytePromptSizerV1()
+    if config.provider_id == ANTHROPIC_PROVIDER_ID:
+        if (
+            float(config.decoding.temperature) != 1.0
+            or float(config.decoding.top_p) != 1.0
+            or config.decoding.seed is not None
+        ):
+            raise SemanticEvaluatorError("shadow_request_invalid")
+        return ANTHROPIC_ADAPTER_ID, AnthropicUtf8BytePromptSizerV1()
     raise SemanticEvaluatorError("shadow_adapter_unavailable")
 
 
@@ -331,6 +384,167 @@ def _policy(adapter_id: str) -> ShadowExecutionPolicy:
     )
 
 
+def _messages_endpoint_for(adapter_id: str) -> str | None:
+    if adapter_id != ANTHROPIC_ADAPTER_ID:
+        return None
+    value = os.environ.get(ANTHROPIC_ENDPOINT_SETTING)
+    try:
+        return canonical_messages_endpoint_v1(value)
+    except TypeError:
+        raise SemanticEvaluatorError("shadow_request_invalid") from None
+
+
+def _prepared_shadow_run_from_values(
+    *,
+    report_bytes: bytes,
+    bounded_context: BoundedContext,
+    instrument_config: InstrumentConfig,
+    trial_id: str,
+    archive_root: Path,
+    workspace_root: Path,
+    messages_endpoint: str | None,
+    profile_id: str = PROFILE_ID,
+) -> PreparedShadowRun:
+    """Admit immutable values without touching an archive, SDK, key, or adapter."""
+
+    if (
+        type(report_bytes) is not bytes
+        or type(trial_id) is not str
+        or not trial_id
+        or type(bounded_context) is not BoundedContext
+        or type(instrument_config) is not InstrumentConfig
+        or not archive_root.is_absolute()
+        or not workspace_root.is_absolute()
+        or ".." in archive_root.parts
+        or ".." in workspace_root.parts
+    ):
+        raise SemanticEvaluatorError("shadow_request_invalid")
+    try:
+        report_bytes.decode("utf-8", errors="strict")
+    except UnicodeDecodeError:
+        raise SemanticEvaluatorError("shadow_request_invalid") from None
+    config = instrument_config
+    if (
+        config.decoding.seed is not None
+        or not 1 <= config.retry_policy.max_attempts <= 3
+        or config.retry_policy.retryable_reason_codes
+        != (
+            []
+            if config.retry_policy.max_attempts == 1
+            else ["provider_retryable_failure"]
+        )
+        or config.prompt_sizer.reserved_output_tokens
+        < config.decoding.max_output_tokens
+    ):
+        raise SemanticEvaluatorError("shadow_request_invalid")
+    adapter_id, prompt_sizer = _prompt_sizer_for(config)
+    if adapter_id == ANTHROPIC_ADAPTER_ID:
+        try:
+            canonical_endpoint = canonical_messages_endpoint_v1(messages_endpoint)
+        except TypeError:
+            raise SemanticEvaluatorError("shadow_request_invalid") from None
+        if canonical_endpoint != messages_endpoint:
+            raise SemanticEvaluatorError("shadow_request_invalid")
+    elif messages_endpoint is not None:
+        raise SemanticEvaluatorError("shadow_request_invalid")
+    loaded_profile = load_profile(profile_id)
+    admission = admit_inputs(
+        {
+            "schema_version": ADMISSION_REQUEST_SCHEMA_ID,
+            "artifact_id": f"shadow-report-{sha256_bytes(report_bytes)[:16]}",
+            "trial_id": trial_id,
+            "report_bytes_hex": report_bytes.hex(),
+            "declared_report_sha256": sha256_bytes(report_bytes),
+            "bounded_context": bounded_context,
+            "declared_bounded_context_sha256": bounded_context.context_sha256,
+            "instrument_config": config,
+            "public_data_attestation": True,
+            "private_or_confidential_material": False,
+            "archive_root": str(archive_root),
+            "workspace_root": str(workspace_root),
+        },
+        prompt_sizer=prompt_sizer,
+        loaded_profile=loaded_profile,
+    )
+    if not admission.admitted:
+        raise SemanticEvaluatorError(
+            admission.reason_codes[0]
+            if admission.reason_codes
+            else "shadow_request_invalid"
+        )
+    return PreparedShadowRun(
+        admission=admission,
+        archive_root=archive_root,
+        trial_id=trial_id,
+        prompt_sizer=prompt_sizer,
+        policy=_policy(adapter_id),
+        messages_endpoint=messages_endpoint,
+    )
+
+
+def prepare_shadow_run_from_bytes(
+    *,
+    report_bytes: bytes,
+    bounded_context: BoundedContext,
+    instrument_config: InstrumentConfig,
+    trial_id: str,
+    archive_root: str | Path,
+    workspace_root: str | Path,
+    messages_endpoint: str | None,
+    profile_id: str = PROFILE_ID,
+) -> PreparedShadowRun | ShadowRunResult:
+    """Prepare a product-owned immutable run without reading caller files or env."""
+
+    try:
+        root = Path(archive_root).expanduser()
+        workspace = Path(workspace_root).expanduser()
+        return _prepared_shadow_run_from_values(
+            report_bytes=report_bytes,
+            bounded_context=bounded_context,
+            instrument_config=instrument_config,
+            trial_id=trial_id,
+            archive_root=root,
+            workspace_root=workspace,
+            messages_endpoint=messages_endpoint,
+            profile_id=profile_id,
+        )
+    except SemanticEvaluatorError as exc:
+        return _failure(exc.reason_code)
+
+
+def prepared_shadow_budget(prepared: PreparedShadowRun) -> PreparedShadowBudget:
+    """Calculate prompt/call/token bounds before archive or provider effects."""
+
+    if type(prepared) is not PreparedShadowRun:
+        raise SemanticEvaluatorError("shadow_request_invalid")
+    prompts = tuple(prepared.admission.prompts)
+    per_prompt = tuple(
+        prepared.prompt_sizer.count_tokens(
+            system_text=item.system_text,
+            user_text=item.user_text,
+        )
+        for item in prompts
+    )
+    if any(type(value) is not int or value < 0 for value in per_prompt):
+        raise SemanticEvaluatorError("prompt_sizer_unavailable")
+    calls = (
+        len(prompts) * prepared.admission.instrument_config.retry_policy.max_attempts
+    )
+    if type(calls) is not int or calls < 0:
+        raise SemanticEvaluatorError("shadow_request_invalid")
+    output_cap = prepared.admission.instrument_config.decoding.max_output_tokens
+    if type(output_cap) is not int or output_cap < 0:
+        raise SemanticEvaluatorError("shadow_request_invalid")
+    return PreparedShadowBudget(
+        prompt_count=len(prompts),
+        provider_call_ceiling=calls,
+        total_input_token_upper_bound=sum(per_prompt)
+        * prepared.admission.instrument_config.retry_policy.max_attempts,
+        total_output_token_upper_bound=calls * output_cap,
+        per_call_output_token_cap=output_cap,
+    )
+
+
 def _source_bundle(*module_names: str) -> str:
     try:
         sources = [
@@ -341,19 +555,46 @@ def _source_bundle(*module_names: str) -> str:
     return canonical_sha256(sources)
 
 
+def _live_provider_sdk_version(adapter_id: str) -> str:
+    if adapter_id == SYNTHETIC_ADAPTER_ID:
+        return "synthetic-v4"
+    if adapter_id in {OPENAI_ADAPTER_ID, CLIPROXY_ADAPTER_ID}:
+        package_name = "openai"
+    elif adapter_id == ANTHROPIC_ADAPTER_ID:
+        package_name = "anthropic"
+    else:
+        raise SemanticEvaluatorError("shadow_adapter_unavailable")
+    try:
+        version = metadata.version(package_name)
+    except Exception:
+        raise SemanticEvaluatorError("shadow_adapter_unavailable") from None
+    if type(version) is not str or not version:
+        raise SemanticEvaluatorError("shadow_adapter_unavailable")
+    if adapter_id == ANTHROPIC_ADAPTER_ID and not (
+        is_supported_anthropic_sdk_version_v1(version)
+    ):
+        raise SemanticEvaluatorError("shadow_adapter_unavailable")
+    return version
+
+
 def _execution_manifest(
     *,
     instrument_sha256: str,
     policy: ShadowExecutionPolicy,
     prompt_sizer: Any,
+    messages_endpoint: str | None,
+    provider_sdk_version: str,
 ) -> ShadowExecutionManifest:
+    if policy.adapter_id != ANTHROPIC_ADAPTER_ID and messages_endpoint is not None:
+        raise SemanticEvaluatorError("shadow_request_invalid")
+    if type(provider_sdk_version) is not str or not provider_sdk_version:
+        raise SemanticEvaluatorError("shadow_adapter_unavailable")
     if policy.adapter_id == SYNTHETIC_ADAPTER_ID:
         adapter_version = _load_fixture_manifest()
         adapter_modules = (
             "multi_agent_brief.semantic_evaluator.adapters.synthetic_fixture",
         )
         provider_sdk_name = "synthetic"
-        provider_sdk_version = "synthetic-v4"
         execution_origin = "synthetic_fixture"
         qualification_class = "synthetic_only"
         provider_endpoint_sha256 = canonical_sha256(["synthetic-no-network"])
@@ -363,10 +604,6 @@ def _execution_manifest(
         adapter_modules = (
             "multi_agent_brief.semantic_evaluator.adapters.openai_responses",
         )
-        try:
-            provider_sdk_version = metadata.version("openai")
-        except Exception:
-            raise SemanticEvaluatorError("shadow_adapter_unavailable") from None
         provider_sdk_name = "openai"
         execution_origin = "direct_openai"
         qualification_class = "direct_openai"
@@ -378,18 +615,24 @@ def _execution_manifest(
             "multi_agent_brief.semantic_evaluator.adapters.openai_responses",
             "multi_agent_brief.semantic_evaluator.adapters.local_proxy_responses",
         )
-        try:
-            provider_sdk_version = metadata.version("openai")
-        except Exception:
-            raise SemanticEvaluatorError("shadow_adapter_unavailable") from None
         provider_sdk_name = "openai"
         execution_origin = "local_cliproxy"
         qualification_class = "local_proxy_experimental"
         provider_endpoint_sha256 = canonical_sha256([CLIPROXY_BASE_URL])
         qualification_eligible = False
+    elif policy.adapter_id == ANTHROPIC_ADAPTER_ID:
+        if messages_endpoint is None:
+            raise SemanticEvaluatorError("shadow_request_invalid")
+        adapter_version = ANTHROPIC_ADAPTER_VERSION
+        adapter_modules = (
+            "multi_agent_brief.semantic_evaluator.adapters.anthropic_messages",
+        )
+        provider_sdk_name = "anthropic"
+        execution_origin = "messages_endpoint"
+        qualification_class = "messages_compatible_experimental"
+        provider_endpoint_sha256 = sha256_bytes(messages_endpoint.encode("ascii"))
+        qualification_eligible = False
     else:
-        raise SemanticEvaluatorError("shadow_adapter_unavailable")
-    if type(provider_sdk_version) is not str or not provider_sdk_version:
         raise SemanticEvaluatorError("shadow_adapter_unavailable")
     schema_hashes = {
         model.schema_id: canonical_sha256(model.model_json_schema())
@@ -460,7 +703,48 @@ def _shadow_request(
     )
 
 
-def _adapter_for(execution: ShadowExecutionManifest) -> SemanticEvaluatorAdapter:
+def resolve_prepared_shadow_identity(
+    prepared: PreparedShadowRun,
+    *,
+    replay_only: bool = False,
+) -> ResolvedPreparedShadowRun:
+    """Resolve replay first, then freeze a live SDK identity only on a miss."""
+
+    replay = resolve_existing_archive(
+        archive_root=prepared.archive_root,
+        trial_id=prepared.trial_id,
+    )
+    if replay is None:
+        if replay_only:
+            raise SemanticEvaluatorError("shadow_archive_incomplete")
+        provider_sdk_version = _live_provider_sdk_version(prepared.policy.adapter_id)
+    else:
+        provider_sdk_version = replay.execution_manifest.provider_sdk_version
+    execution = _execution_manifest(
+        instrument_sha256=(prepared.admission.instrument_manifest.instrument_sha256),
+        policy=prepared.policy,
+        prompt_sizer=prepared.prompt_sizer,
+        messages_endpoint=prepared.messages_endpoint,
+        provider_sdk_version=provider_sdk_version,
+    )
+    request = _shadow_request(prepared.admission, execution)
+    if replay is not None:
+        replay.require_exact_identity(
+            request=request,
+            execution_manifest=execution,
+        )
+    return ResolvedPreparedShadowRun(
+        execution_manifest=execution,
+        request=request,
+        replay=replay,
+    )
+
+
+def _adapter_for(
+    execution: ShadowExecutionManifest,
+    *,
+    messages_endpoint: str | None,
+) -> SemanticEvaluatorAdapter:
     if execution.adapter_id == SYNTHETIC_ADAPTER_ID:
         from multi_agent_brief.semantic_evaluator.adapters.synthetic_fixture import (
             SyntheticFixtureAdapterV4,
@@ -485,6 +769,20 @@ def _adapter_for(execution: ShadowExecutionManifest) -> SemanticEvaluatorAdapter
         if type(api_key) is not str or not api_key:
             raise SemanticEvaluatorError("shadow_adapter_unavailable")
         adapter = CLIProxyResponsesAdapterV1(api_key=api_key)
+    elif execution.adapter_id == ANTHROPIC_ADAPTER_ID:
+        from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+            AnthropicMessagesAdapterV1,
+        )
+
+        if messages_endpoint is None:
+            raise SemanticEvaluatorError("shadow_adapter_unavailable")
+        api_key = os.environ.get(ANTHROPIC_API_KEY_SETTING)
+        if type(api_key) is not str or not api_key:
+            raise SemanticEvaluatorError("shadow_adapter_unavailable")
+        adapter = AnthropicMessagesAdapterV1(
+            api_key=api_key,
+            endpoint=messages_endpoint,
+        )
     else:
         raise SemanticEvaluatorError("shadow_adapter_unavailable")
     if (
@@ -501,6 +799,8 @@ def _adapter_for(execution: ShadowExecutionManifest) -> SemanticEvaluatorAdapter
 def _validate_adapter(
     adapter: SemanticEvaluatorAdapter,
     execution: ShadowExecutionManifest,
+    *,
+    messages_endpoint: str | None,
 ) -> SemanticEvaluatorAdapter:
     try:
         valid = (
@@ -509,6 +809,15 @@ def _validate_adapter(
             and adapter.provider_sdk_name == execution.provider_sdk_name
             and adapter.provider_sdk_version == execution.provider_sdk_version
             and adapter.qualification_eligible == execution.qualification_eligible
+            and (
+                execution.adapter_id != ANTHROPIC_ADAPTER_ID
+                or (
+                    messages_endpoint is not None
+                    and adapter.base_url == messages_endpoint
+                    and execution.provider_endpoint_sha256
+                    == sha256_bytes(messages_endpoint.encode("ascii"))
+                )
+            )
             and callable(adapter.invoke)
         )
     except Exception:
@@ -706,6 +1015,42 @@ def _archive_payloads(
         value.model_dump(mode="json", warnings="error")
     )
     profile = admission._instrument_snapshot.resources.loaded_profile
+    payloads: dict[str, bytes] = _execution_payloads(
+        admission=admission,
+        request=request,
+        execution=execution,
+        archived_attempts=archived_attempts,
+    )
+    payloads.update(
+        {
+            "run.json": model(assembled.run),
+            "validation_report.json": model(assembled.validation_report),
+            "events.jsonl": event_stream_bytes(assembled.events),
+            "laj_composition_witness.json": model(assembled.witness),
+            "baseline.json": model(baseline),
+            "composition_matched.json": model(matched),
+            "composition_actual.json": model(actual),
+            "presentation_matched.json": model(presentation_matched),
+            "presentation_actual.json": model(presentation_actual),
+        }
+    )
+    return payloads
+
+
+def _execution_payloads(
+    *,
+    admission: Any,
+    request: ShadowRunRequest,
+    execution: ShadowExecutionManifest,
+    archived_attempts: list[_ArchivedAttempt],
+    assembled: Any | None = None,
+) -> dict[str, bytes]:
+    """Build the provider-phase evidence set, before local derivation."""
+
+    model = lambda value: canonical_json_bytes(
+        value.model_dump(mode="json", warnings="error")
+    )
+    profile = admission._instrument_snapshot.resources.loaded_profile
     payloads: dict[str, bytes] = {
         "request.json": model(request),
         "execution_manifest.json": model(execution),
@@ -721,15 +1066,6 @@ def _archive_payloads(
         "instrument_config.json": model(admission.instrument_config),
         "instrument_manifest.json": model(admission.instrument_manifest),
         "assessment_plan.json": model(admission.assessment_plan),
-        "run.json": model(assembled.run),
-        "validation_report.json": model(assembled.validation_report),
-        "events.jsonl": event_stream_bytes(assembled.events),
-        "laj_composition_witness.json": model(assembled.witness),
-        "baseline.json": model(baseline),
-        "composition_matched.json": model(matched),
-        "composition_actual.json": model(actual),
-        "presentation_matched.json": model(presentation_matched),
-        "presentation_actual.json": model(presentation_actual),
     }
     for prompt in admission.prompts:
         payloads[f"prompts/{prompt.dimension_id}.json"] = canonical_json_bytes(
@@ -755,11 +1091,155 @@ def _archive_payloads(
             payloads[f"{prefix}/response.body"] = archived.raw.raw_transport_response
         if archived.raw.extracted_output is not None:
             payloads[f"{prefix}/output.txt"] = archived.raw.extracted_output
-        if archived.raw.sdk_projection_bytes is not None:
+        # SDK projections are response-bound, with one exception: an
+        # http_error attempt whose response body is unreadable derives its
+        # facts from the projection itself, so the projection is the only
+        # evidence and must be retained for archive self-verification.
+        if archived.raw.sdk_projection_bytes is not None and (
+            archived.raw.raw_transport_response is not None
+            or (
+                archived.raw.facts.transport_kind == "http_error"
+                and archived.raw.facts.status.state != "absent"
+            )
+        ):
             payloads[f"{prefix}/sdk_projection.json"] = (
                 archived.raw.sdk_projection_bytes
             )
+    if assembled is not None:
+        payloads.update(
+            {
+                "run.json": model(assembled.run),
+                "validation_report.json": model(assembled.validation_report),
+                "events.jsonl": event_stream_bytes(assembled.events),
+                "laj_composition_witness.json": model(assembled.witness),
+            }
+        )
     return payloads
+
+
+def derive_existing_execution_evidence(
+    *,
+    archive_root: Path,
+    trial_id: str,
+) -> ShadowRunResult:
+    """Derive a qualified archive locally from a retained execution receipt.
+
+    This path intentionally never resolves SDK metadata, credentials, or an
+    adapter.  It succeeds only when the provider phase retained an assembled
+    witness; an earlier assembly failure remains diagnosable but cannot be
+    reconstructed from absent deterministic roots.
+    """
+
+    try:
+        evidence = resolve_existing_execution_evidence(
+            archive_root=archive_root,
+            trial_id=trial_id,
+        )
+        if evidence is None:
+            return _failure("shadow_archive_incomplete")
+        payloads = dict(evidence.payloads)
+        # Older execution receipts could contain a value-free SDK projection
+        # beside a timeout/transport attempt.  Keep the frozen execution
+        # receipt untouched, but normalize this derived qualification input so
+        # archive verification sees the response-bound projection contract.
+        for path in tuple(payloads):
+            if not path.startswith("attempts/") or not path.endswith(
+                "/sdk_projection.json"
+            ):
+                continue
+            transport_path = f"{path.rsplit('/', 1)[0]}/transport.json"
+            try:
+                transport = json.loads(payloads[transport_path])
+                envelope_state = transport["facts"]["envelope"]["state"]
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                continue
+            if envelope_state == "absent":
+                payloads.pop(path, None)
+        witness_raw = payloads.get("laj_composition_witness.json")
+        if witness_raw is None:
+            return _failure(
+                "local_derivation_failed",
+                execution_archive_path=str(evidence.path),
+            )
+        witness = verify_laj_composition_witness(
+            LajCompositionWitness.model_validate(json.loads(witness_raw))
+        )
+        execution = ShadowExecutionManifest.model_validate(
+            json.loads(payloads["execution_manifest.json"])
+        )
+        request = ShadowRunRequest.model_validate(json.loads(payloads["request.json"]))
+        profile_payload = json.loads(payloads["profile.json"])
+        profile_id = profile_payload["profile"]["profile_id"]
+        loaded_profile = load_profile(profile_id)
+        if loaded_profile.profile_sha256 != profile_payload.get("profile_sha256"):
+            raise SemanticEvaluatorError("local_derivation_failed")
+        matched = compose_matched_non_llm(
+            report_evidence=witness.report_evidence,
+            reader_artifact=witness.reader_artifact,
+            bounded_context=witness.bounded_context,
+            loaded_profile=loaded_profile,
+        )
+        actual = compose_actual_laj(witness)
+        presentation_matched = build_presentation(
+            matched,
+            report_evidence=witness.report_evidence,
+            reader_artifact=witness.reader_artifact,
+            bounded_context=witness.bounded_context,
+        )
+        presentation_actual = build_presentation(actual, witness=witness)
+        payloads.update(
+            {
+                "baseline.json": canonical_json_bytes(
+                    matched.baseline_payload.model_dump(mode="json", warnings="error")
+                ),
+                "composition_matched.json": canonical_json_bytes(
+                    matched.model_dump(mode="json", warnings="error")
+                ),
+                "composition_actual.json": canonical_json_bytes(
+                    actual.model_dump(mode="json", warnings="error")
+                ),
+                "presentation_matched.json": canonical_json_bytes(
+                    presentation_matched.model_dump(mode="json", warnings="error")
+                ),
+                "presentation_actual.json": canonical_json_bytes(
+                    presentation_actual.model_dump(mode="json", warnings="error")
+                ),
+            }
+        )
+        published = publish_shadow_archive(
+            archive_root=archive_root,
+            request=request,
+            execution_manifest=execution,
+            payloads=payloads,
+            run=witness.run,
+            validation_report=witness.validation_report,
+            created_at=(
+                str(evidence.manifest.get("recorded_at"))
+                if evidence.manifest.get("recorded_at")
+                else _utc_now()
+            ),
+        )
+        return _from_archive(
+            published,
+            replayed=False,
+            execution_archive_path=(
+                str(evidence.path) if evidence is not None else None
+            ),
+        )
+    except SemanticEvaluatorError as exc:
+        return _failure(
+            exc.reason_code,
+            execution_archive_path=(
+                str(evidence.path) if "evidence" in locals() and evidence else None
+            ),
+        )
+    except Exception:
+        return _failure(
+            "local_derivation_failed",
+            execution_archive_path=(
+                str(evidence.path) if "evidence" in locals() and evidence else None
+            ),
+        )
 
 
 def prepare_shadow_run(
@@ -786,53 +1266,21 @@ def prepare_shadow_run(
         )
     except SemanticEvaluatorError as exc:
         return _failure(exc.reason_code)
-    if (
-        config.decoding.seed is not None
-        or not 1 <= config.retry_policy.max_attempts <= 3
-        or config.retry_policy.retryable_reason_codes
-        != (
-            []
-            if config.retry_policy.max_attempts == 1
-            else ["provider_retryable_failure"]
+    try:
+        adapter_id, _ = _prompt_sizer_for(config)
+        messages_endpoint = _messages_endpoint_for(adapter_id)
+        return _prepared_shadow_run_from_values(
+            report_bytes=report_bytes,
+            bounded_context=context,
+            instrument_config=config,
+            trial_id=trial_id,
+            archive_root=root,
+            workspace_root=common_input_root,
+            messages_endpoint=messages_endpoint,
+            profile_id=profile,
         )
-        or config.prompt_sizer.reserved_output_tokens
-        < config.decoding.max_output_tokens
-    ):
-        return _failure("shadow_request_invalid")
-    try:
-        adapter_id, prompt_sizer = _prompt_sizer_for(config)
     except SemanticEvaluatorError as exc:
         return _failure(exc.reason_code)
-    admission = admit_inputs(
-        {
-            "schema_version": ADMISSION_REQUEST_SCHEMA_ID,
-            "artifact_id": f"shadow-report-{sha256_bytes(report_bytes)[:16]}",
-            "trial_id": trial_id,
-            "report_bytes_hex": report_bytes.hex(),
-            "declared_report_sha256": sha256_bytes(report_bytes),
-            "bounded_context": context,
-            "declared_bounded_context_sha256": context.context_sha256,
-            "instrument_config": config,
-            "public_data_attestation": True,
-            "private_or_confidential_material": False,
-            "archive_root": str(root),
-            "workspace_root": str(common_input_root),
-        },
-        prompt_sizer=prompt_sizer,
-    )
-    if not admission.admitted:
-        return _failure(*admission.reason_codes)
-    try:
-        policy = _policy(adapter_id)
-    except SemanticEvaluatorError as exc:
-        return _failure(exc.reason_code)
-    return PreparedShadowRun(
-        admission=admission,
-        archive_root=root,
-        trial_id=trial_id,
-        prompt_sizer=prompt_sizer,
-        policy=policy,
-    )
 
 
 def execute_prepared_shadow_run(
@@ -841,6 +1289,7 @@ def execute_prepared_shadow_run(
     adapter_factory: Callable[[ShadowExecutionManifest], SemanticEvaluatorAdapter]
     | None = None,
     replay_only: bool = False,
+    resolved_identity: ResolvedPreparedShadowRun | None = None,
     clock: Callable[[], str] = _utc_now,
     sleep: Callable[[float], None] = time.sleep,
 ) -> ShadowRunResult:
@@ -851,30 +1300,54 @@ def execute_prepared_shadow_run(
     trial_id = prepared.trial_id
     policy = prepared.policy
     try:
-        execution = _execution_manifest(
+        resolved = resolved_identity or resolve_prepared_shadow_identity(
+            prepared,
+            replay_only=replay_only,
+        )
+        expected_execution = _execution_manifest(
             instrument_sha256=admission.instrument_manifest.instrument_sha256,
             policy=policy,
             prompt_sizer=prepared.prompt_sizer,
+            messages_endpoint=prepared.messages_endpoint,
+            provider_sdk_version=(resolved.execution_manifest.provider_sdk_version),
         )
-        request = _shadow_request(admission, execution)
-        replay = resolve_existing_archive(
-            archive_root=root,
-            request=request,
-            execution_manifest=execution,
-        )
+        expected_request = _shadow_request(admission, expected_execution)
+        if canonical_json_bytes(resolved.execution_manifest) != canonical_json_bytes(
+            expected_execution
+        ) or canonical_json_bytes(resolved.request) != canonical_json_bytes(
+            expected_request
+        ):
+            raise SemanticEvaluatorError("shadow_request_conflict")
+        if replay_only and resolved.replay is None:
+            raise SemanticEvaluatorError("shadow_archive_incomplete")
+        if resolved.replay is not None:
+            resolved.replay.require_exact_identity(
+                request=expected_request,
+                execution_manifest=expected_execution,
+            )
     except SemanticEvaluatorError as exc:
         return _failure(exc.reason_code)
-    if replay is not None:
-        return _from_archive(replay, replayed=True)
-    if replay_only:
-        return _failure("shadow_archive_incomplete")
+    execution = expected_execution
+    request = expected_request
+    execution_archive: Path | None = None
+    if resolved.replay is not None:
+        return _from_archive(resolved.replay, replayed=True)
     try:
         prepare_archive_root(archive_root=root, trial_id=trial_id)
     except SemanticEvaluatorError as exc:
         return _failure(exc.reason_code)
     try:
-        factory = adapter_factory or _adapter_for
-        adapter = _validate_adapter(factory(execution), execution)
+        factory = adapter_factory or (
+            lambda current: _adapter_for(
+                current,
+                messages_endpoint=prepared.messages_endpoint,
+            )
+        )
+        adapter = _validate_adapter(
+            factory(execution),
+            execution,
+            messages_endpoint=prepared.messages_endpoint,
+        )
     except Exception:
         return _failure("shadow_adapter_unavailable")
     try:
@@ -885,14 +1358,84 @@ def execute_prepared_shadow_run(
             clock=clock,
             sleep=sleep,
         )
-        assembled = assemble_semantic_assessment_run(
-            admission=admission,
-            dimension_attempt_evidence=evidence,
+        try:
+            assembled = assemble_semantic_assessment_run(
+                admission=admission,
+                dimension_attempt_evidence=evidence,
+            )
+        except SemanticEvaluatorError as exc:
+            execution_archive = publish_execution_evidence(
+                archive_root=root,
+                request=request,
+                execution_manifest=execution,
+                payloads=_execution_payloads(
+                    admission=admission,
+                    request=request,
+                    execution=execution,
+                    archived_attempts=archived_attempts,
+                ),
+                status="local_derivation_failed",
+                reason_codes=(exc.reason_code,),
+                recorded_at=clock(),
+            )
+            return _failure(
+                exc.reason_code,
+                execution_archive_path=str(execution_archive),
+            )
+        except Exception:
+            execution_archive = publish_execution_evidence(
+                archive_root=root,
+                request=request,
+                execution_manifest=execution,
+                payloads=_execution_payloads(
+                    admission=admission,
+                    request=request,
+                    execution=execution,
+                    archived_attempts=archived_attempts,
+                ),
+                status="local_derivation_failed",
+                reason_codes=("shadow_execution_failed",),
+                recorded_at=clock(),
+            )
+            return _failure(
+                "shadow_execution_failed",
+                execution_archive_path=str(execution_archive),
+            )
+        evidence_reason_codes = tuple(
+            sorted(
+                {
+                    record.kernel_reason
+                    for archived in archived_attempts
+                    for record in (archived.record,)
+                    if record.attempt_status == "failed" and record.kernel_reason
+                }
+            )
         )
+        execution_status = "provider_failed" if evidence_reason_codes else "complete"
+        execution_payloads = _execution_payloads(
+            admission=admission,
+            request=request,
+            execution=execution,
+            archived_attempts=archived_attempts,
+            assembled=assembled,
+        )
+        try:
+            execution_archive = publish_execution_evidence(
+                archive_root=root,
+                request=request,
+                execution_manifest=execution,
+                payloads=execution_payloads,
+                status=execution_status,
+                reason_codes=evidence_reason_codes,
+                recorded_at=clock(),
+            )
+        except SemanticEvaluatorError as exc:
+            return _failure(exc.reason_code)
         matched = compose_matched_non_llm(
             report_evidence=admission.report_evidence,
             reader_artifact=admission.reader.artifact,
             bounded_context=admission.bounded_context,
+            loaded_profile=(admission._instrument_snapshot.resources.loaded_profile),
         )
         baseline = matched.baseline_payload
         actual = compose_actual_laj(assembled.witness)
@@ -918,6 +1461,21 @@ def execute_prepared_shadow_run(
             presentation_matched=presentation_matched,
             presentation_actual=presentation_actual,
         )
+    except SemanticEvaluatorError as exc:
+        return _failure(
+            exc.reason_code,
+            execution_archive_path=(
+                str(execution_archive) if execution_archive is not None else None
+            ),
+        )
+    except Exception:
+        return _failure(
+            "shadow_execution_failed",
+            execution_archive_path=(
+                str(execution_archive) if execution_archive is not None else None
+            ),
+        )
+    try:
         published = publish_shadow_archive(
             archive_root=root,
             request=request,
@@ -933,10 +1491,26 @@ def execute_prepared_shadow_run(
             if exc.reason_code.startswith("shadow_archive_")
             else "shadow_archive_publish_failed"
         )
-        return _failure(reason)
+        return _failure(
+            reason,
+            execution_archive_path=(
+                str(execution_archive) if execution_archive is not None else None
+            ),
+        )
     except Exception:
-        return _failure("shadow_archive_publish_failed")
-    return _from_archive(published, replayed=False)
+        return _failure(
+            "shadow_archive_publish_failed",
+            execution_archive_path=(
+                str(execution_archive) if execution_archive is not None else None
+            ),
+        )
+    return _from_archive(
+        published,
+        replayed=False,
+        execution_archive_path=(
+            str(execution_archive) if execution_archive is not None else None
+        ),
+    )
 
 
 def run_shadow(
@@ -975,10 +1549,16 @@ def run_shadow(
 __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "PROFILE_ID",
+    "PreparedShadowBudget",
     "PreparedShadowRun",
+    "ResolvedPreparedShadowRun",
     "RUNNER_VERSION",
     "ShadowRunResult",
+    "derive_existing_execution_evidence",
     "execute_prepared_shadow_run",
+    "prepared_shadow_budget",
     "prepare_shadow_run",
+    "prepare_shadow_run_from_bytes",
+    "resolve_prepared_shadow_identity",
     "run_shadow",
 ]

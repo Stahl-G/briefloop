@@ -15,6 +15,7 @@ from multi_agent_brief.contracts.v2 import (
     RuntimeSourcePlanBinding,
     RuntimeSourceRouteBinding,
     RuntimeWebSearchAcquisitionSpec,
+    RuntimeWebSearchAcquisitionSpecV3,
     SourceProposal,
 )
 from multi_agent_brief.control_store.serialization import (
@@ -26,9 +27,17 @@ from multi_agent_brief.core_run_v2.service import _derive_runtime_source_plan
 from multi_agent_brief.sources.api_news import NewsApiProvider
 from multi_agent_brief.sources.base import SourceItem, SourceProvider, SourceQuery
 from multi_agent_brief.sources.cached_package import CachedPackageProvider
+from multi_agent_brief.sources.tavily_acquisition import (
+    TavilyAcquisitionBundleError,
+    TavilyAcquisitionObservation,
+    TavilyMultiAcquisitionObservation,
+    parse_tavily_acquisition_bundle,
+    tavily_observation_matches_spec,
+)
 from multi_agent_brief.sources.web_search import WebSearchProvider
 
 from .errors import RuntimeHostError
+from .submission import MAX_SOURCE_PACK_MEMBERS
 
 
 @dataclass(frozen=True)
@@ -36,6 +45,16 @@ class FrozenSourceMaterial:
     proposal: SourceProposal
     content: bytes
     raw_payload: bytes
+
+
+@dataclass(frozen=True)
+class FrozenSourceCollection:
+    materials: tuple[FrozenSourceMaterial, ...]
+    provider_response: bytes | None
+    provider_status_code: int | None
+    result_count: int
+    durable_content_count: int
+    material_validation_failed: bool = False
 
 
 ProviderFactory = Callable[[str], SourceProvider]
@@ -68,12 +87,64 @@ def collect_frozen_sources(
 ) -> tuple[FrozenSourceMaterial, ...]:
     """Execute one frozen route and retain every deterministically ordered result."""
 
+    return collect_frozen_source_pack(
+        workspace,
+        run_id=run_id,
+        invocation_id=invocation_id,
+        route=route,
+        provider_factory=provider_factory,
+    ).materials
+
+
+def collect_frozen_source_pack(
+    workspace: Path,
+    *,
+    run_id: str,
+    invocation_id: str,
+    route: RuntimeSourceRouteBinding,
+    provider_factory: ProviderFactory | None = None,
+    retrieved_at: str | None = None,
+) -> FrozenSourceCollection:
+    """Execute one route and retain its exact provider response when available."""
+
     spec = route.acquisition_spec
     if route.execution_owner != "deterministic" or spec is None:
         raise RuntimeHostError("runtime_source_plan_invalid")
     factory = provider_factory or _provider
     items: list[SourceItem] = []
-    if isinstance(spec, RuntimeWebSearchAcquisitionSpec):
+    provider_response: bytes | None = None
+    provider_status_code: int | None = None
+    tavily_observation: (
+        TavilyAcquisitionObservation | TavilyMultiAcquisitionObservation | None
+    ) = None
+    if isinstance(spec, RuntimeWebSearchAcquisitionSpecV3):
+        if route.provider_id != "tavily":
+            raise RuntimeHostError("runtime_source_plan_invalid")
+        provider = factory("web_search")
+        if not isinstance(provider, WebSearchProvider):
+            raise RuntimeHostError("runtime_source_plan_invalid")
+        collected = provider.collect_with_response(
+            SourceQuery(keywords=[], max_results=800, recency_days=7),
+            {
+                "enabled": True,
+                "mode": "external_api",
+                "backend": "tavily",
+                "_workspace_dir": str(workspace),
+                "acquisition_mode": "multi_search_batch_extract",
+                "max_unique_urls": spec.max_unique_urls,
+                "extract_batch_size": spec.extract_batch_size,
+                "search_tasks": [
+                    item.model_dump(mode="json", exclude_unset=False)
+                    for item in spec.tasks
+                ],
+            },
+        )
+        provider_response = collected.raw_response
+        provider_status_code = collected.status_code
+        items.extend(collected.items)
+    elif isinstance(spec, RuntimeWebSearchAcquisitionSpec):
+        if route.provider_id == "tavily":
+            raise RuntimeHostError("runtime_source_plan_invalid")
         provider = factory("web_search")
         for request in spec.requests:
             items.extend(
@@ -87,6 +158,7 @@ def collect_frozen_sources(
                         "enabled": True,
                         "mode": "external_api",
                         "backend": spec.provider_id,
+                        "_workspace_dir": str(workspace),
                         "max_results": request.max_results,
                         "recency_days": request.recency_days,
                         "search_tasks": [
@@ -130,26 +202,80 @@ def collect_frozen_sources(
         )
     else:  # pragma: no cover - discriminated strict contract is total
         raise RuntimeHostError("runtime_source_plan_invalid")
-    if not items:
-        raise RuntimeHostError("runtime_source_acquisition_failed")
-    ordered = sorted(
-        items,
-        key=lambda value: (
-            value.url,
-            value.source_id,
-            value.title,
-            sha256_hex(value.content.encode("utf-8")),
-        ),
-    )
-    return tuple(
-        _material_from_item(
-            workspace=workspace,
-            run_id=run_id,
-            invocation_id=invocation_id,
-            route=route,
-            item=item,
+    if not items and route.provider_id != "tavily":
+        raise RuntimeHostError("source_pack_empty")
+    result_count = len(items)
+    durable_content_count = 0
+    material_validation_failed = False
+    if route.provider_id == "tavily":
+        if (
+            provider_response is None
+            or not provider_response
+            or provider_status_code != 200
+            or (
+                isinstance(spec, RuntimeWebSearchAcquisitionSpec)
+                and len(spec.requests) != 1
+            )
+        ):
+            raise RuntimeHostError("source_provider_result_invalid")
+        try:
+            tavily_observation = parse_tavily_acquisition_bundle(provider_response)
+        except TavilyAcquisitionBundleError:
+            material_validation_failed = True
+        else:
+            result_count = tavily_observation.result_count
+            durable_content_count = tavily_observation.durable_content_count
+            material_validation_failed = not tavily_observation_matches_spec(
+                tavily_observation, spec
+            ) or not _items_match_tavily_observation(
+                items,
+                tavily_observation,
+            )
+    try:
+        canonical_items = (
+            []
+            if material_validation_failed
+            else _canonical_source_items(
+                items,
+                max_members=(
+                    800
+                    if isinstance(spec, RuntimeWebSearchAcquisitionSpecV3)
+                    else MAX_SOURCE_PACK_MEMBERS
+                ),
+            )
         )
-        for item in ordered
+        ordered = sorted(
+            canonical_items,
+            key=lambda value: (
+                value.url,
+                value.source_id,
+                value.title,
+                sha256_hex(value.content.encode("utf-8")),
+            ),
+        )
+        materials = tuple(
+            _material_from_item(
+                workspace=workspace,
+                run_id=run_id,
+                invocation_id=invocation_id,
+                route=route,
+                item=item,
+                retrieved_at=retrieved_at,
+            )
+            for item in ordered
+        )
+    except RuntimeHostError:
+        if route.provider_id != "tavily":
+            raise
+        materials = ()
+        material_validation_failed = True
+    return FrozenSourceCollection(
+        materials=materials,
+        provider_response=provider_response,
+        provider_status_code=provider_status_code,
+        result_count=result_count,
+        durable_content_count=durable_content_count,
+        material_validation_failed=material_validation_failed,
     )
 
 
@@ -165,6 +291,11 @@ def _provider(kind: str) -> SourceProvider:
 
 def _validated_cached_paths(workspace: Path, paths: list[str]) -> list[Path]:
     result: list[Path] = []
+    logical_paths = [Path(value) for value in paths]
+    for position, left in enumerate(logical_paths):
+        for right in logical_paths[position + 1 :]:
+            if left == right or left in right.parents or right in left.parents:
+                raise RuntimeHostError("runtime_source_pack_invalid")
     for relative in paths:
         current = workspace
         for part in Path(relative).parts:
@@ -181,6 +312,27 @@ def _validated_cached_paths(workspace: Path, paths: list[str]) -> list[Path]:
     return result
 
 
+def _canonical_source_items(
+    items: list[SourceItem], *, max_members: int = MAX_SOURCE_PACK_MEMBERS
+) -> list[SourceItem]:
+    """Close count and duplicate identity before any authoritative mutation."""
+
+    if len(items) > max_members:
+        raise RuntimeHostError("runtime_source_pack_invalid")
+    by_identity: dict[str, tuple[bytes, SourceItem]] = {}
+    for item in items:
+        payload = canonical_json_bytes(item.to_dict())
+        previous = by_identity.get(item.source_id)
+        if previous is None:
+            by_identity[item.source_id] = (payload, item)
+        elif previous[0] != payload:
+            raise RuntimeHostError("runtime_source_pack_invalid")
+    canonical = [value[1] for value in by_identity.values()]
+    if len(canonical) > max_members:
+        raise RuntimeHostError("runtime_source_pack_invalid")
+    return canonical
+
+
 def _material_from_item(
     *,
     workspace: Path,
@@ -188,11 +340,17 @@ def _material_from_item(
     invocation_id: str,
     route: RuntimeSourceRouteBinding,
     item: SourceItem,
+    retrieved_at: str | None = None,
 ) -> FrozenSourceMaterial:
     content = item.content.encode("utf-8")
     if not content:
         raise RuntimeHostError("runtime_source_acquisition_failed")
-    raw_payload = canonical_json_bytes(item.to_dict())
+    provider_projection = item.metadata.get("provider_projection")
+    raw_payload = (
+        canonical_json_bytes(provider_projection)
+        if route.provider_id == "tavily" and isinstance(provider_projection, dict)
+        else canonical_json_bytes(item.to_dict())
+    )
     source_id = derived_id(
         "SRC-HOST",
         route.route_fingerprint,
@@ -228,6 +386,9 @@ def _material_from_item(
         if not item.url:
             raise RuntimeHostError("runtime_source_acquisition_failed")
         locator = {"kind": "web", "url": item.url}
+    has_durable_tavily_content = route.provider_id == "tavily" and (
+        _has_durable_tavily_content(item)
+    )
     proposal = SourceProposal.model_validate(
         {
             "schema_version": SourceProposal.schema_id,
@@ -238,21 +399,21 @@ def _material_from_item(
                 "cached_provider_response"
                 if is_cached
                 else "provider_response"
-                if is_newsapi
+                if is_newsapi or has_durable_tavily_content
                 else "search_snippet_only"
             ),
             "acquisition_method": (
                 "cached_provider_response"
                 if is_cached
                 else "provider_extract"
-                if is_newsapi
+                if is_newsapi or has_durable_tavily_content
                 else "provider_search"
             ),
             "material_kind": (
                 "full_content"
                 if is_cached
                 else "partial_extract"
-                if is_newsapi
+                if is_newsapi or has_durable_tavily_content
                 else "search_snippet"
             ),
             "provider": route.provider_id or "cached_package",
@@ -262,7 +423,7 @@ def _material_from_item(
             or "Collected source",
             "publisher": item.source_name.strip() or None,
             "published_at": published_at,
-            "retrieved_at": item.retrieved_at,
+            "retrieved_at": retrieved_at or item.retrieved_at,
             "source_category": "other" if is_cached else "news_media",
             "retrieval_source_type": "local_file" if is_cached else "news_media",
             "underlying_evidence_type": "unknown" if is_cached else "media_report",
@@ -283,6 +444,45 @@ def _material_from_item(
     )
 
 
+def _has_durable_tavily_content(item: SourceItem) -> bool:
+    return (
+        item.source_type == "web_search"
+        and item.metadata.get("backend") == "tavily"
+        and item.metadata.get("content_shape") == "provider_extract_content"
+        and item.metadata.get("has_raw_content") is True
+        and item.metadata.get("evidence_quality") == "partial_extract"
+        and bool(item.content.strip())
+    )
+
+
+def _items_match_tavily_observation(
+    items: list[SourceItem],
+    observation: TavilyAcquisitionObservation | TavilyMultiAcquisitionObservation,
+) -> bool:
+    """Bind every and only successful Extract item to its frozen projection."""
+
+    expected = {item.url: item for item in observation.sources}
+    if len(items) != len(expected) or len(items) != len(
+        {item.source_id for item in items}
+    ):
+        return False
+    observed_urls: set[str] = set()
+    for item in items:
+        expected_item = expected.get(item.url)
+        projection = item.metadata.get("provider_projection")
+        if (
+            expected_item is None
+            or item.url in observed_urls
+            or not _has_durable_tavily_content(item)
+            or not isinstance(projection, dict)
+            or canonical_json_bytes(projection) != expected_item.projection
+            or item.content.encode("utf-8") != expected_item.content
+        ):
+            return False
+        observed_urls.add(item.url)
+    return observed_urls == set(expected)
+
+
 def _published_date(value: str) -> str | None:
     candidate = value[:10]
     try:
@@ -293,7 +493,9 @@ def _published_date(value: str) -> str | None:
 
 
 __all__ = [
+    "FrozenSourceCollection",
     "FrozenSourceMaterial",
+    "collect_frozen_source_pack",
     "collect_frozen_sources",
     "derive_runtime_source_plan",
 ]

@@ -54,6 +54,7 @@ from multi_agent_brief.product.template_registry import ReportTemplateRegistry
 SPECIALIZED_REPORT_PACK_POLICY_PROFILES = {
     "evidence_extract": "evidence_extract_default",
     "solar_industry_periodic": "solar_manufacturing_default",
+    "solar_stock_periodic": "solar_stock_default",
 }
 EVIDENCE_EXTRACT_BINARY_EXTENSIONS = {
     ".pdf",
@@ -74,6 +75,12 @@ EVIDENCE_EXTRACT_PAGE_INVENTORY_SCHEMA_VERSION = (
     "briefloop.evidence_extract_page_inventory.v1"
 )
 PRODUCT_WORKSPACE_SELECTOR_MAX_ITEMS = 20
+TAVILY_CONFIRMED_INIT_GUIDANCE = (
+    "Tavily setup requires Human-confirmed direction and a 7- or 30-day "
+    "source window. Use `briefloop init <workspace> --web`, or run "
+    "`briefloop onboard` and then `briefloop init <workspace> "
+    "--from-onboarding onboarding.json`."
+)
 
 
 def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
@@ -97,8 +104,9 @@ def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument(
         "--industry",
         help=(
-            "Industry or theme hint for deterministic PolicyProfile resolution. "
-            "Low-confidence or ambiguous matches use the ReportPack default."
+            "Human-authored industry or topic. Low-confidence PolicyProfile "
+            "matches use the ReportPack default. Tavily setup belongs to "
+            "`briefloop init --web` or conversational onboarding."
         ),
     )
     parser.add_argument(
@@ -123,7 +131,10 @@ def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
     parser.add_argument(
         "--search-backend",
         choices=["tavily", "exa", "brave", "firecrawl", "serper"],
-        help="Opt into an external API search backend, for example tavily.",
+        help=(
+            "External API backend for this developer workspace shortcut. "
+            "Tavily requires `briefloop init --web` or conversational onboarding."
+        ),
     )
 
 
@@ -157,7 +168,11 @@ def register_packs(subparsers: argparse._SubParsersAction) -> None:
 
     bundle_parser = actions.add_parser(
         "bundle",
-        help="Write a delivery/audit bundle projection for a finalized workspace.",
+        help="Retired public command; internal deterministic bundle seam only.",
+        description=(
+            "This public command is retired and unavailable. ReportBundle "
+            "remains an internal deterministic, capability-gated seam only."
+        ),
     )
     bundle_parser.add_argument(
         "--workspace", required=True, help="Path to workspace directory."
@@ -169,7 +184,7 @@ def register_packs(subparsers: argparse._SubParsersAction) -> None:
     bundle_parser.add_argument(
         "--write-archives",
         action="store_true",
-        help="Write clean delivery_bundle.zip and audit_bundle.zip from the manifest artifacts.",
+        help="Compatibility option for the unavailable public command.",
     )
     bundle_parser.add_argument(
         "--json", action="store_true", help="Emit machine-readable JSON."
@@ -243,22 +258,23 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
         "--workspace", required=True, help="Path to workspace directory."
     )
     summarize_parser.add_argument(
-        "--laj-view",
-        help=(
-            "Optional standalone laj.json to display as an experimental, "
-            "advisory-only Quality Panel section."
-        ),
-    )
-    summarize_parser.add_argument(
         "--json", action="store_true", help="Emit machine-readable JSON."
     )
+    summarize_parser.add_argument(
+        "--laj-view",
+        help=argparse.SUPPRESS,
+    )
 
+    html_help = (
+        "Write a local, static, read-only four-tab view: verified "
+        "local-finalized Brief, deterministic Quality, optional advisory "
+        "LAJ (NOT MEASURED), and Store-native Human guidance state whose "
+        "reuse requires an explicit successor-start opt-in."
+    )
     html_parser = actions.add_parser(
         "html",
-        help=(
-            "Write the read-only three-page brief HTML (quality / semantic "
-            "review / improvement) as a self-contained static export."
-        ),
+        help=html_help,
+        description=html_help,
     )
     html_parser.add_argument(
         "--workspace", required=True, help="Path to workspace directory."
@@ -279,8 +295,168 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
         "--json", action="store_true", help="Emit machine-readable JSON."
     )
 
+    laj_parser = actions.add_parser(
+        "laj",
+        help=(
+            "Experimental post-final LAJ and Human review controls; advisory only, "
+            "not a Gate, with reuse only through explicit successor-start opt-in."
+        ),
+    )
+    laj_actions = laj_parser.add_subparsers(dest="laj_action", required=True)
+    policy_parser = laj_actions.add_parser(
+        "policy-set",
+        help="Record a strict non-secret, Human-enabled advisory policy.",
+    )
+    policy_parser.add_argument("--workspace", required=True)
+    policy_parser.add_argument(
+        "--policy-json",
+        required=True,
+        help="Strict non-secret policy JSON. API keys are never accepted here.",
+    )
+    policy_parser.add_argument("--json", action="store_true")
+    assess_parser = laj_actions.add_parser(
+        "assess",
+        help="Claim and run one advisory assessment after Store preflight.",
+    )
+    assess_parser.add_argument("--workspace", required=True)
+    assess_parser.add_argument("--json", action="store_true")
+    status_parser = laj_actions.add_parser(
+        "status",
+        help="Read Store-qualified LAJ lifecycle status without provider access.",
+    )
+    status_parser.add_argument("--workspace", required=True)
+    status_parser.add_argument("--json", action="store_true")
+    retry_parser = laj_actions.add_parser(
+        "retry",
+        help="Recover an existing advisory request without a new provider call.",
+    )
+    retry_parser.add_argument("--workspace", required=True)
+    retry_parser.add_argument("--request-id", required=True)
+    retry_parser.add_argument("--json", action="store_true")
+    run_parser = laj_actions.add_parser(
+        "assessment-run",
+        help="Run one new explicitly Human-authorized assessment generation.",
+    )
+    run_parser.add_argument("--workspace", required=True)
+    run_parser.add_argument(
+        "--request-json",
+        required=True,
+        help="Strict inline non-secret assessment authorization JSON.",
+    )
+    run_parser.add_argument("--json", action="store_true")
+    next_parser = laj_actions.add_parser(
+        "assessment-next",
+        help="Project a complete Human-authorized next assessment request without writes.",
+    )
+    next_parser.add_argument("--workspace", required=True)
+    next_parser.add_argument("--policy-revision-id", required=True)
+    next_parser.add_argument("--human-actor-id", required=True)
+    next_parser.add_argument("--human-request-id", required=True)
+    next_parser.add_argument(
+        "--assessment-purpose",
+        choices=("post_final_review", "model_evaluation"),
+        required=True,
+    )
+    next_parser.add_argument("--abandon-predecessor", action="store_true")
+    next_parser.add_argument("--json", action="store_true")
+    list_parser = laj_actions.add_parser(
+        "assessment-list",
+        help="List the verified assessment series without provider access.",
+    )
+    list_parser.add_argument("--workspace", required=True)
+    list_parser.add_argument("--json", action="store_true")
+    review_open_parser = laj_actions.add_parser(
+        "review-open",
+        help=(
+            "Open the secured local Post-final Review page. The ordinary path "
+            "needs no policy JSON, request JSON, generation ID, fingerprint, or "
+            "archive path; AI Second Opinion remains advisory and explicit, and "
+            "guidance reuse requires a separate successor-start opt-in."
+        ),
+    )
+    review_open_parser.add_argument("--workspace", required=True)
+    review_open_parser.add_argument(
+        "--assessment-result-id",
+        help="Advanced exact compatible-result selection; requires its fingerprint.",
+    )
+    review_open_parser.add_argument(
+        "--assessment-result-fingerprint",
+        help="Advanced exact compatible-result selection; requires its result ID.",
+    )
+    review_open_parser.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="Print the loopback URL and keep the session alive without opening a browser.",
+    )
+    review_open_parser.add_argument("--json", action="store_true")
+    observation_parser = laj_actions.add_parser(
+        "observation",
+        aliases=["observation-record"],
+        help=(
+            "Append one report-bound Human observation. No Reader Review result, "
+            "policy JSON, provider, or internal fingerprint is required."
+        ),
+    )
+    observation_parser.add_argument("--workspace", required=True)
+    observation_parser.add_argument(
+        "--request-json",
+        required=True,
+        help="Strict Human observation JSON; provider secrets are rejected.",
+    )
+    observation_parser.add_argument("--json", action="store_true")
+    observation_supersede_parser = laj_actions.add_parser(
+        "observation-supersede",
+        help=(
+            "Append a replacement revision for one exact Human observation "
+            "using its predecessor identity."
+        ),
+    )
+    observation_supersede_parser.add_argument("--workspace", required=True)
+    observation_supersede_parser.add_argument(
+        "--request-json",
+        required=True,
+        help="Strict Human observation replacement JSON.",
+    )
+    observation_supersede_parser.add_argument("--json", action="store_true")
+    for action, help_text in (
+        ("disposition", "Record one accept/reject/defer finding disposition."),
+        ("draft", "Append one Human-edited guidance draft for an accepted finding."),
+        ("approve", "Separately approve one exact guidance draft."),
+        ("deactivate", "Append a deactivated status for one exact guidance draft."),
+        ("revert", "Append a reverted status for one exact guidance draft."),
+        ("supersede", "Append a superseded status for one exact guidance draft."),
+        (
+            "review-status",
+            "Read disposition and guidance state without provider access.",
+        ),
+    ):
+        command = laj_actions.add_parser(action, help=help_text)
+        command.add_argument("--workspace", required=True)
+        command.add_argument("--assessment-result-id", required=True)
+        command.add_argument(
+            "--assessment-result-fingerprint",
+            required=True,
+        )
+        if action != "review-status":
+            command.add_argument(
+                "--request-json",
+                required=True,
+                help="Strict Human command JSON; raw provider findings are not accepted.",
+            )
+        command.add_argument("--json", action="store_true")
+
 
 def handle_new_workspace(args: argparse.Namespace) -> int:
+    if str(getattr(args, "search_backend", "") or "").strip() == "tavily":
+        payload = {
+            "ok": False,
+            "error": TAVILY_CONFIRMED_INIT_GUIDANCE,
+            "workspace": str(args.workspace),
+            "report_pack": str(args.report_pack),
+        }
+        _print_payload("new", payload, as_json=False)
+        return 1
+
     registry = ReportPackRegistry.from_package()
     requested_pack_id = resolve_report_pack_id(args.report_pack)
     pack = registry.get(requested_pack_id)
@@ -440,6 +616,162 @@ def handle_extract(args: argparse.Namespace) -> int:
 
 def handle_quality(args: argparse.Namespace) -> int:
     action = getattr(args, "quality_action", "")
+    if action == "laj":
+        from multi_agent_brief.product.post_final_assessment import (
+            PostFinalAssessmentError,
+            PostFinalAssessmentService,
+        )
+        from multi_agent_brief.product.post_final_review import (
+            PostFinalReviewError,
+            PostFinalReviewService,
+        )
+
+        workspace = Path(args.workspace).expanduser().resolve()
+        service = PostFinalAssessmentService(workspace)
+        try:
+            laj_action = getattr(args, "laj_action", "")
+            if laj_action == "policy-set":
+                value = json.loads(args.policy_json)
+                if type(value) is not dict:
+                    raise PostFinalAssessmentError(
+                        "post_final_assessment_policy_invalid"
+                    )
+                payload = service.policy_set(value)
+            elif laj_action == "assess":
+                payload = service.assess()
+            elif laj_action == "status":
+                payload = service.status()
+            elif laj_action == "retry":
+                payload = service.retry(args.request_id)
+            elif laj_action == "assessment-run":
+                value = json.loads(args.request_json)
+                if type(value) is not dict:
+                    raise PostFinalAssessmentError(
+                        "post_final_assessment_request_invalid"
+                    )
+                payload = service.assessment_run(value)
+            elif laj_action == "assessment-next":
+                payload = service.assessment_next(
+                    policy_revision_id=args.policy_revision_id,
+                    human_actor_id=args.human_actor_id,
+                    human_request_id=args.human_request_id,
+                    assessment_purpose=args.assessment_purpose,
+                    abandon_predecessor=bool(args.abandon_predecessor),
+                )
+            elif laj_action == "assessment-list":
+                payload = service.assessment_list()
+            elif laj_action == "review-open":
+                from multi_agent_brief.product.review_session import (
+                    launch_actionable_review_session,
+                )
+
+                launched = launch_actionable_review_session(
+                    workspace,
+                    assessment_result_id=args.assessment_result_id,
+                    assessment_result_fingerprint=(args.assessment_result_fingerprint),
+                    open_browser=not bool(args.no_browser),
+                )
+                payload = {
+                    "ok": True,
+                    "status": launched.reason_code,
+                    "user_status": launched.user_status,
+                    "compatible_result_count": launched.compatible_result_count,
+                    "selection_required": launched.user_status == "selection_required",
+                    "run_action_available": launched.run_action_available,
+                    "url": launched.url,
+                    "runtime_authority": False,
+                    "next_run_consumption": launched.next_run_consumption,
+                }
+                _print_payload(
+                    "quality laj",
+                    payload,
+                    as_json=getattr(args, "json", False),
+                )
+                try:
+                    launched.server.wait()
+                except KeyboardInterrupt:
+                    launched.server.close()
+                return 0
+            elif laj_action in {
+                "observation",
+                "observation-record",
+                "observation-supersede",
+            }:
+                value = json.loads(args.request_json)
+                if type(value) is not dict:
+                    raise PostFinalReviewError("post_final_review_request_invalid")
+                # Report-bound observations intentionally do not require an
+                # assessment result selection.  If the request carries an
+                # exact selected result tuple, the Store service validates it.
+                review = PostFinalReviewService(workspace)
+                if laj_action in {"observation", "observation-record"}:
+                    payload = review.record_human_observation(value)
+                else:
+                    payload = review.supersede_human_observation(value)
+            elif laj_action == "review-status":
+                payload = PostFinalReviewService(
+                    workspace,
+                    args.assessment_result_id,
+                    args.assessment_result_fingerprint,
+                    allow_historical=True,
+                ).review_status()
+            elif laj_action in {
+                "disposition",
+                "draft",
+                "approve",
+                "deactivate",
+                "revert",
+                "supersede",
+            }:
+                value = json.loads(args.request_json)
+                if type(value) is not dict:
+                    raise PostFinalReviewError("post_final_review_request_invalid")
+                if (
+                    "assessment_result_id" in value
+                    and value["assessment_result_id"] != args.assessment_result_id
+                ):
+                    raise PostFinalReviewError("post_final_review_binding_invalid")
+                review = PostFinalReviewService(
+                    workspace,
+                    args.assessment_result_id,
+                    args.assessment_result_fingerprint,
+                    allow_historical=True,
+                )
+                if laj_action == "disposition":
+                    payload = review.record_disposition(value)
+                elif laj_action == "draft":
+                    payload = review.append_guidance_draft(value)
+                else:
+                    payload = getattr(review, f"{laj_action}_guidance")(value)
+            else:
+                return 1
+        except (
+            json.JSONDecodeError,
+            PostFinalAssessmentError,
+            PostFinalReviewError,
+            OSError,
+            ValueError,
+        ) as exc:
+            payload = {
+                "ok": False,
+                "status": "unavailable",
+                "reason_code": str(exc),
+                "boundary": (
+                    "experimental_advisory_human_review_not_gate_delivery_or_"
+                    "implicit_reuse"
+                ),
+            }
+        payload.setdefault(
+            "boundary",
+            "experimental_advisory_human_review_not_gate_delivery_or_implicit_reuse",
+        )
+        label = (
+            "quality laj assessment-list"
+            if getattr(args, "laj_action", "") == "assessment-list"
+            else "quality laj"
+        )
+        _print_payload(label, payload, as_json=getattr(args, "json", False))
+        return 0 if payload.get("ok") else 1
     if action == "html":
         from multi_agent_brief.product.brief_html import (
             BriefHtmlError,
@@ -467,6 +799,10 @@ def handle_quality(args: argparse.Namespace) -> int:
             return 0
         return 1
     if action != "summarize":
+        return 1
+
+    if getattr(args, "laj_view", None) is not None:
+        print("runtime_command_unsupported")
         return 1
 
     workspace = Path(args.workspace).expanduser().resolve()
@@ -628,8 +964,9 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
                 print("Online search:")
                 print("  Online search is recommended but not active by default.")
                 print("  Tavily is the recommended external API backend.")
+                print("  To enable Tavily, use `briefloop init <workspace> --web`,")
                 print(
-                    "  To enable it, recreate with --search-backend tavily and set TAVILY_API_KEY."
+                    "  or run `briefloop onboard` and initialize from onboarding.json."
                 )
                 print("  To stay offline, recreate with --web-search-mode disabled.")
             elif web_search_mode == "disabled":
@@ -724,6 +1061,31 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
             )
         else:
             print(payload.get("error"))
+    elif label == "quality laj assessment-list":
+        if payload.get("ok"):
+            for item in payload.get("assessments", []):
+                print(
+                    f"- assessment_generation={item.get('assessment_generation')} "
+                    f"assessment_purpose={item.get('assessment_purpose')} "
+                    f"requested_model_id={item.get('requested_model_id')} "
+                    f"terminal_evidence_class={item.get('terminal_evidence_class')}"
+                )
+                print(
+                    f"  assessment_result_id={item.get('assessment_result_id')} "
+                    "assessment_result_fingerprint="
+                    f"{item.get('assessment_result_fingerprint')}"
+                )
+                print(
+                    f"  assessed_unit_count={item.get('assessed_unit_count')} "
+                    f"finding_count={item.get('finding_count')} "
+                    "withheld_finding_count="
+                    f"{item.get('withheld_finding_count')} "
+                    f"abstention_count={item.get('abstention_count')} "
+                    f"reason_codes={item.get('reason_codes')}"
+                )
+        else:
+            print(f"status: {payload.get('status')}")
+            print(f"reason_code: {payload.get('reason_code')}")
     else:
         print(f"report_pack: {payload.get('report_pack')}")
         print(f"resolved_policy_profile: {payload.get('resolved_policy_profile')}")
@@ -810,6 +1172,19 @@ def _create_report_pack_workspace(
 ) -> dict[str, Any]:
     from multi_agent_brief.cli.init_wizard import InitProfile, create_workspace
 
+    requested_backend = str(getattr(args, "search_backend", None) or "").strip()
+    requested_mode = str(getattr(args, "web_search_mode", None) or "").strip()
+    if requested_backend == "tavily":
+        raise ValueError(TAVILY_CONFIRMED_INIT_GUIDANCE)
+    if requested_mode == "external_api" and not requested_backend:
+        raise ValueError(
+            "--web-search-mode external_api requires an explicit "
+            "--search-backend; Tavily must be configured through `briefloop init "
+            "<workspace> --web` or conversational onboarding."
+        )
+    industry_hint = getattr(args, "industry", None)
+    industry_topic = industry_hint.strip() if isinstance(industry_hint, str) else ""
+
     policy_registry = PolicyProfileRegistry.from_package()
     spec = deepcopy(dict(pack.default_report_spec))
     policy_resolution = _resolve_report_pack_policy_profile(
@@ -825,12 +1200,7 @@ def _create_report_pack_workspace(
     )
     language = args.language or str(audience.get("language") or "en-US")
     reader_label = args.audience or str(audience.get("label") or "business reader")
-    industry_hint = getattr(args, "industry", None)
-    industry_text = (
-        industry_hint
-        if isinstance(industry_hint, str) and industry_hint.strip()
-        else pack.display_name
-    )
+    industry_text = industry_topic or pack.display_name
     spec["title"] = title
     spec["audience"] = dict(audience)
     spec["audience"]["label"] = reader_label
@@ -842,21 +1212,53 @@ def _create_report_pack_workspace(
         else ["markdown", "docx"]
     )
 
+    # The ordinary management-monthly entry is the supported Reader Review
+    # identity.  Keep this normalization local to that product shortcut so
+    # other init paths and report packs retain their existing language values.
+    reader_review_direction = (
+        pack.report_type == "management_monthly" and language == "en-US"
+    )
+    solar_stock_direction = pack.report_type == "solar_stock_periodic"
+    focus_areas = (
+        [
+            "TOYO Solar",
+            "listed solar equities",
+            "earnings and valuation",
+            "orders financing M&A capacity and asset events",
+            "solar input prices",
+            "45X FEOC AD/CVD and anti-involution policy",
+            "company PR and external media sentiment",
+        ]
+        if solar_stock_direction
+        else [pack.display_name, "source-backed claims", "reader-ready brief"]
+    )
+    task_objective = (
+        "Prepare a capital-markets Solar Stock Periodic report with two equity "
+        "comparison tables, event-to-trading-day mapping, policy and input-price "
+        "tracking, sentiment separation, and explicit implications for TOYO."
+        if solar_stock_direction
+        else (
+            f"Prepare a {pack.display_name} using local-first sources and the "
+            "BriefLoop control spine."
+        )
+    )
     profile = InitProfile(
         interface_language=language,
-        output_language=language,
+        output_language="en" if reader_review_direction else language,
         company=args.company,
         role="report_owner",
         industry=industry_text,
         industry_text=industry_text,
         brief_title=title,
+        report_type=(
+            pack.report_type
+            if reader_review_direction or solar_stock_direction
+            else None
+        ),
         audience=reader_label,
         audience_profile="management",
-        focus_areas=[pack.display_name, "source-backed claims", "reader-ready brief"],
-        task_objective=(
-            f"Prepare a {pack.display_name} using local-first sources and the "
-            "BriefLoop control spine."
-        ),
+        focus_areas=focus_areas,
+        task_objective=task_objective,
         forbidden_sources=[
             "confidential material not approved for this workspace",
             "private messages",
@@ -864,6 +1266,7 @@ def _create_report_pack_workspace(
             "material non-public information",
         ],
         cadence=cadence,
+        max_source_age_days=7 if solar_stock_direction else 14,
         selector_max_items=PRODUCT_WORKSPACE_SELECTOR_MAX_ITEMS,
         output_formats=[str(item) for item in outputs],
         source_profile="conservative",
@@ -871,6 +1274,9 @@ def _create_report_pack_workspace(
         web_search_enabled=True,
         web_search_mode="configure_later",
         search_backend="",
+        optional_seed_pack=(
+            "solar_stock_periodic" if solar_stock_direction else ""
+        ),
     )
     web_search_mode = getattr(args, "web_search_mode", None)
     if web_search_mode:
@@ -879,9 +1285,6 @@ def _create_report_pack_workspace(
         if web_search_mode == "disabled":
             profile.tavily_enabled = False
             profile.search_backend = ""
-        elif web_search_mode == "external_api" and not profile.search_backend:
-            profile.tavily_enabled = True
-            profile.search_backend = "tavily"
         elif web_search_mode in {"runtime_tool", "configure_later"}:
             profile.tavily_enabled = False
             profile.search_backend = ""

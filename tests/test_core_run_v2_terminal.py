@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
+import sys
 from types import MappingProxyType
 
 import pytest
@@ -25,9 +26,11 @@ from multi_agent_brief.contracts.v2 import (
     DeliveryResultRecord,
     DeliveryResultRequest,
     EventEnvelope,
+    ExecutionSourceManifest,
     FinalizeCompleteRequest,
     FinalizeRenderRequest,
     InternalApprovalRequest,
+    IntegrityCheckRequest,
     FinalizationRecord,
     FinalizeRenderRecord,
     GateCheckRequest,
@@ -35,6 +38,7 @@ from multi_agent_brief.contracts.v2 import (
     GateEvaluationRecord,
     PackageArtifactBinding,
     PackageReadyRecord,
+    PublicationIdentityV1,
     RunArchiveArtifactBinding,
     RunArchiveRecord,
     StageArtifactBinding,
@@ -92,6 +96,92 @@ def _commit_core_fixture(store: SQLiteControlStore, unit, *, observer=None):
 
 def _finalize_ready_workspace(tmp_path: Path) -> tuple[Path, str, object]:
     workspace = core_fixture._workspace(tmp_path)
+    core_fixture._advance_to_finalize_ready(workspace)
+    return workspace, core_fixture.RUN_ID, core_fixture.CLOCK
+
+
+def _authorized_finalize_ready_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[Path, str, object]:
+    """Reuse the normal spine after replacing only its source-intake prefix."""
+
+    workspace = core_fixture._workspace(tmp_path)
+    authorization = core_fixture._execution_authorization(workspace)
+    manifest_payload = deepcopy(authorization["source_manifest"])
+    manifest_payload["members"][0]["source_id"] = "SRC-001"
+    manifest = ExecutionSourceManifest.model_validate(manifest_payload, strict=True)
+    manifest_bytes = canonical_json_bytes(
+        manifest.model_dump(mode="json", exclude_unset=False)
+    )
+    authorization.update(
+        source_manifest=manifest.model_dump(mode="json", exclude_unset=False),
+        source_manifest_sha256=sha256_hex(manifest_bytes),
+    )
+
+    def advance_authorized_source_prefix(
+        target: Path,
+        *,
+        topology: str = "default",
+        role_ids: list[str] | None = None,
+        output_contract: dict[str, object] | None = None,
+    ) -> CoreRunService:
+        service = core_fixture._initialize(
+            target,
+            topology=topology,
+            role_ids=role_ids,
+            output_contract=output_contract,
+            input_governance_required=True,
+            execution_authorization=authorization,
+        )
+        doctor = service.doctor_check(
+            core_fixture._record(
+                IntegrityCheckRequest,
+                request_id="REQ-TERMINAL-AUTHORIZED-DOCTOR-001",
+                run_id=core_fixture.RUN_ID,
+                expected_store_revision=core_fixture._store_revision(target),
+            )
+        )
+        assert doctor.status == "committed", doctor.to_dict()
+        pack = service.apply_authorized_source_pack()
+        assert pack.status == "committed", pack.to_dict()
+        with SQLiteControlStore.open(
+            target / "briefloop.db", clock=core_fixture.CLOCK
+        ) as store:
+            snapshot = CoreRunDomainVerifier().verify(
+                store, core_fixture.RUN_ID
+            ).snapshot
+            source = snapshot.sources[0]
+            frozen = snapshot.run_execution_authorizations[0]
+        core_fixture._complete_stage(
+            service,
+            target,
+            stage_id="source-discovery",
+            artifacts=[
+                (
+                    frozen.source_manifest_artifact.artifact_id,
+                    frozen.source_manifest_artifact.revision,
+                ),
+                (source.content_artifact_id, source.content_artifact_revision),
+            ],
+        )
+        core_fixture._complete_stage(
+            service,
+            target,
+            stage_id="input-governance",
+            artifacts=[("input_classification", 1)],
+        )
+        return service
+
+    monkeypatch.setattr(
+        core_fixture,
+        "_advance_to_scout_ready",
+        advance_authorized_source_prefix,
+    )
+    monkeypatch.setattr(
+        "multi_agent_brief.core_run_v2.gates.evaluate_quality_gate_findings_preloaded",
+        lambda **_kwargs: {gate_id: [] for gate_id in GATE_IDS},
+    )
     core_fixture._advance_to_finalize_ready(workspace)
     return workspace, core_fixture.RUN_ID, core_fixture.CLOCK
 
@@ -561,6 +651,359 @@ def test_finalize_render_records_contamination_before_requested_effect(
         snapshot = store.load_snapshot(run_id)
     assert not snapshot.finalize_renders
     assert snapshot.run_integrity_records[-1].status == "contaminated"
+
+
+def test_authorized_finalize_local_commits_nonpublishing_checkout_and_replays(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from multi_agent_brief.core_run_v2.checkout import (
+        build_checkout_revision,
+        build_publication_intent,
+        prepare_checkout_effect,
+    )
+
+    workspace, run_id, clock = _authorized_finalize_ready_workspace(
+        tmp_path, monkeypatch
+    )
+    _render_receipt, _render_fingerprint, render = _commit_finalize_render(
+        workspace, run_id, clock
+    )
+    _gate_receipt, _gate_fingerprint, evaluations = _commit_finalize_gate(
+        workspace, run_id, clock, render
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+        before = verified.snapshot
+        finalize_stage = next(
+            item for item in before.stage_states if item.stage_id == "finalize"
+        )
+        committed_revisions = {
+            item.transaction_id: item.committed_revision
+            for item in before.transactions
+        }
+        prior_binding = max(
+            before.receipt_checkout_bindings,
+            key=lambda item: committed_revisions[item.transaction_id],
+        )
+        prior_members = tuple(
+            item
+            for item in before.checkout_revision_members
+            if item.checkout_revision_id
+            == prior_binding.post_checkout_revision_id
+        )
+        observed_projection = {
+            item.canonical_path: (workspace / item.canonical_path).read_bytes()
+            for item in prior_members
+        }
+
+        # A real projection delta remains precommit-unsupported on Windows.
+        changed_bytes = b"new projected bytes\n"
+        changed = core_fixture._record(
+            ArtifactRevision,
+            run_id=run_id,
+            artifact_id="windows_projection_probe",
+            revision=1,
+            path="output/intermediate/windows-projection-probe.txt",
+            sha256=sha256_hex(changed_bytes),
+            size_bytes=len(changed_bytes),
+            frozen=True,
+            producer_kind="control_tool",
+            producer_id="core-v2-test-probe",
+            created_at=core_fixture.NOW,
+        )
+        monkeypatch.setattr(sys, "platform", "win32")
+        with pytest.raises(CoreRunError, match="checkout_publication_unsupported"):
+            prepare_checkout_effect(
+                workspace=workspace,
+                snapshot=before,
+                transaction_id="REQ-WINDOWS-PROJECTION-PROBE-001",
+                created_at=clock(),
+                additional_revisions=(changed,),
+            )
+
+    request = FinalizeCompleteRequest.model_validate(
+        {
+            "schema_version": FinalizeCompleteRequest.schema_id,
+            "request_id": "REQ-TERMINAL-AUTHORIZED-LOCAL-COMPLETE-001",
+            "run_id": run_id,
+            "render_id": render.render_id,
+            "expected_finalize_stage_revision": finalize_stage.revision,
+            "gate_evaluation_ids": sorted(
+                item.evaluation_id for item in evaluations
+            ),
+            "recovery_id": None,
+            "expected_store_revision": before.store_revision,
+        },
+        strict=True,
+    )
+    service = CoreRunTerminalService(workspace, clock=clock)
+    result = service.complete_finalize(request)
+    assert (result.status, result.error_code) == ("committed", None)
+    assert result.receipt is not None
+    assert len(result.receipt.stage_transitions) == 1
+    assert result.receipt.stage_artifact_bindings
+    assert len(result.receipt.stage_gate_bindings) == len(evaluations)
+    assert len(result.receipt.finalizations) == 1
+    assert len(result.receipt.checkout_revisions) == 1
+    assert len(result.receipt.receipt_checkout_bindings) == 1
+    assert result.receipt.checkout_publication_intents == []
+    assert result.receipt.artifact_revisions == []
+    assert result.receipt.run_archives == []
+    assert result.receipt.package_ready_records == []
+
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        after_verified = CoreRunDomainVerifier().verify(store, run_id)
+        after = after_verified.snapshot
+        revision_after_commit = after.store_revision
+        finalization = next(
+            item
+            for item in after.finalizations
+            if item.accepted_transaction_id == request.request_id
+        )
+        consumed_bindings = tuple(
+            item
+            for item in after.stage_artifact_bindings
+            if item.transition_id == finalization.finalize_transition_id
+        )
+        assert consumed_bindings
+        forged_missing_lineage = replace(
+            after,
+            stage_artifact_bindings=tuple(
+                item
+                for item in after.stage_artifact_bindings
+                if item != consumed_bindings[0]
+            ),
+        )
+        with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+            CoreRunDomainVerifier._verify_stage_chain(
+                store,
+                forged_missing_lineage,
+                after_verified.contracts,
+                after_verified.binding,
+            )
+    binding = next(
+        item
+        for item in after.receipt_checkout_bindings
+        if item.transaction_id == request.request_id
+    )
+    checkout = next(
+        item
+        for item in after.checkout_revisions
+        if item.checkout_revision_id == binding.post_checkout_revision_id
+    )
+    assert checkout.parent_checkout_revision_id == prior_binding.post_checkout_revision_id
+    post_members = tuple(
+        item
+        for item in after.checkout_revision_members
+        if item.checkout_revision_id == checkout.checkout_revision_id
+    )
+    assert {
+        (item.canonical_path, item.blob_sha256, item.byte_size)
+        for item in post_members
+    } == {
+        (item.canonical_path, item.blob_sha256, item.byte_size)
+        for item in prior_members
+    }
+
+    revisions = {
+        (item.artifact_id, item.revision): item for item in after.artifact_revisions
+    }
+
+    def forged_checkout_snapshot(artifact_revisions):
+        rebuilt = build_checkout_revision(
+            workspace_id=after.workspace_id,
+            run_id=run_id,
+            transaction_id=request.request_id,
+            created_at=datetime.fromisoformat(
+                checkout.created_at.replace("Z", "+00:00")
+            ),
+            artifact_revisions=artifact_revisions,
+            parent_checkout_revision_id=prior_binding.post_checkout_revision_id,
+        )
+        forged_binding = binding.model_copy(
+            update={"post_checkout_revision_id": rebuilt.record.checkout_revision_id}
+        )
+        receipt_payload = result.receipt.model_dump(
+            mode="json", exclude_unset=False
+        )
+        receipt_payload["checkout_revisions"] = [
+            {"checkout_revision_id": rebuilt.record.checkout_revision_id}
+        ]
+        forged_receipt = TransactionReceipt.model_validate(
+            receipt_payload, strict=True
+        )
+        forged_snapshot = replace(
+            after,
+            checkout_revisions=tuple(
+                rebuilt.record
+                if item.checkout_revision_id == checkout.checkout_revision_id
+                else item
+                for item in after.checkout_revisions
+            ),
+            checkout_revision_members=tuple(
+                item
+                for item in after.checkout_revision_members
+                if item.checkout_revision_id != checkout.checkout_revision_id
+            )
+            + rebuilt.members,
+            receipt_checkout_bindings=tuple(
+                forged_binding if item == binding else item
+                for item in after.receipt_checkout_bindings
+            ),
+        )
+        return forged_snapshot, forged_receipt, rebuilt
+
+    parent_revisions = tuple(
+        revisions[(item.artifact_id, item.artifact_revision)]
+        for item in prior_members
+    )
+    omitted_snapshot, omitted_receipt, _omitted_checkout = forged_checkout_snapshot(
+        parent_revisions[:-1]
+    )
+    with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+        _verified_core_receipt_binding(omitted_snapshot, omitted_receipt)
+
+    parent_keys = {
+        (item.artifact_id, item.artifact_revision) for item in prior_members
+    }
+    extra_revision = next(
+        item
+        for item in after.artifact_revisions
+        if (item.artifact_id, item.revision) not in parent_keys
+    )
+    added_snapshot, added_receipt, added_checkout = forged_checkout_snapshot(
+        (*parent_revisions, extra_revision)
+    )
+    with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+        _verified_core_receipt_binding(added_snapshot, added_receipt)
+
+    reordered_members = tuple(
+        item.model_copy(update={"ordinal": len(post_members) - item.ordinal - 1})
+        if item.checkout_revision_id == checkout.checkout_revision_id
+        else item
+        for item in after.checkout_revision_members
+    )
+    with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+        _verified_core_receipt_binding(
+            replace(after, checkout_revision_members=reordered_members),
+            result.receipt,
+        )
+
+    parent_record = next(
+        item
+        for item in after.checkout_revisions
+        if item.checkout_revision_id == prior_binding.post_checkout_revision_id
+    )
+    parent_checkout = build_checkout_revision(
+        workspace_id=after.workspace_id,
+        run_id=run_id,
+        transaction_id=parent_record.creator_transaction_id,
+        created_at=datetime.fromisoformat(
+            parent_record.created_at.replace("Z", "+00:00")
+        ),
+        artifact_revisions=parent_revisions,
+        parent_checkout_revision_id=parent_record.parent_checkout_revision_id,
+    )
+    assert parent_checkout.record == parent_record
+    publication_identity = PublicationIdentityV1.model_validate(
+        {
+            "schema_version": "briefloop-publication-identity/v1",
+            "workspace_id": after.workspace_id,
+            "run_id": run_id,
+            "transaction_id": request.request_id,
+            "checkout_revision_id": added_checkout.record.checkout_revision_id,
+        },
+        strict=True,
+    )
+    forged_intent, forged_publication_members = build_publication_intent(
+        identity=publication_identity,
+        pre=parent_checkout,
+        post=added_checkout,
+        capability_profile_sha256="0" * 64,
+    )
+    assert forged_publication_members
+    publication_receipt_payload = added_receipt.model_dump(
+        mode="json", exclude_unset=False
+    )
+    publication_receipt_payload["checkout_publication_intents"] = [
+        {"checkout_revision_id": added_checkout.record.checkout_revision_id}
+    ]
+    publication_receipt = TransactionReceipt.model_validate(
+        publication_receipt_payload, strict=True
+    )
+    with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+        _verified_core_receipt_binding(
+            replace(
+                added_snapshot,
+                checkout_publication_intents=(
+                    *added_snapshot.checkout_publication_intents,
+                    forged_intent,
+                ),
+                checkout_publication_members=(
+                    *added_snapshot.checkout_publication_members,
+                    *forged_publication_members,
+                ),
+            ),
+            publication_receipt,
+        )
+    assert not any(
+        item.identity.checkout_revision_id == checkout.checkout_revision_id
+        for item in after.checkout_publication_intents
+    )
+    assert not any(
+        item.identity.checkout_revision_id == checkout.checkout_revision_id
+        for item in after.checkout_publication_members
+    )
+    assert {
+        path: (workspace / path).read_bytes() for path in observed_projection
+    } == observed_projection
+    assert classify_terminal_legality(after).terminal_state == "finalized_local"
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        action = classify_core_run_next_action(
+            CoreRunDomainVerifier().verify(store, run_id)
+        )
+    assert (
+        action.action_kind,
+        action.effect_kind,
+        action.reason_code,
+        action.stage_id,
+        action.role_id,
+        action.request_schema_id,
+    ) == (
+        "complete",
+        "finalized_local",
+        "local_finalization_complete",
+        None,
+        None,
+        None,
+    )
+    assert not after.run_archives
+    assert not after.package_ready_records
+    assert not after.approvals
+    assert not after.delivery_authorizations
+    assert not after.delivery_attempts
+    assert not after.delivery_results
+
+    receipt_payload = result.receipt.model_dump(mode="json", exclude_unset=False)
+    first_consumed = consumed_bindings[0]
+    receipt_payload["artifact_revisions"] = [
+        {
+            "artifact_id": first_consumed.artifact_id,
+            "revision": first_consumed.artifact_revision,
+        }
+    ]
+    forged_extra_family = TransactionReceipt.model_validate(
+        receipt_payload, strict=True
+    )
+    with pytest.raises(CoreRunError, match="control_store_integrity_invalid"):
+        _verified_core_receipt_binding(after, forged_extra_family)
+
+    replay = service.complete_finalize(request)
+    assert replay.status == "replayed"
+    assert replay.receipt == result.receipt
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        assert store.current_revision == revision_after_commit
 
 
 def test_finalize_complete_records_contamination_before_requested_effect(

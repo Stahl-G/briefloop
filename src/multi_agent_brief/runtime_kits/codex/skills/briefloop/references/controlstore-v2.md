@@ -28,6 +28,102 @@ briefloop run --workspace <workspace> --runtime codex
 The command emits one strict `CoreRunNextAction`. It does not emit a legacy
 handoff and does not authorize work beyond that action.
 
+The kit written during init is verified Store-bound adapter material for
+reopened/future sessions. It does not hot-load itself into a Codex process that
+was already running. An already-active controller that invoked `init --web`
+continues using the protocol it already loaded.
+
+### Authorized local continuation
+
+When the Store contains either the M2 `RunExecutionAuthorization` for
+`completion_target=finalized_local` or the narrow Tavily
+`RunSourceDiscoveryAuthorization`, use:
+
+```bash
+briefloop runtime continue --workspace <workspace>
+```
+
+The command re-verifies Store and a fresh action before every effect. For the
+narrow discovery authorization it accepts the source-planner proposal and uses
+the exact Store-recorded attempt authorization. Each authorization executes a
+frozen atomic task matrix: every task requests up to 20 advanced Search results,
+all eligible unique URLs are Batch Extracted in groups of 20, and an under-covered
+task may receive one deterministic 30-day backfill. Solar Stock Periodic freezes
+20 independent equity/event/theme tasks within an 800-unique-URL safety envelope.
+Exact replay never redials
+and a failure never auto-retries. A recovery action requires an explicit Human choice to authorize
+another attempt or provide a HumanSourcePack. HumanSourcePack never counts as
+Tavily success. A successful attempt freezes the canonical exact-byte acquisition
+bundle and atomically commits only successful non-empty Extract content
+plus execution authorization before returning the existing role handoff.
+Search snippets are never source-pack members or claims-eligible; only non-empty
+successful Extract content is claims-eligible. It may also commit the
+parameter-free authorized local source pack and other existing deterministic
+effects. `role_work_required` names the exact envelope whose scratch proposal
+the current session must produce; call the command again after proposal
+validation. `proposal_invalid`, `needs_human`, and `needs_attention` are
+stop/attention results. `finalized_local` is terminal and never implies
+approval, packaging, delivery, or repair. Runs without either authorization
+retain the granular protocol below and receive a zero-write unsupported/manual
+result from `runtime continue`.
+
+At truthful `finalized_local`, the result may include a best-effort
+`presentation`. `output/brief_pages.html` is a replaceable self-contained
+static projection of the exact Store-bound `reader_brief`.
+`browser_unavailable` retains the safe relative projection path;
+`projection_unavailable` has no path because no safe projection was written.
+Neither result can change Store revision, finalization, the next action, or
+Gate truth. The file is not approval, packaging, delivery,
+publication, or a persistent localhost service. Regenerate it explicitly with
+`briefloop quality html --workspace <workspace>` when needed. LAJ is rendered
+only from an explicit hash-bound advisory view. Any Improvement tab is a
+read-only Store-native Human-guidance projection, not a legacy ledger, writer,
+approval action, or successor request.
+
+### Start A Normal Successor
+
+After the exact current head is verified `finalized_local`, a Human may start a
+normal successor in the same workspace:
+
+```bash
+briefloop runtime successor-start --workspace <workspace> \
+  --direction-json '<strict RunDirection JSON>' \
+  --run-id <new-run-id> \
+  --include-approved-guidance
+```
+
+The Human supplies the new run ID and complete strict `RunDirection`.
+`--include-approved-guidance` is the separate reuse opt-in; omitting it freezes
+an empty guidance snapshot. This command is a root-host Human transaction, not
+a sixth `CoreRunNextAction` kind, not recovery reset, and not permission for an
+agent, provider, or role to run.
+
+One Core transaction atomically creates the successor and copies the complete
+compatible active-approved set into immutable Store records. Selection is
+deterministic and bounded at 16 items / 65,536 combined UTF-8 bytes. It never
+truncates, summarizes, semantically ranks, or silently omits items. Exact replay
+returns the original Receipt and snapshot; changed input, a competing successor,
+invalid history, or a limit breach fails with no successor write.
+
+Analyst and Editor receive the same ordered `FrozenGuidanceContext` in their
+exact `RoleTaskEnvelope`; all other roles receive `None`. Use frozen guidance
+only for audience fit, structure, style, and expression. Current
+`RunDirection` and evidence govern. Guidance is not a fact, source, Claim
+Ledger input, Gate rule, repair command, or delivery authority. Precedence is:
+
+```text
+Core integrity and legality
+> current RunDirection, source policy, output contract, Gate and delivery
+> frozen approved guidance
+> role presentation preferences
+```
+
+Never reread a live guidance head or retired Improvement file. Later
+deactivation, revert, or supersession cannot change an existing successor
+snapshot. The explicit status/deactivate/revert/supersede CLI path may resolve
+an exact historical assessment result after the head advances; browser
+`review-open` remains current-head-only.
+
 ## 2. Snapshot The Exact Action
 
 Before executing an action, write the exact command output to a regular file
@@ -133,9 +229,13 @@ not make a role perform a deterministic effect. The sole extra input is for an
 `briefloop.runtime_repair_content_input.v2` through `--action-input`. Do not
 invent another repair or content path.
 
-`source_acquire` is also a deterministic `runtime apply` action. Its internal
-provider invocation does not turn search snippets into evidence and does not
-authorize a specialist to bypass source eligibility.
+`source_acquire` is also a deterministic `runtime apply` action. For the narrow
+Tavily route, the runtime owns the exact attempt-bound request and immutable
+response stage; specialists do not call the provider. The workspace credential
+remains local until Human rotation/removal, but it is capability, not call
+authority. Its internal provider invocation does not turn search snippets into
+eligible evidence and does not authorize a specialist to bypass source
+eligibility.
 
 ### `human_decision`
 

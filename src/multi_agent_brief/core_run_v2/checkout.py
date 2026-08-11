@@ -157,6 +157,104 @@ def _current_checkout(
     return BuiltCheckoutRevision(records[0], members, b"")
 
 
+def store_resident_revision_keys(
+    snapshot: ControlStoreSnapshot,
+) -> set[tuple[str, int]]:
+    """Return the one verifier-proven M2 classification kept only in Store.
+
+    This is intentionally relation-derived rather than an artifact-id/path
+    allowlist.  The domain verifier validates the same source-pack graph before
+    checkout construction or integrity observation consumes this helper.
+    """
+
+    if (
+        len(snapshot.run_execution_authorizations) != 1
+        or len(snapshot.run_contract_bindings) != 1
+    ):
+        return set()
+    authorization = snapshot.run_execution_authorizations[0]
+    binding = snapshot.run_contract_bindings[0]
+    source_receipt_ids = {item.accepted_transaction_id for item in snapshot.sources}
+    if len(source_receipt_ids) != 1:
+        return set()
+    source_receipt_id = next(iter(source_receipt_ids))
+    receipt = next(
+        (
+            item
+            for item in snapshot.transactions
+            if item.transaction_id == source_receipt_id
+        ),
+        None,
+    )
+    if receipt is None:
+        return set()
+    events_by_id = {item.event_id: item for item in snapshot.events}
+    classification_events = [
+        events_by_id.get(event_id)
+        for event_id in receipt.event_ids
+        if events_by_id.get(event_id) is not None
+        and events_by_id[event_id].event_type == "input_classification_committed"
+    ]
+    if len(classification_events) != 1:
+        return set()
+    submissions = [
+        item
+        for item in snapshot.owned_artifact_submissions
+        if item.accepted_transaction_id == receipt.transaction_id
+        and item.accepted_event_id == classification_events[0].event_id
+    ]
+    if len(submissions) != 1:
+        return set()
+    submission = submissions[0]
+    if (
+        receipt.transaction_type != "source_evidence_intake"
+        or receipt.run_id != authorization.run_id
+        or sorted(receipt.source_ids)
+        != sorted(item.source_id for item in snapshot.sources)
+        or any(
+            item.run_id != authorization.run_id
+            or item.source_manifest_sha256 != authorization.source_manifest_sha256
+            for item in snapshot.sources
+        )
+        or submission.run_id != authorization.run_id
+        or submission.accepted_transaction_id != receipt.transaction_id
+        or submission.owner_stage_id != "input-governance"
+        or submission.owner_role_id != "python_tool"
+        or submission.producer_tool_id != "input-governance-v2"
+        or submission.invocation_id is not None
+        or submission.run_contract_fingerprint != binding.contract_fingerprint
+        or [item.submission_id for item in receipt.owned_artifact_submissions]
+        != [submission.submission_id]
+        or submission.accepted_event_id not in receipt.event_ids
+    ):
+        return set()
+    matching_revision = next(
+        (
+            item
+            for item in snapshot.artifact_revisions
+            if item.artifact_id == submission.artifact_id
+            and item.revision == submission.artifact_revision
+            and item.sha256 == submission.artifact_sha256
+        ),
+        None,
+    )
+    if matching_revision is None:
+        return set()
+    # A source-pack receipt that explicitly owns publication intent for this
+    # exact revision remains a working projection and must be observed.
+    published_checkout_ids = {
+        item.checkout_revision_id for item in receipt.checkout_publication_intents
+    }
+    if any(
+        item.checkout_revision_id in published_checkout_ids
+        and item.artifact_id == submission.artifact_id
+        and item.artifact_revision == submission.artifact_revision
+        for item in snapshot.checkout_revision_members
+    ):
+        return set()
+    return {(submission.artifact_id, submission.artifact_revision)}
+
+
 def prepare_checkout_effect(
     *,
     workspace: "Path",
@@ -174,6 +272,7 @@ def prepare_checkout_effect(
         (item.artifact_id, item.revision): item
         for item in snapshot.artifact_revisions
     }
+    store_resident_keys = store_resident_revision_keys(snapshot)
     selected: dict[str, ArtifactRevision] = {}
     for artifact in snapshot.artifacts:
         if artifact.current_revision <= 0:
@@ -181,10 +280,16 @@ def prepare_checkout_effect(
         revision = current.get((artifact.artifact_id, artifact.current_revision))
         if revision is None:
             raise CoreRunError("checkout_revision_invalid")
-        if not revision.path.startswith("briefloop.db.blobs/"):
+        if (
+            (revision.artifact_id, revision.revision) not in store_resident_keys
+            and not revision.path.startswith("briefloop.db.blobs/")
+        ):
             selected[artifact.artifact_id] = revision
     for revision in additional_revisions:
-        if not revision.path.startswith("briefloop.db.blobs/"):
+        if (
+            (revision.artifact_id, revision.revision) not in store_resident_keys
+            and not revision.path.startswith("briefloop.db.blobs/")
+        ):
             selected[revision.artifact_id] = revision
     post = build_checkout_revision(
         workspace_id=snapshot.workspace_id,
@@ -321,6 +426,14 @@ def prepare_cross_run_checkout_effect(
     if not provisional_members:
         return PreparedCheckoutEffect(pre, post, binding, None, None, ())
     profile = preflight_publication(Path(workspace), provisional_members)
+    from .integrity import verify_publication_preimage
+
+    verify_publication_preimage(
+        Path(workspace),
+        pre.members,
+        provisional_members,
+        profile,
+    )
     intent, members = build_publication_intent(
         identity=identity,
         pre=pre,

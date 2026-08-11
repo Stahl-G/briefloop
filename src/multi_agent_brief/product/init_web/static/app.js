@@ -1,7 +1,9 @@
 /* ==========================================================================
-   BriefLoop init_web — one-shot workspace wizard (production static asset)
-   Derived (MIT) from the BriefLoop interactive-init prototype; upstream fork
-   shape: PPT Master confirm_ui @619a954 (MIT).
+   BriefLoop init_web — one-shot workspace wizard (production static asset).
+   Interaction and layout source adapted under MIT from PPT Master
+   (https://github.com/hugohe3/ppt-master), pinned at
+   619a954695d866dde970552db9fb1a6640c643c8; source path:
+   skills/ppt-master/scripts/confirm_ui/. Copyright (c) 2025-2026 Hugo He.
    Served under CSP script-src 'self'; style-src 'self': no inline handlers,
    no inline style attributes (custom accent goes through CSSOM insertRule on
    the same-origin stylesheet). DOM via createElement + textContent only;
@@ -38,7 +40,7 @@
             panel_title: "创建报告工作区",
             top_banner: "一次性初始化向导 · 预览为固定合成内容",
             step_1: "报告方向",
-            step_2: "交付与版式",
+            step_2: "本地输出设置",
             step_3: "预览与确认",
             btn_back: "← 上一步",
             btn_next: "下一步 →",
@@ -46,6 +48,9 @@
             sec_company: "公司 / 组织（必填）",
             placeholder_company: "例如：ACME 新能源",
             sec_report_type: "你在做什么报告？",
+            sec_search_topic: "公开网页检索主题（选择公开网页时必填）",
+            placeholder_search_topic: "例如：电网级储能",
+            note_search_topic: "填写一个简短、明确的行业或主题；Human 明确填写的值会原样进入冻结的 Tavily 任务集。公司 / 组织名称、任务说明和报告类型会追加各自的任务，但不会改写它。",
             sec_audience: "谁会读它？",
             sec_purpose: "它要支撑什么决策？（必填）",
             sec_brief_title: "简报标题（可选）",
@@ -59,11 +64,13 @@
             placeholder_purpose: "例如：跟踪组件价格，支撑采购议价",
             placeholder_freetext: "例如：给董事会看，十分钟读完，保留完整数据表，同时给我 DOCX 和网页版。",
             placeholder_window: "例如：近 14 天",
-            sec_formats: "读者收到什么文件？（可多选）",
+            sec_formats: "本地输出格式（可多选）",
             sec_presentation: "版式风格",
             custom_base_title: "基底风格",
             custom_base_note: "自定义 = 基底风格 + 有界覆盖（密度、强调色等为独立字段）。",
-            sec_density: "信息密度",
+            sec_density: "报告篇幅 / 阅读深度",
+            note_output_contract: "确认后，服务端会冻结此篇幅选择及其可衡量的正文预算；来源/参考文献附录不计入正文。",
+            review_output_contract: "已解析的正文预算",
             sec_tables: "数据表处理",
             sec_citations: "来源与引用展示",
             sec_accent: "品牌强调色（可选，仅装饰）",
@@ -81,13 +88,17 @@
             review_proposed: "来自文字的提议 · 待你处置",
             review_unresolved: "未解决 · 不生效",
             review_path_k: "工作区位置",
-            review_statement: "确认后，将在此位置创建 fresh-v2 工作区：一次确定性事务提交报告方向与交付选择，并返回 ControlStore 收据。",
+            review_authorized_boundary: "这将创建并授权一个本地 run，完成目标为 finalized_local，修复预算为 1。它会返回初始化 Receipt，并把控制权交回当前 Codex 会话。它不会对外交付，也不会显示最终报告。",
+            review_manual_boundary: "这将创建一个没有 RunExecutionAuthorization 的本地工作区/run。后续保持手动继续。它不会对外交付，也不会显示最终报告。",
+            review_web_boundary: "这将记录一个实验性的 Tavily 运行时获取方向。初始化会冻结原子检索任务矩阵，而不是把全部主题压成一个宽查询。每个任务请求 20 条 advanced Search 结果；全部合格唯一 URL 按每批 20 条执行 Batch Extract；覆盖不足的任务可执行一次确定性的 30 日定向 backfill。Search 只发现 URL 与 snippet；snippet 永不具备 claims eligibility。仅 Extract 成功返回的非空正文可成为 claims-eligible 来源。失败不会自动重试；Human 可另行授权下一 attempt 或提供 HumanSourcePack，但 HumanSourcePack 不算 Tavily 成功。成本、覆盖率、成功率和到 finalized_local 的表现均为 NOT MEASURED；不会对外交付。",
+            review_manifest_hash: "已确认 canonical manifest SHA-256",
             review_accept: "接受",
             review_discard: "丢弃",
             review_accepted: "已接受",
             review_discarded: "已丢弃（不生效）",
             review_none: "（无）",
             field_company: "公司 / 组织",
+            field_search_topic: "公开网页检索主题",
             field_brief_title: "简报标题",
             field_report_type: "报告类型",
             field_audience: "读者",
@@ -96,41 +107,67 @@
             field_window: "时间窗",
             field_language: "语言",
             field_source: "来源姿态",
-            field_formats: "交付格式",
+            field_search_domains: "检索域名限制",
+            field_formats: "本地输出格式",
             field_presentation: "版式风格",
-            field_density: "信息密度",
+            field_density: "报告篇幅 / 阅读深度",
             field_tables: "数据表",
             field_citations: "引用展示",
             field_accent: "强调色",
             field_freetext: "原始文字",
             err_required: "还有必选项未完成：",
             err_pending: "请先处置每条 Agent 提议（接受或丢弃）。",
+            err_output_contract_preview: "正在核验当前篇幅预算，请稍候。",
+            source_pack_title: "确认本地来源清单",
+            source_pack_note: "选择文件后，服务器计算哈希。你可以导入已有 ExecutionSourceManifest，或编辑来源元数据；服务器会生成下方安全规范预览，确认前不会写入工作区。",
+            source_files: "选择来源文件",
+            source_manifest_import: "导入清单（可选）",
+            source_manifest_edit: "来源元数据（路径、哈希与来源 ID 由服务器生成或核验）",
+            source_manifest_validate: "由服务器校验并规范化",
+            source_uploading: "正在核验来源文件……",
+            source_validating: "服务器正在校验来源清单……",
+            source_ready: "来源文件与清单已逐项匹配",
+            err_source_pack: "请先选择来源文件并确认有效清单。",
+            web_search_title: "确认 Tavily 运行时获取（实验性）",
+            web_search_note: "初始化冻结原子 Tavily 检索任务矩阵；每个任务请求 20 条 advanced Search 结果，全部合格唯一 URL 按每批 20 条执行 Batch Extract，覆盖不足的任务可执行一次确定性的 30 日定向 backfill。Search snippet 永不具备 claims eligibility；只有 Extract 成功返回的非空正文可进入来源包。Key 写入新工作区的私有 .env，并保留到 Human 显式轮换或移除；不进入 Store、日志或报告。成本、覆盖率与成功率均为 NOT MEASURED。",
+            search_domains_label: "可选检索域名（逗号或换行分隔）",
+            search_domains_placeholder: "例如 openai.com",
+            search_domains_note: "留空表示通用搜索。这里只接受 DNS 域名，不接受 URL、路径、端口、通配符或 IP。",
+            tavily_key_label: "Tavily API Key",
+            tavily_key_placeholder: "粘贴 Tavily Key（不会回显）",
+            tavily_key_save: "暂存到本地初始化会话",
+            tavily_key_saving: "正在暂存……",
+            tavily_key_ready: "Key 已暂存；确认初始化成功后才会写入工作区私有 .env。",
+            cf_secret_ready: "凭据已保存到工作区 .env，可供未来经 Human/Store 单独授权的调用使用。",
+            err_tavily_key: "请先填写并保存 Tavily API Key。",
             err_session: "缺少会话令牌：请使用初始化命令给出的完整链接打开本页。",
             status_ready: "可以确认创建。",
             status_fill: "完成必选项后即可创建。",
             preview_fidelity_html: "HTML 为示意预览",
             preview_fidelity_docx: "DOCX 为近似版式预览",
-            preview_formats: "交付：",
+            preview_formats: "本地输出：",
             cf_committed: "已提交 · committed",
             cf_replayed: "重放 · replayed",
             cf_replayed_badge: "replayed · 无新写入",
             cf_conflict: "冲突 · submission_replay_conflict",
             cf_error: "提交被拒绝",
-            cf_sub_committed: "报告工作区已初始化。以下是 ControlStore 事务返回的真实收据：",
-            cf_sub_replayed: "相同请求已提交过——返回原收据，不产生第二个工作区。",
+            cf_sub_committed: "工作区初始化已提交。以下是初始化收据与第一步状态（不是最终报告、交付页或实时进度）：",
+            cf_sub_replayed: "相同初始化请求已提交过——返回原收据，不产生第二个工作区。",
             cf_sub_conflict: "同一 request_id 提交了不同内容。已拒绝，零写入。",
             cf_sub_error: "服务端拒绝了本次提交，未产生任何写入。原因码如上所示。",
             cf_submitting: "正在提交……",
-            cf_next: "下一步：",
+            cf_next: "本地终点与第一步：",
             cf_again: "再次提交同一请求（replay）",
             cf_close: "关闭，修改后重试",
-            cf_note: "此收据由 ControlStore 事务确定性返回；重放返回原收据，冲突请求零写入。"
+            cf_note: "目标为 finalized_local，预授权编辑修复预算为 1。此页仅确认初始化；已启动的 Codex 控制器会在命令行继续。",
+            cf_note_manual: "本次初始化没有 RunExecutionAuthorization；后续为手动继续，不声明 finalized_local 或修复预算。",
+            cf_note_discovery: "本次初始化具有独立的 RunSourceDiscoveryAuthorization 和 attempt #1 授权。attempt 执行冻结的原子任务矩阵：每个任务 20 条 advanced Search，全部合格唯一 URL 分批 Extract，覆盖不足时每任务最多一次 30 日定向 backfill。Search snippet 永不具备 claims eligibility；只有 Extract 成功返回的非空正文才可进入来源包。失败不会自动重试，HumanSourcePack 也不算 Tavily 成功。"
         },
         en: {
             panel_title: "Create report workspace",
             top_banner: "One-shot init wizard · fixed synthetic preview",
             step_1: "Direction",
-            step_2: "Delivery & style",
+            step_2: "Local output setup",
             step_3: "Review & confirm",
             btn_back: "← Back",
             btn_next: "Next →",
@@ -138,6 +175,9 @@
             sec_company: "Company / organization (required)",
             placeholder_company: "e.g. ACME Renewables",
             sec_report_type: "What report are you making?",
+            sec_search_topic: "Public-web search topic (required for public web)",
+            placeholder_search_topic: "e.g. grid-scale energy storage",
+            note_search_topic: "Enter one concise, explicit industry or topic. The Human-entered value seeds the frozen Tavily task set unchanged; company / organization, task objective, and report type add their own tasks but never rewrite it.",
             sec_audience: "Who will read it?",
             sec_purpose: "What decision should it support? (required)",
             sec_brief_title: "Brief title (optional)",
@@ -151,11 +191,13 @@
             placeholder_purpose: "e.g. track component prices to support procurement",
             placeholder_freetext: "e.g. for the board, a ten-minute read, keep full data tables, and give me both DOCX and a web page.",
             placeholder_window: "e.g. last 14 days",
-            sec_formats: "What should readers receive? (multi-select)",
+            sec_formats: "Local output formats (multi-select)",
             sec_presentation: "Presentation style",
             custom_base_title: "Base style",
             custom_base_note: "Custom = base style + bounded overrides (density, accent — separate fields).",
-            sec_density: "Information density",
+            sec_density: "Report amount / reading depth",
+            note_output_contract: "On confirmation, the server freezes this selection and its measurable reader-body budget; source/reference appendices are excluded.",
+            review_output_contract: "Resolved reader-body budget",
             sec_tables: "Table treatment",
             sec_citations: "Source & citation display",
             sec_accent: "Brand accent (optional, decorative only)",
@@ -173,13 +215,17 @@
             review_proposed: "Proposed from your text · awaiting disposition",
             review_unresolved: "Unresolved · no effect",
             review_path_k: "Workspace location",
-            review_statement: "Confirming creates a fresh-v2 workspace here: one deterministic transaction commits the direction and delivery choices and returns a ControlStore receipt.",
+            review_authorized_boundary: "This creates and authorizes a local run with completion target finalized_local and repair budget 1. It returns an initialization Receipt and hands control back to the current Codex session. It does not deliver externally or display the final report.",
+            review_manual_boundary: "This creates a local workspace/run without RunExecutionAuthorization. Continuation remains manual. It does not deliver externally or display the final report.",
+            review_web_boundary: "This records an Experimental Tavily runtime-acquisition direction. Initialization freezes an atomic task matrix instead of collapsing the brief into one broad query. Every task requests 20 advanced Search results; all eligible unique URLs are Batch Extracted in groups of 20; and an under-covered task may receive one deterministic 30-day targeted backfill. Search discovers URLs and snippets only; snippets are never claims-eligible. Only non-empty content from successful Extract results can enter the source pack. Failures never auto-retry; a HumanSourcePack is a separate recovery path and never counts as Tavily success. Cost, coverage, success rate, and acquisition-to-finalized_local performance are NOT MEASURED. It does not deliver externally.",
+            review_manifest_hash: "Confirmed canonical manifest SHA-256",
             review_accept: "Accept",
             review_discard: "Discard",
             review_accepted: "Accepted",
             review_discarded: "Discarded (no effect)",
             review_none: "(none)",
             field_company: "Company / organization",
+            field_search_topic: "Public-web search topic",
             field_brief_title: "Brief title",
             field_report_type: "Report type",
             field_audience: "Audience",
@@ -188,35 +234,61 @@
             field_window: "Time window",
             field_language: "Language",
             field_source: "Source posture",
-            field_formats: "Formats",
+            field_search_domains: "Search domain restriction",
+            field_formats: "Local output formats",
             field_presentation: "Style",
-            field_density: "Density",
+            field_density: "Report amount / reading depth",
             field_tables: "Tables",
             field_citations: "Citations",
             field_accent: "Accent",
             field_freetext: "Raw text",
             err_required: "Missing required choices: ",
             err_pending: "Dispose of every agent proposal first (accept or discard).",
+            err_output_contract_preview: "Validating the current report-amount budget…",
+            source_pack_title: "Confirm local source manifest",
+            source_pack_note: "The server hashes selected files. Import an ExecutionSourceManifest or edit source metadata; the server builds the safe canonical preview below. No workspace is written before confirmation.",
+            source_files: "Select source files",
+            source_manifest_import: "Import manifest (optional)",
+            source_manifest_edit: "Source metadata (server derives or verifies paths, hashes, and IDs)",
+            source_manifest_validate: "Validate and canonicalize on server",
+            source_uploading: "Verifying source files…",
+            source_validating: "Server is validating the source manifest…",
+            source_ready: "Every manifest member matches one selected file",
+            err_source_pack: "Select source files and confirm a valid manifest first.",
+            web_search_title: "Confirm Tavily runtime acquisition (Experimental)",
+            web_search_note: "Initialization freezes an atomic Tavily task matrix. Every task requests 20 advanced Search results; all eligible unique URLs are Batch Extracted in groups of 20; and an under-covered task may receive one deterministic 30-day targeted backfill. Search snippets are never claims-eligible; only non-empty successful Extract content enters the source pack. The key remains in private .env and never enters the Store, logs, or report. Cost, coverage, and success rate are NOT MEASURED.",
+            search_domains_label: "Optional search domains (comma or newline separated)",
+            search_domains_placeholder: "e.g. openai.com",
+            search_domains_note: "Leave empty for general search. DNS domains only; URLs, paths, ports, wildcards, and IP addresses are rejected.",
+            tavily_key_label: "Tavily API Key",
+            tavily_key_placeholder: "Paste Tavily key (never echoed)",
+            tavily_key_save: "Hold in local init session",
+            tavily_key_saving: "Holding securely…",
+            tavily_key_ready: "Key is held; it is written to private workspace .env only after confirmed initialization succeeds.",
+            cf_secret_ready: "Credential saved in workspace .env and available for future separately Human/Store-authorized calls.",
+            err_tavily_key: "Enter and save a Tavily API key first.",
             err_session: "Missing session token: open this page via the full link printed by the init command.",
             status_ready: "Ready to create.",
             status_fill: "Complete the required choices to continue.",
             preview_fidelity_html: "HTML preview is representative",
             preview_fidelity_docx: "DOCX preview is approximate",
-            preview_formats: "Delivery: ",
+            preview_formats: "Local output: ",
             cf_committed: "Committed",
             cf_replayed: "Replayed",
             cf_replayed_badge: "replayed · no new writes",
             cf_conflict: "submission_replay_conflict",
             cf_error: "Submission rejected",
-            cf_sub_committed: "The workspace is initialized. Real receipt returned by the ControlStore transaction:",
-            cf_sub_replayed: "This exact request was already committed — original receipt returned, no second workspace.",
+            cf_sub_committed: "Workspace initialization committed. This is the initialization receipt and first action only, not the final report, delivery page, or live progress:",
+            cf_sub_replayed: "This exact initialization request was already committed — original receipt returned, no second workspace.",
             cf_sub_conflict: "Same request_id with a different payload. Rejected with zero writes.",
             cf_sub_error: "The server rejected this submission; nothing was written. The reason code is shown above.",
             cf_submitting: "Submitting…",
-            cf_next: "Next: ",
+            cf_next: "Local target and first action: ",
             cf_again: "Resubmit the same request (replay)",
             cf_close: "Close, change something, retry",
-            cf_note: "This receipt is returned deterministically by a ControlStore transaction; replays return the original receipt and conflicting requests write nothing."
+            cf_note: "The target is finalized_local with one preauthorized editor repair. This page confirms initialization only; the initiating Codex controller continues in the terminal.",
+            cf_note_manual: "This initialization has no RunExecutionAuthorization; continuation is manual and does not claim finalized_local or a repair budget.",
+            cf_note_discovery: "This initialization has a distinct RunSourceDiscoveryAuthorization and attempt #1 authorization. The attempt executes the frozen atomic task matrix: 20 advanced Search results per task, all eligible unique URLs extracted in batches, and at most one 30-day targeted backfill per under-covered task. Search snippets are never claims-eligible; only non-empty successful Extract content enters the source pack. Failures never auto-retry, and a HumanSourcePack never counts as Tavily success."
         }
     };
 
@@ -240,9 +312,7 @@
         ],
         windows: [
             { id: "7d", zh: ["近 7 天", ""], en: ["Last 7 days", ""] },
-            { id: "30d", zh: ["近 30 天", ""], en: ["Last 30 days", ""] },
-            { id: "quarter", zh: ["本季度", ""], en: ["This quarter", ""] },
-            { id: "custom_window", zh: ["自定义…", ""], en: ["Custom…", ""] }
+            { id: "30d", zh: ["近 30 天", ""], en: ["Last 30 days", ""] }
         ],
         languages: [
             { id: "zh-CN", zh: ["中文", ""], en: ["Chinese", ""] },
@@ -250,13 +320,12 @@
             { id: "bilingual", zh: ["中英对照", ""], en: ["Bilingual", ""] }
         ],
         sources: [
-            { id: "public_web", zh: ["公开网页（已登记）", "轻量公开来源"], en: ["Public web (registered)", "Light public sources"] },
+            { id: "public_web", zh: ["公开网页（Tavily 运行时获取）", "原子任务矩阵 · 每任务 20 条 · 全量分批 Extract"], en: ["Public web (Tavily runtime acquisition)", "Atomic task matrix · 20 per task · batch Extract all eligible URLs"] },
             { id: "local_only", zh: ["仅本地材料", "离线，不上网"], en: ["Local material only", "Offline"] },
-            { id: "mixed", zh: ["本地 + 公开网页", ""], en: ["Local + public web", ""] }
         ],
         formats: [
             { id: "docx", zh: ["DOCX", "可打印、可批注"], en: ["DOCX", "Printable, annotatable"] },
-            { id: "html", zh: ["网页版 HTML", "浏览器阅读，自包含"], en: ["HTML page", "Self-contained web reading"] },
+            { id: "html", zh: ["本地 HTML", "本地输出格式"], en: ["Local HTML", "Local output format"] },
             { id: "markdown", zh: ["Markdown", "可移植、给下游工具"], en: ["Markdown", "Portable, for downstream tools"] }
         ],
         presentations: [
@@ -393,8 +462,9 @@
         stage: 1,
         selections: {
             company: "", report_type: null, audience: null, audience_custom: "",
-            purpose: "", brief_title: "",
-            cadence: null, window: null, window_custom: "", language: null, source: null,
+            purpose: "", brief_title: "", search_topic: "",
+            cadence: null, window: null, language: null, source: null,
+            search_domains: "",
             formats: [], presentation: null, custom_base: "executive_brief",
             density: null, tables: null, citations: null,
             accent: "forest", accent_hex: "", accent_hex_raw: ""
@@ -404,6 +474,24 @@
         dispositions: {}, // "field:value" -> "accepted" | "discarded"
         requestId: genRequestId(), // generated ONCE per page load; reused for resubmits
         workspaceTarget: "./market-weekly",
+        outputContractPreview: null,
+        outputContractPreviewKey: null,
+        outputContractPreviewRequest: 0,
+        sourceUploads: [],
+        sourceManifestMode: "generated",
+        sourceManifestText: "",
+        sourceCanonicalManifest: null,
+        sourceCanonicalPreview: [],
+        sourceCanonicalBindings: [],
+        sourceConfirmedMetadata: [],
+        sourceManifestSha256: null,
+        sourceRoutingHashes: [],
+        sourcePackValid: false,
+        sourcePreviewing: false,
+        sourceUploading: false,
+        searchSecretConfigured: false,
+        searchSecretSaving: false,
+        searchSecretDraft: "",
         submitting: false
     };
 
@@ -531,14 +619,21 @@
             set: function (v) { STATE.selections.company = v; },
             onInput: updateActionbar
         });
+        textField(sectionsHost, {
+            num: "1.2", titleKey: "sec_search_topic", noteKey: "note_search_topic",
+            placeholderKey: "placeholder_search_topic",
+            get: function () { return STATE.selections.search_topic; },
+            set: function (v) { STATE.selections.search_topic = v; },
+            onInput: updateActionbar
+        });
         enumField(sectionsHost, {
-            num: "1.2", titleKey: "sec_report_type", list: CATALOG.report_types,
+            num: "1.3", titleKey: "sec_report_type", list: CATALOG.report_types,
             get: function () { return STATE.selections.report_type; },
             set: function (v) { STATE.selections.report_type = v; },
             onChange: renderStage1Keep
         });
         enumField(sectionsHost, {
-            num: "1.3", titleKey: "sec_audience", list: CATALOG.audiences,
+            num: "1.4", titleKey: "sec_audience", list: CATALOG.audiences,
             get: function () { return STATE.selections.audience; },
             set: function (v) { STATE.selections.audience = v; },
             recIds: { det: [], agent: agentRecIds("audience") },
@@ -547,43 +642,40 @@
             customSet: function (v) { STATE.selections.audience_custom = v; }
         });
         textField(sectionsHost, {
-            num: "1.4", titleKey: "sec_purpose", placeholderKey: "placeholder_purpose",
+            num: "1.5", titleKey: "sec_purpose", placeholderKey: "placeholder_purpose",
             get: function () { return STATE.selections.purpose; },
             set: function (v) { STATE.selections.purpose = v; },
             onInput: updateActionbar
         });
         textField(sectionsHost, {
-            num: "1.5", titleKey: "sec_brief_title", placeholderKey: "placeholder_brief_title",
+            num: "1.6", titleKey: "sec_brief_title", placeholderKey: "placeholder_brief_title",
             get: function () { return STATE.selections.brief_title; },
             set: function (v) { STATE.selections.brief_title = v; }
         });
         enumField(sectionsHost, {
-            num: "1.6", titleKey: "sec_cadence", list: CATALOG.cadences,
+            num: "1.7", titleKey: "sec_cadence", list: CATALOG.cadences,
             get: function () { return STATE.selections.cadence; },
             set: function (v) { STATE.selections.cadence = v; },
             recIds: { det: [], agent: agentRecIds("cadence") }
         });
         enumField(sectionsHost, {
-            num: "1.7", titleKey: "sec_window", list: CATALOG.windows,
+            num: "1.8", titleKey: "sec_window", list: CATALOG.windows,
             get: function () { return STATE.selections.window; },
-            set: function (v) { STATE.selections.window = v; },
-            customId: "custom_window", customPlaceholder: "placeholder_window",
-            customGet: function () { return STATE.selections.window_custom; },
-            customSet: function (v) { STATE.selections.window_custom = v; }
+            set: function (v) { STATE.selections.window = v; }
         });
         enumField(sectionsHost, {
-            num: "1.8", titleKey: "sec_language", list: CATALOG.languages,
+            num: "1.9", titleKey: "sec_language", list: CATALOG.languages,
             get: function () { return STATE.selections.language; },
             set: function (v) { STATE.selections.language = v; }
         });
         enumField(sectionsHost, {
-            num: "1.9", titleKey: "sec_source", list: CATALOG.sources,
+            num: "1.10", titleKey: "sec_source", list: CATALOG.sources,
             get: function () { return STATE.selections.source; },
             set: function (v) { STATE.selections.source = v; }
         });
 
         var ftField = textField(sectionsHost, {
-            num: "1.10", titleKey: "sec_freetext", noteKey: "note_freetext",
+            num: "1.11", titleKey: "sec_freetext", noteKey: "note_freetext",
             placeholderKey: "placeholder_freetext", textarea: true,
             get: function () { return STATE.freeText; },
             set: function (v) { STATE.freeText = v; },
@@ -663,6 +755,13 @@
             recIds: { det: rec.density ? [rec.density] : [], agent: agentRecIds("density") },
             onChange: function () { paintPreview(); updateActionbar(); }
         });
+        var budgetContract = el("div", "review-path output-contract-inline");
+        budgetContract.appendChild(el("span", "k", t("review_output_contract")));
+        var inlineBudget = el("span", null, "…");
+        inlineBudget.id = "output-contract-budget";
+        budgetContract.appendChild(inlineBudget);
+        sectionsHost.appendChild(budgetContract);
+        requestOutputContractPreview();
         enumField(sectionsHost, {
             num: "2.4", titleKey: "sec_tables", list: CATALOG.tables,
             get: function () { return STATE.selections.tables; },
@@ -737,10 +836,7 @@
             tables: CATALOG.tables, citations: CATALOG.citations, accent: CATALOG.accents
         };
         if (raw === "formats") return optionLabel(CATALOG.formats, value);
-        if (raw === "purpose" || raw === "company" || raw === "brief_title") return value;
-        if (raw === "window" && value === "custom_window") {
-            return STATE.selections.window_custom || optionLabel(CATALOG.windows, value);
-        }
+        if (raw === "purpose" || raw === "company" || raw === "brief_title" || raw === "search_topic") return value;
         if (raw === "accent" && value === "custom_hex") {
             return STATE.selections.accent_hex || STATE.selections.accent_hex_raw || optionLabel(CATALOG.accents, value);
         }
@@ -781,6 +877,7 @@
             rows.explicit.push([t(field), shown]);
         }
         push("field_company", s.company.trim());
+        if (s.source === "public_web") push("field_search_topic", s.search_topic.trim());
         push("field_report_type", s.report_type);
         push("field_audience", s.audience === "custom_audience" ? (s.audience_custom || s.audience) : s.audience);
         push("field_purpose", s.purpose);
@@ -789,6 +886,9 @@
         push("field_window", s.window);
         push("field_language", s.language);
         push("field_source", s.source);
+        if (s.source === "public_web") {
+            push("field_search_domains", splitSearchDomains(s.search_domains));
+        }
         push("field_formats", s.formats);
         push("field_presentation", s.presentation);
         push("field_density", s.density);
@@ -821,6 +921,144 @@
         });
         g1.appendChild(tb1);
         sectionsHost.appendChild(g1);
+
+        if (STATE.selections.source === "local_only") {
+        var sources = el("div", "review-group explicit source-pack-editor");
+        var sourceHead = el("div", "review-group-head");
+        sourceHead.appendChild(el("span", "dot"));
+        sourceHead.appendChild(el("span", null, t("source_pack_title")));
+        sources.appendChild(sourceHead);
+        sources.appendChild(el("p", "section-note", t("source_pack_note")));
+
+        var fileLabel = el("label", "source-input-label", t("source_files"));
+        var fileInput = el("input", "source-file-input");
+        fileInput.type = "file";
+        fileInput.multiple = true;
+        fileInput.addEventListener("change", function () {
+            uploadSourceFiles(Array.prototype.slice.call(fileInput.files || []));
+        });
+        fileLabel.appendChild(fileInput);
+        sources.appendChild(fileLabel);
+
+        var importLabel = el("label", "source-input-label", t("source_manifest_import"));
+        var importInput = el("input", "source-manifest-file");
+        importInput.type = "file";
+        importInput.accept = ".json,application/json";
+        importInput.addEventListener("change", function () {
+            var selected = importInput.files && importInput.files[0];
+            if (!selected) return;
+            selected.text().then(function (text) {
+                var imported = JSON.parse(text);
+                STATE.sourceManifestMode = "imported";
+                STATE.sourceRoutingHashes = imported.members.map(function (member) { return member.content_sha256; });
+                STATE.sourceManifestText = JSON.stringify(metadataFromImportedManifest(imported), null, 2);
+                STATE.sourceCanonicalManifest = null;
+                STATE.sourceCanonicalPreview = [];
+                STATE.sourceCanonicalBindings = [];
+                STATE.sourceConfirmedMetadata = [];
+                STATE.sourceManifestSha256 = null;
+                previewSourceManifest();
+                renderStage3();
+                updateActionbar();
+            });
+        });
+        importLabel.appendChild(importInput);
+        sources.appendChild(importLabel);
+
+        sources.appendChild(el("div", "source-input-label", t("source_manifest_edit")));
+        var manifestEditor = el("textarea", "source-manifest-editor");
+        manifestEditor.value = STATE.sourceManifestText;
+        manifestEditor.spellcheck = false;
+        manifestEditor.addEventListener("input", function () {
+            STATE.sourceManifestText = manifestEditor.value;
+            STATE.sourceCanonicalManifest = null;
+            STATE.sourceCanonicalPreview = [];
+            STATE.sourceCanonicalBindings = [];
+            STATE.sourceConfirmedMetadata = [];
+            STATE.sourceManifestSha256 = null;
+            STATE.sourcePackValid = false;
+            updateActionbar();
+        });
+        sources.appendChild(manifestEditor);
+        var validateButton = el("button", "btn-ghost", t("source_manifest_validate"));
+        validateButton.type = "button";
+        validateButton.disabled = STATE.sourceUploading || STATE.sourcePreviewing;
+        validateButton.addEventListener("click", previewSourceManifest);
+        sources.appendChild(validateButton);
+        var sourceStatus = el(
+            "p",
+            STATE.sourcePackValid ? "source-pack-status ok" : "source-pack-status",
+            STATE.sourceUploading
+                ? t("source_uploading")
+                : (STATE.sourcePreviewing
+                    ? t("source_validating")
+                    : (STATE.sourcePackValid ? t("source_ready") : t("err_source_pack")))
+        );
+        sources.appendChild(sourceStatus);
+        if (STATE.sourcePackValid && STATE.sourceCanonicalPreview.length) {
+            var previewTable = el("table", "review-table");
+            STATE.sourceCanonicalPreview.forEach(function (member) {
+                var tr = el("tr");
+                tr.appendChild(el("th", null, String(member.source_id)));
+                var details = String(member.title) + " · observed file: " + String(member.observed_filename) +
+                    " · SHA-256: " + String(member.observed_sha256) +
+                    " · " + String(member.content_media_type) + " · " + String(member.byte_count) + " bytes";
+                if (member.original_url) details += " · " + String(member.original_url);
+                if (member.opened_at) details += " · opened " + String(member.opened_at);
+                tr.appendChild(el("td", null, details));
+                previewTable.appendChild(tr);
+            });
+            sources.appendChild(previewTable);
+            var manifestHash = el("p", "source-pack-status ok");
+            manifestHash.textContent = t("review_manifest_hash") + ": " + String(STATE.sourceManifestSha256);
+            sources.appendChild(manifestHash);
+        }
+        sectionsHost.appendChild(sources);
+        } else {
+            var webSearch = el("div", "review-group explicit source-pack-editor");
+            var webHead = el("div", "review-group-head");
+            webHead.appendChild(el("span", "dot"));
+            webHead.appendChild(el("span", null, t("web_search_title")));
+            webSearch.appendChild(webHead);
+            webSearch.appendChild(el("p", "section-note", t("web_search_note")));
+            var domainLabel = el("label", "source-input-label", t("search_domains_label"));
+            var domainInput = el("textarea", "source-manifest-editor");
+            domainInput.value = STATE.selections.search_domains;
+            domainInput.placeholder = t("search_domains_placeholder");
+            domainInput.spellcheck = false;
+            domainInput.addEventListener("input", function () {
+                STATE.selections.search_domains = domainInput.value;
+            });
+            domainLabel.appendChild(domainInput);
+            webSearch.appendChild(domainLabel);
+            webSearch.appendChild(el("p", "section-note", t("search_domains_note")));
+            var keyLabel = el("label", "source-input-label", t("tavily_key_label"));
+            var keyInput = el("input", "source-file-input");
+            keyInput.type = "password";
+            keyInput.autocomplete = "off";
+            keyInput.placeholder = t("tavily_key_placeholder");
+            keyInput.value = STATE.searchSecretDraft;
+            keyInput.addEventListener("input", function () {
+                STATE.searchSecretDraft = keyInput.value;
+            });
+            keyLabel.appendChild(keyInput);
+            webSearch.appendChild(keyLabel);
+            var saveKey = el("button", "btn-ghost", t("tavily_key_save"));
+            saveKey.type = "button";
+            saveKey.disabled = STATE.searchSecretSaving;
+            saveKey.addEventListener("click", function () {
+                configureTavilySecret(STATE.searchSecretDraft);
+            });
+            webSearch.appendChild(saveKey);
+            webSearch.appendChild(el(
+                "p",
+                STATE.searchSecretConfigured ? "source-pack-status ok" : "source-pack-status",
+                STATE.searchSecretSaving
+                    ? t("tavily_key_saving")
+                    : (STATE.searchSecretConfigured ? t("tavily_key_ready") : t("err_tavily_key"))
+            ));
+            sectionsHost.appendChild(webSearch);
+        }
 
         var g2 = el("div", "review-group proposed");
         var h2 = el("div", "review-group-head");
@@ -884,7 +1122,23 @@
         path.appendChild(targetInput);
         sectionsHost.appendChild(path);
 
-        sectionsHost.appendChild(el("p", "review-warning", t("review_statement")));
+        var contract = el("div", "review-path");
+        contract.appendChild(el("span", "k", t("review_output_contract")));
+        var budget = el("span", null, "…");
+        budget.id = "output-contract-budget";
+        contract.appendChild(budget);
+        sectionsHost.appendChild(contract);
+        requestOutputContractPreview();
+
+        sectionsHost.appendChild(el(
+            "p",
+            "review-warning",
+            t(
+                STATE.selections.source === "public_web"
+                    ? "review_web_boundary"
+                    : (STATE.sourcePackValid ? "review_authorized_boundary" : "review_manual_boundary")
+            )
+        ));
     }
 
     /* ---- synthetic preview (fixed public-safe sample) ---- */
@@ -1018,6 +1272,7 @@
         if (!s.cadence) miss.push(t("field_cadence"));
         if (!s.language) miss.push(t("field_language"));
         if (!s.source) miss.push(t("field_source"));
+        if (s.source === "public_web" && !s.search_topic.trim()) miss.push(t("field_search_topic"));
         if (!s.formats.length) miss.push(t("field_formats"));
         if (!s.presentation) miss.push(t("field_presentation"));
         if (!s.density) miss.push(t("field_density"));
@@ -1058,6 +1313,24 @@
                 btnConfirm.disabled = true;
                 confirmStatus.textContent = t("err_pending");
                 confirmStatus.classList.add("err");
+            } else if (!hasCurrentOutputContractPreview()) {
+                btnConfirm.disabled = true;
+                confirmStatus.textContent = t("err_output_contract_preview");
+                confirmStatus.classList.add("err");
+            } else if (
+                STATE.selections.source === "local_only"
+                && (!STATE.sourcePackValid || STATE.sourceUploading)
+            ) {
+                btnConfirm.disabled = true;
+                confirmStatus.textContent = t("err_source_pack");
+                confirmStatus.classList.add("err");
+            } else if (
+                STATE.selections.source === "public_web"
+                && !STATE.searchSecretConfigured
+            ) {
+                btnConfirm.disabled = true;
+                confirmStatus.textContent = t("err_tavily_key");
+                confirmStatus.classList.add("err");
             } else {
                 btnConfirm.disabled = false;
                 confirmStatus.textContent = t("status_ready");
@@ -1088,6 +1361,86 @@
         document.getElementById("form").scrollTop = 0;
     }
 
+    function outputLanguageForSubmission() {
+        return STATE.selections.language === "en" ? "en" : "zh";
+    }
+
+    function splitSearchDomains(value) {
+        var raw = String(value || "");
+        if (!raw.trim()) return [];
+        return raw.split(/[,\n]/).map(function (item) { return item.trim(); });
+    }
+
+    function currentOutputContractPreviewKey() {
+        return String(STATE.selections.density || "") + "|" + outputLanguageForSubmission();
+    }
+
+    function hasCurrentOutputContractPreview() {
+        return Boolean(
+            STATE.outputContractPreview &&
+            STATE.outputContractPreview.ok === true &&
+            STATE.outputContractPreviewKey === currentOutputContractPreviewKey() &&
+            STATE.outputContractPreview.output_extent === STATE.selections.density
+        );
+    }
+
+    function paintOutputContractPreview() {
+        var target = document.getElementById("output-contract-budget");
+        if (!target) return;
+        var preview = STATE.outputContractPreview;
+        if (!preview) {
+            target.textContent = "…";
+            return;
+        }
+        target.textContent = String(preview.resolved_minimum) + "–" + String(preview.resolved_maximum) + " " + String(preview.body_length_unit);
+    }
+
+    function requestOutputContractPreview() {
+        if (!SESSION.token || !SESSION.sessionId || !STATE.selections.density) return;
+        var previewKey = currentOutputContractPreviewKey();
+        var requestNumber = STATE.outputContractPreviewRequest + 1;
+        STATE.outputContractPreviewRequest = requestNumber;
+        STATE.outputContractPreview = null;
+        STATE.outputContractPreviewKey = null;
+        paintOutputContractPreview();
+        updateActionbar();
+        fetch("/api/v1/output-contract-preview?session_id=" + encodeURIComponent(SESSION.sessionId), {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-BriefLoop-Session-Token": SESSION.token
+            },
+            body: JSON.stringify({
+                output_extent: STATE.selections.density,
+                output_language: outputLanguageForSubmission()
+            })
+        }).then(function (res) {
+            return res.json().then(function (body) {
+                if (
+                    requestNumber !== STATE.outputContractPreviewRequest ||
+                    previewKey !== currentOutputContractPreviewKey()
+                ) {
+                    return;
+                }
+                if (res.status === 200 && body && body.ok === true) {
+                    STATE.outputContractPreview = body;
+                    STATE.outputContractPreviewKey = previewKey;
+                }
+                paintOutputContractPreview();
+                updateActionbar();
+            });
+        }).catch(function () {
+            if (
+                requestNumber !== STATE.outputContractPreviewRequest ||
+                previewKey !== currentOutputContractPreviewKey()
+            ) {
+                return;
+            }
+            paintOutputContractPreview();
+            updateActionbar();
+        });
+    }
+
     btnBack.addEventListener("click", function () { if (STATE.stage > 1) goStage(STATE.stage - 1); });
     btnNext.addEventListener("click", function () { if (STATE.stage < 3) goStage(STATE.stage + 1); });
 
@@ -1097,6 +1450,7 @@
 
     function buildSubmission() {
         var c = confirmedSelections();
+        var maxSourceAgeDays = { "7d": 7, "30d": 30 }[c.window];
         var reportLabel = enLabel(CATALOG.report_types, c.report_type);
         var audience = c.audience === "custom_audience"
             ? String(c.audience_custom || "").trim()
@@ -1104,32 +1458,268 @@
         var objective = String(c.purpose || "").trim() || STATE.freeText.trim();
         var cadence = c.cadence === "one_time" ? "ad_hoc" : String(c.cadence || "weekly");
         if (["weekly", "biweekly", "monthly", "ad_hoc"].indexOf(cadence) < 0) cadence = "weekly";
+        var payload = {
+            workspace_target: STATE.workspaceTarget,
+            selections: {
+                company: String(c.company || "").trim(),
+                report_type: String(c.report_type || "").trim(),
+                industry_or_theme: c.source === "public_web"
+                    ? String(c.search_topic || "").trim()
+                    : reportLabel,
+                task_objective: objective,
+                brief_title: String(c.brief_title || "").trim(),
+                audience: audience,
+                interface_language: LANG,
+                output_language: c.language === "en" ? "en" : "zh",
+                cadence: cadence,
+                max_source_age_days: maxSourceAgeDays,
+                search_domains: c.source === "public_web"
+                    ? splitSearchDomains(c.search_domains)
+                    : [],
+                focus_areas: [reportLabel],
+                output_formats: (c.formats || []).slice(),
+                forbidden_sources: c.source === "local_only" ? ["public_web"] : [],
+                source_profile: c.source === "public_web" ? "llm_decide" : "conservative",
+                web_search_mode: c.source === "public_web" ? "external_api" : "disabled",
+                search_backend: c.source === "public_web" ? "tavily" : "",
+                output_extent: c.density
+            },
+            raw_free_text: STATE.freeText.trim(),
+            discarded: STATE.interpretation.mapped.filter(function (m) {
+                return STATE.dispositions[m.field + ":" + m.value] === "discarded";
+            }).map(function (m) { return m.field + "=" + m.value; }),
+            human_confirmation: true
+        };
+        if (c.source === "local_only") {
+            payload.completion_target = "finalized_local";
+            payload.repair_budget = 1;
+            payload.source_manifest_mode = STATE.sourceManifestMode;
+            payload.source_metadata = STATE.sourceConfirmedMetadata;
+            payload.source_manifest = STATE.sourceCanonicalManifest;
+            payload.upload_session_id = SESSION.sessionId;
+            payload.upload_bindings = STATE.sourceCanonicalBindings;
+        } else {
+            payload.completion_target = "finalized_local";
+            payload.repair_budget = 1;
+            payload.search_secret_session_id = SESSION.sessionId;
+        }
         return {
             schema_version: "briefloop.init_web.submission.v1",
             request_id: STATE.requestId,
-            payload: {
-                workspace_target: STATE.workspaceTarget,
-                selections: {
-                    company: String(c.company || "").trim(),
-                    industry_or_theme: reportLabel,
-                    task_objective: objective,
-                    brief_title: String(c.brief_title || "").trim(),
-                    audience: audience,
-                    interface_language: LANG,
-                    output_language: c.language === "en" ? "en" : "zh",
-                    cadence: cadence,
-                    focus_areas: [reportLabel],
-                    output_formats: (c.formats || []).slice(),
-                    forbidden_sources: c.source === "local_only" ? ["public_web"] : [],
-                    web_search_mode: "disabled"
-                },
-                raw_free_text: STATE.freeText.trim(),
-                discarded: STATE.interpretation.mapped.filter(function (m) {
-                    return STATE.dispositions[m.field + ":" + m.value] === "discarded";
-                }).map(function (m) { return m.field + "=" + m.value; }),
-                human_confirmation: true // set only here, from the explicit confirm button
-            }
+            payload: payload
         };
+    }
+
+    function generatedMetadata(uploads) {
+        return uploads.map(function (upload) {
+                return {
+                    title: upload.filename,
+                    publisher: null,
+                    published_at: null,
+                    document_kind: null,
+                    opened_at: null,
+                    resolved_at: null
+                };
+            });
+    }
+
+    function metadataFromImportedManifest(manifest) {
+        if (!manifest || !Array.isArray(manifest.members)) throw new Error("manifest");
+        return manifest.members.map(function (member) {
+            return {
+                source_id: member.source_id,
+                title: member.title,
+                publisher: member.publisher == null ? null : member.publisher,
+                published_at: member.published_at == null ? null : member.published_at,
+                retrieved_at: member.retrieved_at,
+                origin_type: member.origin_type,
+                acquisition_method: member.acquisition_method,
+                material_kind: member.material_kind,
+                provider: member.provider == null ? null : member.provider,
+                original_url: member.locator && member.locator.kind === "web" ? member.locator.url : null,
+                source_category: member.source_category,
+                retrieval_source_type: member.retrieval_source_type,
+                underlying_evidence_type: member.underlying_evidence_type,
+                raw_underlying_evidence_type: member.raw_underlying_evidence_type == null ? null : member.raw_underlying_evidence_type,
+                document_kind: member.document_kind == null ? null : member.document_kind,
+                opened_at: member.opened_at == null ? null : member.opened_at,
+                resolved_at: member.resolved_at == null ? null : member.resolved_at
+            };
+        });
+    }
+
+    function bindingsForMetadata(metadata) {
+        if (!Array.isArray(metadata) || metadata.length !== STATE.sourceUploads.length) throw new Error("metadata");
+        var unused = STATE.sourceUploads.slice();
+        return metadata.map(function (member, index) {
+            if (STATE.sourceManifestMode === "generated") {
+                return {
+                    metadata_index: index,
+                    upload_handle: STATE.sourceUploads[index].upload_handle
+                };
+            }
+            var selected = -1;
+            if (STATE.sourceManifestMode === "imported") {
+                for (var i = 0; i < unused.length; i++) {
+                    if (unused[i].sha256 === STATE.sourceRoutingHashes[index]) {
+                        selected = i;
+                        break;
+                    }
+                }
+                if (selected < 0) throw new Error("missing imported source hash");
+            }
+            var upload = unused.splice(selected, 1)[0];
+            return {metadata_index: index, upload_handle: upload.upload_handle};
+        });
+    }
+
+    function routedMetadata(metadata) {
+        return metadata.map(function (member, index) {
+            var routed = Object.assign({}, member);
+            if (STATE.sourceManifestMode === "imported") {
+                routed.expected_content_sha256 = STATE.sourceRoutingHashes[index];
+            }
+            return routed;
+        });
+    }
+
+    function configureTavilySecret(apiKey) {
+        if (STATE.searchSecretSaving) return;
+        if (!apiKey || apiKey.length < 8 || /\s/.test(apiKey)) {
+            STATE.searchSecretConfigured = false;
+            renderStage3();
+            updateActionbar();
+            return;
+        }
+        STATE.searchSecretSaving = true;
+        STATE.searchSecretConfigured = false;
+        renderStage3();
+        updateActionbar();
+        fetch("/api/v1/search-secret?session_id=" + encodeURIComponent(SESSION.sessionId), {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-BriefLoop-Session-Token": SESSION.token
+            },
+            credentials: "same-origin",
+            cache: "no-store",
+            body: JSON.stringify({ provider: "tavily", api_key: apiKey })
+        }).then(function (response) {
+            return response.json().then(function (body) {
+                if (!response.ok || body.configured !== true) {
+                    throw new Error(body.reason_code || "secret");
+                }
+                STATE.searchSecretSaving = false;
+                STATE.searchSecretConfigured = true;
+                renderStage3();
+                updateActionbar();
+            });
+        }).catch(function () {
+            STATE.searchSecretSaving = false;
+            STATE.searchSecretConfigured = false;
+            renderStage3();
+            updateActionbar();
+        });
+    }
+
+    function previewSourceManifest() {
+        if (STATE.sourcePreviewing || STATE.sourceUploading) return;
+        var metadata;
+        var bindings;
+        try {
+            metadata = JSON.parse(STATE.sourceManifestText);
+            bindings = bindingsForMetadata(metadata);
+        } catch (e) {
+            STATE.sourcePackValid = false;
+            renderStage3();
+            updateActionbar();
+            return;
+        }
+        STATE.sourcePreviewing = true;
+        STATE.sourcePackValid = false;
+        STATE.sourceCanonicalBindings = [];
+        STATE.sourceConfirmedMetadata = [];
+        STATE.sourceManifestSha256 = null;
+        renderStage3();
+        updateActionbar();
+        fetch("/api/v1/source-manifest-preview?session_id=" + encodeURIComponent(SESSION.sessionId), {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-BriefLoop-Session-Token": SESSION.token
+            },
+            body: JSON.stringify({
+                source_manifest_mode: STATE.sourceManifestMode,
+                source_metadata: routedMetadata(metadata),
+                upload_bindings: bindings
+            })
+        }).then(function (response) {
+            return response.json().then(function (body) {
+                if (response.status !== 200 || !body.ok) throw new Error(body.reason_code || "preview");
+                STATE.sourceCanonicalManifest = body.source_manifest;
+                STATE.sourceCanonicalPreview = body.source_preview || [];
+                STATE.sourceCanonicalBindings = body.routing_bindings || [];
+                STATE.sourceConfirmedMetadata = body.source_metadata || [];
+                STATE.sourceManifestSha256 = body.source_manifest_sha256 || null;
+                STATE.sourcePreviewing = false;
+                STATE.sourcePackValid = true;
+                renderStage3();
+                updateActionbar();
+            });
+        }).catch(function () {
+            STATE.sourcePreviewing = false;
+            STATE.sourcePackValid = false;
+            STATE.sourceCanonicalBindings = [];
+            STATE.sourceConfirmedMetadata = [];
+            STATE.sourceManifestSha256 = null;
+            renderStage3();
+            updateActionbar();
+        });
+    }
+
+    function uploadSourceFiles(files) {
+        STATE.sourceUploading = true;
+        STATE.sourcePackValid = false;
+        STATE.sourceUploads = [];
+        STATE.sourceCanonicalBindings = [];
+        STATE.sourceConfirmedMetadata = [];
+        STATE.sourceManifestSha256 = null;
+        updateActionbar();
+        var chain = Promise.resolve();
+        files.forEach(function (file) {
+            chain = chain.then(function () {
+                return fetch("/api/v1/source-upload?session_id=" + encodeURIComponent(SESSION.sessionId), {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/octet-stream",
+                        "X-BriefLoop-Session-Token": SESSION.token,
+                        "X-BriefLoop-Upload-Name": file.name
+                    },
+                    body: file
+                }).then(function (response) {
+                    return response.json().then(function (body) {
+                        if (response.status !== 200 || !body.ok) throw new Error(body.reason_code || "upload");
+                        STATE.sourceUploads.push(body);
+                    });
+                });
+            });
+        });
+        chain.then(function () {
+            STATE.sourceUploading = false;
+            if (!STATE.sourceManifestText.trim()) {
+                STATE.sourceManifestMode = "generated";
+                STATE.sourceRoutingHashes = [];
+                STATE.sourceManifestText = JSON.stringify(generatedMetadata(STATE.sourceUploads), null, 2);
+            }
+            previewSourceManifest();
+            renderStage3();
+            updateActionbar();
+        }).catch(function () {
+            STATE.sourceUploading = false;
+            STATE.sourcePackValid = false;
+            renderStage3();
+            updateActionbar();
+        });
     }
 
     function submitRequest() {
@@ -1160,6 +1750,10 @@
 
     function handleResponse(httpStatus, body) {
         if (httpStatus === 200 && body && body.ok === true) {
+            if (body.search_secret_status === "ready"
+                    || body.search_secret_status === "recovered") {
+                STATE.searchSecretDraft = "";
+            }
             paintReceipt(body);
             return;
         }
@@ -1187,23 +1781,46 @@
         cfBody.appendChild(el("p", "cf-sub", t(replayed ? "cf_sub_replayed" : "cf_sub_committed")));
 
         var box = el("div", "cf-receipt");
-        [["workspace_id", response.workspace_id],
+        var receiptRows = [["workspace_id", response.workspace_id],
          ["run_id", response.run_id],
-         ["transaction_id", response.transaction_id],
-         ["committed_revision", response.committed_revision],
-         ["workspace", response.workspace]].forEach(function (kv) {
+         ["transaction_id", response.transaction_id]];
+        var hasDiscoveryAuthorization = response.source_discovery_authorized === true;
+        if (response.execution_authorized === true || hasDiscoveryAuthorization) {
+            receiptRows.push(["completion_target", response.completion_target]);
+            receiptRows.push(["repair_budget", response.repair_budget]);
+        }
+        if (response.search_secret_status === "ready"
+                || response.search_secret_status === "recovered") {
+            receiptRows.push(["search_secret_status", response.search_secret_status]);
+        }
+        receiptRows.forEach(function (kv) {
             var line = el("div");
             line.appendChild(el("span", "k", kv[0] + "  "));
             line.appendChild(el("span", null, String(kv[1])));
             box.appendChild(line);
         });
         cfBody.appendChild(box);
+        if (response.search_secret_status === "ready"
+                || response.search_secret_status === "recovered") {
+            cfBody.appendChild(el("p", "cf-note", t("cf_secret_ready")));
+        }
 
         var next = el("p", "cf-next");
         next.appendChild(el("span", null, t("cf_next")));
+        var firstAction = response.first_action || {};
+        var continuationLabel = hasDiscoveryAuthorization
+            ? "Tavily runtime acquisition · "
+            : "manual continuation · ";
         next.appendChild(el("code", null,
-            "briefloop run --workspace " + String(response.workspace || STATE.workspaceTarget)));
+            (response.execution_authorized === true ? "finalized_local · " : continuationLabel) +
+            String(firstAction.reason_code || firstAction.effect_kind || "initialized")));
         cfBody.appendChild(next);
+
+        if (response.progress) {
+            var progress = el("p", "cf-note");
+            progress.textContent = String(response.progress.reason_code || response.progress.status || "initialized");
+            cfBody.appendChild(progress);
+        }
 
         var actions = el("div", "cf-actions");
         var again = el("button", "btn-ghost", t("cf_again"));
@@ -1213,7 +1830,13 @@
         close.addEventListener("click", function () { overlay.hidden = true; });
         actions.appendChild(close);
         cfBody.appendChild(actions);
-        cfBody.appendChild(el("p", "cf-note", t("cf_note")));
+        cfBody.appendChild(el(
+            "p",
+            "cf-note",
+            t(response.execution_authorized === true
+                ? "cf_note"
+                : (hasDiscoveryAuthorization ? "cf_note_discovery" : "cf_note_manual"))
+        ));
     }
 
     function paintError(reasonCode) {

@@ -37,7 +37,10 @@ from multi_agent_brief.semantic_evaluator.reader import (
     LajReaderView,
 )
 from multi_agent_brief.semantic_evaluator.serialization import canonical_sha256
-from tests.helpers import write_minimal_workspace_under
+from tests.helpers import (
+    initialize_workspace,
+    write_minimal_workspace_under,
+)
 
 
 def _workspace(base_path: Path) -> Path:
@@ -57,16 +60,12 @@ def _snapshot_workspace_files(ws: Path) -> dict[str, bytes]:
     }
 
 
-
-
 def _sha256_file(path: Path) -> str:
     h = hashlib.sha256()
     with path.open("rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
-
-
 
 
 def _write_laj_reader_view(path: Path, *, report_sha256: str) -> LajReaderView:
@@ -138,30 +137,14 @@ def _write_laj_reader_view(path: Path, *, report_sha256: str) -> LajReaderView:
     return view
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def test_quality_panel_direct_import_has_no_runtime_state_cycle() -> None:
     env = dict(os.environ)
     src_path = str(Path.cwd() / "src")
-    env["PYTHONPATH"] = f"{src_path}{os.pathsep}{env['PYTHONPATH']}" if env.get("PYTHONPATH") else src_path
+    env["PYTHONPATH"] = (
+        f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
+        if env.get("PYTHONPATH")
+        else src_path
+    )
 
     result = subprocess.run(
         [
@@ -184,60 +167,6 @@ def test_quality_panel_direct_import_has_no_runtime_state_cycle() -> None:
     assert "build_quality_panel" in result.stdout
     assert "render_quality_panel_html" in result.stdout
     assert "render_quality_summary" in result.stdout
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def test_quality_summarize_public_cli_retired_rejects_typed_without_writes(
@@ -272,6 +201,23 @@ def test_quality_summarize_public_cli_retired_rejects_typed_without_writes(
         assert rc == 1
         assert capsys.readouterr().out.strip() == "runtime_command_unsupported"
         assert _snapshot_workspace_files(ws) == before
+
+    sqlite_workspace = initialize_workspace(tmp_path / "sqlite-workspace")
+    sqlite_before = _snapshot_workspace_files(sqlite_workspace)
+    rc = main(
+        [
+            "quality",
+            "summarize",
+            "--workspace",
+            str(sqlite_workspace),
+            "--laj-view",
+            str(laj_path),
+            "--json",
+        ]
+    )
+    assert rc == 1
+    assert capsys.readouterr().out.strip() == "runtime_command_unsupported"
+    assert _snapshot_workspace_files(sqlite_workspace) == sqlite_before
 
     missing = tmp_path / "missing-ws"
     rc = main(["quality", "summarize", "--workspace", str(missing), "--json"])
@@ -310,42 +256,6 @@ def test_quality_summary_validator_rejects_release_authority_shape() -> None:
     assert validate_quality_summary_markdown(bad) == (
         "quality_summary_schema_error:forbidden_phrase:ready_to_publish"
     )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 def test_quality_panel_payload_validator_rejects_release_authority_shape() -> None:
@@ -387,7 +297,10 @@ def test_quality_panel_payload_validator_rejects_release_authority_shape() -> No
         "non_goals": ["quality_score"],
     }
 
-    assert validate_quality_panel_payload(payload) == "quality_panel_schema_error:non_goals"
+    assert (
+        validate_quality_panel_payload(payload)
+        == "quality_panel_schema_error:non_goals"
+    )
 
 
 def test_quality_panel_payload_validator_rejects_forged_trajectory_authority() -> None:
@@ -442,7 +355,9 @@ def test_quality_panel_payload_validator_rejects_forged_trajectory_authority() -
     )
 
     forged_nested_action = json.loads(json.dumps(payload))
-    forged_nested_action["trajectory_regulation"]["recommended_actions"] = [{"action": "approve_delivery"}]
+    forged_nested_action["trajectory_regulation"]["recommended_actions"] = [
+        {"action": "approve_delivery"}
+    ]
     assert (
         validate_quality_panel_payload(forged_nested_action)
         == "quality_panel_schema_error:trajectory_regulation:trajectory_regulation_schema_error:recommended_actions.action"
@@ -450,10 +365,15 @@ def test_quality_panel_payload_validator_rejects_forged_trajectory_authority() -
 
     forged_action = json.loads(json.dumps(payload))
     forged_action["recommended_actions"] = [{"action": "approve_delivery"}]
-    assert validate_quality_panel_payload(forged_action) == "quality_panel_schema_error:recommended_actions.action"
+    assert (
+        validate_quality_panel_payload(forged_action)
+        == "quality_panel_schema_error:recommended_actions.action"
+    )
 
 
-def test_quality_panel_payload_validator_rejects_forged_template_conformance_authority() -> None:
+def test_quality_panel_payload_validator_rejects_forged_template_conformance_authority() -> (
+    None
+):
     payload = {
         "schema_version": "briefloop.quality_panel.v1",
         "workspace": ".",

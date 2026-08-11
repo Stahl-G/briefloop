@@ -166,6 +166,8 @@ def test_contract_validate_rejects_unreadable_or_duplicate_json(
     assert payload["violations"] == []
 
 
+@pytest.mark.explicit_e2e
+@pytest.mark.timeout(900)
 def test_built_wheel_exposes_identical_schema_and_examples(tmp_path: Path) -> None:
     build_root = tmp_path / "build-root"
     build_root.mkdir()

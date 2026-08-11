@@ -1,5 +1,16 @@
 # BriefLoop Operator Skill Changelog
 
+## briefloop-codex-skill-v0.3.1 — 2026-08-10
+
+- Bound the operating guidance to the v0.14.0 → v0.15.1 release line.
+- Documented schema-18 `solar-stock-periodic` discovery: 20 independent
+  equity/event/theme tasks, up to 20 Search results per task, grouped Extract
+  batches, one conditional 30-day backfill, and the 800-unique-URL safety
+  envelope.
+- Clarified that Search snippets remain discovery-only, exact replay never
+  redials, and missing market-data snapshots must not be filled with invented
+  prices or valuation multiples.
+
 ## briefloop-codex-skill-v0.3.0 — 2026-07-22
 
 - Replaced the legacy operator/JSON-control workflow with the fresh

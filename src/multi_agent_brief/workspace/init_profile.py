@@ -8,7 +8,14 @@ from datetime import date
 from multi_agent_brief.contracts.v2 import (
     GATE_ID_VALUES,
     RunDirection,
+    RunExecutionAuthorizationBootstrap,
     WorkspaceControlStoreBootstrapV2,
+)
+from multi_agent_brief.core_run_v2.output_contract import (
+    BODY_LENGTH_BASIS,
+    BODY_LENGTH_UNIT,
+    OUTPUT_EXTENT_CATALOG_ID,
+    resolve_output_extent,
 )
 
 
@@ -22,9 +29,14 @@ class InitProfile:
     industry: str = ""
     industry_text: str = ""  # raw user description, preserved in user.md
     brief_title: str = "Weekly Industry Brief"
+    report_type: str | None = None
     audience: str = "management"
-    audience_profile: str = ""  # mapped profile ID (management, research, ir, legal_compliance, default)
-    focus_areas: list[str] = field(default_factory=lambda: ["policy", "competitor", "market", "customer_demand"])
+    audience_profile: str = (
+        ""  # mapped profile ID (management, research, ir, legal_compliance, default)
+    )
+    focus_areas: list[str] = field(
+        default_factory=lambda: ["policy", "competitor", "market", "customer_demand"]
+    )
     task_objective: str = ""  # free-text task description
     forbidden_sources: list[str] = field(default_factory=list)
     cadence: str = "weekly"
@@ -34,15 +46,25 @@ class InitProfile:
     retrieval_provider: str = "ollama"
     retrieval_model: str = "nomic-embed-text"
     output_formats: list[str] = field(
-        default_factory=lambda: ["markdown", "docx", "claim_ledger", "audit_report", "source_appendix"]
+        default_factory=lambda: [
+            "markdown",
+            "docx",
+            "claim_ledger",
+            "audit_report",
+            "source_appendix",
+        ]
     )
     source_profile: str = "llm_decide"
     source_decision_mode: str = "agent_decide"
     optional_seed_pack: str = ""  # registered pack key or empty
     tavily_enabled: bool = False  # legacy flag, kept for backward compatibility
     web_search_enabled: bool = True
-    web_search_mode: str = "configure_later"  # disabled, runtime_tool, external_api, configure_later
-    search_backend: str = ""  # tavily, exa, brave, firecrawl, serper (only when mode=external_api)
+    web_search_mode: str = (
+        "configure_later"  # disabled, runtime_tool, external_api, configure_later
+    )
+    search_backend: str = (
+        ""  # tavily, exa, brave, firecrawl, serper (only when mode=external_api)
+    )
     initial_news_backfill_enabled: bool = False
     initial_news_backfill_days: int = 7
     initial_news_backfill_daily_max_results: int = 20
@@ -50,6 +72,7 @@ class InitProfile:
     excluded_news_domains: list[str] = field(default_factory=list)
     competitor_module_enabled: bool = False
     competitor_names: list[str] = field(default_factory=list)
+    output_extent: str | None = None
 
 
 def _ordered_unique_nonempty(values: list[str], *, field_name: str) -> list[str]:
@@ -65,6 +88,7 @@ def build_controlstore_bootstrap(
     workspace_id: str,
     run_id: str,
     report_date: date,
+    execution_authorization: RunExecutionAuthorizationBootstrap | None = None,
 ) -> WorkspaceControlStoreBootstrapV2:
     """Map one validated init profile into the exact fresh-v2 bootstrap."""
 
@@ -84,18 +108,40 @@ def build_controlstore_bootstrap(
     task_objective = profile.task_objective.strip()
     if not task_objective:
         raise ValueError("task_objective is required for ControlStore v2")
-    industry_or_theme = profile.industry_text.strip() or profile.industry.strip() or None
+    industry_or_theme = (
+        profile.industry_text.strip() or profile.industry.strip() or None
+    )
     search_backend = (
         profile.search_backend.strip()
         if profile.web_search_mode == "external_api"
         else None
     )
+    output_contract = None
+    if profile.output_extent is not None:
+        resolved = resolve_output_extent(
+            profile.output_extent,
+            profile.output_language,
+        )
+        output_contract = {
+            "schema_version": "briefloop.run_output_contract.v2",
+            "output_extent": resolved.output_extent,
+            "extent_catalog_id": OUTPUT_EXTENT_CATALOG_ID,
+            "body_length_basis": BODY_LENGTH_BASIS,
+            "body_length_unit": BODY_LENGTH_UNIT,
+            "resolved_minimum": resolved.resolved_minimum,
+            "resolved_maximum": resolved.resolved_maximum,
+        }
     direction = RunDirection.model_validate(
         {
             "schema_version": RunDirection.schema_id,
             "subject_name": profile.company.strip(),
             "industry_or_theme": industry_or_theme,
             "brief_title": profile.brief_title.strip(),
+            "report_type": (
+                profile.report_type.strip()
+                if profile.report_type is not None and profile.report_type.strip()
+                else None
+            ),
             "task_objective": task_objective,
             "audience": profile.audience.strip(),
             "audience_profile": (
@@ -117,6 +163,7 @@ def build_controlstore_bootstrap(
             "report_window_end": None,
             "max_source_age_days": profile.max_source_age_days,
             "target_terms": list(focus_areas),
+            "output_contract": output_contract,
         }
     )
     return WorkspaceControlStoreBootstrapV2.model_validate(
@@ -129,5 +176,12 @@ def build_controlstore_bootstrap(
             "input_governance_required": True,
             "gate_strictness": {gate_id: True for gate_id in GATE_ID_VALUES},
             "run_direction": direction.model_dump(mode="json", exclude_unset=False),
+            "execution_authorization": (
+                None
+                if execution_authorization is None
+                else execution_authorization.model_dump(
+                    mode="json", exclude_unset=False
+                )
+            ),
         }
     )
