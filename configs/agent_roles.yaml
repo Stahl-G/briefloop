@@ -295,6 +295,10 @@ roles:
       screening_policy snapshot actually applied. Use reason codes such as
       capacity_capped, stale_source, duplicate_source, weak_relevance, off_focus,
       low_confidence, low_tier, or unsafe_evidence_boundary.
+    - Keep high-priority selected candidates within the workspace
+      selector_max_items capacity; reserve high for items that must appear in
+      the brief and mark the rest excluded or deprioritized with reason_code
+      records.
     - In strict topology, return candidate_claims.json only and hand off to the independent
       Screener.
     - Return candidates and screening output, not final analysis.
@@ -354,6 +358,10 @@ roles:
     - Screening rationale may explain staleness, but explanation is not approval.
     - Preserve candidate_id, source identity, and evidence text for every included item.
     - Apply configured topic capacity caps.
+    - Keep high-priority selected candidates within the workspace
+      selector_max_items capacity; reserve high for items that must appear in
+      the brief and mark the rest excluded or deprioritized with reason_code
+      records.
   claim-ledger:
     stage: pipeline
     tool_profile: edit_safe

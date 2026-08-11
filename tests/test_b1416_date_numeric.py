@@ -183,3 +183,80 @@ class TestB16NumericConfigValidation:
             "B16 FAIL: recency_days=0 should pass all items through"
         )
 
+
+# ─── Frozen report window is the first freshness authority ───
+
+class TestReportWindowAuthority:
+    """report_window_start/end frozen in RunDirection outrank report_date derivation."""
+
+    @staticmethod
+    def _ledger(published_at: str) -> ClaimLedger:
+        ledger = ClaimLedger()
+        ledger.add_claim(Claim(
+            claim_id="WINDOW_A", statement="Window claim",
+            source_id="SRC", evidence_text="test",
+            metadata={"published_at": published_at},
+        ))
+        return ledger
+
+    @staticmethod
+    def _stale(report) -> list:
+        return [f for f in report.findings if f.finding_type == "stale_source"]
+
+    def test_window_start_boundary_day_is_fresh(self):
+        report = run_deterministic_audit(
+            "# Brief\n- Text [src:WINDOW_A]\n",
+            self._ledger("2026-08-03"),
+            report_date="2026-08-10",
+            max_source_age_days=7,
+            report_window_start="2026-08-03",
+        )
+        assert self._stale(report) == []
+
+    def test_source_before_window_start_is_stale(self):
+        report = run_deterministic_audit(
+            "# Brief\n- Text [src:WINDOW_A]\n",
+            self._ledger("2026-08-02"),
+            report_date="2026-08-10",
+            max_source_age_days=7,
+            report_window_start="2026-08-03",
+        )
+        stale = self._stale(report)
+        assert len(stale) == 1
+        assert "2026-08-03" in stale[0].description
+
+    def test_window_overrides_report_date_derivation(self):
+        """Age 8 > 7 vs report_date, but inside the frozen window — window wins."""
+        report = run_deterministic_audit(
+            "# Brief\n- Text [src:WINDOW_A]\n",
+            self._ledger("2026-08-02"),
+            report_date="2026-08-10",
+            max_source_age_days=7,
+            report_window_start="2026-08-01",
+        )
+        assert self._stale(report) == []
+
+    def test_missing_source_date_blocks_under_strict(self):
+        from multi_agent_brief.quality_gates.evaluation import _freshness_findings
+
+        ledger = ClaimLedger()
+        ledger.add_claim(Claim(
+            claim_id="NODATE", statement="Claim without date",
+            source_id="SRC", evidence_text="test",
+            source_type="local_file",
+            metadata={"published_at": ""},
+        ))
+        findings = _freshness_findings(
+            markdown="# Brief\n- Text [src:NODATE]\n",
+            ledger=ledger,
+            report_date="2026-08-10",
+            max_source_age_days=7,
+            strict=True,
+            stages=[],
+            artifacts=[],
+            report_window_start="2026-08-03",
+        )
+        date_findings = [f for f in findings if f["finding_type"] == "missing_source_date"]
+        assert len(date_findings) == 1
+        assert date_findings[0]["blocking_level"] == "blocking"
+

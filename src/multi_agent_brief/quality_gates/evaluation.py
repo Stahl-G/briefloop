@@ -207,15 +207,22 @@ FINDING_RULES: dict[str, dict[str, str]] = {
     },
     "selected_candidate_missing_from_ledger": {
         "rule_summary": (
-            "Selected high-priority screened candidates should not disappear before Claim Ledger freeze "
-            "without an explicit limitation or omission reason."
+            "Selected high-priority screened candidates must be carried into the Claim Ledger; "
+            "omission requires a typed screening revision, not silent dropping."
         ),
         "docs_anchor": "docs/agent-contract.md#coverage_omission",
     },
     "selected_candidate_missing_from_brief": {
         "rule_summary": (
-            "Selected high-priority screened candidates that reach the Claim Ledger should be cited in the "
-            "audited or reader-facing brief unless intentionally scoped out."
+            "Selected high-priority screened candidates that reach the Claim Ledger must be cited in the "
+            "audited or reader-facing brief; omission requires a typed screening revision."
+        ),
+        "docs_anchor": "docs/agent-contract.md#coverage_omission",
+    },
+    "high_priority_capacity_exceeded": {
+        "rule_summary": (
+            "The number of high-priority selected candidates must stay within the frozen "
+            "selector_max_items capacity; overflow requires a typed screening revision."
         ),
         "docs_anchor": "docs/agent-contract.md#coverage_omission",
     },
@@ -756,12 +763,13 @@ def _coverage_omission_findings(
                 artifact_id=ledger_artifact,
                 source_id=_text_or_none(item.get("source_id")),
                 description=(
-                    "A high-priority selected screened candidate is not carried into the Claim Ledger "
-                    f"and has no explicit omission or limitation reason: {item.get('display') or 'unknown'}."
+                    "A high-priority selected screened candidate is not carried into the Claim Ledger: "
+                    f"{item.get('display') or 'unknown'}."
                 ),
                 recommendation=(
-                    "Carry the selected candidate into claim_drafts.json before freezing, or record an explicit "
-                    "scope/limitation reason instead of silently dropping it."
+                    "Carry the selected candidate into claim_drafts.json before freezing, or submit a "
+                    "screening revision that changes the decision to excluded/deprioritized with a "
+                    "reason_code instead of silently dropping it."
                 ),
                 category="coverage_gap",
                 evidence_ref=_text_or_none(item.get("candidate_id")) or _text_or_none(item.get("statement")) or "",
@@ -786,16 +794,52 @@ def _coverage_omission_findings(
                 source_id=_first_text(item.get("source_ids")) or _text_or_none(item.get("source_id")),
                 description=(
                     "A high-priority selected screened candidate reached the Claim Ledger but is not cited in "
-                    f"the brief and has no explicit omission or limitation reason: {item.get('display') or 'unknown'}."
+                    f"the brief: {item.get('display') or 'unknown'}."
                 ),
                 recommendation=(
-                    "Cite the corresponding Claim Ledger entry in the brief, or add an explicit scope/limitation "
-                    "reason for omitting the selected item."
+                    "Cite the corresponding Claim Ledger entry in the brief, or submit a screening revision "
+                    "that changes the decision to excluded/deprioritized with a reason_code."
                 ),
                 category="coverage_gap",
                 evidence_ref=", ".join(str(claim_id) for claim_id in item.get("claim_ids") or []),
                 metadata={
                     "screened_candidate": item,
+                    "semantic_boundary": projection.get("semantic_boundary"),
+                },
+            )
+        )
+    capacity_cap = projection.get("high_priority_cap")
+    capacity_count = projection.get("high_priority_selected_count")
+    if (
+        isinstance(capacity_cap, int)
+        and isinstance(capacity_count, int)
+        and capacity_count > capacity_cap
+    ):
+        screening_stage = _stage_or_none(stages, "screener") or _stage_or_none(stages, "scout")
+        findings.append(
+            _finding(
+                finding_id=f"QG_COVERAGE_OMISSION_{len(findings)+1:03d}",
+                gate_id="coverage_omission",
+                finding_type="high_priority_capacity_exceeded",
+                severity=severity,
+                blocking_level=blocking_level,
+                repair_owner=screening_stage or "scout",
+                stage_id=screening_stage,
+                artifact_id=_artifact_or_none(artifacts, "screened_candidates"),
+                description=(
+                    f"{capacity_count} high-priority selected candidates exceed the frozen "
+                    f"selector_max_items capacity of {capacity_cap}."
+                ),
+                recommendation=(
+                    "Submit a screening revision that keeps only must-include items at high priority "
+                    "within the capacity and marks the rest excluded/deprioritized with reason_code "
+                    "records."
+                ),
+                category="coverage_gap",
+                evidence_ref="screening_capacity",
+                metadata={
+                    "high_priority_selected_count": capacity_count,
+                    "high_priority_cap": capacity_cap,
                     "semantic_boundary": projection.get("semantic_boundary"),
                 },
             )
@@ -899,6 +943,7 @@ def _freshness_findings(
     strict: bool,
     stages: list[dict[str, Any]],
     artifacts: list[dict[str, Any]],
+    report_window_start: str = "",
 ) -> list[dict[str, Any]]:
     report = run_deterministic_audit(
         markdown,
@@ -906,6 +951,7 @@ def _freshness_findings(
         report_date=report_date,
         max_source_age_days=max_source_age_days,
         fail_on_stale_source=strict,
+        report_window_start=report_window_start,
     )
     raw = [
         finding
@@ -1505,6 +1551,7 @@ def evaluate_quality_gate_findings(
     artifacts: list[dict[str, Any]],
     policy_gate_adapter: dict[str, Any] | None = None,
     coverage_omission_projection: dict[str, Any] | None = None,
+    report_window_start: str = "",
     parallel: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
     """Evaluate deterministic quality gates from preloaded inputs without writes.
@@ -1556,6 +1603,7 @@ def evaluate_quality_gate_findings(
             strict=freshness_strict,
             stages=stages,
             artifacts=artifacts,
+            report_window_start=report_window_start,
         )
         gate_tasks["editor_new_fact"] = lambda: _editor_introduced_new_fact_findings(
             markdown=markdown,
@@ -1616,6 +1664,7 @@ def evaluate_quality_gate_findings_preloaded(
     gate_artifact_id: str,
     policy_gate_adapter: dict[str, Any],
     coverage_omission_projection: dict[str, Any],
+    report_window_start: str = "",
     atomic_graph_payload: dict[str, Any] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Run the existing deterministic Gate logic from detached trusted values.
@@ -1638,6 +1687,7 @@ def evaluate_quality_gate_findings_preloaded(
         artifacts=artifacts,
         policy_gate_adapter=policy_gate_adapter,
         coverage_omission_projection=coverage_omission_projection,
+        report_window_start=report_window_start,
         parallel=False,
     )
     atomic_projection = project_atomic_reader_text(

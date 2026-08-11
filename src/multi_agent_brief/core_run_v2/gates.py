@@ -807,6 +807,7 @@ def _replay_gate_outcomes(
             user_text=f"Target: {direction.subject_name}",
             analyst_markdown=analyst_markdown,
             report_date=direction.report_date,
+            report_window_start=direction.report_window_start or "",
             max_source_age_days=direction.max_source_age_days,
             strict=False,
             reader_facing_mode=reader_facing_mode,
@@ -830,6 +831,7 @@ def _replay_gate_outcomes(
                 ledger,
                 markdown,
                 reader_facing_mode=reader_facing_mode,
+                high_priority_cap=direction.selector_max_items,
             ),
             atomic_graph_payload=None,
         )
@@ -1137,6 +1139,7 @@ def _coverage_projection(
     markdown: str,
     *,
     reader_facing_mode: bool = False,
+    high_priority_cap: int | None = None,
 ) -> dict[str, object]:
     by_id = {item.candidate_id: item for item in candidates.candidates}
     selected: list[dict[str, object]] = []
@@ -1190,6 +1193,7 @@ def _coverage_projection(
         "reader_facing_mode": reader_facing_mode,
         "selected_count": len(selected),
         "high_priority_selected_count": len(high),
+        "high_priority_cap": high_priority_cap,
         "missing_from_ledger_count": len(missing_ledger),
         "missing_from_brief_count": len(missing_brief),
         "missing_from_ledger": missing_ledger,
