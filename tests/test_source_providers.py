@@ -1431,6 +1431,30 @@ def test_filter_by_recency():
     assert len(result) == 2  # Recent + NoDate
 
 
+def test_filter_by_recency_calendar_day_boundary():
+    """Collection-side recency must match the audit gate's calendar-day math."""
+    items = [
+        SourceItem(
+            source_id="EDGE",
+            source_name="Edge",
+            source_type="manual",
+            title="Exactly seven days old, late evening",
+            content="C",
+            published_at="2026-08-03T23:30:00+00:00",
+        ),
+        SourceItem(
+            source_id="STALE",
+            source_name="Stale",
+            source_type="manual",
+            title="Eight calendar days old, early morning",
+            content="C",
+            published_at="2026-08-02T00:30:00+00:00",
+        ),
+    ]
+    result = filter_by_recency(items, 7, report_date="2026-08-10")
+    assert [item.source_id for item in result] == ["EDGE"]
+
+
 # --- Registry ---
 
 

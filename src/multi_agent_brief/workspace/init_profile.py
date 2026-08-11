@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 
 from multi_agent_brief.contracts.v2 import (
     GATE_ID_VALUES,
@@ -131,6 +131,7 @@ def build_controlstore_bootstrap(
             "resolved_minimum": resolved.resolved_minimum,
             "resolved_maximum": resolved.resolved_maximum,
         }
+    report_window_start = report_date - timedelta(days=profile.max_source_age_days)
     direction = RunDirection.model_validate(
         {
             "schema_version": RunDirection.schema_id,
@@ -159,9 +160,10 @@ def build_controlstore_bootstrap(
             "output_style": None,
             "output_formats": output_formats,
             "report_date": report_date.isoformat(),
-            "report_window_start": None,
-            "report_window_end": None,
+            "report_window_start": report_window_start.isoformat(),
+            "report_window_end": report_date.isoformat(),
             "max_source_age_days": profile.max_source_age_days,
+            "selector_max_items": profile.selector_max_items,
             "target_terms": list(focus_areas),
             "output_contract": output_contract,
         }

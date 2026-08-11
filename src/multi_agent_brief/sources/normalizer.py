@@ -83,7 +83,8 @@ def filter_by_recency(items: list[SourceItem], recency_days: int, *, report_date
             pub = _parse_datetime(item.published_at)
             if pub.tzinfo is None:
                 pub = pub.replace(tzinfo=timezone.utc)
-            age_days = (now - pub).days
+            # Calendar-day comparison, matching the audit-side freshness gate.
+            age_days = (now.date() - pub.date()).days
             if 0 <= age_days <= recency_days:
                 result.append(item)
         except (ValueError, TypeError):
