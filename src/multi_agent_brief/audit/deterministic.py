@@ -101,6 +101,7 @@ def run_deterministic_audit(
     report_date: str = "",
     max_source_age_days: int | None = None,
     fail_on_stale_source: bool = False,
+    report_window_start: str = "",
 ) -> AuditReport:
     findings: list[AuditFinding] = []
     refs = extract_src_refs(markdown)
@@ -177,8 +178,9 @@ def run_deterministic_audit(
         )
 
     report_day = parse_date(report_date)
+    window_start_day = parse_date(report_window_start)
     web_search_missing_date_count = 0
-    if report_day and max_source_age_days is not None:
+    if window_start_day is not None or (report_day and max_source_age_days is not None):
         for claim in ledger:
             published_at = str(claim.metadata.get("published_at", ""))
             source_day = parse_date(published_at)
@@ -206,6 +208,24 @@ def run_deterministic_audit(
                             related_claim_id=claim.claim_id,
                             description="Claim source is missing a parseable published_at date for reporting-window audit.",
                             recommendation="Add source published_at metadata or mark the source as evergreen/background.",
+                            evidence=claim.statement,
+                        )
+                    )
+                continue
+            if window_start_day is not None:
+                # The frozen report window is the first freshness authority.
+                if source_day < window_start_day:
+                    findings.append(
+                        _tag(
+                            "stale_source",
+                            finding_id=f"STALE_{len(findings)+1:03d}",
+                            severity="high" if fail_on_stale_source else "medium",
+                            related_claim_id=claim.claim_id,
+                            description=(
+                                f"Source date {source_day.isoformat()} predates the frozen reporting "
+                                f"window start {window_start_day.isoformat()}."
+                            ),
+                            recommendation="Remove this item from the weekly brief or recast it as dated background.",
                             evidence=claim.statement,
                         )
                     )

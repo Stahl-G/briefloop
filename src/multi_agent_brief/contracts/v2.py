@@ -2055,6 +2055,7 @@ class RunDirection(StrictModel):
     report_window_start: Optional[IsoDate] = None
     report_window_end: Optional[IsoDate] = None
     max_source_age_days: Optional[PositiveInt] = None
+    selector_max_items: Optional[PositiveInt] = None
     target_terms: list[CleanText] = Field(min_length=1)
     output_contract: Optional[RunOutputContract] = None
 

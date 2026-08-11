@@ -13,6 +13,33 @@ from multi_agent_brief.runtime_host_v2.codex import workspace_codex_adapter_load
 from multi_agent_brief.runtime_host_v2.initialization import initialize_or_open_runtime
 
 
+def test_bootstrap_freezes_report_window_and_selector_capacity():
+    """RunDirection freezes the reporting window and screening capacity at init."""
+    from datetime import date
+
+    from multi_agent_brief.workspace.init_profile import (
+        InitProfile,
+        build_controlstore_bootstrap,
+    )
+
+    profile = InitProfile(
+        company="ExampleCo",
+        task_objective="Track solar stocks weekly.",
+        max_source_age_days=7,
+        selector_max_items=20,
+    )
+    bootstrap = build_controlstore_bootstrap(
+        profile,
+        workspace_id="WS-TEST",
+        run_id="RUN-TEST",
+        report_date=date(2026, 8, 10),
+    )
+    direction = bootstrap.run_direction
+    assert direction.report_window_start == "2026-08-03"
+    assert direction.report_window_end == "2026-08-10"
+    assert direction.selector_max_items == 20
+
+
 def test_init_from_onboarding_creates_workspace(tmp_path: Path, capsys):
     onboarding = {
         "target": "exampleco-weekly",
