@@ -97,8 +97,8 @@ def main() -> int:
 
     if "Prior release line: `v0.14.0`" not in matrix_text:
         errors.append(_error("version matrix does not retain the prior v0.14.0 release line"))
-    if "Prepared release line: `v0.15.1`" not in matrix_text:
-        errors.append(_error("version matrix does not bind the prepared v0.15.1 release line"))
+    if "Prepared release line: `v0.15.2`" not in matrix_text:
+        errors.append(_error("version matrix does not bind the prepared v0.15.2 release line"))
 
     required_runtime_phrases = (
         "CoreRunNextAction",

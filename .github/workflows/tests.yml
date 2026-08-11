@@ -447,7 +447,10 @@ jobs:
           set -e
           cat /tmp/runtime-install.log
           test "$rc" -ne 0
-          grep -q "source-clone-only" /tmp/runtime-install.log
+          grep -q "invalid choice: 'opencode'" /tmp/runtime-install.log
+          briefloop runtime install --workspace /tmp/mabw-ci-smoke --runtime codex > /tmp/runtime-codex-install.log 2>&1
+          cat /tmp/runtime-codex-install.log
+          test -f /tmp/mabw-ci-smoke/.codex/config.toml
 
       - name: Control switchboard smoke
         run: |
@@ -461,8 +464,8 @@ jobs:
           rc=$?
           set -e
           echo "$out"
-          test "$rc" -eq 1
-          test "$out" = "runtime_command_unsupported"
+          test "$rc" -ne 0
+          echo "$out" | grep -q "invalid choice: 'controls'"
           test ! -e /tmp/mabw-ci-smoke/output/intermediate/control_selections.json
           test ! -e /tmp/mabw-ci-smoke/output/intermediate/quality_gate_report.json
 
@@ -711,8 +714,8 @@ jobs:
           rc=$?
           set -e
           echo "$out"
-          test "$rc" -eq 1
-          test "$out" = "runtime_command_unsupported"
+          test "$rc" -ne 0
+          echo "$out" | grep -q "invalid choice: 'finalize'"
           test ! -e /tmp/mabw-docx/output/brief.md
           test ! -e /tmp/mabw-docx/output/brief.docx
 
