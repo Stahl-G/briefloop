@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Guard the current SQLite-only Codex operating protocol and its projections."""
+"""Guard the current single-session SQLite/Codex operator protocol."""
 
 from __future__ import annotations
 
@@ -11,71 +11,58 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CANONICAL = ROOT / ".agents" / "skills" / "briefloop"
 PACKAGED_CODEX = (
-    ROOT / "src" / "multi_agent_brief" / "runtime_kits" / "codex" / "skills" / "briefloop"
+    ROOT
+    / "src"
+    / "multi_agent_brief"
+    / "runtime_kits"
+    / "codex"
+    / "skills"
+    / "briefloop"
 )
-
 
 REQUIRED_REFERENCE_PHRASES: dict[str, list[str]] = {
     "SKILL.md": [
-        "SQLite-only and Codex-only",
+        "Do not create an agent swarm",
         "CoreRunNextAction",
-        "delegate",
-        "deterministic",
-        "human_decision",
-        "blocked",
-        "complete",
-        "RoleTaskEnvelope",
-        "runtime_action_stale",
-        "package_ready",
-        "effect_kind=delivered",
+        "runtime continue",
+        "role_work_required",
+        "needs_human",
+        "needs_attention",
+        "finalized_local",
+        "Solar Stock Periodic",
+        "AI Second Opinion",
+        "local_derivation_failed",
+        "FrozenGuidanceContext",
     ],
     "references/codex-controlstore-v2.md": [
         "runtime_action.json",
         "runtime invocation-start",
-        "delegate_exact_role",
+        "RoleTaskEnvelope",
         "allowed_output_filenames",
         "runtime invocation-accept",
         "runtime invocation-fail",
         "runtime apply",
         "--human-request",
-        "invocation_accept_or_fail",
         "runtime_action_stale",
-        "package_ready",
+        "effect_kind=package_ready",
         "effect_kind=delivered",
+        "local_derivation_failed",
+        "true `outcome_unknown`",
+        "20 atomic",
+        "There is no one-wide-query or top-five fallback",
         "Never read them back for legality",
     ],
-    "references/version-matrix.md": [
-        "briefloop-codex-skill-v0.3.0",
-        "Prior release line: `v0.14.0`",
-        "Prepared release line: `v0.15.2`",
-        "Codex is the only active fresh runtime",
-        "Strict Pydantic requests are the only write boundary",
-        "Experimental",
-        "NOT MEASURED",
-        "eval-cases",
-        "experiments 080",
-    ],
-    "CHANGELOG.md": [
-        "briefloop-codex-skill-v0.3.0",
-        "SQLite-only Codex runtime state machine",
-        "package_ready",
-        "delivered",
+    "evals/evals.json": [
+        '"skill_name": "briefloop"',
+        "role_work_required",
+        "source_acquisition_recovery_decision_required",
+        "local_derivation_failed",
+        "solar-stock-periodic",
     ],
 }
 
 PACKAGED_REQUIRED_PHRASES: dict[str, list[str]] = {
-    "SKILL.md": [
-        "Use when operating this workspace",
-        "CoreRunNextAction",
-        "runtime invocation-start",
-        "runtime apply",
-        "human_decision",
-        "blocked",
-        "complete",
-        "package_ready",
-        "delivered",
-        "Never fall back",
-    ],
+    "SKILL.md": REQUIRED_REFERENCE_PHRASES["SKILL.md"],
     "references/controlstore-v2.md": REQUIRED_REFERENCE_PHRASES[
         "references/codex-controlstore-v2.md"
     ],
@@ -84,17 +71,18 @@ PACKAGED_REQUIRED_PHRASES: dict[str, list[str]] = {
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    parser.add_argument(
+        "--json", action="store_true", help="Emit machine-readable JSON."
+    )
     args = parser.parse_args()
 
     checks: list[dict[str, str]] = []
     _check_required_phrases(checks)
     _check_packaged_phrases(checks)
-
     ok = all(item["status"] == "pass" for item in checks)
     payload = {
         "ok": ok,
-        "schema_version": "briefloop.skill_freshness_check.v1",
+        "schema_version": "briefloop.skill_freshness_check.v2",
         "runtime_effect": "readiness_check_only",
         "checks": checks,
     }
@@ -145,25 +133,16 @@ def _check_packaged_phrases(checks: list[dict[str, str]]) -> None:
     )
 
 
-def _display_path(path: Path) -> str:
-    try:
-        return str(path.relative_to(ROOT))
-    except ValueError:
-        return str(path)
-
-
-def _relative_files(root: Path) -> list[Path]:
-    if not root.exists():
-        return []
-    return sorted(path.relative_to(root) for path in root.rglob("*") if path.is_file())
-
-
-def _append_check(checks: list[dict[str, str]], check_id: str, ok: bool, detail: str) -> None:
-    checks.append({
-        "id": check_id,
-        "status": "pass" if ok else "fail",
-        "detail": detail,
-    })
+def _append_check(
+    checks: list[dict[str, str]], check_id: str, ok: bool, detail: str
+) -> None:
+    checks.append(
+        {
+            "id": check_id,
+            "status": "pass" if ok else "fail",
+            "detail": detail,
+        }
+    )
 
 
 def _print_human(payload: dict[str, object]) -> None:

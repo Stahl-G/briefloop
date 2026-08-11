@@ -32,7 +32,7 @@ def test_briefloop_skill_freshness_script_runs_clean() -> None:
     checks = {item["id"]: item for item in payload["checks"]}
     assert payload["ok"] is True
     assert payload["runtime_effect"] == "readiness_check_only"
-    assert checks["canonical.references/version-matrix.md.freshness"]["status"] == "pass"
+    assert checks["canonical.evals/evals.json.freshness"]["status"] == "pass"
     assert checks["packaged_codex.SKILL.md.freshness"]["status"] == "pass"
     assert (
         checks["packaged_codex.references/controlstore-v2.md.freshness"]["status"]
@@ -49,8 +49,8 @@ def test_briefloop_skill_freshness_rejects_missing_required_phrase(tmp_path, mon
 
     for rel_path, phrases in module.REQUIRED_REFERENCE_PHRASES.items():
         text = "\n".join(phrases)
-        if rel_path == "references/version-matrix.md":
-            text = text.replace("Codex is the only active fresh runtime", "")
+        if rel_path == "SKILL.md":
+            text = text.replace("Do not create an agent swarm", "")
         target = canonical / rel_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(text, encoding="utf-8")
@@ -60,9 +60,9 @@ def test_briefloop_skill_freshness_rejects_missing_required_phrase(tmp_path, mon
     checks: list[dict[str, str]] = []
     module._check_required_phrases(checks)
     by_id = {item["id"]: item for item in checks}
-    assert by_id["canonical.references/version-matrix.md.freshness"]["status"] == "fail"
-    assert "Codex is the only active fresh runtime" in by_id[
-        "canonical.references/version-matrix.md.freshness"
+    assert by_id["canonical.SKILL.md.freshness"]["status"] == "fail"
+    assert "Do not create an agent swarm" in by_id[
+        "canonical.SKILL.md.freshness"
     ]["detail"]
 
 

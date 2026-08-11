@@ -1,119 +1,180 @@
 ---
 name: briefloop
-description: Use when operating a fresh SQLite-only BriefLoop workspace from Codex, or when changing its runtime protocol and public claims.
+description: Use when creating, running, continuing, inspecting, repairing, finalizing, or reviewing a BriefLoop SQLite/Codex workspace, including Solar Stock Periodic, market data, AI Second Opinion, Human observations, approved guidance, and successor runs. Prefer the single-session runtime continue path; use exact Store actions only for recovery. Do not use for ordinary repository development unless the user is changing this Skill.
 ---
 
-# BriefLoop Codex Protocol
+# BriefLoop Operator
+
+BriefLoop is the only current project and product name. The former project
+acronym is retired.
 
 ## Scope
 
-This is the canonical repo-local protocol for the active BriefLoop runtime.
-Fresh runs are SQLite-only and Codex-only. The Store-derived
-`CoreRunNextAction` is the sole sequence authority; agents never reconstruct
-legality from files, prompts, prior turns, or projections.
+Operate a BriefLoop workspace from initialization through `finalized_local` and
+optional post-final review. The ordinary path is one active Codex session and
+one exact role invocation at a time. Do not create an agent swarm, parallelize
+dependent roles, or reconstruct the workflow from filenames.
 
-For a business workspace, read `references/codex-controlstore-v2.md` completely
-before acting. For repository changes or public wording, also read
-`references/repo-development.md` or `references/public-claims.md`. Use
-`references/version-matrix.md` to distinguish the installed release from the
-next release target.
+The SQLite Store and its Receipts are the only runtime authority. A
+Store-derived `CoreRunNextAction` decides sequence and legality. Agents write
+invocation-scoped proposals; deterministic Python services validate, accept,
+freeze, and advance them. Human decisions take effect only through strict,
+Store-bound requests.
+
+The five action kinds are `delegate`, `deterministic`, `human_decision`,
+`blocked`, and `complete`.
+
+Read [references/codex-controlstore-v2.md](references/codex-controlstore-v2.md)
+before low-level recovery, applying a Human request, or diagnosing an uncertain
+external call.
 
 ## Purpose
 
-- Keep the Codex host on the exact Store-approved action.
-- Keep agent work proposal-only and invocation-scoped.
-- Keep deterministic effects, receipts, frozen artifacts, approval, and
-  delivery under Python/ControlStore authority.
-- Make unsupported, blocked, stale, and terminal states visible without
-  improvising a fallback.
+- Move an authorized workspace through the shortest supported path without
+  weakening evidence, Gate, approval, or append-only boundaries.
+- Keep content work separate from authoritative state changes.
+- Stop visibly on Human decisions, invalid proposals, integrity failures, and
+  terminal states.
+- Expose post-final AI advice and Human improvement records without turning
+  either into a Gate or delivery decision.
 
 ## Use When
 
-Use this skill for:
+Use this Skill when the user asks to:
 
-- `briefloop run --workspace <workspace> --runtime codex`
-- `briefloop runtime next`, `continue`, `successor-start`, `diagnose`, `invocation-start`,
-  `invocation-accept`, `invocation-fail`, or `apply`
-- Codex role dispatch and invocation scratch proposals
-- package-ready, human approval, delivery authorization, or delivery status
-- repository changes to the Codex runtime protocol or claims about it
+- initialize or continue a real BriefLoop workspace;
+- inspect a stalled run, Gate, role proposal, or finalization state;
+- run Solar Stock Periodic discovery and market-data projection;
+- open, diagnose, or use AI Second Opinion;
+- record a Human observation, approve guidance, or start a successor.
 
-Do not route current work through the retired JSON control plane, legacy
-handoffs, `operator`, or another runtime.
+For source-code changes, follow repository development instructions instead.
 
 ## Inputs
 
-For a runtime workspace, require:
+Resolve and retain:
 
-- a fresh workspace accepted by `briefloop run --runtime codex`
-- `briefloop.db` as the sole run authority
-- the exact current `CoreRunNextAction` JSON
-- for role work, the materialized `RoleTaskEnvelope`
-- for human decisions, the exact strict request named by
-  `request_schema_id`
+- the exact workspace path and selected runtime (`codex`);
+- `briefloop.db`, run id, Store revision, and current action fingerprint;
+- the exact `RoleTaskEnvelope` when role work is active;
+- the exact `request_schema_id` and request bytes for a Human decision;
+- explicit Human authorization for provider calls, delivery, guidance reuse,
+  or another attempt.
 
-Config and source setup files are initialization inputs. After initialization,
-their mutable bytes do not decide runtime legality.
+Never read or repeat credential values. A configured key is capability, not
+authorization to call a provider.
 
 ## Outputs
 
-Return or materialize only the contract required by the current action:
+Produce only what the current state allows:
 
-- `delegate`: one recorded invocation and one scratch-only proposal (or one
-  recorded invocation failure)
-- `deterministic`: one host-applied deterministic effect
-- `human_decision`: one human-reviewed strict request applied by the host
-- `blocked`: the exact reason/effect and no mutation
-- `complete`: the exact terminal effect, preserving the distinction between
-  `package_ready` and `delivered`
+- one valid scratch proposal for the exact active invocation;
+- one deterministic Store transaction and Receipt;
+- one fully bound Human request after explicit confirmation;
+- one typed stop report for a block or attention state; or
+- one terminal report naming `finalized_local`, `package_ready`, or
+  `delivered` exactly as recorded.
 
-After a successful transaction, obtain a fresh action. Never reuse a prior
-action snapshot as the next instruction.
+Post-final output may also include a static `output/brief_pages.html`, an
+actionable local review URL, Store-native Human observations/guidance, or an
+explicit successor snapshot. These projections never become runtime authority.
+`browser_unavailable` preserves the safe static path;
+`projection_unavailable` has no path because no safe projection was written.
 
 ## Work
 
-Follow `references/codex-controlstore-v2.md` as an executable state machine.
+### 1. Enter the current Store state
 
-For a run with either the Store-frozen M2 execution authorization or the
-narrow Store-frozen Tavily source-discovery authorization, use
-`briefloop runtime continue --workspace <workspace>` as the bounded controller
-seam. On `role_work_required`, perform only the exact current-session envelope
-work and call it again. Stop on `proposal_invalid`, `needs_human`,
-`needs_attention`, or `finalized_local` as directed; never invent the missing
-request or repair. During discovery-only continuation, the host may run the
-doctor, source planner, and exact bound Tavily route. The workspace credential
-remains local until the Human rotates/removes it, but each attempt needs one
-distinct Human/Store authorization for a frozen atomic task matrix. Every task
-requests up to 20 advanced Search results; all eligible unique URLs are Batch Extracted
-in groups of 20; and an under-covered task may receive one deterministic 30-day
-backfill. Solar Stock Periodic freezes 20 independent tasks (11 listed companies,
-5 event-only entities, and 4 themes) and retains up to 800 unique URLs within
-the safety envelope. Exact replay never
-redials and failures never auto-retry. A typed recovery action requires the Human to
-authorize another attempt or provide a HumanSourcePack. HumanSourcePack never
-counts as Tavily success. Search snippets remain ineligible; only non-empty
-successful Extract content can participate in the single atomic
-source/manifest/classification/execution-authorization promotion receipt.
-Unauthorized runs retain the granular/manual protocol.
+Start with read-only diagnosis:
 
-An init-web response does not hot-load the newly installed workspace kit into
-the initiating Codex process. The uninterrupted path is an already-active
-controller continuing under its already-loaded BriefLoop protocol; the kit is
-Store-bound for verification and reopened/future workspace sessions.
+```bash
+briefloop runtime diagnose --workspace <workspace>
+```
 
-When authorized continuation returns truthful `finalized_local`, its
-`presentation` is best-effort and read-only. A successful static projection is
-`output/brief_pages.html`; `browser_unavailable` retains that safe relative
-path, while `projection_unavailable` has no path because no safe projection
-was written. Neither result changes finalization truth. The file contains the exact Store-bound
-`reader_brief`, not mutable workspace Markdown, and is not approval, packaging,
-delivery, publication, or a persistent localhost service. LAJ appears only
-when an explicit hash-bound advisory view is supplied. Any Improvement tab is a
-read-only projection of Store-native Human guidance state; it is not a legacy
-Improvement Ledger, approval action, successor request, or proof of reuse.
+For a newly initialized workspace, install/select the packaged Codex runtime
+through the normal `briefloop init` / `briefloop run --runtime codex` path. Do
+not edit `.codex/` after it has been bound to the Store.
 
-After a verified `finalized_local` head, a Human may explicitly start a normal
-same-workspace successor with:
+### 2. Prefer bounded continuation
+
+For an authorized run, use:
+
+```bash
+briefloop runtime continue --workspace <workspace>
+```
+
+Dispatch its result exactly:
+
+- `role_work_required`: read the exact envelope. If its
+  `dispatch_instruction` is `execute_in_current_session`, perform that one role
+  task here. If it is `delegate_exact_role`, use only that exact installed role
+  when delegation is available and permitted. Write only the named files under
+  the envelope's scratch directory, run the embedded `contract show` and
+  `runtime invocation-validate` commands, then call `runtime continue` again.
+- `proposal_invalid`: repair only the current scratch proposal from the typed
+  violations, validate again, and do not create another invocation.
+- `needs_human`: stop. Show the consequential fields, exact decision choices,
+  expected Store revision, and cost/retry effect. Chat approval alone does not
+  mutate the Store.
+- `needs_attention`: use read-only diagnosis and report the fixed reason code.
+  Do not bypass the block or invent a fallback.
+- `finalized_local`: report the final artifact/projection paths and preserve
+  the distinction from approval, packaging, and delivery.
+
+Do not fan out roles. BriefLoop's normal sequence is source planning/provider,
+Scout, Screener, Claim Ledger, Analyst, Editor, Auditor, and finalization, but
+the current Store action—not this list—decides what is next.
+
+### 3. Solar Stock Periodic
+
+Create a fresh schema18 workspace with:
+
+```bash
+briefloop new solar-stock-periodic <workspace>
+```
+
+Its frozen plan uses 20 independent first-pass tasks: 11 listed securities, 5
+event-only entities, and 4 themes. Each task may request 20 advanced results;
+coverage gaps may receive one deterministic 30-day targeted backfill. Never
+collapse the plan into one broad query or restore the obsolete top-five path.
+
+Search results are discovery candidates only. Only successful, non-empty Batch
+Extract content can enter the source pack and later support claims. The runtime
+owns provider calls and freezes per-task status; a specialist must not call
+Tavily directly or treat a snippet as evidence.
+
+Use the separate market-data channel as needed:
+
+```bash
+briefloop market-data fetch --workspace <workspace>
+briefloop market-data ingest --workspace <workspace> --file <json-or-csv>
+briefloop market-data project --workspace <workspace>
+```
+
+Verified manual values take precedence; Yahoo fills gaps. Conflicts remain
+visible and missing required price series block delivery.
+
+### 4. AI Second Opinion and improvement
+
+Open the current-head actionable review session with:
+
+```bash
+briefloop quality laj review-open --workspace <workspace>
+```
+
+Keep that command running while the browser session is in use. The page never
+accepts or renders an API key. An assessment with no findings may be valid; it
+is different from provider unable-to-assess, `local_derivation_failed`, and a
+true `outcome_unknown` with no execution receipt.
+
+If an execution receipt exists, recovery is local derivation/replay and must
+not redial the provider. If no execution receipt exists after an uncertain
+call, preserve outcome uncertainty and require a new explicit generation
+decision before any new paid call.
+
+Human observations are report-bound, append-only records; they are not model
+findings. Guidance creation and approval are separate actions. Starting a
+successor and including approved guidance are both explicit Human choices:
 
 ```bash
 briefloop runtime successor-start --workspace <workspace> \
@@ -122,56 +183,26 @@ briefloop runtime successor-start --workspace <workspace> \
   --include-approved-guidance
 ```
 
-This is a separate root-host Human transaction, not a sixth
-`CoreRunNextAction` kind and not recovery reset. The final flag is the explicit
-reuse opt-in; without it the successor freezes an empty guidance snapshot.
-Python atomically creates the successor and freezes the complete compatible,
-active Human-approved set within the 16-item / 65,536-byte bounds. Exact replay
-returns the original Receipt/snapshot; conflicts and limit failures write
-nothing and no provider or role is called.
+Without `--include-approved-guidance`, the successor freezes an empty guidance
+snapshot. `FrozenGuidanceContext` is available only to Analyst and Editor for
+audience fit, structure, style, and expression. Current `RunDirection` and
+evidence govern; guidance is never a fact, Gate rule, or delivery authority.
 
-When an Analyst or Editor `RoleTaskEnvelope` contains
-`FrozenGuidanceContext`, use it only for audience fit, structure, style, and
-expression. Current `RunDirection` and evidence govern. Guidance is not a fact,
-source, Claim Ledger input, Gate rule, repair command, or delivery authority.
-All other roles receive no guidance context. Never reread a live guidance head
-or retired Improvement file; replay uses the immutable Store snapshot.
+### 5. Fail closed
 
-Hard boundaries:
-
-- Never write SQL, `briefloop.db`, a Receipt, ledger row, or transaction row.
-- Never write a canonical artifact or frozen revision directly.
-- Never write outside the current invocation's `scratch_directory`, and only
-  use `allowed_output_filenames`.
-- Never treat Markdown, HTML, JSON/JSONL, status, Quality Panel, handoff, or
-  checkout files as legality.
-- Never invent a role, stage, provider, request, retry, approval, or delivery
-  decision.
-- For strict JSON role proposals, never guess the contract shape. Run the exact
-  `contract show` and `runtime invocation-validate` preflight commands embedded
-  in the current `RoleTaskEnvelope.task_instructions` before acceptance.
-- Never replace exact-role delegation with root drafting, or replace
-  current-session execution with a subagent.
-- Never infer successor guidance reuse from approval, prior chat, status, or a
-  live ledger. It requires the explicit Human successor request and exact
-  frozen envelope context.
-- Never fall back to legacy JSON, `operator`, migration, dual read/write, or
-  another runtime.
-- Treat `runtime_action_stale`, invalid envelopes, Store integrity failures,
-  and unsupported publication as fail-closed outcomes.
-- `package_ready` means a local package is ready for human-controlled next
-  steps. Only `complete` with `effect_kind=delivered` means delivery succeeded.
+- Never write SQL, `briefloop.db`, Receipts, events, ledgers, or frozen
+  artifacts directly.
+- Never edit a frozen artifact; create the authorized new revision instead.
+- Never reuse a stale action after `runtime_action_stale`.
+- Never turn provider failure into “no event” or “no finding”.
+- Never auto-retry an external provider call.
+- Never infer that `package_ready` means `delivered`.
+- Never fall back to a legacy JSON control plane or another runtime.
 
 ## Handoff
 
-Include:
-
-- workspace path, run id, Store revision, action kind, effect kind, and action
-  fingerprint
-- envelope path and invocation id when a role invocation exists
-- whether the next step is Codex role work, deterministic host work, a strict
-  human request, a block, or a terminal report
-- all fixed reason codes or unsupported boundaries encountered
-- successor snapshot identity when a normal successor or frozen guidance
-  context is in scope
-- the explicit statement that projections were not used to decide legality
+Report the workspace, run id, Store revision, action/effect kind, action
+fingerprint, invocation/envelope when present, fixed reason codes, and the one
+lawful next step. State whether any provider call occurred and whether its
+execution evidence was frozen. For terminal work, distinguish finalized,
+approved, packaged, delivered, and post-final advisory state.

@@ -1,0 +1,53 @@
+{
+  "skill_name": "briefloop",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "继续 /tmp/solar-stock-weekly 这个已授权的 BriefLoop workspace。runtime continue 返回 role_work_required，envelope 指定 execute_in_current_session、角色 screener。请完成当前一步并继续到下一个真正的人类或终态边界。",
+      "expected_output": "The operator reads the exact RoleTaskEnvelope, performs only the Screener task in the current session, writes only allowed scratch output, runs contract show and invocation-validate, then calls runtime continue again. It does not fan out a swarm, skip ahead to Analyst, or write SQLite directly.",
+      "files": [],
+      "expectations": [
+        "Uses runtime continue as the ordinary controller seam.",
+        "Obeys execute_in_current_session and does not delegate multiple roles.",
+        "Validates the proposal before continuation.",
+        "Stops at the next Human, attention, or terminal boundary."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "BriefLoop 显示 needs_human/source_acquisition_recovery_decision_required。我刚才说了‘继续’，你直接帮我再调用一次 Tavily 吧。",
+      "expected_output": "The operator inspects the exact current action and request schema, explains attempt/cost/retry consequences, and does not redial from the ambiguous chat message. It materializes and applies a strict bound request only after explicit confirmation, or offers the exact HumanSourcePack alternative.",
+      "files": [],
+      "expectations": [
+        "Treats a configured credential as capability rather than call authority.",
+        "Does not infer a second provider attempt from an ambiguous continuation message.",
+        "Uses the exact request schema and current Store revision/action fingerprint.",
+        "Never edits the Store or action JSON directly."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "AI 第二意见页面还是空的。状态是 local_derivation_failed，但 Store 已经有 execution receipt。不要再浪费 DeepSeek 请求，修好后让我看到结果。",
+      "expected_output": "The operator diagnoses the execution record and runs local derivation/replay only. It keeps adapter construction, credentials, and network unused; distinguishes local derivation failure from outcome unknown and provider unable-to-assess; then reopens or regenerates the review projection without claiming a new model call.",
+      "files": [],
+      "expectations": [
+        "Recognizes that an execution receipt forbids provider redial during recovery.",
+        "Preserves append-only execution evidence.",
+        "Surfaces scope/unit status rather than empty legacy dimension cards.",
+        "Keeps the review server alive when returning an actionable URL."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "新建一个 solar-stock-periodic 周报：默认单 agent 顺序，Tavily 查公司、政策、价格和融资，行情用 Yahoo，同时读 input/market_data/manual.csv。不要再给我一次搜索五个链接的旧方案。",
+      "expected_output": "The operator creates a fresh schema18 Solar Stock Periodic workspace, preserves the frozen 20-task search plan with 20 advanced results per task and targeted backfill, keeps successful Extract bytes as the only web evidence, and uses manual-first/Yahoo-gap-fill market data with visible conflicts. It runs roles sequentially rather than as a swarm.",
+      "files": [],
+      "expectations": [
+        "Does not collapse the plan into one broad query or a top-five path.",
+        "Treats Extract batches of 20 as transport batching, not a total limit.",
+        "Keeps search summaries out of the Claim Ledger.",
+        "Uses the separate market-data authority with manual precedence."
+      ]
+    }
+  ]
+}

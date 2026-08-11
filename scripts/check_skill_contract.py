@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Lightweight drift checks for the repo-local BriefLoop operator skill."""
+"""Check the lean BriefLoop operator Skill and packaged projection."""
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -11,165 +12,158 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CANONICAL = ROOT / ".agents" / "skills" / "briefloop"
 SKILL = CANONICAL / "SKILL.md"
+REFERENCE = CANONICAL / "references" / "codex-controlstore-v2.md"
+EVALS = CANONICAL / "evals" / "evals.json"
 CLAUDE_WRAPPER = ROOT / ".claude" / "skills" / "briefloop" / "SKILL.md"
-VERSION_MATRIX = CANONICAL / "references" / "version-matrix.md"
-PUBLIC_CLAIMS = CANONICAL / "references" / "public-claims.md"
-CODEX_REFERENCE = CANONICAL / "references" / "codex-controlstore-v2.md"
-PACKAGED_CODEX = (
-    ROOT / "src" / "multi_agent_brief" / "runtime_kits" / "codex" / "skills" / "briefloop"
+PACKAGED = (
+    ROOT
+    / "src"
+    / "multi_agent_brief"
+    / "runtime_kits"
+    / "codex"
+    / "skills"
+    / "briefloop"
 )
-
-
-def _read(path: Path) -> str:
-    return path.read_text(encoding="utf-8")
+PACKAGED_SKILL = PACKAGED / "SKILL.md"
+PACKAGED_REFERENCE = PACKAGED / "references" / "controlstore-v2.md"
 
 
 def _error(message: str) -> str:
     return f"[skill-contract] {message}"
 
 
-def _relative_files(root: Path) -> list[Path]:
-    if not root.exists():
-        return []
-    return sorted(path.relative_to(root) for path in root.rglob("*") if path.is_file())
-
-
-def _check_projection(source: Path, target: Path, *, label: str) -> list[str]:
-    if not target.exists():
-        return [_error(f"{label} projection is missing: {target.relative_to(ROOT)}")]
-    errors: list[str] = []
-    source_files = set(_relative_files(source))
-    target_files = set(_relative_files(target))
-    for rel_path in sorted(source_files - target_files):
-        errors.append(_error(f"{label} projection missing file: {target.relative_to(ROOT) / rel_path}"))
-    for rel_path in sorted(target_files - source_files):
-        errors.append(_error(f"{label} projection has extra file: {target.relative_to(ROOT) / rel_path}"))
-    for rel_path in sorted(source_files & target_files):
-        if (source / rel_path).read_bytes() != (target / rel_path).read_bytes():
-            errors.append(_error(f"{label} projection differs from canonical: {target.relative_to(ROOT) / rel_path}"))
-    return errors
+def _read(path: Path) -> str:
+    return path.read_text(encoding="utf-8")
 
 
 def main() -> int:
     errors: list[str] = []
-
-    if not SKILL.exists():
-        errors.append(_error("canonical .agents/skills/briefloop/SKILL.md is missing"))
-    if not CLAUDE_WRAPPER.exists():
-        errors.append(_error("Claude briefloop skill wrapper is missing"))
-    if not VERSION_MATRIX.exists():
-        errors.append(_error("version-matrix.md is missing"))
-    if not CODEX_REFERENCE.exists():
-        errors.append(_error("codex-controlstore-v2.md is missing"))
-    if not PACKAGED_CODEX.exists():
-        errors.append(_error("packaged Codex skill is missing"))
-
+    required_files = (
+        SKILL,
+        REFERENCE,
+        EVALS,
+        CLAUDE_WRAPPER,
+        PACKAGED_SKILL,
+        PACKAGED_REFERENCE,
+    )
+    for path in required_files:
+        if not path.exists():
+            errors.append(_error(f"missing: {path.relative_to(ROOT)}"))
     if errors:
-        for error in errors:
-            print(error, file=sys.stderr)
+        _emit(errors)
         return 1
 
-    skill_text = _read(SKILL)
-    wrapper_text = _read(CLAUDE_WRAPPER)
-    matrix_text = _read(VERSION_MATRIX)
-    codex_reference_text = _read(CODEX_REFERENCE)
-    packaged_skill_text = _read(PACKAGED_CODEX / "SKILL.md")
-    packaged_reference = PACKAGED_CODEX / "references" / "controlstore-v2.md"
-    packaged_reference_text = _read(packaged_reference)
-    public_claims_text = _read(PUBLIC_CLAIMS) if PUBLIC_CLAIMS.exists() else ""
+    skill = _read(SKILL)
+    reference = _read(REFERENCE)
+    wrapper = _read(CLAUDE_WRAPPER)
+    packaged_skill = _read(PACKAGED_SKILL)
 
-    references = sorted(set(re.findall(r"references/[a-z0-9-]+\.md", skill_text)))
-    for reference in references:
-        if not (CANONICAL / reference).exists():
-            errors.append(_error(f"missing referenced file: {reference}"))
+    for relative in sorted(set(re.findall(r"references/[a-z0-9-]+\.md", skill))):
+        if not (CANONICAL / relative).exists():
+            errors.append(_error(f"missing referenced file: {relative}"))
 
-    if ".agents/skills/briefloop/SKILL.md" not in wrapper_text:
-        errors.append(_error("Claude wrapper does not point to canonical skill"))
-    if "future 090 readiness" in wrapper_text:
-        errors.append(_error("Claude wrapper routes operators to future 090 readiness framing"))
-    if "archived MABW-080 / BriefLoop-090 experiment tooling" not in wrapper_text:
-        errors.append(_error("Claude wrapper does not describe MABW-080 / BriefLoop-090 as archived tooling"))
+    for heading in (
+        "## Scope",
+        "## Purpose",
+        "## Use When",
+        "## Inputs",
+        "## Outputs",
+        "## Work",
+        "## Handoff",
+    ):
+        if heading not in skill:
+            errors.append(_error(f"canonical Skill missing heading: {heading}"))
 
-    version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
-    expected_version = f"v{version}"
-    if expected_version not in matrix_text:
-        errors.append(_error(f"version matrix does not mention current VERSION {expected_version}"))
+    if ".agents/skills/briefloop/SKILL.md" not in wrapper:
+        errors.append(_error("Claude wrapper does not point to canonical Skill"))
 
-    if "Prior release line: `v0.14.0`" not in matrix_text:
-        errors.append(_error("version matrix does not retain the prior v0.14.0 release line"))
-    if "Prepared release line: `v0.15.2`" not in matrix_text:
-        errors.append(_error("version matrix does not bind the prepared v0.15.2 release line"))
-
-    required_runtime_phrases = (
+    required_protocol = (
         "CoreRunNextAction",
         "RoleTaskEnvelope",
-        "delegate",
-        "deterministic",
-        "human_decision",
-        "blocked",
-        "complete",
+        "runtime continue",
+        "role_work_required",
+        "needs_human",
+        "needs_attention",
+        "finalized_local",
         "runtime_action_stale",
         "package_ready",
         "delivered",
+        "solar-stock-periodic",
+        "market-data",
+        "local_derivation_failed",
+        "outcome_unknown",
+        "FrozenGuidanceContext",
     )
-    current_contract = "\n".join(
-        (skill_text, codex_reference_text, matrix_text, packaged_skill_text)
-    )
-    for phrase in required_runtime_phrases:
-        if phrase not in current_contract:
-            errors.append(_error(f"Codex runtime protocol is missing: {phrase}"))
+    contract = "\n".join((skill, reference, packaged_skill))
+    for phrase in required_protocol:
+        if phrase not in contract:
+            errors.append(_error(f"runtime protocol missing: {phrase}"))
 
-    required_commands = (
+    for command in (
         "briefloop runtime next",
         "briefloop runtime invocation-start",
+        "briefloop runtime invocation-validate",
         "briefloop runtime invocation-accept",
         "briefloop runtime invocation-fail",
         "briefloop runtime apply",
         "--human-request",
+    ):
+        if command not in reference:
+            errors.append(_error(f"runtime reference missing command: {command}"))
+
+    expected_packaged_skill = skill.replace(
+        "references/codex-controlstore-v2.md", "references/controlstore-v2.md"
     )
-    for command in required_commands:
-        if command not in codex_reference_text:
-            errors.append(_error(f"Codex runtime reference is missing command: {command}"))
+    if packaged_skill != expected_packaged_skill:
+        errors.append(_error("packaged Skill differs from canonical projection"))
+    if REFERENCE.read_bytes() != PACKAGED_REFERENCE.read_bytes():
+        errors.append(_error("packaged ControlStore reference differs from canonical"))
 
-    if CODEX_REFERENCE.read_bytes() != packaged_reference.read_bytes():
-        errors.append(_error("packaged Codex ControlStore reference differs from canonical"))
+    try:
+        evals = json.loads(_read(EVALS))
+    except json.JSONDecodeError as exc:
+        errors.append(_error(f"evals/evals.json is invalid JSON: {exc}"))
+    else:
+        if evals.get("skill_name") != "briefloop":
+            errors.append(_error("evals skill_name must be briefloop"))
+        prompts = evals.get("evals")
+        if not isinstance(prompts, list) or len(prompts) < 3:
+            errors.append(_error("evals must contain at least three realistic prompts"))
 
-    retired_current_guidance = (
-        "briefloop run --workspace <workspace> --runtime operator",
+    retired_files = (
+        "version-matrix.md",
+        "public-claims.md",
+        "naming-and-compatibility.md",
+        "repair-protocol.md",
+        "runtime-workspace.md",
+    )
+    for filename in retired_files:
+        if (CANONICAL / "references" / filename).exists():
+            errors.append(_error(f"retired reference restored: {filename}"))
+
+    retired_guidance = (
         "output/intermediate/workflow_state.json",
+        "briefloop run --workspace <workspace> --runtime operator",
         "briefloop gates check --workspace",
         "briefloop finalize --config",
     )
-    for phrase in retired_current_guidance:
-        if phrase in "\n".join((skill_text, codex_reference_text, packaged_skill_text)):
-            errors.append(_error(f"Codex skill restores retired current guidance: {phrase}"))
+    for phrase in retired_guidance:
+        if phrase in contract:
+            errors.append(_error(f"retired current guidance restored: {phrase}"))
 
-    forbidden_positive_claims = [
-        "BriefLoop proves truth.",
-        "BriefLoop eliminates hallucinations.",
-        "BriefLoop makes reports automatically ready to send.",
-        "Improvement Memory improves output quality as a general fact.",
-    ]
-    for claim in forbidden_positive_claims:
-        if claim in public_claims_text and f"- {claim}" not in public_claims_text:
-            errors.append(_error(f"public claims may assert forbidden claim: {claim}"))
-
-    implemented_overclaims = [
-        "Atomic Claim Graph is implemented",
-        "Evidence Span Registry is implemented",
-        "Claim-Support Matrix is implemented",
-    ]
-    joined = "\n".join([skill_text, matrix_text, public_claims_text])
-    for phrase in implemented_overclaims:
-        if phrase in joined:
-            errors.append(_error(f"planned control described as implemented: {phrase}"))
+    if "Do not create an agent swarm" not in skill:
+        errors.append(_error("Skill does not lock the default single-session boundary"))
 
     if errors:
-        for error in errors:
-            print(error, file=sys.stderr)
+        _emit(errors)
         return 1
     print("[skill-contract] ok")
     return 0
+
+
+def _emit(errors: list[str]) -> None:
+    for error in errors:
+        print(error, file=sys.stderr)
 
 
 if __name__ == "__main__":
