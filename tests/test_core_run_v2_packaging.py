@@ -274,7 +274,10 @@ def test_source_and_non_editable_wheel_hardlink_intake_parity(
         },
     }
     if source_payload != expected:
-        raise AssertionError(f"unexpected hardlink payload: {source_payload!r}")@pytest.mark.skipif(
+        raise AssertionError(f"unexpected hardlink payload: {source_payload!r}")
+
+
+@pytest.mark.skipif(
     not supports_retained_directory_publication(),
     reason="successful finalized-local projection is unavailable on this platform",
 )
