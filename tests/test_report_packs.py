@@ -7,6 +7,7 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
 from multi_agent_brief.cli.main import build_parser, main
@@ -15,6 +16,8 @@ from multi_agent_brief.contracts.schemas.report_spec import ReportSpecContract
 from multi_agent_brief.product.report_pack import validate_report_pack_payload
 from multi_agent_brief.product.report_registry import ReportPackRegistry
 from multi_agent_brief.product.report_spec import validate_report_spec_payload
+from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
+from multi_agent_brief.runtime_host_v2.initialization import initialize_or_open_runtime
 
 ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_PACK_IDS = {
@@ -22,21 +25,32 @@ EXPECTED_PACK_IDS = {
     "market_weekly",
     "management_monthly",
     "solar_industry_periodic",
+    "solar_stock_periodic",
 }
 
 
 def _market_pack() -> dict:
-    return yaml.safe_load((ROOT / "configs" / "report_packs" / "market_weekly.yaml").read_text(encoding="utf-8"))
+    return yaml.safe_load(
+        (ROOT / "configs" / "report_packs" / "market_weekly.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
 
 
 def _solar_pack() -> dict:
     return yaml.safe_load(
-        (ROOT / "configs" / "report_packs" / "solar_industry_periodic.yaml").read_text(encoding="utf-8")
+        (ROOT / "configs" / "report_packs" / "solar_industry_periodic.yaml").read_text(
+            encoding="utf-8"
+        )
     )
 
 
 def _evidence_extract_pack() -> dict:
-    return yaml.safe_load((ROOT / "configs" / "report_packs" / "evidence_extract.yaml").read_text(encoding="utf-8"))
+    return yaml.safe_load(
+        (ROOT / "configs" / "report_packs" / "evidence_extract.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
 
 
 def _market_spec() -> dict:
@@ -81,7 +95,9 @@ def test_report_spec_contract_rejects_control_spine_bypass() -> None:
     violations = ReportSpecContract.validate(spec)
 
     assert any(item.field == "control_spine.quality_gates" for item in violations)
-    assert any(item.field == "source_policy.hidden_autonomous_crawling" for item in violations)
+    assert any(
+        item.field == "source_policy.hidden_autonomous_crawling" for item in violations
+    )
 
 
 def test_report_spec_registry_validation_rejects_unknown_pack() -> None:
@@ -100,7 +116,9 @@ def test_report_spec_registry_validation_rejects_unknown_pack() -> None:
 
 
 def test_report_pack_registry_discovers_root_and_packaged_packs() -> None:
-    root_registry = ReportPackRegistry.from_config_dir(ROOT / "configs" / "report_packs")
+    root_registry = ReportPackRegistry.from_config_dir(
+        ROOT / "configs" / "report_packs"
+    )
     package_registry = ReportPackRegistry.from_package()
 
     for registry in (root_registry, package_registry):
@@ -127,20 +145,34 @@ def test_report_pack_config_parity_between_root_and_package_copy() -> None:
 def test_report_pack_payload_validation_rejects_invalid_default_spec() -> None:
     payload = _market_pack()
     payload["default_report_spec"] = dict(payload["default_report_spec"])
-    payload["default_report_spec"]["control_spine"] = dict(payload["default_report_spec"]["control_spine"])
+    payload["default_report_spec"]["control_spine"] = dict(
+        payload["default_report_spec"]["control_spine"]
+    )
     payload["default_report_spec"]["control_spine"]["archive"] = False
 
     violations = validate_report_pack_payload(payload)
 
-    assert any(item.field == "default_report_spec.control_spine.archive" for item in violations)
+    assert any(
+        item.field == "default_report_spec.control_spine.archive" for item in violations
+    )
 
 
-def test_report_pack_payload_validation_allows_supported_and_experimental_statuses() -> None:
+def test_report_pack_payload_validation_allows_supported_and_experimental_statuses() -> (
+    None
+):
     supported = _market_pack()
     experimental = _solar_pack()
 
-    assert not [item for item in validate_report_pack_payload(supported) if item.field == "status"]
-    assert not [item for item in validate_report_pack_payload(experimental) if item.field == "status"]
+    assert not [
+        item
+        for item in validate_report_pack_payload(supported)
+        if item.field == "status"
+    ]
+    assert not [
+        item
+        for item in validate_report_pack_payload(experimental)
+        if item.field == "status"
+    ]
 
     invalid = _market_pack()
     invalid["status"] = "stable"
@@ -166,7 +198,9 @@ def test_packs_cli_list_and_show_pack(capsys) -> None:
     listed = json.loads(capsys.readouterr().out)
     assert listed["ok"] is True
     assert {item["pack_id"] for item in listed["packs"]} == EXPECTED_PACK_IDS
-    market = next(item for item in listed["packs"] if item["pack_id"] == "market_weekly")
+    market = next(
+        item for item in listed["packs"] if item["pack_id"] == "market_weekly"
+    )
     assert market["recommended_entry"] == "industry-weekly"
     assert "market-weekly" in market["aliases"]
     assert "industry-weekly" in market["aliases"]
@@ -211,7 +245,9 @@ def test_packs_show_human_output_matches_pack_support_status(capsys) -> None:
 
 def test_validate_report_spec_cli_accepts_valid_spec(tmp_path: Path, capsys) -> None:
     spec_path = tmp_path / "report_spec.yaml"
-    spec_path.write_text(yaml.safe_dump(_market_spec(), sort_keys=False), encoding="utf-8")
+    spec_path.write_text(
+        yaml.safe_dump(_market_spec(), sort_keys=False), encoding="utf-8"
+    )
 
     assert main(["validate-report-spec", str(spec_path), "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
@@ -222,7 +258,9 @@ def test_validate_report_spec_cli_accepts_valid_spec(tmp_path: Path, capsys) -> 
     assert payload["policy_profile_source"] == "report_spec.policy_profile"
 
 
-def test_validate_report_spec_cli_rejects_disabled_spine(tmp_path: Path, capsys) -> None:
+def test_validate_report_spec_cli_rejects_disabled_spine(
+    tmp_path: Path, capsys
+) -> None:
     spec = _market_spec()
     spec["control_spine"] = dict(spec["control_spine"])
     spec["control_spine"]["event_log"] = False
@@ -254,7 +292,9 @@ def test_validate_report_spec_cli_rejects_malformed_yaml_without_traceback(
     assert "Traceback" not in captured.err
 
 
-def test_new_report_pack_workspace_recommends_tavily_without_requiring_key(tmp_path: Path, capsys) -> None:
+def test_new_report_pack_workspace_recommends_tavily_without_requiring_key(
+    tmp_path: Path, capsys
+) -> None:
     workspace = tmp_path / "weekly"
 
     assert main(["new", "industry-weekly", str(workspace)]) == 0
@@ -264,7 +304,8 @@ def test_new_report_pack_workspace_recommends_tavily_without_requiring_key(tmp_p
     assert "briefloop run --workspace" in output
     assert "Online search is recommended but not active by default." in output
     assert "Tavily is the recommended external API backend." in output
-    assert "--search-backend tavily" in output
+    assert "briefloop init <workspace> --web" in output
+    assert "briefloop onboard" in output
     assert "--web-search-mode disabled" in output
     assert (workspace / "config.yaml").exists()
     assert (workspace / "sources.yaml").exists()
@@ -276,8 +317,13 @@ def test_new_report_pack_workspace_recommends_tavily_without_requiring_key(tmp_p
     spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
     assert spec["report_pack"] == "market_weekly"
     assert spec["policy_profile"] == "manufacturing_default"
-    assert spec["policy_profile_resolution"]["policy_profile"] == "manufacturing_default"
-    assert spec["policy_profile_resolution"]["source"] == "report_pack.default_policy_profile"
+    assert (
+        spec["policy_profile_resolution"]["policy_profile"] == "manufacturing_default"
+    )
+    assert (
+        spec["policy_profile_resolution"]["source"]
+        == "report_pack.default_policy_profile"
+    )
     assert spec["source_policy"]["mode"] == "local_first"
     assert spec["source_policy"]["hidden_autonomous_crawling"] is False
 
@@ -295,26 +341,103 @@ def test_new_report_pack_workspace_recommends_tavily_without_requiring_key(tmp_p
     assert "api_key_env" not in sources["web_search"]
 
 
-def test_new_report_pack_workspace_can_opt_into_tavily(tmp_path: Path, capsys) -> None:
-    workspace = tmp_path / "weekly"
+@pytest.mark.parametrize(
+    "report_pack",
+    (
+        "industry-weekly",
+        "management-monthly",
+        "document-review",
+        "solar-periodic",
+    ),
+)
+def test_new_report_pack_workspace_rejects_tavily_before_writes(
+    tmp_path: Path,
+    capsys,
+    report_pack: str,
+) -> None:
+    workspace = tmp_path / report_pack
 
-    assert main(["new", "industry-weekly", str(workspace), "--search-backend", "tavily"]) == 0
+    assert (
+        main(
+            [
+                "new",
+                report_pack,
+                str(workspace),
+                "--industry",
+                "grid-scale energy storage",
+                "--search-backend",
+                "tavily",
+            ]
+        )
+        == 1
+    )
 
     output = capsys.readouterr().out
-    assert "Online search is enabled via tavily." in output
-    assert "Set TAVILY_API_KEY before running doctor or source discovery." in output
-    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
-    assert sources["source_strategy"]["enabled_providers"] == ["manual", "web_search"]
-    assert sources["web_search"]["enabled"] is True
-    assert sources["web_search"]["mode"] == "external_api"
-    assert sources["web_search"]["backend"] == "tavily"
-    assert sources["web_search"]["api_key_env"] == "TAVILY_API_KEY"
+    assert "briefloop init <workspace> --web" in output
+    assert "briefloop onboard" in output
+    assert not workspace.exists()
 
 
-def test_new_report_pack_workspace_can_disable_web_search(tmp_path: Path, capsys) -> None:
+def test_new_report_pack_workspace_does_not_infer_tavily_from_external_api(
+    tmp_path: Path,
+    capsys,
+) -> None:
     workspace = tmp_path / "weekly"
 
-    assert main(["new", "industry-weekly", str(workspace), "--web-search-mode", "disabled"]) == 0
+    assert (
+        main(
+            [
+                "new",
+                "industry-weekly",
+                str(workspace),
+                "--web-search-mode",
+                "external_api",
+            ]
+        )
+        == 1
+    )
+
+    output = capsys.readouterr().out
+    assert "requires an explicit --search-backend" in output
+    assert not workspace.exists()
+
+
+def test_new_report_pack_workspace_non_tavily_external_backend_does_not_require_topic(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "weekly"
+
+    assert (
+        main(
+            [
+                "new",
+                "industry-weekly",
+                str(workspace),
+                "--search-backend",
+                "exa",
+            ]
+        )
+        == 0
+    )
+
+    capsys.readouterr()
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    assert sources["web_search"]["mode"] == "external_api"
+    assert sources["web_search"]["backend"] == "exa"
+
+
+def test_new_report_pack_workspace_can_disable_web_search(
+    tmp_path: Path, capsys
+) -> None:
+    workspace = tmp_path / "weekly"
+
+    assert (
+        main(
+            ["new", "industry-weekly", str(workspace), "--web-search-mode", "disabled"]
+        )
+        == 0
+    )
 
     output = capsys.readouterr().out
     assert "Online search: disabled." in output
@@ -324,7 +447,9 @@ def test_new_report_pack_workspace_can_disable_web_search(tmp_path: Path, capsys
     assert sources["web_search"]["mode"] == "disabled"
 
 
-def test_new_report_pack_workspace_accepts_product_aliases(tmp_path: Path, capsys) -> None:
+def test_new_report_pack_workspace_accepts_product_aliases(
+    tmp_path: Path, capsys
+) -> None:
     cases = [
         ("management-monthly", "management_monthly"),
         ("document-review", "evidence_extract"),
@@ -339,10 +464,28 @@ def test_new_report_pack_workspace_accepts_product_aliases(tmp_path: Path, capsy
         assert main(["new", entry, str(workspace)]) == 0
 
         capsys.readouterr()
-        spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
+        spec = yaml.safe_load(
+            (workspace / "report_spec.yaml").read_text(encoding="utf-8")
+        )
         assert spec["report_pack"] == expected_pack
         config = yaml.safe_load((workspace / "config.yaml").read_text(encoding="utf-8"))
         assert config["selector"]["max_items"] >= config["brief_quality"]["min_items"]
+
+
+def test_new_management_monthly_binds_reader_review_direction(
+    tmp_path: Path, capsys
+) -> None:
+    workspace = tmp_path / "management-monthly-reader-review"
+
+    assert (
+        main(["new", "management-monthly", str(workspace), "--language", "en-US"]) == 0
+    )
+    capsys.readouterr()
+
+    config = yaml.safe_load((workspace / "config.yaml").read_text(encoding="utf-8"))
+    direction = config["controlstore_v2"]["run_direction"]
+    assert direction["report_type"] == "management_monthly"
+    assert direction["output_language"] == "en"
 
 
 def test_new_report_pack_workspace_overrides_are_written_to_report_spec(
@@ -351,19 +494,22 @@ def test_new_report_pack_workspace_overrides_are_written_to_report_spec(
 ) -> None:
     workspace = tmp_path / "custom-weekly"
 
-    assert main(
-        [
-            "new",
-            "market-weekly",
-            str(workspace),
-            "--title",
-            "Custom Weekly",
-            "--audience",
-            "投资委员会",
-            "--language",
-            "zh-CN",
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "new",
+                "market-weekly",
+                str(workspace),
+                "--title",
+                "Custom Weekly",
+                "--audience",
+                "投资委员会",
+                "--language",
+                "zh-CN",
+            ]
+        )
+        == 0
+    )
     capsys.readouterr()
 
     config = yaml.safe_load((workspace / "config.yaml").read_text(encoding="utf-8"))
@@ -393,7 +539,10 @@ def test_new_solar_industry_periodic_workspace_uses_solar_defaults(
     assert spec["report_pack"] == "solar_industry_periodic"
     assert spec["report_type"] == "solar_industry_periodic"
     assert spec["policy_profile"] == "solar_manufacturing_default"
-    assert spec["policy_profile_resolution"]["source"] == "report_pack.default_policy_profile"
+    assert (
+        spec["policy_profile_resolution"]["source"]
+        == "report_pack.default_policy_profile"
+    )
     assert spec["title"] == "Solar Industry Periodic Report"
     assert spec["audience"] == {
         "label": "management reader",
@@ -425,7 +574,10 @@ def test_new_evidence_extract_workspace_uses_extract_defaults(
     assert spec["report_pack"] == "evidence_extract"
     assert spec["report_type"] == "evidence_extract"
     assert spec["policy_profile"] == "evidence_extract_default"
-    assert spec["policy_profile_resolution"]["source"] == "report_pack.default_policy_profile"
+    assert (
+        spec["policy_profile_resolution"]["source"]
+        == "report_pack.default_policy_profile"
+    )
     assert spec["source_policy"]["mode"] == "explicit_sources"
     assert spec["title"] == "Evidence Extract Brief"
     assert "no_disclosure_readiness" in spec["metadata"]["non_claims"]
@@ -437,15 +589,23 @@ def test_new_evidence_extract_workspace_keeps_extract_default_for_other_industry
 ) -> None:
     workspace = tmp_path / "evidence-finance"
 
-    assert main(["new", "evidence-extract", str(workspace), "--industry", "finance"]) == 0
+    assert (
+        main(["new", "evidence-extract", str(workspace), "--industry", "finance"]) == 0
+    )
 
     output = capsys.readouterr().out
     spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
 
     assert "policy_profile: evidence_extract_default" in output
     assert spec["policy_profile"] == "evidence_extract_default"
-    assert spec["policy_profile_resolution"]["source"] == "report_pack.default_policy_profile"
-    assert spec["policy_profile_resolution"]["matched_rule"] == "specialized_report_pack_default"
+    assert (
+        spec["policy_profile_resolution"]["source"]
+        == "report_pack.default_policy_profile"
+    )
+    assert (
+        spec["policy_profile_resolution"]["matched_rule"]
+        == "specialized_report_pack_default"
+    )
     assert spec["policy_profile_resolution"]["alternatives"] == ["finance_default"]
 
 
@@ -517,7 +677,12 @@ def test_new_report_pack_workspace_resolves_policy_profile_from_industry(
 ) -> None:
     workspace = tmp_path / "finance-weekly"
 
-    assert main(["new", "market-weekly", str(workspace), "--industry", "listed company IR"]) == 0
+    assert (
+        main(
+            ["new", "market-weekly", str(workspace), "--industry", "listed company IR"]
+        )
+        == 0
+    )
 
     output = capsys.readouterr().out
     spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
@@ -541,7 +706,18 @@ def test_new_report_pack_workspace_resolves_solar_industry_hint_to_solar_profile
 ) -> None:
     workspace = tmp_path / "solar-market-weekly"
 
-    assert main(["new", "market-weekly", str(workspace), "--industry", "solar manufacturing"]) == 0
+    assert (
+        main(
+            [
+                "new",
+                "market-weekly",
+                str(workspace),
+                "--industry",
+                "solar manufacturing",
+            ]
+        )
+        == 0
+    )
 
     output = capsys.readouterr().out
     spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
@@ -564,15 +740,18 @@ def test_new_report_pack_workspace_does_not_treat_generic_wafer_as_solar(
 ) -> None:
     workspace = tmp_path / "semiconductor-weekly"
 
-    assert main(
-        [
-            "new",
-            "market-weekly",
-            str(workspace),
-            "--industry",
-            "semiconductor wafer manufacturing",
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "new",
+                "market-weekly",
+                str(workspace),
+                "--industry",
+                "semiconductor wafer manufacturing",
+            ]
+        )
+        == 0
+    )
     capsys.readouterr()
 
     spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
@@ -594,7 +773,10 @@ def test_new_report_pack_workspace_uses_pack_default_for_ambiguous_industry(
 ) -> None:
     workspace = tmp_path / "ambiguous-weekly"
 
-    assert main(["new", "market-weekly", str(workspace), "--industry", "solar finance"]) == 0
+    assert (
+        main(["new", "market-weekly", str(workspace), "--industry", "solar finance"])
+        == 0
+    )
     capsys.readouterr()
 
     spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
@@ -604,7 +786,10 @@ def test_new_report_pack_workspace_uses_pack_default_for_ambiguous_industry(
     assert resolution["source"] == "report_pack.default_policy_profile"
     assert resolution["matched_rule"] == "ambiguous_industry_keywords"
     assert resolution["confidence"] == "default_ambiguous"
-    assert resolution["alternatives"] == ["finance_default", "solar_manufacturing_default"]
+    assert resolution["alternatives"] == [
+        "finance_default",
+        "solar_manufacturing_default",
+    ]
 
 
 def test_new_report_pack_workspace_industry_takes_precedence_over_company_for_policy_profile(
@@ -643,24 +828,29 @@ def test_new_report_pack_workspace_explicit_policy_profile_override_wins(
 ) -> None:
     workspace = tmp_path / "override-weekly"
 
-    assert main(
-        [
-            "new",
-            "market-weekly",
-            str(workspace),
-            "--industry",
-            "solar manufacturing",
-            "--policy-profile",
-            "internet_default",
-        ]
-    ) == 0
+    assert (
+        main(
+            [
+                "new",
+                "market-weekly",
+                str(workspace),
+                "--industry",
+                "solar manufacturing",
+                "--policy-profile",
+                "internet_default",
+            ]
+        )
+        == 0
+    )
     capsys.readouterr()
 
     spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
 
     assert spec["policy_profile"] == "internet_default"
     assert spec["policy_profile_resolution"]["source"] == "explicit_override"
-    assert spec["policy_profile_resolution"]["matched_rule"] == "explicit_policy_profile"
+    assert (
+        spec["policy_profile_resolution"]["matched_rule"] == "explicit_policy_profile"
+    )
 
 
 def test_new_report_pack_workspace_rejects_unknown_policy_profile(
@@ -669,7 +859,18 @@ def test_new_report_pack_workspace_rejects_unknown_policy_profile(
 ) -> None:
     workspace = tmp_path / "bad-profile"
 
-    assert main(["new", "market-weekly", str(workspace), "--policy-profile", "missing_profile"]) == 1
+    assert (
+        main(
+            [
+                "new",
+                "market-weekly",
+                str(workspace),
+                "--policy-profile",
+                "missing_profile",
+            ]
+        )
+        == 1
+    )
 
     output = capsys.readouterr().out
     assert "unknown policy_profile:missing_profile" in output
@@ -703,7 +904,9 @@ def test_new_report_pack_workspace_does_not_overwrite_report_spec_without_force(
 
     output = capsys.readouterr().out
     assert "Refusing to overwrite existing file" in output
-    assert (workspace / "report_spec.yaml").read_text(encoding="utf-8") == "existing: true\n"
+    assert (workspace / "report_spec.yaml").read_text(
+        encoding="utf-8"
+    ) == "existing: true\n"
 
 
 def test_briefloop_alias_help_uses_alias_program_name(monkeypatch) -> None:

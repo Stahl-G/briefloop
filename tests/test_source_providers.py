@@ -1,13 +1,28 @@
 """Tests for the Source Provider system."""
+
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import socket
 from io import BytesIO
 
+import pytest
 
-from multi_agent_brief.sources.base import SourceConfig, SourceItem, SourceQuery, SOURCE_PROFILES
-from multi_agent_brief.sources.search_backends.base import SearchResult
+from multi_agent_brief.sources.base import (
+    SourceConfig,
+    SourceItem,
+    SourceQuery,
+    SOURCE_PROFILES,
+)
+from multi_agent_brief.sources.search_backends.base import (
+    SearchBackendError,
+    SearchResult,
+)
+from multi_agent_brief.sources.search_backends.tavily import (
+    TavilyBackend,
+)
 from multi_agent_brief.sources.manual import ManualProvider
 from multi_agent_brief.sources.rss import RssProvider
 from multi_agent_brief.sources.web_search import WebSearchProvider
@@ -19,13 +34,22 @@ from multi_agent_brief.sources.cli_provider import CliProvider
 from multi_agent_brief.sources.opencli_provider import OpenCliProvider
 from multi_agent_brief.sources.feishu_provider import FeishuProvider
 from multi_agent_brief.sources.mineru_provider import MineruProvider
-from multi_agent_brief.sources.normalizer import normalize_source_item, dedupe_sources, filter_by_recency
-from multi_agent_brief.sources.registry import load_sources_config, collect_all_sources, validate_all_providers
+from multi_agent_brief.sources.normalizer import (
+    normalize_source_item,
+    dedupe_sources,
+    filter_by_recency,
+)
+from multi_agent_brief.sources.registry import (
+    load_sources_config,
+    collect_all_sources,
+    validate_all_providers,
+)
 from multi_agent_brief.sources.doctor import run_doctor, format_doctor_report
 
 
 class FakeSearchBackend:
     """Test-local fake backend replacing the removed MockSearchBackend."""
+
     name = "fake"
 
     def __init__(self):
@@ -49,6 +73,7 @@ class FakeSearchBackend:
 
 class EnvSearchBackend:
     """Fake backend that behaves like real backends by reading os.environ."""
+
     name = "env_fake"
 
     def __init__(self, api_key_env: str = "TAVILY_API_KEY") -> None:
@@ -73,12 +98,19 @@ class EnvSearchBackend:
 
 # --- SourceConfig ---
 
+
 def test_source_config_from_dict():
     data = {
-        "source_strategy": {"profile": "research", "enabled_providers": ["manual", "rss"]},
+        "source_strategy": {
+            "profile": "research",
+            "enabled_providers": ["manual", "rss"],
+        },
         "manual": {"enabled": True, "sources": [{"name": "Test", "path": "input/"}]},
         "rss": {"enabled": False},
-        "opencli": {"enabled": True, "commands": [{"name": "zhihu-hot", "site": "zhihu", "command": "hot"}]},
+        "opencli": {
+            "enabled": True,
+            "commands": [{"name": "zhihu-hot", "site": "zhihu", "command": "hot"}],
+        },
     }
     config = SourceConfig.from_dict(data)
     assert config.profile == "research"
@@ -101,10 +133,14 @@ def test_source_profiles_defined():
 
 # --- ManualProvider ---
 
+
 def test_manual_provider_loads_local_files(tmp_path):
     input_dir = tmp_path / "input"
     input_dir.mkdir()
-    (input_dir / "news.md").write_text("- Manufacturing demand grew 10% in Q1.\n- New tariff announced.\n", encoding="utf-8")
+    (input_dir / "news.md").write_text(
+        "- Manufacturing demand grew 10% in Q1.\n- New tariff announced.\n",
+        encoding="utf-8",
+    )
 
     provider = ManualProvider()
     config = {"sources": [{"name": "Test", "path": str(input_dir)}]}
@@ -119,11 +155,16 @@ def test_manual_provider_loads_local_files(tmp_path):
 def test_manual_provider_loads_json(tmp_path):
     input_dir = tmp_path / "input"
     input_dir.mkdir()
-    (input_dir / "data.json").write_text(json.dumps({
-        "source_url": "https://example.com",
-        "published_at": "2026-06-01",
-        "items": ["Item one", "Item two"],
-    }), encoding="utf-8")
+    (input_dir / "data.json").write_text(
+        json.dumps(
+            {
+                "source_url": "https://example.com",
+                "published_at": "2026-06-01",
+                "items": ["Item one", "Item two"],
+            }
+        ),
+        encoding="utf-8",
+    )
 
     provider = ManualProvider()
     config = {"sources": [{"name": "JSON Source", "path": str(input_dir)}]}
@@ -151,9 +192,14 @@ def test_manual_provider_url_entry(monkeypatch):
         def read(self, max_bytes):
             return b"<article>Trade journal reportable update.</article>"
 
-    monkeypatch.setattr("multi_agent_brief.sources.manual.urlopen", lambda req, timeout=10: FakeResponse())
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.manual.urlopen",
+        lambda req, timeout=10: FakeResponse(),
+    )
     provider = ManualProvider()
-    config = {"sources": [{"name": "Trade Journal", "url": "https://www.trade-journal.com/"}]}
+    config = {
+        "sources": [{"name": "Trade Journal", "url": "https://www.trade-journal.com/"}]
+    }
     items = provider.collect(SourceQuery(), config)
 
     assert len(items) == 1
@@ -164,7 +210,9 @@ def test_manual_provider_url_entry(monkeypatch):
 
 def test_manual_provider_skips_disabled():
     provider = ManualProvider()
-    config = {"sources": [{"name": "Disabled", "path": "/nonexistent", "enabled": False}]}
+    config = {
+        "sources": [{"name": "Disabled", "path": "/nonexistent", "enabled": False}]
+    }
     items = provider.collect(SourceQuery(), config)
     assert items == []
 
@@ -177,6 +225,7 @@ def test_manual_provider_validate_config():
 
 # --- RssProvider ---
 
+
 def test_rss_provider_validate_config():
     provider = RssProvider()
     errors = provider.validate_config({"feeds": [{"name": "", "url": ""}]})
@@ -185,12 +234,15 @@ def test_rss_provider_validate_config():
 
 def test_rss_provider_skips_disabled():
     provider = RssProvider()
-    config = {"feeds": [{"name": "Test", "url": "http://example.com/feed", "enabled": False}]}
+    config = {
+        "feeds": [{"name": "Test", "url": "http://example.com/feed", "enabled": False}]
+    }
     items = provider.collect(SourceQuery(), config)
     assert items == []
 
 
 # --- WebSearchProvider with injected backend ---
+
 
 def test_web_search_with_injected_fake_backend_returns_results():
     provider = WebSearchProvider(backend=FakeSearchBackend())
@@ -198,8 +250,6 @@ def test_web_search_with_injected_fake_backend_returns_results():
     items = provider.collect(SourceQuery(keywords=["manufacturing"]), config)
     assert len(items) > 0
     assert items[0].source_type == "web_search"
-
-
 
 
 def test_web_search_metadata_uses_backend_name():
@@ -308,7 +358,9 @@ def test_web_search_runtime_tool_rejects_backend_configuration():
     assert "runtime_tool must not configure backend" in errors[0]
 
 
-def test_web_search_collect_uses_workspace_env_for_known_backend_key(tmp_path, monkeypatch):
+def test_web_search_collect_uses_workspace_env_for_known_backend_key(
+    tmp_path, monkeypatch
+):
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
     (tmp_path / ".env").write_text(
         "TAVILY_API_KEY=workspace-secret-for-collect\n",
@@ -318,7 +370,12 @@ def test_web_search_collect_uses_workspace_env_for_known_backend_key(tmp_path, m
 
     items = provider.collect(
         SourceQuery(keywords=["manufacturing"]),
-        {"enabled": True, "mode": "external_api", "backend": "tavily", "_workspace_dir": str(tmp_path)},
+        {
+            "enabled": True,
+            "mode": "external_api",
+            "backend": "tavily",
+            "_workspace_dir": str(tmp_path),
+        },
     )
 
     assert len(items) == 1
@@ -326,7 +383,164 @@ def test_web_search_collect_uses_workspace_env_for_known_backend_key(tmp_path, m
     assert os.environ.get("TAVILY_API_KEY") is None
 
 
+def test_tavily_normalizes_strict_dates_and_preserves_provider_value(monkeypatch):
+    sentinel = "test-only-tavily-key"
+    cases = (
+        ("Thu, 23 Jul 2026 22:59:50 GMT", "2026-07-23"),
+        ("Wed, 22 Jul 2026 05:30:00 GMT", "2026-07-22"),
+        ("2026-07-23", "2026-07-23"),
+        ("2026-07-23T23:30:00-02:00", "2026-07-24"),
+        ("2026-07-23T23:30:00", "2026-07-23"),
+        ("Thu, 23 Jul 2026 00:30:00 +1400", "2026-07-22"),
+        ("Thu, 23 Jul 2026 22:59:50", ""),
+        ("Fri, 23 Jul 2026 22:59:50 GMT", ""),
+        ("July 23, 2026", ""),
+        ("2 days ago", ""),
+        (" 2026-07-23", ""),
+        ("2026-02-30", ""),
+    )
+    current_published_date = ""
+    response_bytes = b""
+
+    class _FakeResponse:
+        status = 200
+
+        def read(self, _limit=-1):
+            return response_bytes
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def _urlopen(_request, timeout=30):
+        assert timeout == 30
+        return _FakeResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", _urlopen)
+    monkeypatch.setenv("TAVILY_API_KEY", sentinel)
+
+    for current_published_date, expected in cases:
+        response_bytes = json.dumps(
+            {
+                "results": [
+                    {
+                        "title": "Dated result",
+                        "url": "https://example.com/dated",
+                        "content": "search snippet",
+                        "raw_content": "retrieved durable page extract",
+                        "published_date": current_published_date,
+                        "score": 0.9,
+                    }
+                ]
+            }
+        ).encode("utf-8")
+
+        response = TavilyBackend().search_response("test query", max_results=1)
+        result = response.results[0]
+
+        assert response.raw_response == response_bytes
+        assert result.published_at == expected
+        assert result.raw_projection["published_date"] == current_published_date
+        assert result.metadata["date_status"] == (
+            "published_at_present" if expected else "missing_published_at"
+        )
+        assert result.metadata["source_temporality"] == (
+            "published" if expected else "retrieved_only"
+        )
+        assert sentinel not in repr(result)
+
+
+def test_tavily_transport_failure_is_stable_and_value_free(monkeypatch):
+    sentinel = "tvly-secret-must-not-escape"
+
+    def _raise_transport_error(request, timeout=30):
+        raise RuntimeError(sentinel)
+
+    monkeypatch.setattr("urllib.request.urlopen", _raise_transport_error)
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only-tavily-key")
+
+    try:
+        TavilyBackend().search("test query")
+    except SearchBackendError as exc:
+        assert str(exc) == "Tavily search failed"
+        assert exc.backend == "tavily"
+        assert exc.__cause__ is None
+        assert exc.__context__ is None
+        assert sentinel not in str(exc)
+        assert sentinel not in repr(exc)
+    else:
+        raise AssertionError("transport failure must remain a typed failure")
+
+
+def test_tavily_rejects_secret_or_secret_hash_in_ignored_response_field(
+    monkeypatch,
+):
+    sentinel = "tvly-response-echo-sentinel"
+    sentinel_hash = hashlib.sha256(sentinel.encode("utf-8")).hexdigest()
+    echoed_values = (sentinel, sentinel_hash.upper())
+    calls = 0
+
+    class _FakeResponse:
+        status = 200
+
+        def __init__(self, echoed: str) -> None:
+            self._echoed = echoed
+
+        def read(self, _limit=-1):
+            return json.dumps(
+                {
+                    "ignored_diagnostic": self._echoed,
+                    "results": [
+                        {
+                            "title": "Durable result",
+                            "url": "https://example.com/durable",
+                            "content": "search snippet",
+                            "raw_content": "retrieved durable page extract",
+                            "score": 0.9,
+                        }
+                    ],
+                }
+            ).encode("utf-8")
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    current_echo = ""
+
+    def _urlopen(_request, timeout=30):
+        nonlocal calls
+        assert timeout == 30
+        calls += 1
+        return _FakeResponse(current_echo)
+
+    monkeypatch.setattr("urllib.request.urlopen", _urlopen)
+    monkeypatch.setenv("TAVILY_API_KEY", sentinel)
+
+    for index, echoed in enumerate(echoed_values, start=1):
+        current_echo = echoed
+        try:
+            TavilyBackend().search_response("test query", max_results=1)
+        except SearchBackendError as exc:
+            assert str(exc) == "Tavily search failed"
+            assert exc.backend == "tavily"
+            assert exc.__cause__ is None
+            assert exc.__context__ is None
+            assert sentinel not in str(exc)
+            assert sentinel not in repr(exc)
+            assert sentinel_hash not in str(exc).lower()
+            assert sentinel_hash not in repr(exc).lower()
+        else:
+            raise AssertionError("credential echo must remain a typed failure")
+        assert calls == index
+
+
 # --- Non-stub providers (api_news, filings, mcp, cli) ---
+
 
 def test_news_api_disabled_returns_empty():
     provider = NewsApiProvider()
@@ -373,7 +587,9 @@ def test_news_api_success_items_carry_retrieved_at(monkeypatch):
         def __exit__(self, *args):
             return False
 
-    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=30: _FakeResponse())
+    monkeypatch.setattr(
+        "urllib.request.urlopen", lambda req, timeout=30: _FakeResponse()
+    )
     monkeypatch.setenv("NEWSAPI_API_KEY", "test-key")
     provider = NewsApiProvider()
     items = provider.collect(
@@ -388,7 +604,9 @@ def test_cached_package_json_string_items_bind_source_path(tmp_path):
     package_dir = tmp_path / "cache"
     package_dir.mkdir()
     package_file = package_dir / "news.json"
-    package_file.write_text(json.dumps({"items": ["A" * 60, "B" * 60]}), encoding="utf-8")
+    package_file.write_text(
+        json.dumps({"items": ["A" * 60, "B" * 60]}), encoding="utf-8"
+    )
 
     provider = CachedPackageProvider()
     items = provider.collect(
@@ -421,10 +639,12 @@ def test_filings_validate_config_no_providers():
 
 def test_filings_validate_config_no_user_agent():
     provider = FilingsProvider()
-    errors = provider.validate_config({
-        "enabled": True,
-        "providers": [{"name": "sec"}],
-    })
+    errors = provider.validate_config(
+        {
+            "enabled": True,
+            "providers": [{"name": "sec"}],
+        }
+    )
     assert any("missing 'user_agent'" in e for e in errors)
 
 
@@ -437,6 +657,7 @@ def test_mcp_disabled_returns_empty():
 
 # --- OpenCliProvider ---
 
+
 def test_opencli_disabled_returns_empty():
     provider = OpenCliProvider()
     items = provider.collect(SourceQuery(keywords=["OpenAI"]), {"enabled": False})
@@ -444,12 +665,17 @@ def test_opencli_disabled_returns_empty():
 
 
 def test_opencli_validate_rejects_write_command(monkeypatch):
-    monkeypatch.setattr("multi_agent_brief.sources.opencli_provider.shutil.which", lambda cmd: "/bin/opencli")
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.opencli_provider.shutil.which",
+        lambda cmd: "/bin/opencli",
+    )
     provider = OpenCliProvider()
-    errors = provider.validate_config({
-        "enabled": True,
-        "commands": [{"name": "bad-like", "site": "zhihu", "command": "like"}],
-    })
+    errors = provider.validate_config(
+        {
+            "enabled": True,
+            "commands": [{"name": "bad-like", "site": "zhihu", "command": "like"}],
+        }
+    )
     assert any("read-only allowlist" in e for e in errors)
 
 
@@ -470,7 +696,9 @@ def test_opencli_collects_json_items(monkeypatch):
         captured["timeout"] = timeout
         return FakeResult()
 
-    monkeypatch.setattr("multi_agent_brief.sources.opencli_provider.subprocess.run", fake_run)
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.opencli_provider.subprocess.run", fake_run
+    )
 
     provider = OpenCliProvider()
     items = provider.collect(
@@ -490,7 +718,14 @@ def test_opencli_collects_json_items(monkeypatch):
     )
 
     assert captured["cmd"] == [
-        "opencli", "zhihu", "search", "OpenAI", "--limit", "3", "-f", "json",
+        "opencli",
+        "zhihu",
+        "search",
+        "OpenAI",
+        "--limit",
+        "3",
+        "-f",
+        "json",
     ]
     assert captured["timeout"] == 60
     assert len(items) == 1
@@ -506,7 +741,10 @@ def test_opencli_registry_collects_provider(monkeypatch):
         stdout = '[{"title":"Zhihu hot","content":"A hot topic","url":"https://www.zhihu.com/question/2"}]'
         stderr = ""
 
-    monkeypatch.setattr("multi_agent_brief.sources.opencli_provider.shutil.which", lambda cmd: "/bin/opencli")
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.opencli_provider.shutil.which",
+        lambda cmd: "/bin/opencli",
+    )
     monkeypatch.setattr(
         "multi_agent_brief.sources.opencli_provider.subprocess.run",
         lambda cmd, capture_output, text, timeout: FakeResult(),
@@ -541,10 +779,12 @@ def test_mcp_validate_config_no_servers():
 
 def test_mcp_validate_config_bad_command():
     provider = McpProvider()
-    errors = provider.validate_config({
-        "enabled": True,
-        "servers": [{"name": "bad", "command": "nonexistent_command_xyz"}],
-    })
+    errors = provider.validate_config(
+        {
+            "enabled": True,
+            "servers": [{"name": "bad", "command": "nonexistent_command_xyz"}],
+        }
+    )
     assert any("not found in PATH" in e for e in errors)
 
 
@@ -570,26 +810,39 @@ def test_cli_validate_config_no_scrapers():
 
 def test_cli_validate_config_bad_command():
     provider = CliProvider()
-    errors = provider.validate_config({
-        "enabled": True,
-        "scrapers": [{"name": "bad", "command": "nonexistent_cli_tool"}],
-    })
+    errors = provider.validate_config(
+        {
+            "enabled": True,
+            "scrapers": [{"name": "bad", "command": "nonexistent_cli_tool"}],
+        }
+    )
     assert any("not found in PATH" in e for e in errors)
 
 
 # --- Bugfix tests: MCP text/bytes, NewsAPI validate, CLI error_type ---
 
+
 def test_mcp_jsonrpc_communication(monkeypatch):
     """Mock _jsonrpc_call to return canned responses and verify full lifecycle."""
     provider = McpProvider()
-    call_responses = iter([
-        # initialize response
-        {"protocolVersion": "2025-06-18", "capabilities": {"tools": {}}, "serverInfo": {"name": "mock", "version": "1.0"}},
-        # tools/list response
-        {"tools": [{"name": "echo", "description": "Echo tool", "inputSchema": {}}]},
-        # tools/call response
-        {"content": [{"type": "text", "text": "Hello from MCP"}]},
-    ])
+    call_responses = iter(
+        [
+            # initialize response
+            {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "mock", "version": "1.0"},
+            },
+            # tools/list response
+            {
+                "tools": [
+                    {"name": "echo", "description": "Echo tool", "inputSchema": {}}
+                ]
+            },
+            # tools/call response
+            {"content": [{"type": "text", "text": "Hello from MCP"}]},
+        ]
+    )
 
     def mock_call(_self, _proc, method, params):
         return next(call_responses, None)
@@ -622,16 +875,20 @@ def test_mcp_jsonrpc_communication(monkeypatch):
                 pass
 
     monkeypatch.setattr(McpProvider, "_jsonrpc_call", mock_call)
-    monkeypatch.setattr(McpProvider, "_jsonrpc_notify", lambda _self, _proc, _method: None)
+    monkeypatch.setattr(
+        McpProvider, "_jsonrpc_notify", lambda _self, _proc, _method: None
+    )
     monkeypatch.setattr(McpProvider, "_cleanup_proc", mock_cleanup)
 
     config = {
         "enabled": True,
-        "servers": [{
-            "name": "test-server",
-            "command": "echo",
-            "args": [],
-        }],
+        "servers": [
+            {
+                "name": "test-server",
+                "command": "echo",
+                "args": [],
+            }
+        ],
     }
     items = provider.collect(SourceQuery(keywords=["test"]), config)
     assert len(items) == 1
@@ -675,7 +932,9 @@ def test_mcp_jsonrpc_init_failure_returns_empty(monkeypatch):
                 pass
 
     monkeypatch.setattr(McpProvider, "_jsonrpc_call", mock_fail)
-    monkeypatch.setattr(McpProvider, "_jsonrpc_notify", lambda _self, _proc, _method: None)
+    monkeypatch.setattr(
+        McpProvider, "_jsonrpc_notify", lambda _self, _proc, _method: None
+    )
     monkeypatch.setattr(McpProvider, "_cleanup_proc", mock_cleanup)
 
     config = {
@@ -690,13 +949,15 @@ def test_news_api_validate_skips_non_newsapi_providers():
     """validate_config should only check providers with name=='newsapi'."""
     provider = NewsApiProvider()
     # Mixed providers: sec entry should be ignored by NewsApiProvider
-    errors = provider.validate_config({
-        "enabled": True,
-        "providers": [
-            {"name": "sec", "user_agent": "Test"},
-            {"name": "newsapi", "api_key_env": "NEWSAPI_API_KEY"},
-        ],
-    })
+    errors = provider.validate_config(
+        {
+            "enabled": True,
+            "providers": [
+                {"name": "sec", "user_agent": "Test"},
+                {"name": "newsapi", "api_key_env": "NEWSAPI_API_KEY"},
+            ],
+        }
+    )
     # Should NOT complain about the 'sec' provider
     assert not any("sec" in e for e in errors)
     # Should complain about missing key (since env isn't set in test)
@@ -712,9 +973,12 @@ def test_cli_nonzero_exit_has_error_type(monkeypatch):
             returncode = 1
             stdout = ""
             stderr = "Something went wrong"
+
         return MockResult()
 
-    monkeypatch.setattr("multi_agent_brief.sources.cli_provider.subprocess.run", mock_run)
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.cli_provider.subprocess.run", mock_run
+    )
     config = {
         "enabled": True,
         "scrapers": [{"name": "failer", "command": "false"}],
@@ -725,6 +989,7 @@ def test_cli_nonzero_exit_has_error_type(monkeypatch):
 
 
 # --- Feishu Provider ---
+
 
 def test_feishu_disabled_returns_empty():
     provider = FeishuProvider()
@@ -748,25 +1013,30 @@ def test_feishu_validate_no_sources():
 
 def test_feishu_validate_unknown_type():
     provider = FeishuProvider()
-    errors = provider.validate_config({
-        "enabled": True,
-        "docs": [{"name": "bad", "token": "x", "type": "invalid_type"}],
-    })
+    errors = provider.validate_config(
+        {
+            "enabled": True,
+            "docs": [{"name": "bad", "token": "x", "type": "invalid_type"}],
+        }
+    )
     assert any("unknown type" in e for e in errors)
 
 
 def test_feishu_validate_doc_without_token():
     provider = FeishuProvider()
-    errors = provider.validate_config({
-        "enabled": True,
-        "docs": [{"name": "no-token", "type": "doc"}],
-    })
+    errors = provider.validate_config(
+        {
+            "enabled": True,
+            "docs": [{"name": "no-token", "type": "doc"}],
+        }
+    )
     assert any("requires 'token'" in e for e in errors)
 
 
 def test_feishu_registered_in_provider_classes():
     """FeishuProvider must be findable via PROVIDER_CLASSES."""
     from multi_agent_brief.sources.registry import PROVIDER_CLASSES
+
     assert "feishu" in PROVIDER_CLASSES
     assert PROVIDER_CLASSES["feishu"] is FeishuProvider
 
@@ -784,13 +1054,15 @@ def test_feishu_collect_makes_source_items_with_mocked_lark_cli(monkeypatch):
 
     # Mock _collect_from_source to test _make_item directly
     def mock_fetch_doc(_self, name, token, src):
-        return [_self._make_item(
-            title="Test Doc",
-            content="Test content from Feishu doc",
-            name=name,
-            stype="doc",
-            url="https://feishu.cn/doc/test",
-        )]
+        return [
+            _self._make_item(
+                title="Test Doc",
+                content="Test content from Feishu doc",
+                name=name,
+                stype="doc",
+                url="https://feishu.cn/doc/test",
+            )
+        ]
 
     monkeypatch.setattr(FeishuProvider, "_fetch_doc", mock_fetch_doc)
 
@@ -808,9 +1080,12 @@ def test_feishu_collect_makes_source_items_with_mocked_lark_cli(monkeypatch):
 
 # --- Feishu Delivery ---
 
+
 def test_feishu_delivery_no_lark_cli(monkeypatch):
     """When lark-cli is not installed, deliver should fail gracefully."""
-    monkeypatch.setattr("multi_agent_brief.delivery.feishu.shutil.which", lambda cmd: None)
+    monkeypatch.setattr(
+        "multi_agent_brief.delivery.feishu.shutil.which", lambda cmd: None
+    )
     from multi_agent_brief.delivery.feishu import FeishuDeliveryConnector
     from multi_agent_brief.delivery.base import DeliveryArtifact, DeliveryTarget
 
@@ -824,6 +1099,7 @@ def test_feishu_delivery_no_lark_cli(monkeypatch):
 
 
 # --- MinerU Provider ---
+
 
 def test_mineru_disabled_returns_empty():
     provider = MineruProvider()
@@ -847,25 +1123,33 @@ def test_mineru_validate_no_paths():
 
 def test_mineru_validate_nonexistent_path():
     provider = MineruProvider()
-    errors = provider.validate_config({
-        "enabled": True,
-        "paths": [{"name": "bad", "path": "/nonexistent/file.pdf"}],
-    })
+    errors = provider.validate_config(
+        {
+            "enabled": True,
+            "paths": [{"name": "bad", "path": "/nonexistent/file.pdf"}],
+        }
+    )
     assert any("path does not exist" in e for e in errors)
 
 
 def test_mineru_validate_no_mineru_binary(monkeypatch):
-    monkeypatch.setattr("multi_agent_brief.sources.mineru_provider.shutil.which", lambda cmd: None)
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.mineru_provider.shutil.which", lambda cmd: None
+    )
     provider = MineruProvider()
-    errors = provider.validate_config({
-        "enabled": True,
-        "paths": [{"name": "test", "path": "."}],
-    })
+    errors = provider.validate_config(
+        {
+            "enabled": True,
+            "paths": [{"name": "test", "path": "."}],
+        }
+    )
     assert any("mineru.*not found" in e or "not found" in e for e in errors)
 
 
 def test_mineru_collect_no_binary_returns_empty(monkeypatch):
-    monkeypatch.setattr("multi_agent_brief.sources.mineru_provider.shutil.which", lambda cmd: None)
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.mineru_provider.shutil.which", lambda cmd: None
+    )
     provider = MineruProvider()
     config = {"enabled": True, "paths": [{"name": "test", "path": "."}]}
     items = provider.collect(SourceQuery(), config)
@@ -874,6 +1158,7 @@ def test_mineru_collect_no_binary_returns_empty(monkeypatch):
 
 def test_mineru_registered_in_provider_classes():
     from multi_agent_brief.sources.registry import PROVIDER_CLASSES
+
     assert "mineru" in PROVIDER_CLASSES
     assert PROVIDER_CLASSES["mineru"] is MineruProvider
 
@@ -885,6 +1170,7 @@ def test_mineru_source_config_has_mineru_field():
 
 
 # --- MinerU remote API ---
+
 
 def test_mineru_remote_disabled_returns_empty():
     provider = MineruProvider()
@@ -908,12 +1194,14 @@ def test_mineru_remote_validate_no_files():
 
 def test_mineru_remote_validate_premium_no_token():
     provider = MineruProvider()
-    errors = provider.validate_config({
-        "enabled": True,
-        "mode": "remote",
-        "api_type": "premium",
-        "files": [{"name": "t", "url": "x"}],
-    })
+    errors = provider.validate_config(
+        {
+            "enabled": True,
+            "mode": "remote",
+            "api_type": "premium",
+            "files": [{"name": "t", "url": "x"}],
+        }
+    )
     assert any("api_token" in e.lower() for e in errors)
 
 
@@ -921,8 +1209,23 @@ def test_mineru_remote_agent_url_poll_mocked(monkeypatch):
     """Mock agent URL parse at method level: submit → poll done → download markdown."""
     provider = MineruProvider()
 
-    def mock_agent_parse_url(_self, name, file_url, language, enable_table, enable_formula, is_ocr, poll_timeout, poll_interval_val):
-        return _self._md_to_items(name, "# Hello\n\nThis is parsed markdown from MinerU", "agent_api", url=file_url)
+    def mock_agent_parse_url(
+        _self,
+        name,
+        file_url,
+        language,
+        enable_table,
+        enable_formula,
+        is_ocr,
+        poll_timeout,
+        poll_interval_val,
+    ):
+        return _self._md_to_items(
+            name,
+            "# Hello\n\nThis is parsed markdown from MinerU",
+            "agent_api",
+            url=file_url,
+        )
 
     monkeypatch.setattr(MineruProvider, "_agent_parse_url", mock_agent_parse_url)
 
@@ -930,7 +1233,12 @@ def test_mineru_remote_agent_url_poll_mocked(monkeypatch):
         "enabled": True,
         "mode": "remote",
         "api_type": "agent",
-        "files": [{"name": "Test Doc", "url": "https://cdn-mineru.openxlab.org.cn/demo/example.pdf"}],
+        "files": [
+            {
+                "name": "Test Doc",
+                "url": "https://cdn-mineru.openxlab.org.cn/demo/example.pdf",
+            }
+        ],
     }
     items = provider.collect(SourceQuery(), config)
     assert len(items) == 1
@@ -942,8 +1250,15 @@ def test_mineru_remote_premium_url_poll_mocked(monkeypatch):
     """Mock premium URL parse at method level: submit → poll done → download zip → extract full.md."""
     provider = MineruProvider()
 
-    def mock_premium_parse_url(_self, name, file_url, token, model, language, timeout, interval, headers):
-        return _self._md_to_items(name, "# Premium Parse\n\nPremium quality content.", "premium_api", url=file_url)
+    def mock_premium_parse_url(
+        _self, name, file_url, token, model, language, timeout, interval, headers
+    ):
+        return _self._md_to_items(
+            name,
+            "# Premium Parse\n\nPremium quality content.",
+            "premium_api",
+            url=file_url,
+        )
 
     monkeypatch.setattr(MineruProvider, "_premium_parse_url", mock_premium_parse_url)
 
@@ -974,6 +1289,7 @@ def test_mineru_http_put_file_no_content_type(monkeypatch, tmp_path):
         captured_req["has_data"] = req.data is not None
         # Simulate success
         from unittest.mock import MagicMock
+
         resp = MagicMock()
         resp.status = 200
         resp.read.return_value = b""
@@ -992,7 +1308,9 @@ def test_mineru_http_put_file_no_content_type(monkeypatch, tmp_path):
     assert captured_req["method"] == "PUT"
     assert captured_req["has_data"] is True
     # Content-Type header must be empty string, not 'application/x-www-form-urlencoded'
-    ct = captured_req["headers"].get("Content-type", captured_req["headers"].get("Content-Type", ""))
+    ct = captured_req["headers"].get(
+        "Content-type", captured_req["headers"].get("Content-Type", "")
+    )
     assert ct == "", f"Expected empty Content-Type, got: {ct!r}"
 
 
@@ -1005,8 +1323,11 @@ def test_mineru_http_put_file_error_prints_body(monkeypatch, tmp_path, capsys):
     def mock_open(self, req, *args, **kwargs):
         error_body = b'<?xml version="1.0"?>\n<Error><Code>SignatureDoesNotMatch</Code><Message>The signature ...</Message></Error>'
         raise urllib.error.HTTPError(
-            url=req.full_url, code=403, msg="Forbidden",
-            hdrs=None, fp=BytesIO(error_body),
+            url=req.full_url,
+            code=403,
+            msg="Forbidden",
+            hdrs=None,
+            fp=BytesIO(error_body),
         )
 
     monkeypatch.setattr(urllib.request.OpenerDirector, "open", mock_open)
@@ -1016,6 +1337,7 @@ def test_mineru_http_put_file_error_prints_body(monkeypatch, tmp_path, capsys):
 
     # Suppress ResourceWarning for this test since we're testing error handling
     import warnings
+
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", ResourceWarning)
         result = _http_put_file("https://example.com/signed-url", str(test_file))
@@ -1028,10 +1350,15 @@ def test_mineru_http_put_file_error_prints_body(monkeypatch, tmp_path, capsys):
 
 # --- Normalizer ---
 
+
 def test_normalize_source_item():
     item = SourceItem(
-        source_id="", source_name="Test", source_type="manual",
-        title="  Hello World  ", content="  content  ", url="",
+        source_id="",
+        source_name="Test",
+        source_type="manual",
+        title="  Hello World  ",
+        content="  content  ",
+        url="",
     )
     normalized = normalize_source_item(item)
     assert normalized.title == "Hello World"
@@ -1042,9 +1369,30 @@ def test_normalize_source_item():
 
 def test_dedupe_sources():
     items = [
-        SourceItem(source_id="A", source_name="A", source_type="manual", title="T1", content="C1", dedupe_key="key1"),
-        SourceItem(source_id="B", source_name="B", source_type="manual", title="T2", content="C2", dedupe_key="key1"),
-        SourceItem(source_id="C", source_name="C", source_type="manual", title="T3", content="C3", dedupe_key="key2"),
+        SourceItem(
+            source_id="A",
+            source_name="A",
+            source_type="manual",
+            title="T1",
+            content="C1",
+            dedupe_key="key1",
+        ),
+        SourceItem(
+            source_id="B",
+            source_name="B",
+            source_type="manual",
+            title="T2",
+            content="C2",
+            dedupe_key="key1",
+        ),
+        SourceItem(
+            source_id="C",
+            source_name="C",
+            source_type="manual",
+            title="T3",
+            content="C3",
+            dedupe_key="key2",
+        ),
     ]
     result = dedupe_sources(items)
     assert len(result) == 2
@@ -1052,13 +1400,32 @@ def test_dedupe_sources():
 
 def test_filter_by_recency():
     from datetime import datetime, timezone, timedelta
+
     now = datetime.now(timezone.utc)
     items = [
-        SourceItem(source_id="A", source_name="A", source_type="manual", title="Recent", content="C",
-                   published_at=now.isoformat()),
-        SourceItem(source_id="B", source_name="B", source_type="manual", title="Old", content="C",
-                   published_at=(now - timedelta(days=30)).isoformat()),
-        SourceItem(source_id="C", source_name="C", source_type="manual", title="NoDate", content="C"),
+        SourceItem(
+            source_id="A",
+            source_name="A",
+            source_type="manual",
+            title="Recent",
+            content="C",
+            published_at=now.isoformat(),
+        ),
+        SourceItem(
+            source_id="B",
+            source_name="B",
+            source_type="manual",
+            title="Old",
+            content="C",
+            published_at=(now - timedelta(days=30)).isoformat(),
+        ),
+        SourceItem(
+            source_id="C",
+            source_name="C",
+            source_type="manual",
+            title="NoDate",
+            content="C",
+        ),
     ]
     result = filter_by_recency(items, 14)
     assert len(result) == 2  # Recent + NoDate
@@ -1066,9 +1433,11 @@ def test_filter_by_recency():
 
 # --- Registry ---
 
+
 def test_load_sources_config(tmp_path):
     sources_path = tmp_path / "sources.yaml"
-    sources_path.write_text("""
+    sources_path.write_text(
+        """
 source_strategy:
   profile: conservative
   enabled_providers:
@@ -1078,7 +1447,9 @@ manual:
   sources:
     - name: Test
       path: input/
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
 
     config = load_sources_config(sources_path)
     assert config.profile == "conservative"
@@ -1088,6 +1459,7 @@ manual:
 def test_validate_all_providers_passes():
     """validate_all_providers should pass for a valid config."""
     import tempfile
+
     with tempfile.TemporaryDirectory() as td:
         config = SourceConfig(
             profile="research",
@@ -1101,7 +1473,9 @@ def test_validate_all_providers_passes():
 def test_collect_all_sources_manual(tmp_path):
     input_dir = tmp_path / "input"
     input_dir.mkdir()
-    (input_dir / "test.md").write_text("- A manufacturing factory expanded capacity.\n", encoding="utf-8")
+    (input_dir / "test.md").write_text(
+        "- A manufacturing factory expanded capacity.\n", encoding="utf-8"
+    )
 
     config = SourceConfig(
         enabled_providers=["manual"],
@@ -1115,6 +1489,7 @@ def test_collect_all_sources_manual(tmp_path):
 
 # --- Doctor ---
 
+
 def test_doctor_missing_config():
     results = run_doctor(config_path="/nonexistent/config.yaml")
     assert any(r.status == "ERROR" for r in results)
@@ -1123,7 +1498,8 @@ def test_doctor_missing_config():
 def test_doctor_with_valid_config(tmp_path):
     config_path = tmp_path / "config.yaml"
     config_path.write_text("project:\n  name: Test\n", encoding="utf-8")
-    (tmp_path / "sources.yaml").write_text("""
+    (tmp_path / "sources.yaml").write_text(
+        """
 source_strategy:
   profile: research
   enabled_providers:
@@ -1133,7 +1509,9 @@ manual:
   sources:
     - name: Test
       path: input/
-""", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
 
     results = run_doctor(config_path=config_path)
     report = format_doctor_report(results)
@@ -1183,7 +1561,9 @@ def test_web_search_validate_uses_backend_default_env(monkeypatch):
     monkeypatch.delenv("EXA_API_KEY", raising=False)
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
 
-    errors = WebSearchProvider().validate_config({"enabled": True, "mode": "external_api", "backend": "exa"})
+    errors = WebSearchProvider().validate_config(
+        {"enabled": True, "mode": "external_api", "backend": "exa"}
+    )
 
     assert any("EXA_API_KEY" in e for e in errors)
     assert all("TAVILY_API_KEY" not in e for e in errors)
@@ -1245,6 +1625,7 @@ def test_web_search_enabled_requires_explicit_mode():
 
 # --- P1: WebSearch source_id stability ---
 
+
 def test_web_search_source_id_stable():
     """Same search result should produce same source_id across calls."""
     provider = WebSearchProvider(backend=FakeSearchBackend())
@@ -1260,44 +1641,8 @@ def test_web_search_source_id_stable():
     assert all(sid.startswith("WS_") for sid in ids1)
 
 
-# --- P1: Decider merge should not auto-enable web_search ---
-
-def test_merge_does_not_auto_enable_web_search(tmp_path):
-    """merge_candidates_to_sources should not enable web_search by default."""
-    import yaml
-    from multi_agent_brief.sources.decider import merge_candidates_to_sources
-
-    sources = {
-        "source_strategy": {"profile": "research", "enabled_providers": ["manual"]},
-        "manual": {"enabled": True, "sources": []},
-        "rss": {"enabled": False, "feeds": []},
-        "web_search": {"enabled": False, "max_results": 20, "recency_days": 7},
-    }
-    sources_path = tmp_path / "sources.yaml"
-    with open(sources_path, "w", encoding="utf-8") as f:
-        yaml.dump(sources, f)
-
-    candidates = {
-        "metadata": {
-            "generated_by": "source_decider",
-            "status": "pending_review",
-        },
-        "recommended_sources": [
-            {"name": "Tech News", "url": "https://technews.com", "category": "industry_media", "enabled": True},
-        ],
-    }
-    candidates_path = tmp_path / "source_candidates.yaml"
-    with open(candidates_path, "w", encoding="utf-8") as f:
-        yaml.dump(candidates, f)
-
-    merge_candidates_to_sources(sources_path, candidates_path)
-
-    updated = yaml.safe_load(sources_path.read_text(encoding="utf-8"))
-    assert updated["web_search"]["enabled"] is False
-    assert "web_search" not in updated["source_strategy"].get("enabled_providers", [])
-
-
 # --- P2: Provider errors are captured ---
+
 
 def test_collect_all_sources_captures_provider_errors(tmp_path):
     """Failed providers should be recorded, not silently swallowed."""
@@ -1307,8 +1652,10 @@ def test_collect_all_sources_captures_provider_errors(tmp_path):
     class FailingProvider(SourceProvider):
         name = "failing"
         source_type = "test"
+
         def validate_config(self, config):
             return []
+
         def collect(self, query, config):
             raise ConnectionError("Network timeout")
 
@@ -1317,6 +1664,7 @@ def test_collect_all_sources_captures_provider_errors(tmp_path):
     )
 
     import multi_agent_brief.sources.registry as reg
+
     old_registry = reg.PROVIDER_CLASSES.copy()
     reg.PROVIDER_CLASSES["failing"] = FailingProvider
     try:
@@ -1333,6 +1681,7 @@ def test_collect_all_sources_captures_provider_errors(tmp_path):
 
 # --- P1: WebSearch backend errors propagate to registry errors ---
 
+
 def test_web_search_backend_error_captured_by_registry():
     """Backend exceptions should propagate through to collect_all_sources errors."""
     from multi_agent_brief.sources.search_backends.base import SearchBackend
@@ -1340,8 +1689,10 @@ def test_web_search_backend_error_captured_by_registry():
 
     class FailingSearchBackend(SearchBackend):
         name = "failing_search"
+
         def search(self, query, max_results=10, **kwargs):
             raise ConnectionError("API rate limit exceeded")
+
         def is_available(self):
             return True
 
@@ -1353,7 +1704,12 @@ def test_web_search_backend_error_captured_by_registry():
 
     config = SourceConfig(
         enabled_providers=["web_search"],
-        web_search={"enabled": True, "mode": "external_api", "backend": "tavily", "allow_generic_fallback": True},
+        web_search={
+            "enabled": True,
+            "mode": "external_api",
+            "backend": "tavily",
+            "allow_generic_fallback": True,
+        },
     )
     try:
         items, errors = collect_all_sources(config)
@@ -1394,6 +1750,7 @@ def test_collect_all_sources_skips_web_search_when_validation_fails():
 
 # --- P2: Domain filtering ---
 
+
 def test_web_search_passes_domains_to_backend():
     """search_tasks with domains should be forwarded to the backend."""
     backend = FakeSearchBackend()
@@ -1401,7 +1758,10 @@ def test_web_search_passes_domains_to_backend():
     config = {
         "enabled": True,
         "search_tasks": [
-            {"query": "manufacturing prices", "domains": ["industry-news.org", "reuters.com"]},
+            {
+                "query": "manufacturing prices",
+                "domains": ["industry-news.org", "reuters.com"],
+            },
         ],
     }
     items = provider.collect(SourceQuery(), config)
@@ -1421,14 +1781,13 @@ def test_web_search_no_domains_passes_none():
 
 # --- Init profiles recommend online search without requiring an API key ---
 
+
 def _with_task_objective_if_supported(args):
     from multi_agent_brief.cli.main import build_parser
 
     parser = build_parser()
     subcommands = next(
-        action.choices
-        for action in parser._actions
-        if getattr(action, "choices", None)
+        action.choices for action in parser._actions if getattr(action, "choices", None)
     )
     init_options = {
         option
@@ -1479,6 +1838,7 @@ def test_init_aggressive_signal_web_search_enabled_without_backend(tmp_path):
 def test_init_custom_web_search_enabled_without_backend(tmp_path):
     import yaml
     from multi_agent_brief.cli.main import main
+
     workspace = tmp_path / "ws"
     args = [
         "init",
@@ -1509,6 +1869,7 @@ def test_init_custom_web_search_enabled_without_backend(tmp_path):
 def test_init_research_web_search_enabled_without_backend(tmp_path):
     import yaml
     from multi_agent_brief.cli.main import main
+
     workspace = tmp_path / "ws"
     args = [
         "init",
@@ -1537,6 +1898,7 @@ def test_init_research_web_search_enabled_without_backend(tmp_path):
 
 
 # --- Unknown provider validation ---
+
 
 def test_unknown_provider_surfaced_in_collect_errors():
     """Unknown enabled providers must produce errors, not be silently skipped."""

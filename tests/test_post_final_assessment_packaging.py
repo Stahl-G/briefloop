@@ -1,0 +1,691 @@
+"""Source/non-editable-wheel parity for Store-qualified PF-LAJ replay."""
+
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import textwrap
+import zipfile
+
+import pytest
+
+from multi_agent_brief.product.projection_platform import (
+    supports_retained_directory_publication,
+)
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+_PROBE = r"""
+import json
+import os
+from pathlib import Path
+import sys
+
+import pytest
+
+import multi_agent_brief
+from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.product.brief_html import build_brief_pages_data
+from multi_agent_brief.product.post_final_assessment import PostFinalAssessmentService
+from multi_agent_brief.product.post_final_review import PostFinalReviewService
+from multi_agent_brief.product.review_session.launcher import (
+    launch_actionable_review_session,
+)
+from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+    ANTHROPIC_API_KEY_SETTING,
+)
+import multi_agent_brief.semantic_evaluator.runner as runner_module
+from tests.test_post_final_assessment import (
+    _real_finalized_local_workspace,
+)
+from tests.test_reader_review_backend import _reader_input, _reader_service
+from tests.test_post_final_human_review import _disposition_payload
+
+
+mode = sys.argv[1]
+workspace = Path(sys.argv[2])
+expected_package_root = Path(sys.argv[3]).resolve()
+package_file = Path(multi_agent_brief.__file__).resolve()
+if not package_file.is_relative_to(expected_package_root):
+    raise RuntimeError("package root mismatch")
+
+if mode == "source":
+    patch = pytest.MonkeyPatch()
+    try:
+        workspace = _real_finalized_local_workspace(workspace.parent, patch)
+        calls = []
+        service = _reader_service(workspace, calls, terminal_mode="finding")
+        patch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+        patch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+        command = _reader_input("wheel-shared-reader-review-1")
+        command_json = json.dumps(command, sort_keys=True, separators=(",", ":"))
+        (workspace.parent / "assessment-run-replay.json").write_text(
+            command_json,
+            encoding="utf-8",
+        )
+        assessed = service.run_reader_review(command)
+        if not assessed.get("ok") or assessed.get("status") != "available":
+            raise RuntimeError(f"source assessment failed: {assessed!r}")
+        provider_calls = len(calls)
+        selected_result_id = assessed["assessment_result_id"]
+        selected_result_fingerprint = assessed["assessment_result_fingerprint"]
+        review = PostFinalReviewService(
+            workspace,
+            selected_result_id,
+            selected_result_fingerprint,
+        )
+        review_status = review.review_status()
+        finding = review_status["dispositions"][0]
+        accepted = review.record_disposition(
+            _disposition_payload(
+                review_status,
+                finding,
+                request_id="wheel-shared-accept-1",
+                decision="accept",
+            )
+        )
+        draft = review.append_guidance_draft(
+            {
+                "schema_version": "briefloop.post_final_guidance_draft_input.v1",
+                "human_actor_id": "human-reviewer-1",
+                "human_request_id": "wheel-shared-draft-1",
+                "assessment_result_id": review_status["assessment_result_id"],
+                "finding_id": finding["finding_id"],
+                "disposition_id": accepted["disposition_id"],
+                "guidance_text": "Keep the conclusion within the report constraints.",
+            }
+        )
+        review.approve_guidance(
+            {
+                "schema_version": "briefloop.post_final_guidance_status_input.v1",
+                "human_actor_id": "human-reviewer-1",
+                "human_request_id": "wheel-shared-approve-1",
+                "guidance_id": draft["guidance_id"],
+                "draft_revision": draft["draft_revision"],
+            }
+        )
+        review_status = review.review_status()
+        finding = review_status["dispositions"][0]
+        review.record_disposition(
+            _disposition_payload(
+                review_status,
+                finding,
+                request_id="wheel-shared-defer-1",
+                decision="defer",
+            )
+        )
+    finally:
+        patch.undo()
+elif mode == "wheel":
+    run_id = None
+    provider_calls = 0
+    os.environ.pop(ANTHROPIC_API_KEY_SETTING, None)
+    runner_module.metadata.version = lambda _name: (_ for _ in ()).throw(
+        AssertionError("wheel exact replay touched distribution metadata")
+    )
+    service = PostFinalAssessmentService(
+        workspace,
+        adapter_factory=lambda _execution: (_ for _ in ()).throw(
+            AssertionError("wheel exact replay touched adapter")
+        ),
+    )
+    command_json = (workspace.parent / "assessment-run-replay.json").read_text(
+        encoding="utf-8"
+    )
+    cli_replay = service.run_reader_review(json.loads(command_json))
+    if not cli_replay.get("replayed"):
+        raise RuntimeError(f"wheel assessment replay failed: {cli_replay!r}")
+    current = service.status()
+    if not current.get("assessment_request_id"):
+        raise RuntimeError(f"missing request: {current!r}")
+    assessed = service.retry(current["assessment_request_id"])
+    if not assessed.get("ok") or not assessed.get("replayed"):
+        raise RuntimeError(f"wheel replay failed: {assessed!r}")
+    listing = service.assessment_list()
+    if len(listing.get("assessments", [])) != 1:
+        raise RuntimeError(f"wheel assessment listing failed: {listing!r}")
+    selected = listing["assessments"][0]
+    selected_result_id = selected["assessment_result_id"]
+    selected_result_fingerprint = selected["assessment_result_fingerprint"]
+    review = PostFinalReviewService(
+        workspace,
+        selected_result_id,
+        selected_result_fingerprint,
+    )
+    review_status = review.review_status()
+    finding = review_status["dispositions"][0]
+    replayed_disposition = review.record_disposition(
+        _disposition_payload(
+            review_status,
+            finding,
+            request_id="wheel-shared-defer-1",
+            decision="defer",
+        )
+    )
+    if not replayed_disposition.get("replayed"):
+        raise RuntimeError("wheel Human disposition did not replay")
+    launched = launch_actionable_review_session(
+        workspace,
+        selected_result_id,
+        selected_result_fingerprint,
+        open_browser=True,
+        browser_open=lambda _url: False,
+    )
+    try:
+        from urllib.request import urlopen
+
+        with urlopen(launched.url.split("#", 1)[0], timeout=5) as response:
+            if response.status != 200 or b"briefloop.brief_pages.data.v2" not in response.read():
+                raise RuntimeError("wheel actionable page unavailable")
+    finally:
+        launched.server.close()
+else:
+    raise RuntimeError("unknown mode")
+
+status = PostFinalAssessmentService(workspace).status()
+review_status = PostFinalReviewService(
+    workspace,
+    selected_result_id,
+    selected_result_fingerprint,
+).review_status()
+pages = build_brief_pages_data(
+    workspace,
+    assessment_result_id=selected_result_id,
+    assessment_result_fingerprint=selected_result_fingerprint,
+)
+with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+    head = store.load_workspace_run_head()
+    if head is None:
+        raise RuntimeError("missing Store head")
+    snapshot = store.load_snapshot(head.current_run_id)
+    request = snapshot.post_final_assessment_requests[0]
+    result = snapshot.post_final_assessment_results[0]
+
+print(json.dumps({
+    "provider_calls": provider_calls,
+    "status": status["status"],
+    "request_id": request.assessment_request_id,
+    "request_fingerprint": request.request_fingerprint,
+    "result_id": result.assessment_result_id,
+    "result_fingerprint": result.result_fingerprint,
+    "terminal_evidence_class": result.terminal_evidence_class,
+    "semantic": {
+        "status": pages["semantic"]["status"],
+        "store_qualified": pages["semantic"]["store_qualified"],
+        "finding_count": pages["semantic"]["coverage"]["finding_count"],
+    },
+    "human_review": {
+        "current_decision": review_status["dispositions"][0]["current"]["decision"],
+        "guidance_draft_count": len(review_status["guidance_drafts"]),
+        "guidance_status_count": len(review_status["guidance_statuses"]),
+        "next_run_consumption": review_status["next_run_consumption"],
+        "provider_calls": review_status["provider_calls"],
+        "improvement_status": pages["improvement"]["status"],
+    },
+}, sort_keys=True))
+"""
+
+
+_ZERO_ADVICE_PROBE = r"""
+import json
+import os
+from pathlib import Path
+import shutil
+import sys
+
+import pytest
+
+import multi_agent_brief
+from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.product.brief_html import build_brief_pages_data
+from multi_agent_brief.product.post_final_assessment import PostFinalAssessmentService
+from multi_agent_brief.product.post_final_assessment_projection import (
+    build_post_final_assessment_projection,
+)
+from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+    ANTHROPIC_API_KEY_SETTING,
+)
+from multi_agent_brief.semantic_evaluator.archive import trial_archive_path
+import multi_agent_brief.semantic_evaluator.runner as runner_module
+from tests.test_post_final_assessment import (
+    _fixture_service,
+    _policy_payload,
+    _real_finalized_local_workspace,
+)
+
+
+mode = sys.argv[1]
+workspace = Path(sys.argv[2])
+expected_package_root = Path(sys.argv[3]).resolve()
+package_file = Path(multi_agent_brief.__file__).resolve()
+if not package_file.is_relative_to(expected_package_root):
+    raise RuntimeError("package root mismatch")
+
+provider_calls = 0
+if mode == "source":
+    patch = pytest.MonkeyPatch()
+    try:
+        workspace = _real_finalized_local_workspace(workspace.parent, patch)
+        calls = []
+        service = _fixture_service(
+            workspace,
+            calls,
+            terminal_mode="transport_failure",
+        )
+        if not service.policy_set(_policy_payload())["ok"]:
+            raise RuntimeError("policy did not commit")
+        patch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+        patch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+        assessed = service.assess()
+        if assessed.get("status") != "provider_failed":
+            raise RuntimeError(f"source terminal result failed: {assessed!r}")
+        provider_calls = len(calls)
+        with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+            head = store.load_workspace_run_head()
+            if head is None:
+                raise RuntimeError("missing Store head")
+            snapshot = store.load_snapshot(head.current_run_id)
+        request = snapshot.post_final_assessment_requests[0]
+        shutil.rmtree(trial_archive_path(service._archive_root, request.trial_id))
+    finally:
+        patch.undo()
+elif mode == "wheel":
+    os.environ.pop(ANTHROPIC_API_KEY_SETTING, None)
+    runner_module.metadata.version = lambda _name: (_ for _ in ()).throw(
+        AssertionError("wheel zero-advice replay touched distribution metadata")
+    )
+else:
+    raise RuntimeError("unknown mode")
+
+database_before = (workspace / "briefloop.db").read_bytes()
+with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+    head = store.load_workspace_run_head()
+    if head is None:
+        raise RuntimeError("missing Store head")
+    revision_before = store.current_revision
+    snapshot = store.load_snapshot(head.current_run_id)
+    request = snapshot.post_final_assessment_requests[0]
+    result = snapshot.post_final_assessment_results[0]
+
+replay = PostFinalAssessmentService(
+    workspace,
+    adapter_factory=lambda _execution: (_ for _ in ()).throw(
+        AssertionError("zero-advice replay touched adapter")
+    ),
+)
+assessed = replay.assess()
+retried = replay.retry(request.assessment_request_id)
+projection = build_post_final_assessment_projection(workspace)
+semantic = build_brief_pages_data(workspace)["semantic"]
+if not assessed.get("replayed") or not retried.get("replayed"):
+    raise RuntimeError("zero-advice Store result did not replay")
+if assessed.get("status") != result.terminal_evidence_class:
+    raise RuntimeError("zero-advice assess status drift")
+if retried.get("status") != result.terminal_evidence_class:
+    raise RuntimeError("zero-advice retry status drift")
+if projection.view.archive_verified or projection.view.findings:
+    raise RuntimeError("zero-advice projection claimed archive findings")
+if semantic["status"] != "not_assessed":
+    raise RuntimeError("zero-advice HTML status drift")
+if semantic["findings"]:
+    raise RuntimeError("zero-advice HTML exposed findings")
+with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+    if store.current_revision != revision_before:
+        raise RuntimeError("zero-advice replay changed Store revision")
+if (workspace / "briefloop.db").read_bytes() != database_before:
+    raise RuntimeError("zero-advice replay changed Store bytes")
+
+print(json.dumps({
+    "optimize": sys.flags.optimize,
+    "provider_calls": provider_calls,
+    "request_id": request.assessment_request_id,
+    "result_id": result.assessment_result_id,
+    "result_fingerprint": result.result_fingerprint,
+    "status": result.terminal_evidence_class,
+    "reason_codes": result.reason_codes,
+    "finding_count": result.finding_count,
+    "withheld_finding_count": result.withheld_finding_count,
+    "archive_verified": projection.view.archive_verified,
+    "semantic_status": semantic["status"],
+}, sort_keys=True))
+"""
+
+
+_ASSESSMENT_NEXT_PROBE = r"""
+import io
+import json
+import os
+import shutil
+import sys
+from contextlib import redirect_stdout
+from pathlib import Path
+
+import pytest
+
+import multi_agent_brief
+from multi_agent_brief.cli.main import main
+from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+    ANTHROPIC_API_KEY_SETTING,
+)
+from tests.test_post_final_assessment import (
+    _policy_payload,
+    _real_finalized_local_workspace,
+)
+
+
+mode = sys.argv[1]
+workspace_arg = Path(sys.argv[2])
+expected_package_root = Path(sys.argv[3]).resolve()
+package_file = Path(multi_agent_brief.__file__).resolve()
+if not package_file.is_relative_to(expected_package_root):
+    raise RuntimeError("package root mismatch")
+
+
+def run_json(arguments: list[str]) -> tuple[int, dict[str, object]]:
+    output = io.StringIO()
+    with redirect_stdout(output):
+        code = main(arguments + ["--json"])
+    return code, json.loads(output.getvalue())
+
+
+if mode == "source":
+    workspace_arg.parent.mkdir(parents=True, exist_ok=True)
+    seed_root = workspace_arg.parent / "source-seed"
+    seed_root.mkdir(parents=True, exist_ok=True)
+    patch = pytest.MonkeyPatch()
+    try:
+        source_workspace = _real_finalized_local_workspace(
+            seed_root,
+            patch,
+        )
+    finally:
+        patch.undo()
+    template = workspace_arg.parent / "assessment-next-v12"
+    shutil.copytree(source_workspace, template)
+    source_workspace = template
+elif mode == "wheel":
+    source_workspace = workspace_arg.parent / "assessment-next-v12"
+else:
+    raise RuntimeError("unknown mode")
+
+policy_json = json.dumps(_policy_payload(), sort_keys=True)
+policy_code, policy = run_json(
+    [
+        "quality",
+        "laj",
+        "policy-set",
+        "--workspace",
+        str(source_workspace),
+        "--policy-json",
+        policy_json,
+    ]
+)
+if policy_code != 0 or not policy.get("ok"):
+    raise RuntimeError(f"policy failed: {policy!r}")
+policy_id = str(policy["policy_revision_id"])
+next_args = [
+    "quality",
+    "laj",
+    "assessment-next",
+    "--workspace",
+    str(source_workspace),
+    "--policy-revision-id",
+    policy_id,
+    "--human-actor-id",
+    "packaging-human",
+    "--human-request-id",
+    "packaging-next-1",
+    "--assessment-purpose",
+    "post_final_review",
+]
+next_code, next_payload = run_json(next_args)
+policy_flag_index = next_args.index("--policy-revision-id")
+policy_value_index = next_args.index(policy_id)
+invalid_code, invalid_payload = run_json(
+    [
+        *next_args[: policy_flag_index + 1],
+        "stale-policy",
+        *next_args[policy_value_index + 1 :],
+    ]
+)
+if next_code != 0 or not next_payload.get("ok"):
+    raise RuntimeError(f"assessment-next failed: {next_payload!r}")
+if invalid_code != 1 or invalid_payload.get("reason_code") != (
+    "post_final_assessment_policy_conflict"
+):
+    raise RuntimeError(f"assessment-next invalid row drift: {invalid_payload!r}")
+
+print(
+    json.dumps(
+        {
+            "optimize": sys.flags.optimize,
+            "request": next_payload["request"],
+            "request_fingerprint": next_payload["request_fingerprint"],
+            "invalid_reason_code": invalid_payload["reason_code"],
+            "provider_calls": 0,
+            "key_present": ANTHROPIC_API_KEY_SETTING in os.environ,
+        },
+        sort_keys=True,
+    )
+)
+"""
+
+
+def _run_probe(
+    *,
+    mode: str,
+    workspace: Path,
+    package_root: Path,
+    script: Path,
+    cwd: Path,
+) -> dict[str, object]:
+    command = [sys.executable]
+    if sys.flags.optimize:
+        command.append("-" + ("O" * sys.flags.optimize))
+    command.extend((str(script), mode, str(workspace), str(package_root)))
+    environment = dict(os.environ)
+    environment.pop("BRIEFLOOP_LAJ_MESSAGES_API_KEY", None)
+    environment["PYTHONPATH"] = os.pathsep.join((str(package_root), str(ROOT)))
+    run = subprocess.run(
+        command,
+        cwd=cwd,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if run.returncode:
+        raise AssertionError(run.stdout + run.stderr)
+    return json.loads(run.stdout)
+
+
+@pytest.mark.explicit_e2e
+@pytest.mark.timeout(900)
+@pytest.mark.skipif(
+    not supports_retained_directory_publication(),
+    reason="successful finalized-local assessment is unavailable on this platform",
+)
+def test_source_and_non_editable_wheel_replay_the_same_pf_laj_result(
+    tmp_path: Path,
+) -> None:
+    """S28: installed consumers replay frozen evidence with no SDK/key/provider."""
+
+    build_root = tmp_path / "build-root"
+    build_root.mkdir()
+    shutil.copy2(ROOT / "pyproject.toml", build_root / "pyproject.toml")
+    shutil.copy2(ROOT / "README.md", build_root / "README.md")
+    shutil.copytree(ROOT / "src", build_root / "src")
+    wheel_dir = tmp_path / "wheel"
+    wheel_dir.mkdir()
+    build = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            ".",
+            "--no-deps",
+            "--no-build-isolation",
+            "--wheel-dir",
+            str(wheel_dir),
+        ],
+        cwd=build_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert build.returncode == 0, build.stdout + build.stderr
+    wheel_path = next(wheel_dir.glob("briefloop-*.whl"))
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    with zipfile.ZipFile(wheel_path) as archive:
+        archive.extractall(installed)
+        assert (
+            "multi_agent_brief/control_store/migrations/0009.sql" in archive.namelist()
+        )
+        assert (
+            "multi_agent_brief/control_store/migrations/0010.sql" in archive.namelist()
+        )
+        assert (
+            "multi_agent_brief/control_store/migrations/0012.sql" in archive.namelist()
+        )
+
+    script = tmp_path / "pf_laj_wheel_probe.py"
+    script.write_text(textwrap.dedent(_PROBE), encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    source = _run_probe(
+        mode="source",
+        workspace=workspace,
+        package_root=ROOT / "src",
+        script=script,
+        cwd=tmp_path,
+    )
+    wheel = _run_probe(
+        mode="wheel",
+        workspace=workspace,
+        package_root=installed,
+        script=script,
+        cwd=tmp_path,
+    )
+
+    assert source["provider_calls"] == 2
+    assert wheel["provider_calls"] == 0
+    assert {key: source[key] for key in source if key != "provider_calls"} == {
+        key: wheel[key] for key in wheel if key != "provider_calls"
+    }
+    assert wheel["semantic"]["status"] == "finding_returned"
+    assert wheel["semantic"]["store_qualified"] is True
+    assert wheel["semantic"]["finding_count"] >= 1
+    assert wheel["human_review"] == {
+        "current_decision": "defer",
+        "guidance_draft_count": 1,
+        "guidance_status_count": 1,
+        "next_run_consumption": "explicit_opt_in_successor_only",
+        "provider_calls": 0,
+        "improvement_status": "available",
+    }
+
+    zero_script = tmp_path / "pf_laj_zero_advice_wheel_probe.py"
+    zero_script.write_text(textwrap.dedent(_ZERO_ADVICE_PROBE), encoding="utf-8")
+    zero_workspace = tmp_path / "zero-advice-fixture" / "workspace"
+    zero_source = _run_probe(
+        mode="source",
+        workspace=zero_workspace,
+        package_root=ROOT / "src",
+        script=zero_script,
+        cwd=tmp_path,
+    )
+    zero_wheel = _run_probe(
+        mode="wheel",
+        workspace=zero_workspace,
+        package_root=installed,
+        script=zero_script,
+        cwd=tmp_path,
+    )
+
+    assert zero_source["optimize"] == zero_wheel["optimize"] == sys.flags.optimize
+    assert zero_source["provider_calls"] == 9
+    assert zero_wheel["provider_calls"] == 0
+    assert {
+        key: zero_source[key] for key in zero_source if key != "provider_calls"
+    } == {key: zero_wheel[key] for key in zero_wheel if key != "provider_calls"}
+    assert zero_wheel["status"] == "provider_failed"
+    assert zero_wheel["finding_count"] == 0
+    assert zero_wheel["withheld_finding_count"] == 0
+    assert zero_wheel["archive_verified"] is False
+
+
+@pytest.mark.explicit_e2e
+@pytest.mark.timeout(900)
+@pytest.mark.skipif(
+    not supports_retained_directory_publication(),
+    reason="source/non-editable-wheel assessment-next parity is unavailable",
+)
+def test_source_and_non_editable_wheel_run_assessment_next(
+    tmp_path: Path,
+) -> None:
+    """Current-schema assessment-next is executable and parity-safe after install."""
+
+    build_root = tmp_path / "build-root"
+    build_root.mkdir()
+    shutil.copy2(ROOT / "pyproject.toml", build_root / "pyproject.toml")
+    shutil.copy2(ROOT / "README.md", build_root / "README.md")
+    shutil.copytree(ROOT / "src", build_root / "src")
+    wheel_dir = tmp_path / "wheel"
+    wheel_dir.mkdir()
+    build = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            ".",
+            "--no-deps",
+            "--no-build-isolation",
+            "--wheel-dir",
+            str(wheel_dir),
+        ],
+        cwd=build_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert build.returncode == 0, build.stdout + build.stderr
+    wheel_path = next(wheel_dir.glob("briefloop-*.whl"))
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    with zipfile.ZipFile(wheel_path) as archive:
+        archive.extractall(installed)
+        assert "multi_agent_brief/control_store/upgrade.py" not in archive.namelist()
+        assert (
+            "multi_agent_brief/control_store/migrations/0012.sql" in archive.namelist()
+        )
+
+    script = tmp_path / "assessment_next_probe.py"
+    script.write_text(textwrap.dedent(_ASSESSMENT_NEXT_PROBE), encoding="utf-8")
+    workspace = tmp_path / "assessment-next" / "workspace"
+    source = _run_probe(
+        mode="source",
+        workspace=workspace,
+        package_root=ROOT / "src",
+        script=script,
+        cwd=tmp_path,
+    )
+    wheel = _run_probe(
+        mode="wheel",
+        workspace=workspace,
+        package_root=installed,
+        script=script,
+        cwd=tmp_path,
+    )
+    assert source == wheel
+    assert source["provider_calls"] == 0
+    assert source["key_present"] is False
+    assert source["invalid_reason_code"] == "post_final_assessment_policy_conflict"
+    assert source["request"]["assessment_generation"] == 1

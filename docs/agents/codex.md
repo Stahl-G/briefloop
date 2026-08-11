@@ -10,7 +10,7 @@
         inventory is hash-bound into the Store adapter binding.
 
         - `briefloop-source-planner.toml` — Lightweight Source Planner for choosing source-discovery categories, domains, and search tasks from the user/config profile. Writes source_candidates.yaml as a plan only, not evidence.
-- `briefloop-source-provider.toml` — Configures, validates, and collects information sources from manual inputs, RSS feeds, web search, APIs, and MCP/CLI tools.
+- `briefloop-source-provider.toml` — Configures and validates source inputs, then normalizes provider outputs supplied by the deterministic runtime host.
 - `briefloop-scout.toml` — Discovers source-grounded candidate items and, in default topology, screens them in one stage while keeping candidate_claims and screened_candidates as distinct artifacts.
 - `briefloop-screener.toml` — Strict-topology independent screening role that filters, ranks, deduplicates, freshness-checks, and capacity-caps Scout candidates before Claim Ledger.
 - `briefloop-claim-ledger.toml` — Converts screened candidates into source-grounded claim drafts for deterministic Python freezing into the Claim Ledger.

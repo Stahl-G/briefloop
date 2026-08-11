@@ -1,17 +1,375 @@
 from __future__ import annotations
 
+import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import shutil
 import subprocess
 import sys
 import textwrap
 import zipfile
 
+import pytest
+
+from tests.test_runtime_host_v2 import _adapter
+from tests.test_runtime_host_continue_v2 import (
+    _authorized_workspace,
+    _service,
+    _write_current_role_proposal,
+)
+
+from multi_agent_brief.cli.init_wizard import create_demo_workspace
+from multi_agent_brief.control_store.schema import SCHEMA_VERSION
+from multi_agent_brief.product.projection_platform import (
+    supports_retained_directory_publication,
+)
+from multi_agent_brief.runtime_host_v2 import (
+    RuntimeHostError,
+    build_finalized_local_review_projection,
+)
+from multi_agent_brief.runtime_host_v2.initialization import (
+    initialize_or_open_runtime,
+)
+
 
 ROOT = Path(__file__).parents[1]
 
 
+def _real_finalized_local_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """Create one verifier-valid finalized-local history without test-only Gate seams."""
+
+    workspace = _authorized_workspace(tmp_path)
+    monkeypatch.setattr(
+        "multi_agent_brief.product.brief_html.render.webbrowser.open",
+        lambda _uri: False,
+    )
+    service = _service(workspace)
+    for _ in range(12):
+        result = service.continue_authorized()
+        if result.status == "finalized_local":
+            assert result.reason_code == "local_finalization_complete"
+            return workspace
+        assert result.status == "role_work_required", result.reason_code
+        _write_current_role_proposal(workspace, result)
+    raise AssertionError("real finalized-local workspace did not terminate")
+
+
+def _wheel_e2e_command(
+    *,
+    script_path: os.PathLike[str],
+    workspace: os.PathLike[str],
+    installed: os.PathLike[str],
+) -> list[str]:
+    return [sys.executable, str(script_path), str(workspace), str(installed)]
+
+
+def test_wheel_e2e_command_uses_a_script_file_on_windows() -> None:
+    script_path = PureWindowsPath(r"C:\tmp\wheel_e2e.py")
+    command = _wheel_e2e_command(
+        script_path=script_path,
+        workspace=PureWindowsPath(r"C:\tmp\workspace"),
+        installed=PureWindowsPath(r"C:\tmp\installed"),
+    )
+
+    assert command[1] == str(script_path)
+    assert "-c" not in command
+
+
+def test_source_and_non_editable_wheel_hardlink_intake_parity(
+    tmp_path: Path,
+) -> None:
+    build_root = tmp_path / "build-root"
+    build_root.mkdir()
+    shutil.copy2(ROOT / "pyproject.toml", build_root / "pyproject.toml")
+    shutil.copy2(ROOT / "README.md", build_root / "README.md")
+    shutil.copytree(ROOT / "src", build_root / "src")
+    wheel_dir = tmp_path / "wheel"
+    wheel_dir.mkdir()
+    build = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            ".",
+            "--no-deps",
+            "--no-build-isolation",
+            "--wheel-dir",
+            str(wheel_dir),
+        ],
+        cwd=build_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if build.returncode != 0:
+        raise AssertionError(build.stdout + build.stderr)
+    wheel_path = next(wheel_dir.glob("briefloop-*.whl"))
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    with zipfile.ZipFile(wheel_path) as archive:
+        archive.extractall(installed)
+
+    script = textwrap.dedent(
+        """
+        import json
+        import os
+        from pathlib import Path
+        import sys
+
+        import multi_agent_brief
+        from multi_agent_brief.contracts.v2 import IntegrityCheckRequest
+        from multi_agent_brief.intake_v2.service import IntakeService
+        from tests.test_control_store_intake_v2 import (
+            CLOCK as INTAKE_CLOCK,
+            _seed_workspace,
+            _source_request,
+        )
+        from tests.test_core_run_v2 import (
+            CLOCK as CORE_CLOCK,
+            RUN_ID,
+            _execution_authorization,
+            _initialize,
+            _record,
+            _store_revision,
+            _workspace,
+        )
+
+        root = Path(sys.argv[1])
+        expected_package_root = Path(sys.argv[2]).resolve()
+        package_file = Path(multi_agent_brief.__file__).resolve()
+        if not package_file.is_relative_to(expected_package_root):
+            raise RuntimeError("package root mismatch")
+
+        def replace_with_external_hardlink(path, outside):
+            content = path.read_bytes()
+            outside.write_bytes(content)
+            path.unlink()
+            try:
+                os.link(outside, path)
+            except OSError:
+                return None
+            target_info = path.stat()
+            outside_info = outside.stat()
+            if (target_info.st_dev, target_info.st_ino) != (
+                outside_info.st_dev, outside_info.st_ino
+            ):
+                raise RuntimeError("hardlink identity mismatch")
+            if target_info.st_nlink <= 1:
+                raise RuntimeError("hardlink link count mismatch")
+            return content
+
+        root.mkdir()
+        intake_workspace = root / "intake-workspace"
+        _seed_workspace(intake_workspace)
+        intake_request = _source_request(intake_workspace)
+        intake_leaf = intake_request.parent / "source_content.pdf"
+        if replace_with_external_hardlink(
+            intake_leaf, root / "outside-intake-source.pdf"
+        ) is None:
+            print(json.dumps({"hardlink_supported": False}, sort_keys=True))
+            raise SystemExit(0)
+        intake_db = intake_workspace / "briefloop.db"
+        intake_before = intake_db.read_bytes()
+        intake_result = IntakeService(
+            intake_workspace, clock=INTAKE_CLOCK
+        ).submit_source(intake_request.relative_to(intake_workspace).as_posix())
+
+        core_workspace = _workspace(root / "core-workspace")
+        core_service = _initialize(
+            core_workspace,
+            execution_authorization=_execution_authorization(core_workspace),
+        )
+        doctor = core_service.doctor_check(
+            _record(
+                IntegrityCheckRequest,
+                request_id="REQ-WHEEL-HARDLINK-DOCTOR-001",
+                run_id=RUN_ID,
+                expected_store_revision=_store_revision(core_workspace),
+            )
+        )
+        if doctor.status != "committed":
+            raise RuntimeError(f"doctor did not commit: {doctor.to_dict()!r}")
+        core_leaf = core_workspace / "input" / "authorized-source.txt"
+        if replace_with_external_hardlink(
+            core_leaf, root / "outside-authorized-source.txt"
+        ) is None:
+            raise RuntimeError("hardlink support changed between rows")
+        core_db = core_workspace / "briefloop.db"
+        core_before = core_db.read_bytes()
+        core_result = core_service.apply_authorized_source_pack()
+
+        print(json.dumps({
+            "hardlink_supported": True,
+            "optimize": sys.flags.optimize,
+            "intake": {
+                "result": intake_result.to_dict(),
+                "database_unchanged": intake_db.read_bytes() == intake_before,
+            },
+            "core": {
+                "result": core_result.to_dict(),
+                "database_unchanged": core_db.read_bytes() == core_before,
+            },
+        }, sort_keys=True))
+        """
+    )
+    script_path = tmp_path / "wheel_hardlink_intake_parity.py"
+    script_path.write_bytes(script.encode("utf-8"))
+
+    def execute(label: str, package_root: Path) -> dict[str, object]:
+        environment = dict(os.environ)
+        environment["PYTHONPATH"] = os.pathsep.join((str(package_root), str(ROOT)))
+        optimization_flag = (
+            "-" + ("O" * sys.flags.optimize) if sys.flags.optimize else None
+        )
+        command = [sys.executable]
+        if optimization_flag is not None:
+            command.append(optimization_flag)
+        command.extend(
+            [
+                str(script_path),
+                str(tmp_path / f"{label}-run"),
+                str(package_root),
+            ]
+        )
+        run = subprocess.run(
+            command,
+            cwd=tmp_path,
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if run.returncode != 0:
+            raise AssertionError(run.stdout + run.stderr)
+        return json.loads(run.stdout)
+
+    source_payload = execute("source", ROOT / "src")
+    if not source_payload["hardlink_supported"]:
+        pytest.skip("test filesystem does not support hardlinks")
+    wheel_payload = execute("wheel", installed)
+    if wheel_payload != source_payload:
+        raise AssertionError(
+            f"source/wheel payload mismatch: {source_payload!r} != {wheel_payload!r}"
+        )
+    expected = {
+        "hardlink_supported": True,
+        "optimize": sys.flags.optimize,
+        "intake": {
+            "result": {
+                "error_code": "scratch_entry_unsafe",
+                "status": "failed_uncommitted",
+            },
+            "database_unchanged": True,
+        },
+        "core": {
+            "result": {
+                "error_code": "source_pack_authorization_invalid",
+                "status": "failed_uncommitted",
+            },
+            "database_unchanged": True,
+        },
+    }
+    if source_payload != expected:
+        raise AssertionError(f"unexpected hardlink payload: {source_payload!r}")@pytest.mark.skipif(
+    not supports_retained_directory_publication(),
+    reason="successful finalized-local projection is unavailable on this platform",
+)
+def test_finalized_local_review_projection_source_and_wheel_parity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = _real_finalized_local_workspace(tmp_path, monkeypatch)
+    source_payload = build_finalized_local_review_projection(workspace).model_dump(
+        mode="json", exclude_unset=False
+    )
+    facts = source_payload["facts"]
+    assert facts["terminal_state"] == "finalized_local"
+    assert facts["terminal_action_fingerprint"]
+    assert facts["finalization_receipt_id"]
+    assert facts["report"]["render_receipt_id"]
+    assert facts["report"]["artifact_revision"] > 0
+    assert facts["report"]["markdown_utf8"]
+    assert facts["gate_bindings"]
+    assert facts["facts_fingerprint"]
+
+    build_root = tmp_path / "build-root"
+    build_root.mkdir()
+    shutil.copy2(ROOT / "pyproject.toml", build_root / "pyproject.toml")
+    shutil.copy2(ROOT / "README.md", build_root / "README.md")
+    shutil.copytree(ROOT / "src", build_root / "src")
+    wheel_dir = tmp_path / "wheel"
+    wheel_dir.mkdir()
+    build = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            ".",
+            "--no-deps",
+            "--no-build-isolation",
+            "--wheel-dir",
+            str(wheel_dir),
+        ],
+        cwd=build_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert build.returncode == 0, build.stdout + build.stderr
+    wheel_path = next(wheel_dir.glob("briefloop-*.whl"))
+    installed = tmp_path / "installed"
+    installed.mkdir()
+    with zipfile.ZipFile(wheel_path) as archive:
+        archive.extractall(installed)
+    script = textwrap.dedent(
+        """
+        import json
+        from pathlib import Path
+        import sys
+
+        import multi_agent_brief
+        from multi_agent_brief.runtime_host_v2 import (
+            build_finalized_local_review_projection,
+        )
+
+        workspace = Path(sys.argv[1])
+        installed = Path(sys.argv[2]).resolve()
+        assert Path(multi_agent_brief.__file__).resolve().is_relative_to(installed)
+        projection = build_finalized_local_review_projection(workspace)
+        print(json.dumps(
+            projection.model_dump(mode="json", exclude_unset=False),
+            ensure_ascii=False,
+            sort_keys=True,
+        ))
+        """
+    )
+    script_path = tmp_path / "wheel_finalized_local_review_facts.py"
+    script_path.write_bytes(script.encode("utf-8"))
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = str(installed)
+    run = subprocess.run(
+        _wheel_e2e_command(
+            script_path=script_path,
+            workspace=workspace,
+            installed=installed,
+        ),
+        cwd=tmp_path,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert json.loads(run.stdout) == source_payload
+
+
+@pytest.mark.explicit_e2e
+@pytest.mark.timeout(900)
 def test_non_editable_wheel_runs_complete_dormant_core_spine(
     tmp_path: Path,
 ) -> None:
@@ -50,15 +408,20 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         r"""
         from contextlib import redirect_stdout
         from copy import deepcopy
+        from datetime import date, timedelta
         import hashlib
         from importlib import resources
         import io
         import json
+        import os
         from pathlib import Path
         import shutil
         import sys
 
         import multi_agent_brief
+        from multi_agent_brief.product.projection_platform import (
+            supports_retained_directory_publication,
+        )
         from multi_agent_brief.cli.init_wizard import create_demo_workspace
         from multi_agent_brief.cli.main import main
         from multi_agent_brief.contracts.v2 import (
@@ -71,21 +434,45 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             InvocationStartRequest,
             OwnedArtifactSubmitRequest,
             SourceCommitRequest,
+            SourceProposal,
             StageCompleteRequest,
+            SchemaRegistry,
         )
         from multi_agent_brief.control_store import SQLiteControlStore
         from multi_agent_brief.control_store.serialization import canonical_fingerprint
         from multi_agent_brief.core_run_v2.checkout import build_checkout_revision
         from multi_agent_brief.core_run_v2.publication import CheckoutPublicationEngine
         from multi_agent_brief.core_run_v2.policy import REQUIRED_AUDITOR_GATES
+        from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
         from multi_agent_brief.product.init_web.submit import (
             SUBMISSION_SCHEMA,
             InitWebSubmitter,
+        )
+        from multi_agent_brief.product.init_web.staging import (
+            MAX_SOURCE_AGGREGATE_BYTES as INIT_MAX_SOURCE_AGGREGATE_BYTES,
+            MAX_SOURCE_MEMBER_BYTES as INIT_MAX_SOURCE_MEMBER_BYTES,
+            MAX_SOURCE_MEMBERS as INIT_MAX_SOURCE_MEMBERS,
+        )
+        from multi_agent_brief.runtime_host_v2.service import (
+            RuntimeHostService,
+            _ROLE_OUTPUTS,
+            _strict_proposal_violations,
+        )
+        from multi_agent_brief.runtime_host_v2.codex import (
+            workspace_codex_adapter_loader,
+        )
+        from multi_agent_brief.runtime_host_v2.submission import (
+            MAX_SOURCE_MEMBER_BYTES,
+            MAX_SOURCE_PACK_BYTES,
+            MAX_SOURCE_PACK_MEMBERS,
         )
 
         workspace = Path(sys.argv[1])
         installed = Path(sys.argv[2]).resolve()
         assert Path(multi_agent_brief.__file__).resolve().is_relative_to(installed)
+        assert supports_retained_directory_publication() is (
+            os.environ["BRIEFLOOP_TEST_RETAINED_PUBLICATION_CAPABILITY"] == "1"
+        )
         migration_0004 = resources.files(
             "multi_agent_brief.control_store"
         ).joinpath("migrations", "0004.sql")
@@ -101,21 +488,82 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         ).joinpath("migrations", "0006.sql")
         assert migration_0006.is_file()
         assert "PRAGMA user_version=6;" in migration_0006.read_text(encoding="utf-8")
+        migration_0007 = resources.files(
+            "multi_agent_brief.control_store"
+        ).joinpath("migrations", "0007.sql")
+        assert migration_0007.is_file()
+        assert "PRAGMA user_version=7;" in migration_0007.read_text(encoding="utf-8")
+        migration_0008 = resources.files(
+            "multi_agent_brief.control_store"
+        ).joinpath("migrations", "0008.sql")
+        assert migration_0008.is_file()
+        assert "PRAGMA user_version=8;" in migration_0008.read_text(encoding="utf-8")
+        migration_0009 = resources.files(
+            "multi_agent_brief.control_store"
+        ).joinpath("migrations", "0009.sql")
+        assert migration_0009.is_file()
+        assert "PRAGMA user_version=9;" in migration_0009.read_text(encoding="utf-8")
         assert callable(build_checkout_revision)
         assert CheckoutPublicationEngine.__module__.endswith(".publication")
+        assert MAX_SOURCE_PACK_MEMBERS == 256
+        assert MAX_SOURCE_MEMBER_BYTES == 16 * 1024 * 1024
+        assert MAX_SOURCE_PACK_BYTES == 256 * 1024 * 1024
+        assert INIT_MAX_SOURCE_MEMBERS == MAX_SOURCE_PACK_MEMBERS
+        assert INIT_MAX_SOURCE_MEMBER_BYTES == MAX_SOURCE_MEMBER_BYTES
+        assert INIT_MAX_SOURCE_AGGREGATE_BYTES == MAX_SOURCE_PACK_BYTES
+        verifier_content = b"packaged exact source bytes\n"
+        verifier_raw = b'{"packaged":true}\n'
+        verifier_proposal = deepcopy(SourceProposal.full_example)
+        verifier_proposal.update(
+            content_sha256=hashlib.sha256(verifier_content).hexdigest(),
+            raw_payload_sha256=hashlib.sha256(verifier_raw).hexdigest(),
+        )
+        verifier_outputs = {
+            "source_proposal.json": json.dumps(
+                verifier_proposal,
+                sort_keys=True,
+            ).encode("utf-8"),
+            "source_content.bin": verifier_content,
+            "source_raw.json": verifier_raw,
+        }
+        assert _strict_proposal_violations(
+            _ROLE_OUTPUTS["source-provider"],
+            verifier_outputs,
+            expected_run_id=verifier_proposal["run_id"],
+        ) == []
+        verifier_outputs["source_content.bin"] += b"tampered"
+        assert [
+            item.field
+            for item in _strict_proposal_violations(
+                _ROLE_OUTPUTS["source-provider"],
+                verifier_outputs,
+                expected_run_id=verifier_proposal["run_id"],
+            )
+        ] == ["content_sha256"]
 
         binding_workspace = workspace.parent / "codex-binding-wheel"
         create_demo_workspace(binding_workspace)
         stream = io.StringIO()
         with redirect_stdout(stream):
-            assert main([
+            install_exit = main([
                 "runtime", "install", "--workspace", str(binding_workspace),
                 "--runtime", "codex",
-            ]) == 0
-            assert main([
+            ])
+            run_exit = main([
                 "run", "--workspace", str(binding_workspace),
                 "--runtime", "codex",
-            ]) == 0
+            ])
+        assert install_exit == 0
+        assert run_exit == 0
+        runtime_reference = binding_workspace / (
+            ".codex/skills/briefloop/references/controlstore-v2.md"
+        )
+        assert runtime_reference.is_file()
+        reference_text = runtime_reference.read_text(encoding="utf-8")
+        assert "RunSourceDiscoveryAuthorization" in reference_text
+        assert "frozen atomic task matrix" in reference_text
+        assert "Search snippets are" in reference_text
+        assert "never source-pack members or claims-eligible" in reference_text
         scout = binding_workspace / ".codex/agents/briefloop-scout.toml"
         scout.write_bytes(scout.read_bytes() + b"\n# wheel drift\n")
         stream = io.StringIO()
@@ -127,7 +575,47 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
 
         init_web_root = workspace.parent / "init-web-wheel"
         init_web_root.mkdir()
-        status, response = InitWebSubmitter(base_dir=init_web_root).submit({
+        init_submitter = InitWebSubmitter(base_dir=init_web_root)
+        init_content = b"packaged init source\n"
+        init_upload = init_submitter.stage_upload(
+            session_id="wheel-init-session",
+            filename="source.txt",
+            stream=io.BytesIO(init_content),
+            declared_length=len(init_content),
+        )
+        init_metadata = {
+            "source_id": "SRC-WHEEL-INIT-001",
+            "expected_content_sha256": init_upload["sha256"],
+            "origin_type": "uploaded_file",
+            "acquisition_method": "manual_upload",
+            "material_kind": "uploaded_file",
+            "provider": None,
+            "original_url": None,
+            "title": "Packaged init source",
+            "publisher": "Example publisher",
+            "published_at": (date.today() - timedelta(days=1)).isoformat(),
+            "retrieved_at": "2026-07-23T00:00:00Z",
+            "source_category": "other",
+            "retrieval_source_type": "local_file",
+            "underlying_evidence_type": "unknown",
+            "raw_underlying_evidence_type": None,
+            "document_kind": None,
+            "opened_at": None,
+            "resolved_at": None,
+        }
+        init_bindings = [{
+            "metadata_index": 0,
+            "upload_handle": init_upload["upload_handle"],
+        }]
+        init_preview = init_submitter.preview_source_manifest(
+            session_id="wheel-init-session",
+            body={
+                "source_manifest_mode": "imported",
+                "source_metadata": [init_metadata],
+                "upload_bindings": init_bindings,
+            },
+        )
+        status, response = init_submitter.submit({
             "schema_version": SUBMISSION_SCHEMA,
             "request_id": "REQ-WHEEL-INIT-WEB-001",
             "payload": {
@@ -135,12 +623,22 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
                 "selections": {
                     "company": "Wheel ExampleCo",
                     "industry_or_theme": "manufacturing",
+                    "report_type": "management_monthly",
                     "task_objective": "Prepare a packaged runtime brief.",
                     "audience": "management",
                     "focus_areas": ["operations"],
                     "output_formats": ["markdown"],
                     "web_search_mode": "disabled",
+                    "output_extent": "balanced",
+                    "output_language": "en",
                 },
+                "completion_target": "finalized_local",
+                "repair_budget": 1,
+                "source_manifest_mode": "imported",
+                "source_metadata": init_preview["source_metadata"],
+                "source_manifest": init_preview["source_manifest"],
+                "upload_session_id": "wheel-init-session",
+                "upload_bindings": init_preview["routing_bindings"],
                 "human_confirmation": True,
             },
         })
@@ -154,6 +652,238 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
                 "runtime", "next", "--workspace", str(init_web_workspace),
             ]) == 0
         assert json.loads(stream.getvalue())["run_id"] == response["run_id"]
+        stream = io.StringIO()
+        with redirect_stdout(stream):
+            assert main([
+                "runtime", "continue", "--workspace", str(init_web_workspace),
+            ]) == 0
+        continuation = json.loads(stream.getvalue())
+        assert continuation["status"] == "role_work_required"
+        assert continuation["current_stage"] == "scout"
+        assert "trace" not in continuation
+
+        init_service = RuntimeHostService(
+            init_web_workspace,
+            adapter_loader=workspace_codex_adapter_loader(init_web_workspace),
+        )
+        sequence = []
+
+        def write_role_proposal(result):
+            envelope_path = init_web_workspace / result.trace.envelope_path
+            envelope = json.loads(envelope_path.read_text(encoding="utf-8"))
+            scratch = init_web_workspace / envelope["scratch_directory"]
+            role_id = envelope["role_id"]
+            run_id = envelope["run_id"]
+            with SQLiteControlStore.open(init_web_workspace / "briefloop.db") as store:
+                current = store.load_snapshot(run_id)
+            if role_id == "scout":
+                payload = deepcopy(SchemaRegistry.example(
+                    "briefloop.candidate_claims_proposal.v2", "minimal"
+                ))
+                payload.update(run_id=run_id, proposal_id="PROP-WHEEL-CANDIDATES")
+                payload["candidates"][0].update(
+                    source_id=current.sources[0].source_id,
+                    statement="ExampleCo opened a public pilot facility.",
+                    evidence_text="packaged init source",
+                )
+                filename = "candidate_claims.json"
+            elif role_id == "screener":
+                candidate = next(
+                    item for item in current.accepted_proposals
+                    if item.proposal_kind == "candidate"
+                )
+                payload = deepcopy(SchemaRegistry.example(
+                    "briefloop.screened_candidates_proposal.v2", "minimal"
+                ))
+                payload.update(
+                    run_id=run_id,
+                    proposal_id="PROP-WHEEL-SCREENED",
+                    candidate_claims_proposal_id=candidate.proposal_id,
+                )
+                payload["decisions"][0]["candidate_id"] = "CAND-001"
+                filename = "screened_candidates.json"
+            elif role_id == "claim-ledger":
+                screened = next(
+                    item for item in current.accepted_proposals
+                    if item.proposal_kind == "screened"
+                )
+                payload = deepcopy(SchemaRegistry.example(
+                    "briefloop.claim_drafts_proposal.v2", "minimal"
+                ))
+                payload.update(
+                    run_id=run_id,
+                    proposal_id="PROP-WHEEL-DRAFTS",
+                    screened_candidates_proposal_id=screened.proposal_id,
+                )
+                payload["drafts"][0]["source_ids"] = [current.sources[0].source_id]
+                filename = "claim_drafts.json"
+            elif role_id in {"analyst", "editor"}:
+                repairing = role_id == "editor" and bool(
+                    current.gate_repair_cycles
+                )
+                repetitions = 160 if repairing else 20
+                body = (
+                    "# ExampleCo public brief\n\n## Executive Summary\n\n"
+                    + " ".join(
+                        ["Wheel ExampleCo operations context"] * repetitions
+                    )
+                    + " ExampleCo opened a public pilot facility. [src:CL-0001]\n"
+                )
+                filename = (
+                    "analyst_draft.md" if role_id == "analyst"
+                    else "audited_brief.md"
+                )
+                (scratch / filename).write_text(body, encoding="utf-8")
+                return
+            elif role_id == "auditor":
+                payload = deepcopy(SchemaRegistry.example(
+                    "briefloop.audit_proposal.v2", "minimal"
+                ))
+                payload.update(
+                    run_id=run_id,
+                    proposal_id=(
+                        "PROP-WHEEL-AUDIT-REPAIR"
+                        if current.gate_repair_cycles
+                        else "PROP-WHEEL-AUDIT"
+                    ),
+                    artifact_id="audited_brief",
+                    artifact_revision=next(
+                        item.current_revision
+                        for item in current.artifacts
+                        if item.artifact_id == "audited_brief"
+                    ),
+                    decision="pass",
+                    findings=[],
+                )
+                filename = "audit_proposal.json"
+            else:
+                raise AssertionError(role_id)
+            (scratch / filename).write_text(
+                json.dumps(payload, sort_keys=True), encoding="utf-8"
+            )
+
+        current_result = init_service.continue_authorized()
+        for _ in range(12):
+            sequence.append((
+                current_result.status,
+                current_result.reason_code,
+                current_result.trace.next_action.action_fingerprint,
+            ))
+            if current_result.status == "finalized_local":
+                break
+            if (
+                sys.platform == "win32"
+                and current_result.status == "needs_attention"
+            ):
+                break
+            assert current_result.status == "role_work_required", sequence
+            write_role_proposal(current_result)
+            current_result = init_service.continue_authorized()
+        else:
+            raise AssertionError("packaged init run did not reach finalized_local")
+
+        if sys.platform == "win32":
+            assert [item[0] for item in sequence] == [
+                "role_work_required",
+                "role_work_required",
+                "role_work_required",
+                "needs_attention",
+            ]
+            assert [item[1] for item in sequence] == [
+                "role_work_required",
+                "role_work_required",
+                "role_work_required",
+                "checkout_publication_unsupported",
+            ]
+            assert current_result.trace.next_action.effect_kind == "claim_freeze"
+            blocked_action_fingerprint = sequence[-1][2]
+            with SQLiteControlStore.open(init_web_workspace / "briefloop.db") as store:
+                verified_before_retry = CoreRunDomainVerifier().verify(
+                    store,
+                    response["run_id"],
+                )
+            init_snapshot = verified_before_retry.snapshot
+            blocked_revision = init_snapshot.store_revision
+
+            retry_result = init_service.continue_authorized()
+            assert retry_result.status == "needs_attention"
+            assert retry_result.reason_code == "checkout_publication_unsupported"
+            assert (
+                retry_result.trace.next_action.action_fingerprint
+                == blocked_action_fingerprint
+            )
+            with SQLiteControlStore.open(init_web_workspace / "briefloop.db") as store:
+                verified_after_retry = CoreRunDomainVerifier().verify(
+                    store,
+                    response["run_id"],
+                )
+            assert verified_after_retry.snapshot.store_revision == blocked_revision
+        else:
+            assert current_result.reason_code == "local_finalization_complete"
+            assert current_result.trace.next_action.effect_kind == "finalized_local"
+            assert current_result.presentation.status in {
+                "opened",
+                "browser_unavailable",
+            }
+            assert (
+                current_result.presentation.relative_path
+                == "output/brief_pages.html"
+            )
+            assert [item[0] for item in sequence] == [
+                "role_work_required",
+                "role_work_required",
+                "role_work_required",
+                "role_work_required",
+                "role_work_required",
+                "role_work_required",
+                "role_work_required",
+                "role_work_required",
+                "finalized_local",
+            ]
+            with SQLiteControlStore.open(init_web_workspace / "briefloop.db") as store:
+                init_snapshot = store.load_snapshot(response["run_id"])
+                init_history = store.load_history()
+            reader_record = next(
+                item
+                for item in init_snapshot.artifacts
+                if item.artifact_id == "reader_brief"
+            )
+            reader_bytes = init_history.read_artifact_revision_bytes(
+                response["run_id"],
+                "reader_brief",
+                reader_record.current_revision,
+            )
+            brief_html = (
+                init_web_workspace / "output" / "brief_pages.html"
+            ).read_text(encoding="utf-8")
+            brief_data = json.loads(
+                brief_html.split('id="brief-pages-data">', 1)[1].split(
+                    "</script>",
+                    1,
+                )[0]
+            )
+            assert brief_data["brief"]["markdown"] == reader_bytes.decode("utf-8")
+            assert brief_data["brief"]["artifact"] == {
+                "artifact_id": "reader_brief",
+                "revision": reader_record.current_revision,
+                "sha256": hashlib.sha256(reader_bytes).hexdigest(),
+            }
+            assert str(init_web_workspace) not in brief_html
+            assert len(init_snapshot.gate_repair_cycles) == 1
+            assert len(init_snapshot.gate_repair_artifact_bindings) == 1
+            assert len(init_snapshot.gate_repair_outcomes) == 1
+            repair_binding = init_snapshot.gate_repair_artifact_bindings[0]
+            assert repair_binding.prior_artifact.revision == 1
+            assert repair_binding.successor_artifact.revision == 2
+            assert init_snapshot.gate_repair_outcomes[0].disposition == "passed"
+
+        if sys.platform == "win32":
+            assert not init_snapshot.finalizations
+        assert not init_snapshot.package_ready_records
+        assert not init_snapshot.approvals
+        assert not init_snapshot.delivery_authorizations
+        assert not init_snapshot.delivery_attempts
+        assert not init_snapshot.delivery_results
 
         create_demo_workspace(workspace)
         run_id = "RUN-WHEEL-CORE-V2-001"
@@ -795,16 +1525,19 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
         }, sort_keys=True))
         """
     )
+    script_path = tmp_path / "wheel_core_e2e.py"
+    script_path.write_bytes(script.encode("utf-8"))
     env = dict(os.environ)
     env["PYTHONPATH"] = str(installed)
+    env["BRIEFLOOP_TEST_RETAINED_PUBLICATION_CAPABILITY"] = (
+        "1" if supports_retained_directory_publication() else "0"
+    )
     run = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            script,
-            str(tmp_path / "wheel-core-workspace"),
-            str(installed),
-        ],
+        _wheel_e2e_command(
+            script_path=script_path,
+            workspace=tmp_path / "wheel-core-workspace",
+            installed=installed,
+        ),
         cwd=tmp_path,
         env=env,
         check=False,
@@ -825,3 +1558,404 @@ def test_non_editable_wheel_runs_complete_dormant_core_spine(
             '"gate_count": 6, "legacy_file_zero_truth": true, '
             '"receipt_count": 28}\n'
         )
+
+
+_SUCCESSOR_GUIDANCE_PROBE = r"""
+from contextlib import redirect_stdout
+import io
+import json
+from pathlib import Path
+import sqlite3
+import sys
+
+import multi_agent_brief
+from multi_agent_brief.cli.main import main
+from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
+from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
+
+
+mode = sys.argv[1]
+workspace = Path(sys.argv[2])
+expected_package_root = Path(sys.argv[3]).resolve()
+direction = json.loads(Path(sys.argv[4]).read_text(encoding="utf-8"))
+successor_run_id = sys.argv[5]
+expected_guidance = sys.argv[6]
+package_file = Path(multi_agent_brief.__file__).resolve()
+
+
+def require(condition, message):
+    if not condition:
+        raise RuntimeError(message)
+
+
+require(
+    package_file.is_relative_to(expected_package_root),
+    f"package root mismatch: {package_file} not under {expected_package_root}",
+)
+database = workspace / "briefloop.db"
+with sqlite3.connect(database) as connection:
+    schema_before = connection.execute("PRAGMA user_version").fetchone()[0]
+with SQLiteControlStore.open(database) as store:
+    revision_before = store.current_revision
+database_before = database.read_bytes()
+
+output = io.StringIO()
+with redirect_stdout(output):
+    return_code = main(
+        [
+            "runtime",
+            "successor-start",
+            "--workspace",
+            str(workspace),
+            "--direction-json",
+            json.dumps(direction, sort_keys=True, separators=(",", ":")),
+            "--run-id",
+            successor_run_id,
+            "--include-approved-guidance",
+        ]
+    )
+lines = [line for line in output.getvalue().splitlines() if line.strip()]
+require(return_code == 0, f"successor command failed: {output.getvalue()}")
+require(len(lines) == 1, f"successor command output drift: {lines!r}")
+command_result = json.loads(lines[0])
+require(
+    command_result.get("status") == ("committed" if mode == "source" else "replayed"),
+    f"successor command status drift: {command_result!r}",
+)
+
+with sqlite3.connect(database) as connection:
+    schema_after = connection.execute("PRAGMA user_version").fetchone()[0]
+with SQLiteControlStore.open(database) as store:
+    revision_after = store.current_revision
+    history = store.load_history()
+verified = CoreRunDomainVerifier().verify_loaded_history(history, successor_run_id)
+snapshot = verified.snapshot
+require(len(snapshot.run_guidance_snapshots) == 1, "missing guidance snapshot")
+guidance = snapshot.run_guidance_snapshots[0]
+decisions = tuple(snapshot.run_guidance_selection_decisions)
+items = tuple(snapshot.run_guidance_snapshot_items)
+require(guidance.reuse_requested, "guidance opt-in was not frozen")
+require(guidance.selected_count == len(items) == 1, "selected guidance count drift")
+require(guidance.omitted_count == 0, "compatible approved guidance was omitted")
+require(len(decisions) == 1 and decisions[0].selected, "selection decision drift")
+require(decisions[0].reason_code == "approved_scope_match", "selection reason drift")
+require(items[0].guidance_text == expected_guidance, "frozen guidance text drift")
+require(
+    guidance.selected_item_ids == [items[0].item_id]
+    and guidance.decision_ids == [decisions[0].decision_id],
+    "snapshot relation order drift",
+)
+receipts = [
+    item
+    for item in snapshot.transactions
+    if item.transaction_id == guidance.accepted_transaction_id
+]
+require(len(receipts) == 1, "missing successor Receipt")
+receipt = receipts[0]
+require(
+    [item.snapshot_id for item in receipt.run_guidance_snapshots]
+    == [guidance.snapshot_id],
+    "Receipt snapshot relation drift",
+)
+require(
+    [item.decision_id for item in receipt.run_guidance_selection_decisions]
+    == [decisions[0].decision_id],
+    "Receipt decision relation drift",
+)
+require(
+    [item.item_id for item in receipt.run_guidance_snapshot_items]
+    == [items[0].item_id],
+    "Receipt selected-item relation drift",
+)
+
+role_ids = (
+    "source-planner",
+    "source-provider",
+    "scout",
+    "screener",
+    "claim-ledger",
+    "analyst",
+    "editor",
+    "auditor",
+    "formatter",
+)
+contexts = {}
+for role_id in role_ids:
+    context = RuntimeHostService._frozen_guidance_context(verified, role_id=role_id)
+    contexts[role_id] = (
+        None
+        if context is None
+        else context.model_dump(mode="json", exclude_unset=False)
+    )
+require(contexts["analyst"] is not None, "analyst guidance context missing")
+require(contexts["editor"] == contexts["analyst"], "analyst/editor context drift")
+require(
+    all(
+        contexts[role_id] is None
+        for role_id in role_ids
+        if role_id not in {"analyst", "editor"}
+    ),
+    "guidance leaked to a forbidden role",
+)
+
+print(
+    json.dumps(
+        {
+            "mode": mode,
+            "optimize": sys.flags.optimize,
+            "command_status": command_result["status"],
+            "primary_record_id": command_result.get("primary_record_id"),
+            "schema_before": schema_before,
+            "schema_after": schema_after,
+            "revision_before": revision_before,
+            "revision_after": revision_after,
+            "database_unchanged": database.read_bytes() == database_before,
+            "snapshot": guidance.model_dump(mode="json", exclude_unset=False),
+            "decisions": [
+                item.model_dump(mode="json", exclude_unset=False)
+                for item in decisions
+            ],
+            "items": [
+                item.model_dump(mode="json", exclude_unset=False)
+                for item in items
+            ],
+            "receipt_relations": {
+                "snapshots": [
+                    item.model_dump(mode="json", exclude_unset=False)
+                    for item in receipt.run_guidance_snapshots
+                ],
+                "decisions": [
+                    item.model_dump(mode="json", exclude_unset=False)
+                    for item in receipt.run_guidance_selection_decisions
+                ],
+                "items": [
+                    item.model_dump(mode="json", exclude_unset=False)
+                    for item in receipt.run_guidance_snapshot_items
+                ],
+            },
+            "contexts": contexts,
+        },
+        sort_keys=True,
+    )
+)
+"""
+
+
+def _run_successor_guidance_probe(
+    *,
+    mode: str,
+    workspace: Path,
+    package_root: Path,
+    direction_path: Path,
+    successor_run_id: str,
+    expected_guidance: str,
+    script_path: Path,
+    cwd: Path,
+) -> dict[str, object]:
+    command = [sys.executable]
+    if sys.flags.optimize:
+        command.append("-" + ("O" * sys.flags.optimize))
+    command.extend(
+        (
+            str(script_path),
+            mode,
+            str(workspace),
+            str(package_root),
+            str(direction_path),
+            successor_run_id,
+            expected_guidance,
+        )
+    )
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = os.pathsep.join((str(package_root), str(ROOT)))
+    run = subprocess.run(
+        command,
+        cwd=cwd,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if run.returncode:
+        raise AssertionError(run.stdout + run.stderr)
+    return json.loads(run.stdout)
+
+
+@pytest.mark.timeout(900)
+@pytest.mark.skipif(
+    not supports_retained_directory_publication(),
+    reason="normal successor checkout publication is unavailable on this platform",
+)
+def test_source_and_non_editable_wheel_replay_guidance_successor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fresh schema-13 successor reuse is one installed, replay-safe product path."""
+
+    from multi_agent_brief.control_store import SQLiteControlStore
+    from multi_agent_brief.product.post_final_review import PostFinalReviewService
+    from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+        ANTHROPIC_API_KEY_SETTING,
+    )
+    import multi_agent_brief.semantic_evaluator.runner as runner_module
+    from tests.test_post_final_human_review import _disposition_payload
+    from tests.test_reader_review_backend import _reader_input, _reader_service
+
+    workspace = _real_finalized_local_workspace(tmp_path / "seed", monkeypatch)
+    provider_calls: list[tuple[str, int]] = []
+    assessment = _reader_service(
+        workspace,
+        provider_calls,
+        terminal_mode="finding",
+    )
+    monkeypatch.setattr(runner_module.metadata, "version", lambda _name: "0.104.1")
+    monkeypatch.setenv(ANTHROPIC_API_KEY_SETTING, "public-synthetic-key")
+    assessed = assessment.run_reader_review(
+        _reader_input("packaging-successor-reader-review-1")
+    )
+    monkeypatch.delenv(ANTHROPIC_API_KEY_SETTING, raising=False)
+    assert assessed["ok"] is True
+    assert assessed["status"] == "available"
+    assert assessed["finding_count"] >= 1
+    assert len(provider_calls) == 2
+    review = PostFinalReviewService(
+        workspace,
+        str(assessed["assessment_result_id"]),
+        str(assessed["assessment_result_fingerprint"]),
+    )
+    status = review.review_status()
+    finding = status["dispositions"][0]
+    accepted = review.record_disposition(
+        _disposition_payload(
+            status,
+            finding,
+            request_id="packaging-successor-accept-1",
+            decision="accept",
+        )
+    )
+    guidance_text = "Lead with the decision and keep evidence obligations explicit."
+    draft = review.append_guidance_draft(
+        {
+            "schema_version": "briefloop.post_final_guidance_draft_input.v1",
+            "human_actor_id": "packaging-human",
+            "human_request_id": "packaging-successor-draft-1",
+            "assessment_result_id": status["assessment_result_id"],
+            "finding_id": finding["finding_id"],
+            "disposition_id": accepted["disposition_id"],
+            "guidance_text": guidance_text,
+        }
+    )
+    approved = review.approve_guidance(
+        {
+            "schema_version": "briefloop.post_final_guidance_status_input.v1",
+            "human_actor_id": "packaging-human",
+            "human_request_id": "packaging-successor-approve-1",
+            "guidance_id": draft["guidance_id"],
+            "draft_revision": draft["draft_revision"],
+        }
+    )
+    assert approved["replayed"] is False
+
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        predecessor = store.load_snapshot(head.current_run_id)
+    assert predecessor.run_contract_bindings
+    direction = predecessor.run_contract_bindings[0].run_direction.model_dump(
+        mode="json",
+        exclude_unset=False,
+    )
+    direction.update(
+        {
+            "subject_name": "Successor public brief",
+            "brief_title": "Successor public brief",
+            "task_objective": "Prepare the next public-safe recurring brief.",
+        }
+    )
+    direction_path = tmp_path / "successor-direction.json"
+    direction_path.write_text(
+        json.dumps(direction, sort_keys=True, separators=(",", ":")),
+        encoding="utf-8",
+    )
+
+    build_root = tmp_path / "build-root-successor"
+    build_root.mkdir()
+    shutil.copy2(ROOT / "pyproject.toml", build_root / "pyproject.toml")
+    shutil.copy2(ROOT / "README.md", build_root / "README.md")
+    shutil.copytree(ROOT / "src", build_root / "src")
+    wheel_dir = tmp_path / "wheel-successor"
+    wheel_dir.mkdir()
+    build = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pip",
+            "wheel",
+            ".",
+            "--no-deps",
+            "--no-build-isolation",
+            "--wheel-dir",
+            str(wheel_dir),
+        ],
+        cwd=build_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert build.returncode == 0, build.stdout + build.stderr
+    wheel_path = next(wheel_dir.glob("briefloop-*.whl"))
+    installed = tmp_path / "installed-successor"
+    installed.mkdir()
+    with zipfile.ZipFile(wheel_path) as archive:
+        archive.extractall(installed)
+        assert (
+            "multi_agent_brief/control_store/migrations/0013.sql" in archive.namelist()
+        )
+
+    script_path = tmp_path / "successor_guidance_probe.py"
+    script_path.write_text(
+        textwrap.dedent(_SUCCESSOR_GUIDANCE_PROBE),
+        encoding="utf-8",
+    )
+    successor_run_id = "RUN-PACKAGING-SUCCESSOR-001"
+    source = _run_successor_guidance_probe(
+        mode="source",
+        workspace=workspace,
+        package_root=ROOT / "src",
+        direction_path=direction_path,
+        successor_run_id=successor_run_id,
+        expected_guidance=guidance_text,
+        script_path=script_path,
+        cwd=tmp_path,
+    )
+    wheel = _run_successor_guidance_probe(
+        mode="wheel",
+        workspace=workspace,
+        package_root=installed,
+        direction_path=direction_path,
+        successor_run_id=successor_run_id,
+        expected_guidance=guidance_text,
+        script_path=script_path,
+        cwd=tmp_path,
+    )
+
+    assert source["optimize"] == wheel["optimize"] == sys.flags.optimize
+    assert source["schema_before"] == source["schema_after"] == SCHEMA_VERSION
+    assert wheel["schema_before"] == wheel["schema_after"] == SCHEMA_VERSION
+    assert source["command_status"] == "committed"
+    assert source["revision_after"] == source["revision_before"] + 1
+    assert wheel["command_status"] == "replayed"
+    assert wheel["revision_after"] == wheel["revision_before"]
+    assert wheel["database_unchanged"] is True
+    stable_keys = (
+        "primary_record_id",
+        "snapshot",
+        "decisions",
+        "items",
+        "receipt_relations",
+        "contexts",
+    )
+    assert {key: source[key] for key in stable_keys} == {
+        key: wheel[key] for key in stable_keys
+    }

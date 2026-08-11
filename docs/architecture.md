@@ -6,7 +6,7 @@ A subagent-first briefing workflow. The Python CLI manages workspaces, source go
 
 ```mermaid
 flowchart LR
-  A["User Requirements<br/>onboarding + init"] --> B["Source Governance<br/>sources decide + doctor + inputs extract/classify"]
+  A["User Requirements<br/>onboarding + init"] --> B["Source Governance<br/>Store-derived runtime action + doctor + inputs extract/classify"]
   B --> C["Scout"]
   C --> D["Screener"]
   D --> E["Claim Ledger"]

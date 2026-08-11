@@ -161,6 +161,7 @@ def create_source_plan(
                     source_domains=task_def.get("domains", []),
                     topic=task_def.get("topic", "general"),
                     priority=task_def.get("priority", "medium"),
+                    max_results=task_def.get("max_results", 10),
                 )
             )
 

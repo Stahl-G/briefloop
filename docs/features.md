@@ -12,10 +12,11 @@ Status labels:
 - **Experimental**: implemented but not yet a stable v0.11.0 contract.
 - **Roadmap**: planned or scoped, not an implemented capability.
 
-Current product baseline: **v0.13.0 supported baseline entries for
-`industry-weekly`, `management-monthly`, and `document-review`**. Wider
+Current product baseline: **v0.15.2** carries the supported baseline entries for
+`industry-weekly`, `management-monthly`, and `document-review`. Wider
 Product OS surfaces remain experimental unless this page or the support matrix
-marks them supported.
+marks them supported. `solar-stock-periodic` is an experimental schema-18
+ReportPack, not a stable product baseline.
 
 ## Start And Operate A Brief
 
@@ -23,7 +24,9 @@ marks them supported.
 |---|---|---|---|
 | Workspace onboarding | Collects brief purpose, audience, cadence, source mode, and output preferences before creating a workspace | Always on | `briefloop onboard`, `briefloop init --from-onboarding` |
 | Product workspace skeleton | Creates a conservative local-first workspace and `report_spec.yaml` from a supported baseline ReportPack | Supported baseline | `briefloop new industry-weekly <workspace>`, `briefloop new management-monthly <workspace>`, `briefloop new document-review <workspace>` |
+| Solar Stock Periodic workspace | Creates a fresh schema-18 experimental capital-markets weekly contract with a 20-task Tavily discovery plan | Experimental | `briefloop new solar-stock-periodic <workspace>`; live prices/valuation require a separate frozen market-data snapshot |
 | Runtime handoff | Bootstraps the SQLite ControlStore and returns the Store-derived next action | Always on | `briefloop run --workspace <workspace> --runtime codex`, `briefloop runtime next` |
+| Normal same-workspace successor | Starts a new run from a finalized current head and atomically freezes compatible active-approved Human guidance only after explicit opt-in | Experimental development main | `briefloop runtime successor-start --workspace <workspace> --direction-json <json> --run-id <id> --include-approved-guidance`; Analyst/Editor only, utility NOT MEASURED |
 | Status view | Shows the Store-derived stage, action, package readiness, and delivery state | Always on | `briefloop status --workspace <workspace> --json` |
 | Delivery bundle | Produces reader-facing Markdown and DOCX outputs through Store-backed delivery | Always on | `briefloop runtime apply` (delivery actions), Store-native status |
 | Delivery/audit bundle projection | Writes a manifest that separates reader delivery artifacts from audit/control artifacts by hash | Experimental | `briefloop packs bundle --workspace <workspace>` |
@@ -33,10 +36,11 @@ marks them supported.
 | Function | What it does | Status | Notes |
 |---|---|---|---|
 | Manual local inputs | Uses local files already placed in the workspace | Always on | Best first path for trying BriefLoop |
-| SourceHub Lite setup | Copies local text files into the workspace and registers RSS or runtime web-search handoff tasks | Experimental | Source setup only; no hidden crawling, span extraction, or support judgment |
+| Retired SourceHub Lite commands | Preserves parser recognition for deterministic rejection | Unsupported | `sources add-*` returns `runtime_command_unsupported` with zero source or Store writes |
 | Cached source packages | Reuses pre-downloaded public or private source packs | Optional | Useful for repeatable runs |
 | Runtime web search | Lets the active agent runtime gather sources through its own search tool | Optional | No BriefLoop API key required |
 | External search APIs | Uses configured search backends such as Tavily, Exa, Brave, Firecrawl, or Serper | Optional | Requires API keys |
+| Solar Stock Periodic multi-query Tavily route | Executes the frozen 20-task equity/event/theme plan, with up to 20 results per task, grouped Extract batches, and one conditional targeted backfill | Experimental | Search snippets are not evidence; live usefulness and coverage are NOT MEASURED |
 | RSS and news feeds | Monitors configured feeds and news APIs | Optional | Useful for weekly tracking |
 | SEC / filing tools | Pulls filings and resolves ticker/XBRL filing sources | Optional | Useful for company and investor-relations workflows |
 | Feishu / Lark source integration | Pulls configured Feishu/Lark materials through local tooling | Optional | Requires local integration setup |
@@ -64,14 +68,15 @@ marks them supported.
 | Run integrity contamination | Marks frozen-artifact changes, replay hazards, and integrity violations explicitly | Always on | Contaminated runs are not clean reference evidence |
 | Repair routing | Routes blockers and findings to scoped repair paths | Supported, still improving | Repair does not erase the original trace |
 
-## Feedback And Approved Memory
+## Feedback And Approved Guidance
 
 | Function | What it does | Status | Boundary |
 |---|---|---|---|
 | Feedback capture | Records user feedback for review and repair/intake workflows | Supported | Feedback is not automatically memory |
-| Improvement Ledger | Stores human-approved reader guidance in an append-only, auditable ledger | Always on when used | No autonomous learning |
-| Improvement Memory snapshot | Freezes approved guidance into the next run's runtime surface | Always on when Improvement Ledger is used | Takes effect on future runs, not retroactively |
-| Supersede / revert hygiene | Prevents obvious guidance rot and records reversibility | Supported | Human-controlled |
+| Store-native post-final guidance lifecycle | Records explicit Human disposition, edited guidance, and separate approval/status as append-only SQLite Receipts | Experimental development main | Approval is not automatic reuse or evidence |
+| Successor guidance snapshot | With explicit successor opt-in, freezes compatible active-approved guidance and supplies the same immutable context to Analyst and Editor | Experimental development main | Current direction/evidence govern; no other role, Gate, finalize, delivery, repair, or Core authority |
+| Historical deactivate / revert / supersede | Keeps prior-run guidance lifecycle addressable after a successor becomes current | Experimental development main | Exact result binding; browser `review-open` remains current-head-only |
+| Legacy Improvement files and commands | Former JSON/JSONL ledger, projection, snapshot, and `improve` mutators | Retired | Inert; no reader, writer, migration, or fallback |
 
 ## Experimental Support-Record Surfaces
 
@@ -84,7 +89,7 @@ into a truth-proof system.
 | Atomic Claim Graph | Optional atom-level decomposition of Claim Ledger entries | Experimental | Automatic atomization correctness |
 | Evidence Span Registry | Optional source-pack byte binding and span trace records | Experimental | Semantic support proof |
 | Claim-Support Matrix | Optional atom-to-evidence support rows with validation and gate/status projection | Experimental | Automatic support assessment, truth proof, or release eligibility |
-| Semantic support assessment proposals | Structured multi-assessor proposal layer for support labels | Experimental | A single model judge deciding truth |
+| Semantic Assessment Report contract | Optional schema and machine-checkable reference validation | Experimental schema only | No current producer, proposal/status projection, adjudication writer, support truth, or Gate authority |
 | Human adjudication queue | Human resolution of disputed support assessments | Roadmap | Automatic adjudication |
 | Release eligibility | Explicit release/reference classification from support and evaluation records | Roadmap | Hidden quality claims |
 
@@ -95,7 +100,7 @@ into a truth-proof system.
 | Deterministic test suite | Runs 1,000+ tests without LLM calls | Always on in CI | Tests contracts and control behavior, not model quality |
 | Synthetic demos | Shows the evidence chain on safe example materials | Supported | Demo behavior is not a production-quality claim |
 | Reference run reports | Publishes selected public-safe integration and failure studies | Supported | Each report states what it proves and does not prove |
-| MABW-080 / BriefLoop-090 experiments | Reproduces and audits archived controlled experiment runs | Archived Experimental | Pilot-level observation, not broad quality proof |
+| MABW-080 / BriefLoop-090 experiments | Historical guide, git history, and frozen reference-run records | Retired tooling | No current commands; archived observation is not broad quality proof |
 
 ## Output Formats
 

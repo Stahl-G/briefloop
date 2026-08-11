@@ -80,6 +80,7 @@ SHADOW_REASON_CODES = (
     "provider_retryable_failure",
     "provider_failed",
     "provider_incomplete",
+    "provider_refused",
     "provider_identity_mismatch",
     "provider_boundary_invalid",
 )

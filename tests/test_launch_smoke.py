@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "check_launch_smoke.py"
 DEMO_SCRIPT = SCRIPT.parent / "demo.py"
@@ -22,6 +24,7 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+@pytest.mark.explicit_e2e
 def test_launch_smoke_json_runs_demo_handoff_path():
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--json"],

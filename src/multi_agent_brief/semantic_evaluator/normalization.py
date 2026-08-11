@@ -13,6 +13,7 @@ from multi_agent_brief.semantic_evaluator.contracts import (
     BoundedContext,
     BoundedRequirement,
     DataClass,
+    Language,
     ReaderArtifact,
     ReaderBlock,
     SpanLocator,
@@ -86,7 +87,12 @@ def _closing_fence(line: _Line, opener: str) -> bool:
     return set(marks) == {opener[0]} and len(marks) >= len(opener)
 
 
-def _normalize_markdown(markdown_bytes: bytes, *, artifact_id: str) -> NormalizedReader:
+def _normalize_markdown(
+    markdown_bytes: bytes,
+    *,
+    artifact_id: str,
+    language: Language,
+) -> NormalizedReader:
     text: str | None = None
     try:
         text = normalized_utf8_text(markdown_bytes)
@@ -187,7 +193,7 @@ def _normalize_markdown(markdown_bytes: bytes, *, artifact_id: str) -> Normalize
         schema_version=READER_ARTIFACT_SCHEMA_ID,
         artifact_id=artifact_id,
         report_sha256=sha256_bytes(markdown_bytes),
-        language="zh-CN",
+        language=language,
         format="normalized_markdown",
         normalized_text_sha256=sha256_text(text),
         blocks=blocks,
@@ -196,11 +202,20 @@ def _normalize_markdown(markdown_bytes: bytes, *, artifact_id: str) -> Normalize
     return NormalizedReader(normalized_text=text, artifact=artifact)
 
 
-def normalize_markdown(markdown_bytes: bytes, *, artifact_id: str) -> NormalizedReader:
+def normalize_markdown(
+    markdown_bytes: bytes,
+    *,
+    artifact_id: str,
+    language: Language = "zh-CN",
+) -> NormalizedReader:
     result: NormalizedReader | None = None
     failure_reason: str | None = None
     try:
-        result = _normalize_markdown(markdown_bytes, artifact_id=artifact_id)
+        result = _normalize_markdown(
+            markdown_bytes,
+            artifact_id=artifact_id,
+            language=language,
+        )
     except SemanticEvaluatorError as exc:
         failure_reason = exc.reason_code
     except (AttributeError, KeyError, TypeError, ValueError):
@@ -289,10 +304,15 @@ def _build_admitted_report_evidence(
     report_bytes: bytes,
     *,
     artifact_id: str,
+    language: Language,
 ) -> tuple[AdmittedReportEvidence, NormalizedReader]:
     if not report_bytes:
         raise SemanticEvaluatorError("input_missing")
-    reader = normalize_markdown(report_bytes, artifact_id=artifact_id)
+    reader = normalize_markdown(
+        report_bytes,
+        artifact_id=artifact_id,
+        language=language,
+    )
     payload = {
         "artifact_id": artifact_id,
         "report_bytes_hex": report_bytes.hex(),
@@ -309,6 +329,7 @@ def build_admitted_report_evidence(
     report_bytes: bytes,
     *,
     artifact_id: str,
+    language: Language = "zh-CN",
 ) -> tuple[AdmittedReportEvidence, NormalizedReader]:
     result: tuple[AdmittedReportEvidence, NormalizedReader] | None = None
     failure_reason: str | None = None
@@ -316,6 +337,7 @@ def build_admitted_report_evidence(
         result = _build_admitted_report_evidence(
             report_bytes,
             artifact_id=artifact_id,
+            language=language,
         )
     except SemanticEvaluatorError as exc:
         failure_reason = exc.reason_code
@@ -343,6 +365,7 @@ def verify_admitted_report_evidence(
     expected, reader = build_admitted_report_evidence(
         raw,
         artifact_id=strict.artifact_id,
+        language=(reader_artifact.language if reader_artifact is not None else "zh-CN"),
     )
     exact = False
     try:
@@ -362,12 +385,13 @@ def _freeze_bounded_context(
     *,
     context_id: str,
     data_class: DataClass,
+    language: Language,
     requirements: Iterable[BoundedRequirement],
 ) -> BoundedContext:
     payload = {
         "schema_version": BOUNDED_CONTEXT_SCHEMA_ID,
         "context_id": context_id,
-        "language": "zh-CN",
+        "language": language,
         "data_class": data_class,
         "requirements": [strict_model_payload(item) for item in requirements],
     }
@@ -381,6 +405,7 @@ def freeze_bounded_context(
     *,
     context_id: str,
     data_class: DataClass,
+    language: Language = "zh-CN",
     requirements: Iterable[BoundedRequirement],
 ) -> BoundedContext:
     result: BoundedContext | None = None
@@ -389,6 +414,7 @@ def freeze_bounded_context(
         result = _freeze_bounded_context(
             context_id=context_id,
             data_class=data_class,
+            language=language,
             requirements=requirements,
         )
     except SemanticEvaluatorError as exc:

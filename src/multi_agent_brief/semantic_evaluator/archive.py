@@ -25,6 +25,12 @@ from multi_agent_brief.semantic_evaluator.adapter import (
     classify_provider_outcome_v4,
     make_provider_boundary_facts_v4,
 )
+from multi_agent_brief.semantic_evaluator.adapters.anthropic_messages import (
+    ANTHROPIC_ADAPTER_ID,
+    ANTHROPIC_PROVIDER_ID,
+    is_supported_anthropic_sdk_version_v1,
+    project_anthropic_attempt_v1,
+)
 from multi_agent_brief.semantic_evaluator.adapters.openai_responses import (
     OPENAI_ADAPTER_ID,
     OPENAI_PROVIDER_ID,
@@ -86,6 +92,7 @@ from multi_agent_brief.semantic_evaluator.validator import (
 
 
 ARCHIVE_VERSION = "semantic_evaluator_shadow_archive_v5"
+EXECUTION_EVIDENCE_VERSION = "semantic_evaluator_shadow_execution_evidence_v1"
 _TRIAL_ID = TypeAdapter(ContractId)
 _FIXED_CONTROL_FILES = frozenset({"archive_manifest.json", "receipt.json", "COMPLETE"})
 _REQUIRED_PAYLOAD_FILES = frozenset(
@@ -111,9 +118,14 @@ _REQUIRED_PAYLOAD_FILES = frozenset(
     }
 )
 _OPENAI_WIRE_ADAPTER_IDS = frozenset({OPENAI_ADAPTER_ID, CLIPROXY_ADAPTER_ID})
+_SDK_PROJECTED_ADAPTER_IDS = frozenset(
+    {OPENAI_ADAPTER_ID, CLIPROXY_ADAPTER_ID, ANTHROPIC_ADAPTER_ID}
+)
 
 
 def _provider_id_for_adapter(adapter_id: str) -> str:
+    if adapter_id == ANTHROPIC_ADAPTER_ID:
+        return ANTHROPIC_PROVIDER_ID
     if adapter_id == OPENAI_ADAPTER_ID:
         return OPENAI_PROVIDER_ID
     if adapter_id == CLIPROXY_ADAPTER_ID:
@@ -140,6 +152,27 @@ class VerifiedShadowArchive:
             self.receipt.run_status == "completed"
             and self.receipt.validation_status == "accepted"
         )
+
+    def require_exact_identity(
+        self,
+        *,
+        request: ShadowRunRequest,
+        execution_manifest: ShadowExecutionManifest,
+    ) -> "VerifiedShadowArchive":
+        """Compare current expected identity only after intrinsic verification."""
+
+        if _model_bytes(self.request) != _model_bytes(request) or _model_bytes(
+            self.execution_manifest
+        ) != _model_bytes(execution_manifest):
+            raise SemanticEvaluatorError("shadow_request_conflict")
+        return self
+
+
+@dataclass(frozen=True)
+class VerifiedExecutionEvidence:
+    path: Path
+    manifest: Mapping[str, Any]
+    payloads: Mapping[str, bytes]
 
 
 def _strict_json_bytes(raw: bytes) -> Any:
@@ -304,7 +337,7 @@ class _OpenAISdkProjection:
     body_state: str
 
 
-def _parse_sdk_projection(raw: bytes) -> _OpenAISdkProjection:
+def _parse_openai_sdk_projection(raw: bytes) -> _OpenAISdkProjection:
     value = _strict_json_bytes(raw)
     required = {
         "body_state",
@@ -404,10 +437,40 @@ def _recomputed_facts(
 ):
     """Rebuild all derivable facts from retained bytes and frozen identities."""
 
+    if record.adapter_id == ANTHROPIC_ADAPTER_ID:
+        if sdk_projection_raw is None:
+            if response_raw is not None or record.facts.envelope.state != "absent":
+                raise SemanticEvaluatorError("shadow_archive_invalid")
+            provider = _provider_fact(
+                ExternalTextObservation(True, record.provider_id),
+                ExternalTextObservation(
+                    True, _provider_id_for_adapter(record.adapter_id)
+                ),
+            )
+            return make_provider_boundary_facts_v4(
+                envelope=capture_response_envelope_v4(None, present=False),
+                status=_absent_external_text(),
+                response_id=_absent_external_text(),
+                provider_identity=provider,
+                model_identity=_absent_external_text(),
+                output=_absent_external_text(),
+                http_status=record.facts.http_status.to_runtime(),
+                transport_kind=record.facts.transport_kind,
+            )
+        try:
+            return project_anthropic_attempt_v1(
+                raw=response_raw,
+                sdk_projection_raw=sdk_projection_raw,
+                provider_id=record.provider_id,
+            ).facts
+        except Exception:
+            raise SemanticEvaluatorError("shadow_archive_invalid") from None
+
     absent = _absent_external_text()
-    sdk_projection = (
-        _parse_sdk_projection(sdk_projection_raw)
+    openai_sdk_projection = (
+        _parse_openai_sdk_projection(sdk_projection_raw)
         if sdk_projection_raw is not None
+        and record.adapter_id in _OPENAI_WIRE_ADAPTER_IDS
         else None
     )
     if response_raw is None:
@@ -415,23 +478,23 @@ def _recomputed_facts(
             raise SemanticEvaluatorError("shadow_archive_invalid")
         if record.adapter_id in _OPENAI_WIRE_ADAPTER_IDS:
             if (
-                sdk_projection is None
-                or sdk_projection.body_state != "absent"
+                openai_sdk_projection is None
+                or openai_sdk_projection.body_state != "absent"
                 or any(
                     item.state != "absent"
                     for item in (
-                        sdk_projection.status,
-                        sdk_projection.response_id,
-                        sdk_projection.model_identity,
-                        sdk_projection.output,
+                        openai_sdk_projection.status,
+                        openai_sdk_projection.response_id,
+                        openai_sdk_projection.model_identity,
+                        openai_sdk_projection.output,
                     )
                 )
             ):
                 raise SemanticEvaluatorError("shadow_archive_invalid")
-            transport_kind = sdk_projection.transport_kind
-            http_status = sdk_projection.http_status.to_runtime()
+            transport_kind = openai_sdk_projection.transport_kind
+            http_status = openai_sdk_projection.http_status.to_runtime()
         else:
-            if sdk_projection is not None:
+            if sdk_projection_raw is not None:
                 raise SemanticEvaluatorError("shadow_archive_invalid")
             transport_kind = record.facts.transport_kind
             http_status = record.facts.http_status.to_runtime()
@@ -457,7 +520,7 @@ def _recomputed_facts(
         raise SemanticEvaluatorError("shadow_archive_invalid")
     if record.adapter_id in _OPENAI_WIRE_ADAPTER_IDS:
         projection = project_openai_response_bytes_v4(response_raw)
-        if sdk_projection is None or sdk_projection.body_state not in {
+        if openai_sdk_projection is None or openai_sdk_projection.body_state not in {
             "present",
             "invalid",
         }:
@@ -469,13 +532,13 @@ def _recomputed_facts(
         sdk_is_absent = all(
             item.state == "absent"
             for item in (
-                sdk_projection.status,
-                sdk_projection.response_id,
-                sdk_projection.model_identity,
-                sdk_projection.output,
+                openai_sdk_projection.status,
+                openai_sdk_projection.response_id,
+                openai_sdk_projection.model_identity,
+                openai_sdk_projection.output,
             )
         )
-        if sdk_projection.body_state == "invalid":
+        if openai_sdk_projection.body_state == "invalid":
             status = absent
             response_id = absent
             model = absent
@@ -484,7 +547,7 @@ def _recomputed_facts(
         elif projection.envelope_valid and not sdk_is_absent:
             status = _reconcile_raw_and_sdk(
                 projection.status,
-                sdk_projection.status,
+                openai_sdk_projection.status,
                 allowed_values=frozenset(
                     {
                         "completed",
@@ -497,13 +560,13 @@ def _recomputed_facts(
                 ),
             )
             response_id = _reconcile_raw_and_sdk(
-                projection.response_id, sdk_projection.response_id
+                projection.response_id, openai_sdk_projection.response_id
             )
             model = _reconcile_raw_and_sdk(
-                projection.model_identity, sdk_projection.model_identity
+                projection.model_identity, openai_sdk_projection.model_identity
             )
             output = (
-                _reconcile_raw_and_sdk(projection.output, sdk_projection.output)
+                _reconcile_raw_and_sdk(projection.output, openai_sdk_projection.output)
                 if projection.output.state == "present_valid"
                 else projection.output
             )
@@ -514,7 +577,7 @@ def _recomputed_facts(
             model = projection.model_identity
             output = projection.output
             envelope_invalid_code = projection.envelope_invalid_code
-        transport_kind = sdk_projection.transport_kind
+        transport_kind = openai_sdk_projection.transport_kind
         http_status = capture_http_status_v4(None, present=False)
     elif record.adapter_id == "synthetic_fixture_v4":
         if sdk_projection_raw is not None:
@@ -554,12 +617,66 @@ def _recomputed_facts(
         provider_identity=provider,
         model_identity=model,
         output=output,
-        # A response body precludes transport retry.  The archived typed HTTP
-        # observation is still recomputed as absent on the normal response path;
-        # a status-error body remains terminal through the present envelope.
+        # A response body precludes transport retry.  The exact SDK HTTP
+        # observation remains part of the recomputed boundary facts: absent for
+        # a normal response and captured for a status-error body.
         http_status=http_status,
         transport_kind=transport_kind,  # type: ignore[arg-type]
     )
+
+
+def _validate_anthropic_usage(
+    *,
+    record: ProviderAttemptRecord,
+    response_raw: bytes | None,
+    sdk_projection_raw: bytes | None,
+) -> None:
+    if record.adapter_id != ANTHROPIC_ADAPTER_ID:
+        return
+    if response_raw is None:
+        # A plain transport failure has no HTTP response and no projection.
+        # An http_error attempt whose response body is unreadable retains
+        # only its projection; usage fields must equal the projection-derived
+        # nulls exactly.
+        if sdk_projection_raw is None:
+            return
+        try:
+            projection = project_anthropic_attempt_v1(
+                raw=None,
+                sdk_projection_raw=sdk_projection_raw,
+                provider_id=record.provider_id,
+            )
+        except Exception:
+            raise SemanticEvaluatorError("shadow_archive_invalid") from None
+        expected = (
+            projection.input_tokens,
+            projection.output_tokens,
+            projection.total_tokens,
+        )
+        if (
+            record.input_tokens,
+            record.output_tokens,
+            record.total_tokens,
+        ) != expected:
+            raise SemanticEvaluatorError("shadow_archive_invalid")
+        return
+    if sdk_projection_raw is None:
+        raise SemanticEvaluatorError("shadow_archive_invalid")
+    try:
+        projection = project_anthropic_attempt_v1(
+            raw=response_raw,
+            sdk_projection_raw=sdk_projection_raw,
+            provider_id=record.provider_id,
+        )
+    except Exception:
+        raise SemanticEvaluatorError("shadow_archive_invalid") from None
+    expected = (
+        projection.input_tokens,
+        projection.output_tokens,
+        projection.total_tokens,
+    )
+    if (record.input_tokens, record.output_tokens, record.total_tokens) != expected:
+        raise SemanticEvaluatorError("shadow_archive_invalid")
 
 
 def _validate_attempt_reachability(
@@ -690,11 +807,28 @@ def _attempt_records(
         if has_response:
             expected_paths.add(response_path)
         has_sdk_projection = sdk_projection_path in payloads
-        if has_sdk_projection != (record.adapter_id in _OPENAI_WIRE_ADAPTER_IDS):
+        # A provider response processed by an SDK has a projection.  An
+        # http_error attempt whose response body is unreadable also retains
+        # its projection because the recorded facts were derived from it (the
+        # projection is then the sole evidence); a plain transport failure
+        # has absent facts and no projection to retain.
+        expects_sdk_projection = record.adapter_id in _SDK_PROJECTED_ADAPTER_IDS and (
+            record.raw_transport_response_sha256 is not None
+            or (
+                record.facts.transport_kind == "http_error"
+                and record.facts.status.state != "absent"
+            )
+        )
+        if has_sdk_projection != expects_sdk_projection:
             raise SemanticEvaluatorError("shadow_archive_invalid")
         if has_sdk_projection:
             expected_paths.add(sdk_projection_path)
         recomputed_facts = _recomputed_facts(
+            record=record,
+            response_raw=payloads.get(response_path),
+            sdk_projection_raw=payloads.get(sdk_projection_path),
+        )
+        _validate_anthropic_usage(
             record=record,
             response_raw=payloads.get(response_path),
             sdk_projection_raw=payloads.get(sdk_projection_path),
@@ -802,10 +936,10 @@ def verify_shadow_archive(
         raise SemanticEvaluatorError("shadow_archive_invalid")
     if not _REQUIRED_PAYLOAD_FILES.issubset(expected_payload_paths):
         raise SemanticEvaluatorError("shadow_archive_invalid")
-    if (
-        len([item for item in expected_payload_paths if item.startswith("prompts/")])
-        != 9
-    ):
+    prompt_member_count = len(
+        [item for item in expected_payload_paths if item.startswith("prompts/")]
+    )
+    if not 1 <= prompt_member_count <= 9:
         raise SemanticEvaluatorError("shadow_archive_invalid")
 
     payloads: dict[str, bytes] = {}
@@ -816,9 +950,25 @@ def verify_shadow_archive(
         payloads[member.path] = raw
 
     request = _parse_model(payloads["request.json"], ShadowRunRequest)
+    if prompt_member_count != len(request.ordered_prompt_request_sha256s):
+        raise SemanticEvaluatorError("shadow_archive_invalid")
     execution = _parse_model(
         payloads["execution_manifest.json"], ShadowExecutionManifest
     )
+    sdk_identity_valid = {
+        ANTHROPIC_ADAPTER_ID: (
+            execution.provider_sdk_name == "anthropic"
+            and is_supported_anthropic_sdk_version_v1(execution.provider_sdk_version)
+        ),
+        CLIPROXY_ADAPTER_ID: execution.provider_sdk_name == "openai",
+        OPENAI_ADAPTER_ID: execution.provider_sdk_name == "openai",
+        "synthetic_fixture_v4": (
+            execution.provider_sdk_name == "synthetic"
+            and execution.provider_sdk_version == "synthetic-v4"
+        ),
+    }[execution.adapter_id]
+    if not sdk_identity_valid:
+        raise SemanticEvaluatorError("shadow_archive_invalid")
     policy_payload: dict[str, object] = {
         "schema_version": ShadowExecutionPolicy.schema_id,
         "adapter_id": execution.adapter_id,
@@ -1019,7 +1169,7 @@ def verify_shadow_archive(
         raise SemanticEvaluatorError("shadow_archive_invalid")
     reasons = set(witness.validation_report.reason_codes)
     specific_provider_reasons = set(terminal_attempt_reasons).intersection(
-        {"provider_identity_mismatch", "provider_incomplete"}
+        {"provider_identity_mismatch", "provider_incomplete", "provider_refused"}
     )
     if specific_provider_reasons:
         if "provider_failed" not in terminal_attempt_reasons:
@@ -1040,10 +1190,21 @@ def verify_shadow_archive(
 def resolve_existing_archive(
     *,
     archive_root: Path,
-    request: ShadowRunRequest,
-    execution_manifest: ShadowExecutionManifest,
+    request: ShadowRunRequest | None = None,
+    execution_manifest: ShadowExecutionManifest | None = None,
+    trial_id: str | None = None,
 ) -> VerifiedShadowArchive | None:
-    path = trial_archive_path(archive_root, request.trial_id)
+    if (request is None) != (execution_manifest is None):
+        raise SemanticEvaluatorError("shadow_request_invalid")
+    if request is not None:
+        if trial_id is not None and trial_id != request.trial_id:
+            raise SemanticEvaluatorError("shadow_request_invalid")
+        current_trial_id = request.trial_id
+    else:
+        if type(trial_id) is not str:
+            raise SemanticEvaluatorError("shadow_request_invalid")
+        current_trial_id = trial_id
+    path = trial_archive_path(archive_root, current_trial_id)
     try:
         path.lstat()
     except FileNotFoundError:
@@ -1095,6 +1256,277 @@ def prepare_archive_root(*, archive_root: Path, trial_id: str) -> Path:
     except OSError:
         raise SemanticEvaluatorError("archive_root_unsafe") from None
     return final_path
+
+
+def execution_evidence_path(archive_root: Path, trial_id: str) -> Path:
+    """Return the append-only provider-evidence path for one trial.
+
+    Execution evidence is deliberately separate from the qualified archive:
+    provider bytes are committed before baseline/composition derivation and
+    therefore survive a local derivation failure.
+    """
+
+    try:
+        validated_trial_id = _TRIAL_ID.validate_python(trial_id)
+    except Exception:
+        raise SemanticEvaluatorError("shadow_request_invalid") from None
+    return archive_root / "executions" / validated_trial_id
+
+
+def _execution_evidence_manifest(
+    *,
+    stage: Path,
+    request: ShadowRunRequest,
+    execution: ShadowExecutionManifest,
+    payload_paths: list[str],
+    status: str,
+    reason_codes: tuple[str, ...],
+    recorded_at: str,
+) -> dict[str, Any]:
+    members = []
+    for relative in sorted(payload_paths):
+        raw = _read_regular(stage / relative)
+        members.append(
+            {
+                "path": relative,
+                "size_bytes": len(raw),
+                "sha256": sha256_bytes(raw),
+            }
+        )
+    aggregate = canonical_sha256(members)
+    payload: dict[str, Any] = {
+        "schema_version": EXECUTION_EVIDENCE_VERSION,
+        "execution_id": f"execution-{canonical_sha256([request.shadow_request_sha256, aggregate])[:24]}",
+        "shadow_request_sha256": request.shadow_request_sha256,
+        "execution_sha256": execution.execution_sha256,
+        "trial_id": request.trial_id,
+        "status": status,
+        "reason_codes": list(reason_codes),
+        "recorded_at": recorded_at,
+        "payload_members": members,
+        "payload_file_count": len(members),
+        "aggregate_payload_sha256": aggregate,
+    }
+    payload["execution_manifest_sha256"] = canonical_sha256(payload)
+    return payload
+
+
+def publish_execution_evidence(
+    *,
+    archive_root: Path,
+    request: ShadowRunRequest,
+    execution_manifest: ShadowExecutionManifest,
+    payloads: Mapping[str, bytes],
+    status: str,
+    reason_codes: tuple[str, ...] = (),
+    recorded_at: str,
+) -> Path:
+    """Atomically retain provider evidence before local derivation.
+
+    This archive has no reader-facing qualification semantics.  It is an
+    append-only witness for request/prompt/attempt/response bytes and may be
+    replayed by a future local derivation step without credentials or a
+    provider call.
+    """
+
+    if not payloads or any(path in _FIXED_CONTROL_FILES for path in payloads):
+        raise SemanticEvaluatorError("shadow_archive_publish_failed")
+    evidence_payloads = {
+        path: raw for path, raw in payloads.items() if path != "execution_manifest.json"
+    }
+    final_path = execution_evidence_path(archive_root, request.trial_id)
+    parent = final_path.parent
+    _ensure_real_directory(parent)
+    try:
+        final_path.lstat()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        raise SemanticEvaluatorError("shadow_archive_publish_failed") from None
+    else:
+        # Never overwrite evidence.  A same-identity retry is idempotent only
+        # when the existing receipt is complete and its request/execution
+        # identities match exactly.
+        try:
+            manifest = json.loads(_read_regular(final_path / "evidence_manifest.json"))
+            complete = _read_regular(final_path / "COMPLETE")
+            receipt = _read_regular(final_path / "execution_receipt.json")
+            if complete != (sha256_bytes(receipt) + "\n").encode("ascii"):
+                raise ValueError
+            if (
+                manifest.get("shadow_request_sha256") != request.shadow_request_sha256
+                or manifest.get("execution_sha256")
+                != execution_manifest.execution_sha256
+            ):
+                raise ValueError
+            return final_path
+        except Exception:
+            raise SemanticEvaluatorError("shadow_request_conflict") from None
+
+    try:
+        stage = Path(tempfile.mkdtemp(prefix=".execution-staging-", dir=parent))
+    except OSError:
+        raise SemanticEvaluatorError("shadow_archive_publish_failed") from None
+    try:
+        for relative, raw in sorted(evidence_payloads.items()):
+            candidate = PurePosixPath(relative)
+            if (
+                candidate.is_absolute()
+                or str(candidate) != relative
+                or any(part in {"", ".", ".."} for part in candidate.parts)
+            ):
+                raise SemanticEvaluatorError("shadow_archive_publish_failed")
+            _write_exclusive(stage / relative, raw)
+        _write_exclusive(
+            stage / "execution_manifest.json",
+            canonical_json_bytes(
+                execution_manifest.model_dump(mode="json", warnings="error")
+            ),
+        )
+        manifest = _execution_evidence_manifest(
+            stage=stage,
+            request=request,
+            execution=execution_manifest,
+            payload_paths=list(evidence_payloads),
+            status=status,
+            reason_codes=tuple(sorted(set(reason_codes))),
+            recorded_at=recorded_at,
+        )
+        manifest_bytes = canonical_json_bytes(manifest)
+        receipt_payload = {
+            "schema_version": EXECUTION_EVIDENCE_VERSION,
+            "execution_receipt_id": f"execution-receipt-{manifest['execution_id']}",
+            "execution_id": manifest["execution_id"],
+            "execution_manifest_sha256": manifest["execution_manifest_sha256"],
+            "shadow_request_sha256": request.shadow_request_sha256,
+            "execution_sha256": execution_manifest.execution_sha256,
+            "trial_id": request.trial_id,
+            "status": manifest["status"],
+            "reason_codes": manifest["reason_codes"],
+            "recorded_at": recorded_at,
+        }
+        receipt_payload["receipt_sha256"] = canonical_sha256(receipt_payload)
+        receipt_bytes = canonical_json_bytes(receipt_payload)
+        _write_exclusive(stage / "evidence_manifest.json", manifest_bytes)
+        _write_exclusive(stage / "execution_receipt.json", receipt_bytes)
+        _write_exclusive(
+            stage / "COMPLETE", (sha256_bytes(receipt_bytes) + "\n").encode("ascii")
+        )
+        os.rename(stage, final_path)
+        return final_path
+    except FileExistsError:
+        raise SemanticEvaluatorError("shadow_request_conflict") from None
+    except SemanticEvaluatorError:
+        raise
+    except OSError:
+        raise SemanticEvaluatorError("shadow_archive_publish_failed") from None
+    finally:
+        try:
+            shutil.rmtree(stage)
+        except OSError:
+            pass
+
+
+def resolve_existing_execution_evidence(
+    *,
+    archive_root: Path,
+    trial_id: str,
+    request: ShadowRunRequest | None = None,
+    execution_manifest: ShadowExecutionManifest | None = None,
+) -> VerifiedExecutionEvidence | None:
+    """Verify and reopen a provider-phase evidence archive, if present."""
+
+    path = execution_evidence_path(archive_root, trial_id)
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        raise SemanticEvaluatorError("shadow_archive_invalid") from None
+    if not path.is_dir() or (path / "COMPLETE").is_symlink():
+        raise SemanticEvaluatorError("shadow_archive_invalid")
+    try:
+        receipt_bytes = _read_regular(path / "execution_receipt.json")
+        manifest_bytes = _read_regular(path / "evidence_manifest.json")
+        execution_bytes = _read_regular(path / "execution_manifest.json")
+        if _read_regular(path / "COMPLETE") != (
+            sha256_bytes(receipt_bytes) + "\n"
+        ).encode("ascii"):
+            raise SemanticEvaluatorError("shadow_archive_invalid")
+        receipt = json.loads(receipt_bytes)
+        manifest = json.loads(manifest_bytes)
+        execution = ShadowExecutionManifest.model_validate(json.loads(execution_bytes))
+        if (
+            receipt.get("receipt_sha256")
+            != canonical_sha256(
+                {
+                    key: value
+                    for key, value in receipt.items()
+                    if key != "receipt_sha256"
+                }
+            )
+            or manifest.get("execution_manifest_sha256")
+            != canonical_sha256(
+                {
+                    key: value
+                    for key, value in manifest.items()
+                    if key != "execution_manifest_sha256"
+                }
+            )
+            or receipt.get("execution_manifest_sha256")
+            != manifest.get("execution_manifest_sha256")
+            or manifest.get("trial_id") != trial_id
+            or manifest.get("execution_sha256") != execution.execution_sha256
+        ):
+            raise SemanticEvaluatorError("shadow_archive_invalid")
+        if (
+            request is not None
+            and manifest.get("shadow_request_sha256") != request.shadow_request_sha256
+        ):
+            raise SemanticEvaluatorError("shadow_request_conflict")
+        if execution_manifest is not None and canonical_json_bytes(
+            execution
+        ) != canonical_json_bytes(execution_manifest):
+            raise SemanticEvaluatorError("shadow_request_conflict")
+        members = manifest.get("payload_members")
+        if not isinstance(members, list):
+            raise SemanticEvaluatorError("shadow_archive_invalid")
+        payloads: dict[str, bytes] = {}
+        expected = {
+            "COMPLETE",
+            "execution_receipt.json",
+            "evidence_manifest.json",
+            "execution_manifest.json",
+        }
+        for item in members:
+            if not isinstance(item, dict) or not isinstance(item.get("path"), str):
+                raise SemanticEvaluatorError("shadow_archive_invalid")
+            relative = item["path"]
+            candidate = PurePosixPath(relative)
+            if (
+                candidate.is_absolute()
+                or str(candidate) != relative
+                or any(part in {"", ".", ".."} for part in candidate.parts)
+            ):
+                raise SemanticEvaluatorError("shadow_archive_invalid")
+            raw = _read_regular(path / relative)
+            if item.get("size_bytes") != len(raw) or item.get("sha256") != sha256_bytes(
+                raw
+            ):
+                raise SemanticEvaluatorError("shadow_archive_invalid")
+            payloads[relative] = raw
+            expected.add(relative)
+        files, directories = _all_tree_entries(path)
+        if files != expected or directories != _expected_directories(files):
+            raise SemanticEvaluatorError("shadow_archive_invalid")
+        payloads["execution_manifest.json"] = execution_bytes
+        return VerifiedExecutionEvidence(
+            path=path, manifest=manifest, payloads=payloads
+        )
+    except SemanticEvaluatorError:
+        raise
+    except Exception:
+        raise SemanticEvaluatorError("shadow_archive_invalid") from None
 
 
 def _resolve_publish_winner(
@@ -1300,10 +1732,15 @@ def publish_shadow_archive(
 
 __all__ = [
     "ARCHIVE_VERSION",
+    "EXECUTION_EVIDENCE_VERSION",
+    "VerifiedExecutionEvidence",
     "VerifiedShadowArchive",
+    "execution_evidence_path",
     "prepare_archive_root",
+    "publish_execution_evidence",
     "publish_shadow_archive",
     "resolve_existing_archive",
+    "resolve_existing_execution_evidence",
     "trial_archive_path",
     "verify_shadow_archive",
 ]

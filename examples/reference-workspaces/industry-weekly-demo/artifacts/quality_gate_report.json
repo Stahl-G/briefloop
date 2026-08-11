@@ -1,9 +1,11 @@
 {
-  "schema_version": "briefloop.quality_gate_report.v1",
-  "stage": "auditor",
+  "schema_version": "multi-agent-brief-quality-gates/v1",
+  "created_at": "2026-06-14T09:08:00Z",
+  "updated_at": "2026-06-14T09:08:00Z",
+  "workspace": "industry-weekly-demo",
+  "report_date": "2026-06-14",
+  "policy_pack": "default",
   "status": "warning",
-  "blocking_count": 0,
-  "warning_count": 1,
   "gate_results": [
     {
       "gate_id": "material_fact",
@@ -33,21 +35,48 @@
       "gate_id": "final_abstract_quality",
       "status": "warning",
       "blocking": false,
-      "finding_ids": ["F-001"]
+      "finding_ids": ["QG_FINAL_ABSTRACT_QUALITY_001"]
     }
   ],
   "findings": [
     {
-      "finding_id": "F-001",
+      "finding_id": "QG_FINAL_ABSTRACT_QUALITY_001",
       "gate_id": "final_abstract_quality",
       "finding_type": "final_missing_comparison_basis",
-      "severity": "warning",
+      "category": "final_abstract_quality",
+      "severity": "medium",
       "blocking": false,
       "blocking_level": "warning",
-      "artifact": "output/delivery/brief.md",
-      "message": "The brief uses a comparative phrase about demand improving, but the comparison basis is limited to the sample fixture.",
-      "recommended_action": "Keep the narrow sample framing in the reader-facing text."
+      "repair_owner": "none",
+      "stage_id": "editor",
+      "artifact_id": "audited_brief",
+      "gate_stage_id": "auditor",
+      "gate_artifact_id": "auditor_quality_gate_report",
+      "repair_stage_id": null,
+      "repair_artifact_id": null,
+      "claim_id": null,
+      "source_id": null,
+      "line_number": 4,
+      "description": "The brief uses a comparative phrase about demand improving, but the comparison basis is limited to the sample fixture.",
+      "recommendation": "Keep the narrow sample framing in the reader-facing text and state the comparison basis before broadening the signal.",
+      "rule_summary": "Comparison framing should include an explicit basis, method, benchmark, or scope.",
+      "docs_anchor": "docs/agent-contract.md#final_abstract_quality",
+      "summary": "The brief uses a comparative phrase about demand improving, but the comparison basis is limited to the sample fixture.",
+      "evidence_ref": "Public-safe demo sources point to a modest pickup in grid-equipment demand.",
+      "metadata": {
+        "semantic_boundary": "warning_only_deterministic_pattern_surface; not a prose-quality score, truth proof, release authority, delivery approval, or repair authority",
+        "repair_boundary": "advisory_non_routable",
+        "authority_boundary": "deterministic_warning_only_no_repair_or_delivery_authority"
+      }
     }
   ],
-  "boundary": "deterministic_warning_surface_only_no_delivery_authority"
+  "metadata": {
+    "stage_id": "auditor",
+    "gate_stage_id": "auditor",
+    "gate_artifact_id": "auditor_quality_gate_report",
+    "brief": "output/intermediate/audited_brief.md",
+    "ledger": "output/intermediate/claim_ledger.json",
+    "reference_fixture": true,
+    "authority_boundary": "deterministic_warning_only_no_repair_or_delivery_authority"
+  }
 }

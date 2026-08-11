@@ -143,7 +143,7 @@ BriefLoop 适合：
 | 哪些动作真正生效了？ | 被接受的 strict request、transaction receipt 和 invocation lineage | 通过受支持的 status/runtime view 查看 `briefloop.db` |
 | 什么在替你把关？ | Store-backed gate evaluation、package readiness 和显式人工批准 | Receipt-backed runtime action 与只读状态投影 |
 
-Agent 可以观察和提议；只有通过严格校验并被确定性服务接受的请求才会改变 Store，交付仍由人控制。当前尚未交付 Store-native 的可复用 guidance 或 Improvement Ledger。
+Agent 可以观察和提议；只有通过严格校验并被确定性服务接受的请求才会改变 Store，交付仍由人控制。在尚未发布的 development main 上，实验性 post-final 审阅可在同一 finalized lineage 上记录多个、彼此独立且由 Human 授权的 append-only assessment；审阅必须显式选择 result，并可记录 accept/reject/defer、人工编辑的 guidance 和独立 approval Receipt。generation 2 及以后只能由显式 Human 操作创建，policy 漂移不会自动运行或重拨。Human 随后可以通过 `briefloop runtime successor-start` 显式启动同一 workspace 的正常 successor，提供新的 `RunDirection`，并用 `--include-approved-guidance` 明确选择复用。一个确定性事务只为 successor 冻结兼容、active 且经 Human 批准的 guidance，且仅 Analyst 和 Editor 收到同一份不可变 context。当前 direction 与 evidence 始终优先；guidance 不进入 Claim Ledger，也不拥有 Gate、finalize、delivery、repair 或 Core 权限；效用 NOT MEASURED。已发布 v0.14.0 不包含这条 development-main successor 路径或 Store-native 可复用 guidance surface。
 
 ---
 
@@ -237,6 +237,21 @@ URL 与事件 `opened_at` 元数据。workspace 内的 Codex kit 也会被哈希
 
 旧的 `briefloop sources decide` 仅作为退役命令名保留；SQLite Codex run 的来源
 登记必须走 Store-derived runtime action，不得把旧 JSON 路径当作 fallback。
+窄范围 Tavily runtime-first 路径仍是 Experimental。凭据会保留在工作区私有
+`.env` 中，直到 Human 显式轮换或移除；凭据存在本身不构成 provider spend
+authority。每个由 Human 单独确认并记录到 Store 的 acquisition attempt 至多
+执行冻结的 Tavily 原子任务矩阵：每个任务最多请求 20 条 advanced Search 结果，全部
+合格唯一 URL 按每批 20 条执行 Batch Extract，覆盖不足的任务可执行一次确定性的
+30 日定向 backfill；Solar Stock Periodic 默认冻结 20 条独立任务（11 家上市公司、
+5 个事件主体、4 条主题），安全包络为 800 个唯一 URL。
+Search 只发现 URL 与摘要；摘要永不具备 claims eligibility。只有 Extract 成功
+返回的非空正文进入 Intake source pack；部分成功只提交成功 URL，同时在一个
+哈希绑定的 acquisition bundle 中保留准确的 request/response bytes 与逐 URL
+结果。Search 零结果或 Extract 全失败不产生 source 或 execution authorization。
+精确 replay 不会重新调用 provider，失败不会自动重试；HumanSourcePack 是独立的
+Human 来源路径，不能算 Tavily 成功。合成 loopback transport 已测试；真实用途、
+可靠性、成本、覆盖率、成功率以及从 acquisition 到 `finalized_local` 的表现均为
+**NOT MEASURED**。
 
 ### Windows PowerShell
 
@@ -332,24 +347,73 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 
 当前版本：**v0.15.2**
 
-当前主要入口：
+v0.15.2 移除 legacy JSON control-plane 运行时。原有 Claude/Hermes/OpenCode/
+CodeBuddy/operator 路径及其 workspace 资产、role skills、writer 命令和 JSON
+control 文件均已删除；仅保留 SQLite Codex ControlStore 运行时。此版本同时
+移除已退役的 JSON runtime-state 栈及其 dead consumer。
+
+v0.15.1 prepared release target（development main，尚未打 tag）包含 Store-qualified post-final 审阅：同一 finalized lineage 可执行多个、
+彼此独立且由 Human 授权的 append-only advisory assessment；必须显式选择 result，
+随后打开受保护的本地 Review Session，并追加人工处置、编辑草稿和独立 guidance
+approval。generation 2 及以后只能显式创建，policy 漂移不会自动运行或重拨。独立
+的 Human 命令可以启动同一 workspace 的正常 successor；只有显式带上
+`--include-approved-guidance` 时，一个原子事务才会冻结兼容、active 且已批准的
+guidance。只有 Analyst 和 Editor 收到同一份不可变 context。效用 NOT MEASURED；
+guidance 不提供 evidence，不改变 Claim Ledger、Gate、finalize、delivery、repair
+或 Core，也不存在自动学习或隐式复用。
+
+当前入口：
 
 - CLI：`briefloop`
 - Experimental SQLite-only Codex runtime：`briefloop run --workspace <path>
   --runtime codex`，随后使用 `briefloop runtime next`、
   `invocation-start`、`invocation-accept|fail` 和 `apply`
 - Experimental 一次性网页初始化：`briefloop init <path> --web`
-- 只读三页报告视图：`briefloop quality html --workspace <path> [--open]`
+- 尽力而为且受平台能力门禁约束的本地静态只读四 Tab 视图：
+  `briefloop quality html --workspace <path>
+  [--open]`；Brief 显示 Store 绑定的 `finalized_local` reader，Quality 为确定性
+  投影，LAJ 仅为可选 advisory 且 NOT MEASURED，Improvement 因已发布版本没有
+  Store-native writer/lifecycle 而如实显示 unavailable
 - 实验性 offline-shadow LAJ：`briefloop experiments laj shadow-run` 与
   `briefloop experiments laj present`；仅用于公开/合成材料的 advisory 评估及
   独立 JSON/Markdown/HTML 展示；也可通过
-  `briefloop quality summarize --laj-view <laj.json>` 只读展示显式提供且与当前
-  报告绑定的 `laj.json`
+  `briefloop quality html --workspace <path> --laj-view <laj.json>` 只读展示
+  显式提供且与当前报告绑定的 `laj.json`
+- 实验性 Solar Stock Periodic ReportPack：`briefloop new solar-stock-periodic
+  <workspace>`。请使用 fresh schema-18 workspace，并通过 Store 冻结的 Tavily
+  路径执行 20 条发现任务；Search 摘要仍不能作为证据，精确重放不会重拨，失败
+  任务会保留为可见状态，而不是伪装成“本周无事件”。`briefloop market-data
+  fetch|ingest|project` 每个 run、每个 as-of 日期只冻结一份 append-only
+  周度行情快照（有界 Yahoo chart API 适配器，单只证券失败隔离为显式缺口；
+  `input/market_data/` 下的手工 JSON/CSV 优先于 API），并投影出带显式
+  `NOT AVAILABLE` 行的股权对比表；缺失数据绝不会用编造的价格或估值倍数
+  填补。
 
-v0.15.2 移除 legacy JSON control-plane 运行时。原有 Claude/Hermes/OpenCode/
-CodeBuddy/operator 路径及其 workspace 资产、role skills、writer 命令和 JSON
-control 文件均已删除；仅保留 SQLite Codex ControlStore 运行时。此版本同时
-移除已退役的 JSON runtime-state 栈及其 dead consumer。
+仅限 development-main 的 LAJ continuation controls：
+
+- `briefloop quality laj assessment-next --workspace <path>
+  --policy-revision-id <id> --human-actor-id <id> --human-request-id <id>
+  --assessment-purpose <purpose>`：只读生成可直接交给 `assessment-run` 的完整
+  非秘密请求，不需要 SQL、内部 fingerprint、credential 或写入。
+- `briefloop runtime successor-start --workspace <path> --direction-json
+  '<strict RunDirection JSON>' --run-id <new-run-id>
+  --include-approved-guidance`：显式启动正常 successor，并选择复用兼容的
+  active-approved guidance。不带最后一个 flag 时冻结空 snapshot；两种形式都不
+  调用 provider 或 role。
+
+Store schema 变化后，旧 development workspace 不受支持；请用当前 schema 新建
+workspace。BriefLoop 不提供 development schema 的产品内升级路径。
+
+v0.15.1 prepared target 延续 SQLite-only 切换，并增加实验性的 post-final 审阅与多任务来源发现：
+
+- Store-qualified AI 第二意见支持多代 Human 授权、append-only assessment、精确
+  archive-bound replay/projection，以及人工来源观察记录和独立 guidance approval。
+  它只是 advisory，不改变 Gate、finalize、delivery 或 Core next-action 权威。
+- schema 18 新增 Solar Stock Periodic 的冻结搜索计划、逐任务 Tavily Search/Extract
+  结果和不可变 acquisition bundle。已有 schema-17 workspace 不迁移、不原地升级。
+- 可执行 Tavily 路径不再重建一个宽泛行业查询，也不再使用五个 URL 的产品上限；
+  它逐条执行冻结任务，任务覆盖不足时最多做一次确定性的 30 日定向 backfill，安全
+  包络上限为 800 个唯一 URL。
 
 此前的 v0.14.0 完成 SQLite-only 切换，并增加只读交互面：
 
@@ -361,21 +425,23 @@ control 文件均已删除；仅保留 SQLite Codex ControlStore 运行时。此
   和 human-request JSON payload 必须由 Store 重验，本身不是权威。
 - 打包的 Codex Skill 只执行 Store 派生的精确下一动作与 Receipt-backed
   invocation，不回退到 `operator` 或其他 runtime。
-- loopback init wizard 与三页 HTML 都是只读交互面。LAJ 仍为 Experimental，
-  效用 NOT MEASURED；Improvement Ledger 页面如实显示 unavailable，不能把
-  guidance 写入下一 run。
-- v0.14 工程改动由 Codex 实现和测试；人类维护者授权合并与发布。
+- loopback init wizard 与本地静态四 Tab HTML 都是只读交互面。Brief 显示经
+  Store 验证的 `finalized_local` reader，Quality 为确定性投影；LAJ 仍为可选
+  advisory、效用 NOT MEASURED；Improvement Ledger 因已发布版本没有
+  Store-native writer/lifecycle 而如实显示 unavailable。
+- v0.15.1 工程改动仍属于实验性、fresh-only 能力；发布 tag 和 GitHub Release
+  仍须由人类维护者单独授权。
 
 延续的受支持报告工具与 advisory quality surface 包括：
 
 - `ReportSpec`、`ReportPack`、`ReportTemplate` 和 `PolicyProfile` contract
 - workspace skeleton 和确定性的 PolicyProfile 解析
-- delivery / audit bundle manifest 与干净 bundle archive
 - 支持的 `industry-weekly`、`management-monthly` 和 `document-review` 产品入口
 - 有边界的 `evidence_extract` source/scope 注册、source lock、logical page
   inventory seed 和 text-span seed registry
-- 实验性的 SourceHub Lite 来源设置入口，用于本地文件、RSS feed 和 runtime web-search handoff task
-- durable source evidence pack materialization 和 source taxonomy normalization
+- 已退役的 `sources decide/materialize-pack/add-*` 命令名统一 fail closed 并返回
+  `runtime_command_unsupported`；来源获取走 Store-derived runtime action，
+  `source_candidates.yaml` 只保留为 plan-only artifact
 - 内部 review release-mode approval record
 - Quality Panel JSON / Markdown / HTML 投影及 audit bundle 集成
 - 独立的实验性 LAJ JSON / Markdown / HTML second-opinion artifact，以及显式绑定
@@ -383,12 +449,13 @@ control 文件均已删除；仅保留 SQLite Codex ControlStore 运行时。此
   delivery、repair、approval、权威建议动作或 next-action authority，且 evaluator
   efficacy 尚未测量
 - reader-quality warning / projection surface：template conformance、
-  materiality selection、support-calibrated wording、citation profile、
-  coverage/omission 和 scoped final-abstract diagnostics
+  materiality selection、citation profile、coverage/omission 和 scoped
+  final-abstract diagnostics
 - repeated retry / repair / blocker loop 的 trajectory-regulation decision
   narrowing
-- proposal-only Semantic Support Auditor surface 和 human adjudication record；
-  这些记录不创建 support truth、gate、delivery approval 或 release authority
+- 可选 Semantic Assessment Report schema 与 reference validation；producer、
+  status projection 和 adjudication writer 已退役，剩余 contract 不创建 support
+  truth、gate、delivery approval 或 release authority
 - 公开安全的 reference、synthetic regression、minimal comparative evaluation、
   launch smoke 和 release checklist guardrail
 
@@ -457,6 +524,8 @@ BriefLoop 想把软件工程里的那套“可追踪、可回滚、可审计、�
 架构参考和贡献者文档：
 
 - [功能地图](docs/features.zh-CN.md)
+- [v0.15.1 准备中的 release target](docs/releases/v0.15.1.md)
+- [支持矩阵](docs/support-matrix.md)
 - [黄金路径](docs/golden-path.zh-CN.md)
 - [WorkBuddy 指南](docs/workbuddy.zh-CN.md)
 - [我每周怎么用 BriefLoop](docs/weekly-use.zh-CN.md)

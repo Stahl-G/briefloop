@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -14,9 +15,13 @@ from multi_agent_brief.runtime_assets import install_runtime_kit
 from multi_agent_brief.runtime_host_v2.codex import (
     load_codex_adapter_binding,
     load_workspace_codex_adapter_binding,
+    workspace_codex_adapter_loader,
 )
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
-from multi_agent_brief.runtime_host_v2.initialization import WorkspaceBootstrap
+from multi_agent_brief.runtime_host_v2.initialization import (
+    WorkspaceBootstrap,
+    initialize_or_open_runtime,
+)
 from multi_agent_brief.workspace.init_profile import InitProfile
 
 
@@ -36,6 +41,7 @@ ASSET_PATHS = (
     Path("skills/briefloop/references/controlstore-v2.md"),
     *(Path(f"agents/briefloop-{role_id}.toml") for role_id in ROLE_IDS),
 )
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def _workspace(tmp_path: Path, *, install: bool = True) -> Path:
@@ -154,9 +160,7 @@ def test_cli_initial_news_backfill_prepares_exact_kit_without_store(
         "--source-profile",
         "llm_decide",
         "--web-search-mode",
-        "external_api",
-        "--search-backend",
-        "tavily",
+        "runtime_tool",
         "--initial-news-backfill",
     ]
 
@@ -167,9 +171,71 @@ def test_cli_initial_news_backfill_prepares_exact_kit_without_store(
     run_id = config["controlstore_v2"]["run_id"]
 
     assert sources["web_search"]["initial_news_backfill"]["enabled"] is True
+    assert sources["web_search"]["mode"] == "runtime_tool"
+    assert "backend" not in sources["web_search"]
     assert load_workspace_codex_adapter_binding(
         workspace, run_id
     ) == load_codex_adapter_binding(run_id)
+    assert not (workspace / "briefloop.db").exists()
+
+
+@pytest.mark.parametrize(
+    "tavily_args",
+    (
+        ("--search-backend", "tavily"),
+        ("--tavily",),
+        ("--web-search-mode", "external_api"),
+    ),
+)
+def test_direct_init_tavily_entrypoints_require_confirmed_onboarding_before_writes(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    tavily_args: tuple[str, ...],
+) -> None:
+    workspace = tmp_path / "cli-tavily-workspace"
+    args = _direct_init_args(workspace)
+    args.extend(tavily_args)
+
+    assert main(args) == 1
+    output = capsys.readouterr().out
+    assert "briefloop init <workspace> --web" in output
+    assert "briefloop onboard" in output
+    assert not workspace.exists()
+
+
+@pytest.mark.parametrize(
+    ("backend", "api_key_env"),
+    (
+        ("exa", "EXA_API_KEY"),
+        ("brave", "BRAVE_SEARCH_API_KEY"),
+        ("firecrawl", "FIRECRAWL_API_KEY"),
+        ("serper", "SERPER_API_KEY"),
+    ),
+)
+def test_direct_init_preserves_explicit_supported_non_tavily_backends(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    backend: str,
+    api_key_env: str,
+) -> None:
+    workspace = tmp_path / f"cli-{backend}-workspace"
+    args = [
+        *_direct_init_args(workspace),
+        "--web-search-mode",
+        "external_api",
+        "--search-backend",
+        backend,
+    ]
+
+    assert main(args) == 0
+    output = capsys.readouterr().out
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    web_search = sources["web_search"]
+    assert web_search["enabled"] is True
+    assert web_search["mode"] == "external_api"
+    assert web_search["backend"] == backend
+    assert web_search["api_key_env"] == api_key_env
+    assert api_key_env in output
     assert not (workspace / "briefloop.db").exists()
 
 

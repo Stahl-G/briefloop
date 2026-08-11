@@ -9,6 +9,8 @@ from multi_agent_brief.semantic_evaluator.errors import SemanticEvaluatorError
 
 
 OPENAI_PROMPT_SIZER_ID = "openai_tiktoken_v1"
+ANTHROPIC_PROMPT_SIZER_ID = "anthropic_utf8_bytes_conservative_v1"
+ANTHROPIC_PROMPT_SIZER_VERSION = "anthropic_utf8_bytes_conservative_v1"
 CLIPROXY_PROMPT_SIZER_ID = "local_proxy_utf8_bytes_conservative_v1"
 CLIPROXY_PROMPT_SIZER_VERSION = "local_proxy_utf8_bytes_conservative_v1"
 SYNTHETIC_PROMPT_SIZER_ID = "synthetic_fixture_sizer_v4"
@@ -107,15 +109,40 @@ class CLIProxyUtf8BytePromptSizerV1:
         )
 
 
+class AnthropicUtf8BytePromptSizerV1:
+    """Conservative local sizing for the fixed native Messages profile."""
+
+    sizer_id = ANTHROPIC_PROMPT_SIZER_ID
+    sizer_version = ANTHROPIC_PROMPT_SIZER_VERSION
+    package_name = "briefloop"
+    package_version = "semantic-evaluator-v1"
+    encoding_name = "utf8-bytes-upper-bound-v1"
+
+    def count_tokens(self, *, system_text: str, user_text: str) -> int:
+        if type(system_text) is not str or type(user_text) is not str:
+            raise SemanticEvaluatorError("prompt_sizer_unavailable")
+        try:
+            system_bytes = system_text.encode("utf-8", errors="strict")
+            user_bytes = user_text.encode("utf-8", errors="strict")
+        except UnicodeEncodeError:
+            raise SemanticEvaluatorError("prompt_sizer_unavailable") from None
+        return _exact_count(
+            len(system_bytes) + len(user_bytes) + _RESPONSES_MESSAGE_OVERHEAD
+        )
+
+
 SyntheticFixturePromptSizerV1 = SyntheticFixturePromptSizerV4
 
 
 __all__ = [
+    "ANTHROPIC_PROMPT_SIZER_ID",
+    "ANTHROPIC_PROMPT_SIZER_VERSION",
     "CLIPROXY_PROMPT_SIZER_ID",
     "CLIPROXY_PROMPT_SIZER_VERSION",
     "OPENAI_PROMPT_SIZER_ID",
     "SYNTHETIC_PROMPT_SIZER_ID",
     "SYNTHETIC_PROMPT_SIZER_VERSION",
+    "AnthropicUtf8BytePromptSizerV1",
     "CLIProxyUtf8BytePromptSizerV1",
     "OpenAITiktokenPromptSizerV1",
     "SyntheticFixturePromptSizerV4",

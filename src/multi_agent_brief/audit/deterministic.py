@@ -80,7 +80,8 @@ def _plain_heading_text(line: str) -> str:
     return text.strip(" \t:-—–：")
 
 
-def _source_reference_section_level(line: str) -> int | None:
+def source_reference_section_level(line: str) -> int | None:
+    """Return the canonical source/reference heading level, if any."""
     level = _heading_level(line)
     if level is None:
         return None
@@ -120,17 +121,17 @@ def run_deterministic_audit(
                 )
             )
 
-    source_reference_section_level: int | None = None
+    active_source_reference_section_level: int | None = None
     for line_number, line in enumerate(markdown.splitlines(), start=1):
         heading_level = _heading_level(line)
-        if heading_level is not None and source_reference_section_level is not None:
-            if heading_level <= source_reference_section_level:
-                source_reference_section_level = None
-        section_level = _source_reference_section_level(line)
+        if heading_level is not None and active_source_reference_section_level is not None:
+            if heading_level <= active_source_reference_section_level:
+                active_source_reference_section_level = None
+        section_level = source_reference_section_level(line)
         if section_level is not None:
-            source_reference_section_level = section_level
+            active_source_reference_section_level = section_level
             continue
-        if source_reference_section_level is not None:
+        if active_source_reference_section_level is not None:
             continue
         if not line.strip() or line.startswith("#"):
             continue

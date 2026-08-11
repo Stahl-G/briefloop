@@ -1,0 +1,16 @@
+schema_version: briefloop.policy_profile.v1
+policy_profile_id: solar_stock_default
+industry: solar_capital_markets
+source_policy:
+  freshness_days_by_tier: {official_exchange: 7, company_ir: 7, market_data: 1, official_regulator: 14, reputable_news: 7, trade_press: 14}
+  preferred_source_tiers: [official_exchange, company_ir, market_data, official_regulator, reputable_news, trade_press]
+  discouraged_source_tiers: [social, unverified_forum, unsourced_search_summary]
+claim_policy:
+  materiality_terms: [share price, market capitalization, enterprise value, revenue, EBITDA, earnings, guidance, order, financing, merger, acquisition, capacity, asset disposal, 45X, FEOC, AD/CVD, polysilicon, cell price, module price]
+wording_policy:
+  forbidden_phrases: [投资建议, 买入, 卖出, 必然上涨, 必然下跌, guaranteed return, risk-free]
+gate_policy: {freshness: strict, material_fact: strict, target_relevance: strict}
+metadata:
+  boundary: experimental_policy_profile_only
+  maturity: solar_stock_dogfood_profile
+  non_claims: [no_investment_advice, no_automatic_price_causality, no_search_snippet_evidence, no_release_authority]

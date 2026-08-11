@@ -41,8 +41,13 @@ semantic-evaluator-openai = [
   "openai>=2,<3",
   "tiktoken>=0.9,<1",
 ]
+semantic-evaluator-anthropic = [
+  "anthropic>=0.104,<0.105",
+]
 dev = [
   "pytest>=8.0",
+  "pytest-split>=0.10,<1",
+  "pytest-timeout>=2.4,<3",
   "pytest-xdist>=3.5",
   "python-docx>=1.0.0",
   "ruff>=0.8.0",
@@ -115,6 +120,11 @@ multi_agent_brief = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+  "explicit_e2e: heavyweight end-to-end evidence run only when explicitly authorized; excluded from normal PR CI",
+  "macos_publication: exercises darwin-specific checkout publication primitives (F_FULLFSYNC, no_clobber_rename); the macOS CI job runs exactly this selection",
+  "timeout(seconds): per-node wall-clock bound supplied by pytest-timeout",
+]
 
 [tool.ruff]
 target-version = "py312"

@@ -6,9 +6,15 @@ import argparse
 import json
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from multi_agent_brief.runtime_assets import (
     RuntimeAssetInstallError,
+    apply_runtime_kit_plan,
     install_runtime_kit,
+    plan_runtime_kit,
+    plan_protected_codex_observations,
+    preflight_runtime_kit_plans,
 )
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
 
@@ -53,6 +59,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "invocation-accept",
         "invocation-fail",
         "apply",
+        "continue",
     ):
         command = actions.add_parser(
             action,
@@ -81,6 +88,25 @@ def register(subparsers: argparse._SubParsersAction) -> None:
                     "proposal_invalid",
                 ),
             )
+        if action == "continue":
+            command.add_argument(
+                "--trace",
+                action="store_true",
+                help="Include the read-only Store action trace.",
+            )
+
+    successor = actions.add_parser(
+        "successor-start",
+        help="Start a normal same-workspace successor run.",
+    )
+    successor.add_argument("--workspace", required=True)
+    successor.add_argument("--direction-json", required=True)
+    successor.add_argument("--run-id", required=True)
+    successor.add_argument(
+        "--include-approved-guidance",
+        action="store_true",
+        help="Freeze compatible active Human-approved guidance for this successor.",
+    )
 
 
 def handle(args: argparse.Namespace) -> int:
@@ -100,20 +126,38 @@ def handle(args: argparse.Namespace) -> int:
                     WorkspaceBootstrap,
                 )
 
-                results = [
-                    WorkspaceBootstrap(args.workspace).install_codex_kit(
-                        dry_run=dry_run
-                    ),
-                    *(
-                        install_runtime_kit(
+                bootstrap = WorkspaceBootstrap(args.workspace)
+                force = bool(getattr(args, "force", False))
+                codex_preflight = bootstrap.install_codex_kit(dry_run=True)
+                protected_observations = plan_protected_codex_observations(
+                    workspace=args.workspace
+                )
+                retained_plan = preflight_runtime_kit_plans(
+                    plans=tuple(
+                        plan_runtime_kit(
                             workspace=args.workspace,
                             runtime=runtime,
                             repo_workdir=getattr(args, "repo_workdir", None),
-                            force=bool(getattr(args, "force", False)),
-                            dry_run=dry_run,
                         )
                         for runtime in ("opencode", "claude")
                     ),
+                    force=force,
+                    runtime="all",
+                    protected_observations=protected_observations,
+                )
+                codex_result = (
+                    codex_preflight
+                    if dry_run
+                    else bootstrap.install_codex_kit(dry_run=False)
+                )
+                retained_result = apply_runtime_kit_plan(
+                    retained_plan,
+                    force=force,
+                    dry_run=dry_run,
+                )
+                results = [
+                    codex_result,
+                    retained_result,
                 ]
                 written = list(
                     dict.fromkeys(path for item in results for path in item["written"])
@@ -157,6 +201,50 @@ def handle(args: argparse.Namespace) -> int:
                 "so project .codex/config.toml and custom agents are loaded."
             )
         return 0
+    if args.runtime_action == "successor-start":
+        from multi_agent_brief.contracts.v2 import RunDirection
+        from multi_agent_brief.runtime_host_v2.codex import (
+            workspace_codex_adapter_loader,
+        )
+        from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
+
+        try:
+            workspace = Path(args.workspace).expanduser().resolve(strict=True)
+            raw = json.loads(args.direction_json)
+            if type(raw) is not dict:
+                raise RuntimeHostError("runtime_successor_request_invalid")
+            direction = RunDirection.model_validate(raw, strict=True)
+            result = RuntimeHostService(
+                workspace,
+                adapter_loader=workspace_codex_adapter_loader(workspace),
+            ).start_successor(
+                successor_run_id=args.run_id,
+                run_direction=direction,
+                include_approved_guidance=bool(args.include_approved_guidance),
+            )
+        except (
+            json.JSONDecodeError,
+            OSError,
+            RuntimeHostError,
+            TypeError,
+            ValidationError,
+            ValueError,
+        ) as exc:
+            code = (
+                str(exc)
+                if isinstance(exc, RuntimeHostError)
+                else "runtime_successor_request_invalid"
+            )
+            print(f"[runtime successor-start] {code}")
+            return 1
+        print(
+            json.dumps(
+                result.to_dict(),
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        return 0
     if args.runtime_action in {
         "next",
         "diagnose",
@@ -165,6 +253,7 @@ def handle(args: argparse.Namespace) -> int:
         "invocation-accept",
         "invocation-fail",
         "apply",
+        "continue",
     }:
         from multi_agent_brief.runtime_host_v2.codex import (
             workspace_codex_adapter_loader,
@@ -174,6 +263,7 @@ def handle(args: argparse.Namespace) -> int:
         from multi_agent_brief.runtime_host_v2.contracts import (
             HumanSourceMaterialRequest,
             HumanSourcePackRequest,
+            RuntimeSourceAcquisitionRecoveryRequest,
             RepairContentInput,
             RoleTaskEnvelope,
         )
@@ -193,6 +283,12 @@ def handle(args: argparse.Namespace) -> int:
                 payload = service.next_action().model_dump(
                     mode="json", exclude_unset=False
                 )
+            elif args.runtime_action == "continue":
+                payload = service.continue_authorized().model_dump(
+                    mode="json", exclude_unset=False
+                )
+                if not bool(getattr(args, "trace", False)):
+                    payload.pop("trace", None)
             elif args.runtime_action == "diagnose":
                 payload = service.diagnose().model_dump(
                     mode="json", exclude_unset=False
@@ -256,6 +352,9 @@ def handle(args: argparse.Namespace) -> int:
                 if action.action_kind == "human_decision":
                     request_models = {
                         HumanSourcePackRequest.schema_id: HumanSourcePackRequest,
+                        RuntimeSourceAcquisitionRecoveryRequest.schema_id: (
+                            RuntimeSourceAcquisitionRecoveryRequest
+                        ),
                         HumanSourceMaterialRequest.schema_id: (
                             HumanSourceMaterialRequest
                         ),

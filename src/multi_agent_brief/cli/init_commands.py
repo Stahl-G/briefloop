@@ -8,6 +8,14 @@ from pathlib import Path
 from multi_agent_brief.orchestrator_contract import RUNTIME_CLI_CHOICE_PLACEHOLDER
 
 
+TAVILY_CONFIRMED_INIT_GUIDANCE = (
+    "Tavily setup requires Human-confirmed direction and an explicit 7- or "
+    "30-day source window. Use `briefloop init <workspace> --web`, or run "
+    "`briefloop onboard` and then `briefloop init <workspace> "
+    "--from-onboarding onboarding.json`."
+)
+
+
 def register(subparsers: argparse._SubParsersAction) -> None:
     """Register the init subparser."""
     init_parser = subparsers.add_parser(
@@ -99,7 +107,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     init_parser.add_argument(
         "--tavily",
         action="store_true",
-        help="Legacy alias: enable Tavily live web search backend.",
+        help=(
+            "Retired direct Tavily shortcut; use --web or conversational onboarding "
+            "to confirm direction and source window."
+        ),
     )
     init_parser.add_argument(
         "--web-search-mode",
@@ -109,7 +120,10 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     init_parser.add_argument(
         "--search-backend",
         choices=["tavily", "exa", "brave", "firecrawl", "serper"],
-        help="Search backend for --web-search-mode external_api.",
+        help=(
+            "Search backend for --web-search-mode external_api. Direct Tavily setup "
+            "is rejected; use --web or conversational onboarding."
+        ),
     )
     init_parser.add_argument(
         "--initial-news-backfill",
@@ -180,8 +194,28 @@ def _init_web_wizard(args: argparse.Namespace) -> int:
         server.serve_forever()
     except KeyboardInterrupt:
         print("[init --web] cancelled; no workspace was created by this server.")
+        return_code = 130
+    else:
+        return_code = 0
     finally:
         server.close()
+    if return_code:
+        return return_code
+    outcome = server.outcome
+    if outcome is None:
+        print("[init --web] stopped without a committed or replayed initialization.")
+        return 1
+    print(
+        f"[init --web] {outcome.status}: workspace={outcome.workspace} "
+        f"run_id={outcome.run_id} transaction_id={outcome.transaction_id}"
+    )
+    if outcome.execution_authorized or outcome.source_discovery_authorized:
+        print(f"briefloop runtime continue --workspace {outcome.workspace}")
+    else:
+        print(
+            "briefloop run --workspace "
+            f"{outcome.workspace} --runtime codex --skip-doctor"
+        )
     return 0
 
 
@@ -322,9 +356,6 @@ def _apply_cli_overrides(profile, args: argparse.Namespace) -> None:
         if args.web_search_mode == "disabled":
             profile.tavily_enabled = False
             profile.search_backend = ""
-        elif args.web_search_mode == "external_api" and not profile.search_backend:
-            profile.tavily_enabled = True
-            profile.search_backend = "tavily"
         elif args.web_search_mode in {"runtime_tool", "configure_later"}:
             profile.tavily_enabled = False
             profile.search_backend = ""
@@ -373,7 +404,7 @@ def _profile_option_errors(profile) -> list[str]:
     ):
         errors.append(
             "--initial-news-backfill requires --source-profile llm_decide "
-            "because it runs through sources decide and source_discovery."
+            "because it belongs to the llm_decide source-discovery profile."
         )
     return errors
 
@@ -394,6 +425,22 @@ def _existing_store_init_error(target: Path) -> str | None:
 
 def _init_workspace(args: argparse.Namespace) -> int:
     """Create a brief workspace from onboarding or CLI args."""
+    search_backend = getattr(args, "search_backend", None)
+    if (
+        not getattr(args, "web", False)
+        and not getattr(args, "from_onboarding", None)
+        and (
+            getattr(args, "tavily", False)
+            or search_backend == "tavily"
+            or (
+                getattr(args, "web_search_mode", None) == "external_api"
+                and not search_backend
+            )
+        )
+    ):
+        print(f"[error] {TAVILY_CONFIRMED_INIT_GUIDANCE}")
+        return 1
+
     from multi_agent_brief.cli.init_wizard import (
         InitOnboardingRequired,
         _is_interactive,
@@ -405,13 +452,21 @@ def _init_workspace(args: argparse.Namespace) -> int:
     )
     from multi_agent_brief.onboarding.io import load_onboarding_result
     from multi_agent_brief.onboarding.mapper import map_onboarding_to_profile
+    from multi_agent_brief.product.workspace_hygiene import (
+        NestedWorkspaceTargetError,
+        canonical_workspace_target,
+    )
 
     if getattr(args, "web", False):
         return _init_web_wizard(args)
 
     # Priority: explicit CLI target > onboarding.target > default "brief-workspace"
     if args.demo:
-        target = Path(args.target)
+        try:
+            target = canonical_workspace_target(Path(args.target))
+        except NestedWorkspaceTargetError as exc:
+            print(f"[error] {exc.code}")
+            return 1
         if error_code := _existing_store_init_error(target):
             print(f"[error] {error_code}")
             return 1
@@ -473,6 +528,12 @@ def _init_workspace(args: argparse.Namespace) -> int:
 
         # Apply any explicit CLI overrides on top of onboarding values
         _apply_cli_overrides(profile, args)
+        if getattr(profile, "search_backend", "") == "tavily" or getattr(
+            profile, "tavily_enabled", False
+        ):
+            if onboarding.source_age_days not in {7, 30}:
+                print(f"[error] {TAVILY_CONFIRMED_INIT_GUIDANCE}")
+                return 1
         # CLI target overrides onboarding.target
         cli_target = args.target
         default_target = "brief-workspace"
@@ -530,10 +591,20 @@ def _init_workspace(args: argparse.Namespace) -> int:
         _print_profile_option_errors(option_errors)
         return 1
 
+    try:
+        target = canonical_workspace_target(target)
+    except NestedWorkspaceTargetError as exc:
+        print(f"[error] {exc.code}")
+        return 1
     if error_code := _existing_store_init_error(target):
         print(f"[error] {error_code}")
         return 1
-    create_workspace(target, profile, force=args.force)
+
+    try:
+        create_workspace(target, profile, force=args.force)
+    except NestedWorkspaceTargetError as exc:
+        print(f"[error] {exc.code}")
+        return 1
     from multi_agent_brief.runtime_host_v2.initialization import (
         RuntimeHostError,
         WorkspaceBootstrap,

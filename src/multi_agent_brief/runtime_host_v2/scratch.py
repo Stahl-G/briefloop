@@ -283,21 +283,28 @@ def read_role_outputs(
     envelope: RoleTaskEnvelope,
     *,
     host_filenames: Iterable[str] = (),
+    allow_optional_host_request: bool = False,
 ) -> dict[str, bytes]:
     """Read the exact invocation-scoped output set without following links."""
 
     scratch = workspace / envelope.scratch_directory
     allowed = set(envelope.allowed_output_filenames)
     host_owned = set(host_filenames)
-    expected_members = allowed | host_owned | {"role_task_envelope.json"}
+    optional_host_owned = (
+        {"submit_request.json"} if allow_optional_host_request else set()
+    )
+    required_members = allowed | host_owned | {"role_task_envelope.json"}
+    permitted_members = required_members | optional_host_owned
     try:
         if scratch.is_symlink() or not stat.S_ISDIR(scratch.lstat().st_mode):
             raise RuntimeHostError("runtime_scratch_invalid")
         members = {entry.name for entry in os.scandir(scratch)}
-        if members != expected_members:
+        if members != required_members and not (
+            required_members < members <= permitted_members
+        ):
             raise RuntimeHostError(
                 "runtime_proposal_missing"
-                if members < expected_members
+                if members < required_members
                 else "runtime_scratch_invalid"
             )
         result: dict[str, bytes] = {}
@@ -359,6 +366,30 @@ def materialize_host_request(
     )
 
 
+def verify_optional_host_request(
+    workspace: Path,
+    envelope: RoleTaskEnvelope,
+    payload: bytes,
+) -> bool:
+    """Verify an optional canonical Host request without treating it as authority."""
+
+    if not payload or len(payload) > MAX_HOST_CONTRACT_BYTES:
+        raise RuntimeHostError("runtime_scratch_invalid")
+    path = workspace / envelope.scratch_directory / "submit_request.json"
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        raise RuntimeHostError("runtime_scratch_invalid") from exc
+    _read_existing_host_bytes(
+        path,
+        payload,
+        error_code="runtime_scratch_invalid",
+    )
+    return True
+
+
 __all__ = [
     "MAX_HOST_CONTRACT_BYTES",
     "MAX_ROLE_OUTPUT_BYTES",
@@ -368,4 +399,5 @@ __all__ = [
     "read_role_envelope",
     "read_role_outputs",
     "read_host_contract",
+    "verify_optional_host_request",
 ]

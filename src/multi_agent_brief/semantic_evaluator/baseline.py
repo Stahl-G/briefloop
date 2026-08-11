@@ -255,7 +255,12 @@ def _build_baseline(
                 dimension_id=None,
                 requirement_id=requirement.requirement_id,
                 requirement_type=requirement.type,
-                text=f"请人工检查冻结要求 {requirement.requirement_id}（{requirement.type}）：{requirement.text}",
+                text=(
+                    f"Review frozen requirement {requirement.requirement_id} "
+                    f"({requirement.type}): {requirement.text}"
+                    if profile.profile.language == "en"
+                    else f"请人工检查冻结要求 {requirement.requirement_id}（{requirement.type}）：{requirement.text}"
+                ),
             )
         )
     payload: dict[str, Any] = {
@@ -264,7 +269,7 @@ def _build_baseline(
         "report_sha256": reader_artifact.report_sha256,
         "bounded_context_sha256": bounded_context.context_sha256,
         "profile_sha256": profile.profile_sha256,
-        "checklist_id": "structured_checklist_zh_v1",
+        "checklist_id": template.checklist_id,
         "lint_id": LINT_VERSION,
         "checklist_items": [
             item.model_dump(mode="json", warnings="error") for item in checklist_items

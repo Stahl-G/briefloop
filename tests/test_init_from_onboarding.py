@@ -1,12 +1,16 @@
 """Tests for CLI init --from-onboarding integration."""
+
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 from multi_agent_brief.cli.main import main
+from multi_agent_brief.runtime_host_v2.codex import workspace_codex_adapter_loader
+from multi_agent_brief.runtime_host_v2.initialization import initialize_or_open_runtime
 
 
 def test_init_from_onboarding_creates_workspace(tmp_path: Path, capsys):
@@ -30,7 +34,13 @@ def test_init_from_onboarding_creates_workspace(tmp_path: Path, capsys):
     output = capsys.readouterr().out
     assert rc == 0
 
-    for name in ("config.yaml", "profile.yaml", "sources.yaml", "user.md", "audience_profile.md"):
+    for name in (
+        "config.yaml",
+        "profile.yaml",
+        "sources.yaml",
+        "user.md",
+        "audience_profile.md",
+    ):
         assert (ws / name).exists(), f"{name} missing"
     input_readme = (ws / "input" / "README.md").read_text(encoding="utf-8")
     context_readme = (ws / "input" / "context" / "README.md").read_text(
@@ -93,6 +103,125 @@ def test_init_from_onboarding_preserves_declined_online_search(tmp_path: Path):
     assert doctor_rc == 0
 
 
+@pytest.mark.parametrize(
+    "search_selection",
+    (
+        {"search_backend_plain": "tavily"},
+        {"tavily_enabled": True},
+    ),
+)
+@pytest.mark.parametrize("source_age_days", (7, 30))
+def test_init_from_onboarding_tavily_freezes_exact_human_topic(
+    tmp_path: Path,
+    search_selection: dict[str, object],
+    source_age_days: int,
+) -> None:
+    topic = "grid-scale energy storage"
+    onboarding = {
+        "target": "tavily-weekly",
+        "company_or_org": "ExampleCo",
+        "industry_or_theme": topic,
+        "task_objective": "Track public grid storage developments for management.",
+        "audience_plain": "management team",
+        "source_style_plain": "research",
+        "output_style_plain": "executive brief",
+        "language_plain": "English",
+        "cadence_plain": "weekly",
+        "source_age_days": source_age_days,
+        **search_selection,
+    }
+    ob_path = tmp_path / "onboarding.json"
+    ob_path.write_text(json.dumps(onboarding), encoding="utf-8")
+    workspace = tmp_path / "tavily-weekly"
+
+    assert main(["init", str(workspace), "--from-onboarding", str(ob_path)]) == 0
+    initialized = initialize_or_open_runtime(
+        workspace,
+        adapter_loader=workspace_codex_adapter_loader(workspace),
+    )
+    route = next(
+        item
+        for item in initialized.verified.source_plan.routes
+        if item.route_id == "web-search"
+    )
+    assert route.acquisition_spec is not None
+    topic_queries = [
+        task.query
+        for task in route.acquisition_spec.tasks
+        if topic in task.query
+    ]
+    assert topic_queries
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    assert sources["web_search"]["recency_days"] == 7
+    assert sources["web_search"]["initial_news_backfill"]["recency_days"] == 30
+
+
+@pytest.mark.parametrize(
+    "invalid_window",
+    (None, 14, 90),
+    ids=("missing", "unsupported-14", "unsupported-90"),
+)
+def test_init_from_onboarding_tavily_rejects_unsupported_window_before_writes(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    invalid_window: int | None,
+) -> None:
+    onboarding: dict[str, object] = {
+        "target": "tavily-weekly",
+        "company_or_org": "ExampleCo",
+        "industry_or_theme": "grid-scale energy storage",
+        "task_objective": "Track public grid storage developments for management.",
+        "audience_plain": "management team",
+        "source_style_plain": "research",
+        "output_style_plain": "executive brief",
+        "language_plain": "English",
+        "cadence_plain": "weekly",
+        "search_backend_plain": "tavily",
+    }
+    if invalid_window is not None:
+        onboarding["source_age_days"] = invalid_window
+    ob_path = tmp_path / "onboarding.json"
+    ob_path.write_text(json.dumps(onboarding), encoding="utf-8")
+    workspace = tmp_path / "tavily-weekly"
+
+    assert main(["init", str(workspace), "--from-onboarding", str(ob_path)]) == 1
+    output = capsys.readouterr().out
+    assert "explicit 7- or 30-day source window" in output
+    assert "briefloop init <workspace> --web" in output
+    assert not workspace.exists()
+
+
+@pytest.mark.parametrize(("window_choice", "expected_days"), (("1", 7), ("2", 30)))
+def test_interactive_onboarding_tavily_forces_supported_window_choice(
+    window_choice: str,
+    expected_days: int,
+) -> None:
+    from multi_agent_brief.cli.init_wizard import prompt_for_profile
+
+    def answer(prompt: str) -> str:
+        if prompt.startswith("Select language"):
+            return "1"
+        if prompt.startswith("Maximum source age"):
+            return "90"
+        if prompt.startswith("Source profile"):
+            return "2"
+        if prompt.startswith("Enable online search"):
+            return "y"
+        if prompt.startswith("How should live web search"):
+            return "1"
+        if prompt.startswith("Tavily source window"):
+            return window_choice
+        if "RAG" in prompt or prompt.startswith("Enable competitor"):
+            return "n"
+        return ""
+
+    profile = prompt_for_profile(input_func=answer)
+
+    assert profile.search_backend == "tavily"
+    assert profile.tavily_enabled is True
+    assert profile.max_source_age_days == expected_days
+
+
 def test_init_from_onboarding_cli_workspace_overrides_target(tmp_path: Path):
     onboarding = {
         "target": "onboarding-target",
@@ -135,6 +264,7 @@ def test_init_from_onboarding_uses_onboarding_target_when_no_cli_target(tmp_path
         assert (ws / "config.yaml").exists()
     finally:
         import shutil
+
         shutil.rmtree(ws, ignore_errors=True)
 
 
@@ -201,7 +331,9 @@ def test_init_from_onboarding_aliases_accepted(tmp_path: Path):
     assert (ws / "audience_profile.md").exists()
 
 
-def test_init_from_onboarding_title_alias_does_not_pollute_task_objective(tmp_path: Path):
+def test_init_from_onboarding_title_alias_does_not_pollute_task_objective(
+    tmp_path: Path,
+):
     onboarding = {
         "company": "Example Solar",
         "industry": "美国光储市场",
@@ -250,7 +382,9 @@ def test_init_from_onboarding_canonical_brief_title_beats_title_alias(tmp_path: 
     assert config["project"]["name"] == "美国光储市场周报"
 
 
-def test_init_from_onboarding_rejects_selector_below_quality_floor(tmp_path: Path, capsys):
+def test_init_from_onboarding_rejects_selector_below_quality_floor(
+    tmp_path: Path, capsys
+):
     onboarding = {
         "company": "Example Solar",
         "industry": "美国光储市场",
@@ -276,27 +410,29 @@ def test_init_from_onboarding_rejects_selector_below_quality_floor(tmp_path: Pat
 def test_direct_init_creates_audience_profile(tmp_path: Path):
     ws = tmp_path / "direct-ws"
 
-    rc = main([
-        "init",
-        str(ws),
-        "--language",
-        "en-US",
-        "--company",
-        "DirectCo",
-        "--industry",
-        "manufacturing",
-        "--title",
-        "DirectCo Weekly Brief",
-        "--task-objective",
-        "Track material manufacturing developments for DirectCo management.",
-        "--audience",
-        "management",
-        "--cadence",
-        "weekly",
-        "--source-profile",
-        "llm_decide",
-        "--force",
-    ])
+    rc = main(
+        [
+            "init",
+            str(ws),
+            "--language",
+            "en-US",
+            "--company",
+            "DirectCo",
+            "--industry",
+            "manufacturing",
+            "--title",
+            "DirectCo Weekly Brief",
+            "--task-objective",
+            "Track material manufacturing developments for DirectCo management.",
+            "--audience",
+            "management",
+            "--cadence",
+            "weekly",
+            "--source-profile",
+            "llm_decide",
+            "--force",
+        ]
+    )
 
     assert rc == 0
     profile = (ws / "audience_profile.md").read_text(encoding="utf-8")
@@ -309,31 +445,33 @@ def test_direct_init_rejects_selector_below_quality_floor(tmp_path: Path, capsys
     for value in ("0", "-1", "1"):
         ws = tmp_path / f"direct-ws-{value.replace('-', 'neg')}"
 
-        rc = main([
-            "init",
-            str(ws),
-            "--language",
-            "en-US",
-            "--company",
-            "DirectCo",
-            "--role",
-            "operator",
-            "--industry",
-            "manufacturing",
-            "--title",
-            "DirectCo Weekly Brief",
-            "--task-objective",
-            "Track material manufacturing developments for DirectCo management.",
-            "--audience",
-            "management",
-            "--cadence",
-            "weekly",
-            "--source-profile",
-            "research",
-            "--selector-max-items",
-            value,
-            "--force",
-        ])
+        rc = main(
+            [
+                "init",
+                str(ws),
+                "--language",
+                "en-US",
+                "--company",
+                "DirectCo",
+                "--role",
+                "operator",
+                "--industry",
+                "manufacturing",
+                "--title",
+                "DirectCo Weekly Brief",
+                "--task-objective",
+                "Track material manufacturing developments for DirectCo management.",
+                "--audience",
+                "management",
+                "--cadence",
+                "weekly",
+                "--source-profile",
+                "research",
+                "--selector-max-items",
+                value,
+                "--force",
+            ]
+        )
 
         assert rc == 1
         out = capsys.readouterr().out

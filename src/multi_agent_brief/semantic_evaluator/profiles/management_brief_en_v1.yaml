@@ -1,0 +1,145 @@
+schema_version: briefloop.semantic_evaluator.profile.v1
+profile_id: management_brief_en_v1
+report_type: management_monthly
+language: en
+allowed_scope_classes: [O1, O2]
+dimensions:
+  - dimension_id: cross_section_consistency
+    scope_class: O1
+    definition: The report must remain internally consistent across its executive summary, body, tables, conclusions, limitations, and recommendations.
+    positive_criterion: Statements about the same entity, period, scope, number, conclusion, uncertainty, or recommendation can all be true at the same time.
+    exclusions: &o1_exclusions
+      - Do not judge whether an external-world fact is true.
+      - Do not judge whether a source supports a claim.
+      - Do not treat a style preference as an internal inconsistency.
+    severity_rubric: &severity_rubric
+      severe: The issue would reverse a key conclusion, status, or irreversible decision.
+      major: The issue would materially mislead the intended management decision or principal recommendation.
+      minor: The issue affects local understanding without changing the principal decision.
+    abstention_conditions: &o1_abstention
+      - The compared statements cannot be shown to share the same entity, period, definition, or scope from the report alone.
+      - A conclusion requires an external factual premise that the report does not contain.
+    o3_handoff_conditions: &evidence_handoff
+      - The question requires opening sources or checking external facts, freshness, professional truth, or semantic source support.
+    eligible_requirement_types: &o1_types []
+    sub_aspects:
+      - sub_aspect_id: summary_body_alignment
+        definition: Check whether the executive summary and headline conclusions match the body and explicit limitations.
+        positive_criterion: The summary preserves all body facts, qualifications, and status differences that could change a management decision.
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *evidence_handoff
+        eligible_requirement_types: *o1_types
+      - sub_aspect_id: entity_time_number_consistency
+        definition: Check repeated entities, periods, units, denominators, and numbers for internal conflict.
+        positive_criterion: Repeated values and labels use compatible entities, periods, units, denominators, and scopes.
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *evidence_handoff
+        eligible_requirement_types: *o1_types
+      - sub_aspect_id: reasoning_continuity
+        definition: Check whether the report's stated premises and intermediate reasoning reach its stated conclusions without an internal break.
+        positive_criterion: Each key conclusion follows from premises and limitations that the report itself states.
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *evidence_handoff
+        eligible_requirement_types: *o1_types
+      - sub_aspect_id: uncertainty_consistency
+        definition: Check whether certainty language conflicts with uncertainty, disagreement, or evidence limitations stated elsewhere in the report.
+        positive_criterion: The strength of each conclusion stays within the report's own uncertainty and limitation language.
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *evidence_handoff
+        eligible_requirement_types: *o1_types
+      - sub_aspect_id: recommendation_constraint_consistency
+        definition: Check whether recommendations violate the report's own status, preconditions, exclusions, limitations, or other recommendations.
+        positive_criterion: Recommendations remain mutually compatible and respect every relevant constraint stated in the report.
+        exclusions: *o1_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o1_abstention
+        o3_handoff_conditions: *evidence_handoff
+        eligible_requirement_types: *o1_types
+
+  - dimension_id: brief_requirement_coverage
+    scope_class: O2
+    definition: Classify each frozen operative requirement by whether the report fulfilled it, left it unmet but disclosed the gap, left it unmet without disclosure, or could not be assessed.
+    positive_criterion: Each requirement receives exactly one supported four-state classification bound to the correct frozen requirement and assessment unit.
+    exclusions: &o2_exclusions
+      - Frozen context is task intent, not external factual evidence.
+      - Mentioning a topic does not by itself fulfill the requirement.
+      - Transparently disclosing an unmet requirement does not fulfill that requirement.
+      - Do not judge external-world truth or semantic source support.
+    severity_rubric: *severity_rubric
+    abstention_conditions: &o2_abstention
+      - The frozen requirement is missing, conflicting, or too ambiguous to classify.
+      - Provider failure, incomplete output, refusal, or insufficient report/context prevents classification.
+    o3_handoff_conditions: *evidence_handoff
+    eligible_requirement_types:
+      - must_answer
+      - must_include
+      - must_not_claim
+      - audience_need
+      - decision_use
+      - scope_included
+      - scope_excluded
+    sub_aspects:
+      - sub_aspect_id: must_answer_coverage
+        definition: Classify whether each must-answer requirement is substantively answered.
+        positive_criterion: The report provides a locatable substantive answer, not merely a mention or a disclosure that the answer is missing.
+        exclusions: *o2_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o2_abstention
+        o3_handoff_conditions: *evidence_handoff
+        eligible_requirement_types: [must_answer]
+      - sub_aspect_id: must_include_coverage
+        definition: Classify whether each must-include requirement is substantively present.
+        positive_criterion: The required content is explicitly and locatably included.
+        exclusions: *o2_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o2_abstention
+        o3_handoff_conditions: *evidence_handoff
+        eligible_requirement_types: [must_include]
+      - sub_aspect_id: must_not_claim_compliance
+        definition: Classify whether each forbidden-claim constraint is respected.
+        positive_criterion: The report makes no statement prohibited by the frozen constraint.
+        exclusions: *o2_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o2_abstention
+        o3_handoff_conditions: *evidence_handoff
+        eligible_requirement_types: [must_not_claim]
+      - sub_aspect_id: audience_need_coverage
+        definition: Classify whether the frozen audience need is substantively addressed.
+        positive_criterion: The report gives the intended reader the decision-relevant information explicitly requested by the frozen direction.
+        exclusions: *o2_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o2_abstention
+        o3_handoff_conditions: *evidence_handoff
+        eligible_requirement_types: [audience_need]
+      - sub_aspect_id: decision_use_coverage
+        definition: Classify whether the frozen decision use is substantively supported by the report.
+        positive_criterion: The report provides the status, scope, trade-offs, and limitations needed for the frozen decision use.
+        exclusions: *o2_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o2_abstention
+        o3_handoff_conditions: *evidence_handoff
+        eligible_requirement_types: [decision_use]
+      - sub_aspect_id: scope_included_coverage
+        definition: Classify whether each explicitly included scope item is substantively covered.
+        positive_criterion: The report explicitly addresses the included scope rather than silently omitting it.
+        exclusions: *o2_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o2_abstention
+        o3_handoff_conditions: *evidence_handoff
+        eligible_requirement_types: [scope_included]
+      - sub_aspect_id: scope_excluded_compliance
+        definition: Classify whether each explicitly excluded scope item is kept outside the report's conclusions and recommendations.
+        positive_criterion: The report does not silently include an excluded scope item.
+        exclusions: *o2_exclusions
+        severity_rubric: *severity_rubric
+        abstention_conditions: *o2_abstention
+        o3_handoff_conditions: *evidence_handoff
+        eligible_requirement_types: [scope_excluded]

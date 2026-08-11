@@ -7,6 +7,14 @@ on:
     branches: ["main"]
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_dispatch:
+    inputs:
+      refresh_test_durations:
+        description: >-
+          Run the whole suite once on ubuntu and upload a refreshed
+          .test_durations artifact. Commit the artifact when shard balance
+          has drifted; stale durations silently unbalance the shards.
+        type: boolean
+        default: false
 
 concurrency:
   group: >-
@@ -87,9 +95,55 @@ jobs:
               and bool(changed)
               and all(is_docs_path(path) for path in changed)
           )
+          # One matrix entry per CI shard. The job id stays `test`, so the
+          # merge gate's needs list is unchanged: a matrix job reports one
+          # aggregated result to dependents.
+          #
+          # ubuntu carries the full POSIX suite because it has 4 vCPU against
+          # macOS's 3, and because the working-checkout publication surface
+          # that dominates runtime is POSIX, not darwin-specific. macOS keeps
+          # the darwin durability primitives (F_FULLFSYNC, no_clobber_rename)
+          # through the macos_publication selection. Windows is unchanged; it
+          # already skips the publication surface as precommit unsupported.
+          #
+          # Windows needs its own duration profile. Skips happen at run time,
+          # not at collection, so the publication tests are still assigned to
+          # a shard there and then return instantly. Weighting Windows with
+          # POSIX durations puts most of its real work in one shard: measured
+          # 2.9x imbalance, against 1.0x with a Windows profile.
           test_matrix = {
-              "os": ["macos-latest", "windows-latest"],
-              "python-version": ["3.12"],
+              "include": [
+                  {
+                      "os": "ubuntu-latest",
+                      "python-version": "3.12",
+                      "shard": index,
+                      "shards": 6,
+                      "select": "",
+                      "durations": ".test_durations",
+                  }
+                  for index in (1, 2, 3, 4, 5, 6)
+              ]
+              + [
+                  {
+                      "os": "windows-latest",
+                      "python-version": "3.12",
+                      "shard": index,
+                      "shards": 2,
+                      "select": "",
+                      "durations": ".test_durations.windows",
+                  }
+                  for index in (1, 2)
+              ]
+              + [
+                  {
+                      "os": "macos-latest",
+                      "python-version": "3.12",
+                      "shard": 1,
+                      "shards": 1,
+                      "select": "macos_publication",
+                      "durations": ".test_durations",
+                  }
+              ]
           }
 
           print("Changed files:")
@@ -168,12 +222,13 @@ jobs:
           PY
 
   test:
-    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }} / shard ${{ matrix.shard }} of ${{ matrix.shards }}
     needs: changes
     if: >-
       needs.changes.outputs.run_candidate == 'true' &&
       needs.changes.outputs.docs_only != 'true'
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.changes.outputs.test_matrix) }}
@@ -215,13 +270,31 @@ jobs:
       - name: Terminology check
         run: python scripts/check_terms.py
 
+      # faulthandler_timeout kills the worker when it fires, so it has to sit
+      # above the slowest legitimate test rather than near it. The slowest
+      # post-final review tests run ~90s locally and ~4x that on a shared
+      # runner, which tripped the old 240s bound and failed a shard on a test
+      # that was still making progress. 600s still catches a real hang well
+      # inside the 45 minute step bound.
       - name: Tests
-        run: python -m pytest -q -n auto --dist worksteal
+        timeout-minutes: 45
+        run: >-
+          python -m pytest
+          ${{ runner.os == 'Windows' && '-vv' || '-q' }}
+          -n auto
+          --dist worksteal
+          -m "${{ matrix.select && format('{0} and ', matrix.select) || '' }}not explicit_e2e"
+          --splits ${{ matrix.shards }}
+          --group ${{ matrix.shard }}
+          --durations-path ${{ matrix.durations }}
+          --max-worker-restart=0
+          -o faulthandler_timeout=600
 
       - name: Agent config check
         run: python scripts/generate_agent_configs.py --check
 
       - name: Release consistency check
+        if: matrix.os == 'ubuntu-latest' && matrix.shard == 1
         run: python scripts/check_release_consistency.py
 
       - name: Version consistency check
@@ -741,6 +814,60 @@ jobs:
 
       - name: Assert onboarding prepare stays removed
         run: python scripts/ci/smoke_pipeline.py /tmp/golden-onboarding/config.yaml /tmp/golden-onboarding/input /tmp/golden-onboarding/output
+
+  refresh-test-durations:
+    name: Refresh test durations (${{ matrix.os }})
+    # Dispatch-only. Deliberately outside the merge gate: it produces an
+    # artifact for a human to commit, it does not gate anything.
+    #
+    # One leg per duration profile. Windows must measure its own, because it
+    # skips the publication surface at run time rather than at collection.
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.refresh_test_durations
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            durations: .test_durations
+          - os: windows-latest
+            durations: .test_durations.windows
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Install
+        run: python -m pip install -e ".[dev]"
+
+      - name: Store durations for the whole suite
+        run: >-
+          python -m pytest
+          -q
+          -n auto
+          --dist worksteal
+          -m "not explicit_e2e"
+          --max-worker-restart=0
+          --store-durations
+          --durations-path=${{ matrix.durations }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-durations-${{ matrix.os }}
+          path: ${{ matrix.durations }}
+          # The duration files are dotfiles and upload-artifact skips hidden
+          # paths by default, which uploads nothing while still reporting
+          # success.
+          include-hidden-files: true
 
   merge-gate:
     name: >-

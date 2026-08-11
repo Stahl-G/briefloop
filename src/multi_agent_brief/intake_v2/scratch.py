@@ -136,7 +136,7 @@ class ScratchReader:
                     dir_fd=parent_fd,
                     follow_symlinks=False,
                 )
-                if not stat.S_ISREG(leaf_before.st_mode):
+                if not stat.S_ISREG(leaf_before.st_mode) or leaf_before.st_nlink != 1:
                     raise IntakeError("scratch_entry_unsafe")
                 leaf_fd = os.open(
                     filename,
@@ -145,7 +145,10 @@ class ScratchReader:
                 )
                 try:
                     leaf_open = os.fstat(leaf_fd)
-                    if not self._same_identity(leaf_before, leaf_open):
+                    if (
+                        not self._same_identity(leaf_before, leaf_open)
+                        or leaf_open.st_nlink != 1
+                    ):
                         raise IntakeError("scratch_entry_unsafe")
                     return self._read_fd(leaf_fd)
                 finally:
@@ -178,12 +181,16 @@ class ScratchReader:
                 not stat.S_ISDIR(scratch_info.st_mode)
                 or any(not stat.S_ISDIR(item.st_mode) for item in directory_infos)
                 or not stat.S_ISREG(leaf_before.st_mode)
+                or leaf_before.st_nlink != 1
             ):
                 raise IntakeError("scratch_entry_unsafe")
             fd = os.open(leaf_path, self._file_flags())
             try:
                 leaf_open = os.fstat(fd)
-                if not self._same_identity(leaf_before, leaf_open):
+                if (
+                    not self._same_identity(leaf_before, leaf_open)
+                    or leaf_open.st_nlink != 1
+                ):
                     raise IntakeError("scratch_entry_unsafe")
                 return self._read_fd(fd)
             finally:

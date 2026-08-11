@@ -156,7 +156,7 @@ def build_input_binding(
         "bounded_context_sha256": context.context_sha256,
         "profile_sha256": profile_sha256,
         "instrument_config_sha256": config_sha256,
-        "language": "zh-CN",
+        "language": context.language,
         "data_class": context.data_class,
         "public_data_attestation": public_data_attestation,
         "private_or_confidential_material": private_or_confidential_material,
@@ -253,7 +253,7 @@ def admit_inputs(
     config = InstrumentConfig.model_validate(
         strict_model_payload(admitted_request.instrument_config)
     )
-    if context.language != "zh-CN" or config.language != "zh-CN":
+    if context.language != config.language:
         return _blocked("unsupported_language")
     if context.data_class not in {"public", "synthetic"}:
         return _blocked("unsupported_data_class")
@@ -316,12 +316,16 @@ def admit_inputs(
     except SemanticEvaluatorError as exc:
         return _blocked(exc.reason_code)
     profile = instrument_snapshot.resources.loaded_profile
-    if profile.profile.language != "zh-CN":
+    if (
+        profile.profile.language != context.language
+        or profile.profile.language != config.language
+    ):
         return _blocked("unsupported_language")
     try:
         report_evidence, reader = build_admitted_report_evidence(
             report_bytes,
             artifact_id=admitted_request.artifact_id,
+            language=profile.profile.language,
         )
     except SemanticEvaluatorError as exc:
         return _blocked(exc.reason_code)

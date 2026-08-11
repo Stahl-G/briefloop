@@ -22,6 +22,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SQLite. The active runtime is the packaged Codex ControlStore kit
   (`briefloop runtime install --runtime codex`).
 
+## [0.15.1] — 2026-08-10 (prepared release target)
+
+This prepared release target is an experimental, fresh-only extension of the
+SQLite/Codex runtime. It is not a claim that the system proves report quality,
+investment outcomes, or live provider reliability.
+
+### Added
+
+- Added Store-qualified AI Second Opinion / post-final review for a finalized
+  report: multiple Human-authorized assessment generations, exact result
+  selection, archive-bound replay/projection, append-only dispositions, and
+  Human-originated observations with separately approved guidance.
+- Added schema 18 (`0018.sql`) for the experimental `solar-stock-periodic`
+  ReportPack. A frozen plan contains 20 independent discovery tasks: 11 listed
+  companies, 5 event-only entities, and 4 industry/policy/financing themes.
+- Added the multi-search Tavily acquisition contract and immutable bundle
+  records. Each task can request up to 20 advanced Search results; eligible
+  URLs are Batch Extracted in groups of 20; an under-covered task can receive
+  one deterministic 30-day targeted backfill; the safety envelope is 800
+  unique URLs.
+- Added ReportPack, template, and policy-profile metadata for TOYO/global solar
+  capital-markets weeklies, including required sections for equity comparison,
+  events, policy/input signals, capacity/assets, sentiment, and TOYO
+  implications.
+
+### Changed
+
+- Tavily no longer executes the old single reconstructed industry query or a
+  five-URL product cap. Runtime execution follows the Store-frozen task matrix
+  in order; Search snippets remain discovery-only and only successful,
+  non-empty Extract content can enter Intake.
+- Exact replay never redials and failures never auto-retry. Partial task
+  failures remain visible with per-task and per-URL outcomes instead of being
+  reported as “no events”.
+- The source-provider role is proposal-only. Provider I/O, credentials,
+  receipts, frozen artifacts, and Store writes remain owned by the deterministic
+  runtime host.
+- Public skills, README files, architecture/migration/support docs, and the
+  version matrix now describe the v0.14.0 → v0.15.1 release-target boundary
+  and the schema-18 fresh-only rule.
+
+### Fixed
+
+- Fixed Reader Review direction admission and exact archive-bound replay paths,
+  including zero-finding, failed, and not-run report states.
+- Fixed Human-observation Review Session lifecycle/error reporting so stale or
+  disconnected browser pages explain that the session must be reopened instead
+  of presenting an opaque “record failed” message.
+- Fixed projection of real Reader Review scopes and units: completed
+  no-finding checks, provider-unable checks, and per-call evidence are shown
+  without falling back to the obsolete nine-dimension placeholder grid.
+
+### Limits and fresh-only boundary
+
+- Existing schema-17 or older SQLite workspaces are not migrated or upgraded in
+  place; create a fresh schema-18 workspace for `solar-stock-periodic`.
+- The ReportPack reserves the market-data snapshot boundary, but this target
+  does not ship a YahooMarketDataAdapter. It must not invent prices, returns,
+  FX, or valuation multiples when a verified snapshot is absent.
+- Live Tavily usefulness, source coverage, provider reliability, cost, and
+  acquisition-to-`finalized_local` performance remain **NOT MEASURED**.
+- Solar Stock Periodic and AI Second Opinion remain Experimental and advisory;
+  neither changes Gates, finalization, delivery, publication, or Core
+  next-action authority.
+
 ## [0.14.0] — 2026-07-22
 
 ### Added

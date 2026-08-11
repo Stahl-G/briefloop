@@ -152,8 +152,18 @@ The design rule is simple:
 | What guards delivery? | Store-backed gate evaluations, package readiness, and explicit human approval | Receipt-backed runtime actions and read-only status projections |
 
 Agents can observe and propose. Only strict requests accepted by deterministic
-services change the Store, and delivery stays human-controlled. A Store-native
-reusable-guidance or Improvement Ledger surface is not shipped yet.
+services change the Store, and delivery stays human-controlled. On the
+unreleased development main, Experimental post-final Human review can record
+accept/reject/defer, Human-edited guidance, and a separate approval Receipt in
+SQLite. A Human can then explicitly start a normal successor in the same
+workspace with `briefloop runtime successor-start`, supplying the new
+`RunDirection` and opting in with `--include-approved-guidance`. One
+deterministic transaction freezes only compatible, active Human-approved
+guidance for the successor's Analyst and Editor. The same immutable context is
+advisory only: current direction and evidence govern, and guidance has no Claim
+Ledger, Gate, finalize, delivery, repair, or Core authority. Utility is NOT
+MEASURED. Released v0.14.0 does not include this development-main successor
+path or a Store-native reusable-guidance surface.
 
 ---
 
@@ -265,6 +275,24 @@ or symlinks fail closed before runtime work continues.
 
 For workspaces that use the `llm_decide` source profile, source discovery runs
 through the runtime-host route (`run --runtime codex` → `runtime next`).
+The narrow Tavily runtime-first path is Experimental. Its credential remains
+in the private workspace `.env` until the Human rotates or removes it, but
+credential presence is not provider-spend authority. Each separately
+Human-confirmed, Store-recorded acquisition attempt executes a frozen Tavily
+atomic task matrix. Every task requests up to 20 advanced Search results; all eligible
+unique URLs are Batch Extracted in groups of 20; and an under-covered task may
+receive one deterministic 30-day targeted backfill. Solar Stock Periodic freezes
+20 independent tasks (11 listed companies, 5 event-only entities, and 4 themes)
+within an 800-unique-URL safety envelope. Search requests discover URLs and snippets only; snippets are never
+claims-eligible. Only non-empty content from successful Extract results enters
+the Intake source pack. Partial Extract success commits successful URLs only,
+while retaining exact request/response bytes and per-URL outcomes in one
+hash-bound acquisition bundle. All-failed Extract creates
+neither source nor execution authorization. Exact replay never redials and
+failures never auto-retry. A HumanSourcePack remains a separate Human source
+path and never counts as Tavily success. Synthetic loopback transport is tested.
+Live usefulness, reliability, cost, coverage, success rate, and
+acquisition-to-`finalized_local` performance are **NOT MEASURED**.
 
 ### Windows PowerShell
 
@@ -362,26 +390,90 @@ The demos use synthetic materials. They show the evidence chain and gate behavio
 
 Current version: **v0.15.2**
 
-Current main entrypoints:
+v0.15.2 removes the legacy JSON control-plane runtime. The former
+Claude/Hermes/OpenCode/CodeBuddy/operator paths and their workspace assets,
+role skills, writer commands, and JSON control files are deleted; only the
+SQLite Codex ControlStore runtime remains. This release also removes the
+retired JSON runtime state stack and its dead consumers.
+
+The v0.15.1 prepared release target (development main, not yet tagged)
+includes Store-qualified post-final review: multiple
+append-only, independently Human-authorized assessments on one finalized
+lineage, exact result selection for the secured local Review Session, and
+Human-originated observations with separate guidance approvals. Generation 2
+and later are explicit only; policy drift never auto-runs or redials. A
+separate explicit Human command can start a normal same-workspace successor
+and atomically freeze compatible, active approved guidance when
+`--include-approved-guidance` is present. Only Analyst and Editor receive that
+immutable context. Utility is NOT MEASURED; guidance never supplies evidence
+or changes Claim Ledger, Gate, finalize, delivery, repair, or Core truth.
+There is no automatic learning or implicit next-run reuse.
+
+Current entrypoints:
 
 - CLI: `briefloop`
 - Experimental SQLite-only Codex runtime: `briefloop run --workspace <path>
   --runtime codex`, followed by `briefloop runtime next`,
   `invocation-start`, `invocation-accept|fail`, and `apply`
 - Experimental one-shot web initialization: `briefloop init <path> --web`
-- read-only three-page report view: `briefloop quality html --workspace <path>
-  [--open]`
+- best-effort, capability-gated local static read-only four-tab view:
+  `briefloop quality html --workspace
+  <path> [--open]`; Brief shows the verified Store-bound `finalized_local`
+  reader, Quality is a deterministic projection, LAJ is optional explicit
+  hash-bound advisory input (never authority), and Improvement is honestly
+  unavailable because no released Store-native writer/lifecycle is active.
+  This view
+  does not imply approval, package readiness, delivery, publication, automatic
+  learning, or a persistent browser server.
 - experimental offline-shadow LAJ: `briefloop experiments laj shadow-run` and
   `briefloop experiments laj present` for public/synthetic advisory evaluation
   and standalone JSON/Markdown/HTML presentation; an explicitly supplied
   current-report-bound `laj.json` may be displayed read-only with
-  `briefloop quality summarize --laj-view <laj.json>`
+  `briefloop quality html --workspace <path> --laj-view <laj.json>`
+- experimental Solar Stock Periodic ReportPack:
+  `briefloop new solar-stock-periodic <workspace>`. Use a fresh schema-18
+  workspace and the Store-frozen Tavily route for its 20-task discovery plan.
+  Search snippets remain discovery-only, exact replay never redials, and
+  failed tasks remain visible rather than being reported as “no events”.
+  `briefloop market-data fetch|ingest|project` freezes one append-only weekly
+  quote snapshot per run and as-of date (bounded Yahoo chart-API adapter with
+  per-security failure isolation; manual `input/market_data/` JSON/CSV files
+  take precedence) and projects the equity comparison tables with explicit
+  `NOT AVAILABLE` rows; missing data is never filled with invented prices or
+  valuation multiples.
 
-v0.15.2 removes the legacy JSON control-plane runtime. The former
-Claude/Hermes/OpenCode/CodeBuddy/operator paths and their workspace assets,
-role skills, writer commands, and JSON control files are deleted; only the
-SQLite Codex ControlStore runtime remains. This release also removes the
-retired JSON runtime state stack and its dead consumers.
+Development-main-only LAJ continuation controls are explicit and Store-native:
+
+- `briefloop quality laj assessment-next --workspace <path>
+  --policy-revision-id <id> --human-actor-id <id> --human-request-id <id>
+  --assessment-purpose <purpose>` emits a complete non-secret request for
+  `assessment-run` without SQL, internal fingerprints, credentials, or writes.
+- `briefloop runtime successor-start --workspace <path> --direction-json
+  '<strict RunDirection JSON>' --run-id <new-run-id>
+  --include-approved-guidance` explicitly starts a normal successor and opts
+  into compatible active-approved guidance. Omit the final flag for an empty
+  snapshot; neither form calls a provider or role.
+
+Old development workspaces are unsupported when the Store schema changes;
+create a fresh workspace on the current schema. BriefLoop does not ship an
+in-product development-schema upgrade path.
+
+The v0.15.1 prepared target carries the SQLite-only cutover forward and adds
+experimental post-final review and multi-query source-discovery surfaces:
+
+- Store-qualified AI Second Opinion supports multiple Human-authorized,
+  append-only assessment generations, exact archive-bound replay/projection,
+  and Human-originated observations with separate guidance approval. It is
+  advisory only; it does not affect Gates, finalization, delivery, or Core
+  next-action authority.
+- schema 18 adds fresh-only Store records for the frozen Solar Stock Periodic
+  search plan, per-task Tavily Search/Extract outcomes, and immutable
+  acquisition bundles. Existing schema-17 workspaces are not migrated or
+  upgraded in place.
+- The executable Tavily route no longer reconstructs one broad industry query
+  or applies a five-URL product cap. It runs each frozen task independently,
+  allows one deterministic 30-day targeted backfill when a task is
+  under-covered, and caps only the safe envelope of 800 unique URLs.
 
 Prior v0.14.0 completed the SQLite-only cutover and added read-only
 interaction surfaces:
@@ -392,22 +484,26 @@ interaction surfaces:
 - the packaged Codex Skill follows the exact Store-derived next action and
   Receipt-backed invocation protocol. It does not fall back to `operator` or
   another runtime.
-- the loopback init wizard and three-page HTML are read-only interaction
-  surfaces. LAJ remains Experimental and NOT MEASURED; the Improvement Ledger
-  page reports unavailable and cannot write guidance into a later run.
+- the loopback init wizard and four-tab local HTML are read-only interaction
+  surfaces. Brief shows the verified Store-bound `finalized_local` reader;
+  Quality is deterministic; LAJ is optional advisory and NOT MEASURED; and
+  Improvement reports unavailable because no released Store-native lifecycle
+  is active.
+- v0.15.1 engineering changes are experimental and fresh-only. Human
+  maintainers must authorize any release tag and GitHub Release separately.
 
 The carried-forward supported report tooling and advisory quality surfaces
 include:
 
 - `ReportSpec`, `ReportPack`, `ReportTemplate`, and `PolicyProfile` contracts
 - workspace skeletons and deterministic PolicyProfile resolution
-- delivery / audit bundle manifests and clean bundle archives
 - supported `industry-weekly`, `management-monthly`, and `document-review`
   product entrypoints
 - bounded `evidence_extract` source/scope registration, source locks, logical
   page inventory seeds, and text-span seed registries
-- experimental SourceHub Lite setup for local files, RSS feeds, and runtime web-search handoff tasks
-- durable source evidence pack materialization and source taxonomy normalization
+- retired `sources decide/materialize-pack/add-*` names that fail closed with
+  `runtime_command_unsupported`; source acquisition uses Store-derived runtime
+  actions, while `source_candidates.yaml` remains a plan-only artifact
 - internal release-mode approval records
 - Quality Panel JSON / Markdown / HTML projections and audit-bundle integration
 - standalone experimental LAJ JSON / Markdown / HTML second-opinion artifacts
@@ -416,13 +512,14 @@ include:
   approval, recommended authoritative actions, or next-action authority, and
   evaluator efficacy is not measured
 - reader-quality warning/projection surfaces for template conformance,
-  materiality selection, support-calibrated wording, citation profiles,
-  coverage/omission, and scoped final-abstract diagnostics
+  materiality selection, citation profiles, coverage/omission, and scoped
+  final-abstract diagnostics
 - trajectory-regulation decision narrowing for repeated retry/repair/blocker
   loops
-- proposal-only Semantic Support Auditor surfaces and human adjudication records
-  that do not create support truth, gates, delivery approval, or release
-  authority
+- optional Semantic Assessment Report schema and reference validation only;
+  its producer, status projection, and adjudication writer are retired, and the
+  remaining contract creates no support truth, gates, delivery approval, or
+  release authority
 - public-safe reference, synthetic regression, minimal comparative evaluation,
   launch smoke, and release checklist guardrails
 
@@ -495,6 +592,8 @@ First-user path:
 Architecture reference and contributor docs:
 
 - [Function Map](docs/features.md)
+- [v0.15.1 prepared release target](docs/releases/v0.15.1.md)
+- [Support Matrix](docs/support-matrix.md)
 - [Golden Path](docs/golden-path.md)
 - [Architecture Status](docs/architecture-status.md)
 - [Naming and compatibility](docs/briefloop-naming.md)

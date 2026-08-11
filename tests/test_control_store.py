@@ -37,8 +37,12 @@ from multi_agent_brief.control_store import (
     ControlStoreStateError,
     SQLiteControlStore,
 )
-from multi_agent_brief.control_store.schema import migration_sql
-from multi_agent_brief.control_store.serialization import canonical_model_text
+from multi_agent_brief.control_store.schema import SCHEMA_VERSION, migration_sql
+from multi_agent_brief.control_store.serialization import (
+    canonical_json_bytes,
+    canonical_model_text,
+)
+from multi_agent_brief.control_store.sqlite_store import _decode_record
 from multi_agent_brief.core_run_v2.checkout import build_checkout_revision
 
 
@@ -50,6 +54,20 @@ COMMITTED_AT = datetime(2026, 7, 15, 9, 0, 1, tzinfo=timezone.utc)
 BLOB = b"BriefLoop SQLite substrate test artifact.\n"
 BLOB_SHA256 = hashlib.sha256(BLOB).hexdigest()
 CRASH_TRANSACTION_ID = "TX-CRASH-BOUNDARY-001"
+_POST_FINAL_RECEIPT_RELATION_FIELDS = (
+    "post_final_assessment_policy_revisions",
+    "post_final_assessment_requests",
+    "post_final_assessment_results",
+    "post_final_finding_dispositions",
+    "post_final_human_observations",
+    "post_final_guidance_drafts",
+    "post_final_guidance_statuses",
+)
+_GUIDANCE_RECEIPT_RELATION_FIELDS = (
+    "run_guidance_snapshots",
+    "run_guidance_selection_decisions",
+    "run_guidance_snapshot_items",
+)
 
 
 _CRASH_SUBPROCESS = r"""
@@ -430,6 +448,193 @@ def _insert_receipt_row(
                 reference.artifact_id,
             ),
         )
+
+
+def test_historical_receipt_projection_accepts_only_the_exact_legacy_shape() -> None:
+    receipt = TransactionReceipt.model_validate(
+        TransactionReceipt.minimal_example,
+        strict=True,
+    )
+    payload = receipt.model_dump(mode="json", exclude_unset=False)
+    for field in _POST_FINAL_RECEIPT_RELATION_FIELDS:
+        assert payload.pop(field) == []
+    legacy_text = canonical_json_bytes(payload).decode("utf-8")
+
+    assert (
+        _decode_record(
+            TransactionReceipt,
+            legacy_text,
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_receipt_max_committed_revision=receipt.committed_revision,
+        )
+        == receipt
+    )
+
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_not_canonical",
+    ):
+        _decode_record(
+            TransactionReceipt,
+            legacy_text,
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_receipt_max_committed_revision=receipt.committed_revision - 1,
+        )
+
+    partial = receipt.model_dump(mode="json", exclude_unset=False)
+    partial.pop(_POST_FINAL_RECEIPT_RELATION_FIELDS[0])
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_not_canonical",
+    ):
+        _decode_record(
+            TransactionReceipt,
+            canonical_json_bytes(partial).decode("utf-8"),
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_receipt_max_committed_revision=receipt.committed_revision,
+        )
+
+    advisory = dict(payload)
+    advisory["transaction_type"] = "post_final_guidance_status"
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_not_canonical",
+    ):
+        _decode_record(
+            TransactionReceipt,
+            canonical_json_bytes(advisory).decode("utf-8"),
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_receipt_max_committed_revision=receipt.committed_revision,
+        )
+
+    unknown = dict(payload)
+    unknown["unknown_relation"] = []
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_invalid",
+    ):
+        _decode_record(
+            TransactionReceipt,
+            canonical_json_bytes(unknown).decode("utf-8"),
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_receipt_max_committed_revision=receipt.committed_revision,
+        )
+
+
+@pytest.mark.parametrize("field", _GUIDANCE_RECEIPT_RELATION_FIELDS)
+def test_schema13_receipt_requires_guidance_relation_fields(field: str) -> None:
+    receipt = TransactionReceipt.model_validate(
+        TransactionReceipt.minimal_example,
+        strict=True,
+    )
+    payload = receipt.model_dump(mode="json", exclude_unset=False)
+    assert payload.pop(field) == []
+
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_not_canonical",
+    ):
+        _decode_record(
+            TransactionReceipt,
+            canonical_json_bytes(payload).decode("utf-8"),
+            receipt_committed_revision=receipt.committed_revision,
+        )
+
+
+def test_historical_receipt_projection_accepts_only_missing_attempt_relation() -> None:
+    receipt = TransactionReceipt.model_validate(
+        TransactionReceipt.minimal_example,
+        strict=True,
+    )
+    payload = receipt.model_dump(mode="json", exclude_unset=False)
+    assert payload.pop("run_source_acquisition_attempt_authorizations") == []
+    legacy_text = canonical_json_bytes(payload).decode("utf-8")
+
+    assert (
+        _decode_record(
+            TransactionReceipt,
+            legacy_text,
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_source_attempt_receipt_max_committed_revision=(
+                receipt.committed_revision
+            ),
+        )
+        == receipt
+    )
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_not_canonical",
+    ):
+        _decode_record(
+            TransactionReceipt,
+            legacy_text,
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_source_attempt_receipt_max_committed_revision=(
+                receipt.committed_revision - 1
+            ),
+        )
+
+    authorize = dict(payload)
+    authorize["transaction_type"] = "core-v2-source-acquisition-attempt-authorize"
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_not_canonical",
+    ):
+        _decode_record(
+            TransactionReceipt,
+            canonical_json_bytes(authorize).decode("utf-8"),
+            receipt_committed_revision=receipt.committed_revision,
+            legacy_source_attempt_receipt_max_committed_revision=(
+                receipt.committed_revision
+            ),
+        )
+
+
+def test_fresh_schema10_receipt_cannot_be_laundered_as_legacy(
+    tmp_path: Path,
+) -> None:
+    store = _create_store(tmp_path)
+    receipt = _stage_all(store).commit()
+    database = store.path
+    cutoff = store._connection.execute(
+        "SELECT legacy_receipt_max_committed_revision "
+        "FROM transaction_receipt_compatibility_boundaries "
+        "WHERE workspace_id=?",
+        (WORKSPACE_ID,),
+    ).fetchone()
+    assert cutoff is not None and int(cutoff[0]) == 0
+    store.close()
+
+    payload = receipt.model_dump(mode="json", exclude_unset=False)
+    for field in _POST_FINAL_RECEIPT_RELATION_FIELDS:
+        assert payload.pop(field) == []
+    connection = sqlite3.connect(database)
+    try:
+        trigger_sql = connection.execute(
+            "SELECT sql FROM sqlite_master "
+            "WHERE type='trigger' AND name='transactions_no_update'"
+        ).fetchone()
+        assert trigger_sql is not None
+        connection.execute("DROP TRIGGER transactions_no_update")
+        connection.execute(
+            "UPDATE transactions SET payload_json=? "
+            "WHERE run_id=? AND transaction_id=?",
+            (
+                canonical_json_bytes(payload).decode("utf-8"),
+                receipt.run_id,
+                receipt.transaction_id,
+            ),
+        )
+        connection.execute(str(trigger_sql[0]))
+        connection.commit()
+    finally:
+        connection.close()
+
+    with pytest.raises(
+        ControlStoreIntegrityError,
+        match="stored_payload_not_canonical",
+    ):
+        SQLiteControlStore.open(database)
 
 
 def _insert_artifact_revision_row(
@@ -871,9 +1076,7 @@ def test_proposed_graph_is_verified_before_sqlite_commit(
             revision = store._workspace_revision_in_transaction()
             observations.append((store._connection.in_transaction, revision))
             if revision == 1:
-                raise ControlStoreIntegrityError(
-                    "transaction_ledger_integrity_invalid"
-                )
+                raise ControlStoreIntegrityError("transaction_ledger_integrity_invalid")
 
         monkeypatch.setattr(
             store,
@@ -1049,14 +1252,15 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "stage_states",
         "agent_invocations",
         "transactions",
+        "transaction_receipt_compatibility_boundaries",
         "transaction_events",
-            "transaction_artifact_revisions",
-            "transaction_artifact_identities",
+        "transaction_artifact_revisions",
+        "transaction_artifact_identities",
         "transaction_sources",
         "transaction_proposals",
         "events",
-            "artifacts",
-            "artifact_identities",
+        "artifacts",
+        "artifact_identities",
         "artifact_revisions",
         "approvals",
         "deliveries",
@@ -1065,6 +1269,8 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "accepted_proposals",
         "proposal_source_bindings",
         "run_contract_bindings",
+        "run_execution_authorizations",
+        "run_source_discovery_authorizations",
         "owned_artifact_submissions",
         "stage_transitions",
         "stage_artifact_bindings",
@@ -1076,7 +1282,16 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "gate_findings",
         "gate_artifact_bindings",
         "run_integrity_records",
+        "gate_repair_cycles",
+        "gate_repair_cycle_evaluations",
+        "gate_repair_cycle_findings",
+        "gate_repair_cycle_transitions",
+        "gate_repair_artifact_bindings",
+        "gate_repair_outcomes",
+        "gate_repair_outcome_evaluations",
         "transaction_run_contract_bindings",
+        "transaction_run_execution_authorizations",
+        "transaction_run_source_discovery_authorizations",
         "transaction_owned_artifact_submissions",
         "transaction_stage_transitions",
         "transaction_stage_artifact_bindings",
@@ -1088,6 +1303,9 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "transaction_gate_findings",
         "transaction_gate_artifact_bindings",
         "transaction_run_integrity_records",
+        "transaction_gate_repair_cycles",
+        "transaction_gate_repair_artifact_bindings",
+        "transaction_gate_repair_outcomes",
         "repair_cycles",
         "artifact_supersessions",
         "repair_completions",
@@ -1126,6 +1344,35 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "transaction_delivery_authorizations",
         "transaction_delivery_attempts",
         "transaction_delivery_results",
+        "post_final_assessment_policy_revisions",
+        "post_final_assessment_requests",
+        "post_final_assessment_results",
+        "post_final_human_observations",
+        "post_final_finding_dispositions",
+        "post_final_guidance_drafts",
+        "post_final_guidance_statuses",
+        "transaction_post_final_assessment_policy_revisions",
+        "transaction_post_final_assessment_requests",
+        "transaction_post_final_assessment_results",
+        "transaction_post_final_human_observations",
+        "transaction_post_final_finding_dispositions",
+        "transaction_post_final_guidance_drafts",
+        "transaction_post_final_guidance_statuses",
+        "run_guidance_snapshots",
+        "run_guidance_selection_decisions",
+        "run_guidance_snapshot_items",
+        "run_guidance_snapshot_decisions",
+        "run_guidance_snapshot_selected_items",
+        "transaction_run_guidance_snapshots",
+        "transaction_run_guidance_selection_decisions",
+        "transaction_run_guidance_snapshot_items",
+        "post_final_assessment_abandonment_compatibility_boundaries",
+        "post_final_assessment_abandonments",
+        "post_final_assessment_executions",
+        "transaction_post_final_assessment_abandonments",
+        "source_acquisition_attempt_compatibility_boundaries",
+        "run_source_acquisition_attempt_authorizations",
+        "transaction_run_source_acquisition_attempt_authorizations",
         "checkout_revisions",
         "checkout_revision_members",
         "receipt_checkout_bindings",
@@ -1136,12 +1383,20 @@ def test_schema_settings_and_exact_table_universe(tmp_path: Path) -> None:
         "transaction_checkout_revisions",
         "transaction_receipt_checkout_bindings",
         "transaction_checkout_publication_intents",
+        "run_source_acquisition_attempt_authorizations_v2",
+        "transaction_run_source_acquisition_attempt_authorizations_v2",
+        "runtime_source_search_plans",
+        "tavily_acquisition_bundle_records",
+        "market_data_snapshots",
     }
     with _create_store(tmp_path) as store:
         assert store._connection.execute("PRAGMA foreign_keys").fetchone()[0] == 1
         assert store._connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         assert store._connection.execute("PRAGMA synchronous").fetchone()[0] == 2
-        assert store._connection.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert (
+            store._connection.execute("PRAGMA user_version").fetchone()[0]
+            == SCHEMA_VERSION
+        )
         tables = {
             row[0]
             for row in store._connection.execute(
@@ -1221,9 +1476,10 @@ def test_transaction_receipt_preserves_event_and_artifact_revision_order(
             (reference.artifact_id, reference.revision)
             for reference in receipt.artifact_revisions
         ] == expected_revisions
-        assert [
-            reference.artifact_id for reference in receipt.artifact_identities
-        ] == ["artifact-a", "artifact-b"]
+        assert [reference.artifact_id for reference in receipt.artifact_identities] == [
+            "artifact-a",
+            "artifact-b",
+        ]
         assert store.load_snapshot(RUN_ID).transactions == (receipt,)
 
 
@@ -1235,6 +1491,7 @@ def test_artifact_identity_is_inception_owned_and_history_is_revision_exact(
     second_digest = hashlib.sha256(second_content).hexdigest()
     second_path = f"output/artifacts/{second_digest}/brief.md"
     with _create_store(tmp_path) as store:
+
         def stage_first():
             unit = store.begin(
                 RUN_ID,
@@ -1311,10 +1568,13 @@ def test_artifact_identity_is_inception_owned_and_history_is_revision_exact(
         assert second.artifact_identities == []
         assert _table_count(store, "artifact_identities") == 1
         assert _table_count(store, "transaction_artifact_identities") == 1
-        assert store._connection.execute(
-            "SELECT payload_json FROM artifact_identities WHERE run_id=? AND artifact_id=?",
-            (RUN_ID, records.artifact.artifact_id),
-        ).fetchone()[0] == identity_payload
+        assert (
+            store._connection.execute(
+                "SELECT payload_json FROM artifact_identities WHERE run_id=? AND artifact_id=?",
+                (RUN_ID, records.artifact.artifact_id),
+            ).fetchone()[0]
+            == identity_payload
+        )
 
         history = store.load_history()
         first_prefix = history.snapshot_at_revision(RUN_ID, 1)
@@ -1366,9 +1626,12 @@ def test_artifact_identity_stable_fields_and_revision_zero_path_are_immutable(
         assert error.value.code == "relational_integrity_conflict"
         assert store.current_revision == 1
         assert _table_count(store, "transactions") == 1
-        assert store._connection.execute(
-            "SELECT payload_json FROM artifact_identities"
-        ).fetchone()[0] == before_identity
+        assert (
+            store._connection.execute(
+                "SELECT payload_json FROM artifact_identities"
+            ).fetchone()[0]
+            == before_identity
+        )
 
 
 def test_revision_positive_artifact_path_must_equal_its_exact_revision(
@@ -1499,13 +1762,13 @@ def test_dual_connection_late_conflict_leaves_only_non_authoritative_orphan(
 ) -> None:
     primary = _create_store(tmp_path)
     _stage_all(primary).commit()
-    winner = SQLiteControlStore.open(tmp_path / "control.db", clock=lambda: COMMITTED_AT)
+    winner = SQLiteControlStore.open(
+        tmp_path / "control.db", clock=lambda: COMMITTED_AT
+    )
     loser_content = b"Late conflicting content-addressed blob.\n"
     loser_sha256 = hashlib.sha256(loser_content).hexdigest()
     loser_artifact_id = "late-conflict-brief"
-    loser_artifact_path = (
-        f"output/artifacts/{loser_sha256}/{loser_artifact_id}.md"
-    )
+    loser_artifact_path = f"output/artifacts/{loser_sha256}/{loser_artifact_id}.md"
     loser_transaction_id = "TX-LATE-CONFLICT-002"
     loser = primary.begin(
         RUN_ID,
@@ -2590,11 +2853,27 @@ def test_future_schema_fails_closed(tmp_path: Path) -> None:
     store = _create_store(tmp_path)
     store.close()
     connection = sqlite3.connect(tmp_path / "control.db")
-    connection.execute("PRAGMA user_version = 7")
+    connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
     connection.close()
     with pytest.raises(ControlStoreSchemaError) as error:
         SQLiteControlStore.open(tmp_path / "control.db")
     assert error.value.code == "future_schema_version"
+
+
+def test_schema_v12_is_rejected_without_automatic_upgrade(tmp_path: Path) -> None:
+    store = _create_store(tmp_path)
+    store.close()
+    connection = sqlite3.connect(tmp_path / "control.db")
+    connection.execute("PRAGMA user_version = 12")
+    connection.close()
+
+    with pytest.raises(ControlStoreSchemaError) as error:
+        SQLiteControlStore.open(tmp_path / "control.db")
+    assert error.value.code == "unsupported_schema_version"
+
+    connection = sqlite3.connect(tmp_path / "control.db")
+    assert connection.execute("PRAGMA user_version").fetchone()[0] == 12
+    connection.close()
 
 
 def test_schema_v1_store_is_rejected_without_automatic_upgrade(tmp_path: Path) -> None:
@@ -2821,9 +3100,7 @@ def test_postcommit_observer_failure_preserves_commit_and_closes_uow(
         with pytest.raises(ControlStoreStateError, match="unit_of_work_not_active"):
             unit.commit()
 
-        replayed = _stage_all(store).commit(
-            _postcommit_observer=lambda _receipt: None
-        )
+        replayed = _stage_all(store).commit(_postcommit_observer=lambda _receipt: None)
         assert replayed.transaction_id == TRANSACTION_ID
         assert store.current_revision == 1
 
@@ -2888,6 +3165,13 @@ def test_migration_resource_matches_packaged_source_text() -> None:
     assert packaged_6.read_text(encoding="utf-8") == migration_6.read_text(
         encoding="utf-8"
     )
+    migration_7 = source.with_name("0007.sql")
+    packaged_7 = resources.files("multi_agent_brief.control_store").joinpath(
+        "migrations", "0007.sql"
+    )
+    assert packaged_7.read_text(encoding="utf-8") == migration_7.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_only_dormant_v2_modules_import_control_store() -> None:
@@ -2901,15 +3185,29 @@ def test_only_dormant_v2_modules_import_control_store() -> None:
         "cli/core_v2_commands.py",
         "cli/authority_guard.py",
         # brief_html builder is the read-only page-1 projection (C3-sanctioned);
-        # init_web submit reads only the real bootstrap receipt after the
-        # sanctioned initialize path.
+        # PF-LAJ's product service is the sole advisory policy/request/result
+        # writer and its companion projection is read-only. init_web submit
+        # reads only the real bootstrap receipt after the sanctioned initialize
+        # path.
         "product/brief_html/builder.py",
         "product/init_web/submit.py",
+        "product/post_final_assessment.py",
+        "product/post_final_assessment_projection.py",
+        # The read model consumes deterministic serialization helpers only.
+        "product/post_final_assessment_read_model.py",
+        "product/post_final_review.py",
+        # The market data service is the sole snapshot writer for the
+        # append-only market_data_snapshots authority surface.
+        "product/market_data_service.py",
+        # The review session launcher reads only the frozen Store head.
+        "product/review_session/launcher.py",
         "runtime_host_v2/codex.py",
         "runtime_host_v2/initialization.py",
         "runtime_host_v2/projections.py",
         "runtime_host_v2/scratch.py",
         "runtime_host_v2/service.py",
+        # Unit A admission/staging consumes deterministic serialization helpers.
+        "runtime_host_v2/submission.py",
         "runtime_host_v2/source_routes.py",
     }
     findings: list[str] = []

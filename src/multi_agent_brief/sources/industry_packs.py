@@ -3,8 +3,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from multi_agent_brief.sources.solar_stock_plan import solar_stock_search_tasks
+
 
 INDUSTRY_PACKS: dict[str, dict[str, Any]] = {
+    "solar_stock_periodic": {
+        "name": "Solar Stock Periodic",
+        "rss_feeds": [],
+        "search_tasks": solar_stock_search_tasks(),
+    },
     "solar": {
         "name": "Solar / Photovoltaic",
         "rss_feeds": [],

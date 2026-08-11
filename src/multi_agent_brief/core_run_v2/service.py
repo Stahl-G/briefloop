@@ -16,11 +16,18 @@ from multi_agent_brief.contracts.v2 import (
     ArtifactRevision,
     CoreRunEventBinding,
     CoreRunInitializeRequest,
+    ExecutionSourceManifest,
+    MultiTavilyExecutionSourceManifest,
     EventEnvelope,
     IntegrityCheckRequest,
     Invocation,
     InvocationStartRequest,
     RunContractBinding,
+    RunExecutionAuthorization,
+    RunSourceAcquisitionAttemptAuthorization,
+    RunSourceDiscoveryAuthorization,
+    SourceAcquisitionAttemptAuthorizeRequest,
+    canonical_run_direction_for_binding,
     RunDirection,
     RunIdentity,
     RunIntegrityRecord,
@@ -30,6 +37,8 @@ from multi_agent_brief.contracts.v2 import (
     RuntimeSourcePlanBinding,
     RuntimeSourceRouteBinding,
     RuntimeWebSearchAcquisitionSpec,
+    RuntimeWebSearchAcquisitionSpecV3,
+    RuntimeWebSearchTaskSpecV3,
     RuntimeWebSearchRequestSpec,
     ReceiptCheckoutBinding,
     StageArtifactBinding,
@@ -54,6 +63,7 @@ from multi_agent_brief.contracts.runtime_contracts import (
     load_runtime_contract_payloads,
 )
 from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
+from multi_agent_brief.intake_v2.scratch import parse_json_object
 from multi_agent_brief.sources.doctor import run_doctor
 
 from .errors import CoreRunError, CoreRunResult, core_run_failure_result
@@ -64,6 +74,7 @@ from .checkout import (
 )
 from .integrity import RunIntegrityService, read_workspace_file
 from .lineage import (
+    audit_promotion_allows_stage_completion,
     classify_current_audit_promotion,
     classify_current_lineage,
     require_current_gate_after_audit_promotion,
@@ -74,7 +85,7 @@ from .policy import (
     DOCTOR_IMPLEMENTATION,
     DOCTOR_VERSION,
     INTERNAL_CONTRACT_ARTIFACT_IDS,
-    REQUIRED_AUDITOR_GATES,
+    EXECUTION_AUTHORIZATION_MANIFEST_ARTIFACT_ID,
     SOURCE_ROUTE_IDS,
     SOURCE_WEB_PROVIDER_IDS,
     STAGE_ROLES,
@@ -83,6 +94,7 @@ from .policy import (
     derived_id,
     run_contract_fingerprint,
     require_topology_runtime,
+    required_auditor_gates,
     transaction_type_for,
 )
 from .verifier import (
@@ -135,11 +147,191 @@ class CoreRunService:
         except (CoreRunError, ControlStoreError) as exc:
             return core_run_failure_result(exc)
 
+    def authorize_source_acquisition_attempt(
+        self,
+        request: SourceAcquisitionAttemptAuthorizeRequest,
+    ) -> CoreRunResult:
+        try:
+            return self._authorize_source_acquisition_attempt(request)
+        except (CoreRunError, ControlStoreError) as exc:
+            return core_run_failure_result(exc)
+
+    def apply_authorized_source_pack(self) -> CoreRunResult:
+        """Apply the one Store-authorized local source pack without host DTOs."""
+
+        try:
+            return self._apply_authorized_source_pack()
+        except (CoreRunError, ControlStoreError) as exc:
+            return core_run_failure_result(exc)
+
     def complete_stage(self, request: StageCompleteRequest) -> CoreRunResult:
         try:
             return self._complete_stage(request)
         except (CoreRunError, ControlStoreError) as exc:
             return core_run_failure_result(exc)
+
+    def _apply_authorized_source_pack(self) -> CoreRunResult:
+        resumed_invocation_id: str | None = None
+        intake_expected_revision: int | None = None
+        with self._open_store() as store:
+            verified = self._verifier.verify(
+                store, store.load_workspace_run_head().current_run_id
+            )
+            if len(verified.snapshot.run_execution_authorizations) != 1:
+                raise CoreRunError("core_run_head_mismatch")
+            authorization = verified.snapshot.run_execution_authorizations[0]
+            pack_request_id = derived_id(
+                "REQ-AUTHORIZED-SOURCE-PACK",
+                verified.snapshot.run.run_id,
+                authorization.request_fingerprint,
+            )
+            existing = store.load_transaction_receipt(
+                verified.snapshot.run.run_id, pack_request_id
+            )
+            if existing is not None:
+                return CoreRunResult(status="replayed", receipt=existing)
+            invocation_request_id = derived_id(
+                "REQ-AUTHORIZED-SOURCE-PROVIDER", pack_request_id
+            )
+            action = classify_core_run_next_action(verified)
+            active_invocations = [
+                item
+                for item in verified.snapshot.invocations
+                if item.status == "active"
+            ]
+            fresh_reservation = (
+                action.action_kind == "deterministic"
+                and action.effect_kind == "authorized_source_pack_commit"
+                and action.stage_id == "source-discovery"
+                and not active_invocations
+            )
+            start_receipt = store.load_transaction_receipt(
+                verified.snapshot.run.run_id, invocation_request_id
+            )
+            if fresh_reservation:
+                invocation_expected_revision = verified.snapshot.store_revision
+            else:
+                if (
+                    start_receipt is None
+                    or start_receipt.transaction_type
+                    != transaction_type_for("invocation_start")
+                ):
+                    raise CoreRunError("core_run_head_mismatch")
+                invocation_expected_revision = start_receipt.prior_revision
+            invocation_request = InvocationStartRequest.model_validate(
+                {
+                    "schema_version": InvocationStartRequest.schema_id,
+                    "request_id": invocation_request_id,
+                    "run_id": verified.snapshot.run.run_id,
+                    "stage_id": "source-discovery",
+                    "role_id": "source-provider",
+                    "runtime": verified.snapshot.run.runtime,
+                    "expected_store_revision": invocation_expected_revision,
+                },
+                strict=True,
+            )
+            invocation_fingerprint = canonical_fingerprint(
+                invocation_request.model_dump(mode="json", exclude_unset=False)
+            )
+            expected_invocation_id = derived_id(
+                "INV", invocation_request_id, invocation_fingerprint
+            )
+            if not fresh_reservation:
+                events = [
+                    item
+                    for item in verified.snapshot.events
+                    if item.transaction_id == invocation_request_id
+                    and item.core_run_binding is not None
+                ]
+                if (
+                    start_receipt is None
+                    or len(active_invocations) != 1
+                    or active_invocations[0].invocation_id != expected_invocation_id
+                    or active_invocations[0].role_id != "source-provider"
+                    or len(events) != 1
+                    or events[0].stage_id != "source-discovery"
+                    or events[0].core_run_binding.request_id != invocation_request_id
+                    or events[0].core_run_binding.request_fingerprint
+                    != invocation_fingerprint
+                    or events[0].core_run_binding.effect_kind != "invocation_start"
+                    or events[0].core_run_binding.primary_record_id
+                    != expected_invocation_id
+                ):
+                    raise CoreRunError("control_store_integrity_invalid")
+                resumed_invocation_id = expected_invocation_id
+                intake_expected_revision = start_receipt.committed_revision
+            if not fresh_reservation and resumed_invocation_id is None:
+                raise CoreRunError("core_run_head_mismatch")
+            try:
+                manifest_bytes = store.read_artifact_revision_bytes(
+                    verified.snapshot.run.run_id,
+                    authorization.source_manifest_artifact.artifact_id,
+                    authorization.source_manifest_artifact.revision,
+                )
+                manifest_payload = parse_json_object(manifest_bytes)
+                manifest_model = (
+                    MultiTavilyExecutionSourceManifest
+                    if manifest_payload.get("schema_version")
+                    == MultiTavilyExecutionSourceManifest.schema_id
+                    else ExecutionSourceManifest
+                )
+                manifest = manifest_model.model_validate(
+                    manifest_payload,
+                    strict=True,
+                )
+            except Exception as exc:
+                raise CoreRunError("control_store_integrity_invalid") from exc
+        contents: list[bytes] = []
+        for member in manifest.members:
+            observed = read_workspace_file(self.workspace, member.input_path)
+            if observed.entry_kind != "regular_file" or observed.content is None:
+                raise CoreRunError("source_pack_authorization_invalid")
+            if observed.sha256 != member.content_sha256:
+                raise CoreRunError("source_hash_mismatch")
+            contents.append(observed.content)
+        if resumed_invocation_id is None:
+            started = self._start_invocation(invocation_request)
+            if (
+                started.status not in {"committed", "replayed"}
+                or started.primary_record_id is None
+                or started.receipt is None
+            ):
+                return started
+            invocation_id = started.primary_record_id
+            intake_expected_revision = started.receipt.committed_revision
+        else:
+            invocation_id = resumed_invocation_id
+        if intake_expected_revision is None:
+            raise CoreRunError("control_store_integrity_invalid")
+        from multi_agent_brief.intake_v2.service import (
+            IntakeError,
+            IntakeService,
+            _CoreAuthorizedSourcePack,
+        )
+
+        try:
+            result = IntakeService(
+                self.workspace, clock=self._clock
+            )._commit_authorized_source_pack_from_core(
+                _CoreAuthorizedSourcePack(
+                    request_id=pack_request_id,
+                    run_id=invocation_request.run_id,
+                    invocation_id=invocation_id,
+                    expected_store_revision=intake_expected_revision,
+                    manifest=manifest,
+                    source_manifest_sha256=authorization.source_manifest_sha256,
+                    contents=tuple(contents),
+                )
+            )
+        except IntakeError as exc:
+            raise CoreRunError(exc.code) from exc
+        if result.receipt is None:
+            raise CoreRunError(result.error_code or "control_store_integrity_invalid")
+        return CoreRunResult(
+            status=result.status,
+            receipt=result.receipt,
+            primary_record_id=(result.source_id or invocation_id),
+        )
 
     def _initialize(self, request: CoreRunInitializeRequest) -> CoreRunResult:
         database = self.workspace / "briefloop.db"
@@ -199,6 +391,35 @@ class CoreRunService:
         )
         adapter_hash = sha256_hex(adapter_bytes)
         source_plan_hash = sha256_hex(source_plan_bytes)
+        authorization_input = request.execution_authorization
+        source_discovery_input = request.source_discovery_authorization
+        if authorization_input is not None and source_discovery_input is not None:
+            raise CoreRunError("core_run_contract_mismatch")
+        execution_manifest_bytes: bytes | None = None
+        if authorization_input is not None:
+            execution_manifest_bytes = canonical_json_bytes(
+                authorization_input.source_manifest.model_dump(
+                    mode="json", exclude_unset=False
+                )
+            )
+            if sha256_hex(execution_manifest_bytes) != (
+                authorization_input.source_manifest_sha256
+            ):
+                raise CoreRunError("core_run_contract_mismatch")
+        discovery_route: RuntimeSourceRouteBinding | None = None
+        if source_discovery_input is not None:
+            routes = [
+                route
+                for route in source_plan.routes
+                if route.route_id == source_discovery_input.route_id
+                and route.provider_id == source_discovery_input.provider_id
+                and route.execution_owner == source_discovery_input.execution_owner
+                and route.route_kind == "external_api"
+                and route.acquisition_spec is not None
+            ]
+            if len(routes) != 1:
+                raise CoreRunError("core_run_contract_mismatch")
+            discovery_route = routes[0]
         fingerprint = run_contract_fingerprint(
             runtime=request.runtime,
             stage_specs_schema=str(contracts.stage_specs["schema_version"]),
@@ -282,6 +503,24 @@ class CoreRunService:
                     )
                     + (payload,)
                 )
+            if execution_manifest_bytes is not None:
+                contract_artifacts.append(
+                    _artifact_pair(
+                        run_id=request.run_id,
+                        artifact_id=EXECUTION_AUTHORIZATION_MANIFEST_ARTIFACT_ID,
+                        revision=1,
+                        path=blob_workspace_path(
+                            authorization_input.source_manifest_sha256
+                        ),
+                        artifact_format="json",
+                        content=execution_manifest_bytes,
+                        producer_kind="control_tool",
+                        producer_id="core-v2-initializer",
+                        created_at=now,
+                        required=True,
+                    )
+                    + (execution_manifest_bytes,)
+                )
             binding = RunContractBinding.model_validate(
                 {
                     "schema_version": RunContractBinding.schema_id,
@@ -338,6 +577,127 @@ class CoreRunService:
                 },
                 strict=True,
             )
+            execution_authorization = (
+                None
+                if authorization_input is None
+                else RunExecutionAuthorization.model_validate(
+                    {
+                        "schema_version": RunExecutionAuthorization.schema_id,
+                        "authorization_id": derived_id(
+                            "EXEC-AUTH", request.request_id, request_fingerprint
+                        ),
+                        "run_id": request.run_id,
+                        "workspace_id": request.workspace_id,
+                        "run_contract_fingerprint": binding.contract_fingerprint,
+                        "run_direction_fingerprint": canonical_fingerprint(
+                            canonical_run_direction_for_binding(
+                                request.run_direction.model_dump(
+                                    mode="json", exclude_unset=False
+                                )
+                            )
+                        ),
+                        "completion_target": authorization_input.completion_target,
+                        "source_manifest_artifact": {
+                            "artifact_id": EXECUTION_AUTHORIZATION_MANIFEST_ARTIFACT_ID,
+                            "revision": 1,
+                        },
+                        "source_manifest_sha256": authorization_input.source_manifest_sha256,
+                        "source_manifest_member_count": authorization_input.source_manifest_member_count,
+                        "repair_budget": authorization_input.repair_budget,
+                        "authorization_event_id": event_id,
+                        "accepted_transaction_id": request.request_id,
+                        "request_fingerprint": request_fingerprint,
+                        "created_at": now,
+                    },
+                    strict=True,
+                )
+            )
+            source_discovery_authorization = (
+                None
+                if source_discovery_input is None or discovery_route is None
+                else RunSourceDiscoveryAuthorization.model_validate(
+                    {
+                        "schema_version": RunSourceDiscoveryAuthorization.schema_id,
+                        "authorization_id": derived_id(
+                            "DISCOVERY-AUTH", request.request_id, request_fingerprint
+                        ),
+                        "run_id": request.run_id,
+                        "workspace_id": request.workspace_id,
+                        "run_contract_fingerprint": binding.contract_fingerprint,
+                        "run_direction_fingerprint": canonical_fingerprint(
+                            canonical_run_direction_for_binding(
+                                request.run_direction.model_dump(
+                                    mode="json", exclude_unset=False
+                                )
+                            )
+                        ),
+                        "runtime_source_plan_fingerprint": (
+                            source_plan.source_plan_fingerprint
+                        ),
+                        "source_route_fingerprint": discovery_route.route_fingerprint,
+                        "route_id": source_discovery_input.route_id,
+                        "provider_id": source_discovery_input.provider_id,
+                        "execution_owner": source_discovery_input.execution_owner,
+                        "credential_env": source_discovery_input.credential_env,
+                        "completion_target": source_discovery_input.completion_target,
+                        "repair_budget": source_discovery_input.repair_budget,
+                        "authorization_event_id": event_id,
+                        "accepted_transaction_id": request.request_id,
+                        "request_fingerprint": request_fingerprint,
+                        "created_at": now,
+                    },
+                    strict=True,
+                )
+            )
+            source_acquisition_attempt_authorization = (
+                None
+                if source_discovery_authorization is None
+                or discovery_route is None
+                or discovery_route.acquisition_spec is None
+                else RunSourceAcquisitionAttemptAuthorization.model_validate(
+                    {
+                        "schema_version": (
+                            RunSourceAcquisitionAttemptAuthorization.schema_id
+                        ),
+                        "attempt_authorization_id": derived_id(
+                            "SOURCE-ACQUIRE-ATTEMPT-AUTH",
+                            request.request_id,
+                            request_fingerprint,
+                            "1",
+                        ),
+                        "attempt_ordinal": 1,
+                        "run_id": request.run_id,
+                        "workspace_id": request.workspace_id,
+                        "discovery_authorization_id": (
+                            source_discovery_authorization.authorization_id
+                        ),
+                        "run_contract_fingerprint": binding.contract_fingerprint,
+                        "run_direction_fingerprint": (
+                            source_discovery_authorization.run_direction_fingerprint
+                        ),
+                        "runtime_source_plan_fingerprint": (
+                            source_plan.source_plan_fingerprint
+                        ),
+                        "source_route_fingerprint": (discovery_route.route_fingerprint),
+                        "provider_request_fingerprint": (
+                            discovery_route.acquisition_spec.acquisition_spec_fingerprint
+                        ),
+                        "provider_id": source_discovery_authorization.provider_id,
+                        "route_id": source_discovery_authorization.route_id,
+                        **_tavily_attempt_call_limits(
+                            discovery_route.acquisition_spec
+                        ),
+                        "provider_cost_status": ("not_reported_acknowledged"),
+                        "previous_attempt_authorization_id": None,
+                        "human_request_id": request.request_id,
+                        "authorization_event_id": event_id,
+                        "accepted_transaction_id": request.request_id,
+                        "request_fingerprint": request_fingerprint,
+                        "created_at": now,
+                    },
+                    strict=True,
+                )
+            )
             event = _core_event(
                 event_id=event_id,
                 run_id=request.run_id,
@@ -367,6 +727,16 @@ class CoreRunService:
                 unit.put_artifact(artifact)
                 unit.put_artifact_revision(revision, payload)
             unit.put_run_contract_binding(binding)
+            if execution_authorization is not None:
+                unit.put_run_execution_authorization(execution_authorization)
+            if source_discovery_authorization is not None:
+                unit.put_run_source_discovery_authorization(
+                    source_discovery_authorization
+                )
+            if source_acquisition_attempt_authorization is not None:
+                unit.put_run_source_acquisition_attempt_authorization(
+                    source_acquisition_attempt_authorization
+                )
             artifact_contracts = {
                 str(item["artifact_id"]): item for item in contracts.artifacts
             }
@@ -516,6 +886,13 @@ class CoreRunService:
                 and request.stage_id == "source-discovery"
                 and request.role_id == "source-provider"
             )
+            authorized_source_pack_reservation = (
+                action.action_kind == "deterministic"
+                and action.effect_kind == "authorized_source_pack_commit"
+                and action.stage_id == "source-discovery"
+                and request.stage_id == "source-discovery"
+                and request.role_id == "source-provider"
+            )
             human_source_reservation = (
                 action.action_kind == "human_decision"
                 and action.effect_kind == "source_input_required"
@@ -525,10 +902,21 @@ class CoreRunService:
                 and request.stage_id == "source-discovery"
                 and request.role_id == "source-provider"
             )
+            recovery_source_reservation = (
+                action.action_kind == "human_decision"
+                and action.effect_kind == "source_acquisition_recovery"
+                and action.stage_id == "source-discovery"
+                and action.request_schema_id
+                == "briefloop.runtime_source_acquisition_recovery_request.v1"
+                and request.stage_id == "source-discovery"
+                and request.role_id == "source-provider"
+            )
             if not (
                 delegate_reservation
                 or source_acquire_reservation
+                or authorized_source_pack_reservation
                 or human_source_reservation
+                or recovery_source_reservation
             ):
                 raise CoreRunError("invocation_owner_mismatch")
             if request.role_id not in verified.runtime_adapter.role_ids:
@@ -627,6 +1015,146 @@ class CoreRunService:
                 status="committed",
                 receipt=receipt,
                 primary_record_id=invocation_id,
+            )
+
+    def _authorize_source_acquisition_attempt(
+        self,
+        request: SourceAcquisitionAttemptAuthorizeRequest,
+    ) -> CoreRunResult:
+        fingerprint = canonical_fingerprint(
+            request.model_dump(mode="json", exclude_unset=False)
+        )
+        with self._open_store() as store:
+            replay = resolve_core_replay(
+                store,
+                run_id=request.run_id,
+                request_id=request.request_id,
+                request_fingerprint=fingerprint,
+            )
+            if replay is not None:
+                return replay
+            verified = self._verifier.verify(store, request.run_id)
+            self._require_store_revision(verified, request.expected_store_revision)
+            action = classify_core_run_next_action(verified)
+            if (
+                action.action_kind != "human_decision"
+                or action.effect_kind != "source_acquisition_recovery"
+                or action.reason_code != "source_acquisition_recovery_decision_required"
+                or action.action_fingerprint != request.expected_action_fingerprint
+                or len(verified.snapshot.run_source_discovery_authorizations) != 1
+                or not verified.snapshot.run_source_acquisition_attempt_authorizations
+                or verified.snapshot.run_execution_authorizations
+            ):
+                raise CoreRunError("source_acquisition_recovery_invalid")
+            discovery = verified.snapshot.run_source_discovery_authorizations[0]
+            previous = verified.snapshot.run_source_acquisition_attempt_authorizations[
+                -1
+            ]
+            if (
+                previous.attempt_authorization_id
+                != request.previous_attempt_authorization_id
+            ):
+                raise CoreRunError("source_acquisition_recovery_invalid")
+            route = next(
+                (
+                    item
+                    for item in verified.source_plan.routes
+                    if item.route_id == discovery.route_id
+                    and item.provider_id == discovery.provider_id
+                    and item.route_fingerprint == discovery.source_route_fingerprint
+                ),
+                None,
+            )
+            if route is None or route.acquisition_spec is None:
+                raise CoreRunError("control_store_integrity_invalid")
+            now = _now(self._clock)
+            event_id = derived_id(
+                "EVT-SOURCE-ACQUIRE-ATTEMPT-AUTH",
+                request.request_id,
+                fingerprint,
+            )
+            attempt_id = derived_id(
+                "SOURCE-ACQUIRE-ATTEMPT-AUTH",
+                request.run_id,
+                request.request_id,
+                fingerprint,
+            )
+            authorization = RunSourceAcquisitionAttemptAuthorization.model_validate(
+                {
+                    "schema_version": (
+                        RunSourceAcquisitionAttemptAuthorization.schema_id
+                    ),
+                    "attempt_authorization_id": attempt_id,
+                    "attempt_ordinal": previous.attempt_ordinal + 1,
+                    "run_id": request.run_id,
+                    "workspace_id": verified.snapshot.workspace_id,
+                    "discovery_authorization_id": discovery.authorization_id,
+                    "run_contract_fingerprint": discovery.run_contract_fingerprint,
+                    "run_direction_fingerprint": (discovery.run_direction_fingerprint),
+                    "runtime_source_plan_fingerprint": (
+                        discovery.runtime_source_plan_fingerprint
+                    ),
+                    "source_route_fingerprint": discovery.source_route_fingerprint,
+                    "provider_request_fingerprint": (
+                        route.acquisition_spec.acquisition_spec_fingerprint
+                    ),
+                    "provider_id": discovery.provider_id,
+                    "route_id": discovery.route_id,
+                    **_tavily_attempt_call_limits(route.acquisition_spec),
+                    "provider_cost_status": request.provider_cost_status,
+                    "previous_attempt_authorization_id": (
+                        previous.attempt_authorization_id
+                    ),
+                    "human_request_id": request.request_id,
+                    "authorization_event_id": event_id,
+                    "accepted_transaction_id": request.request_id,
+                    "request_fingerprint": fingerprint,
+                    "created_at": now,
+                },
+                strict=True,
+            )
+            event = _core_event(
+                event_id=event_id,
+                run_id=request.run_id,
+                event_type="source_acquisition_attempt_authorized",
+                transaction_id=request.request_id,
+                stage_id="source-discovery",
+                decision="continue",
+                reason="Human authorized one additional Tavily acquisition attempt",
+                created_at=now,
+                binding=CoreRunEventBinding(
+                    request_id=request.request_id,
+                    request_fingerprint=fingerprint,
+                    effect_kind="source_acquisition_attempt_authorize",
+                    primary_record_id=attempt_id,
+                    outcome="committed",
+                ),
+            )
+            unit = store.begin(
+                request.run_id,
+                request.request_id,
+                transaction_type_for("source_acquisition_attempt_authorize"),
+                request.expected_store_revision,
+            )
+            unit.put_run_source_acquisition_attempt_authorization(authorization)
+            unit.append_event(event)
+            checkout = prepare_checkout_effect(
+                workspace=self.workspace,
+                snapshot=verified.snapshot,
+                transaction_id=request.request_id,
+                created_at=self._clock(),
+            )
+            stage_checkout_effect(unit, checkout)
+            receipt = unit.commit(
+                _postcommit_observer=lambda _receipt: self._verifier.verify(
+                    store,
+                    request.run_id,
+                )
+            )
+            return CoreRunResult(
+                status="committed",
+                receipt=receipt,
+                primary_record_id=attempt_id,
             )
 
     def _doctor_check(self, request: IntegrityCheckRequest) -> CoreRunResult:
@@ -760,7 +1288,9 @@ class CoreRunService:
                 recovery_authorization.require_allowed()
                 mismatch = self._integrity.first_mismatch(
                     verified,
-                    additional_revisions=(item for item, _usage in required_revisions),
+                    completion_lineage_revisions=(
+                        item for item, _usage in required_revisions
+                    ),
                 )
                 if mismatch is not None:
                     raise CoreRunError("core_run_integrity_blocked")
@@ -773,7 +1303,9 @@ class CoreRunService:
                     request_id=request.request_id,
                     request_fingerprint=fingerprint,
                     expected_store_revision=request.expected_store_revision,
-                    additional_revisions=(item for item, _usage in required_revisions),
+                    completion_lineage_revisions=(
+                        item for item, _usage in required_revisions
+                    ),
                 )
                 advance_workflow = True
             if blocked is not None:
@@ -890,6 +1422,76 @@ class CoreRunService:
 
         gate_ids: tuple[str, ...] = ()
         if stage_id == "source-discovery":
+            if snapshot.run_execution_authorizations:
+                if len(snapshot.run_execution_authorizations) != 1:
+                    raise CoreRunError("control_store_integrity_invalid")
+                authorization = snapshot.run_execution_authorizations[0]
+                manifest_revision = revisions.get(
+                    (
+                        authorization.source_manifest_artifact.artifact_id,
+                        authorization.source_manifest_artifact.revision,
+                    )
+                )
+                if manifest_revision is None:
+                    raise CoreRunError("control_store_integrity_invalid")
+                try:
+                    manifest_bytes = store.read_artifact_revision_bytes(
+                        snapshot.run.run_id,
+                        authorization.source_manifest_artifact.artifact_id,
+                        authorization.source_manifest_artifact.revision,
+                    )
+                    manifest_payload = parse_json_object(manifest_bytes)
+                    manifest_model = (
+                        MultiTavilyExecutionSourceManifest
+                        if manifest_payload.get("schema_version")
+                        == MultiTavilyExecutionSourceManifest.schema_id
+                        else ExecutionSourceManifest
+                    )
+                    manifest = manifest_model.model_validate(
+                        manifest_payload,
+                        strict=True,
+                    )
+                except Exception as exc:
+                    raise CoreRunError("control_store_integrity_invalid") from exc
+                sources = sorted(snapshot.sources, key=lambda item: item.source_id)
+                expected = sorted(manifest.members, key=lambda item: item.source_id)
+                if not sources or (
+                    len(sources) != len(expected)
+                    or [item.source_id for item in sources]
+                    != [item.source_id for item in expected]
+                    or len({item.accepted_transaction_id for item in sources}) != 1
+                ):
+                    raise CoreRunError("stage_artifact_binding_invalid")
+                if any(
+                    source.content_sha256 != member.content_sha256
+                    or source.invocation_id != sources[0].invocation_id
+                    for source, member in zip(sources, expected, strict=True)
+                ):
+                    raise CoreRunError("stage_artifact_binding_invalid")
+                receipt = store.load_transaction_receipt(
+                    snapshot.run.run_id, sources[0].accepted_transaction_id
+                )
+                if receipt is None or set(receipt.source_ids) != {
+                    item.source_id for item in sources
+                }:
+                    raise CoreRunError("stage_artifact_binding_invalid")
+                selected.append((manifest_revision, "consumed"))
+                for source in sources:
+                    revision = revisions.get(
+                        (source.content_artifact_id, source.content_artifact_revision)
+                    )
+                    if revision is None or revision.sha256 != source.content_sha256:
+                        raise CoreRunError("control_store_integrity_invalid")
+                    selected.append((revision, "produced"))
+                producer_invocation_id = require_invocation(
+                    sources[0].invocation_id, role_id="source-provider"
+                )
+                return (
+                    tuple(selected),
+                    gate_ids,
+                    producer_invocation_id,
+                    producer_tool_id,
+                )
             candidates = require_artifact("source_candidates", "produced")
             submission = require_submission(
                 candidates,
@@ -1078,24 +1680,73 @@ class CoreRunService:
                 owner_role_id="editor",
             )
             producer_invocation_id = submission.invocation_id
-            snapshot_revision = require_artifact(
-                "analyst_draft_snapshot",
-                "consumed",
-            )
-            submissions = [
+            matching_bindings = [
                 item
-                for item in snapshot.owned_artifact_submissions
-                if item.artifact_id == brief.artifact_id
-                and item.artifact_revision == brief.revision
+                for item in snapshot.gate_repair_artifact_bindings
+                if item.owned_artifact_submission_id == submission.submission_id
+                and item.successor_artifact.artifact_id == brief.artifact_id
+                and item.successor_artifact.revision == brief.revision
             ]
-            if (
-                len(submissions) != 1
-                or submissions[0].parent_artifact is None
-                or submissions[0].parent_artifact.artifact_id
-                != snapshot_revision.artifact_id
-                or submissions[0].parent_artifact.revision != snapshot_revision.revision
-            ):
-                raise CoreRunError("stage_artifact_binding_invalid")
+            if matching_bindings:
+                from .gate_repair import classify_gate_repair_legality
+
+                legality = classify_gate_repair_legality(snapshot)
+                if (
+                    len(matching_bindings) != 1
+                    or len(snapshot.gate_repair_cycles) != 1
+                    or len(snapshot.gate_repair_artifact_bindings) != 1
+                    or legality.state != "active"
+                    or legality.cycle is None
+                ):
+                    raise CoreRunError("stage_artifact_binding_invalid")
+                repair_binding = matching_bindings[0]
+                submission_receipt = store.load_transaction_receipt(
+                    snapshot.run.run_id,
+                    submission.accepted_transaction_id,
+                )
+                prior_revision = revisions.get(
+                    (
+                        repair_binding.prior_artifact.artifact_id,
+                        repair_binding.prior_artifact.revision,
+                    )
+                )
+                if (
+                    repair_binding.gate_repair_id != legality.cycle.gate_repair_id
+                    or repair_binding.prior_artifact != legality.cycle.target_artifact
+                    or repair_binding.accepted_transaction_id
+                    != submission.accepted_transaction_id
+                    or submission.parent_artifact != repair_binding.prior_artifact
+                    or submission_receipt is None
+                    or [
+                        item.submission_id
+                        for item in submission_receipt.owned_artifact_submissions
+                    ]
+                    != [submission.submission_id]
+                    or [
+                        item.gate_repair_id
+                        for item in submission_receipt.gate_repair_artifact_bindings
+                    ]
+                    != [repair_binding.gate_repair_id]
+                    or prior_revision is None
+                ):
+                    raise CoreRunError("stage_artifact_binding_invalid")
+                selected.append((prior_revision, "consumed"))
+            else:
+                if (
+                    snapshot.gate_repair_cycles
+                    or snapshot.gate_repair_artifact_bindings
+                ):
+                    raise CoreRunError("stage_artifact_binding_invalid")
+                snapshot_revision = require_artifact(
+                    "analyst_draft_snapshot",
+                    "consumed",
+                )
+                if submission.parent_artifact is None or (
+                    submission.parent_artifact.artifact_id
+                    != snapshot_revision.artifact_id
+                    or submission.parent_artifact.revision != snapshot_revision.revision
+                ):
+                    raise CoreRunError("stage_artifact_binding_invalid")
         elif stage_id == "auditor":
             ledger = require_artifact("claim_ledger", "consumed")
             brief = require_artifact("audited_brief", "consumed")
@@ -1127,10 +1778,7 @@ class CoreRunService:
             if artifacts["analyst_draft_snapshot"].current_revision:
                 require_artifact("analyst_draft_snapshot", "consumed")
             del ledger
-            if audit_promotion.proposal.decision == "fail" or any(
-                finding.severity == "error"
-                for finding in audit_promotion.proposal.findings
-            ):
+            if not audit_promotion_allows_stage_completion(audit_promotion):
                 raise CoreRunError("stage_artifact_binding_invalid")
             evaluations = {
                 item.gate_id: item
@@ -1151,9 +1799,10 @@ class CoreRunService:
                 )
             except CoreRunError as exc:
                 raise CoreRunError("stage_gate_binding_invalid") from exc
-            if set(REQUIRED_AUDITOR_GATES) - set(evaluations):
+            required_gate_ids = required_auditor_gates(verified.binding.run_direction)
+            if set(required_gate_ids) - set(evaluations):
                 raise CoreRunError("stage_gate_binding_invalid")
-            required = [evaluations[gate_id] for gate_id in REQUIRED_AUDITOR_GATES]
+            required = [evaluations[gate_id] for gate_id in required_gate_ids]
             if any(
                 item.status not in {"pass", "warning"} or item.blocking
                 for item in required
@@ -1538,7 +2187,7 @@ _SECRET_BEARING_INPUT_KEYS = frozenset(
         "access_key",
         "api_key",
         "authorization",
-        "client" "_secret",
+        "client" + "_secret",
         "credential",
         "credentials",
         "password",
@@ -1550,6 +2199,12 @@ _SECRET_BEARING_INPUT_KEYS = frozenset(
 )
 _SECRET_BEARING_INPUT_SUFFIXES = tuple(
     f"_{name}" for name in sorted(_SECRET_BEARING_INPUT_KEYS)
+)
+# The bootstrap's strict, non-secret control DTO uses this historical suffix;
+# it is validated separately as a Pydantic authorization input, never treated
+# as a credential selector or persisted secret.
+_NON_SECRET_CONTROL_INPUT_KEYS = frozenset(
+    {"execution_authorization", "source_discovery_authorization"}
 )
 
 
@@ -1601,8 +2256,9 @@ def _require_non_secret_mapping(content: bytes) -> None:
                 if type(key) is not str:
                     raise CoreRunError("core_run_contract_mismatch")
                 normalized = key.strip().casefold().replace("-", "_")
-                if normalized in _SECRET_BEARING_INPUT_KEYS or normalized.endswith(
-                    _SECRET_BEARING_INPUT_SUFFIXES
+                if normalized not in _NON_SECRET_CONTROL_INPUT_KEYS and (
+                    normalized in _SECRET_BEARING_INPUT_KEYS
+                    or normalized.endswith(_SECRET_BEARING_INPUT_SUFFIXES)
                 ):
                     raise CoreRunError("core_run_contract_mismatch")
                 pending.append(child)
@@ -1942,6 +2598,25 @@ _WEB_CREDENTIAL_ENV = {
 }
 
 
+def _tavily_attempt_call_limits(
+    spec: object,
+) -> dict[str, object]:
+    if not isinstance(spec, RuntimeWebSearchAcquisitionSpecV3):
+        raise CoreRunError("runtime_source_plan_invalid")
+    max_search_calls = (
+        spec.max_primary_search_calls + spec.max_backfill_search_calls
+    )
+    return {
+        "max_provider_calls": max_search_calls + spec.max_extract_calls,
+        "max_search_calls": max_search_calls,
+        "max_extract_calls": spec.max_extract_calls,
+        "max_extract_urls": spec.max_unique_urls,
+        "provider_call_sequence": (
+            "primary_search_extract_then_conditional_backfill_search_extract"
+        ),
+    }
+
+
 def _source_acquisition_spec(
     *,
     route_id: str,
@@ -2010,12 +2685,19 @@ def _source_acquisition_spec(
         if set(web) - allowed:
             raise CoreRunError("runtime_source_plan_invalid")
         backfill = web.get("initial_news_backfill", {})
-        if type(backfill) is not dict or backfill.get("enabled", False) is not False:
+        if type(backfill) is not dict:
             raise CoreRunError("runtime_source_plan_invalid")
-        if (
-            web.get("topic", "news") != "news"
-            or web.get("search_depth", "basic") != "basic"
-        ):
+        tavily_multi = provider_id == "tavily"
+        if tavily_multi:
+            if (
+                backfill.get("enabled") is not True
+                or backfill.get("mode") != "conditional_per_task"
+                or backfill.get("recency_days") != 30
+                or backfill.get("max_results_per_task") != 20
+                or web.get("search_depth") != "advanced"
+            ):
+                raise CoreRunError("runtime_source_plan_invalid")
+        elif backfill.get("enabled", False) is not False:
             raise CoreRunError("runtime_source_plan_invalid")
         configured_env = web.get("api_key_env")
         if configured_env not in {None, "", _WEB_CREDENTIAL_ENV[provider_id]}:
@@ -2032,8 +2714,29 @@ def _source_acquisition_spec(
         if type(tasks) is not list:
             raise CoreRunError("runtime_source_plan_invalid")
         requests: list[dict[str, object]] = []
-        for task in tasks:
-            if type(task) is not dict or set(task) - {
+        if tavily_multi:
+            if (
+                max_results != 20
+                or recency_days != 7
+                or not 1 <= len(tasks) <= 20
+                or backfill.get("max_additional_tasks") != len(tasks)
+            ):
+                raise CoreRunError("runtime_source_plan_invalid")
+            task_payloads: list[dict[str, object]] = []
+            solar_task_fields = {
+                "task_id",
+                "task_category",
+                "entity_id",
+                "query",
+                "topic",
+                "domains",
+                "max_results",
+                "recency_days",
+                "search_depth",
+                "minimum_extract_successes",
+                "backfill",
+            }
+            simple_task_fields = {
                 "query",
                 "domains",
                 "topic",
@@ -2041,18 +2744,107 @@ def _source_acquisition_spec(
                 "language",
                 "platform_group",
                 "signal_type",
-            }:
-                raise CoreRunError("runtime_source_plan_invalid")
-            query = task.get("query")
-            task_domains = task.get("domains", domains)
-            requests.append(
-                _web_request_payload(
-                    query=query,
-                    domains=task_domains,
-                    max_results=max_results,
-                    recency_days=recency_days,
+            }
+            for index, task in enumerate(tasks):
+                if type(task) is not dict:
+                    raise CoreRunError("runtime_source_plan_invalid")
+                if set(task) == solar_task_fields:
+                    task_payload = {
+                        "schema_version": RuntimeWebSearchTaskSpecV3.schema_id,
+                        **task,
+                    }
+                elif not set(task) - simple_task_fields:
+                    query = task.get("query")
+                    task_domains = task.get("domains", domains)
+                    incoming_topic = str(task.get("topic", "news")).lower()
+                    topic = (
+                        "general"
+                        if incoming_topic
+                        in {"policy", "prices", "price", "regulation", "official"}
+                        else "news"
+                    )
+                    if (
+                        type(query) is not str
+                        or not query.strip()
+                        or type(task_domains) is not list
+                        or any(type(item) is not str for item in task_domains)
+                    ):
+                        raise CoreRunError("runtime_source_plan_invalid")
+                    task_id = f"source-search-{index + 1:03d}"
+                    canonical_domains = sorted(set(task_domains))
+                    task_payload = {
+                        "schema_version": RuntimeWebSearchTaskSpecV3.schema_id,
+                        "task_id": task_id,
+                        "task_category": "general",
+                        "entity_id": None,
+                        "query": query.strip(),
+                        "topic": topic,
+                        "domains": canonical_domains,
+                        "max_results": 20,
+                        "recency_days": 7,
+                        "search_depth": "advanced",
+                        "minimum_extract_successes": 1,
+                        "backfill": {
+                            "enabled": True,
+                            "query": f"{query.strip()} official filing press release",
+                            "domains": canonical_domains,
+                            "max_results": 20,
+                            "recency_days": 30,
+                            "search_depth": "advanced",
+                        },
+                    }
+                else:
+                    raise CoreRunError("runtime_source_plan_invalid")
+                try:
+                    task_payloads.append(
+                        RuntimeWebSearchTaskSpecV3.model_validate(
+                            task_payload, strict=True
+                        ).model_dump(mode="json", exclude_unset=False)
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise CoreRunError("runtime_source_plan_invalid") from exc
+            task_payloads.sort(key=lambda item: str(item["task_id"]))
+            max_unique_urls = min(800, len(task_payloads) * 40)
+            payload = {
+                "schema_version": RuntimeWebSearchAcquisitionSpecV3.schema_id,
+                "kind": "web_search_multi",
+                "provider_id": "tavily",
+                "tasks": task_payloads,
+                "max_primary_search_calls": len(task_payloads),
+                "max_backfill_search_calls": len(task_payloads),
+                "max_extract_calls": (max_unique_urls + 19) // 20,
+                "max_unique_urls": max_unique_urls,
+                "extract_batch_size": 20,
+            }
+            payload["acquisition_spec_fingerprint"] = canonical_fingerprint(payload)
+            try:
+                return RuntimeWebSearchAcquisitionSpecV3.model_validate(
+                    payload, strict=True
+                ).model_dump(mode="json", exclude_unset=False)
+            except (TypeError, ValueError) as exc:
+                raise CoreRunError("runtime_source_plan_invalid") from exc
+        else:
+            for task in tasks:
+                if type(task) is not dict or set(task) - {
+                    "query",
+                    "domains",
+                    "topic",
+                    "market",
+                    "language",
+                    "platform_group",
+                    "signal_type",
+                }:
+                    raise CoreRunError("runtime_source_plan_invalid")
+                query = task.get("query")
+                task_domains = task.get("domains", domains)
+                requests.append(
+                    _web_request_payload(
+                        query=query,
+                        domains=task_domains,
+                        max_results=max_results,
+                        recency_days=recency_days,
+                    )
                 )
-            )
         if not requests:
             if run_direction is None:
                 raise CoreRunError("runtime_source_plan_invalid")
@@ -2151,7 +2943,7 @@ def _web_preferred_domains(web: dict[str, object]) -> list[str]:
         or any(type(item) is not str for item in preferred)
     ):
         raise CoreRunError("runtime_source_plan_invalid")
-    return sorted({item.lower() for item in preferred})
+    return list(dict.fromkeys(item.lower() for item in preferred))
 
 
 def _web_request_payload(
@@ -2172,7 +2964,7 @@ def _web_request_payload(
             {
                 "schema_version": RuntimeWebSearchRequestSpec.schema_id,
                 "query": query,
-                "domains": sorted({item.lower() for item in domains}),
+                "domains": list(dict.fromkeys(item.lower() for item in domains)),
                 "max_results": max_results,
                 "recency_days": recency_days,
             },

@@ -6,16 +6,18 @@ stage legality, establish source truth, or replace any current v1 authority.
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import date, datetime
+import base64
 import hashlib
 import json
 import math
 from pathlib import PurePosixPath
 import re
 from types import MappingProxyType
-from typing import Annotated, Any, ClassVar, Literal, Optional, Union
+from typing import Annotated, Any, ClassVar, Iterable, Literal, Optional, Union
 
 from pydantic import (
     AfterValidator,
@@ -27,6 +29,7 @@ from pydantic import (
     StringConstraints,
     ValidationError,
     ValidationInfo,
+    ValidatorFunctionWrapHandler,
     WithJsonSchema,
     field_validator,
     model_validator,
@@ -107,26 +110,47 @@ SOURCE_ELIGIBILITY_REASONS = (
 )
 
 
-def _contains_non_finite_number(value: Any) -> bool:
+def _scan_non_finite_numbers(value: Any, scanned: set[int]) -> bool:
+    """Walk one payload for non-finite floats, recording visited containers.
+
+    ``scanned`` accumulates the identity of every container the walk entered.
+    An enclosing validation keeps that set so a nested contract can prove its
+    payload was already covered instead of rewalking the same subtree.
+    """
+
     stack = [value]
-    seen: set[int] = set()
     while stack:
         current = stack.pop()
         if type(current) is float and not math.isfinite(current):
             return True
         if isinstance(current, dict):
             identity = id(current)
-            if identity in seen:
+            if identity in scanned:
                 continue
-            seen.add(identity)
+            scanned.add(identity)
             stack.extend(current.values())
         elif isinstance(current, (list, tuple)):
             identity = id(current)
-            if identity in seen:
+            if identity in scanned:
                 continue
-            seen.add(identity)
+            scanned.add(identity)
             stack.extend(current)
     return False
+
+
+def _contains_non_finite_number(value: Any) -> bool:
+    return _scan_non_finite_numbers(value, set())
+
+
+# Set for the duration of one outermost contract validation. Nested contracts
+# validated inside it are subtrees of a payload that was already walked, so
+# they skip their own walk. The value is the identity set of the containers
+# that walk actually covered: a nested payload that did not come from the
+# outer structure is absent from it and is still walked.
+_SCANNED_FINITE_CONTAINERS: ContextVar[set[int] | None] = ContextVar(
+    "briefloop_scanned_finite_containers",
+    default=None,
+)
 
 
 def _contract_fingerprint(payload: dict[str, Any], *, field: str) -> str:
@@ -142,6 +166,26 @@ def _contract_fingerprint(payload: dict[str, Any], *, field: str) -> str:
             separators=(",", ":"),
         ).encode("utf-8")
     ).hexdigest()
+
+
+def canonical_run_direction_for_binding(
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalize the one backward-compatible frozen RunDirection shape.
+
+    ``output_contract`` was introduced after already-valid v2 run bindings had
+    been frozen.  An absent field in those bindings and an explicitly null
+    field both retain the unconstrained-output semantics, so neither belongs
+    in serialized bindings or their fingerprints.  A present contract remains
+    exact input.
+    """
+
+    canonical = dict(payload)
+    if canonical.get("output_contract") is None:
+        canonical.pop("output_contract", None)
+    if canonical.get("report_type") is None:
+        canonical.pop("report_type", None)
+    return canonical
 
 
 def _clean_text(value: str) -> str:
@@ -320,6 +364,8 @@ EVENT_TYPES = {
     "repair_plan_created",
     "repair_plan_completed",
     "repair_started",
+    "gate_repair_started",
+    "gate_repair_outcome_recorded",
     "repair_completed",
     "repair_stage_superseded",
     "quality_gate_checked",
@@ -354,19 +400,37 @@ EVENT_TYPES = {
     "run_blocked",
     "run_integrity_contaminated",
     "run_reset",
+    "run_successor_started",
+    "run_guidance_snapshot_frozen",
     "semantic_assessment_checked_inputs_bound",
     "semantic_support_finding_adjudicated",
     "source_evidence_committed",
+    "input_classification_committed",
     "role_proposal_committed",
     "intake_rejected",
     "role_invocation_started",
     "owned_artifact_accepted",
     "audit_proposal_promoted",
+    "post_final_assessment_policy_recorded",
+    "post_final_assessment_claimed",
+    "post_final_assessment_abandoned",
+    "post_final_assessment_execution_recorded",
+    "post_final_assessment_result_recorded",
+    "post_final_finding_disposition_recorded",
+    "post_final_guidance_draft_recorded",
+    "post_final_guidance_status_recorded",
+    "post_final_human_observation_recorded",
+    "source_acquisition_attempt_authorized",
+    "runtime_source_search_plan_recorded",
+    "tavily_acquisition_bundle_recorded",
+    "market_data_snapshot_recorded",
 }
 
 # Release-mode approval vocabulary and boundary. DTO truth source;
 # the product approval layer imports them from here.
-APPROVAL_BOUNDARY = "internal_review_approval_records_only_not_public_release_authorization"
+APPROVAL_BOUNDARY = (
+    "internal_review_approval_records_only_not_public_release_authorization"
+)
 
 RELEASE_MODES: dict[str, dict[str, Any]] = {
     "internal_draft": {
@@ -386,12 +450,20 @@ RELEASE_MODES: dict[str, dict[str, Any]] = {
     },
     "ir_draft": {
         "approval_required": True,
-        "required_roles": ["ir_owner", "evidence_reviewer", "legal_or_compliance_reviewer"],
+        "required_roles": [
+            "ir_owner",
+            "evidence_reviewer",
+            "legal_or_compliance_reviewer",
+        ],
         "description": "Ready for IR draft review when owner, evidence, and legal/compliance approvals are present.",
     },
     "formal_release_candidate": {
         "approval_required": True,
-        "required_roles": ["content_owner", "evidence_reviewer", "legal_or_compliance_reviewer"],
+        "required_roles": [
+            "content_owner",
+            "evidence_reviewer",
+            "legal_or_compliance_reviewer",
+        ],
         "description": "Ready for formal release-candidate review when required internal approvals are present.",
     },
 }
@@ -416,15 +488,32 @@ class StrictModel(BaseModel):
     minimal_example: ClassVar[dict[str, Any]]
     full_example: ClassVar[dict[str, Any]]
 
-    @model_validator(mode="before")
+    @model_validator(mode="wrap")
     @classmethod
-    def reject_non_finite_json_numbers(cls, value: Any) -> Any:
-        if _contains_non_finite_number(value):
+    def reject_non_finite_json_numbers(
+        cls,
+        value: Any,
+        handler: ValidatorFunctionWrapHandler,
+    ) -> Any:
+        scanned = _SCANNED_FINITE_CONTAINERS.get()
+        if scanned is not None:
+            if id(value) not in scanned and _scan_non_finite_numbers(value, scanned):
+                raise PydanticCustomError(
+                    "non_finite_json_number",
+                    "non-finite JSON number",
+                )
+            return handler(value)
+        scanned = set()
+        if _scan_non_finite_numbers(value, scanned):
             raise PydanticCustomError(
                 "non_finite_json_number",
                 "non-finite JSON number",
             )
-        return value
+        token = _SCANNED_FINITE_CONTAINERS.set(scanned)
+        try:
+            return handler(value)
+        finally:
+            _SCANNED_FINITE_CONTAINERS.reset(token)
 
     @classmethod
     def contract_validate(cls, data: dict[str, Any]) -> list[FieldViolation]:
@@ -444,12 +533,24 @@ class StrictModel(BaseModel):
                 schema_version=cls.schema_version_number,
             )
 
+    _contract_json_schema_cache: ClassVar[dict[type, dict[str, Any]]] = {}
+
     @classmethod
     def contract_json_schema(cls) -> dict[str, Any]:
-        schema = cls.model_json_schema()
-        schema["$id"] = cls.schema_id
-        schema["examples"] = [deepcopy(cls.minimal_example), deepcopy(cls.full_example)]
-        return schema
+        # model_json_schema() regenerates the whole schema on every call, and
+        # the verifier asks for contract schemas thousands of times per run.
+        # The schema is a pure function of the class, but callers own the dict
+        # they get back, so cache one canonical build and hand out copies.
+        cached = StrictModel._contract_json_schema_cache.get(cls)
+        if cached is None:
+            cached = cls.model_json_schema()
+            cached["$id"] = cls.schema_id
+            cached["examples"] = [
+                deepcopy(cls.minimal_example),
+                deepcopy(cls.full_example),
+            ]
+            StrictModel._contract_json_schema_cache[cls] = cached
+        return deepcopy(cached)
 
     @classmethod
     def contract_example(cls, detail: str) -> dict[str, Any]:
@@ -517,6 +618,596 @@ class AuditFindingItem(StrictModel):
     summary: CleanText
 
 
+class SourceAcquisitionArtifactReference(StrictModel):
+    """Exact optional acquisition-bundle artifact frozen with one attempt."""
+
+    artifact_id: ContractId
+    revision: Literal[1]
+
+
+class TavilyAcquisitionExchange(StrictModel):
+    """One exact non-secret HTTP body exchange in a Tavily acquisition attempt."""
+
+    operation: Literal["search", "extract"]
+    endpoint: Literal["/search", "/extract"]
+    request_body_base64: str
+    request_body_sha256: Sha256
+    request_body_size_bytes: PositiveInt
+    response_body_base64: str | None = None
+    response_body_sha256: Sha256 | None = None
+    response_body_size_bytes: NonNegativeInt | None = None
+    status_code: Annotated[int, Field(ge=100, le=599)] | None = None
+    # Present only when no HTTP response was received.  Keep this projection
+    # value-free: it is a coarse stdlib transport class, never an exception
+    # message, URL, host, or credential.
+    transport_error_class: (
+        Literal[
+            "dns",
+            "tls",
+            "connect",
+            "timeout",
+            "proxy",
+            "network_permission_denied",
+            "other",
+        ]
+        | None
+    ) = Field(default=None, exclude_if=lambda value: value is None)
+
+    @staticmethod
+    def _decode_exact(value: str) -> bytes:
+        try:
+            decoded = base64.b64decode(value.encode("ascii"), validate=True)
+        except (UnicodeEncodeError, ValueError) as exc:
+            raise ValueError("exchange bytes are not canonical base64") from exc
+        if base64.b64encode(decoded).decode("ascii") != value:
+            raise ValueError("exchange bytes are not canonical base64")
+        return decoded
+
+    @model_validator(mode="after")
+    def byte_identity_is_total(self) -> "TavilyAcquisitionExchange":
+        if self.endpoint != f"/{self.operation}":
+            raise ValueError("exchange endpoint does not match operation")
+        request = self._decode_exact(self.request_body_base64)
+        if (
+            not request
+            or len(request) != self.request_body_size_bytes
+            or hashlib.sha256(request).hexdigest() != self.request_body_sha256
+        ):
+            raise ValueError("exchange request identity mismatch")
+        response_fields = (
+            self.response_body_base64,
+            self.response_body_sha256,
+            self.response_body_size_bytes,
+            self.status_code,
+        )
+        if all(value is None for value in response_fields):
+            return self
+        if any(value is None for value in response_fields):
+            raise ValueError("exchange response identity is incomplete")
+        if self.transport_error_class is not None:
+            raise ValueError("transport error cannot accompany an HTTP response")
+        response = self._decode_exact(self.response_body_base64 or "")
+        if (
+            len(response) != self.response_body_size_bytes
+            or hashlib.sha256(response).hexdigest() != self.response_body_sha256
+        ):
+            raise ValueError("exchange response identity mismatch")
+        return self
+
+
+class TavilyExtractUrlOutcome(StrictModel):
+    """Value-free per-URL projection from one batch Extract response."""
+
+    url: CleanText
+    status: Literal["succeeded", "provider_failed", "empty_content"]
+    response_item_sha256: Sha256
+    content_sha256: Sha256 | None = None
+    content_size_bytes: PositiveInt | None = None
+
+    @model_validator(mode="after")
+    def success_content_identity_is_total(self) -> "TavilyExtractUrlOutcome":
+        if self.status == "succeeded":
+            if self.content_sha256 is None or self.content_size_bytes is None:
+                raise ValueError("successful extract outcome requires content identity")
+        elif self.content_sha256 is not None or self.content_size_bytes is not None:
+            raise ValueError("failed extract outcome cannot claim content identity")
+        return self
+
+
+class TavilyAcquisitionBundle(StrictModel):
+    """Historical v1 single-Search evidence; read-only and never newly emitted."""
+
+    schema_id = "briefloop.tavily_acquisition_bundle.v1"
+
+    schema_version: Literal["briefloop.tavily_acquisition_bundle.v1"]
+    provider_id: Literal["tavily"]
+    status: Literal[
+        "search_response_unavailable",
+        "search_response_invalid",
+        "search_results_empty",
+        "extract_response_unavailable",
+        "extract_response_invalid",
+        "extract_results_all_failed",
+        "extract_results_partial",
+        "extract_results_succeeded",
+    ]
+    search: TavilyAcquisitionExchange
+    extract: TavilyAcquisitionExchange | None = None
+    extract_urls: list[CleanText] = Field(max_length=5)
+    outcomes: list[TavilyExtractUrlOutcome] = Field(max_length=5)
+
+    @model_validator(mode="after")
+    def acquisition_shape_is_canonical(self) -> "TavilyAcquisitionBundle":
+        if self.search.operation != "search":
+            raise ValueError("bundle search exchange is invalid")
+        if self.extract_urls != sorted(set(self.extract_urls)):
+            raise ValueError("extract URLs must be sorted and unique")
+        if [item.url for item in self.outcomes] != sorted(
+            {item.url for item in self.outcomes}
+        ):
+            raise ValueError("extract outcomes must be sorted and unique")
+        if self.status in {
+            "search_response_unavailable",
+            "search_response_invalid",
+            "search_results_empty",
+        }:
+            if self.extract is not None or self.extract_urls or self.outcomes:
+                raise ValueError("terminal Search cannot carry Extract evidence")
+            if self.status == "search_response_unavailable":
+                if self.search.status_code == 200:
+                    raise ValueError("unavailable Search cannot be HTTP 200")
+            elif self.search.status_code != 200:
+                raise ValueError("valid or invalid Search requires HTTP 200 evidence")
+            return self
+        if (
+            self.search.status_code != 200
+            or self.extract is None
+            or self.extract.operation != "extract"
+            or not self.extract_urls
+        ):
+            raise ValueError("non-empty search requires one batch Extract exchange")
+        if self.status == "extract_response_unavailable":
+            if self.outcomes or self.extract.status_code == 200:
+                raise ValueError("unavailable Extract response cannot carry outcomes")
+            return self
+        if self.status == "extract_response_invalid":
+            if self.outcomes or self.extract.status_code != 200:
+                raise ValueError("invalid Extract response requires exact HTTP 200")
+            return self
+        if self.extract.status_code != 200 or set(self.extract_urls) != {
+            item.url for item in self.outcomes
+        }:
+            raise ValueError("Extract outcomes do not cover the exact request")
+        succeeded = sum(item.status == "succeeded" for item in self.outcomes)
+        expected = (
+            "extract_results_all_failed"
+            if succeeded == 0
+            else "extract_results_succeeded"
+            if succeeded == len(self.outcomes)
+            else "extract_results_partial"
+        )
+        if self.status != expected:
+            raise ValueError("bundle status does not match Extract outcomes")
+        return self
+
+
+class TavilySearchTaskExchange(StrictModel):
+    """One exact primary or backfill Search in a multi-task acquisition."""
+
+    task_id: ContractId
+    phase: Literal["primary", "backfill"]
+    status: Literal["succeeded", "empty", "unavailable", "invalid"]
+    exchange: TavilyAcquisitionExchange
+    discovered_urls: list[CleanText] = Field(max_length=20)
+
+    @model_validator(mode="after")
+    def task_search_shape(self) -> "TavilySearchTaskExchange":
+        if self.exchange.operation != "search":
+            raise ValueError("task Search exchange is invalid")
+        if self.discovered_urls != sorted(set(self.discovered_urls)):
+            raise ValueError("task Search URLs must be sorted and unique")
+        if self.status in {"unavailable", "invalid", "empty"} and self.discovered_urls:
+            raise ValueError("terminal task Search cannot claim discovered URLs")
+        if self.status == "unavailable" and self.exchange.status_code == 200:
+            raise ValueError("unavailable task Search cannot be HTTP 200")
+        if self.status in {"succeeded", "empty", "invalid"} and (
+            self.exchange.status_code != 200
+        ):
+            raise ValueError("parsed task Search requires HTTP 200")
+        if self.status == "succeeded" and not self.discovered_urls:
+            raise ValueError("successful task Search requires discovered URLs")
+        return self
+
+
+class TavilyExtractBatchExchange(StrictModel):
+    """One exact technical batch of at most twenty Extract URLs."""
+
+    phase: Literal["primary", "backfill"]
+    batch_ordinal: PositiveInt
+    status: Literal["succeeded", "partial", "all_failed", "unavailable", "invalid"]
+    exchange: TavilyAcquisitionExchange
+    urls: list[CleanText] = Field(min_length=1, max_length=20)
+    outcomes: list[TavilyExtractUrlOutcome] = Field(max_length=20)
+
+    @model_validator(mode="after")
+    def extract_batch_shape(self) -> "TavilyExtractBatchExchange":
+        if self.exchange.operation != "extract":
+            raise ValueError("batch Extract exchange is invalid")
+        if self.urls != sorted(set(self.urls)):
+            raise ValueError("batch Extract URLs must be sorted and unique")
+        outcome_urls = [item.url for item in self.outcomes]
+        if outcome_urls != sorted(set(outcome_urls)):
+            raise ValueError("batch Extract outcomes must be sorted and unique")
+        if self.status in {"unavailable", "invalid"}:
+            if self.outcomes:
+                raise ValueError("unusable Extract batch cannot claim outcomes")
+            if self.status == "unavailable" and self.exchange.status_code == 200:
+                raise ValueError("unavailable Extract batch cannot be HTTP 200")
+            if self.status == "invalid" and self.exchange.status_code != 200:
+                raise ValueError("invalid Extract batch requires HTTP 200")
+            return self
+        if self.exchange.status_code != 200 or set(self.urls) != set(outcome_urls):
+            raise ValueError("Extract batch outcomes must cover the exact URL batch")
+        succeeded = sum(item.status == "succeeded" for item in self.outcomes)
+        expected = (
+            "all_failed"
+            if succeeded == 0
+            else "succeeded"
+            if succeeded == len(self.outcomes)
+            else "partial"
+        )
+        if self.status != expected:
+            raise ValueError("Extract batch status does not match outcomes")
+        return self
+
+
+class TavilyTaskAcquisitionStatus(StrictModel):
+    """Value-free final coverage status for one frozen search task."""
+
+    task_id: ContractId
+    primary_search_ordinal: PositiveInt
+    backfill_search_ordinal: PositiveInt | None = None
+    discovered_unique_url_count: NonNegativeInt
+    extracted_success_count: NonNegativeInt
+    minimum_extract_successes: PositiveInt
+    status: Literal[
+        "covered",
+        "coverage_insufficient",
+        "search_unavailable",
+        "extract_unavailable",
+    ]
+
+    @model_validator(mode="after")
+    def coverage_status_matches_counts(self) -> "TavilyTaskAcquisitionStatus":
+        covered = self.extracted_success_count >= self.minimum_extract_successes
+        if covered != (self.status == "covered"):
+            if self.status not in {"search_unavailable", "extract_unavailable"}:
+                raise ValueError("task coverage status does not match counts")
+            if covered:
+                raise ValueError("failed task cannot meet its coverage threshold")
+        return self
+
+
+class TavilyAcquisitionBundleV2(StrictModel):
+    """Exact multi-Search and multi-batch Extract execution evidence."""
+
+    schema_id = "briefloop.tavily_acquisition_bundle.v2"
+
+    schema_version: Literal["briefloop.tavily_acquisition_bundle.v2"]
+    provider_id: Literal["tavily"]
+    status: Literal["complete", "partial", "failed"]
+    searches: list[TavilySearchTaskExchange] = Field(min_length=1, max_length=40)
+    extract_batches: list[TavilyExtractBatchExchange] = Field(max_length=40)
+    unique_urls: list[CleanText] = Field(max_length=800)
+    task_statuses: list[TavilyTaskAcquisitionStatus] = Field(
+        min_length=1, max_length=20
+    )
+
+    @model_validator(mode="after")
+    def multi_acquisition_shape(self) -> "TavilyAcquisitionBundleV2":
+        if self.unique_urls != sorted(set(self.unique_urls)):
+            raise ValueError("multi-acquisition URLs must be sorted and unique")
+        if [item.task_id for item in self.task_statuses] != sorted(
+            {item.task_id for item in self.task_statuses}
+        ):
+            raise ValueError("task statuses must be sorted and unique")
+        if [item.batch_ordinal for item in self.extract_batches] != list(
+            range(1, len(self.extract_batches) + 1)
+        ):
+            raise ValueError("Extract batch ordinals must be contiguous")
+        batch_urls = [url for batch in self.extract_batches for url in batch.urls]
+        if len(batch_urls) != len(set(batch_urls)) or sorted(batch_urls) != self.unique_urls:
+            raise ValueError("Extract batches must partition every unique URL")
+        covered = sum(item.status == "covered" for item in self.task_statuses)
+        expected = (
+            "complete"
+            if covered == len(self.task_statuses)
+            else "failed"
+            if covered == 0
+            else "partial"
+        )
+        if self.status != expected:
+            raise ValueError("multi-acquisition status does not match task coverage")
+        return self
+
+
+class TavilyAcquisitionBundleRecordV2(StrictModel):
+    """Receipt-owned Store identity for one frozen multi-Tavily bundle."""
+
+    schema_id = "briefloop.tavily_acquisition_bundle_record.v2"
+
+    schema_version: Literal["briefloop.tavily_acquisition_bundle_record.v2"]
+    bundle_record_id: ContractId
+    run_id: ContractId
+    attempt_authorization_id: ContractId
+    provider_response_artifact_id: ContractId
+    provider_response_sha256: Sha256
+    bundle_status: Literal["complete", "partial", "failed"]
+    search_count: Annotated[int, Field(ge=1, le=40)]
+    extract_batch_count: Annotated[int, Field(ge=0, le=40)]
+    unique_url_count: Annotated[int, Field(ge=0, le=800)]
+    durable_content_count: Annotated[int, Field(ge=0, le=800)]
+    record_event_id: ContractId
+    accepted_transaction_id: ContractId
+    recorded_at: IsoDateTime
+    record_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def bundle_record_identity_is_exact(self) -> "TavilyAcquisitionBundleRecordV2":
+        if self.durable_content_count > self.unique_url_count:
+            raise ValueError("durable content count exceeds the URL universe")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"record_fingerprint"}),
+            field="record_fingerprint",
+        )
+        if self.record_fingerprint != expected:
+            raise ValueError("Tavily bundle record fingerprint mismatch")
+        return self
+
+
+class MarketDataSecurityV1(StrictModel):
+    """One exact weekly equity quote inside a frozen market data snapshot.
+
+    Quote and valuation fields are explicit nulls when the provider response
+    or manual input file does not carry them; nothing is estimated,
+    interpolated, or backfilled.
+    """
+
+    ticker: ContractId
+    exchange: CleanText
+    currency: Annotated[str, StringConstraints(pattern=r"^[A-Z]{3}$")]
+    as_of: IsoDate
+    data_origin: Literal["yahoo_chart_api", "manual_input"]
+    week_open: Optional[Annotated[float, Field(gt=0)]]
+    week_high: Optional[Annotated[float, Field(gt=0)]]
+    week_low: Optional[Annotated[float, Field(gt=0)]]
+    week_close: Annotated[float, Field(gt=0)]
+    week_volume: Optional[NonNegativeInt]
+    weekly_change_pct: Optional[float]
+    market_cap: Optional[Annotated[float, Field(ge=0)]]
+    trailing_pe: Optional[Annotated[float, Field(gt=0)]]
+
+    @model_validator(mode="after")
+    def weekly_bar_is_coherent(self) -> "MarketDataSecurityV1":
+        if (
+            self.week_high is not None
+            and self.week_low is not None
+            and self.week_high < self.week_low
+        ):
+            raise ValueError("weekly high is below weekly low")
+        return self
+
+
+class MarketDataSecurityGapV1(StrictModel):
+    """Value-free record of one security that could not be quoted."""
+
+    ticker: ContractId
+    failure_class: Literal[
+        "transport_unavailable",
+        "http_error",
+        "response_invalid",
+        "symbol_data_missing",
+        "manual_record_invalid",
+    ]
+
+
+class MarketDataSnapshotV1(StrictModel):
+    """Append-only weekly market data snapshot for one run and as-of date.
+
+    The Store enforces one snapshot per (run_id, as_of_date) and rejects any
+    in-place change; a correction requires a later as-of date.  Missing
+    securities appear only as value-free gaps, never as fabricated quotes.
+    """
+
+    schema_id = "briefloop.market_data_snapshot.v1"
+
+    schema_version: Literal["briefloop.market_data_snapshot.v1"]
+    market_data_snapshot_id: ContractId
+    run_id: ContractId
+    as_of_date: IsoDate
+    security_count: Annotated[int, Field(ge=1, le=11)]
+    provider_id: Literal["yahoo_finance_chart"]
+    securities: list[MarketDataSecurityV1] = Field(min_length=1, max_length=11)
+    gaps: list[MarketDataSecurityGapV1] = Field(max_length=11)
+    record_event_id: ContractId
+    accepted_transaction_id: ContractId
+    recorded_at: IsoDateTime
+    snapshot_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def snapshot_identity_is_exact(self) -> "MarketDataSnapshotV1":
+        tickers = [item.ticker for item in self.securities]
+        if tickers != sorted(set(tickers)):
+            raise ValueError("market data securities must be sorted and unique")
+        if self.security_count != len(self.securities):
+            raise ValueError("market data security count mismatch")
+        gap_tickers = [item.ticker for item in self.gaps]
+        if gap_tickers != sorted(set(gap_tickers)):
+            raise ValueError("market data gaps must be sorted and unique")
+        if set(tickers) & set(gap_tickers):
+            raise ValueError("market data gap tickers must not carry a quote")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"snapshot_fingerprint"}),
+            field="snapshot_fingerprint",
+        )
+        if self.snapshot_fingerprint != expected:
+            raise ValueError("market data snapshot fingerprint mismatch")
+        return self
+
+
+class SourceAcquisitionFailureEvidence(StrictModel):
+    """Value-free, receipt-owned evidence for one failed discovery attempt."""
+
+    schema_id = "briefloop.source_acquisition_failure_evidence.v1"
+
+    schema_version: Literal["briefloop.source_acquisition_failure_evidence.v1"]
+    attempt_id: ContractId
+    attempt_authorization_id: ContractId
+    attempt_ordinal: PositiveInt
+    run_id: ContractId
+    invocation_id: ContractId
+    discovery_authorization_id: ContractId
+    provider_id: Literal["tavily"]
+    route_fingerprint: Sha256
+    provider_request_fingerprint: Sha256
+    request_fingerprint: Sha256
+    failure_class: Literal[
+        "provider_transport_unavailable",
+        "provider_search_failed",
+        "provider_extract_failed",
+        "provider_results_empty",
+        "provider_results_without_durable_content",
+        "intake_rejected_no_eligible_source",
+        "source_pack_validation_rejected",
+        "provider_response_unavailable",
+    ]
+    provider_status_class: Literal[
+        "acquisition_bundle_retained",
+        "response_unavailable",
+    ]
+    provider_response_artifact: SourceAcquisitionArtifactReference | None = None
+    provider_response_sha256: Sha256 | None = None
+    provider_response_size_bytes: PositiveInt | None = None
+    transport_phase: Literal["search", "extract"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
+    transport_error_class: (
+        Literal[
+            "dns",
+            "tls",
+            "connect",
+            "timeout",
+            "proxy",
+            "network_permission_denied",
+            "other",
+        ]
+        | None
+    ) = Field(default=None, exclude_if=lambda value: value is None)
+    result_count: NonNegativeInt | None = None
+    durable_content_count: NonNegativeInt | None = None
+    claims_eligible_count: NonNegativeInt | None = None
+    rejection_counts: dict[ContractId, NonNegativeInt] | None = None
+
+    @model_validator(mode="after")
+    def failure_shape_is_total(self) -> "SourceAcquisitionFailureEvidence":
+        artifact_values = (
+            self.provider_response_artifact,
+            self.provider_response_sha256,
+            self.provider_response_size_bytes,
+        )
+        if any(value is None for value in artifact_values) != all(
+            value is None for value in artifact_values
+        ):
+            raise ValueError("provider response artifact identity is incomplete")
+        count_values = (
+            self.result_count,
+            self.durable_content_count,
+            self.claims_eligible_count,
+        )
+        if self.failure_class == "provider_response_unavailable":
+            if (
+                self.provider_status_class != "response_unavailable"
+                or any(value is not None for value in artifact_values)
+                or any(value is not None for value in count_values)
+                or self.rejection_counts is not None
+            ):
+                raise ValueError("unavailable response cannot carry response evidence")
+            return self
+        if self.failure_class == "provider_transport_unavailable":
+            if (
+                self.provider_status_class != "acquisition_bundle_retained"
+                or any(value is None for value in artifact_values)
+                or self.durable_content_count != 0
+                or self.claims_eligible_count != 0
+                or self.rejection_counts is not None
+                or self.transport_phase is None
+                or self.transport_error_class is None
+                or self.result_count is None
+                or (self.transport_phase == "search" and self.result_count != 0)
+                or (self.transport_phase == "extract" and self.result_count == 0)
+            ):
+                raise ValueError("transport failure evidence is incomplete")
+            return self
+        if self.transport_phase is not None or self.transport_error_class is not None:
+            raise ValueError(
+                "transport classification is only valid for transport failure"
+            )
+        if (
+            self.provider_status_class != "acquisition_bundle_retained"
+            or any(value is None for value in artifact_values)
+            or self.result_count is None
+            or self.durable_content_count is None
+            or self.durable_content_count > self.result_count
+        ):
+            raise ValueError("safe response evidence is incomplete")
+        if self.claims_eligible_count is not None and (
+            self.claims_eligible_count > self.result_count
+        ):
+            raise ValueError("eligible source count exceeds result count")
+        if self.rejection_counts is not None and (
+            not self.rejection_counts
+            or sum(self.rejection_counts.values()) + (self.claims_eligible_count or 0)
+            != self.result_count
+        ):
+            raise ValueError("source rejection counts are not total")
+        if self.failure_class == "provider_results_empty" and (
+            self.result_count != 0
+            or self.durable_content_count != 0
+            or self.claims_eligible_count != 0
+            or self.rejection_counts is not None
+        ):
+            raise ValueError("empty response evidence is inconsistent")
+        if self.failure_class == "provider_search_failed" and (
+            self.result_count != 0
+            or self.durable_content_count != 0
+            or self.claims_eligible_count != 0
+            or self.rejection_counts is not None
+        ):
+            raise ValueError("failed Search evidence is inconsistent")
+        if self.failure_class in {
+            "provider_extract_failed",
+            "provider_results_without_durable_content",
+        } and (
+            self.result_count == 0
+            or self.durable_content_count != 0
+            or self.claims_eligible_count != 0
+            or self.rejection_counts is None
+        ):
+            raise ValueError("non-durable response evidence is inconsistent")
+        if self.failure_class == "intake_rejected_no_eligible_source" and (
+            self.result_count == 0
+            or self.durable_content_count == 0
+            or self.claims_eligible_count != 0
+            or self.rejection_counts is None
+        ):
+            raise ValueError("ineligible response evidence is inconsistent")
+        if self.failure_class == "source_pack_validation_rejected" and (
+            self.claims_eligible_count is not None or self.rejection_counts is not None
+        ):
+            raise ValueError("validation rejection cannot claim eligibility results")
+        return self
+
+
 class IntakeEventBinding(StrictModel):
     request_id: ContractId
     request_fingerprint: Sha256
@@ -525,6 +1216,7 @@ class IntakeEventBinding(StrictModel):
     source_id: Optional[ContractId] = None
     proposal_id: Optional[ContractId] = None
     reason_code: Optional[ContractId] = None
+    source_acquisition_failure: SourceAcquisitionFailureEvidence | None = None
 
     @model_validator(mode="after")
     def identity_shape_is_unambiguous(self) -> "IntakeEventBinding":
@@ -534,6 +1226,14 @@ class IntakeEventBinding(StrictModel):
             raise ValueError("committed intake binding cannot carry a rejection reason")
         if self.outcome == "rejected" and self.reason_code is None:
             raise ValueError("rejected intake binding requires a reason code")
+        if self.outcome == "committed" and self.source_acquisition_failure is not None:
+            raise ValueError("committed intake binding cannot carry failure evidence")
+        if self.source_acquisition_failure is not None and (
+            self.source_id is not None
+            or self.proposal_id is not None
+            or self.source_acquisition_failure.run_id == ""
+        ):
+            raise ValueError("source acquisition failure binding is ambiguous")
         return self
 
 
@@ -544,6 +1244,7 @@ class CoreRunEventBinding(StrictModel):
     request_fingerprint: Sha256
     effect_kind: Literal[
         "initialize",
+        "source_acquisition_attempt_authorize",
         "invocation_start",
         "owned_artifact_acceptance",
         "claim_freeze",
@@ -555,7 +1256,9 @@ class CoreRunEventBinding(StrictModel):
         "artifact_supersession",
         "repair_complete",
         "recovery_complete",
+        "gate_repair_start",
         "run_head_transition",
+        "run_successor_start",
         "finalize_render",
         "finalize_complete",
         "internal_approval",
@@ -603,7 +1306,9 @@ class SourceProposal(StrictModel):
             raise ValueError("raw payload hash and media type must be paired")
         if self.document_kind == "status_incident":
             if self.opened_at is None or self.published_at is not None:
-                raise ValueError("status incident requires opened_at instead of published_at")
+                raise ValueError(
+                    "status incident requires opened_at instead of published_at"
+                )
         elif self.opened_at is not None or self.resolved_at is not None:
             raise ValueError("incident timestamps require status_incident")
         if self.resolved_at is not None and self.opened_at is None:
@@ -710,7 +1415,10 @@ class SourcePackCommitRequest(StrictModel):
         expected_root = PurePosixPath("scratch") / self.invocation_id / "sources"
         for item in self.members:
             proposal = PurePosixPath(item.proposal_path)
-            if proposal.parent.parent != expected_root or proposal.parent.name != item.member_id:
+            if (
+                proposal.parent.parent != expected_root
+                or proposal.parent.name != item.member_id
+            ):
                 raise ValueError("source pack member path must be invocation scoped")
             paths.extend(
                 value
@@ -723,6 +1431,58 @@ class SourcePackCommitRequest(StrictModel):
             )
         if len(paths) != len(set(paths)):
             raise ValueError("source pack paths must be unique")
+        return self
+
+
+class MultiTavilySourcePackCommitRequest(StrictModel):
+    """Core-only atomic request for the schema18 multi-Tavily stage profile."""
+
+    schema_id = "briefloop.multi_tavily_source_pack_commit_request.v1"
+
+    schema_version: Literal[
+        "briefloop.multi_tavily_source_pack_commit_request.v1"
+    ]
+    capacity_profile: Literal["multi_tavily_v2"]
+    request_id: ContractId
+    run_id: ContractId
+    invocation_id: ContractId
+    members: list[SourcePackCommitMember] = Field(min_length=1, max_length=800)
+    manifest_path: WorkspacePath
+    expected_manifest_sha256: Sha256
+    expected_store_revision: NonNegativeInt
+
+    @model_validator(mode="after")
+    def pack_is_ordered_unique_and_invocation_scoped(
+        self,
+    ) -> "MultiTavilySourcePackCommitRequest":
+        expected_manifest = (
+            PurePosixPath("scratch") / self.invocation_id / "source_manifest.json"
+        )
+        if PurePosixPath(self.manifest_path) != expected_manifest:
+            raise ValueError("multi-Tavily manifest path must be invocation scoped")
+        member_ids = [item.member_id for item in self.members]
+        if member_ids != sorted(set(member_ids)):
+            raise ValueError("multi-Tavily members must be sorted and unique")
+        expected_root = PurePosixPath("scratch") / self.invocation_id / "sources"
+        paths: list[str] = []
+        for item in self.members:
+            proposal = PurePosixPath(item.proposal_path)
+            if (
+                proposal.parent.parent != expected_root
+                or proposal.parent.name != item.member_id
+            ):
+                raise ValueError("multi-Tavily member path is not invocation scoped")
+            paths.extend(
+                value
+                for value in (
+                    item.proposal_path,
+                    item.content_path,
+                    item.raw_payload_path,
+                )
+                if value is not None
+            )
+        if len(paths) != len(set(paths)):
+            raise ValueError("multi-Tavily member paths must be unique")
         return self
 
 
@@ -889,7 +1649,9 @@ class AcceptedSourceRecord(StrictModel):
             raise ValueError("source eligibility reason does not match verdict")
         if self.document_kind == "status_incident":
             if self.opened_at is None or self.published_at is not None:
-                raise ValueError("status incident requires opened_at instead of published_at")
+                raise ValueError(
+                    "status incident requires opened_at instead of published_at"
+                )
         elif self.opened_at is not None or self.resolved_at is not None:
             raise ValueError("incident timestamps require status_incident")
         if self.resolved_at is not None and self.opened_at is None:
@@ -1085,6 +1847,9 @@ class EventEnvelope(StrictModel):
         if self.core_run_binding is not None:
             allowed_core_events = {
                 "initialize": {"run_initialized"},
+                "source_acquisition_attempt_authorize": {
+                    "source_acquisition_attempt_authorized"
+                },
                 "invocation_start": {"role_invocation_started"},
                 "owned_artifact_acceptance": {"owned_artifact_accepted"},
                 "claim_freeze": {"claim_ledger_frozen"},
@@ -1095,6 +1860,7 @@ class EventEnvelope(StrictModel):
                     "stage_satisfied_by_topology",
                 },
                 "integrity_contamination": {"run_integrity_contaminated"},
+                "gate_repair_start": {"gate_repair_started"},
                 "repair_start": {"repair_started"},
                 "artifact_supersession": {
                     "repair_stage_superseded",
@@ -1102,11 +1868,8 @@ class EventEnvelope(StrictModel):
                 },
                 "repair_complete": {"repair_completed", "stage_status_changed"},
                 "recovery_complete": {"decision_recorded"},
-                "run_head_transition": {
-                    "run_reset",
-                    "run_initialized",
-                    "stage_status_changed",
-                },
+                "run_head_transition": {"run_reset"},
+                "run_successor_start": {"run_successor_started"},
                 "finalize_render": {"owned_artifact_accepted"},
                 "finalize_complete": {
                     "stage_status_changed",
@@ -1241,6 +2004,24 @@ class ArtifactIdentityReference(StrictModel):
     artifact_id: ContractId
 
 
+class RunOutputContract(StrictModel):
+    schema_id = "briefloop.run_output_contract.v2"
+
+    schema_version: Literal["briefloop.run_output_contract.v2"]
+    output_extent: Literal["compact", "balanced", "detailed"]
+    extent_catalog_id: Literal["briefloop.output_extent_catalog.v1"]
+    body_length_basis: Literal["reader_body_excluding_source_reference_sections"]
+    body_length_unit: Literal["word_equivalent_tokens"]
+    resolved_minimum: int = Field(ge=1, le=100000)
+    resolved_maximum: int = Field(ge=1, le=100000)
+
+    @model_validator(mode="after")
+    def bounds_are_ordered(self) -> "RunOutputContract":
+        if self.resolved_minimum > self.resolved_maximum:
+            raise ValueError("resolved output contract bounds are not ordered")
+        return self
+
+
 class RunDirection(StrictModel):
     schema_id = "briefloop.run_direction.v2"
 
@@ -1248,6 +2029,7 @@ class RunDirection(StrictModel):
     subject_name: CleanText
     industry_or_theme: Optional[CleanText] = None
     brief_title: CleanText
+    report_type: Optional[ContractId] = None
     task_objective: CleanText
     audience: CleanText
     audience_profile: CleanText
@@ -1274,6 +2056,7 @@ class RunDirection(StrictModel):
     report_window_end: Optional[IsoDate] = None
     max_source_age_days: Optional[PositiveInt] = None
     target_terms: list[CleanText] = Field(min_length=1)
+    output_contract: Optional[RunOutputContract] = None
 
     @model_validator(mode="after")
     def direction_is_canonical(self) -> "RunDirection":
@@ -1299,7 +2082,341 @@ class RunDirection(StrictModel):
                 raise ValueError("external API search requires a backend")
         elif self.search_backend is not None:
             raise ValueError("search backend is allowed only for external API mode")
+        if self.output_contract is not None:
+            try:
+                # Lazy import avoids initializing the Core package while the
+                # strict contract registry itself is still being constructed.
+                from multi_agent_brief.core_run_v2.output_contract import (
+                    verify_output_contract,
+                )
+
+                verify_output_contract(self.output_contract, self.output_language)
+            except ValueError as exc:
+                raise ValueError(
+                    "output contract catalog resolution is invalid"
+                ) from exc
         return self
+
+
+class ExecutionSourceManifestMember(StrictModel):
+    """One Human-confirmed source row frozen before an authorized run starts."""
+
+    source_id: ContractId
+    input_path: WorkspacePath
+    content_sha256: Sha256
+    content_media_type: MimeType
+    origin_type: Literal[SOURCE_ORIGIN_TYPES]
+    acquisition_method: Literal[SOURCE_ACQUISITION_METHODS]
+    material_kind: Literal[SOURCE_MATERIAL_KINDS]
+    provider: Optional[ContractId] = None
+    locator: SourceLocator
+    title: CleanText
+    publisher: Optional[CleanText] = None
+    published_at: Optional[IsoDate] = None
+    retrieved_at: IsoDateTime
+    source_category: Literal[tuple(sorted(VALID_SOURCE_CATEGORIES))]
+    retrieval_source_type: Literal[tuple(sorted(VALID_RETRIEVAL_SOURCE_TYPES))]
+    underlying_evidence_type: Literal[tuple(sorted(VALID_UNDERLYING_EVIDENCE_TYPES))]
+    raw_underlying_evidence_type: Optional[CleanText] = None
+    document_kind: Optional[CleanText] = None
+    opened_at: Optional[IsoDateTime] = None
+    resolved_at: Optional[IsoDateTime] = None
+
+    @model_validator(mode="after")
+    def frozen_member_shape_is_explicit(self) -> "ExecutionSourceManifestMember":
+        if not self.input_path.startswith("input/"):
+            raise ValueError("execution source input must be under input")
+        if self.document_kind == "status_incident":
+            if self.opened_at is None or self.published_at is not None:
+                raise ValueError(
+                    "status incident requires opened_at instead of published_at"
+                )
+        elif self.opened_at is not None or self.resolved_at is not None:
+            raise ValueError("incident timestamps require status_incident")
+        if self.resolved_at is not None and self.opened_at is None:
+            raise ValueError("resolved_at requires opened_at")
+        return self
+
+
+class ExecutionSourceManifest(StrictModel):
+    """The canonical, Human-confirmed source set for an authorized run."""
+
+    schema_id = "briefloop.execution_source_manifest.v2"
+
+    schema_version: Literal["briefloop.execution_source_manifest.v2"]
+    members: list[ExecutionSourceManifestMember] = Field(min_length=1, max_length=256)
+
+    @model_validator(mode="after")
+    def members_are_ordered_and_unique(self) -> "ExecutionSourceManifest":
+        source_ids = [member.source_id for member in self.members]
+        input_paths = [member.input_path for member in self.members]
+        if source_ids != sorted(set(source_ids)):
+            raise ValueError("execution source members must be sorted and unique")
+        if len(input_paths) != len(set(input_paths)):
+            raise ValueError("execution source input paths must be unique")
+        return self
+
+
+class MultiTavilyExecutionSourceManifest(StrictModel):
+    """Core-only manifest for up to 800 successfully extracted Tavily URLs."""
+
+    schema_id = "briefloop.multi_tavily_execution_source_manifest.v1"
+
+    schema_version: Literal[
+        "briefloop.multi_tavily_execution_source_manifest.v1"
+    ]
+    capacity_profile: Literal["multi_tavily_v2"]
+    members: list[ExecutionSourceManifestMember] = Field(
+        min_length=1, max_length=800
+    )
+
+    @model_validator(mode="after")
+    def members_are_tavily_ordered_and_unique(
+        self,
+    ) -> "MultiTavilyExecutionSourceManifest":
+        source_ids = [member.source_id for member in self.members]
+        input_paths = [member.input_path for member in self.members]
+        if source_ids != sorted(set(source_ids)):
+            raise ValueError("multi-Tavily members must be sorted and unique")
+        if len(input_paths) != len(set(input_paths)):
+            raise ValueError("multi-Tavily input paths must be unique")
+        if any(
+            member.provider != "tavily"
+            or member.acquisition_method != "provider_extract"
+            for member in self.members
+        ):
+            raise ValueError("multi-Tavily manifest contains a non-Tavily member")
+        return self
+
+
+class RunExecutionAuthorizationInput(StrictModel):
+    """Strict bootstrap input; Core turns it into the sole durable authority."""
+
+    schema_id = "briefloop.run_execution_authorization_input.v2"
+
+    schema_version: Literal["briefloop.run_execution_authorization_input.v2"]
+    completion_target: Literal["finalized_local"]
+    source_manifest: ExecutionSourceManifest
+    source_manifest_sha256: Sha256
+    source_manifest_member_count: PositiveInt
+    repair_budget: Literal[1]
+
+    @model_validator(mode="after")
+    def manifest_identity_is_exact(self) -> "RunExecutionAuthorizationInput":
+        payload = self.source_manifest.model_dump(mode="json", exclude_unset=False)
+        encoded = json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        if hashlib.sha256(encoded).hexdigest() != self.source_manifest_sha256:
+            raise ValueError("execution source manifest hash mismatch")
+        if len(self.source_manifest.members) != self.source_manifest_member_count:
+            raise ValueError("execution source manifest member count mismatch")
+        return self
+
+
+class RunExecutionAuthorizationBootstrap(StrictModel):
+    """The non-authoritative init-file pointer for an explicit manifest."""
+
+    schema_id = "briefloop.run_execution_authorization_bootstrap.v2"
+
+    schema_version: Literal["briefloop.run_execution_authorization_bootstrap.v2"]
+    completion_target: Literal["finalized_local"]
+    source_manifest_path: WorkspacePath
+    source_manifest_sha256: Sha256
+    source_manifest_member_count: PositiveInt
+    repair_budget: Literal[1]
+
+    @model_validator(mode="after")
+    def manifest_path_is_explicit_input(self) -> "RunExecutionAuthorizationBootstrap":
+        if not self.source_manifest_path.startswith("input/"):
+            raise ValueError("execution source manifest must be under input")
+        return self
+
+
+class RunExecutionAuthorization(StrictModel):
+    """Receipt-owned authorization for the automated local completion path."""
+
+    schema_id = "briefloop.run_execution_authorization.v2"
+
+    schema_version: Literal["briefloop.run_execution_authorization.v2"]
+    authorization_id: ContractId
+    run_id: ContractId
+    workspace_id: ContractId
+    run_contract_fingerprint: Sha256
+    run_direction_fingerprint: Sha256
+    completion_target: Literal["finalized_local"]
+    source_manifest_artifact: ArtifactRevisionReference
+    source_manifest_sha256: Sha256
+    source_manifest_member_count: PositiveInt
+    repair_budget: Literal[1]
+    authorization_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+    created_at: IsoDateTime
+
+
+class RunSourceDiscoveryAuthorizationInput(StrictModel):
+    """Strict bootstrap input for one Store-owned Tavily discovery authority."""
+
+    schema_id = "briefloop.run_source_discovery_authorization_input.v2"
+
+    schema_version: Literal["briefloop.run_source_discovery_authorization_input.v2"]
+    route_id: Literal["web-search"]
+    provider_id: Literal["tavily"]
+    execution_owner: Literal["deterministic"]
+    credential_env: Literal["TAVILY_API_KEY"]
+    completion_target: Literal["finalized_local"]
+    repair_budget: Literal[1]
+
+
+class RunSourceDiscoveryAuthorizationBootstrap(StrictModel):
+    """Non-authoritative init-file request for the discovery authority."""
+
+    schema_id = "briefloop.run_source_discovery_authorization_bootstrap.v2"
+
+    schema_version: Literal["briefloop.run_source_discovery_authorization_bootstrap.v2"]
+    route_id: Literal["web-search"]
+    provider_id: Literal["tavily"]
+    execution_owner: Literal["deterministic"]
+    credential_env: Literal["TAVILY_API_KEY"]
+    completion_target: Literal["finalized_local"]
+    repair_budget: Literal[1]
+
+
+class RunSourceDiscoveryAuthorization(StrictModel):
+    """Receipt-owned authority for one future, not-yet-executed source route."""
+
+    schema_id = "briefloop.run_source_discovery_authorization.v2"
+
+    schema_version: Literal["briefloop.run_source_discovery_authorization.v2"]
+    authorization_id: ContractId
+    run_id: ContractId
+    workspace_id: ContractId
+    run_contract_fingerprint: Sha256
+    run_direction_fingerprint: Sha256
+    runtime_source_plan_fingerprint: Sha256
+    source_route_fingerprint: Sha256
+    route_id: Literal["web-search"]
+    provider_id: Literal["tavily"]
+    execution_owner: Literal["deterministic"]
+    credential_env: Literal["TAVILY_API_KEY"]
+    completion_target: Literal["finalized_local"]
+    repair_budget: Literal[1]
+    authorization_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+    created_at: IsoDateTime
+
+
+class RunSourceAcquisitionAttemptAuthorization(StrictModel):
+    """Receipt-owned ceiling for one frozen multi-task Tavily acquisition."""
+
+    schema_id = "briefloop.run_source_acquisition_attempt_authorization.v2"
+
+    schema_version: Literal["briefloop.run_source_acquisition_attempt_authorization.v2"]
+    attempt_authorization_id: ContractId
+    attempt_ordinal: PositiveInt
+    run_id: ContractId
+    workspace_id: ContractId
+    discovery_authorization_id: ContractId
+    run_contract_fingerprint: Sha256
+    run_direction_fingerprint: Sha256
+    runtime_source_plan_fingerprint: Sha256
+    source_route_fingerprint: Sha256
+    provider_request_fingerprint: Sha256
+    provider_id: Literal["tavily"]
+    route_id: Literal["web-search"]
+    max_provider_calls: Annotated[int, Field(ge=4, le=80)]
+    max_search_calls: Annotated[int, Field(ge=2, le=40)]
+    max_extract_calls: Annotated[int, Field(ge=2, le=40)]
+    max_extract_urls: Annotated[int, Field(ge=40, le=800)]
+    provider_call_sequence: Literal[
+        "primary_search_extract_then_conditional_backfill_search_extract"
+    ]
+    provider_cost_status: Literal["not_reported_acknowledged"]
+    previous_attempt_authorization_id: ContractId | None = None
+    human_request_id: ContractId
+    authorization_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+    created_at: IsoDateTime
+
+    @model_validator(mode="after")
+    def ordinal_chain_shape(self) -> "RunSourceAcquisitionAttemptAuthorization":
+        if (self.attempt_ordinal == 1) != (
+            self.previous_attempt_authorization_id is None
+        ):
+            raise ValueError("attempt predecessor does not match ordinal")
+        if (
+            self.max_provider_calls
+            != self.max_search_calls + self.max_extract_calls
+            or self.max_extract_calls != (self.max_extract_urls + 19) // 20
+        ):
+            raise ValueError("attempt call ceilings are inconsistent")
+        return self
+
+
+class SourceAcquisitionAttemptAuthorizeRequest(StrictModel):
+    """Deterministic Core request carrying one explicit Human authorization."""
+
+    schema_id = "briefloop.source_acquisition_attempt_authorize_request.v1"
+
+    schema_version: Literal["briefloop.source_acquisition_attempt_authorize_request.v1"]
+    request_id: ContractId
+    run_id: ContractId
+    expected_store_revision: NonNegativeInt
+    expected_action_fingerprint: Sha256
+    previous_attempt_authorization_id: ContractId
+    human_confirmation: Literal[True]
+    provider_cost_status: Literal["not_reported_acknowledged"]
+
+
+def authorized_input_classification_bytes(
+    manifest: ExecutionSourceManifest,
+    sources: list[AcceptedSourceRecord],
+) -> bytes:
+    """Serialize the single deterministic classification for an authorized pack.
+
+    This is deliberately a pure projection: the receipt-owned intake transaction
+    remains the only writer of the artifact which carries these bytes.
+    """
+
+    payload = {
+        "schema_version": "briefloop.input_classification.v2",
+        "source_manifest_sha256": hashlib.sha256(
+            json.dumps(
+                manifest.model_dump(mode="json", exclude_unset=False),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest(),
+        "sources": [
+            {
+                "source_id": source.source_id,
+                "content_sha256": source.content_sha256,
+                "title": source.title,
+                "locator": source.locator.model_dump(mode="json"),
+                "manifest_local_file": source.manifest_local_file,
+                "document_kind": source.document_kind,
+                "opened_at": source.opened_at,
+                "resolved_at": source.resolved_at,
+            }
+            for source in sorted(sources, key=lambda item: item.source_id)
+        ],
+    }
+    return (
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        + b"\n"
+    )
 
 
 class CoreRunInitializeRequest(StrictModel):
@@ -1318,6 +2435,8 @@ class CoreRunInitializeRequest(StrictModel):
     gate_strictness: dict[GateId, bool]
     input_governance_required: bool
     runtime_adapter_binding: "RuntimeAdapterBinding"
+    execution_authorization: "RunExecutionAuthorizationInput | None" = None
+    source_discovery_authorization: "RunSourceDiscoveryAuthorizationInput | None" = None
 
     @field_validator("gate_strictness")
     @classmethod
@@ -1340,6 +2459,8 @@ class WorkspaceControlStoreBootstrapV2(StrictModel):
     input_governance_required: bool
     gate_strictness: dict[GateId, bool]
     run_direction: RunDirection
+    execution_authorization: "RunExecutionAuthorizationBootstrap | None" = None
+    source_discovery_authorization: "RunSourceDiscoveryAuthorizationBootstrap | None" = None
 
     @field_validator("gate_strictness")
     @classmethod
@@ -1433,7 +2554,7 @@ class RuntimeWebSearchRequestSpec(StrictModel):
 
 
 class RuntimeWebSearchAcquisitionSpec(StrictModel):
-    """Executable external-web plan without credentials or mutable config."""
+    """Generic external-web plan; its Tavily variant is historical read-only."""
 
     schema_id = "briefloop.runtime_web_search_acquisition_spec.v2"
 
@@ -1451,6 +2572,137 @@ class RuntimeWebSearchAcquisitionSpec(StrictModel):
         )
         if self.acquisition_spec_fingerprint != expected:
             raise ValueError("web acquisition fingerprint mismatch")
+        return self
+
+
+class RuntimeWebSearchBackfillSpecV1(StrictModel):
+    """One deterministic fallback request for an under-covered primary task."""
+
+    enabled: Literal[True]
+    query: CleanText
+    domains: list[CleanText]
+    max_results: Literal[20]
+    recency_days: Literal[30]
+    search_depth: Literal["advanced"]
+
+    @model_validator(mode="after")
+    def canonical_domains(self) -> "RuntimeWebSearchBackfillSpecV1":
+        if self.domains != sorted(set(self.domains)) or any(
+            item != item.lower() for item in self.domains
+        ):
+            raise ValueError("backfill domains must be lowercase, sorted and unique")
+        return self
+
+
+class RuntimeWebSearchTaskSpecV3(StrictModel):
+    """One frozen atomic discovery cell in the Solar Stock product plan."""
+
+    schema_id = "briefloop.runtime_web_search_task_spec.v3"
+
+    schema_version: Literal["briefloop.runtime_web_search_task_spec.v3"]
+    task_id: ContractId
+    task_category: Literal[
+        "listed_company",
+        "event_entity",
+        "industry_prices",
+        "us_policy",
+        "china_policy",
+        "capital_markets",
+        "general",
+    ]
+    entity_id: CleanText | None = None
+    query: CleanText
+    topic: Literal["news", "general"]
+    domains: list[CleanText]
+    max_results: Literal[20]
+    recency_days: Literal[7]
+    search_depth: Literal["advanced"]
+    minimum_extract_successes: Annotated[int, Field(ge=1, le=20)]
+    backfill: RuntimeWebSearchBackfillSpecV1
+
+    @model_validator(mode="after")
+    def atomic_task_shape(self) -> "RuntimeWebSearchTaskSpecV3":
+        if self.domains != sorted(set(self.domains)) or any(
+            item != item.lower() for item in self.domains
+        ):
+            raise ValueError("task domains must be lowercase, sorted and unique")
+        company_task = self.task_category in {"listed_company", "event_entity"}
+        if company_task != (self.entity_id is not None):
+            raise ValueError("entity identity does not match task category")
+        return self
+
+
+class RuntimeWebSearchAcquisitionSpecV3(StrictModel):
+    """Multi-task, coverage-first Tavily acquisition plan."""
+
+    schema_id = "briefloop.runtime_web_search_acquisition_spec.v3"
+
+    schema_version: Literal["briefloop.runtime_web_search_acquisition_spec.v3"]
+    kind: Literal["web_search_multi"]
+    provider_id: Literal["tavily"]
+    tasks: list[RuntimeWebSearchTaskSpecV3] = Field(min_length=1, max_length=20)
+    max_primary_search_calls: Annotated[int, Field(ge=1, le=20)]
+    max_backfill_search_calls: Annotated[int, Field(ge=1, le=20)]
+    max_extract_calls: Annotated[int, Field(ge=1, le=40)]
+    max_unique_urls: Annotated[int, Field(ge=40, le=800)]
+    extract_batch_size: Literal[20]
+    acquisition_spec_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def canonical_spec(self) -> "RuntimeWebSearchAcquisitionSpecV3":
+        if [item.task_id for item in self.tasks] != sorted(
+            {item.task_id for item in self.tasks}
+        ):
+            raise ValueError("multi-search tasks must be sorted and unique")
+        expected_urls = min(800, len(self.tasks) * 40)
+        if (
+            self.max_primary_search_calls != len(self.tasks)
+            or self.max_backfill_search_calls != len(self.tasks)
+            or self.max_unique_urls != expected_urls
+            or self.max_extract_calls != (expected_urls + 19) // 20
+        ):
+            raise ValueError("multi-search limits do not match the task matrix")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude_unset=False),
+            field="acquisition_spec_fingerprint",
+        )
+        if self.acquisition_spec_fingerprint != expected:
+            raise ValueError("multi-search acquisition fingerprint mismatch")
+        return self
+
+
+class RuntimeSourceSearchPlanV2(StrictModel):
+    """Append-only identity for the exact atomic search plan actually executed."""
+
+    schema_id = "briefloop.runtime_source_search_plan.v2"
+
+    schema_version: Literal["briefloop.runtime_source_search_plan.v2"]
+    search_plan_id: ContractId
+    run_id: ContractId
+    plan_revision: PositiveInt
+    report_type: CleanText
+    acquisition_spec: RuntimeWebSearchAcquisitionSpecV3
+    task_count: Annotated[int, Field(ge=1, le=20)]
+    acquisition_spec_fingerprint: Sha256
+    record_event_id: ContractId
+    accepted_transaction_id: ContractId
+    created_at: IsoDateTime
+    plan_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def search_plan_identity_is_exact(self) -> "RuntimeSourceSearchPlanV2":
+        if (
+            self.task_count != len(self.acquisition_spec.tasks)
+            or self.acquisition_spec_fingerprint
+            != self.acquisition_spec.acquisition_spec_fingerprint
+        ):
+            raise ValueError("runtime source search plan spec identity mismatch")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"plan_fingerprint"}),
+            field="plan_fingerprint",
+        )
+        if self.plan_fingerprint != expected:
+            raise ValueError("runtime source search plan fingerprint mismatch")
         return self
 
 
@@ -1522,6 +2774,7 @@ class RuntimeNewsApiAcquisitionSpec(StrictModel):
 RuntimeSourceAcquisitionSpec = Annotated[
     Union[
         RuntimeWebSearchAcquisitionSpec,
+        RuntimeWebSearchAcquisitionSpecV3,
         RuntimeCachedPackageAcquisitionSpec,
         RuntimeNewsApiAcquisitionSpec,
     ],
@@ -1614,7 +2867,8 @@ class RuntimeSourceRouteBinding(StrictModel):
         if self.acquisition_spec is not None:
             if self.route_kind == "external_api" and self.route_id == "web-search":
                 if (
-                    self.acquisition_spec.kind != "web_search"
+                    self.acquisition_spec.kind
+                    not in {"web_search", "web_search_multi"}
                     or self.acquisition_spec.provider_id != self.provider_id
                 ):
                     raise ValueError("source route acquisition spec mismatch")
@@ -1733,6 +2987,7 @@ class CoreRunNextAction(StrictModel):
             "serper",
         ]
     ] = None
+    source_acquisition_attempt_authorization_id: Optional[ContractId] = None
     reason_code: ContractId
     input_artifacts: list[ArtifactRevisionReference]
     request_schema_id: Optional[CleanText] = None
@@ -1764,6 +3019,7 @@ class CoreRunNextAction(StrictModel):
                 "source_input_required",
                 "role_proposal",
                 "role_unavailable",
+                "source_discovery_acquisition_unavailable",
             }
             and (
                 self.effect_kind != "role_unavailable"
@@ -1784,6 +3040,49 @@ class CoreRunNextAction(StrictModel):
             raise ValueError("only source route actions name source routing")
         if self.source_provider_id is not None and self.source_route_id is None:
             raise ValueError("source provider requires a source route")
+        tavily_acquisition_family = (
+            self.effect_kind == "source_acquire" and self.source_provider_id == "tavily"
+        )
+        recovery_family = self.effect_kind == "source_acquisition_recovery"
+        exact_tavily_acquisition = (
+            tavily_acquisition_family
+            and self.action_kind == "deterministic"
+            and self.stage_id == "source-discovery"
+            and self.role_id is None
+            and self.source_route_id == "web-search"
+            and self.reason_code
+            in {
+                "deterministic_source_route_required",
+                "active_discovery_source_acquire_requires_resume",
+            }
+            and self.request_schema_id == "briefloop.source_pack_commit_request.v2"
+        )
+        exact_recovery = (
+            recovery_family
+            and self.action_kind == "human_decision"
+            and self.stage_id == "source-discovery"
+            and self.role_id is None
+            and self.source_route_id is None
+            and self.source_provider_id is None
+            and self.reason_code == "source_acquisition_recovery_decision_required"
+            and self.request_schema_id
+            == "briefloop.runtime_source_acquisition_recovery_request.v1"
+        )
+        if (tavily_acquisition_family and not exact_tavily_acquisition) or (
+            recovery_family and not exact_recovery
+        ):
+            raise ValueError(
+                "source acquisition lifecycle requires an exact action shape"
+            )
+        if exact_tavily_acquisition or exact_recovery:
+            if self.source_acquisition_attempt_authorization_id is None:
+                raise ValueError(
+                    "source acquisition lifecycle requires exact attempt authority"
+                )
+        elif self.source_acquisition_attempt_authorization_id is not None:
+            raise ValueError(
+                "only Tavily acquisition lifecycle names attempt authority"
+            )
         expected = _contract_fingerprint(
             self.model_dump(mode="json", exclude_unset=False),
             field="action_fingerprint",
@@ -2028,7 +3327,13 @@ class StageTransitionRecord(StrictModel):
     run_id: ContractId
     stage_id: ContractId
     transition_kind: Literal[
-        "initialize", "activate", "complete", "satisfied_by_topology", "repair_reopen"
+        "initialize",
+        "activate",
+        "complete",
+        "satisfied_by_topology",
+        "repair_reopen",
+        "gate_repair_reopen",
+        "gate_repair_reset",
     ]
     requested_decision: Optional[Literal["continue"]] = None
     prior_status: Optional[
@@ -2360,6 +3665,98 @@ class RepairCycleRecord(StrictModel):
         return self
 
 
+class GateRepairCycleRecord(StrictModel):
+    """One preauthorized, bounded editor-only Gate repair attempt."""
+
+    schema_id = "briefloop.gate_repair_cycle_record.v2"
+
+    schema_version: Literal["briefloop.gate_repair_cycle_record.v2"]
+    gate_repair_id: ContractId
+    run_id: ContractId
+    authorization_id: ContractId
+    repair_ordinal: Literal[1]
+    source_gate_batch_id: ContractId
+    source_stage_id: Literal["auditor", "finalize"]
+    blocking_evaluation_ids: list[ContractId] = Field(min_length=1)
+    blocking_findings: list["GateFindingReference"] = Field(min_length=1)
+    repair_owner: Literal["editor"]
+    target_artifact: ArtifactRevisionReference
+    reopened_transition_ids: list[ContractId] = Field(min_length=1)
+    started_at: IsoDateTime
+    start_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def scope_is_canonical(self) -> "GateRepairCycleRecord":
+        if self.blocking_evaluation_ids != sorted(set(self.blocking_evaluation_ids)):
+            raise ValueError("Gate repair evaluations must be sorted and unique")
+        finding_keys = [
+            (item.evaluation_id, item.finding_id) for item in self.blocking_findings
+        ]
+        if finding_keys != sorted(set(finding_keys)):
+            raise ValueError("Gate repair findings must be sorted and unique")
+        if self.target_artifact.artifact_id != "audited_brief":
+            raise ValueError("Gate repair target must be audited_brief")
+        if self.reopened_transition_ids != sorted(set(self.reopened_transition_ids)):
+            raise ValueError("Gate repair transitions must be sorted and unique")
+        return self
+
+
+class GateRepairArtifactBinding(StrictModel):
+    """Bind the sole repaired audited-brief revision to its Gate repair cycle."""
+
+    schema_id = "briefloop.gate_repair_artifact_binding.v2"
+
+    schema_version: Literal["briefloop.gate_repair_artifact_binding.v2"]
+    run_id: ContractId
+    gate_repair_id: ContractId
+    prior_artifact: ArtifactRevisionReference
+    successor_artifact: ArtifactRevisionReference
+    owned_artifact_submission_id: ContractId
+    accepted_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def revision_advances_once(self) -> "GateRepairArtifactBinding":
+        if (
+            self.prior_artifact.artifact_id != "audited_brief"
+            or self.successor_artifact.artifact_id != "audited_brief"
+        ):
+            raise ValueError("Gate repair binding must name audited_brief")
+        if self.successor_artifact.revision != self.prior_artifact.revision + 1:
+            raise ValueError("Gate repair artifact revision must advance once")
+        return self
+
+
+class GateRepairOutcomeRecord(StrictModel):
+    """Terminal result of the sole bounded Gate repair attempt."""
+
+    schema_id = "briefloop.gate_repair_outcome_record.v2"
+
+    schema_version: Literal["briefloop.gate_repair_outcome_record.v2"]
+    outcome_id: ContractId
+    run_id: ContractId
+    gate_repair_id: ContractId
+    replacement_gate_batch_id: ContractId
+    replacement_stage_id: Literal["auditor", "finalize"]
+    evaluation_ids: list[ContractId] = Field(min_length=1)
+    disposition: Literal["passed", "blocked"]
+    completed_at: IsoDateTime
+    completion_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def evaluations_are_canonical(self) -> "GateRepairOutcomeRecord":
+        if self.evaluation_ids != sorted(set(self.evaluation_ids)):
+            raise ValueError(
+                "Gate repair outcome evaluations must be sorted and unique"
+            )
+        return self
+
+
 class ArtifactSupersessionRecord(StrictModel):
     schema_id = "briefloop.artifact_supersession_record.v2"
 
@@ -2447,8 +3844,8 @@ class RunHeadTransitionRecord(StrictModel):
     successor_run_id: ContractId
     prior_workspace_revision: NonNegativeInt
     successor_workspace_revision: PositiveInt
-    reason_code: Literal["run_reset"]
-    successor_disposition: Literal["non_reference"]
+    reason_code: Literal["run_reset", "human_started_successor"]
+    successor_disposition: Literal["non_reference", "reference"]
     created_at: IsoDateTime
     transition_event_id: ContractId
     accepted_transaction_id: ContractId
@@ -2460,6 +3857,231 @@ class RunHeadTransitionRecord(StrictModel):
             raise ValueError("reset successor must be a distinct run")
         if self.successor_workspace_revision != self.prior_workspace_revision + 1:
             raise ValueError("workspace revision must advance once")
+        if (self.reason_code, self.successor_disposition) not in {
+            ("run_reset", "non_reference"),
+            ("human_started_successor", "reference"),
+        }:
+            raise ValueError("head transition reason and disposition do not match")
+        return self
+
+
+class GuidanceReuseScopeV1(StrictModel):
+    """Deterministic presentation-only compatibility scope for guidance reuse."""
+
+    schema_id = "briefloop.guidance_reuse_scope.v1"
+
+    schema_version: Literal["briefloop.guidance_reuse_scope.v1"]
+    audience: CleanText
+    audience_profile: CleanText
+    output_language: CleanText
+    output_style: Optional[CleanText] = None
+    output_formats: list[ContractId] = Field(min_length=1)
+    cadence: CleanText
+    scope_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def scope_identity_is_exact(self) -> "GuidanceReuseScopeV1":
+        if len(self.output_formats) != len(set(self.output_formats)):
+            raise ValueError("duplicate guidance reuse output format")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"scope_fingerprint"}),
+            field="scope_fingerprint",
+        )
+        if self.scope_fingerprint != expected:
+            raise ValueError("guidance reuse scope fingerprint mismatch")
+        return self
+
+
+class RunGuidanceSelectionDecisionRecord(StrictModel):
+    """One immutable deterministic decision for a guidance draft head."""
+
+    schema_id = "briefloop.run_guidance_selection_decision_record.v1"
+
+    schema_version: Literal["briefloop.run_guidance_selection_decision_record.v1"]
+    decision_id: ContractId
+    run_id: ContractId
+    snapshot_id: ContractId
+    source_run_id: ContractId
+    guidance_id: ContractId
+    draft_revision: PositiveInt
+    status_revision_id: Optional[ContractId] = None
+    provenance_kind: Literal["accepted_model_finding", "human_observation"] = (
+        "accepted_model_finding"
+    )
+    assessment_result_id: Optional[ContractId] = None
+    finding_id: Optional[ContractId] = None
+    disposition_id: Optional[ContractId] = None
+    result_fingerprint: Optional[Sha256] = None
+    finding_fingerprint: Optional[Sha256] = None
+    disposition_fingerprint: Optional[Sha256] = None
+    observation_id: Optional[ContractId] = None
+    observation_fingerprint: Optional[Sha256] = None
+    draft_fingerprint: Sha256
+    status_fingerprint: Optional[Sha256] = None
+    source_scope_fingerprint: Sha256
+    successor_scope_fingerprint: Sha256
+    selected: bool
+    reason_code: Literal[
+        "approved_scope_match",
+        "reuse_not_requested",
+        "guidance_unapproved",
+        "guidance_inactive",
+        "guidance_superseded",
+        "guidance_scope_mismatch",
+    ]
+    decision_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def decision_identity_is_exact(self) -> "RunGuidanceSelectionDecisionRecord":
+        result_fields = (self.assessment_result_id, self.result_fingerprint)
+        finding_fields = (self.finding_id, self.finding_fingerprint)
+        disposition_fields = (self.disposition_id, self.disposition_fingerprint)
+        observation_fields = (self.observation_id, self.observation_fingerprint)
+        if self.provenance_kind == "accepted_model_finding":
+            if not all(
+                item is not None
+                for item in (*result_fields, *finding_fields, *disposition_fields)
+            ):
+                raise ValueError("accepted model finding selection is incomplete")
+            if any(item is not None for item in observation_fields):
+                raise ValueError("model finding selection cannot bind observation")
+        else:
+            if not all(item is not None for item in observation_fields):
+                raise ValueError("human observation selection is incomplete")
+            if any(item is not None for item in finding_fields + disposition_fields):
+                raise ValueError("human observation selection cannot bind finding")
+            if any(item is not None for item in result_fields) and not all(
+                item is not None for item in result_fields
+            ):
+                raise ValueError(
+                    "human observation selection result binding is partial"
+                )
+        if self.selected != (self.reason_code == "approved_scope_match"):
+            raise ValueError("guidance selection verdict does not match reason")
+        if (self.status_revision_id is None) != (self.status_fingerprint is None):
+            raise ValueError("guidance status identity must be total or absent")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"decision_fingerprint"}),
+            field="decision_fingerprint",
+        )
+        if self.decision_fingerprint != expected:
+            raise ValueError("guidance selection decision fingerprint mismatch")
+        return self
+
+
+class RunGuidanceSnapshotItemRecord(StrictModel):
+    """One copied Human-authored guidance item frozen for a successor run."""
+
+    schema_id = "briefloop.run_guidance_snapshot_item_record.v1"
+
+    schema_version: Literal["briefloop.run_guidance_snapshot_item_record.v1"]
+    item_id: ContractId
+    run_id: ContractId
+    snapshot_id: ContractId
+    position: NonNegativeInt
+    source_run_id: ContractId
+    finalized_lineage_fingerprint: Sha256
+    provenance_kind: Literal["accepted_model_finding", "human_observation"] = (
+        "accepted_model_finding"
+    )
+    assessment_result_id: Optional[ContractId] = None
+    assessment_result_fingerprint: Optional[Sha256] = None
+    finding_id: Optional[ContractId] = None
+    finding_fingerprint: Optional[Sha256] = None
+    disposition_id: Optional[ContractId] = None
+    disposition_fingerprint: Optional[Sha256] = None
+    observation_id: Optional[ContractId] = None
+    observation_fingerprint: Optional[Sha256] = None
+    guidance_id: ContractId
+    draft_revision: PositiveInt
+    draft_fingerprint: Sha256
+    status_revision_id: ContractId
+    status_fingerprint: Sha256
+    guidance_text: CleanText
+    guidance_sha256: Sha256
+    reuse_scope: GuidanceReuseScopeV1
+    item_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def snapshot_item_identity_is_exact(self) -> "RunGuidanceSnapshotItemRecord":
+        result_fields = (self.assessment_result_id, self.assessment_result_fingerprint)
+        finding_fields = (self.finding_id, self.finding_fingerprint)
+        disposition_fields = (self.disposition_id, self.disposition_fingerprint)
+        observation_fields = (self.observation_id, self.observation_fingerprint)
+        if self.provenance_kind == "accepted_model_finding":
+            if not all(
+                item is not None
+                for item in (*result_fields, *finding_fields, *disposition_fields)
+            ):
+                raise ValueError("accepted model finding snapshot item is incomplete")
+            if any(item is not None for item in observation_fields):
+                raise ValueError("model finding snapshot item cannot bind observation")
+        else:
+            if not all(item is not None for item in observation_fields):
+                raise ValueError("human observation snapshot item is incomplete")
+            if any(item is not None for item in finding_fields + disposition_fields):
+                raise ValueError("human observation snapshot item cannot bind finding")
+            if any(item is not None for item in result_fields) and not all(
+                item is not None for item in result_fields
+            ):
+                raise ValueError("human observation snapshot result binding is partial")
+        if (
+            self.guidance_sha256
+            != hashlib.sha256(self.guidance_text.encode("utf-8")).hexdigest()
+        ):
+            raise ValueError("snapshot guidance text hash mismatch")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"item_fingerprint"}),
+            field="item_fingerprint",
+        )
+        if self.item_fingerprint != expected:
+            raise ValueError("guidance snapshot item fingerprint mismatch")
+        return self
+
+
+class RunGuidanceSnapshotRecord(StrictModel):
+    """The one immutable approved-guidance context frozen with a successor run."""
+
+    schema_id = "briefloop.run_guidance_snapshot_record.v1"
+
+    schema_version: Literal["briefloop.run_guidance_snapshot_record.v1"]
+    snapshot_id: ContractId
+    workspace_id: ContractId
+    run_id: ContractId
+    predecessor_run_id: ContractId
+    reuse_requested: bool
+    successor_direction_fingerprint: Sha256
+    successor_run_contract_fingerprint: Sha256
+    candidate_set_fingerprint: Sha256
+    selected_item_ids: list[ContractId]
+    decision_ids: list[ContractId]
+    selected_count: NonNegativeInt
+    omitted_count: NonNegativeInt
+    snapshot_fingerprint: Sha256
+    snapshot_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def snapshot_identity_is_exact(self) -> "RunGuidanceSnapshotRecord":
+        if self.predecessor_run_id == self.run_id:
+            raise ValueError("guidance snapshot predecessor must be distinct")
+        if len(self.selected_item_ids) != len(set(self.selected_item_ids)):
+            raise ValueError("duplicate guidance snapshot item identity")
+        if len(self.decision_ids) != len(set(self.decision_ids)):
+            raise ValueError("duplicate guidance decision identity")
+        if self.selected_count != len(self.selected_item_ids):
+            raise ValueError("guidance selected count mismatch")
+        if self.selected_count + self.omitted_count != len(self.decision_ids):
+            raise ValueError("guidance decision count mismatch")
+        if not self.reuse_requested and self.selected_count != 0:
+            raise ValueError("guidance reuse opt-out cannot select items")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"snapshot_fingerprint"}),
+            field="snapshot_fingerprint",
+        )
+        if self.snapshot_fingerprint != expected:
+            raise ValueError("guidance snapshot fingerprint mismatch")
         return self
 
 
@@ -2680,6 +4302,1014 @@ class DeliveryResultObservation(StrictModel):
         return self
 
 
+def _canonical_json_sha256(value: object) -> str:
+    """Return the exact JSON identity used by Store-owned opaque subcontracts."""
+
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("canonical JSON identity is invalid") from exc
+    return hashlib.sha256(encoded).hexdigest()
+
+
+class ReaderReviewAssessmentInput(StrictModel):
+    """The complete Human-supplied command for one paid Reader Review."""
+
+    schema_id: ClassVar[str] = "briefloop.reader_review_assessment_input.v1"
+
+    schema_version: Literal["briefloop.reader_review_assessment_input.v1"]
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    disclosure_confirmed: Literal[True]
+    messages_endpoint: CleanText
+    requested_model_id: CleanText
+    model_version: CleanText
+    expected_model_identity: CleanText
+    public_safe_egress_attested: Literal[True]
+    cost_status: Literal["not_measured"]
+
+
+_READER_REVIEW_PROFILE_BINDINGS = {
+    "management_brief_en_v1": ("management_monthly", "en"),
+    # ``zh`` is the ordinary Init Web RunDirection value.  The evaluator's
+    # internal Language contract remains the canonical ``zh-CN`` below the
+    # product boundary; Store records retain the user-facing direction value.
+    "industry_weekly_zh_v1": ("industry_weekly", "zh"),
+}
+
+
+class PostFinalAssessmentPolicyRevision(StrictModel):
+    """One Human-recorded, non-secret advisory assessment policy revision."""
+
+    schema_id = "briefloop.post_final_assessment_policy_revision.v2"
+    reader_review_schema_id: ClassVar[str] = (
+        "briefloop.post_final_assessment_policy_revision.v3"
+    )
+
+    schema_version: Literal[
+        "briefloop.post_final_assessment_policy_revision.v2",
+        "briefloop.post_final_assessment_policy_revision.v3",
+    ]
+    policy_revision_id: ContractId
+    run_id: ContractId
+    previous_policy_revision_id: Optional[ContractId] = None
+    enabled: bool
+    auto_run: bool
+    auto_open: bool
+    adapter_id: Literal["anthropic_messages_v1"]
+    messages_endpoint: CleanText
+    messages_endpoint_sha256: Sha256
+    requested_model_id: CleanText
+    model_version: CleanText
+    expected_model_identity: CleanText
+    profile_id: Literal[
+        "research_design_report_zh_v1",
+        "management_brief_en_v1",
+        "industry_weekly_zh_v1",
+    ]
+    instrument_config: dict[str, JsonValue]
+    instrument_config_sha256: Sha256
+    bounded_context: dict[str, JsonValue]
+    bounded_context_sha256: Sha256
+    temperature: Literal[1.0]
+    top_p: Literal[1.0]
+    max_provider_calls: PositiveInt
+    max_total_input_tokens: PositiveInt
+    max_total_output_tokens: PositiveInt
+    max_output_tokens_per_call: PositiveInt
+    wall_timeout_seconds: Literal[60]
+    public_safe_egress_attested: bool
+    egress_scope: Literal["public_safe_report"]
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    recorded_at: IsoDateTime
+    policy_event_id: ContractId
+    accepted_transaction_id: ContractId
+    policy_fingerprint: Sha256
+    assessment_kind: Optional[Literal["reader_review"]] = None
+    report_type: Optional[Literal["management_monthly", "industry_weekly"]] = None
+    language: Optional[Literal["en", "zh"]] = None
+    disclosure_confirmed: Optional[Literal[True]] = None
+    cost_status: Optional[Literal["not_measured"]] = None
+
+    @model_validator(mode="after")
+    def policy_identity_is_exact(self) -> "PostFinalAssessmentPolicyRevision":
+        reader_fields = {
+            "assessment_kind",
+            "report_type",
+            "language",
+            "disclosure_confirmed",
+            "cost_status",
+        }
+        if (
+            self.messages_endpoint_sha256
+            != hashlib.sha256(self.messages_endpoint.encode("utf-8")).hexdigest()
+            or self.instrument_config_sha256
+            != _canonical_json_sha256(self.instrument_config)
+            or self.bounded_context.get("context_sha256") != self.bounded_context_sha256
+            or self.max_output_tokens_per_call > self.max_total_output_tokens
+            or (self.enabled and not self.public_safe_egress_attested)
+        ):
+            raise ValueError("post-final assessment policy identity is invalid")
+        if self.schema_version == self.schema_id:
+            if self.profile_id != "research_design_report_zh_v1" or any(
+                getattr(self, field) is not None for field in reader_fields
+            ):
+                raise ValueError("historical post-final policy fields are invalid")
+            fingerprint_payload = self.model_dump(
+                mode="json",
+                exclude={"policy_fingerprint", *reader_fields},
+            )
+        else:
+            binding = _READER_REVIEW_PROFILE_BINDINGS.get(self.profile_id)
+            if (
+                binding is None
+                or self.assessment_kind != "reader_review"
+                or (self.report_type, self.language) != binding
+                or self.disclosure_confirmed is not True
+                or self.cost_status != "not_measured"
+                or not self.enabled
+                or self.auto_run
+                or self.auto_open
+            ):
+                raise ValueError("Reader Review policy binding is invalid")
+            fingerprint_payload = self.model_dump(
+                mode="json", exclude={"policy_fingerprint"}
+            )
+        expected = _contract_fingerprint(
+            fingerprint_payload,
+            field="policy_fingerprint",
+        )
+        if self.policy_fingerprint != expected:
+            raise ValueError("post-final assessment policy fingerprint mismatch")
+        return self
+
+
+class PostFinalAssessmentRequestRecord(StrictModel):
+    """One durable assessment claim in an exact finalized-local lineage series."""
+
+    schema_id = "briefloop.post_final_assessment_request_record.v2"
+    series_schema_id: ClassVar[str] = (
+        "briefloop.post_final_assessment_request_record.v3"
+    )
+    reader_review_schema_id: ClassVar[str] = (
+        "briefloop.post_final_assessment_request_record.v4"
+    )
+
+    schema_version: Literal[
+        "briefloop.post_final_assessment_request_record.v2",
+        "briefloop.post_final_assessment_request_record.v3",
+        "briefloop.post_final_assessment_request_record.v4",
+    ]
+    assessment_request_id: ContractId
+    run_id: ContractId
+    finalized_facts_fingerprint: Sha256
+    finalized_lineage_fingerprint: Sha256
+    report_artifact_id: ContractId
+    report_revision: PositiveInt
+    report_sha256: Sha256
+    finalization_id: ContractId
+    finalization_receipt_id: ContractId
+    finalize_gate_batch_id: ContractId
+    policy_revision_id: ContractId
+    policy_fingerprint: Sha256
+    adapter_id: Literal["anthropic_messages_v1"]
+    messages_endpoint_sha256: Sha256
+    requested_model_id: CleanText
+    expected_model_identity: CleanText
+    profile_id: Literal[
+        "research_design_report_zh_v1",
+        "management_brief_en_v1",
+        "industry_weekly_zh_v1",
+    ]
+    instrument_config_sha256: Sha256
+    bounded_context_sha256: Sha256
+    input_binding_sha256: Sha256
+    assessment_plan_sha256: Sha256
+    ordered_prompt_request_sha256s: list[Sha256] = Field(min_length=1, max_length=9)
+    prompt_count: PositiveInt
+    provider_call_ceiling: PositiveInt
+    total_input_token_upper_bound: PositiveInt
+    total_output_token_upper_bound: PositiveInt
+    output_tokens_per_call: PositiveInt
+    trial_id: ContractId
+    archive_identity_sha256: Sha256
+    request_status: Literal["claimed"]
+    claimed_at: IsoDateTime
+    request_event_id: ContractId
+    accepted_transaction_id: ContractId
+    request_fingerprint: Sha256
+    assessment_generation: PositiveInt = 1
+    predecessor_assessment_request_id: Optional[ContractId] = None
+    predecessor_assessment_request_fingerprint: Optional[Sha256] = None
+    predecessor_assessment_result_id: Optional[ContractId] = None
+    predecessor_result_fingerprint: Optional[Sha256] = None
+    predecessor_abandonment_id: Optional[ContractId] = None
+    predecessor_abandonment_fingerprint: Optional[Sha256] = None
+    assessment_purpose: Literal["post_final_review", "model_evaluation"] = (
+        "post_final_review"
+    )
+    human_actor_id: Optional[ContractId] = None
+    human_request_id: Optional[ContractId] = None
+    authorization_fingerprint: Optional[Sha256] = None
+    assessment_kind: Optional[Literal["reader_review"]] = None
+    report_type: Optional[Literal["management_monthly", "industry_weekly"]] = None
+    language: Optional[Literal["en", "zh"]] = None
+    model_version: Optional[CleanText] = None
+    parser_version: Optional[ContractId] = None
+    projection_version: Optional[ContractId] = None
+    disclosure_confirmed: Optional[Literal[True]] = None
+    public_safe_egress_attested: Optional[Literal[True]] = None
+    cost_status: Optional[Literal["not_measured"]] = None
+    reader_review_authorization_fingerprint: Optional[Sha256] = None
+
+    @model_validator(mode="after")
+    def request_identity_is_exact(self) -> "PostFinalAssessmentRequestRecord":
+        reader_fields = {
+            "assessment_kind",
+            "report_type",
+            "language",
+            "model_version",
+            "parser_version",
+            "projection_version",
+            "disclosure_confirmed",
+            "public_safe_egress_attested",
+            "cost_status",
+            "reader_review_authorization_fingerprint",
+        }
+        if (
+            len(set(self.ordered_prompt_request_sha256s))
+            != len(self.ordered_prompt_request_sha256s)
+            or self.prompt_count != len(self.ordered_prompt_request_sha256s)
+            or self.output_tokens_per_call > self.total_output_token_upper_bound
+        ):
+            raise ValueError("post-final assessment request identity is invalid")
+        if self.schema_version != self.reader_review_schema_id and (
+            self.profile_id != "research_design_report_zh_v1"
+            or len(self.ordered_prompt_request_sha256s) != 9
+            or any(getattr(self, field) is not None for field in reader_fields)
+        ):
+            raise ValueError("historical assessment request fields invalid")
+        binding = _READER_REVIEW_PROFILE_BINDINGS.get(self.profile_id)
+        if self.schema_version == self.reader_review_schema_id and (
+            binding is None
+            or self.assessment_kind != "reader_review"
+            or (self.report_type, self.language) != binding
+            or self.model_version is None
+            or self.parser_version is None
+            or self.projection_version is None
+            or self.disclosure_confirmed is not True
+            or self.public_safe_egress_attested is not True
+            or self.cost_status != "not_measured"
+            or self.reader_review_authorization_fingerprint is None
+            or self.prompt_count != 2
+            or self.assessment_purpose != "post_final_review"
+        ):
+            raise ValueError("Reader Review request binding is invalid")
+        series_fields = {
+            "assessment_generation",
+            "predecessor_assessment_request_id",
+            "predecessor_assessment_request_fingerprint",
+            "predecessor_assessment_result_id",
+            "predecessor_result_fingerprint",
+            "predecessor_abandonment_id",
+            "predecessor_abandonment_fingerprint",
+            "assessment_purpose",
+            "human_actor_id",
+            "human_request_id",
+            "authorization_fingerprint",
+        }
+        if self.schema_version == self.schema_id:
+            if (
+                self.assessment_generation != 1
+                or self.predecessor_assessment_request_id is not None
+                or self.predecessor_assessment_request_fingerprint is not None
+                or self.predecessor_assessment_result_id is not None
+                or self.predecessor_result_fingerprint is not None
+                or self.predecessor_abandonment_id is not None
+                or self.predecessor_abandonment_fingerprint is not None
+                or self.assessment_purpose != "post_final_review"
+                or self.human_actor_id is not None
+                or self.human_request_id is not None
+                or self.authorization_fingerprint is not None
+            ):
+                raise ValueError("historical assessment request series fields invalid")
+            payload = self.model_dump(
+                mode="json",
+                exclude={"request_fingerprint", *series_fields, *reader_fields},
+            )
+        else:
+            result_predecessor = (
+                self.predecessor_assessment_result_id,
+                self.predecessor_result_fingerprint,
+            )
+            abandonment_predecessor = (
+                self.predecessor_abandonment_id,
+                self.predecessor_abandonment_fingerprint,
+            )
+            if (
+                self.human_actor_id is None
+                or self.human_request_id is None
+                or self.authorization_fingerprint is None
+            ):
+                raise ValueError("assessment Human authorization is required")
+            if self.assessment_generation == 1:
+                if any(
+                    value is not None
+                    for value in (
+                        self.predecessor_assessment_request_id,
+                        self.predecessor_assessment_request_fingerprint,
+                        *result_predecessor,
+                        *abandonment_predecessor,
+                    )
+                ):
+                    raise ValueError("generation one cannot bind a predecessor")
+            elif (
+                self.predecessor_assessment_request_id is None
+                or self.predecessor_assessment_request_fingerprint is None
+                or (all(value is not None for value in result_predecessor))
+                == (all(value is not None for value in abandonment_predecessor))
+                or any(value is None for value in result_predecessor)
+                and any(value is not None for value in result_predecessor)
+                or any(value is None for value in abandonment_predecessor)
+                and any(value is not None for value in abandonment_predecessor)
+            ):
+                raise ValueError("assessment predecessor binding is invalid")
+            payload = self.model_dump(
+                mode="json",
+                exclude=(
+                    {"request_fingerprint", *reader_fields}
+                    if self.schema_version == self.series_schema_id
+                    else {"request_fingerprint"}
+                ),
+            )
+        expected = _contract_fingerprint(
+            payload,
+            field="request_fingerprint",
+        )
+        if self.request_fingerprint != expected:
+            raise ValueError("post-final assessment request fingerprint mismatch")
+        return self
+
+
+class PostFinalAssessmentAbandonmentRecord(StrictModel):
+    """One Human-recorded terminal closure for an outcome-unknown request."""
+
+    schema_id = "briefloop.post_final_assessment_abandonment_record.v1"
+
+    schema_version: Literal["briefloop.post_final_assessment_abandonment_record.v1"]
+    abandonment_id: ContractId
+    run_id: ContractId
+    assessment_request_id: ContractId
+    assessment_request_fingerprint: Sha256
+    finalized_lineage_fingerprint: Sha256
+    assessment_generation: PositiveInt
+    reason: Literal["outcome_unknown"]
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    expected_store_revision: NonNegativeInt
+    recorded_at: IsoDateTime
+    abandonment_event_id: ContractId
+    accepted_transaction_id: ContractId
+    abandonment_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def abandonment_identity_is_exact(
+        self,
+    ) -> "PostFinalAssessmentAbandonmentRecord":
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"abandonment_fingerprint"}),
+            field="abandonment_fingerprint",
+        )
+        if self.abandonment_fingerprint != expected:
+            raise ValueError("post-final assessment abandonment fingerprint mismatch")
+        return self
+
+
+PostFinalAssessmentExecutionStatus = Literal[
+    "complete",
+    "provider_failed",
+    "local_derivation_failed",
+]
+
+PostFinalAssessmentFailurePhase = Literal[
+    "provider_execution",
+    "run_assembly",
+    "baseline_derivation",
+    "composition_derivation",
+    "archive_publication",
+]
+
+
+class PostFinalAssessmentExecutionRecord(StrictModel):
+    """Immutable evidence that provider execution reached a known local boundary."""
+
+    # Keep the schema id used by the already-created fresh schema17 workspace.
+    # The row is an execution witness; the complete identity remains in the
+    # immutable payload_json so the table can stay deliberately small.
+    schema_id = "briefloop.post_final_assessment_execution.v1"
+
+    schema_version: Literal["briefloop.post_final_assessment_execution.v1"]
+    execution_id: ContractId
+    run_id: ContractId
+    assessment_request_id: ContractId
+    assessment_request_fingerprint: Sha256
+    trial_id: ContractId
+    finalized_lineage_fingerprint: Sha256
+    execution_archive_manifest_sha256: Sha256
+    execution_receipt_id: ContractId
+    execution_status: PostFinalAssessmentExecutionStatus
+    run_status: Optional[str] = None
+    validation_status: Optional[str] = None
+    failure_phase: Optional[PostFinalAssessmentFailurePhase] = None
+    reason_codes: list[ContractId] = Field(default_factory=list)
+    recorded_at: IsoDateTime
+    execution_event_id: ContractId
+    accepted_transaction_id: ContractId
+    execution_fingerprint: Sha256
+
+    @property
+    def reason_codes_json(self) -> str:
+        """Canonical value mirrored by the compact schema17 table column."""
+
+        return json.dumps(
+            self.reason_codes,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    @model_validator(mode="after")
+    def execution_identity_is_exact(self) -> "PostFinalAssessmentExecutionRecord":
+        if self.reason_codes != sorted(set(self.reason_codes)):
+            raise ValueError("post-final execution reason codes are not canonical")
+        if (self.execution_status == "complete") != (self.failure_phase is None):
+            raise ValueError("post-final execution failure phase is invalid")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"execution_fingerprint"}),
+            field="execution_fingerprint",
+        )
+        if self.execution_fingerprint != expected:
+            raise ValueError("post-final execution fingerprint mismatch")
+        return self
+
+
+ReaderReviewResultStatus = Literal[
+    "finding_returned",
+    "no_finding_returned_in_completed_supported_checks",
+    "partially_assessed",
+    "unable_to_assess",
+]
+
+
+def derive_reader_review_result_status(
+    *,
+    terminal_evidence_class: str,
+    assessed_unit_count: int,
+    finding_count: int,
+    withheld_finding_count: int,
+    abstention_count: int,
+    requirement_states: Iterable[str],
+) -> str:
+    """Derive the limited Reader Review outcome vocabulary from stored facts."""
+
+    states = tuple(requirement_states)
+    if terminal_evidence_class == "available":
+        if (
+            withheld_finding_count > 0
+            or abstention_count > 0
+            or "unable_to_assess" in states
+        ):
+            return "partially_assessed"
+        if finding_count > 0:
+            return "finding_returned"
+        return "no_finding_returned_in_completed_supported_checks"
+    # A terminal incomplete provider attempt never certifies the units whose
+    # response was truncated.  The projection may still expose completed O1
+    # units separately, but the result-level status must remain unable to
+    # assess instead of implying a partial supported conclusion.
+    if terminal_evidence_class == "incomplete":
+        return "unable_to_assess"
+    return "unable_to_assess"
+
+
+def _contains_reader_review_secret_key(value: object) -> bool:
+    forbidden = {
+        "api_key",
+        "authorization",
+        "credential",
+        "credentials",
+        "password",
+        "secret",
+        "token",
+    }
+    if isinstance(value, dict):
+        return any(
+            key.lower() in forbidden or _contains_reader_review_secret_key(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_reader_review_secret_key(item) for item in value)
+    return False
+
+
+class PostFinalAssessmentResultRecord(StrictModel):
+    """One qualified, archive-bound advisory outcome; never raw provider data."""
+
+    schema_id = "briefloop.post_final_assessment_result_record.v2"
+    reader_review_schema_id: ClassVar[str] = (
+        "briefloop.post_final_assessment_result_record.v3"
+    )
+
+    schema_version: Literal[
+        "briefloop.post_final_assessment_result_record.v2",
+        "briefloop.post_final_assessment_result_record.v3",
+    ]
+    assessment_result_id: ContractId
+    run_id: ContractId
+    assessment_request_id: ContractId
+    policy_revision_id: ContractId
+    finalized_facts_fingerprint: Sha256
+    finalized_lineage_fingerprint: Sha256
+    terminal_evidence_class: Literal[
+        "available",
+        "abstained",
+        "provider_failed",
+        "refused",
+        "incomplete",
+        "unavailable",
+    ]
+    reason_codes: list[ContractId] = Field(default_factory=list)
+    shadow_request_sha256: Sha256
+    execution_manifest_sha256: Sha256
+    archive_manifest_sha256: Sha256
+    archive_receipt_id: ContractId
+    composition_sha256: Sha256
+    presentation_sha256: Sha256
+    reader_view_sha256: Sha256
+    assessed_unit_count: NonNegativeInt
+    finding_count: NonNegativeInt
+    withheld_finding_count: NonNegativeInt
+    abstention_count: NonNegativeInt
+    recorded_at: IsoDateTime
+    result_event_id: ContractId
+    accepted_transaction_id: ContractId
+    result_fingerprint: Sha256
+    assessment_kind: Optional[Literal["reader_review"]] = None
+    report_type: Optional[Literal["management_monthly", "industry_weekly"]] = None
+    language: Optional[Literal["en", "zh"]] = None
+    profile_id: Optional[Literal["management_brief_en_v1", "industry_weekly_zh_v1"]] = (
+        None
+    )
+    model_version: Optional[CleanText] = None
+    expected_model_identity: Optional[CleanText] = None
+    parser_version: Optional[Literal["strict_dimension_json_v3"]] = None
+    projection_version: Optional[Literal["reader_review_projection_v1"]] = None
+    reader_review_status: Optional[ReaderReviewResultStatus] = None
+    reader_view_payload: Optional[dict[str, JsonValue]] = None
+
+    @model_validator(mode="after")
+    def result_identity_and_non_effect_are_exact(
+        self,
+    ) -> "PostFinalAssessmentResultRecord":
+        reader_fields = {
+            "assessment_kind",
+            "report_type",
+            "language",
+            "profile_id",
+            "model_version",
+            "expected_model_identity",
+            "parser_version",
+            "projection_version",
+            "reader_review_status",
+            "reader_view_payload",
+        }
+        if self.reason_codes != sorted(set(self.reason_codes)):
+            raise ValueError("post-final assessment reason codes are not canonical")
+        if self.terminal_evidence_class != "available" and (
+            self.finding_count != 0 or self.withheld_finding_count != 0
+        ):
+            raise ValueError("unavailable assessment cannot expose findings")
+        if self.schema_version == self.schema_id:
+            if any(getattr(self, field) is not None for field in reader_fields):
+                raise ValueError("historical assessment result fields are invalid")
+            fingerprint_payload = self.model_dump(
+                mode="json",
+                exclude={"result_fingerprint", *reader_fields},
+            )
+        else:
+            view = self.reader_view_payload
+            allowed_view_keys = {
+                "schema_version",
+                "status",
+                "boundary",
+                "advisory_only",
+                "shadow_only",
+                "runtime_authority",
+                "authority_effect",
+                "archive_verified",
+                "binding",
+                "run_status",
+                "validation_status",
+                "reason_codes",
+                "assessed_unit_count",
+                "finding_count",
+                "withheld_finding_count",
+                "abstention_count",
+                "findings",
+                "requirement_assessments",
+                "disclaimer",
+                "view_sha256",
+            }
+            binding = _READER_REVIEW_PROFILE_BINDINGS.get(self.profile_id)
+            if (
+                self.assessment_kind != "reader_review"
+                or binding is None
+                or (self.report_type, self.language) != binding
+                or self.model_version is None
+                or self.expected_model_identity is None
+                or self.model_version != self.expected_model_identity
+                or self.parser_version != "strict_dimension_json_v3"
+                or self.projection_version != "reader_review_projection_v1"
+                or view is None
+                or set(view) != allowed_view_keys
+                or _contains_reader_review_secret_key(view)
+                or view.get("view_sha256") != self.reader_view_sha256
+                or _canonical_json_sha256(
+                    {key: item for key, item in view.items() if key != "view_sha256"}
+                )
+                != self.reader_view_sha256
+                or view.get("finding_count") != self.finding_count
+                or view.get("withheld_finding_count") != self.withheld_finding_count
+                or view.get("abstention_count") != self.abstention_count
+                or view.get("assessed_unit_count") != self.assessed_unit_count
+                or view.get("reason_codes") != self.reason_codes
+            ):
+                raise ValueError("Reader Review result binding is invalid")
+            assessments = view.get("requirement_assessments")
+            if not isinstance(assessments, list) or any(
+                not isinstance(item, dict)
+                or item.get("state")
+                not in {
+                    "fulfilled",
+                    "unfulfilled_transparent",
+                    "unfulfilled_undisclosed",
+                    "unable_to_assess",
+                }
+                for item in assessments
+            ):
+                raise ValueError("Reader Review requirement states are invalid")
+            expected_status = derive_reader_review_result_status(
+                terminal_evidence_class=self.terminal_evidence_class,
+                assessed_unit_count=self.assessed_unit_count,
+                finding_count=self.finding_count,
+                withheld_finding_count=self.withheld_finding_count,
+                abstention_count=self.abstention_count,
+                requirement_states=(str(item["state"]) for item in assessments),
+            )
+            if self.reader_review_status != expected_status:
+                raise ValueError("Reader Review result status is invalid")
+            fingerprint_payload = self.model_dump(
+                mode="json", exclude={"result_fingerprint"}
+            )
+        expected = _contract_fingerprint(
+            fingerprint_payload,
+            field="result_fingerprint",
+        )
+        if self.result_fingerprint != expected:
+            raise ValueError("post-final assessment result fingerprint mismatch")
+        return self
+
+
+class PostFinalFindingDispositionRecord(StrictModel):
+    """One append-only Human decision on one Store-qualified LAJ finding."""
+
+    schema_id = "briefloop.post_final_finding_disposition_record.v2"
+
+    schema_version: Literal["briefloop.post_final_finding_disposition_record.v2"]
+    disposition_id: ContractId
+    run_id: ContractId
+    finalized_lineage_fingerprint: Sha256
+    assessment_result_id: ContractId
+    assessment_result_fingerprint: Sha256
+    reader_view_sha256: Sha256
+    finding_id: ContractId
+    finding_fingerprint: Sha256
+    previous_disposition_id: Optional[ContractId] = None
+    decision: Literal["accept", "reject", "defer"]
+    human_note: Optional[CleanText] = None
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    recorded_at: IsoDateTime
+    disposition_event_id: ContractId
+    accepted_transaction_id: ContractId
+    disposition_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def disposition_identity_is_exact(self) -> "PostFinalFindingDispositionRecord":
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"disposition_fingerprint"}),
+            field="disposition_fingerprint",
+        )
+        if self.disposition_fingerprint != expected:
+            raise ValueError("post-final disposition fingerprint mismatch")
+        return self
+
+
+class HumanObservationReportSpan(StrictModel):
+    """Strict, report-bound span reference supplied by a Human observer."""
+
+    schema_id = "briefloop.post_final_human_observation_report_span.v1"
+
+    schema_version: Literal["briefloop.post_final_human_observation_report_span.v1"]
+    report_sha256: Sha256
+    block_id: ContractId
+    start_char: NonNegativeInt
+    end_char: PositiveInt
+    excerpt_sha256: Sha256
+
+    @model_validator(mode="after")
+    def span_offsets_are_ordered(self) -> "HumanObservationReportSpan":
+        if self.start_char >= self.end_char:
+            raise ValueError("human observation span offsets must be ordered")
+        return self
+
+
+class PostFinalHumanObservationRecord(StrictModel):
+    """One append-only, report-bound Human observation.
+
+    A Human observation is deliberately not a model finding: it never carries a
+    finding identity.  Superseding creates a new observation identity linked to
+    the prior record; no row is updated in place.
+    """
+
+    schema_id = "briefloop.post_final_human_observation_record.v1"
+
+    schema_version: Literal["briefloop.post_final_human_observation_record.v1"]
+    origin: Literal["human"]
+    observation_id: ContractId
+    observation_revision: PositiveInt
+    run_id: ContractId
+    finalized_lineage_fingerprint: Sha256
+    report_revision: PositiveInt
+    report_artifact_id: ContractId
+    report_sha256: Sha256
+    assessment_result_id: Optional[ContractId] = None
+    assessment_result_fingerprint: Optional[Sha256] = None
+    reader_view_sha256: Optional[Sha256] = None
+    observation_text: CleanText
+    observation_sha256: Sha256
+    requirement_id: Optional[ContractId] = None
+    claim_id: Optional[ContractId] = None
+    report_span: Optional[HumanObservationReportSpan] = None
+    scope_class: Optional[Literal["O1", "O2"]] = None
+    dimension_id: Optional[ContractId] = None
+    previous_observation_id: Optional[ContractId] = None
+    previous_observation_fingerprint: Optional[Sha256] = None
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    recorded_at: IsoDateTime
+    observation_event_id: ContractId
+    accepted_transaction_id: ContractId
+    observation_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def observation_identity_is_exact(self) -> "PostFinalHumanObservationRecord":
+        result_fields = (
+            self.assessment_result_id,
+            self.assessment_result_fingerprint,
+            self.reader_view_sha256,
+        )
+        if any(item is not None for item in result_fields) and not all(
+            item is not None for item in result_fields
+        ):
+            raise ValueError("human observation assessment binding must be total")
+        if (self.scope_class is None) != (self.dimension_id is None):
+            raise ValueError("human observation dimension binding must be total")
+        if (self.previous_observation_id is None) != (
+            self.previous_observation_fingerprint is None
+        ):
+            raise ValueError("human observation predecessor binding must be total")
+        if self.observation_revision == 1 and self.previous_observation_id is not None:
+            raise ValueError("first human observation revision cannot have predecessor")
+        if self.observation_revision > 1 and self.previous_observation_id is None:
+            raise ValueError("superseding human observation requires predecessor")
+        if (
+            self.observation_sha256
+            != hashlib.sha256(self.observation_text.encode("utf-8")).hexdigest()
+        ):
+            raise ValueError("human observation text hash mismatch")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"observation_fingerprint"}),
+            field="observation_fingerprint",
+        )
+        if self.observation_fingerprint != expected:
+            raise ValueError("human observation fingerprint mismatch")
+        return self
+
+
+def _current_post_final_disposition_at_cutoff(
+    records: tuple[PostFinalFindingDispositionRecord, ...],
+    *,
+    receipt_revisions: dict[tuple[str, str], int],
+    run_id: str,
+    assessment_result_id: str,
+    finding_id: str,
+    cutoff_revision: int,
+) -> PostFinalFindingDispositionRecord | None:
+    """Select one deterministic disposition head at an exact Store revision."""
+
+    if type(cutoff_revision) is not int or cutoff_revision < 0:
+        raise ValueError("post-final disposition cutoff is invalid")
+    candidates: list[tuple[int, PostFinalFindingDispositionRecord]] = []
+    seen_revisions: set[int] = set()
+    for record in records:
+        if (
+            record.run_id != run_id
+            or record.assessment_result_id != assessment_result_id
+            or record.finding_id != finding_id
+        ):
+            continue
+        revision = receipt_revisions.get(
+            (record.run_id, record.accepted_transaction_id)
+        )
+        if type(revision) is not int or revision < 0:
+            raise ValueError("post-final disposition receipt is invalid")
+        if revision > cutoff_revision:
+            continue
+        if revision in seen_revisions:
+            raise ValueError("post-final disposition revision is ambiguous")
+        seen_revisions.add(revision)
+        candidates.append((revision, record))
+    return max(candidates, key=lambda item: item[0])[1] if candidates else None
+
+
+class PostFinalGuidanceDraftRevision(StrictModel):
+    """One Human-authored guidance text revision sourced from an acceptance."""
+
+    schema_id = "briefloop.post_final_guidance_draft_revision.v2"
+
+    schema_version: Literal["briefloop.post_final_guidance_draft_revision.v2"]
+    guidance_id: ContractId
+    draft_revision: PositiveInt
+    run_id: ContractId
+    finalized_lineage_fingerprint: Sha256
+    provenance_kind: Literal["accepted_model_finding", "human_observation"] = (
+        "accepted_model_finding"
+    )
+    assessment_result_id: Optional[ContractId] = None
+    assessment_result_fingerprint: Optional[Sha256] = None
+    finding_id: Optional[ContractId] = None
+    finding_fingerprint: Optional[Sha256] = None
+    disposition_id: Optional[ContractId] = None
+    disposition_fingerprint: Optional[Sha256] = None
+    observation_id: Optional[ContractId] = None
+    observation_fingerprint: Optional[Sha256] = None
+    previous_draft_revision: Optional[PositiveInt] = None
+    guidance_scope: Literal["finding_only", "observation_only"]
+    guidance_text: CleanText
+    guidance_sha256: Sha256
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    recorded_at: IsoDateTime
+    draft_event_id: ContractId
+    accepted_transaction_id: ContractId
+    draft_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def guidance_draft_identity_is_exact(self) -> "PostFinalGuidanceDraftRevision":
+        result_fields = (
+            self.assessment_result_id,
+            self.assessment_result_fingerprint,
+        )
+        finding_fields = (self.finding_id, self.finding_fingerprint)
+        disposition_fields = (self.disposition_id, self.disposition_fingerprint)
+        observation_fields = (self.observation_id, self.observation_fingerprint)
+        if self.provenance_kind == "accepted_model_finding":
+            if not all(
+                item is not None
+                for item in (*result_fields, *finding_fields, *disposition_fields)
+            ):
+                raise ValueError("accepted model finding provenance is incomplete")
+            if any(item is not None for item in observation_fields):
+                raise ValueError("model finding guidance cannot bind observation")
+            if self.guidance_scope != "finding_only":
+                raise ValueError("model finding guidance scope is invalid")
+        else:
+            if not all(item is not None for item in observation_fields):
+                raise ValueError("human observation provenance is incomplete")
+            if any(item is not None for item in finding_fields + disposition_fields):
+                raise ValueError("human observation guidance cannot bind finding")
+            if any(item is not None for item in result_fields) and not all(
+                item is not None for item in result_fields
+            ):
+                raise ValueError("human observation result binding must be total")
+            if self.guidance_scope != "observation_only":
+                raise ValueError("human observation guidance scope is invalid")
+        if (
+            self.guidance_sha256
+            != hashlib.sha256(self.guidance_text.encode("utf-8")).hexdigest()
+        ):
+            raise ValueError("post-final guidance text hash mismatch")
+        if (self.draft_revision == 1 and self.previous_draft_revision is not None) or (
+            self.draft_revision > 1
+            and self.previous_draft_revision != self.draft_revision - 1
+        ):
+            raise ValueError("post-final guidance revision chain is invalid")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"draft_fingerprint"}),
+            field="draft_fingerprint",
+        )
+        if self.draft_fingerprint != expected:
+            raise ValueError("post-final guidance draft fingerprint mismatch")
+        return self
+
+
+class PostFinalGuidanceStatusRevision(StrictModel):
+    """One separate Human approval/lifecycle decision for an exact draft."""
+
+    schema_id = "briefloop.post_final_guidance_status_revision.v2"
+
+    schema_version: Literal["briefloop.post_final_guidance_status_revision.v2"]
+    status_revision_id: ContractId
+    run_id: ContractId
+    finalized_lineage_fingerprint: Sha256
+    guidance_id: ContractId
+    draft_revision: PositiveInt
+    guidance_sha256: Sha256
+    status: Literal["approved", "deactivated", "reverted", "superseded"]
+    previous_status_revision_id: Optional[ContractId] = None
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    recorded_at: IsoDateTime
+    status_event_id: ContractId
+    accepted_transaction_id: ContractId
+    status_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def guidance_status_identity_is_exact(self) -> "PostFinalGuidanceStatusRevision":
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"status_fingerprint"}),
+            field="status_fingerprint",
+        )
+        if self.status_fingerprint != expected:
+            raise ValueError("post-final guidance status fingerprint mismatch")
+        return self
+
+
+POST_FINAL_GUIDANCE_STATUS_TRANSITIONS = MappingProxyType(
+    {
+        None: ("approved",),
+        "approved": ("approved", "deactivated", "reverted", "superseded"),
+        "deactivated": ("approved",),
+        "reverted": ("approved",),
+        "superseded": ("approved",),
+    }
+)
+
+
+def post_final_guidance_legal_actions(
+    current: PostFinalGuidanceStatusRevision | None,
+    *,
+    target_draft_revision: int,
+    approval_eligible: bool,
+) -> tuple[str, ...]:
+    """Return the only legal Human actions for one exact draft revision."""
+
+    if current is None:
+        return (
+            POST_FINAL_GUIDANCE_STATUS_TRANSITIONS[None]
+            if target_draft_revision >= 1 and approval_eligible
+            else ()
+        )
+    if target_draft_revision > current.draft_revision:
+        return ("approved",) if approval_eligible else ()
+    if target_draft_revision == current.draft_revision and current.status == "approved":
+        return ("deactivated", "reverted", "superseded")
+    return ()
+
+
+def post_final_guidance_status_transition_allowed(
+    current: PostFinalGuidanceStatusRevision | None,
+    candidate: PostFinalGuidanceStatusRevision,
+    *,
+    approval_eligible: bool,
+) -> bool:
+    """Validate one append-only status transition against the current head."""
+
+    return candidate.status in post_final_guidance_legal_actions(
+        current,
+        target_draft_revision=candidate.draft_revision,
+        approval_eligible=approval_eligible,
+    )
+
+
 class RepairStartRequest(StrictModel):
     schema_id = "briefloop.repair_start_request.v2"
     schema_version: Literal["briefloop.repair_start_request.v2"]
@@ -2761,6 +5391,42 @@ class RunResetRequest(StrictModel):
     role_topology: RoleTopology
     gate_strictness: dict[GateId, bool]
     input_governance_required: bool
+
+
+class RunSuccessorStartRequest(StrictModel):
+    """Human request for one normal same-workspace successor run."""
+
+    schema_id = "briefloop.run_successor_start_request.v1"
+
+    schema_version: Literal["briefloop.run_successor_start_request.v1"]
+    request_id: ContractId
+    predecessor_run_id: ContractId
+    successor_run_id: ContractId
+    workspace_id: ContractId
+    runtime: RuntimeName
+    expected_head_run_id: ContractId
+    expected_store_revision: NonNegativeInt
+    expected_workspace_revision: NonNegativeInt
+    run_direction: RunDirection
+    workspace_config_sha256: Sha256
+    sources_config_sha256: Sha256
+    role_topology: RoleTopology
+    gate_strictness: dict[GateId, bool]
+    input_governance_required: bool
+    include_approved_guidance: bool
+    request_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def successor_request_identity_is_exact(self) -> "RunSuccessorStartRequest":
+        if self.predecessor_run_id == self.successor_run_id:
+            raise ValueError("successor run must be distinct")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"request_fingerprint"}),
+            field="request_fingerprint",
+        )
+        if self.request_fingerprint != expected:
+            raise ValueError("successor request fingerprint mismatch")
+        return self
 
 
 class FinalizeRenderRequest(StrictModel):
@@ -3283,6 +5949,18 @@ class RunContractBindingReference(StrictModel):
     run_id: ContractId
 
 
+class RunExecutionAuthorizationReference(StrictModel):
+    authorization_id: ContractId
+
+
+class RunSourceDiscoveryAuthorizationReference(StrictModel):
+    authorization_id: ContractId
+
+
+class RunSourceAcquisitionAttemptAuthorizationReference(StrictModel):
+    attempt_authorization_id: ContractId
+
+
 class OwnedArtifactSubmissionReference(StrictModel):
     submission_id: ContractId
 
@@ -3334,6 +6012,18 @@ class RunIntegrityReference(StrictModel):
 
 class RepairCycleReference(StrictModel):
     repair_id: ContractId
+
+
+class GateRepairCycleReference(StrictModel):
+    gate_repair_id: ContractId
+
+
+class GateRepairArtifactBindingReference(StrictModel):
+    gate_repair_id: ContractId
+
+
+class GateRepairOutcomeReference(StrictModel):
+    outcome_id: ContractId
 
 
 class ArtifactSupersessionReference(StrictModel):
@@ -3399,6 +6089,55 @@ class DeliveryResultReference(StrictModel):
     result_id: ContractId
 
 
+class PostFinalAssessmentPolicyRevisionReference(StrictModel):
+    policy_revision_id: ContractId
+
+
+class PostFinalAssessmentRequestReference(StrictModel):
+    assessment_request_id: ContractId
+
+
+class PostFinalAssessmentAbandonmentReference(StrictModel):
+    abandonment_id: ContractId
+
+
+class PostFinalAssessmentExecutionReference(StrictModel):
+    execution_id: ContractId
+
+
+class PostFinalAssessmentResultReference(StrictModel):
+    assessment_result_id: ContractId
+
+
+class PostFinalFindingDispositionReference(StrictModel):
+    disposition_id: ContractId
+
+
+class PostFinalHumanObservationReference(StrictModel):
+    observation_id: ContractId
+
+
+class PostFinalGuidanceDraftReference(StrictModel):
+    guidance_id: ContractId
+    draft_revision: PositiveInt
+
+
+class PostFinalGuidanceStatusReference(StrictModel):
+    status_revision_id: ContractId
+
+
+class RunGuidanceSnapshotReference(StrictModel):
+    snapshot_id: ContractId
+
+
+class RunGuidanceSelectionDecisionReference(StrictModel):
+    decision_id: ContractId
+
+
+class RunGuidanceSnapshotItemReference(StrictModel):
+    item_id: ContractId
+
+
 class CheckoutRevisionReference(StrictModel):
     checkout_revision_id: CheckoutRevisionId
 
@@ -3430,6 +6169,15 @@ class TransactionReceipt(StrictModel):
     run_contract_bindings: list[RunContractBindingReference] = Field(
         default_factory=list
     )
+    run_execution_authorizations: list[RunExecutionAuthorizationReference] = Field(
+        default_factory=list
+    )
+    run_source_discovery_authorizations: list[
+        RunSourceDiscoveryAuthorizationReference
+    ] = Field(default_factory=list)
+    run_source_acquisition_attempt_authorizations: list[
+        RunSourceAcquisitionAttemptAuthorizationReference
+    ] = Field(default_factory=list)
     owned_artifact_submissions: list[OwnedArtifactSubmissionReference] = Field(
         default_factory=list
     )
@@ -3450,6 +6198,11 @@ class TransactionReceipt(StrictModel):
     )
     run_integrity_records: list[RunIntegrityReference] = Field(default_factory=list)
     repair_cycles: list[RepairCycleReference] = Field(default_factory=list)
+    gate_repair_cycles: list[GateRepairCycleReference] = Field(default_factory=list)
+    gate_repair_artifact_bindings: list[GateRepairArtifactBindingReference] = Field(
+        default_factory=list
+    )
+    gate_repair_outcomes: list[GateRepairOutcomeReference] = Field(default_factory=list)
     artifact_supersessions: list[ArtifactSupersessionReference] = Field(
         default_factory=list
     )
@@ -3477,6 +6230,39 @@ class TransactionReceipt(StrictModel):
     )
     delivery_attempts: list[DeliveryAttemptReference] = Field(default_factory=list)
     delivery_results: list[DeliveryResultReference] = Field(default_factory=list)
+    post_final_assessment_policy_revisions: list[
+        PostFinalAssessmentPolicyRevisionReference
+    ] = Field(default_factory=list)
+    post_final_assessment_requests: list[PostFinalAssessmentRequestReference] = Field(
+        default_factory=list
+    )
+    post_final_assessment_abandonments: list[
+        PostFinalAssessmentAbandonmentReference
+    ] = Field(default_factory=list)
+    post_final_assessment_results: list[PostFinalAssessmentResultReference] = Field(
+        default_factory=list
+    )
+    post_final_finding_dispositions: list[PostFinalFindingDispositionReference] = Field(
+        default_factory=list
+    )
+    post_final_human_observations: list[PostFinalHumanObservationReference] = Field(
+        default_factory=list
+    )
+    post_final_guidance_drafts: list[PostFinalGuidanceDraftReference] = Field(
+        default_factory=list
+    )
+    post_final_guidance_statuses: list[PostFinalGuidanceStatusReference] = Field(
+        default_factory=list
+    )
+    run_guidance_snapshots: list[RunGuidanceSnapshotReference] = Field(
+        default_factory=list
+    )
+    run_guidance_selection_decisions: list[RunGuidanceSelectionDecisionReference] = (
+        Field(default_factory=list)
+    )
+    run_guidance_snapshot_items: list[RunGuidanceSnapshotItemReference] = Field(
+        default_factory=list
+    )
     checkout_revisions: list[CheckoutRevisionReference] = Field(default_factory=list)
     receipt_checkout_bindings: list[ReceiptCheckoutBindingReference] = Field(
         default_factory=list
@@ -3505,6 +6291,9 @@ class TransactionReceipt(StrictModel):
             raise ValueError("duplicate proposal identity")
         relation_lists = (
             self.run_contract_bindings,
+            self.run_execution_authorizations,
+            self.run_source_discovery_authorizations,
+            self.run_source_acquisition_attempt_authorizations,
             self.owned_artifact_submissions,
             self.stage_transitions,
             self.stage_artifact_bindings,
@@ -3517,6 +6306,9 @@ class TransactionReceipt(StrictModel):
             self.gate_artifact_bindings,
             self.run_integrity_records,
             self.repair_cycles,
+            self.gate_repair_cycles,
+            self.gate_repair_artifact_bindings,
+            self.gate_repair_outcomes,
             self.artifact_supersessions,
             self.repair_completions,
             self.recovery_completions,
@@ -3532,6 +6324,17 @@ class TransactionReceipt(StrictModel):
             self.delivery_authorizations,
             self.delivery_attempts,
             self.delivery_results,
+            self.post_final_assessment_policy_revisions,
+            self.post_final_assessment_requests,
+            self.post_final_assessment_abandonments,
+            self.post_final_assessment_results,
+            self.post_final_finding_dispositions,
+            self.post_final_human_observations,
+            self.post_final_guidance_drafts,
+            self.post_final_guidance_statuses,
+            self.run_guidance_snapshots,
+            self.run_guidance_selection_decisions,
+            self.run_guidance_snapshot_items,
             self.checkout_revisions,
             self.receipt_checkout_bindings,
             self.checkout_publication_intents,
@@ -3547,6 +6350,8 @@ _RUN = "RUN-20260714-001"
 _NOW = "2026-07-14T09:00:00Z"
 _SHA_A = "a" * 64
 _SHA_B = "b" * 64
+_SHA_C = "c" * 64
+_SHA_D = "d" * 64
 
 SourceProposal.minimal_example = {
     "schema_version": SourceProposal.schema_id,
@@ -3618,6 +6423,27 @@ SourcePackCommitRequest.minimal_example = {
     "expected_store_revision": 1,
 }
 SourcePackCommitRequest.full_example = deepcopy(SourcePackCommitRequest.minimal_example)
+MultiTavilySourcePackCommitRequest.minimal_example = {
+    "schema_version": MultiTavilySourcePackCommitRequest.schema_id,
+    "capacity_profile": "multi_tavily_v2",
+    "request_id": "REQ-MULTI-TAVILY-PACK-001",
+    "run_id": "RUN-001",
+    "invocation_id": "INV-SOURCE-001",
+    "members": [
+        {
+            "member_id": "SRC-MEMBER-0001",
+            "proposal_path": "scratch/INV-SOURCE-001/sources/SRC-MEMBER-0001/source_proposal.json",
+            "content_path": "scratch/INV-SOURCE-001/sources/SRC-MEMBER-0001/source_content.txt",
+            "raw_payload_path": "scratch/INV-SOURCE-001/sources/SRC-MEMBER-0001/source_raw.json",
+        }
+    ],
+    "manifest_path": "scratch/INV-SOURCE-001/source_manifest.json",
+    "expected_manifest_sha256": _SHA_A,
+    "expected_store_revision": 1,
+}
+MultiTavilySourcePackCommitRequest.full_example = deepcopy(
+    MultiTavilySourcePackCommitRequest.minimal_example
+)
 
 _CANDIDATE = {
     "candidate_id": "CAND-001",
@@ -3991,6 +6817,343 @@ RunDirection.minimal_example = deepcopy(_RUN_DIRECTION)
 RunDirection.full_example = deepcopy(_RUN_DIRECTION)
 
 _GATE_STRICTNESS = {gate_id: True for gate_id in GATE_ID_VALUES}
+_EXECUTION_SOURCE_MEMBER = {
+    "source_id": "SRC-INIT-001",
+    "input_path": "input/evidence/source-001.txt",
+    "content_sha256": _SHA_A,
+    "content_media_type": "text/plain",
+    "origin_type": "manual_evidence",
+    "acquisition_method": "manual_evidence",
+    "material_kind": "full_content",
+    "provider": None,
+    "locator": {"kind": "file", "path": "input/evidence/source-001.txt"},
+    "title": "Public example source",
+    "publisher": "Example publisher",
+    "published_at": "2026-07-14",
+    "retrieved_at": _NOW,
+    "source_category": "other",
+    "retrieval_source_type": "local_file",
+    "underlying_evidence_type": "unknown",
+    "raw_underlying_evidence_type": None,
+    "document_kind": None,
+    "opened_at": None,
+    "resolved_at": None,
+}
+ExecutionSourceManifestMember.minimal_example = deepcopy(_EXECUTION_SOURCE_MEMBER)
+ExecutionSourceManifestMember.full_example = deepcopy(_EXECUTION_SOURCE_MEMBER)
+_EXECUTION_SOURCE_MANIFEST = {
+    "schema_version": ExecutionSourceManifest.schema_id,
+    "members": [deepcopy(_EXECUTION_SOURCE_MEMBER)],
+}
+ExecutionSourceManifest.minimal_example = deepcopy(_EXECUTION_SOURCE_MANIFEST)
+ExecutionSourceManifest.full_example = deepcopy(_EXECUTION_SOURCE_MANIFEST)
+_MULTI_TAVILY_EXECUTION_SOURCE_MEMBER = {
+    **deepcopy(_EXECUTION_SOURCE_MEMBER),
+    "origin_type": "provider_response",
+    "acquisition_method": "provider_extract",
+    "provider": "tavily",
+    "locator": {"kind": "web", "url": "https://example.com/report"},
+    "retrieval_source_type": "paper_page",
+    "raw_underlying_evidence_type": "provider-extracted-document",
+}
+_MULTI_TAVILY_EXECUTION_SOURCE_MANIFEST = {
+    "schema_version": MultiTavilyExecutionSourceManifest.schema_id,
+    "capacity_profile": "multi_tavily_v2",
+    "members": [deepcopy(_MULTI_TAVILY_EXECUTION_SOURCE_MEMBER)],
+}
+MultiTavilyExecutionSourceManifest.minimal_example = deepcopy(
+    _MULTI_TAVILY_EXECUTION_SOURCE_MANIFEST
+)
+MultiTavilyExecutionSourceManifest.full_example = deepcopy(
+    _MULTI_TAVILY_EXECUTION_SOURCE_MANIFEST
+)
+_EXECUTION_SOURCE_MANIFEST_SHA = hashlib.sha256(
+    json.dumps(
+        _EXECUTION_SOURCE_MANIFEST,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+).hexdigest()
+_EXECUTION_AUTHORIZATION_INPUT = {
+    "schema_version": RunExecutionAuthorizationInput.schema_id,
+    "completion_target": "finalized_local",
+    "source_manifest": deepcopy(_EXECUTION_SOURCE_MANIFEST),
+    "source_manifest_sha256": _EXECUTION_SOURCE_MANIFEST_SHA,
+    "source_manifest_member_count": 1,
+    "repair_budget": 1,
+}
+RunExecutionAuthorizationInput.minimal_example = deepcopy(
+    _EXECUTION_AUTHORIZATION_INPUT
+)
+RunExecutionAuthorizationInput.full_example = deepcopy(_EXECUTION_AUTHORIZATION_INPUT)
+_EXECUTION_AUTHORIZATION_BOOTSTRAP = {
+    "schema_version": RunExecutionAuthorizationBootstrap.schema_id,
+    "completion_target": "finalized_local",
+    "source_manifest_path": "input/execution-source-manifest.json",
+    "source_manifest_sha256": _EXECUTION_SOURCE_MANIFEST_SHA,
+    "source_manifest_member_count": 1,
+    "repair_budget": 1,
+}
+RunExecutionAuthorizationBootstrap.minimal_example = deepcopy(
+    _EXECUTION_AUTHORIZATION_BOOTSTRAP
+)
+RunExecutionAuthorizationBootstrap.full_example = deepcopy(
+    _EXECUTION_AUTHORIZATION_BOOTSTRAP
+)
+RunExecutionAuthorization.minimal_example = {
+    "schema_version": RunExecutionAuthorization.schema_id,
+    "authorization_id": "EXEC-AUTH-001",
+    "run_id": _RUN,
+    "workspace_id": "WS-PUBLIC-DEMO",
+    "run_contract_fingerprint": _SHA_A,
+    "run_direction_fingerprint": _SHA_B,
+    "completion_target": "finalized_local",
+    "source_manifest_artifact": {
+        "artifact_id": "run_execution_source_manifest",
+        "revision": 1,
+    },
+    "source_manifest_sha256": _EXECUTION_SOURCE_MANIFEST_SHA,
+    "source_manifest_member_count": 1,
+    "repair_budget": 1,
+    "authorization_event_id": "EVT-EXEC-AUTH-001",
+    "accepted_transaction_id": "TXN-001",
+    "request_fingerprint": _SHA_A,
+    "created_at": _NOW,
+}
+RunExecutionAuthorization.full_example = deepcopy(
+    RunExecutionAuthorization.minimal_example
+)
+_SOURCE_DISCOVERY_AUTHORIZATION_INPUT = {
+    "schema_version": RunSourceDiscoveryAuthorizationInput.schema_id,
+    "route_id": "web-search",
+    "provider_id": "tavily",
+    "execution_owner": "deterministic",
+    "credential_env": "TAVILY_API_KEY",
+    "completion_target": "finalized_local",
+    "repair_budget": 1,
+}
+RunSourceDiscoveryAuthorizationInput.minimal_example = deepcopy(
+    _SOURCE_DISCOVERY_AUTHORIZATION_INPUT
+)
+RunSourceDiscoveryAuthorizationInput.full_example = deepcopy(
+    _SOURCE_DISCOVERY_AUTHORIZATION_INPUT
+)
+_SOURCE_DISCOVERY_AUTHORIZATION_BOOTSTRAP = {
+    "schema_version": RunSourceDiscoveryAuthorizationBootstrap.schema_id,
+    "route_id": "web-search",
+    "provider_id": "tavily",
+    "execution_owner": "deterministic",
+    "credential_env": "TAVILY_API_KEY",
+    "completion_target": "finalized_local",
+    "repair_budget": 1,
+}
+RunSourceDiscoveryAuthorizationBootstrap.minimal_example = deepcopy(
+    _SOURCE_DISCOVERY_AUTHORIZATION_BOOTSTRAP
+)
+RunSourceDiscoveryAuthorizationBootstrap.full_example = deepcopy(
+    _SOURCE_DISCOVERY_AUTHORIZATION_BOOTSTRAP
+)
+RunSourceDiscoveryAuthorization.minimal_example = {
+    "schema_version": RunSourceDiscoveryAuthorization.schema_id,
+    "authorization_id": "DISCOVERY-AUTH-001",
+    "run_id": _RUN,
+    "workspace_id": "WS-PUBLIC-DEMO",
+    "run_contract_fingerprint": _SHA_A,
+    "run_direction_fingerprint": _SHA_B,
+    "runtime_source_plan_fingerprint": _SHA_C,
+    "source_route_fingerprint": _SHA_D,
+    "route_id": "web-search",
+    "provider_id": "tavily",
+    "execution_owner": "deterministic",
+    "credential_env": "TAVILY_API_KEY",
+    "completion_target": "finalized_local",
+    "repair_budget": 1,
+    "authorization_event_id": "EVT-DISCOVERY-AUTH-001",
+    "accepted_transaction_id": "TXN-001",
+    "request_fingerprint": _SHA_A,
+    "created_at": _NOW,
+}
+RunSourceDiscoveryAuthorization.full_example = deepcopy(
+    RunSourceDiscoveryAuthorization.minimal_example
+)
+RunSourceAcquisitionAttemptAuthorization.minimal_example = {
+    "schema_version": RunSourceAcquisitionAttemptAuthorization.schema_id,
+    "attempt_authorization_id": "ATTEMPT-AUTH-001",
+    "attempt_ordinal": 1,
+    "run_id": _RUN,
+    "workspace_id": "WS-001",
+    "discovery_authorization_id": "DISCOVERY-AUTH-001",
+    "run_contract_fingerprint": _SHA_A,
+    "run_direction_fingerprint": _SHA_B,
+    "runtime_source_plan_fingerprint": _SHA_C,
+    "source_route_fingerprint": _SHA_D,
+    "provider_request_fingerprint": _SHA_A,
+    "provider_id": "tavily",
+    "route_id": "web-search",
+    "max_provider_calls": 4,
+    "max_search_calls": 2,
+    "max_extract_calls": 2,
+    "max_extract_urls": 40,
+    "provider_call_sequence": (
+        "primary_search_extract_then_conditional_backfill_search_extract"
+    ),
+    "provider_cost_status": "not_reported_acknowledged",
+    "previous_attempt_authorization_id": None,
+    "human_request_id": "REQ-INIT-001",
+    "authorization_event_id": "EVT-INIT-001",
+    "accepted_transaction_id": "REQ-INIT-001",
+    "request_fingerprint": _SHA_B,
+    "created_at": _NOW,
+}
+RunSourceAcquisitionAttemptAuthorization.full_example = {
+    **RunSourceAcquisitionAttemptAuthorization.minimal_example,
+    "attempt_authorization_id": "ATTEMPT-AUTH-002",
+    "attempt_ordinal": 2,
+    "previous_attempt_authorization_id": "ATTEMPT-AUTH-001",
+    "human_request_id": "REQ-ATTEMPT-002",
+    "authorization_event_id": "EVT-ATTEMPT-002",
+    "accepted_transaction_id": "REQ-ATTEMPT-002",
+}
+_TAVILY_SEARCH_REQUEST_EXAMPLE = b'{"include_raw_content":false,"max_results":5,"query":"ExampleCo","search_depth":"basic","time_range":"week","topic":"news"}'
+_TAVILY_SEARCH_RESPONSE_EXAMPLE = b'{"results":[]}'
+_TAVILY_ACQUISITION_BUNDLE_EXAMPLE = {
+    "schema_version": TavilyAcquisitionBundle.schema_id,
+    "provider_id": "tavily",
+    "status": "search_results_empty",
+    "search": {
+        "operation": "search",
+        "endpoint": "/search",
+        "request_body_base64": base64.b64encode(_TAVILY_SEARCH_REQUEST_EXAMPLE).decode(
+            "ascii"
+        ),
+        "request_body_sha256": hashlib.sha256(
+            _TAVILY_SEARCH_REQUEST_EXAMPLE
+        ).hexdigest(),
+        "request_body_size_bytes": len(_TAVILY_SEARCH_REQUEST_EXAMPLE),
+        "response_body_base64": base64.b64encode(
+            _TAVILY_SEARCH_RESPONSE_EXAMPLE
+        ).decode("ascii"),
+        "response_body_sha256": hashlib.sha256(
+            _TAVILY_SEARCH_RESPONSE_EXAMPLE
+        ).hexdigest(),
+        "response_body_size_bytes": len(_TAVILY_SEARCH_RESPONSE_EXAMPLE),
+        "status_code": 200,
+    },
+    "extract": None,
+    "extract_urls": [],
+    "outcomes": [],
+}
+TavilyAcquisitionBundle.minimal_example = deepcopy(_TAVILY_ACQUISITION_BUNDLE_EXAMPLE)
+TavilyAcquisitionBundle.full_example = deepcopy(_TAVILY_ACQUISITION_BUNDLE_EXAMPLE)
+_TAVILY_MULTI_SEARCH_REQUEST_EXAMPLE = b'{"auto_parameters":false,"include_answer":false,"include_raw_content":false,"max_results":20,"query":"ExampleCo catalyst","search_depth":"advanced","time_range":"week","topic":"news"}'
+_TAVILY_MULTI_SEARCH_EXCHANGE_EXAMPLE = {
+    "operation": "search",
+    "endpoint": "/search",
+    "request_body_base64": base64.b64encode(
+        _TAVILY_MULTI_SEARCH_REQUEST_EXAMPLE
+    ).decode("ascii"),
+    "request_body_sha256": hashlib.sha256(
+        _TAVILY_MULTI_SEARCH_REQUEST_EXAMPLE
+    ).hexdigest(),
+    "request_body_size_bytes": len(_TAVILY_MULTI_SEARCH_REQUEST_EXAMPLE),
+    "response_body_base64": None,
+    "response_body_sha256": None,
+    "response_body_size_bytes": None,
+    "status_code": None,
+    "transport_error_class": "timeout",
+}
+TavilySearchTaskExchange.minimal_example = {
+    "task_id": "solar-stock-task-01",
+    "phase": "primary",
+    "status": "unavailable",
+    "exchange": deepcopy(_TAVILY_MULTI_SEARCH_EXCHANGE_EXAMPLE),
+    "discovered_urls": [],
+}
+TavilySearchTaskExchange.full_example = deepcopy(
+    TavilySearchTaskExchange.minimal_example
+)
+TavilyExtractBatchExchange.minimal_example = {
+    "phase": "primary",
+    "batch_ordinal": 1,
+    "status": "unavailable",
+    "exchange": {
+        **deepcopy(_TAVILY_MULTI_SEARCH_EXCHANGE_EXAMPLE),
+        "operation": "extract",
+        "endpoint": "/extract",
+    },
+    "urls": ["https://example.com/report"],
+    "outcomes": [],
+}
+TavilyExtractBatchExchange.full_example = deepcopy(
+    TavilyExtractBatchExchange.minimal_example
+)
+TavilyTaskAcquisitionStatus.minimal_example = {
+    "task_id": "solar-stock-task-01",
+    "primary_search_ordinal": 1,
+    "backfill_search_ordinal": None,
+    "discovered_unique_url_count": 0,
+    "extracted_success_count": 0,
+    "minimum_extract_successes": 2,
+    "status": "search_unavailable",
+}
+TavilyTaskAcquisitionStatus.full_example = deepcopy(
+    TavilyTaskAcquisitionStatus.minimal_example
+)
+TavilyAcquisitionBundleV2.minimal_example = {
+    "schema_version": TavilyAcquisitionBundleV2.schema_id,
+    "provider_id": "tavily",
+    "status": "failed",
+    "searches": [deepcopy(TavilySearchTaskExchange.minimal_example)],
+    "extract_batches": [],
+    "unique_urls": [],
+    "task_statuses": [deepcopy(TavilyTaskAcquisitionStatus.minimal_example)],
+}
+TavilyAcquisitionBundleV2.full_example = deepcopy(
+    TavilyAcquisitionBundleV2.minimal_example
+)
+_TAVILY_ACQUISITION_BUNDLE_RECORD_V2 = {
+    "schema_version": TavilyAcquisitionBundleRecordV2.schema_id,
+    "bundle_record_id": "TAVILY-BUNDLE-RECORD-001",
+    "run_id": _RUN,
+    "attempt_authorization_id": "ATTEMPT-AUTH-001",
+    "provider_response_artifact_id": "ARTIFACT-PROVIDER-RESPONSE-001",
+    "provider_response_sha256": _SHA_A,
+    "bundle_status": "failed",
+    "search_count": 1,
+    "extract_batch_count": 0,
+    "unique_url_count": 0,
+    "durable_content_count": 0,
+    "record_event_id": "EVT-TAVILY-BUNDLE-001",
+    "accepted_transaction_id": "TXN-TAVILY-BUNDLE-001",
+    "recorded_at": _NOW,
+    "record_fingerprint": "0" * 64,
+}
+_TAVILY_ACQUISITION_BUNDLE_RECORD_V2["record_fingerprint"] = (
+    _contract_fingerprint(
+        _TAVILY_ACQUISITION_BUNDLE_RECORD_V2,
+        field="record_fingerprint",
+    )
+)
+TavilyAcquisitionBundleRecordV2.minimal_example = deepcopy(
+    _TAVILY_ACQUISITION_BUNDLE_RECORD_V2
+)
+TavilyAcquisitionBundleRecordV2.full_example = deepcopy(
+    _TAVILY_ACQUISITION_BUNDLE_RECORD_V2
+)
+SourceAcquisitionAttemptAuthorizeRequest.minimal_example = {
+    "schema_version": SourceAcquisitionAttemptAuthorizeRequest.schema_id,
+    "request_id": "REQ-ATTEMPT-002",
+    "run_id": _RUN,
+    "expected_store_revision": 4,
+    "expected_action_fingerprint": _SHA_A,
+    "previous_attempt_authorization_id": "ATTEMPT-AUTH-001",
+    "human_confirmation": True,
+    "provider_cost_status": "not_reported_acknowledged",
+}
+SourceAcquisitionAttemptAuthorizeRequest.full_example = deepcopy(
+    SourceAcquisitionAttemptAuthorizeRequest.minimal_example
+)
 WorkspaceControlStoreBootstrapV2.minimal_example = {
     "schema_version": WorkspaceControlStoreBootstrapV2.schema_id,
     "workspace_id": "WS-PUBLIC-DEMO",
@@ -4059,7 +7222,7 @@ _WEB_REQUEST_SPEC = {
     "schema_version": RuntimeWebSearchRequestSpec.schema_id,
     "query": "ExampleCo operations",
     "domains": ["example.com"],
-    "max_results": 5,
+    "max_results": 20,
     "recency_days": 7,
 }
 RuntimeWebSearchRequestSpec.minimal_example = deepcopy(_WEB_REQUEST_SPEC)
@@ -4068,7 +7231,7 @@ RuntimeWebSearchRequestSpec.full_example = deepcopy(_WEB_REQUEST_SPEC)
 _WEB_ACQUISITION_SPEC = {
     "schema_version": RuntimeWebSearchAcquisitionSpec.schema_id,
     "kind": "web_search",
-    "provider_id": "tavily",
+    "provider_id": "exa",
     "requests": [deepcopy(_WEB_REQUEST_SPEC)],
     "acquisition_spec_fingerprint": "0" * 64,
 }
@@ -4078,6 +7241,126 @@ _WEB_ACQUISITION_SPEC["acquisition_spec_fingerprint"] = _contract_fingerprint(
 )
 RuntimeWebSearchAcquisitionSpec.minimal_example = deepcopy(_WEB_ACQUISITION_SPEC)
 RuntimeWebSearchAcquisitionSpec.full_example = deepcopy(_WEB_ACQUISITION_SPEC)
+
+_WEB_BACKFILL_SPEC_V1 = {
+    "enabled": True,
+    "query": "ExampleCo official filing investor relations",
+    "domains": ["example.com"],
+    "max_results": 20,
+    "recency_days": 30,
+    "search_depth": "advanced",
+}
+RuntimeWebSearchBackfillSpecV1.minimal_example = deepcopy(_WEB_BACKFILL_SPEC_V1)
+RuntimeWebSearchBackfillSpecV1.full_example = deepcopy(_WEB_BACKFILL_SPEC_V1)
+_WEB_TASK_SPEC_V3 = {
+    "schema_version": RuntimeWebSearchTaskSpecV3.schema_id,
+    "task_id": "solar-stock-task-01",
+    "task_category": "listed_company",
+    "entity_id": "EXMPL",
+    "query": "ExampleCo catalyst",
+    "topic": "news",
+    "domains": [],
+    "max_results": 20,
+    "recency_days": 7,
+    "search_depth": "advanced",
+    "minimum_extract_successes": 2,
+    "backfill": deepcopy(_WEB_BACKFILL_SPEC_V1),
+}
+RuntimeWebSearchTaskSpecV3.minimal_example = deepcopy(_WEB_TASK_SPEC_V3)
+RuntimeWebSearchTaskSpecV3.full_example = deepcopy(_WEB_TASK_SPEC_V3)
+_WEB_MULTI_TASKS_V3 = [
+    {
+        **deepcopy(_WEB_TASK_SPEC_V3),
+        "task_id": f"solar-stock-task-{position:02d}",
+        "query": f"ExampleCo catalyst {position:02d}",
+    }
+    for position in range(1, 21)
+]
+_WEB_ACQUISITION_SPEC_V3 = {
+    "schema_version": RuntimeWebSearchAcquisitionSpecV3.schema_id,
+    "kind": "web_search_multi",
+    "provider_id": "tavily",
+    "tasks": _WEB_MULTI_TASKS_V3,
+    "max_primary_search_calls": 20,
+    "max_backfill_search_calls": 20,
+    "max_extract_calls": 40,
+    "max_unique_urls": 800,
+    "extract_batch_size": 20,
+    "acquisition_spec_fingerprint": "0" * 64,
+}
+_WEB_ACQUISITION_SPEC_V3["acquisition_spec_fingerprint"] = _contract_fingerprint(
+    _WEB_ACQUISITION_SPEC_V3,
+    field="acquisition_spec_fingerprint",
+)
+RuntimeWebSearchAcquisitionSpecV3.minimal_example = deepcopy(
+    _WEB_ACQUISITION_SPEC_V3
+)
+RuntimeWebSearchAcquisitionSpecV3.full_example = deepcopy(_WEB_ACQUISITION_SPEC_V3)
+_RUNTIME_SOURCE_SEARCH_PLAN_V2 = {
+    "schema_version": RuntimeSourceSearchPlanV2.schema_id,
+    "search_plan_id": "SOURCE-SEARCH-PLAN-001",
+    "run_id": _RUN,
+    "plan_revision": 1,
+    "report_type": "solar_stock_periodic",
+    "acquisition_spec": deepcopy(_WEB_ACQUISITION_SPEC_V3),
+    "task_count": 20,
+    "acquisition_spec_fingerprint": _WEB_ACQUISITION_SPEC_V3[
+        "acquisition_spec_fingerprint"
+    ],
+    "record_event_id": "EVT-SOURCE-SEARCH-PLAN-001",
+    "accepted_transaction_id": "TXN-SOURCE-SEARCH-PLAN-001",
+    "created_at": _NOW,
+    "plan_fingerprint": "0" * 64,
+}
+_RUNTIME_SOURCE_SEARCH_PLAN_V2["plan_fingerprint"] = _contract_fingerprint(
+    _RUNTIME_SOURCE_SEARCH_PLAN_V2,
+    field="plan_fingerprint",
+)
+RuntimeSourceSearchPlanV2.minimal_example = deepcopy(
+    _RUNTIME_SOURCE_SEARCH_PLAN_V2
+)
+RuntimeSourceSearchPlanV2.full_example = deepcopy(_RUNTIME_SOURCE_SEARCH_PLAN_V2)
+
+_MARKET_DATA_SECURITY_V1 = {
+    "ticker": "TOYO",
+    "exchange": "NasdaqCM",
+    "currency": "USD",
+    "as_of": "2026-08-07",
+    "data_origin": "yahoo_chart_api",
+    "week_open": 10.4,
+    "week_high": 10.9,
+    "week_low": 10.1,
+    "week_close": 10.62,
+    "week_volume": 1523400,
+    "weekly_change_pct": 2.31,
+    "market_cap": 812000000.0,
+    "trailing_pe": None,
+}
+_MARKET_DATA_SNAPSHOT_V1 = {
+    "schema_version": MarketDataSnapshotV1.schema_id,
+    "market_data_snapshot_id": "MARKET-DATA-SNAPSHOT-001",
+    "run_id": _RUN,
+    "as_of_date": "2026-08-07",
+    "security_count": 1,
+    "provider_id": "yahoo_finance_chart",
+    "securities": [deepcopy(_MARKET_DATA_SECURITY_V1)],
+    "gaps": [
+        {
+            "ticker": "DQ",
+            "failure_class": "transport_unavailable",
+        }
+    ],
+    "record_event_id": "EVT-MARKET-DATA-SNAPSHOT-001",
+    "accepted_transaction_id": "TXN-MARKET-DATA-SNAPSHOT-001",
+    "recorded_at": _NOW,
+    "snapshot_fingerprint": "0" * 64,
+}
+_MARKET_DATA_SNAPSHOT_V1["snapshot_fingerprint"] = _contract_fingerprint(
+    _MARKET_DATA_SNAPSHOT_V1,
+    field="snapshot_fingerprint",
+)
+MarketDataSnapshotV1.minimal_example = deepcopy(_MARKET_DATA_SNAPSHOT_V1)
+MarketDataSnapshotV1.full_example = deepcopy(_MARKET_DATA_SNAPSHOT_V1)
 
 _CACHED_ACQUISITION_SPEC = {
     "schema_version": RuntimeCachedPackageAcquisitionSpec.schema_id,
@@ -4090,12 +7373,8 @@ _CACHED_ACQUISITION_SPEC["acquisition_spec_fingerprint"] = _contract_fingerprint
     _CACHED_ACQUISITION_SPEC,
     field="acquisition_spec_fingerprint",
 )
-RuntimeCachedPackageAcquisitionSpec.minimal_example = deepcopy(
-    _CACHED_ACQUISITION_SPEC
-)
-RuntimeCachedPackageAcquisitionSpec.full_example = deepcopy(
-    _CACHED_ACQUISITION_SPEC
-)
+RuntimeCachedPackageAcquisitionSpec.minimal_example = deepcopy(_CACHED_ACQUISITION_SPEC)
+RuntimeCachedPackageAcquisitionSpec.full_example = deepcopy(_CACHED_ACQUISITION_SPEC)
 
 _NEWSAPI_ACQUISITION_SPEC = {
     "schema_version": RuntimeNewsApiAcquisitionSpec.schema_id,
@@ -4144,6 +7423,7 @@ _NEXT_ACTION = {
     "role_id": "scout",
     "source_route_id": None,
     "source_provider_id": None,
+    "source_acquisition_attempt_authorization_id": None,
     "reason_code": "role_proposal_required",
     "input_artifacts": [],
     "request_schema_id": "briefloop.candidate_claims_proposal.v2",
@@ -4572,6 +7852,54 @@ RepairCycleRecord.minimal_example = {
     "accepted_transaction_id": "REQ-REPAIR-001",
     "request_fingerprint": _SHA_A,
 }
+GateRepairCycleRecord.minimal_example = {
+    "schema_version": GateRepairCycleRecord.schema_id,
+    "gate_repair_id": "GATE-REPAIR-001",
+    "run_id": _RUN,
+    "authorization_id": "AUTH-RUN-001",
+    "repair_ordinal": 1,
+    "source_gate_batch_id": "GATE-BATCH-001",
+    "source_stage_id": "auditor",
+    "blocking_evaluation_ids": ["EVAL-MATERIAL-001"],
+    "blocking_findings": [
+        {
+            "evaluation_id": "EVAL-MATERIAL-001",
+            "finding_id": "FINDING-MATERIAL-001",
+        }
+    ],
+    "repair_owner": "editor",
+    "target_artifact": _AR1,
+    "reopened_transition_ids": ["TRANS-EDITOR-REOPEN-001"],
+    "started_at": _NOW,
+    "start_event_id": "EVT-GATE-REPAIR-001",
+    "accepted_transaction_id": "REQ-GATE-REPAIR-001",
+    "request_fingerprint": _SHA_A,
+}
+GateRepairArtifactBinding.minimal_example = {
+    "schema_version": GateRepairArtifactBinding.schema_id,
+    "run_id": _RUN,
+    "gate_repair_id": "GATE-REPAIR-001",
+    "prior_artifact": _AR1,
+    "successor_artifact": {"artifact_id": "audited_brief", "revision": 2},
+    "owned_artifact_submission_id": "SUBMISSION-AUDITED-BRIEF-002",
+    "accepted_event_id": "EVT-GATE-REPAIR-ARTIFACT-001",
+    "accepted_transaction_id": "REQ-GATE-REPAIR-ARTIFACT-001",
+    "request_fingerprint": _SHA_A,
+}
+GateRepairOutcomeRecord.minimal_example = {
+    "schema_version": GateRepairOutcomeRecord.schema_id,
+    "outcome_id": "GATE-REPAIR-OUTCOME-001",
+    "run_id": _RUN,
+    "gate_repair_id": "GATE-REPAIR-001",
+    "replacement_gate_batch_id": "GATE-BATCH-002",
+    "replacement_stage_id": "auditor",
+    "evaluation_ids": ["EVAL-MATERIAL-002"],
+    "disposition": "passed",
+    "completed_at": _NOW,
+    "completion_event_id": "EVT-GATE-REPAIR-OUTCOME-001",
+    "accepted_transaction_id": "REQ-GATE-REPAIR-OUTCOME-001",
+    "request_fingerprint": _SHA_A,
+}
 ArtifactSupersessionRecord.minimal_example = {
     "schema_version": ArtifactSupersessionRecord.schema_id,
     "supersession_id": "SUPERSEDE-001",
@@ -4629,6 +7957,119 @@ RunHeadTransitionRecord.minimal_example = {
     "accepted_transaction_id": "REQ-RESET-001",
     "request_fingerprint": _SHA_A,
 }
+_GUIDANCE_REUSE_SCOPE_EXAMPLE = {
+    "schema_version": GuidanceReuseScopeV1.schema_id,
+    "audience": "Executive team",
+    "audience_profile": "Decision makers",
+    "output_language": "English",
+    "output_style": "concise",
+    "output_formats": ["markdown"],
+    "cadence": "weekly",
+}
+_GUIDANCE_REUSE_SCOPE_EXAMPLE["scope_fingerprint"] = _contract_fingerprint(
+    _GUIDANCE_REUSE_SCOPE_EXAMPLE,
+    field="scope_fingerprint",
+)
+GuidanceReuseScopeV1.minimal_example = deepcopy(_GUIDANCE_REUSE_SCOPE_EXAMPLE)
+
+_GUIDANCE_DECISION_EXAMPLE = {
+    "schema_version": RunGuidanceSelectionDecisionRecord.schema_id,
+    "decision_id": "GUIDANCE-DECISION-001",
+    "run_id": "RUN-20260714-002",
+    "snapshot_id": "GUIDANCE-SNAPSHOT-001",
+    "source_run_id": _RUN,
+    "guidance_id": "GUIDANCE-001",
+    "draft_revision": 1,
+    "status_revision_id": "GUIDANCE-STATUS-001",
+    "provenance_kind": "accepted_model_finding",
+    "assessment_result_id": "PFLAJ-RESULT-001",
+    "finding_id": "FINDING-001",
+    "disposition_id": "DISPOSITION-001",
+    "result_fingerprint": _SHA_A,
+    "finding_fingerprint": _SHA_B,
+    "disposition_fingerprint": _SHA_C,
+    "observation_id": None,
+    "observation_fingerprint": None,
+    "draft_fingerprint": _SHA_D,
+    "status_fingerprint": _SHA_A,
+    "source_scope_fingerprint": _GUIDANCE_REUSE_SCOPE_EXAMPLE["scope_fingerprint"],
+    "successor_scope_fingerprint": _GUIDANCE_REUSE_SCOPE_EXAMPLE["scope_fingerprint"],
+    "selected": True,
+    "reason_code": "approved_scope_match",
+}
+_GUIDANCE_DECISION_EXAMPLE["decision_fingerprint"] = _contract_fingerprint(
+    _GUIDANCE_DECISION_EXAMPLE,
+    field="decision_fingerprint",
+)
+RunGuidanceSelectionDecisionRecord.minimal_example = deepcopy(
+    _GUIDANCE_DECISION_EXAMPLE
+)
+
+_GUIDANCE_ITEM_EXAMPLE = {
+    "schema_version": RunGuidanceSnapshotItemRecord.schema_id,
+    "item_id": "GUIDANCE-ITEM-001",
+    "run_id": "RUN-20260714-002",
+    "snapshot_id": "GUIDANCE-SNAPSHOT-001",
+    "position": 0,
+    "source_run_id": _RUN,
+    "finalized_lineage_fingerprint": _SHA_A,
+    "provenance_kind": "accepted_model_finding",
+    "assessment_result_id": "PFLAJ-RESULT-001",
+    "assessment_result_fingerprint": _SHA_B,
+    "finding_id": "FINDING-001",
+    "finding_fingerprint": _SHA_C,
+    "disposition_id": "DISPOSITION-001",
+    "disposition_fingerprint": _SHA_D,
+    "observation_id": None,
+    "observation_fingerprint": None,
+    "guidance_id": "GUIDANCE-001",
+    "draft_revision": 1,
+    "draft_fingerprint": _SHA_A,
+    "status_revision_id": "GUIDANCE-STATUS-001",
+    "status_fingerprint": _SHA_B,
+    "guidance_text": "Prefer a short executive summary before the detail.",
+    "guidance_sha256": hashlib.sha256(
+        b"Prefer a short executive summary before the detail."
+    ).hexdigest(),
+    "reuse_scope": deepcopy(_GUIDANCE_REUSE_SCOPE_EXAMPLE),
+}
+_GUIDANCE_ITEM_EXAMPLE["item_fingerprint"] = _contract_fingerprint(
+    _GUIDANCE_ITEM_EXAMPLE,
+    field="item_fingerprint",
+)
+RunGuidanceSnapshotItemRecord.minimal_example = deepcopy(_GUIDANCE_ITEM_EXAMPLE)
+
+_GUIDANCE_SNAPSHOT_EXAMPLE = {
+    "schema_version": RunGuidanceSnapshotRecord.schema_id,
+    "snapshot_id": "GUIDANCE-SNAPSHOT-001",
+    "workspace_id": "WS-001",
+    "run_id": "RUN-20260714-002",
+    "predecessor_run_id": _RUN,
+    "reuse_requested": True,
+    "successor_direction_fingerprint": _SHA_A,
+    "successor_run_contract_fingerprint": _SHA_B,
+    "candidate_set_fingerprint": _SHA_C,
+    "selected_item_ids": ["GUIDANCE-ITEM-001"],
+    "decision_ids": ["GUIDANCE-DECISION-001"],
+    "selected_count": 1,
+    "omitted_count": 0,
+    "snapshot_event_id": "EVT-GUIDANCE-SNAPSHOT-001",
+    "accepted_transaction_id": "REQ-SUCCESSOR-001",
+    "request_fingerprint": _SHA_D,
+}
+_GUIDANCE_SNAPSHOT_EXAMPLE["snapshot_fingerprint"] = _contract_fingerprint(
+    _GUIDANCE_SNAPSHOT_EXAMPLE,
+    field="snapshot_fingerprint",
+)
+RunGuidanceSnapshotRecord.minimal_example = deepcopy(_GUIDANCE_SNAPSHOT_EXAMPLE)
+
+for _model in (
+    GuidanceReuseScopeV1,
+    RunGuidanceSelectionDecisionRecord,
+    RunGuidanceSnapshotItemRecord,
+    RunGuidanceSnapshotRecord,
+):
+    _model.full_example = deepcopy(_model.minimal_example)
 FinalizeRenderRecord.minimal_example = {
     "schema_version": FinalizeRenderRecord.schema_id,
     "render_id": "RENDER-001",
@@ -4858,6 +8299,35 @@ RunResetRequest.minimal_example = {
     "gate_strictness": {key: True for key in GATE_ID_VALUES},
     "input_governance_required": False,
 }
+_SUCCESSOR_REQUEST_EXAMPLE = {
+    "schema_version": RunSuccessorStartRequest.schema_id,
+    "request_id": "REQ-SUCCESSOR-001",
+    "predecessor_run_id": _RUN,
+    "successor_run_id": "RUN-20260714-002",
+    "workspace_id": "WS-001",
+    "runtime": "operator",
+    "expected_head_run_id": _RUN,
+    "expected_store_revision": 14,
+    "expected_workspace_revision": 14,
+    "run_direction": deepcopy(
+        CoreRunInitializeRequest.minimal_example["run_direction"]
+    ),
+    "workspace_config_sha256": _SHA_A,
+    "sources_config_sha256": _SHA_B,
+    "role_topology": "default",
+    "gate_strictness": {key: True for key in GATE_ID_VALUES},
+    "input_governance_required": False,
+    "include_approved_guidance": True,
+}
+_SUCCESSOR_REQUEST_EXAMPLE["run_direction"] = RunDirection.model_validate(
+    _SUCCESSOR_REQUEST_EXAMPLE["run_direction"],
+    strict=True,
+).model_dump(mode="json")
+_SUCCESSOR_REQUEST_EXAMPLE["request_fingerprint"] = _contract_fingerprint(
+    _SUCCESSOR_REQUEST_EXAMPLE,
+    field="request_fingerprint",
+)
+RunSuccessorStartRequest.minimal_example = _SUCCESSOR_REQUEST_EXAMPLE
 FinalizeRenderRequest.minimal_example = {
     "schema_version": FinalizeRenderRequest.schema_id,
     "request_id": "REQ-RENDER-001",
@@ -4934,6 +8404,9 @@ DeliveryResultRequest.minimal_example = {
 
 for _model in (
     RepairCycleRecord,
+    GateRepairCycleRecord,
+    GateRepairArtifactBinding,
+    GateRepairOutcomeRecord,
     ArtifactSupersessionRecord,
     RepairCompletionRecord,
     RecoveryCompletionRecord,
@@ -4954,6 +8427,7 @@ for _model in (
     RepairCompleteRequest,
     RecoveryCompleteRequest,
     RunResetRequest,
+    RunSuccessorStartRequest,
     FinalizeRenderRequest,
     FinalizeCompleteRequest,
     InternalApprovalRequest,
@@ -5072,10 +8546,353 @@ for _model in (
     _model.full_example = deepcopy(_model.minimal_example)
 
 
+_PFLAJ_INSTRUMENT = {
+    "schema_version": "briefloop.semantic_evaluator.instrument_config.v1",
+    "instrument_config_id": "PFLAJ-INSTRUMENT-001",
+    "provider_id": "anthropic_messages",
+    "model_id": "messages-model-001",
+    "model_version": "model-version-001",
+    "language": "zh-CN",
+    "decoding": {
+        "temperature": 1.0,
+        "top_p": 1.0,
+        "max_output_tokens": 1024,
+        "seed": None,
+    },
+    "retry_policy": {
+        "max_attempts": 1,
+        "retryable_reason_codes": [],
+        "backoff_schedule_ms": [],
+    },
+    "prompt_sizer": {
+        "sizer_id": "anthropic_utf8_byte_v1",
+        "sizer_version": "v1",
+        "max_context_tokens": 8192,
+        "reserved_output_tokens": 1024,
+    },
+    "transport_policy": {
+        "provider_transport_only": True,
+        "model_tools": False,
+        "browser": False,
+        "cross_run_memory": False,
+        "provider_file_search": False,
+    },
+}
+_PFLAJ_CONTEXT = {
+    "schema_version": "briefloop.semantic_evaluator.bounded_context.v1",
+    "context_id": "PFLAJ-CONTEXT-001",
+    "context_sha256": _SHA_A,
+    "language": "zh-CN",
+    "data_class": "public",
+    "requirements": [],
+}
+_PFLAJ_CONTEXT["context_sha256"] = _canonical_json_sha256(
+    {key: value for key, value in _PFLAJ_CONTEXT.items() if key != "context_sha256"}
+)
+_PFLAJ_ENDPOINT = "https://messages.example.com"
+_PFLAJ_POLICY = {
+    "schema_version": PostFinalAssessmentPolicyRevision.schema_id,
+    "policy_revision_id": "PFLAJ-POLICY-001",
+    "run_id": _RUN,
+    "previous_policy_revision_id": None,
+    "enabled": True,
+    "auto_run": False,
+    "auto_open": False,
+    "adapter_id": "anthropic_messages_v1",
+    "messages_endpoint": _PFLAJ_ENDPOINT,
+    "messages_endpoint_sha256": hashlib.sha256(
+        _PFLAJ_ENDPOINT.encode("utf-8")
+    ).hexdigest(),
+    "requested_model_id": "messages-model-001",
+    "model_version": "model-version-001",
+    "expected_model_identity": "model-version-001",
+    "profile_id": "research_design_report_zh_v1",
+    "instrument_config": deepcopy(_PFLAJ_INSTRUMENT),
+    "instrument_config_sha256": _canonical_json_sha256(_PFLAJ_INSTRUMENT),
+    "bounded_context": deepcopy(_PFLAJ_CONTEXT),
+    "bounded_context_sha256": _PFLAJ_CONTEXT["context_sha256"],
+    "temperature": 1.0,
+    "top_p": 1.0,
+    "max_provider_calls": 9,
+    "max_total_input_tokens": 100000,
+    "max_total_output_tokens": 9216,
+    "max_output_tokens_per_call": 1024,
+    "wall_timeout_seconds": 60,
+    "public_safe_egress_attested": True,
+    "egress_scope": "public_safe_report",
+    "human_actor_id": "HUMAN-001",
+    "human_request_id": "PFLAJ-POLICY-REQUEST-001",
+    "recorded_at": _NOW,
+    "policy_event_id": "EVENT-PFLAJ-POLICY-001",
+    "accepted_transaction_id": "TX-PFLAJ-POLICY-001",
+    "policy_fingerprint": _SHA_A,
+}
+_PFLAJ_POLICY["policy_fingerprint"] = _contract_fingerprint(
+    _PFLAJ_POLICY, field="policy_fingerprint"
+)
+PostFinalAssessmentPolicyRevision.minimal_example = deepcopy(_PFLAJ_POLICY)
+PostFinalAssessmentPolicyRevision.full_example = deepcopy(_PFLAJ_POLICY)
+
+_PFLAJ_REQUEST = {
+    "schema_version": PostFinalAssessmentRequestRecord.schema_id,
+    "assessment_request_id": "PFLAJ-REQUEST-001",
+    "run_id": _RUN,
+    "finalized_facts_fingerprint": _SHA_A,
+    "finalized_lineage_fingerprint": _SHA_B,
+    "report_artifact_id": "reader_brief",
+    "report_revision": 1,
+    "report_sha256": _SHA_B,
+    "finalization_id": "FINALIZATION-001",
+    "finalization_receipt_id": "TX-FINALIZATION-001",
+    "finalize_gate_batch_id": "GATE-BATCH-001",
+    "policy_revision_id": _PFLAJ_POLICY["policy_revision_id"],
+    "policy_fingerprint": _PFLAJ_POLICY["policy_fingerprint"],
+    "adapter_id": "anthropic_messages_v1",
+    "messages_endpoint_sha256": _PFLAJ_POLICY["messages_endpoint_sha256"],
+    "requested_model_id": "messages-model-001",
+    "expected_model_identity": "model-version-001",
+    "profile_id": "research_design_report_zh_v1",
+    "instrument_config_sha256": _PFLAJ_POLICY["instrument_config_sha256"],
+    "bounded_context_sha256": _PFLAJ_POLICY["bounded_context_sha256"],
+    "input_binding_sha256": "c" * 64,
+    "assessment_plan_sha256": "d" * 64,
+    "ordered_prompt_request_sha256s": [f"{item:064x}" for item in range(1, 10)],
+    "prompt_count": 9,
+    "provider_call_ceiling": 9,
+    "total_input_token_upper_bound": 10000,
+    "total_output_token_upper_bound": 9216,
+    "output_tokens_per_call": 1024,
+    "trial_id": "PFLAJ-TRIAL-001",
+    "archive_identity_sha256": "e" * 64,
+    "request_status": "claimed",
+    "claimed_at": _NOW,
+    "request_event_id": "EVENT-PFLAJ-REQUEST-001",
+    "accepted_transaction_id": "TX-PFLAJ-REQUEST-001",
+    "request_fingerprint": _SHA_A,
+}
+_PFLAJ_REQUEST["request_fingerprint"] = _contract_fingerprint(
+    _PFLAJ_REQUEST, field="request_fingerprint"
+)
+PostFinalAssessmentRequestRecord.minimal_example = deepcopy(_PFLAJ_REQUEST)
+PostFinalAssessmentRequestRecord.full_example = deepcopy(_PFLAJ_REQUEST)
+
+_PFLAJ_ABANDONMENT = {
+    "schema_version": PostFinalAssessmentAbandonmentRecord.schema_id,
+    "abandonment_id": "PFLAJ-ABANDONMENT-001",
+    "run_id": _RUN,
+    "assessment_request_id": _PFLAJ_REQUEST["assessment_request_id"],
+    "assessment_request_fingerprint": _PFLAJ_REQUEST["request_fingerprint"],
+    "finalized_lineage_fingerprint": _SHA_B,
+    "assessment_generation": 1,
+    "reason": "outcome_unknown",
+    "human_actor_id": "HUMAN-001",
+    "human_request_id": "PFLAJ-ASSESSMENT-REQUEST-002",
+    "expected_store_revision": 20,
+    "recorded_at": _NOW,
+    "abandonment_event_id": "EVENT-PFLAJ-ABANDONMENT-001",
+    "accepted_transaction_id": "TX-PFLAJ-SERIES-002",
+    "abandonment_fingerprint": _SHA_A,
+}
+_PFLAJ_ABANDONMENT["abandonment_fingerprint"] = _contract_fingerprint(
+    _PFLAJ_ABANDONMENT,
+    field="abandonment_fingerprint",
+)
+PostFinalAssessmentAbandonmentRecord.minimal_example = deepcopy(_PFLAJ_ABANDONMENT)
+PostFinalAssessmentAbandonmentRecord.full_example = deepcopy(_PFLAJ_ABANDONMENT)
+
+_PFLAJ_EXECUTION = {
+    "schema_version": PostFinalAssessmentExecutionRecord.schema_id,
+    "execution_id": "PFLAJ-EXECUTION-001",
+    "run_id": _RUN,
+    "assessment_request_id": _PFLAJ_REQUEST["assessment_request_id"],
+    "assessment_request_fingerprint": _PFLAJ_REQUEST["request_fingerprint"],
+    "trial_id": _PFLAJ_REQUEST["trial_id"],
+    "finalized_lineage_fingerprint": _SHA_B,
+    "execution_archive_manifest_sha256": "f" * 64,
+    "execution_receipt_id": "PFLAJ-EXECUTION-RECEIPT-001",
+    "execution_status": "complete",
+    "run_status": None,
+    "validation_status": None,
+    "failure_phase": None,
+    "reason_codes": [],
+    "recorded_at": _NOW,
+    "execution_event_id": "EVENT-PFLAJ-EXECUTION-001",
+    "accepted_transaction_id": "TX-PFLAJ-EXECUTION-001",
+    "execution_fingerprint": _SHA_A,
+}
+_PFLAJ_EXECUTION["execution_fingerprint"] = _contract_fingerprint(
+    _PFLAJ_EXECUTION,
+    field="execution_fingerprint",
+)
+PostFinalAssessmentExecutionRecord.minimal_example = deepcopy(_PFLAJ_EXECUTION)
+PostFinalAssessmentExecutionRecord.full_example = deepcopy(_PFLAJ_EXECUTION)
+
+_PFLAJ_RESULT = {
+    "schema_version": PostFinalAssessmentResultRecord.schema_id,
+    "assessment_result_id": "PFLAJ-RESULT-001",
+    "run_id": _RUN,
+    "assessment_request_id": _PFLAJ_REQUEST["assessment_request_id"],
+    "policy_revision_id": _PFLAJ_POLICY["policy_revision_id"],
+    "finalized_facts_fingerprint": _SHA_A,
+    "finalized_lineage_fingerprint": _SHA_B,
+    "terminal_evidence_class": "available",
+    "reason_codes": [],
+    "shadow_request_sha256": "f" * 64,
+    "execution_manifest_sha256": "1" * 64,
+    "archive_manifest_sha256": "2" * 64,
+    "archive_receipt_id": "PFLAJ-ARCHIVE-RECEIPT-001",
+    "composition_sha256": "3" * 64,
+    "presentation_sha256": "4" * 64,
+    "reader_view_sha256": "5" * 64,
+    "assessed_unit_count": 25,
+    "finding_count": 0,
+    "withheld_finding_count": 0,
+    "abstention_count": 0,
+    "recorded_at": _NOW,
+    "result_event_id": "EVENT-PFLAJ-RESULT-001",
+    "accepted_transaction_id": "TX-PFLAJ-RESULT-001",
+    "result_fingerprint": _SHA_A,
+}
+_PFLAJ_RESULT["result_fingerprint"] = _contract_fingerprint(
+    _PFLAJ_RESULT, field="result_fingerprint"
+)
+PostFinalAssessmentResultRecord.minimal_example = deepcopy(_PFLAJ_RESULT)
+PostFinalAssessmentResultRecord.full_example = deepcopy(_PFLAJ_RESULT)
+
+_PFLAJ_DISPOSITION = {
+    "schema_version": PostFinalFindingDispositionRecord.schema_id,
+    "disposition_id": "PFLAJ-DISPOSITION-001",
+    "run_id": _RUN,
+    "finalized_lineage_fingerprint": _SHA_B,
+    "assessment_result_id": _PFLAJ_RESULT["assessment_result_id"],
+    "assessment_result_fingerprint": _PFLAJ_RESULT["result_fingerprint"],
+    "reader_view_sha256": _PFLAJ_RESULT["reader_view_sha256"],
+    "finding_id": "F-000000000001",
+    "finding_fingerprint": "6" * 64,
+    "previous_disposition_id": None,
+    "decision": "accept",
+    "human_note": "Useful post-final observation.",
+    "human_actor_id": "HUMAN-001",
+    "human_request_id": "PFLAJ-DISPOSITION-REQUEST-001",
+    "recorded_at": _NOW,
+    "disposition_event_id": "EVENT-PFLAJ-DISPOSITION-001",
+    "accepted_transaction_id": "TX-PFLAJ-DISPOSITION-001",
+    "disposition_fingerprint": _SHA_A,
+}
+_PFLAJ_DISPOSITION["disposition_fingerprint"] = _contract_fingerprint(
+    _PFLAJ_DISPOSITION, field="disposition_fingerprint"
+)
+PostFinalFindingDispositionRecord.minimal_example = deepcopy(_PFLAJ_DISPOSITION)
+PostFinalFindingDispositionRecord.full_example = deepcopy(_PFLAJ_DISPOSITION)
+
+_HUMAN_OBSERVATION_SPAN = {
+    "schema_version": HumanObservationReportSpan.schema_id,
+    "report_sha256": _SHA_C,
+    "block_id": "BLOCK-PFLAJ-001",
+    "start_char": 0,
+    "end_char": 12,
+    "excerpt_sha256": hashlib.sha256(b"Human note.").hexdigest(),
+}
+HumanObservationReportSpan.minimal_example = deepcopy(_HUMAN_OBSERVATION_SPAN)
+HumanObservationReportSpan.full_example = deepcopy(_HUMAN_OBSERVATION_SPAN)
+_PFLAJ_HUMAN_OBSERVATION = {
+    "schema_version": PostFinalHumanObservationRecord.schema_id,
+    "origin": "human",
+    "observation_id": "PFLAJ-HUMAN-OBSERVATION-001",
+    "observation_revision": 1,
+    "run_id": _RUN,
+    "finalized_lineage_fingerprint": _SHA_B,
+    "report_revision": 1,
+    "report_artifact_id": "reader_brief",
+    "report_sha256": _SHA_C,
+    "assessment_result_id": None,
+    "assessment_result_fingerprint": None,
+    "reader_view_sha256": None,
+    "observation_text": "Human note.",
+    "observation_sha256": hashlib.sha256(b"Human note.").hexdigest(),
+    "requirement_id": None,
+    "claim_id": None,
+    "report_span": _HUMAN_OBSERVATION_SPAN,
+    "scope_class": None,
+    "dimension_id": None,
+    "previous_observation_id": None,
+    "previous_observation_fingerprint": None,
+    "human_actor_id": "HUMAN-001",
+    "human_request_id": "PFLAJ-HUMAN-OBSERVATION-REQUEST-001",
+    "recorded_at": _NOW,
+    "observation_event_id": "EVENT-PFLAJ-HUMAN-OBSERVATION-001",
+    "accepted_transaction_id": "TX-PFLAJ-HUMAN-OBSERVATION-001",
+    "observation_fingerprint": _SHA_A,
+}
+_PFLAJ_HUMAN_OBSERVATION["observation_fingerprint"] = _contract_fingerprint(
+    _PFLAJ_HUMAN_OBSERVATION, field="observation_fingerprint"
+)
+PostFinalHumanObservationRecord.minimal_example = deepcopy(_PFLAJ_HUMAN_OBSERVATION)
+PostFinalHumanObservationRecord.full_example = deepcopy(_PFLAJ_HUMAN_OBSERVATION)
+
+_PFLAJ_GUIDANCE_DRAFT = {
+    "schema_version": PostFinalGuidanceDraftRevision.schema_id,
+    "guidance_id": "PFLAJ-GUIDANCE-001",
+    "draft_revision": 1,
+    "run_id": _RUN,
+    "finalized_lineage_fingerprint": _SHA_B,
+    "provenance_kind": "accepted_model_finding",
+    "assessment_result_id": _PFLAJ_RESULT["assessment_result_id"],
+    "assessment_result_fingerprint": _PFLAJ_RESULT["result_fingerprint"],
+    "finding_id": _PFLAJ_DISPOSITION["finding_id"],
+    "finding_fingerprint": _PFLAJ_DISPOSITION["finding_fingerprint"],
+    "disposition_id": _PFLAJ_DISPOSITION["disposition_id"],
+    "disposition_fingerprint": _PFLAJ_DISPOSITION["disposition_fingerprint"],
+    "observation_id": None,
+    "observation_fingerprint": None,
+    "previous_draft_revision": None,
+    "guidance_scope": "finding_only",
+    "guidance_text": "Keep the conclusion aligned with the report body.",
+    "guidance_sha256": hashlib.sha256(
+        "Keep the conclusion aligned with the report body.".encode("utf-8")
+    ).hexdigest(),
+    "human_actor_id": "HUMAN-001",
+    "human_request_id": "PFLAJ-GUIDANCE-DRAFT-REQUEST-001",
+    "recorded_at": _NOW,
+    "draft_event_id": "EVENT-PFLAJ-GUIDANCE-DRAFT-001",
+    "accepted_transaction_id": "TX-PFLAJ-GUIDANCE-DRAFT-001",
+    "draft_fingerprint": _SHA_A,
+}
+_PFLAJ_GUIDANCE_DRAFT["draft_fingerprint"] = _contract_fingerprint(
+    _PFLAJ_GUIDANCE_DRAFT, field="draft_fingerprint"
+)
+PostFinalGuidanceDraftRevision.minimal_example = deepcopy(_PFLAJ_GUIDANCE_DRAFT)
+PostFinalGuidanceDraftRevision.full_example = deepcopy(_PFLAJ_GUIDANCE_DRAFT)
+
+_PFLAJ_GUIDANCE_STATUS = {
+    "schema_version": PostFinalGuidanceStatusRevision.schema_id,
+    "status_revision_id": "PFLAJ-GUIDANCE-STATUS-001",
+    "run_id": _RUN,
+    "finalized_lineage_fingerprint": _SHA_B,
+    "guidance_id": _PFLAJ_GUIDANCE_DRAFT["guidance_id"],
+    "draft_revision": _PFLAJ_GUIDANCE_DRAFT["draft_revision"],
+    "guidance_sha256": _PFLAJ_GUIDANCE_DRAFT["guidance_sha256"],
+    "status": "approved",
+    "previous_status_revision_id": None,
+    "human_actor_id": "HUMAN-001",
+    "human_request_id": "PFLAJ-GUIDANCE-STATUS-REQUEST-001",
+    "recorded_at": _NOW,
+    "status_event_id": "EVENT-PFLAJ-GUIDANCE-STATUS-001",
+    "accepted_transaction_id": "TX-PFLAJ-GUIDANCE-STATUS-001",
+    "status_fingerprint": _SHA_A,
+}
+_PFLAJ_GUIDANCE_STATUS["status_fingerprint"] = _contract_fingerprint(
+    _PFLAJ_GUIDANCE_STATUS, field="status_fingerprint"
+)
+PostFinalGuidanceStatusRevision.minimal_example = deepcopy(_PFLAJ_GUIDANCE_STATUS)
+PostFinalGuidanceStatusRevision.full_example = deepcopy(_PFLAJ_GUIDANCE_STATUS)
+
+
 V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     SourceProposal,
     SourceCommitRequest,
     SourcePackCommitRequest,
+    MultiTavilySourcePackCommitRequest,
     CandidateClaimsProposal,
     ScreenedCandidatesProposal,
     ClaimDraftsProposal,
@@ -5096,10 +8913,27 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     Delivery,
     TransactionReceipt,
     RunDirection,
+    ExecutionSourceManifest,
+    MultiTavilyExecutionSourceManifest,
+    RunExecutionAuthorizationInput,
+    RunExecutionAuthorizationBootstrap,
+    RunExecutionAuthorization,
+    RunSourceDiscoveryAuthorizationInput,
+    RunSourceDiscoveryAuthorizationBootstrap,
+    RunSourceDiscoveryAuthorization,
+    RunSourceAcquisitionAttemptAuthorization,
+    TavilyAcquisitionBundle,
+    TavilyAcquisitionBundleV2,
+    TavilyAcquisitionBundleRecordV2,
+    MarketDataSnapshotV1,
+    SourceAcquisitionAttemptAuthorizeRequest,
     WorkspaceControlStoreBootstrapV2,
     RuntimeAdapterBinding,
     RuntimeWebSearchRequestSpec,
     RuntimeWebSearchAcquisitionSpec,
+    RuntimeWebSearchTaskSpecV3,
+    RuntimeWebSearchAcquisitionSpecV3,
+    RuntimeSourceSearchPlanV2,
     RuntimeCachedPackageAcquisitionSpec,
     RuntimeNewsApiAcquisitionSpec,
     RuntimeSourceRouteBinding,
@@ -5128,10 +8962,17 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     RunIntegrityRecord,
     IntegrityCheckRequest,
     RepairCycleRecord,
+    GateRepairCycleRecord,
+    GateRepairArtifactBinding,
+    GateRepairOutcomeRecord,
     ArtifactSupersessionRecord,
     RepairCompletionRecord,
     RecoveryCompletionRecord,
     RunHeadTransitionRecord,
+    GuidanceReuseScopeV1,
+    RunGuidanceSelectionDecisionRecord,
+    RunGuidanceSnapshotItemRecord,
+    RunGuidanceSnapshotRecord,
     FinalizeRenderRecord,
     FinalizationRecord,
     RunArchiveRecord,
@@ -5143,12 +8984,22 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     DeliveryAttemptRecord,
     DeliveryResultRecord,
     DeliveryResultObservation,
+    PostFinalAssessmentPolicyRevision,
+    PostFinalAssessmentRequestRecord,
+    PostFinalAssessmentExecutionRecord,
+    PostFinalAssessmentResultRecord,
+    PostFinalFindingDispositionRecord,
+    HumanObservationReportSpan,
+    PostFinalHumanObservationRecord,
+    PostFinalGuidanceDraftRevision,
+    PostFinalGuidanceStatusRevision,
     RepairStartRequest,
     ArtifactSupersedeRequest,
     ArtifactRevertRequest,
     RepairCompleteRequest,
     RecoveryCompleteRequest,
     RunResetRequest,
+    RunSuccessorStartRequest,
     FinalizeRenderRequest,
     FinalizeCompleteRequest,
     InternalApprovalRequest,
@@ -5285,6 +9136,7 @@ __all__ = [
     "ArtifactRevision",
     "ArtifactRevisionReference",
     "ArtifactSubmitRequest",
+    "authorized_input_classification_bytes",
     "AuditPromotionRequest",
     "AuditProposal",
     "AuditReportArtifact",
@@ -5305,6 +9157,10 @@ __all__ = [
     "CoreRunEventBinding",
     "CoreRunInitializeRequest",
     "CoreRunNextAction",
+    "ExecutionSourceManifest",
+    "ExecutionSourceManifestMember",
+    "MultiTavilyExecutionSourceManifest",
+    "MultiTavilySourcePackCommitRequest",
     "Delivery",
     "DeliveryAttemptRecord",
     "DeliveryAttemptReference",
@@ -5316,12 +9172,19 @@ __all__ = [
     "DeliveryResultObservation",
     "DeliveryResultReference",
     "DeliveryResultRequest",
+    "derive_reader_review_result_status",
     "EventEnvelope",
     "GATE_ID_VALUES",
     "GateArtifactBinding",
     "GateCheckRequest",
     "GateEvaluationRecord",
     "GateFindingRecord",
+    "GateRepairArtifactBinding",
+    "GateRepairArtifactBindingReference",
+    "GateRepairCycleRecord",
+    "GateRepairCycleReference",
+    "GateRepairOutcomeRecord",
+    "GateRepairOutcomeReference",
     "FinalizeCompleteRequest",
     "FinalizeRenderRecord",
     "FinalizeRenderReference",
@@ -5339,10 +9202,31 @@ __all__ = [
     "OwnedArtifactSubmissionRecord",
     "OwnedArtifactSubmitRequest",
     "ProposalSourceBinding",
+    "ReaderReviewAssessmentInput",
     "PackageArtifactBinding",
     "PackageArtifactBindingReference",
     "PackageReadyRecord",
     "PackageReadyReference",
+    "PostFinalAssessmentPolicyRevision",
+    "PostFinalAssessmentPolicyRevisionReference",
+    "PostFinalAssessmentRequestRecord",
+    "PostFinalAssessmentRequestReference",
+    "PostFinalAssessmentExecutionRecord",
+    "PostFinalAssessmentExecutionReference",
+    "PostFinalAssessmentExecutionStatus",
+    "PostFinalAssessmentFailurePhase",
+    "PostFinalAssessmentResultRecord",
+    "PostFinalAssessmentResultReference",
+    "ReaderReviewResultStatus",
+    "PostFinalFindingDispositionRecord",
+    "PostFinalFindingDispositionReference",
+    "PostFinalGuidanceDraftRevision",
+    "PostFinalGuidanceDraftReference",
+    "PostFinalGuidanceStatusRevision",
+    "POST_FINAL_GUIDANCE_STATUS_TRANSITIONS",
+    "post_final_guidance_legal_actions",
+    "post_final_guidance_status_transition_allowed",
+    "PostFinalGuidanceStatusReference",
     "PublicationIdentityV1",
     "RecoveryCompleteRequest",
     "RecoveryCompletionRecord",
@@ -5359,7 +9243,30 @@ __all__ = [
     "RunArchiveRecord",
     "RunArchiveReference",
     "RunContractBinding",
+    "RunExecutionAuthorizationReference",
+    "RunSourceDiscoveryAuthorizationReference",
+    "RunSourceAcquisitionAttemptAuthorizationReference",
     "RunDirection",
+    "GuidanceReuseScopeV1",
+    "RunExecutionAuthorization",
+    "RunExecutionAuthorizationBootstrap",
+    "RunExecutionAuthorizationInput",
+    "RunSourceDiscoveryAuthorization",
+    "RunSourceAcquisitionAttemptAuthorization",
+    "TavilyAcquisitionExchange",
+    "TavilyExtractUrlOutcome",
+    "TavilyAcquisitionBundle",
+    "TavilySearchTaskExchange",
+    "TavilyExtractBatchExchange",
+    "TavilyTaskAcquisitionStatus",
+    "TavilyAcquisitionBundleV2",
+    "TavilyAcquisitionBundleRecordV2",
+    "MarketDataSecurityV1",
+    "MarketDataSecurityGapV1",
+    "MarketDataSnapshotV1",
+    "SourceAcquisitionAttemptAuthorizeRequest",
+    "RunSourceDiscoveryAuthorizationBootstrap",
+    "RunSourceDiscoveryAuthorizationInput",
     "RuntimeAdapterBinding",
     "RuntimeCachedPackageAcquisitionSpec",
     "RuntimeNewsApiAcquisitionSpec",
@@ -5369,15 +9276,27 @@ __all__ = [
     "RUNTIME_SOURCE_ROUTE_IDS",
     "RUNTIME_SOURCE_WEB_PROVIDER_IDS",
     "RuntimeSourcePlanBinding",
+    "RuntimeSourceSearchPlanV2",
     "RuntimeSourceRouteBinding",
     "RuntimeWebSearchAcquisitionSpec",
+    "RuntimeWebSearchBackfillSpecV1",
+    "RuntimeWebSearchTaskSpecV3",
+    "RuntimeWebSearchAcquisitionSpecV3",
     "RuntimeWebSearchRequestSpec",
     "RunIdentity",
     "RunIntegrityRecord",
     "RunHeadTransitionRecord",
     "RunHeadTransitionReference",
+    "RunGuidanceSelectionDecisionRecord",
+    "RunGuidanceSelectionDecisionReference",
+    "RunGuidanceSnapshotItemRecord",
+    "RunGuidanceSnapshotItemReference",
+    "RunGuidanceSnapshotRecord",
+    "RunGuidanceSnapshotReference",
     "RunResetRequest",
+    "RunSuccessorStartRequest",
     "ScreenedCandidatesProposal",
+    "SourceAcquisitionFailureEvidence",
     "SOURCE_ACQUISITION_METHODS",
     "SOURCE_ELIGIBILITY_REASONS",
     "SOURCE_MATERIAL_KINDS",

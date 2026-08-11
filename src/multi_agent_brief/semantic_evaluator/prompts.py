@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import re
 from typing import Protocol
 
@@ -42,7 +43,7 @@ from multi_agent_brief.semantic_evaluator.unit_planner import (
 )
 
 
-PROMPT_ASSEMBLER_VERSION = "dimension_prompt_assembler_v3"
+PROMPT_ASSEMBLER_VERSION = "dimension_prompt_assembler_v5"
 CANARY_DERIVATION_VERSION = "semantic_evaluator_canary_v1"
 
 
@@ -168,6 +169,44 @@ def dimension_prompt_sha256() -> str:
     return resource_sha256("prompts", DIMENSION_PROMPT_RESOURCE)
 
 
+def _provider_reader_artifact_projection(
+    reader_artifact: ReaderArtifact,
+) -> dict[str, object]:
+    """Project frozen reader identity without global block offsets."""
+
+    return {
+        "schema_version": reader_artifact.schema_version,
+        "artifact_id": reader_artifact.artifact_id,
+        "report_sha256": reader_artifact.report_sha256,
+        "language": reader_artifact.language,
+        "format": reader_artifact.format,
+        "normalized_text_sha256": reader_artifact.normalized_text_sha256,
+        "blocks": [
+            {
+                "block_id": block.block_id,
+                "ordinal": block.ordinal,
+                "section_path": list(block.section_path),
+                "role": block.role,
+                "text": block.text,
+                "text_sha256": block.text_sha256,
+            }
+            for block in reader_artifact.blocks
+        ],
+    }
+
+
+@lru_cache(maxsize=1)
+def _dimension_output_schema_text() -> str:
+    """Canonical schema text for the one fixed dimension response contract.
+
+    model_json_schema() rebuilds the schema on every call and this is a single
+    class, so both the schema and its canonical text are constant for the
+    process. The text is embedded verbatim in the prompt and never mutated.
+    """
+
+    return canonical_json_text(DimensionResponse.model_json_schema())
+
+
 def build_dimension_prompt(
     *,
     reader_artifact: ReaderArtifact,
@@ -206,7 +245,7 @@ def build_dimension_prompt(
     ):
         raise ValueError("dimension_prompt_plan_binding_invalid")
     report_data = {
-        "artifact": reader_artifact.model_dump(mode="json", warnings="error"),
+        "artifact": _provider_reader_artifact_projection(reader_artifact),
         "normalized_text": normalized_text,
         "span_locator_contract": {
             "offset_basis": "block_text_zero_based_half_open",
@@ -256,12 +295,11 @@ def build_dimension_prompt(
         bounded_context_sha256=bounded_context.context_sha256,
         dimension_id=dimension.dimension_id,
     )
-    output_schema = DimensionResponse.model_json_schema()
     replacements = {
         "{{REPORT_DATA}}": canonical_json_text(report_data),
         "{{BOUNDED_CONTEXT_DATA}}": canonical_json_text(context_data),
         "{{CURRENT_RUBRIC}}": canonical_json_text(rubric_data),
-        "{{OUTPUT_SCHEMA}}": canonical_json_text(output_schema),
+        "{{OUTPUT_SCHEMA}}": _dimension_output_schema_text(),
     }
     user_text = resources.prompts.dimension_template_text
     for marker, value in replacements.items():

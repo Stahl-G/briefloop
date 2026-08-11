@@ -10,6 +10,8 @@ from multi_agent_brief.contracts.v2 import (
     RUNTIME_SOURCE_PROVIDER_IDS,
     RUNTIME_SOURCE_ROUTE_IDS,
     RUNTIME_SOURCE_WEB_PROVIDER_IDS,
+    RunDirection,
+    canonical_run_direction_for_binding,
 )
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
 
@@ -30,6 +32,7 @@ INTERNAL_CONTRACT_ARTIFACT_IDS = (
     "run_contract_runtime_adapter",
     "run_contract_runtime_source_plan",
 )
+EXECUTION_AUTHORIZATION_MANIFEST_ARTIFACT_ID = "run_execution_source_manifest"
 REQUIRED_AUDITOR_GATES = (
     "coverage_omission",
     "freshness",
@@ -68,6 +71,14 @@ class ArtifactPolicy:
     invocation_required: bool
     producer_tool_id: str | None = None
     invocation_role_id: str | None = None
+
+
+def required_auditor_gates(run_direction: RunDirection) -> tuple[str, ...]:
+    """Return the sole Store-bound required Gate policy for this run."""
+
+    if run_direction.output_contract is None:
+        return REQUIRED_AUDITOR_GATES
+    return (*REQUIRED_AUDITOR_GATES, "final_abstract_quality")
 
 
 @dataclass(frozen=True)
@@ -265,7 +276,7 @@ def run_contract_fingerprint(
             "runtime_adapter_fingerprint": runtime_adapter_fingerprint,
             "runtime_source_plan_sha256": runtime_source_plan_sha256,
             "runtime_source_plan_fingerprint": runtime_source_plan_fingerprint,
-            "run_direction": run_direction,
+            "run_direction": canonical_run_direction_for_binding(run_direction),
             "workspace_config_sha256": workspace_config_sha256,
             "sources_config_sha256": sources_config_sha256,
             "role_topology": role_topology,
@@ -289,13 +300,18 @@ def transaction_type_for(effect_kind: str) -> str:
         "artifact_supersession": "core-v2-artifact-supersession",
         "repair_complete": "core-v2-repair-complete",
         "recovery_complete": "core-v2-recovery-complete",
+        "gate_repair_start": "core-v2-gate-repair-start",
         "run_head_transition": "core-v2-run-reset",
+        "run_successor_start": "core-v2-run-successor-start",
         "finalize_render": "core-v2-finalize-render",
         "finalize_complete": "core-v2-finalize-complete",
         "internal_approval": "core-v2-internal-approval",
         "delivery_authorization": "core-v2-delivery-authorization",
         "delivery_attempt": "core-v2-delivery-attempt",
         "delivery_result": "core-v2-delivery-result",
+        "source_acquisition_attempt_authorize": (
+            "core-v2-source-acquisition-attempt-authorize"
+        ),
     }
     return values[effect_kind]
 
@@ -322,6 +338,7 @@ __all__ = [
     "DOCTOR_IMPLEMENTATION",
     "DOCTOR_VERSION",
     "INTERNAL_CONTRACT_ARTIFACT_IDS",
+    "EXECUTION_AUTHORIZATION_MANIFEST_ARTIFACT_ID",
     "REQUIRED_AUDITOR_GATES",
     "STAGE_ROLES",
     "SOURCE_PROVIDER_IDS",
@@ -335,6 +352,7 @@ __all__ = [
     "core_role_topology_policy",
     "derived_id",
     "normalize_text",
+    "required_auditor_gates",
     "run_contract_fingerprint",
     "require_topology_runtime",
     "transaction_type_for",

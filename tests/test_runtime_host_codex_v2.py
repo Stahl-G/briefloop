@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from copy import deepcopy
+from dataclasses import replace
 from datetime import date
 import hashlib
 import json
@@ -12,11 +14,29 @@ import yaml
 from multi_agent_brief.cli.init_wizard import create_workspace
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.contracts import SchemaRegistry
-from multi_agent_brief.contracts.v2 import InvocationStartRequest
+from multi_agent_brief.contracts.v2 import (
+    InvocationStartRequest,
+    SourceProposal,
+    TavilyAcquisitionBundleV2,
+    TavilyExtractBatchExchange,
+    TavilyExtractUrlOutcome,
+    TavilySearchTaskExchange,
+    TavilyTaskAcquisitionStatus,
+)
 from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.control_store.serialization import (
+    canonical_fingerprint,
+    canonical_json_bytes,
+)
 from multi_agent_brief.core_run_v2.errors import CoreRunResult
 from multi_agent_brief.core_run_v2.policy import derived_id
 from multi_agent_brief.core_run_v2.service import CoreRunService
+from multi_agent_brief.intake_v2.errors import IntakeResult
+from multi_agent_brief.intake_v2.service import IntakeService
+from multi_agent_brief.product.init_web.submit import (
+    SUBMISSION_SCHEMA,
+    InitWebSubmitter,
+)
 from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
 from multi_agent_brief.runtime_host_v2.service import (
@@ -24,8 +44,15 @@ from multi_agent_brief.runtime_host_v2.service import (
     _ROLE_OUTPUTS,
     _role_task_instructions,
     _strict_proposal_violations,
+    _target_relevance_task_instruction,
 )
+from multi_agent_brief.runtime_host_v2.submission import source_stage_root
 from multi_agent_brief.runtime_assets import install_runtime_kit
+from multi_agent_brief.sources.base import SourceItem
+from multi_agent_brief.sources.search_backends.tavily import TavilyBackend
+from multi_agent_brief.sources.web_search import (
+    WebSearchCollection,
+)
 from multi_agent_brief.workspace.init_profile import InitProfile
 
 
@@ -62,8 +89,7 @@ def test_strict_json_role_instructions_bind_contract_preflight_commands() -> Non
     )
 
     assert (
-        "briefloop contract show briefloop.candidate_claims_proposal.v2 "
-        "--example full"
+        "briefloop contract show briefloop.candidate_claims_proposal.v2 --example full"
     ) in instructions
     assert (
         "briefloop runtime invocation-validate --workspace . --envelope "
@@ -77,6 +103,21 @@ def test_strict_json_role_instructions_bind_contract_preflight_commands() -> Non
         "INV-PLANNER-001",
     )
     assert "briefloop contract" not in owned_instructions
+
+
+def test_target_relevance_task_instructions_bind_frozen_terms_without_evidence() -> None:
+    terms = ["Toyo solar", "Industry weekly"]
+
+    analyst = _target_relevance_task_instruction("analyst", terms)
+    assert 'target_terms=["Toyo solar", "Industry weekly"]' in analyst
+    assert "executive summary" in analyst
+    assert "verbatim" in analyst
+    assert "not evidence" in analyst
+
+    editor = _target_relevance_task_instruction("editor", terms, gate_repair=True)
+    assert 'target_terms=["Toyo solar", "Industry weekly"]' in editor
+    assert "Gate repair" in editor
+    assert "do not add facts" in editor
 
 
 def test_strict_proposal_preflight_rejects_schema_valid_cross_run_binding() -> None:
@@ -158,9 +199,9 @@ def test_first_dynamic_proposal_is_created_and_advances_the_runtime(
     payload["run_id"] = dispatch.envelope.run_id
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         source = store.load_snapshot(dispatch.envelope.run_id).sources[0]
-    evidence_text = (workspace / str(source.locator.path)).read_text(
-        encoding="utf-8"
-    ).strip()
+    evidence_text = (
+        (workspace / str(source.locator.path)).read_text(encoding="utf-8").strip()
+    )
     payload["candidates"][0].update(
         source_id=source.source_id,
         statement=evidence_text,
@@ -179,9 +220,7 @@ def test_first_dynamic_proposal_is_created_and_advances_the_runtime(
     assert request.expected_artifact_revision == 0
 
     envelope_path = (
-        workspace
-        / dispatch.envelope.scratch_directory
-        / "role_task_envelope.json"
+        workspace / dispatch.envelope.scratch_directory / "role_task_envelope.json"
     )
     (envelope_path.parent / "candidate_claims.json").write_text(
         json.dumps(payload, sort_keys=True),
@@ -225,27 +264,49 @@ def test_first_dynamic_proposal_is_created_and_advances_the_runtime(
 
 
 def _external_workspace(tmp_path: Path) -> Path:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     workspace = tmp_path / "external-workspace"
-    values = iter(("external-codex-workspace", "external-codex-run"))
-    create_workspace(
-        workspace,
-        InitProfile(
-            company="ExampleCo",
-            industry="manufacturing",
-            brief_title="ExampleCo brief",
-            task_objective="Prepare the ExampleCo brief.",
-            audience="management",
-            audience_profile="management",
-            focus_areas=["operations"],
-            output_formats=["markdown"],
-            web_search_mode="external_api",
-            web_search_enabled=True,
-            search_backend="tavily",
-        ),
-        report_date_factory=lambda: date(2026, 7, 19),
-        identity_factory=lambda: next(values),
+    session_id = "runtime-host-codex-test-session"
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    submitter.configure_search_secret(
+        session_id=session_id,
+        body={"provider": "tavily", "api_key": "test-only-tavily-secret"},
     )
-    install_runtime_kit(workspace=workspace, runtime="codex")
+    status, response = submitter.submit(
+        {
+            "schema_version": SUBMISSION_SCHEMA,
+            "request_id": "REQ-RUNTIME-HOST-CODEX-TAVILY",
+            "payload": {
+                "workspace_target": workspace.name,
+                "selections": {
+                    "company": "ExampleCo",
+                    "report_type": "management_monthly",
+                    "industry_or_theme": "manufacturing",
+                    "task_objective": "Prepare the ExampleCo brief.",
+                    "brief_title": "ExampleCo brief",
+                    "audience": "management",
+                    "interface_language": "en",
+                    "output_language": "en",
+                    "cadence": "weekly",
+                    "max_source_age_days": 30,
+                    "focus_areas": ["operations"],
+                    "output_formats": ["markdown"],
+                    "forbidden_sources": [],
+                    "source_profile": "llm_decide",
+                    "web_search_mode": "external_api",
+                    "search_backend": "tavily",
+                    "search_domains": [],
+                    "output_extent": "balanced",
+                },
+                "completion_target": "finalized_local",
+                "repair_budget": 1,
+                "search_secret_session_id": session_id,
+                "human_confirmation": True,
+            },
+        }
+    )
+    if status != 200 or response.get("source_discovery_authorized") is not True:
+        raise AssertionError(f"external workspace initialization failed: {response!r}")
     return workspace
 
 
@@ -274,6 +335,43 @@ cached_package:
         encoding="utf-8",
     )
     return workspace
+
+
+def _specialist_workspace(tmp_path: Path) -> Path:
+    workspace = _workspace(tmp_path)
+    (workspace / "sources.yaml").write_text(
+        """source_strategy:
+  profile: research
+  enabled_providers: [rss]
+""",
+        encoding="utf-8",
+    )
+    return workspace
+
+
+def _advance_to_source_route(
+    workspace: Path,
+    capsys,
+    *,
+    route: str,
+) -> tuple[RuntimeHostService, object]:
+    assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
+    capsys.readouterr()
+    assert _apply_current(workspace, capsys) == 0
+    capsys.readouterr()
+    host = RuntimeHostService(
+        workspace,
+        adapter_loader=load_codex_adapter_binding,
+    )
+    planner = host.start_current_invocation()
+    (
+        workspace / planner.envelope.scratch_directory / "source_candidates.yaml"
+    ).write_text(
+        f"version: 1\ncandidates:\n  - route: {route}\n",
+        encoding="utf-8",
+    )
+    accepted = host.accept_invocation(planner.envelope.invocation_id)
+    return host, accepted.next_action
 
 
 def _current_action_path(workspace: Path, capsys) -> Path:
@@ -561,6 +659,112 @@ def test_invocation_validate_blocks_missing_output_without_writing_store(
         assert store.current_revision == before
 
 
+def test_role_submission_reconstructs_every_envelope_field_from_store(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = _workspace(tmp_path)
+    assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
+    capsys.readouterr()
+    assert _apply_current(workspace, capsys) == 0
+    capsys.readouterr()
+    host = RuntimeHostService(
+        workspace,
+        adapter_loader=load_codex_adapter_binding,
+    )
+    dispatch = host.start_current_invocation()
+    scratch = workspace / dispatch.envelope.scratch_directory
+    (scratch / "source_candidates.yaml").write_text(
+        "version: 1\ncandidates: []\n",
+        encoding="utf-8",
+    )
+    envelope_path = scratch / "role_task_envelope.json"
+    original = json.loads(envelope_path.read_text(encoding="utf-8"))
+    mutations = {
+        "schema_version": "briefloop.role_task_envelope.invalid",
+        "run_id": "RUN-FORGED",
+        "invocation_id": "INV-FORGED",
+        "store_revision": original["store_revision"] + 1,
+        "action_fingerprint": "0" * 64,
+        "role_id": "scout",
+        "stage_id": "scout",
+        "scratch_directory": "scratch/INV-FORGED",
+        "allowed_output_filenames": ["forged.json"],
+        "proposal_schema_id": "briefloop.forged.v2",
+        "adapter_binding_fingerprint": "1" * 64,
+        "source_plan_fingerprint": "2" * 64,
+        "executor_kind": "delegated_specialist",
+        "context_mode": "independent_stage_context",
+        "review_mode": "independent_stage_context",
+        "dispatch_instruction": "delegate_exact_role",
+        "task_instructions": "Forged mutable task instructions.",
+    }
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+    for field, value in mutations.items():
+        tampered = deepcopy(original)
+        tampered[field] = value
+        envelope_path.write_text(json.dumps(tampered, sort_keys=True), encoding="utf-8")
+        with pytest.raises(RuntimeHostError, match="runtime_envelope_invalid"):
+            host.validate_invocation(dispatch.envelope.invocation_id)
+        envelope_path.write_text(json.dumps(original, sort_keys=True), encoding="utf-8")
+    assert host.validate_invocation(dispatch.envelope.invocation_id).status == "valid"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_revision
+
+
+def test_source_submission_verifier_binds_content_raw_and_advisory_race(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("source-candidate publication is precommit unsupported on Windows")
+    workspace = _specialist_workspace(tmp_path)
+    host, action = _advance_to_source_route(workspace, capsys, route="rss")
+    assert action.action_kind == "delegate"
+    assert action.role_id == "source-provider"
+    dispatch = host.start_current_invocation(expected_action=action)
+    scratch = workspace / dispatch.envelope.scratch_directory
+    content = b"Exact source content for sibling verification.\n"
+    raw_payload = b'{"provider":"rss","result":"exact"}\n'
+    payload = SchemaRegistry.example(SourceProposal.schema_id, "full")
+    payload.update(
+        proposal_id="PROP-SOURCE-RSS-001",
+        run_id=action.run_id,
+        source_id="SRC-RSS-001",
+        content_sha256=hashlib.sha256(content).hexdigest(),
+        raw_payload_sha256=hashlib.sha256(raw_payload).hexdigest(),
+    )
+    (scratch / "source_proposal.json").write_text(
+        json.dumps(payload, sort_keys=True),
+        encoding="utf-8",
+    )
+    content_path = scratch / "source_content.bin"
+    raw_path = scratch / "source_raw.json"
+    content_path.write_bytes(content)
+    raw_path.write_bytes(raw_payload)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+
+    assert host.validate_invocation(dispatch.envelope.invocation_id).status == "valid"
+    content_path.write_bytes(content + b"tampered")
+    content_result = host.validate_invocation(dispatch.envelope.invocation_id)
+    assert content_result.status == "invalid"
+    assert [item.field for item in content_result.violations] == ["content_sha256"]
+    with pytest.raises(RuntimeHostError, match="runtime_proposal_invalid"):
+        host.accept_invocation(dispatch.envelope.invocation_id)
+    content_path.write_bytes(content)
+    assert host.validate_invocation(dispatch.envelope.invocation_id).status == "valid"
+    raw_path.write_bytes(raw_payload + b"tampered")
+    raw_result = host.validate_invocation(dispatch.envelope.invocation_id)
+    assert raw_result.status == "invalid"
+    assert [item.field for item in raw_result.violations] == ["raw_payload_sha256"]
+    with pytest.raises(RuntimeHostError, match="runtime_proposal_invalid"):
+        host.accept_invocation(dispatch.envelope.invocation_id)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_revision
+
+
 def test_restart_recovers_original_invocation_action_and_envelope(
     tmp_path: Path,
     capsys,
@@ -594,7 +798,10 @@ def test_restart_recovers_original_invocation_action_and_envelope(
             strict=True,
         )
     )
-    assert committed.status == "committed"
+    assert committed.status == "committed", (
+        committed.next_action.reason_code,
+        committed.next_action.effect_kind,
+    )
     assert committed.receipt is not None
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         revision = store.current_revision
@@ -1036,10 +1243,10 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
     def no_results(_provider, _query, _config):
         nonlocal calls
         calls += 1
-        return []
+        return _provider_collection([])
 
     monkeypatch.setattr(
-        "multi_agent_brief.sources.web_search.WebSearchProvider.collect",
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",
         no_results,
     )
     assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
@@ -1096,12 +1303,18 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
     failed = json.loads(capsys.readouterr().out)
     assert failed["status"] == "rejected_recorded"
     assert failed["next_action"]["action_kind"] == "human_decision"
-    assert failed["next_action"]["effect_kind"] == "source_input_required"
+    assert failed["next_action"]["effect_kind"] == "source_acquisition_recovery"
+    assert (
+        failed["next_action"]["source_acquisition_attempt_authorization_id"]
+        == accepted["next_action"]["source_acquisition_attempt_authorization_id"]
+    )
     assert calls == 1
 
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         revision = store.current_revision
-        snapshot = store.load_snapshot("RUN-external-codex-run")
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
     assert snapshot.sources == ()
     assert (
         len(
@@ -1154,7 +1367,7 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
         manifest_payload, sort_keys=True, separators=(",", ":")
     ).encode("utf-8")
     manifest_path.write_bytes(manifest_bytes)
-    request_payload = {
+    human_pack_payload = {
         "schema_version": "briefloop.runtime_human_source_pack_request.v2",
         "request_id": "REQ-HUMAN-SOURCE-PACK-001",
         "run_id": action["run_id"],
@@ -1195,18 +1408,34 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
             },
         ],
     }
+    request_payload = {
+        "schema_version": ("briefloop.runtime_source_acquisition_recovery_request.v1"),
+        "request_id": "REQ-HUMAN-SOURCE-RECOVERY-001",
+        "run_id": action["run_id"],
+        "expected_store_revision": action["store_revision"],
+        "expected_action_fingerprint": action["action_fingerprint"],
+        "decision": "provide_human_source_pack",
+        "previous_attempt_authorization_id": None,
+        "human_confirmation": None,
+        "provider_cost_status": None,
+        "human_source_pack": human_pack_payload,
+    }
     request_path.write_text(
         json.dumps(request_payload, sort_keys=True),
         encoding="utf-8",
     )
-    bad_members = [dict(item) for item in request_payload["members"]]
+    bad_members = [dict(item) for item in human_pack_payload["members"]]
     bad_members[1]["expected_input_sha256"] = "0" * 64
     request_path.write_text(
         json.dumps(
             {
                 **request_payload,
                 "request_id": "REQ-HUMAN-SOURCE-PACK-BAD",
-                "members": bad_members,
+                "human_source_pack": {
+                    **human_pack_payload,
+                    "request_id": "REQ-HUMAN-SOURCE-PACK-BAD",
+                    "members": bad_members,
+                },
             },
             sort_keys=True,
         ),
@@ -1236,7 +1465,14 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
     manifest_path.write_bytes(manifest_bytes + b"\n")
     request_path.write_text(
         json.dumps(
-            {**request_payload, "request_id": "REQ-HUMAN-SOURCE-PACK-MANIFEST-BAD"},
+            {
+                **request_payload,
+                "request_id": "REQ-HUMAN-SOURCE-MANIFEST-BAD",
+                "human_source_pack": {
+                    **human_pack_payload,
+                    "request_id": "REQ-HUMAN-SOURCE-PACK-MANIFEST-BAD",
+                },
+            },
             sort_keys=True,
         ),
         encoding="utf-8",
@@ -1265,6 +1501,89 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
         json.dumps(request_payload, sort_keys=True),
         encoding="utf-8",
     )
+    original_host_submit = IntakeService._commit_human_source_pack_from_host
+    host_submit_calls = 0
+    replacement_bytes: list[bytes] = []
+
+    def replace_materialized_pack_then_report_unknown(self, request, pack):
+        nonlocal host_submit_calls
+        host_submit_calls += 1
+        if host_submit_calls == 1:
+            replacement_contents = [
+                f"Replacement content B for {member.member_id}.\n".encode()
+                for member in request.members
+            ]
+            replacement_manifest = deepcopy(manifest_payload)
+            for entry, replacement_content in zip(
+                replacement_manifest["sources"],
+                replacement_contents,
+                strict=True,
+            ):
+                entry["sha256"] = hashlib.sha256(replacement_content).hexdigest()
+            replacement_manifest_bytes = json.dumps(
+                replacement_manifest,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+            replacement_manifest_sha = hashlib.sha256(
+                replacement_manifest_bytes
+            ).hexdigest()
+            assert request.manifest_path is not None
+            (workspace / request.manifest_path).write_bytes(replacement_manifest_bytes)
+            replacement_bytes.append(replacement_manifest_bytes)
+            for member, verified, replacement_content in zip(
+                request.members,
+                pack.members,
+                replacement_contents,
+                strict=True,
+            ):
+                replacement_proposal = json.loads(verified.proposal_bytes)
+                replacement_proposal["title"] = (
+                    f"Replacement title B for {member.member_id}"
+                )
+                replacement_proposal["content_sha256"] = hashlib.sha256(
+                    replacement_content
+                ).hexdigest()
+                replacement_proposal["source_manifest_sha256"] = (
+                    replacement_manifest_sha
+                )
+                replacement_proposal_bytes = json.dumps(
+                    replacement_proposal,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+                (workspace / member.proposal_path).write_bytes(
+                    replacement_proposal_bytes
+                )
+                (workspace / member.content_path).write_bytes(replacement_content)
+                replacement_bytes.extend(
+                    (replacement_proposal_bytes, replacement_content)
+                )
+            replacement_request = request.model_dump(mode="json", exclude_unset=False)
+            replacement_request["expected_manifest_sha256"] = replacement_manifest_sha
+            replacement_request_bytes = json.dumps(
+                replacement_request,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+            (
+                workspace / "scratch" / request.invocation_id / "submit_request.json"
+            ).write_bytes(replacement_request_bytes)
+            replacement_bytes.append(replacement_request_bytes)
+        result = original_host_submit(self, request, pack)
+        if host_submit_calls == 1:
+            assert result.status == "committed"
+            return IntakeResult(
+                status="commit_outcome_unknown",
+                error_code="commit_outcome_unknown",
+            )
+        return result
+
+    monkeypatch.setattr(
+        IntakeService,
+        "_commit_human_source_pack_from_host",
+        replace_materialized_pack_then_report_unknown,
+    )
     assert (
         main(
             [
@@ -1281,7 +1600,8 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
         == 0
     )
     accepted_manual = json.loads(capsys.readouterr().out)
-    assert accepted_manual["status"] == "committed", accepted_manual
+    assert accepted_manual["status"] == "replayed", accepted_manual
+    assert host_submit_calls == 2
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         after_manual = store.current_revision
         snapshot = store.load_snapshot(action["run_id"])
@@ -1307,6 +1627,8 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
     receipt = snapshot.transactions[-1]
     assert len(receipt.source_ids) == 2
     assert accepted_manual["next_action"]["effect_kind"] == "stage_complete"
+    database_bytes = (workspace / "briefloop.db").read_bytes()
+    assert all(item not in database_bytes for item in replacement_bytes)
 
     manual.write_text("mutated after acceptance\n", encoding="utf-8")
     assert (
@@ -1348,9 +1670,15 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
         ("input_path", "input/missing-source.txt"),
         ("expected_input_sha256", "0" * 64),
     ):
-        changed_members = [dict(item) for item in request_payload["members"]]
+        changed_members = [dict(item) for item in human_pack_payload["members"]]
         changed_members[0][field] = changed_value
-        changed_request = {**request_payload, "members": changed_members}
+        changed_request = {
+            **request_payload,
+            "human_source_pack": {
+                **human_pack_payload,
+                "members": changed_members,
+            },
+        }
         request_path.write_text(
             json.dumps(changed_request, sort_keys=True),
             encoding="utf-8",
@@ -1387,6 +1715,767 @@ def test_deterministic_source_failure_exhausts_frozen_route_without_retry(
             for path in sorted((workspace / "scratch").rglob("*"))
             if path.is_file()
         } == scratch_before_conflicts
+
+
+def _provider_item(position: int, *, content: str | None = None) -> SourceItem:
+    return SourceItem(
+        source_id=f"WEB-{position:04d}",
+        source_name="Example Search",
+        source_type="web_search",
+        title=f"Search result {position:04d}",
+        content=content or f"Bounded discovery result {position:04d}.",
+        url=f"https://example.com/result/{position:04d}",
+        published_at="2026-07-20T00:00:00Z",
+        retrieved_at="2026-07-22T00:00:00Z",
+        metadata={"rank": position},
+    )
+
+
+def _provider_collection(items: list[SourceItem]) -> WebSearchCollection:
+    projections = [
+        {
+            "title": item.title,
+            "url": item.url,
+            "snippet": f"Discovery snippet {position}.",
+            "raw_content": item.content,
+            "published_date": item.published_at or "",
+            "score": 0.9,
+        }
+        for position, item in enumerate(items, start=1)
+    ]
+    normalized = tuple(
+        replace(
+            item,
+            metadata={
+                **item.metadata,
+                "backend": "tavily",
+                "content_shape": "provider_raw_content",
+                "has_raw_content": True,
+                "evidence_quality": "partial_extract",
+                "provider_projection": projection,
+            },
+        )
+        for item, projection in zip(items, projections, strict=True)
+    )
+    response = {
+        "results": [
+            {
+                "title": projection["title"],
+                "url": projection["url"],
+                "content": projection["snippet"],
+                "raw_content": projection["raw_content"],
+                "published_date": projection["published_date"],
+                "score": projection["score"],
+            }
+            for projection in projections
+        ]
+    }
+    return WebSearchCollection(
+        items=normalized,
+        raw_response=json.dumps(response, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        ),
+        status_code=200,
+    )
+
+
+def _durable_tavily_collection(
+    items: list[SourceItem],
+    *,
+    search_tasks: list[dict[str, object]],
+) -> WebSearchCollection:
+    """Build one schema18 multi-search + batch Extract success bundle."""
+
+    search_rows = [
+        {
+            "title": item.title,
+            "url": item.url,
+            "content": f"Discovery snippet {position}.",
+            "published_date": item.published_at,
+            "score": 0.9,
+        }
+        for position, item in enumerate(items, start=1)
+    ]
+    searches: list[TavilySearchTaskExchange] = []
+    task_statuses: list[TavilyTaskAcquisitionStatus] = []
+    task_ids_by_url: dict[str, str] = {}
+    for ordinal, task in enumerate(search_tasks, start=1):
+        task_rows = search_rows[(ordinal - 1) * 20 : ordinal * 20]
+        search_payload: dict[str, object] = {
+            "query": task["query"],
+            "max_results": 20,
+            "topic": task["topic"],
+            "search_depth": "advanced",
+            "include_answer": False,
+            "include_raw_content": False,
+            "auto_parameters": False,
+            "time_range": "week",
+        }
+        domains = task.get("domains") or []
+        if domains:
+            search_payload["include_domains"] = domains
+        exchange = TavilyBackend._exchange(
+            "search",
+            canonical_json_bytes(search_payload),
+            response_body=canonical_json_bytes({"results": task_rows}),
+            status_code=200,
+        )
+        task_id = str(task["task_id"])
+        for row in task_rows:
+            task_ids_by_url[str(row["url"])] = task_id
+        searches.append(
+            TavilySearchTaskExchange.model_validate(
+                {
+                    "task_id": task_id,
+                    "phase": "primary",
+                    "status": "succeeded" if task_rows else "empty",
+                    "exchange": exchange.model_dump(mode="json"),
+                    "discovered_urls": sorted(row["url"] for row in task_rows),
+                },
+                strict=True,
+            )
+        )
+        success_count = len(task_rows)
+        minimum = int(task["minimum_extract_successes"])
+        task_statuses.append(
+            TavilyTaskAcquisitionStatus.model_validate(
+                {
+                    "task_id": task_id,
+                    "primary_search_ordinal": ordinal,
+                    "discovered_unique_url_count": len(task_rows),
+                    "extracted_success_count": success_count,
+                    "minimum_extract_successes": minimum,
+                    "status": (
+                        "covered"
+                        if success_count >= minimum
+                        else "coverage_insufficient"
+                    ),
+                },
+                strict=True,
+            )
+        )
+
+    extract_urls = sorted(item.url for item in items)
+    extract_rows = [
+        {"url": item.url, "raw_content": item.content.strip()}
+        for item in sorted(items, key=lambda value: value.url)
+    ]
+    extract_batches: list[TavilyExtractBatchExchange] = []
+    for batch_ordinal, start in enumerate(range(0, len(extract_rows), 20), start=1):
+        batch_rows = extract_rows[start : start + 20]
+        batch_urls = [str(row["url"]) for row in batch_rows]
+        extract_exchange = TavilyBackend._exchange(
+            "extract",
+            canonical_json_bytes(
+                {
+                    "urls": batch_urls,
+                    "chunks_per_source": 5,
+                    "extract_depth": "advanced",
+                    "include_images": False,
+                    "include_favicon": False,
+                    "format": "markdown",
+                    "include_usage": True,
+                }
+            ),
+            response_body=canonical_json_bytes(
+                {"results": batch_rows, "failed_results": []}
+            ),
+            status_code=200,
+        )
+        outcomes = tuple(
+            TavilyExtractUrlOutcome.model_validate(
+                {
+                    "url": row["url"],
+                    "status": "succeeded",
+                    "response_item_sha256": hashlib.sha256(
+                        canonical_json_bytes(row)
+                    ).hexdigest(),
+                    "content_sha256": hashlib.sha256(
+                        str(row["raw_content"]).encode("utf-8")
+                    ).hexdigest(),
+                    "content_size_bytes": len(
+                        str(row["raw_content"]).encode("utf-8")
+                    ),
+                },
+                strict=True,
+            )
+            for row in batch_rows
+        )
+        extract_batches.append(
+            TavilyExtractBatchExchange.model_validate(
+                {
+                    "phase": "primary",
+                    "batch_ordinal": batch_ordinal,
+                    "status": "succeeded",
+                    "exchange": extract_exchange.model_dump(mode="json"),
+                    "urls": batch_urls,
+                    "outcomes": [item.model_dump(mode="json") for item in outcomes],
+                },
+                strict=True,
+            )
+        )
+    search_by_url = {row["url"]: row for row in search_rows}
+    extract_by_url = {row["url"]: row for row in extract_rows}
+    normalized = tuple(
+        replace(
+            item,
+            content=item.content.strip(),
+            metadata={
+                **item.metadata,
+                "backend": "tavily",
+                "content_shape": "provider_extract_content",
+                "has_raw_content": True,
+                "evidence_quality": "partial_extract",
+                "provider_projection": {
+                    "schema_version": ("briefloop.tavily_extract_source_projection.v2"),
+                    "search_result": search_by_url[item.url],
+                    "extract_result": extract_by_url[item.url],
+                    "discovery_task_ids": [task_ids_by_url[item.url]],
+                },
+            },
+        )
+        for item in items
+    )
+    bundle = TavilyAcquisitionBundleV2.model_validate(
+        {
+            "schema_version": TavilyAcquisitionBundleV2.schema_id,
+            "provider_id": "tavily",
+            "status": "partial",
+            "searches": [item.model_dump(mode="json") for item in searches],
+            "extract_batches": [
+                item.model_dump(mode="json") for item in extract_batches
+            ],
+            "unique_urls": extract_urls,
+            "task_statuses": [
+                item.model_dump(mode="json") for item in task_statuses
+            ],
+        },
+        strict=True,
+    )
+    return WebSearchCollection(
+        items=normalized,
+        raw_response=canonical_json_bytes(bundle.model_dump(mode="json")),
+        status_code=200,
+    )
+
+
+def test_deterministic_source_acquire_rejects_public_invocation_start_before_mutation(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("source-candidate publication is precommit unsupported on Windows")
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only")
+    workspace = _external_workspace(tmp_path)
+    host, action = _advance_to_source_route(workspace, capsys, route="web-search")
+    provider_calls = 0
+
+    def should_not_run(_provider, _query, _config):
+        nonlocal provider_calls
+        provider_calls += 1
+        return _provider_collection([_provider_item(1)])
+
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",
+        should_not_run,
+    )
+    action_path = workspace / "source-acquire-action.json"
+    action_path.write_text(
+        action.model_dump_json(exclude_unset=False),
+        encoding="utf-8",
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+        before_invocations = store.load_snapshot(action.run_id).invocations
+    scratch_before = sorted(
+        path.relative_to(workspace).as_posix()
+        for path in (workspace / "scratch").rglob("*")
+    )
+
+    with pytest.raises(RuntimeHostError, match="runtime_action_not_invocable"):
+        host.start_current_invocation(expected_action=action)
+    assert (
+        main(
+            [
+                "runtime",
+                "invocation-start",
+                "--workspace",
+                str(workspace),
+                "--action",
+                str(action_path),
+            ]
+        )
+        == 1
+    )
+    assert "runtime_action_not_invocable" in capsys.readouterr().out
+
+    assert provider_calls == 0
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.current_revision == before_revision
+        assert store.load_snapshot(action.run_id).invocations == before_invocations
+    assert (
+        sorted(
+            path.relative_to(workspace).as_posix()
+            for path in (workspace / "scratch").rglob("*")
+        )
+        == scratch_before
+    )
+
+
+def test_provider_result_over_bound_records_one_failed_invocation(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("source-candidate publication is precommit unsupported on Windows")
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only")
+    workspace = _external_workspace(tmp_path)
+    host, action = _advance_to_source_route(workspace, capsys, route="web-search")
+    calls = 0
+
+    def oversized(_provider, _query, _config):
+        nonlocal calls
+        calls += 1
+        return _provider_collection([_provider_item(position) for position in range(6)])
+
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",
+        oversized,
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+        before_snapshot = store.load_snapshot(action.run_id)
+    scratch_before = sorted(
+        path.relative_to(workspace).as_posix()
+        for path in (workspace / "scratch").rglob("*")
+    )
+
+    rejected = host.apply_current(expected_action=action)
+
+    assert calls == 1
+    assert rejected.status == "rejected_recorded"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        after_snapshot = store.load_snapshot(action.run_id)
+        assert store.current_revision == before_revision + 2
+    assert len(after_snapshot.invocations) == len(before_snapshot.invocations) + 1
+    assert len(after_snapshot.transactions) == len(before_snapshot.transactions) + 2
+    provider_invocation = next(
+        item for item in after_snapshot.invocations if item.role_id == "source-provider"
+    )
+    assert provider_invocation.status == "failed"
+    assert provider_invocation.failure_reason == "child_failed"
+    scratch_after = sorted(
+        path.relative_to(workspace).as_posix()
+        for path in (workspace / "scratch").rglob("*")
+    )
+    assert set(scratch_before).issubset(scratch_after)
+    assert set(scratch_after) - set(scratch_before) == {
+        f"scratch/{provider_invocation.invocation_id}",
+        f"scratch/{provider_invocation.invocation_id}/role_task_envelope.json",
+    }
+
+
+def test_multi_tavily_commits_all_extracted_sources_and_store_replay_skips_redial(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("source-candidate publication is precommit unsupported on Windows")
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only")
+    workspace = _external_workspace(tmp_path)
+    host, action = _advance_to_source_route(workspace, capsys, route="web-search")
+    calls = 0
+
+    def bounded(_provider, _query, config):
+        nonlocal calls
+        calls += 1
+        return _durable_tavily_collection(
+            [_provider_item(position) for position in range(25)],
+            search_tasks=config["search_tasks"],
+        )
+
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",
+        bounded,
+    )
+
+    committed = host.apply_current(expected_action=action)
+    replayed = host.apply_current(expected_action=action)
+
+    assert committed.status == "committed", (
+        committed.next_action.reason_code,
+        committed.next_action.effect_kind,
+    )
+    assert replayed.status == "replayed"
+    assert replayed.transaction_id == committed.transaction_id
+    assert replayed.store_revision == committed.store_revision
+    assert calls == 1
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(action.run_id)
+    provider_invocations = [
+        item for item in snapshot.invocations if item.role_id == "source-provider"
+    ]
+    receipt = next(
+        item
+        for item in snapshot.transactions
+        if item.transaction_id == committed.transaction_id
+    )
+    assert len(provider_invocations) == 1
+    assert len(snapshot.sources) == 25
+    assert len(receipt.source_ids) == 25
+
+
+def test_provider_duplicate_identity_is_rejected_after_one_call(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("source-candidate publication is precommit unsupported on Windows")
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only")
+    workspace = _external_workspace(tmp_path / "identical")
+    host, action = _advance_to_source_route(workspace, capsys, route="web-search")
+    item = _provider_item(1)
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",
+        lambda _provider, _query, _config: _provider_collection([item, item]),
+    )
+    identical_rejected = host.apply_current(expected_action=action)
+    assert identical_rejected.status == "rejected_recorded"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        identical_snapshot = store.load_snapshot(action.run_id)
+    assert identical_snapshot.sources == ()
+    assert (
+        next(
+            item
+            for item in identical_snapshot.invocations
+            if item.role_id == "source-provider"
+        ).status
+        == "failed"
+    )
+
+    conflicting_workspace = _external_workspace(tmp_path / "conflicting")
+    conflicting_host, conflicting_action = _advance_to_source_route(
+        conflicting_workspace,
+        capsys,
+        route="web-search",
+    )
+    first = _provider_item(2)
+    second = _provider_item(2, content="Different bytes under one source identity.")
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",
+        lambda _provider, _query, _config: _provider_collection([first, second]),
+    )
+    with SQLiteControlStore.open(conflicting_workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+        before_invocations = len(
+            store.load_snapshot(conflicting_action.run_id).invocations
+        )
+    conflicting_rejected = conflicting_host.apply_current(
+        expected_action=conflicting_action
+    )
+    assert conflicting_rejected.status == "rejected_recorded"
+    with SQLiteControlStore.open(conflicting_workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(conflicting_action.run_id)
+        assert store.current_revision == before_revision + 2
+    assert len(snapshot.invocations) == before_invocations + 1
+
+
+def test_overlapping_cached_roots_fail_before_provider_and_invocation(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("source-candidate publication is precommit unsupported on Windows")
+    workspace = _workspace(tmp_path)
+    cache = workspace / "input" / "cache"
+    cache.mkdir()
+    selected = cache / "source.txt"
+    selected.write_text("A bounded cached source payload.\n", encoding="utf-8")
+    (workspace / "sources.yaml").write_text(
+        """source_strategy:
+  profile: conservative
+  enabled_providers: [cached_package]
+cached_package:
+  enabled: true
+  paths: [input/cache, input/cache/source.txt]
+  formats: [txt]
+""",
+        encoding="utf-8",
+    )
+    host, action = _advance_to_source_route(
+        workspace,
+        capsys,
+        route="cached_package",
+    )
+    calls = 0
+
+    def should_not_run(_provider, _query, _config):
+        nonlocal calls
+        calls += 1
+        return []
+
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.cached_package.CachedPackageProvider.collect",
+        should_not_run,
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+        before_invocations = len(store.load_snapshot(action.run_id).invocations)
+
+    with pytest.raises(RuntimeHostError, match="runtime_source_pack_invalid"):
+        host.apply_current(expected_action=action)
+
+    assert calls == 0
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(action.run_id)
+        assert store.current_revision == before_revision
+    assert len(snapshot.invocations) == before_invocations
+
+
+def test_corrupt_stage_after_invocation_remains_outcome_unknown_without_provider(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("source-candidate publication is precommit unsupported on Windows")
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only")
+    workspace = _external_workspace(tmp_path)
+    host, action = _advance_to_source_route(workspace, capsys, route="web-search")
+    provider_calls = 0
+
+    def one_result(_provider, _query, _config):
+        nonlocal provider_calls
+        provider_calls += 1
+        return _provider_collection([_provider_item(1)])
+
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",
+        one_result,
+    )
+    original_start = RuntimeHostService._start_invocation_for_action
+
+    def crash_after_authoritative_start(
+        self,
+        current,
+        current_action,
+        *,
+        role_id,
+        request_id,
+    ):
+        request = self._invocation_start_request(
+            current,
+            current_action,
+            role_id=role_id,
+            request_id=request_id,
+        )
+        committed = CoreRunService(self.workspace).start_invocation(request)
+        assert committed.status == "committed"
+        raise RuntimeError("simulated host stop after invocation start")
+
+    monkeypatch.setattr(
+        RuntimeHostService,
+        "_start_invocation_for_action",
+        crash_after_authoritative_start,
+    )
+    with pytest.raises(RuntimeError, match="simulated host stop"):
+        host.apply_current(expected_action=action)
+    monkeypatch.setattr(
+        RuntimeHostService,
+        "_start_invocation_for_action",
+        original_start,
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        interrupted = store.load_snapshot(action.run_id)
+    provider_invocations = [
+        item for item in interrupted.invocations if item.role_id == "source-provider"
+    ]
+    assert len(provider_invocations) == 1
+    assert provider_invocations[0].status == "active"
+    assert not (workspace / "scratch" / provider_invocations[0].invocation_id).exists()
+    with pytest.raises(RuntimeHostError, match="runtime_action_not_invocable"):
+        host.start_current_invocation(expected_action=action)
+    assert not (workspace / "scratch" / provider_invocations[0].invocation_id).exists()
+    discovery = interrupted.run_source_discovery_authorizations[0]
+    attempt = interrupted.run_source_acquisition_attempt_authorizations[0]
+    stage_identity = canonical_fingerprint(
+        {
+            "kind": "discovery_source_pack",
+            "run_id": action.run_id,
+            "action_fingerprint": action.action_fingerprint,
+            "discovery_authorization_id": discovery.authorization_id,
+            "attempt_authorization_id": attempt.attempt_authorization_id,
+        }
+    )
+    stage_root = source_stage_root(workspace, stage_identity)
+    stage_root.mkdir(parents=True, exist_ok=True)
+    (stage_root / "stage_attestation.json").write_text(
+        "{}",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        RuntimeHostError,
+        match="source_acquisition_outcome_unknown",
+    ):
+        host.apply_current()
+
+    assert provider_calls == 0
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        final = store.load_snapshot(action.run_id)
+    assert (
+        len([item for item in final.invocations if item.role_id == "source-provider"])
+        == 1
+    )
+    assert (
+        next(
+            item for item in final.invocations if item.role_id == "source-provider"
+        ).status
+        == "active"
+    )
+
+
+def test_missing_stage_after_invocation_records_one_failure_without_provider(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("source-candidate publication is precommit unsupported on Windows")
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only")
+    workspace = _external_workspace(tmp_path)
+    host, action = _advance_to_source_route(workspace, capsys, route="web-search")
+    request_id = derived_id(
+        "REQ-HOST-INVOKE",
+        action.run_id,
+        action.action_fingerprint,
+    )
+    request = InvocationStartRequest.model_validate(
+        {
+            "schema_version": InvocationStartRequest.schema_id,
+            "request_id": request_id,
+            "run_id": action.run_id,
+            "stage_id": action.stage_id,
+            "role_id": "source-provider",
+            "runtime": "codex",
+            "expected_store_revision": action.store_revision,
+        },
+        strict=True,
+    )
+    started = CoreRunService(workspace).start_invocation(request)
+    assert started.status == "committed"
+    provider_calls = 0
+
+    def should_not_run(_provider, _query, _config):
+        nonlocal provider_calls
+        provider_calls += 1
+        return _provider_collection([_provider_item(1)])
+
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",
+        should_not_run,
+    )
+
+    recovery_action = host.next_action()
+    failed = host.apply_current(expected_action=recovery_action)
+    replayed = host.apply_current(expected_action=recovery_action)
+
+    assert failed.status == "rejected_recorded"
+    assert failed.next_action.effect_kind == "source_acquisition_recovery"
+    assert (
+        failed.next_action.reason_code
+        == "source_acquisition_recovery_decision_required"
+    )
+    assert replayed == failed
+    assert provider_calls == 0
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(action.run_id)
+    provider_invocations = [
+        item for item in snapshot.invocations if item.role_id == "source-provider"
+    ]
+    assert len(provider_invocations) == 1
+    assert provider_invocations[0].status == "failed"
+    assert provider_invocations[0].failure_reason == "child_failed"
+    failures = [
+        event.intake_binding.source_acquisition_failure
+        for event in snapshot.events
+        if event.intake_binding is not None
+        and event.intake_binding.source_acquisition_failure is not None
+    ]
+    assert len(failures) == 1
+    assert failures[0].failure_class == "provider_response_unavailable"
+    assert failures[0].provider_response_artifact is None
+    assert snapshot.sources == ()
+    assert snapshot.run_execution_authorizations == ()
+
+
+def test_source_pack_commit_outcome_unknown_replays_identical_request(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    if sys.platform == "win32":
+        pytest.skip("source-candidate publication is precommit unsupported on Windows")
+    monkeypatch.setenv("TAVILY_API_KEY", "test-only")
+    workspace = _external_workspace(tmp_path)
+    host, action = _advance_to_source_route(workspace, capsys, route="web-search")
+    provider_calls = 0
+
+    def one_result(_provider, _query, config):
+        nonlocal provider_calls
+        provider_calls += 1
+        return _durable_tavily_collection(
+            [_provider_item(1)],
+            search_tasks=config["search_tasks"],
+        )
+
+    monkeypatch.setattr(
+        "multi_agent_brief.sources.web_search.WebSearchProvider.collect_with_response",
+        one_result,
+    )
+    original_submit = IntakeService._commit_discovery_source_pack_from_core
+    submit_calls = 0
+
+    def unknown_after_commit(self, intake_input):
+        nonlocal submit_calls
+        submit_calls += 1
+        result = original_submit(self, intake_input)
+        if submit_calls == 1:
+            assert result.status == "committed"
+            return IntakeResult(
+                status="commit_outcome_unknown",
+                error_code="commit_outcome_unknown",
+            )
+        return result
+
+    monkeypatch.setattr(
+        IntakeService,
+        "_commit_discovery_source_pack_from_core",
+        unknown_after_commit,
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        before_revision = store.current_revision
+
+    result = host.apply_current(expected_action=action)
+
+    assert result.status == "replayed"
+    assert provider_calls == 1
+    assert submit_calls == 2
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = store.load_snapshot(action.run_id)
+        assert store.current_revision == before_revision + 2
+    assert (
+        len(
+            [item for item in snapshot.invocations if item.role_id == "source-provider"]
+        )
+        == 1
+    )
+    assert len(snapshot.sources) == 1
 
 
 def test_cached_source_acquisition_is_claims_eligible_and_completes_discovery(

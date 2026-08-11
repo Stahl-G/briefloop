@@ -31,6 +31,7 @@ validation unless that is stated separately.
 |---|---|
 | Subagent workflow (default topology: Scout finds + screens; strict topology: independent Screener; Claim Ledger → Analyst → Delivery Editor → Auditor) | Supported |
 | Fresh SQLite-only Codex control path (`briefloop.db`, strict DTOs, UoW receipts, Store-derived `CoreRunNextAction`) | Experimental |
+| Store schema v13 assessment continuation and normal successor guidance snapshot (`quality laj assessment-next`; `runtime successor-start`) | Experimental on unreleased development main; fresh current-schema workspaces only. Assessments remain explicitly Human-authorized and result-selected; a separate Human successor request can atomically freeze compatible active-approved guidance for Analyst/Editor only. Older development SQLite workspaces are unsupported and must be recreated |
 | Manifest-bound atomic runtime source-pack intake (1–256 ordered members, stable source IDs/URLs/incident time, one Invocation/UoW/Receipt, zero partial registration) | Experimental |
 | Workspace-local Codex kit binding (config, Skill, reference, all role files; tamper/delete/extra/symlink fail closed) | Experimental |
 | Codex `single_session` topology (shared context, distinct Receipt-backed invocations, stage-separated self-review) | Experimental |
@@ -38,24 +39,29 @@ validation unless that is stated separately.
 | JSON/JSONL runtime control files (`runtime_manifest.json`, `workflow_state.json`, `artifact_registry.json`, `event_log.jsonl`) | Projection/legacy only; never accepted as runtime authority |
 | Stage runtime/model provenance on completion transactions | Supported |
 | Audience profile runtime surface (`audience_profile.md` + `audience_profile_snapshot.md`) | Supported |
-| Improvement Ledger / Memory (`improvement/ledger.jsonl`, `improvement/memory.md`, `improvement_memory_snapshot.md`) | Retired (LD2-3); the projection and per-run freeze paths were deleted with the legacy stack, so these files have no code reader or writer. The `improvement_*` event vocabulary in `contracts/v2.py` survives. A Store-native Improvement Ledger belongs to MU-2 |
+| Legacy Improvement Ledger / Memory files (`improvement/ledger.jsonl`, `improvement/memory.md`, `improvement_memory_snapshot.md`) | Retired (LD2-3); these files have no code reader or writer. Experimental post-final Human disposition, edited guidance, approval/status, and successor snapshots are append-only SQLite records; no legacy file is resurrected or read |
 | Orchestrator control switchboard (`orchestrator_control_switchboard.json`, optional `control_selections.json`) | Supported |
 | Feedback control files (`feedback_issues.json`, `repair_plan.json`, conditional `delta_audit_report.json`) | Supported |
 | Stage-scoped quality gate control files (`gates/auditor_quality_gate_report.json`, `gates/finalize_quality_gate_report.json`; legacy latest projection `quality_gate_report.json`) | Supported |
 | Atomic Claim Graph (`atomic_claim_graph.json` schema, coverage/type validation, Analyst/Editor contract boundary, and reader-residue projection) | Experimental |
 | Evidence Span Registry (`evidence_span_registry.json` schema, source-pack byte binding, archive projection, and Source Appendix trace view) | Experimental |
-| Durable Source Evidence Pack materialization (`sources materialize-pack`, `input/sources/*.json`, optional `source_evidence_pack_manifest.json` hash validation, and source taxonomy normalization) | Experimental |
+| Legacy Durable Source Evidence Pack materializer (`sources materialize-pack`) | Unsupported/retired; the parser returns `runtime_command_unsupported` with zero writes. The optional manifest contract remains readable for existing artifacts but has no writer through this command |
 | Claim-Support Matrix (`claim_support_matrix.json` schema, cross-artifact validation, and gate/status projection from explicit support records) | Experimental |
-| Semantic Assessment Report (`semantic_assessment_report.json` schema and reference validation) | Experimental; schema/contract only. The proposal projection, status visibility, and human adjudication records were deleted with the legacy stack in LD2-3. The Quality Panel `semantic_support` section reports a constant `not_available` until a Store-native producer lands — on SQLite workspaces it already did, since the Store projection never carried this key |
+| Semantic Assessment Report (`semantic_assessment_report.json` schema and reference validation) | Experimental schema/contract only. The producer, proposal projection, status visibility, and human adjudication writer were deleted with the legacy stack in LD2-3; no current runtime role creates the artifact. The remaining optional validation is non-blocking and has no support, Gate, delivery, or release authority |
 | v0.11 product-facing workspace entries (`briefloop new industry-weekly`, `briefloop new management-monthly`, `briefloop new document-review`) mapped to canonical ReportPacks (`market_weekly`, `management_monthly`, `evidence_extract`) with local-first skeletons and control-spine defaults | Supported |
 | ReportSpec / ReportPack baseline contracts for the v0.11 product baseline (`report_spec.yaml`, packaged `market_weekly`, `management_monthly`, and `evidence_extract`, `packs list/show`, and `validate-report-spec`) | Supported |
-| Wider Product OS extensions: ReportTemplate / PolicyProfile registry, Citation Profile Split metadata, Reader Template Conformance warning projection, template renderer MVP, `solar-periodic` / `solar_industry_periodic`, SourceHub Lite setup, internal release-mode approval records, Quality Panel / Quality Summary / static HTML projection, Trajectory Regulation read-only projection, Materiality Selection diagnostic projection, `extract` source/scope registration, and `packs bundle` delivery/audit manifest projection | Experimental |
+| Experimental `solar-stock-periodic` ReportPack and schema-18 source plan (`briefloop new solar-stock-periodic`, fixed equity/event/theme universe, 20 independent Tavily tasks, per-task Extract outcomes, and fresh-only acquisition bundle) plus the `market-data` CLI channel (bounded no-redirect Yahoo chart-API adapter, manual-first `input/market_data/` intake, one append-only snapshot per run and as-of date, deterministic comparison-table projection with explicit `NOT AVAILABLE` rows) | Experimental; source-discovery/report-contract and market-data acquisition surface only; no invented price/valuation fields |
+| Wider Product OS extensions: ReportTemplate / PolicyProfile registry, Citation Profile Split metadata, Reader Template Conformance warning projection, template renderer MVP, `solar-periodic` / `solar_industry_periodic`, internal release-mode approval records, Quality Panel / Quality Summary / static HTML projection, Trajectory Regulation read-only projection, Materiality Selection diagnostic projection, and `extract` source/scope registration | Experimental |
+| Public `briefloop packs bundle` command | Unsupported/retired on SQLite workspaces; the authority guard returns `runtime_command_unsupported` before bundle, file, or Store effects |
+| Internal deterministic ReportBundle seam | Experimental/internal and independently safe-read/publication capability-gated; not a CLI, Gate, approval, package-ready, delivery, or publication authority |
 | Provenance projection control file (`provenance_graph.json`) | Supported |
 | Finalize delivery bundle (`output/delivery/brief.md` + configured DOCX) | Supported |
 | Source appendix audit/control copy (`source_appendix.md`) | Supported |
 | `briefloop` CLI | Supported |
 | `multi-agent-brief` CLI | Supported compatibility entrypoint with identical behavior; retained for existing scripts and installs |
 | `briefloop run --workspace <path> --runtime codex` plus `runtime next/invocation-start/invocation-validate/invocation-accept/invocation-fail/apply/diagnose`; strict JSON proposal contract preflight | Experimental; fresh SQLite-only, no JSON migration or fallback |
+| `briefloop runtime successor-start --workspace <path> --direction-json <json> --run-id <id> [--include-approved-guidance]` | Experimental on unreleased development main; explicit Human-started normal same-workspace successor. With opt-in, one atomic Core transaction freezes the complete compatible active-approved set within 16-item / 65,536-byte bounds for Analyst and Editor only. Exact replay returns the original Receipt/snapshot; conflicts and limit failures write nothing. No provider, role, evidence, Gate, finalize, delivery, repair, or automatic-learning authority |
+| `briefloop runtime continue --workspace <path>` with Store-frozen Tavily discovery authorization | Experimental; credential remains in private workspace `.env` until Human rotation/removal; each separately Human-confirmed, Store-recorded attempt executes the frozen atomic task matrix; Solar Stock Periodic freezes 20 independent tasks (11 equities, 5 event-only entities, 4 themes), each requests up to 20 advanced Search results, all eligible unique URLs are Batch Extracted in groups of 20, and an under-covered task may receive one deterministic 30-day backfill; the only product safety envelope is 800 unique URLs; exact replay never redials and failures never auto-retry; the canonical bundle freezes exact safe exchanges, per-task status, and per-URL outcomes; Search snippets are never claims-eligible and only successful non-empty Extract content enters Intake; partial success commits successful URLs only, while all-failed Extract creates no source or execution authorization; HumanSourcePack never counts as Tavily success; focused synthetic transport is tested; live usefulness, reliability, cost, coverage, success rate, and acquisition-to-`finalized_local` performance NOT MEASURED; POSIX/macOS capability is checked before any provider call; current Windows returns `checkout_publication_unsupported` with zero provider/network access, no source promotion, and no later execution/finalization/approval/package/delivery authority |
 | Legacy runtime names and `operator --recipe fast-rerun` | Unsupported for the SQLite-only active path |
 | `briefloop status --workspace <path>` | Supported read-only Store projection for SQLite workspaces; JSON-only workspace unsupported |
 | Legacy `briefloop deliver` commands | Unsupported on SQLite; approval and delivery use typed Store actions through `runtime apply` |
@@ -84,7 +90,8 @@ validation unless that is stated separately.
 | `briefloop experiments laj study-preflight/budgeted-shadow-run/study-compare` | Experimental; strict target eligibility, complete-trial call/token budget, and offline exact dimension/span-overlap comparison only; advisory with zero runtime authority; utility and efficacy NOT MEASURED |
 | `briefloop init --from-onboarding` | Supported |
 | `briefloop init --web [--port <n>]` | Experimental; one-shot loopback wizard that creates the workspace through the same ControlStore bootstrap path and returns the real TransactionReceipt |
-| `briefloop quality html --workspace <path> [--open] [--laj-view <laj.json>]` | Experimental; read-only self-contained three-page HTML export (quality / LAJ advisory / improvement); no write affordance; LAJ utility NOT MEASURED |
+| `briefloop quality html --workspace <path> [--open] [--laj-view <laj.json>]` | Experimental; best-effort, capability-gated local static read-only four-tab surface: verified Store-bound `finalized_local` Brief, deterministic Quality, optional advisory LAJ (NOT MEASURED), and current Store-native Human guidance state; unsupported platforms return no projection path; static export has no write, approval, package, delivery, publication, persistent-server, or learning affordance |
+| `briefloop quality laj policy-set/assess/status/retry/assessment-next/assessment-run/assessment-list/review-open/disposition/draft/approve/deactivate/revert/supersede/review-status` | Experimental development-main Store-qualified post-final assessment series and secured local Human review. Multiple independently Human-authorized generations append policy/request/result/abandonment Receipts; `assessment-next` is a read-only, self-describing request projection. Explicit result selection is required; generation 2+ never auto-runs or redials. Approval alone has no later-run effect; reuse requires the separate explicit successor command. Historical result status/deactivate/revert/supersede remains exact-result-bound, while browser `review-open` stays current-head-only. LAJ remains advisory and utility NOT MEASURED; no Gate/finalize/delivery/Core authority |
 | `briefloop onboard` | Supported |
 | `briefloop doctor` | Supported |
 | `briefloop extract --workspace <path> --scope <text> --source <file>` | Unsupported on SQLite; retired public CLI |
@@ -105,7 +112,16 @@ Provenance commands write a deterministic workspace-local audit/debug graph from
 
 Audience profile files are workspace-local runtime context. The active run uses the frozen per-run snapshot exposed through handoff; these files are not source evidence, artifact contracts, quality gates, provenance graph nodes, or stage blockers.
 
-Improvement Ledger files are retired as of LD2-3. The code that projected approved guidance into `improvement/memory.md` and froze `output/intermediate/improvement_memory_snapshot.md` during `run`/`start`/`handoff` was deleted with the legacy runtime-state stack, so these files now have no reader or writer. The `improvement_*` event vocabulary in `contracts/v2.py` survives. Existing workspace files are inert; nothing reads them and no run consumes them. A Store-native Improvement Ledger is MU-2 work. Even when it was live, the snapshot carried taste/audience guidance only — it did not serve as evidence, source material, Claim Ledger input, repair instruction, semantic proof, or an output-quality guarantee.
+Legacy Improvement Ledger files are retired as of LD2-3. The code that projected approved guidance into `improvement/memory.md` and froze `output/intermediate/improvement_memory_snapshot.md` during `run`/`start`/`handoff` was deleted with the legacy runtime-state stack, so these files remain inert and have no reader or writer. Experimental post-final Human review now records finding dispositions, Human-edited guidance drafts, and separate approval/status revisions in SQLite. Those records are not evidence, source material, Claim Ledger input, repair instructions, semantic proof, or an output-quality guarantee; approval alone never creates an implicit later-run effect.
+On unreleased development main, a Human can separately start a normal
+same-workspace successor with a new strict `RunDirection` and explicit
+`--include-approved-guidance`. The Core transaction freezes only the complete
+compatible active-approved set into immutable Store records for Analyst/Editor;
+without opt-in it freezes an empty snapshot. Later live status changes do not
+rewrite the successor snapshot. Current direction and evidence take precedence,
+and the snapshot has no source, Claim Ledger, Gate, repair, finalize, delivery,
+or Core authority. Utility is NOT MEASURED and the mechanism is not automatic
+learning.
 
 Control switchboard files are runtime control context. Python surfaces deterministic recommendations and records Orchestrator enable/defer/reject selections; selection is not execution and does not run gates, feedback planning, provenance projection, source discovery, repair, or subagents.
 
@@ -198,9 +214,9 @@ read-only status and generated handoff artifacts, report read-only
 section-conformance diagnostics for existing audited/final reader Markdown in
 status and generated handoff artifacts, project read-only render-plan
 diagnostics that name the future render source artifact, section heading
-mapping, unresolved sections, and planned delivery targets, apply the resolved
-ReportTemplate section order during finalize for already-present reader
-Markdown sections, or write a bundle manifest with `packs bundle`.
+mapping, unresolved sections, and planned delivery targets, or apply the
+resolved ReportTemplate section order during finalize for already-present
+reader Markdown sections.
 For `evidence_extract` workspaces, `extract` can copy explicit local source
 files into `input/sources/evidence_extract/`, write `extraction_scope.yaml`,
 update `sources.yaml` manual source entries, write
@@ -213,14 +229,11 @@ remains bounded source/scope/source-lock/page-seed/span registration: it does
 not parse PDFs or binary documents, render pages for visual inspection, extract
 tables or figures, judge semantic support, generate Claim-Support Matrix rows,
 draw legal or disclosure conclusions, run stages, or authorize delivery.
-SourceHub Lite commands can copy explicit local text files into
-`input/sources/sourcehub/`, register RSS feeds, and register runtime web-search
-handoff tasks in `sources.yaml`. This is source setup only: local files remain
-workspace-local evidence inputs, RSS registration does not fetch feeds, and
-web-search handoff uses `runtime_tool` mode without executing Python web
-search. SourceHub Lite does not turn source candidates or search summaries into
-evidence, generate Evidence Span Registry entries, run stages, bypass gates, or
-authorize delivery.
+The legacy SourceHub Lite `sources add-file/add-rss/add-web-search` command
+names are retired parser surfaces. They return
+`runtime_command_unsupported` without source, workspace, Store, provider, or
+network effects. Current source intake and public-web acquisition use
+Store-derived runtime actions.
 Internal release-mode approval commands can initialize
 `human_approval_ledger.json`, append human approval decisions, and write
 `release_readiness_report.json` for internal review modes. These reports may
@@ -234,7 +247,9 @@ compact human-readable `output/intermediate/quality_summary.md` from a valid
 panel. Static Quality Panel HTML can render
 `output/intermediate/quality_panel.html` from the same valid panel with inline
 CSS and no external assets or frontend runtime. `quality summarize` can write
-these artifacts together. With explicit `--laj-view <laj.json>`, it can render
+the legacy audit artifacts together. The current SQLite manual display surface
+is `quality html --workspace <path> --laj-view <laj.json>`; with an explicit
+view it can render
 a strict, current-report-bound LAJ result as an experimental advisory-only
 section; it does not call the evaluator, and absent, invalid, stale, failed, or
 abstained LAJ does not change the panel overall status, blockers, recommended
@@ -251,8 +266,9 @@ repair, run gates, block stages, approve delivery, or decide release readiness.
 Guidance Manifestation projection is retired in LEGACY-DELETE-2 D1. The
 optional `output/intermediate/guidance_manifestation_report.json` fold-in is
 no longer read, and `status`/Quality Panel payloads no longer carry the
-`guidance_manifestation` key. Improvement Memory materialization itself
-(`improvement/memory.md` and the frozen snapshot) is unaffected.
+`guidance_manifestation` key. The legacy Improvement Memory projection and
+snapshot are also retired; the Store-native successor snapshot is a distinct
+development-main control record and does not revive those files.
 Materiality Selection projection reads valid `screened_candidates.json`, the
 resolved PolicyProfile materiality terms, and workspace focus terms to surface
 excluded or deprioritized candidates that match explicit materiality/focus
@@ -275,78 +291,27 @@ lite/force-deliver path.
 
 Source appendices are reader-facing delivery artifacts generated during finalize from cited Claim Ledger sources. They can display safe source identity and taxonomy labels, while the separate source appendix trace audit copy can include internal claim/source/span IDs, source paths, source byte hashes, and metadata completeness warnings for review. They are not source evidence, semantic proof, runtime state, provenance graphs, or workflow gates.
 
-Durable Source Evidence Pack materialization is experimental. The
-`sources materialize-pack` command can turn explicit manual or cached-package
-source records into workspace-local source evidence files under
-`input/sources/` and an optional hash-checked
-`output/intermediate/source_evidence_pack_manifest.json`. This helps ordinary
-recurring reports archive reproducible source bytes. It does not upgrade
-`source_candidates.yaml`, search summaries, model summaries, or source plans
-into evidence; it does not assess semantic support, generate Claim-Support
-Matrix rows, or authorize delivery.
-Generated source evidence records preserve separate provider/storage
-`source_type`, retrieval/page `retrieval_source_type`, reader-facing
-`source_category`, and `underlying_evidence_type` metadata. This taxonomy is
-identity normalization only; it is not trust scoring, source-policy gating,
-semantic support judgment, or compliance review.
+The legacy `sources materialize-pack` name is retained only so callers receive
+a deterministic `runtime_command_unsupported` response. It performs no source
+or Store write. The optional
+`output/intermediate/source_evidence_pack_manifest.json` schema and reader
+contract remain available for existing artifacts, but this retired command is
+not their producer. A source plan, source candidate, search summary, or model
+summary remains discovery material rather than evidence.
 
-Fast-rerun fact-layer import is an experimental control transaction. It can
-import a complete, clean, archived frozen fact layer into a new runtime run for
-downstream rerun inspection. It does not register 080 experiment runs, score
-output quality, summarize experiments, or prove semantic truth.
-`run --recipe fast-rerun` requires an existing valid
-`runtime_manifest.fact_layer_import`; it writes runtime handoff guidance from
-Analyst onward and must not synthesize upstream source-discovery, Scout,
-Screener, or Claim Ledger execution history.
+Fast-rerun fact-layer import and the MABW-080 command suite were retired with
+LD2-3. `state import-fact-layer`, `run --recipe fast-rerun`, and
+`briefloop experiments 080 ...` are not current SQLite product or experiment
+paths. Git history, archived experiment material, and frozen reference-run
+records remain available for historical reproduction and audit; they do not
+restore a writer, runtime action, or compatibility promise.
 
-MABW-080 is an archived experimental measurement namespace, not a product
-workspace path. Its commands remain available for explicit controlled
-experiment work, archived scorecard audit, and reference-run reproduction.
-
-MABW-080 run registration is archived experimental experiment metadata tooling. It
-registers completed workspace runs into an existing 080 case as `run_record.json`.
-MABW-080 scorecard building is archived experimental deterministic metadata tooling. It
-can build a scorecard draft from an existing `run_record.json`, archive/control
-projections, target artifacts, and the case definition. The default
-`delivery_brief` target keeps the full finalize, reader-clean, and archive
-requirements. The `auditable_brief` target is content-level experiment metadata
-for frozen audited brief plus auditor gate passage only; it is not a
-management-ready delivery claim. Python fills control integrity, fact-layer
-match, reader-clean or target-not-required status, gate/finalize/archive,
-timing, and coverage-delta status when inputs are available. It does not score guidance
-manifestation, summarize experiments, scaffold conditions, run workflow stages,
-judge prose quality, or prove output quality.
-
-MABW-080 assessment import is archived experimental experiment metadata tooling. It
-validates externally supplied guidance-manifestation scores, merges them into a
-scorecard, and derives the resulting validity class from deterministic control
-fields plus the imported assessment method. Python does not judge whether
-guidance manifested, whether prose improved, or whether a semantic regression
-occurred.
-
-MABW-080 case summarization is archived experimental experiment metadata tooling. It
-aggregates existing scorecards into A/B/invalid counts, condition groups,
-manifestation-score counts, reader-clean rates, coverage-delta status, timing
-status, and invalid reasons. It discovers scorecards under the case directory
-and can include explicit `--scorecard` paths for scorecards written elsewhere.
-It does not judge output quality, run workflow stages, scaffold conditions, or
-include invalid runs in A-grade denominators.
-
-MABW-080 condition scaffolding is archived experimental experiment setup tooling. It
-requires an initialized condition workspace, imports the frozen fact layer
-through the deterministic fast-rerun transaction, writes condition metadata and
-operator instructions, and leaves the run at Analyst. It does not create generic
-workspace config, run subagents, gates, finalize, register runs, score runs,
-summarize cases, or create Improvement Memory.
-
-For the full experimental command sequence and public-claim boundaries, see
-[MABW-080 experiment guide](experiments-080.md).
-v0.9.1 includes one completed public-safe synthetic `auditable_brief` pilot with
-condition-blind, hash-bound assessment. This supports only the documented
-single-case observation; broader quality, delivery-readiness, factual
-correctness, and generalization claims remain out of scope.
-For the v1.0 product boundary, see the
-[BriefLoop-090 experiment closeout](reference-runs/briefloop-090-experiment-closeout.md).
+The archived [MABW-080 experiment guide](experiments-080.md) and
+[BriefLoop-090 experiment closeout](reference-runs/briefloop-090-experiment-closeout.md)
+record the former command semantics and one public-safe synthetic
+`auditable_brief` pilot. That historical observation is not current capability
+evidence and supports no broader quality, delivery-readiness, factual
+correctness, or generalization claim.
 
 ## Runtimes
 
@@ -372,7 +337,7 @@ from any install to copy the packaged Codex workspace-local runtime kit.
 | Provider | Status |
 |---|---|
 | Manual (local md/txt/json files) | Supported |
-| Web search — Tavily | Supported |
+| Web search — Tavily | Experimental narrow runtime-first Search + batch Extract route; persistent local credential is separated from per-attempt Human/Store phase-bounded authority; Search snippets are never claims-eligible; no automatic retry or hidden fallback; synthetic transport tested; live usefulness, reliability, cost, coverage, success rate, and acquisition-to-`finalized_local` performance NOT MEASURED |
 | Web search — Exa | Supported |
 | Web search — Brave | Supported |
 | Web search — Firecrawl | Supported |

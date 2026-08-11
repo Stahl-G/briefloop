@@ -12,8 +12,13 @@ names.
 - Do not let Python auto-repair prose or claim the repair is semantically complete.
 - Do not let `finalize` stand in for quality gates.
 - Do not treat feedback text as claim evidence.
-- Do not treat `FeedbackIssue` as guidance: guidance must be human-authored and human-approved, with no automatic path from issue or gate finding to materialized audience memory.
-- Do not tell users "the system learned this" unless the user approved it and it is inspectable in the Improvement Ledger.
+- Do not treat `FeedbackIssue` as guidance: guidance must be Human-authored,
+  separately approved, compatible with the successor direction, and explicitly
+  opted into; there is no automatic path from issue or Gate finding to a
+  successor snapshot.
+- Do not tell users "the system learned this." Even approved guidance has no
+  later-run effect until a Human explicitly starts a compatible successor with
+  reuse enabled; utility is NOT MEASURED.
 - Do not let future-stage artifacts or issues globally block a fresh workspace.
 - Do not let planned blocking issues be bypassed by `continue`.
 - Do not require reader-facing briefs to retain internal `[src:<claim_id>]` markers.
@@ -42,4 +47,8 @@ names.
 
 These red lines are enforced through focused tests, packaged public-safe evaluation cases, and the support matrix.
 
-中文红线：`FeedbackIssue` 只是证据，不是读者偏好。Guidance 必须由人撰写、由人批准；从 issue 或 gate finding 到可物化 audience memory 不存在自动路径。不要告诉用户“系统学会了这一点”，除非这条偏好已经由用户批准，并且能在 Improvement Ledger 里查看和撤销。
+中文红线：`FeedbackIssue` 只是问题记录，不是读者偏好。Guidance 必须由 Human
+撰写、独立批准、与 successor direction 兼容，并在启动 successor 时明确 opt-in；
+从 issue 或 Gate finding 到 successor snapshot 不存在自动路径。不要告诉用户
+“系统学会了这一点”；即使已批准 guidance，效用仍是 NOT MEASURED，也没有隐式
+后续 run effect。

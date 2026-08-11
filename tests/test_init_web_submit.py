@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
 import json
+import os
+from io import BytesIO
 import yaml
 
 from pathlib import Path
@@ -10,8 +14,12 @@ from pathlib import Path
 import pytest
 
 from multi_agent_brief.cli.init_wizard import create_workspace
+from multi_agent_brief.cli.secrets_commands import SecretImportError
 from multi_agent_brief.cli.main import main
-from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.control_store import (
+    ControlStoreIntegrityError,
+    SQLiteControlStore,
+)
 from multi_agent_brief.core_run_v2.policy import derived_id
 from multi_agent_brief.core_run_v2.errors import CoreRunResult
 from multi_agent_brief.core_run_v2.service import CoreRunService
@@ -20,6 +28,12 @@ from multi_agent_brief.product.init_web.submit import (
     InitWebSubmitter,
     SubmissionError,
     _profile_from_payload,
+)
+from multi_agent_brief.product.init_web import submit as init_web_submit_module
+from multi_agent_brief.product.init_web.staging import InitWebStaging
+from multi_agent_brief.product.workspace_hygiene import (
+    NestedWorkspaceTargetError,
+    canonical_workspace_target,
 )
 from multi_agent_brief.runtime_assets import RuntimeAssetInstallError
 from multi_agent_brief.runtime_host_v2.initialization import WorkspaceBootstrap
@@ -30,6 +44,7 @@ def _body(request_id: str, target: str, **overrides: object) -> dict[str, object
         "workspace_target": target,
         "selections": {
             "company": "ExampleCo",
+            "report_type": "management_monthly",
             "industry_or_theme": "manufacturing",
             "task_objective": "Prepare the weekly manufacturing brief.",
             "brief_title": "ExampleCo weekly brief",
@@ -37,10 +52,12 @@ def _body(request_id: str, target: str, **overrides: object) -> dict[str, object
             "interface_language": "zh",
             "output_language": "zh",
             "cadence": "weekly",
+            "max_source_age_days": 7,
             "focus_areas": ["operations", "policy"],
             "output_formats": ["markdown", "docx"],
             "forbidden_sources": [],
             "web_search_mode": "disabled",
+            "output_extent": "balanced",
         },
         "raw_free_text": "weekly manufacturing brief for management",
         "discarded": [],
@@ -70,6 +87,108 @@ def _submit_ok(
     return response
 
 
+def _authorized_body(
+    submitter: InitWebSubmitter,
+    *,
+    request_id: str,
+    target: str,
+    members: int = 1,
+) -> dict[str, object]:
+    body = _body(request_id, target)
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+    source_metadata: list[dict[str, object]] = []
+    bindings: list[dict[str, object]] = []
+    for index in range(members):
+        content = f"public source {index}\n".encode()
+        staged = submitter.stage_upload(
+            session_id="init-session",
+            filename=f"source-{index:03d}.txt",
+            stream=BytesIO(content),
+            declared_length=len(content),
+        )
+        source_id = f"SRC-{index + 1:03d}"
+        incident = index == 14 and members >= 15
+        source_metadata.append(
+            {
+                "source_id": source_id,
+                "expected_content_sha256": staged["sha256"],
+                "origin_type": "uploaded_file",
+                "acquisition_method": "manual_upload",
+                "material_kind": "uploaded_file",
+                "provider": None,
+                "original_url": f"https://example.com/{index}",
+                "title": f"Public source {index}",
+                "publisher": "Example publisher",
+                "published_at": None if incident else "2026-07-22",
+                "retrieved_at": "2026-07-23T00:00:00Z",
+                "source_category": "other",
+                "retrieval_source_type": "local_file",
+                "underlying_evidence_type": "unknown",
+                "raw_underlying_evidence_type": None,
+                "document_kind": "status_incident" if incident else None,
+                "opened_at": "2026-07-21T00:00:00Z" if incident else None,
+                "resolved_at": None,
+            }
+        )
+        bindings.append(
+            {
+                "metadata_index": index,
+                "upload_handle": str(staged["upload_handle"]),
+            }
+        )
+    preview = submitter.preview_source_manifest(
+        session_id="init-session",
+        body={
+            "source_manifest_mode": "imported",
+            "source_metadata": source_metadata,
+            "upload_bindings": bindings,
+        },
+    )
+    payload.update(
+        {
+            "completion_target": "finalized_local",
+            "repair_budget": 1,
+            "source_manifest_mode": "imported",
+            "source_metadata": preview["source_metadata"],
+            "source_manifest": preview["source_manifest"],
+            "upload_session_id": "init-session",
+            "upload_bindings": preview["routing_bindings"],
+        }
+    )
+    return body
+
+
+def _public_web_body(
+    request_id: str,
+    target: str,
+    *,
+    session_id: str = "web-session",
+    search_domains: list[str] | None = None,
+) -> dict[str, object]:
+    body = _body(request_id, target)
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+    selections = payload["selections"]
+    assert isinstance(selections, dict)
+    selections.update(
+        {
+            "source_profile": "llm_decide",
+            "web_search_mode": "external_api",
+            "search_backend": "tavily",
+            "search_domains": [] if search_domains is None else search_domains,
+        }
+    )
+    payload.update(
+        {
+            "completion_target": "finalized_local",
+            "repair_budget": 1,
+            "search_secret_session_id": session_id,
+        }
+    )
+    return body
+
+
 def test_committed_submission_creates_runnable_workspace_and_real_receipt(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -81,6 +200,8 @@ def test_committed_submission_creates_runnable_workspace_and_real_receipt(
     assert response["status"] == "committed"
     workspace = tmp_path / "web-ws"
     assert (workspace / "config.yaml").is_file()
+    config = yaml.safe_load((workspace / "config.yaml").read_text(encoding="utf-8"))
+    assert config["output"]["html_report"]["auto_open"] is False
     assert (workspace / ".codex" / "config.toml").is_file()
     assert (workspace / "briefloop.db").is_file()
     expected_receipt_id = derived_id(
@@ -88,6 +209,9 @@ def test_committed_submission_creates_runnable_workspace_and_real_receipt(
     )
     assert response["transaction_id"] == expected_receipt_id
     assert response["committed_revision"] >= 1
+    assert response["execution_authorized"] is False
+    assert response["completion_target"] is None
+    assert response["repair_budget"] is None
     receipt = response["receipt"]
     assert receipt["transaction_id"] == expected_receipt_id
     assert receipt["run_id"] == response["run_id"]
@@ -100,6 +224,1075 @@ def test_committed_submission_creates_runnable_workspace_and_real_receipt(
     action = json.loads(capsys.readouterr().out)
     assert action["run_id"] == response["run_id"]
     assert _revision(workspace) == revision_before
+
+
+def test_public_web_submission_stores_tavily_key_outside_run_contract(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _public_web_body("REQ-WEB00001", "web-search-ws")
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+    selections = payload["selections"]
+    assert isinstance(selections, dict)
+    selections.pop("search_domains")
+    configured = submitter.configure_search_secret(
+        session_id="web-session",
+        body={"provider": "tavily", "api_key": "tvly-test-secret-123"},
+    )
+    assert configured == {
+        "ok": True,
+        "provider": "tavily",
+        "api_key_env": "TAVILY_API_KEY",
+        "configured": True,
+    }
+
+    response = _submit_ok(submitter, body)
+
+    workspace = tmp_path / "web-search-ws"
+    secret_path = workspace / ".env"
+    assert secret_path.read_text(encoding="utf-8") == (
+        "TAVILY_API_KEY=tvly-test-secret-123\n"
+    )
+    # POSIX mode bits express the workspace-secret contract. Windows reports
+    # synthetic mode bits and protects the file through its inherited ACL.
+    if os.name != "nt":
+        assert secret_path.stat().st_mode & 0o777 == 0o600
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    assert sources["source_strategy"]["profile"] == "llm_decide"
+    assert sources["web_search"]["mode"] == "external_api"
+    assert sources["web_search"]["backend"] == "tavily"
+    assert sources["web_search"]["api_key_env"] == "TAVILY_API_KEY"
+    assert (
+        sources["source_discovery"]["news_source_selection"]["preferred_domains"] == []
+    )
+    assert sources["web_search"]["news_source_domains"]["preferred_domains"] == []
+    assert response["execution_authorized"] is False
+    assert response["source_discovery_authorized"] is True
+    assert response["completion_target"] == "finalized_local"
+    assert response["repair_budget"] == 1
+    assert response["search_secret_status"] == "ready"
+    assert response["source_discovery"] == {
+        "mode": "pre_provider_authorization",
+        "profile": "llm_decide",
+        "backend": "tavily",
+        "api_key_env": "TAVILY_API_KEY",
+    }
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert len(snapshot.run_execution_authorizations) == 0
+    assert len(snapshot.run_source_discovery_authorizations) == 1
+    assert snapshot.run_source_discovery_authorizations[0].route_id == "web-search"
+    assert "tvly-test-secret-123" not in json.dumps(response)
+    config_text = (workspace / "config.yaml").read_text(encoding="utf-8")
+    assert "tvly-test-secret-123" not in config_text
+    assert b"tvly-test-secret-123" not in (workspace / "briefloop.db").read_bytes()
+
+
+def test_public_web_submission_freezes_canonical_search_domains_and_replays(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _public_web_body(
+        "REQ-DOMAINS-001",
+        "domain-bound",
+        search_domains=[" OpenAI.COM ", "docs.openai.com"],
+    )
+    submitter.configure_search_secret(
+        session_id="web-session",
+        body={"provider": "tavily", "api_key": "tvly-domain-secret"},
+    )
+
+    committed = _submit_ok(submitter, body)
+    workspace = tmp_path / "domain-bound"
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    assert sources["source_discovery"]["news_source_selection"][
+        "preferred_domains"
+    ] == ["docs.openai.com", "openai.com"]
+    assert sources["web_search"]["news_source_domains"]["preferred_domains"] == [
+        "docs.openai.com",
+        "openai.com",
+    ]
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert snapshot.store_revision == committed["committed_revision"]
+    db_bytes = (workspace / "briefloop.db").read_bytes()
+
+    replayed = _submit_ok(
+        submitter,
+        _public_web_body(
+            "REQ-DOMAINS-001",
+            "domain-bound",
+            search_domains=["docs.openai.com", "openai.com"],
+        ),
+    )
+    assert replayed["status"] == "replayed"
+    assert (workspace / "briefloop.db").read_bytes() == db_bytes
+
+
+@pytest.mark.parametrize(
+    "invalid_domains",
+    [
+        None,
+        "openai.com",
+        [""],
+        ["https://openai.com"],
+        ["openai.com/path"],
+        ["openai.com:443"],
+        ["*.openai.com"],
+        ["127.0.0.1"],
+        ["[::1]"],
+        ["localhost"],
+        ["openai..com"],
+        ["-openai.com"],
+        ["openai-.com"],
+        ["OPENAI.COM", "openai.com"],
+        [f"d{index}.example.com" for index in range(21)],
+    ],
+)
+def test_public_web_invalid_search_domains_fail_before_state_or_secret(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_domains: object,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _public_web_body("REQ-DOMAINS-BAD", "invalid-domain")
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+    selections = payload["selections"]
+    assert isinstance(selections, dict)
+    selections["search_domains"] = invalid_domains
+
+    def _effect_must_not_run(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("invalid domains reached credential effect")
+
+    monkeypatch.setattr(
+        init_web_submit_module,
+        "get_known_env_value",
+        _effect_must_not_run,
+    )
+    monkeypatch.setattr(
+        init_web_submit_module,
+        "store_workspace_secret",
+        _effect_must_not_run,
+    )
+
+    with pytest.raises(SubmissionError) as exc_info:
+        submitter.submit(body)
+
+    assert exc_info.value.error_code == "submission_search_domains_invalid"
+    assert exc_info.value.http_status == 422
+    assert not (tmp_path / "invalid-domain").exists()
+
+
+def test_public_web_changed_search_domains_conflict_before_secret_effect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _public_web_body(
+        "REQ-DOMAINS-CONFLICT",
+        "domain-conflict",
+        search_domains=["openai.com"],
+    )
+    submitter.configure_search_secret(
+        session_id="web-session",
+        body={"provider": "tavily", "api_key": "tvly-domain-secret"},
+    )
+    _submit_ok(submitter, body)
+    workspace = tmp_path / "domain-conflict"
+    db_bytes = (workspace / "briefloop.db").read_bytes()
+    (workspace / ".env").unlink()
+
+    def _secret_effect_must_not_run(**_kwargs: object) -> str:
+        raise AssertionError("domain conflict reached credential effect")
+
+    monkeypatch.setattr(
+        submitter,
+        "_apply_search_secret_effect",
+        _secret_effect_must_not_run,
+    )
+    changed = _public_web_body(
+        "REQ-DOMAINS-CONFLICT",
+        "domain-conflict",
+        search_domains=["platform.openai.com"],
+    )
+
+    with pytest.raises(SubmissionError) as exc_info:
+        submitter.submit(changed)
+
+    assert exc_info.value.error_code == "submission_replay_conflict"
+    assert exc_info.value.http_status == 409
+    assert (workspace / "briefloop.db").read_bytes() == db_bytes
+    assert not (workspace / ".env").exists()
+
+
+@pytest.mark.parametrize("max_source_age_days", [7, 30])
+def test_public_web_submission_freezes_confirmed_report_window(
+    tmp_path: Path,
+    max_source_age_days: int,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    target = f"web-search-{max_source_age_days}"
+    body = _public_web_body(
+        f"REQ-WINDOW-{max_source_age_days}",
+        target,
+    )
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+    selections = payload["selections"]
+    assert isinstance(selections, dict)
+    selections["max_source_age_days"] = max_source_age_days
+    submitter.configure_search_secret(
+        session_id="web-session",
+        body={"provider": "tavily", "api_key": "tvly-window-secret"},
+    )
+
+    _submit_ok(submitter, body)
+
+    workspace = tmp_path / target
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    assert sources["web_search"]["recency_days"] == 7
+    assert sources["web_search"]["initial_news_backfill"]["recency_days"] == 30
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+    assert len(snapshot.run_contract_bindings) == 1
+    assert (
+        snapshot.run_contract_bindings[0].run_direction.max_source_age_days
+        == max_source_age_days
+    )
+
+
+@pytest.mark.parametrize(
+    "invalid_window",
+    [None, True, "30", 0, 14, 90, 91],
+)
+def test_public_web_invalid_report_window_fails_before_state_or_secret(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    invalid_window: object,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _public_web_body("REQ-WINDOW-INVALID", "invalid-window")
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+    selections = payload["selections"]
+    assert isinstance(selections, dict)
+    if invalid_window is None:
+        selections.pop("max_source_age_days")
+    else:
+        selections["max_source_age_days"] = invalid_window
+
+    def _secret_effect_must_not_run(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("invalid report window reached credential effect")
+
+    monkeypatch.setattr(
+        init_web_submit_module,
+        "get_known_env_value",
+        _secret_effect_must_not_run,
+    )
+    monkeypatch.setattr(
+        init_web_submit_module,
+        "store_workspace_secret",
+        _secret_effect_must_not_run,
+    )
+
+    with pytest.raises(SubmissionError) as exc_info:
+        submitter.submit(body)
+
+    assert exc_info.value.error_code == "submission_report_window_invalid"
+    assert exc_info.value.http_status == 422
+    assert not (tmp_path / "invalid-window").exists()
+
+
+def test_public_web_submission_commits_discovery_before_secret_is_required(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _public_web_body("REQ-WEB00002", "web-search-ws")
+
+    status, response = submitter.submit(body)
+
+    assert status == 422
+    assert response == {
+        "ok": False,
+        "reason_code": "submission_search_api_key_required",
+        "initialization_status": "committed",
+        "search_secret_status": "required",
+    }
+    workspace = tmp_path / "web-search-ws"
+    assert (workspace / "briefloop.db").is_file()
+    revision = _revision(workspace)
+    assert not (workspace / ".env").exists()
+    replay_status, replay = submitter.submit(body)
+    assert replay_status == 422
+    assert replay["reason_code"] == "submission_search_api_key_required"
+    assert _revision(workspace) == revision
+
+
+def test_public_web_pending_secret_recovers_on_exact_same_process_replay(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _public_web_body("REQ-WEB00003", "web-search-ws")
+    sentinel = "tvly-pending-recovery-sentinel"
+    assert (
+        submitter.configure_search_secret(
+            session_id="web-session",
+            body={"provider": "tavily", "api_key": sentinel},
+        )["configured"]
+        is True
+    )
+    original_store_secret = init_web_submit_module.store_workspace_secret
+
+    def _pending_secret(*_args: object, **_kwargs: object) -> None:
+        raise SecretImportError("test-only persistence failure")
+
+    monkeypatch.setattr(
+        init_web_submit_module,
+        "store_workspace_secret",
+        _pending_secret,
+    )
+    first_status, first = submitter.submit(body)
+    assert first_status == 500
+    assert first == {
+        "ok": False,
+        "reason_code": "submission_search_secret_store_failed",
+        "initialization_status": "committed",
+        "search_secret_status": "pending",
+    }
+    workspace = tmp_path / "web-search-ws"
+    revision = _revision(workspace)
+    db_bytes = (workspace / "briefloop.db").read_bytes()
+    assert not (workspace / ".env").exists()
+    assert sentinel.encode("utf-8") not in db_bytes
+
+    monkeypatch.setattr(
+        init_web_submit_module,
+        "store_workspace_secret",
+        original_store_secret,
+    )
+    second_status, second = submitter.submit(body)
+    assert second_status == 200
+    assert second["status"] == "replayed"
+    assert second["search_secret_status"] == "recovered"
+    assert _revision(workspace) == revision
+    assert (workspace / "briefloop.db").read_bytes() == db_bytes
+    assert (workspace / ".env").read_text(encoding="utf-8") == (
+        f"TAVILY_API_KEY={sentinel}\n"
+    )
+    assert sentinel not in json.dumps(second)
+
+
+def test_public_web_restart_replay_is_store_first_then_recovered_or_ready(
+    tmp_path: Path,
+) -> None:
+    body = _public_web_body("REQ-WEB00004", "web-search-ws")
+    initial = InitWebSubmitter(base_dir=tmp_path)
+    initial_status, initial_response = initial.submit(body)
+    assert initial_status == 422
+    assert initial_response["search_secret_status"] == "required"
+    workspace = tmp_path / "web-search-ws"
+    revision = _revision(workspace)
+    db_bytes = (workspace / "briefloop.db").read_bytes()
+    initial.close()
+
+    recovered_body = _public_web_body(
+        "REQ-WEB00004",
+        "web-search-ws",
+        session_id="restart-entry-session",
+    )
+    recovered_submitter = InitWebSubmitter(base_dir=tmp_path)
+    sentinel = "tvly-restart-recovery-sentinel"
+    assert (
+        recovered_submitter.configure_search_secret(
+            session_id="restart-entry-session",
+            body={"provider": "tavily", "api_key": sentinel},
+        )["configured"]
+        is True
+    )
+    recovered_status, recovered = recovered_submitter.submit(recovered_body)
+    assert recovered_status == 200
+    assert recovered["status"] == "replayed"
+    assert recovered["search_secret_status"] == "recovered"
+    assert _revision(workspace) == revision
+    assert (workspace / "briefloop.db").read_bytes() == db_bytes
+    env_path = workspace / ".env"
+    env_mtime = env_path.stat().st_mtime_ns
+    recovered_submitter.close()
+
+    ready_submitter = InitWebSubmitter(base_dir=tmp_path)
+    ready_status, ready = ready_submitter.submit(
+        _public_web_body(
+            "REQ-WEB00004",
+            "web-search-ws",
+            session_id="restart-ready-session",
+        )
+    )
+    assert ready_status == 200
+    assert ready["status"] == "replayed"
+    assert ready["search_secret_status"] == "ready"
+    assert _revision(workspace) == revision
+    assert (workspace / "briefloop.db").read_bytes() == db_bytes
+    assert env_path.stat().st_mtime_ns == env_mtime
+    assert sentinel not in json.dumps(ready)
+
+
+def test_public_web_changed_semantics_conflict_before_secret_effect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _public_web_body("REQ-WEB00005", "web-search-ws")
+    assert (
+        submitter.configure_search_secret(
+            session_id="web-session",
+            body={"provider": "tavily", "api_key": "tvly-conflict-sentinel"},
+        )["configured"]
+        is True
+    )
+    assert _submit_ok(submitter, body)["search_secret_status"] == "ready"
+    workspace = tmp_path / "web-search-ws"
+    revision = _revision(workspace)
+    db_bytes = (workspace / "briefloop.db").read_bytes()
+    changed = deepcopy(body)
+    changed_payload = changed["payload"]
+    assert isinstance(changed_payload, dict)
+    changed_selections = changed_payload["selections"]
+    assert isinstance(changed_selections, dict)
+    changed_selections["max_source_age_days"] = 30
+
+    def _secret_must_not_be_touched(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("Store replay conflict must precede secret effect")
+
+    monkeypatch.setattr(
+        init_web_submit_module,
+        "get_known_env_value",
+        _secret_must_not_be_touched,
+    )
+    monkeypatch.setattr(
+        init_web_submit_module,
+        "store_workspace_secret",
+        _secret_must_not_be_touched,
+    )
+    with pytest.raises(SubmissionError) as exc_info:
+        submitter.submit(changed)
+    assert exc_info.value.error_code == "submission_replay_conflict"
+    assert _revision(workspace) == revision
+    assert (workspace / "briefloop.db").read_bytes() == db_bytes
+
+
+def test_discovery_authorization_missing_receipt_relation_fails_store_verification(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _public_web_body("REQ-WEB00006", "web-search-ws")
+    assert (
+        submitter.configure_search_secret(
+            session_id="web-session",
+            body={"provider": "tavily", "api_key": "tvly-relation-sentinel"},
+        )["configured"]
+        is True
+    )
+    response = _submit_ok(submitter, body)
+    workspace = tmp_path / "web-search-ws"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        store._connection.execute(
+            "DELETE FROM transaction_run_source_discovery_authorizations "
+            "WHERE run_id = ? AND transaction_id = ?",
+            (response["run_id"], response["transaction_id"]),
+        )
+        store._connection.commit()
+        with pytest.raises(ControlStoreIntegrityError) as exc_info:
+            store.load_snapshot(response["run_id"])
+    assert exc_info.value.code == "transaction_relation_mismatch"
+
+
+def test_authorized_submission_freezes_manifest_and_returns_first_action(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _authorized_body(
+        submitter,
+        request_id="REQ-AUTH0001",
+        target="authorized-ws",
+    )
+
+    response = _submit_ok(submitter, body)
+
+    workspace = tmp_path / "authorized-ws"
+    assert response["next_action"]["effect_kind"] == "doctor_check"
+    assert response["execution_authorized"] is True
+    assert response["completion_target"] == "finalized_local"
+    assert response["repair_budget"] == 1
+    assert (workspace / "input" / "execution-source-manifest.json").is_file()
+    config = yaml.safe_load((workspace / "config.yaml").read_text(encoding="utf-8"))
+    authorization = config["controlstore_v2"]["execution_authorization"]
+    assert authorization["completion_target"] == "finalized_local"
+    assert authorization["source_manifest_member_count"] == 1
+    assert config["output"]["html_report"]["auto_open"] is True
+
+
+def test_source_manifest_preview_is_server_canonical_and_zero_workspace_write(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _authorized_body(
+        submitter,
+        request_id="REQ-PREVIEW01",
+        target="authorized-ws",
+    )
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+
+    preview = submitter.preview_source_manifest(
+        session_id="init-session",
+        body={
+            "source_manifest_mode": payload["source_manifest_mode"],
+            "source_metadata": payload["source_metadata"],
+            "upload_bindings": payload["upload_bindings"],
+        },
+    )
+
+    assert preview["ok"] is True
+    assert preview["member_count"] == 1
+    assert len(str(preview["source_manifest_sha256"])) == 64
+    assert preview["routing_bindings"] == payload["upload_bindings"]
+    observed = preview["source_preview"][0]
+    assert observed["observed_filename"] == "source-000.txt"
+    assert (
+        observed["observed_sha256"]
+        == payload["source_metadata"][0]["expected_content_sha256"]
+    )
+    assert observed["byte_count"] == len(b"public source 0\n")
+    assert not (tmp_path / "authorized-ws").exists()
+
+    bindings = payload["upload_bindings"]
+    assert isinstance(bindings, list)
+    handle = bindings[0]["upload_handle"]
+    staged = submitter._staging._uploads[handle]
+    replacement = staged.path.with_name(staged.path.name + "-replacement")
+    replacement.write_bytes(staged.path.read_bytes())
+    replacement.replace(staged.path)
+    with pytest.raises(SubmissionError) as exc_info:
+        submitter.preview_source_manifest(
+            session_id="init-session",
+            body={
+                "source_manifest_mode": payload["source_manifest_mode"],
+                "source_metadata": payload["source_metadata"],
+                "upload_bindings": payload["upload_bindings"],
+            },
+        )
+    assert exc_info.value.error_code in {
+        "init_web_source_handle_invalid",
+        "init_web_source_hash_mismatch",
+    }
+    assert not (tmp_path / "authorized-ws").exists()
+
+
+def test_authorized_replay_precedes_deleted_staging_and_handle_lookup(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _authorized_body(
+        submitter,
+        request_id="REQ-AUTH0002",
+        target="authorized-ws",
+    )
+    first = _submit_ok(submitter, body)
+    submitter.close()
+
+    restarted = InitWebSubmitter(base_dir=tmp_path)
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+    bindings = payload["upload_bindings"]
+    assert isinstance(bindings, list)
+    bindings[0]["upload_handle"] = "upload-routing-handle-can-change"
+    second = _submit_ok(restarted, body)
+
+    assert second["status"] == "replayed"
+    assert second["receipt"] == first["receipt"]
+
+
+def test_authorized_changed_semantic_manifest_conflicts_before_source_reads(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _authorized_body(
+        submitter,
+        request_id="REQ-AUTH0003",
+        target="authorized-ws",
+    )
+    _submit_ok(submitter, body)
+    submitter.close()
+    payload = body["payload"]
+    assert isinstance(payload, dict)
+    manifest = payload["source_manifest"]
+    assert isinstance(manifest, dict)
+    members = manifest["members"]
+    assert isinstance(members, list)
+    members[0]["title"] = "Changed confirmed title"
+
+    with pytest.raises(SubmissionError) as exc_info:
+        InitWebSubmitter(base_dir=tmp_path).submit(body)
+
+    assert exc_info.value.error_code == "submission_replay_conflict"
+
+
+def test_authorized_25_member_manifest_preserves_url_and_incident_semantics(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _authorized_body(
+        submitter,
+        request_id="REQ-AUTH0025",
+        target="authorized-ws",
+        members=25,
+    )
+
+    _submit_ok(submitter, body)
+
+    stored = json.loads(
+        (
+            tmp_path / "authorized-ws" / "input" / "execution-source-manifest.json"
+        ).read_text()
+    )
+    assert len(stored["members"]) == 25
+    assert [item["source_id"] for item in stored["members"]] == [
+        f"SRC-{index:03d}" for index in range(1, 26)
+    ]
+    assert [item["locator"]["url"] for item in stored["members"]] == [
+        f"https://example.com/{index}" for index in range(25)
+    ]
+    assert stored["members"][14]["locator"] == {
+        "kind": "web",
+        "url": "https://example.com/14",
+    }
+    assert stored["members"][14]["document_kind"] == "status_incident"
+    assert stored["members"][14]["opened_at"] == "2026-07-21T00:00:00Z"
+
+
+@pytest.mark.parametrize("member_count", [2, 25, 256])
+def test_generated_manifest_maps_every_member_once_with_stable_server_ids(
+    tmp_path: Path,
+    member_count: int,
+) -> None:
+    projections: list[list[tuple[str, str, str, str]]] = []
+    for suffix, reverse in (("a", False), ("b", True)):
+        submitter = InitWebSubmitter(base_dir=tmp_path / suffix)
+        uploads = []
+        inputs = [
+            (f"source-{index:03d}.txt", f"content-{index:03d}".encode())
+            for index in range(member_count)
+        ]
+        if reverse:
+            inputs.reverse()
+        for filename, content in inputs:
+            uploads.append(
+                submitter.stage_upload(
+                    session_id="session",
+                    filename=filename,
+                    stream=BytesIO(content),
+                    declared_length=len(content),
+                )
+            )
+        metadata = [
+            {
+                "title": upload["filename"],
+                "published_at": None,
+            }
+            for upload in uploads
+        ]
+        preview = submitter.preview_source_manifest(
+            session_id="session",
+            body={
+                "source_manifest_mode": "generated",
+                "source_metadata": metadata,
+                "upload_bindings": [
+                    {"metadata_index": index, "upload_handle": upload["upload_handle"]}
+                    for index, upload in enumerate(uploads)
+                ],
+            },
+        )
+        assert len(preview["routing_bindings"]) == member_count
+        assert (
+            len({item["upload_handle"] for item in preview["routing_bindings"]})
+            == member_count
+        )
+        projections.append(
+            [
+                (
+                    item["source_id"],
+                    item["input_path"],
+                    item["title"],
+                    item["content_sha256"],
+                )
+                for item in preview["source_manifest"]["members"]
+            ]
+        )
+        assert all(
+            item["published_at"] is None
+            for item in preview["source_manifest"]["members"]
+        )
+    assert projections[0] == projections[1]
+    assert [item[0] for item in projections[0]] == [
+        f"SRC-INIT-{index:03d}" for index in range(1, member_count + 1)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("forbidden_key", "value"),
+    [
+        ("source_id", "SRC-CLIENT-001"),
+        ("input_path", "input/client.txt"),
+        ("locator", {"kind": "file", "path": "input/client.txt"}),
+        ("content_sha256", "0" * 64),
+        ("expected_content_sha256", "0" * 64),
+        ("retrieved_at", "2026-07-23T00:00:00Z"),
+        ("origin_type", "uploaded_file"),
+    ],
+)
+def test_generated_manifest_rejects_imported_or_server_derived_fields(
+    tmp_path: Path,
+    forbidden_key: str,
+    value: object,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    staged = submitter.stage_upload(
+        session_id="session",
+        filename="source.txt",
+        stream=BytesIO(b"source"),
+        declared_length=6,
+    )
+    metadata: dict[str, object] = {"title": "Source", forbidden_key: value}
+
+    with pytest.raises(SubmissionError, match="init_web_source_manifest_invalid"):
+        submitter.preview_source_manifest(
+            session_id="session",
+            body={
+                "source_manifest_mode": "generated",
+                "source_metadata": [metadata],
+                "upload_bindings": [
+                    {
+                        "metadata_index": 0,
+                        "upload_handle": staged["upload_handle"],
+                    }
+                ],
+            },
+        )
+
+
+def test_generated_preview_routing_is_reused_for_exact_first_commit(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    uploads = [
+        submitter.stage_upload(
+            session_id="session",
+            filename=filename,
+            stream=BytesIO(content),
+            declared_length=len(content),
+        )
+        for filename, content in (("zeta.txt", b"zeta"), ("alpha.txt", b"alpha"))
+    ]
+    preview = submitter.preview_source_manifest(
+        session_id="session",
+        body={
+            "source_manifest_mode": "generated",
+            "source_metadata": [
+                {"title": "Same source", "publisher": None},
+                {"title": "Same source"},
+            ],
+            "upload_bindings": [
+                {
+                    "metadata_index": index,
+                    "upload_handle": upload["upload_handle"],
+                }
+                for index, upload in enumerate(uploads)
+            ],
+        },
+    )
+    body = _body(
+        "REQ-GENERATED-COMMIT",
+        "generated-ws",
+        completion_target="finalized_local",
+        repair_budget=1,
+        source_manifest_mode="generated",
+        source_metadata=preview["source_metadata"],
+        source_manifest=preview["source_manifest"],
+        upload_session_id="session",
+        upload_bindings=preview["routing_bindings"],
+    )
+
+    response = _submit_ok(submitter, body)
+
+    assert response["execution_authorized"] is True
+    stored = json.loads(
+        (tmp_path / "generated-ws" / "input/execution-source-manifest.json").read_text()
+    )
+    assert stored == preview["source_manifest"]
+    assert [member["source_id"] for member in stored["members"]] == [
+        "SRC-INIT-001",
+        "SRC-INIT-002",
+    ]
+
+
+def test_generated_optional_omission_and_null_normalize_identically(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    staged = submitter.stage_upload(
+        session_id="session",
+        filename="source.txt",
+        stream=BytesIO(b"source"),
+        declared_length=6,
+    )
+    binding = [{"metadata_index": 0, "upload_handle": staged["upload_handle"]}]
+
+    omitted = submitter.preview_source_manifest(
+        session_id="session",
+        body={
+            "source_manifest_mode": "generated",
+            "source_metadata": [{"title": "Source"}],
+            "upload_bindings": binding,
+        },
+    )
+    explicit_null = submitter.preview_source_manifest(
+        session_id="session",
+        body={
+            "source_manifest_mode": "generated",
+            "source_metadata": [{"title": "Source", "publisher": None}],
+            "upload_bindings": binding,
+        },
+    )
+
+    assert omitted["source_metadata"] == explicit_null["source_metadata"]
+    assert omitted["source_manifest"] == explicit_null["source_manifest"]
+
+
+def test_generated_canonical_manifest_ignores_upload_and_binding_order(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    uploads = [
+        submitter.stage_upload(
+            session_id="session",
+            filename=f"source-{index}.txt",
+            stream=BytesIO(f"content-{index}".encode()),
+            declared_length=len(f"content-{index}".encode()),
+        )
+        for index in range(3)
+    ]
+
+    def _preview(ordered: list[dict[str, object]]) -> dict[str, object]:
+        return submitter.preview_source_manifest(
+            session_id="session",
+            body={
+                "source_manifest_mode": "generated",
+                "source_metadata": [
+                    {"title": str(upload["filename"])} for upload in ordered
+                ],
+                "upload_bindings": [
+                    {
+                        "metadata_index": index,
+                        "upload_handle": upload["upload_handle"],
+                    }
+                    for index, upload in enumerate(ordered)
+                ],
+            },
+        )
+
+    forward = _preview(uploads)
+    reverse = _preview(list(reversed(uploads)))
+
+    assert forward["source_manifest"] == reverse["source_manifest"]
+    assert forward["source_metadata"] == reverse["source_metadata"]
+
+
+def test_generated_normalized_duplicate_is_rejected(tmp_path: Path) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    uploads = [
+        submitter.stage_upload(
+            session_id="session",
+            filename="same.txt",
+            stream=BytesIO(b"same"),
+            declared_length=4,
+        )
+        for _index in range(2)
+    ]
+
+    with pytest.raises(SubmissionError, match="init_web_source_manifest_invalid"):
+        submitter.preview_source_manifest(
+            session_id="session",
+            body={
+                "source_manifest_mode": "generated",
+                "source_metadata": [
+                    {"title": "Same"},
+                    {"title": "Same", "publisher": None},
+                ],
+                "upload_bindings": [
+                    {
+                        "metadata_index": index,
+                        "upload_handle": upload["upload_handle"],
+                    }
+                    for index, upload in enumerate(uploads)
+                ],
+            },
+        )
+
+
+def test_imported_manifest_expected_hash_must_match_staged_observation(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    staged = submitter.stage_upload(
+        session_id="session",
+        filename="source.txt",
+        stream=BytesIO(b"source"),
+        declared_length=6,
+    )
+    metadata = {
+        "source_id": "SRC-001",
+        "expected_content_sha256": "0" * 64,
+        "title": "Source",
+        "retrieved_at": "2026-07-23T00:00:00Z",
+    }
+
+    with pytest.raises(SubmissionError, match="init_web_source_hash_mismatch"):
+        submitter.preview_source_manifest(
+            session_id="session",
+            body={
+                "source_manifest_mode": "imported",
+                "source_metadata": [metadata],
+                "upload_bindings": [
+                    {
+                        "metadata_index": 0,
+                        "upload_handle": staged["upload_handle"],
+                    }
+                ],
+            },
+        )
+
+
+def test_browser_hash_rewrite_fails_before_store_commit(tmp_path: Path) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _authorized_body(
+        submitter, request_id="REQ-BROWSER-HASH", target="authorized-ws"
+    )
+    payload = body["payload"]
+    payload["source_manifest"]["members"][0]["content_sha256"] = "0" * 64
+
+    with pytest.raises(SubmissionError, match="submission_source_manifest_invalid"):
+        submitter.submit(body)
+
+    assert not (tmp_path / "authorized-ws" / "briefloop.db").exists()
+
+
+@pytest.mark.parametrize("phase", ["copy", "post_copy"])
+def test_source_mutation_during_or_after_copy_fails_before_store_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase: str
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    body = _authorized_body(
+        submitter, request_id=f"REQ-MUTATE-{phase}", target=f"ws-{phase}"
+    )
+    payload = body["payload"]
+    binding = payload["upload_bindings"][0]
+    staged = submitter._staging._uploads[binding["upload_handle"]]
+    if phase == "copy":
+        original_open = InitWebStaging._open_verified
+        open_calls = 0
+
+        def _mutate_after_open(expected_sha256, selected):
+            nonlocal open_calls
+            open_calls += 1
+            descriptor = original_open(expected_sha256, selected)
+            if open_calls == 3:
+                selected.path.write_bytes(b"Y" * selected.byte_count)
+            return descriptor
+
+        monkeypatch.setattr(
+            InitWebStaging, "_open_verified", staticmethod(_mutate_after_open)
+        )
+    else:
+        original_verify = InitWebStaging._verify_materialized
+
+        def _mutate_before_post_copy(destination, selected, member):
+            destination.write_bytes(b"Z" * selected.byte_count)
+            return original_verify(destination, selected, member)
+
+        monkeypatch.setattr(
+            InitWebStaging,
+            "_verify_materialized",
+            staticmethod(_mutate_before_post_copy),
+        )
+
+    with pytest.raises(SubmissionError, match="init_web_source_hash_mismatch"):
+        submitter.submit(body)
+
+    assert not (tmp_path / f"ws-{phase}" / "briefloop.db").exists()
+
+
+@pytest.mark.parametrize("changed", [False, True])
+def test_same_target_concurrent_submission_is_linearized_before_second_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, changed: bool
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    first_body = _authorized_body(
+        submitter, request_id="REQ-CONCURRENT", target="authorized-ws"
+    )
+    second_body = deepcopy(first_body)
+    if changed:
+        second_payload = second_body["payload"]
+        second_payload["source_metadata"][0]["title"] = "Changed source title"
+        preview = submitter.preview_source_manifest(
+            session_id="init-session",
+            body={
+                "source_manifest_mode": "imported",
+                "source_metadata": second_payload["source_metadata"],
+                "upload_bindings": second_payload["upload_bindings"],
+            },
+        )
+        second_payload["source_manifest"] = preview["source_manifest"]
+
+    entered = __import__("threading").Event()
+    release = __import__("threading").Event()
+    original = submitter._staging.materialize_canonical
+    materializations = 0
+
+    def _pause_winner(**kwargs):
+        nonlocal materializations
+        materializations += 1
+        entered.set()
+        assert release.wait(timeout=5)
+        return original(**kwargs)
+
+    monkeypatch.setattr(submitter._staging, "materialize_canonical", _pause_winner)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        winner = executor.submit(submitter.submit, first_body)
+        assert entered.wait(timeout=5)
+        loser = executor.submit(submitter.submit, second_body)
+        release.set()
+        first = winner.result(timeout=20)
+        if changed:
+            with pytest.raises(SubmissionError, match="submission_replay_conflict"):
+                loser.result(timeout=20)
+        else:
+            second = loser.result(timeout=20)
+            assert {first[1]["status"], second[1]["status"]} == {
+                "committed",
+                "replayed",
+            }
+            assert first[1]["transaction_id"] == second[1]["transaction_id"]
+    assert materializations == 1
+    assert _revision(tmp_path / "authorized-ws") == 1
 
 
 def test_kit_materialization_failure_never_commits_store(
@@ -246,7 +1439,12 @@ def test_same_request_id_with_different_payload_conflicts_with_zero_writes(
     workspace = tmp_path / "web-ws"
     revision_before = _revision(workspace)
 
-    changed = _body("REQ-AAAA0004", "web-ws", raw_free_text="changed mind")
+    changed = _body("REQ-AAAA0004", "web-ws")
+    changed_payload = changed["payload"]
+    assert isinstance(changed_payload, dict)
+    changed_selections = changed_payload["selections"]
+    assert isinstance(changed_selections, dict)
+    changed_selections["task_objective"] = "Prepare a different confirmed brief."
     restarted = InitWebSubmitter(base_dir=tmp_path)
     with pytest.raises(SubmissionError) as exc_info:
         restarted.submit(changed)
@@ -291,6 +1489,60 @@ def test_missing_required_selection_is_rejected(tmp_path: Path) -> None:
     assert not (tmp_path / "web-ws").exists()
 
 
+def test_report_type_is_required_and_frozen_into_run_direction(
+    tmp_path: Path,
+) -> None:
+    missing = _body("REQ-REPORT-TYPE-MISSING", "missing-report-type")
+    missing["payload"]["selections"]["report_type"] = ""  # type: ignore[index]
+    with pytest.raises(SubmissionError) as exc_info:
+        InitWebSubmitter(base_dir=tmp_path).submit(missing)
+    assert exc_info.value.error_code == "submission_report_type_required"
+    assert not (tmp_path / "missing-report-type").exists()
+
+    body = _body("REQ-REPORT-TYPE-FROZEN", "report-type-ws")
+    response = _submit_ok(InitWebSubmitter(base_dir=tmp_path), body)
+    with SQLiteControlStore.open(tmp_path / "report-type-ws" / "briefloop.db") as store:
+        binding = store.load_snapshot(response["run_id"]).run_contract_bindings[0]
+    assert binding.run_direction.report_type == "management_monthly"
+
+
+@pytest.mark.parametrize("extent", ["unknown", None])
+def test_unknown_output_extent_is_rejected_before_workspace_writes(
+    tmp_path: Path,
+    extent: object,
+) -> None:
+    body = _body("REQ-OUTPUT-EXTENT", "web-ws")
+    body["payload"]["selections"]["output_extent"] = extent  # type: ignore[index]
+
+    with pytest.raises(SubmissionError, match="submission_output_extent_invalid"):
+        InitWebSubmitter(base_dir=tmp_path).submit(body)
+
+    assert not (tmp_path / "web-ws").exists()
+
+
+def test_output_extent_is_store_frozen_and_part_of_replay_identity(
+    tmp_path: Path,
+) -> None:
+    body = _body("REQ-OUTPUT-EXTENT-REPLAY", "web-ws")
+    body["payload"]["selections"]["output_language"] = "en"  # type: ignore[index]
+    first = _submit_ok(InitWebSubmitter(base_dir=tmp_path), body)
+    workspace = tmp_path / "web-ws"
+    revision_before = _revision(workspace)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        binding = store.load_snapshot(first["run_id"]).run_contract_bindings[0]
+    assert binding.run_direction.output_contract is not None
+    assert binding.run_direction.output_contract.output_extent == "balanced"
+    assert binding.run_direction.output_contract.resolved_minimum == 600
+    assert binding.run_direction.output_contract.resolved_maximum == 800
+
+    changed = _body("REQ-OUTPUT-EXTENT-REPLAY", "web-ws")
+    changed["payload"]["selections"]["output_language"] = "en"  # type: ignore[index]
+    changed["payload"]["selections"]["output_extent"] = "detailed"  # type: ignore[index]
+    with pytest.raises(SubmissionError, match="submission_replay_conflict"):
+        InitWebSubmitter(base_dir=tmp_path).submit(changed)
+    assert _revision(workspace) == revision_before
+
+
 def test_existing_non_empty_target_conflicts(tmp_path: Path) -> None:
     target = tmp_path / "web-ws"
     target.mkdir()
@@ -300,6 +1552,145 @@ def test_existing_non_empty_target_conflicts(tmp_path: Path) -> None:
         submitter.submit(_body("REQ-AAAA0007", "web-ws"))
     assert exc_info.value.error_code == "workspace_target_exists"
     assert exc_info.value.http_status == 409
+
+
+def test_target_nested_below_existing_workspace_rejects_before_writes(
+    tmp_path: Path,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    _submit_ok(submitter, _body("REQ-OUTER-0001", "outer"))
+    outer = tmp_path / "outer"
+    revision_before = _revision(outer)
+    nested = outer / "nested"
+
+    with pytest.raises(SubmissionError) as exc_info:
+        submitter.submit(_body("REQ-NESTED-001", "outer/nested"))
+
+    assert exc_info.value.error_code == "workspace_target_nested"
+    assert exc_info.value.http_status == 409
+    assert not nested.exists()
+    assert _revision(outer) == revision_before
+
+
+def test_init_web_rejects_outside_alias_into_workspace_before_source_access(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    _submit_ok(submitter, _body("REQ-WEB-ALIAS-OUTER", "outer"))
+    outer = tmp_path / "outer"
+    revision_before = _revision(outer)
+    alias = tmp_path / "outside-alias"
+    try:
+        alias.symlink_to(outer / "input" / "context", target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable")
+
+    def forbidden_source_access(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("source handles must not be accessed")
+
+    monkeypatch.setattr(
+        submitter._staging,
+        "canonical_manifest",
+        forbidden_source_access,
+    )
+    body = _body(
+        "REQ-WEB-ALIAS-INTO-WORKSPACE",
+        "outside-alias/nested",
+        source_manifest={"untrusted": True},
+        source_manifest_mode="generated",
+        upload_session_id="never-read",
+        upload_bindings=[{"upload_handle": "never-read"}],
+    )
+
+    with pytest.raises(SubmissionError) as exc_info:
+        submitter.submit(body)
+
+    assert exc_info.value.error_code == "workspace_target_nested"
+    assert exc_info.value.http_status == 409
+    assert not (outer / "input" / "context" / "nested").exists()
+    assert _revision(outer) == revision_before
+
+
+def test_init_web_rejects_lexically_nested_alias_outward_before_source_access(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    submitter = InitWebSubmitter(base_dir=tmp_path)
+    _submit_ok(submitter, _body("REQ-WEB-LEXICAL-OUTER", "outer"))
+    outer = tmp_path / "outer"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    alias = outer / "input" / "context" / "outward"
+    try:
+        alias.symlink_to(outside, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable")
+
+    def forbidden_source_access(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("source handles must not be accessed")
+
+    monkeypatch.setattr(
+        submitter._staging,
+        "canonical_manifest",
+        forbidden_source_access,
+    )
+    body = _body(
+        "REQ-WEB-LEXICAL-OUTWARD",
+        "outer/input/context/outward/nested",
+        source_manifest={"untrusted": True},
+        source_manifest_mode="generated",
+        upload_session_id="never-read",
+        upload_bindings=[{"upload_handle": "never-read"}],
+    )
+
+    with pytest.raises(SubmissionError) as exc_info:
+        submitter.submit(body)
+
+    assert exc_info.value.error_code == "workspace_target_nested"
+    assert exc_info.value.http_status == 409
+    assert not (outside / "nested").exists()
+
+
+def test_direct_create_workspace_rejects_alias_into_existing_workspace(
+    tmp_path: Path,
+) -> None:
+    outer = tmp_path / "outer"
+    profile = _profile_from_payload(_body("REQ-DIRECT-OUTER", "outer")["payload"])
+    create_workspace(outer, profile)
+    alias = tmp_path / "alias"
+    try:
+        alias.symlink_to(outer / "input" / "context", target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable")
+
+    with pytest.raises(NestedWorkspaceTargetError):
+        create_workspace(alias / "nested", profile)
+
+    assert not (outer / "input" / "context" / "nested").exists()
+
+
+def test_canonical_target_remains_bound_after_input_alias_replacement(
+    tmp_path: Path,
+) -> None:
+    original = tmp_path / "original"
+    replacement = tmp_path / "replacement"
+    original.mkdir()
+    replacement.mkdir()
+    alias = tmp_path / "alias"
+    try:
+        alias.symlink_to(original, target_is_directory=True)
+    except OSError:
+        pytest.skip("directory symlinks unavailable")
+    canonical = canonical_workspace_target(alias / "workspace")
+    alias.unlink()
+    alias.symlink_to(replacement, target_is_directory=True)
+    profile = _profile_from_payload(_body("REQ-ALIAS-SWAP", "workspace")["payload"])
+
+    create_workspace(canonical, profile)
+
+    assert (original / "workspace" / "config.yaml").exists()
+    assert not (replacement / "workspace").exists()
 
 
 def test_malformed_body_is_rejected(tmp_path: Path) -> None:

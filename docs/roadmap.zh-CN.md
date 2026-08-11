@@ -26,6 +26,22 @@ v0.11.0 产品基线前不优先重建完整分布式 multi-agent runtime。Pyth
 - Stage boundary 就是契约 boundary。部分 gate 只需要机器检查，部分 gate 需要人类语义确认，部分 gate 由机器 findings 加司乐师判断共同决定。
 - Memory 是 workspace-local 且 human-governed。项目可以加入 agent-proposed memory updates 和 frozen per-run snapshots，但 v0.11.0 产品基线前不做完整 long-term-memory 或 RAG platform。
 
+## 当前 development 校正
+
+下方按版本排列的 milestone 是历史 roadmap 记录。当前 development truth 是 fresh
+SQLite schema 13：legacy Improvement JSON/JSONL、fast-rerun 与 MABW-080 command
+tooling 已退役，git history 及 archive/reference-run material 仅作为历史证据保留。
+Semantic Assessment Report 只保留可选 schema/reference validation；producer、
+proposal/status projection 与 adjudication writer 已退役。
+
+在 development main 上，Human 可以通过 `briefloop runtime successor-start`
+提供新的严格 `RunDirection`，显式启动同一 workspace 的正常 successor。只有带上
+`--include-approved-guidance` 才会复用已批准 guidance。Python 原子冻结兼容、
+active 且经 Human 批准的 guidance，只交给 Analyst 与 Editor；其他角色不收到。
+当前 direction 与 evidence 优先。效用 NOT MEASURED；guidance 不是 evidence、
+Claim Ledger input、Gate rule、repair command、finalize/delivery authority、Core
+next-action authority、自动学习或质量证明。
+
 ## 已完成基线
 
 ### v0.5.7

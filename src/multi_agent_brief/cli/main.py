@@ -27,6 +27,7 @@ from multi_agent_brief.cli import (
     contract_commands,
     intake_v2_commands,
     core_v2_commands,
+    market_data_commands,
 )
 
 
@@ -78,6 +79,9 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
 
     # Read-only strict contract schemas and examples
     contract_commands.register(subparsers)
+
+    # Market data snapshot acquisition and projection
+    market_data_commands.register(subparsers)
 
     # Dormant fresh-v2 ControlStore intake; no active adapter invokes it.
     intake_v2_commands.register(subparsers)
@@ -160,6 +164,9 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "contract":
         return contract_commands.handle(args)
+
+    if cmd == "market-data":
+        return market_data_commands.handle(args)
 
     if cmd == "intake-v2":
         return intake_v2_commands.handle(args)

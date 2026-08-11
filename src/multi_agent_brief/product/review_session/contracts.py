@@ -1,4 +1,4 @@
-"""Strict read-only contracts for the post-final Human Review Session."""
+"""Strict read models and zero-authority command envelopes for Review Session."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ from multi_agent_brief.contracts.v2 import (
     IsoDateTime,
     NonNegativeInt,
     PositiveInt,
+    ReaderReviewAssessmentInput,
+    RunDirection,
     Sha256,
     StrictModel,
 )
@@ -26,6 +28,17 @@ SEMANTIC_REVIEW_SCHEMA_ID = "briefloop.post_final_review.semantic_review.v1"
 IMPROVEMENT_PROJECTION_SCHEMA_ID = "briefloop.post_final_review.improvement.v1"
 POST_FINAL_REVIEW_READ_MODEL_SCHEMA_ID = "briefloop.post_final_review.read_model.v1"
 REVIEW_SESSION_DESCRIPTOR_SCHEMA_ID = "briefloop.post_final_review.session.v1"
+REVIEW_SESSION_COMMAND_SCHEMA_ID = "briefloop.post_final_review.command.v1"
+READER_REVIEW_SELECTION_SCHEMA_ID = (
+    "briefloop.post_final_review.reader_review_selection.v1"
+)
+READER_REVIEW_REFRESH_SCHEMA_ID = "briefloop.post_final_review.refresh.v1"
+HUMAN_OBSERVATION_INPUT_SCHEMA_ID = "briefloop.post_final_human_observation_input.v1"
+HUMAN_OBSERVATION_SUPERSEDE_INPUT_SCHEMA_ID = (
+    "briefloop.post_final_human_observation_supersede_input.v1"
+)
+HUMAN_GUIDANCE_DRAFT_INPUT_SCHEMA_ID = "briefloop.post_final_guidance_draft_input.v1"
+SUCCESSOR_START_INPUT_SCHEMA_ID = "briefloop.post_final_successor_start_input.v1"
 
 QualityStatus = Literal["pass", "warning", "block", "incomplete"]
 SemanticReviewStatus = Literal[
@@ -44,7 +57,9 @@ SemanticReviewStatus = Literal[
 # The evaluator-side bridge converts findings field-by-field; this kernel never
 # imports the evaluator, so the display contract is restated locally.
 FindingBlockId = Annotated[str, StringConstraints(pattern=r"^B[0-9]{6}$")]
-FindingAssessmentUnitId = Annotated[str, StringConstraints(pattern=r"^AU-[0-9a-f]{12}$")]
+FindingAssessmentUnitId = Annotated[
+    str, StringConstraints(pattern=r"^AU-[0-9a-f]{12}$")
+]
 FindingProposalId = Annotated[str, StringConstraints(pattern=r"^F-[0-9a-f]{12}$")]
 
 FindingScopeClass = Literal["O1", "O2"]
@@ -82,6 +97,185 @@ FindingRecommendedHumanAction = Literal[
     "review_o3_evidence",
     "inspect_manually",
 ]
+
+
+class HumanObservationSpan(StrictModel):
+    """Exact report span reference accepted by Human observations."""
+
+    schema_version: Literal["briefloop.post_final_human_observation_report_span.v1"]
+    report_sha256: Sha256
+    block_id: ContractId
+    start_char: NonNegativeInt
+    end_char: PositiveInt
+    excerpt_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_offsets(self) -> "HumanObservationSpan":
+        if self.start_char >= self.end_char:
+            raise ValueError("span offsets must be ordered")
+        return self
+
+
+class HumanObservationInput(StrictModel):
+    """Strict loopback/CLI envelope for an independent Human observation.
+
+    The finalized report lineage is always resolved by the Store service.  A
+    selected assessment may be supplied by the page, but it is optional so a
+    Human can record an observation when Reader Review was not run or did not
+    produce a qualified result.  References are identifiers only; the
+    deterministic service validates each one against the frozen report.
+    """
+
+    schema_version: Literal[HUMAN_OBSERVATION_INPUT_SCHEMA_ID]
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    observation_text: Annotated[str, StringConstraints(min_length=1, max_length=12000)]
+    assessment_result_id: ContractId | None = None
+    assessment_result_fingerprint: Sha256 | None = None
+    reader_view_sha256: Sha256 | None = None
+    requirement_id: ContractId | None = None
+    claim_id: ContractId | None = None
+    report_span: HumanObservationSpan | None = None
+    scope_class: FindingScopeClass | None = None
+    dimension_id: ContractId | None = None
+
+    @model_validator(mode="after")
+    def validate_observation_input(self) -> "HumanObservationInput":
+        if not self.observation_text.strip():
+            raise ValueError("observation_text must not be blank")
+        selected = (
+            self.assessment_result_id,
+            self.assessment_result_fingerprint,
+            self.reader_view_sha256,
+        )
+        if any(value is not None for value in selected) and not all(
+            value is not None for value in selected
+        ):
+            raise ValueError("selected assessment binding must be complete")
+        if (self.scope_class is None) != (self.dimension_id is None):
+            raise ValueError("scope_class and dimension_id must be paired")
+        return self
+
+
+class HumanObservationSupersedeInput(StrictModel):
+    """Strict append-only supersede command for one Human observation.
+
+    Superseding is a new observation revision, not a status update.  It uses
+    the same text/reference fields as append and adds the exact predecessor
+    binding required by the Store transaction.
+    """
+
+    schema_version: Literal[HUMAN_OBSERVATION_SUPERSEDE_INPUT_SCHEMA_ID]
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    observation_text: Annotated[str, StringConstraints(min_length=1, max_length=12000)]
+    assessment_result_id: ContractId | None = None
+    assessment_result_fingerprint: Sha256 | None = None
+    reader_view_sha256: Sha256 | None = None
+    requirement_id: ContractId | None = None
+    claim_id: ContractId | None = None
+    report_span: HumanObservationSpan | None = None
+    scope_class: FindingScopeClass | None = None
+    dimension_id: ContractId | None = None
+    previous_observation_id: ContractId
+    previous_observation_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def validate_supersede_input(self) -> "HumanObservationSupersedeInput":
+        if not self.observation_text.strip():
+            raise ValueError("observation_text must not be blank")
+        selected = (
+            self.assessment_result_id,
+            self.assessment_result_fingerprint,
+            self.reader_view_sha256,
+        )
+        if any(value is not None for value in selected) and not all(
+            value is not None for value in selected
+        ):
+            raise ValueError("selected assessment binding must be complete")
+        if (self.scope_class is None) != (self.dimension_id is None):
+            raise ValueError("scope_class and dimension_id must be paired")
+        return self
+
+
+class HumanGuidanceDraftInput(StrictModel):
+    """Transport DTO for the tagged guidance provenance union.
+
+    The Store remains the authority for eligibility and persistence.  The
+    session transport nevertheless rejects ambiguous provenance before a
+    request reaches the service: accepted model findings require the existing
+    finding/disposition pair, while a Human observation requires only its
+    exact observation id.
+    """
+
+    schema_version: Literal[HUMAN_GUIDANCE_DRAFT_INPUT_SCHEMA_ID]
+    human_actor_id: ContractId
+    human_request_id: ContractId
+    provenance_kind: Literal["accepted_model_finding", "human_observation"]
+    guidance_text: Annotated[str, StringConstraints(min_length=1, max_length=12000)]
+    assessment_result_id: ContractId | None = None
+    assessment_result_fingerprint: Sha256 | None = None
+    finding_id: ContractId | None = None
+    finding_fingerprint: Sha256 | None = None
+    disposition_id: ContractId | None = None
+    disposition_fingerprint: Sha256 | None = None
+    observation_id: ContractId | None = None
+    observation_fingerprint: Sha256 | None = None
+
+    @model_validator(mode="after")
+    def validate_provenance(self) -> "HumanGuidanceDraftInput":
+        if not self.guidance_text.strip():
+            raise ValueError("guidance_text must not be blank")
+        if self.provenance_kind == "accepted_model_finding":
+            if not all(
+                item is not None
+                for item in (
+                    self.assessment_result_id,
+                    self.assessment_result_fingerprint,
+                    self.finding_id,
+                    self.finding_fingerprint,
+                    self.disposition_id,
+                    self.disposition_fingerprint,
+                )
+            ):
+                raise ValueError(
+                    "accepted finding provenance requires result/finding/disposition"
+                )
+            if self.observation_id is not None:
+                raise ValueError(
+                    "accepted finding provenance cannot include observation"
+                )
+            if self.observation_fingerprint is not None:
+                raise ValueError(
+                    "accepted finding provenance cannot include observation fingerprint"
+                )
+            if self.finding_fingerprint is None or self.disposition_fingerprint is None:
+                raise ValueError(
+                    "accepted finding provenance requires finding/disposition fingerprints"
+                )
+        else:
+            if self.observation_id is None or self.observation_fingerprint is None:
+                raise ValueError(
+                    "Human observation provenance requires observation id/fingerprint"
+                )
+            if self.finding_id is not None or self.disposition_id is not None:
+                raise ValueError("Human observation provenance cannot include finding")
+            if (
+                self.finding_fingerprint is not None
+                or self.disposition_fingerprint is not None
+            ):
+                raise ValueError(
+                    "Human observation provenance cannot include finding fingerprints"
+                )
+            result_fields = (
+                self.assessment_result_id,
+                self.assessment_result_fingerprint,
+            )
+            if any(value is not None for value in result_fields) and not all(
+                value is not None for value in result_fields
+            ):
+                raise ValueError("Human observation result binding must be complete")
+        return self
 
 
 class ReviewFindingSpan(StrictModel):
@@ -293,7 +487,10 @@ class PostFinalReviewReadModel(StrictModel):
 
     @model_validator(mode="after")
     def validate_read_model(self) -> "PostFinalReviewReadModel":
-        if self.context.qp_projection_fingerprint != self.quality.projection_fingerprint:
+        if (
+            self.context.qp_projection_fingerprint
+            != self.quality.projection_fingerprint
+        ):
             raise ValueError("quality projection binding mismatch")
         binding = self.semantic_review.binding
         if binding is not None and binding.report_sha256 != self.context.report_sha256:
@@ -321,3 +518,74 @@ class ReviewSessionStatus(StrictModel):
     schema_version: Literal["briefloop.post_final_review.session_status.v1"]
     active: StrictBool
     reason_code: ContractId
+
+
+class ReaderReviewResultSelection(StrictModel):
+    """Ephemeral display selection; Store qualification remains projection-owned."""
+
+    schema_version: Literal[READER_REVIEW_SELECTION_SCHEMA_ID]
+    assessment_result_id: ContractId
+    assessment_result_fingerprint: Sha256
+
+
+class ReaderReviewRefresh(StrictModel):
+    """Zero-authority request to rebuild the canonical read-only projection."""
+
+    schema_version: Literal[READER_REVIEW_REFRESH_SCHEMA_ID]
+
+
+class SuccessorStartInput(StrictModel):
+    """Human-facing successor choice for the secured Review Session.
+
+    The page carries the complete frozen RunDirection as a readable payload so
+    the runtime can re-validate it against SQLite before the Core successor
+    writer is invoked.  No Store fingerprints or hidden authority fields are
+    accepted here; the runtime derives those from the verified predecessor.
+    """
+
+    schema_version: Literal[SUCCESSOR_START_INPUT_SCHEMA_ID]
+    successor_run_id: ContractId
+    run_direction: RunDirection
+    include_approved_guidance: StrictBool
+
+
+class ReviewSessionCommand(StrictModel):
+    """Ephemeral transport envelope; nested domain DTOs remain Store-service owned."""
+
+    schema_version: Literal["briefloop.post_final_review.command.v1"]
+    action: Literal[
+        "run_reader_review",
+        "select_result",
+        "refresh",
+        "start_successor",
+        "append_observation",
+        "supersede_observation",
+        "accept",
+        "reject",
+        "defer",
+        "draft",
+        "approve",
+        "deactivate",
+        "revert",
+        "supersede",
+        "status",
+    ]
+    payload: dict[str, object]
+
+    @model_validator(mode="after")
+    def validate_payload_contract(self) -> "ReviewSessionCommand":
+        if self.action == "run_reader_review":
+            ReaderReviewAssessmentInput.model_validate(self.payload, strict=True)
+        elif self.action == "select_result":
+            ReaderReviewResultSelection.model_validate(self.payload, strict=True)
+        elif self.action == "refresh":
+            ReaderReviewRefresh.model_validate(self.payload, strict=True)
+        elif self.action == "start_successor":
+            SuccessorStartInput.model_validate(self.payload, strict=True)
+        elif self.action == "append_observation":
+            HumanObservationInput.model_validate(self.payload, strict=True)
+        elif self.action == "supersede_observation":
+            HumanObservationSupersedeInput.model_validate(self.payload, strict=True)
+        elif self.action == "draft":
+            HumanGuidanceDraftInput.model_validate(self.payload, strict=True)
+        return self
