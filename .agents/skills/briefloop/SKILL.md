@@ -24,7 +24,7 @@ Store-bound requests.
 The five action kinds are `delegate`, `deterministic`, `human_decision`,
 `blocked`, and `complete`.
 
-Read [references/controlstore-v2.md](references/controlstore-v2.md)
+Read [references/codex-controlstore-v2.md](references/codex-controlstore-v2.md)
 before low-level recovery, applying a Human request, or diagnosing an uncertain
 external call.
 

@@ -105,7 +105,7 @@ def test_runtime_install_codex_workspace_kit_is_local(tmp_path: Path, capsys) ->
     skill_text = skill_path.read_text(encoding="utf-8")
     assert skill_text.startswith("---\n")
     assert "name: briefloop" in skill_text
-    assert "BriefLoop Codex Protocol" in skill_text
+    assert "BriefLoop Operator" in skill_text
     assert "references/controlstore-v2.md" in skill_text
     assert "CoreRunNextAction" in skill_text
     reference_text = reference_path.read_text(encoding="utf-8")

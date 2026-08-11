@@ -45,8 +45,8 @@ NAMING_AUTHORITY_FILES = [
 ]
 
 NAMING_CONSUMER_FILES = [
-    ".agents/skills/briefloop/references/naming-and-compatibility.md",
-    ".agents/skills/briefloop/references/version-matrix.md",
+    ".agents/skills/briefloop/SKILL.md",
+    ".agents/skills/briefloop/references/codex-controlstore-v2.md",
 ]
 
 CLI_HELP_COMMANDS = [

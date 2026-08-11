@@ -1,20 +1,17 @@
 ---
 name: briefloop-operator-protocol
-description: Thin Claude projection for the canonical BriefLoop operator protocol. Use when Claude is operating BriefLoop workspaces, archived MABW-080 / BriefLoop-090 experiment tooling, repair/gates/status/finalize/delivery decisions, repo-development contract changes, naming compatibility, or public claims.
+description: Use when Claude is operating a BriefLoop SQLite/Codex workspace, including runtime continuation, Solar Stock Periodic, market data, AI Second Opinion, Human observations, approved guidance, and successor runs.
 user-invocable: false
 ---
 
-# BriefLoop Claude Skill Wrapper
+# BriefLoop Claude Wrapper
 
-This is a thin Claude projection only.
-
-Canonical source:
+This is a routing wrapper only. Load the canonical operator Skill and its
+selected reference before acting:
 
 ```text
 .agents/skills/briefloop/SKILL.md
 ```
 
-Load the canonical skill and its selected reference file before operating a
-BriefLoop workspace, experiment, repo-development change, or public-claim task.
-
-Do not treat this wrapper as an independent source of truth.
+Do not treat this wrapper, workspace files, or prior chat as runtime authority.
+The Store-derived action and the canonical Skill govern.

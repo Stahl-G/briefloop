@@ -159,8 +159,8 @@ def test_operator_naming_consumer_surface_is_ratchet_locked() -> None:
     module = _load_module()
 
     assert module.NAMING_CONSUMER_FILES == [
-        ".agents/skills/briefloop/references/naming-and-compatibility.md",
-        ".agents/skills/briefloop/references/version-matrix.md",
+        ".agents/skills/briefloop/SKILL.md",
+        ".agents/skills/briefloop/references/codex-controlstore-v2.md",
     ]
 
 

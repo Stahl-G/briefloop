@@ -96,6 +96,10 @@ def main() -> int:
     for phrase in (
         "CoreRunNextAction",
         "RoleTaskEnvelope",
+        "runtime continue",
+        "role_work_required",
+        "needs_human",
+        "needs_attention",
         "delegate",
         "deterministic",
         "human_decision",
@@ -108,6 +112,9 @@ def main() -> int:
         "runtime invocation-accept",
         "runtime invocation-fail",
         "runtime apply",
+        "solar-stock-periodic",
+        "local_derivation_failed",
+        "FrozenGuidanceContext",
     ):
         if phrase not in packaged_contract:
             errors.append(f"packaged Codex skill is missing runtime contract phrase: {phrase}")
