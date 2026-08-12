@@ -12,6 +12,9 @@ from tests.test_runtime_host_continue_v2 import (
 from multi_agent_brief.contracts.v2 import RunTerminationRequest
 from multi_agent_brief.control_store import SQLiteControlStore
 from multi_agent_brief.core_run_v2.terminal import CoreRunTerminalService
+from multi_agent_brief.runtime_host_v2.projections import (
+    build_local_run_presentation,
+)
 
 
 SCHEMA = "briefloop.run_termination_request.v2"
@@ -100,6 +103,9 @@ def test_run_termination_is_irreversible_terminal_and_replays(tmp_path: Path) ->
         assert events[0].metadata["terminated_action_fingerprint"] == (
             human.trace.next_action.action_fingerprint
         )
+
+    presentation = build_local_run_presentation(workspace)
+    assert presentation.view_state == "needs_attention"
 
 
 def test_run_termination_rejects_stale_action_without_write(tmp_path: Path) -> None:

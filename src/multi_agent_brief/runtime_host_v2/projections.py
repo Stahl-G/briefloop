@@ -192,7 +192,10 @@ def _local_run_presentation(
         reader = _reader_brief(history, verified)
     else:
         reader = LocalReaderBrief(state="unavailable")
-        if action.action_kind in {"human_decision", "blocked"}:
+        if action.action_kind in {"human_decision", "blocked"} or (
+            action.action_kind == "complete"
+            and action.effect_kind == "run_terminated"
+        ):
             view_state = "needs_attention"
         elif completed == 0:
             view_state = "setup"

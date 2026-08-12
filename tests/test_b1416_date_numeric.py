@@ -10,6 +10,8 @@ from __future__ import annotations
 from datetime import date, timedelta
 from pathlib import Path
 
+import pytest
+
 from multi_agent_brief.audit.deterministic import run_deterministic_audit
 from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import Claim
@@ -390,6 +392,47 @@ class TestBackgroundSourceTemporality:
         )
         findings = _freshness_findings(
             markdown="# Brief\n- 本周最新事件 [src:BACKGROUND]\n",
+            ledger=ledger,
+            report_date="2026-08-10",
+            max_source_age_days=7,
+            strict=True,
+            stages=[],
+            artifacts=[],
+            report_window_start="2026-08-03",
+        )
+
+        current = [
+            item
+            for item in findings
+            if item["finding_type"] == "background_source_current_framing"
+        ]
+        assert len(current) == 1
+        assert current[0]["blocking_level"] == "blocking"
+
+    @pytest.mark.parametrize(
+        "markdown",
+        [
+            "# Latest developments\n\n- Historical company context [src:BACKGROUND]\n",
+            "# Brief\n- This week\n- Historical company context [src:BACKGROUND]\n",
+            "# Brief\n- Newly announced context [src:BACKGROUND]\n",
+        ],
+    )
+    def test_typed_background_adjacent_framing_blocks(self, markdown):
+        from multi_agent_brief.quality_gates.evaluation import _freshness_findings
+
+        ledger = ClaimLedger()
+        ledger.add_claim(
+            Claim(
+                claim_id="BACKGROUND",
+                statement="Historical company context",
+                source_id="SRC",
+                evidence_text="test",
+                source_type="web_search",
+                metadata={"temporal_role": "background"},
+            )
+        )
+        findings = _freshness_findings(
+            markdown=markdown,
             ledger=ledger,
             report_date="2026-08-10",
             max_source_age_days=7,

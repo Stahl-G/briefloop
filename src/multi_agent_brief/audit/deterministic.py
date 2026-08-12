@@ -29,10 +29,44 @@ SOURCE_REFERENCE_SECTION_KEYWORDS = (
     re.compile(r"(数据来源|资料来源|参考资料|参考来源|参考文献|来源附录)"),
 )
 CURRENT_EVENT_WORDS = re.compile(
-    r"(?:\bthis\s+(?:week|period)\b|\blatest\b|\brecently\b|"
-    r"本周|本期|最新|近期|刚刚|近日)",
+    r"(?:\bthis\s+(?:week|period)\b|\bcurrent(?:ly)?\b|"
+    r"\bcurrent[- ](?:week|period)\b|\blatest\b|\brecent(?:ly)?\b|"
+    r"\bnewly\s+(?:occurred|reported|announced)\b|"
+    r"本周|本期|当前|最新|近期|刚刚|近日|新近)",
     re.IGNORECASE,
 )
+
+
+def _background_current_framing(
+    markdown: str,
+    claim_id: str,
+) -> str | None:
+    """Find current-period framing adjacent to a background citation.
+
+    A heading or sentence can establish the temporal frame for a following
+    cited line; requiring the marker and wording on one physical line would
+    let that framing escape the gate. Keep the look-behind bounded so an
+    unrelated earlier section cannot taint a later claim.
+    """
+
+    citation = f"[src:{claim_id}]"
+    lines = markdown.splitlines()
+    for index, line in enumerate(lines):
+        if citation not in line:
+            continue
+        context = [line]
+        nonempty_seen = 0
+        for previous in range(index - 1, max(-1, index - 6), -1):
+            candidate = lines[previous].strip()
+            if not candidate:
+                continue
+            context.append(candidate)
+            nonempty_seen += 1
+            if candidate.startswith("#") or nonempty_seen >= 3:
+                break
+        if any(CURRENT_EVENT_WORDS.search(item) for item in context):
+            return " ".join(reversed(context))
+    return None
 
 
 def _tag(finding_type: str, **kwargs) -> AuditFinding:
@@ -217,16 +251,8 @@ def run_deterministic_audit(
                         evidence=claim.statement,
                     )
                 )
-                citation = f"[src:{claim.claim_id}]"
-                current_line = next(
-                    (
-                        line.strip()
-                        for line in markdown.splitlines()
-                        if citation in line and CURRENT_EVENT_WORDS.search(line)
-                    ),
-                    None,
-                )
-                if current_line is not None:
+                current_context = _background_current_framing(markdown, claim.claim_id)
+                if current_context is not None:
                     findings.append(
                         _tag(
                             "background_source_current_framing",
@@ -241,7 +267,7 @@ def run_deterministic_audit(
                                 "Remove the current-event wording or cite an in-window "
                                 "source with a canonical event date."
                             ),
-                            evidence=current_line,
+                            evidence=current_context,
                         )
                     )
                 continue
