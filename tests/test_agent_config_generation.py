@@ -113,6 +113,21 @@ def test_packaged_codex_agents_have_required_fields(manifest):
         assert parsed["developer_instructions"].strip()
 
 
+def test_packaged_codex_agents_carry_role_contract(manifest):
+    for name in PACKAGED_CODEX_ROLE_IDS:
+        role = manifest["roles"][name]
+        parsed = tomllib.loads(render_packaged_codex_agent(name, role))
+        instructions = parsed["developer_instructions"]
+        first_responsibility = str(role["responsibilities"][0])
+        first_hard_rule = str(role["hard_rules"][0])
+        assert first_responsibility in instructions, (name, first_responsibility)
+        assert first_hard_rule in instructions, (name, first_hard_rule)
+    for name in ("analyst", "editor", "auditor"):
+        role = manifest["roles"][name]
+        parsed = tomllib.loads(render_packaged_codex_agent(name, role))
+        assert "[src:<claim_id>]" in parsed["developer_instructions"], name
+
+
 def test_checked_in_packaged_codex_agents_are_valid_toml():
     for path in sorted((PACKAGED_CODEX_ROOT / "agents").glob("briefloop-*.toml")):
         parsed = tomllib.loads(path.read_text(encoding="utf-8"))
