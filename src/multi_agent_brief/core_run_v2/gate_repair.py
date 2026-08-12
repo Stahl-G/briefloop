@@ -333,13 +333,15 @@ def classify_gate_repair_legality(
             current,
         )
     findings = [item for item in selected if item is not None]
+    # claim_id/source_id on a finding are evidence pointers, not scope markers:
+    # an editor-owned finding stays editor-repairable when it cites the claims
+    # or sources the editor must reference (e.g. coverage omissions fixed by
+    # adding [src:<claim_id>] citations to the brief).
     exact_editor = [
         item.blocking_level == "blocking"
         and item.repair_owner == "editor"
         and item.stage_id == "editor"
         and item.artifact_id == "audited_brief"
-        and item.source_id is None
-        and item.claim_id is None
         for item in findings
     ]
     if all(exact_editor):
@@ -355,8 +357,6 @@ def classify_gate_repair_legality(
             "human",
             "none",
         }
-        or item.source_id is not None
-        or item.claim_id is not None
         for item in findings
     )
     if explicit_non_editor and not any(exact_editor):
