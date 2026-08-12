@@ -156,6 +156,34 @@ Do not apply again. `effect_kind=finalized_local` is a local reader brief;
 `effect_kind=package_ready` is a Human-controlled package boundary; only
 `effect_kind=delivered` records delivery.
 
+## Run termination at an unresolvable human review
+
+When a run reaches `human_decision` with `effect_kind` of
+`gate_repair_human_review` or `audit_human_review` and no lawful repair exit
+remains, the Human may terminate the run instead of forcing a repair. The
+pending action carries
+`request_schema_id=briefloop.run_termination_request.v2`.
+
+1. Run
+   `briefloop contract show briefloop.run_termination_request.v2 --example full`.
+2. Materialize the request bound to the current run and expected Store
+   revision, with `decision=terminate` and one typed `reason_code`:
+   - `gate_repair_unresolvable`: the repair loop cannot produce a passing
+     artifact within the frozen budget.
+   - `negative_audit_truth_accepted`: the audit truth stands; the run stops
+     rather than laundering it into a pass.
+   - `operator_abandon`: the Human abandons the run for reasons outside the
+     artifact.
+3. Show the Human the reason and the consequence: the run becomes
+   `blocked/run_terminated` permanently.
+4. Obtain explicit confirmation, then apply exactly once with
+   `briefloop runtime apply --human-request`.
+
+Termination is recorded as one `run_terminated` control event on the run.
+The terminated run keeps every frozen artifact and receipt for audit; it
+cannot resume, be repaired, or be delivered. Any further work starts from a
+new run.
+
 ## Role dispatch discipline
 
 - `execute_in_current_session`: this session performs the one exact role task.

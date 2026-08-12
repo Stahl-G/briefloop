@@ -125,6 +125,7 @@ def _snapshot(
         delivery_authorizations=(),
         delivery_attempts=(),
         delivery_results=(),
+        events=(),
     )
 
 

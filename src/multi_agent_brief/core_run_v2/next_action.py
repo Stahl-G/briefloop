@@ -108,6 +108,13 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
     """Return exactly one legal category without consulting mutable files."""
 
     snapshot = verified.snapshot
+    if any(item.event_type == "run_terminated" for item in snapshot.events):
+        return _action(
+            verified,
+            action_kind="blocked",
+            effect_kind="run_terminated",
+            reason_code="run_terminated",
+        )
     gate_repair = None
     if snapshot.gate_repair_cycles:
         gate_repair = classify_gate_repair_legality(snapshot)
@@ -126,6 +133,7 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
                     if gate_repair.current_block is None
                     else gate_repair.current_block.stage_id
                 ),
+                request_schema_id="briefloop.run_termination_request.v2",
             )
     recovery = classify_recovery_legality(snapshot)
     if recovery.state == "invalid":
@@ -212,6 +220,7 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
                 if gate_repair.current_block is None
                 else gate_repair.current_block.stage_id
             ),
+            request_schema_id="briefloop.run_termination_request.v2",
         )
 
     active = [item for item in snapshot.invocations if item.status == "active"]
@@ -914,6 +923,7 @@ def _auditor_action(verified: VerifiedCoreRun) -> CoreRunNextAction | None:
                 effect_kind="gate_repair_human_review",
                 reason_code="gate_repair_failed_after_attempt",
                 stage_id="auditor",
+                request_schema_id="briefloop.run_termination_request.v2",
             )
         return _action(
             verified,
@@ -921,6 +931,7 @@ def _auditor_action(verified: VerifiedCoreRun) -> CoreRunNextAction | None:
             effect_kind="audit_human_review",
             reason_code="negative_audit_truth_requires_human_review",
             stage_id="auditor",
+            request_schema_id="briefloop.run_termination_request.v2",
         )
     return _action(
         verified,

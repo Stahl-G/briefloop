@@ -1042,6 +1042,49 @@ def _verified_market_data_snapshot_receipt(
         raise CoreRunError("control_store_integrity_invalid")
 
 
+def _verified_run_termination_receipt(
+    snapshot: ControlStoreSnapshot,
+    receipt: TransactionReceipt,
+) -> None:
+    """Verify one exact Store-native run termination receipt.
+
+    A run termination is the typed Human decision that closes a run stuck at
+    an unresolvable human review.  It carries exactly one control event and
+    no authoritative relation families; the terminated disposition is derived
+    from the event, never from free text.
+    """
+
+    if (
+        receipt.transaction_type != "run_termination"
+        or receipt.run_id != snapshot.run.run_id
+    ):
+        raise CoreRunError("control_store_integrity_invalid")
+    _verify_authoritative_receipt_relation_families(receipt, frozenset())
+    if len(receipt.event_ids) != 1:
+        raise CoreRunError("control_store_integrity_invalid")
+    events = [item for item in snapshot.events if item.event_id == receipt.event_ids[0]]
+    if len(events) != 1:
+        raise CoreRunError("control_store_integrity_invalid")
+    event = events[0]
+    if (
+        event.run_id != receipt.run_id
+        or event.transaction_id != receipt.transaction_id
+        or event.event_type != "run_terminated"
+        or event.intake_binding is not None
+        or event.core_run_binding is not None
+        or event.stage_id is not None
+        or event.artifact_id is not None
+        or event.decision != "terminate"
+        or event.reason
+        not in {
+            "gate_repair_unresolvable",
+            "negative_audit_truth_accepted",
+            "operator_abandon",
+        }
+    ):
+        raise CoreRunError("control_store_integrity_invalid")
+
+
 def _verified_intake_receipt_effect(
     snapshot: ControlStoreSnapshot,
     receipt: TransactionReceipt,
@@ -2859,6 +2902,14 @@ class CoreRunDomainVerifier:
                 snapshot,
                 receipt,
                 _verified_market_data_snapshot_receipt,
+            )
+            return
+        if receipt.transaction_type == "run_termination":
+            self._verify_historical_zero_effect_prefix(
+                history,
+                snapshot,
+                receipt,
+                _verified_run_termination_receipt,
             )
             return
         if receipt.transaction_type in _INTAKE_EFFECT_RULES:
