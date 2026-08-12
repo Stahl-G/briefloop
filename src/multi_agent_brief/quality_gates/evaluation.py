@@ -375,6 +375,13 @@ def _map_audit_finding(
         repair_owner = "claim-ledger"
         category = "missing_source" if finding_type == "missing_source" else "stale_source"
         default_blocking = finding_type == "missing_source"
+    elif finding_type == "retrieved_only_source":
+        # Disclosure-only: retrieved_at anchors the window audit; never blocks.
+        stage_id = None
+        artifact_id = None
+        repair_owner = "none"
+        category = "retrieved_only"
+        default_blocking = False
     elif finding_type == "stale_source":
         stage_id = claim_stage or source_stage
         artifact_id = ledger_artifact
@@ -391,7 +398,11 @@ def _map_audit_finding(
     elif finding_type in {"unsupported_certainty", "low_source_density"}:
         default_blocking = True
 
-    blocking_level = _blocking_level(default_blocking=default_blocking, strict=strict)
+    blocking_level = (
+        "warning"
+        if finding_type == "retrieved_only_source"
+        else _blocking_level(default_blocking=default_blocking, strict=strict)
+    )
     severity = "high" if blocking_level == "blocking" else finding.severity
     return _finding(
         finding_id=f"QG_{gate_id.upper()}_{idx:03d}",
@@ -958,7 +969,7 @@ def _freshness_findings(
     raw = [
         finding
         for finding in report.findings
-        if finding.finding_type in {"stale_source", "missing_source_date"}
+        if finding.finding_type in {"stale_source", "missing_source_date", "retrieved_only_source"}
     ]
     findings = [
         _map_audit_finding(

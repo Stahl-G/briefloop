@@ -185,33 +185,53 @@ def run_deterministic_audit(
             published_at = str(claim.metadata.get("published_at", ""))
             source_day = parse_date(published_at)
             if source_day is None:
-                # web_search sources often lack published_at — flag it at low severity (B15)
-                if claim.source_type == "web_search":
+                # Sources without published_at fall back to retrieved_at as the
+                # reporting-window date anchor; the substitution is disclosed.
+                retrieved_day = parse_date(str(claim.metadata.get("retrieved_at", "")))
+                if retrieved_day is not None:
                     findings.append(
                         _tag(
-                            "missing_source_date",
-                            finding_id=f"DATE_{len(findings)+1:03d}",
+                            "retrieved_only_source",
+                            finding_id=f"RETR_{len(findings)+1:03d}",
                             severity="low",
                             related_claim_id=claim.claim_id,
-                            description="Web search claim is missing a parseable published_at date.",
-                            recommendation="Mark the source as retrieved_only or provide published_at.",
+                            description=(
+                                "Claim source has no parseable published_at date; retrieved_at "
+                                f"{retrieved_day.isoformat()} anchors the reporting-window audit."
+                            ),
+                            recommendation="Disclose retrieval-anchored dating to the reader; provide published_at when available.",
                             evidence=claim.statement,
                         )
                     )
-                    web_search_missing_date_count += 1
+                    source_day = retrieved_day
                 else:
-                    findings.append(
-                        _tag(
-                            "missing_source_date",
-                            finding_id=f"DATE_{len(findings)+1:03d}",
-                            severity="medium",
-                            related_claim_id=claim.claim_id,
-                            description="Claim source is missing a parseable published_at date for reporting-window audit.",
-                            recommendation="Add source published_at metadata or mark the source as evergreen/background.",
-                            evidence=claim.statement,
+                    # web_search sources often lack published_at — flag it at low severity (B15)
+                    if claim.source_type == "web_search":
+                        findings.append(
+                            _tag(
+                                "missing_source_date",
+                                finding_id=f"DATE_{len(findings)+1:03d}",
+                                severity="low",
+                                related_claim_id=claim.claim_id,
+                                description="Web search claim is missing a parseable published_at date.",
+                                recommendation="Provide published_at; without any date the claim cannot be window-audited.",
+                                evidence=claim.statement,
+                            )
                         )
-                    )
-                continue
+                        web_search_missing_date_count += 1
+                    else:
+                        findings.append(
+                            _tag(
+                                "missing_source_date",
+                                finding_id=f"DATE_{len(findings)+1:03d}",
+                                severity="medium",
+                                related_claim_id=claim.claim_id,
+                                description="Claim source is missing a parseable published_at date for reporting-window audit.",
+                                recommendation="Provide a parseable published_at or retrieved_at date so the reporting window can be audited.",
+                                evidence=claim.statement,
+                            )
+                        )
+                    continue
             if window_start_day is not None:
                 # The frozen report window is the first freshness authority.
                 if source_day < window_start_day:

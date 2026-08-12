@@ -260,3 +260,85 @@ class TestReportWindowAuthority:
         assert len(date_findings) == 1
         assert date_findings[0]["blocking_level"] == "blocking"
 
+
+
+# ─── retrieved_at fallback for sources without published_at ───
+
+class TestRetrievedOnlySourceAnchor:
+    """Sources without published_at use retrieved_at as the window date anchor."""
+
+    def test_retrieved_at_anchors_window_and_discloses(self):
+        ledger = ClaimLedger()
+        ledger.add_claim(Claim(
+            claim_id="RETR_ONLY", statement="Undated web page claim",
+            source_id="SRC", evidence_text="test",
+            source_type="web_search",
+            metadata={"published_at": "", "retrieved_at": "2026-08-09T10:00:00Z"},
+        ))
+        report = run_deterministic_audit(
+            "# Brief\n- Text [src:RETR_ONLY]\n",
+            ledger,
+            report_date="2026-08-10",
+            max_source_age_days=7,
+            report_window_start="2026-08-03",
+        )
+        types = [f.finding_type for f in report.findings]
+        assert "missing_source_date" not in types
+        assert "stale_source" not in types
+        disclosed = [
+            f for f in report.findings
+            if f.finding_type == "retrieved_only_source"
+            and f.related_claim_id == "RETR_ONLY"
+        ]
+        assert len(disclosed) == 1
+        assert disclosed[0].severity == "low"
+
+    def test_retrieved_only_disclosure_never_blocks_under_strict(self):
+        from multi_agent_brief.quality_gates.evaluation import _freshness_findings
+
+        ledger = ClaimLedger()
+        ledger.add_claim(Claim(
+            claim_id="RETR_ONLY", statement="Undated web page claim",
+            source_id="SRC", evidence_text="test",
+            source_type="web_search",
+            metadata={"published_at": "", "retrieved_at": "2026-08-09T10:00:00Z"},
+        ))
+        findings = _freshness_findings(
+            markdown="# Brief\n- Text [src:RETR_ONLY]\n",
+            ledger=ledger,
+            report_date="2026-08-10",
+            max_source_age_days=7,
+            strict=True,
+            stages=[],
+            artifacts=[],
+            report_window_start="2026-08-03",
+        )
+        blocking = [f for f in findings if f["blocking_level"] == "blocking"]
+        assert blocking == []
+        disclosed = [f for f in findings if f["finding_type"] == "retrieved_only_source"]
+        assert len(disclosed) == 1
+        assert disclosed[0]["blocking_level"] == "warning"
+
+    def test_no_date_at_all_still_blocks_under_strict(self):
+        from multi_agent_brief.quality_gates.evaluation import _freshness_findings
+
+        ledger = ClaimLedger()
+        ledger.add_claim(Claim(
+            claim_id="NODATE2", statement="Claim without any date",
+            source_id="SRC", evidence_text="test",
+            source_type="web_search",
+            metadata={"published_at": "", "retrieved_at": ""},
+        ))
+        findings = _freshness_findings(
+            markdown="# Brief\n- Text [src:NODATE2]\n",
+            ledger=ledger,
+            report_date="2026-08-10",
+            max_source_age_days=7,
+            strict=True,
+            stages=[],
+            artifacts=[],
+            report_window_start="2026-08-03",
+        )
+        date_findings = [f for f in findings if f["finding_type"] == "missing_source_date"]
+        assert len(date_findings) == 1
+        assert date_findings[0]["blocking_level"] == "blocking"
