@@ -16,6 +16,7 @@ Role responsibilities:
 - Reduce repetition.
 - Preserve all real [src:<claim_id>] citations exactly.
 - Preserve uncertainty.
+- Preserve background framing for Claim Ledger entries whose metadata.temporal_role is background; never promote them into current, latest, or this-week events through editing.
 - Remove internal residue when safe.
 - Remove [SRC:], [SOURCE:], empty [src:] markers.
 - Remove Claude/Codex process residue (Thought for..., Agent completed, Bash(...), audit in background).

@@ -18,6 +18,7 @@ Role responsibilities:
 - Preserve every real [src:<claim_id>] citation exactly.
 - Include source dates (published_at or retrieved_at) where available.
 - Preserve uncertainty and source limitations.
+- Treat Claim Ledger entries with metadata.temporal_role=background as context only. Do not describe them as this week, this period, latest, recent, or newly occurred; use current-window claims for those assertions.
 - Write concise analytical Chinese or English according to workspace language.
 - Keep all added facts within Claim Ledger support.
 - Use frozen claim_ledger.json and approved analysis artifacts as the evidence base.

@@ -4,6 +4,7 @@ B14 — Source recency filtering must use report_date, not system time.
 B15 — Web search claims missing published_at must generate audit findings.
 B16 — max_claims=0 and max_source_age_days=0 must not be swallowed by truthiness.
 """
+
 from __future__ import annotations
 
 from datetime import date, timedelta
@@ -16,6 +17,7 @@ from multi_agent_brief.core.config import build_run_settings
 
 
 # ─── B14: Recency filtering uses report_date ───
+
 
 class TestB14RecencyByReportDate:
     """filter_by_recency must accept and use report_date, not system time."""
@@ -39,11 +41,15 @@ class TestB14RecencyByReportDate:
     def test_auditor_uses_report_date_for_staleness(self):
         """Auditor's deterministic audit uses report_date for stale checks."""
         ledger = ClaimLedger()
-        ledger.add_claim(Claim(
-            claim_id="TEST_A", statement="Recent claim",
-            source_id="SRC", evidence_text="test",
-            metadata={"published_at": "2026-06-01"},
-        ))
+        ledger.add_claim(
+            Claim(
+                claim_id="TEST_A",
+                statement="Recent claim",
+                source_id="SRC",
+                evidence_text="test",
+                metadata={"published_at": "2026-06-01"},
+            )
+        )
         report = run_deterministic_audit(
             "# Brief\n- Text [src:TEST_A]\n",
             ledger,
@@ -52,11 +58,14 @@ class TestB14RecencyByReportDate:
             fail_on_stale_source=True,
         )
         # June 1 is 1 day before June 2 — not stale
-        stale_findings = [f for f in report.findings if f.finding_type == "stale_source"]
+        stale_findings = [
+            f for f in report.findings if f.finding_type == "stale_source"
+        ]
         assert len(stale_findings) == 0, "June 1 source should not be stale"
 
 
 # ─── B15: Web search missing date generates findings ───
+
 
 class TestB15WebSearchMissingDate:
     """Web search claims missing published_at must generate audit findings."""
@@ -64,13 +73,16 @@ class TestB15WebSearchMissingDate:
     def test_web_search_missing_date_generates_finding(self):
         """When a web search claim lacks published_at, audit must flag it."""
         ledger = ClaimLedger()
-        ledger.add_claim(Claim(
-            claim_id="WS_MISSING_DATE",
-            statement="Web search claim with no date",
-            source_id="SRC", evidence_text="test",
-            source_type="web_search",
-            metadata={"published_at": "", "backend": "tavily"},
-        ))
+        ledger.add_claim(
+            Claim(
+                claim_id="WS_MISSING_DATE",
+                statement="Web search claim with no date",
+                source_id="SRC",
+                evidence_text="test",
+                source_type="web_search",
+                metadata={"published_at": "", "backend": "tavily"},
+            )
+        )
         report = run_deterministic_audit(
             "# Brief\n- Text [src:WS_MISSING_DATE]\n",
             ledger,
@@ -79,7 +91,8 @@ class TestB15WebSearchMissingDate:
         )
         # Must have at least a low-severity finding for missing date
         date_findings = [
-            f for f in report.findings
+            f
+            for f in report.findings
             if f.finding_type == "missing_source_date"
             and f.related_claim_id == "WS_MISSING_DATE"
         ]
@@ -91,13 +104,16 @@ class TestB15WebSearchMissingDate:
     def test_non_web_search_missing_date_still_flagged(self):
         """Non-web-search claims with missing date must still be flagged."""
         ledger = ClaimLedger()
-        ledger.add_claim(Claim(
-            claim_id="LOCAL_MISSING",
-            statement="Local file claim with no date",
-            source_id="SRC", evidence_text="test",
-            source_type="local_file",
-            metadata={"published_at": ""},
-        ))
+        ledger.add_claim(
+            Claim(
+                claim_id="LOCAL_MISSING",
+                statement="Local file claim with no date",
+                source_id="SRC",
+                evidence_text="test",
+                source_type="local_file",
+                metadata={"published_at": ""},
+            )
+        )
         report = run_deterministic_audit(
             "# Brief\n- Text [src:LOCAL_MISSING]\n",
             ledger,
@@ -105,7 +121,8 @@ class TestB15WebSearchMissingDate:
             max_source_age_days=7,
         )
         date_findings = [
-            f for f in report.findings
+            f
+            for f in report.findings
             if f.finding_type == "missing_source_date"
             and f.related_claim_id == "LOCAL_MISSING"
         ]
@@ -115,6 +132,7 @@ class TestB15WebSearchMissingDate:
 
 
 # ─── B16: Numeric config validation ───
+
 
 class TestB16NumericConfigValidation:
     """max_claims and max_source_age_days must be validated — 0 and negatives
@@ -128,8 +146,12 @@ class TestB16NumericConfigValidation:
             "output": {"path": str(tmp_path / "output")},
         }
         settings = build_run_settings(
-            config=config, input_dir=None, output_dir=None,
-            name=None, language=None, audience=None,
+            config=config,
+            input_dir=None,
+            output_dir=None,
+            name=None,
+            language=None,
+            audience=None,
         )
         # 0 is a valid value — should not be replaced by default 160
         assert settings["max_claims"] == 0, (
@@ -144,8 +166,12 @@ class TestB16NumericConfigValidation:
             "output": {"path": str(tmp_path / "output")},
         }
         settings = build_run_settings(
-            config=config, input_dir=None, output_dir=None,
-            name=None, language=None, audience=None,
+            config=config,
+            input_dir=None,
+            output_dir=None,
+            name=None,
+            language=None,
+            audience=None,
         )
         assert settings["max_source_age_days"] == 0, (
             "B16 FAIL: max_source_age_days=0 was converted to None via truthiness"
@@ -159,8 +185,12 @@ class TestB16NumericConfigValidation:
             "output": {"path": str(tmp_path / "output")},
         }
         settings = build_run_settings(
-            config=config, input_dir=None, output_dir=None,
-            name=None, language=None, audience=None,
+            config=config,
+            input_dir=None,
+            output_dir=None,
+            name=None,
+            language=None,
+            audience=None,
         )
         assert settings["max_source_age_days"] is None, (
             "When absent, max_source_age_days should be None"
@@ -173,8 +203,11 @@ class TestB16NumericConfigValidation:
 
         # Future date item
         future_item = SourceItem(
-            source_id="FUTURE", source_name="Future",
-            source_type="local_file", title="Future", content="Future news",
+            source_id="FUTURE",
+            source_name="Future",
+            source_type="local_file",
+            title="Future",
+            content="Future news",
             published_at="2099-01-01",
         )
         result = filter_by_recency([future_item], recency_days=0)
@@ -186,17 +219,22 @@ class TestB16NumericConfigValidation:
 
 # ─── Frozen report window is the first freshness authority ───
 
+
 class TestReportWindowAuthority:
     """report_window_start/end frozen in RunDirection outrank report_date derivation."""
 
     @staticmethod
     def _ledger(published_at: str) -> ClaimLedger:
         ledger = ClaimLedger()
-        ledger.add_claim(Claim(
-            claim_id="WINDOW_A", statement="Window claim",
-            source_id="SRC", evidence_text="test",
-            metadata={"published_at": published_at},
-        ))
+        ledger.add_claim(
+            Claim(
+                claim_id="WINDOW_A",
+                statement="Window claim",
+                source_id="SRC",
+                evidence_text="test",
+                metadata={"published_at": published_at},
+            )
+        )
         return ledger
 
     @staticmethod
@@ -240,12 +278,16 @@ class TestReportWindowAuthority:
         from multi_agent_brief.quality_gates.evaluation import _freshness_findings
 
         ledger = ClaimLedger()
-        ledger.add_claim(Claim(
-            claim_id="NODATE", statement="Claim without date",
-            source_id="SRC", evidence_text="test",
-            source_type="local_file",
-            metadata={"published_at": ""},
-        ))
+        ledger.add_claim(
+            Claim(
+                claim_id="NODATE",
+                statement="Claim without date",
+                source_id="SRC",
+                evidence_text="test",
+                source_type="local_file",
+                metadata={"published_at": ""},
+            )
+        )
         findings = _freshness_findings(
             markdown="# Brief\n- Text [src:NODATE]\n",
             ledger=ledger,
@@ -256,25 +298,31 @@ class TestReportWindowAuthority:
             artifacts=[],
             report_window_start="2026-08-03",
         )
-        date_findings = [f for f in findings if f["finding_type"] == "missing_source_date"]
+        date_findings = [
+            f for f in findings if f["finding_type"] == "missing_source_date"
+        ]
         assert len(date_findings) == 1
         assert date_findings[0]["blocking_level"] == "blocking"
 
 
+# ─── typed background sources never use retrieved_at as event time ───
 
-# ─── retrieved_at fallback for sources without published_at ───
 
-class TestRetrievedOnlySourceAnchor:
-    """Sources without published_at use retrieved_at as the window date anchor."""
+class TestBackgroundSourceTemporality:
+    """Background context is visible but cannot establish a weekly event."""
 
-    def test_retrieved_at_anchors_window_and_discloses(self):
+    def test_retrieved_at_does_not_promote_legacy_undated_source(self):
         ledger = ClaimLedger()
-        ledger.add_claim(Claim(
-            claim_id="RETR_ONLY", statement="Undated web page claim",
-            source_id="SRC", evidence_text="test",
-            source_type="web_search",
-            metadata={"published_at": "", "retrieved_at": "2026-08-09T10:00:00Z"},
-        ))
+        ledger.add_claim(
+            Claim(
+                claim_id="RETR_ONLY",
+                statement="Undated web page claim",
+                source_id="SRC",
+                evidence_text="test",
+                source_type="web_search",
+                metadata={"published_at": "", "retrieved_at": "2026-08-09T10:00:00Z"},
+            )
+        )
         report = run_deterministic_audit(
             "# Brief\n- Text [src:RETR_ONLY]\n",
             ledger,
@@ -283,26 +331,29 @@ class TestRetrievedOnlySourceAnchor:
             report_window_start="2026-08-03",
         )
         types = [f.finding_type for f in report.findings]
-        assert "missing_source_date" not in types
+        assert "missing_source_date" in types
         assert "stale_source" not in types
-        disclosed = [
-            f for f in report.findings
-            if f.finding_type == "retrieved_only_source"
-            and f.related_claim_id == "RETR_ONLY"
-        ]
-        assert len(disclosed) == 1
-        assert disclosed[0].severity == "low"
 
-    def test_retrieved_only_disclosure_never_blocks_under_strict(self):
+    def test_typed_background_warns_but_does_not_block(self):
         from multi_agent_brief.quality_gates.evaluation import _freshness_findings
 
         ledger = ClaimLedger()
-        ledger.add_claim(Claim(
-            claim_id="RETR_ONLY", statement="Undated web page claim",
-            source_id="SRC", evidence_text="test",
-            source_type="web_search",
-            metadata={"published_at": "", "retrieved_at": "2026-08-09T10:00:00Z"},
-        ))
+        ledger.add_claim(
+            Claim(
+                claim_id="RETR_ONLY",
+                statement="Undated web page claim",
+                source_id="SRC",
+                evidence_text="test",
+                source_type="web_search",
+                metadata={
+                    "published_at": "",
+                    "retrieved_at": "2026-08-09T10:00:00Z",
+                    "temporal_role": "background",
+                    "temporal_anchor_date": None,
+                    "temporal_basis": "none",
+                },
+            )
+        )
         findings = _freshness_findings(
             markdown="# Brief\n- Text [src:RETR_ONLY]\n",
             ledger=ledger,
@@ -315,20 +366,61 @@ class TestRetrievedOnlySourceAnchor:
         )
         blocking = [f for f in findings if f["blocking_level"] == "blocking"]
         assert blocking == []
-        disclosed = [f for f in findings if f["finding_type"] == "retrieved_only_source"]
+        disclosed = [
+            f
+            for f in findings
+            if f["finding_type"] == "background_source_not_current_evidence"
+        ]
         assert len(disclosed) == 1
         assert disclosed[0]["blocking_level"] == "warning"
+
+    def test_typed_background_current_framing_blocks(self):
+        from multi_agent_brief.quality_gates.evaluation import _freshness_findings
+
+        ledger = ClaimLedger()
+        ledger.add_claim(
+            Claim(
+                claim_id="BACKGROUND",
+                statement="Historical company context",
+                source_id="SRC",
+                evidence_text="test",
+                source_type="web_search",
+                metadata={"temporal_role": "background"},
+            )
+        )
+        findings = _freshness_findings(
+            markdown="# Brief\n- 本周最新事件 [src:BACKGROUND]\n",
+            ledger=ledger,
+            report_date="2026-08-10",
+            max_source_age_days=7,
+            strict=True,
+            stages=[],
+            artifacts=[],
+            report_window_start="2026-08-03",
+        )
+
+        current = [
+            item
+            for item in findings
+            if item["finding_type"] == "background_source_current_framing"
+        ]
+        assert len(current) == 1
+        assert current[0]["blocking_level"] == "blocking"
 
     def test_no_date_at_all_still_blocks_under_strict(self):
         from multi_agent_brief.quality_gates.evaluation import _freshness_findings
 
         ledger = ClaimLedger()
-        ledger.add_claim(Claim(
-            claim_id="NODATE2", statement="Claim without any date",
-            source_id="SRC", evidence_text="test",
-            source_type="web_search",
-            metadata={"published_at": "", "retrieved_at": ""},
-        ))
+        ledger.add_claim(
+            Claim(
+                claim_id="NODATE2",
+                statement="Claim without any date",
+                source_id="SRC",
+                evidence_text="test",
+                source_type="web_search",
+                metadata={"published_at": "", "retrieved_at": ""},
+            )
+        )
         findings = _freshness_findings(
             markdown="# Brief\n- Text [src:NODATE2]\n",
             ledger=ledger,
@@ -339,6 +431,8 @@ class TestRetrievedOnlySourceAnchor:
             artifacts=[],
             report_window_start="2026-08-03",
         )
-        date_findings = [f for f in findings if f["finding_type"] == "missing_source_date"]
+        date_findings = [
+            f for f in findings if f["finding_type"] == "missing_source_date"
+        ]
         assert len(date_findings) == 1
         assert date_findings[0]["blocking_level"] == "blocking"

@@ -194,6 +194,26 @@ class MarketDataService:
         snapshot = store.load_snapshot(run_id)
         return run_id, history.store_revision, snapshot
 
+    @staticmethod
+    def _require_no_active_invocation(snapshot: Any) -> None:
+        if any(item.status == "active" for item in snapshot.invocations):
+            raise MarketDataError("market_data_snapshot_run_invocation_active")
+
+    def require_recording_allowed(self) -> dict[str, object]:
+        """Read-only preflight before any external market-data acquisition."""
+
+        try:
+            with SQLiteControlStore.open(self._database_path) as store:
+                run_id, store_revision, snapshot = self._current_run(store)
+                self._require_no_active_invocation(snapshot)
+        except ControlStoreError as exc:
+            raise MarketDataError(str(exc)) from exc
+        return {
+            "ok": True,
+            "run_id": run_id,
+            "store_revision": store_revision,
+        }
+
     def record_snapshot(self, value: Mapping[str, object]) -> dict[str, object]:
         """Freeze one exact snapshot; same input replays, same date conflicts."""
 
@@ -213,6 +233,7 @@ class MarketDataService:
         try:
             with SQLiteControlStore.open(self._database_path) as store:
                 run_id, store_revision, snapshot = self._current_run(store)
+                self._require_no_active_invocation(snapshot)
                 scoped_identity = {"run_id": run_id, **identity}
                 snapshot_id = _id("market-data-snapshot", scoped_identity)
                 existing = next(

@@ -4,6 +4,7 @@ from datetime import date
 import json
 import os
 from pathlib import Path
+import shutil
 
 import pytest
 import yaml
@@ -123,15 +124,34 @@ def test_installed_workspace_binding_equals_packaged_binding(tmp_path: Path) -> 
     ) == load_codex_adapter_binding("RUN-binding-run")
 
 
-def test_run_fails_closed_when_workspace_kit_is_missing(
+def test_run_bootstraps_legacy_skeleton_when_store_and_kit_are_missing(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     workspace = _workspace(tmp_path, install=False)
 
-    assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 1
-    assert "runtime_adapter_binding_mismatch" in capsys.readouterr().out
-    assert not (workspace / "briefloop.db").exists()
+    assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert (payload["action_kind"], payload["effect_kind"]) == (
+        "deterministic",
+        "doctor_check",
+    )
+    assert (workspace / "briefloop.db").is_file()
+    assert (workspace / ".codex").is_dir()
+
+
+def test_runtime_next_fails_closed_when_store_bound_kit_is_absent(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    workspace = _workspace(tmp_path)
+    _initialize(workspace, capsys)
+    shutil.rmtree(workspace / ".codex")
+    database_before = (workspace / "briefloop.db").read_bytes()
+
+    assert main(["runtime", "next", "--workspace", str(workspace)]) == 1
+    assert not (workspace / ".codex").exists()
+    assert (workspace / "briefloop.db").read_bytes() == database_before
 
 
 def test_cli_init_prepares_exact_kit_without_committing_store(

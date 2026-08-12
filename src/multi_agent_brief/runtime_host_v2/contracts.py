@@ -697,6 +697,7 @@ class RuntimeContinuationResult(StrictModel):
         "needs_human",
         "needs_attention",
         "finalized_local",
+        "terminated",
     ]
     reason_code: ContractId | None = None
     current_stage: ContractId | None = None

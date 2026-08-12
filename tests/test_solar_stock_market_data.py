@@ -184,7 +184,7 @@ def _mock_urlopen(bodies: dict[str, object]):
     return urlopen
 
 
-def _bootstrap_workspace(workspace: Path) -> None:
+def _bootstrap_workspace(workspace: Path, *, invocation_active: bool = False) -> None:
     """Create one raw Store workspace with a current run head."""
 
     workspace.mkdir(parents=True, exist_ok=True)
@@ -235,9 +235,9 @@ def _bootstrap_workspace(workspace: Path) -> None:
                 run_id=RUN_ID,
                 role_id="scout",
                 runtime="operator",
-                status="completed",
+                status="active" if invocation_active else "completed",
                 started_at=NOW,
-                completed_at=NOW,
+                completed_at=None if invocation_active else NOW,
             )
         )
         unit.put_artifact(
@@ -602,6 +602,27 @@ def test_record_replay_and_as_of_conflict(tmp_path: Path) -> None:
         assert len(store.load_snapshot(RUN_ID).market_data_snapshots) == 1
 
 
+def test_record_rejected_while_invocation_active(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    _bootstrap_workspace(workspace, invocation_active=True)
+
+    with pytest.raises(MarketDataError) as excinfo:
+        MarketDataService(workspace).record_snapshot(_record_request())
+    assert str(excinfo.value) == "market_data_snapshot_run_invocation_active"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.load_snapshot(RUN_ID).market_data_snapshots == ()
+
+
+def test_recording_preflight_rejected_while_invocation_active(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    _bootstrap_workspace(workspace, invocation_active=True)
+
+    with pytest.raises(MarketDataError) as excinfo:
+        MarketDataService(workspace).require_recording_allowed()
+
+    assert str(excinfo.value) == "market_data_snapshot_run_invocation_active"
+
+
 def test_snapshots_are_append_only(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     _bootstrap_workspace(workspace)
@@ -864,3 +885,23 @@ def test_cli_fetch_total_failure_records_nothing(
     assert output["reason_code"] == "market_data_unavailable"
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         assert store.load_snapshot(RUN_ID).market_data_snapshots == ()
+
+
+def test_cli_fetch_preflight_blocks_before_yahoo_and_writes_nothing(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    workspace = tmp_path / "workspace"
+    _bootstrap_workspace(workspace, invocation_active=True)
+    database = workspace / "briefloop.db"
+    before = database.read_bytes()
+
+    def unexpected_urlopen(*_args, **_kwargs):
+        raise AssertionError("Yahoo must not be called during an active invocation")
+
+    monkeypatch.setattr("urllib.request.urlopen", unexpected_urlopen)
+    status = cli_main(["market-data", "fetch", "--workspace", str(workspace), "--json"])
+
+    assert status == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["reason_code"] == "market_data_snapshot_run_invocation_active"
+    assert database.read_bytes() == before

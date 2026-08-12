@@ -199,6 +199,14 @@ evidence govern; guidance is never a fact, Gate rule, or delivery authority.
 - Never infer that `package_ready` means `delivered`.
 - Never fall back to a legacy JSON control plane or another runtime.
 
+When a Human review exposes no lawful repair path, the current action may bind
+`briefloop.run_termination_request.v2`. Show its exact action fingerprint,
+Store revision, typed reason and irreversible consequence before applying it.
+A successful termination returns `complete/run_terminated`; subsequent
+`runtime continue` calls return `terminated` without role, provider,
+finalization, post-final review, or delivery work. Start a new run for any
+further work.
+
 ## Handoff
 
 Report the workspace, run id, Store revision, action/effect kind, action

@@ -424,6 +424,7 @@ EVENT_TYPES = {
     "runtime_source_search_plan_recorded",
     "tavily_acquisition_bundle_recorded",
     "market_data_snapshot_recorded",
+    "run_terminated",
 }
 
 # Release-mode approval vocabulary and boundary. DTO truth source;
@@ -916,7 +917,10 @@ class TavilyAcquisitionBundleV2(StrictModel):
         ):
             raise ValueError("Extract batch ordinals must be contiguous")
         batch_urls = [url for batch in self.extract_batches for url in batch.urls]
-        if len(batch_urls) != len(set(batch_urls)) or sorted(batch_urls) != self.unique_urls:
+        if (
+            len(batch_urls) != len(set(batch_urls))
+            or sorted(batch_urls) != self.unique_urls
+        ):
             raise ValueError("Extract batches must partition every unique URL")
         covered = sum(item.status == "covered" for item in self.task_statuses)
         expected = (
@@ -1439,9 +1443,7 @@ class MultiTavilySourcePackCommitRequest(StrictModel):
 
     schema_id = "briefloop.multi_tavily_source_pack_commit_request.v1"
 
-    schema_version: Literal[
-        "briefloop.multi_tavily_source_pack_commit_request.v1"
-    ]
+    schema_version: Literal["briefloop.multi_tavily_source_pack_commit_request.v1"]
     capacity_profile: Literal["multi_tavily_v2"]
     request_id: ContractId
     run_id: ContractId
@@ -2163,13 +2165,9 @@ class MultiTavilyExecutionSourceManifest(StrictModel):
 
     schema_id = "briefloop.multi_tavily_execution_source_manifest.v1"
 
-    schema_version: Literal[
-        "briefloop.multi_tavily_execution_source_manifest.v1"
-    ]
+    schema_version: Literal["briefloop.multi_tavily_execution_source_manifest.v1"]
     capacity_profile: Literal["multi_tavily_v2"]
-    members: list[ExecutionSourceManifestMember] = Field(
-        min_length=1, max_length=800
-    )
+    members: list[ExecutionSourceManifestMember] = Field(min_length=1, max_length=800)
 
     @model_validator(mode="after")
     def members_are_tavily_ordered_and_unique(
@@ -2352,8 +2350,7 @@ class RunSourceAcquisitionAttemptAuthorization(StrictModel):
         ):
             raise ValueError("attempt predecessor does not match ordinal")
         if (
-            self.max_provider_calls
-            != self.max_search_calls + self.max_extract_calls
+            self.max_provider_calls != self.max_search_calls + self.max_extract_calls
             or self.max_extract_calls != (self.max_extract_urls + 19) // 20
         ):
             raise ValueError("attempt call ceilings are inconsistent")
@@ -2868,8 +2865,7 @@ class RuntimeSourceRouteBinding(StrictModel):
         if self.acquisition_spec is not None:
             if self.route_kind == "external_api" and self.route_id == "web-search":
                 if (
-                    self.acquisition_spec.kind
-                    not in {"web_search", "web_search_multi"}
+                    self.acquisition_spec.kind not in {"web_search", "web_search_multi"}
                     or self.acquisition_spec.provider_id != self.provider_id
                 ):
                     raise ValueError("source route acquisition spec mismatch")
@@ -5516,6 +5512,26 @@ class DeliveryAuthorizationRequest(StrictModel):
     expected_store_revision: NonNegativeInt
 
 
+class RunTerminationRequest(StrictModel):
+    """Explicit Human decision that irreversibly terminates one run."""
+
+    schema_id = "briefloop.run_termination_request.v2"
+
+    schema_version: Literal["briefloop.run_termination_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    decision: Literal["terminate"]
+    reason_code: Literal[
+        "gate_repair_unresolvable",
+        "negative_audit_truth_accepted",
+        "operator_abandon",
+    ]
+    reason: ApprovalReason
+    actor_id: ContractId
+    expected_action_fingerprint: Sha256
+    expected_store_revision: NonNegativeInt
+
+
 class DeliveryAttemptRequest(StrictModel):
     schema_id = "briefloop.delivery_attempt_request.v2"
     schema_version: Literal["briefloop.delivery_attempt_request.v2"]
@@ -7130,11 +7146,9 @@ _TAVILY_ACQUISITION_BUNDLE_RECORD_V2 = {
     "recorded_at": _NOW,
     "record_fingerprint": "0" * 64,
 }
-_TAVILY_ACQUISITION_BUNDLE_RECORD_V2["record_fingerprint"] = (
-    _contract_fingerprint(
-        _TAVILY_ACQUISITION_BUNDLE_RECORD_V2,
-        field="record_fingerprint",
-    )
+_TAVILY_ACQUISITION_BUNDLE_RECORD_V2["record_fingerprint"] = _contract_fingerprint(
+    _TAVILY_ACQUISITION_BUNDLE_RECORD_V2,
+    field="record_fingerprint",
 )
 TavilyAcquisitionBundleRecordV2.minimal_example = deepcopy(
     _TAVILY_ACQUISITION_BUNDLE_RECORD_V2
@@ -7293,9 +7307,7 @@ _WEB_ACQUISITION_SPEC_V3["acquisition_spec_fingerprint"] = _contract_fingerprint
     _WEB_ACQUISITION_SPEC_V3,
     field="acquisition_spec_fingerprint",
 )
-RuntimeWebSearchAcquisitionSpecV3.minimal_example = deepcopy(
-    _WEB_ACQUISITION_SPEC_V3
-)
+RuntimeWebSearchAcquisitionSpecV3.minimal_example = deepcopy(_WEB_ACQUISITION_SPEC_V3)
 RuntimeWebSearchAcquisitionSpecV3.full_example = deepcopy(_WEB_ACQUISITION_SPEC_V3)
 _RUNTIME_SOURCE_SEARCH_PLAN_V2 = {
     "schema_version": RuntimeSourceSearchPlanV2.schema_id,
@@ -7317,9 +7329,7 @@ _RUNTIME_SOURCE_SEARCH_PLAN_V2["plan_fingerprint"] = _contract_fingerprint(
     _RUNTIME_SOURCE_SEARCH_PLAN_V2,
     field="plan_fingerprint",
 )
-RuntimeSourceSearchPlanV2.minimal_example = deepcopy(
-    _RUNTIME_SOURCE_SEARCH_PLAN_V2
-)
+RuntimeSourceSearchPlanV2.minimal_example = deepcopy(_RUNTIME_SOURCE_SEARCH_PLAN_V2)
 RuntimeSourceSearchPlanV2.full_example = deepcopy(_RUNTIME_SOURCE_SEARCH_PLAN_V2)
 
 _MARKET_DATA_SECURITY_V1 = {
@@ -8381,6 +8391,17 @@ DeliveryAuthorizationRequest.minimal_example = {
     "reason": "Approved local package preparation",
     "expected_store_revision": 24,
 }
+RunTerminationRequest.minimal_example = {
+    "schema_version": RunTerminationRequest.schema_id,
+    "request_id": "REQ-TERMINATE-001",
+    "run_id": _RUN,
+    "decision": "terminate",
+    "reason_code": "gate_repair_unresolvable",
+    "reason": "The frozen repair budget is exhausted; preserve the failed run.",
+    "actor_id": "local-human-reviewer",
+    "expected_action_fingerprint": "0" * 64,
+    "expected_store_revision": 24,
+}
 DeliveryAttemptRequest.minimal_example = {
     "schema_version": DeliveryAttemptRequest.schema_id,
     "request_id": "REQ-ATTEMPT-001",
@@ -8433,6 +8454,7 @@ for _model in (
     FinalizeCompleteRequest,
     InternalApprovalRequest,
     DeliveryAuthorizationRequest,
+    RunTerminationRequest,
     DeliveryAttemptRequest,
     DeliveryResultRequest,
 ):
@@ -9005,6 +9027,7 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     FinalizeCompleteRequest,
     InternalApprovalRequest,
     DeliveryAuthorizationRequest,
+    RunTerminationRequest,
     DeliveryAttemptRequest,
     DeliveryResultRequest,
     CheckoutRevisionRecord,
@@ -9295,6 +9318,7 @@ __all__ = [
     "RunGuidanceSnapshotRecord",
     "RunGuidanceSnapshotReference",
     "RunResetRequest",
+    "RunTerminationRequest",
     "RunSuccessorStartRequest",
     "ScreenedCandidatesProposal",
     "SourceAcquisitionFailureEvidence",

@@ -299,6 +299,10 @@ roles:
       selector_max_items capacity; reserve high for items that must appear in
       the brief and mark the rest excluded or deprioritized with reason_code
       records.
+    - Reserve high priority for sources with a canonical published_at date, or
+      status-incident opened_at date, inside the frozen reporting window.
+      Undated and out-of-window sources may be selected only as low/medium
+      background; retrieved_at never proves that an event belongs to this week.
     - In strict topology, return candidate_claims.json only and hand off to the independent
       Screener.
     - Return candidates and screening output, not final analysis.
@@ -362,6 +366,10 @@ roles:
       selector_max_items capacity; reserve high for items that must appear in
       the brief and mark the rest excluded or deprioritized with reason_code
       records.
+    - Reserve high priority for sources with a canonical published_at date, or
+      status-incident opened_at date, inside the frozen reporting window.
+      Undated and out-of-window sources may be selected only as low/medium
+      background; retrieved_at never proves that an event belongs to this week.
   claim-ledger:
     stage: pipeline
     tool_profile: edit_safe
@@ -420,6 +428,9 @@ roles:
     - Preserve every real [src:<claim_id>] citation exactly.
     - Include source dates (published_at or retrieved_at) where available.
     - Preserve uncertainty and source limitations.
+    - Treat Claim Ledger entries with metadata.temporal_role=background as
+      context only. Do not describe them as this week, this period, latest,
+      recent, or newly occurred; use current-window claims for those assertions.
     - Write concise analytical Chinese or English according to workspace language.
     - Keep all added facts within Claim Ledger support.
     - Use frozen claim_ledger.json and approved analysis artifacts as the evidence base.
@@ -480,6 +491,8 @@ roles:
     - Check missing citations — claims in ledger not cited in brief.
     - Check orphan citations — real [src:<claim_id>] citations in the brief not found in the ledger.
     - Check stale sources — sources older than configured reporting window.
+    - Check temporal_role=background claims remain explicitly contextual and
+      are never framed as this week, latest, recent, or newly occurred.
     - Check investment-advice language — no trading signals or investment recommendations.
     - Check redaction risks — no private identifiers, internal paths, or confidential
       content.
@@ -550,6 +563,9 @@ roles:
     - Reduce repetition.
     - Preserve all real [src:<claim_id>] citations exactly.
     - Preserve uncertainty.
+    - Preserve background framing for Claim Ledger entries whose
+      metadata.temporal_role is background; never promote them into current,
+      latest, or this-week events through editing.
     - Remove internal residue when safe.
     - Remove [SRC:], [SOURCE:], empty [src:] markers.
     - Remove Claude/Codex process residue (Thought for..., Agent completed, Bash(...),

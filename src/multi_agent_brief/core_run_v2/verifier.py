@@ -98,6 +98,7 @@ from .tavily_source_binding import (
     expected_tavily_intake_submission,
     expected_tavily_source_pack,
 )
+from .source_temporality import classify_source_temporality
 
 
 @dataclass(frozen=True)
@@ -1042,6 +1043,58 @@ def _verified_market_data_snapshot_receipt(
         raise CoreRunError("control_store_integrity_invalid")
 
 
+def _verified_run_termination_receipt(
+    snapshot: ControlStoreSnapshot,
+    receipt: TransactionReceipt,
+) -> None:
+    if (
+        receipt.transaction_type != "run_termination"
+        or receipt.run_id != snapshot.run.run_id
+    ):
+        raise CoreRunError("control_store_integrity_invalid")
+    _verify_authoritative_receipt_relation_families(receipt, frozenset())
+    if len(receipt.event_ids) != 1:
+        raise CoreRunError("control_store_integrity_invalid")
+    events = [item for item in snapshot.events if item.event_id == receipt.event_ids[0]]
+    if len(events) != 1:
+        raise CoreRunError("control_store_integrity_invalid")
+    event = events[0]
+    metadata = event.metadata
+    expected_reasons = {
+        "gate_repair_human_review": {
+            "gate_repair_unresolvable",
+            "operator_abandon",
+        },
+        "audit_human_review": {
+            "negative_audit_truth_accepted",
+            "operator_abandon",
+        },
+    }
+    effect = metadata.get("terminated_action_effect_kind")
+    if (
+        event.run_id != receipt.run_id
+        or event.transaction_id != receipt.transaction_id
+        or event.event_type != "run_terminated"
+        or event.actor != "runtime"
+        or event.intake_binding is not None
+        or event.core_run_binding is not None
+        or event.stage_id is not None
+        or event.artifact_id is not None
+        or event.decision != "terminate"
+        or type(metadata.get("human_actor_id")) is not str
+        or not metadata.get("human_actor_id")
+        or type(metadata.get("human_reason")) is not str
+        or not metadata.get("human_reason")
+        or type(metadata.get("terminated_action_fingerprint")) is not str
+        or len(str(metadata.get("terminated_action_fingerprint"))) != 64
+        or type(metadata.get("request_fingerprint")) is not str
+        or len(str(metadata.get("request_fingerprint"))) != 64
+        or effect not in expected_reasons
+        or event.reason not in expected_reasons[effect]
+    ):
+        raise CoreRunError("control_store_integrity_invalid")
+
+
 def _verified_intake_receipt_effect(
     snapshot: ControlStoreSnapshot,
     receipt: TransactionReceipt,
@@ -1083,12 +1136,9 @@ def _verified_intake_receipt_effect(
             for item in typed_events
             if item.event_type in source_control_event_types
         ]
-        if (
-            len(source_events)
-            + len(classification_events)
-            + len(source_control_events)
-            != len(typed_events)
-        ):
+        if len(source_events) + len(classification_events) + len(
+            source_control_events
+        ) != len(typed_events):
             raise CoreRunError("control_store_integrity_invalid")
         if any(
             item.run_id != receipt.run_id
@@ -2089,8 +2139,7 @@ class CoreRunDomainVerifier:
         if not isinstance(route_spec, RuntimeWebSearchAcquisitionSpecV3):
             raise CoreRunError("control_store_integrity_invalid")
         expected_search_calls = (
-            route_spec.max_primary_search_calls
-            + route_spec.max_backfill_search_calls
+            route_spec.max_primary_search_calls + route_spec.max_backfill_search_calls
         )
         expected_extract_calls = route_spec.max_extract_calls
         receipts = {item.transaction_id: item for item in snapshot.transactions}
@@ -2321,9 +2370,9 @@ class CoreRunDomainVerifier:
                 )
                 observation = CoreRunDomainVerifier._tavily_observation(response_bytes)
                 route_spec = routes[0].acquisition_spec
-                if not isinstance(route_spec, RuntimeWebSearchAcquisitionSpecV3) or not (
-                    tavily_observation_matches_spec(observation, route_spec)
-                ):
+                if not isinstance(
+                    route_spec, RuntimeWebSearchAcquisitionSpecV3
+                ) or not (tavily_observation_matches_spec(observation, route_spec)):
                     raise CoreRunError("control_store_integrity_invalid")
                 result_count = observation.result_count
                 durable_count = observation.durable_content_count
@@ -2660,8 +2709,7 @@ class CoreRunDomainVerifier:
             raise CoreRunError("control_store_integrity_invalid")
         route_spec = route_specs[0]
         expected_search_calls = (
-            route_spec.max_primary_search_calls
-            + route_spec.max_backfill_search_calls
+            route_spec.max_primary_search_calls + route_spec.max_backfill_search_calls
         )
         if (
             attempts[0].max_provider_calls
@@ -2860,6 +2908,42 @@ class CoreRunDomainVerifier:
                 receipt,
                 _verified_market_data_snapshot_receipt,
             )
+            return
+        if receipt.transaction_type == "run_termination":
+            self._verify_historical_zero_effect_prefix(
+                history,
+                snapshot,
+                receipt,
+                _verified_run_termination_receipt,
+            )
+            try:
+                pre = history.snapshot_at_revision(
+                    receipt.run_id,
+                    receipt.committed_revision - 1,
+                )
+                pre_verified = self._verify_snapshot(history, pre)
+                from .next_action import classify_core_run_next_action
+
+                action = classify_core_run_next_action(pre_verified)
+                event = next(
+                    item
+                    for item in snapshot.events
+                    if item.event_id == receipt.event_ids[0]
+                )
+                if (
+                    action.action_kind != "human_decision"
+                    or action.effect_kind
+                    not in {"gate_repair_human_review", "audit_human_review"}
+                    or event.metadata.get("terminated_action_effect_kind")
+                    != action.effect_kind
+                    or event.metadata.get("terminated_action_fingerprint")
+                    != action.action_fingerprint
+                ):
+                    raise CoreRunError("historical_prefix_invalid")
+            except CoreRunError:
+                raise
+            except Exception as exc:
+                raise CoreRunError("historical_prefix_invalid") from exc
             return
         if receipt.transaction_type in _INTAKE_EFFECT_RULES:
             if (
@@ -5313,6 +5397,39 @@ class CoreRunDomainVerifier:
             statement = normalize_text(draft.statement)
             evidence = normalize_text(draft.evidence_text)
             duplicate_statements[statement.casefold()].append(draft.draft_id)
+            temporal = {
+                source_id: classify_source_temporality(
+                    sources[source_id], binding.run_direction
+                )
+                for source_id in source_ids
+            }
+            current_source_ids = sorted(
+                source_id
+                for source_id, item in temporal.items()
+                if item.role == "current_window"
+            )
+            anchors = sorted(
+                item.anchor_date
+                for item in temporal.values()
+                if item.role == "current_window" and item.anchor_date is not None
+            )
+            bases = sorted(
+                {
+                    item.basis
+                    for item in temporal.values()
+                    if item.role == "current_window"
+                }
+            )
+            temporal_metadata = {
+                "temporal_role": (
+                    "current_window" if current_source_ids else "background"
+                ),
+                "temporal_anchor_date": (anchors[-1].isoformat() if anchors else None),
+                "temporal_basis": (
+                    bases[0] if len(bases) == 1 else "mixed" if bases else "none"
+                ),
+                "current_window_source_ids": current_source_ids,
+            }
             expected_claim = {
                 "schema_version": claim.schema_id,
                 "run_id": snapshot.run.run_id,
@@ -5331,7 +5448,10 @@ class CoreRunDomainVerifier:
                 "evidence_relation": "direct",
                 "applicability_reason": None,
                 "limitations": [],
-                "metadata": {"source_ids": list(source_ids)},
+                "metadata": {
+                    "source_ids": list(source_ids),
+                    **temporal_metadata,
+                },
                 "created_at": freeze.frozen_at,
                 "accepted_transaction_id": freeze.accepted_transaction_id,
             }
@@ -5387,6 +5507,7 @@ class CoreRunDomainVerifier:
                         "published_at": primary.published_at,
                         "retrieved_at": primary.retrieved_at,
                         "underlying_evidence_type": primary.underlying_evidence_type,
+                        **temporal_metadata,
                     },
                     "schema_version": "v2",
                     "epistemic_type": CLAIM_EPISTEMIC[draft.claim_type],

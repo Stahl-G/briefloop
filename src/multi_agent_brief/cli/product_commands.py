@@ -20,7 +20,6 @@ from multi_agent_brief.contracts.schemas.evidence_span_registry import (
 )
 from multi_agent_brief.contracts.source_metadata import normalize_source_category
 from multi_agent_brief.inputs.contracts import extracted_markdown_path
-from multi_agent_brief.orchestrator_contract import RUNTIME_CLI_CHOICE_PLACEHOLDER
 from multi_agent_brief.product.bundle_projection import (
     ReportBundleProjectionError,
     write_report_bundle_manifest,
@@ -77,9 +76,10 @@ EVIDENCE_EXTRACT_PAGE_INVENTORY_SCHEMA_VERSION = (
 PRODUCT_WORKSPACE_SELECTOR_MAX_ITEMS = 20
 TAVILY_CONFIRMED_INIT_GUIDANCE = (
     "Tavily setup requires Human-confirmed direction and a 7- or 30-day "
-    "source window. Use `briefloop init <workspace> --web`, or run "
+    "source window. Use `briefloop init <workspace> --web`, run "
     "`briefloop onboard` and then `briefloop init <workspace> "
-    "--from-onboarding onboarding.json`."
+    "--from-onboarding onboarding.json`, or pass `--search-backend tavily` "
+    "with the solar_stock_periodic ReportPack."
 )
 
 
@@ -133,7 +133,8 @@ def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
         choices=["tavily", "exa", "brave", "firecrawl", "serper"],
         help=(
             "External API backend for this developer workspace shortcut. "
-            "Tavily requires `briefloop init --web` or conversational onboarding."
+            "Tavily requires `briefloop init --web`, conversational "
+            "onboarding, or the solar_stock_periodic ReportPack."
         ),
     )
 
@@ -447,16 +448,6 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
 
 
 def handle_new_workspace(args: argparse.Namespace) -> int:
-    if str(getattr(args, "search_backend", "") or "").strip() == "tavily":
-        payload = {
-            "ok": False,
-            "error": TAVILY_CONFIRMED_INIT_GUIDANCE,
-            "workspace": str(args.workspace),
-            "report_pack": str(args.report_pack),
-        }
-        _print_payload("new", payload, as_json=False)
-        return 1
-
     registry = ReportPackRegistry.from_package()
     requested_pack_id = resolve_report_pack_id(args.report_pack)
     pack = registry.get(requested_pack_id)
@@ -469,10 +460,29 @@ def handle_new_workspace(args: argparse.Namespace) -> int:
         _print_payload("new", payload, as_json=False)
         return 1
 
+    if (
+        str(getattr(args, "search_backend", "") or "").strip() == "tavily"
+        and pack.report_type != "solar_stock_periodic"
+    ):
+        payload = {
+            "ok": False,
+            "error": TAVILY_CONFIRMED_INIT_GUIDANCE,
+            "workspace": str(args.workspace),
+            "report_pack": str(args.report_pack),
+        }
+        _print_payload("new", payload, as_json=False)
+        return 1
+
     target = Path(args.workspace)
+    from multi_agent_brief.runtime_host_v2.initialization import (
+        RuntimeHostError,
+        WorkspaceBootstrap,
+    )
+
     try:
         creation = _create_report_pack_workspace(target=target, pack=pack, args=args)
-    except (FileExistsError, OSError, ValueError) as exc:
+        WorkspaceBootstrap(target).install_codex_kit()
+    except (FileExistsError, OSError, RuntimeHostError, ValueError) as exc:
         payload = {
             "ok": False,
             "error": str(exc),
@@ -976,10 +986,7 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
             print("Next:")
             print(f"  Add local evidence files under {workspace}/input/sources/")
             print(f"  briefloop doctor --config {workspace}/config.yaml")
-            print(
-                f"  briefloop run --workspace {workspace}"
-                f" --runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}"
-            )
+            print(f"  briefloop run --workspace {workspace} --runtime codex")
         else:
             print(payload.get("error"))
             available = payload.get("available_packs") or []
@@ -1174,7 +1181,7 @@ def _create_report_pack_workspace(
 
     requested_backend = str(getattr(args, "search_backend", None) or "").strip()
     requested_mode = str(getattr(args, "web_search_mode", None) or "").strip()
-    if requested_backend == "tavily":
+    if requested_backend == "tavily" and pack.report_type != "solar_stock_periodic":
         raise ValueError(TAVILY_CONFIRMED_INIT_GUIDANCE)
     if requested_mode == "external_api" and not requested_backend:
         raise ValueError(
@@ -1274,9 +1281,7 @@ def _create_report_pack_workspace(
         web_search_enabled=True,
         web_search_mode="configure_later",
         search_backend="",
-        optional_seed_pack=(
-            "solar_stock_periodic" if solar_stock_direction else ""
-        ),
+        optional_seed_pack=("solar_stock_periodic" if solar_stock_direction else ""),
     )
     web_search_mode = getattr(args, "web_search_mode", None)
     if web_search_mode:
@@ -1306,7 +1311,38 @@ def _create_report_pack_workspace(
         raise FileExistsError(
             f"Refusing to overwrite existing file: {spec_path}. Use --force to overwrite."
         )
-    create_workspace(target, profile, force=bool(getattr(args, "force", False)))
+    discovery_authorization = None
+    if (
+        solar_stock_direction
+        and profile.web_search_mode == "external_api"
+        and profile.search_backend == "tavily"
+    ):
+        from multi_agent_brief.contracts.v2 import (
+            RunSourceDiscoveryAuthorizationBootstrap,
+        )
+
+        discovery_authorization = (
+            RunSourceDiscoveryAuthorizationBootstrap.model_validate(
+                {
+                    "schema_version": (
+                        RunSourceDiscoveryAuthorizationBootstrap.schema_id
+                    ),
+                    "route_id": "web-search",
+                    "provider_id": "tavily",
+                    "execution_owner": "deterministic",
+                    "credential_env": "TAVILY_API_KEY",
+                    "completion_target": "finalized_local",
+                    "repair_budget": 1,
+                },
+                strict=True,
+            )
+        )
+    create_workspace(
+        target,
+        profile,
+        force=bool(getattr(args, "force", False)),
+        source_discovery_authorization=discovery_authorization,
+    )
     spec_path.write_text(
         yaml.safe_dump(spec, sort_keys=False, allow_unicode=True),
         encoding="utf-8",

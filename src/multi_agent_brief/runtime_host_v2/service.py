@@ -47,6 +47,7 @@ from multi_agent_brief.contracts.v2 import (
     InvocationFailureRequest,
     InvocationStartRequest,
     OwnedArtifactSubmitRequest,
+    RunTerminationRequest,
     RuntimeAdapterBinding,
     RuntimeSourceRouteBinding,
     RuntimeWebSearchAcquisitionSpecV3,
@@ -565,6 +566,14 @@ class RuntimeHostService:
                     transaction_ids=tuple(transaction_ids),
                 )
             if action.action_kind == "complete":
+                if action.effect_kind == "run_terminated":
+                    return build_runtime_continuation_result(
+                        current.verified,
+                        action,
+                        status="terminated",
+                        reason_code=action.reason_code,
+                        transaction_ids=tuple(transaction_ids),
+                    )
                 if (
                     action.effect_kind != "finalized_local"
                     or action.reason_code != "local_finalization_complete"
@@ -2140,7 +2149,12 @@ class RuntimeHostService:
         ):
             raise RuntimeHostError("runtime_human_request_invalid")
         terminal = CoreRunTerminalService(self.workspace)
-        if action.effect_kind == "internal_approval" and isinstance(
+        if action.effect_kind in {
+            "gate_repair_human_review",
+            "audit_human_review",
+        } and isinstance(request, RunTerminationRequest):
+            result = terminal.record_run_termination(request)
+        elif action.effect_kind == "internal_approval" and isinstance(
             request, InternalApprovalRequest
         ):
             result = terminal.record_internal_approval(request)

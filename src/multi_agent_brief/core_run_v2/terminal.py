@@ -31,6 +31,7 @@ from multi_agent_brief.contracts.v2 import (
     PackageReadyRecord,
     RunArchiveArtifactBinding,
     RunArchiveRecord,
+    RunTerminationRequest,
     StageArtifactBinding,
     StageGateBinding,
     StageState,
@@ -901,6 +902,9 @@ class CoreRunTerminalService:
     def record_internal_approval(self, request: InternalApprovalRequest):
         return self._public(self._record_internal_approval, request)
 
+    def record_run_termination(self, request: RunTerminationRequest):
+        return self._public(self._record_run_termination, request)
+
     def authorize_delivery(self, request: DeliveryAuthorizationRequest):
         return self._public(self._authorize_delivery, request)
 
@@ -935,11 +939,19 @@ class CoreRunTerminalService:
             self.workspace / "briefloop.db",
             clock=self._clock,
         )
-        replay = resolve_core_replay(
-            store,
-            run_id=request.run_id,
-            request_id=request.request_id,
-            request_fingerprint=fingerprint,
+        replay = (
+            self._resolve_run_termination_replay(
+                store,
+                request=request,
+                request_fingerprint=fingerprint,
+            )
+            if isinstance(request, RunTerminationRequest)
+            else resolve_core_replay(
+                store,
+                run_id=request.run_id,
+                request_id=request.request_id,
+                request_fingerprint=fingerprint,
+            )
         )
         if replay is not None:
             store.close()
@@ -964,6 +976,45 @@ class CoreRunTerminalService:
             store.close()
             return None, None, fingerprint, blocked
         return store, (verifier, verified), fingerprint, None
+
+    @staticmethod
+    def _resolve_run_termination_replay(
+        store: SQLiteControlStore,
+        *,
+        request: RunTerminationRequest,
+        request_fingerprint: str,
+    ):
+        from .errors import CoreRunResult
+        from .verifier import CoreRunDomainVerifier
+
+        receipt = store.load_transaction_receipt(request.run_id, request.request_id)
+        if receipt is None:
+            return None
+        history = store.load_history()
+        CoreRunDomainVerifier().verify_history(
+            history,
+            through_revision=receipt.committed_revision,
+        )
+        snapshot = history.snapshot_at_revision(
+            request.run_id,
+            receipt.committed_revision,
+        )
+        events = [
+            item for item in snapshot.events if item.event_id in receipt.event_ids
+        ]
+        if (
+            receipt.transaction_type != "run_termination"
+            or len(events) != 1
+            or events[0].event_type != "run_terminated"
+        ):
+            raise CoreRunError("control_store_integrity_invalid")
+        if events[0].metadata.get("request_fingerprint") != request_fingerprint:
+            raise CoreRunError("submission_replay_conflict")
+        return CoreRunResult(
+            status="replayed",
+            receipt=receipt,
+            primary_record_id=request.request_id,
+        )
 
     def _record_internal_approval(self, request: InternalApprovalRequest):
         from multi_agent_brief.contracts.v2 import APPROVAL_BOUNDARY
@@ -1052,6 +1103,81 @@ class CoreRunTerminalService:
         finally:
             store.close()
 
+    def _record_run_termination(self, request: RunTerminationRequest):
+        from .errors import CoreRunResult
+        from .next_action import classify_core_run_next_action
+        from .policy import derived_id
+
+        store, context, fingerprint, replay = self._open_verified(request)
+        if replay is not None:
+            return replay
+        assert store is not None and context is not None
+        verifier, verified = context
+        try:
+            action = classify_core_run_next_action(verified)
+            if action.action_kind != "human_decision" or action.effect_kind not in {
+                "gate_repair_human_review",
+                "audit_human_review",
+            }:
+                raise CoreRunError("stage_not_current")
+            if action.action_fingerprint != request.expected_action_fingerprint:
+                raise CoreRunError("runtime_action_stale")
+            compatible = {
+                "gate_repair_human_review": {
+                    "gate_repair_unresolvable",
+                    "operator_abandon",
+                },
+                "audit_human_review": {
+                    "negative_audit_truth_accepted",
+                    "operator_abandon",
+                },
+            }
+            if request.reason_code not in compatible[action.effect_kind]:
+                raise CoreRunError("core_run_request_invalid")
+            event_id = derived_id(
+                "EVT-RUN-TERMINATION", request.request_id, fingerprint
+            )
+            event = EventEnvelope.model_validate(
+                {
+                    "schema_version": EventEnvelope.schema_id,
+                    "event_id": event_id,
+                    "run_id": request.run_id,
+                    "event_type": "run_terminated",
+                    "created_at": self._now(),
+                    "actor": "runtime",
+                    "transaction_id": request.request_id,
+                    "decision": request.decision,
+                    "reason": request.reason_code,
+                    "metadata": {
+                        "human_actor_id": request.actor_id,
+                        "human_reason": request.reason,
+                        "request_fingerprint": fingerprint,
+                        "terminated_action_effect_kind": action.effect_kind,
+                        "terminated_action_fingerprint": action.action_fingerprint,
+                    },
+                },
+                strict=True,
+            )
+            unit = store.begin(
+                request.run_id,
+                request.request_id,
+                "run_termination",
+                request.expected_store_revision,
+            )
+            unit.append_event(event)
+            receipt = unit.commit(
+                _postcommit_observer=lambda _receipt: verifier.verify(
+                    store, request.run_id
+                )
+            )
+            return CoreRunResult(
+                status="committed",
+                receipt=receipt,
+                primary_record_id=request.request_id,
+            )
+        finally:
+            store.close()
+
     def _accept_finalize_render(self, request: FinalizeRenderRequest):
         from pydantic import ValidationError
 
@@ -1103,8 +1229,13 @@ class CoreRunTerminalService:
             now = self._now()
             for artifact_id in sorted(request.reader_scratch_inputs):
                 try:
-                    content = self._scratch.read(request.reader_scratch_inputs[artifact_id])
-                    if sha256_hex(content) != request.expected_reader_sha256[artifact_id]:
+                    content = self._scratch.read(
+                        request.reader_scratch_inputs[artifact_id]
+                    )
+                    if (
+                        sha256_hex(content)
+                        != request.expected_reader_sha256[artifact_id]
+                    ):
                         raise CoreRunError("finalize_input_invalid")
                     text = content.decode("utf-8")
                 except (
@@ -1141,7 +1272,10 @@ class CoreRunTerminalService:
                     if prior.current_revision != expected_revision:
                         raise CoreRunError("finalize_input_invalid")
                     record = prior.model_copy(
-                        update={"current_revision": expected_revision + 1, "status": "valid"}
+                        update={
+                            "current_revision": expected_revision + 1,
+                            "status": "valid",
+                        }
                     )
                 revision = ArtifactRevision.model_validate(
                     {
@@ -1161,7 +1295,11 @@ class CoreRunTerminalService:
                 )
                 rows.append((record, revision, content))
                 residue_fingerprints.append(
-                    {"artifact_id": artifact_id, "sha256": revision.sha256, "status": residue.status}
+                    {
+                        "artifact_id": artifact_id,
+                        "sha256": revision.sha256,
+                        "status": residue.status,
+                    }
                 )
             render_id = derived_id("RENDER", request.request_id, fingerprint)
             event_id = derived_id("EVT-RENDER", request.request_id, fingerprint)
@@ -1174,11 +1312,16 @@ class CoreRunTerminalService:
                     "audited_brief": request.expected_audited_brief,
                     "audit_report": request.expected_audit_report,
                     "reader_artifacts": [
-                        {"artifact_id": revision.artifact_id, "revision": revision.revision}
+                        {
+                            "artifact_id": revision.artifact_id,
+                            "revision": revision.revision,
+                        }
                         for _record, revision, _content in rows
                     ],
                     "reader_clean_status": "pass",
-                    "policy_result_fingerprint": canonical_fingerprint(residue_fingerprints),
+                    "policy_result_fingerprint": canonical_fingerprint(
+                        residue_fingerprints
+                    ),
                     "run_contract_fingerprint": verified.binding.contract_fingerprint,
                     "created_at": now,
                     "render_event_id": event_id,
@@ -1216,14 +1359,20 @@ class CoreRunTerminalService:
             )
             stage_checkout_effect(unit, checkout)
             receipt = unit.commit(
-                _postcommit_observer=lambda _receipt: verifier.verify(store, request.run_id)
+                _postcommit_observer=lambda _receipt: verifier.verify(
+                    store, request.run_id
+                )
             )
             published, _warnings = publish_checkout_effect(
                 workspace=self.workspace, store=store, prepared=checkout
             )
             if not published:
-                return CoreRunResult(status="commit_outcome_unknown", error_code="commit_outcome_unknown")
-            return CoreRunResult(status="committed", receipt=receipt, primary_record_id=render_id)
+                return CoreRunResult(
+                    status="commit_outcome_unknown", error_code="commit_outcome_unknown"
+                )
+            return CoreRunResult(
+                status="committed", receipt=receipt, primary_record_id=render_id
+            )
         except ValidationError as exc:
             raise CoreRunError("finalize_input_invalid") from exc
         finally:
@@ -1240,9 +1389,7 @@ class CoreRunTerminalService:
         assert store is not None and context is not None
         verifier, verified = context
         try:
-            authorization_id = derived_id(
-                "AUTH", request.request_id, fingerprint
-            )
+            authorization_id = derived_id("AUTH", request.request_id, fingerprint)
             classify_terminal_effect_authorization(
                 verified.snapshot,
                 CoreEffect.DELIVERY_AUTHORIZE,
@@ -1312,7 +1459,9 @@ class CoreRunTerminalService:
                     store, request.run_id
                 )
             )
-            return CoreRunResult(status="committed", receipt=receipt, primary_record_id=authorization_id)
+            return CoreRunResult(
+                status="committed", receipt=receipt, primary_record_id=authorization_id
+            )
         finally:
             store.close()
 
@@ -1340,8 +1489,15 @@ class CoreRunTerminalService:
                 TerminalEffectSubject(),
             ).require_allowed()
             snapshot = verified.snapshot
-            renders = [item for item in snapshot.finalize_renders if item.render_id == request.render_id]
-            stage = next((item for item in snapshot.stage_states if item.stage_id == "finalize"), None)
+            renders = [
+                item
+                for item in snapshot.finalize_renders
+                if item.render_id == request.render_id
+            ]
+            stage = next(
+                (item for item in snapshot.stage_states if item.stage_id == "finalize"),
+                None,
+            )
             selected = sorted(
                 (
                     item
@@ -1357,13 +1513,16 @@ class CoreRunTerminalService:
                 for item in selected
             }
             legality = classify_recovery_legality(snapshot)
-            expected_recovery_id = legality.recovery_id if legality.state == "recovered_current" else None
+            expected_recovery_id = (
+                legality.recovery_id if legality.state == "recovered_current" else None
+            )
             if (
                 len(renders) != 1
                 or stage is None
                 or stage.status != "ready"
                 or stage.revision != request.expected_finalize_stage_revision
-                or request.gate_evaluation_ids != sorted(set(request.gate_evaluation_ids))
+                or request.gate_evaluation_ids
+                != sorted(set(request.gate_evaluation_ids))
                 or len(selected) != len(request.gate_evaluation_ids)
                 or {item.gate_id for item in selected} != set(GATE_IDS)
                 or len({item.gate_batch_id for item in selected}) != 1
@@ -1376,7 +1535,12 @@ class CoreRunTerminalService:
                         current_gate_report.current_revision,
                     )
                 }
-                or any(item.stage_id != "finalize" or item.blocking or item.status not in {"pass", "warning"} for item in selected)
+                or any(
+                    item.stage_id != "finalize"
+                    or item.blocking
+                    or item.status not in {"pass", "warning"}
+                    for item in selected
+                )
                 or request.recovery_id != expected_recovery_id
             ):
                 raise CoreRunError("finalize_gate_blocked")
@@ -1393,14 +1557,27 @@ class CoreRunTerminalService:
                 )
             render = renders[0]
             now = self._now()
-            finalization_id = derived_id("FINALIZATION", request.request_id, fingerprint)
-            transition_id = derived_id("TRANSITION-FINALIZE", request.request_id, fingerprint)
-            final_event_id = derived_id("EVT-FINALIZED", request.request_id, fingerprint)
+            finalization_id = derived_id(
+                "FINALIZATION", request.request_id, fingerprint
+            )
+            transition_id = derived_id(
+                "TRANSITION-FINALIZE", request.request_id, fingerprint
+            )
+            final_event_id = derived_id(
+                "EVT-FINALIZED", request.request_id, fingerprint
+            )
             archive_id = derived_id("ARCHIVE", request.request_id, fingerprint)
-            archive_event_id = derived_id("EVT-ARCHIVE", request.request_id, fingerprint)
+            archive_event_id = derived_id(
+                "EVT-ARCHIVE", request.request_id, fingerprint
+            )
             package_id = derived_id("PACKAGE", request.request_id, fingerprint)
-            package_event_id = derived_id("EVT-PACKAGE", request.request_id, fingerprint)
-            revisions = {(item.artifact_id, item.revision): item for item in snapshot.artifact_revisions}
+            package_event_id = derived_id(
+                "EVT-PACKAGE", request.request_id, fingerprint
+            )
+            revisions = {
+                (item.artifact_id, item.revision): item
+                for item in snapshot.artifact_revisions
+            }
             current = sorted(
                 (
                     revisions[(artifact.artifact_id, artifact.current_revision)]
@@ -1409,17 +1586,24 @@ class CoreRunTerminalService:
                 ),
                 key=lambda item: (item.artifact_id, item.revision),
             )
-            archive_bytes = canonical_json_bytes(
-                {
-                    "schema_version": "briefloop.core_v2_run_archive.v1",
-                    "run_id": request.run_id,
-                    "finalization_id": finalization_id,
-                    "artifacts": [
-                        {"artifact_id": item.artifact_id, "revision": item.revision, "sha256": item.sha256}
-                        for item in current
-                    ],
-                }
-            ) + b"\n"
+            archive_bytes = (
+                canonical_json_bytes(
+                    {
+                        "schema_version": "briefloop.core_v2_run_archive.v1",
+                        "run_id": request.run_id,
+                        "finalization_id": finalization_id,
+                        "artifacts": [
+                            {
+                                "artifact_id": item.artifact_id,
+                                "revision": item.revision,
+                                "sha256": item.sha256,
+                            }
+                            for item in current
+                        ],
+                    }
+                )
+                + b"\n"
+            )
             archive_revision = ArtifactRevision.model_validate(
                 {
                     "schema_version": ArtifactRevision.schema_id,
@@ -1436,19 +1620,33 @@ class CoreRunTerminalService:
                 },
                 strict=True,
             )
-            reader_revisions = [revisions[(item.artifact_id, item.revision)] for item in render.reader_artifacts]
-            package_bytes = canonical_json_bytes(
-                {
-                    "schema_version": "briefloop.core_v2_package_manifest.v1",
-                    "run_id": request.run_id,
-                    "finalization_id": finalization_id,
-                    "archive": {"artifact_id": archive_revision.artifact_id, "revision": 1, "sha256": archive_revision.sha256},
-                    "reader_artifacts": [
-                        {"artifact_id": item.artifact_id, "revision": item.revision, "sha256": item.sha256}
-                        for item in reader_revisions
-                    ],
-                }
-            ) + b"\n"
+            reader_revisions = [
+                revisions[(item.artifact_id, item.revision)]
+                for item in render.reader_artifacts
+            ]
+            package_bytes = (
+                canonical_json_bytes(
+                    {
+                        "schema_version": "briefloop.core_v2_package_manifest.v1",
+                        "run_id": request.run_id,
+                        "finalization_id": finalization_id,
+                        "archive": {
+                            "artifact_id": archive_revision.artifact_id,
+                            "revision": 1,
+                            "sha256": archive_revision.sha256,
+                        },
+                        "reader_artifacts": [
+                            {
+                                "artifact_id": item.artifact_id,
+                                "revision": item.revision,
+                                "sha256": item.sha256,
+                            }
+                            for item in reader_revisions
+                        ],
+                    }
+                )
+                + b"\n"
+            )
             package_revision = ArtifactRevision.model_validate(
                 {
                     "schema_version": ArtifactRevision.schema_id,
@@ -1506,7 +1704,9 @@ class CoreRunTerminalService:
                     "finalize_gate_batch_id": selected[0].gate_batch_id,
                     "finalize_gate_evaluation_ids": request.gate_evaluation_ids,
                     "recovery_id": request.recovery_id,
-                    "integrity_revision": snapshot.run_integrity_records[-1].integrity_revision,
+                    "integrity_revision": snapshot.run_integrity_records[
+                        -1
+                    ].integrity_revision,
                     "finalized_at": now,
                     "finalization_event_id": final_event_id,
                     "accepted_transaction_id": request.request_id,
@@ -1520,7 +1720,10 @@ class CoreRunTerminalService:
                     "archive_id": archive_id,
                     "run_id": request.run_id,
                     "finalization_id": finalization_id,
-                    "archive_artifact": {"artifact_id": archive_revision.artifact_id, "revision": 1},
+                    "archive_artifact": {
+                        "artifact_id": archive_revision.artifact_id,
+                        "revision": 1,
+                    },
                     "manifest_sha256": archive_revision.sha256,
                     "included_count": len(current),
                     "created_at": now,
@@ -1538,7 +1741,10 @@ class CoreRunTerminalService:
                     "run_id": request.run_id,
                     "finalization_id": finalization_id,
                     "archive_id": archive_id,
-                    "package_manifest_artifact": {"artifact_id": package_revision.artifact_id, "revision": 1},
+                    "package_manifest_artifact": {
+                        "artifact_id": package_revision.artifact_id,
+                        "revision": 1,
+                    },
                     "package_manifest_sha256": package_revision.sha256,
                     "artifact_count": len(package_members),
                     "created_at": now,
@@ -1555,44 +1761,181 @@ class CoreRunTerminalService:
                 created_at=self._clock(),
                 additional_revisions=(archive_revision, package_revision),
             )
-            unit = store.begin(request.run_id, request.request_id, transaction_type_for("finalize_complete"), request.expected_store_revision)
-            unit.put_stage_state(StageState.model_validate({"schema_version": StageState.schema_id, "run_id": request.run_id, "stage_id": "finalize", "status": "complete", "revision": stage.revision + 1, "updated_at": now}, strict=True))
+            unit = store.begin(
+                request.run_id,
+                request.request_id,
+                transaction_type_for("finalize_complete"),
+                request.expected_store_revision,
+            )
+            unit.put_stage_state(
+                StageState.model_validate(
+                    {
+                        "schema_version": StageState.schema_id,
+                        "run_id": request.run_id,
+                        "stage_id": "finalize",
+                        "status": "complete",
+                        "revision": stage.revision + 1,
+                        "updated_at": now,
+                    },
+                    strict=True,
+                )
+            )
             unit.append_stage_transition(transition)
             first_gate = selected[0].evaluation_id
             consumed = {
-                (item.artifact_id, item.artifact_revision): revisions[(item.artifact_id, item.artifact_revision)]
+                (item.artifact_id, item.artifact_revision): revisions[
+                    (item.artifact_id, item.artifact_revision)
+                ]
                 for item in snapshot.gate_artifact_bindings
                 if item.evaluation_id == first_gate
             }
-            consumed.update({(item.artifact_id, item.revision): item for item in reader_revisions})
+            consumed.update(
+                {(item.artifact_id, item.revision): item for item in reader_revisions}
+            )
             transition_inputs = sorted(
-                [*((item, "consumed") for item in consumed.values()), (archive_revision, "produced"), (package_revision, "produced")],
+                [
+                    *((item, "consumed") for item in consumed.values()),
+                    (archive_revision, "produced"),
+                    (package_revision, "produced"),
+                ],
                 key=lambda item: (item[0].artifact_id, item[0].revision),
             )
             for position, (revision, usage) in enumerate(transition_inputs):
-                unit.put_stage_artifact_binding(StageArtifactBinding.model_validate({"schema_version": StageArtifactBinding.schema_id, "run_id": request.run_id, "transition_id": transition_id, "position": position, "artifact_id": revision.artifact_id, "artifact_revision": revision.revision, "artifact_sha256": revision.sha256, "usage": usage, "accepted_transaction_id": request.request_id}, strict=True))
+                unit.put_stage_artifact_binding(
+                    StageArtifactBinding.model_validate(
+                        {
+                            "schema_version": StageArtifactBinding.schema_id,
+                            "run_id": request.run_id,
+                            "transition_id": transition_id,
+                            "position": position,
+                            "artifact_id": revision.artifact_id,
+                            "artifact_revision": revision.revision,
+                            "artifact_sha256": revision.sha256,
+                            "usage": usage,
+                            "accepted_transaction_id": request.request_id,
+                        },
+                        strict=True,
+                    )
+                )
             for evaluation in selected:
-                unit.put_stage_gate_binding(StageGateBinding.model_validate({"schema_version": StageGateBinding.schema_id, "run_id": request.run_id, "transition_id": transition_id, "gate_id": evaluation.gate_id, "evaluation_id": evaluation.evaluation_id, "accepted_transaction_id": request.request_id}, strict=True))
-            for artifact_id, revision, content in ((archive_revision.artifact_id, archive_revision, archive_bytes), (package_revision.artifact_id, package_revision, package_bytes)):
-                unit.put_artifact(ArtifactRecord.model_validate({"schema_version": ArtifactRecord.schema_id, "run_id": request.run_id, "artifact_id": artifact_id, "current_revision": 1, "status": "valid", "required": True, "path": revision.path, "format": "json"}, strict=True))
+                unit.put_stage_gate_binding(
+                    StageGateBinding.model_validate(
+                        {
+                            "schema_version": StageGateBinding.schema_id,
+                            "run_id": request.run_id,
+                            "transition_id": transition_id,
+                            "gate_id": evaluation.gate_id,
+                            "evaluation_id": evaluation.evaluation_id,
+                            "accepted_transaction_id": request.request_id,
+                        },
+                        strict=True,
+                    )
+                )
+            for artifact_id, revision, content in (
+                (archive_revision.artifact_id, archive_revision, archive_bytes),
+                (package_revision.artifact_id, package_revision, package_bytes),
+            ):
+                unit.put_artifact(
+                    ArtifactRecord.model_validate(
+                        {
+                            "schema_version": ArtifactRecord.schema_id,
+                            "run_id": request.run_id,
+                            "artifact_id": artifact_id,
+                            "current_revision": 1,
+                            "status": "valid",
+                            "required": True,
+                            "path": revision.path,
+                            "format": "json",
+                        },
+                        strict=True,
+                    )
+                )
                 unit.put_artifact_revision(revision, content)
             unit.put_finalization(finalization)
             unit.put_run_archive(archive)
             for position, revision in enumerate(current):
-                unit.put_run_archive_artifact_binding(RunArchiveArtifactBinding.model_validate({"schema_version": RunArchiveArtifactBinding.schema_id, "run_id": request.run_id, "archive_id": archive_id, "position": position, "artifact_id": revision.artifact_id, "artifact_revision": revision.revision, "artifact_sha256": revision.sha256, "usage": archive_artifact_usage(revision.artifact_id), "accepted_transaction_id": request.request_id}, strict=True))
+                unit.put_run_archive_artifact_binding(
+                    RunArchiveArtifactBinding.model_validate(
+                        {
+                            "schema_version": RunArchiveArtifactBinding.schema_id,
+                            "run_id": request.run_id,
+                            "archive_id": archive_id,
+                            "position": position,
+                            "artifact_id": revision.artifact_id,
+                            "artifact_revision": revision.revision,
+                            "artifact_sha256": revision.sha256,
+                            "usage": archive_artifact_usage(revision.artifact_id),
+                            "accepted_transaction_id": request.request_id,
+                        },
+                        strict=True,
+                    )
+                )
             unit.put_package_ready(package)
             for position, revision in enumerate(package_members):
-                usage = "archive" if revision.artifact_id == archive_revision.artifact_id else "manifest" if revision.artifact_id == package_revision.artifact_id else "reader"
-                unit.put_package_artifact_binding(PackageArtifactBinding.model_validate({"schema_version": PackageArtifactBinding.schema_id, "run_id": request.run_id, "package_id": package_id, "position": position, "artifact_id": revision.artifact_id, "artifact_revision": revision.revision, "artifact_sha256": revision.sha256, "usage": usage, "accepted_transaction_id": request.request_id}, strict=True))
-            unit.append_event(self._event(event_id=final_event_id, event_type="stage_status_changed", request=request, fingerprint=fingerprint, effect_kind="finalize_complete", primary_record_id=finalization_id))
-            for event_id, event_type, primary_id in ((archive_event_id, "run_archived", archive_id), (package_event_id, "decision_recorded", package_id)):
-                unit.append_event(self._event(event_id=event_id, event_type=event_type, request=request, fingerprint=fingerprint, effect_kind="finalize_complete", primary_record_id=primary_id, bind=False))
+                usage = (
+                    "archive"
+                    if revision.artifact_id == archive_revision.artifact_id
+                    else "manifest"
+                    if revision.artifact_id == package_revision.artifact_id
+                    else "reader"
+                )
+                unit.put_package_artifact_binding(
+                    PackageArtifactBinding.model_validate(
+                        {
+                            "schema_version": PackageArtifactBinding.schema_id,
+                            "run_id": request.run_id,
+                            "package_id": package_id,
+                            "position": position,
+                            "artifact_id": revision.artifact_id,
+                            "artifact_revision": revision.revision,
+                            "artifact_sha256": revision.sha256,
+                            "usage": usage,
+                            "accepted_transaction_id": request.request_id,
+                        },
+                        strict=True,
+                    )
+                )
+            unit.append_event(
+                self._event(
+                    event_id=final_event_id,
+                    event_type="stage_status_changed",
+                    request=request,
+                    fingerprint=fingerprint,
+                    effect_kind="finalize_complete",
+                    primary_record_id=finalization_id,
+                )
+            )
+            for event_id, event_type, primary_id in (
+                (archive_event_id, "run_archived", archive_id),
+                (package_event_id, "decision_recorded", package_id),
+            ):
+                unit.append_event(
+                    self._event(
+                        event_id=event_id,
+                        event_type=event_type,
+                        request=request,
+                        fingerprint=fingerprint,
+                        effect_kind="finalize_complete",
+                        primary_record_id=primary_id,
+                        bind=False,
+                    )
+                )
             stage_checkout_effect(unit, checkout)
-            receipt = unit.commit(_postcommit_observer=lambda _receipt: verifier.verify(store, request.run_id))
-            published, _warnings = publish_checkout_effect(workspace=self.workspace, store=store, prepared=checkout)
+            receipt = unit.commit(
+                _postcommit_observer=lambda _receipt: verifier.verify(
+                    store, request.run_id
+                )
+            )
+            published, _warnings = publish_checkout_effect(
+                workspace=self.workspace, store=store, prepared=checkout
+            )
             if not published:
-                return CoreRunResult(status="commit_outcome_unknown", error_code="commit_outcome_unknown")
-            return CoreRunResult(status="committed", receipt=receipt, primary_record_id=finalization_id)
+                return CoreRunResult(
+                    status="commit_outcome_unknown", error_code="commit_outcome_unknown"
+                )
+            return CoreRunResult(
+                status="committed", receipt=receipt, primary_record_id=finalization_id
+            )
         finally:
             store.close()
 
@@ -1617,7 +1960,9 @@ class CoreRunTerminalService:
         snapshot = verified.snapshot
         now = self._now()
         finalization_id = derived_id("FINALIZATION", request.request_id, fingerprint)
-        transition_id = derived_id("TRANSITION-FINALIZE", request.request_id, fingerprint)
+        transition_id = derived_id(
+            "TRANSITION-FINALIZE", request.request_id, fingerprint
+        )
         event_id = derived_id("EVT-FINALIZED", request.request_id, fingerprint)
         transition = StageTransitionRecord.model_validate(
             {
@@ -1660,7 +2005,9 @@ class CoreRunTerminalService:
                 "finalize_gate_batch_id": selected[0].gate_batch_id,
                 "finalize_gate_evaluation_ids": request.gate_evaluation_ids,
                 "recovery_id": request.recovery_id,
-                "integrity_revision": snapshot.run_integrity_records[-1].integrity_revision,
+                "integrity_revision": snapshot.run_integrity_records[
+                    -1
+                ].integrity_revision,
                 "finalized_at": now,
                 "finalization_event_id": event_id,
                 "accepted_transaction_id": request.request_id,
@@ -1715,7 +2062,9 @@ class CoreRunTerminalService:
         )
         unit.append_stage_transition(transition)
         for position, revision in enumerate(
-            sorted(consumed.values(), key=lambda item: (item.artifact_id, item.revision))
+            sorted(
+                consumed.values(), key=lambda item: (item.artifact_id, item.revision)
+            )
         ):
             unit.put_stage_artifact_binding(
                 StageArtifactBinding.model_validate(
@@ -1837,12 +2186,23 @@ class CoreRunTerminalService:
                 transaction_id=request.request_id,
                 created_at=self._clock(),
             )
-            unit = store.begin(request.run_id, request.request_id, transaction_type_for("delivery_attempt"), request.expected_store_revision)
+            unit = store.begin(
+                request.run_id,
+                request.request_id,
+                transaction_type_for("delivery_attempt"),
+                request.expected_store_revision,
+            )
             unit.put_delivery_attempt(record)
             unit.append_event(event)
             stage_checkout_effect(unit, checkout)
-            receipt = unit.commit(_postcommit_observer=lambda _receipt: verifier.verify(store, request.run_id))
-            return CoreRunResult(status="committed", receipt=receipt, primary_record_id=attempt_id)
+            receipt = unit.commit(
+                _postcommit_observer=lambda _receipt: verifier.verify(
+                    store, request.run_id
+                )
+            )
+            return CoreRunResult(
+                status="committed", receipt=receipt, primary_record_id=attempt_id
+            )
         finally:
             store.close()
 
@@ -1859,7 +2219,10 @@ class CoreRunTerminalService:
         assert store is not None and context is not None
         verifier, verified = context
         try:
-            if request.observation_input_path is None or request.expected_observation_sha256 is None:
+            if (
+                request.observation_input_path is None
+                or request.expected_observation_sha256 is None
+            ):
                 raise CoreRunError("delivery_result_invalid")
             try:
                 observation_bytes = self._scratch.read(request.observation_input_path)
@@ -1876,7 +2239,14 @@ class CoreRunTerminalService:
                 ValueError,
             ) as exc:
                 raise CoreRunError("delivery_result_invalid") from exc
-            attempt = next((item for item in verified.snapshot.delivery_attempts if item.attempt_id == request.attempt_id), None)
+            attempt = next(
+                (
+                    item
+                    for item in verified.snapshot.delivery_attempts
+                    if item.attempt_id == request.attempt_id
+                ),
+                None,
+            )
             if (
                 attempt is None
                 or observation.attempt_id != attempt.attempt_id
@@ -1884,7 +2254,8 @@ class CoreRunTerminalService:
                 or observation.adapter_version
                 != verified.runtime_adapter.adapter_version
                 or observation.connector_operation_id != attempt.connector_operation_id
-                or observation.connector_request_fingerprint != attempt.connector_request_fingerprint
+                or observation.connector_request_fingerprint
+                != attempt.connector_request_fingerprint
             ):
                 raise CoreRunError("delivery_result_invalid")
             classify_terminal_effect_authorization(
@@ -1929,18 +2300,51 @@ class CoreRunTerminalService:
                 "failed": "delivery_failed",
                 "outcome_unknown": "decision_recorded",
             }[observation.status]
-            event = self._event(event_id=event_id, event_type=event_type, request=request, fingerprint=fingerprint, effect_kind="delivery_result", primary_record_id=result_id)
-            checkout = prepare_checkout_effect(workspace=self.workspace, snapshot=verified.snapshot, transaction_id=request.request_id, created_at=self._clock())
-            unit = store.begin(request.run_id, request.request_id, transaction_type_for("delivery_result"), request.expected_store_revision)
+            event = self._event(
+                event_id=event_id,
+                event_type=event_type,
+                request=request,
+                fingerprint=fingerprint,
+                effect_kind="delivery_result",
+                primary_record_id=result_id,
+            )
+            checkout = prepare_checkout_effect(
+                workspace=self.workspace,
+                snapshot=verified.snapshot,
+                transaction_id=request.request_id,
+                created_at=self._clock(),
+            )
+            unit = store.begin(
+                request.run_id,
+                request.request_id,
+                transaction_type_for("delivery_result"),
+                request.expected_store_revision,
+            )
             unit.put_delivery_result(record)
             unit.append_event(event)
             stage_checkout_effect(unit, checkout)
-            receipt = unit.commit(_postcommit_observer=lambda _receipt: verifier.verify(store, request.run_id))
-            return CoreRunResult(status="committed", receipt=receipt, primary_record_id=result_id)
+            receipt = unit.commit(
+                _postcommit_observer=lambda _receipt: verifier.verify(
+                    store, request.run_id
+                )
+            )
+            return CoreRunResult(
+                status="committed", receipt=receipt, primary_record_id=result_id
+            )
         finally:
             store.close()
 
-    def _event(self, *, event_id, event_type, request, fingerprint, effect_kind, primary_record_id, bind=True):
+    def _event(
+        self,
+        *,
+        event_id,
+        event_type,
+        request,
+        fingerprint,
+        effect_kind,
+        primary_record_id,
+        bind=True,
+    ):
         return EventEnvelope.model_validate(
             {
                 "schema_version": EventEnvelope.schema_id,

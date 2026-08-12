@@ -20,9 +20,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "run",
         help="Run a workspace through the selected agent runtime handoff.",
     )
-    run_parser.add_argument(
-        "--workspace", help="Path to workspace directory."
-    )
+    run_parser.add_argument("--workspace", help="Path to workspace directory.")
     run_parser.add_argument(
         "--config",
         help="Path to workspace config.yaml (convenience alias for --workspace).",
@@ -43,9 +41,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "--repo-workdir",
         help="Repository workdir (default: auto-detect source repo).",
     )
-    run_parser.add_argument(
-        "--venv", help="Virtual env path (default: auto-detect)."
-    )
+    run_parser.add_argument("--venv", help="Virtual env path (default: auto-detect).")
     run_parser.add_argument(
         "--skip-doctor", action="store_true", help=argparse.SUPPRESS
     )
@@ -63,9 +59,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "start",
         help="Alias for run: create runtime handoff for the current agent.",
     )
-    start_parser.add_argument(
-        "--workspace", help="Path to workspace directory."
-    )
+    start_parser.add_argument("--workspace", help="Path to workspace directory.")
     start_parser.add_argument(
         "--runtime",
         required=True,
@@ -82,9 +76,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "--repo-workdir",
         help="Repository workdir (default: auto-detect source repo).",
     )
-    start_parser.add_argument(
-        "--venv", help="Virtual env path (default: auto-detect)."
-    )
+    start_parser.add_argument("--venv", help="Virtual env path (default: auto-detect).")
     start_parser.add_argument(
         "--skip-doctor", action="store_true", help=argparse.SUPPRESS
     )
@@ -117,6 +109,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     handoff_parser.add_argument(
         "--skip-doctor", action="store_true", help=argparse.SUPPRESS
     )
+
 
 def handle(args: argparse.Namespace) -> int:
     """Dispatch run / start / handoff / prepare commands."""
@@ -157,9 +150,7 @@ def _resolve_workspace(args: argparse.Namespace) -> Path | None:
 
 def _run_launcher(args: argparse.Namespace) -> int:
     """run — standard runtime handoff launcher."""
-    prefix = (
-        "[start]" if getattr(args, "command", None) == "start" else "[run]"
-    )
+    prefix = "[start]" if getattr(args, "command", None) == "start" else "[run]"
 
     workspace_path = _resolve_workspace(args)
     if workspace_path is None:
@@ -188,15 +179,11 @@ def _run_launcher(args: argparse.Namespace) -> int:
     if getattr(args, "skip_doctor", False):
         print(f"{prefix} runtime_command_unsupported")
         return 1
-    from multi_agent_brief.runtime_host_v2.codex import workspace_codex_adapter_loader
+    from multi_agent_brief.runtime_host_v2.initialization import WorkspaceBootstrap
     from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
-    from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
 
     try:
-        action = RuntimeHostService(
-            workspace_path,
-            adapter_loader=workspace_codex_adapter_loader(workspace_path),
-        ).next_action()
+        action = WorkspaceBootstrap(workspace_path).initialize_runnable_codex().action
     except RuntimeHostError as exc:
         print(f"{prefix} {exc}")
         return 1

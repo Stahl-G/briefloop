@@ -17,6 +17,7 @@ Role responsibilities:
 - Check missing citations — claims in ledger not cited in brief.
 - Check orphan citations — real [src:<claim_id>] citations in the brief not found in the ledger.
 - Check stale sources — sources older than configured reporting window.
+- Check temporal_role=background claims remain explicitly contextual and are never framed as this week, latest, recent, or newly occurred.
 - Check investment-advice language — no trading signals or investment recommendations.
 - Check redaction risks — no private identifiers, internal paths, or confidential content.
 - Check low-confidence source leakage.

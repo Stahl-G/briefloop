@@ -705,9 +705,7 @@ class IntakeService:
                     if transport_search is not None:
                         failure_class = "provider_transport_unavailable"
                         transport_phase = "search"
-                        transport_error_class = (
-                            transport_search.transport_error_class
-                        )
+                        transport_error_class = transport_search.transport_error_class
                     elif any(
                         item.status in {"unavailable", "invalid"}
                         for item in observation.bundle.searches
@@ -716,9 +714,7 @@ class IntakeService:
                     else:
                         failure_class = "provider_results_empty"
                 else:
-                    rejection_counts = {
-                        "extract_not_succeeded": observed_results
-                    }
+                    rejection_counts = {"extract_not_succeeded": observed_results}
                     transport_extract = next(
                         (
                             item.exchange
@@ -732,9 +728,7 @@ class IntakeService:
                     if transport_extract is not None:
                         failure_class = "provider_transport_unavailable"
                         transport_phase = "extract"
-                        transport_error_class = (
-                            transport_extract.transport_error_class
-                        )
+                        transport_error_class = transport_extract.transport_error_class
                         rejection_counts = None
                     elif any(
                         item.status in {"unavailable", "invalid"}
@@ -1939,6 +1933,9 @@ class IntakeService:
         if lane.lane == "screened":
             from multi_agent_brief.core_run_v2.errors import CoreRunError
             from multi_agent_brief.core_run_v2.lineage import classify_current_lineage
+            from multi_agent_brief.core_run_v2.source_temporality import (
+                high_priority_background_candidate_ids,
+            )
 
             typed = cast(ScreenedCandidatesProposal, proposal)
             parent = _by_id(
@@ -1966,6 +1963,16 @@ class IntakeService:
             actual_ids = {item.candidate_id for item in typed.decisions}
             if actual_ids != expected_ids or len(typed.decisions) != len(expected_ids):
                 raise _KnownInvalid("candidate_universe_mismatch")
+            if snapshot.run_contract_bindings:
+                direction = snapshot.run_contract_bindings[0].run_direction
+                sources_by_id = {item.source_id: item for item in snapshot.sources}
+                if high_priority_background_candidate_ids(
+                    parent_bytes.candidates,
+                    typed.decisions,
+                    sources_by_id,
+                    direction,
+                ):
+                    raise _KnownInvalid("screened_current_window_date_required")
             return _ProposalLineage(parent_proposal_id=parent.proposal_id)
         if lane.lane == "claim-drafts":
             from multi_agent_brief.core_run_v2.errors import CoreRunError
@@ -2411,9 +2418,7 @@ class IntakeService:
                     observation = _source_acquisition_observation(
                         discovery_provider_response_bytes
                     )
-                    if not isinstance(
-                        observation, TavilyMultiAcquisitionObservation
-                    ):
+                    if not isinstance(observation, TavilyMultiAcquisitionObservation):
                         raise IntakeError("source_provider_result_invalid")
                     self._put_runtime_tavily_execution_records(
                         unit,
@@ -2528,8 +2533,7 @@ class IntakeService:
         if (
             len(snapshot.run_contract_bindings) != 1
             or snapshot.run_contract_bindings[0].run_direction.report_type is None
-            or attempt.provider_request_fingerprint
-            != spec.acquisition_spec_fingerprint
+            or attempt.provider_request_fingerprint != spec.acquisition_spec_fingerprint
         ):
             raise IntakeError("source_discovery_authorization_invalid")
         report_type = snapshot.run_contract_bindings[0].run_direction.report_type
@@ -2559,13 +2563,9 @@ class IntakeService:
                 "run_id": attempt.run_id,
                 "plan_revision": plan_revision,
                 "report_type": report_type,
-                "acquisition_spec": spec.model_dump(
-                    mode="json", exclude_unset=False
-                ),
+                "acquisition_spec": spec.model_dump(mode="json", exclude_unset=False),
                 "task_count": len(spec.tasks),
-                "acquisition_spec_fingerprint": (
-                    spec.acquisition_spec_fingerprint
-                ),
+                "acquisition_spec_fingerprint": (spec.acquisition_spec_fingerprint),
                 "record_event_id": plan_event_id,
                 "accepted_transaction_id": transaction_id,
                 "created_at": created_at,
@@ -2856,8 +2856,7 @@ class IntakeService:
                 control_snapshot is None
                 or discovery_attempt_authorization is None
                 or (
-                    acquisition_observation is not None
-                    and response_artifact_id is None
+                    acquisition_observation is not None and response_artifact_id is None
                 )
             ):
                 raise IntakeError("source_provider_result_invalid")
@@ -3309,9 +3308,7 @@ def _attempt_matches_tavily_spec(
     attempt: RunSourceAcquisitionAttemptAuthorization,
     spec: RuntimeWebSearchAcquisitionSpecV3,
 ) -> bool:
-    max_search_calls = (
-        spec.max_primary_search_calls + spec.max_backfill_search_calls
-    )
+    max_search_calls = spec.max_primary_search_calls + spec.max_backfill_search_calls
     return (
         attempt.max_provider_calls == max_search_calls + spec.max_extract_calls
         and attempt.max_search_calls == max_search_calls
