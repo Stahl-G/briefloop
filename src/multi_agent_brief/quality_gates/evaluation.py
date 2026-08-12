@@ -793,8 +793,10 @@ def _coverage_omission_findings(
                 claim_id=_first_text(item.get("claim_ids")),
                 source_id=_first_text(item.get("source_ids")) or _text_or_none(item.get("source_id")),
                 description=(
-                    "A high-priority selected screened candidate reached the Claim Ledger but is not cited in "
-                    f"the brief: {item.get('display') or 'unknown'}."
+                    "A high-priority selected screened candidate reached the Claim Ledger but its ledger "
+                    "claims are not cited in the brief with [src:<claim_id>] markers: "
+                    f"candidate {item.get('display') or 'unknown'}, "
+                    f"claims {', '.join(str(claim_id) for claim_id in item.get('claim_ids') or []) or 'unknown'}."
                 ),
                 recommendation=(
                     "Cite the corresponding Claim Ledger entry in the brief, or submit a screening revision "

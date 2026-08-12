@@ -139,6 +139,17 @@ def _snapshot(
         (
             (
                 _finding(
+                    "FINDING-EDITOR-COVERAGE",
+                    claim_id="CL-0010",
+                    source_id="SRC-1",
+                ),
+            ),
+            "eligible",
+            None,
+        ),
+        (
+            (
+                _finding(
                     "FINDING-SOURCE",
                     repair_owner="source-provider",
                     stage_id="source-discovery",
