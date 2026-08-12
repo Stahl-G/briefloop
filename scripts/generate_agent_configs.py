@@ -65,7 +65,7 @@ SENSITIVE_CONTEXT_PATTERNS = [
 SENSITIVE_EXEMPTIONS = [
     "do not commit", "do not store", "do not expose", "do not put",
     "do not place", "do not import", "do not migrate", "do not copy",
-    "do not save", "do not include", "do not provide",
+    "do not save", "do not include", "do not provide", "must not",
 ]
 
 
@@ -179,7 +179,11 @@ def render_packaged_codex_agent(role_name: str, role: dict) -> str:
         "When task_instructions name `briefloop contract show` and "
         "`briefloop runtime invocation-validate` preflight commands, run them exactly "
         "before returning; do not guess JSON wrappers, aliases, or fields. "
-        "Return control to the root host after the proposal is complete."
+        "Return control to the root host after the proposal is complete.\n\n"
+        "Role responsibilities:\n"
+        f"{_join_lines([str(item) for item in role['responsibilities']])}\n\n"
+        "Role hard rules:\n"
+        f"{_join_lines([str(item) for item in role['hard_rules']])}"
     )
     return (
         f"{AUTOGEN_HEADER_TOML}\n\n"
