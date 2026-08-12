@@ -30,4 +30,5 @@ Role hard rules:
 - Preserve candidate_id, source identity, and evidence text for every included item.
 - Apply configured topic capacity caps.
 - Keep high-priority selected candidates within the workspace selector_max_items capacity; reserve high for items that must appear in the brief and mark the rest excluded or deprioritized with reason_code records.
+- Reserve high priority for sources with a canonical published_at date, or status-incident opened_at date, inside the frozen reporting window. Undated and out-of-window sources may be selected only as low/medium background; retrieved_at never proves that an event belongs to this week.
 '''

@@ -108,12 +108,17 @@ def classify_core_run_next_action(verified: VerifiedCoreRun) -> CoreRunNextActio
     """Return exactly one legal category without consulting mutable files."""
 
     snapshot = verified.snapshot
-    if any(item.event_type == "run_terminated" for item in snapshot.events):
+    terminations = [
+        item for item in snapshot.events if item.event_type == "run_terminated"
+    ]
+    if terminations:
+        if len(terminations) != 1:
+            raise CoreRunError("control_store_integrity_invalid")
         return _action(
             verified,
-            action_kind="blocked",
+            action_kind="complete",
             effect_kind="run_terminated",
-            reason_code="run_terminated",
+            reason_code=terminations[0].reason,
         )
     gate_repair = None
     if snapshot.gate_repair_cycles:

@@ -48,11 +48,14 @@ from .policy import (
     normalize_text,
     transaction_type_for,
 )
+from .source_temporality import classify_source_temporality
 from .verifier import CoreRunDomainVerifier, resolve_core_replay
 
 
 _Clock = Callable[[], datetime]
 _ProposalT = TypeVar("_ProposalT", bound=StrictModel)
+
+
 class ClaimFreezeService:
     """Freeze complete canonical Claims and their deterministic Ledger bytes."""
 
@@ -150,8 +153,7 @@ class ClaimFreezeService:
             )
             if (
                 drafts_artifact is None
-                or drafts_artifact.current_revision
-                != drafts_record.artifact_revision
+                or drafts_artifact.current_revision != drafts_record.artifact_revision
             ):
                 raise CoreRunError("artifact_revision_conflict")
             ledger = next(
@@ -162,7 +164,10 @@ class ClaimFreezeService:
                 ),
                 None,
             )
-            if ledger is None or ledger.current_revision != request.expected_ledger_revision:
+            if (
+                ledger is None
+                or ledger.current_revision != request.expected_ledger_revision
+            ):
                 raise CoreRunError("artifact_revision_conflict")
             revisions = {
                 (item.artifact_id, item.revision): item
@@ -210,6 +215,7 @@ class ClaimFreezeService:
             bindings: list[ClaimSourceBinding] = []
             ledger_claims: list[dict[str, object]] = []
             duplicate_statements: dict[str, list[str]] = defaultdict(list)
+            direction = verified.binding.run_direction
             for ordinal, draft in enumerate(canonical_drafts, start=1):
                 source_ids = tuple(sorted(draft.source_ids))
                 for source_id in source_ids:
@@ -231,6 +237,40 @@ class ClaimFreezeService:
                 statement = normalize_text(draft.statement)
                 evidence = normalize_text(draft.evidence_text)
                 duplicate_statements[statement.casefold()].append(draft.draft_id)
+                temporal = {
+                    source_id: classify_source_temporality(
+                        sources[source_id], direction
+                    )
+                    for source_id in source_ids
+                }
+                current_source_ids = sorted(
+                    source_id
+                    for source_id, item in temporal.items()
+                    if item.role == "current_window"
+                )
+                anchors = sorted(
+                    item.anchor_date
+                    for item in temporal.values()
+                    if item.role == "current_window" and item.anchor_date is not None
+                )
+                temporal_role = "current_window" if current_source_ids else "background"
+                bases = sorted(
+                    {
+                        item.basis
+                        for item in temporal.values()
+                        if item.role == "current_window"
+                    }
+                )
+                temporal_metadata = {
+                    "temporal_role": temporal_role,
+                    "temporal_anchor_date": (
+                        anchors[-1].isoformat() if anchors else None
+                    ),
+                    "temporal_basis": (
+                        bases[0] if len(bases) == 1 else "mixed" if bases else "none"
+                    ),
+                    "current_window_source_ids": current_source_ids,
+                }
                 claim = ClaimRecord.model_validate(
                     {
                         "schema_version": ClaimRecord.schema_id,
@@ -250,7 +290,10 @@ class ClaimFreezeService:
                         "evidence_relation": "direct",
                         "applicability_reason": None,
                         "limitations": [],
-                        "metadata": {"source_ids": list(source_ids)},
+                        "metadata": {
+                            "source_ids": list(source_ids),
+                            **temporal_metadata,
+                        },
                         "created_at": now,
                         "accepted_transaction_id": request.request_id,
                     },
@@ -297,6 +340,7 @@ class ClaimFreezeService:
                             "published_at": primary.published_at,
                             "retrieved_at": primary.retrieved_at,
                             "underlying_evidence_type": primary.underlying_evidence_type,
+                            **temporal_metadata,
                         },
                         "schema_version": "v2",
                         "epistemic_type": CLAIM_EPISTEMIC[draft.claim_type],
@@ -459,7 +503,9 @@ class ClaimFreezeService:
 
     def _open_store(self) -> SQLiteControlStore:
         try:
-            return SQLiteControlStore.open(self.workspace / "briefloop.db", clock=self._clock)
+            return SQLiteControlStore.open(
+                self.workspace / "briefloop.db", clock=self._clock
+            )
         except ControlStoreError as exc:
             raise CoreRunError("control_store_integrity_invalid") from exc
 

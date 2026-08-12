@@ -433,8 +433,15 @@ Current entrypoints:
 - experimental Solar Stock Periodic ReportPack:
   `briefloop new solar-stock-periodic <workspace>`. Use a fresh schema-18
   workspace and the Store-frozen Tavily route for its 20-task discovery plan.
+  `--search-backend tavily` is accepted for this pack at `new` time and
+  freezes the same Tavily discovery authorization as `briefloop init --web`.
+  `new` installs the packaged Codex kit; the first `run --runtime codex`
+  initializes the Store. Existing Store-bound kits are verified and never
+  silently reinstalled by read-only runtime commands.
   Search snippets remain discovery-only, exact replay never redials, and
   failed tasks remain visible rather than being reported as “no events”.
+  Sources without an in-window publication/event date remain typed background:
+  retrieval time never promotes them into current-week evidence.
   `briefloop market-data fetch|ingest|project` freezes one append-only weekly
   quote snapshot per run and as-of date (bounded Yahoo chart-API adapter with
   per-security failure isolation; manual `input/market_data/` JSON/CSV files

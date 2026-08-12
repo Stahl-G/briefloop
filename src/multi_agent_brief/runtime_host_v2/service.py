@@ -566,6 +566,14 @@ class RuntimeHostService:
                     transaction_ids=tuple(transaction_ids),
                 )
             if action.action_kind == "complete":
+                if action.effect_kind == "run_terminated":
+                    return build_runtime_continuation_result(
+                        current.verified,
+                        action,
+                        status="terminated",
+                        reason_code=action.reason_code,
+                        transaction_ids=tuple(transaction_ids),
+                    )
                 if (
                     action.effect_kind != "finalized_local"
                     or action.reason_code != "local_finalization_complete"

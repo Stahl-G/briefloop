@@ -289,7 +289,7 @@ def _execution_authorization(workspace: Path) -> dict[str, object]:
         "locator": {"kind": "file", "path": "input/authorized-source.txt"},
         "title": "Authorized source",
         "publisher": None,
-        "published_at": None,
+        "published_at": "2026-07-14",
         "retrieved_at": NOW,
         "source_category": "other",
         "retrieval_source_type": "local_file",

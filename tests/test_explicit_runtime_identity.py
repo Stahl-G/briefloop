@@ -42,11 +42,9 @@ def _files(workspace: Path) -> dict[str, bytes]:
     }
 
 
-
-
-
-
-@pytest.mark.parametrize("runtime", ["auto", "controls", "manual", "Hermes", "OPERATOR", "unknown"])
+@pytest.mark.parametrize(
+    "runtime", ["auto", "controls", "manual", "Hermes", "OPERATOR", "unknown"]
+)
 def test_run_parser_rejects_noncanonical_runtime_without_writes(
     tmp_path: Path,
     runtime: str,
@@ -60,16 +58,14 @@ def test_run_parser_rejects_noncanonical_runtime_without_writes(
     assert _files(ws) == before
 
 
-
-
-
-
 def test_active_generic_cli_guidance_requires_explicit_runtime_choice() -> None:
     placeholder = f"--runtime {RUNTIME_CLI_CHOICE_PLACEHOLDER}"
     surfaces = {
         ROOT / "src/multi_agent_brief/cli/init_commands.py": 2,
         ROOT / "src/multi_agent_brief/cli/onboard_commands.py": 3,
-        ROOT / "src/multi_agent_brief/cli/product_commands.py": 2,
+        # ReportPack shortcuts now name the only supported runtime directly;
+        # they must not reintroduce the historical runtime placeholder.
+        ROOT / "src/multi_agent_brief/cli/product_commands.py": 0,
         ROOT / "src/multi_agent_brief/cli/run_commands.py": 0,
     }
     for path, expected_count in surfaces.items():
@@ -111,9 +107,13 @@ def test_active_runtime_docs_do_not_advertise_historical_aliases() -> None:
         lowered = text.casefold()
         assert "manual` is a legacy cli alias" not in lowered, path
         assert "manual` remains a cli compatibility alias" not in lowered, path
-        assert "manual` runtime value is only a cli compatibility alias" not in lowered, path
+        assert (
+            "manual` runtime value is only a cli compatibility alias" not in lowered
+        ), path
         assert "manual` 是其 legacy cli alias" not in lowered, path
-        assert "manual` runtime 值只保留为 `operator` 的 cli 兼容别名" not in lowered, path
+        assert "manual` runtime 值只保留为 `operator` 的 cli 兼容别名" not in lowered, (
+            path
+        )
 
     repo_instructions = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
     assert "briefloop run --workspace <workspace> --runtime codex" in repo_instructions
@@ -137,7 +137,17 @@ def test_root_and_packaged_runtime_contracts_are_byte_identical() -> None:
     "argv",
     [
         ["state", "check", "--json"],
-        ["state", "decide", "--stage", "doctor", "--decision", "block_run", "--reason", "fixture", "--json"],
+        [
+            "state",
+            "decide",
+            "--stage",
+            "doctor",
+            "--decision",
+            "block_run",
+            "--reason",
+            "fixture",
+            "--json",
+        ],
         ["controls", "build-switchboard", "--json"],
         ["gates", "check", "--json"],
         ["feedback", "plan", "--json"],
@@ -157,7 +167,3 @@ def test_deleted_runtime_commands_do_not_implicitly_initialize(
     with pytest.raises(SystemExit):
         main(command)
     assert _files(ws) == before
-
-
-
-

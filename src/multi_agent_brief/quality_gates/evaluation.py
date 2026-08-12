@@ -66,7 +66,10 @@ STRATEGIC_IMPLICATION_PHRASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("procurement_pathways", ("procurement pathway", "procurement pathways")),
     ("municipal_buyer_demand", ("municipal buyer demand", "municipal buyers demand")),
     ("policy_driven_demand", ("policy-driven demand", "policy driven demand")),
-    ("partnership_recommendations", ("partnership recommendation", "partnership recommendations")),
+    (
+        "partnership_recommendations",
+        ("partnership recommendation", "partnership recommendations"),
+    ),
 )
 FINAL_ABSTRACT_COMPARISON_RE = re.compile(
     r"\b(?:better than|worse than|outperform(?:s|ed|ing)?|underperform(?:s|ed|ing)?|"
@@ -103,9 +106,13 @@ FINAL_ABSTRACT_CASE_HEADING_RE = re.compile(
     re.IGNORECASE,
 )
 FINAL_ABSTRACT_CASE_FIELD_PATTERNS: dict[str, re.Pattern[str]] = {
-    "date_or_period": re.compile(r"\b20\d{2}(?:-\d{2}(?:-\d{2})?)?\b|(?:日期|时间|期间|窗口)"),
+    "date_or_period": re.compile(
+        r"\b20\d{2}(?:-\d{2}(?:-\d{2})?)?\b|(?:日期|时间|期间|窗口)"
+    ),
     "source_reference": re.compile(r"\[S\d+\]|(?:source|来源)[:：]", re.IGNORECASE),
-    "impact_or_relevance": re.compile(r"\b(?:impact|relevance|implication|why it matters)\b|(?:影响|意义|启示|相关性)"),
+    "impact_or_relevance": re.compile(
+        r"\b(?:impact|relevance|implication|why it matters)\b|(?:影响|意义|启示|相关性)"
+    ),
 }
 GATE_RULE_DOC_ANCHOR = "docs/agent-contract.md#quality-gate-rule-summaries"
 GATE_RULES: dict[str, dict[str, str]] = {
@@ -247,6 +254,8 @@ FINDING_RULES: dict[str, dict[str, str]] = {
         "docs_anchor": "docs/agent-contract.md#final_abstract_quality",
     },
 }
+
+
 def _gate_rule(gate_id: str) -> dict[str, str]:
     return GATE_RULES.get(
         gate_id,
@@ -255,18 +264,32 @@ def _gate_rule(gate_id: str) -> dict[str, str]:
             "docs_anchor": GATE_RULE_DOC_ANCHOR,
         },
     )
+
+
 def _finding_rule(*, finding_type: str, gate_id: str) -> dict[str, str]:
     return FINDING_RULES.get(finding_type, _gate_rule(gate_id))
+
+
 def _stage_exists(stages: list[dict[str, Any]], stage_id: str) -> bool:
     return any(stage.get("stage_id") == stage_id for stage in stages)
+
+
 def _artifact_exists(artifacts: list[dict[str, Any]], artifact_id: str) -> bool:
     return any(artifact.get("artifact_id") == artifact_id for artifact in artifacts)
+
+
 def _stage_or_none(stages: list[dict[str, Any]], preferred: str) -> str | None:
     return preferred if _stage_exists(stages, preferred) else None
+
+
 def _artifact_or_none(artifacts: list[dict[str, Any]], preferred: str) -> str | None:
     return preferred if _artifact_exists(artifacts, preferred) else None
+
+
 def _blocking_level(*, default_blocking: bool, strict: bool) -> str:
     return "blocking" if default_blocking or strict else "warning"
+
+
 def _apply_gate_context(
     findings: list[dict[str, Any]],
     *,
@@ -274,20 +297,30 @@ def _apply_gate_context(
     gate_artifact_id: str,
 ) -> list[dict[str, Any]]:
     for finding in findings:
-        metadata = finding.get("metadata") if isinstance(finding.get("metadata"), dict) else {}
+        metadata = (
+            finding.get("metadata") if isinstance(finding.get("metadata"), dict) else {}
+        )
         advisory_non_routable = (
             finding.get("gate_id") == "final_abstract_quality"
             and metadata.get("repair_boundary") == "advisory_non_routable"
         )
-        repair_stage_id = None if advisory_non_routable else finding.get("repair_stage_id") or finding.get("stage_id")
+        repair_stage_id = (
+            None
+            if advisory_non_routable
+            else finding.get("repair_stage_id") or finding.get("stage_id")
+        )
         repair_artifact_id = (
-            None if advisory_non_routable else finding.get("repair_artifact_id") or finding.get("artifact_id")
+            None
+            if advisory_non_routable
+            else finding.get("repair_artifact_id") or finding.get("artifact_id")
         )
         finding["gate_stage_id"] = gate_stage_id
         finding["gate_artifact_id"] = gate_artifact_id
         finding["repair_stage_id"] = repair_stage_id
         finding["repair_artifact_id"] = repair_artifact_id
     return findings
+
+
 def _finding(
     *,
     finding_id: str,
@@ -314,12 +347,14 @@ def _finding(
         and repair_owner == "editor"
         and artifact_id == "audited_brief"
     ):
-        resolved_metadata.update({
-            "requires_content_edit": True,
-            "owner_stage": "editor",
-            "post_freeze_action": "open_editor_repair",
-            "delivery_effect": "blocks_until_repaired",
-        })
+        resolved_metadata.update(
+            {
+                "requires_content_edit": True,
+                "owner_stage": "editor",
+                "post_freeze_action": "open_editor_repair",
+                "delivery_effect": "blocks_until_repaired",
+            }
+        )
     return {
         "finding_id": finding_id,
         "gate_id": gate_id,
@@ -346,6 +381,8 @@ def _finding(
         "evidence_ref": evidence_ref,
         "metadata": resolved_metadata,
     }
+
+
 def _map_audit_finding(
     *,
     finding: AuditFinding,
@@ -373,15 +410,20 @@ def _map_audit_finding(
         stage_id = claim_stage
         artifact_id = ledger_artifact
         repair_owner = "claim-ledger"
-        category = "missing_source" if finding_type == "missing_source" else "stale_source"
+        category = (
+            "missing_source" if finding_type == "missing_source" else "stale_source"
+        )
         default_blocking = finding_type == "missing_source"
-    elif finding_type == "retrieved_only_source":
-        # Disclosure-only: retrieved_at anchors the window audit; never blocks.
+    elif finding_type == "background_source_not_current_evidence":
+        # Background context is visible but does not establish current coverage.
         stage_id = None
         artifact_id = None
         repair_owner = "none"
-        category = "retrieved_only"
+        category = "background_source"
         default_blocking = False
+    elif finding_type == "background_source_current_framing":
+        category = "stale_source"
+        default_blocking = True
     elif finding_type == "stale_source":
         stage_id = claim_stage or source_stage
         artifact_id = ledger_artifact
@@ -400,7 +442,7 @@ def _map_audit_finding(
 
     blocking_level = (
         "warning"
-        if finding_type == "retrieved_only_source"
+        if finding_type == "background_source_not_current_evidence"
         else _blocking_level(default_blocking=default_blocking, strict=strict)
     )
     severity = "high" if blocking_level == "blocking" else finding.severity
@@ -422,6 +464,8 @@ def _map_audit_finding(
         category=category,
         metadata={"source_finding_type": finding_type},
     )
+
+
 def _material_findings(
     *,
     markdown: str,
@@ -467,6 +511,8 @@ def _material_findings(
         )
     )
     return findings
+
+
 def _unsupported_strategic_implication_findings(
     *,
     markdown: str,
@@ -481,7 +527,9 @@ def _unsupported_strategic_implication_findings(
     editor_stage = _stage_or_none(stages, "editor")
     audited_artifact = _artifact_or_none(artifacts, "audited_brief")
     for _phrase_id, variants in STRATEGIC_IMPLICATION_PHRASES:
-        matched_variant = next((variant for variant in variants if variant in normalized_markdown), "")
+        matched_variant = next(
+            (variant for variant in variants if variant in normalized_markdown), ""
+        )
         if not matched_variant:
             continue
         if any(variant in support_text for variant in variants):
@@ -517,6 +565,8 @@ def _unsupported_strategic_implication_findings(
             )
         )
     return findings
+
+
 def _atomic_reader_projection_findings(
     *,
     projection: dict[str, Any],
@@ -529,7 +579,9 @@ def _atomic_reader_projection_findings(
     if not isinstance(residue_findings, list):
         return []
     stage_id = _stage_or_none(stages, "editor")
-    artifact_id = _artifact_or_none(artifacts, "reader_brief" if reader_facing_mode else "audited_brief")
+    artifact_id = _artifact_or_none(
+        artifacts, "reader_brief" if reader_facing_mode else "audited_brief"
+    )
     findings: list[dict[str, Any]] = []
     for item in residue_findings:
         if not isinstance(item, dict):
@@ -537,7 +589,9 @@ def _atomic_reader_projection_findings(
         raw_type = str(item.get("finding_type") or "")
         if raw_type == "atomic_graph_process_residue":
             finding_type = "atomic_graph_process_residue"
-            description = "Reader-facing text contains Atomic Claim Graph process wording."
+            description = (
+                "Reader-facing text contains Atomic Claim Graph process wording."
+            )
         else:
             finding_type = "atomic_atom_id_residue"
             description = "Reader-facing text contains an Atomic Claim Graph atom ID."
@@ -552,14 +606,18 @@ def _atomic_reader_projection_findings(
                 repair_owner="editor",
                 stage_id=stage_id,
                 artifact_id=artifact_id,
-                claim_id=item.get("claim_id") if isinstance(item.get("claim_id"), str) else None,
+                claim_id=item.get("claim_id")
+                if isinstance(item.get("claim_id"), str)
+                else None,
                 description=description,
                 recommendation=(
                     "Remove Atomic Claim Graph residue from reader-facing prose and preserve only "
                     "`[src:<claim_id>]` Claim Ledger citations."
                 ),
                 category="atomic_reader_residue",
-                line_number=item.get("line") if isinstance(item.get("line"), int) else None,
+                line_number=item.get("line")
+                if isinstance(item.get("line"), int)
+                else None,
                 evidence_ref=evidence_ref,
                 metadata={
                     "target_artifact": projection.get("target_artifact"),
@@ -570,23 +628,42 @@ def _atomic_reader_projection_findings(
             )
         )
     return findings
+
+
 def _row_list(value: Any) -> list[dict[str, Any]]:
-    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+    return (
+        [item for item in value if isinstance(item, dict)]
+        if isinstance(value, list)
+        else []
+    )
+
+
 def _claim_ledger_support_text(ledger: ClaimLedger) -> str:
     parts: list[str] = []
     for claim in ledger:
-        parts.extend([
-            claim.statement,
-            claim.evidence_text,
-            claim.applicability_reason,
-        ])
+        parts.extend(
+            [
+                claim.statement,
+                claim.evidence_text,
+                claim.applicability_reason,
+            ]
+        )
         for value in claim.metadata.values():
             if isinstance(value, str):
                 parts.append(value)
             elif isinstance(value, list):
                 parts.extend(str(item) for item in value if isinstance(item, str))
     return "\n".join(part for part in parts if isinstance(part, str)).lower()
-HIGH_PRIORITY_SCREENING_VALUES = {"high", "critical", "blocking", "direct", "must_include", "must-include"}
+
+
+HIGH_PRIORITY_SCREENING_VALUES = {
+    "high",
+    "critical",
+    "blocking",
+    "direct",
+    "must_include",
+    "must-include",
+}
 COVERAGE_LIMITATION_FIELDS = (
     "omission_reason",
     "coverage_limitation",
@@ -614,6 +691,8 @@ COVERAGE_LIMITATION_WORDS = (
     "未纳入",
     "省略",
 )
+
+
 def _coverage_omission_projection(
     *,
     workspace: Path | None,
@@ -690,8 +769,14 @@ def _coverage_omission_projection(
         base["not_interpreted_reason"] = "legacy_list_shape_has_no_selected_bucket"
         return base
 
-    selected = [item for item in payload.get("selected") or [] if isinstance(item, dict)]
-    high_priority = [candidate for candidate in selected if _screened_candidate_is_high_priority(candidate)]
+    selected = [
+        item for item in payload.get("selected") or [] if isinstance(item, dict)
+    ]
+    high_priority = [
+        candidate
+        for candidate in selected
+        if _screened_candidate_is_high_priority(candidate)
+    ]
     base["status"] = "checked"
     base["selected_count"] = len(selected)
     base["high_priority_selected_count"] = len(high_priority)
@@ -716,17 +801,21 @@ def _coverage_omission_projection(
                 continue
             missing_from_ledger.append(trace)
             continue
-        cited_matches = [claim for claim in matches if claim.claim_id in cited_claim_ids]
+        cited_matches = [
+            claim for claim in matches if claim.claim_id in cited_claim_ids
+        ]
         if reader_facing_mode:
             if limitation:
                 scoped_out.append({**trace, "limitation": limitation})
             continue
         if not cited_matches and not limitation:
-            missing_from_brief.append({
-                **trace,
-                "claim_ids": [claim.claim_id for claim in matches],
-                "source_ids": [claim.source_id for claim in matches],
-            })
+            missing_from_brief.append(
+                {
+                    **trace,
+                    "claim_ids": [claim.claim_id for claim in matches],
+                    "source_ids": [claim.source_id for claim in matches],
+                }
+            )
         elif limitation:
             scoped_out.append({**trace, "limitation": limitation})
 
@@ -743,6 +832,8 @@ def _coverage_omission_projection(
         }
     )
     return base
+
+
 def _coverage_omission_findings(
     *,
     projection: dict[str, Any],
@@ -759,12 +850,14 @@ def _coverage_omission_findings(
     ledger_stage = _stage_or_none(stages, "claim-ledger")
     ledger_artifact = _artifact_or_none(artifacts, "claim_ledger")
     editor_stage = _stage_or_none(stages, "editor")
-    brief_artifact = _artifact_or_none(artifacts, "reader_brief" if reader_facing_mode else "audited_brief")
+    brief_artifact = _artifact_or_none(
+        artifacts, "reader_brief" if reader_facing_mode else "audited_brief"
+    )
 
     for item in _row_list(projection.get("missing_from_ledger")):
         findings.append(
             _finding(
-                finding_id=f"QG_COVERAGE_OMISSION_{len(findings)+1:03d}",
+                finding_id=f"QG_COVERAGE_OMISSION_{len(findings) + 1:03d}",
                 gate_id="coverage_omission",
                 finding_type="selected_candidate_missing_from_ledger",
                 severity=severity,
@@ -783,7 +876,9 @@ def _coverage_omission_findings(
                     "reason_code instead of silently dropping it."
                 ),
                 category="coverage_gap",
-                evidence_ref=_text_or_none(item.get("candidate_id")) or _text_or_none(item.get("statement")) or "",
+                evidence_ref=_text_or_none(item.get("candidate_id"))
+                or _text_or_none(item.get("statement"))
+                or "",
                 metadata={
                     "screened_candidate": item,
                     "semantic_boundary": projection.get("semantic_boundary"),
@@ -793,7 +888,7 @@ def _coverage_omission_findings(
     for item in _row_list(projection.get("missing_from_brief")):
         findings.append(
             _finding(
-                finding_id=f"QG_COVERAGE_OMISSION_{len(findings)+1:03d}",
+                finding_id=f"QG_COVERAGE_OMISSION_{len(findings) + 1:03d}",
                 gate_id="coverage_omission",
                 finding_type="selected_candidate_missing_from_brief",
                 severity=severity,
@@ -802,7 +897,8 @@ def _coverage_omission_findings(
                 stage_id=editor_stage,
                 artifact_id=brief_artifact,
                 claim_id=_first_text(item.get("claim_ids")),
-                source_id=_first_text(item.get("source_ids")) or _text_or_none(item.get("source_id")),
+                source_id=_first_text(item.get("source_ids"))
+                or _text_or_none(item.get("source_id")),
                 description=(
                     "A high-priority selected screened candidate reached the Claim Ledger but its ledger "
                     "claims are not cited in the brief with [src:<claim_id>] markers: "
@@ -814,7 +910,9 @@ def _coverage_omission_findings(
                     "that changes the decision to excluded/deprioritized with a reason_code."
                 ),
                 category="coverage_gap",
-                evidence_ref=", ".join(str(claim_id) for claim_id in item.get("claim_ids") or []),
+                evidence_ref=", ".join(
+                    str(claim_id) for claim_id in item.get("claim_ids") or []
+                ),
                 metadata={
                     "screened_candidate": item,
                     "semantic_boundary": projection.get("semantic_boundary"),
@@ -828,10 +926,12 @@ def _coverage_omission_findings(
         and isinstance(capacity_count, int)
         and capacity_count > capacity_cap
     ):
-        screening_stage = _stage_or_none(stages, "screener") or _stage_or_none(stages, "scout")
+        screening_stage = _stage_or_none(stages, "screener") or _stage_or_none(
+            stages, "scout"
+        )
         findings.append(
             _finding(
-                finding_id=f"QG_COVERAGE_OMISSION_{len(findings)+1:03d}",
+                finding_id=f"QG_COVERAGE_OMISSION_{len(findings) + 1:03d}",
                 gate_id="coverage_omission",
                 finding_type="high_priority_capacity_exceeded",
                 severity=severity,
@@ -858,10 +958,14 @@ def _coverage_omission_findings(
             )
         )
     return findings
+
+
 def _text_or_none(value: Any) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
+
 def _first_text(value: Any) -> str | None:
     if isinstance(value, list):
         for item in value:
@@ -869,11 +973,17 @@ def _first_text(value: Any) -> str | None:
             if text:
                 return text
     return _text_or_none(value)
+
+
 def _screened_candidate_trace(candidate: dict[str, Any]) -> dict[str, Any]:
     candidate_id = _text_or_none(candidate.get("candidate_id"))
-    statement = _text_or_none(candidate.get("statement")) or _text_or_none(candidate.get("claim"))
+    statement = _text_or_none(candidate.get("statement")) or _text_or_none(
+        candidate.get("claim")
+    )
     source_id = _text_or_none(candidate.get("source_id"))
-    source_title = _text_or_none(candidate.get("source_title")) or _text_or_none(candidate.get("title"))
+    source_title = _text_or_none(candidate.get("source_title")) or _text_or_none(
+        candidate.get("title")
+    )
     display = candidate_id or statement or source_title or source_id or "unknown"
     return {
         "candidate_id": candidate_id,
@@ -883,22 +993,45 @@ def _screened_candidate_trace(candidate: dict[str, Any]) -> dict[str, Any]:
         "display": display,
         "priority": _screened_candidate_priority_value(candidate),
     }
+
+
 def _screened_candidate_priority_value(candidate: dict[str, Any]) -> str:
-    for container in (candidate, candidate.get("metadata") if isinstance(candidate.get("metadata"), dict) else {}):
-        for key in ("priority", "importance", "materiality", "severity", "selected_priority"):
+    for container in (
+        candidate,
+        candidate.get("metadata")
+        if isinstance(candidate.get("metadata"), dict)
+        else {},
+    ):
+        for key in (
+            "priority",
+            "importance",
+            "materiality",
+            "severity",
+            "selected_priority",
+        ):
             value = container.get(key) if isinstance(container, dict) else None
             if isinstance(value, str) and value.strip():
                 return value.strip().lower()
     if candidate.get("high_priority") is True:
         return "high"
     return ""
+
+
 def _screened_candidate_is_high_priority(candidate: dict[str, Any]) -> bool:
-    return _screened_candidate_priority_value(candidate) in HIGH_PRIORITY_SCREENING_VALUES
-def _matching_claims_for_screened_candidate(candidate: dict[str, Any], ledger: ClaimLedger) -> list[Any]:
+    return (
+        _screened_candidate_priority_value(candidate) in HIGH_PRIORITY_SCREENING_VALUES
+    )
+
+
+def _matching_claims_for_screened_candidate(
+    candidate: dict[str, Any], ledger: ClaimLedger
+) -> list[Any]:
     candidate_id = _text_or_none(candidate.get("candidate_id"))
     explicit_claim_id = _text_or_none(candidate.get("claim_id"))
     normalized_statement = _normalize_candidate_statement(
-        _text_or_none(candidate.get("statement")) or _text_or_none(candidate.get("claim")) or ""
+        _text_or_none(candidate.get("statement"))
+        or _text_or_none(candidate.get("claim"))
+        or ""
     )
     matches: list[Any] = []
     for claim in ledger:
@@ -910,20 +1043,35 @@ def _matching_claims_for_screened_candidate(candidate: dict[str, Any], ledger: C
         if candidate_id and candidate_id in metadata_candidate_ids:
             matches.append(claim)
             continue
-        if not candidate_id and normalized_statement and _normalize_candidate_statement(claim.statement) == normalized_statement:
+        if (
+            not candidate_id
+            and normalized_statement
+            and _normalize_candidate_statement(claim.statement) == normalized_statement
+        ):
             matches.append(claim)
     return matches
+
+
 def _metadata_candidate_ids(metadata: dict[str, Any]) -> set[str]:
     values: set[str] = set()
-    for key in ("candidate_id", "screened_candidate_id", "candidate_ids", "screened_candidate_ids"):
+    for key in (
+        "candidate_id",
+        "screened_candidate_id",
+        "candidate_ids",
+        "screened_candidate_ids",
+    ):
         value = metadata.get(key)
         if isinstance(value, str) and value.strip():
             values.add(value.strip())
         elif isinstance(value, list):
             values.update(str(item).strip() for item in value if str(item).strip())
     return values
+
+
 def _normalize_candidate_statement(value: str) -> str:
     return " ".join(value.lower().split()).strip(".,;:()[]{}")
+
+
 def _coverage_limitation_reason(*, candidate: dict[str, Any], markdown: str) -> str:
     for field in COVERAGE_LIMITATION_FIELDS:
         value = candidate.get(field)
@@ -944,9 +1092,13 @@ def _coverage_limitation_reason(*, candidate: dict[str, Any], markdown: str) -> 
         return ""
     for line in markdown.splitlines():
         lower = line.lower()
-        if any(word in lower for word in COVERAGE_LIMITATION_WORDS) and any(token in lower for token in tokens):
+        if any(word in lower for word in COVERAGE_LIMITATION_WORDS) and any(
+            token in lower for token in tokens
+        ):
             return f"brief_limitation:{line.strip()}"
     return ""
+
+
 def _freshness_findings(
     *,
     markdown: str,
@@ -969,7 +1121,13 @@ def _freshness_findings(
     raw = [
         finding
         for finding in report.findings
-        if finding.finding_type in {"stale_source", "missing_source_date", "retrieved_only_source"}
+        if finding.finding_type
+        in {
+            "stale_source",
+            "missing_source_date",
+            "background_source_not_current_evidence",
+            "background_source_current_framing",
+        }
     ]
     findings = [
         _map_audit_finding(
@@ -992,8 +1150,12 @@ def _freshness_findings(
         )
     )
     return findings
+
+
 def _normalize_fact_token(value: str) -> str:
     return " ".join(value.strip().split()).strip(".,;:()[]{}").lower()
+
+
 def _token_map(pattern: re.Pattern[str], text: str) -> dict[str, str]:
     tokens: dict[str, str] = {}
     for match in pattern.finditer(text):
@@ -1002,8 +1164,12 @@ def _token_map(pattern: re.Pattern[str], text: str) -> dict[str, str]:
         if normalized:
             tokens.setdefault(normalized, raw)
     return tokens
+
+
 def _claim_ref_map(text: str) -> dict[str, str]:
     return {claim_id.lower(): claim_id for claim_id in extract_src_ref_ids(text)}
+
+
 def _entity_map(text: str) -> dict[str, str]:
     entities: dict[str, str] = {}
     in_code_block = False
@@ -1020,12 +1186,16 @@ def _entity_map(text: str) -> dict[str, str]:
         entities.update(_token_map(ENTITY_RE, line_body))
     stop = {_normalize_fact_token(item): item for item in ENTITY_STOP_PHRASES}
     return {key: value for key, value in entities.items() if key not in stop}
+
+
 def _line_number_for_token(text: str, token: str) -> int | None:
     normalized_token = token.lower()
     for idx, line in enumerate(text.splitlines(), start=1):
         if normalized_token in line.lower():
             return idx
     return None
+
+
 def _editor_introduced_new_fact_findings(
     *,
     markdown: str,
@@ -1040,12 +1210,19 @@ def _editor_introduced_new_fact_findings(
         return []
 
     introduced_numbers = sorted(
-        set(_token_map(FACT_NUMBER_RE, markdown)) - set(_token_map(FACT_NUMBER_RE, analyst_markdown))
+        set(_token_map(FACT_NUMBER_RE, markdown))
+        - set(_token_map(FACT_NUMBER_RE, analyst_markdown))
     )
-    introduced_claim_ids = sorted(set(_claim_ref_map(markdown)) - set(_claim_ref_map(analyst_markdown)))
-    allowed_metadata_entities = _declared_metadata_entity_tokens(config=config, user_text=user_text)
+    introduced_claim_ids = sorted(
+        set(_claim_ref_map(markdown)) - set(_claim_ref_map(analyst_markdown))
+    )
+    allowed_metadata_entities = _declared_metadata_entity_tokens(
+        config=config, user_text=user_text
+    )
     introduced_entities = sorted(
-        set(_entity_map(markdown)) - set(_entity_map(analyst_markdown)) - allowed_metadata_entities
+        set(_entity_map(markdown))
+        - set(_entity_map(analyst_markdown))
+        - allowed_metadata_entities
     )
     if not introduced_numbers and not introduced_claim_ids and not introduced_entities:
         return []
@@ -1071,7 +1248,9 @@ def _editor_introduced_new_fact_findings(
             repair_owner="editor",
             stage_id=_stage_or_none(stages, "editor"),
             artifact_id=_artifact_or_none(artifacts, "audited_brief"),
-            line_number=_line_number_for_token(markdown, first_sample) if first_sample else None,
+            line_number=_line_number_for_token(markdown, first_sample)
+            if first_sample
+            else None,
             description=(
                 "Delivery Editor introduced factual tokens that were absent from the Analyst draft"
                 + (f": {sample_text}." if sample_text else ".")
@@ -1091,6 +1270,8 @@ def _editor_introduced_new_fact_findings(
             },
         )
     ]
+
+
 def _final_abstract_quality_findings(
     *,
     markdown: str,
@@ -1102,7 +1283,9 @@ def _final_abstract_quality_findings(
     """Surface deterministic final-quality risks as warning-only findings."""
 
     stage_id = _stage_or_none(stages, "editor")
-    artifact_id = _artifact_or_none(artifacts, "reader_brief" if reader_facing_mode else "audited_brief")
+    artifact_id = _artifact_or_none(
+        artifacts, "reader_brief" if reader_facing_mode else "audited_brief"
+    )
     findings: list[dict[str, Any]] = []
 
     def append_finding(
@@ -1116,7 +1299,7 @@ def _final_abstract_quality_findings(
         metadata: dict[str, Any] | None = None,
     ) -> None:
         finding = _finding(
-            finding_id=f"QG_FINAL_ABSTRACT_QUALITY_{len(findings)+1:03d}",
+            finding_id=f"QG_FINAL_ABSTRACT_QUALITY_{len(findings) + 1:03d}",
             gate_id="final_abstract_quality",
             finding_type=finding_type,
             severity="medium",
@@ -1156,12 +1339,17 @@ def _final_abstract_quality_findings(
             category="final_abstract_quality",
             line_number=_line_number_for_token(markdown, title) if title else None,
             evidence_ref=title,
-            metadata={"expected_cadence": expected_cadence, "title_cadence": title_cadence},
+            metadata={
+                "expected_cadence": expected_cadence,
+                "title_cadence": title_cadence,
+            },
         )
 
     comparison_line = _first_body_line_matching(markdown, FINAL_ABSTRACT_COMPARISON_RE)
     has_comparison = comparison_line is not None
-    if has_comparison and not _has_markdown_heading(markdown, FINAL_ABSTRACT_BASIS_HEADING_RE):
+    if has_comparison and not _has_markdown_heading(
+        markdown, FINAL_ABSTRACT_BASIS_HEADING_RE
+    ):
         append_finding(
             finding_type="final_missing_comparison_basis",
             description="The brief uses comparison framing without an explicit basis, method, benchmark, or scope section.",
@@ -1185,7 +1373,9 @@ def _final_abstract_quality_findings(
             re.IGNORECASE,
         ),
     )
-    if risk_line and not _has_markdown_heading(markdown, FINAL_ABSTRACT_LIMITATION_HEADING_RE):
+    if risk_line and not _has_markdown_heading(
+        markdown, FINAL_ABSTRACT_LIMITATION_HEADING_RE
+    ):
         append_finding(
             finding_type="final_missing_limitation_section",
             description=(
@@ -1228,6 +1418,8 @@ def _final_abstract_quality_findings(
         )
 
     return findings
+
+
 def _final_abstract_case_field_present(
     field: str,
     pattern: re.Pattern[str],
@@ -1236,6 +1428,8 @@ def _final_abstract_case_field_present(
     if field == "source_reference":
         return bool(extract_src_ref_ids(line) or pattern.search(line))
     return bool(pattern.search(line))
+
+
 def _configured_report_cadence(config: dict[str, Any]) -> str:
     candidates: list[Any] = []
     report = config.get("report")
@@ -1247,6 +1441,8 @@ def _configured_report_cadence(config: dict[str, Any]) -> str:
         if normalized:
             return normalized
     return ""
+
+
 def _normalize_cadence(value: Any) -> str:
     if not isinstance(value, str):
         return ""
@@ -1256,6 +1452,8 @@ def _normalize_cadence(value: Any) -> str:
     if normalized in {"monthly", "month", "月报", "monthly-report"}:
         return "monthly"
     return ""
+
+
 def _title_cadence(title: str) -> str:
     lower = title.lower()
     if "weekly" in lower or "周报" in title:
@@ -1263,12 +1461,16 @@ def _title_cadence(title: str) -> str:
     if "monthly" in lower or "月报" in title:
         return "monthly"
     return ""
+
+
 def _first_markdown_h1(markdown: str) -> str:
     for line in markdown.splitlines():
         stripped = line.strip()
         if stripped.startswith("# ") and not stripped.startswith("## "):
             return stripped[2:].strip(" #")
     return ""
+
+
 def _has_markdown_heading(markdown: str, pattern: re.Pattern[str]) -> bool:
     for line in markdown.splitlines():
         stripped = line.strip()
@@ -1278,11 +1480,17 @@ def _has_markdown_heading(markdown: str, pattern: re.Pattern[str]) -> bool:
         if pattern.search(heading):
             return True
     return False
-def _first_body_line_matching(markdown: str, pattern: re.Pattern[str]) -> tuple[int, str] | None:
+
+
+def _first_body_line_matching(
+    markdown: str, pattern: re.Pattern[str]
+) -> tuple[int, str] | None:
     for line_number, line in _body_lines(markdown):
         if pattern.search(line):
             return line_number, line
     return None
+
+
 def _body_lines(markdown: str) -> list[tuple[int, str]]:
     lines: list[tuple[int, str]] = []
     in_code_block = False
@@ -1302,6 +1510,8 @@ def _body_lines(markdown: str) -> list[tuple[int, str]]:
             continue
         lines.append((line_number, stripped))
     return lines
+
+
 def _key_case_lines(markdown: str) -> list[tuple[int, str]]:
     results: list[tuple[int, str]] = []
     in_case_section = False
@@ -1316,7 +1526,11 @@ def _key_case_lines(markdown: str) -> list[tuple[int, str]]:
             if FINAL_ABSTRACT_CASE_HEADING_RE.search(heading):
                 in_case_section = True
                 case_level = heading_level
-            elif in_case_section and case_level is not None and heading_level <= case_level:
+            elif (
+                in_case_section
+                and case_level is not None
+                and heading_level <= case_level
+            ):
                 in_case_section = False
             continue
         if not in_case_section:
@@ -1324,6 +1538,8 @@ def _key_case_lines(markdown: str) -> list[tuple[int, str]]:
         if re.match(r"^(?:[-*+]|\d+[.)])\s+", stripped):
             results.append((line_number, stripped))
     return results
+
+
 def _markdown_heading_level(stripped_line: str) -> int | None:
     if not stripped_line.startswith("#"):
         return None
@@ -1331,6 +1547,8 @@ def _markdown_heading_level(stripped_line: str) -> int | None:
     if set(marker) == {"#"}:
         return len(marker)
     return None
+
+
 def _unsupported_superlative_lines(markdown: str) -> list[tuple[int, str]]:
     findings: list[tuple[int, str]] = []
     for line_number, line in _body_lines(markdown):
@@ -1342,12 +1560,16 @@ def _unsupported_superlative_lines(markdown: str) -> list[tuple[int, str]]:
         if len(findings) >= 3:
             break
     return findings
+
+
 def _line_has_local_source_reference(line: str) -> bool:
     return bool(
         extract_src_ref_ids(line)
         or re.search(r"\[S\d+\]", line)
         or re.search(r"https?://", line, re.IGNORECASE)
     )
+
+
 def _market_quote_metadata_findings(
     *,
     ledger: ClaimLedger,
@@ -1361,7 +1583,9 @@ def _market_quote_metadata_findings(
     artifact_id = _artifact_or_none(artifacts, "claim_ledger")
     for claim in ledger:
         metadata = claim.metadata or {}
-        has_quote = any(key in metadata for key in ("ticker", "price", "as_of", "quote_source"))
+        has_quote = any(
+            key in metadata for key in ("ticker", "price", "as_of", "quote_source")
+        )
         if not has_quote:
             continue
         missing = [
@@ -1393,6 +1617,8 @@ def _market_quote_metadata_findings(
             )
         )
     return findings
+
+
 def _section_between(content: str, start_patterns: tuple[str, ...]) -> str:
     lines = content.splitlines()
     start_idx: int | None = None
@@ -1409,6 +1635,8 @@ def _section_between(content: str, start_patterns: tuple[str, ...]) -> str:
             end_idx = idx
             break
     return "\n".join(lines[start_idx:end_idx])
+
+
 def _target_terms(config: dict[str, Any], *, user_text: str = "") -> list[str]:
     terms: list[str] = []
     project = config.get("project") or {}
@@ -1443,14 +1671,22 @@ def _target_terms(config: dict[str, Any], *, user_text: str = "") -> list[str]:
             seen.add(normalized)
             result.append(term)
     return result
-def _declared_metadata_entity_tokens(*, config: dict[str, Any], user_text: str) -> set[str]:
+
+
+def _declared_metadata_entity_tokens(
+    *, config: dict[str, Any], user_text: str
+) -> set[str]:
     tokens: set[str] = set()
     for term in _target_terms(config, user_text=user_text):
         tokens.update(_entity_map(term))
     return tokens
+
+
 def _mentions_any(text: str, terms: list[str]) -> bool:
     lower = text.lower()
     return any(term.lower() in lower for term in terms if term)
+
+
 def _target_relevance_findings(
     *,
     markdown: str,
@@ -1506,7 +1742,7 @@ def _target_relevance_findings(
     if summary and not _mentions_any(summary, terms):
         findings.append(
             _finding(
-                finding_id=f"QG_TARGET_RELEVANCE_{len(findings)+1:03d}",
+                finding_id=f"QG_TARGET_RELEVANCE_{len(findings) + 1:03d}",
                 gate_id="target_relevance",
                 finding_type="target_relevance_gap",
                 severity="high",
@@ -1525,14 +1761,15 @@ def _target_relevance_findings(
         claim
         for claim in ledger
         if _mentions_any(f"{claim.statement}\n{claim.evidence_text}", terms)
-        and str((claim.metadata or {}).get("importance", "")).lower() in {"high", "critical", "blocking", "direct"}
+        and str((claim.metadata or {}).get("importance", "")).lower()
+        in {"high", "critical", "blocking", "direct"}
     ]
     if summary and target_claims and not reader_facing_mode:
         refs = set(extract_src_ref_ids(summary))
         if not any(claim.claim_id in refs for claim in target_claims):
             findings.append(
                 _finding(
-                    finding_id=f"QG_TARGET_RELEVANCE_{len(findings)+1:03d}",
+                    finding_id=f"QG_TARGET_RELEVANCE_{len(findings) + 1:03d}",
                     gate_id="target_relevance",
                     finding_type="target_priority_claim_missing_from_summary",
                     severity="high",
@@ -1545,10 +1782,15 @@ def _target_relevance_findings(
                     description="A high-priority target-specific claim is not represented in the executive summary.",
                     recommendation="Include at least one high-priority target-specific claim in the summary or document why it is excluded.",
                     category="coverage_gap",
-                    metadata={"target_terms": terms, "target_claim_ids": [claim.claim_id for claim in target_claims]},
+                    metadata={
+                        "target_terms": terms,
+                        "target_claim_ids": [claim.claim_id for claim in target_claims],
+                    },
                 )
             )
     return findings
+
+
 def evaluate_quality_gate_findings(
     *,
     markdown: str,
@@ -1574,12 +1816,22 @@ def evaluate_quality_gate_findings(
     and legacy projection updates remain owned by ``check_quality_gates``.
     """
 
-    gate_findings: dict[str, list[dict[str, Any]]] = {gate_id: [] for gate_id in sorted(GATE_IDS)}
+    gate_findings: dict[str, list[dict[str, Any]]] = {
+        gate_id: [] for gate_id in sorted(GATE_IDS)
+    }
     gate_tasks: dict[str, Callable[[], list[dict[str, Any]]]] = {}
-    material_fact_strict = policy_gate_is_strict(policy_gate_adapter, "material_fact", cli_strict=strict)
-    freshness_strict = policy_gate_is_strict(policy_gate_adapter, "freshness", cli_strict=strict)
-    target_relevance_strict = policy_gate_is_strict(policy_gate_adapter, "target_relevance", cli_strict=strict)
-    coverage_omission_strict = policy_gate_is_strict(policy_gate_adapter, "coverage_omission", cli_strict=strict)
+    material_fact_strict = policy_gate_is_strict(
+        policy_gate_adapter, "material_fact", cli_strict=strict
+    )
+    freshness_strict = policy_gate_is_strict(
+        policy_gate_adapter, "freshness", cli_strict=strict
+    )
+    target_relevance_strict = policy_gate_is_strict(
+        policy_gate_adapter, "target_relevance", cli_strict=strict
+    )
+    coverage_omission_strict = policy_gate_is_strict(
+        policy_gate_adapter, "coverage_omission", cli_strict=strict
+    )
     coverage_projection = coverage_omission_projection or _coverage_omission_projection(
         workspace=None,
         markdown=markdown,
@@ -1645,20 +1897,33 @@ def evaluate_quality_gate_findings(
 
     gate_errors: dict[str, str] = {}
     max_workers = min(len(gate_tasks), 4)
-    with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="mabw-quality-gate") as executor:
-        futures = {executor.submit(gate_tasks[gate_id]): gate_id for gate_id in sorted(gate_tasks)}
+    with ThreadPoolExecutor(
+        max_workers=max_workers, thread_name_prefix="mabw-quality-gate"
+    ) as executor:
+        futures = {
+            executor.submit(gate_tasks[gate_id]): gate_id
+            for gate_id in sorted(gate_tasks)
+        }
         for future in as_completed(futures):
             gate_id = futures[future]
             try:
                 gate_findings[gate_id] = future.result()
-            except Exception as exc:  # pragma: no cover - exercised through monkeypatch tests.
+            except (
+                Exception
+            ) as exc:  # pragma: no cover - exercised through monkeypatch tests.
                 gate_errors[gate_id] = str(exc)
     if gate_errors:
         raise RuntimeStateError(
             "Quality gate evaluation failed.",
-            details={"gate_errors": {gate_id: gate_errors[gate_id] for gate_id in sorted(gate_errors)}},
+            details={
+                "gate_errors": {
+                    gate_id: gate_errors[gate_id] for gate_id in sorted(gate_errors)
+                }
+            },
         )
     return gate_findings
+
+
 def evaluate_quality_gate_findings_preloaded(
     *,
     markdown: str,

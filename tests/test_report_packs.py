@@ -13,6 +13,8 @@ import yaml
 from multi_agent_brief.cli.main import build_parser, main
 from multi_agent_brief.contracts.registry import ContractRegistry
 from multi_agent_brief.contracts.schemas.report_spec import ReportSpecContract
+from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
 from multi_agent_brief.product.report_pack import validate_report_pack_payload
 from multi_agent_brief.product.report_registry import ReportPackRegistry
 from multi_agent_brief.product.report_spec import validate_report_spec_payload
@@ -376,6 +378,84 @@ def test_new_report_pack_workspace_rejects_tavily_before_writes(
     assert "briefloop init <workspace> --web" in output
     assert "briefloop onboard" in output
     assert not workspace.exists()
+
+
+def test_new_solar_stock_workspace_accepts_tavily_with_discovery_authorization(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "solar-stock"
+
+    assert (
+        main(
+            [
+                "new",
+                "solar-stock-periodic",
+                str(workspace),
+                "--search-backend",
+                "tavily",
+            ]
+        )
+        == 0
+    )
+
+    capsys.readouterr()
+    assert (workspace / ".codex").is_dir()
+    assert not (workspace / "briefloop.db").exists()
+    config = yaml.safe_load((workspace / "config.yaml").read_text(encoding="utf-8"))
+    authorization = config["controlstore_v2"]["source_discovery_authorization"]
+    assert authorization == {
+        "schema_version": "briefloop.run_source_discovery_authorization_bootstrap.v2",
+        "route_id": "web-search",
+        "provider_id": "tavily",
+        "execution_owner": "deterministic",
+        "credential_env": "TAVILY_API_KEY",
+        "completion_target": "finalized_local",
+        "repair_budget": 1,
+    }
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    assert sources["web_search"]["mode"] == "external_api"
+    assert sources["web_search"]["backend"] == "tavily"
+    assert len(sources["web_search"]["search_tasks"]) == 20
+
+
+def test_new_solar_tavily_workspace_first_run_freezes_atomic_plan(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "solar-stock-run"
+    assert (
+        main(
+            [
+                "new",
+                "solar-stock-periodic",
+                str(workspace),
+                "--search-backend",
+                "tavily",
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+
+    assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
+    action = json.loads(capsys.readouterr().out)
+    assert (action["action_kind"], action["effect_kind"]) == (
+        "deterministic",
+        "doctor_check",
+    )
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        verified = CoreRunDomainVerifier().verify(store, head.current_run_id)
+    assert len(verified.snapshot.run_source_discovery_authorizations) == 1
+    route = next(
+        item for item in verified.source_plan.routes if item.route_id == "web-search"
+    )
+    assert route.acquisition_spec is not None
+    assert route.acquisition_spec.kind == "web_search_multi"
+    assert len(route.acquisition_spec.tasks) == 20
+    assert {item.max_results for item in route.acquisition_spec.tasks} == {20}
 
 
 def test_new_report_pack_workspace_does_not_infer_tavily_from_external_api(

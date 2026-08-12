@@ -11,7 +11,9 @@ from multi_agent_brief.core.claim_ledger import ClaimLedger
 from multi_agent_brief.core.schemas import AuditFinding, AuditReport, PipelineContext
 
 
-NUMBER_PATTERN = re.compile(r"(\$[\d,.]+|[\d,.]+%|\b\d+(?:\.\d+)?\s?(?:GW|GWh|MW|MWh|million|billion)\b)")
+NUMBER_PATTERN = re.compile(
+    r"(\$[\d,.]+|[\d,.]+%|\b\d+(?:\.\d+)?\s?(?:GW|GWh|MW|MWh|million|billion)\b)"
+)
 HEADING_PATTERN = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 SOURCE_REFERENCE_SECTION_TITLES = {
     "bibliography",
@@ -26,6 +28,45 @@ SOURCE_REFERENCE_SECTION_TITLES = {
 SOURCE_REFERENCE_SECTION_KEYWORDS = (
     re.compile(r"(数据来源|资料来源|参考资料|参考来源|参考文献|来源附录)"),
 )
+CURRENT_EVENT_WORDS = re.compile(
+    r"(?:\bthis\s+(?:week|period)\b|\bcurrent(?:ly)?\b|"
+    r"\bcurrent[- ](?:week|period)\b|\blatest\b|\brecent(?:ly)?\b|"
+    r"\bnewly\s+(?:occurred|reported|announced)\b|"
+    r"本周|本期|当前|最新|近期|刚刚|近日|新近)",
+    re.IGNORECASE,
+)
+
+
+def _background_current_framing(
+    markdown: str,
+    claim_id: str,
+) -> str | None:
+    """Find current-period framing adjacent to a background citation.
+
+    A heading or sentence can establish the temporal frame for a following
+    cited line; requiring the marker and wording on one physical line would
+    let that framing escape the gate. Keep the look-behind bounded so an
+    unrelated earlier section cannot taint a later claim.
+    """
+
+    citation = f"[src:{claim_id}]"
+    lines = markdown.splitlines()
+    for index, line in enumerate(lines):
+        if citation not in line:
+            continue
+        context = [line]
+        nonempty_seen = 0
+        for previous in range(index - 1, max(-1, index - 6), -1):
+            candidate = lines[previous].strip()
+            if not candidate:
+                continue
+            context.append(candidate)
+            nonempty_seen += 1
+            if candidate.startswith("#") or nonempty_seen >= 3:
+                break
+        if any(CURRENT_EVENT_WORDS.search(item) for item in context):
+            return " ".join(reversed(context))
+    return None
 
 
 def _tag(finding_type: str, **kwargs) -> AuditFinding:
@@ -58,7 +99,13 @@ def extract_src_refs(markdown: str) -> list[dict]:
     refs: list[dict] = []
     for line_number, line in enumerate(markdown.splitlines(), start=1):
         for match in SRC_REF_PATTERN.finditer(line):
-            refs.append({"claim_id": match.group(1), "line_number": line_number, "line": line.strip()})
+            refs.append(
+                {
+                    "claim_id": match.group(1),
+                    "line_number": line_number,
+                    "line": line.strip(),
+                }
+            )
     return refs
 
 
@@ -112,7 +159,7 @@ def run_deterministic_audit(
             findings.append(
                 _tag(
                     "missing_claim",
-                    finding_id=f"ORPHAN_{len(findings)+1:03d}",
+                    finding_id=f"ORPHAN_{len(findings) + 1:03d}",
                     severity="high",
                     related_claim_id=ref["claim_id"],
                     line_number=ref["line_number"],
@@ -125,7 +172,10 @@ def run_deterministic_audit(
     active_source_reference_section_level: int | None = None
     for line_number, line in enumerate(markdown.splitlines(), start=1):
         heading_level = _heading_level(line)
-        if heading_level is not None and active_source_reference_section_level is not None:
+        if (
+            heading_level is not None
+            and active_source_reference_section_level is not None
+        ):
             if heading_level <= active_source_reference_section_level:
                 active_source_reference_section_level = None
         section_level = source_reference_section_level(line)
@@ -142,7 +192,7 @@ def run_deterministic_audit(
             findings.append(
                 _tag(
                     "number_without_source",
-                    finding_id=f"NUMBER_{len(findings)+1:03d}",
+                    finding_id=f"NUMBER_{len(findings) + 1:03d}",
                     severity="medium",
                     line_number=line_number,
                     description=f"Number-like value '{match.group(1)}' appears without a source reference on the same line.",
@@ -155,7 +205,7 @@ def run_deterministic_audit(
         findings.append(
             _tag(
                 "missing_source",
-                finding_id=f"SOURCE_{len(findings)+1:03d}",
+                finding_id=f"SOURCE_{len(findings) + 1:03d}",
                 severity="high",
                 related_claim_id=claim.claim_id,
                 description="A claim requires audit but is missing source_id or evidence_text.",
@@ -168,7 +218,7 @@ def run_deterministic_audit(
         findings.append(
             _tag(
                 "duplicate_claim",
-                finding_id=f"DUP_{len(findings)+1:03d}",
+                finding_id=f"DUP_{len(findings) + 1:03d}",
                 severity="low",
                 related_claim_id=duplicate_group[0].claim_id,
                 description=f"Duplicate claim statements found: {', '.join(claim.claim_id for claim in duplicate_group)}.",
@@ -182,63 +232,88 @@ def run_deterministic_audit(
     web_search_missing_date_count = 0
     if window_start_day is not None or (report_day and max_source_age_days is not None):
         for claim in ledger:
-            published_at = str(claim.metadata.get("published_at", ""))
-            source_day = parse_date(published_at)
-            if source_day is None:
-                # Sources without published_at fall back to retrieved_at as the
-                # reporting-window date anchor; the substitution is disclosed.
-                retrieved_day = parse_date(str(claim.metadata.get("retrieved_at", "")))
-                if retrieved_day is not None:
+            temporal_role = str(claim.metadata.get("temporal_role", ""))
+            if temporal_role == "background":
+                findings.append(
+                    _tag(
+                        "background_source_not_current_evidence",
+                        finding_id=f"BACKGROUND_{len(findings) + 1:03d}",
+                        severity="low",
+                        related_claim_id=claim.claim_id,
+                        description=(
+                            "Claim uses a background source with no canonical event date "
+                            "inside the frozen reporting window."
+                        ),
+                        recommendation=(
+                            "Keep it explicitly framed as background; do not use it to "
+                            "establish a current-week event."
+                        ),
+                        evidence=claim.statement,
+                    )
+                )
+                current_context = _background_current_framing(markdown, claim.claim_id)
+                if current_context is not None:
                     findings.append(
                         _tag(
-                            "retrieved_only_source",
-                            finding_id=f"RETR_{len(findings)+1:03d}",
-                            severity="low",
+                            "background_source_current_framing",
+                            finding_id=f"BACKGROUND_CURRENT_{len(findings) + 1:03d}",
+                            severity="high",
                             related_claim_id=claim.claim_id,
                             description=(
-                                "Claim source has no parseable published_at date; retrieved_at "
-                                f"{retrieved_day.isoformat()} anchors the reporting-window audit."
+                                "A background-only claim is framed as current, latest, "
+                                "or part of this reporting period."
                             ),
-                            recommendation="Disclose retrieval-anchored dating to the reader; provide published_at when available.",
+                            recommendation=(
+                                "Remove the current-event wording or cite an in-window "
+                                "source with a canonical event date."
+                            ),
+                            evidence=current_context,
+                        )
+                    )
+                continue
+            if temporal_role == "current_window":
+                source_day = parse_date(
+                    str(claim.metadata.get("temporal_anchor_date", ""))
+                )
+            else:
+                # Historical ledgers lack temporal_role.  Preserve their
+                # fail-closed date semantics and never promote retrieved_at.
+                source_day = parse_date(str(claim.metadata.get("published_at", "")))
+            if source_day is None:
+                # Retrieval time is never evidence of publication/event time.
+                if claim.source_type == "web_search":
+                    findings.append(
+                        _tag(
+                            "missing_source_date",
+                            finding_id=f"DATE_{len(findings) + 1:03d}",
+                            severity="low",
+                            related_claim_id=claim.claim_id,
+                            description="Web search claim is missing a canonical event date.",
+                            recommendation="Provide published_at or an incident opened_at date; retrieval time is not an event date.",
                             evidence=claim.statement,
                         )
                     )
-                    source_day = retrieved_day
+                    web_search_missing_date_count += 1
                 else:
-                    # web_search sources often lack published_at — flag it at low severity (B15)
-                    if claim.source_type == "web_search":
-                        findings.append(
-                            _tag(
-                                "missing_source_date",
-                                finding_id=f"DATE_{len(findings)+1:03d}",
-                                severity="low",
-                                related_claim_id=claim.claim_id,
-                                description="Web search claim is missing a parseable published_at date.",
-                                recommendation="Provide published_at; without any date the claim cannot be window-audited.",
-                                evidence=claim.statement,
-                            )
+                    findings.append(
+                        _tag(
+                            "missing_source_date",
+                            finding_id=f"DATE_{len(findings) + 1:03d}",
+                            severity="medium",
+                            related_claim_id=claim.claim_id,
+                            description="Claim source is missing a canonical event date for reporting-window audit.",
+                            recommendation="Provide a parseable published_at or incident opened_at date.",
+                            evidence=claim.statement,
                         )
-                        web_search_missing_date_count += 1
-                    else:
-                        findings.append(
-                            _tag(
-                                "missing_source_date",
-                                finding_id=f"DATE_{len(findings)+1:03d}",
-                                severity="medium",
-                                related_claim_id=claim.claim_id,
-                                description="Claim source is missing a parseable published_at date for reporting-window audit.",
-                                recommendation="Provide a parseable published_at or retrieved_at date so the reporting window can be audited.",
-                                evidence=claim.statement,
-                            )
-                        )
-                    continue
+                    )
+                continue
             if window_start_day is not None:
                 # The frozen report window is the first freshness authority.
                 if source_day < window_start_day:
                     findings.append(
                         _tag(
                             "stale_source",
-                            finding_id=f"STALE_{len(findings)+1:03d}",
+                            finding_id=f"STALE_{len(findings) + 1:03d}",
                             severity="high" if fail_on_stale_source else "medium",
                             related_claim_id=claim.claim_id,
                             description=(
@@ -255,7 +330,7 @@ def run_deterministic_audit(
                 findings.append(
                     _tag(
                         "stale_source",
-                        finding_id=f"STALE_{len(findings)+1:03d}",
+                        finding_id=f"STALE_{len(findings) + 1:03d}",
                         severity="high" if fail_on_stale_source else "medium",
                         related_claim_id=claim.claim_id,
                         description=(
@@ -267,11 +342,13 @@ def run_deterministic_audit(
                     )
                 )
 
-    for risk in scan_redaction_risks(markdown + "\n" + "\n".join(claim.evidence_text for claim in ledger)):
+    for risk in scan_redaction_risks(
+        markdown + "\n" + "\n".join(claim.evidence_text for claim in ledger)
+    ):
         findings.append(
             _tag(
                 "redaction_risk",
-                finding_id=f"REDACT_{len(findings)+1:03d}",
+                finding_id=f"REDACT_{len(findings) + 1:03d}",
                 severity="high" if risk["severity"] == "high" else "medium",
                 description=f"Potential {risk['type']} detected.",
                 recommendation=risk["recommendation"],
@@ -285,7 +362,7 @@ def run_deterministic_audit(
             findings.append(
                 _tag(
                     "hypothesis_high_confidence",
-                    finding_id=f"EPISTEMIC_{len(findings)+1:03d}",
+                    finding_id=f"EPISTEMIC_{len(findings) + 1:03d}",
                     severity="high",
                     related_claim_id=claim.claim_id,
                     description="Hypothesis claim is presented with high confidence — hypotheses should not be treated as certain facts.",
@@ -297,7 +374,7 @@ def run_deterministic_audit(
             findings.append(
                 _tag(
                     "action_without_basis",
-                    finding_id=f"EPISTEMIC_{len(findings)+1:03d}",
+                    finding_id=f"EPISTEMIC_{len(findings) + 1:03d}",
                     severity="high",
                     related_claim_id=claim.claim_id,
                     description="Action claim lacks applicability rationale — actions must justify why they apply here.",
@@ -309,7 +386,7 @@ def run_deterministic_audit(
             findings.append(
                 _tag(
                     "analogy_without_limitations",
-                    finding_id=f"EPISTEMIC_{len(findings)+1:03d}",
+                    finding_id=f"EPISTEMIC_{len(findings) + 1:03d}",
                     severity="medium",
                     related_claim_id=claim.claim_id,
                     description="Analogy claim has no stated limitations — analogies must declare where they break down.",
@@ -321,7 +398,7 @@ def run_deterministic_audit(
             findings.append(
                 _tag(
                     "analogy_direct_relation",
-                    finding_id=f"EPISTEMIC_{len(findings)+1:03d}",
+                    finding_id=f"EPISTEMIC_{len(findings) + 1:03d}",
                     severity="high",
                     related_claim_id=claim.claim_id,
                     description="Analogy claim uses 'direct' evidence relation — analogies should use indirect or analogous relation.",
@@ -330,7 +407,9 @@ def run_deterministic_audit(
                 )
             )
 
-    unused_claims = [claim.claim_id for claim in ledger if claim.claim_id not in referenced_ids]
+    unused_claims = [
+        claim.claim_id for claim in ledger if claim.claim_id not in referenced_ids
+    ]
     metadata = {
         "refs_extracted": len(refs),
         "unique_refs": len(referenced_ids),
@@ -350,7 +429,9 @@ def run_deterministic_audit(
     else:
         status = "pass"
     score = max(0, 100 - high * 25 - medium * 10 - (len(findings) - high - medium) * 3)
-    return AuditReport(audit_status=status, audit_score=score, findings=findings, metadata=metadata)
+    return AuditReport(
+        audit_status=status, audit_score=score, findings=findings, metadata=metadata
+    )
 
 
 class DeterministicAuditAgent(AuditAgentInterface):
@@ -382,7 +463,10 @@ class DeterministicAuditAgent(AuditAgentInterface):
                 local_findings = _check_local_signal_claims(markdown, ledger, context)
                 report.findings.extend(local_findings)
                 if local_findings:
-                    from multi_agent_brief.audit.interfaces import recompute_report_status
+                    from multi_agent_brief.audit.interfaces import (
+                        recompute_report_status,
+                    )
+
                     recompute_report_status(report)
 
         return report
@@ -401,10 +485,18 @@ _CONSUMER_PAIN_PATTERNS_ZH = [
 
 # English patterns — case insensitive
 _CONSUMER_PAIN_PATTERNS_EN = [
-    re.compile(r"consumers?\s+\w*\s*(?:report|complain|believe|feel|say|indicate)", re.IGNORECASE),
-    re.compile(r"users?\s+\w*\s*(?:complain|report|feel|believe|commonly)", re.IGNORECASE),
+    re.compile(
+        r"consumers?\s+\w*\s*(?:report|complain|believe|feel|say|indicate)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"users?\s+\w*\s*(?:complain|report|feel|believe|commonly)", re.IGNORECASE
+    ),
     re.compile(r"market\s+feedback\s+(?:shows|indicates|suggests)", re.IGNORECASE),
-    re.compile(r"customer\s+(?:complaints?|feedback|reviews?)\s+(?:show|indicate|suggest)", re.IGNORECASE),
+    re.compile(
+        r"customer\s+(?:complaints?|feedback|reviews?)\s+(?:show|indicate|suggest)",
+        re.IGNORECASE,
+    ),
 ]
 
 _CONSUMER_PAIN_PATTERNS = _CONSUMER_PAIN_PATTERNS_ZH + _CONSUMER_PAIN_PATTERNS_EN
@@ -449,7 +541,7 @@ def _check_local_signal_claims(
                     findings.append(
                         _tag(
                             "local_signal_unsupported_claim",
-                            finding_id=f"LOCAL_SIGNAL_CLAIM_{len(findings)+1:03d}",
+                            finding_id=f"LOCAL_SIGNAL_CLAIM_{len(findings) + 1:03d}",
                             severity="high",
                             line_number=line_num,
                             description=(
@@ -468,14 +560,24 @@ def _check_local_signal_claims(
 
     # LOCAL_SIGNAL_PROVENANCE_001: Check local signal claims have required metadata
     for claim in ledger:
-        if claim.source_type == "local_signal" or claim.metadata.get("source_family") == "local_signal":
-            required_meta = ["platform", "market", "collected_at", "access_level", "sample_type", "collector"]
+        if (
+            claim.source_type == "local_signal"
+            or claim.metadata.get("source_family") == "local_signal"
+        ):
+            required_meta = [
+                "platform",
+                "market",
+                "collected_at",
+                "access_level",
+                "sample_type",
+                "collector",
+            ]
             missing = [k for k in required_meta if not claim.metadata.get(k)]
             if missing:
                 findings.append(
                     _tag(
                         "local_signal_missing_provenance",
-                        finding_id=f"LOCAL_SIGNAL_PROV_{len(findings)+1:03d}",
+                        finding_id=f"LOCAL_SIGNAL_PROV_{len(findings) + 1:03d}",
                         severity="medium",
                         related_claim_id=claim.claim_id,
                         description=(
@@ -497,7 +599,7 @@ def _check_local_signal_claims(
             findings.append(
                 _tag(
                     "local_signal_privacy_violation",
-                    finding_id=f"LOCAL_SIGNAL_PRIV_{len(findings)+1:03d}",
+                    finding_id=f"LOCAL_SIGNAL_PRIV_{len(findings) + 1:03d}",
                     severity="high",
                     related_claim_id=claim.claim_id,
                     description=(

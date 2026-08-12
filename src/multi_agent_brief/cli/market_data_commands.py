@@ -162,6 +162,8 @@ def _load_manual_inputs(workspace: Path) -> list:
 
 
 def _handle_fetch(args: argparse.Namespace, workspace: Path) -> dict[str, object]:
+    service = MarketDataService(workspace)
+    service.require_recording_allowed()
     manuals = _load_manual_inputs(workspace)
     fetched = YahooMarketDataAdapter().fetch_weekly(_SOLAR_STOCK_UNIVERSE)
     merged = merge_manual_first(manuals, fetched)
@@ -170,7 +172,6 @@ def _handle_fetch(args: argparse.Namespace, workspace: Path) -> dict[str, object
         gaps=merged.gaps,
         as_of=getattr(args, "as_of", None),
     )
-    service = MarketDataService(workspace)
     record = service.record_snapshot(request)
     projection = service.project_tables()
     return {"ok": True, "record": record, "projection": projection}
