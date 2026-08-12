@@ -424,6 +424,7 @@ EVENT_TYPES = {
     "runtime_source_search_plan_recorded",
     "tavily_acquisition_bundle_recorded",
     "market_data_snapshot_recorded",
+    "run_terminated",
 }
 
 # Release-mode approval vocabulary and boundary. DTO truth source;
@@ -5516,6 +5517,22 @@ class DeliveryAuthorizationRequest(StrictModel):
     expected_store_revision: NonNegativeInt
 
 
+class RunTerminationRequest(StrictModel):
+    """Human decision that terminates a run stuck at an unresolvable review."""
+
+    schema_id = "briefloop.run_termination_request.v2"
+    schema_version: Literal["briefloop.run_termination_request.v2"]
+    request_id: ContractId
+    run_id: ContractId
+    decision: Literal["terminate"]
+    reason_code: Literal[
+        "gate_repair_unresolvable",
+        "negative_audit_truth_accepted",
+        "operator_abandon",
+    ]
+    expected_store_revision: NonNegativeInt
+
+
 class DeliveryAttemptRequest(StrictModel):
     schema_id = "briefloop.delivery_attempt_request.v2"
     schema_version: Literal["briefloop.delivery_attempt_request.v2"]
@@ -8381,6 +8398,14 @@ DeliveryAuthorizationRequest.minimal_example = {
     "reason": "Approved local package preparation",
     "expected_store_revision": 24,
 }
+RunTerminationRequest.minimal_example = {
+    "schema_version": RunTerminationRequest.schema_id,
+    "request_id": "REQ-TERMINATE-001",
+    "run_id": _RUN,
+    "decision": "terminate",
+    "reason_code": "gate_repair_unresolvable",
+    "expected_store_revision": 24,
+}
 DeliveryAttemptRequest.minimal_example = {
     "schema_version": DeliveryAttemptRequest.schema_id,
     "request_id": "REQ-ATTEMPT-001",
@@ -8433,6 +8458,7 @@ for _model in (
     FinalizeCompleteRequest,
     InternalApprovalRequest,
     DeliveryAuthorizationRequest,
+    RunTerminationRequest,
     DeliveryAttemptRequest,
     DeliveryResultRequest,
 ):
@@ -9005,6 +9031,7 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     FinalizeCompleteRequest,
     InternalApprovalRequest,
     DeliveryAuthorizationRequest,
+    RunTerminationRequest,
     DeliveryAttemptRequest,
     DeliveryResultRequest,
     CheckoutRevisionRecord,
@@ -9295,6 +9322,7 @@ __all__ = [
     "RunGuidanceSnapshotRecord",
     "RunGuidanceSnapshotReference",
     "RunResetRequest",
+    "RunTerminationRequest",
     "RunSuccessorStartRequest",
     "ScreenedCandidatesProposal",
     "SourceAcquisitionFailureEvidence",

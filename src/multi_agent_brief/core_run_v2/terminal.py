@@ -31,6 +31,7 @@ from multi_agent_brief.contracts.v2 import (
     PackageReadyRecord,
     RunArchiveArtifactBinding,
     RunArchiveRecord,
+    RunTerminationRequest,
     StageArtifactBinding,
     StageGateBinding,
     StageState,
@@ -901,6 +902,9 @@ class CoreRunTerminalService:
     def record_internal_approval(self, request: InternalApprovalRequest):
         return self._public(self._record_internal_approval, request)
 
+    def record_run_termination(self, request: RunTerminationRequest):
+        return self._public(self._record_run_termination, request)
+
     def authorize_delivery(self, request: DeliveryAuthorizationRequest):
         return self._public(self._authorize_delivery, request)
 
@@ -1048,6 +1052,63 @@ class CoreRunTerminalService:
                 status="committed",
                 receipt=receipt,
                 primary_record_id=request.approval_id,
+            )
+        finally:
+            store.close()
+
+    def _record_run_termination(self, request: RunTerminationRequest):
+        from .errors import CoreRunResult
+        from .next_action import classify_core_run_next_action
+        from .policy import derived_id
+
+        store, context, fingerprint, replay = self._open_verified(request)
+        if replay is not None:
+            return replay
+        assert store is not None and context is not None
+        verifier, verified = context
+        try:
+            action = classify_core_run_next_action(verified)
+            if (
+                action.action_kind != "human_decision"
+                or action.effect_kind
+                not in {"gate_repair_human_review", "audit_human_review"}
+            ):
+                raise CoreRunError("stage_not_current")
+            now = self._now()
+            event_id = derived_id("EVT-RUN-TERMINATION", request.request_id, fingerprint)
+            event = EventEnvelope.model_validate(
+                {
+                    "schema_version": EventEnvelope.schema_id,
+                    "event_id": event_id,
+                    "run_id": request.run_id,
+                    "event_type": "run_terminated",
+                    "created_at": now,
+                    "actor": "system",
+                    "transaction_id": request.request_id,
+                    "decision": request.decision,
+                    "reason": request.reason_code,
+                    "metadata": {
+                        "terminated_action_effect_kind": action.effect_kind,
+                    },
+                },
+                strict=True,
+            )
+            unit = store.begin(
+                request.run_id,
+                request.request_id,
+                "run_termination",
+                request.expected_store_revision,
+            )
+            unit.append_event(event)
+            receipt = unit.commit(
+                _postcommit_observer=lambda _receipt: verifier.verify(
+                    store, request.run_id
+                )
+            )
+            return CoreRunResult(
+                status="committed",
+                receipt=receipt,
+                primary_record_id=request.request_id,
             )
         finally:
             store.close()

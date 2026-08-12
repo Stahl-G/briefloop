@@ -271,6 +271,7 @@ def handle(args: argparse.Namespace) -> int:
             CoreRunNextAction,
             DeliveryAuthorizationRequest,
             InternalApprovalRequest,
+            RunTerminationRequest,
         )
 
         try:
@@ -362,6 +363,7 @@ def handle(args: argparse.Namespace) -> int:
                         DeliveryAuthorizationRequest.schema_id: (
                             DeliveryAuthorizationRequest
                         ),
+                        RunTerminationRequest.schema_id: RunTerminationRequest,
                     }
                     request_model = request_models.get(action.request_schema_id)
                     if args.human_request is None or request_model is None:
