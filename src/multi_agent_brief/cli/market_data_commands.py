@@ -3,8 +3,9 @@
 Exposes the solar stock weekly market data channel to a workspace:
 ``fetch`` pulls the Yahoo chart API (manual files under
 ``input/market_data/`` take precedence), ``ingest`` records one manual
-file without any network access, and ``project`` re-renders the
-deterministic comparison tables from the latest frozen snapshot.
+JSON/CSV file or one profile-bound XLSX workbook without network access, and
+``project`` re-renders deterministic comparison tables, JSON, and chart
+projections from the latest frozen snapshot.
 """
 
 from __future__ import annotations
@@ -15,7 +16,6 @@ from pathlib import Path
 from typing import Any
 
 from multi_agent_brief.product.market_data_service import (
-    MARKET_DATA_RECORD_INPUT_SCHEMA,
     MarketDataService,
 )
 from multi_agent_brief.sources.market_data import (
@@ -24,6 +24,14 @@ from multi_agent_brief.sources.market_data import (
     YahooMarketDataAdapter,
     load_manual_market_data_file,
     merge_manual_first,
+)
+from multi_agent_brief.sources.market_data_xlsx import (
+    TOYO_WEEKLY_XLSX_PROFILE_ID,
+    parse_toyo_weekly_xlsx,
+)
+from multi_agent_brief.sources.market_data_v2 import (
+    YahooMarketDataV2Adapter,
+    merge_manual_workbook_with_yahoo,
 )
 from multi_agent_brief.sources.solar_stock_plan import (
     SOLAR_STOCK_OVERSEAS_SECURITIES,
@@ -57,13 +65,26 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         help="Logical snapshot date (YYYY-MM-DD); defaults to the latest quote date.",
     )
     fetch_parser.add_argument(
+        "--workbook",
+        help=(
+            "Optional Solar Stock Periodic XLSX workbook. Manual cells win and "
+            "Yahoo supplies missing history, securities, FX, and fields before "
+            "one snapshot is committed."
+        ),
+    )
+    fetch_parser.add_argument(
+        "--profile",
+        choices=[TOYO_WEEKLY_XLSX_PROFILE_ID],
+        help="Required deterministic workbook profile when --workbook is used.",
+    )
+    fetch_parser.add_argument(
         "--json", action="store_true", help="Emit machine-readable JSON."
     )
 
     ingest_parser = actions.add_parser(
         "ingest",
         help=(
-            "Freeze one manual market data file (JSON or CSV) without any "
+            "Freeze one manual market data file (JSON, CSV, or XLSX) without any "
             "network access, then project the comparison tables."
         ),
     )
@@ -71,7 +92,12 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "--workspace", required=True, help="Path to workspace directory."
     )
     ingest_parser.add_argument(
-        "--file", required=True, help="Manual market data file (JSON or CSV)."
+        "--file", required=True, help="Manual market data file (JSON, CSV, or XLSX)."
+    )
+    ingest_parser.add_argument(
+        "--profile",
+        choices=[TOYO_WEEKLY_XLSX_PROFILE_ID],
+        help="Required deterministic workbook profile for XLSX input.",
     )
     ingest_parser.add_argument(
         "--as-of",
@@ -85,8 +111,8 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     project_parser = actions.add_parser(
         "project",
         help=(
-            "Re-render output/intermediate/market_data_tables.md from the "
-            "latest frozen snapshot."
+            "Re-render market-data tables, JSON, deterministic PNG charts, and "
+            "the chart manifest from the latest frozen snapshot."
         ),
     )
     project_parser.add_argument(
@@ -107,9 +133,11 @@ def _print_payload(label: str, payload: dict[str, Any], *, as_json: bool) -> Non
         "as_of_date",
         "security_count",
         "gap_count",
+        "conflict_count",
         "snapshot_fingerprint",
         "receipt_id",
         "path",
+        "projection_path",
         "reason_code",
         "detail",
     ):
@@ -139,7 +167,7 @@ def _snapshot_request_payload(
     ordered_gaps = sorted(gaps, key=lambda item: item.ticker)
     as_of_date = as_of or max(item.as_of for item in ordered)
     return {
-        "schema_version": MARKET_DATA_RECORD_INPUT_SCHEMA,
+        "schema_version": "briefloop.market_data_record_input.v1",
         "as_of_date": as_of_date,
         "securities": [
             item.model_dump(mode="json", exclude_unset=False) for item in ordered
@@ -164,6 +192,26 @@ def _load_manual_inputs(workspace: Path) -> list:
 def _handle_fetch(args: argparse.Namespace, workspace: Path) -> dict[str, object]:
     service = MarketDataService(workspace)
     service.require_recording_allowed()
+    workbook_path = getattr(args, "workbook", None)
+    if workbook_path is not None:
+        if getattr(args, "profile", None) != TOYO_WEEKLY_XLSX_PROFILE_ID:
+            raise MarketDataError("market_data_xlsx_profile_required")
+        parsed = parse_toyo_weekly_xlsx(Path(workbook_path).expanduser().resolve())
+        requested_as_of = getattr(args, "as_of", None)
+        if requested_as_of is not None and requested_as_of != parsed.as_of_date:
+            raise MarketDataError("market_data_xlsx_as_of_mismatch")
+        provider = YahooMarketDataV2Adapter().fetch(
+            _SOLAR_STOCK_UNIVERSE,
+            as_of_date=parsed.as_of_date,
+        )
+        request = merge_manual_workbook_with_yahoo(parsed.record_payload(), provider)
+        # Provider calls happen only after the first read-only preflight.  The
+        # Store service repeats the active-invocation check inside its commit.
+        record = service.record_snapshot(request)
+        projection = service.project_tables()
+        return {"ok": True, "record": record, "projection": projection}
+    if getattr(args, "profile", None) is not None:
+        raise MarketDataError("market_data_profile_not_applicable")
     manuals = _load_manual_inputs(workspace)
     fetched = YahooMarketDataAdapter().fetch_weekly(_SOLAR_STOCK_UNIVERSE)
     merged = merge_manual_first(manuals, fetched)
@@ -178,13 +226,26 @@ def _handle_fetch(args: argparse.Namespace, workspace: Path) -> dict[str, object
 
 
 def _handle_ingest(args: argparse.Namespace, workspace: Path) -> dict[str, object]:
-    manual = load_manual_market_data_file(args.file)
-    request = _snapshot_request_payload(
-        securities=manual.securities,
-        gaps=manual.gaps,
-        as_of=getattr(args, "as_of", None),
-    )
     service = MarketDataService(workspace)
+    service.require_recording_allowed()
+    file_path = Path(args.file).expanduser().resolve()
+    if file_path.suffix.lower() == ".xlsx":
+        if getattr(args, "profile", None) != TOYO_WEEKLY_XLSX_PROFILE_ID:
+            raise MarketDataError("market_data_xlsx_profile_required")
+        parsed = parse_toyo_weekly_xlsx(file_path)
+        requested_as_of = getattr(args, "as_of", None)
+        if requested_as_of is not None and requested_as_of != parsed.as_of_date:
+            raise MarketDataError("market_data_xlsx_as_of_mismatch")
+        request = parsed.record_payload()
+    else:
+        if getattr(args, "profile", None) is not None:
+            raise MarketDataError("market_data_profile_not_applicable")
+        manual = load_manual_market_data_file(file_path)
+        request = _snapshot_request_payload(
+            securities=manual.securities,
+            gaps=manual.gaps,
+            as_of=getattr(args, "as_of", None),
+        )
     record = service.record_snapshot(request)
     projection = service.project_tables()
     return {"ok": True, "record": record, "projection": projection}

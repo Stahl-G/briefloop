@@ -62,6 +62,10 @@ from .lineage import classify_current_audit_promotion, classify_current_lineage
 from .output_contract import measure_reader_body, verify_output_contract
 from .policy import derived_id, transaction_type_for
 from .verifier import CoreRunDomainVerifier, resolve_core_replay
+from multi_agent_brief.sources.solar_stock_plan import (
+    SOLAR_STOCK_OVERSEAS_SECURITIES,
+    SOLAR_STOCK_PRIMARY_SECURITIES,
+)
 
 
 _Clock = Callable[[], datetime]
@@ -270,7 +274,9 @@ class GateEvaluationService:
                 status = (
                     forced_status
                     if forced_status is not None
-                    else ("fail" if blocking else ("warning" if finding_ids else "pass"))
+                    else (
+                        "fail" if blocking else ("warning" if finding_ids else "pass")
+                    )
                 )
                 evaluations.append(
                     GateEvaluationRecord.model_validate(
@@ -352,7 +358,9 @@ class GateEvaluationService:
                     "stage_id": request.stage_id,
                     "artifact_id": report_record.artifact_id,
                     "decision": (
-                        "block" if any(item.blocking for item in evaluations) else "continue"
+                        "block"
+                        if any(item.blocking for item in evaluations)
+                        else "continue"
                     ),
                     "reason": "preloaded deterministic Gate batch evaluated",
                     "metadata": {},
@@ -469,7 +477,9 @@ class GateEvaluationService:
 
     def _open_store(self) -> SQLiteControlStore:
         try:
-            return SQLiteControlStore.open(self.workspace / "briefloop.db", clock=self._clock)
+            return SQLiteControlStore.open(
+                self.workspace / "briefloop.db", clock=self._clock
+            )
         except ControlStoreError as exc:
             raise CoreRunError("control_store_integrity_invalid") from exc
 
@@ -483,8 +493,7 @@ def _one_proposal(
     selected = [
         item
         for item in records
-        if item.proposal_kind == kind
-        and item.artifact_revision == current_revision
+        if item.proposal_kind == kind and item.artifact_revision == current_revision
     ]
     if len(selected) != 1:
         raise CoreRunError("gate_input_binding_invalid")
@@ -556,12 +565,8 @@ def _gate_finding_record(
             "claim_id": raw.get("claim_id"),
             "source_id": raw.get("source_id"),
             "line_number": raw.get("line_number"),
-            "description": str(
-                raw.get("description") or "deterministic Gate finding"
-            ),
-            "recommendation": str(
-                raw.get("recommendation") or "inspect Gate inputs"
-            ),
+            "description": str(raw.get("description") or "deterministic Gate finding"),
+            "recommendation": str(raw.get("recommendation") or "inspect Gate inputs"),
             "category": str(raw.get("category") or "gate_finding"),
             "evidence_ref": str(raw.get("evidence_ref") or finding_id),
             "metadata": raw.get("metadata") or {},
@@ -587,8 +592,7 @@ def _replay_gate_outcomes(
 
     artifact_records = {item.artifact_id: item for item in snapshot.artifacts}
     revisions = {
-        (item.artifact_id, item.revision): item
-        for item in snapshot.artifact_revisions
+        (item.artifact_id, item.revision): item for item in snapshot.artifact_revisions
     }
 
     def current_revision(artifact_id: str) -> ArtifactRevision:
@@ -606,11 +610,9 @@ def _replay_gate_outcomes(
         (item.artifact_id, item.artifact_revision, item.usage)
         for item in artifact_bindings
     ]
-    if (
-        [item.position for item in artifact_bindings]
-        != list(range(len(artifact_bindings)))
-        or len(binding_keys) != len(set(binding_keys))
-    ):
+    if [item.position for item in artifact_bindings] != list(
+        range(len(artifact_bindings))
+    ) or len(binding_keys) != len(set(binding_keys)):
         raise CoreRunError("gate_input_binding_invalid")
     bound_revisions: list[tuple[ArtifactRevision, str]] = []
     for item in artifact_bindings:
@@ -852,6 +854,11 @@ def _replay_gate_outcomes(
             stage_id=stage_id,
             artifact_id=target_artifact,
         )
+    _append_solar_market_data_findings(
+        raw,
+        snapshot=snapshot,
+        binding=binding,
+    )
     if stage_id == "auditor":
         _append_reader_projection_residue_finding(raw, markdown=markdown)
     return _classify_gate_outcomes(
@@ -859,6 +866,139 @@ def _replay_gate_outcomes(
         stage_id=stage_id,
         gate_artifact_id=gate_artifact_id,
     )
+
+
+def _append_solar_market_data_findings(
+    raw: object,
+    *,
+    snapshot: ControlStoreSnapshot,
+    binding: RunContractBinding,
+) -> None:
+    """Make the Solar comparison-table boundary a deterministic Gate input."""
+
+    if binding.run_direction.report_type != "solar_stock_periodic" or not isinstance(
+        raw, dict
+    ):
+        return
+    target = raw.get("material_fact")
+    if not isinstance(target, list) or not all(
+        isinstance(item, dict) for item in target
+    ):
+        return
+    records = snapshot.market_data_snapshots
+    if not records:
+        target.append(
+            _market_data_finding(
+                finding_type="market_data_snapshot_missing",
+                blocking=True,
+                description=(
+                    "Solar Stock Periodic has no Store-frozen structured market-data snapshot."
+                ),
+                recommendation=(
+                    "Record the approved workbook/Yahoo merged snapshot before rerunning Gates."
+                ),
+                evidence_ref="market-data:snapshot:missing",
+                metadata={"snapshot_status": "missing"},
+            )
+        )
+        return
+    latest = max(
+        records,
+        key=lambda item: (
+            item.as_of_date,
+            item.recorded_at,
+            item.market_data_snapshot_id,
+        ),
+    )
+    expected = SOLAR_STOCK_PRIMARY_SECURITIES + SOLAR_STOCK_OVERSEAS_SECURITIES
+    actual = {item.ticker for item in latest.securities}
+    missing = [ticker for ticker in expected if ticker not in actual]
+    window_mismatch = (
+        binding.run_direction.report_window_start is not None
+        and binding.run_direction.report_window_end is not None
+        and (
+            latest.report_window_start != binding.run_direction.report_window_start
+            or latest.report_window_end != binding.run_direction.report_window_end
+        )
+    )
+    blocking_gaps = [item for item in latest.gaps if item.severity == "blocking"]
+    blocking_conflicts = [
+        item for item in latest.conflicts if item.severity == "blocking"
+    ]
+    if missing or window_mismatch or blocking_gaps or blocking_conflicts:
+        target.append(
+            _market_data_finding(
+                finding_type="market_data_snapshot_incomplete",
+                blocking=True,
+                description=(
+                    "The frozen Solar market-data snapshot cannot populate the required "
+                    "11-security comparison surface."
+                ),
+                recommendation=(
+                    "Resolve required price-series gaps or blocking conflicts, record a new "
+                    "append-only snapshot, and rerun Gates."
+                ),
+                evidence_ref=f"market-data:{latest.market_data_snapshot_id}",
+                metadata={
+                    "market_data_snapshot_id": latest.market_data_snapshot_id,
+                    "snapshot_fingerprint": latest.snapshot_fingerprint,
+                    "missing_tickers": missing,
+                    "window_mismatch": window_mismatch,
+                    "blocking_gap_ids": [item.gap_id for item in blocking_gaps],
+                    "blocking_conflict_ids": [
+                        item.conflict_id for item in blocking_conflicts
+                    ],
+                },
+            )
+        )
+    warnings = [item for item in latest.gaps if item.severity == "warning"]
+    warnings.extend(item for item in latest.conflicts if item.severity == "warning")
+    if warnings:
+        target.append(
+            _market_data_finding(
+                finding_type="market_data_snapshot_disclosures_required",
+                blocking=False,
+                description=(
+                    "The frozen Solar market-data snapshot contains visible optional-field, "
+                    "event-source, or manual/provider differences."
+                ),
+                recommendation=(
+                    "Keep these unavailable fields and conflicts visible in the reader projection."
+                ),
+                evidence_ref=f"market-data:{latest.market_data_snapshot_id}:warnings",
+                metadata={
+                    "market_data_snapshot_id": latest.market_data_snapshot_id,
+                    "warning_ids": sorted(
+                        getattr(item, "gap_id", None) or getattr(item, "conflict_id")
+                        for item in warnings
+                    ),
+                },
+            )
+        )
+
+
+def _market_data_finding(
+    *,
+    finding_type: str,
+    blocking: bool,
+    description: str,
+    recommendation: str,
+    evidence_ref: str,
+    metadata: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "finding_type": finding_type,
+        "severity": "high" if blocking else "medium",
+        "blocking_level": "blocking" if blocking else "warning",
+        "repair_owner": "human-market-data",
+        "stage_id": None,
+        "artifact_id": None,
+        "description": description,
+        "recommendation": recommendation,
+        "category": "structured_market_data",
+        "evidence_ref": evidence_ref,
+        "metadata": metadata,
+    }
 
 
 def _append_output_contract_finding(
@@ -874,7 +1014,9 @@ def _append_output_contract_finding(
     if not isinstance(raw, dict):
         return
     findings = raw.get("final_abstract_quality")
-    if not isinstance(findings, list) or not all(isinstance(item, dict) for item in findings):
+    if not isinstance(findings, list) or not all(
+        isinstance(item, dict) for item in findings
+    ):
         return
     measurement = measure_reader_body(markdown, contract)
     if measurement.in_bounds:
@@ -957,9 +1099,7 @@ def _append_reader_projection_residue_finding(
     residue = detect_reader_residue(reader_markdown, "reader_brief")
     if residue.status == "pass":
         return
-    positive_counts = {
-        key: count for key, count in residue.counts.items() if count > 0
-    }
+    positive_counts = {key: count for key, count in residue.counts.items() if count > 0}
     findings.append(
         _reader_projection_blocking_finding(
             finding_type="reader_projection_residue",
@@ -1125,7 +1265,9 @@ def _claim_ledger(payload: bytes) -> ClaimLedger:
     try:
         data = parse_json_object(payload)
         rows = data.get("claims")
-        if not isinstance(rows, list) or not all(isinstance(item, dict) for item in rows):
+        if not isinstance(rows, list) or not all(
+            isinstance(item, dict) for item in rows
+        ):
             raise IntakeError("scratch_payload_unreadable")
         return ClaimLedger([Claim.from_dict(item) for item in rows])
     except (IntakeError, TypeError, ValueError) as exc:
@@ -1176,9 +1318,8 @@ def _coverage_projection(
         }
         if not matches:
             missing_ledger.append(trace)
-        elif (
-            not reader_facing_mode
-            and not any(item.claim_id in cited for item in matches)
+        elif not reader_facing_mode and not any(
+            item.claim_id in cited for item in matches
         ):
             missing_brief.append(
                 {

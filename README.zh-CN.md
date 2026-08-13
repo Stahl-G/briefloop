@@ -369,10 +369,11 @@ guidance 不提供 evidence，不改变 Claim Ledger、Gate、finalize、deliver
   --runtime codex`，随后使用 `briefloop runtime next`、
   `invocation-start`、`invocation-accept|fail` 和 `apply`
 - Experimental 一次性网页初始化：`briefloop init <path> --web`
-- 尽力而为且受平台能力门禁约束的本地静态只读四 Tab 视图：
+- 尽力而为且受平台能力门禁约束的本地静态只读五 Tab 视图：
   `briefloop quality html --workspace <path>
   [--open]`；Brief 显示 Store 绑定的 `finalized_local` reader，Quality 为确定性
-  投影，LAJ 仅为可选 advisory 且 NOT MEASURED，Improvement 因已发布版本没有
+  投影；存在 Solar 行情快照时，Market Data 展示 Store 绑定的比较表与图表；LAJ
+  仅为可选 advisory 且 NOT MEASURED，Improvement 因已发布版本没有
   Store-native writer/lifecycle 而如实显示 unavailable
 - 实验性 offline-shadow LAJ：`briefloop experiments laj shadow-run` 与
   `briefloop experiments laj present`；仅用于公开/合成材料的 advisory 评估及
@@ -384,14 +385,24 @@ guidance 不提供 evidence，不改变 Claim Ledger、Gate、finalize、deliver
   runtime kit，同时冻结 source-discovery authorization；第一次 `briefloop run
   --workspace <workspace> --runtime codex` 才创建 Store。已有 Store 的 kit 缺失或
   被篡改时只会 fail closed，不会由 `runtime next/diagnose` 静默修复。请使用 fresh
-  schema-18 workspace，并通过 Store 冻结的 Tavily
+  schema-19 workspace，并通过 Store 冻结的 Tavily
   路径执行 20 条发现任务；Search 摘要仍不能作为证据，精确重放不会重拨，失败
-  任务会保留为可见状态，而不是伪装成“本周无事件”。`briefloop market-data
+  任务会保留为可见状态，而不是伪装成“本周无事件”。执行行情命令前，应在创建
+  workspace 时把经 Human 确认的 Excel 周期冻结
+  到 RunDirection，例如 `--report-window-start 2026-08-03
+  --report-window-end 2026-08-12`；两个参数必须成对出现，ingest 不会暗改报告窗口。
+  `briefloop market-data
   fetch|ingest|project` 每个 run、每个 as-of 日期只冻结一份 append-only
-  周度行情快照（有界 Yahoo chart API 适配器，单只证券失败隔离为显式缺口；
-  `input/market_data/` 下的手工 JSON/CSV 优先于 API），并投影出带显式
-  `NOT AVAILABLE` 行的股权对比表；缺失数据绝不会用编造的价格或估值倍数
-  填补。没有可信发布日期或超出冻结报告窗口的来源只能作为 background；采集时间
+  周度行情快照。除 JSON/CSV 外，可用
+  `ingest --file <weekly.xlsx> --profile toyo-weekly-v1` 离线读取 TOYO 周报
+  Excel；也可用 `fetch --workbook <weekly.xlsx> --profile toyo-weekly-v1`
+  让经验证的 Excel 单元格优先、Yahoo 只补缺失证券、复权历史、汇率或字段。
+  投影包含两张股票表、事件时间线、七张确定性 PNG 图、JSON read model 与哈希绑定
+  manifest，并显示在本地 HTML 的第五个 Market Data Tab。必需证券缺失和冲突保持
+  可见并可阻断；不会编造价格、汇率、收益率、估值或事件因果。价格、收益率和汇率
+  换算等产品公式由冻结输入重新计算，过期的 Excel 公式缓存不能静默成为权威。
+  Excel 内嵌图表只是 display-only，不是证据，私有 workbook bytes 不进入仓库。
+  没有可信发布日期或超出冻结报告窗口的来源只能作为 background；采集时间
   `retrieved_at` 永远不能把它提升为本周证据，且 background 不能被选为
   `priority=high`。
 
@@ -431,7 +442,7 @@ v0.15.1 prepared target 延续 SQLite-only 切换，并增加实验性的 post-f
   和 human-request JSON payload 必须由 Store 重验，本身不是权威。
 - 打包的 Codex Skill 只执行 Store 派生的精确下一动作与 Receipt-backed
   invocation，不回退到 `operator` 或其他 runtime。
-- loopback init wizard 与本地静态四 Tab HTML 都是只读交互面。Brief 显示经
+- loopback init wizard 与本地静态五 Tab HTML 都是只读交互面。Brief 显示经
   Store 验证的 `finalized_local` reader，Quality 为确定性投影；LAJ 仍为可选
   advisory、效用 NOT MEASURED；Improvement Ledger 因已发布版本没有
   Store-native writer/lifecycle 而如实显示 unavailable。

@@ -40,6 +40,7 @@ Role hard rules:
 - Preserve audit gates while fixing failures.
 - Do not create, edit, or repair semantic_assessment_report.json. Its remaining optional schema/reference validator is Python-owned and has no producer, proposal/status projection, adjudication writer, or Gate effect.
 - Treat model judgment as analysis, not source evidence.
+- For solar_stock_periodic, do not treat market-data tables, charts, or workbook display objects as Claim Ledger evidence. Any causal or event explanation in audited_brief.md still requires a real frozen claim; the deterministic market-data Gate separately checks required securities, window binding, gaps, and conflicts.
 - Do not read claim_drafts.json; audit the frozen claim_ledger.json consumed by Analyst and Editor.
 - Do not create, edit, rewrite, or repair claim_ledger.json.
 - Report audit readiness only. Formatter, finalize, and deterministic gates decide delivery completion.

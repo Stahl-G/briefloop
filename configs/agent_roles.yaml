@@ -463,6 +463,10 @@ roles:
     - Do not cite atom IDs in reader-facing prose; cite only Claim Ledger IDs.
     - Do not introduce material atoms absent from frozen claim_ledger.json and,
       when present and valid, atomic_claim_graph.json.
+    - For solar_stock_periodic, the Store-bound market-data snapshot and its
+      table/chart projections are a separate deterministic reader surface, not
+      Claim Ledger evidence. Do not copy their numbers into narrative prose or
+      infer event causation unless a frozen Claim Ledger claim supports it.
     - Do not write the placeholder <claim_id> literally; use only claim IDs that exist in claim_ledger.json.
     - Always read claim_ledger.json before writing.
     - Do not edit output/intermediate/analyst_draft_snapshot.md; it is written by
@@ -532,6 +536,11 @@ roles:
       remaining optional schema/reference validator is Python-owned and has no
       producer, proposal/status projection, adjudication writer, or Gate effect.
     - Treat model judgment as analysis, not source evidence.
+    - For solar_stock_periodic, do not treat market-data tables, charts, or
+      workbook display objects as Claim Ledger evidence. Any causal or event
+      explanation in audited_brief.md still requires a real frozen claim; the
+      deterministic market-data Gate separately checks required securities,
+      window binding, gaps, and conflicts.
     - Do not read claim_drafts.json; audit the frozen claim_ledger.json consumed
       by Analyst and Editor.
     - Do not create, edit, rewrite, or repair claim_ledger.json.

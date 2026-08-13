@@ -5,6 +5,36 @@ All notable changes to the multi-agent-brief-workflow project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added fresh-only schema 19 and strict `market_data_snapshot.v2` for Solar
+  Stock Periodic, including workbook identity, adjusted-close history,
+  corporate actions, FX, valuation fields, event reactions, gaps, and conflicts.
+- Added profile-bound ingestion for the TOYO weekly XLSX layout. Offline
+  `ingest` keeps verified workbook cells authoritative; workbook-aware `fetch`
+  uses Yahoo only to fill missing securities, history, FX, and fields.
+- Added paired Solar workspace `--report-window-start/--report-window-end`
+  options so a Human can freeze the workbook's exact reporting period before
+  Store initialization.
+- Added Store-bound primary/overseas comparison tables, an event timeline,
+  seven deterministic PNG charts, a JSON read model, a hash-bound chart
+  manifest, and a fifth Market Data tab in the local HTML report.
+
+### Changed
+
+- Solar market-data Gates now block missing required series, window mismatch,
+  blocking workbook gaps, and conflicts. Embedded workbook charts remain
+  display-only, and structured market data does not become Claim Ledger
+  evidence or prove event causation.
+- Product-owned workbook outputs (latest price, period return, USD conversion,
+  and USD market cap) are recomputed from frozen cells and FX inputs; formula
+  caches are comparison-only and mismatches remain visible blockers.
+- The DOCX renderer now embeds bounded local PNG/JPEG Markdown images while
+  rejecting absolute, escaping, SVG, missing, unsupported, and oversized image
+  paths.
+
 ## [0.15.2] — 2026-08-10
 
 ### Removed

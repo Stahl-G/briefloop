@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
-import hashlib
 import json
 from pathlib import Path
 import sqlite3
@@ -12,19 +11,13 @@ import pytest
 from multi_agent_brief.cli.init_wizard import create_demo_workspace
 from multi_agent_brief.cli.main import main as cli_main
 from multi_agent_brief.contracts.v2 import (
-    Approval,
-    ArtifactRecord,
-    ArtifactRevision,
     CoreRunInitializeRequest,
-    Delivery,
-    EventEnvelope,
+    IntegrityCheckRequest,
     Invocation,
+    InvocationStartRequest,
     MarketDataSecurityGapV1,
     MarketDataSecurityV1,
     MarketDataSnapshotV1,
-    RunIdentity,
-    StageState,
-    WorkspaceRunHead,
 )
 from multi_agent_brief.control_store import SQLiteControlStore
 from multi_agent_brief.control_store.serialization import (
@@ -57,9 +50,6 @@ RUN_ID = "RUN-MARKET-DATA-001"
 WORKSPACE_ID = "WS-MARKET-DATA-001"
 NOW = "2026-08-07T09:00:00Z"
 COMMITTED_AT = datetime(2026, 8, 7, 9, 0, tzinfo=timezone.utc)
-BLOB = b"BriefLoop market data channel test artifact.\n"
-BLOB_SHA256 = hashlib.sha256(BLOB).hexdigest()
-
 _WEEK_START = int(datetime(2026, 8, 3, tzinfo=timezone.utc).timestamp())
 _WEEK_END = int(datetime(2026, 8, 10, tzinfo=timezone.utc).timestamp())
 
@@ -185,105 +175,55 @@ def _mock_urlopen(bodies: dict[str, object]):
 
 
 def _bootstrap_workspace(workspace: Path, *, invocation_active: bool = False) -> None:
-    """Create one raw Store workspace with a current run head."""
+    """Create a contract-bound Store; optionally inject an active test invocation."""
 
-    workspace.mkdir(parents=True, exist_ok=True)
-    store = SQLiteControlStore.create(
-        workspace / "briefloop.db",
-        workspace_id=WORKSPACE_ID,
-        clock=lambda: COMMITTED_AT,
+    create_demo_workspace(workspace)
+    _initialize_core_run(workspace)
+    if not invocation_active:
+        return
+    service = CoreRunService(workspace, clock=lambda: COMMITTED_AT)
+    doctor = service.doctor_check(
+        IntegrityCheckRequest.model_validate(
+            {
+                "schema_version": IntegrityCheckRequest.schema_id,
+                "request_id": "REQ-MARKET-DATA-ACTIVE-DOCTOR",
+                "run_id": RUN_ID,
+                "expected_store_revision": 1,
+            },
+            strict=True,
+        )
     )
-
-    def record(model_type, **values):
-        return model_type.model_validate(
-            {"schema_version": model_type.schema_id, **values}
+    assert doctor.status == "committed"
+    started = service.start_invocation(
+        InvocationStartRequest.model_validate(
+            {
+                "schema_version": InvocationStartRequest.schema_id,
+                "request_id": "REQ-MARKET-DATA-ACTIVE-INVOCATION",
+                "run_id": RUN_ID,
+                "stage_id": "source-discovery",
+                "role_id": "source-planner",
+                "runtime": "operator",
+                "expected_store_revision": 2,
+            },
+            strict=True,
         )
-
-    try:
-        unit = store.begin(RUN_ID, "TX-MARKET-DATA-BOOTSTRAP", "bootstrap", 0)
-        unit.put_run(
-            record(
-                RunIdentity,
-                run_id=RUN_ID,
-                workspace_id=WORKSPACE_ID,
-                runtime="operator",
-                created_at=NOW,
-            )
-        )
-        unit.put_workspace_run_head(
-            record(
-                WorkspaceRunHead,
-                workspace_id=WORKSPACE_ID,
-                current_run_id=RUN_ID,
-                updated_at=NOW,
-            )
-        )
-        unit.put_stage_state(
-            record(
-                StageState,
-                run_id=RUN_ID,
-                stage_id="scout",
-                status="ready",
-                revision=1,
-                updated_at=NOW,
-            )
-        )
-        unit.put_invocation(
-            record(
-                Invocation,
-                invocation_id="INV-MARKET-DATA-001",
-                run_id=RUN_ID,
-                role_id="scout",
-                runtime="operator",
-                status="active" if invocation_active else "completed",
-                started_at=NOW,
-                completed_at=None if invocation_active else NOW,
-            )
-        )
-        unit.put_artifact(
-            record(
-                ArtifactRecord,
-                run_id=RUN_ID,
-                artifact_id="brief",
-                current_revision=1,
-                status="valid",
-                required=True,
-                path=f"output/artifacts/{BLOB_SHA256}/brief.md",
-                format="markdown",
-            )
-        )
-        unit.put_artifact_revision(
-            record(
-                ArtifactRevision,
-                run_id=RUN_ID,
-                artifact_id="brief",
-                revision=1,
-                path=f"output/artifacts/{BLOB_SHA256}/brief.md",
-                sha256=BLOB_SHA256,
-                size_bytes=len(BLOB),
-                frozen=True,
-                producer_kind="workflow_stage",
-                producer_id="scout",
-                created_at=NOW,
-            ),
-            BLOB,
-        )
-        unit.append_event(
-            record(
-                EventEnvelope,
-                event_id="EVT-MARKET-DATA-BOOTSTRAP",
-                run_id=RUN_ID,
-                event_type="run_initialized",
-                created_at=NOW,
-                actor="cli",
-                transaction_id="TX-MARKET-DATA-BOOTSTRAP",
-                decision="initialized",
-                reason="Market data test bootstrap.",
-            )
-        )
-        unit.commit()
-    finally:
-        store.close()
+    )
+    assert started.status == "committed"
+    invocation = Invocation.model_validate(
+        {
+            "schema_version": Invocation.schema_id,
+            "invocation_id": started.primary_record_id,
+            "run_id": RUN_ID,
+            "role_id": "source-planner",
+            "runtime": "operator",
+            "status": "active",
+            "started_at": NOW,
+            "completed_at": None,
+            "failure_reason": None,
+        },
+        strict=True,
+    )
+    assert invocation.status == "active"
 
 
 def _record_request(*, as_of: str = "2026-08-10", **security_overrides):
@@ -319,6 +259,12 @@ def _initialize_core_run(workspace: Path) -> None:
         input_governance_required=False,
         workspace_config_sha256=read_workspace_file(workspace, "config.yaml").sha256,
         sources_config_sha256=read_workspace_file(workspace, "sources.yaml").sha256,
+    )
+    request["run_direction"].update(
+        report_type="solar_stock_periodic",
+        report_date="2026-08-10",
+        report_window_start="2026-08-03",
+        report_window_end="2026-08-10",
     )
     result = service.initialize(
         CoreRunInitializeRequest.model_validate(
@@ -602,6 +548,27 @@ def test_record_replay_and_as_of_conflict(tmp_path: Path) -> None:
         assert len(store.load_snapshot(RUN_ID).market_data_snapshots) == 1
 
 
+def test_record_rejects_window_drift_before_store_write(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    _bootstrap_workspace(workspace)
+    service = MarketDataService(workspace)
+    command = _record_request()
+    # V1 input is upgraded against RunDirection, so exercise strict V2 through
+    # a valid request projection and then drift only its frozen window.
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        direction = store.load_snapshot(RUN_ID).run_contract_bindings[0].run_direction
+    from multi_agent_brief.product.market_data_service import _upgrade_v1
+
+    typed = service._validate(command)
+    upgraded = _upgrade_v1(typed, direction).model_dump(mode="json")
+    upgraded["report_window_start"] = "2026-08-02"
+
+    with pytest.raises(MarketDataError, match="market_data_snapshot_window_invalid"):
+        service.record_snapshot(upgraded)
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        assert store.load_snapshot(RUN_ID).market_data_snapshots == ()
+
+
 def test_record_rejected_while_invocation_active(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     _bootstrap_workspace(workspace, invocation_active=True)
@@ -635,14 +602,7 @@ def test_snapshots_are_append_only(tmp_path: Path) -> None:
             connection.execute("DELETE FROM market_data_snapshots")
         with pytest.raises(sqlite3.IntegrityError):
             connection.execute(
-                "INSERT INTO market_data_snapshots("
-                "run_id, market_data_snapshot_id, schema_version, as_of_date,"
-                " security_count, provider_id, snapshot_fingerprint,"
-                " accepted_transaction_id, recorded_at, payload_json)"
-                " SELECT run_id, 'MARKET-DATA-SNAPSHOT-COPY', schema_version,"
-                " as_of_date, security_count, provider_id, snapshot_fingerprint,"
-                " accepted_transaction_id, recorded_at, payload_json"
-                " FROM market_data_snapshots"
+                "INSERT INTO market_data_snapshots SELECT * FROM market_data_snapshots"
             )
     finally:
         connection.close()
@@ -690,7 +650,10 @@ def test_tampered_snapshot_graph_fails_closed(tmp_path: Path) -> None:
     with pytest.raises(Exception) as excinfo:
         with SQLiteControlStore.open(workspace / "briefloop.db") as store:
             store.load_snapshot(RUN_ID)
-    assert "market_data_snapshot_graph_invalid" in str(excinfo.value)
+    assert str(excinfo.value) in {
+        "market_data_snapshot_graph_invalid",
+        "stored_payload_invalid",
+    }
 
 
 def test_recording_survives_full_core_run_verification(tmp_path: Path) -> None:
@@ -703,7 +666,7 @@ def test_recording_survives_full_core_run_verification(tmp_path: Path) -> None:
         verified = CoreRunDomainVerifier().verify(store, RUN_ID)
     assert len(verified.snapshot.market_data_snapshots) == 1
     record = verified.snapshot.market_data_snapshots[0]
-    assert record.provider_id == "yahoo_finance_chart"
+    assert record.provider_ids == ["legacy_v1_upgrade"]
     event = next(
         item
         for item in verified.snapshot.events
@@ -728,10 +691,10 @@ def test_projection_renders_both_tables_with_not_available_rows(
     text = (workspace / MARKET_DATA_TABLES_PATH).read_text(encoding="utf-8")
     assert "## Primary Equity Comparison" in text
     assert "## Overseas Equity Comparison" in text
-    assert "| TOYO | NasdaqCM | USD | 2026-08-10 | 10.62 | +2.31 |" in text
+    assert "| TOYO | NasdaqCM | USD | 10.62 | 2.31 |" in text
     dq_row = next(line for line in text.splitlines() if line.startswith("| DQ |"))
-    assert dq_row.count("NOT AVAILABLE") == 8
-    assert "- DQ: transport_unavailable" in text
+    assert dq_row.count("NOT AVAILABLE") == 10
+    assert "- [blocking] DQ: transport_unavailable" in text
     header = text.splitlines()[1]
     assert "snapshot_fingerprint" in text and header.startswith("run_id:")
 
@@ -744,20 +707,27 @@ def test_projection_requires_a_frozen_snapshot(tmp_path: Path) -> None:
     assert str(excinfo.value) == "market_data_snapshot_unavailable"
 
 
-def test_render_covers_the_full_solar_universe() -> None:
+def test_render_covers_the_full_solar_universe(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    _bootstrap_workspace(workspace)
     securities = [
         _security_payload(ticker=ticker, trailing_pe=18.5)
         for ticker in sorted(
             SOLAR_STOCK_PRIMARY_SECURITIES + SOLAR_STOCK_OVERSEAS_SECURITIES
         )
     ]
-    snapshot = _snapshot(
-        securities=securities,
-        security_count=len(securities),
-        gaps=[],
+    service = MarketDataService(workspace)
+    service.record_snapshot(
+        {
+            "schema_version": "briefloop.market_data_record_input.v1",
+            "as_of_date": "2026-08-10",
+            "securities": securities,
+            "gaps": [],
+        }
     )
+    snapshot = service.latest_snapshot()
     text = render_market_data_tables(snapshot)
-    assert "| NOT AVAILABLE |" not in text
+    assert len(snapshot.securities) == 11
     for ticker in SOLAR_STOCK_PRIMARY_SECURITIES:
         assert f"| {ticker} |" in text
     assert "- none" in text
@@ -863,9 +833,12 @@ def test_cli_fetch_merges_manual_first_and_never_fabricates(
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         record = store.load_snapshot(RUN_ID).market_data_snapshots[0]
     by_ticker = {item.ticker: item for item in record.securities}
-    assert by_ticker["DQ"].data_origin == "manual_input"
-    assert by_ticker["DQ"].week_close == 2.34
-    assert by_ticker["TOYO"].data_origin == "yahoo_chart_api"
+    dq_close = next(
+        item for item in by_ticker["DQ"].fields if item.field_id == "latest_close_local"
+    )
+    assert by_ticker["DQ"].price_series[0].data_origin == "manual_json"
+    assert dq_close.value_number == 2.34
+    assert by_ticker["TOYO"].price_series[0].data_origin == "yahoo_chart_api"
     assert {gap.ticker for gap in record.gaps} == set(SOLAR_STOCK_OVERSEAS_SECURITIES)
 
 

@@ -1158,8 +1158,115 @@ button { font-family: inherit; cursor: pointer; border: none; background: none; 
     overflow-wrap: anywhere;
 }
 
+/* Structured Solar Stock Periodic market-data projection. */
+.market-reader-sheet {
+    max-width: 1320px;
+}
+.market-meta {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin: 18px 0 24px;
+}
+.market-meta-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 13px 15px;
+    border: 1px solid var(--bl-line-soft);
+    border-radius: var(--bl-radius-sm);
+    background: var(--bl-surface);
+}
+.market-meta-item strong {
+    overflow-wrap: anywhere;
+}
+.market-section {
+    margin-top: 26px;
+}
+.market-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--bl-line-soft);
+    border-radius: var(--bl-radius-sm);
+}
+.market-table {
+    width: 100%;
+    min-width: 920px;
+    border-collapse: collapse;
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+}
+.market-table th,
+.market-table td {
+    padding: 10px 11px;
+    border-bottom: 1px solid var(--bl-line-soft);
+    text-align: right;
+    white-space: nowrap;
+}
+.market-table thead th,
+.market-table tr:first-child th {
+    color: var(--bl-muted);
+    background: var(--bl-surface);
+    font: 10.5px/1.4 var(--bl-font-mono);
+    letter-spacing: 0.025em;
+}
+.market-table th:first-child,
+.market-table td:first-child,
+.market-table td:nth-child(3) {
+    text-align: left;
+}
+.market-table tr:last-child th,
+.market-table tr:last-child td {
+    border-bottom: 0;
+}
+.market-row-missing {
+    color: var(--bl-faint);
+    background: repeating-linear-gradient(
+        -45deg,
+        var(--bl-paper),
+        var(--bl-paper) 6px,
+        var(--bl-surface) 6px,
+        var(--bl-surface) 12px
+    );
+}
+.market-chart-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+    margin-top: 14px;
+}
+.market-chart-card {
+    margin: 0;
+    padding: 14px;
+    border: 1px solid var(--bl-line-soft);
+    border-radius: var(--bl-radius-sm);
+    background: white;
+}
+.market-chart-card figcaption {
+    margin-bottom: 10px;
+    color: var(--bl-ink);
+    font-weight: 650;
+}
+.market-chart-svg {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+.market-gap-list {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding-left: 22px;
+    color: var(--bl-ink-soft);
+}
+.market-gap-blocking {
+    color: var(--sem-warn);
+    font-weight: 600;
+}
+
 @media (max-width: 720px) {
     .disclosure-grid,
-    .reader-review-fields { grid-template-columns: 1fr; }
+    .reader-review-fields,
+    .market-meta,
+    .market-chart-grid { grid-template-columns: 1fr; }
     .result-option { align-items: flex-start; flex-direction: column; }
 }

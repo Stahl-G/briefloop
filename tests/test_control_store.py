@@ -3199,6 +3199,9 @@ def test_only_dormant_v2_modules_import_control_store() -> None:
         # The market data service is the sole snapshot writer for the
         # append-only market_data_snapshots authority surface.
         "product/market_data_service.py",
+        # The companion market-data read model opens only the current Store
+        # head and projects the latest append-only snapshot for reader output.
+        "product/market_data_read_model.py",
         # The review session launcher reads only the frozen Store head.
         "product/review_session/launcher.py",
         "runtime_host_v2/codex.py",

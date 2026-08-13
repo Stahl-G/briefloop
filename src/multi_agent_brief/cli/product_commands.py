@@ -9,7 +9,7 @@ import json
 import shutil
 import tempfile
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -135,6 +135,20 @@ def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
             "External API backend for this developer workspace shortcut. "
             "Tavily requires `briefloop init --web`, conversational "
             "onboarding, or the solar_stock_periodic ReportPack."
+        ),
+    )
+    parser.add_argument(
+        "--report-window-start",
+        help=(
+            "Explicit YYYY-MM-DD report-window start. Solar Stock Periodic "
+            "accepts this only together with --report-window-end."
+        ),
+    )
+    parser.add_argument(
+        "--report-window-end",
+        help=(
+            "Explicit YYYY-MM-DD report-window end/report date. Solar Stock "
+            "Periodic accepts windows from 2 through 31 calendar days."
         ),
     )
 
@@ -267,7 +281,7 @@ def register_quality(subparsers: argparse._SubParsersAction) -> None:
     )
 
     html_help = (
-        "Write a local, static, read-only four-tab view: verified "
+        "Write a local, static, read-only five-tab view: verified "
         "local-finalized Brief, deterministic Quality, optional advisory "
         "LAJ (NOT MEASURED), and Store-native Human guidance state whose "
         "reuse requires an explicit successor-start opt-in."
@@ -1226,6 +1240,27 @@ def _create_report_pack_workspace(
         pack.report_type == "management_monthly" and language == "en-US"
     )
     solar_stock_direction = pack.report_type == "solar_stock_periodic"
+    window_start_text = str(getattr(args, "report_window_start", "") or "").strip()
+    window_end_text = str(getattr(args, "report_window_end", "") or "").strip()
+    if bool(window_start_text) != bool(window_end_text):
+        raise ValueError(
+            "--report-window-start and --report-window-end must be supplied together"
+        )
+    explicit_window: tuple[date, date] | None = None
+    if window_start_text:
+        if not solar_stock_direction:
+            raise ValueError(
+                "explicit report-window flags are supported only by solar-stock-periodic"
+            )
+        try:
+            window_start = date.fromisoformat(window_start_text)
+            window_end = date.fromisoformat(window_end_text)
+        except ValueError as exc:
+            raise ValueError("report window must use valid YYYY-MM-DD dates") from exc
+        span_days = (window_end - window_start).days
+        if span_days < 1 or span_days > 30:
+            raise ValueError("solar report window must span 2 through 31 calendar days")
+        explicit_window = (window_start, window_end)
     focus_areas = (
         [
             "TOYO Solar",
@@ -1273,7 +1308,11 @@ def _create_report_pack_workspace(
             "material non-public information",
         ],
         cadence=cadence,
-        max_source_age_days=7 if solar_stock_direction else 14,
+        max_source_age_days=(
+            (explicit_window[1] - explicit_window[0]).days
+            if explicit_window is not None
+            else (7 if solar_stock_direction else 14)
+        ),
         selector_max_items=PRODUCT_WORKSPACE_SELECTOR_MAX_ITEMS,
         output_formats=[str(item) for item in outputs],
         source_profile="conservative",
@@ -1337,12 +1376,21 @@ def _create_report_pack_workspace(
                 strict=True,
             )
         )
-    create_workspace(
-        target,
-        profile,
-        force=bool(getattr(args, "force", False)),
-        source_discovery_authorization=discovery_authorization,
-    )
+    if explicit_window is not None:
+        create_workspace(
+            target,
+            profile,
+            force=bool(getattr(args, "force", False)),
+            source_discovery_authorization=discovery_authorization,
+            report_date_factory=lambda: explicit_window[1],
+        )
+    else:
+        create_workspace(
+            target,
+            profile,
+            force=bool(getattr(args, "force", False)),
+            source_discovery_authorization=discovery_authorization,
+        )
     spec_path.write_text(
         yaml.safe_dump(spec, sort_keys=False, allow_unicode=True),
         encoding="utf-8",

@@ -61,7 +61,7 @@ from multi_agent_brief.contracts.v2 import (
     RunSourceDiscoveryAuthorization,
     RuntimeSourceSearchPlanV2,
     TavilyAcquisitionBundleRecordV2,
-    MarketDataSnapshotV1,
+    MarketDataSnapshotV2,
     RunIdentity,
     RunGuidanceSelectionDecisionRecord,
     RunGuidanceSnapshotItemRecord,
@@ -163,7 +163,7 @@ class ControlUnitOfWork:
         self._tavily_acquisition_bundle_records: dict[
             str, TavilyAcquisitionBundleRecordV2
         ] = {}
-        self._market_data_snapshots: dict[str, MarketDataSnapshotV1] = {}
+        self._market_data_snapshots: dict[str, MarketDataSnapshotV2] = {}
         self._owned_artifact_submissions: dict[str, OwnedArtifactSubmissionRecord] = {}
         self._stage_transitions: dict[str, StageTransitionRecord] = {}
         self._stage_artifact_bindings: dict[tuple[str, int], StageArtifactBinding] = {}
@@ -739,8 +739,8 @@ class ControlUnitOfWork:
             snapshot,
         )
 
-    def put_market_data_snapshot(self, record: MarketDataSnapshotV1) -> None:
-        snapshot = self._snapshot_record(record, MarketDataSnapshotV1)
+    def put_market_data_snapshot(self, record: MarketDataSnapshotV2) -> None:
+        snapshot = self._snapshot_record(record, MarketDataSnapshotV2)
         self._require_run(snapshot)
         self._put_unique(
             self._market_data_snapshots,

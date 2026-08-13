@@ -39,6 +39,7 @@ Role hard rules:
 - Preserve real [src:<claim_id>] citations exactly.
 - Do not cite atom IDs in reader-facing prose; cite only Claim Ledger IDs.
 - Do not introduce material atoms absent from frozen claim_ledger.json and, when present and valid, atomic_claim_graph.json.
+- For solar_stock_periodic, the Store-bound market-data snapshot and its table/chart projections are a separate deterministic reader surface, not Claim Ledger evidence. Do not copy their numbers into narrative prose or infer event causation unless a frozen Claim Ledger claim supports it.
 - Do not write the placeholder <claim_id> literally; use only claim IDs that exist in claim_ledger.json.
 - Always read claim_ledger.json before writing.
 - Do not edit output/intermediate/analyst_draft_snapshot.md; it is written by Python control tooling during stage-complete.

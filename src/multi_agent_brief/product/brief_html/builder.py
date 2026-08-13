@@ -23,6 +23,11 @@ from multi_agent_brief.product.post_final_assessment_projection import (
     build_post_final_assessment_projection,
     build_successor_start_projection,
 )
+from multi_agent_brief.product.market_data_read_model import (
+    MarketDataReadModelError,
+    load_latest_market_data_snapshot,
+    market_data_projection,
+)
 from multi_agent_brief.runtime_host_v2.projections import (
     build_local_run_presentation,
     build_quality_projection_from_local_run,
@@ -34,7 +39,7 @@ from multi_agent_brief.semantic_evaluator.reader import (
     load_laj_reader_view,
 )
 
-BRIEF_PAGES_DATA_SCHEMA = "briefloop.brief_pages.data.v2"
+BRIEF_PAGES_DATA_SCHEMA = "briefloop.brief_pages.data.v3"
 BRIEF_PAGES_BOUNDARY = (
     "Read-only projection. No Gate, approval, delivery, repair, or runtime "
     "authority. LAJ surfaces are Experimental advisory; no finding is neutral "
@@ -60,7 +65,7 @@ READER_REVIEW_ZERO_FINDING_DISCLAIMER = (
 
 
 class BriefPagesError(ValueError):
-    """Raised when the three-page data contract cannot be built."""
+    """Raised when the five-tab data contract cannot be built."""
 
 
 def _utc_now() -> str:
@@ -474,7 +479,7 @@ def build_brief_pages_data(
     assessment_result_fingerprint: str | None = None,
     generated_at: str | None = None,
 ) -> dict[str, Any]:
-    """Build the full three-page data contract from Store/LAJ sources only."""
+    """Build the full five-tab data contract from Store/read-model sources."""
 
     root = Path(workspace).expanduser().resolve()
     try:
@@ -487,6 +492,27 @@ def build_brief_pages_data(
         assessment_result_fingerprint=assessment_result_fingerprint,
     )
     improvement = _improvement_page(local, qualified)
+    try:
+        market_snapshot = load_latest_market_data_snapshot(root)
+    except MarketDataReadModelError as exc:
+        if str(exc) != "market_data_snapshot_unavailable":
+            raise BriefPagesError("control_store_integrity_invalid") from exc
+        market_data = {
+            "status": "unavailable",
+            "reason_code": "market_data_snapshot_unavailable",
+            "boundary": "store_projection_only_no_price_causation",
+        }
+    else:
+        market_data = {
+            "status": "available",
+            "reason_code": None,
+            "boundary": (
+                "Store-bound structured market observations. Manual fields win; "
+                "missing values and conflicts remain visible. Price co-movement "
+                "does not prove event causation."
+            ),
+            **market_data_projection(market_snapshot),
+        }
     return {
         "schema_version": BRIEF_PAGES_DATA_SCHEMA,
         "generated_at": generated_at or _utc_now(),
@@ -508,6 +534,7 @@ def build_brief_pages_data(
             "completion_target": local.completion_target,
         },
         "brief": _brief_page(local),
+        "market_data": market_data,
         "quality": _quality_page(local),
         "semantic": _semantic_page(
             local,

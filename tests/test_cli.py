@@ -209,7 +209,7 @@ def test_quality_html_help_states_the_truthful_four_tab_boundary(capsys):
     assert exc.value.code == 0
     output = capsys.readouterr().out
     normalized = " ".join(output.split())
-    assert "local, static, read-only four-tab view" in normalized
+    assert "local, static, read-only five-tab view" in normalized
     assert "local-finalized Brief" in normalized
     assert "deterministic Quality" in normalized
     assert "optional advisory LAJ (NOT MEASURED)" in normalized
@@ -821,7 +821,6 @@ def test_cli_init_rejects_initial_news_backfill_without_llm_decide(tmp_path, cap
         in capsys.readouterr().out
     )
     assert not (workspace / "sources.yaml").exists()
-
 
 
 def test_cli_version(capsys):

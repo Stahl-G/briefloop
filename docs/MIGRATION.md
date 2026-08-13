@@ -54,6 +54,11 @@ This page explains the public architecture migration from older Python-pipeline 
   place. `solar-stock-periodic` must be initialized in a new schema-18
   workspace; missing market-data snapshots remain missing rather than being
   filled with invented prices or valuation multiples.
+- Schema 19 replaces the fresh-only market-data v1 table with the strict
+  `briefloop.market_data_snapshot.v2` authority: workbook identity, adjusted
+  history, corporate actions, FX, valuation fields, events, gaps, and conflicts.
+  Schema-18 workspaces are not upgraded or dual-read. Create a fresh schema-19
+  workspace before ingesting a profile-bound XLSX workbook.
 - Legacy Improvement JSON/JSONL remains inert. Experimental post-final review
   supports multiple independently Human-authorized append-only assessments on
   one finalized lineage, explicit result selection, Human accept/reject/defer,

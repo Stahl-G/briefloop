@@ -622,7 +622,7 @@ def test_actionable_canonical_session_requires_token_origin_and_csrf(
         token, session_id, csrf, port = _action_credentials(launched.url)
         page_status, headers, body = _request(port, "/index.html")
         assert page_status == 200
-        assert b"briefloop.brief_pages.data.v2" in body
+        assert b"briefloop.brief_pages.data.v3" in body
         assert headers["Content-Security-Policy"] != CONTENT_SECURITY_POLICY
         assert "'unsafe-inline'" not in headers["Content-Security-Policy"]
         path = f"/api/v1/command?session_id={session_id}"
