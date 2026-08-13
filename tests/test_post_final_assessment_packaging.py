@@ -181,7 +181,7 @@ elif mode == "wheel":
         from urllib.request import urlopen
 
         with urlopen(launched.url.split("#", 1)[0], timeout=5) as response:
-            if response.status != 200 or b"briefloop.brief_pages.data.v2" not in response.read():
+            if response.status != 200 or b"briefloop.brief_pages.data.v3" not in response.read():
                 raise RuntimeError("wheel actionable page unavailable")
     finally:
         launched.server.close()
@@ -554,6 +554,13 @@ def test_source_and_non_editable_wheel_replay_the_same_pf_laj_result(
         )
         assert (
             "multi_agent_brief/control_store/migrations/0012.sql" in archive.namelist()
+        )
+        assert (
+            "multi_agent_brief/control_store/migrations/0019.sql" in archive.namelist()
+        )
+        assert "multi_agent_brief/sources/market_data_xlsx.py" in archive.namelist()
+        assert (
+            "multi_agent_brief/product/market_data_read_model.py" in archive.namelist()
         )
 
     script = tmp_path / "pf_laj_wheel_probe.py"

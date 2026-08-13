@@ -127,7 +127,7 @@ the current Store action—not this list—decides what is next.
 
 ### 3. Solar Stock Periodic
 
-Create a fresh schema18 workspace with:
+Create a fresh schema19 workspace with:
 
 ```bash
 briefloop new solar-stock-periodic <workspace>
@@ -148,11 +148,21 @@ Use the separate market-data channel as needed:
 ```bash
 briefloop market-data fetch --workspace <workspace>
 briefloop market-data ingest --workspace <workspace> --file <json-or-csv>
+briefloop market-data ingest --workspace <workspace> \
+  --file <weekly.xlsx> --profile toyo-weekly-v1
+briefloop market-data fetch --workspace <workspace> \
+  --workbook <weekly.xlsx> --profile toyo-weekly-v1
 briefloop market-data project --workspace <workspace>
 ```
 
-Verified manual values take precedence; Yahoo fills gaps. Conflicts remain
-visible and missing required price series block delivery.
+The XLSX-only `ingest` path is offline. The workbook-aware `fetch` path keeps
+verified manual cells authoritative and uses Yahoo only to fill missing
+securities, adjusted-close history, FX, or fields. Conflicts remain visible;
+missing required price series block delivery. The projection writes comparison
+tables, a JSON read model, seven deterministic PNG charts, and a hash-bound
+chart manifest. An embedded workbook chart is display-only and never evidence.
+Never copy structured market values into causal prose without a separately
+frozen Claim Ledger claim.
 
 ### 4. AI Second Opinion and improvement
 

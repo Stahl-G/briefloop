@@ -419,6 +419,61 @@ def test_new_solar_stock_workspace_accepts_tavily_with_discovery_authorization(
     assert len(sources["web_search"]["search_tasks"]) == 20
 
 
+def test_new_solar_stock_workspace_freezes_explicit_workbook_window(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "solar-stock-workbook-window"
+
+    assert (
+        main(
+            [
+                "new",
+                "solar-stock-periodic",
+                str(workspace),
+                "--report-window-start",
+                "2026-08-03",
+                "--report-window-end",
+                "2026-08-12",
+            ]
+        )
+        == 0
+    )
+
+    capsys.readouterr()
+    config = yaml.safe_load((workspace / "config.yaml").read_text(encoding="utf-8"))
+    direction = config["controlstore_v2"]["run_direction"]
+    assert direction["report_date"] == "2026-08-12"
+    assert direction["report_window_start"] == "2026-08-03"
+    assert direction["report_window_end"] == "2026-08-12"
+    assert direction["max_source_age_days"] == 9
+
+
+@pytest.mark.parametrize(
+    "extra_args",
+    [
+        ["--report-window-start", "2026-08-03"],
+        [
+            "--report-window-start",
+            "2026-08-12",
+            "--report-window-end",
+            "2026-08-03",
+        ],
+    ],
+)
+def test_new_solar_stock_workspace_rejects_invalid_explicit_window(
+    tmp_path: Path,
+    capsys,
+    extra_args: list[str],
+) -> None:
+    workspace = tmp_path / "solar-stock-invalid-window"
+
+    assert main(["new", "solar-stock-periodic", str(workspace), *extra_args]) == 1
+    output = capsys.readouterr().out
+    assert "report window" in output or "must be supplied together" in output
+    assert not workspace.exists()
+
+
 def test_new_solar_tavily_workspace_first_run_freezes_atomic_plan(
     tmp_path: Path,
     capsys,

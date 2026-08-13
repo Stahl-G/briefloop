@@ -3,9 +3,12 @@
 Rendered Output Validation checks DOCX output quality including
 text depth, heading mapping, and bullet rendering.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
+
+import pytest
 
 from multi_agent_brief.audit.final_quality import (
     RenderedOutputAuditAgent,
@@ -78,8 +81,8 @@ class TestRenderedOutputWithRealDocx:
             "It includes multiple sentences with source-backed claims. "
             "The market showed significant movement this week with various factors. "
             "Competitor analysis reveals important trends in the industry. "
-            "Regulatory changes may impact future operations. "
-        * 30)
+            "Regulatory changes may impact future operations. " * 30
+        )
         content = f"# Test Brief\n\n## Section 1\n\n{section_content}\n\n"
         content += f"## Section 2\n\n{section_content}\n\n"
         content += f"## Section 3\n\n{section_content}\n"
@@ -87,6 +90,7 @@ class TestRenderedOutputWithRealDocx:
         docx_path = tmp_path / "output.docx"
 
         from multi_agent_brief.outputs.ib_docx import convert
+
         convert(md_path, docx_path, template="executive_brief")
 
         context = PipelineContext(
@@ -112,6 +116,7 @@ class TestRenderedOutputWithRealDocx:
         docx_path = tmp_path / "output.docx"
 
         from multi_agent_brief.outputs.ib_docx import convert
+
         convert(md_path, docx_path, template="executive_brief")
 
         context = PipelineContext(
@@ -211,3 +216,48 @@ def test_ib_docx_keeps_parenthesized_markdown_link_targets(tmp_path):
     ]
     assert url in hyperlink_targets
     assert "https://example.com/Foo_(bar" not in hyperlink_targets
+
+
+def test_ib_docx_embeds_local_market_chart_and_caption(tmp_path):
+    """A deterministic local PNG projection should become a real Word image."""
+    from docx import Document
+
+    from multi_agent_brief.outputs.ib_docx import convert
+    from multi_agent_brief.product.market_data_charts import _Canvas
+
+    chart_dir = tmp_path / "charts"
+    chart_dir.mkdir()
+    chart_path = chart_dir / "market.png"
+    chart_path.write_bytes(_Canvas(8, 8).png())
+    md_path = tmp_path / "market.md"
+    md_path.write_text(
+        "# Market Brief\n\n![Primary equity performance](charts/market.png)\n",
+        encoding="utf-8",
+    )
+    docx_path = tmp_path / "market.docx"
+
+    convert(md_path, docx_path)
+
+    document = Document(docx_path)
+    assert len(document.inline_shapes) == 1
+    assert any(
+        paragraph.text == "Primary equity performance"
+        for paragraph in document.paragraphs
+    )
+
+
+def test_ib_docx_rejects_image_path_outside_markdown_directory(tmp_path):
+    from multi_agent_brief.outputs.ib_docx import convert
+
+    outside = tmp_path.parent / "outside.png"
+    outside.write_bytes(b"not-an-image")
+    md_path = tmp_path / "market.md"
+    md_path.write_text(
+        "# Market Brief\n\n![Outside](../outside.png)\n", encoding="utf-8"
+    )
+
+    try:
+        with pytest.raises(ValueError, match="inside the report output directory"):
+            convert(md_path, tmp_path / "market.docx")
+    finally:
+        outside.unlink(missing_ok=True)

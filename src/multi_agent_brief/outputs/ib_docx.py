@@ -27,9 +27,9 @@ from docx.oxml import OxmlElement
 
 # ── Color scheme ────────────────────────────────────────────────
 COLORS = {
-    "primary": "003A70",   # deep blue — cover / table header / emphasis
-    "dark": "002147",      # dark navy — section headings / footer / bold
-    "neutral": "58595B",   # medium gray — body text
+    "primary": "003A70",  # deep blue — cover / table header / emphasis
+    "dark": "002147",  # dark navy — section headings / footer / bold
+    "neutral": "58595B",  # medium gray — body text
     "light_bg": "F2F2F2",  # ice gray — alternating table rows / code bg
     "negative": "9B2743",  # burgundy — inline code / risk highlights
     "positive": "2D6A4F",  # forest green — positive signals (reserved)
@@ -42,6 +42,7 @@ DEFAULT_FOOTER = "Generated Brief"
 
 
 # ── XML helpers ─────────────────────────────────────────────────
+
 
 def _hex_to_rgb(hex_str: str) -> RGBColor:
     return RGBColor(*bytes.fromhex(hex_str))
@@ -143,6 +144,7 @@ def _append_hyperlink(paragraph, text: str, url: str, font_name: str):
 
 # ── Document styles ─────────────────────────────────────────────
 
+
 def _setup_document_styles(doc, font_name: str):
     section = doc.sections[0]
     section.page_width = Cm(21)
@@ -187,6 +189,7 @@ _RE_HRULE = re.compile(r"^\s*([-*_])(\s*\1){2,}\s*$")
 _RE_UL = re.compile(r"^(\s*)([-*+])\s+(.+)$")
 _RE_OL = re.compile(r"^(\s*)(\d+)[.)]\s+(.+)$")
 _RE_QUOTE = re.compile(r"^\s*>\s?(.*)$")
+_RE_IMAGE = re.compile(r"^!\[([^\]]*)\]\((?:<([^>]+)>|([^)]+))\)\s*$")
 
 # Chinese-style section headings (common in LLM Chinese reports)
 _RE_CN_H2 = re.compile(r"^[一二三四五六七八九十百千]+[、.．]\s*(.+)$")
@@ -232,7 +235,7 @@ def _is_any_heading(line: str, next_line: str) -> bool:
 def parse_markdown(md_text: str) -> list:
     """Parse Markdown text into a list of blocks.
 
-    Supports: headings, tab/pipe tables, fenced code, blockquotes,
+    Supports: headings, tab/pipe tables, fenced code, blockquotes, local images,
     ordered/unordered lists (with nesting), horizontal rules,
     Chinese-style section headings.
     """
@@ -247,6 +250,16 @@ def parse_markdown(md_text: str) -> list:
 
         # blank line
         if not line.strip():
+            i += 1
+            continue
+
+        # Standalone local image. Remote URLs are deliberately not fetched by
+        # the renderer; deterministic report charts must already exist.
+        m = _RE_IMAGE.match(line.strip())
+        if m:
+            blocks.append(
+                ("image", m.group(1).strip(), (m.group(2) or m.group(3)).strip())
+            )
             i += 1
             continue
 
@@ -331,7 +344,9 @@ def parse_markdown(md_text: str) -> list:
 
         # Table/figure caption
         if re.match(r"^[表图]\s*\d+[：:]\s*.+$", line.strip()):
-            next_real = next((lines[j] for j in range(i + 1, n) if lines[j].strip()), "")
+            next_real = next(
+                (lines[j] for j in range(i + 1, n) if lines[j].strip()), ""
+            )
             if _is_tab_row(next_real) or ("|" in next_real):
                 blocks.append(("caption", line.strip()))
                 i += 1
@@ -356,10 +371,19 @@ def parse_markdown(md_text: str) -> list:
                 m_ul = _RE_UL.match(lines[i])
                 m_ol = _RE_OL.match(lines[i])
                 if m_ul:
-                    items.append(("ul", len(m_ul.group(1).expandtabs(4)), m_ul.group(3)))
+                    items.append(
+                        ("ul", len(m_ul.group(1).expandtabs(4)), m_ul.group(3))
+                    )
                     i += 1
                 elif m_ol:
-                    items.append(("ol", len(m_ol.group(1).expandtabs(4)), m_ol.group(3), int(m_ol.group(2))))
+                    items.append(
+                        (
+                            "ol",
+                            len(m_ol.group(1).expandtabs(4)),
+                            m_ol.group(3),
+                            int(m_ol.group(2)),
+                        )
+                    )
                     i += 1
                 elif lines[i].startswith((" ", "\t")) and lines[i].strip() and items:
                     prev = items[-1]
@@ -386,6 +410,8 @@ def parse_markdown(md_text: str) -> list:
                 break
             if _RE_FENCE.match(l) or _RE_HRULE.match(l):
                 break
+            if _RE_IMAGE.match(l.strip()):
+                break
             if _RE_UL.match(l) or _RE_OL.match(l) or _RE_QUOTE.match(l):
                 break
             if "|" in l and i + 1 < n and _RE_TABLE_SEP.match(lines[i + 1]):
@@ -406,15 +432,15 @@ def parse_markdown(md_text: str) -> list:
 # ── Inline formatting ───────────────────────────────────────────
 
 _INLINE_PATTERN = re.compile(
-    r"(\*\*\*[^*\n]+?\*\*\*"    # ***bold italic***
-    r"|___[^_\n]+?___"          # ___bold italic___
-    r"|\*\*[^*\n]+?\*\*"        # **bold**
-    r"|__[^_\n]+?__"            # __bold__
-    r"|~~[^~\n]+?~~"            # ~~strike~~
-    r"|`[^`\n]+?`"              # `code`
+    r"(\*\*\*[^*\n]+?\*\*\*"  # ***bold italic***
+    r"|___[^_\n]+?___"  # ___bold italic___
+    r"|\*\*[^*\n]+?\*\*"  # **bold**
+    r"|__[^_\n]+?__"  # __bold__
+    r"|~~[^~\n]+?~~"  # ~~strike~~
+    r"|`[^`\n]+?`"  # `code`
     r"|\[[^\]]+\]\((?:<[^>\n]+>|[^)\n]+)\)"  # [text](url) or [text](<url>)
-    r"|<https?://[^>\s]+>"      # <https://example.com>
-    r"|\*[^*\n]+?\*"            # *italic*
+    r"|<https?://[^>\s]+>"  # <https://example.com>
+    r"|\*[^*\n]+?\*"  # *italic*
     r"|(?<!\w)_[^_\n]+?_(?!\w))"  # _italic_
 )
 
@@ -432,7 +458,11 @@ def _unwrap_inline_token(part: str) -> tuple[str, str]:
         return "strike", part[2:-2]
     if part.startswith("`") and part.endswith("`") and len(part) > 2:
         return "code", part[1:-1]
-    if part.startswith("<") and part.endswith(">") and part[1:].startswith(("http://", "https://")):
+    if (
+        part.startswith("<")
+        and part.endswith(">")
+        and part[1:].startswith(("http://", "https://"))
+    ):
         return "link", part[1:-1]
     if part.startswith("[") and part.endswith(")") and "](" in part:
         m_link = re.match(r"\[([^\]]+)\]\((?:<([^>\n]+)>|([^)]+))\)", part)
@@ -519,6 +549,7 @@ def _inline_link_target(part: str) -> str:
 
 
 # ── Block renderers ─────────────────────────────────────────────
+
 
 def _parse_table_row(line: str) -> list[str]:
     line = line.strip()
@@ -675,7 +706,9 @@ def _render_list(doc, items, font_name: str):
             last_kind_at.pop(lvl, None)
 
         if last_kind_at.get(level) != kind:
-            counters[level] = source_number if kind == "ol" and source_number is not None else 1
+            counters[level] = (
+                source_number if kind == "ol" and source_number is not None else 1
+            )
             last_kind_at[level] = kind
 
         if kind == "ol":
@@ -714,6 +747,20 @@ def _render_caption(doc, text: str, font_name: str):
     _set_run_eastasia_font(run, font_name)
 
 
+def _render_image(doc, image_path: Path, alt_text: str, font_name: str):
+    if (
+        not image_path.is_file()
+        or image_path.suffix.lower() not in {".png", ".jpg", ".jpeg"}
+        or image_path.stat().st_size > 16 * 1024 * 1024
+    ):
+        raise ValueError("Markdown image is missing, unsupported, or oversized")
+    doc.add_picture(str(image_path), width=Cm(15.5))
+    paragraph = doc.paragraphs[-1]
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    if alt_text:
+        _render_caption(doc, alt_text, font_name)
+
+
 def _render_code_block(doc, code: str, font_name: str):
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(4)
@@ -745,6 +792,7 @@ def _render_hr(doc):
 
 
 # ── Cover / footer ──────────────────────────────────────────────
+
 
 def _add_cover(doc, title: str, subtitle: str | None, font_name: str):
     p = doc.add_paragraph()
@@ -807,6 +855,7 @@ def _add_footer(doc, footer_text: str | None, font_name: str):
 
 # ── Quality check ───────────────────────────────────────────────
 
+
 def _check_input_quality(md_text: str):
     if "�" in md_text:
         n = md_text.count("�")
@@ -818,6 +867,7 @@ def _check_input_quality(md_text: str):
 
 
 # ── Public API ──────────────────────────────────────────────────
+
 
 def convert(
     md_path: str | Path,
@@ -851,6 +901,7 @@ def convert(
     template_config = None
     if template and template != "default":
         from multi_agent_brief.outputs.templates import get_template
+
         template_config = get_template(template)
 
     if title is None:
@@ -896,6 +947,7 @@ def convert(
         break
 
     blocks = parse_markdown("\n".join(body_lines))
+    markdown_directory = Path(md_path).expanduser().resolve().parent
     skipped_title_block = False
     for block in blocks:
         btype = block[0]
@@ -908,7 +960,10 @@ def convert(
                 level = 1
             doc.add_heading(text, level=min(level, 4))
         elif btype == "paragraph":
-            if not skipped_title_block and _inline_plain_text(block[1].strip()) == title:
+            if (
+                not skipped_title_block
+                and _inline_plain_text(block[1].strip()) == title
+            ):
                 skipped_title_block = True
                 continue
             p = doc.add_paragraph()
@@ -921,13 +976,40 @@ def convert(
             _render_code_block(doc, block[1], font)
         elif btype == "caption":
             _render_caption(doc, block[1], font)
+        elif btype == "image":
+            target = Path(block[2])
+            if target.is_absolute() or target.suffix.lower() == ".svg":
+                raise ValueError("Markdown image must be a relative PNG or JPEG")
+            resolved_target = (markdown_directory / target).resolve()
+            image_root = (
+                markdown_directory.parent
+                if markdown_directory.name == "intermediate"
+                and markdown_directory.parent.name == "output"
+                else markdown_directory
+            )
+            try:
+                resolved_target.relative_to(image_root)
+            except ValueError as exc:
+                raise ValueError(
+                    "Markdown image must remain inside the report output directory"
+                ) from exc
+            _render_image(
+                doc,
+                resolved_target,
+                block[1],
+                font,
+            )
         elif btype == "quote":
             _render_quote(doc, block[1], font)
         elif btype == "hr":
             _render_hr(doc)
 
     # Add disclaimer if template requires it
-    if template_config and template_config.show_disclaimer and template_config.disclaimer_text:
+    if (
+        template_config
+        and template_config.show_disclaimer
+        and template_config.disclaimer_text
+    ):
         doc.add_paragraph()  # spacing
         p = doc.add_paragraph()
         p.paragraph_format.space_before = Pt(12)

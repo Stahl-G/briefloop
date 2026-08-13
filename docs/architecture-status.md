@@ -49,7 +49,7 @@ page describes implemented runtime capability, not a breaking deep rename.
   `checkout_publication_unsupported` stop with zero provider/network access,
   no source promotion, and no later execution, finalization, approval,
   package, or delivery authority.
-- Experimental `solar-stock-periodic` is a schema-18, fresh-only ReportPack for
+- Experimental `solar-stock-periodic` is a schema-19, fresh-only ReportPack for
   a TOYO/global solar capital-markets weekly. Its runtime freezes 20 independent
   Tavily discovery tasks (11 listed companies, 5 event-only entities, and 4
   themes), requests up to 20 advanced Search results per task, permits one
@@ -58,14 +58,15 @@ page describes implemented runtime capability, not a breaking deep rename.
   Search snippets remain discovery-only; task failures and per-URL outcomes are
   retained as evidence, and only successful non-empty Extract content enters
   the Claim Ledger path. The `market-data` CLI channel freezes one append-only
-  snapshot per run and as-of date through a single Store transaction: a
-  bounded, no-redirect Yahoo chart-API adapter isolates each security
-  failure as a value-free gap, manual `input/market_data/` JSON/CSV intake
-  takes precedence through the same contract, and a deterministic projection
-  renders the primary/overseas equity comparison tables to
-  `output/intermediate/market_data_tables.md` with explicit `NOT AVAILABLE`
-  rows. The channel never invents price/valuation fields when a frozen
-  market-data snapshot is absent.
+  snapshot per run and as-of date through a single Store transaction. The
+  strict v2 snapshot accepts manual JSON/CSV or the profile-bound TOYO XLSX
+  layout; workbook cells win and a bounded, no-redirect Yahoo adapter may fill
+  missing adjusted history, FX, securities, or fields. A deterministic
+  projection renders primary/overseas tables, an event timeline, seven PNG
+  charts, a JSON read model, and a hash-bound chart manifest. Required-series
+  gaps and conflicts remain visible and can block. The channel never invents
+  price/valuation fields or causal explanations, and embedded workbook charts
+  are display-only rather than evidence.
 - The workspace-local Codex kit is execution input, not decoration: `run` and
   runtime commands verify its exact config, Skill, reference, and role-file
   inventory against the Store-bound adapter identity.

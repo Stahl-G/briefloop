@@ -1059,6 +1059,321 @@ class MarketDataSnapshotV1(StrictModel):
         return self
 
 
+class MarketDataWorkbookIdentityV2(StrictModel):
+    """Content identity and parser boundary for one manually supplied workbook."""
+
+    source_name: CleanText
+    content_sha256: Sha256
+    content_size_bytes: NonNegativeInt
+    profile_id: Literal["toyo-weekly-v1"]
+    parsed_sheet_names: list[CleanText] = Field(min_length=7, max_length=16)
+    contains_macros: Literal[False]
+    contains_external_links: Literal[False]
+
+    @model_validator(mode="after")
+    def sheets_are_canonical(self) -> "MarketDataWorkbookIdentityV2":
+        if self.parsed_sheet_names != sorted(set(self.parsed_sheet_names)):
+            raise ValueError("workbook sheet identities must be sorted and unique")
+        return self
+
+
+class MarketDataSeriesPointV2(StrictModel):
+    """One exact daily market observation with a stable source locator."""
+
+    date: IsoDate
+    close: Annotated[float, Field(gt=0)]
+    adjusted_close: Optional[Annotated[float, Field(gt=0)]] = None
+    volume: Optional[NonNegativeInt] = None
+    data_origin: Literal[
+        "manual_xlsx",
+        "manual_json",
+        "manual_csv",
+        "yahoo_chart_api",
+    ]
+    source_locator: CleanText
+    source_sha256: Sha256
+
+
+class MarketDataCorporateActionV2(StrictModel):
+    """One provider- or workbook-bound corporate action observation."""
+
+    action_id: ContractId
+    date: IsoDate
+    action_type: Literal["dividend", "split", "capital_gain"]
+    value: Annotated[float, Field(gt=0)]
+    currency: Optional[Annotated[str, StringConstraints(pattern=r"^[A-Z]{3}$")]] = None
+    split_numerator: Optional[Annotated[float, Field(gt=0)]] = None
+    split_denominator: Optional[Annotated[float, Field(gt=0)]] = None
+    data_origin: Literal[
+        "manual_xlsx",
+        "manual_json",
+        "manual_csv",
+        "yahoo_chart_api",
+    ]
+    source_locator: CleanText
+    source_sha256: Sha256
+
+    @model_validator(mode="after")
+    def action_shape_matches_kind(self) -> "MarketDataCorporateActionV2":
+        split_values = (self.split_numerator, self.split_denominator)
+        if self.action_type == "split":
+            if not all(value is not None for value in split_values):
+                raise ValueError("split action requires an exact ratio")
+            if self.currency is not None:
+                raise ValueError("split action cannot carry currency")
+        elif any(value is not None for value in split_values):
+            raise ValueError("non-split action cannot carry a split ratio")
+        return self
+
+
+class MarketDataFieldValueV2(StrictModel):
+    """One independently sourced or derived field in a security row."""
+
+    field_id: ContractId
+    status: Literal["available", "unavailable", "not_meaningful"]
+    value_number: Optional[float] = None
+    value_text: Optional[CleanText] = None
+    unit: CleanText
+    as_of: Optional[IsoDate] = None
+    currency: Optional[Annotated[str, StringConstraints(pattern=r"^[A-Z]{3}$")]] = None
+    data_origin: Literal[
+        "manual_xlsx",
+        "manual_json",
+        "manual_csv",
+        "yahoo_chart_api",
+        "yahoo_quote_summary",
+        "derived",
+    ]
+    derivation: Literal[
+        "direct",
+        "recomputed",
+        "converted",
+        "manual_override",
+        "provider_fill",
+    ]
+    source_locator: CleanText
+    source_sha256: Sha256
+    reason_code: Optional[ContractId] = None
+
+    @model_validator(mode="after")
+    def value_shape_matches_status(self) -> "MarketDataFieldValueV2":
+        present = int(self.value_number is not None) + int(self.value_text is not None)
+        if self.status == "available":
+            if present != 1 or self.reason_code is not None:
+                raise ValueError("available market field requires one exact value")
+        elif present != 0 or self.reason_code is None:
+            raise ValueError("unavailable market field requires a reason and no value")
+        return self
+
+
+class MarketDataSecurityV2(StrictModel):
+    """One security's daily series and per-field provenance."""
+
+    ticker: ContractId
+    display_name: CleanText
+    universe: Literal["primary", "overseas"]
+    exchange: CleanText
+    currency: Annotated[str, StringConstraints(pattern=r"^[A-Z]{3}$")]
+    return_basis: Literal["adjusted_close", "close"]
+    price_series: list[MarketDataSeriesPointV2] = Field(min_length=1, max_length=400)
+    corporate_actions: list[MarketDataCorporateActionV2] = Field(max_length=128)
+    fields: list[MarketDataFieldValueV2] = Field(min_length=1, max_length=40)
+
+    @model_validator(mode="after")
+    def security_rows_are_canonical(self) -> "MarketDataSecurityV2":
+        dates = [item.date for item in self.price_series]
+        if dates != sorted(set(dates)):
+            raise ValueError("market data series must be date-sorted and unique")
+        field_ids = [item.field_id for item in self.fields]
+        if field_ids != sorted(set(field_ids)):
+            raise ValueError("market data fields must be sorted and unique")
+        if self.return_basis == "adjusted_close" and any(
+            item.adjusted_close is None for item in self.price_series
+        ):
+            raise ValueError("adjusted-close return basis requires a complete series")
+        action_keys = [(item.date, item.action_id) for item in self.corporate_actions]
+        if action_keys != sorted(set(action_keys)):
+            raise ValueError("corporate actions must be ordered and unique")
+        return self
+
+
+class MarketDataBenchmarkV2(StrictModel):
+    ticker: ContractId
+    display_name: CleanText
+    currency: Annotated[str, StringConstraints(pattern=r"^[A-Z]{3}$")]
+    return_basis: Literal["adjusted_close", "close"]
+    price_series: list[MarketDataSeriesPointV2] = Field(min_length=2, max_length=400)
+
+    @model_validator(mode="after")
+    def benchmark_series_is_canonical(self) -> "MarketDataBenchmarkV2":
+        dates = [item.date for item in self.price_series]
+        if dates != sorted(set(dates)):
+            raise ValueError("benchmark series must be date-sorted and unique")
+        if self.return_basis == "adjusted_close" and any(
+            item.adjusted_close is None for item in self.price_series
+        ):
+            raise ValueError("adjusted-close benchmark requires a complete series")
+        return self
+
+
+class MarketDataFxRateV2(StrictModel):
+    base_currency: Annotated[str, StringConstraints(pattern=r"^[A-Z]{3}$")]
+    quote_currency: Literal["USD"]
+    units_per_usd: Annotated[float, Field(gt=0)]
+    as_of: IsoDate
+    data_origin: Literal["manual_xlsx", "manual_json", "manual_csv", "yahoo_chart_api"]
+    source_locator: CleanText
+    source_sha256: Sha256
+
+
+class MarketDataEventReactionV2(StrictModel):
+    """One company event and contemporaneous price observations.
+
+    Return fields describe co-movement only. They never encode causal proof.
+    """
+
+    event_id: ContractId
+    ticker: ContractId
+    title: CleanText
+    published_at: IsoDate
+    publication_timing: Literal[
+        "pre_market", "during_market", "after_market", "unknown"
+    ]
+    original_url: Optional[HttpUrlString] = None
+    evidence_status: Literal["claim_eligible", "display_only_source_url_missing"]
+    event_day_return_pct: Optional[float] = None
+    benchmark_event_day_return_pct: Optional[float] = None
+    event_day_excess_return_pct: Optional[float] = None
+    t1_return_pct: Optional[float] = None
+    t5_return_pct: Optional[float] = None
+    event_day_volume: Optional[NonNegativeInt] = None
+    volume_ratio: Optional[Annotated[float, Field(ge=0)]] = None
+    data_origin: Literal["manual_xlsx", "manual_json", "manual_csv", "derived"]
+    source_locator: CleanText
+    source_sha256: Sha256
+
+    @model_validator(mode="after")
+    def evidence_status_matches_url(self) -> "MarketDataEventReactionV2":
+        if (self.original_url is None) != (
+            self.evidence_status == "display_only_source_url_missing"
+        ):
+            raise ValueError("event evidence status does not match original URL")
+        return self
+
+
+class MarketDataGapV2(StrictModel):
+    gap_id: ContractId
+    severity: Literal["warning", "blocking"]
+    category: Literal[
+        "missing_security_series",
+        "field_unavailable",
+        "event_source_url_missing",
+        "workbook_profile_mismatch",
+        "workbook_formula_unresolved",
+        "display_only_chart_underlying_series_missing",
+        "provider_unavailable",
+    ]
+    ticker: Optional[ContractId] = None
+    field_id: Optional[ContractId] = None
+    source_locator: Optional[CleanText] = None
+    reason_code: ContractId
+
+
+class MarketDataConflictV2(StrictModel):
+    conflict_id: ContractId
+    severity: Literal["warning", "blocking"]
+    category: Literal[
+        "manual_provider_value_mismatch",
+        "formula_recompute_mismatch",
+        "duplicate_manual_field",
+    ]
+    ticker: Optional[ContractId] = None
+    field_id: ContractId
+    manual_value: Optional[float] = None
+    provider_value: Optional[float] = None
+    resolution: Literal["manual_wins", "unresolved"]
+    source_locator: CleanText
+
+
+class MarketDataSnapshotV2(StrictModel):
+    """Append-only structured market evidence for Solar Stock Periodic."""
+
+    schema_id = "briefloop.market_data_snapshot.v2"
+
+    schema_version: Literal["briefloop.market_data_snapshot.v2"]
+    market_data_snapshot_id: ContractId
+    run_id: ContractId
+    report_window_start: IsoDate
+    report_window_end: IsoDate
+    as_of_date: IsoDate
+    universe_tickers: list[ContractId] = Field(min_length=1, max_length=20)
+    security_count: Annotated[int, Field(ge=1, le=20)]
+    provider_ids: list[ContractId] = Field(min_length=1, max_length=8)
+    workbook: Optional[MarketDataWorkbookIdentityV2] = None
+    securities: list[MarketDataSecurityV2] = Field(min_length=1, max_length=20)
+    benchmark: Optional[MarketDataBenchmarkV2] = None
+    fx_rates: list[MarketDataFxRateV2] = Field(max_length=16)
+    events: list[MarketDataEventReactionV2] = Field(max_length=128)
+    gaps: list[MarketDataGapV2] = Field(max_length=128)
+    conflicts: list[MarketDataConflictV2] = Field(max_length=128)
+    derivation_version: ContractId
+    record_event_id: ContractId
+    accepted_transaction_id: ContractId
+    recorded_at: IsoDateTime
+    snapshot_fingerprint: Sha256
+
+    @model_validator(mode="after")
+    def snapshot_v2_identity_is_exact(self) -> "MarketDataSnapshotV2":
+        if self.report_window_end < self.report_window_start:
+            raise ValueError("market data report window is inverted")
+        if not (self.report_window_start <= self.as_of_date <= self.report_window_end):
+            raise ValueError("market data as-of date is outside the report window")
+        if self.universe_tickers != list(dict.fromkeys(self.universe_tickers)):
+            raise ValueError("market data universe must be ordered and unique")
+        tickers = [item.ticker for item in self.securities]
+        if tickers != sorted(set(tickers)):
+            raise ValueError("market data securities must be sorted and unique")
+        if self.security_count != len(self.securities):
+            raise ValueError("market data security count mismatch")
+        if not set(tickers) <= set(self.universe_tickers):
+            raise ValueError("market data security is outside the frozen universe")
+        if self.provider_ids != sorted(set(self.provider_ids)):
+            raise ValueError(
+                "market data provider identities must be sorted and unique"
+            )
+        fx_pairs = [(item.base_currency, item.quote_currency) for item in self.fx_rates]
+        if fx_pairs != sorted(set(fx_pairs)):
+            raise ValueError("market data FX rates must be sorted and unique")
+        event_ids = [item.event_id for item in self.events]
+        if event_ids != sorted(set(event_ids)):
+            raise ValueError("market data events must be sorted and unique")
+        if any(item.ticker not in self.universe_tickers for item in self.events):
+            raise ValueError("market data event is outside the frozen universe")
+        gap_ids = [item.gap_id for item in self.gaps]
+        if gap_ids != sorted(set(gap_ids)):
+            raise ValueError("market data gaps must be sorted and unique")
+        if any(
+            item.ticker is not None and item.ticker not in self.universe_tickers
+            for item in self.gaps
+        ):
+            raise ValueError("market data gap is outside the frozen universe")
+        conflict_ids = [item.conflict_id for item in self.conflicts]
+        if conflict_ids != sorted(set(conflict_ids)):
+            raise ValueError("market data conflicts must be sorted and unique")
+        if any(
+            item.ticker is not None and item.ticker not in self.universe_tickers
+            for item in self.conflicts
+        ):
+            raise ValueError("market data conflict is outside the frozen universe")
+        expected = _contract_fingerprint(
+            self.model_dump(mode="json", exclude={"snapshot_fingerprint"}),
+            field="snapshot_fingerprint",
+        )
+        if self.snapshot_fingerprint != expected:
+            raise ValueError("market data snapshot fingerprint mismatch")
+        return self
+
+
 class SourceAcquisitionFailureEvidence(StrictModel):
     """Value-free, receipt-owned evidence for one failed discovery attempt."""
 
@@ -7373,6 +7688,98 @@ _MARKET_DATA_SNAPSHOT_V1["snapshot_fingerprint"] = _contract_fingerprint(
 MarketDataSnapshotV1.minimal_example = deepcopy(_MARKET_DATA_SNAPSHOT_V1)
 MarketDataSnapshotV1.full_example = deepcopy(_MARKET_DATA_SNAPSHOT_V1)
 
+_MARKET_DATA_SNAPSHOT_V2 = {
+    "schema_version": MarketDataSnapshotV2.schema_id,
+    "market_data_snapshot_id": "MARKET-DATA-SNAPSHOT-002",
+    "run_id": _RUN,
+    "report_window_start": "2026-08-03",
+    "report_window_end": "2026-08-07",
+    "as_of_date": "2026-08-07",
+    "universe_tickers": ["TOYO"],
+    "security_count": 1,
+    "provider_ids": ["manual_xlsx"],
+    "workbook": {
+        "source_name": "public-safe-market-data.xlsx",
+        "content_sha256": _SHA_A,
+        "content_size_bytes": 1024,
+        "profile_id": "toyo-weekly-v1",
+        "parsed_sheet_names": [
+            "PR事件复盘",
+            "Sources",
+            "TOYO周明细",
+            "估值与多空",
+            "海外对标",
+            "美股对标",
+            "走势数据",
+        ],
+        "contains_macros": False,
+        "contains_external_links": False,
+    },
+    "securities": [
+        {
+            "ticker": "TOYO",
+            "display_name": "Example Solar",
+            "universe": "primary",
+            "exchange": "NASDAQ",
+            "currency": "USD",
+            "return_basis": "close",
+            "price_series": [
+                {
+                    "date": "2026-08-03",
+                    "close": 5.0,
+                    "adjusted_close": None,
+                    "volume": 1000,
+                    "data_origin": "manual_xlsx",
+                    "source_locator": "走势数据!B4",
+                    "source_sha256": _SHA_A,
+                },
+                {
+                    "date": "2026-08-07",
+                    "close": 5.5,
+                    "adjusted_close": None,
+                    "volume": 1200,
+                    "data_origin": "manual_xlsx",
+                    "source_locator": "走势数据!B5",
+                    "source_sha256": _SHA_A,
+                },
+            ],
+            "corporate_actions": [],
+            "fields": [
+                {
+                    "field_id": "return_1w_pct",
+                    "status": "available",
+                    "value_number": 10.0,
+                    "value_text": None,
+                    "unit": "percent",
+                    "as_of": "2026-08-07",
+                    "currency": None,
+                    "data_origin": "derived",
+                    "derivation": "recomputed",
+                    "source_locator": "走势数据!B4:B5",
+                    "source_sha256": _SHA_A,
+                    "reason_code": None,
+                }
+            ],
+        }
+    ],
+    "benchmark": None,
+    "fx_rates": [],
+    "events": [],
+    "gaps": [],
+    "conflicts": [],
+    "derivation_version": "solar-market-data-v2",
+    "record_event_id": "EVT-MARKET-DATA-SNAPSHOT-002",
+    "accepted_transaction_id": "TXN-MARKET-DATA-SNAPSHOT-002",
+    "recorded_at": _NOW,
+    "snapshot_fingerprint": "0" * 64,
+}
+_MARKET_DATA_SNAPSHOT_V2["snapshot_fingerprint"] = _contract_fingerprint(
+    _MARKET_DATA_SNAPSHOT_V2,
+    field="snapshot_fingerprint",
+)
+MarketDataSnapshotV2.minimal_example = deepcopy(_MARKET_DATA_SNAPSHOT_V2)
+MarketDataSnapshotV2.full_example = deepcopy(_MARKET_DATA_SNAPSHOT_V2)
+
 _CACHED_ACQUISITION_SPEC = {
     "schema_version": RuntimeCachedPackageAcquisitionSpec.schema_id,
     "kind": "cached_package",
@@ -8949,6 +9356,7 @@ V2_CONTRACT_MODELS: tuple[type[StrictModel], ...] = (
     TavilyAcquisitionBundleV2,
     TavilyAcquisitionBundleRecordV2,
     MarketDataSnapshotV1,
+    MarketDataSnapshotV2,
     SourceAcquisitionAttemptAuthorizeRequest,
     WorkspaceControlStoreBootstrapV2,
     RuntimeAdapterBinding,
@@ -9288,6 +9696,17 @@ __all__ = [
     "MarketDataSecurityV1",
     "MarketDataSecurityGapV1",
     "MarketDataSnapshotV1",
+    "MarketDataWorkbookIdentityV2",
+    "MarketDataSeriesPointV2",
+    "MarketDataCorporateActionV2",
+    "MarketDataFieldValueV2",
+    "MarketDataSecurityV2",
+    "MarketDataBenchmarkV2",
+    "MarketDataFxRateV2",
+    "MarketDataEventReactionV2",
+    "MarketDataGapV2",
+    "MarketDataConflictV2",
+    "MarketDataSnapshotV2",
     "SourceAcquisitionAttemptAuthorizeRequest",
     "RunSourceDiscoveryAuthorizationBootstrap",
     "RunSourceDiscoveryAuthorizationInput",

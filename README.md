@@ -416,10 +416,11 @@ Current entrypoints:
   --runtime codex`, followed by `briefloop runtime next`,
   `invocation-start`, `invocation-accept|fail`, and `apply`
 - Experimental one-shot web initialization: `briefloop init <path> --web`
-- best-effort, capability-gated local static read-only four-tab view:
+- best-effort, capability-gated local static read-only five-tab view:
   `briefloop quality html --workspace
   <path> [--open]`; Brief shows the verified Store-bound `finalized_local`
-  reader, Quality is a deterministic projection, LAJ is optional explicit
+  reader, Quality is a deterministic projection, Market Data shows the latest
+  Store-bound Solar comparison tables and charts when present, LAJ is optional explicit
   hash-bound advisory input (never authority), and Improvement is honestly
   unavailable because no released Store-native writer/lifecycle is active.
   This view
@@ -431,7 +432,7 @@ Current entrypoints:
   current-report-bound `laj.json` may be displayed read-only with
   `briefloop quality html --workspace <path> --laj-view <laj.json>`
 - experimental Solar Stock Periodic ReportPack:
-  `briefloop new solar-stock-periodic <workspace>`. Use a fresh schema-18
+  `briefloop new solar-stock-periodic <workspace>`. Use a fresh schema-19
   workspace and the Store-frozen Tavily route for its 20-task discovery plan.
   `--search-backend tavily` is accepted for this pack at `new` time and
   freezes the same Tavily discovery authorization as `briefloop init --web`.
@@ -442,12 +443,24 @@ Current entrypoints:
   failed tasks remain visible rather than being reported as “no events”.
   Sources without an in-window publication/event date remain typed background:
   retrieval time never promotes them into current-week evidence.
+  When a workbook defines the reporting period, freeze that exact Human-reviewed
+  period at workspace creation, for example
+  `--report-window-start 2026-08-03 --report-window-end 2026-08-12`; both flags
+  are required together and the Store direction cannot be changed by ingest.
   `briefloop market-data fetch|ingest|project` freezes one append-only weekly
-  quote snapshot per run and as-of date (bounded Yahoo chart-API adapter with
-  per-security failure isolation; manual `input/market_data/` JSON/CSV files
-  take precedence) and projects the equity comparison tables with explicit
-  `NOT AVAILABLE` rows; missing data is never filled with invented prices or
-  valuation multiples.
+  quote snapshot per run and as-of date. JSON/CSV remain supported; a
+  profile-bound TOYO workbook can be ingested offline with
+  `--file <weekly.xlsx> --profile toyo-weekly-v1`, or supplied to `fetch` with
+  `--workbook <weekly.xlsx> --profile toyo-weekly-v1` so verified workbook cells
+  win and the bounded Yahoo adapter fills only missing fields. The projection
+  writes the two equity tables, event timeline, seven deterministic PNG charts,
+  a JSON read model, and a hash-bound chart manifest; the fifth local HTML tab
+  renders the same Store snapshot. Missing required series and input conflicts
+  remain visible and may block; no price, FX, return, valuation, or causal event
+  explanation is invented. Product-owned price, return, and FX conversion
+  formulas are recomputed from frozen cells; stale Excel formula caches cannot
+  silently become authority. Embedded workbook charts are display-only, never
+  evidence, and private workbook bytes are not copied into the repository.
 
 Development-main-only LAJ continuation controls are explicit and Store-native:
 
@@ -491,7 +504,7 @@ interaction surfaces:
 - the packaged Codex Skill follows the exact Store-derived next action and
   Receipt-backed invocation protocol. It does not fall back to `operator` or
   another runtime.
-- the loopback init wizard and four-tab local HTML are read-only interaction
+- the loopback init wizard and five-tab local HTML are read-only interaction
   surfaces. Brief shows the verified Store-bound `finalized_local` reader;
   Quality is deterministic; LAJ is optional advisory and NOT MEASURED; and
   Improvement reports unavailable because no released Store-native lifecycle

@@ -1,11 +1,12 @@
 /* ==========================================================================
    BriefLoop brief_html — local reader and audit pages (production static asset)
    Derived (MIT) from the BriefLoop quality-panel redesign prototype.
-   Reads the embedded brief_pages.data.v2 payload and renders:
+   Reads the embedded brief_pages.data.v3 payload and renders:
      tab 1 brief    — exact Store-bound local reader Markdown
-     tab 2 quality  — deterministic Store projection (green = pass only)
-     tab 3 review   — LAJ semantic advisory view (purple; never PASS wording)
-     tab 4 feedback — Store-native Human observation history and guidance state
+     tab 2 market   — Store-bound structured market data, tables, and charts
+     tab 3 quality  — deterministic Store projection (green = pass only)
+     tab 4 review   — LAJ semantic advisory view (purple; never PASS wording)
+     tab 5 feedback — Store-native Human observation history and guidance state
    Static exports remain read-only. A secured loopback Review Session may expose
    strict Human commands; DOM uses createElement/textContent only.
    ========================================================================== */
@@ -18,9 +19,47 @@
             top_badge: "只读静态导出 · 无任何写入能力",
             session_badge: "本机审阅会话 · 人工操作写入 SQLite",
             tab_brief: "简报",
+            tab_market: "行情与事件",
             tab_quality: "质量状态",
             tab_review: "AI 第二意见",
             tab_feedback: "反馈与改进",
+            market_title: "Solar Stock Periodic 行情与事件",
+            market_sub: "以下图表和表格来自 SQLite 中冻结的结构化行情快照；人工 Excel 字段优先，缺口与冲突不会被隐藏。",
+            market_unavailable: "尚无结构化行情快照",
+            market_window: "报告窗口",
+            market_as_of: "数据截至",
+            market_sources: "冻结数据通道",
+            market_primary: "美股主比较表",
+            market_overseas: "海外比较表",
+            market_ticker: "代码",
+            market_close: "最新收盘",
+            market_1w: "1周",
+            market_1m: "1月",
+            market_ytd: "年初至今",
+            market_cap: "市值（百万美元）",
+            market_ev_sales: "EV/Sales",
+            market_ev_ebitda: "EV/EBITDA",
+            market_pe: "P/E(TTM)",
+            market_events: "PR 与事件同期反应",
+            market_event_date: "日期",
+            market_event: "事件",
+            market_event_return: "当日涨跌",
+            market_excess: "相对 TAN 超额",
+            market_t1: "T+1",
+            market_evidence: "证据资格",
+            market_chart_us: "美股指数化走势",
+            market_chart_overseas: "海外指数化走势",
+            market_chart_toyo: "TOYO 收盘与成交量",
+            market_chart_pr: "PR 事件同期超额收益",
+            market_chart_weekly: "1周收益比较",
+            market_chart_caps: "美元市值比较",
+            market_chart_valuation: "EV/Sales 估值比较",
+            market_chart_note: "图表由冻结快照确定性生成；价格同期变化不等于事件因果。",
+            market_gaps: "可见缺口与冲突",
+            market_no_gaps: "无缺口或冲突",
+            market_available: "可用",
+            market_not_available: "不可用",
+            market_not_meaningful: "N/M",
             eyebrow: "审计附件",
             panel_title: "质量面板",
             overall_status: "投影状态",
@@ -220,9 +259,47 @@
             top_badge: "Read-only static export · no write affordance",
             session_badge: "Local Review Session · Human actions write SQLite",
             tab_brief: "Brief",
+            tab_market: "Market data",
             tab_quality: "Quality status",
             tab_review: "AI Second Opinion",
             tab_feedback: "Feedback & improvement",
+            market_title: "Solar Stock Periodic market data and events",
+            market_sub: "Charts and tables below come from the structured snapshot frozen in SQLite. Manual Excel fields take precedence; gaps and conflicts remain visible.",
+            market_unavailable: "No structured market-data snapshot is available",
+            market_window: "Report window",
+            market_as_of: "Data as of",
+            market_sources: "Frozen data channels",
+            market_primary: "Primary equity comparison",
+            market_overseas: "Overseas equity comparison",
+            market_ticker: "Ticker",
+            market_close: "Latest close",
+            market_1w: "1W",
+            market_1m: "1M",
+            market_ytd: "YTD",
+            market_cap: "Market cap (USD m)",
+            market_ev_sales: "EV/Sales",
+            market_ev_ebitda: "EV/EBITDA",
+            market_pe: "P/E (TTM)",
+            market_events: "PR and event co-movement",
+            market_event_date: "Date",
+            market_event: "Event",
+            market_event_return: "Event-day return",
+            market_excess: "Excess vs TAN",
+            market_t1: "T+1",
+            market_evidence: "Evidence status",
+            market_chart_us: "Indexed primary-equity trend",
+            market_chart_overseas: "Indexed overseas-equity trend",
+            market_chart_toyo: "TOYO close and volume",
+            market_chart_pr: "PR event-day excess return",
+            market_chart_weekly: "One-week return comparison",
+            market_chart_caps: "USD market-cap comparison",
+            market_chart_valuation: "EV/Sales valuation comparison",
+            market_chart_note: "Charts are deterministically derived from the frozen snapshot. Contemporaneous price movement does not prove event causation.",
+            market_gaps: "Visible gaps and conflicts",
+            market_no_gaps: "No gaps or conflicts",
+            market_available: "available",
+            market_not_available: "not available",
+            market_not_meaningful: "N/M",
             eyebrow: "Audit attachment",
             panel_title: "Quality Panel",
             overall_status: "Projection status",
@@ -761,7 +838,8 @@
             });
         }).then(function (result) {
             if (result.page_data && typeof result.page_data === "object" &&
-                    result.page_data.schema_version === "briefloop.brief_pages.data.v2") {
+                    (result.page_data.schema_version === "briefloop.brief_pages.data.v3" ||
+                     result.page_data.schema_version === "briefloop.brief_pages.data.v2")) {
                 DATA = result.page_data;
             }
             if (result.ok !== true) {
@@ -888,6 +966,296 @@
                 String(run.reason_code || brief.reason_code || "")));
             section.appendChild(progress);
         }
+        main.appendChild(section);
+    }
+
+    /* ---- structured market-data tab ---- */
+    function svgNode(tag, attrs, textValue) {
+        var node = document.createElementNS("http:" + "//www.w3.org/2000/svg", tag);
+        Object.keys(attrs || {}).forEach(function (key) {
+            node.setAttribute(key, String(attrs[key]));
+        });
+        if (textValue != null) node.textContent = String(textValue);
+        return node;
+    }
+
+    function marketField(security, fieldId) {
+        return (security.fields || []).find(function (item) {
+            return item.field_id === fieldId;
+        }) || null;
+    }
+
+    function marketValue(field, decimals) {
+        if (!field || field.status === "unavailable") return t("market_not_available");
+        if (field.status === "not_meaningful") return t("market_not_meaningful");
+        if (field.value_text != null) return String(field.value_text);
+        if (field.value_number == null) return t("market_not_available");
+        return Number(field.value_number).toFixed(decimals == null ? 2 : decimals);
+    }
+
+    function marketTable(parent, titleKey, tickers, byTicker) {
+        var section = el("section", "panel-section market-section");
+        section.appendChild(el("h2", null, t(titleKey)));
+        var wrap = el("div", "market-table-wrap");
+        var table = el("table", "market-table");
+        var head = el("tr");
+        ["market_ticker", "market_close", "market_1w", "market_1m", "market_ytd",
+         "market_cap", "market_ev_sales", "market_ev_ebitda", "market_pe"].forEach(function (key) {
+            head.appendChild(el("th", null, t(key)));
+        });
+        table.appendChild(head);
+        tickers.forEach(function (ticker) {
+            var security = byTicker[ticker];
+            var row = el("tr", security ? null : "market-row-missing");
+            row.appendChild(el("th", null, ticker));
+            if (!security) {
+                for (var i = 0; i < 8; i += 1) row.appendChild(el("td", null, t("market_not_available")));
+            } else {
+                [
+                    ["latest_close_local", 2], ["return_1w_pct", 2],
+                    ["return_1m_pct", 2], ["return_ytd_pct", 2],
+                    ["market_cap_usd_millions", 0], ["ev_sales_ttm", 2],
+                    ["ev_ebitda_ttm", 2], ["pe_ttm", 2]
+                ].forEach(function (spec) {
+                    row.appendChild(el("td", null, marketValue(marketField(security, spec[0]), spec[1])));
+                });
+            }
+            table.appendChild(row);
+        });
+        wrap.appendChild(table);
+        section.appendChild(wrap);
+        parent.appendChild(section);
+    }
+
+    function lineChart(titleKey, securities, options) {
+        var card = el("figure", "market-chart-card");
+        card.appendChild(el("figcaption", null, t(titleKey)));
+        var svg = svgNode("svg", {
+            viewBox: "0 0 920 420", role: "img", "aria-label": t(titleKey),
+            class: "market-chart-svg"
+        });
+        var left = 58, top = 28, width = 820, height = 300;
+        svg.appendChild(svgNode("rect", {x: 0, y: 0, width: 920, height: 420, fill: "#ffffff"}));
+        var rows = [];
+        (securities || []).forEach(function (security) {
+            var points = security.price_series || [];
+            if (points.length < 2) return;
+            var base = Number(points[0].adjusted_close || points[0].close);
+            var values = points.map(function (point) {
+                var price = Number(point.adjusted_close || point.close);
+                return options.indexed ? price / base * 100 : price;
+            });
+            rows.push({ticker: security.ticker, points: points, values: values});
+        });
+        if (!rows.length) {
+            svg.appendChild(svgNode("text", {x: 460, y: 210, "text-anchor": "middle", fill: "#6b7280"}, t("market_unavailable")));
+            card.appendChild(svg);
+            return card;
+        }
+        var valuesAll = [];
+        rows.forEach(function (row) { valuesAll = valuesAll.concat(row.values); });
+        var min = Math.min.apply(null, valuesAll);
+        var max = Math.max.apply(null, valuesAll);
+        var padding = Math.max((max - min) * 0.12, Math.abs(max) * 0.01, 1);
+        min -= padding; max += padding;
+        for (var g = 0; g <= 4; g += 1) {
+            var gy = top + height * g / 4;
+            svg.appendChild(svgNode("line", {x1: left, y1: gy, x2: left + width, y2: gy, stroke: "#e5e7eb", "stroke-width": 1}));
+            svg.appendChild(svgNode("text", {x: left - 8, y: gy + 4, "text-anchor": "end", fill: "#6b7280", "font-size": 11}, (max - (max - min) * g / 4).toFixed(1)));
+        }
+        var colors = ["#2563eb", "#dc2626", "#059669", "#7c3aed", "#ea580c", "#0891b2", "#4f46e5", "#be123c", "#65a30d", "#9333ea", "#0f766e"];
+        rows.forEach(function (row, rowIndex) {
+            var count = row.values.length;
+            var d = row.values.map(function (value, index) {
+                var x = left + width * index / Math.max(count - 1, 1);
+                var y = top + height * (max - value) / Math.max(max - min, 1e-9);
+                return (index ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
+            }).join(" ");
+            svg.appendChild(svgNode("path", {d: d, fill: "none", stroke: colors[rowIndex % colors.length], "stroke-width": row.ticker === "TOYO" ? 3.5 : 2.2, "stroke-linejoin": "round"}));
+            var legendX = left + (rowIndex % 5) * 155;
+            var legendY = 360 + Math.floor(rowIndex / 5) * 24;
+            svg.appendChild(svgNode("line", {x1: legendX, y1: legendY, x2: legendX + 20, y2: legendY, stroke: colors[rowIndex % colors.length], "stroke-width": 3}));
+            svg.appendChild(svgNode("text", {x: legendX + 26, y: legendY + 4, fill: "#374151", "font-size": 12}, row.ticker));
+        });
+        var firstPoints = rows[0].points;
+        svg.appendChild(svgNode("text", {x: left, y: 344, fill: "#6b7280", "font-size": 11}, firstPoints[0].date));
+        svg.appendChild(svgNode("text", {x: left + width, y: 344, "text-anchor": "end", fill: "#6b7280", "font-size": 11}, firstPoints[firstPoints.length - 1].date));
+        card.appendChild(svg);
+        return card;
+    }
+
+    function eventBarChart(events) {
+        var card = el("figure", "market-chart-card");
+        card.appendChild(el("figcaption", null, t("market_chart_pr")));
+        var svg = svgNode("svg", {viewBox: "0 0 920 420", role: "img", "aria-label": t("market_chart_pr"), class: "market-chart-svg"});
+        svg.appendChild(svgNode("rect", {x: 0, y: 0, width: 920, height: 420, fill: "#ffffff"}));
+        var usable = (events || []).filter(function (event) { return event.event_day_excess_return_pct != null; });
+        if (!usable.length) {
+            svg.appendChild(svgNode("text", {x: 460, y: 210, "text-anchor": "middle", fill: "#6b7280"}, t("market_unavailable")));
+            card.appendChild(svg); return card;
+        }
+        var maxAbs = Math.max.apply(null, usable.map(function (event) { return Math.abs(Number(event.event_day_excess_return_pct)); }).concat([1]));
+        var left = 80, top = 32, width = 780, height = 290, zero = top + height / 2;
+        svg.appendChild(svgNode("line", {x1: left, y1: zero, x2: left + width, y2: zero, stroke: "#64748b", "stroke-width": 1.5}));
+        usable.forEach(function (event, index) {
+            var slot = width / usable.length;
+            var barWidth = Math.min(90, slot * 0.55);
+            var value = Number(event.event_day_excess_return_pct);
+            var barHeight = Math.abs(value) / maxAbs * (height / 2 - 18);
+            var x = left + slot * index + (slot - barWidth) / 2;
+            var y = value >= 0 ? zero - barHeight : zero;
+            svg.appendChild(svgNode("rect", {x: x, y: y, width: barWidth, height: barHeight, rx: 4, fill: value >= 0 ? "#059669" : "#dc2626"}));
+            svg.appendChild(svgNode("text", {x: x + barWidth / 2, y: value >= 0 ? y - 7 : y + barHeight + 16, "text-anchor": "middle", fill: "#374151", "font-size": 12}, (value >= 0 ? "+" : "") + value.toFixed(2) + "%"));
+            svg.appendChild(svgNode("text", {x: x + barWidth / 2, y: 350, "text-anchor": "middle", fill: "#6b7280", "font-size": 11}, event.published_at));
+        });
+        card.appendChild(svg); return card;
+    }
+
+    function fieldBarChart(titleKey, securities, fieldId, suffix) {
+        var card = el("figure", "market-chart-card");
+        card.appendChild(el("figcaption", null, t(titleKey)));
+        var svg = svgNode("svg", {viewBox: "0 0 920 420", role: "img", "aria-label": t(titleKey), class: "market-chart-svg"});
+        svg.appendChild(svgNode("rect", {x: 0, y: 0, width: 920, height: 420, fill: "#ffffff"}));
+        var rows = (securities || []).map(function (security) {
+            var field = marketField(security, fieldId);
+            return field && field.status === "available" && field.value_number != null ?
+                {ticker: security.ticker, value: Number(field.value_number)} : null;
+        }).filter(Boolean);
+        if (!rows.length) {
+            svg.appendChild(svgNode("text", {x: 460, y: 210, "text-anchor": "middle", fill: "#6b7280"}, t("market_unavailable")));
+            card.appendChild(svg); return card;
+        }
+        var left = 70, top = 34, width = 790, height = 280;
+        var min = Math.min.apply(null, rows.map(function (row) { return row.value; }).concat([0]));
+        var max = Math.max.apply(null, rows.map(function (row) { return row.value; }).concat([0]));
+        var span = Math.max(max - min, 1e-9);
+        var zero = top + height * max / span;
+        svg.appendChild(svgNode("line", {x1: left, y1: zero, x2: left + width, y2: zero, stroke: "#64748b", "stroke-width": 1.3}));
+        rows.forEach(function (row, index) {
+            var slot = width / rows.length;
+            var barWidth = Math.min(64, slot * 0.62);
+            var x = left + slot * index + (slot - barWidth) / 2;
+            var yValue = top + height * (max - row.value) / span;
+            var y = Math.min(zero, yValue);
+            var barHeight = Math.max(Math.abs(zero - yValue), 1);
+            svg.appendChild(svgNode("rect", {x: x, y: y, width: barWidth, height: barHeight, rx: 4, fill: row.value >= 0 ? "#2563eb" : "#dc2626"}));
+            svg.appendChild(svgNode("text", {x: x + barWidth / 2, y: row.value >= 0 ? y - 7 : y + barHeight + 15, "text-anchor": "middle", fill: "#374151", "font-size": 10}, row.value.toFixed(fieldId === "market_cap_usd_millions" ? 0 : 2) + suffix));
+            svg.appendChild(svgNode("text", {x: x + barWidth / 2, y: 346, "text-anchor": "middle", fill: "#6b7280", "font-size": 10}, row.ticker));
+        });
+        card.appendChild(svg); return card;
+    }
+
+    function toyoPriceVolumeChart(security) {
+        var card = el("figure", "market-chart-card");
+        card.appendChild(el("figcaption", null, t("market_chart_toyo")));
+        var svg = svgNode("svg", {viewBox: "0 0 920 420", role: "img", "aria-label": t("market_chart_toyo"), class: "market-chart-svg"});
+        svg.appendChild(svgNode("rect", {x: 0, y: 0, width: 920, height: 420, fill: "#ffffff"}));
+        var points = security ? (security.price_series || []) : [];
+        if (points.length < 2) {
+            svg.appendChild(svgNode("text", {x: 460, y: 210, "text-anchor": "middle", fill: "#6b7280"}, t("market_unavailable")));
+            card.appendChild(svg); return card;
+        }
+        var left = 62, top = 30, width = 810, height = 290;
+        var prices = points.map(function (point) { return Number(point.close); });
+        var volumes = points.map(function (point) { return Number(point.volume || 0); });
+        var minPrice = Math.min.apply(null, prices), maxPrice = Math.max.apply(null, prices);
+        var pricePad = Math.max((maxPrice - minPrice) * 0.12, maxPrice * 0.01, 0.1);
+        minPrice -= pricePad; maxPrice += pricePad;
+        var maxVolume = Math.max.apply(null, volumes.concat([1]));
+        points.forEach(function (point, index) {
+            var x = left + width * index / Math.max(points.length - 1, 1);
+            var barWidth = Math.max(5, Math.min(34, width / points.length * 0.46));
+            var barHeight = Number(point.volume || 0) / maxVolume * height * 0.38;
+            svg.appendChild(svgNode("rect", {x: x - barWidth / 2, y: top + height - barHeight, width: barWidth, height: barHeight, fill: "#bfdbfe", opacity: 0.78}));
+        });
+        var d = prices.map(function (value, index) {
+            var x = left + width * index / Math.max(points.length - 1, 1);
+            var y = top + height * (maxPrice - value) / Math.max(maxPrice - minPrice, 1e-9);
+            return (index ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
+        }).join(" ");
+        svg.appendChild(svgNode("path", {d: d, fill: "none", stroke: "#1d4ed8", "stroke-width": 3.5, "stroke-linejoin": "round"}));
+        svg.appendChild(svgNode("text", {x: left, y: 347, fill: "#6b7280", "font-size": 11}, points[0].date));
+        svg.appendChild(svgNode("text", {x: left + width, y: 347, "text-anchor": "end", fill: "#6b7280", "font-size": 11}, points[points.length - 1].date));
+        card.appendChild(svg); return card;
+    }
+
+    function renderMarketData(main) {
+        var market = DATA.market_data || {};
+        var section = el("article", "reader-sheet market-reader-sheet");
+        var header = el("header", "reader-header");
+        header.appendChild(el("p", "eyebrow", t("tab_market")));
+        header.appendChild(el("h1", null, t("market_title")));
+        header.appendChild(el("p", "hero-boundary", market.boundary || t("market_sub")));
+        section.appendChild(header);
+        if (market.status !== "available") {
+            var unavailable = el("div", "unavailable-card");
+            unavailable.appendChild(el("strong", null, t("market_unavailable")));
+            unavailable.appendChild(el("p", null, String(market.reason_code || "")));
+            section.appendChild(unavailable); main.appendChild(section); return;
+        }
+        var meta = el("div", "market-meta");
+        [["market_window", String(market.report_window_start) + " – " + String(market.report_window_end)],
+         ["market_as_of", market.as_of_date], ["market_sources", (market.provider_ids || []).join(", ")]].forEach(function (pair) {
+            var item = el("div", "market-meta-item");
+            item.appendChild(el("span", "fb-k", t(pair[0])));
+            item.appendChild(el("strong", null, String(pair[1] || "")));
+            meta.appendChild(item);
+        });
+        section.appendChild(meta);
+        var securities = market.securities || [];
+        var byTicker = {};
+        securities.forEach(function (security) { byTicker[security.ticker] = security; });
+        marketTable(section, "market_primary", ["TOYO", "TE", "FSLR", "CSIQ", "JKS", "NXT", "DQ"], byTicker);
+        marketTable(section, "market_overseas", ["009830.KS", "WAAREEENER.NS", "PREMIERENE.NS", "VIKRAMSOLR.NS"], byTicker);
+
+        var charts = el("section", "panel-section market-section");
+        charts.appendChild(el("p", "section-muted", t("market_chart_note")));
+        var chartGrid = el("div", "market-chart-grid");
+        chartGrid.appendChild(lineChart("market_chart_us", securities.filter(function (security) { return security.universe === "primary"; }), {indexed: true}));
+        chartGrid.appendChild(lineChart("market_chart_overseas", securities.filter(function (security) { return security.universe === "overseas"; }), {indexed: true}));
+        chartGrid.appendChild(toyoPriceVolumeChart(byTicker.TOYO));
+        chartGrid.appendChild(eventBarChart(market.events || []));
+        chartGrid.appendChild(fieldBarChart("market_chart_weekly", securities, "return_1w_pct", "%"));
+        chartGrid.appendChild(fieldBarChart("market_chart_caps", securities, "market_cap_usd_millions", ""));
+        chartGrid.appendChild(fieldBarChart("market_chart_valuation", securities, "ev_sales_ttm", "x"));
+        charts.appendChild(chartGrid); section.appendChild(charts);
+
+        var eventsSection = el("section", "panel-section market-section");
+        eventsSection.appendChild(el("h2", null, t("market_events")));
+        var eventWrap = el("div", "market-table-wrap");
+        var eventTable = el("table", "market-table");
+        var eventHead = el("tr");
+        ["market_event_date", "market_ticker", "market_event", "market_event_return", "market_excess", "market_t1", "market_evidence"].forEach(function (key) { eventHead.appendChild(el("th", null, t(key))); });
+        eventTable.appendChild(eventHead);
+        (market.events || []).forEach(function (event) {
+            var row = el("tr");
+            [event.published_at, event.ticker, event.title,
+             event.event_day_return_pct == null ? t("market_not_available") : Number(event.event_day_return_pct).toFixed(2) + "%",
+             event.event_day_excess_return_pct == null ? t("market_not_available") : Number(event.event_day_excess_return_pct).toFixed(2) + "%",
+             event.t1_return_pct == null ? t("market_not_available") : Number(event.t1_return_pct).toFixed(2) + "%",
+             event.evidence_status].forEach(function (value) { row.appendChild(el("td", null, String(value))); });
+            eventTable.appendChild(row);
+        });
+        eventWrap.appendChild(eventTable); eventsSection.appendChild(eventWrap); section.appendChild(eventsSection);
+
+        var gapsSection = el("section", "panel-section market-section");
+        gapsSection.appendChild(el("h2", null, t("market_gaps")));
+        var findings = (market.gaps || []).concat(market.conflicts || []);
+        if (!findings.length) gapsSection.appendChild(el("p", "section-muted", t("market_no_gaps")));
+        else {
+            var list = el("ul", "market-gap-list");
+            findings.forEach(function (item) {
+                list.appendChild(el("li", item.severity === "blocking" ? "market-gap-blocking" : null,
+                    String(item.ticker || item.field_id || "workbook") + " · " +
+                    String(item.reason_code || item.category || "")));
+            });
+            gapsSection.appendChild(list);
+        }
+        section.appendChild(gapsSection);
+        var details = el("details", "projection-details");
+        details.appendChild(el("summary", null, t("sec_projection")));
+        details.appendChild(el("pre", null, JSON.stringify(market, null, 2)));
+        section.appendChild(details);
         main.appendChild(section);
     }
 
@@ -2109,6 +2477,7 @@
     /* ---- tabs ---- */
     var TABS = [
         ["brief", "tab_brief"],
+        ["market", "tab_market"],
         ["quality", "tab_quality"],
         ["review", "tab_review"],
         ["feedback", "tab_feedback"]
@@ -2164,6 +2533,7 @@
         }
         renderTabBar(main);
         if (STATE.tab === "brief") renderBrief(main);
+        else if (STATE.tab === "market") renderMarketData(main);
         else if (STATE.tab === "quality") renderQuality(main);
         else if (STATE.tab === "review") renderReview(main);
         else renderFeedback(main);

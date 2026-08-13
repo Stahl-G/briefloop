@@ -24,6 +24,10 @@
   acquisition bundle、逐任务结果和行情快照边界。Schema-17 workspace 不迁移、不
   dual-read，也不原地升级；要运行 Solar Stock Periodic，必须新建 schema-18
   workspace。缺少行情快照时保持缺失，不用伪造价格或估值倍数填空。
+- Schema 19 用严格的 `briefloop.market_data_snapshot.v2` 权威替换 fresh-only
+  行情 v1 表，冻结 workbook identity、复权历史、公司行动、汇率、估值、事件、
+  缺口与冲突。Schema-18 workspace 不升级、不 dual-read；读取 profile-bound XLSX
+  前必须新建 schema-19 workspace。
 - legacy Improvement JSON/JSONL 与对应 mutator、fast-rerun/080 命令均已退役。
   可选 Semantic Assessment Report 只保留非阻断的 schema/reference validation；
   producer、status/proposal projection 与 adjudication writer 已退役。

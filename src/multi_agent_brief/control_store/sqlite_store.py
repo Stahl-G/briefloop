@@ -89,7 +89,7 @@ from multi_agent_brief.contracts.v2 import (
     RunSourceDiscoveryAuthorization,
     RuntimeSourceSearchPlanV2,
     TavilyAcquisitionBundleRecordV2,
-    MarketDataSnapshotV1,
+    MarketDataSnapshotV2,
     RunIdentity,
     RunGuidanceSelectionDecisionRecord,
     RunGuidanceSelectionDecisionReference,
@@ -191,7 +191,7 @@ _EXTENDED_RECORD_MODELS = (
     RunSourceAcquisitionAttemptAuthorization,
     RuntimeSourceSearchPlanV2,
     TavilyAcquisitionBundleRecordV2,
-    MarketDataSnapshotV1,
+    MarketDataSnapshotV2,
     OwnedArtifactSubmissionRecord,
     StageTransitionRecord,
     StageArtifactBinding,
@@ -560,7 +560,7 @@ class ControlStoreSnapshot:
     ]
     runtime_source_search_plans: tuple[RuntimeSourceSearchPlanV2, ...]
     tavily_acquisition_bundle_records: tuple[TavilyAcquisitionBundleRecordV2, ...]
-    market_data_snapshots: tuple[MarketDataSnapshotV1, ...]
+    market_data_snapshots: tuple[MarketDataSnapshotV2, ...]
     owned_artifact_submissions: tuple[OwnedArtifactSubmissionRecord, ...]
     stage_transitions: tuple[StageTransitionRecord, ...]
     stage_artifact_bindings: tuple[StageArtifactBinding, ...]
@@ -1954,9 +1954,7 @@ class SQLiteControlStore:
                 self._insert_tavily_acquisition_bundle_records(
                     uow._tavily_acquisition_bundle_records.values()
                 )
-                self._insert_market_data_snapshots(
-                    uow._market_data_snapshots.values()
-                )
+                self._insert_market_data_snapshots(uow._market_data_snapshots.values())
                 self._insert_owned_artifact_submissions(
                     uow._owned_artifact_submissions.values()
                 )
@@ -5382,25 +5380,35 @@ class SQLiteControlStore:
             )
 
     def _insert_market_data_snapshots(
-        self, records: Iterable[MarketDataSnapshotV1]
+        self, records: Iterable[MarketDataSnapshotV2]
     ) -> None:
         for record in records:
             self._connection.execute(
                 """
                 INSERT INTO market_data_snapshots(
-                    run_id, market_data_snapshot_id, schema_version, as_of_date,
-                    security_count, provider_id, snapshot_fingerprint,
+                    run_id, market_data_snapshot_id, schema_version,
+                    report_window_start, report_window_end, as_of_date,
+                    universe_count, security_count, provider_count,
+                    workbook_sha256, gap_count, conflict_count,
+                    snapshot_fingerprint, record_event_id,
                     accepted_transaction_id, recorded_at, payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.run_id,
                     record.market_data_snapshot_id,
                     record.schema_version,
+                    record.report_window_start,
+                    record.report_window_end,
                     record.as_of_date,
+                    len(record.universe_tickers),
                     record.security_count,
-                    record.provider_id,
+                    len(record.provider_ids),
+                    None if record.workbook is None else record.workbook.content_sha256,
+                    len(record.gaps),
+                    len(record.conflicts),
                     record.snapshot_fingerprint,
+                    record.record_event_id,
                     record.accepted_transaction_id,
                     record.recorded_at,
                     _canonical_record_text(record),
@@ -7409,9 +7417,7 @@ class SQLiteControlStore:
                     "plan_revision": "plan_revision",
                     "report_type": "report_type",
                     "task_count": "task_count",
-                    "acquisition_spec_fingerprint": (
-                        "acquisition_spec_fingerprint"
-                    ),
+                    "acquisition_spec_fingerprint": ("acquisition_spec_fingerprint"),
                     "plan_fingerprint": "plan_fingerprint",
                     "record_event_id": "record_event_id",
                     "accepted_transaction_id": "accepted_transaction_id",
@@ -7428,9 +7434,7 @@ class SQLiteControlStore:
                     "bundle_record_id": "bundle_record_id",
                     "schema_version": "schema_version",
                     "attempt_authorization_id": "attempt_authorization_id",
-                    "provider_response_artifact_id": (
-                        "provider_response_artifact_id"
-                    ),
+                    "provider_response_artifact_id": ("provider_response_artifact_id"),
                     "provider_response_sha256": "provider_response_sha256",
                     "bundle_status": "bundle_status",
                     "search_count": "search_count",
@@ -7444,7 +7448,7 @@ class SQLiteControlStore:
                 },
             ),
             market_data_snapshots=self._load_for_run(
-                MarketDataSnapshotV1,
+                MarketDataSnapshotV2,
                 "market_data_snapshots",
                 run_id,
                 "recorded_at, market_data_snapshot_id",
@@ -7452,10 +7456,12 @@ class SQLiteControlStore:
                     "run_id": "run_id",
                     "market_data_snapshot_id": "market_data_snapshot_id",
                     "schema_version": "schema_version",
+                    "report_window_start": "report_window_start",
+                    "report_window_end": "report_window_end",
                     "as_of_date": "as_of_date",
                     "security_count": "security_count",
-                    "provider_id": "provider_id",
                     "snapshot_fingerprint": "snapshot_fingerprint",
+                    "record_event_id": "record_event_id",
                     "accepted_transaction_id": "accepted_transaction_id",
                     "recorded_at": "recorded_at",
                 },
@@ -8550,14 +8556,10 @@ class SQLiteControlStore:
         binding = snapshot.run_contract_bindings[0]
         if binding.run_direction.report_type is None:
             raise ControlStoreIntegrityError("runtime_source_search_graph_invalid")
-        if [item.plan_revision for item in plans] != list(
-            range(1, len(plans) + 1)
-        ):
+        if [item.plan_revision for item in plans] != list(range(1, len(plans) + 1)):
             raise ControlStoreIntegrityError("runtime_source_search_graph_invalid")
 
-        transactions = {
-            item.transaction_id: item for item in snapshot.transactions
-        }
+        transactions = {item.transaction_id: item for item in snapshot.transactions}
         events = {item.event_id: item for item in snapshot.events}
         attempts = {
             item.attempt_authorization_id: item
@@ -8566,9 +8568,7 @@ class SQLiteControlStore:
         artifacts = {item.artifact_id: item for item in snapshot.artifacts}
         revisions_by_artifact: dict[str, list[ArtifactRevision]] = {}
         for revision in snapshot.artifact_revisions:
-            revisions_by_artifact.setdefault(revision.artifact_id, []).append(
-                revision
-            )
+            revisions_by_artifact.setdefault(revision.artifact_id, []).append(revision)
         plan_fingerprints: set[str] = set()
         for plan in plans:
             event = events.get(plan.record_event_id)
@@ -8586,9 +8586,7 @@ class SQLiteControlStore:
                     for attempt in attempts.values()
                 )
             ):
-                raise ControlStoreIntegrityError(
-                    "runtime_source_search_graph_invalid"
-                )
+                raise ControlStoreIntegrityError("runtime_source_search_graph_invalid")
             plan_fingerprints.add(plan.acquisition_spec_fingerprint)
 
         seen_attempts: set[str] = set()
@@ -8603,8 +8601,7 @@ class SQLiteControlStore:
             matching_revisions = [
                 item
                 for item in revisions
-                if item.sha256 == bundle.provider_response_sha256
-                and item.frozen
+                if item.sha256 == bundle.provider_response_sha256 and item.frozen
             ]
             if (
                 bundle.run_id != snapshot.run.run_id
@@ -8620,9 +8617,7 @@ class SQLiteControlStore:
                 or artifact is None
                 or not matching_revisions
             ):
-                raise ControlStoreIntegrityError(
-                    "runtime_source_search_graph_invalid"
-                )
+                raise ControlStoreIntegrityError("runtime_source_search_graph_invalid")
             seen_attempts.add(bundle.attempt_authorization_id)
 
     @staticmethod
@@ -8634,9 +8629,7 @@ class SQLiteControlStore:
         records = snapshot.market_data_snapshots
         if not records:
             return
-        transactions = {
-            item.transaction_id: item for item in snapshot.transactions
-        }
+        transactions = {item.transaction_id: item for item in snapshot.transactions}
         events = {item.event_id: item for item in snapshot.events}
         seen_ids: set[str] = set()
         seen_dates: set[str] = set()
@@ -8653,9 +8646,7 @@ class SQLiteControlStore:
                 or event.event_type != "market_data_snapshot_recorded"
                 or event.decision != record.market_data_snapshot_id
             ):
-                raise ControlStoreIntegrityError(
-                    "market_data_snapshot_graph_invalid"
-                )
+                raise ControlStoreIntegrityError("market_data_snapshot_graph_invalid")
             seen_ids.add(record.market_data_snapshot_id)
             seen_dates.add(record.as_of_date)
 
@@ -10717,6 +10708,18 @@ class SQLiteControlStore:
                 ).decode("utf-8")
             )
             if row["report_span_json"] != span_text:
+                raise ControlStoreIntegrityError("stored_payload_identity_mismatch")
+        elif model_type is MarketDataSnapshotV2:
+            workbook_sha256 = (
+                None if model.workbook is None else model.workbook.content_sha256
+            )
+            if (
+                row["universe_count"] != len(model.universe_tickers)
+                or row["provider_count"] != len(model.provider_ids)
+                or row["workbook_sha256"] != workbook_sha256
+                or row["gap_count"] != len(model.gaps)
+                or row["conflict_count"] != len(model.conflicts)
+            ):
                 raise ControlStoreIntegrityError("stored_payload_identity_mismatch")
         return model
 

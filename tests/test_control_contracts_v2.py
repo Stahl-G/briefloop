@@ -63,6 +63,7 @@ EXPECTED_V2_CONTRACT_IDS = (
     "briefloop.tavily_acquisition_bundle.v2",
     "briefloop.tavily_acquisition_bundle_record.v2",
     "briefloop.market_data_snapshot.v1",
+    "briefloop.market_data_snapshot.v2",
     "briefloop.source_acquisition_attempt_authorize_request.v1",
     "briefloop.workspace_controlstore_bootstrap.v2",
     "briefloop.runtime_adapter_binding.v2",

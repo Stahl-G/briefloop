@@ -185,7 +185,7 @@ def test_normal_successor_freezes_empty_snapshot_without_inheriting_authority(
 
     with sqlite3.connect(workspace / "briefloop.db") as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-    assert SCHEMA_VERSION == 18
+    assert SCHEMA_VERSION == 19
 
     committed = _start_successor(
         workspace,
