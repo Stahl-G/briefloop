@@ -131,7 +131,14 @@ Create a fresh schema19 workspace with:
 
 ```bash
 briefloop new solar-stock-periodic <workspace>
+# When the workbook already defines the reporting period, freeze it before run:
+briefloop new solar-stock-periodic <workspace> \
+  --report-window-start <YYYY-MM-DD> --report-window-end <YYYY-MM-DD>
 ```
+
+The paired report-window flags are the Human confirmation for the workbook
+period. They must be set before Store initialization; market-data ingest never
+rewrites RunDirection.
 
 Its frozen plan uses 20 independent first-pass tasks: 11 listed securities, 5
 event-only entities, and 4 themes. Each task may request 20 advanced results;
@@ -160,7 +167,9 @@ verified manual cells authoritative and uses Yahoo only to fill missing
 securities, adjusted-close history, FX, or fields. Conflicts remain visible;
 missing required price series block delivery. The projection writes comparison
 tables, a JSON read model, seven deterministic PNG charts, and a hash-bound
-chart manifest. An embedded workbook chart is display-only and never evidence.
+chart manifest. Product-owned price, period-return, and FX-conversion formulas
+are recomputed from frozen inputs; Excel formula caches are comparison-only.
+An embedded workbook chart is display-only and never evidence.
 Never copy structured market values into causal prose without a separately
 frozen Claim Ledger claim.
 

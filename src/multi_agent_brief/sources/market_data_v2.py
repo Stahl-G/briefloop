@@ -29,7 +29,7 @@ from multi_agent_brief.contracts.v2 import (
     MarketDataSecurityV2,
     MarketDataSeriesPointV2,
 )
-from multi_agent_brief.control_store.serialization import canonical_fingerprint
+from multi_agent_brief.core.fingerprint import canonical_fingerprint
 from multi_agent_brief.sources.market_data import MarketDataError, _open_no_redirect
 from multi_agent_brief.sources.solar_stock_plan import (
     SOLAR_STOCK_OVERSEAS_SECURITIES,
