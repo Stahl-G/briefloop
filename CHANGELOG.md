@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Added the experimental DeepSeek Harness (DSH) runtime kit (0.16.0 slice):
+  `briefloop runtime install --workspace <workspace> --runtime dsh` writes
+  eight role presets, the BriefLoop operator skill, and the protocol
+  reference under `.dsh/` with exact hash-bound install verification;
+  `briefloop run --workspace <workspace> --runtime dsh` prints the DSH
+  operator handoff and never generates the brief or writes the ControlStore.
+  Fresh Store initialization stays Codex-bound.
 - Added fresh-only schema 19 and strict `market_data_snapshot.v2` for Solar
   Stock Periodic, including workbook identity, adjusted-close history,
   corporate actions, FX, valuation fields, event reactions, gaps, and conflicts.

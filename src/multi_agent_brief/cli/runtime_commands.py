@@ -38,7 +38,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     install.add_argument(
         "--runtime",
         required=True,
-        choices=("codex", "all"),
+        choices=("codex", "dsh", "all"),
         help="Runtime kit to install.",
     )
     install.add_argument(
@@ -121,6 +121,14 @@ def handle(args: argparse.Namespace) -> int:
                 result = WorkspaceBootstrap(args.workspace).install_codex_kit(
                     dry_run=dry_run
                 )
+            elif args.runtime == "dsh":
+                from multi_agent_brief.runtime_host_v2.initialization import (
+                    WorkspaceBootstrap,
+                )
+
+                result = WorkspaceBootstrap(args.workspace).install_dsh_kit(
+                    dry_run=dry_run
+                )
             elif args.runtime == "all":
                 from multi_agent_brief.runtime_host_v2.initialization import (
                     WorkspaceBootstrap,
@@ -139,7 +147,7 @@ def handle(args: argparse.Namespace) -> int:
                             runtime=runtime,
                             repo_workdir=getattr(args, "repo_workdir", None),
                         )
-                        for runtime in ("opencode", "claude")
+                        for runtime in ("dsh",)
                     ),
                     force=force,
                     runtime="all",
@@ -199,6 +207,12 @@ def handle(args: argparse.Namespace) -> int:
             print(
                 "[runtime install] Codex note: open and trust this workspace in Codex "
                 "so project .codex/config.toml and custom agents are loaded."
+            )
+        if result["runtime"] in {"dsh", "all"}:
+            print(
+                "[runtime install] DSH note: copy the .dsh/presets/briefloop-<role> "
+                "directories into your DSH preset root "
+                "(${DSH_HOME:-$HOME/.dsh}/.agent-presets/) so the roster can mount them."
             )
         return 0
     if args.runtime_action == "successor-start":

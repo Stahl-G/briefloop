@@ -65,6 +65,7 @@ runtime_surfaces:
   - codex
   - codebuddy
   - operator
+  - dsh
 v060_boundaries:
   implements:
     - shared_orchestrator_authority

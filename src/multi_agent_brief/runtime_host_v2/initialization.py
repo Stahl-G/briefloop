@@ -350,6 +350,31 @@ class WorkspaceBootstrap:
             "phase": "planned" if dry_run else "prepared",
         }
 
+    def install_dsh_kit(self, *, dry_run: bool = False) -> dict[str, object]:
+        """Materialize or verify the workspace-local DSH operating kit.
+
+        The DSH kit is replaceable comfort material: it never writes the
+        ControlStore and the Store never re-binds on install, so an existing
+        SQLite workspace is not re-verified against it.
+        """
+
+        authority_kind = self.classify_target()
+        if authority_kind == "invalid_sqlite":
+            raise RuntimeHostError("control_store_integrity_invalid")
+        try:
+            result = install_runtime_kit(
+                workspace=self.workspace,
+                runtime="dsh",
+                force=False,
+                dry_run=dry_run,
+            )
+        except RuntimeAssetInstallError as exc:
+            raise RuntimeHostError("runtime_adapter_binding_mismatch") from exc
+        return {
+            **result,
+            "phase": "planned" if dry_run else "prepared",
+        }
+
     def prepare_codex_runtime(
         self,
         *,

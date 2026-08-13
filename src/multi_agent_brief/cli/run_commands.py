@@ -111,6 +111,71 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
 
 
+def _dsh_handoff(workspace_path: Path) -> int:
+    """run --runtime dsh — print the DeepSeek Harness operator handoff.
+
+    The launcher never generates the brief: it verifies the workspace-local
+    DSH kit (exact binding when present) and prints the operating protocol
+    for one DSH session. Fresh Store initialization stays Codex-bound in
+    this experimental slice.
+    """
+    prefix = "[run]"
+    kit_status = "missing"
+    kit_root = workspace_path / ".dsh"
+    if kit_root.exists():
+        from multi_agent_brief.runtime_host_v2.dsh import (
+            load_dsh_adapter_binding,
+            load_workspace_dsh_adapter_binding,
+        )
+        from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
+
+        verification_run_id = "RUN-DSH-KIT-VERIFY"
+        try:
+            installed = load_workspace_dsh_adapter_binding(
+                workspace_path,
+                verification_run_id,
+            )
+            packaged = load_dsh_adapter_binding(verification_run_id)
+        except RuntimeHostError:
+            print(f"{prefix} runtime_adapter_binding_mismatch")
+            return 1
+        if installed != packaged:
+            print(f"{prefix} runtime_adapter_binding_mismatch")
+            return 1
+        kit_status = "installed"
+
+    steps = [
+        "read the Store-derived action: briefloop runtime continue --workspace <workspace>",
+        "on role_work_required with delegate_exact_role: dispatch that exact role as a DSH subagent on the matching .dsh/presets/briefloop-<role> preset, handing it the exact RoleTaskEnvelope",
+        "the subagent writes only the envelope's allowed scratch files and runs the embedded preflight commands (briefloop contract show / runtime invocation-validate)",
+        "return control to this session and call briefloop runtime continue again",
+        "deterministic transitions and Human decisions use exact Store actions only (briefloop runtime apply)",
+        "repeat until complete; never write briefloop.db directly",
+    ]
+    if kit_status == "missing":
+        steps.insert(
+            0,
+            "install the DSH kit first: briefloop runtime install --workspace <workspace> --runtime dsh",
+        )
+        steps.insert(
+            1,
+            "copy .dsh/presets/briefloop-<role> directories into the DSH preset root (${DSH_HOME:-$HOME/.dsh}/.agent-presets/)",
+        )
+
+    payload = {
+        "schema_version": "briefloop.dsh_handoff.v1",
+        "runtime": "dsh",
+        "workspace": str(workspace_path),
+        "control_protocol": "controlstore_v2",
+        "action_protocol": "core_run_next_action_v2",
+        "store_runtime": "codex",
+        "kit": kit_status,
+        "steps": steps,
+    }
+    print(json.dumps(payload, sort_keys=True, separators=(",", ":")))
+    return 0
+
+
 def handle(args: argparse.Namespace) -> int:
     """Dispatch run / start / handoff / prepare commands."""
     if args.command in {"prepare", "handoff"}:
@@ -173,6 +238,8 @@ def _run_launcher(args: argparse.Namespace) -> int:
     if getattr(args, "command", None) == "start":
         print(f"{prefix} runtime_command_unsupported")
         return 1
+    if args.runtime == "dsh":
+        return _dsh_handoff(workspace_path)
     if args.runtime != "codex":
         print(f"{prefix} runtime_adapter_unsupported")
         return 1

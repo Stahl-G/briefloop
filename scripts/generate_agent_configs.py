@@ -40,7 +40,7 @@ ORCHESTRATOR_LOOP_TEXT = (
     "delegate_repair / request_human_review / block_run / finalize"
 )
 
-TARGETS = {"codex", "docs"}
+TARGETS = {"codex", "dsh", "docs"}
 PACKAGED_CODEX_ROLE_IDS = (
     "source-planner",
     "source-provider",
@@ -51,6 +51,7 @@ PACKAGED_CODEX_ROLE_IDS = (
     "editor",
     "auditor",
 )
+PACKAGED_DSH_ROLE_IDS = PACKAGED_CODEX_ROLE_IDS
 
 SENSITIVE_PATTERNS = [
     "api_key", "password",
@@ -164,9 +165,8 @@ def render_codex_config(manifest: dict) -> str:
 # Codex agent TOML
 # ---------------------------------------------------------------------------
 
-def render_packaged_codex_agent(role_name: str, role: dict) -> str:
-    description = _toml_basic_string(str(role["description"]))
-    instructions = (
+def _role_instructions(role_name: str, role: dict) -> str:
+    return (
         f"You are the BriefLoop {role_name} specialist for the SQLite-only "
         "ControlStore v2 runtime.\n\n"
         "Read the exact RoleTaskEnvelope supplied by the host. Treat its "
@@ -185,6 +185,11 @@ def render_packaged_codex_agent(role_name: str, role: dict) -> str:
         "Role hard rules:\n"
         f"{_join_lines([str(item) for item in role['hard_rules']])}"
     )
+
+
+def render_packaged_codex_agent(role_name: str, role: dict) -> str:
+    description = _toml_basic_string(str(role["description"]))
+    instructions = _role_instructions(role_name, role)
     return (
         f"{AUTOGEN_HEADER_TOML}\n\n"
         f'name = "{role_name}"\n'
@@ -192,6 +197,74 @@ def render_packaged_codex_agent(role_name: str, role: dict) -> str:
         f"developer_instructions = "
         f"{_toml_literal_multiline_string(instructions)}\n"
     )
+# ---------------------------------------------------------------------------
+# DeepSeek Harness (DSH) agent presets
+# ---------------------------------------------------------------------------
+
+DSH_PRESET_BODY = """\
+{header}
+# BriefLoop {role} agent preset for DeepSeek Harness (experimental 0.16.0
+# runtime kit). A preset row that publishes a service must sit inside an
+# isolate realm; every row below registers into the host `tools` registry or
+# the per-scope skill layer, so it publishes nothing and needs no realm.
+
+# ── identity ──
+# The preset's own persona: the BriefLoop role contract.
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: {persona}
+
+# ── model-facing tools ──
+# Only model-facing rows; the registries (tools, skills, shell, fs) stay in
+# the host composition.
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
+
+# ── skills ──
+# The skill REGISTRY lives in the host composition and is layered per scope:
+# these rows register into this preset's layer of it, so they need no realm.
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+"""
+
+
+def _yaml_quoted(value: str) -> str:
+    """Render one double-quoted YAML string (JSON escapes are valid YAML)."""
+    return json.dumps(value, ensure_ascii=False)
+
+
+def render_packaged_dsh_preset(role_name: str, role: dict) -> str:
+    return (
+        DSH_PRESET_BODY.format(
+            header=AUTOGEN_HEADER_TOML,
+            role=role_name,
+            persona=_yaml_quoted(_role_instructions(role_name, role)),
+        )
+        + "\n"
+    )
+
+
+def render_packaged_dsh_preset_meta(role_name: str, role: dict) -> str:
+    return (
+        f"{AUTOGEN_HEADER_TOML}\n"
+        f"name: {_yaml_quoted(f'BriefLoop {role_name}')}\n"
+        f"description: {_yaml_quoted(str(role['description']))}\n"
+    )
+
+
 def render_docs(manifest: dict) -> dict[str, str]:
     roles = manifest["roles"]
     project = manifest["project"]
@@ -247,6 +320,7 @@ def render_docs(manifest: dict) -> dict[str, str]:
         | Platform | Location | Format |
         |----------|----------|--------|
         | Packaged Codex runtime kit | `src/multi_agent_brief/runtime_kits/codex/` | TOML |
+        | Packaged DSH runtime kit | `src/multi_agent_brief/runtime_kits/dsh/` | YAML presets + Markdown |
         | Skills | `.agents/skills/*/SKILL.md` | Markdown + YAML frontmatter, hand-maintained |
         | Project instructions | `AGENTS.md` | Markdown, hand-maintained |
     """)
@@ -504,6 +578,26 @@ def generate_all(manifest: dict, check: bool = False, target: str | None = None)
             if not write_or_check(path, content, check):
                 ok = False
 
+    # Packaged DeepSeek Harness (DSH) runtime kit presets
+    if "dsh" in targets:
+        packaged_root = ROOT / "src" / "multi_agent_brief" / "runtime_kits" / "dsh"
+        for name in PACKAGED_DSH_ROLE_IDS:
+            preset_dir = packaged_root / "presets" / f"briefloop-{name}"
+            agent_path = preset_dir / "agent.cordis.yml"
+            meta_path = preset_dir / "preset.yml"
+            if not write_or_check(
+                agent_path,
+                render_packaged_dsh_preset(name, roles[name]),
+                check,
+            ):
+                ok = False
+            if not write_or_check(
+                meta_path,
+                render_packaged_dsh_preset_meta(name, roles[name]),
+                check,
+            ):
+                ok = False
+
     # Docs
     if "docs" in targets:
         docs = render_docs(manifest)
@@ -528,7 +622,7 @@ def main(argv: list[str] | None = None) -> int:
     group.add_argument("--write", action="store_true", help="Generate platform adapter files")
     group.add_argument("--check", action="store_true", help="Check if platform adapter files are up to date")
     parser.add_argument("--target", choices=sorted(TARGETS),
-                        help="Generate only a specific target: codex or docs.")
+                        help=f"Generate only a specific target: {', '.join(sorted(TARGETS))}.")
     parser.add_argument("--manifest", type=Path, default=MANIFEST_PATH,
                         help="Path to agent_roles.yaml")
 

@@ -26,4 +26,4 @@ def test_generator_help_states_operating_contract_boundary():
     assert result.returncode == 0
     assert "hand-maintained operating contracts" in result.stdout
     assert "agents_md" not in result.stdout
-    assert "{codex,docs}" in result.stdout
+    assert "{codex,docs,dsh}" in result.stdout

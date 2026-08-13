@@ -171,7 +171,7 @@ def test_start_help_shows_runtime_options(capsys):
     assert "claude" in output
     assert "operator" in output
     assert "manual" not in output
-    assert "{hermes,claude,opencode,codex,codebuddy,operator}" in output
+    assert "{hermes,claude,opencode,codex,codebuddy,operator,dsh}" in output
     assert "--workspace" in output
     assert "--skip-doctor" not in output
 
@@ -420,7 +420,9 @@ def test_retired_launcher_public_paths_reject_without_writes(
         ],
         "runtime_command_unsupported\n",
     )
-    # non-codex runtimes are refused on every workspace (SQLite-only runtime).
+    # retired non-codex runtimes are refused on every workspace (SQLite-only
+    # runtime); `dsh` is the experimental handoff runtime and is covered by
+    # test_dsh_runtime_kit.py.
     ws_fresh = _write_workspace(tmp_path / "fresh")
     assert_rejected(
         ws_fresh,

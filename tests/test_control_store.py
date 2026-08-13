@@ -3205,6 +3205,9 @@ def test_only_dormant_v2_modules_import_control_store() -> None:
         # The review session launcher reads only the frozen Store head.
         "product/review_session/launcher.py",
         "runtime_host_v2/codex.py",
+        # The DSH kit binding consumes deterministic serialization helpers
+        # only (canonical fingerprint); it never opens the Store.
+        "runtime_host_v2/dsh.py",
         "runtime_host_v2/initialization.py",
         "runtime_host_v2/projections.py",
         "runtime_host_v2/scratch.py",

@@ -41,6 +41,23 @@ REQUIRED_PACKAGE_FILES = [
             "auditor",
         )
     ),
+    "src/multi_agent_brief/runtime_kits/dsh/README.md",
+    "src/multi_agent_brief/runtime_kits/dsh/skills/briefloop/SKILL.md",
+    "src/multi_agent_brief/runtime_kits/dsh/skills/briefloop/references/controlstore-v2.md",
+    *(
+        f"src/multi_agent_brief/runtime_kits/dsh/presets/briefloop-{role}/{member}"
+        for role in (
+            "source-planner",
+            "source-provider",
+            "scout",
+            "screener",
+            "claim-ledger",
+            "analyst",
+            "editor",
+            "auditor",
+        )
+        for member in ("agent.cordis.yml", "preset.yml")
+    ),
 ]
 
 REQUIRED_PACKAGE_DATA_PATTERNS = [
@@ -58,6 +75,10 @@ REQUIRED_PACKAGE_DATA_PATTERNS = [
     '"runtime_kits/codex/agents/*.toml"',
     '"runtime_kits/codex/skills/briefloop/*.md"',
     '"runtime_kits/codex/skills/briefloop/references/*.md"',
+    '"runtime_kits/dsh/*.md"',
+    '"runtime_kits/dsh/skills/briefloop/*.md"',
+    '"runtime_kits/dsh/skills/briefloop/references/*.md"',
+    '"runtime_kits/dsh/presets/*/*.yml"',
 ]
 
 
@@ -118,6 +139,72 @@ def main() -> int:
     ):
         if phrase not in packaged_contract:
             errors.append(f"packaged Codex skill is missing runtime contract phrase: {phrase}")
+
+    dsh_skill = (
+        ROOT / "src/multi_agent_brief/runtime_kits/dsh/skills/briefloop/SKILL.md"
+    ).read_text(encoding="utf-8")
+    dsh_reference = (
+        ROOT
+        / "src/multi_agent_brief/runtime_kits/dsh/skills/briefloop/references/controlstore-v2.md"
+    ).read_text(encoding="utf-8")
+    dsh_contract = dsh_skill + "\n" + dsh_reference
+    for phrase in (
+        "CoreRunNextAction",
+        "RoleTaskEnvelope",
+        "runtime continue",
+        "role_work_required",
+        "needs_human",
+        "needs_attention",
+        "delegate",
+        "deterministic",
+        "human_decision",
+        "blocked",
+        "complete",
+        "runtime_action_stale",
+        "package_ready",
+        "delivered",
+        "runtime invocation-start",
+        "runtime invocation-accept",
+        "runtime invocation-fail",
+        "runtime apply",
+        "solar-stock-periodic",
+        "local_derivation_failed",
+        "FrozenGuidanceContext",
+        "runtime install --workspace <workspace> --runtime dsh",
+        "run --workspace <workspace> --runtime dsh",
+        ".dsh/presets/briefloop-",
+        "briefloop.db",
+    ):
+        if phrase not in dsh_contract:
+            errors.append(f"packaged DSH skill is missing runtime contract phrase: {phrase}")
+
+    for role in (
+        "source-planner",
+        "source-provider",
+        "scout",
+        "screener",
+        "claim-ledger",
+        "analyst",
+        "editor",
+        "auditor",
+    ):
+        dsh_preset = (
+            ROOT
+            / "src/multi_agent_brief/runtime_kits/dsh/presets"
+            / f"briefloop-{role}"
+            / "agent.cordis.yml"
+        ).read_text(encoding="utf-8")
+        for phrase in (
+            "@deepseek-ai/dsh-persona",
+            f"BriefLoop {role} specialist",
+            "RoleTaskEnvelope",
+            "briefloop contract show",
+            "briefloop runtime invocation-validate",
+        ):
+            if phrase not in dsh_preset:
+                errors.append(
+                    f"packaged DSH preset briefloop-{role} is missing role phrase: {phrase}"
+                )
 
     if errors:
         print("Runtime Asset Parity Check")

@@ -75,7 +75,7 @@ def test_active_generic_cli_guidance_requires_explicit_runtime_choice() -> None:
         assert "--runtime auto" not in text, path
 
     assert placeholder == (
-        "--runtime <hermes|claude|opencode|codex|codebuddy|operator>"
+        "--runtime <hermes|claude|opencode|codex|codebuddy|operator|dsh>"
     )
 
     runtime_assets = (ROOT / "src/multi_agent_brief/runtime_assets.py").read_text(

@@ -59,5 +59,6 @@ Strict: Scout -> Screener -> Claim Ledger -> Analyst -> Delivery Editor -> Audit
         | Platform | Location | Format |
         |----------|----------|--------|
         | Packaged Codex runtime kit | `src/multi_agent_brief/runtime_kits/codex/` | TOML |
+        | Packaged DSH runtime kit | `src/multi_agent_brief/runtime_kits/dsh/` | YAML presets + Markdown |
         | Skills | `.agents/skills/*/SKILL.md` | Markdown + YAML frontmatter, hand-maintained |
         | Project instructions | `AGENTS.md` | Markdown, hand-maintained |
