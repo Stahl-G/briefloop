@@ -111,7 +111,7 @@ _ROLE_TOPOLOGY_POLICIES = MappingProxyType(
             context_display="Shared context",
             review_display="Stage-separated self-review",
             role_stages_display="Separate recorded invocations",
-            required_runtime="codex",
+            required_runtime=None,  # single_session is supported by codex and dsh
         ),
         "strict": CoreRoleTopologyPolicy(
             topology="strict",

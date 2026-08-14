@@ -158,6 +158,12 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         "--from-onboarding",
         help="Path to onboarding.json for conversational init.",
     )
+    init_parser.add_argument(
+        "--runtime",
+        choices=["codex", "dsh"],
+        default="codex",
+        help="ControlStore runtime identity for the fresh bootstrap (default: codex).",
+    )
 
 
 def handle(args: argparse.Namespace) -> int:
@@ -470,7 +476,7 @@ def _init_workspace(args: argparse.Namespace) -> int:
         if error_code := _existing_store_init_error(target):
             print(f"[error] {error_code}")
             return 1
-        create_demo_workspace(target, force=args.force)
+        create_demo_workspace(target, force=args.force, runtime=args.runtime)
         print(f"Created demo workspace: {target}")
         print_context_reference_guidance(target, "en-US")
         print(
@@ -601,7 +607,7 @@ def _init_workspace(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        create_workspace(target, profile, force=args.force)
+        create_workspace(target, profile, force=args.force, runtime=args.runtime)
     except NestedWorkspaceTargetError as exc:
         print(f"[error] {exc.code}")
         return 1

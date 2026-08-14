@@ -41,6 +41,11 @@ from .codex import (
     load_workspace_codex_adapter_binding,
     workspace_codex_adapter_loader,
 )
+from .dsh import (
+    load_dsh_adapter_binding,
+    load_workspace_dsh_adapter_binding,
+    workspace_dsh_adapter_loader,
+)
 from .errors import RuntimeHostError
 from .source_routes import derive_runtime_source_plan
 
@@ -85,7 +90,7 @@ class _InitializationInputs:
 
 
 @dataclass(frozen=True)
-class _PreparedCodexRuntime:
+class _PreparedRuntime:
     inputs: _InitializationInputs | None
     adapter: RuntimeAdapterBinding
 
@@ -375,11 +380,83 @@ class WorkspaceBootstrap:
             "phase": "planned" if dry_run else "prepared",
         }
 
+    def prepare_dsh_runtime(
+        self,
+        *,
+        expected_adapter_loader: AdapterLoader = load_dsh_adapter_binding,
+    ) -> _PreparedRuntime:
+        """Validate bootstrap inputs, then prepare and bind the DSH kit."""
+
+        authority_kind = self.classify_target()
+        if authority_kind == "sqlite":
+            current = _verify_existing(
+                self.workspace,
+                adapter_loader=workspace_dsh_adapter_loader(self.workspace),
+            )
+            return _PreparedRuntime(
+                inputs=None,
+                adapter=current.verified.runtime_adapter,
+            )
+        if authority_kind == "invalid_sqlite":
+            raise RuntimeHostError("control_store_integrity_invalid")
+
+        inputs = _load_initialization_inputs(self.workspace)
+        self.install_dsh_kit()
+        installed = load_workspace_dsh_adapter_binding(
+            self.workspace,
+            inputs.bootstrap.run_id,
+        )
+        expected = expected_adapter_loader(inputs.bootstrap.run_id)
+        if installed != expected:
+            raise RuntimeHostError("runtime_adapter_binding_mismatch")
+        return _PreparedRuntime(
+            inputs=inputs,
+            adapter=installed,
+        )
+
+    def initialize_runnable_dsh(
+        self,
+        *,
+        expected_adapter_loader: AdapterLoader = load_dsh_adapter_binding,
+    ) -> InitializedRuntime:
+        """Prepare the DSH kit first and commit SQLite last for a fresh workspace."""
+
+        authority_kind = self.classify_target()
+        if authority_kind == "sqlite":
+            return _verify_existing(
+                self.workspace,
+                adapter_loader=workspace_dsh_adapter_loader(self.workspace),
+            )
+        prepared = self.prepare_dsh_runtime(
+            expected_adapter_loader=expected_adapter_loader
+        )
+        if prepared.inputs is None:
+            raise RuntimeHostError("control_store_integrity_invalid")
+        request = _initialize_request(prepared.inputs, prepared.adapter)
+        result = CoreRunService(self.workspace).initialize(request)
+        if result.status == "commit_outcome_unknown":
+            result = CoreRunService(self.workspace).initialize(request)
+        if result.status not in {"committed", "replayed"}:
+            raise RuntimeHostError(
+                result.error_code or "control_store_integrity_invalid"
+            )
+        current = _verify_existing(
+            self.workspace,
+            adapter_loader=workspace_dsh_adapter_loader(self.workspace),
+        )
+        if current.verified.runtime_adapter != prepared.adapter:
+            raise RuntimeHostError("runtime_adapter_binding_mismatch")
+        return InitializedRuntime(
+            verified=current.verified,
+            action=current.action,
+            initialized=True,
+        )
+
     def prepare_codex_runtime(
         self,
         *,
         expected_adapter_loader: AdapterLoader = load_codex_adapter_binding,
-    ) -> _PreparedCodexRuntime:
+    ) -> _PreparedRuntime:
         """Validate bootstrap inputs, then prepare and bind the exact kit."""
 
         authority_kind = self.classify_target()
@@ -388,7 +465,7 @@ class WorkspaceBootstrap:
                 self.workspace,
                 adapter_loader=workspace_codex_adapter_loader(self.workspace),
             )
-            return _PreparedCodexRuntime(
+            return _PreparedRuntime(
                 inputs=None,
                 adapter=current.verified.runtime_adapter,
             )
@@ -404,7 +481,7 @@ class WorkspaceBootstrap:
         expected = expected_adapter_loader(inputs.bootstrap.run_id)
         if installed != expected:
             raise RuntimeHostError("runtime_adapter_binding_mismatch")
-        return _PreparedCodexRuntime(
+        return _PreparedRuntime(
             inputs=inputs,
             adapter=installed,
         )
@@ -491,10 +568,49 @@ def initialize_or_open_runtime(
     )
 
 
+def store_runtime(workspace: str | Path) -> str:
+    """Read the frozen runtime identity from the Store's verified adapter binding."""
+
+    root = Path(workspace).expanduser().resolve(strict=False)
+    try:
+        with SQLiteControlStore.open(root / "briefloop.db") as store:
+            head = store.load_workspace_run_head()
+            if head is None:
+                raise RuntimeHostError("control_store_integrity_invalid")
+            verified = CoreRunDomainVerifier().verify(store, head.current_run_id)
+            return verified.runtime_adapter.runtime
+    except RuntimeHostError:
+        raise
+    except Exception as exc:
+        raise RuntimeHostError("control_store_integrity_invalid") from exc
+
+
+def adapter_loader_for_workspace(workspace: str | Path) -> AdapterLoader:
+    """Select the codex or dsh workspace adapter loader from the Store runtime.
+
+    The Store's runtime_adapter binding records the runtime that froze this
+    workspace. Reading it first keeps every runtime command verifying the
+    installed kit against the same identity the Store was initialized with.
+    A fresh workspace (no Store yet) uses the codex loader: runtime commands
+    can only initialize a fresh Store through the codex path; a dsh-bound
+    Store is created by ``run --runtime dsh`` before any of these commands.
+    """
+
+    root = Path(workspace).expanduser().resolve(strict=False)
+    if not (root / "briefloop.db").exists():
+        return workspace_codex_adapter_loader(root)
+    runtime = store_runtime(root)
+    if runtime == "dsh":
+        return workspace_dsh_adapter_loader(root)
+    return workspace_codex_adapter_loader(root)
+
+
 __all__ = [
     "AdapterLoader",
     "InitializedRuntime",
     "RuntimeHostError",
     "WorkspaceBootstrap",
+    "adapter_loader_for_workspace",
     "initialize_or_open_runtime",
+    "store_runtime",
 ]

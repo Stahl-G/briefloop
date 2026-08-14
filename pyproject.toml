@@ -77,6 +77,7 @@ multi_agent_brief = [
   "runtime_kits/codex/skills/briefloop/*.md",
   "runtime_kits/codex/skills/briefloop/references/*.md",
   "runtime_kits/dsh/*.md",
+  "runtime_kits/dsh/plugin/*.js",
   "runtime_kits/dsh/skills/briefloop/*.md",
   "runtime_kits/dsh/skills/briefloop/references/*.md",
   "runtime_kits/dsh/presets/*/*.yml",

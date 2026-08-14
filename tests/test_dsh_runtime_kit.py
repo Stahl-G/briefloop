@@ -47,8 +47,9 @@ def _installed_files(ws: Path) -> list[Path]:
 
 def _assert_kit_complete(ws: Path) -> None:
     files = _installed_files(ws)
-    assert len(files) == 19
+    assert len(files) == 20
     assert (ws / ".dsh" / "README.md").exists()
+    assert (ws / ".dsh" / "plugin" / "briefloop-dsh.host.js").exists()
     assert (ws / ".dsh" / "skills" / "briefloop" / "SKILL.md").exists()
     assert (
         ws / ".dsh" / "skills" / "briefloop" / "references" / "controlstore-v2.md"
@@ -164,7 +165,7 @@ def test_dsh_binding_matches_packaged_and_detects_tamper(
     assert installed.adapter_id == "briefloop-dsh-controlstore"
     assert installed.role_ids == sorted(DSH_ROLES)
     assert "dsh.README.md" in installed.adapter_asset_sha256
-    assert len(installed.adapter_asset_sha256) == 19
+    assert len(installed.adapter_asset_sha256) == 20
 
     preset_path = ws / ".dsh" / "presets" / "briefloop-scout" / "agent.cordis.yml"
     # A byte-level tamper that preserves structure changes the hash-bound
@@ -253,3 +254,76 @@ def test_dsh_presets_declare_no_service_publishing_rows() -> None:
             assert isinstance(row, dict), path
             assert row["name"] in allowed_row_names, (path, row)
             assert row.get("group") is not True, (path, row)
+
+
+def test_dsh_plugin_source_declares_operator_and_cli_only() -> None:
+    plugin = (
+        ROOT / "src/multi_agent_brief/runtime_kits/dsh/plugin/briefloop-dsh.host.js"
+    ).read_text(encoding="utf-8")
+    assert "name: 'briefloop-dsh-operator'" in plugin
+    # Every tool is CLI-only; the plugin never opens SQLite or the Store.
+    assert "sqlite3" not in plugin
+    assert "SQLiteControlStore" not in plugin
+    assert "BRIEFLOOP_BIN" in plugin
+    for tool in (
+        "briefloop_version",
+        "briefloop_status",
+        "briefloop_runtime_next",
+        "briefloop_init",
+        "briefloop_runtime_install",
+        "briefloop_runtime_continue",
+        "briefloop_runtime_apply",
+        "briefloop_runtime_invocation_start",
+        "briefloop_runtime_invocation_validate",
+        "briefloop_runtime_invocation_accept",
+        "briefloop_runtime_invocation_fail",
+    ):
+        assert tool in plugin
+
+
+def test_init_runtime_dsh_writes_dsh_bound_bootstrap(tmp_path: Path, capsys) -> None:
+    ws = tmp_path / "dsh-ws"
+    rc = main(["init", str(ws), "--demo", "--runtime", "dsh", "--force"])
+
+    assert rc == 0
+    capsys.readouterr()
+    config = yaml.safe_load((ws / "config.yaml").read_text(encoding="utf-8"))
+    assert config["controlstore_v2"]["runtime"] == "dsh"
+
+
+def test_run_runtime_dsh_initializes_dsh_bound_store(tmp_path: Path, capsys) -> None:
+    ws = tmp_path / "dsh-ws"
+    assert main(["init", str(ws), "--demo", "--runtime", "dsh", "--force"]) == 0
+    capsys.readouterr()
+
+    rc = main(["run", "--workspace", str(ws), "--runtime", "dsh"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert payload["schema_version"] == "briefloop.core_run_next_action.v2"
+    # The Store is now bound to the dsh runtime.
+    assert (ws / "briefloop.db").exists()
+    from multi_agent_brief.runtime_host_v2.initialization import store_runtime
+
+    assert store_runtime(ws) == "dsh"
+
+
+def test_adapter_loader_for_workspace_dispatches_on_store_runtime(
+    tmp_path: Path, capsys
+) -> None:
+    from multi_agent_brief.runtime_host_v2.initialization import (
+        adapter_loader_for_workspace,
+        store_runtime,
+    )
+
+    ws = tmp_path / "dsh-ws"
+    assert main(["init", str(ws), "--demo", "--runtime", "dsh", "--force"]) == 0
+    assert main(["run", "--workspace", str(ws), "--runtime", "dsh"]) == 0
+    capsys.readouterr()
+
+    assert store_runtime(ws) == "dsh"
+    loader = adapter_loader_for_workspace(ws)
+    binding = loader("RUN-LOADER-DISPATCH")
+    assert binding.runtime == "dsh"
+    assert binding.adapter_id == "briefloop-dsh-controlstore"

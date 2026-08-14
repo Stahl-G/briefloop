@@ -337,6 +337,7 @@ def create_demo_workspace(
     target: Path,
     *,
     force: bool = False,
+    runtime: str = "codex",
     report_date_factory: Callable[[], date] = date.today,
     identity_factory: Callable[[], str] | None = None,
 ) -> None:
@@ -374,6 +375,7 @@ def create_demo_workspace(
         workspace_id=f"WS-{identity_factory()}",
         run_id=f"RUN-{identity_factory()}",
         report_date=report_date_factory(),
+        runtime=runtime,
     )
     input_dir = target / "input"
     sources_dir = input_dir / "sources"
@@ -446,6 +448,7 @@ def create_workspace(
     profile: InitProfile,
     *,
     force: bool = False,
+    runtime: str = "codex",
     report_date_factory: Callable[[], date] = date.today,
     identity_factory: Callable[[], str] = _new_controlstore_identity,
     execution_authorization: RunExecutionAuthorizationBootstrap | None = None,
@@ -479,6 +482,7 @@ def create_workspace(
         workspace_id=f"WS-{identity_factory()}",
         run_id=f"RUN-{identity_factory()}",
         report_date=report_date_factory(),
+        runtime=runtime,
         execution_authorization=execution_authorization,
     )
     if source_discovery_authorization is not None:

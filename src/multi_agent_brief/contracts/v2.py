@@ -2767,7 +2767,7 @@ class WorkspaceControlStoreBootstrapV2(StrictModel):
     schema_version: Literal["briefloop.workspace_controlstore_bootstrap.v2"]
     workspace_id: ContractId
     run_id: ContractId
-    runtime: Literal["codex"]
+    runtime: Literal["codex", "dsh"]
     role_topology: Literal["single_session", "default", "strict"]
     input_governance_required: bool
     gate_strictness: dict[GateId, bool]

@@ -42,6 +42,7 @@ REQUIRED_PACKAGE_FILES = [
         )
     ),
     "src/multi_agent_brief/runtime_kits/dsh/README.md",
+    "src/multi_agent_brief/runtime_kits/dsh/plugin/briefloop-dsh.host.js",
     "src/multi_agent_brief/runtime_kits/dsh/skills/briefloop/SKILL.md",
     "src/multi_agent_brief/runtime_kits/dsh/skills/briefloop/references/controlstore-v2.md",
     *(
@@ -76,6 +77,7 @@ REQUIRED_PACKAGE_DATA_PATTERNS = [
     '"runtime_kits/codex/skills/briefloop/*.md"',
     '"runtime_kits/codex/skills/briefloop/references/*.md"',
     '"runtime_kits/dsh/*.md"',
+    '"runtime_kits/dsh/plugin/*.js"',
     '"runtime_kits/dsh/skills/briefloop/*.md"',
     '"runtime_kits/dsh/skills/briefloop/references/*.md"',
     '"runtime_kits/dsh/presets/*/*.yml"',

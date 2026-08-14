@@ -217,8 +217,8 @@ def handle(args: argparse.Namespace) -> int:
         return 0
     if args.runtime_action == "successor-start":
         from multi_agent_brief.contracts.v2 import RunDirection
-        from multi_agent_brief.runtime_host_v2.codex import (
-            workspace_codex_adapter_loader,
+        from multi_agent_brief.runtime_host_v2.initialization import (
+            adapter_loader_for_workspace,
         )
         from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
 
@@ -230,7 +230,7 @@ def handle(args: argparse.Namespace) -> int:
             direction = RunDirection.model_validate(raw, strict=True)
             result = RuntimeHostService(
                 workspace,
-                adapter_loader=workspace_codex_adapter_loader(workspace),
+                adapter_loader=adapter_loader_for_workspace(workspace),
             ).start_successor(
                 successor_run_id=args.run_id,
                 run_direction=direction,
@@ -269,8 +269,8 @@ def handle(args: argparse.Namespace) -> int:
         "apply",
         "continue",
     }:
-        from multi_agent_brief.runtime_host_v2.codex import (
-            workspace_codex_adapter_loader,
+        from multi_agent_brief.runtime_host_v2.initialization import (
+            adapter_loader_for_workspace,
         )
         from multi_agent_brief.runtime_host_v2.service import RuntimeHostService
         from multi_agent_brief.runtime_host_v2.scratch import read_host_contract
@@ -292,7 +292,7 @@ def handle(args: argparse.Namespace) -> int:
             workspace = Path(args.workspace).expanduser().resolve(strict=True)
             service = RuntimeHostService(
                 workspace,
-                adapter_loader=workspace_codex_adapter_loader(workspace),
+                adapter_loader=adapter_loader_for_workspace(workspace),
             )
             if args.runtime_action == "next":
                 payload = service.next_action().model_dump(

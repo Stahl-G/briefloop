@@ -555,6 +555,10 @@ def _dsh_writes(*, workspace: Path) -> list[PlannedWrite]:
             _dsh_asset("README.md"),
         ),
         PlannedWrite(
+            workspace / ".dsh" / "plugin" / "briefloop-dsh.host.js",
+            _dsh_asset("plugin/briefloop-dsh.host.js"),
+        ),
+        PlannedWrite(
             workspace / ".dsh" / "skills" / "briefloop" / "SKILL.md",
             _dsh_asset("skills/briefloop/SKILL.md"),
         ),

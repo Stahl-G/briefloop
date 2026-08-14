@@ -88,6 +88,7 @@ def build_controlstore_bootstrap(
     workspace_id: str,
     run_id: str,
     report_date: date,
+    runtime: str = "codex",
     execution_authorization: RunExecutionAuthorizationBootstrap | None = None,
 ) -> WorkspaceControlStoreBootstrapV2:
     """Map one validated init profile into the exact fresh-v2 bootstrap."""
@@ -173,7 +174,7 @@ def build_controlstore_bootstrap(
             "schema_version": WorkspaceControlStoreBootstrapV2.schema_id,
             "workspace_id": workspace_id,
             "run_id": run_id,
-            "runtime": "codex",
+            "runtime": runtime,
             "role_topology": "single_session",
             "input_governance_required": True,
             "gate_strictness": {gate_id: True for gate_id in GATE_ID_VALUES},

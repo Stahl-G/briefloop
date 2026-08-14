@@ -37,6 +37,7 @@ _ROLE_IDS = (
 )
 _ASSET_PATHS = (
     "README.md",
+    "plugin/briefloop-dsh.host.js",
     "skills/briefloop/SKILL.md",
     "skills/briefloop/references/controlstore-v2.md",
     *(
@@ -191,6 +192,14 @@ def _build_binding(
     run_id: str,
     contents: dict[str, bytes],
 ) -> RuntimeAdapterBinding:
+    plugin_bytes = contents.get("plugin/briefloop-dsh.host.js", b"")
+    try:
+        plugin_text = plugin_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise _binding_error(exc)
+    if "briefloop-dsh-operator" not in plugin_text:
+        raise _binding_error("plugin/briefloop-dsh.host.js: operator name missing")
+
     for role_id in _ROLE_IDS:
         agent_path = f"presets/briefloop-{role_id}/agent.cordis.yml"
         meta_path = f"presets/briefloop-{role_id}/preset.yml"

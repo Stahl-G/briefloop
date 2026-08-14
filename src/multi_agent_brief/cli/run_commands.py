@@ -111,6 +111,91 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
 
 
+def _dsh_launcher(workspace_path: Path) -> int:
+    """run --runtime dsh — initialize a fresh dsh-bound Store or print the
+    DeepSeek Harness operator handoff.
+
+    A fresh workspace whose config.yaml bootstrap names `dsh` initializes a
+    Store bound to the DSH kit (mirroring the codex launcher). A workspace
+    already bound to dsh verifies its kit and prints the next Store action.
+    A codex-bound workspace prints the operator handoff and never generates
+    the brief.
+    """
+    prefix = "[run]"
+    from multi_agent_brief.cli.authority_guard import classify_workspace_authority
+    from multi_agent_brief.runtime_host_v2.initialization import (
+        WorkspaceBootstrap,
+        store_runtime,
+    )
+    from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
+
+    authority = classify_workspace_authority(workspace_path)
+    if authority.kind == "invalid_sqlite":
+        print(f"{prefix} control_store_integrity_invalid")
+        return 1
+
+    # Existing Store: act on its frozen runtime identity.
+    if authority.kind == "sqlite":
+        try:
+            runtime = store_runtime(workspace_path)
+        except RuntimeHostError as exc:
+            print(f"{prefix} {exc}")
+            return 1
+        if runtime == "dsh":
+            try:
+                action = WorkspaceBootstrap(
+                    workspace_path
+                ).initialize_runnable_dsh().action
+            except RuntimeHostError as exc:
+                print(f"{prefix} {exc}")
+                return 1
+            print(
+                json.dumps(
+                    action.model_dump(mode="json", exclude_unset=False),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            )
+            return 0
+        # codex-bound store: DSH operates it through the handoff protocol.
+        return _dsh_handoff(workspace_path)
+
+    # Fresh workspace: initialize when the bootstrap names dsh, else handoff.
+    try:
+        config_text = (workspace_path / "config.yaml").read_text(encoding="utf-8")
+    except OSError:
+        print(f"{prefix} runtime_initialization_input_invalid")
+        return 1
+    import yaml
+
+    try:
+        config = yaml.safe_load(config_text)
+        runtime = (
+            config.get("controlstore_v2", {}).get("runtime")
+            if isinstance(config, dict)
+            else None
+        )
+    except yaml.YAMLError:
+        runtime = None
+    if runtime == "dsh":
+        try:
+            action = WorkspaceBootstrap(
+                workspace_path
+            ).initialize_runnable_dsh().action
+        except RuntimeHostError as exc:
+            print(f"{prefix} {exc}")
+            return 1
+        print(
+            json.dumps(
+                action.model_dump(mode="json", exclude_unset=False),
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        )
+        return 0
+    return _dsh_handoff(workspace_path)
+
+
 def _dsh_handoff(workspace_path: Path) -> int:
     """run --runtime dsh — print the DeepSeek Harness operator handoff.
 
@@ -239,7 +324,7 @@ def _run_launcher(args: argparse.Namespace) -> int:
         print(f"{prefix} runtime_command_unsupported")
         return 1
     if args.runtime == "dsh":
-        return _dsh_handoff(workspace_path)
+        return _dsh_launcher(workspace_path)
     if args.runtime != "codex":
         print(f"{prefix} runtime_adapter_unsupported")
         return 1
