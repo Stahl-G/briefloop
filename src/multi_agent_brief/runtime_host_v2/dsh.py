@@ -208,8 +208,8 @@ def _build_binding(
         ui_text = ui_bytes.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise _binding_error(exc)
-    if "sidebar.footer.action" not in ui_text or "briefloop_start" not in ui_text:
-        raise _binding_error("plugin/briefloop-dsh.client.js: launcher slot or RPC missing")
+    if "settings.section" not in ui_text or "briefloop_start" not in ui_text:
+        raise _binding_error("plugin/briefloop-dsh.client.js: launcher section or RPC missing")
 
     for role_id in _ROLE_IDS:
         agent_path = f"presets/briefloop-{role_id}/agent.cordis.yml"

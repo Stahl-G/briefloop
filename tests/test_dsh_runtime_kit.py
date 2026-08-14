@@ -305,7 +305,7 @@ def test_dsh_plugin_source_declares_operator_and_cli_only() -> None:
     client = (
         ROOT / "src/multi_agent_brief/runtime_kits/dsh/plugin/briefloop-dsh.client.js"
     ).read_text(encoding="utf-8")
-    assert "sidebar.footer.action" in client
+    assert "settings.section" in client
     assert "briefloop_start" in client
     assert "host.call" in client
     assert "sqlite3" not in client
