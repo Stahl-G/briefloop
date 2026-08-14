@@ -47,9 +47,10 @@ def _installed_files(ws: Path) -> list[Path]:
 
 def _assert_kit_complete(ws: Path) -> None:
     files = _installed_files(ws)
-    assert len(files) == 20
+    assert len(files) == 21
     assert (ws / ".dsh" / "README.md").exists()
     assert (ws / ".dsh" / "plugin" / "briefloop-dsh.host.js").exists()
+    assert (ws / ".dsh" / "plugin" / "briefloop-dsh.client.js").exists()
     assert (ws / ".dsh" / "skills" / "briefloop" / "SKILL.md").exists()
     assert (
         ws / ".dsh" / "skills" / "briefloop" / "references" / "controlstore-v2.md"
@@ -165,7 +166,7 @@ def test_dsh_binding_matches_packaged_and_detects_tamper(
     assert installed.adapter_id == "briefloop-dsh-controlstore"
     assert installed.role_ids == sorted(DSH_ROLES)
     assert "dsh.README.md" in installed.adapter_asset_sha256
-    assert len(installed.adapter_asset_sha256) == 20
+    assert len(installed.adapter_asset_sha256) == 21
 
     preset_path = ws / ".dsh" / "presets" / "briefloop-scout" / "agent.cordis.yml"
     # A byte-level tamper that preserves structure changes the hash-bound
@@ -284,6 +285,7 @@ def test_dsh_plugin_source_declares_operator_and_cli_only() -> None:
     assert "sqlite3" not in plugin
     assert "SQLiteControlStore" not in plugin
     assert "BRIEFLOOP_BIN" in plugin
+    assert "briefloop_start" in plugin
     for tool in (
         "briefloop_version",
         "briefloop_status",
@@ -299,6 +301,14 @@ def test_dsh_plugin_source_declares_operator_and_cli_only() -> None:
         "briefloop_role_dispatch",
     ):
         assert tool in plugin
+
+    client = (
+        ROOT / "src/multi_agent_brief/runtime_kits/dsh/plugin/briefloop-dsh.client.js"
+    ).read_text(encoding="utf-8")
+    assert "sidebar.footer.action" in client
+    assert "briefloop_start" in client
+    assert "host.call" in client
+    assert "sqlite3" not in client
 
 
 def test_init_runtime_dsh_writes_dsh_bound_bootstrap(tmp_path: Path, capsys) -> None:

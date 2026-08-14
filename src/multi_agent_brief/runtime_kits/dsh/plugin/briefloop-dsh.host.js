@@ -54,6 +54,20 @@ return {
     const runCli = (argv, exec, timeoutMs) =>
       runCommand([BRIEFLOOP_BIN, ...argv].join(' '), exec, timeoutMs)
 
+    // Package-private Client RPC: the Web UI launcher button calls this to
+    // start a workspace. It runs the CLI launcher only and never opens the
+    // ControlStore directly.
+    harness.handle('briefloop_start', async (args) => {
+      const ws = String((args && args.workspace) || '')
+      const rt = (args && args.runtime) === 'codex' ? 'codex' : 'dsh'
+      if (!ws) return { ok: false, error: 'workspace path is required' }
+      return runCommand(
+        [BRIEFLOOP_BIN, 'run', '--workspace', q(ws), '--runtime', rt].join(' '),
+        undefined,
+        120000,
+      )
+    })
+
     const textOut = (_args, value) => {
       const lines = []
       lines.push(value.ok ? 'OK (exit 0)' : 'FAILED (exit ' + value.exitCode + (value.sandboxDenied ? ', sandbox-denied' : '') + ')')

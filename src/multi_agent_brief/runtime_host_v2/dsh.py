@@ -38,6 +38,7 @@ _ROLE_IDS = (
 _ASSET_PATHS = (
     "README.md",
     "plugin/briefloop-dsh.host.js",
+    "plugin/briefloop-dsh.client.js",
     "skills/briefloop/SKILL.md",
     "skills/briefloop/references/controlstore-v2.md",
     *(
@@ -199,6 +200,16 @@ def _build_binding(
         raise _binding_error(exc)
     if "briefloop-dsh-operator" not in plugin_text:
         raise _binding_error("plugin/briefloop-dsh.host.js: operator name missing")
+    if "briefloop_start" not in plugin_text:
+        raise _binding_error("plugin/briefloop-dsh.host.js: briefloop_start RPC missing")
+
+    ui_bytes = contents.get("plugin/briefloop-dsh.client.js", b"")
+    try:
+        ui_text = ui_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise _binding_error(exc)
+    if "sidebar.footer.action" not in ui_text or "briefloop_start" not in ui_text:
+        raise _binding_error("plugin/briefloop-dsh.client.js: launcher slot or RPC missing")
 
     for role_id in _ROLE_IDS:
         agent_path = f"presets/briefloop-{role_id}/agent.cordis.yml"
