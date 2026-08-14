@@ -345,12 +345,17 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 
 ## 🧭 当前状态
 
-当前版本：**v0.15.2**
+当前版本：**v0.15.3**
 
-v0.15.2 移除 legacy JSON control-plane 运行时。原有 Claude/Hermes/OpenCode/
-CodeBuddy/operator 路径及其 workspace 资产、role skills、writer 命令和 JSON
-control 文件均已删除；仅保留 SQLite Codex ControlStore 运行时。此版本同时
-移除已退役的 JSON runtime-state 栈及其 dead consumer。
+v0.15.3 交付 Solar Stock Periodic 行情数据面：fresh-only schema 19 与严格
+`market_data_snapshot.v2`（工作簿身份、复权收盘历史、公司行动、FX、估值字段、
+事件反应、缺口与冲突）；TOYO 周报 XLSX 的 profile-bound 采集；成对的
+`--report-window-start/--report-window-end` 选项；Store-bound 对比表、事件时间线、
+七张确定性 PNG 图、JSON 读模型、hash-bound 图清单，以及本地 HTML 报告的第五个
+Market Data Tab。Solar 行情 Gate 会阻断缺失序列、窗口错配、阻断性工作簿缺口与
+冲突；内嵌工作簿图表仅展示，结构化行情数据永不成为 Claim Ledger evidence。
+
+v0.15.2 移除了 legacy JSON control-plane 运行时。
 
 v0.15.1 prepared release target（development main，尚未打 tag）包含 Store-qualified post-final 审阅：同一 finalized lineage 可执行多个、
 彼此独立且由 Human 授权的 append-only advisory assessment；必须显式选择 result，
