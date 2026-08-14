@@ -10,7 +10,7 @@ BriefLoop 的功能很多，因为它不是一个单点报告生成器，而是�
 - **实验性**：已实现，但还不是 v0.11.0 稳定契约。
 - **路线图**：已规划或已定边界，但不是已实现能力。
 
-当前产品基线：**v0.15.2** 延续 `industry-weekly`、`management-monthly`、
+当前产品基线：**v0.15.3** 延续 `industry-weekly`、`management-monthly`、
 `document-review` 的受支持 baseline 入口。更宽的 Product OS surface 仍是实验性，
 除非本页或 support matrix 明确标为受支持。`solar-stock-periodic` 是实验性的
 schema-19 ReportPack，不是稳定产品基线。

@@ -162,7 +162,7 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
     ],
     "docs/features.md": [
         "Current product baseline:",
-        "v0.15.2",
+        "v0.15.3",
         "industry-weekly",
         "management-monthly",
         "document-review",
@@ -174,7 +174,7 @@ REQUIRED_DOC_BOUNDARY_PHRASES = {
     ],
     "docs/features.zh-CN.md": [
         "当前产品基线",
-        "v0.15.2",
+        "v0.15.3",
         "industry-weekly",
         "management-monthly",
         "document-review",

@@ -388,13 +388,21 @@ The demos use synthetic materials. They show the evidence chain and gate behavio
 
 ## 🧭 Current status
 
-Current version: **v0.15.2**
+Current version: **v0.15.3**
 
-v0.15.2 removes the legacy JSON control-plane runtime. The former
-Claude/Hermes/OpenCode/CodeBuddy/operator paths and their workspace assets,
-role skills, writer commands, and JSON control files are deleted; only the
-SQLite Codex ControlStore runtime remains. This release also removes the
-retired JSON runtime state stack and its dead consumers.
+v0.15.3 ships the Solar Stock Periodic market-data surface: a fresh-only
+schema 19 and strict `market_data_snapshot.v2` for workbook identity,
+adjusted-close history, corporate actions, FX, valuation fields, event
+reactions, gaps, and conflicts; profile-bound ingestion of the TOYO weekly
+XLSX layout; paired `--report-window-start/--report-window-end` options;
+Store-bound comparison tables, an event timeline, seven deterministic PNG
+charts, a JSON read model, a hash-bound chart manifest, and a fifth Market
+Data tab in the local HTML report. Solar market-data Gates block missing
+series, window mismatch, blocking workbook gaps, and conflicts; embedded
+workbook charts stay display-only and structured market data never becomes
+Claim Ledger evidence.
+
+v0.15.2 removed the legacy JSON control-plane runtime.
 
 The v0.15.1 prepared release target (development main, not yet tagged)
 includes Store-qualified post-final review: multiple
