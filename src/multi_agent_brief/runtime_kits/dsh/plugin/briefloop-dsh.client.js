@@ -5,11 +5,38 @@
 // Starting calls the Host half's `briefloop_start` RPC, which runs the
 // `briefloop` CLI launcher. This half never touches the ControlStore; all
 // authority stays in the deterministic Python/SQLite layer.
+//
+// Styling uses the DSH theme tokens (--dsw-alias-*) so the form follows the
+// active light/dark theme instead of hardcoded colors.
+
+const CSS = `
+.briefloop-launcher { display: flex; flex-direction: column; gap: 4px; max-width: 560px; }
+.briefloop-launcher .bl-hint { margin: 0 0 12px; font-size: 13px; color: var(--dsw-alias-label-secondary); line-height: 1.5; }
+.briefloop-launcher .bl-label { font-size: 12px; color: var(--dsw-alias-label-primary); margin-bottom: 4px; }
+.briefloop-launcher .bl-input {
+  width: 100%; padding: 7px 10px; box-sizing: border-box; margin-bottom: 12px;
+  background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary);
+  border: 1px solid var(--dsw-alias-border-l1); border-radius: 6px; font-size: 13px;
+}
+.briefloop-launcher .bl-input:focus { outline: none; border-color: var(--dsw-alias-brand-primary); }
+.briefloop-launcher .bl-start {
+  align-self: flex-start; padding: 8px 16px; cursor: pointer; font-size: 13px;
+  background: var(--dsw-alias-brand-primary); color: #fff; border: none; border-radius: 6px;
+}
+.briefloop-launcher .bl-start:disabled { opacity: 0.55; cursor: default; }
+.briefloop-launcher .bl-result {
+  margin: 14px 0 0; padding: 10px; max-height: 260px; overflow: auto; font-size: 11px;
+  white-space: pre-wrap; word-break: break-word;
+  background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary);
+  border: 1px solid var(--dsw-alias-border-l1); border-radius: 6px;
+}
+`
 
 return {
   apply(ctx) {
     const slots = ctx.get('slots')
     if (slots === undefined) return
+    styles.insert(CSS)
 
     slots.inject('settings.section', () => slots.register(
       { name: 'settings.section', id: 'briefloop-launcher', order: 10, label: 'BriefLoop' },
@@ -19,34 +46,27 @@ return {
         const [result, setResult] = React.useState('')
         const [busy, setBusy] = React.useState(false)
 
-        const label = { display: 'block', marginBottom: '4px', fontSize: '12px' }
-        const control = {
-          width: '100%', padding: '6px 8px', boxSizing: 'border-box',
-          marginBottom: '12px', borderRadius: '4px', border: '1px solid #444',
-          background: '#111', color: 'inherit', fontSize: '13px',
-        }
-
-        return React.createElement('div', { style: { padding: '4px 0', maxWidth: '560px' } },
-          React.createElement('p', {
-            style: { margin: '0 0 14px', fontSize: '13px', color: '#999', lineHeight: '1.5' },
-          }, '输入 workspace 路径并选择 runtime,点击「启动 briefloop」后,由 Host 侧调用 briefloop CLI launcher,结果回显在下方。'),
-          React.createElement('label', { style: label }, 'Workspace'),
+        return React.createElement('div', { className: 'briefloop-launcher' },
+          React.createElement('p', { className: 'bl-hint' },
+            '输入 workspace 路径并选择 runtime,点击「启动 briefloop」后,由 Host 侧调用 briefloop CLI launcher,结果回显在下方。'),
+          React.createElement('label', { className: 'bl-label' }, 'Workspace'),
           React.createElement('input', {
+            className: 'bl-input',
             value: workspace,
             placeholder: '/绝对路径/到/workspace',
             onChange: (e) => setWorkspace(e.target.value),
-            style: control,
           }),
-          React.createElement('label', { style: label }, 'Runtime'),
+          React.createElement('label', { className: 'bl-label' }, 'Runtime'),
           React.createElement('select', {
+            className: 'bl-input',
             value: runtime,
             onChange: (e) => setRuntime(e.target.value),
-            style: control,
           },
             React.createElement('option', { value: 'dsh' }, 'dsh'),
             React.createElement('option', { value: 'codex' }, 'codex'),
           ),
           React.createElement('button', {
+            className: 'bl-start',
             disabled: busy,
             onClick: async () => {
               setBusy(true)
@@ -59,18 +79,8 @@ return {
               }
               setBusy(false)
             },
-            style: {
-              padding: '8px 16px', cursor: 'pointer', borderRadius: '4px',
-              border: '1px solid #555', background: '#2a2a2a', color: 'inherit', fontSize: '13px',
-            },
           }, busy ? '运行中…' : '启动 briefloop'),
-          result ? React.createElement('pre', {
-            style: {
-              marginTop: '14px', padding: '8px', maxHeight: '260px', overflow: 'auto',
-              fontSize: '11px', whiteSpace: 'pre-wrap', background: '#111',
-              border: '1px solid #333', borderRadius: '4px',
-            },
-          }, result) : null,
+          result ? React.createElement('pre', { className: 'bl-result' }, result) : null,
         )
       },
     ))
