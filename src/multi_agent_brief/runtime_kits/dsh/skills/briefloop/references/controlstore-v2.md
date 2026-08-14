@@ -226,6 +226,28 @@ delivery effects.
 Specialists write proposals only. The host owns Store writes, provider I/O,
 source promotion, validation, Gate evaluation, artifact freezing, and receipts.
 
+### Dispatch a role as a DSH subagent
+
+After `invocation-start` materializes the envelope, dispatch deterministically:
+
+1. Read `role_id` from the envelope; the preset id is `briefloop-<role_id>`.
+2. Materialize the dispatch context with the read-only plugin tool:
+
+   ```bash
+   briefloop_role_dispatch --workspace <workspace> \
+     --envelope <scratch_directory>/role_task_envelope.json
+   ```
+
+   It returns `preset_id`, the role contract (the matching preset persona), and
+   a ready `dispatch_prompt`.
+3. Start exactly one subagent with that `dispatch_prompt`. It writes only the
+   envelope's `allowed_output_filenames` under `scratch_directory`, runs the
+   embedded `contract show` / `runtime invocation-validate` preflight commands,
+   and reports back. It never touches `briefloop.db`.
+4. Validate (`runtime invocation-validate`) then accept
+   (`runtime invocation-accept`). One role at a time; never parallelize
+   dependent roles or write proposal files outside the envelope's list.
+
 ## Failure and recovery matrix
 
 | Signal | Meaning | Lawful response |

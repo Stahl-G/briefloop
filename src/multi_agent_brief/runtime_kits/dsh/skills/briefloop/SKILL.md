@@ -123,9 +123,11 @@ Dispatch its result exactly:
 
 - `role_work_required`: read the exact envelope. If its
   `dispatch_instruction` is `execute_in_current_session`, perform that one role
-  task here. If it is `delegate_exact_role`, dispatch that exact installed role
-  as a DSH subagent on its BriefLoop preset. Write only the named files under
-  the envelope's scratch directory, run the embedded `contract show` and
+  task here. If it is `delegate_exact_role`, materialize the dispatch context
+  with the read-only `briefloop_role_dispatch` tool and start exactly one DSH
+  subagent with its returned `dispatch_prompt` (the matching `briefloop-<role>`
+  preset carries the role contract). Write only the named files under the
+  envelope's scratch directory, run the embedded `contract show` and
   `runtime invocation-validate` commands, then call `runtime continue` again.
 - `proposal_invalid`: repair only the current scratch proposal from the typed
   violations, validate again, and do not create another invocation.

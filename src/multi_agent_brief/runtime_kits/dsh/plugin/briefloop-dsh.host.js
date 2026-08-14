@@ -25,9 +25,9 @@ return {
       return "'" + s.replace(/'/g, "'\\''") + "'"
     }
 
-    const runCli = async (argv, exec, timeoutMs) => {
+    const runCommand = async (command, exec, timeoutMs) => {
       const request = {
-        command: [BRIEFLOOP_BIN, ...argv].join(' '),
+        command,
         timeoutMs,
         stdoutMaxBytes: 256 * 1024,
       }
@@ -50,6 +50,9 @@ return {
         sandboxDenied: !ok && /sandbox: file access denied/.test(stderr),
       }
     }
+
+    const runCli = (argv, exec, timeoutMs) =>
+      runCommand([BRIEFLOOP_BIN, ...argv].join(' '), exec, timeoutMs)
 
     const textOut = (_args, value) => {
       const lines = []
@@ -222,6 +225,95 @@ return {
         ],
         120000,
       )),
+      harness.registerTool(ctx, harness.defineTool({
+        name: 'briefloop_role_dispatch',
+        description: 'Read-only: materialize the exact DSH subagent dispatch context for a role envelope (role contract from the matching preset + a ready dispatch prompt). Hand the returned dispatch_prompt to the subagent tool. Never writes the ControlStore.',
+        parameters: {
+          type: 'object',
+          properties: {
+            workspace: { type: 'string', description: 'Workspace directory.' },
+            envelope: { type: 'string', description: 'Path to role_task_envelope.json (workspace-relative or absolute).' },
+          },
+          required: ['workspace', 'envelope'],
+        },
+        output: {
+          schema: { type: 'object', additionalProperties: true },
+          render: (_args, value) => {
+            if (value && value.ok && value.dispatch_prompt) {
+              const head = 'preset_id: ' + value.preset_id + ' | role_id: ' + value.role_id
+                + ' | dispatch_instruction: ' + value.dispatch_instruction + '\n\n'
+              return [{ type: 'text', text: head + value.dispatch_prompt }]
+            }
+            return [{ type: 'text', text: JSON.stringify(value) }]
+          },
+        },
+        async execute(args, exec) {
+          const ws = String(args.workspace)
+          const envArg = String(args.envelope)
+          const envPath = envArg.startsWith('/') ? envArg : ws + '/' + envArg
+          const envRes = await runCommand('cat ' + q(envPath), exec, 30000)
+          if (!envRes.ok) return { ok: false, error: 'envelope_read_failed', stderr: envRes.stderr }
+          let envelope
+          try {
+            envelope = JSON.parse(envRes.stdout)
+          } catch (_e) {
+            return { ok: false, error: 'envelope_unparseable', stdout: envRes.stdout }
+          }
+          const roleId = envelope.role_id
+          const presetId = 'briefloop-' + roleId
+          const presetPath = ws + '/.dsh/presets/' + presetId + '/agent.cordis.yml'
+          const presetRes = await runCommand('cat ' + q(presetPath), exec, 30000)
+          let roleContract = ''
+          if (presetRes.ok) {
+            const match = /^\s*text:\s*(.+?)\s*$/m.exec(presetRes.stdout)
+            if (match) {
+              try { roleContract = JSON.parse(match[1]) } catch (_e) { roleContract = match[1] }
+            }
+          }
+          const allowed = Array.isArray(envelope.allowed_output_filenames)
+            ? envelope.allowed_output_filenames
+            : []
+          const scratch = envelope.scratch_directory || ''
+          const schemaId = envelope.proposal_schema_id || ''
+          const dispatchPrompt = [
+            '你是 BriefLoop 的 ' + roleId + ' 角色,在 DeepSeek Harness 会话中被派发执行一次精确的角色调用。只写允许的提案文件并跑一次校验命令,然后回报。绝不触碰 SQLite/Store,绝不写 scratch 目录之外的任何文件。',
+            '',
+            '绑定事实(来自 RoleTaskEnvelope):',
+            '- workspace 绝对路径: ' + ws,
+            '- invocation_id: ' + (envelope.invocation_id || ''),
+            '- scratch_directory(相对 workspace): ' + scratch,
+            '- role_id: ' + roleId,
+            '- 唯一允许产出: ' + JSON.stringify(allowed),
+            '- proposal_schema_id: ' + schemaId,
+            '- envelope 文件: ' + ws + '/' + scratch + '/role_task_envelope.json',
+            '',
+            '角色契约:',
+            roleContract,
+            '',
+            '任务说明: ' + (envelope.task_instructions || ''),
+            '',
+            '执行:',
+            '1. 用你的工具在 scratch 目录写允许的提案文件。',
+            '2. 若 task_instructions 要求 preflight,运行: briefloop contract show ' + schemaId + ' --example full 与 briefloop runtime invocation-validate --workspace ' + ws + ' --envelope ' + scratch + '/role_task_envelope.json',
+            '3. 回报:产出文件绝对路径、校验命令 stdout(尤其 status)、提案概要。',
+            '只做这一件事,不 apply、不 accept、不碰 briefloop.db。',
+          ].join('\n')
+          return {
+            ok: true,
+            role_id: roleId,
+            preset_id: presetId,
+            invocation_id: envelope.invocation_id || '',
+            scratch_directory: scratch,
+            allowed_output_filenames: allowed,
+            proposal_schema_id: schemaId,
+            stage_id: envelope.stage_id || '',
+            dispatch_instruction: envelope.dispatch_instruction || '',
+            task_instructions: envelope.task_instructions || '',
+            role_contract: roleContract,
+            dispatch_prompt: dispatchPrompt,
+          }
+        },
+      })),
     ]
     return () => {
       for (const dispose of disposers) dispose()

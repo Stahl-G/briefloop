@@ -296,6 +296,7 @@ def test_dsh_plugin_source_declares_operator_and_cli_only() -> None:
         "briefloop_runtime_invocation_validate",
         "briefloop_runtime_invocation_accept",
         "briefloop_runtime_invocation_fail",
+        "briefloop_role_dispatch",
     ):
         assert tool in plugin
 

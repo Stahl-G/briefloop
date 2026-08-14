@@ -176,6 +176,9 @@ def main() -> int:
         "run --workspace <workspace> --runtime dsh",
         ".dsh/presets/briefloop-",
         "briefloop.db",
+        "briefloop_role_dispatch",
+        "dispatch_prompt",
+        "delegate_exact_role",
     ):
         if phrase not in dsh_contract:
             errors.append(f"packaged DSH skill is missing runtime contract phrase: {phrase}")
