@@ -5,17 +5,22 @@ All notable changes to the multi-agent-brief-workflow project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added the experimental DeepSeek Harness (DSH) runtime (0.16.0 slice):
+  `briefloop init --runtime dsh` and `briefloop run --workspace <workspace>
+  --runtime dsh` initialize a dsh-bound ControlStore; `briefloop runtime
+  install --workspace <workspace> --runtime dsh` writes eight role presets,
+  the operator skill, the protocol reference, and the operator plugin source
+  under `.dsh/` with exact hash-bound verification; every plugin tool calls
+  the `briefloop` CLI only and never writes the ControlStore directly.
+
 ## [0.15.3] — 2026-08-14
 
 ### Added
 
-- Added the experimental DeepSeek Harness (DSH) runtime kit (0.16.0 slice):
-  `briefloop runtime install --workspace <workspace> --runtime dsh` writes
-  eight role presets, the BriefLoop operator skill, and the protocol
-  reference under `.dsh/` with exact hash-bound install verification;
-  `briefloop run --workspace <workspace> --runtime dsh` prints the DSH
-  operator handoff and never generates the brief or writes the ControlStore.
-  Fresh Store initialization stays Codex-bound.
 - Added fresh-only schema 19 and strict `market_data_snapshot.v2` for Solar
   Stock Periodic, including workbook identity, adjusted-close history,
   corporate actions, FX, valuation fields, event reactions, gaps, and conflicts.
