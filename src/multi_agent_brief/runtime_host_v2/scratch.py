@@ -211,7 +211,16 @@ def read_host_contract(
     if not candidate.is_absolute():
         candidate = workspace / candidate
     try:
-        relative = candidate.relative_to(workspace)
+        try:
+            relative = candidate.relative_to(workspace)
+        except ValueError:
+            # A symlinked workspace prefix (macOS /tmp -> /private/tmp) makes
+            # the raw path incomparable to the caller's resolved workspace.
+            # Resolve the candidate the same way; containment is then checked
+            # on the resolved path, so a link that escapes the workspace still
+            # fails closed.
+            candidate = candidate.resolve()
+            relative = candidate.relative_to(workspace)
         if not relative.parts or ".." in relative.parts:
             raise RuntimeHostError(error_code)
         current = workspace

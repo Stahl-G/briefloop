@@ -256,6 +256,25 @@ def test_dsh_presets_declare_no_service_publishing_rows() -> None:
             assert row.get("group") is not True, (path, row)
 
 
+def test_dsh_presets_declare_required_tool_config() -> None:
+    """tool-fs-search and tool-todo have required config fields; omitting them
+    makes the preset fail the DSH mount audit (standingKeyFor)."""
+
+    for role in DSH_ROLES:
+        path = (
+            ROOT
+            / "src/multi_agent_brief/runtime_kits/dsh/presets"
+            / f"briefloop-{role}"
+            / "agent.cordis.yml"
+        )
+        rows = yaml.safe_load(path.read_text(encoding="utf-8"))
+        by_name = {row.get("id"): row for row in rows}
+        fs_search = by_name["tool-fs-search"]
+        assert fs_search["config"]["sampleOverCapGlobResults"] is False, path
+        todo = by_name["tool-todo"]
+        assert todo["config"]["allowParallelInProgress"] is True, path
+
+
 def test_dsh_plugin_source_declares_operator_and_cli_only() -> None:
     plugin = (
         ROOT / "src/multi_agent_brief/runtime_kits/dsh/plugin/briefloop-dsh.host.js"
@@ -327,3 +346,57 @@ def test_adapter_loader_for_workspace_dispatches_on_store_runtime(
     binding = loader("RUN-LOADER-DISPATCH")
     assert binding.runtime == "dsh"
     assert binding.adapter_id == "briefloop-dsh-controlstore"
+
+
+def test_read_host_contract_accepts_symlinked_workspace_prefix(tmp_path: Path) -> None:
+    """A symlinked workspace prefix (macOS /tmp -> /private/tmp) must not break
+    workspace containment: the caller resolves the workspace while the host
+    input path may still carry the symlinked prefix."""
+
+    from pydantic import BaseModel
+
+    from multi_agent_brief.runtime_host_v2.scratch import read_host_contract
+
+    class _Contract(BaseModel):
+        x: int
+
+    real = tmp_path / "real-ws"
+    real.mkdir()
+    (real / "action.json").write_text('{"x": 7}', encoding="utf-8")
+    link = tmp_path / "link-ws"
+    link.symlink_to(real, target_is_directory=True)
+
+    workspace = Path(str(link)).resolve()
+    result = read_host_contract(
+        workspace,
+        str(link / "action.json"),
+        _Contract,
+        error_code="runtime_action_invalid",
+    )
+    assert result.x == 7
+
+
+def test_read_host_contract_still_rejects_inner_symlink(tmp_path: Path) -> None:
+    """The symlinked-prefix fix must not weaken inner-symlink rejection."""
+
+    from pydantic import BaseModel
+
+    from multi_agent_brief.runtime_host_v2.scratch import read_host_contract
+
+    class _Contract(BaseModel):
+        x: int
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "action.json").write_text('{"x": 9}', encoding="utf-8")
+    (workspace / "action.json").symlink_to(outside / "action.json")
+
+    with pytest.raises(RuntimeHostError):
+        read_host_contract(
+            workspace.resolve(),
+            str(workspace / "action.json"),
+            _Contract,
+            error_code="runtime_action_invalid",
+        )

@@ -226,9 +226,13 @@ DSH_PRESET_BODY = """\
 
 - id: tool-fs-search
   name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
 
 - id: tool-todo
   name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: true
 
 # ── skills ──
 # The skill REGISTRY lives in the host composition and is layered per scope:
