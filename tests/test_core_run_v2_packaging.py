@@ -35,6 +35,23 @@ from multi_agent_brief.runtime_host_v2.initialization import (
 ROOT = Path(__file__).parents[1]
 
 
+def _ambient_wheel_build_backend_available() -> bool:
+    try:
+        import setuptools.build_meta  # noqa: F401
+    except Exception:
+        return False
+    return True
+
+
+# The wheel e2e tests build with --no-build-isolation, so the ambient
+# interpreter must provide the setuptools PEP 517 backend itself. Homebrew
+# Python ships without setuptools, for example.
+_WHEEL_BACKEND_SKIP = pytest.mark.skipif(
+    not _ambient_wheel_build_backend_available(),
+    reason="pip wheel --no-build-isolation requires setuptools.build_meta in the ambient interpreter",
+)
+
+
 def _real_finalized_local_workspace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -78,6 +95,7 @@ def test_wheel_e2e_command_uses_a_script_file_on_windows() -> None:
     assert "-c" not in command
 
 
+@_WHEEL_BACKEND_SKIP
 def test_source_and_non_editable_wheel_hardlink_intake_parity(
     tmp_path: Path,
 ) -> None:
@@ -277,6 +295,7 @@ def test_source_and_non_editable_wheel_hardlink_intake_parity(
         raise AssertionError(f"unexpected hardlink payload: {source_payload!r}")
 
 
+@_WHEEL_BACKEND_SKIP
 @pytest.mark.skipif(
     not supports_retained_directory_publication(),
     reason="successful finalized-local projection is unavailable on this platform",
@@ -371,9 +390,10 @@ def test_finalized_local_review_projection_source_and_wheel_parity(
     assert json.loads(run.stdout) == source_payload
 
 
+@_WHEEL_BACKEND_SKIP
 @pytest.mark.explicit_e2e
 @pytest.mark.timeout(900)
-def test_non_editable_wheel_runs_complete_dormant_core_spine(
+def test_non_editable_wheel_runs_complete_core_spine(
     tmp_path: Path,
 ) -> None:
     build_root = tmp_path / "build-root"
@@ -1785,6 +1805,7 @@ def _run_successor_guidance_probe(
     return json.loads(run.stdout)
 
 
+@_WHEEL_BACKEND_SKIP
 @pytest.mark.timeout(900)
 @pytest.mark.skipif(
     not supports_retained_directory_publication(),
