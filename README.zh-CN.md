@@ -551,7 +551,7 @@ BriefLoop 想把软件工程里的那套“可追踪、可回滚、可审计、�
 - [支持矩阵](docs/support-matrix.md)
 - [黄金路径](docs/golden-path.zh-CN.md)
 - [WorkBuddy 指南](docs/workbuddy.zh-CN.md)
-- [我每周怎么用 BriefLoop](docs/weekly-use.zh-CN.md)
+- [每周循环](docs/weekly-loop.md)
 - [架构状态](docs/architecture-status.zh-CN.md)
 - [路线图](docs/roadmap.zh-CN.md)
 - [红线与反模式](docs/red-lines-and-anti-patterns.md)

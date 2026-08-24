@@ -1,4 +1,4 @@
-"""Adversarial dormant checkout publication and recovery matrix."""
+"""Adversarial checkout publication and recovery matrix."""
 
 from __future__ import annotations
 

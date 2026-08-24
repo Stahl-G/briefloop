@@ -1,7 +1,7 @@
-"""Dormant fresh-v2 core run domain services.
+"""Fresh-v2 core run domain services.
 
-No active runtime, Skill, status, Gate command, or delivery path imports this
-package before the later authority-cutover merge unit.
+The SQLite runtime host (runtime_host_v2) binds these services, gates,
+verifiers, and next-action classification directly.
 """
 
 from .artifacts import ArtifactAcceptanceService

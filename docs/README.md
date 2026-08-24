@@ -24,7 +24,6 @@ tree is fully bilingual.
 | Function map | [features.md](features.md) | [features.zh-CN.md](features.zh-CN.md) |
 | Windows PowerShell setup | [windows-powershell.md](windows-powershell.md) | [windows-powershell.zh-CN.md](windows-powershell.zh-CN.md) |
 | Golden path | [golden-path.md](golden-path.md) | [golden-path.zh-CN.md](golden-path.zh-CN.md) |
-| Weekly use script | [weekly-use.md](weekly-use.md) | [weekly-use.zh-CN.md](weekly-use.zh-CN.md) |
 | Release checklist | [release-checklist.md](release-checklist.md) | English-first |
 | v1.0 pilot evidence gate | [v1-pilot-evidence.md](v1-pilot-evidence.md) | English-first |
 | Architecture status | [architecture-status.md](architecture-status.md) | [architecture-status.zh-CN.md](architecture-status.zh-CN.md) |

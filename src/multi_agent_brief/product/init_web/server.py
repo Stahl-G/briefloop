@@ -212,7 +212,26 @@ def create_init_web_server(
             if self.command != "HEAD":
                 self.wfile.write(body)
 
+        def _drain_request_body(self) -> None:
+            # Windows aborts the client connection (WSAECONNABORTED /
+            # WinError 10053) when the server closes a socket that still
+            # holds unread request bytes, so early rejections must drain a
+            # bounded request body before responding. Paths that already
+            # consumed the body set _request_body_consumed first; oversized
+            # declared bodies are left undrained on purpose because reading
+            # them is unbounded work for an already-rejected request.
+            if getattr(self, "_request_body_consumed", False):
+                return
+            self._request_body_consumed = True
+            try:
+                remaining = int(self.headers.get("Content-Length", "0"))
+            except (TypeError, ValueError):
+                return
+            if 0 < remaining <= MAX_JSON_BODY_BYTES:
+                self.rfile.read(remaining)
+
         def _reject(self, status: HTTPStatus, reason: str) -> None:
+            self._drain_request_body()
             body = canonical_json_bytes({"ok": False, "reason_code": reason}) + b"\n"
             self._send(status, body, "application/json; charset=utf-8")
 
@@ -297,6 +316,7 @@ def create_init_web_server(
                     )
                     return
                 filename = self.headers.get("X-BriefLoop-Upload-Name", "")
+                self._request_body_consumed = True
                 try:
                     response = submitter.stage_upload(
                         session_id=session_id,
@@ -326,6 +346,7 @@ def create_init_web_server(
                 )
                 return
             raw = self.rfile.read(length)
+            self._request_body_consumed = True
             try:
                 body = json.loads(raw.decode("utf-8"))
             except Exception:

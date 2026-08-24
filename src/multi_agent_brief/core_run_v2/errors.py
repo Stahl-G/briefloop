@@ -1,4 +1,4 @@
-"""Stable, value-free results for the dormant fresh-v2 core run spine."""
+"""Stable, value-free results for the fresh-v2 core run spine."""
 
 from __future__ import annotations
 
