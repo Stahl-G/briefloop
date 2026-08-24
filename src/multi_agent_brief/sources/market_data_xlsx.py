@@ -33,8 +33,9 @@ from multi_agent_brief.contracts.v2 import (
 )
 from multi_agent_brief.core.fingerprint import canonical_fingerprint
 from multi_agent_brief.sources.market_data import MarketDataError
-from multi_agent_brief.sources.solar_stock_plan import (
-    SOLAR_STOCK_OVERSEAS_SECURITIES,
+from multi_agent_brief.sources.equity_universe import (
+    DEFAULT_SOLAR_EQUITY_UNIVERSE,
+    EquityPeriodicUniverse,
     SOLAR_STOCK_PRIMARY_SECURITIES,
 )
 
@@ -86,6 +87,22 @@ _SECURITY_META = {
     "PREMIERENE.NS": ("Premier Energies", "NSE", "INR", "overseas"),
     "VIKRAMSOLR.NS": ("Vikram Solar", "NSE", "INR", "overseas"),
 }
+
+
+def _ticker_meta(
+    ticker: str, universe: EquityPeriodicUniverse
+) -> tuple[str, str, str, str]:
+    if ticker in _SECURITY_META:
+        return _SECURITY_META[ticker]
+    if ticker.endswith(".KS"):
+        return (ticker, "KRX", "KRW", universe.group_for(ticker))
+    if ticker.endswith(".NS"):
+        return (ticker, "NSE", "INR", universe.group_for(ticker))
+    if ticker.endswith(".HK"):
+        return (ticker, "HKEX", "HKD", universe.group_for(ticker))
+    return (ticker, "UNKNOWN", "USD", universe.group_for(ticker))
+
+
 _VALUATION_FIELDS = {
     "现价(本币)": ("latest_close_local", "price"),
     "现价(美元)": ("latest_close_usd", "price"),
@@ -654,7 +671,8 @@ def _parse_valuation_fields(
         ):
             continue
         currency = str(
-            sheet.value(row, header["币种"]) or _SECURITY_META[ticker][2]
+            sheet.value(row, header["币种"])
+            or (_SECURITY_META[ticker][2] if ticker in _SECURITY_META else "USD")
         ).strip()
         result: list[MarketDataFieldValueV2] = []
         for label, (field_id, unit) in _VALUATION_FIELDS.items():
@@ -752,19 +770,21 @@ def _recomputed_fields(
     fx_rates: Mapping[str, MarketDataFxRateV2],
     source_sha256: str,
     as_of: str,
+    universe: EquityPeriodicUniverse,
 ) -> list[MarketDataFieldValueV2]:
     if not series:
         return []
     first, last = series[0], series[-1]
     locator = f"{first.source_locator}:{last.source_locator}"
     period_return = round((last.close / first.close - 1.0) * 100.0, 6)
+    currency = _ticker_meta(ticker, universe)[2]
     fields = [
         _available_field(
             field_id="latest_close_local",
             value=last.close,
             unit="price",
             as_of=last.date,
-            currency=_SECURITY_META[ticker][2],
+            currency=currency,
             origin="derived",
             derivation="recomputed",
             locator=last.source_locator,
@@ -782,7 +802,6 @@ def _recomputed_fields(
             source_sha256=source_sha256,
         ),
     ]
-    currency = _SECURITY_META[ticker][2]
     rate = 1.0 if currency == "USD" else None
     rate_locator = "identity:USD"
     if currency != "USD":
@@ -1054,6 +1073,13 @@ def _parse_events(
         }
         event_id = _stable_id("market-event", payload)
         locator = sheet.locator(row, header["事件"])
+        raw_url = sheet.value(row, header.get("官方来源URL", -1))
+        original_url = (
+            raw_url.strip()
+            if isinstance(raw_url, str)
+            and raw_url.strip().startswith(("http://", "https://"))
+            else None
+        )
         result.append(
             MarketDataEventReactionV2.model_validate(
                 {
@@ -1064,8 +1090,12 @@ def _parse_events(
                     "publication_timing": "pre_market"
                     if "盘前" in title
                     else "unknown",
-                    "original_url": None,
-                    "evidence_status": "display_only_source_url_missing",
+                    "original_url": original_url,
+                    "evidence_status": (
+                        "claim_eligible"
+                        if original_url is not None
+                        else "display_only_source_url_missing"
+                    ),
                     "event_day_return_pct": _number(
                         sheet.value(row, header.get("当日涨跌%", -1))
                     ),
@@ -1092,27 +1122,33 @@ def _parse_events(
                 strict=True,
             )
         )
-        gaps.append(
-            MarketDataGapV2.model_validate(
-                {
-                    "gap_id": _stable_id("market-gap", {**payload, "kind": "url"}),
-                    "severity": "warning",
-                    "category": "event_source_url_missing",
-                    "ticker": "TOYO",
-                    "field_id": None,
-                    "source_locator": locator,
-                    "reason_code": "event_original_url_missing",
-                },
-                strict=True,
+        if original_url is None:
+            gaps.append(
+                MarketDataGapV2.model_validate(
+                    {
+                        "gap_id": _stable_id("market-gap", {**payload, "kind": "url"}),
+                        "severity": "warning",
+                        "category": "event_source_url_missing",
+                        "ticker": "TOYO",
+                        "field_id": None,
+                        "source_locator": locator,
+                        "reason_code": "event_original_url_missing",
+                    },
+                    strict=True,
+                )
             )
-        )
         row += 1
     return sorted(result, key=lambda item: item.event_id)
 
 
-def parse_toyo_weekly_xlsx(path: str | Path) -> ParsedMarketDataWorkbook:
+def parse_toyo_weekly_xlsx(
+    path: str | Path,
+    *,
+    universe: EquityPeriodicUniverse | None = None,
+) -> ParsedMarketDataWorkbook:
     """Parse one workbook into validated snapshot children without Store writes."""
 
+    watchlist = universe or DEFAULT_SOLAR_EQUITY_UNIVERSE
     source_path = Path(path).expanduser().resolve()
     workbook, payload = _read_ooxml(source_path)
     if any(name not in workbook.sheets for name in _REQUIRED_SHEETS):
@@ -1121,7 +1157,7 @@ def parse_toyo_weekly_xlsx(path: str | Path) -> ParsedMarketDataWorkbook:
     report_start, report_end = _report_window(workbook.sheet("美股对标"))
     if _report_window(workbook.sheet("海外对标")) != (report_start, report_end):
         raise MarketDataError("market_data_xlsx_profile_invalid")
-    universe = SOLAR_STOCK_PRIMARY_SECURITIES + SOLAR_STOCK_OVERSEAS_SECURITIES
+    tickers = watchlist.watchlist
     workbook_identity = MarketDataWorkbookIdentityV2.model_validate(
         {
             "source_name": source_path.name,
@@ -1145,21 +1181,30 @@ def parse_toyo_weekly_xlsx(path: str | Path) -> ParsedMarketDataWorkbook:
     conflicts: list[MarketDataConflictV2] = []
     gaps: list[MarketDataGapV2] = []
     securities: list[MarketDataSecurityV2] = []
-    for ticker in universe:
+    for ticker in tickers:
         series = series_by_ticker.get(ticker, [])
         if not series:
+            # The universe is a default watchlist, not a delivery quota:
+            # only a core-subject miss blocks; every other miss becomes a
+            # visible warning for coverage disclosure.
             gaps.append(
                 MarketDataGapV2.model_validate(
                     {
                         "gap_id": _stable_id(
                             "market-gap", {"ticker": ticker, "kind": "series"}
                         ),
-                        "severity": "blocking",
+                        "severity": (
+                            "blocking" if watchlist.is_core(ticker) else "warning"
+                        ),
                         "category": "missing_security_series",
                         "ticker": ticker,
                         "field_id": "price_series",
                         "source_locator": "走势数据",
-                        "reason_code": "required_security_price_series_missing",
+                        "reason_code": (
+                            "core_security_price_series_missing"
+                            if watchlist.is_core(ticker)
+                            else "watchlist_security_price_series_missing"
+                        ),
                     },
                     strict=True,
                 )
@@ -1192,12 +1237,15 @@ def parse_toyo_weekly_xlsx(path: str | Path) -> ParsedMarketDataWorkbook:
                     fx_by_currency,
                     source_sha256,
                     report_end,
+                    watchlist,
                 ),
             ),
             conflicts,
         )
         _record_formula_cache_conflicts(ticker, fields, formula_caches, conflicts)
-        display_name, exchange, currency, universe_kind = _SECURITY_META[ticker]
+        display_name, exchange, currency, universe_kind = _ticker_meta(
+            ticker, watchlist
+        )
         securities.append(
             MarketDataSecurityV2.model_validate(
                 {
@@ -1240,7 +1288,7 @@ def parse_toyo_weekly_xlsx(path: str | Path) -> ParsedMarketDataWorkbook:
             report_window_start=report_start,
             report_window_end=report_end,
             as_of_date=report_end,
-            universe_tickers=universe,
+            universe_tickers=tickers,
             provider_ids=("manual_xlsx",),
             workbook=workbook_identity,
             securities=tuple(sorted(securities, key=lambda item: item.ticker)),

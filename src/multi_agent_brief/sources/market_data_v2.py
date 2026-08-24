@@ -31,9 +31,10 @@ from multi_agent_brief.contracts.v2 import (
 )
 from multi_agent_brief.core.fingerprint import canonical_fingerprint
 from multi_agent_brief.sources.market_data import MarketDataError, _open_no_redirect
-from multi_agent_brief.sources.solar_stock_plan import (
-    SOLAR_STOCK_OVERSEAS_SECURITIES,
-    SOLAR_STOCK_PRIMARY_SECURITIES,
+from multi_agent_brief.sources.equity_universe import (
+    DEFAULT_SOLAR_EQUITY_UNIVERSE,
+    PACKAGED_SOLAR_BENCHMARK_TICKER,
+    infer_listing_group,
 )
 
 YAHOO_DAILY_CHART_BASE = "https://query1.finance.yahoo.com/v8/finance/chart"
@@ -44,7 +45,7 @@ YAHOO_V2_RANGE = "1y"
 YAHOO_V2_INTERVAL = "1d"
 YAHOO_V2_PROVIDER_ID = "yahoo_finance_chart_v2"
 
-_UNIVERSE = SOLAR_STOCK_PRIMARY_SECURITIES + SOLAR_STOCK_OVERSEAS_SECURITIES
+_UNIVERSE = DEFAULT_SOLAR_EQUITY_UNIVERSE.watchlist
 _META = {
     "TOYO": ("TOYO Solar", "NASDAQ", "USD", "primary"),
     "TE": ("T1 Energy", "NYSE", "USD", "primary"),
@@ -182,8 +183,15 @@ class YahooMarketDataV2Adapter:
         symbols: Iterable[str],
         *,
         as_of_date: str,
+        core_tickers: Iterable[str] | None = None,
+        benchmark_ticker: str | None = PACKAGED_SOLAR_BENCHMARK_TICKER,
     ) -> MarketDataProviderOutcomeV2:
         requested = tuple(symbols)
+        core = tuple(
+            core_tickers
+            if core_tickers is not None
+            else DEFAULT_SOLAR_EQUITY_UNIVERSE.core_tickers
+        )
         quote_rows = self._fetch_quotes(requested)
         securities: list[MarketDataSecurityV2] = []
         gaps: list[MarketDataGapV2] = []
@@ -203,7 +211,9 @@ class YahooMarketDataV2Adapter:
                     _gap(
                         category="provider_unavailable",
                         reason_code=str(exc),
-                        severity="blocking",
+                        severity=(
+                            "blocking" if symbol in core else "warning"
+                        ),
                         ticker=symbol,
                         field_id="price_series",
                         source_locator=f"yahoo:chart:{symbol}",
@@ -213,25 +223,27 @@ class YahooMarketDataV2Adapter:
             securities.append(security)
 
         benchmark: MarketDataBenchmarkV2 | None = None
-        try:
-            document, digest, locator = self._request_chart("TAN")
-            benchmark = self._parse_benchmark(
-                document,
-                response_sha256=digest,
-                source_locator=locator,
-                as_of_date=as_of_date,
-            )
-        except MarketDataError as exc:
-            gaps.append(
-                _gap(
-                    category="provider_unavailable",
-                    reason_code=str(exc),
-                    severity="warning",
-                    ticker="TAN",
-                    field_id="benchmark_series",
-                    source_locator="yahoo:chart:TAN",
+        if benchmark_ticker:
+            try:
+                document, digest, locator = self._request_chart(benchmark_ticker)
+                benchmark = self._parse_benchmark(
+                    document,
+                    ticker=benchmark_ticker,
+                    response_sha256=digest,
+                    source_locator=locator,
+                    as_of_date=as_of_date,
                 )
-            )
+            except MarketDataError as exc:
+                gaps.append(
+                    _gap(
+                        category="provider_unavailable",
+                        reason_code=str(exc),
+                        severity="warning",
+                        ticker=benchmark_ticker,
+                        field_id="benchmark_series",
+                        source_locator=f"yahoo:chart:{benchmark_ticker}",
+                    )
+                )
 
         fx_rates: list[MarketDataFxRateV2] = []
         for currency, symbol in _FX_SYMBOLS.items():
@@ -527,8 +539,13 @@ class YahooMarketDataV2Adapter:
         as_of_date: str,
         quote_row: tuple[dict[str, object], str, str] | None,
     ) -> MarketDataSecurityV2:
-        if symbol not in _META:
-            raise MarketDataError("response_invalid")
+        if symbol in _META:
+            display_name, expected_exchange, expected_currency, universe = _META[symbol]
+        else:
+            display_name = symbol
+            expected_exchange = "UNKNOWN"
+            expected_currency = "USD"
+            universe = infer_listing_group(symbol)
         points, actions, meta = self._chart_parts(
             symbol,
             document,
@@ -536,7 +553,6 @@ class YahooMarketDataV2Adapter:
             source_locator=source_locator,
             as_of_date=as_of_date,
         )
-        display_name, expected_exchange, expected_currency, universe = _META[symbol]
         currency = (
             meta.get("currency")
             if isinstance(meta.get("currency"), str)
@@ -744,22 +760,26 @@ class YahooMarketDataV2Adapter:
         self,
         document: Mapping[str, object],
         *,
+        ticker: str,
         response_sha256: str,
         source_locator: str,
         as_of_date: str,
     ) -> MarketDataBenchmarkV2:
         points, _actions, meta = self._chart_parts(
-            "TAN",
+            ticker,
             document,
             response_sha256=response_sha256,
             source_locator=source_locator,
             as_of_date=as_of_date,
         )
         complete_adjusted = all(item.adjusted_close is not None for item in points)
+        display_name = (
+            "Invesco Solar ETF" if ticker == PACKAGED_SOLAR_BENCHMARK_TICKER else ticker
+        )
         return MarketDataBenchmarkV2.model_validate(
             {
-                "ticker": "TAN",
-                "display_name": "Invesco Solar ETF",
+                "ticker": ticker,
+                "display_name": display_name,
                 "currency": meta.get("currency") or "USD",
                 "return_basis": "adjusted_close" if complete_adjusted else "close",
                 "price_series": [
@@ -958,8 +978,9 @@ def merge_manual_workbook_with_yahoo(
         MarketDataConflictV2.model_validate(value, strict=True)
         for value in manual_payload.get("conflicts", [])
     ]
+    merge_tickers = tuple(manual_payload.get("universe_tickers") or _UNIVERSE)
     securities: list[MarketDataSecurityV2] = []
-    for ticker in _UNIVERSE:
+    for ticker in merge_tickers:
         manual = manual_securities.get(ticker)
         fetched = provider_securities.get(ticker)
         if manual is not None and fetched is not None:

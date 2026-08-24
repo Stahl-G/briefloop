@@ -1,32 +1,18 @@
-"""Deterministic discovery plan for the Solar Stock Periodic product."""
+"""Solar preset discovery plan for the equity-periodic engine."""
 
 from __future__ import annotations
 
 from copy import deepcopy
 from typing import Final
 
-
-SOLAR_STOCK_PRIMARY_SECURITIES: Final[tuple[str, ...]] = (
-    "TOYO",
-    "TE",
-    "FSLR",
-    "CSIQ",
-    "JKS",
-    "NXT",
-    "DQ",
-)
-SOLAR_STOCK_OVERSEAS_SECURITIES: Final[tuple[str, ...]] = (
-    "009830.KS",
-    "WAAREEENER.NS",
-    "PREMIERENE.NS",
-    "VIKRAMSOLR.NS",
-)
-SOLAR_STOCK_EVENT_ONLY_ENTITIES: Final[tuple[str, ...]] = (
-    "Qcells",
-    "Illuminate USA",
-    "ES Foundry",
-    "Suniva",
-    "Talon PV",
+from multi_agent_brief.sources.equity_universe import (
+    EquityPeriodicUniverse,
+    SOLAR_STOCK_CORE_SECURITIES,
+    SOLAR_STOCK_EVENT_ONLY_ENTITIES,
+    SOLAR_STOCK_OVERSEAS_SECURITIES,
+    SOLAR_STOCK_PRIMARY_SECURITIES,
+    is_packaged_solar_universe,
+    listed_company_search_tasks,
 )
 
 
@@ -216,14 +202,26 @@ _SOLAR_STOCK_SEARCH_TASKS: Final[tuple[dict[str, object], ...]] = (
 
 
 def solar_stock_search_tasks() -> list[dict[str, object]]:
-    """Return a detached copy of the exact 20-task product default."""
+    """Return a detached copy of the exact 20-task solar default."""
 
     return deepcopy(sorted(_SOLAR_STOCK_SEARCH_TASKS, key=lambda item: item["task_id"]))
 
 
+def search_tasks_for_universe(
+    universe: EquityPeriodicUniverse,
+) -> list[dict[str, object]]:
+    """Use the frozen solar 20-task plan only for the packaged default universe."""
+
+    if is_packaged_solar_universe(universe):
+        return solar_stock_search_tasks()
+    return listed_company_search_tasks(universe)
+
+
 __all__ = [
+    "SOLAR_STOCK_CORE_SECURITIES",
     "SOLAR_STOCK_EVENT_ONLY_ENTITIES",
     "SOLAR_STOCK_OVERSEAS_SECURITIES",
     "SOLAR_STOCK_PRIMARY_SECURITIES",
+    "search_tasks_for_universe",
     "solar_stock_search_tasks",
 ]

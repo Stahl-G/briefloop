@@ -679,7 +679,7 @@ def test_recording_survives_full_core_run_verification(tmp_path: Path) -> None:
 # ── Projection ────────────────────────────────────────────────────────────────
 
 
-def test_projection_renders_both_tables_with_not_available_rows(
+def test_projection_omits_missing_watchlist_rows_and_shows_coverage(
     tmp_path: Path,
 ) -> None:
     workspace = tmp_path / "workspace"
@@ -692,11 +692,58 @@ def test_projection_renders_both_tables_with_not_available_rows(
     assert "## Primary Equity Comparison" in text
     assert "## Overseas Equity Comparison" in text
     assert "| TOYO | NasdaqCM | USD | 10.62 | 2.31 |" in text
-    dq_row = next(line for line in text.splitlines() if line.startswith("| DQ |"))
-    assert dq_row.count("NOT AVAILABLE") == 10
-    assert "- [blocking] DQ: transport_unavailable" in text
+    assert not any(line.startswith("| DQ |") for line in text.splitlines())
+    assert (
+        "- Watchlist coverage 1/7; missing: TE, FSLR, CSIQ, JKS, NXT, DQ." in text
+    )
+    assert (
+        "- Watchlist coverage 0/4; missing: 009830.KS, WAAREEENER.NS, "
+        "PREMIERENE.NS, VIKRAMSOLR.NS." in text
+    )
+    assert "- [warning] DQ: transport_unavailable" in text
     header = text.splitlines()[1]
     assert "snapshot_fingerprint" in text and header.startswith("run_id:")
+
+
+def test_projection_follows_report_spec_watchlist_not_solar_quota(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    _bootstrap_workspace(workspace)
+    (workspace / "report_spec.yaml").write_text(
+        "\n".join(
+            [
+                "metadata:",
+                "  primary_tickers: [AAPL, MSFT]",
+                "  overseas_tickers: []",
+                "  core_tickers: [AAPL]",
+                "  event_only_entities: []",
+                "  benchmark_ticker:",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    service = MarketDataService(workspace)
+    service.record_snapshot(
+        {
+            "schema_version": "briefloop.market_data_record_input.v1",
+            "as_of_date": "2026-08-10",
+            "securities": [_security_payload(ticker="AAPL", exchange="NMS")],
+            "gaps": [{"ticker": "MSFT", "failure_class": "transport_unavailable"}],
+        }
+    )
+    projection = service.project_tables()
+    assert projection["ok"]
+    text = (workspace / MARKET_DATA_TABLES_PATH).read_text(encoding="utf-8")
+    assert "| AAPL |" in text
+    assert "TOYO" not in text
+    assert "PREMIERENE" not in text
+    assert "## Overseas Equity Comparison" not in text
+    assert "- Watchlist coverage 1/2; missing: MSFT." in text
+    snapshot = service.latest_snapshot()
+    assert snapshot.universe_tickers == ["AAPL", "MSFT"]
+    assert not any(item.severity == "blocking" for item in snapshot.gaps)
 
 
 def test_projection_requires_a_frozen_snapshot(tmp_path: Path) -> None:

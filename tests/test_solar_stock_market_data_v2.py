@@ -178,7 +178,31 @@ def _make_public_safe_workbook(
     path: Path,
     *,
     formula_cache_overrides: dict[tuple[str, str], float] | None = None,
+    event_source_url: str | None = None,
 ) -> None:
+    event_headers = [
+        "事件",
+        "发布日期",
+        "当日涨跌%",
+        "TAN当日%",
+        "超额收益%",
+        "次日涨跌%",
+        "事件日成交量",
+        "量比(vs事件日前30日)",
+    ]
+    event_row = [
+        "Public-safe product update",
+        "2026-08-05",
+        2.0,
+        0.5,
+        1.5,
+        -0.2,
+        120_000,
+        1.4,
+    ]
+    if event_source_url is not None:
+        event_headers.append("官方来源URL")
+        event_row.append(event_source_url)
     trend_headers = ["日期", *[label for _ticker, label in _TREND_LABELS], "TAN(基准)"]
     trend_start = ["2026-08-03", *[10 + index for index in range(10)], 50.0]
     trend_end = [
@@ -187,28 +211,7 @@ def _make_public_safe_workbook(
         51.0,
     ]
     sheets = {
-        "PR事件复盘": [
-            [
-                "事件",
-                "发布日期",
-                "当日涨跌%",
-                "TAN当日%",
-                "超额收益%",
-                "次日涨跌%",
-                "事件日成交量",
-                "量比(vs事件日前30日)",
-            ],
-            [
-                "Public-safe product update",
-                "2026-08-05",
-                2.0,
-                0.5,
-                1.5,
-                -0.2,
-                120_000,
-                1.4,
-            ],
-        ],
+        "PR事件复盘": [event_headers, event_row],
         "Sources": [["source"], ["public-safe fixture"]],
         "TOYO周明细": [
             ["日期", "收盘", "成交量(股)"],
@@ -325,7 +328,7 @@ def _provider_security(ticker: str = "PREMIERENE.NS") -> MarketDataSecurityV2:
     )
 
 
-def test_profile_bound_xlsx_parses_values_and_keeps_missing_rows_visible(
+def test_profile_bound_xlsx_degrades_missing_watchlist_security_to_warning(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "public-safe-weekly.xlsx"
@@ -349,11 +352,37 @@ def test_profile_bound_xlsx_parses_values_and_keeps_missing_rows_visible(
     toyo = next(item for item in command.securities if item.ticker == "TOYO")
     assert [item.volume for item in toyo.price_series] == [100_000, 120_000]
     assert _field_value(toyo, "return_1w_pct").value_number == pytest.approx(10.0)
-    assert any(
-        item.ticker == "PREMIERENE.NS"
-        and item.category == "missing_security_series"
-        and item.severity == "blocking"
+    premier_gap = next(
+        item
         for item in command.gaps
+        if item.ticker == "PREMIERENE.NS"
+        and item.category == "missing_security_series"
+    )
+    assert premier_gap.severity == "warning"
+    assert premier_gap.reason_code == "watchlist_security_price_series_missing"
+    assert not any(
+        item.severity == "blocking" for item in command.gaps
+    )
+
+
+def test_profile_bound_xlsx_preserves_official_event_urls(tmp_path: Path) -> None:
+    path = tmp_path / "public-safe-weekly.xlsx"
+    _make_public_safe_workbook(
+        path,
+        event_source_url="https://www.prnewswire.com/news-releases/example",
+    )
+
+    parsed = parse_toyo_weekly_xlsx(path)
+    command = MarketDataRecordInputV2.model_validate(
+        parsed.record_payload(), strict=True
+    )
+
+    assert len(command.events) == 1
+    event = command.events[0]
+    assert str(event.original_url) == "https://www.prnewswire.com/news-releases/example"
+    assert event.evidence_status == "claim_eligible"
+    assert not any(
+        item.category == "event_source_url_missing" for item in command.gaps
     )
 
 
@@ -512,10 +541,16 @@ def test_chart_projection_is_deterministic_and_png() -> None:
     first = render_market_chart_assets(snapshot)
     second = render_market_chart_assets(snapshot)
 
-    assert len(first) == 7
+    # Charts without any plottable data are omitted instead of rendered as
+    # empty frames; the minimal example only backs these three.
+    assert [item.chart_id for item in first] == [
+        "primary-indexed-trend",
+        "toyo-price-volume",
+        "one-week-return",
+    ]
     assert [item.sha256 for item in first] == [item.sha256 for item in second]
     assert all(item.png_bytes.startswith(b"\x89PNG\r\n\x1a\n") for item in first)
-    assert len({item.relative_path for item in first}) == 7
+    assert len({item.relative_path for item in first}) == len(first)
 
 
 def test_corporate_action_contract_rejects_incomplete_split() -> None:
@@ -548,12 +583,18 @@ def test_snapshot_contract_rejects_security_outside_frozen_universe() -> None:
         MarketDataSnapshotV2.model_validate(payload, strict=True)
 
 
-def _gate_bound_snapshot(*, warning: bool = False) -> MarketDataSnapshotV2:
+def _gate_bound_snapshot(
+    *,
+    warning: bool = False,
+    exclude_tickers: tuple[str, ...] = (),
+) -> MarketDataSnapshotV2:
     payload = deepcopy(MarketDataSnapshotV2.minimal_example)
     universe = SOLAR_STOCK_PRIMARY_SECURITIES + SOLAR_STOCK_OVERSEAS_SECURITIES
     base_security = payload["securities"][0]
     securities = []
     for ticker in sorted(universe):
+        if ticker in exclude_tickers:
+            continue
         security = deepcopy(base_security)
         security["ticker"] = ticker
         security["display_name"] = ticker
@@ -638,3 +679,62 @@ def test_solar_market_data_gate_accepts_full_universe_and_keeps_warning_visible(
         "market_data_snapshot_disclosures_required"
     ]
     assert raw["material_fact"][0]["blocking_level"] == "warning"
+
+
+def test_solar_market_data_gate_degrades_missing_watchlist_security_to_disclosure() -> (
+    None
+):
+    raw: dict[str, list[dict[str, object]]] = {"material_fact": []}
+    binding = SimpleNamespace(
+        run_direction=SimpleNamespace(
+            report_type="solar_stock_periodic",
+            report_window_start="2026-08-03",
+            report_window_end="2026-08-12",
+        )
+    )
+
+    _append_solar_market_data_findings(
+        raw,
+        snapshot=SimpleNamespace(
+            market_data_snapshots=(
+                _gate_bound_snapshot(exclude_tickers=("PREMIERENE.NS",)),
+            )
+        ),
+        binding=binding,
+    )
+
+    assert [item["finding_type"] for item in raw["material_fact"]] == [
+        "market_data_snapshot_disclosures_required"
+    ]
+    finding = raw["material_fact"][0]
+    assert finding["blocking_level"] == "warning"
+    assert finding["metadata"]["watchlist_missing_tickers"] == ["PREMIERENE.NS"]
+    assert finding["metadata"]["watchlist_expected_total"] == 11
+
+
+def test_solar_market_data_gate_blocks_missing_core_subject() -> None:
+    raw: dict[str, list[dict[str, object]]] = {"material_fact": []}
+    binding = SimpleNamespace(
+        run_direction=SimpleNamespace(
+            report_type="solar_stock_periodic",
+            report_window_start="2026-08-03",
+            report_window_end="2026-08-12",
+        )
+    )
+
+    _append_solar_market_data_findings(
+        raw,
+        snapshot=SimpleNamespace(
+            market_data_snapshots=(_gate_bound_snapshot(exclude_tickers=("TOYO",)),)
+        ),
+        binding=binding,
+    )
+
+    assert [item["finding_type"] for item in raw["material_fact"]] == [
+        "market_data_snapshot_incomplete",
+        "market_data_snapshot_disclosures_required",
+    ]
+    blocking = raw["material_fact"][0]
+    assert blocking["blocking_level"] == "blocking"
+    assert blocking["metadata"]["core_missing_tickers"] == ["TOYO"]
+    assert blocking["metadata"]["watchlist_missing_tickers"] == ["TOYO"]

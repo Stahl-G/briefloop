@@ -52,9 +52,11 @@ from multi_agent_brief.product.market_data_read_model import (
     market_data_projection,
 )
 from multi_agent_brief.sources.market_data import MarketDataError
-from multi_agent_brief.sources.solar_stock_plan import (
-    SOLAR_STOCK_OVERSEAS_SECURITIES,
-    SOLAR_STOCK_PRIMARY_SECURITIES,
+from multi_agent_brief.sources.equity_universe import (
+    DEFAULT_SOLAR_EQUITY_UNIVERSE,
+    EquityPeriodicUniverse,
+    infer_listing_group,
+    load_equity_universe,
 )
 
 MARKET_DATA_RECORD_INPUT_SCHEMA = "briefloop.market_data_record_input.v2"
@@ -63,7 +65,6 @@ MARKET_DATA_TABLES_PATH = "output/intermediate/market_data_tables.md"
 MARKET_DATA_PROJECTION_PATH = "output/intermediate/market_data_projection.json"
 _NOT_AVAILABLE = "NOT AVAILABLE"
 _NOT_MEANINGFUL = "N/M"
-_UNIVERSE = SOLAR_STOCK_PRIMARY_SECURITIES + SOLAR_STOCK_OVERSEAS_SECURITIES
 
 
 class MarketDataRecordInputV1(StrictModel):
@@ -154,30 +155,71 @@ def _comparison_table(
     snapshot: MarketDataSnapshotV2, tickers: tuple[str, ...]
 ) -> list[str]:
     by_ticker = {item.ticker: item for item in snapshot.securities}
-    lines = [
-        "| Ticker | Exchange | Currency | Latest Close | 1W % | 1M % | YTD %"
-        " | Market Cap USD (m) | EV/Sales | EV/EBITDA | P/E TTM |",
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    present = [ticker for ticker in tickers if ticker in by_ticker]
+    # Optional columns render only when at least one displayed security has a
+    # frozen value; fully unavailable columns are dropped with a footnote
+    # instead of rendering an empty column.
+    optional_columns: tuple[tuple[str, str], ...] = (
+        ("1M %", "return_1m_pct"),
+        ("YTD %", "return_ytd_pct"),
+        ("P/S TTM", "ps_ttm"),
+        ("EV/Sales", "ev_sales_ttm"),
+        ("EV/EBITDA", "ev_ebitda_ttm"),
+        ("P/E TTM", "pe_ttm"),
+    )
+    kept = [
+        (label, field_id)
+        for label, field_id in optional_columns
+        if any(
+            (field := _field(by_ticker[ticker], field_id)) is not None
+            and field.value_number is not None
+            for ticker in present
+        )
     ]
-    for ticker in tickers:
-        security = by_ticker.get(ticker)
-        if security is None:
-            cells = [ticker] + [_NOT_AVAILABLE] * 10
-        else:
-            cells = [
-                ticker,
-                security.exchange,
-                security.currency,
-                _display_field(_field(security, "latest_close_local")),
-                _display_field(_field(security, "return_1w_pct")),
-                _display_field(_field(security, "return_1m_pct")),
-                _display_field(_field(security, "return_ytd_pct")),
-                _display_field(_field(security, "market_cap_usd_millions"), decimals=0),
-                _display_field(_field(security, "ev_sales_ttm")),
-                _display_field(_field(security, "ev_ebitda_ttm")),
-                _display_field(_field(security, "pe_ttm")),
-            ]
+    dropped = [
+        label
+        for label, field_id in optional_columns
+        if (label, field_id) not in kept
+    ]
+    header = (
+        "| Ticker | Exchange | Currency | Latest Close | 1W %"
+        " | Market Cap USD (m)"
+        + "".join(f" | {label}" for label, _field_id in kept)
+        + " |"
+    )
+    divider = (
+        "| --- | --- | --- | ---: | ---: | ---:"
+        + " | ---:" * len(kept)
+        + " |"
+    )
+    lines = [header, divider]
+    for ticker in present:
+        security = by_ticker[ticker]
+        cells = [
+            ticker,
+            security.exchange,
+            security.currency,
+            _display_field(_field(security, "latest_close_local")),
+            _display_field(_field(security, "return_1w_pct")),
+            _display_field(_field(security, "market_cap_usd_millions"), decimals=0),
+        ]
+        cells.extend(
+            _display_field(_field(security, field_id)) for _label, field_id in kept
+        )
         lines.append("| " + " | ".join(cells) + " |")
+    if dropped:
+        lines.append(
+            "- Columns not shown (no frozen values in this snapshot): "
+            + ", ".join(dropped)
+            + "."
+        )
+    if len(present) < len(tickers):
+        missing = [ticker for ticker in tickers if ticker not in by_ticker]
+        lines.append(
+            f"- Watchlist coverage {len(present)}/{len(tickers)}; missing: "
+            + ", ".join(missing)
+            + "."
+        )
     return lines
 
 
@@ -185,9 +227,11 @@ def render_market_data_tables(
     snapshot: MarketDataSnapshotV2,
     *,
     chart_assets: tuple[MarketChartAsset, ...] = (),
+    universe: EquityPeriodicUniverse | None = None,
 ) -> str:
     """Render the deterministic reader-facing comparison projection."""
 
+    watchlist = universe or DEFAULT_SOLAR_EQUITY_UNIVERSE
     lines = [
         "<!-- briefloop:market-data-tables",
         f"run_id: {snapshot.run_id}",
@@ -195,7 +239,7 @@ def render_market_data_tables(
         f"snapshot_fingerprint: {snapshot.snapshot_fingerprint}",
         "-->",
         "",
-        "# Solar Stock Periodic · Structured Market Data",
+        "# Structured Market Data",
         "",
         f"- Report window: {snapshot.report_window_start} to {snapshot.report_window_end}",
         f"- As of: {snapshot.as_of_date}",
@@ -207,9 +251,10 @@ def render_market_data_tables(
         "## Primary Equity Comparison",
         "",
     ]
-    lines.extend(_comparison_table(snapshot, SOLAR_STOCK_PRIMARY_SECURITIES))
-    lines.extend(["", "## Overseas Equity Comparison", ""])
-    lines.extend(_comparison_table(snapshot, SOLAR_STOCK_OVERSEAS_SECURITIES))
+    lines.extend(_comparison_table(snapshot, watchlist.primary_tickers))
+    if watchlist.overseas_tickers:
+        lines.extend(["", "## Overseas Equity Comparison", ""])
+        lines.extend(_comparison_table(snapshot, watchlist.overseas_tickers))
     if chart_assets:
         lines.extend(
             [
@@ -299,7 +344,10 @@ def _v1_field(
 
 
 def _upgrade_v1(
-    command: MarketDataRecordInputV1, direction: Any
+    command: MarketDataRecordInputV1,
+    direction: Any,
+    *,
+    watchlist: EquityPeriodicUniverse | None = None,
 ) -> MarketDataRecordInputV2:
     start = (
         direction.report_window_start
@@ -312,16 +360,15 @@ def _upgrade_v1(
     identity = canonical_fingerprint(
         command.model_dump(mode="json", exclude_unset=False)
     )
+    equity_universe = watchlist or DEFAULT_SOLAR_EQUITY_UNIVERSE
     securities: list[dict[str, object]] = []
     for item in command.securities:
-        universe = (
-            "primary" if item.ticker in SOLAR_STOCK_PRIMARY_SECURITIES else "overseas"
-        )
+        listing_group = infer_listing_group(item.ticker, equity_universe)
         securities.append(
             {
                 "ticker": item.ticker,
                 "display_name": item.ticker,
-                "universe": universe,
+                "universe": listing_group,
                 "exchange": item.exchange,
                 "currency": item.currency,
                 "return_basis": "close",
@@ -383,7 +430,11 @@ def _upgrade_v1(
             "gap_id": _id(
                 "market-gap", {"ticker": item.ticker, "failure": item.failure_class}
             ),
-            "severity": "blocking",
+            "severity": (
+                "blocking"
+                if item.ticker in equity_universe.core_tickers
+                else "warning"
+            ),
             "category": "provider_unavailable",
             "ticker": item.ticker,
             "field_id": "price_series",
@@ -398,7 +449,10 @@ def _upgrade_v1(
             "report_window_start": start,
             "report_window_end": end,
             "as_of_date": command.as_of_date,
-            "universe_tickers": list(_UNIVERSE),
+            "universe_tickers": sorted(
+                {item.ticker for item in command.securities}
+                | {item.ticker for item in command.gaps}
+            ),
             "provider_ids": ["legacy_v1_upgrade"],
             "workbook": None,
             "securities": sorted(
@@ -479,7 +533,11 @@ class MarketDataService:
                 run_id, store_revision, snapshot, direction = self._current_run(store)
                 self._require_no_active_invocation(snapshot)
                 command = (
-                    _upgrade_v1(incoming, direction)
+                    _upgrade_v1(
+                        incoming,
+                        direction,
+                        watchlist=load_equity_universe(self.workspace),
+                    )
                     if isinstance(incoming, MarketDataRecordInputV1)
                     else incoming
                 )
@@ -495,7 +553,7 @@ class MarketDataService:
                     or command.report_window_end != direction.report_window_end
                 ):
                     raise MarketDataError("market_data_snapshot_window_invalid")
-                if command.universe_tickers != list(_UNIVERSE):
+                if not command.universe_tickers:
                     raise MarketDataError("market_data_snapshot_universe_invalid")
                 identity = command.model_dump(mode="json", exclude_unset=False)
                 scoped_identity = {"run_id": run_id, **identity}
@@ -592,10 +650,12 @@ class MarketDataService:
 
     def project_tables(self) -> dict[str, object]:
         latest = self.latest_snapshot()
-        chart_assets = render_market_chart_assets(latest)
+        universe = load_equity_universe(self.workspace)
+        chart_assets = render_market_chart_assets(latest, universe=universe)
         markdown = render_market_data_tables(
             latest,
             chart_assets=chart_assets,
+            universe=universe,
         ).encode("utf-8")
         projection = canonical_json_bytes(market_data_projection(latest)) + b"\n"
         chart_manifest = (

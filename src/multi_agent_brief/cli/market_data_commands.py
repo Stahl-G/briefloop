@@ -18,6 +18,7 @@ from typing import Any
 from multi_agent_brief.product.market_data_service import (
     MarketDataService,
 )
+from multi_agent_brief.sources.equity_universe import load_equity_universe
 from multi_agent_brief.sources.market_data import (
     MARKET_DATA_INPUT_DIR,
     MarketDataError,
@@ -33,12 +34,6 @@ from multi_agent_brief.sources.market_data_v2 import (
     YahooMarketDataV2Adapter,
     merge_manual_workbook_with_yahoo,
 )
-from multi_agent_brief.sources.solar_stock_plan import (
-    SOLAR_STOCK_OVERSEAS_SECURITIES,
-    SOLAR_STOCK_PRIMARY_SECURITIES,
-)
-
-_SOLAR_STOCK_UNIVERSE = SOLAR_STOCK_PRIMARY_SECURITIES + SOLAR_STOCK_OVERSEAS_SECURITIES
 
 
 def register(subparsers: argparse._SubParsersAction) -> None:
@@ -196,13 +191,19 @@ def _handle_fetch(args: argparse.Namespace, workspace: Path) -> dict[str, object
     if workbook_path is not None:
         if getattr(args, "profile", None) != TOYO_WEEKLY_XLSX_PROFILE_ID:
             raise MarketDataError("market_data_xlsx_profile_required")
-        parsed = parse_toyo_weekly_xlsx(Path(workbook_path).expanduser().resolve())
+        parsed = parse_toyo_weekly_xlsx(
+            Path(workbook_path).expanduser().resolve(),
+            universe=load_equity_universe(workspace),
+        )
         requested_as_of = getattr(args, "as_of", None)
         if requested_as_of is not None and requested_as_of != parsed.as_of_date:
             raise MarketDataError("market_data_xlsx_as_of_mismatch")
+        universe = load_equity_universe(workspace)
         provider = YahooMarketDataV2Adapter().fetch(
-            _SOLAR_STOCK_UNIVERSE,
+            universe.watchlist,
             as_of_date=parsed.as_of_date,
+            core_tickers=universe.core_tickers,
+            benchmark_ticker=universe.benchmark_ticker,
         )
         request = merge_manual_workbook_with_yahoo(parsed.record_payload(), provider)
         # Provider calls happen only after the first read-only preflight.  The
@@ -213,7 +214,9 @@ def _handle_fetch(args: argparse.Namespace, workspace: Path) -> dict[str, object
     if getattr(args, "profile", None) is not None:
         raise MarketDataError("market_data_profile_not_applicable")
     manuals = _load_manual_inputs(workspace)
-    fetched = YahooMarketDataAdapter().fetch_weekly(_SOLAR_STOCK_UNIVERSE)
+    fetched = YahooMarketDataAdapter().fetch_weekly(
+        load_equity_universe(workspace).watchlist
+    )
     merged = merge_manual_first(manuals, fetched)
     request = _snapshot_request_payload(
         securities=merged.securities,
@@ -232,7 +235,9 @@ def _handle_ingest(args: argparse.Namespace, workspace: Path) -> dict[str, objec
     if file_path.suffix.lower() == ".xlsx":
         if getattr(args, "profile", None) != TOYO_WEEKLY_XLSX_PROFILE_ID:
             raise MarketDataError("market_data_xlsx_profile_required")
-        parsed = parse_toyo_weekly_xlsx(file_path)
+        parsed = parse_toyo_weekly_xlsx(
+            file_path, universe=load_equity_universe(workspace)
+        )
         requested_as_of = getattr(args, "as_of", None)
         if requested_as_of is not None and requested_as_of != parsed.as_of_date:
             raise MarketDataError("market_data_xlsx_as_of_mismatch")

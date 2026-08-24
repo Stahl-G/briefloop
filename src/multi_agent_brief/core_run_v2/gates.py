@@ -62,10 +62,7 @@ from .lineage import classify_current_audit_promotion, classify_current_lineage
 from .output_contract import measure_reader_body, verify_output_contract
 from .policy import derived_id, transaction_type_for
 from .verifier import CoreRunDomainVerifier, resolve_core_replay
-from multi_agent_brief.sources.solar_stock_plan import (
-    SOLAR_STOCK_OVERSEAS_SECURITIES,
-    SOLAR_STOCK_PRIMARY_SECURITIES,
-)
+from multi_agent_brief.sources.equity_universe import load_equity_universe
 
 
 _Clock = Callable[[], datetime]
@@ -225,6 +222,7 @@ class GateEvaluationService:
                     stages=tuple(dict(item) for item in verified.stages),
                     artifacts=tuple(dict(item) for item in verified.artifacts),
                     artifact_bindings=tuple(bindings),
+                    workspace=self.workspace,
                 )
             except (
                 ControlStoreError,
@@ -587,6 +585,7 @@ def _replay_gate_outcomes(
     artifacts: tuple[dict[str, object], ...],
     artifact_bindings: tuple[GateArtifactBinding, ...],
     evaluator_version: str = EVALUATOR_VERSION,
+    workspace: Path | None = None,
 ) -> dict[str, tuple[str | None, list[dict[str, object]]]]:
     """Replay the sole preloaded Gate evaluator from exact Store revisions."""
 
@@ -858,6 +857,7 @@ def _replay_gate_outcomes(
         raw,
         snapshot=snapshot,
         binding=binding,
+        workspace=workspace,
     )
     if stage_id == "auditor":
         _append_reader_projection_residue_finding(raw, markdown=markdown)
@@ -873,8 +873,9 @@ def _append_solar_market_data_findings(
     *,
     snapshot: ControlStoreSnapshot,
     binding: RunContractBinding,
+    workspace: Path | None = None,
 ) -> None:
-    """Make the Solar comparison-table boundary a deterministic Gate input."""
+    """Make the comparison-table boundary a deterministic Gate input."""
 
     if binding.run_direction.report_type != "solar_stock_periodic" or not isinstance(
         raw, dict
@@ -892,7 +893,8 @@ def _append_solar_market_data_findings(
                 finding_type="market_data_snapshot_missing",
                 blocking=True,
                 description=(
-                    "Solar Stock Periodic has no Store-frozen structured market-data snapshot."
+                    "This equity-periodic report has no Store-frozen structured "
+                    "market-data snapshot."
                 ),
                 recommendation=(
                     "Record the approved workbook/Yahoo merged snapshot before rerunning Gates."
@@ -910,9 +912,11 @@ def _append_solar_market_data_findings(
             item.market_data_snapshot_id,
         ),
     )
-    expected = SOLAR_STOCK_PRIMARY_SECURITIES + SOLAR_STOCK_OVERSEAS_SECURITIES
+    universe = load_equity_universe(workspace)
     actual = {item.ticker for item in latest.securities}
-    missing = [ticker for ticker in expected if ticker not in actual]
+    expected = latest.universe_tickers or list(universe.watchlist)
+    core_missing = [ticker for ticker in universe.core_tickers if ticker not in actual]
+    watchlist_missing = [ticker for ticker in expected if ticker not in actual]
     window_mismatch = (
         binding.run_direction.report_window_start is not None
         and binding.run_direction.report_window_end is not None
@@ -925,24 +929,25 @@ def _append_solar_market_data_findings(
     blocking_conflicts = [
         item for item in latest.conflicts if item.severity == "blocking"
     ]
-    if missing or window_mismatch or blocking_gaps or blocking_conflicts:
+    if core_missing or window_mismatch or blocking_gaps or blocking_conflicts:
         target.append(
             _market_data_finding(
                 finding_type="market_data_snapshot_incomplete",
                 blocking=True,
                 description=(
-                    "The frozen Solar market-data snapshot cannot populate the required "
-                    "11-security comparison surface."
+                    "The frozen market-data snapshot cannot populate the core "
+                    "subject price series required by this report."
                 ),
                 recommendation=(
-                    "Resolve required price-series gaps or blocking conflicts, record a new "
-                    "append-only snapshot, and rerun Gates."
+                    "Resolve the core-subject price-series gap or blocking conflict, "
+                    "record a new append-only snapshot, and rerun Gates."
                 ),
                 evidence_ref=f"market-data:{latest.market_data_snapshot_id}",
                 metadata={
                     "market_data_snapshot_id": latest.market_data_snapshot_id,
                     "snapshot_fingerprint": latest.snapshot_fingerprint,
-                    "missing_tickers": missing,
+                    "core_missing_tickers": core_missing,
+                    "watchlist_missing_tickers": watchlist_missing,
                     "window_mismatch": window_mismatch,
                     "blocking_gap_ids": [item.gap_id for item in blocking_gaps],
                     "blocking_conflict_ids": [
@@ -953,17 +958,19 @@ def _append_solar_market_data_findings(
         )
     warnings = [item for item in latest.gaps if item.severity == "warning"]
     warnings.extend(item for item in latest.conflicts if item.severity == "warning")
-    if warnings:
+    if warnings or watchlist_missing:
         target.append(
             _market_data_finding(
                 finding_type="market_data_snapshot_disclosures_required",
                 blocking=False,
                 description=(
-                    "The frozen Solar market-data snapshot contains visible optional-field, "
-                    "event-source, or manual/provider differences."
+                    "The frozen market-data snapshot contains visible optional-field, "
+                    "event-source, manual/provider differences, or partial watchlist "
+                    "coverage."
                 ),
                 recommendation=(
-                    "Keep these unavailable fields and conflicts visible in the reader projection."
+                    "Keep these unavailable fields, conflicts, and watchlist coverage "
+                    "gaps visible in the reader projection."
                 ),
                 evidence_ref=f"market-data:{latest.market_data_snapshot_id}:warnings",
                 metadata={
@@ -972,6 +979,8 @@ def _append_solar_market_data_findings(
                         getattr(item, "gap_id", None) or getattr(item, "conflict_id")
                         for item in warnings
                     ),
+                    "watchlist_expected_total": len(expected),
+                    "watchlist_missing_tickers": watchlist_missing,
                 },
             )
         )
