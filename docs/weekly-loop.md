@@ -8,12 +8,12 @@ and delivery decisions visible.
 
 ```text
 create or select workspace
--> add sources
--> run handoff
--> inspect quality summary
--> repair or record feedback
--> deliver by human action
--> keep approved feedback for next time
+-> bind sources before the run
+-> run and continue the Store workflow
+-> inspect the current action and quality projections
+-> repair through the active invocation or stop for Human review
+-> reach finalized_local
+-> optionally record Human observations and approved guidance
 ```
 
 ## 1. Create Or Select A Workspace
@@ -49,14 +49,17 @@ Put local source files under:
 input/sources/
 ```
 
-For document-review work, register source files and scope explicitly:
+For a Human-reviewed upload flow, use the one-shot local initialization wizard
+and review its source manifest before submitting:
 
 ```bash
-briefloop extract \
-  --workspace ./document-review \
-  --sources "./docs/*.md" \
-  --scope "contracts, permits, production capacity, dates, named obligations"
+briefloop init ./document-review --web
 ```
+
+The retired `briefloop extract` and `briefloop sources ...` commands are not a
+fallback for a SQLite workspace. If the active run requests a Human source
+pack, follow the exact Store-bound request shown by `runtime continue` rather
+than editing SQLite or frozen manifests.
 
 Feedback, instructions, and context are not source evidence. Keep them in their
 own input folders so claims do not inherit authority from comments or task
@@ -71,6 +74,16 @@ briefloop run --workspace ./weekly-brief --runtime codex
 Then follow the generated handoff for your runtime. In normal use, agents draft
 and inspect content while deterministic commands record state, freeze artifacts,
 run checks, and prepare delivery.
+
+Continue through the bounded Store path:
+
+```bash
+briefloop runtime continue --workspace ./weekly-brief
+```
+
+Repeat only after completing the exact returned role proposal or deterministic
+action. Stop when it returns `needs_human`, `needs_attention`, `finalized_local`,
+or `terminated`; do not infer a retry or another stage.
 
 ## 4. Inspect Status And Quality Summary
 
@@ -102,39 +115,40 @@ delivery or prove source support.
 If a check fails, repair through the workflow instead of editing frozen files.
 Use status to find the next safe action.
 
-For reader feedback:
+For post-final reader feedback, open the secured local Review Session and keep
+the command running while the page is in use:
 
 ```bash
-mkdir -p ./weekly-brief/input/feedback
-printf '%s\n' "Lead with business impact before listing news." \
-  > ./weekly-brief/input/feedback/human-feedback.md
-
-briefloop feedback ingest \
-  --workspace ./weekly-brief \
-  --source human \
-  --feedback ./weekly-brief/input/feedback/human-feedback.md
+briefloop quality laj review-open --workspace ./weekly-brief
 ```
+
+The Store-native observation/guidance lifecycle is Experimental in v0.15.3.
+It keeps Human observations separate from model findings, and guidance approval
+does not automatically affect a later run. The retired `briefloop feedback`
+commands are unavailable on SQLite workspaces.
 
 Do not use feedback as evidence. If a number, date, source, or factual claim is
 wrong, treat it as a source or repair issue, not as a reader preference.
 
 ## 6. Deliver By Human Action
 
-After required checks and finalize state pass:
+Finalization and any later package/delivery step are Store actions. Continue the
+runtime until it reports the exact terminal or Human boundary:
 
 ```bash
-briefloop deliver --workspace ./weekly-brief
+briefloop runtime continue --workspace ./weekly-brief
 ```
 
-Reader-facing files are under:
+At `finalized_local`, the local reader projection is normally available under:
 
 ```text
-output/delivery/
+output/brief.md
+output/brief_pages.html
 ```
 
-Audit and intermediate files stay with the workspace so the team can review how
-the brief was produced. Delivery is human-triggered; there is no delivery
-override path for bypassing failed checks.
+An explicitly authorized package or delivery may also create files under
+`output/delivery/`. There is no supported standalone `briefloop deliver`
+command on SQLite and no delivery override for bypassing failed checks.
 
 ## 7. Keep The Workspace Reviewable
 

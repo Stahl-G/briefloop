@@ -57,7 +57,7 @@
 - legacy Improvement Ledger lifecycle 已在 LD2-3 退役；其 JSON/JSONL 文件保持
   inert 且无读写方。实验性 post-final 人工审阅把 finding 处置、人工编辑 guidance
   草稿和独立 approval/status revision 记录为 append-only SQLite Receipt。在
-  development main 上，Human 可以提供新的 `RunDirection` 并用
+  v0.15.3 中，Human 可以提供新的 `RunDirection` 并用
   `--include-approved-guidance` 显式启动同一 workspace 的正常 successor；Core
   事务会原子冻结兼容、active 且经 Human 批准的 guidance。Analyst 和 Editor 收到
   同一份不可变 context；其他角色不收到，commit 后也不会读取 live ledger 或退役文件。
@@ -85,7 +85,7 @@
   当前 runtime role 不会被指示创建它。剩余 schema 不阻断流程，也不会创建 support
   truth、Claim-Support Matrix row、repair route、Gate、delivery decision、release
   authority 或 semantic proof。
-- development main 的 Store-qualified post-final LAJ 仍要求显式选择 result，并以
+- v0.15.3 的 Store-qualified post-final LAJ 仍要求显式选择 result，并以
   append-only Receipt 记录 Human accept/reject/defer、人工编辑 draft 和独立
   approval/status。独立的 `briefloop runtime successor-start` 命令只有在 Human
   提供新 run ID、严格 `RunDirection` 并显式选择复用时，才会创建正常的同 workspace

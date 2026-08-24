@@ -28,13 +28,13 @@ v0.11.0 产品基线前不优先重建完整分布式 multi-agent runtime。Pyth
 
 ## 当前 development 校正
 
-下方按版本排列的 milestone 是历史 roadmap 记录。当前 development truth 是 fresh
-SQLite schema 13：legacy Improvement JSON/JSONL、fast-rerun 与 MABW-080 command
+下方按版本排列的 milestone 是历史 roadmap 记录。当前发布真相是 v0.15.3 与 fresh-only
+SQLite schema 19：legacy Improvement JSON/JSONL、fast-rerun 与 MABW-080 command
 tooling 已退役，git history 及 archive/reference-run material 仅作为历史证据保留。
 Semantic Assessment Report 只保留可选 schema/reference validation；producer、
 proposal/status projection 与 adjudication writer 已退役。
 
-在 development main 上，Human 可以通过 `briefloop runtime successor-start`
+在 v0.15.3 中，Human 可以通过 `briefloop runtime successor-start`
 提供新的严格 `RunDirection`，显式启动同一 workspace 的正常 successor。只有带上
 `--include-approved-guidance` 才会复用已批准 guidance。Python 原子冻结兼容、
 active 且经 Human 批准的 guidance，只交给 Analyst 与 Editor；其他角色不收到。

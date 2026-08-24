@@ -115,7 +115,7 @@ page describes implemented runtime capability, not a breaking deep rename.
   files remain inert with no reader or writer. Experimental post-final Human
   review records finding dispositions, Human-edited guidance drafts, and
   separate approval/status revisions as append-only SQLite Receipts. On
-  development main, a Human may explicitly start a normal same-workspace
+  v0.15.3, a Human may explicitly start a normal same-workspace
   successor with a new `RunDirection` and `--include-approved-guidance`; the
   Core transaction atomically freezes only compatible, active Human-approved
   guidance. Analyst and Editor receive the same immutable context. Other roles
@@ -166,7 +166,7 @@ page describes implemented runtime capability, not a breaking deep rename.
   canonical `brief_html` page is read-only as a static export and becomes
   actionable only through a secured loopback Review Session, where strict
   Human commands append accept/reject/defer, edited guidance drafts, and
-  separate approval/status Receipts. Development main also exposes the
+  separate approval/status Receipts. v0.15.3 also exposes the
   read-only `assessment-next` request projection; it is not a second assessment
   writer. A separate public `briefloop runtime successor-start` command can
   create a normal same-workspace successor only after explicit Human input
