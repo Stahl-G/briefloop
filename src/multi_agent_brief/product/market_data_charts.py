@@ -154,9 +154,7 @@ def _line_asset(
     title: str,
     securities: Iterable[MarketDataSecurityV2],
     indexed: bool,
-) -> MarketChartAsset:
-    canvas = _Canvas()
-    left, top, width, height = _frame(canvas)
+) -> MarketChartAsset | None:
     rows: list[tuple[str, list[float]]] = []
     for security in securities:
         if len(security.price_series) < 2:
@@ -171,21 +169,24 @@ def _line_asset(
         if indexed:
             values = [value / values[0] * 100.0 for value in values]
         rows.append((security.ticker, values))
-    if rows:
-        all_values = [value for _ticker, values in rows for value in values]
-        low, high = min(all_values), max(all_values)
-        pad = max((high - low) * 0.1, abs(high) * 0.01, 0.1)
-        low -= pad
-        high += pad
-        for index, (_ticker, values) in enumerate(rows):
-            points = []
-            for position, value in enumerate(values):
-                x = left + round(width * position / max(len(values) - 1, 1))
-                y = top + round(height * (high - value) / max(high - low, 1e-9))
-                points.append((x, y))
-            for first, second in zip(points, points[1:]):
-                canvas.line(*first, *second, _COLORS[index % len(_COLORS)], thickness=3)
-            canvas.rect(76 + index * 70, 420, 48, 8, _COLORS[index % len(_COLORS)])
+    if not rows:
+        return None
+    canvas = _Canvas()
+    left, top, width, height = _frame(canvas)
+    all_values = [value for _ticker, values in rows for value in values]
+    low, high = min(all_values), max(all_values)
+    pad = max((high - low) * 0.1, abs(high) * 0.01, 0.1)
+    low -= pad
+    high += pad
+    for index, (_ticker, values) in enumerate(rows):
+        points = []
+        for position, value in enumerate(values):
+            x = left + round(width * position / max(len(values) - 1, 1))
+            y = top + round(height * (high - value) / max(high - low, 1e-9))
+            points.append((x, y))
+        for first, second in zip(points, points[1:]):
+            canvas.line(*first, *second, _COLORS[index % len(_COLORS)], thickness=3)
+        canvas.rect(76 + index * 70, 420, 48, 8, _COLORS[index % len(_COLORS)])
     return MarketChartAsset(
         chart_id=chart_id,
         title=title,
@@ -200,33 +201,34 @@ def _bar_asset(
     title: str,
     securities: Iterable[MarketDataSecurityV2],
     value: Callable[[MarketDataSecurityV2], float | None],
-) -> MarketChartAsset:
-    canvas = _Canvas()
-    left, top, width, height = _frame(canvas)
+) -> MarketChartAsset | None:
     rows = [
         (item.ticker, number)
         for item in securities
         if (number := value(item)) is not None
     ]
-    if rows:
-        low = min(0.0, *(number for _ticker, number in rows))
-        high = max(0.0, *(number for _ticker, number in rows))
-        span = max(high - low, 1e-9)
-        zero = top + round(height * high / span)
-        canvas.line(left, zero, left + width, zero, (71, 85, 105), thickness=2)
-        slot = width / len(rows)
-        bar_width = max(8, min(58, round(slot * 0.6)))
-        for index, (_ticker, number) in enumerate(rows):
-            x = left + round(slot * index + (slot - bar_width) / 2)
-            y_value = top + round(height * (high - number) / span)
-            y = min(zero, y_value)
-            canvas.rect(
-                x,
-                y,
-                bar_width,
-                max(1, abs(zero - y_value)),
-                _COLORS[index % len(_COLORS)] if number >= 0 else (220, 38, 38),
-            )
+    if not rows:
+        return None
+    canvas = _Canvas()
+    left, top, width, height = _frame(canvas)
+    low = min(0.0, *(number for _ticker, number in rows))
+    high = max(0.0, *(number for _ticker, number in rows))
+    span = max(high - low, 1e-9)
+    zero = top + round(height * high / span)
+    canvas.line(left, zero, left + width, zero, (71, 85, 105), thickness=2)
+    slot = width / len(rows)
+    bar_width = max(8, min(58, round(slot * 0.6)))
+    for index, (_ticker, number) in enumerate(rows):
+        x = left + round(slot * index + (slot - bar_width) / 2)
+        y_value = top + round(height * (high - number) / span)
+        y = min(zero, y_value)
+        canvas.rect(
+            x,
+            y,
+            bar_width,
+            max(1, abs(zero - y_value)),
+            _COLORS[index % len(_COLORS)] if number >= 0 else (220, 38, 38),
+        )
     return MarketChartAsset(
         chart_id=chart_id,
         title=title,
@@ -235,28 +237,27 @@ def _bar_asset(
     )
 
 
-def _toyo_asset(security: MarketDataSecurityV2 | None) -> MarketChartAsset:
+def _toyo_asset(security: MarketDataSecurityV2 | None) -> MarketChartAsset | None:
+    if security is None or len(security.price_series) < 2:
+        return None
     canvas = _Canvas()
     left, top, width, height = _frame(canvas)
-    if security is not None and len(security.price_series) >= 2:
-        prices = [point.close for point in security.price_series]
-        volumes = [point.volume or 0 for point in security.price_series]
-        low, high = min(prices), max(prices)
-        pad = max((high - low) * 0.1, high * 0.01, 0.1)
-        low -= pad
-        high += pad
-        max_volume = max(1, *volumes)
-        points: list[tuple[int, int]] = []
-        for index, point in enumerate(security.price_series):
-            x = left + round(width * index / max(len(security.price_series) - 1, 1))
-            bar_height = round(height * 0.36 * (point.volume or 0) / max_volume)
-            canvas.rect(
-                x - 9, top + height - bar_height, 18, bar_height, (191, 219, 254)
-            )
-            y = top + round(height * (high - point.close) / max(high - low, 1e-9))
-            points.append((x, y))
-        for first, second in zip(points, points[1:]):
-            canvas.line(*first, *second, (29, 78, 216), thickness=4)
+    prices = [point.close for point in security.price_series]
+    volumes = [point.volume or 0 for point in security.price_series]
+    low, high = min(prices), max(prices)
+    pad = max((high - low) * 0.1, high * 0.01, 0.1)
+    low -= pad
+    high += pad
+    max_volume = max(1, *volumes)
+    points: list[tuple[int, int]] = []
+    for index, point in enumerate(security.price_series):
+        x = left + round(width * index / max(len(security.price_series) - 1, 1))
+        bar_height = round(height * 0.36 * (point.volume or 0) / max_volume)
+        canvas.rect(x - 9, top + height - bar_height, 18, bar_height, (191, 219, 254))
+        y = top + round(height * (high - point.close) / max(high - low, 1e-9))
+        points.append((x, y))
+    for first, second in zip(points, points[1:]):
+        canvas.line(*first, *second, (29, 78, 216), thickness=4)
     return MarketChartAsset(
         chart_id="toyo-price-volume",
         title="TOYO Close and Volume",
@@ -265,32 +266,33 @@ def _toyo_asset(security: MarketDataSecurityV2 | None) -> MarketChartAsset:
     )
 
 
-def _event_asset(snapshot: MarketDataSnapshotV2) -> MarketChartAsset:
-    canvas = _Canvas()
-    left, top, width, height = _frame(canvas)
+def _event_asset(snapshot: MarketDataSnapshotV2) -> MarketChartAsset | None:
     rows = [
         (event.event_id, event.event_day_excess_return_pct)
         for event in snapshot.events
         if event.event_day_excess_return_pct is not None
     ]
-    if rows:
-        low = min(0.0, *(number for _event, number in rows))
-        high = max(0.0, *(number for _event, number in rows))
-        span = max(high - low, 1e-9)
-        zero = top + round(height * high / span)
-        canvas.line(left, zero, left + width, zero, (71, 85, 105), thickness=2)
-        slot = width / len(rows)
-        for index, (_event, number) in enumerate(rows):
-            bar_width = min(90, round(slot * 0.55))
-            x = left + round(slot * index + (slot - bar_width) / 2)
-            y_value = top + round(height * (high - number) / span)
-            canvas.rect(
-                x,
-                min(zero, y_value),
-                bar_width,
-                max(1, abs(zero - y_value)),
-                (5, 150, 105) if number >= 0 else (220, 38, 38),
-            )
+    if not rows:
+        return None
+    canvas = _Canvas()
+    left, top, width, height = _frame(canvas)
+    low = min(0.0, *(number for _event, number in rows))
+    high = max(0.0, *(number for _event, number in rows))
+    span = max(high - low, 1e-9)
+    zero = top + round(height * high / span)
+    canvas.line(left, zero, left + width, zero, (71, 85, 105), thickness=2)
+    slot = width / len(rows)
+    for index, (_event, number) in enumerate(rows):
+        bar_width = min(90, round(slot * 0.55))
+        x = left + round(slot * index + (slot - bar_width) / 2)
+        y_value = top + round(height * (high - number) / span)
+        canvas.rect(
+            x,
+            min(zero, y_value),
+            bar_width,
+            max(1, abs(zero - y_value)),
+            (5, 150, 105) if number >= 0 else (220, 38, 38),
+        )
     return MarketChartAsset(
         chart_id="event-excess-return",
         title="PR Event-day Excess Return",
@@ -306,7 +308,7 @@ def render_market_chart_assets(
     primary = [item for item in securities if item.universe == "primary"]
     overseas = [item for item in securities if item.universe == "overseas"]
     toyo = next((item for item in securities if item.ticker == "TOYO"), None)
-    return (
+    candidates: tuple[MarketChartAsset | None, ...] = (
         _line_asset(
             chart_id="primary-indexed-trend",
             title="Primary Equity Indexed Trend",
@@ -339,7 +341,14 @@ def render_market_chart_assets(
             securities=securities,
             value=lambda item: _field_number(item, "ev_sales_ttm"),
         ),
+        _bar_asset(
+            chart_id="ps-ttm",
+            title="P/S (TTM) Valuation Comparison",
+            securities=securities,
+            value=lambda item: _field_number(item, "ps_ttm"),
+        ),
     )
+    return tuple(asset for asset in candidates if asset is not None)
 
 
 __all__ = [

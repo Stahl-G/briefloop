@@ -63,6 +63,7 @@ from .output_contract import measure_reader_body, verify_output_contract
 from .policy import derived_id, transaction_type_for
 from .verifier import CoreRunDomainVerifier, resolve_core_replay
 from multi_agent_brief.sources.solar_stock_plan import (
+    SOLAR_STOCK_CORE_SECURITIES,
     SOLAR_STOCK_OVERSEAS_SECURITIES,
     SOLAR_STOCK_PRIMARY_SECURITIES,
 )
@@ -912,7 +913,10 @@ def _append_solar_market_data_findings(
     )
     expected = SOLAR_STOCK_PRIMARY_SECURITIES + SOLAR_STOCK_OVERSEAS_SECURITIES
     actual = {item.ticker for item in latest.securities}
-    missing = [ticker for ticker in expected if ticker not in actual]
+    core_missing = [
+        ticker for ticker in SOLAR_STOCK_CORE_SECURITIES if ticker not in actual
+    ]
+    watchlist_missing = [ticker for ticker in expected if ticker not in actual]
     window_mismatch = (
         binding.run_direction.report_window_start is not None
         and binding.run_direction.report_window_end is not None
@@ -925,24 +929,25 @@ def _append_solar_market_data_findings(
     blocking_conflicts = [
         item for item in latest.conflicts if item.severity == "blocking"
     ]
-    if missing or window_mismatch or blocking_gaps or blocking_conflicts:
+    if core_missing or window_mismatch or blocking_gaps or blocking_conflicts:
         target.append(
             _market_data_finding(
                 finding_type="market_data_snapshot_incomplete",
                 blocking=True,
                 description=(
-                    "The frozen Solar market-data snapshot cannot populate the required "
-                    "11-security comparison surface."
+                    "The frozen Solar market-data snapshot cannot populate the core "
+                    "subject price series required by this report."
                 ),
                 recommendation=(
-                    "Resolve required price-series gaps or blocking conflicts, record a new "
-                    "append-only snapshot, and rerun Gates."
+                    "Resolve the core-subject price-series gap or blocking conflict, "
+                    "record a new append-only snapshot, and rerun Gates."
                 ),
                 evidence_ref=f"market-data:{latest.market_data_snapshot_id}",
                 metadata={
                     "market_data_snapshot_id": latest.market_data_snapshot_id,
                     "snapshot_fingerprint": latest.snapshot_fingerprint,
-                    "missing_tickers": missing,
+                    "core_missing_tickers": core_missing,
+                    "watchlist_missing_tickers": watchlist_missing,
                     "window_mismatch": window_mismatch,
                     "blocking_gap_ids": [item.gap_id for item in blocking_gaps],
                     "blocking_conflict_ids": [
@@ -953,17 +958,19 @@ def _append_solar_market_data_findings(
         )
     warnings = [item for item in latest.gaps if item.severity == "warning"]
     warnings.extend(item for item in latest.conflicts if item.severity == "warning")
-    if warnings:
+    if warnings or watchlist_missing:
         target.append(
             _market_data_finding(
                 finding_type="market_data_snapshot_disclosures_required",
                 blocking=False,
                 description=(
                     "The frozen Solar market-data snapshot contains visible optional-field, "
-                    "event-source, or manual/provider differences."
+                    "event-source, manual/provider differences, or partial watchlist "
+                    "coverage."
                 ),
                 recommendation=(
-                    "Keep these unavailable fields and conflicts visible in the reader projection."
+                    "Keep these unavailable fields, conflicts, and watchlist coverage "
+                    "gaps visible in the reader projection."
                 ),
                 evidence_ref=f"market-data:{latest.market_data_snapshot_id}:warnings",
                 metadata={
@@ -972,6 +979,8 @@ def _append_solar_market_data_findings(
                         getattr(item, "gap_id", None) or getattr(item, "conflict_id")
                         for item in warnings
                     ),
+                    "watchlist_expected_total": len(expected),
+                    "watchlist_missing_tickers": watchlist_missing,
                 },
             )
         )

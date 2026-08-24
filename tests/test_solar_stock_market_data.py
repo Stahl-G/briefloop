@@ -679,7 +679,7 @@ def test_recording_survives_full_core_run_verification(tmp_path: Path) -> None:
 # ── Projection ────────────────────────────────────────────────────────────────
 
 
-def test_projection_renders_both_tables_with_not_available_rows(
+def test_projection_omits_missing_watchlist_rows_and_shows_coverage(
     tmp_path: Path,
 ) -> None:
     workspace = tmp_path / "workspace"
@@ -692,9 +692,15 @@ def test_projection_renders_both_tables_with_not_available_rows(
     assert "## Primary Equity Comparison" in text
     assert "## Overseas Equity Comparison" in text
     assert "| TOYO | NasdaqCM | USD | 10.62 | 2.31 |" in text
-    dq_row = next(line for line in text.splitlines() if line.startswith("| DQ |"))
-    assert dq_row.count("NOT AVAILABLE") == 10
-    assert "- [blocking] DQ: transport_unavailable" in text
+    assert not any(line.startswith("| DQ |") for line in text.splitlines())
+    assert (
+        "- Watchlist coverage 1/7; missing: TE, FSLR, CSIQ, JKS, NXT, DQ." in text
+    )
+    assert (
+        "- Watchlist coverage 0/4; missing: 009830.KS, WAAREEENER.NS, "
+        "PREMIERENE.NS, VIKRAMSOLR.NS." in text
+    )
+    assert "- [warning] DQ: transport_unavailable" in text
     header = text.splitlines()[1]
     assert "snapshot_fingerprint" in text and header.startswith("run_id:")
 

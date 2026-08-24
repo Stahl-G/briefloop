@@ -34,6 +34,7 @@ from multi_agent_brief.contracts.v2 import (
 from multi_agent_brief.core.fingerprint import canonical_fingerprint
 from multi_agent_brief.sources.market_data import MarketDataError
 from multi_agent_brief.sources.solar_stock_plan import (
+    SOLAR_STOCK_CORE_SECURITIES,
     SOLAR_STOCK_OVERSEAS_SECURITIES,
     SOLAR_STOCK_PRIMARY_SECURITIES,
 )
@@ -1054,6 +1055,13 @@ def _parse_events(
         }
         event_id = _stable_id("market-event", payload)
         locator = sheet.locator(row, header["事件"])
+        raw_url = sheet.value(row, header.get("官方来源URL", -1))
+        original_url = (
+            raw_url.strip()
+            if isinstance(raw_url, str)
+            and raw_url.strip().startswith(("http://", "https://"))
+            else None
+        )
         result.append(
             MarketDataEventReactionV2.model_validate(
                 {
@@ -1064,8 +1072,12 @@ def _parse_events(
                     "publication_timing": "pre_market"
                     if "盘前" in title
                     else "unknown",
-                    "original_url": None,
-                    "evidence_status": "display_only_source_url_missing",
+                    "original_url": original_url,
+                    "evidence_status": (
+                        "claim_eligible"
+                        if original_url is not None
+                        else "display_only_source_url_missing"
+                    ),
                     "event_day_return_pct": _number(
                         sheet.value(row, header.get("当日涨跌%", -1))
                     ),
@@ -1092,20 +1104,21 @@ def _parse_events(
                 strict=True,
             )
         )
-        gaps.append(
-            MarketDataGapV2.model_validate(
-                {
-                    "gap_id": _stable_id("market-gap", {**payload, "kind": "url"}),
-                    "severity": "warning",
-                    "category": "event_source_url_missing",
-                    "ticker": "TOYO",
-                    "field_id": None,
-                    "source_locator": locator,
-                    "reason_code": "event_original_url_missing",
-                },
-                strict=True,
+        if original_url is None:
+            gaps.append(
+                MarketDataGapV2.model_validate(
+                    {
+                        "gap_id": _stable_id("market-gap", {**payload, "kind": "url"}),
+                        "severity": "warning",
+                        "category": "event_source_url_missing",
+                        "ticker": "TOYO",
+                        "field_id": None,
+                        "source_locator": locator,
+                        "reason_code": "event_original_url_missing",
+                    },
+                    strict=True,
+                )
             )
-        )
         row += 1
     return sorted(result, key=lambda item: item.event_id)
 
@@ -1148,18 +1161,29 @@ def parse_toyo_weekly_xlsx(path: str | Path) -> ParsedMarketDataWorkbook:
     for ticker in universe:
         series = series_by_ticker.get(ticker, [])
         if not series:
+            # The universe is a default watchlist, not a delivery quota:
+            # only a core-subject miss blocks; every other miss becomes a
+            # visible warning for coverage disclosure.
             gaps.append(
                 MarketDataGapV2.model_validate(
                     {
                         "gap_id": _stable_id(
                             "market-gap", {"ticker": ticker, "kind": "series"}
                         ),
-                        "severity": "blocking",
+                        "severity": (
+                            "blocking"
+                            if ticker in SOLAR_STOCK_CORE_SECURITIES
+                            else "warning"
+                        ),
                         "category": "missing_security_series",
                         "ticker": ticker,
                         "field_id": "price_series",
                         "source_locator": "走势数据",
-                        "reason_code": "required_security_price_series_missing",
+                        "reason_code": (
+                            "core_security_price_series_missing"
+                            if ticker in SOLAR_STOCK_CORE_SECURITIES
+                            else "watchlist_security_price_series_missing"
+                        ),
                     },
                     strict=True,
                 )

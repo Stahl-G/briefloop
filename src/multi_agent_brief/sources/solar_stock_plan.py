@@ -21,6 +21,11 @@ SOLAR_STOCK_OVERSEAS_SECURITIES: Final[tuple[str, ...]] = (
     "PREMIERENE.NS",
     "VIKRAMSOLR.NS",
 )
+# The primary + overseas universe is a default watchlist, not a delivery
+# quota: it drives discovery search, ordering, and coverage disclosure.
+# Only these core subject tickers may block delivery when their price series
+# is missing; every other watchlist miss degrades to a visible disclosure.
+SOLAR_STOCK_CORE_SECURITIES: Final[tuple[str, ...]] = ("TOYO",)
 SOLAR_STOCK_EVENT_ONLY_ENTITIES: Final[tuple[str, ...]] = (
     "Qcells",
     "Illuminate USA",
