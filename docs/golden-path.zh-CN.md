@@ -1,4 +1,4 @@
-# BriefLoop v0.11 产品黄金路径
+# BriefLoop v0.15.3 SQLite 产品黄金路径
 
 这是一份给普通 BriefLoop 用户看的最短产品路径。它不是实验 harness，不是
 benchmark protocol，也不是 reference run 展示。它只回答一个实际问题：怎样从
@@ -12,8 +12,9 @@ benchmark protocol，也不是 reference run 展示。它只回答一个实际�
 | `management-monthly` | `management_monthly` | 管理层月度复盘和经营简报 |
 | `document-review` | `evidence_extract` | 有明确范围的本地文档证据审阅 |
 
-`solar-periodic` 仍是实验性 Product OS 扩展。它可以用于 dogfood，但不是稳定
-v0.11 产品基线的一部分。
+`solar-stock-periodic` 是 v0.15.3 发布的 fresh schema-19 实验性资本市场
+周报入口；更广的旧 `solar-periodic` Product OS 扩展也仍是实验性。
+两者都不是稳定 v0.11 产品基线的一部分。
 
 ## 边界
 
@@ -62,14 +63,15 @@ briefloop new document-review ./document-review \
 cp ./sources/*.md ./weekly-brief/input/sources/
 ```
 
-`document-review` 要显式登记来源和审阅范围：
+需要人工检查上传与来源清单时，使用一次性本地初始化页面并在提交前确认 canonical
+source manifest：
 
 ```bash
-briefloop extract \
-  --workspace ./document-review \
-  --sources "./docs/*.md" \
-  --scope "contracts, permits, production capacity, dates, named obligations"
+briefloop init ./document-review --web
 ```
+
+退役的 `briefloop extract` 和 `briefloop sources ...` 在 SQLite workspace 上不可用。
+如果 `runtime continue` 要求 Human source pack，只执行它返回的精确 Store-bound 请求。
 
 二进制 / PDF 文件不会因为选择了产品入口就自动变成可用证据。如果某个二进制来源
 只是 registered-only，先通过受支持的输入路径把它转换或抽取成可读文本，再让
@@ -80,23 +82,19 @@ runtime 使用其中内容作为 evidence。
 创建或刷新 runtime handoff：
 
 ```bash
-briefloop run --workspace ./weekly-brief --runtime operator
-```
-
-Claude Code 里的 writer 命令是：
-
-```text
-/briefloop run ./weekly-brief
-```
-
-然后按照生成的 handoff 执行。Claude writer 路径里，继续使用
-`/briefloop status` 和生成的 handoff 来选择下一步安全动作：
-
-```text
-/briefloop status ./weekly-brief
+briefloop run --workspace ./weekly-brief --runtime codex
 ```
 
 `run` 是 handoff launcher。它本身不完成 stage，也不会绕过确定性 transaction。
+
+随后只沿 Store 给出的动作继续：
+
+```bash
+briefloop runtime continue --workspace ./weekly-brief
+```
+
+只完成返回的精确 role proposal 或 deterministic action，然后再 continue。遇到
+`needs_human`、`needs_attention`、`finalized_local` 或 `terminated` 就停止。
 
 ## 4. 先看状态，再行动
 
@@ -113,33 +111,34 @@ projection 和下一步安全动作。如果控制 artifact 缺失或过期，�
 
 ## 5. 把反馈当反馈处理
 
-草稿需要修改时，记录 feedback，而不是直接改 frozen artifact：
+finalized brief 需要读者反馈时，打开受保护的本地 Review Session，不要直接修改
+frozen artifact：
 
 ```bash
-printf '%s\n' "先讲业务影响，再列新闻。" > ./weekly-brief/input/feedback/human-feedback.md
-briefloop feedback ingest \
-  --workspace ./weekly-brief \
-  --source human \
-  --feedback ./weekly-brief/input/feedback/human-feedback.md
+briefloop quality laj review-open --workspace ./weekly-brief
 ```
 
-Feedback 不是 source evidence，也不会自动进入 Improvement Memory。事实或来源问题
-走 repair、audit 或 gates；稳定的读者偏好必须由人批准后，才会在后续 run 中复用。
+Human observation 不是 source evidence，也不是 model finding。guidance 必须单独批准，
+并在 successor 中显式 opt-in 才能复用。退役的 `briefloop feedback` 命令在 SQLite
+workspace 上不可用。
 
 ## 6. 门禁通过后再交付
 
-run 通过必要门禁并完成 finalize 状态后，再交付：
+finalize 和之后的 package/delivery 都是 typed Store action。继续使用有界 continuation：
 
 ```bash
-briefloop deliver --workspace ./weekly-brief
+briefloop runtime continue --workspace ./weekly-brief
 ```
 
-读者可见文件在：
+达到 `finalized_local` 时，本地读者文件通常包括：
 
 ```text
-output/delivery/brief.md
-output/delivery/<named-brief>.docx
+output/brief.md
+output/brief_pages.html
 ```
+
+只有显式授权的 package/delivery 才可能额外生成 `output/delivery/brief.md` 与命名
+DOCX。SQLite workspace 不提供独立的 `briefloop deliver` 或 force-deliver 路径。
 
 审计和控制 artifact 继续保留在 workspace 中，用于追溯和复盘。它们不是第二份读者
 交付文件：

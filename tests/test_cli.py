@@ -493,7 +493,7 @@ def test_quality_laj_cli_executes_assessment_next_request(
     assert len(calls) == calls_before_replay
 
 
-def test_readmes_bind_v0151_candidate_and_keep_v014_historical_boundary() -> None:
+def test_readmes_bind_v0151_work_to_v0153_and_keep_v014_historical_boundary() -> None:
     def require(condition: bool, message: str) -> None:
         if not condition:
             raise AssertionError(message)
@@ -504,9 +504,9 @@ def test_readmes_bind_v0151_candidate_and_keep_v014_historical_boundary() -> Non
     readme_en = (root / "README_en.md").read_text(encoding="utf-8")
 
     require(
-        "The v0.15.1 prepared release target" in english
-        and "includes Store-qualified post-final review" in english,
-        "English README does not bind AI Second Opinion to the v0.15.1 prepared target",
+        "The v0.15.1 engineering target, included in v0.15.3" in english
+        and "introduced\nStore-qualified post-final review" in english,
+        "English README does not bind v0.15.1 AI Second Opinion work to v0.15.3",
     )
     historical_english = english.split(
         "Prior v0.14.0 completed the SQLite-only cutover",
@@ -518,9 +518,9 @@ def test_readmes_bind_v0151_candidate_and_keep_v014_historical_boundary() -> Non
     )
 
     require(
-        "v0.15.1 prepared release target" in chinese
-        and "包含 Store-qualified post-final 审阅" in chinese,
-        "Chinese README does not bind AI Second Opinion to the v0.15.1 prepared target",
+        "v0.15.1 工程目标已包含在 v0.15.3 中" in chinese
+        and "它引入了 Store-qualified post-final 审阅" in chinese,
+        "Chinese README does not bind v0.15.1 AI Second Opinion work to v0.15.3",
     )
     historical_chinese = chinese.split(
         "此前的 v0.14.0 完成 SQLite-only 切换",

@@ -26,7 +26,7 @@ ReportPack, not a stable product baseline.
 | Product workspace skeleton | Creates a conservative local-first workspace and `report_spec.yaml` from a supported baseline ReportPack | Supported baseline | `briefloop new industry-weekly <workspace>`, `briefloop new management-monthly <workspace>`, `briefloop new document-review <workspace>` |
 | Solar Stock Periodic workspace | Creates a fresh schema-19 experimental capital-markets weekly contract with a 20-task Tavily discovery plan | Experimental | `briefloop new solar-stock-periodic <workspace>`; JSON/CSV or profile-bound TOYO XLSX can supply the separate frozen market-data snapshot |
 | Runtime handoff | Bootstraps the SQLite ControlStore and returns the Store-derived next action | Always on | `briefloop run --workspace <workspace> --runtime codex`, `briefloop runtime next` |
-| Normal same-workspace successor | Starts a new run from a finalized current head and atomically freezes compatible active-approved Human guidance only after explicit opt-in | Experimental development main | `briefloop runtime successor-start --workspace <workspace> --direction-json <json> --run-id <id> --include-approved-guidance`; Analyst/Editor only, utility NOT MEASURED |
+| Normal same-workspace successor | Starts a new run from a finalized current head and atomically freezes compatible active-approved Human guidance only after explicit opt-in | Experimental in v0.15.3 | `briefloop runtime successor-start --workspace <workspace> --direction-json <json> --run-id <id> --include-approved-guidance`; Analyst/Editor only, utility NOT MEASURED |
 | Status view | Shows the Store-derived stage, action, package readiness, and delivery state | Always on | `briefloop status --workspace <workspace> --json` |
 | Delivery bundle | Produces reader-facing Markdown and DOCX outputs through Store-backed delivery | Always on | `briefloop runtime apply` (delivery actions), Store-native status |
 | Delivery/audit bundle projection | Writes a manifest that separates reader delivery artifacts from audit/control artifacts by hash | Experimental | `briefloop packs bundle --workspace <workspace>` |
@@ -74,9 +74,9 @@ ReportPack, not a stable product baseline.
 | Function | What it does | Status | Boundary |
 |---|---|---|---|
 | Feedback capture | Records user feedback for review and repair/intake workflows | Supported | Feedback is not automatically memory |
-| Store-native post-final guidance lifecycle | Records explicit Human disposition, edited guidance, and separate approval/status as append-only SQLite Receipts | Experimental development main | Approval is not automatic reuse or evidence |
-| Successor guidance snapshot | With explicit successor opt-in, freezes compatible active-approved guidance and supplies the same immutable context to Analyst and Editor | Experimental development main | Current direction/evidence govern; no other role, Gate, finalize, delivery, repair, or Core authority |
-| Historical deactivate / revert / supersede | Keeps prior-run guidance lifecycle addressable after a successor becomes current | Experimental development main | Exact result binding; browser `review-open` remains current-head-only |
+| Store-native post-final guidance lifecycle | Records explicit Human disposition, edited guidance, and separate approval/status as append-only SQLite Receipts | Experimental in v0.15.3 | Approval is not automatic reuse or evidence |
+| Successor guidance snapshot | With explicit successor opt-in, freezes compatible active-approved guidance and supplies the same immutable context to Analyst and Editor | Experimental in v0.15.3 | Current direction/evidence govern; no other role, Gate, finalize, delivery, repair, or Core authority |
+| Historical deactivate / revert / supersede | Keeps prior-run guidance lifecycle addressable after a successor becomes current | Experimental in v0.15.3 | Exact result binding; browser `review-open` remains current-head-only |
 | Legacy Improvement files and commands | Former JSON/JSONL ledger, projection, snapshot, and `improve` mutators | Retired | Inert; no reader, writer, migration, or fallback |
 
 ## Experimental Support-Record Surfaces

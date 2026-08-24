@@ -1,11 +1,11 @@
-# BriefLoop v0.11 Product Golden Path
+# BriefLoop v0.15.3 SQLite Golden Path
 
 This is the shortest product path for a normal BriefLoop user. This product
 path is not an experiment harness, benchmark protocol, or reference-run
 showcase. It answers one practical question: how do I create, run, inspect, and
 deliver a traceable business brief without bypassing the control spine?
 
-Use this path when you want one of the supported v0.11 product-baseline
+Use this path when you want one of the supported product-baseline
 workspaces:
 
 | Product entry | Internal ReportPack | Best for |
@@ -14,9 +14,10 @@ workspaces:
 | `management-monthly` | `management_monthly` | recurring management review and executive briefing packages |
 | `document-review` | `evidence_extract` | local document evidence review with explicit scope |
 
-`solar-periodic` remains experimental for command usage. In plain terms:
-solar-periodic remains an experimental Product OS extension. It may be useful
-for dogfood, but it is not part of the stable v0.11 product baseline.
+`solar-stock-periodic` is the fresh schema-19 experimental capital-markets
+weekly entry released in v0.15.3. The wider legacy `solar-periodic` Product OS
+extension also remains experimental. Neither is part of the stable v0.11
+product baseline.
 
 ## Boundary
 
@@ -67,14 +68,16 @@ text files:
 cp ./sources/*.md ./weekly-brief/input/sources/
 ```
 
-For `document-review`, register source files with an explicit scope:
+For a Human-reviewed upload flow, use the one-shot local initialization wizard
+and review its canonical source manifest before submitting:
 
 ```bash
-briefloop extract \
-  --workspace ./document-review \
-  --sources "./docs/*.md" \
-  --scope "contracts, permits, production capacity, dates, named obligations"
+briefloop init ./document-review --web
 ```
+
+The retired `briefloop extract` and `briefloop sources ...` commands are not
+available on SQLite workspaces. If `runtime continue` requests a Human source
+pack, follow that exact Store-bound request.
 
 Binary/PDF inputs are not automatically converted into supported evidence by
 the product entry alone. If a binary source is registered-only, convert or
@@ -89,21 +92,18 @@ Create or refresh the runtime handoff:
 briefloop run --workspace ./weekly-brief --runtime codex
 ```
 
-In Claude Code, the writer command equivalent is:
-
-```text
-/briefloop run ./weekly-brief
-```
-
-Then follow the generated handoff. In the Claude writer path, keep using
-`/briefloop status` and the generated handoff to choose the next safe action:
-
-```text
-/briefloop status ./weekly-brief
-```
-
 `run` is a handoff launcher. It does not mark stages complete by itself and does
 not bypass deterministic transactions.
+
+Continue with the Store-derived action:
+
+```bash
+briefloop runtime continue --workspace ./weekly-brief
+```
+
+Complete only the exact returned role proposal or deterministic action, then
+continue again. Stop at `needs_human`, `needs_attention`, `finalized_local`, or
+`terminated`.
 
 ## 4. Inspect Status Before Acting
 
@@ -121,34 +121,36 @@ artifact by hand.
 
 ## 5. Handle Feedback As Feedback
 
-When a draft needs work, record feedback rather than editing frozen artifacts:
+When a finalized brief needs reader feedback, open the secured local Review
+Session rather than editing frozen artifacts:
 
 ```bash
-printf '%s\n' "Lead with business impact before listing news." > ./weekly-brief/input/feedback/human-feedback.md
-briefloop feedback ingest \
-  --workspace ./weekly-brief \
-  --source human \
-  --feedback ./weekly-brief/input/feedback/human-feedback.md
+briefloop quality laj review-open --workspace ./weekly-brief
 ```
 
-Feedback is not source evidence and is not automatically Improvement Memory.
-Fact/source issues go through repair, audit, or gates. Stable reader
-preferences require human approval before they are reused in a later run.
+Human observations are not source evidence or model findings. Guidance requires
+a separate approval and explicit successor opt-in before reuse. The retired
+`briefloop feedback` command family is unavailable on SQLite workspaces.
 
 ## 6. Deliver Only After Gates Pass
 
-Use delivery after the run has passed the required gates and finalize state:
+Finalization and any later package/delivery step are typed Store actions. Keep
+using bounded continuation:
 
 ```bash
-briefloop deliver --workspace ./weekly-brief
+briefloop runtime continue --workspace ./weekly-brief
 ```
 
-Reader-facing outputs are under:
+At `finalized_local`, the local reader files normally include:
 
 ```text
-output/delivery/brief.md
-output/delivery/<named-brief>.docx
+output/brief.md
+output/brief_pages.html
 ```
+
+An explicitly authorized package/delivery may additionally create
+`output/delivery/brief.md` and a named DOCX. SQLite workspaces do not expose a
+standalone `briefloop deliver` command or a force-deliver path.
 
 Audit and control artifacts stay in the workspace for review and traceability.
 They are not a second reader delivery:

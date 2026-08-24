@@ -28,14 +28,15 @@ Two design principles guide the next phases:
 
 ## Current Development Correction
 
-The versioned milestones below are historical roadmap records. Current
-development truth is fresh SQLite schema 13: legacy Improvement JSON/JSONL,
-fast-rerun, and MABW-080 command tooling are retired, with git history and
-archived/reference-run material retained only as historical evidence. The
-Semantic Assessment Report keeps optional schema/reference validation only;
-its producer, proposal/status projection, and adjudication writer are retired.
+The versioned milestones below are historical roadmap records. Current release
+truth is v0.15.3 with fresh-only SQLite schema 19. Legacy Improvement
+JSON/JSONL, fast-rerun, and MABW-080 command tooling are retired, with git
+history and archived/reference-run material retained only as historical
+evidence. The Semantic Assessment Report keeps optional schema/reference
+validation only; its producer, proposal/status projection, and adjudication
+writer are retired.
 
-On development main, a Human can explicitly start a normal successor in the
+In v0.15.3, a Human can explicitly start a normal successor in the
 same workspace with a new strict `RunDirection` through
 `briefloop runtime successor-start`. Approved-guidance reuse occurs only when
 `--include-approved-guidance` is present. Python atomically freezes compatible,

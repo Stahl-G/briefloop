@@ -152,8 +152,8 @@ The design rule is simple:
 | What guards delivery? | Store-backed gate evaluations, package readiness, and explicit human approval | Receipt-backed runtime actions and read-only status projections |
 
 Agents can observe and propose. Only strict requests accepted by deterministic
-services change the Store, and delivery stays human-controlled. On the
-unreleased development main, Experimental post-final Human review can record
+services change the Store, and delivery stays human-controlled. In v0.15.3,
+Experimental post-final Human review can record
 accept/reject/defer, Human-edited guidance, and a separate approval Receipt in
 SQLite. A Human can then explicitly start a normal successor in the same
 workspace with `briefloop runtime successor-start`, supplying the new
@@ -162,8 +162,9 @@ deterministic transaction freezes only compatible, active Human-approved
 guidance for the successor's Analyst and Editor. The same immutable context is
 advisory only: current direction and evidence govern, and guidance has no Claim
 Ledger, Gate, finalize, delivery, repair, or Core authority. Utility is NOT
-MEASURED. Released v0.14.0 does not include this development-main successor
-path or a Store-native reusable-guidance surface.
+MEASURED. The v0.15.3 successor path and Store-native reusable-guidance
+surface remain Experimental rather than automatic learning or delivery
+authority.
 
 ---
 
@@ -404,8 +405,8 @@ Claim Ledger evidence.
 
 v0.15.2 removed the legacy JSON control-plane runtime.
 
-The v0.15.1 prepared release target (development main, not yet tagged)
-includes Store-qualified post-final review: multiple
+The v0.15.1 engineering target, included in v0.15.3, introduced
+Store-qualified post-final review: multiple
 append-only, independently Human-authorized assessments on one finalized
 lineage, exact result selection for the secured local Review Session, and
 Human-originated observations with separate guidance approvals. Generation 2
@@ -470,7 +471,7 @@ Current entrypoints:
   silently become authority. Embedded workbook charts are display-only, never
   evidence, and private workbook bytes are not copied into the repository.
 
-Development-main-only LAJ continuation controls are explicit and Store-native:
+The released Experimental LAJ continuation controls are explicit and Store-native:
 
 - `briefloop quality laj assessment-next --workspace <path>
   --policy-revision-id <id> --human-actor-id <id> --human-request-id <id>
@@ -486,8 +487,8 @@ Old development workspaces are unsupported when the Store schema changes;
 create a fresh workspace on the current schema. BriefLoop does not ship an
 in-product development-schema upgrade path.
 
-The v0.15.1 prepared target carries the SQLite-only cutover forward and adds
-experimental post-final review and multi-query source-discovery surfaces:
+The v0.15.1 engineering target, carried into v0.15.3, added experimental
+post-final review and multi-query source-discovery surfaces:
 
 - Store-qualified AI Second Opinion supports multiple Human-authorized,
   append-only assessment generations, exact archive-bound replay/projection,
@@ -620,7 +621,8 @@ First-user path:
 Architecture reference and contributor docs:
 
 - [Function Map](docs/features.md)
-- [v0.15.1 prepared release target](docs/releases/v0.15.1.md)
+- [v0.15.3 release notes](docs/releases/v0.15.3.md)
+- [v0.15.1 engineering target](docs/releases/v0.15.1.md)
 - [Support Matrix](docs/support-matrix.md)
 - [Golden Path](docs/golden-path.md)
 - [Architecture Status](docs/architecture-status.md)

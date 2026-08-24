@@ -23,7 +23,7 @@ schema-19 ReportPack，不是稳定产品基线。
 | 产品工作区骨架 | 从受支持的 baseline ReportPack 创建 conservative local-first workspace 和 `report_spec.yaml` | 受支持基线 | `briefloop new industry-weekly <workspace>`, `briefloop new management-monthly <workspace>`, `briefloop new document-review <workspace>` |
 | Solar Stock Periodic 工作区 | 创建 fresh schema-19 的实验性资本市场周报契约和 20 条 Tavily 发现计划 | 实验性 | `briefloop new solar-stock-periodic <workspace>`；JSON/CSV 或 profile-bound TOYO XLSX 可提供单独冻结的行情快照 |
 | Runtime handoff | 引导 SQLite ControlStore 并返回 Store 推导的下一动作 | 默认在场 | `briefloop run --workspace <workspace> --runtime codex`, `briefloop runtime next` |
-| 同 workspace 正常 successor | 从已 finalized 的当前 head 启动新 run；只有显式 opt-in 时才原子冻结兼容、active-approved 的 Human guidance | development main 实验性 | `briefloop runtime successor-start --workspace <workspace> --direction-json <json> --run-id <id> --include-approved-guidance`；仅 Analyst/Editor，效用 NOT MEASURED |
+| 同 workspace 正常 successor | 从已 finalized 的当前 head 启动新 run；只有显式 opt-in 时才原子冻结兼容、active-approved 的 Human guidance | v0.15.3 实验性 | `briefloop runtime successor-start --workspace <workspace> --direction-json <json> --run-id <id> --include-approved-guidance`；仅 Analyst/Editor，效用 NOT MEASURED |
 | 状态查看 | 查看 Store 推导的 stage、动作、package readiness 和交付状态 | 默认在场 | `briefloop status --workspace <workspace> --json` |
 | 交付包 | 通过 Store 支撑的交付动作输出读者可见 Markdown 和 DOCX | 默认在场 | `briefloop runtime apply`（交付动作），Store 原生状态 |
 
@@ -69,9 +69,9 @@ schema-19 ReportPack，不是稳定产品基线。
 | 功能 | 做什么 | 状态 | 边界 |
 |---|---|---|---|
 | Feedback capture | 记录用户反馈，用于 review、repair 或 intake | 已支持 | feedback 不自动等于 memory |
-| Store-native post-final guidance lifecycle | 把显式 Human disposition、人工编辑 guidance 与独立 approval/status 记录为 append-only SQLite Receipt | development main 实验性 | approval 不等于自动复用，也不是 evidence |
-| Successor guidance snapshot | 只有 successor 显式 opt-in 时，冻结兼容 active-approved guidance，并给 Analyst 与 Editor 同一份不可变 context | development main 实验性 | 当前 direction/evidence 优先；其他角色、Gate、finalize、delivery、repair、Core 均无此权限 |
-| 历史 deactivate / revert / supersede | successor 成为当前 head 后，旧 run guidance lifecycle 仍可显式寻址 | development main 实验性 | 精确 result binding；browser `review-open` 仍只支持当前 head |
+| Store-native post-final guidance lifecycle | 把显式 Human disposition、人工编辑 guidance 与独立 approval/status 记录为 append-only SQLite Receipt | v0.15.3 实验性 | approval 不等于自动复用，也不是 evidence |
+| Successor guidance snapshot | 只有 successor 显式 opt-in 时，冻结兼容 active-approved guidance，并给 Analyst 与 Editor 同一份不可变 context | v0.15.3 实验性 | 当前 direction/evidence 优先；其他角色、Gate、finalize、delivery、repair、Core 均无此权限 |
+| 历史 deactivate / revert / supersede | successor 成为当前 head 后，旧 run guidance lifecycle 仍可显式寻址 | v0.15.3 实验性 | 精确 result binding；browser `review-open` 仍只支持当前 head |
 | Legacy Improvement 文件与命令 | 旧 JSON/JSONL ledger、projection、snapshot 与 `improve` mutator | 已退役 | inert；无 reader、writer、migration 或 fallback |
 
 ## 实验性支持记录控制面

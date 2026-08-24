@@ -143,7 +143,7 @@ BriefLoop 适合：
 | 哪些动作真正生效了？ | 被接受的 strict request、transaction receipt 和 invocation lineage | 通过受支持的 status/runtime view 查看 `briefloop.db` |
 | 什么在替你把关？ | Store-backed gate evaluation、package readiness 和显式人工批准 | Receipt-backed runtime action 与只读状态投影 |
 
-Agent 可以观察和提议；只有通过严格校验并被确定性服务接受的请求才会改变 Store，交付仍由人控制。在尚未发布的 development main 上，实验性 post-final 审阅可在同一 finalized lineage 上记录多个、彼此独立且由 Human 授权的 append-only assessment；审阅必须显式选择 result，并可记录 accept/reject/defer、人工编辑的 guidance 和独立 approval Receipt。generation 2 及以后只能由显式 Human 操作创建，policy 漂移不会自动运行或重拨。Human 随后可以通过 `briefloop runtime successor-start` 显式启动同一 workspace 的正常 successor，提供新的 `RunDirection`，并用 `--include-approved-guidance` 明确选择复用。一个确定性事务只为 successor 冻结兼容、active 且经 Human 批准的 guidance，且仅 Analyst 和 Editor 收到同一份不可变 context。当前 direction 与 evidence 始终优先；guidance 不进入 Claim Ledger，也不拥有 Gate、finalize、delivery、repair 或 Core 权限；效用 NOT MEASURED。已发布 v0.14.0 不包含这条 development-main successor 路径或 Store-native 可复用 guidance surface。
+Agent 可以观察和提议；只有通过严格校验并被确定性服务接受的请求才会改变 Store，交付仍由人控制。v0.15.3 已包含实验性 post-final 审阅：它可在同一 finalized lineage 上记录多个、彼此独立且由 Human 授权的 append-only assessment；审阅必须显式选择 result，并可记录 accept/reject/defer、人工编辑的 guidance 和独立 approval Receipt。generation 2 及以后只能由显式 Human 操作创建，policy 漂移不会自动运行或重拨。Human 随后可以通过 `briefloop runtime successor-start` 显式启动同一 workspace 的正常 successor，提供新的 `RunDirection`，并用 `--include-approved-guidance` 明确选择复用。一个确定性事务只为 successor 冻结兼容、active 且经 Human 批准的 guidance，且仅 Analyst 和 Editor 收到同一份不可变 context。当前 direction 与 evidence 始终优先；guidance 不进入 Claim Ledger，也不拥有 Gate、finalize、delivery、repair 或 Core 权限；效用 NOT MEASURED。这条 successor 路径和 Store-native guidance surface 仍是实验性能力，不构成自动学习或交付权限。
 
 ---
 
@@ -357,7 +357,7 @@ Market Data Tab。Solar 行情 Gate 会阻断缺失序列、窗口错配、阻�
 
 v0.15.2 移除了 legacy JSON control-plane 运行时。
 
-v0.15.1 prepared release target（development main，尚未打 tag）包含 Store-qualified post-final 审阅：同一 finalized lineage 可执行多个、
+v0.15.1 工程目标已包含在 v0.15.3 中；它引入了 Store-qualified post-final 审阅：同一 finalized lineage 可执行多个、
 彼此独立且由 Human 授权的 append-only advisory assessment；必须显式选择 result，
 随后打开受保护的本地 Review Session，并追加人工处置、编辑草稿和独立 guidance
 approval。generation 2 及以后只能显式创建，policy 漂移不会自动运行或重拨。独立
@@ -411,7 +411,7 @@ guidance 不提供 evidence，不改变 Claim Ledger、Gate、finalize、deliver
   `retrieved_at` 永远不能把它提升为本周证据，且 background 不能被选为
   `priority=high`。
 
-仅限 development-main 的 LAJ continuation controls：
+已发布但仍为实验性的 LAJ continuation controls：
 
 - `briefloop quality laj assessment-next --workspace <path>
   --policy-revision-id <id> --human-actor-id <id> --human-request-id <id>
@@ -426,7 +426,7 @@ guidance 不提供 evidence，不改变 Claim Ledger、Gate、finalize、deliver
 Store schema 变化后，旧 development workspace 不受支持；请用当前 schema 新建
 workspace。BriefLoop 不提供 development schema 的产品内升级路径。
 
-v0.15.1 prepared target 延续 SQLite-only 切换，并增加实验性的 post-final 审阅与多任务来源发现：
+v0.15.1 工程目标已随 v0.15.3 发布，它延续 SQLite-only 切换，并增加实验性的 post-final 审阅与多任务来源发现：
 
 - Store-qualified AI 第二意见支持多代 Human 授权、append-only assessment、精确
   archive-bound replay/projection，以及人工来源观察记录和独立 guidance approval。
@@ -546,7 +546,8 @@ BriefLoop 想把软件工程里的那套“可追踪、可回滚、可审计、�
 架构参考和贡献者文档：
 
 - [功能地图](docs/features.zh-CN.md)
-- [v0.15.1 准备中的 release target](docs/releases/v0.15.1.md)
+- [v0.15.3 发布说明](docs/releases/v0.15.3.md)
+- [v0.15.1 工程目标](docs/releases/v0.15.1.md)
 - [支持矩阵](docs/support-matrix.md)
 - [黄金路径](docs/golden-path.zh-CN.md)
 - [WorkBuddy 指南](docs/workbuddy.zh-CN.md)
