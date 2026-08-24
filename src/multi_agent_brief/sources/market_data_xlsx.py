@@ -33,7 +33,9 @@ from multi_agent_brief.contracts.v2 import (
 )
 from multi_agent_brief.core.fingerprint import canonical_fingerprint
 from multi_agent_brief.sources.market_data import MarketDataError
-from multi_agent_brief.sources.solar_stock_plan import (
+from multi_agent_brief.sources.equity_universe import (
+    DEFAULT_SOLAR_EQUITY_UNIVERSE,
+    EquityPeriodicUniverse,
     SOLAR_STOCK_CORE_SECURITIES,
     SOLAR_STOCK_OVERSEAS_SECURITIES,
     SOLAR_STOCK_PRIMARY_SECURITIES,
@@ -1123,9 +1125,14 @@ def _parse_events(
     return sorted(result, key=lambda item: item.event_id)
 
 
-def parse_toyo_weekly_xlsx(path: str | Path) -> ParsedMarketDataWorkbook:
+def parse_toyo_weekly_xlsx(
+    path: str | Path,
+    *,
+    universe: EquityPeriodicUniverse | None = None,
+) -> ParsedMarketDataWorkbook:
     """Parse one workbook into validated snapshot children without Store writes."""
 
+    watchlist = universe or DEFAULT_SOLAR_EQUITY_UNIVERSE
     source_path = Path(path).expanduser().resolve()
     workbook, payload = _read_ooxml(source_path)
     if any(name not in workbook.sheets for name in _REQUIRED_SHEETS):
@@ -1134,7 +1141,7 @@ def parse_toyo_weekly_xlsx(path: str | Path) -> ParsedMarketDataWorkbook:
     report_start, report_end = _report_window(workbook.sheet("美股对标"))
     if _report_window(workbook.sheet("海外对标")) != (report_start, report_end):
         raise MarketDataError("market_data_xlsx_profile_invalid")
-    universe = SOLAR_STOCK_PRIMARY_SECURITIES + SOLAR_STOCK_OVERSEAS_SECURITIES
+    tickers = watchlist.watchlist
     workbook_identity = MarketDataWorkbookIdentityV2.model_validate(
         {
             "source_name": source_path.name,
@@ -1158,7 +1165,7 @@ def parse_toyo_weekly_xlsx(path: str | Path) -> ParsedMarketDataWorkbook:
     conflicts: list[MarketDataConflictV2] = []
     gaps: list[MarketDataGapV2] = []
     securities: list[MarketDataSecurityV2] = []
-    for ticker in universe:
+    for ticker in tickers:
         series = series_by_ticker.get(ticker, [])
         if not series:
             # The universe is a default watchlist, not a delivery quota:
@@ -1171,9 +1178,7 @@ def parse_toyo_weekly_xlsx(path: str | Path) -> ParsedMarketDataWorkbook:
                             "market-gap", {"ticker": ticker, "kind": "series"}
                         ),
                         "severity": (
-                            "blocking"
-                            if ticker in SOLAR_STOCK_CORE_SECURITIES
-                            else "warning"
+                            "blocking" if watchlist.is_core(ticker) else "warning"
                         ),
                         "category": "missing_security_series",
                         "ticker": ticker,
@@ -1181,7 +1186,7 @@ def parse_toyo_weekly_xlsx(path: str | Path) -> ParsedMarketDataWorkbook:
                         "source_locator": "走势数据",
                         "reason_code": (
                             "core_security_price_series_missing"
-                            if ticker in SOLAR_STOCK_CORE_SECURITIES
+                            if watchlist.is_core(ticker)
                             else "watchlist_security_price_series_missing"
                         ),
                     },
@@ -1221,7 +1226,11 @@ def parse_toyo_weekly_xlsx(path: str | Path) -> ParsedMarketDataWorkbook:
             conflicts,
         )
         _record_formula_cache_conflicts(ticker, fields, formula_caches, conflicts)
-        display_name, exchange, currency, universe_kind = _SECURITY_META[ticker]
+        if ticker in _SECURITY_META:
+            display_name, exchange, currency, universe_kind = _SECURITY_META[ticker]
+        else:
+            display_name, exchange, currency = ticker, "UNKNOWN", "USD"
+            universe_kind = watchlist.group_for(ticker)
         securities.append(
             MarketDataSecurityV2.model_validate(
                 {
@@ -1264,7 +1273,7 @@ def parse_toyo_weekly_xlsx(path: str | Path) -> ParsedMarketDataWorkbook:
             report_window_start=report_start,
             report_window_end=report_end,
             as_of_date=report_end,
-            universe_tickers=universe,
+            universe_tickers=tickers,
             provider_ids=("manual_xlsx",),
             workbook=workbook_identity,
             securities=tuple(sorted(securities, key=lambda item: item.ticker)),

@@ -1,4 +1,4 @@
-"""Deterministic PNG chart projections for Solar Stock Periodic.
+"""Deterministic PNG chart projections for equity-periodic market data.
 
 The Store snapshot remains the authority.  PNG files are replaceable reader
 projections whose manifest binds every byte to the exact snapshot fingerprint
@@ -15,6 +15,10 @@ import zlib
 from typing import Callable, Iterable
 
 from multi_agent_brief.contracts.v2 import MarketDataSecurityV2, MarketDataSnapshotV2
+from multi_agent_brief.sources.equity_universe import (
+    DEFAULT_SOLAR_EQUITY_UNIVERSE,
+    EquityPeriodicUniverse,
+)
 
 CHART_RENDERER_VERSION = "market-chart-png-v1"
 CHART_OUTPUT_DIRECTORY = "output/charts/market_data"
@@ -259,9 +263,13 @@ def _toyo_asset(security: MarketDataSecurityV2 | None) -> MarketChartAsset | Non
     for first, second in zip(points, points[1:]):
         canvas.line(*first, *second, (29, 78, 216), thickness=4)
     return MarketChartAsset(
-        chart_id="toyo-price-volume",
-        title="TOYO Close and Volume",
-        relative_path=f"{CHART_OUTPUT_DIRECTORY}/toyo-price-volume.png",
+        chart_id=(
+            "toyo-price-volume"
+            if security.ticker == "TOYO"
+            else "subject-price-volume"
+        ),
+        title=f"{security.ticker} Close and Volume",
+        relative_path=f"{CHART_OUTPUT_DIRECTORY}/{'toyo-price-volume' if security.ticker == 'TOYO' else 'subject-price-volume'}.png",
         png_bytes=canvas.png(),
     )
 
@@ -303,11 +311,24 @@ def _event_asset(snapshot: MarketDataSnapshotV2) -> MarketChartAsset | None:
 
 def render_market_chart_assets(
     snapshot: MarketDataSnapshotV2,
+    *,
+    universe: EquityPeriodicUniverse | None = None,
 ) -> tuple[MarketChartAsset, ...]:
+    watchlist = universe or DEFAULT_SOLAR_EQUITY_UNIVERSE
     securities = list(snapshot.securities)
     primary = [item for item in securities if item.universe == "primary"]
     overseas = [item for item in securities if item.universe == "overseas"]
-    toyo = next((item for item in securities if item.ticker == "TOYO"), None)
+    subject = next(
+        (
+            item
+            for ticker in watchlist.core_tickers
+            for item in securities
+            if item.ticker == ticker
+        ),
+        None,
+    )
+    if subject is None and primary:
+        subject = primary[0]
     candidates: tuple[MarketChartAsset | None, ...] = (
         _line_asset(
             chart_id="primary-indexed-trend",
@@ -321,7 +342,7 @@ def render_market_chart_assets(
             securities=overseas,
             indexed=True,
         ),
-        _toyo_asset(toyo),
+        _toyo_asset(subject),
         _event_asset(snapshot),
         _bar_asset(
             chart_id="one-week-return",

@@ -62,11 +62,7 @@ from .lineage import classify_current_audit_promotion, classify_current_lineage
 from .output_contract import measure_reader_body, verify_output_contract
 from .policy import derived_id, transaction_type_for
 from .verifier import CoreRunDomainVerifier, resolve_core_replay
-from multi_agent_brief.sources.solar_stock_plan import (
-    SOLAR_STOCK_CORE_SECURITIES,
-    SOLAR_STOCK_OVERSEAS_SECURITIES,
-    SOLAR_STOCK_PRIMARY_SECURITIES,
-)
+from multi_agent_brief.sources.equity_universe import load_equity_universe
 
 
 _Clock = Callable[[], datetime]
@@ -226,6 +222,7 @@ class GateEvaluationService:
                     stages=tuple(dict(item) for item in verified.stages),
                     artifacts=tuple(dict(item) for item in verified.artifacts),
                     artifact_bindings=tuple(bindings),
+                    workspace=self.workspace,
                 )
             except (
                 ControlStoreError,
@@ -588,6 +585,7 @@ def _replay_gate_outcomes(
     artifacts: tuple[dict[str, object], ...],
     artifact_bindings: tuple[GateArtifactBinding, ...],
     evaluator_version: str = EVALUATOR_VERSION,
+    workspace: Path | None = None,
 ) -> dict[str, tuple[str | None, list[dict[str, object]]]]:
     """Replay the sole preloaded Gate evaluator from exact Store revisions."""
 
@@ -859,6 +857,7 @@ def _replay_gate_outcomes(
         raw,
         snapshot=snapshot,
         binding=binding,
+        workspace=workspace,
     )
     if stage_id == "auditor":
         _append_reader_projection_residue_finding(raw, markdown=markdown)
@@ -874,8 +873,9 @@ def _append_solar_market_data_findings(
     *,
     snapshot: ControlStoreSnapshot,
     binding: RunContractBinding,
+    workspace: Path | None = None,
 ) -> None:
-    """Make the Solar comparison-table boundary a deterministic Gate input."""
+    """Make the comparison-table boundary a deterministic Gate input."""
 
     if binding.run_direction.report_type != "solar_stock_periodic" or not isinstance(
         raw, dict
@@ -893,7 +893,8 @@ def _append_solar_market_data_findings(
                 finding_type="market_data_snapshot_missing",
                 blocking=True,
                 description=(
-                    "Solar Stock Periodic has no Store-frozen structured market-data snapshot."
+                    "This equity-periodic report has no Store-frozen structured "
+                    "market-data snapshot."
                 ),
                 recommendation=(
                     "Record the approved workbook/Yahoo merged snapshot before rerunning Gates."
@@ -911,11 +912,10 @@ def _append_solar_market_data_findings(
             item.market_data_snapshot_id,
         ),
     )
-    expected = SOLAR_STOCK_PRIMARY_SECURITIES + SOLAR_STOCK_OVERSEAS_SECURITIES
+    universe = load_equity_universe(workspace)
     actual = {item.ticker for item in latest.securities}
-    core_missing = [
-        ticker for ticker in SOLAR_STOCK_CORE_SECURITIES if ticker not in actual
-    ]
+    expected = latest.universe_tickers or list(universe.watchlist)
+    core_missing = [ticker for ticker in universe.core_tickers if ticker not in actual]
     watchlist_missing = [ticker for ticker in expected if ticker not in actual]
     window_mismatch = (
         binding.run_direction.report_window_start is not None
@@ -935,7 +935,7 @@ def _append_solar_market_data_findings(
                 finding_type="market_data_snapshot_incomplete",
                 blocking=True,
                 description=(
-                    "The frozen Solar market-data snapshot cannot populate the core "
+                    "The frozen market-data snapshot cannot populate the core "
                     "subject price series required by this report."
                 ),
                 recommendation=(
@@ -964,7 +964,7 @@ def _append_solar_market_data_findings(
                 finding_type="market_data_snapshot_disclosures_required",
                 blocking=False,
                 description=(
-                    "The frozen Solar market-data snapshot contains visible optional-field, "
+                    "The frozen market-data snapshot contains visible optional-field, "
                     "event-source, manual/provider differences, or partial watchlist "
                     "coverage."
                 ),
