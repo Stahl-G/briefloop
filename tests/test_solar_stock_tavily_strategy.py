@@ -451,6 +451,8 @@ def test_multi_tavily_redirect_is_not_followed(monkeypatch) -> None:
 
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
+            content_length = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(content_length)
             hits.append(self.path)
             self.send_response(302 if self.path == "/search" else 200)
             if self.path == "/search":
