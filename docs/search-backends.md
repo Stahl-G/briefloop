@@ -4,10 +4,10 @@ This document describes the runtime search option and pluggable external search 
 
 ## User-Facing Modes
 
-MABW supports two search paths:
+BriefLoop supports two search paths:
 
 1. `mode: runtime_tool` — use the current Orchestrator runtime's built-in web
-   search tool. This is the zero-API-key path. MABW records the resulting
+   search tool. This is the zero-API-key path. BriefLoop records the resulting
    evidence through the normal Claim Ledger and gates, but Python does not call
    a search API.
 2. `mode: external_api` — use a configured Python search backend such as

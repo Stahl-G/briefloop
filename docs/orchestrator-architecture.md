@@ -79,7 +79,7 @@ as `.agents/`, `.claude/`, `.codex/`, `.opencode/`, and
 Use `briefloop runtime install --workspace <workspace> --runtime opencode|claude|codex|all`
 from a source clone to copy workspace-local OpenCode/Claude Code/Codex commands
 or custom agents plus skills into the business workspace. The installed
-workspace kit lets a runtime operate from the workspace without reading the MABW
+workspace kit lets a runtime operate from the workspace without reading the BriefLoop
 source repo.
 
 ## Reader-Facing Source Appendix

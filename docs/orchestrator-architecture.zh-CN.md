@@ -80,7 +80,7 @@ packaged public-safe eval fixtures。`.agents/`、`.claude/`、`.codex/`、
 `briefloop runtime install --workspace <workspace> --runtime opencode|claude|codex|all`
 可以把 workspace-local OpenCode/Claude Code/Codex commands 或 custom agents 以及
 skills 复制到业务 workspace。安装后的 workspace kit 允许 runtime 在业务 workspace 内运行，
-而不必读取 MABW source repo。
+而不必读取 BriefLoop source repo。
 
 ## Reader-Facing Source Appendix
 

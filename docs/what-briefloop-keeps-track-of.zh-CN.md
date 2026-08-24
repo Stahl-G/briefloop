@@ -1,6 +1,4 @@
-# BriefLoop / MABW 会替你记住什么
-
-英文版：`docs/what-mabw-keeps-track-of.md`。
+# BriefLoop 会替你记住什么
 
 这篇文档只回答一个问题：
 
@@ -10,7 +8,7 @@
 
 AI 可以帮你写草稿；BriefLoop 负责把过程留下来；最后是否采纳、是否交付，仍然由人决定。
 
-MABW 是 BriefLoop 当前保留的运行时和兼容名称。你在命令、包名、历史文件里看到 MABW，通常可以理解为 BriefLoop 的当前实现层。
+MABW 是 BriefLoop 保留的兼容名称。你在命令、包名、历史文件里看到 MABW，指的是同一个项目的当前实现层。
 
 ---
 
@@ -347,7 +345,7 @@ BriefLoop 可以提出候选偏好，但未经用户确认，不应该影响未�
 
 它可以帮助准备 IR、市场、战略、合规类报告的草稿和审阅材料，但正式披露仍然需要公司内部审批、律师审查和专业判断。
 
-### 为什么还叫 MABW？
+### 为什么有些地方还叫 MABW？
 
 BriefLoop 是项目对外名称。MABW 是历史实现名，也是当前某些命令、包名和文件路径里的兼容名称。
 
@@ -408,8 +406,6 @@ configs/policy_packs/default.yaml
 
 ## Related
 
-- `docs/control-surfaces.zh-CN.md`
 - `docs/architecture-status.md`
 - `docs/support-matrix.md`
-- `docs/modules/improvement.md`
 - `docs/archive/design-note-preference-taste-governance-2026-06-11.md`
