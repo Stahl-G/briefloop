@@ -1,8 +1,8 @@
-# MABW Agent 开发指南
+# BriefLoop Agent 开发指南
 
-本文是 coding agent 和 contributor 快速理解 MABW 源码仓库的开发入口。它不是 end-user brief workspace 的执行合同，也不是某一次 brief run 的 handoff。真实运行时合同以 `briefloop run --workspace <workspace> --runtime operator` 生成的 交接产物、runtime state files、role skills 和 workspace 配置为准。
+本文是 coding agent 和 contributor 快速理解 BriefLoop 源码仓库的开发入口。它不是 end-user brief workspace 的执行合同，也不是某一次 brief run 的 handoff。真实运行时合同以 `briefloop run --workspace <workspace> --runtime codex` 生成的 交接产物、runtime state files、role skills 和 workspace 配置为准。
 
-如果需要一份可直接复制或注入给 coding agent 的开发提示词，使用 [MABW 开发 Agent Prompt](agent-dev-prompt.zh-CN.md)。本文件保留为解释版开发指南。
+如果需要一份可直接复制或注入给 coding agent 的开发提示词，使用 [BriefLoop 开发 Agent Prompt](agent-dev-prompt.zh-CN.md)。本文件保留为解释版开发指南。
 
 ## 项目目标
 
@@ -65,7 +65,7 @@ Orchestrator Control Loop
 
 Runtime control files 通常位于 workspace 的 `output/intermediate/`：
 
-- `runtime_manifest.json`：记录 run id、workspace、runtime、MABW version、契约 references、stage order 和 expected artifacts。
+- `runtime_manifest.json`：记录 run id、workspace、runtime、BriefLoop version、契约 references、stage order 和 expected artifacts。
 - `workflow_state.json`：记录当前 stage、stage status、blocked 状态、blocking reason、last decision 和 next allowed decisions。
 - `artifact_registry.json`：记录每个 artifact 的 path、required、producer、consumers、status、validation result 和 blocking reason。
 - `event_log.jsonl`：append-only 记录 runtime/control events、artifact validation、stage status changes 和 司乐师 decisions。
@@ -121,7 +121,7 @@ finalize
 
 ## ARS / Hermes 设计启发
 
-MABW 可以吸收 academic research workflow 和 Hermes-style agent design 的工程模式，但不要直接复制外部项目的 prompts、skills 或专有实现。
+BriefLoop 可以吸收 academic research workflow 和 Hermes-style agent design 的工程模式，但不要直接复制外部项目的 prompts、skills 或专有实现。
 
 ### Checkpointed Stage Gates
 
@@ -158,7 +158,7 @@ Red lines 应说明三件事：
 
 ### Workspace Memory
 
-MABW 的记忆层应分清三类：
+BriefLoop 的记忆层应分清三类：
 
 - `audience_profile.md`：taste、偏好、部门风格和读者期待。
 - FeedbackIssue / RepairPlan / FrictionStore：错误、修复和 recurring failure memory。
@@ -196,7 +196,7 @@ git diff --check
 
 ## 总结
 
-MABW v0.6+ 的目标不是增加更多 agent，而是建立 司乐师 Control Plane：
+BriefLoop v0.6+ 的目标不是增加更多 agent，而是建立 司乐师 Control Plane：
 
 ```text
 一次 run 可控

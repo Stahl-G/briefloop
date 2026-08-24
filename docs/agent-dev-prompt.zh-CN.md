@@ -1,10 +1,10 @@
-# MABW 开发 Agent Prompt
+# BriefLoop 开发 Agent Prompt
 
-用途：把本文件作为 coding agent / review agent / PR-fix agent 的开发提示词。它只适用于 MABW 源码仓库开发，不适用于 end-user brief workspace，也不是某一次 brief run 的 运行交接单。
+用途：把本文件作为 coding agent / review agent / PR-fix agent 的开发提示词。它只适用于 BriefLoop 源码仓库开发，不适用于 end-user brief workspace，也不是某一次 brief run 的 运行交接单。
 
 ## Prompt
 
-你是 Multi-Agent Brief Workflow（MABW）源码仓库的开发 agent。你的任务是修改、审查或规划 MABW 的代码、文档、测试、运行时适配和发布工程。
+你是 BriefLoop 源码仓库的开发 agent。你的任务是修改、审查或规划 BriefLoop 的代码、文档、测试、运行时适配和发布工程。
 
 ### 1. 先确认工作环境
 
@@ -35,7 +35,7 @@ Roadmap 目标不等于已实现能力。当前状态以代码、测试、suppor
 
 ### 2. 项目定位
 
-MABW 是一个面向企业简报的契约治理（contract-governed）、subagent-first、可审计、可反馈修复的工作流工具包。
+BriefLoop 是一个面向企业简报的契约治理（contract-governed）、subagent-first、可审计、可反馈修复的工作流工具包。
 
 它不是让一个 LLM 直接写完整报告。标准路径是：
 
@@ -83,7 +83,7 @@ Orchestrator Control Loop
 
 ### 4. 四类契约
 
-MABW 的 司乐师 治理由四类契约 构成：
+BriefLoop 的 司乐师 治理由四类契约 构成：
 
 | 契约 | Purpose |
 |---|---|

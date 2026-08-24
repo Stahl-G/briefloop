@@ -1,6 +1,6 @@
 # Runtime Asset Inventory
 
-This page describes which MABW runtime assets are available from each
+This page describes which BriefLoop runtime assets are available from each
 distribution surface. It is a truth table for install/runtime behavior, not a
 new workflow contract.
 
