@@ -1,4 +1,4 @@
-"""Fixed, value-free outcomes for dormant fresh-v2 intake."""
+"""Fixed, value-free outcomes for fresh-v2 intake."""
 
 from __future__ import annotations
 

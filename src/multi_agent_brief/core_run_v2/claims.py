@@ -1,4 +1,4 @@
-"""Deterministic canonical Claim freeze for dormant fresh-v2 runs."""
+"""Deterministic canonical Claim freeze for fresh-v2 runs."""
 
 from __future__ import annotations
 

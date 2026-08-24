@@ -291,7 +291,7 @@ def test_intake_cli_is_labelled_internal_and_requires_json() -> None:
     assert "not the active runtime path" in intake_parser.description
 
 
-def test_intake_v2_imports_are_confined_to_dormant_package_and_cli_adapter() -> None:
+def test_intake_v2_imports_are_confined_to_bound_importers() -> None:
     package_root = Path(__file__).parents[1] / "src" / "multi_agent_brief"
     allowed = {
         "cli/core_v2_commands.py",

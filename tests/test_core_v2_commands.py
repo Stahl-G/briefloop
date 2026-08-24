@@ -317,7 +317,7 @@ def test_core_v2_cli_is_internal_and_requires_json() -> None:
         assert required == {"--workspace", "--request", "--json"}
 
 
-def test_core_v2_imports_are_confined_to_dormant_cli_package_and_bound_intake() -> None:
+def test_core_v2_imports_are_confined_to_bound_importers() -> None:
     package_root = ROOT / "src" / "multi_agent_brief"
 
     def imports_core_v2(node: ast.AST) -> bool:

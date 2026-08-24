@@ -1,4 +1,4 @@
-"""Read-only domain replay for the dormant fresh-v2 core run spine."""
+"""Read-only domain replay for the fresh-v2 core run spine."""
 
 from __future__ import annotations
 

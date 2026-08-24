@@ -1,4 +1,4 @@
-"""Dormant receipt-derived working-checkout publication and recovery engine."""
+"""Receipt-derived working-checkout publication and recovery engine."""
 
 from __future__ import annotations
 

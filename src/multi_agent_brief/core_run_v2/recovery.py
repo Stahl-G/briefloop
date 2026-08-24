@@ -1,4 +1,4 @@
-"""Pure recovery legality for dormant fresh-v2 historical verification."""
+"""Pure recovery legality for fresh-v2 historical verification."""
 
 from __future__ import annotations
 

@@ -3174,7 +3174,7 @@ def test_migration_resource_matches_packaged_source_text() -> None:
     )
 
 
-def test_only_dormant_v2_modules_import_control_store() -> None:
+def test_only_bound_modules_import_control_store() -> None:
     package_root = Path(__file__).parents[1] / "src" / "multi_agent_brief"
     # Post-CX activation is intentional: runtime_host_v2 is the sole runtime
     # authority and cli/authority_guard.py enforces its fail-closed boundary;

@@ -1,4 +1,4 @@
-"""Dormant fresh-v2 source and role-proposal intake service."""
+"""Fresh-v2 source and role-proposal intake service."""
 
 from __future__ import annotations
 

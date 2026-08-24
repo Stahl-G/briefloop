@@ -1947,7 +1947,7 @@ def evaluate_quality_gate_findings_preloaded(
 ) -> dict[str, list[dict[str, Any]]]:
     """Run the existing deterministic Gate logic from detached trusted values.
 
-    This entrypoint performs no workspace reads or writes.  The dormant
+    This entrypoint performs no workspace reads or writes.  The
     ControlStore path supplies exact revision bytes and owns persistence.
     """
 

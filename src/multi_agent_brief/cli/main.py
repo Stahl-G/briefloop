@@ -83,10 +83,10 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
     # Market data snapshot acquisition and projection
     market_data_commands.register(subparsers)
 
-    # Dormant fresh-v2 ControlStore intake; no active adapter invokes it.
+    # Fresh-v2 ControlStore intake lanes.
     intake_v2_commands.register(subparsers)
 
-    # Dormant fresh-v2 core-run harness; no active adapter invokes it.
+    # Fresh-v2 core-run harness commands.
     core_v2_commands.register(subparsers)
 
     # Meta

@@ -1,4 +1,4 @@
-"""Frozen product policy for the dormant fresh-v2 core run spine."""
+"""Frozen product policy for the fresh-v2 core run spine."""
 
 from __future__ import annotations
 

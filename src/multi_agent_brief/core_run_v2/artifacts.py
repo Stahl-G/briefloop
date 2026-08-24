@@ -1,4 +1,4 @@
-"""Deterministic owned-artifact acceptance for dormant fresh-v2 runs."""
+"""Deterministic owned-artifact acceptance for fresh-v2 runs."""
 
 from __future__ import annotations
 

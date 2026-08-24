@@ -1,4 +1,4 @@
-"""Frozen lane and source-eligibility policy for dormant v2 intake."""
+"""Frozen lane and source-eligibility policy for v2 intake."""
 
 from __future__ import annotations
 
