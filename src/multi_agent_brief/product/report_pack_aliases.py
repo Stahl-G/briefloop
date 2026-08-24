@@ -34,6 +34,8 @@ REPORT_PACK_ALIASES = {
     "solar_periodic": "solar_industry_periodic",
     "solar_industry_periodic": "solar_industry_periodic",
     "solar_stock_periodic": "solar_stock_periodic",
+    "equity_periodic": "solar_stock_periodic",
+    "stock_periodic_report": "solar_stock_periodic",
 }
 
 
@@ -60,6 +62,10 @@ def aliases_for_report_pack(pack_id: str) -> list[str]:
     if recommended:
         aliases.add(recommended)
         aliases.add(normalize_report_pack_entry(recommended))
+    for alias, target in REPORT_PACK_ALIASES.items():
+        if target == canonical:
+            aliases.add(alias)
+            aliases.add(hyphenated_pack_id(alias))
     return sorted(aliases)
 
 

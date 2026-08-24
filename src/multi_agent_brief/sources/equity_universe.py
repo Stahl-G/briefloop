@@ -13,6 +13,31 @@ from typing import Any, Iterable, Mapping
 
 from multi_agent_brief.product.report_spec import ReportSpecLoadError, load_report_spec
 
+PACKAGED_SOLAR_CORE_TICKERS = ("TOYO",)
+PACKAGED_SOLAR_PRIMARY_TICKERS = (
+    "TOYO",
+    "TE",
+    "FSLR",
+    "CSIQ",
+    "JKS",
+    "NXT",
+    "DQ",
+)
+PACKAGED_SOLAR_OVERSEAS_TICKERS = (
+    "009830.KS",
+    "WAAREEENER.NS",
+    "PREMIERENE.NS",
+    "VIKRAMSOLR.NS",
+)
+PACKAGED_SOLAR_EVENT_ONLY_ENTITIES = (
+    "Qcells",
+    "Illuminate USA",
+    "ES Foundry",
+    "Suniva",
+    "Talon PV",
+)
+PACKAGED_SOLAR_BENCHMARK_TICKER = "TAN"
+
 
 @dataclass(frozen=True)
 class EquityPeriodicUniverse:
@@ -20,6 +45,7 @@ class EquityPeriodicUniverse:
     primary_tickers: tuple[str, ...]
     overseas_tickers: tuple[str, ...]
     event_only_entities: tuple[str, ...] = ()
+    benchmark_ticker: str | None = None
 
     @property
     def watchlist(self) -> tuple[str, ...]:
@@ -47,6 +73,25 @@ def _unique(values: Iterable[str]) -> tuple[str, ...]:
     return tuple(seen)
 
 
+def _benchmark_from_mapping(
+    metadata: Mapping[str, Any],
+    *,
+    primary: tuple[str, ...],
+    overseas: tuple[str, ...],
+) -> str | None:
+    if "benchmark_ticker" in metadata:
+        raw = metadata.get("benchmark_ticker")
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+        return None
+    if (
+        primary == PACKAGED_SOLAR_PRIMARY_TICKERS
+        and overseas == PACKAGED_SOLAR_OVERSEAS_TICKERS
+    ):
+        return PACKAGED_SOLAR_BENCHMARK_TICKER
+    return None
+
+
 def universe_from_mapping(metadata: Mapping[str, Any]) -> EquityPeriodicUniverse | None:
     primary = _unique(metadata.get("primary_tickers") or ())
     overseas = _unique(metadata.get("overseas_tickers") or ())
@@ -59,26 +104,27 @@ def universe_from_mapping(metadata: Mapping[str, Any]) -> EquityPeriodicUniverse
         primary_tickers=primary,
         overseas_tickers=overseas,
         event_only_entities=events,
+        benchmark_ticker=_benchmark_from_mapping(
+            metadata, primary=primary, overseas=overseas
+        ),
     )
 
 
 DEFAULT_SOLAR_EQUITY_UNIVERSE = EquityPeriodicUniverse(
-    core_tickers=("TOYO",),
-    primary_tickers=("TOYO", "TE", "FSLR", "CSIQ", "JKS", "NXT", "DQ"),
-    overseas_tickers=(
-        "009830.KS",
-        "WAAREEENER.NS",
-        "PREMIERENE.NS",
-        "VIKRAMSOLR.NS",
-    ),
-    event_only_entities=(
-        "Qcells",
-        "Illuminate USA",
-        "ES Foundry",
-        "Suniva",
-        "Talon PV",
-    ),
+    core_tickers=PACKAGED_SOLAR_CORE_TICKERS,
+    primary_tickers=PACKAGED_SOLAR_PRIMARY_TICKERS,
+    overseas_tickers=PACKAGED_SOLAR_OVERSEAS_TICKERS,
+    event_only_entities=PACKAGED_SOLAR_EVENT_ONLY_ENTITIES,
+    benchmark_ticker=PACKAGED_SOLAR_BENCHMARK_TICKER,
 )
+
+
+def is_packaged_solar_universe(universe: EquityPeriodicUniverse) -> bool:
+    return (
+        universe.watchlist == DEFAULT_SOLAR_EQUITY_UNIVERSE.watchlist
+        and universe.event_only_entities
+        == DEFAULT_SOLAR_EQUITY_UNIVERSE.event_only_entities
+    )
 
 SOLAR_STOCK_CORE_SECURITIES = DEFAULT_SOLAR_EQUITY_UNIVERSE.core_tickers
 SOLAR_STOCK_PRIMARY_SECURITIES = DEFAULT_SOLAR_EQUITY_UNIVERSE.primary_tickers
@@ -179,11 +225,13 @@ def infer_listing_group(ticker: str, universe: EquityPeriodicUniverse | None = N
 __all__ = [
     "DEFAULT_SOLAR_EQUITY_UNIVERSE",
     "EquityPeriodicUniverse",
+    "PACKAGED_SOLAR_BENCHMARK_TICKER",
     "SOLAR_STOCK_CORE_SECURITIES",
     "SOLAR_STOCK_EVENT_ONLY_ENTITIES",
     "SOLAR_STOCK_OVERSEAS_SECURITIES",
     "SOLAR_STOCK_PRIMARY_SECURITIES",
     "infer_listing_group",
+    "is_packaged_solar_universe",
     "listed_company_search_tasks",
     "load_equity_universe",
     "universe_from_mapping",

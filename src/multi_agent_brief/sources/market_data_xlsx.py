@@ -36,8 +36,6 @@ from multi_agent_brief.sources.market_data import MarketDataError
 from multi_agent_brief.sources.equity_universe import (
     DEFAULT_SOLAR_EQUITY_UNIVERSE,
     EquityPeriodicUniverse,
-    SOLAR_STOCK_CORE_SECURITIES,
-    SOLAR_STOCK_OVERSEAS_SECURITIES,
     SOLAR_STOCK_PRIMARY_SECURITIES,
 )
 
@@ -89,6 +87,22 @@ _SECURITY_META = {
     "PREMIERENE.NS": ("Premier Energies", "NSE", "INR", "overseas"),
     "VIKRAMSOLR.NS": ("Vikram Solar", "NSE", "INR", "overseas"),
 }
+
+
+def _ticker_meta(
+    ticker: str, universe: EquityPeriodicUniverse
+) -> tuple[str, str, str, str]:
+    if ticker in _SECURITY_META:
+        return _SECURITY_META[ticker]
+    if ticker.endswith(".KS"):
+        return (ticker, "KRX", "KRW", universe.group_for(ticker))
+    if ticker.endswith(".NS"):
+        return (ticker, "NSE", "INR", universe.group_for(ticker))
+    if ticker.endswith(".HK"):
+        return (ticker, "HKEX", "HKD", universe.group_for(ticker))
+    return (ticker, "UNKNOWN", "USD", universe.group_for(ticker))
+
+
 _VALUATION_FIELDS = {
     "现价(本币)": ("latest_close_local", "price"),
     "现价(美元)": ("latest_close_usd", "price"),
@@ -657,7 +671,8 @@ def _parse_valuation_fields(
         ):
             continue
         currency = str(
-            sheet.value(row, header["币种"]) or _SECURITY_META[ticker][2]
+            sheet.value(row, header["币种"])
+            or (_SECURITY_META[ticker][2] if ticker in _SECURITY_META else "USD")
         ).strip()
         result: list[MarketDataFieldValueV2] = []
         for label, (field_id, unit) in _VALUATION_FIELDS.items():
@@ -755,19 +770,21 @@ def _recomputed_fields(
     fx_rates: Mapping[str, MarketDataFxRateV2],
     source_sha256: str,
     as_of: str,
+    universe: EquityPeriodicUniverse,
 ) -> list[MarketDataFieldValueV2]:
     if not series:
         return []
     first, last = series[0], series[-1]
     locator = f"{first.source_locator}:{last.source_locator}"
     period_return = round((last.close / first.close - 1.0) * 100.0, 6)
+    currency = _ticker_meta(ticker, universe)[2]
     fields = [
         _available_field(
             field_id="latest_close_local",
             value=last.close,
             unit="price",
             as_of=last.date,
-            currency=_SECURITY_META[ticker][2],
+            currency=currency,
             origin="derived",
             derivation="recomputed",
             locator=last.source_locator,
@@ -785,7 +802,6 @@ def _recomputed_fields(
             source_sha256=source_sha256,
         ),
     ]
-    currency = _SECURITY_META[ticker][2]
     rate = 1.0 if currency == "USD" else None
     rate_locator = "identity:USD"
     if currency != "USD":
@@ -1221,16 +1237,15 @@ def parse_toyo_weekly_xlsx(
                     fx_by_currency,
                     source_sha256,
                     report_end,
+                    watchlist,
                 ),
             ),
             conflicts,
         )
         _record_formula_cache_conflicts(ticker, fields, formula_caches, conflicts)
-        if ticker in _SECURITY_META:
-            display_name, exchange, currency, universe_kind = _SECURITY_META[ticker]
-        else:
-            display_name, exchange, currency = ticker, "UNKNOWN", "USD"
-            universe_kind = watchlist.group_for(ticker)
+        display_name, exchange, currency, universe_kind = _ticker_meta(
+            ticker, watchlist
+        )
         securities.append(
             MarketDataSecurityV2.model_validate(
                 {

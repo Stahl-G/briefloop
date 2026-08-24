@@ -11,7 +11,7 @@ import tempfile
 from copy import deepcopy
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import yaml
 
@@ -49,6 +49,13 @@ from multi_agent_brief.product.report_spec import (
     validate_report_spec_payload,
 )
 from multi_agent_brief.product.template_registry import ReportTemplateRegistry
+from multi_agent_brief.sources.equity_universe import (
+    DEFAULT_SOLAR_EQUITY_UNIVERSE,
+    EquityPeriodicUniverse,
+    is_packaged_solar_universe,
+    universe_from_mapping,
+)
+from multi_agent_brief.sources.solar_stock_plan import search_tasks_for_universe
 
 SPECIALIZED_REPORT_PACK_POLICY_PROFILES = {
     "evidence_extract": "evidence_extract_default",
@@ -150,6 +157,30 @@ def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
             "Explicit YYYY-MM-DD report-window end/report date. Solar Stock "
             "Periodic accepts windows from 2 through 31 calendar days."
         ),
+    )
+    parser.add_argument(
+        "--core-ticker",
+        action="append",
+        dest="core_tickers",
+        help=(
+            "Must-have subject ticker. Repeatable. Solar Stock Periodic / "
+            "equity-periodic only; missing these names can block delivery."
+        ),
+    )
+    parser.add_argument(
+        "--ticker",
+        action="append",
+        dest="primary_tickers",
+        help=(
+            "Primary-comparison ticker. Repeatable. Overrides the packaged "
+            "watchlist for solar-stock-periodic / equity-periodic."
+        ),
+    )
+    parser.add_argument(
+        "--overseas-ticker",
+        action="append",
+        dest="overseas_tickers",
+        help="Overseas-comparison ticker. Repeatable. Equity-periodic only.",
     )
 
 
@@ -1188,6 +1219,74 @@ def _resolve_report_pack_policy_profile(
     return resolution
 
 
+def _apply_equity_universe_overrides(
+    spec: dict[str, Any], args: argparse.Namespace
+) -> None:
+    metadata = spec.get("metadata")
+    if not isinstance(metadata, dict):
+        metadata = {}
+        spec["metadata"] = metadata
+    primary = [
+        str(item).strip()
+        for item in (getattr(args, "primary_tickers", None) or [])
+        if str(item).strip()
+    ]
+    overseas = [
+        str(item).strip()
+        for item in (getattr(args, "overseas_tickers", None) or [])
+        if str(item).strip()
+    ]
+    core = [
+        str(item).strip()
+        for item in (getattr(args, "core_tickers", None) or [])
+        if str(item).strip()
+    ]
+    if primary:
+        metadata["primary_tickers"] = list(dict.fromkeys(primary))
+        if not overseas:
+            metadata["overseas_tickers"] = []
+        metadata["event_only_entities"] = []
+        metadata["benchmark_ticker"] = None
+    if overseas:
+        metadata["overseas_tickers"] = list(dict.fromkeys(overseas))
+    if core:
+        metadata["core_tickers"] = list(dict.fromkeys(core))
+    elif primary:
+        metadata["core_tickers"] = [metadata["primary_tickers"][0]]
+
+
+def _equity_universe_from_spec(spec: Mapping[str, Any]) -> EquityPeriodicUniverse:
+    metadata = spec.get("metadata")
+    if isinstance(metadata, dict):
+        loaded = universe_from_mapping(metadata)
+        if loaded is not None:
+            return loaded
+    return DEFAULT_SOLAR_EQUITY_UNIVERSE
+
+
+def _maybe_rewrite_equity_search_tasks(
+    workspace: Path, universe: EquityPeriodicUniverse
+) -> None:
+    if is_packaged_solar_universe(universe):
+        return
+    sources_path = workspace / "sources.yaml"
+    if not sources_path.is_file():
+        return
+    sources = yaml.safe_load(sources_path.read_text(encoding="utf-8")) or {}
+    web = sources.get("web_search")
+    if not isinstance(web, dict) or not web.get("search_tasks"):
+        return
+    tasks = search_tasks_for_universe(universe)
+    web["search_tasks"] = tasks
+    backfill = web.get("initial_news_backfill")
+    if isinstance(backfill, dict):
+        backfill["max_additional_tasks"] = len(tasks)
+    sources_path.write_text(
+        yaml.safe_dump(sources, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
+
+
 def _create_report_pack_workspace(
     *, target: Path, pack: Any, args: argparse.Namespace
 ) -> dict[str, Any]:
@@ -1240,6 +1339,25 @@ def _create_report_pack_workspace(
         pack.report_type == "management_monthly" and language == "en-US"
     )
     solar_stock_direction = pack.report_type == "solar_stock_periodic"
+    equity_universe = DEFAULT_SOLAR_EQUITY_UNIVERSE
+    custom_equity_watchlist = False
+    if solar_stock_direction:
+        _apply_equity_universe_overrides(spec, args)
+        equity_universe = _equity_universe_from_spec(spec)
+        custom_equity_watchlist = not is_packaged_solar_universe(equity_universe)
+        if custom_equity_watchlist and not args.title:
+            spec["title"] = (
+                f"{equity_universe.core_tickers[0]} Capital Markets Weekly"
+            )
+            title = spec["title"]
+    elif any(
+        getattr(args, name, None)
+        for name in ("core_tickers", "primary_tickers", "overseas_tickers")
+    ):
+        raise ValueError(
+            "--ticker / --overseas-ticker / --core-ticker are supported only by "
+            "solar-stock-periodic (also aliased as equity-periodic)"
+        )
     window_start_text = str(getattr(args, "report_window_start", "") or "").strip()
     window_end_text = str(getattr(args, "report_window_end", "") or "").strip()
     if bool(window_start_text) != bool(window_end_text):
@@ -1261,8 +1379,20 @@ def _create_report_pack_workspace(
         if span_days < 1 or span_days > 30:
             raise ValueError("solar report window must span 2 through 31 calendar days")
         explicit_window = (window_start, window_end)
-    focus_areas = (
-        [
+    if solar_stock_direction and custom_equity_watchlist:
+        focus_areas = [
+            " ".join(equity_universe.core_tickers),
+            "listed equities",
+            "earnings and valuation",
+            "company events and price reaction",
+        ]
+        task_objective = (
+            "Prepare a capital-markets equity periodic snapshot with comparison "
+            "tables for the configured watchlist. Missing non-core names are "
+            "coverage disclosures, not delivery blockers."
+        )
+    elif solar_stock_direction:
+        focus_areas = [
             "TOYO Solar",
             "listed solar equities",
             "earnings and valuation",
@@ -1271,19 +1401,17 @@ def _create_report_pack_workspace(
             "45X FEOC AD/CVD and anti-involution policy",
             "company PR and external media sentiment",
         ]
-        if solar_stock_direction
-        else [pack.display_name, "source-backed claims", "reader-ready brief"]
-    )
-    task_objective = (
-        "Prepare a capital-markets Solar Stock Periodic report with two equity "
-        "comparison tables, event-to-trading-day mapping, policy and input-price "
-        "tracking, sentiment separation, and explicit implications for TOYO."
-        if solar_stock_direction
-        else (
+        task_objective = (
+            "Prepare a capital-markets Solar Stock Periodic report with two equity "
+            "comparison tables, event-to-trading-day mapping, policy and input-price "
+            "tracking, sentiment separation, and explicit implications for TOYO."
+        )
+    else:
+        focus_areas = [pack.display_name, "source-backed claims", "reader-ready brief"]
+        task_objective = (
             f"Prepare a {pack.display_name} using local-first sources and the "
             "BriefLoop control spine."
         )
-    )
     profile = InitProfile(
         interface_language=language,
         output_language="en" if reader_review_direction else language,
@@ -1395,6 +1523,8 @@ def _create_report_pack_workspace(
         yaml.safe_dump(spec, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
     )
+    if solar_stock_direction:
+        _maybe_rewrite_equity_search_tasks(target, equity_universe)
     return {
         "policy_profile": policy_resolution.policy_profile,
         "policy_profile_resolution": policy_resolution.to_dict(),

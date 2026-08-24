@@ -222,6 +222,13 @@ def test_packs_cli_list_and_show_pack(capsys) -> None:
     assert shown["pack"]["status"] == "experimental"
     assert shown["pack"]["default_policy_profile"] == "solar_manufacturing_default"
 
+    assert main(["packs", "show", "equity-periodic", "--json"]) == 0
+    shown = json.loads(capsys.readouterr().out)
+    assert shown["ok"] is True
+    assert shown["pack"]["pack_id"] == "solar_stock_periodic"
+    assert "equity-periodic" in shown["aliases"]
+    assert "stock-periodic-report" in shown["aliases"]
+
     assert main(["packs", "show", "evidence_extract", "--json"]) == 0
     shown = json.loads(capsys.readouterr().out)
     assert shown["ok"] is True
@@ -417,6 +424,89 @@ def test_new_solar_stock_workspace_accepts_tavily_with_discovery_authorization(
     assert sources["web_search"]["mode"] == "external_api"
     assert sources["web_search"]["backend"] == "tavily"
     assert len(sources["web_search"]["search_tasks"]) == 20
+
+
+def test_new_equity_periodic_alias_overrides_watchlist(tmp_path: Path, capsys) -> None:
+    workspace = tmp_path / "equity-periodic"
+
+    assert (
+        main(
+            [
+                "new",
+                "equity-periodic",
+                str(workspace),
+                "--ticker",
+                "AAPL",
+                "--ticker",
+                "MSFT",
+            ]
+        )
+        == 0
+    )
+
+    capsys.readouterr()
+    spec = yaml.safe_load((workspace / "report_spec.yaml").read_text(encoding="utf-8"))
+    assert spec["report_pack"] == "solar_stock_periodic"
+    assert spec["title"] == "AAPL Capital Markets Weekly"
+    assert spec["metadata"]["primary_tickers"] == ["AAPL", "MSFT"]
+    assert spec["metadata"]["overseas_tickers"] == []
+    assert spec["metadata"]["core_tickers"] == ["AAPL"]
+    assert spec["metadata"]["event_only_entities"] == []
+    assert spec["metadata"]["benchmark_ticker"] is None
+
+
+def test_new_equity_periodic_custom_tavily_plan_uses_listed_company_tasks(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "equity-periodic-tavily"
+
+    assert (
+        main(
+            [
+                "new",
+                "equity-periodic",
+                str(workspace),
+                "--search-backend",
+                "tavily",
+                "--ticker",
+                "AAPL",
+                "--core-ticker",
+                "AAPL",
+            ]
+        )
+        == 0
+    )
+
+    capsys.readouterr()
+    sources = yaml.safe_load((workspace / "sources.yaml").read_text(encoding="utf-8"))
+    tasks = sources["web_search"]["search_tasks"]
+    assert [item["entity_id"] for item in tasks] == ["AAPL"]
+    assert tasks[0]["task_id"] == "equity-listed-aapl"
+    assert sources["web_search"]["initial_news_backfill"]["max_additional_tasks"] == 1
+
+
+def test_new_management_monthly_rejects_equity_ticker_flags(
+    tmp_path: Path, capsys
+) -> None:
+    workspace = tmp_path / "management-monthly-tickers"
+
+    assert (
+        main(
+            [
+                "new",
+                "management-monthly",
+                str(workspace),
+                "--ticker",
+                "AAPL",
+            ]
+        )
+        == 1
+    )
+
+    output = capsys.readouterr().out
+    assert "--ticker / --overseas-ticker / --core-ticker" in output
+    assert not workspace.exists()
 
 
 def test_new_solar_stock_workspace_freezes_explicit_workbook_window(

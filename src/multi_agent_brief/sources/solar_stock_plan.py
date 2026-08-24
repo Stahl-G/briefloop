@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from typing import Final
 
 from multi_agent_brief.sources.equity_universe import (
-    DEFAULT_SOLAR_EQUITY_UNIVERSE,
     EquityPeriodicUniverse,
     SOLAR_STOCK_CORE_SECURITIES,
     SOLAR_STOCK_EVENT_ONLY_ENTITIES,
     SOLAR_STOCK_OVERSEAS_SECURITIES,
     SOLAR_STOCK_PRIMARY_SECURITIES,
+    is_packaged_solar_universe,
     listed_company_search_tasks,
 )
 
@@ -211,11 +212,7 @@ def search_tasks_for_universe(
 ) -> list[dict[str, object]]:
     """Use the frozen solar 20-task plan only for the packaged default universe."""
 
-    if (
-        universe.watchlist == DEFAULT_SOLAR_EQUITY_UNIVERSE.watchlist
-        and universe.event_only_entities
-        == DEFAULT_SOLAR_EQUITY_UNIVERSE.event_only_entities
-    ):
+    if is_packaged_solar_universe(universe):
         return solar_stock_search_tasks()
     return listed_company_search_tasks(universe)
 

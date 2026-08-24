@@ -344,7 +344,10 @@ def _v1_field(
 
 
 def _upgrade_v1(
-    command: MarketDataRecordInputV1, direction: Any
+    command: MarketDataRecordInputV1,
+    direction: Any,
+    *,
+    watchlist: EquityPeriodicUniverse | None = None,
 ) -> MarketDataRecordInputV2:
     start = (
         direction.report_window_start
@@ -357,14 +360,15 @@ def _upgrade_v1(
     identity = canonical_fingerprint(
         command.model_dump(mode="json", exclude_unset=False)
     )
+    equity_universe = watchlist or DEFAULT_SOLAR_EQUITY_UNIVERSE
     securities: list[dict[str, object]] = []
     for item in command.securities:
-        universe = infer_listing_group(item.ticker)
+        listing_group = infer_listing_group(item.ticker, equity_universe)
         securities.append(
             {
                 "ticker": item.ticker,
                 "display_name": item.ticker,
-                "universe": universe,
+                "universe": listing_group,
                 "exchange": item.exchange,
                 "currency": item.currency,
                 "return_basis": "close",
@@ -428,7 +432,7 @@ def _upgrade_v1(
             ),
             "severity": (
                 "blocking"
-                if item.ticker in DEFAULT_SOLAR_EQUITY_UNIVERSE.core_tickers
+                if item.ticker in equity_universe.core_tickers
                 else "warning"
             ),
             "category": "provider_unavailable",
@@ -529,7 +533,11 @@ class MarketDataService:
                 run_id, store_revision, snapshot, direction = self._current_run(store)
                 self._require_no_active_invocation(snapshot)
                 command = (
-                    _upgrade_v1(incoming, direction)
+                    _upgrade_v1(
+                        incoming,
+                        direction,
+                        watchlist=load_equity_universe(self.workspace),
+                    )
                     if isinstance(incoming, MarketDataRecordInputV1)
                     else incoming
                 )
