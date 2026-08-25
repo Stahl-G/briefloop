@@ -42,6 +42,9 @@ class InitProfile:
     # Reader-skeleton contract from the report pack; frozen into RunDirection
     # so the deterministic section gate reads Store state only.
     required_section_intents: list[str] = field(default_factory=list)
+    # Percent move of the core subject that must be addressed in the
+    # market-reaction section (None keeps the built-in default).
+    market_divergence_threshold_pct: float | None = None
     cadence: str = "weekly"
     max_source_age_days: int = 14
     selector_max_items: int = 20
@@ -178,6 +181,9 @@ def build_controlstore_bootstrap(
             "required_section_intents": _unique_nonempty(
                 profile.required_section_intents,
                 field_name="required_section_intents",
+            ),
+            "market_divergence_threshold_pct": (
+                profile.market_divergence_threshold_pct
             ),
             "output_contract": output_contract,
         }

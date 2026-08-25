@@ -2375,6 +2375,7 @@ class RunDirection(StrictModel):
     selector_max_items: Optional[PositiveInt] = None
     target_terms: list[CleanText] = Field(min_length=1)
     required_section_intents: list[CleanText] = Field(default_factory=list)
+    market_divergence_threshold_pct: Optional[float] = None
     output_contract: Optional[RunOutputContract] = None
 
     @model_validator(mode="after")
@@ -2392,6 +2393,17 @@ class RunDirection(StrictModel):
                 raise ValueError(f"{field_name} must contain unique values")
         if (self.report_window_start is None) != (self.report_window_end is None):
             raise ValueError("report window boundaries must be paired")
+        if (
+            self.market_divergence_threshold_pct is not None
+            and not (
+                0
+                < self.market_divergence_threshold_pct
+                <= 100
+            )
+        ):
+            raise ValueError(
+                "market divergence threshold must be in (0, 100] percent"
+            )
         if self.report_window_start is not None:
             if self.report_window_start > self.report_window_end:
                 raise ValueError("report window is not ordered")

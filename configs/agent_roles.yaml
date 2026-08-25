@@ -470,8 +470,10 @@ roles:
       when present and valid, atomic_claim_graph.json.
     - For solar_stock_periodic, the Store-bound market-data snapshot and its
       table/chart projections are a separate deterministic reader surface, not
-      Claim Ledger evidence. Do not copy their numbers into narrative prose or
-      infer event causation unless a frozen Claim Ledger claim supports it.
+      Claim Ledger evidence. Market-data numbers may appear only in the
+      market-reaction section and the data-table sections, always marked
+      (行情快照) or equivalent, and never as causal narrative unless a frozen
+      Claim Ledger claim supports the cause.
     - Do not write the placeholder <claim_id> literally; use only claim IDs that exist in claim_ledger.json.
     - Always read claim_ledger.json before writing.
     - Do not edit output/intermediate/analyst_draft_snapshot.md; it is written by

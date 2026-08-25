@@ -1436,6 +1436,16 @@ def _create_report_pack_workspace(
             )
             if str(item).strip()
         ],
+        market_divergence_threshold_pct=(
+            float((spec.get("metadata") or {})["market_divergence_threshold_pct"])
+            if isinstance(
+                (spec.get("metadata") or {}).get(
+                    "market_divergence_threshold_pct"
+                ),
+                (int, float),
+            )
+            else None
+        ),
         forbidden_sources=[
             "confidential material not approved for this workspace",
             "private messages",

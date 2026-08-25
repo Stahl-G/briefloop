@@ -69,6 +69,7 @@ default_report_spec:
       - toyo_implications
       - market_reaction_divergence
       - investment_view_calendar
+    market_divergence_threshold_pct: 10
     non_claims:
       - no_investment_advice
       - no_causal_price_attribution_without_evidence

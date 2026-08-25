@@ -163,6 +163,20 @@ def _has_future_date(text: str, report_date: str) -> bool:
     return False
 
 
+def sections_from_markdown(markdown: str) -> list[_Section]:
+    return _sections(markdown)
+
+
+def section_matching(
+    sections: list[_Section], intent: str
+) -> "_Section | None":
+    return _section_for(sections, intent)
+
+
+def limitations_section(sections: list[_Section]) -> "_Section | None":
+    return _limitations_section(sections)
+
+
 def _finding(
     *,
     finding_type: str,
@@ -279,5 +293,8 @@ def required_section_findings(
 
 __all__ = [
     "SECTION_INTENT_ALIASES",
+    "limitations_section",
     "required_section_findings",
+    "section_matching",
+    "sections_from_markdown",
 ]

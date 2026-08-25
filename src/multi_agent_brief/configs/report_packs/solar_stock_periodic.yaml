@@ -26,4 +26,5 @@ default_report_spec:
     overseas_tickers: [009830.KS, WAAREEENER.NS, PREMIERENE.NS, VIKRAMSOLR.NS]
     event_only_entities: [Qcells, Illuminate USA, ES Foundry, Suniva, Talon PV]
     required_section_intents: [executive_summary, primary_equity_comparison, overseas_equity_comparison, event_price_timeline, earnings_valuation, policy_input_dashboard, capacity_asset_watch, sentiment_monitor, toyo_implications, market_reaction_divergence, investment_view_calendar]
+    market_divergence_threshold_pct: 10
     non_claims: [no_investment_advice, no_causal_price_attribution_without_evidence, no_search_snippet_evidence, no_release_authority]

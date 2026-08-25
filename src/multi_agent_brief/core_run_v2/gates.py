@@ -869,6 +869,14 @@ def _replay_gate_outcomes(
         target_artifact=target_artifact,
     )
     if stage_id == "auditor":
+        _append_price_narrative_findings(
+            raw,
+            snapshot=snapshot,
+            binding=binding,
+            workspace=workspace,
+            markdown=markdown,
+            ledger=ledger,
+        )
         _append_reader_projection_residue_finding(raw, markdown=markdown)
     return _classify_gate_outcomes(
         raw,
@@ -1019,6 +1027,36 @@ def _market_data_finding(
     }
 
 
+def _latest_market_context(
+    snapshot: ControlStoreSnapshot,
+    workspace: Path | None,
+):
+    """Latest frozen snapshot plus workspace universe, or (None, None)."""
+
+    universe = None
+    if workspace is not None:
+        try:
+            from multi_agent_brief.sources.equity_universe import (
+                load_equity_universe,
+            )
+
+            universe = load_equity_universe(workspace)
+        except Exception:
+            universe = None
+    records = list(snapshot.market_data_snapshots)
+    if not records:
+        return None, universe
+    latest = max(
+        records,
+        key=lambda item: (
+            item.as_of_date,
+            item.recorded_at,
+            item.market_data_snapshot_id,
+        ),
+    )
+    return latest, universe
+
+
 def _append_required_section_findings(
     raw: object,
     *,
@@ -1042,25 +1080,7 @@ def _append_required_section_findings(
     core_ticker: str | None = None
     core_multiple_available = False
     peer_multiples_count = 0
-    universe = None
-    if workspace is not None:
-        try:
-            from multi_agent_brief.sources.equity_universe import (
-                load_equity_universe,
-            )
-
-            universe = load_equity_universe(workspace)
-        except Exception:
-            universe = None
-    records = list(snapshot.market_data_snapshots)
-    latest = max(
-        records,
-        key=lambda item: (
-            item.as_of_date,
-            item.recorded_at,
-            item.market_data_snapshot_id,
-        ),
-    ) if records else None
+    latest, universe = _latest_market_context(snapshot, workspace)
     if latest is not None and universe is not None:
         core_tickers = list(universe.core_tickers)
         multiple_fields = ("ps_ttm", "ev_ebitda_ttm", "pe_ttm")
@@ -1096,6 +1116,55 @@ def _append_required_section_findings(
             item["stage_id"] = stage_id
         item["artifact_id"] = target_artifact
         findings.append(item)
+
+
+def _append_price_narrative_findings(
+    raw: object,
+    *,
+    snapshot: ControlStoreSnapshot,
+    binding: RunContractBinding,
+    workspace: Path | None,
+    markdown: str,
+    ledger: "ClaimLedger | None",
+) -> None:
+    """Block one-sided narratives against a large frozen core-subject move."""
+
+    if not isinstance(raw, dict):
+        return
+    target = raw.get("material_fact")
+    if not isinstance(target, list) or not all(
+        isinstance(item, dict) for item in target
+    ):
+        return
+    latest, universe = _latest_market_context(snapshot, workspace)
+    if latest is None or universe is None or not universe.core_tickers:
+        return
+    core_tickers = set(universe.core_tickers)
+    core_ticker: str | None = None
+    return_1w: float | None = None
+    for security in latest.securities:
+        if security.ticker in core_tickers:
+            core_ticker = security.ticker
+            for field in security.fields:
+                if (
+                    field.field_id == "return_1w_pct"
+                    and field.status == "available"
+                    and field.value_number is not None
+                ):
+                    return_1w = float(field.value_number)
+            break
+    from multi_agent_brief.quality_gates.narrative_coherence import (
+        price_narrative_findings,
+    )
+
+    for item in price_narrative_findings(
+        markdown,
+        core_ticker=core_ticker,
+        return_1w=return_1w,
+        ledger=ledger,
+        threshold_pct=binding.run_direction.market_divergence_threshold_pct,
+    ):
+        target.append(item)
 
 
 def _append_output_contract_finding(
