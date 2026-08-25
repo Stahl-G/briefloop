@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path, PureWindowsPath
 from typing import Any, Iterable
 from urllib.parse import urlparse
@@ -153,8 +153,43 @@ def build_source_appendix(
     workspace: str | Path | None = None,
 ) -> SourceAppendixResult:
     """Build reader-facing source appendix Markdown from cited Claim Ledger entries."""
-    warnings: list[str] = []
     ledger = ClaimLedger.import_json(ledger_path)
+    result = build_source_appendix_from_ledger(
+        audited_markdown=audited_markdown,
+        ledger=ledger,
+    )
+    trace = _build_source_appendix_trace(
+        registry_path=evidence_span_registry_path,
+        workspace=workspace,
+        ledger_path=ledger_path,
+        records=result.records,
+    )
+    # The trace step backfills record.span_count/span_roles, so the appendix
+    # markdown must be re-rendered afterwards to include the span summary.
+    markdown = (
+        render_source_appendix(result.records, warnings=result.warnings)
+        if trace["status"] == "generated"
+        else result.markdown
+    )
+    return replace(
+        result,
+        markdown=markdown,
+        trace_status=trace["status"],
+        trace_markdown=trace["markdown"],
+        trace_source_count=trace["source_count"],
+        trace_span_count=trace["span_count"],
+        trace_warnings=trace["warnings"],
+    )
+
+
+def build_source_appendix_from_ledger(
+    *,
+    audited_markdown: str,
+    ledger: ClaimLedger,
+) -> SourceAppendixResult:
+    """Build the appendix from an in-memory ledger (Store-frozen bytes path)."""
+
+    warnings: list[str] = []
     ledger_ids = {claim.claim_id.strip() for claim in ledger if claim.claim_id.strip()}
     claim_ids = cited_claim_ids(audited_markdown, valid_claim_ids=ledger_ids)
     records_by_key: dict[str, SourceAppendixRecord] = {}
@@ -206,13 +241,6 @@ def build_source_appendix(
         for claim_id, key in claim_source_keys.items()
         if key in records_by_key and records_by_key[key].label
     }
-    trace = _build_source_appendix_trace(
-        registry_path=evidence_span_registry_path,
-        workspace=workspace,
-        ledger_path=ledger_path,
-        records=records,
-    )
-
     status = "generated_with_warnings" if warnings else "generated"
     markdown = render_source_appendix(records, warnings=warnings)
     return SourceAppendixResult(
@@ -225,11 +253,6 @@ def build_source_appendix(
         records=records,
         citation_labels=citation_labels,
         claim_source_map=claim_source_map,
-        trace_status=trace["status"],
-        trace_markdown=trace["markdown"],
-        trace_source_count=trace["source_count"],
-        trace_span_count=trace["span_count"],
-        trace_warnings=trace["warnings"],
     )
 
 

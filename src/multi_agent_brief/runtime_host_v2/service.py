@@ -108,7 +108,6 @@ from multi_agent_brief.core_run_v2.tavily_source_binding import (
     expected_tavily_source_pack,
 )
 from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
-from multi_agent_brief.core.citations import remove_src_marker_spans
 from multi_agent_brief.core.env import WorkspaceEnvError, known_env_key_is_set
 from multi_agent_brief.intake_v2.errors import IntakeError
 from multi_agent_brief.intake_v2.scratch import ScratchReader, parse_json_object
@@ -129,7 +128,6 @@ from multi_agent_brief.sources.tavily_acquisition import (
 )
 from multi_agent_brief.outputs.reader_projection import (
     ReaderProjectionSourceError,
-    reader_projection_source_markdown,
 )
 
 from .contracts import (
@@ -4013,6 +4011,44 @@ class RuntimeHostService:
         )
         return service.complete_stage(request)
 
+    @staticmethod
+    def _claim_ledger_for_render(store, snapshot) -> "ClaimLedger | None":
+        """Load the frozen claim ledger for the finalize reader projection.
+
+        Returns ``None`` when no ledger artifact exists yet; the reader
+        projection then falls back to plain marker removal.
+        """
+
+        record = next(
+            (
+                item
+                for item in snapshot.artifacts
+                if item.artifact_id == "claim_ledger"
+            ),
+            None,
+        )
+        if record is None:
+            return None
+        try:
+            payload = store.read_artifact_revision_bytes(
+                snapshot.run.run_id,
+                record.artifact_id,
+                record.current_revision,
+            )
+        except Exception as exc:
+            raise RuntimeHostError("control_store_integrity_invalid") from exc
+        try:
+            data = parse_json_object(payload)
+            rows = data.get("claims")
+            if not isinstance(rows, list):
+                raise ValueError("claims rows missing")
+            from multi_agent_brief.core.claim_ledger import ClaimLedger
+            from multi_agent_brief.core.schemas import Claim
+
+            return ClaimLedger([Claim.from_dict(item) for item in rows])
+        except (IntakeError, TypeError, ValueError) as exc:
+            raise RuntimeHostError("control_store_integrity_invalid") from exc
+
     def _apply_finalize_render(self, current, action: CoreRunNextAction):
         snapshot = current.verified.snapshot
         with SQLiteControlStore.open(self.workspace / "briefloop.db") as store:
@@ -4032,10 +4068,21 @@ class RuntimeHostService:
                 raise RuntimeHostError("control_store_integrity_invalid") from exc
         try:
             audited = audited_bytes.decode("utf-8")
-            reader = remove_src_marker_spans(
-                reader_projection_source_markdown(audited)
+            from multi_agent_brief.runtime_host_v2.reader_render import (
+                render_reader_markdown,
+            )
+
+            ledger = self._claim_ledger_for_render(store, snapshot)
+            reader = render_reader_markdown(
+                audited_markdown=audited,
+                ledger=ledger,
+                run_direction=current.verified.binding.run_direction,
+                run_id=action.run_id,
+                store_revision=snapshot.store_revision,
             ).strip()
         except (UnicodeDecodeError, ReaderProjectionSourceError) as exc:
+            raise RuntimeHostError("runtime_deterministic_input_invalid") from exc
+        except RuntimeError as exc:
             raise RuntimeHostError("runtime_deterministic_input_invalid") from exc
         if not reader:
             raise RuntimeHostError("runtime_deterministic_input_invalid")

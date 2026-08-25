@@ -1246,7 +1246,11 @@ class CoreRunTerminalService:
                     ValueError,
                 ) as exc:
                     raise CoreRunError("finalize_input_invalid") from exc
-                residue = detect_reader_residue(text, artifact_id)
+                residue = detect_reader_residue(
+                    text,
+                    artifact_id,
+                    allow_compliance_footer=True,
+                )
                 if residue.status != "pass":
                     raise CoreRunError("finalize_input_invalid")
                 prior = artifacts.get(artifact_id)
