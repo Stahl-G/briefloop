@@ -1720,6 +1720,10 @@ def format_scalar(value: Any) -> str:
         return "true" if value else "false"
     if isinstance(value, int):
         return str(value)
+    if isinstance(value, float):
+        # Numeric scalars must round-trip as YAML numbers, not quoted
+        # strings, or strict bootstrap validation fails on re-read.
+        return repr(value)
     text = str(value)
     if (
         text == "auto"
