@@ -1790,6 +1790,14 @@ class RuntimeHostService:
                 expected_run_id=envelope.run_id,
             )
         )
+        if (
+            spec.owner_kind == "owned"
+            and spec.proposal_model is None
+            and envelope.role_id in {"analyst", "editor"}
+        ):
+            violations = violations + tuple(
+                self._owned_brief_lint_violations(current, spec, outputs)
+            )
         request = None
         lane = None
         request_payload = None
@@ -1812,6 +1820,42 @@ class RuntimeHostService:
             acceptance_lane=lane,
             acceptance_payload=request_payload,
         )
+
+    def _owned_brief_lint_violations(
+        self,
+        current,
+        spec: "_RoleOutputSpec",
+        outputs: dict[str, bytes],
+    ) -> list["FieldViolation"]:
+        """Read-only content lint sharing the auditor gate rule bodies."""
+
+        filename = spec.filenames[0]
+        raw = outputs.get(filename)
+        if raw is None:
+            return []
+        try:
+            markdown = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return []
+        snapshot = current.verified.snapshot
+        with SQLiteControlStore.open(self.workspace / "briefloop.db") as store:
+            ledger = self._claim_ledger_for_render(store, snapshot)
+        from multi_agent_brief.quality_gates.lint import brief_content_lint
+
+        messages = brief_content_lint(
+            markdown,
+            ledger=ledger,
+            direction=current.verified.binding.run_direction,
+            workspace=self.workspace,
+            snapshot=snapshot,
+        )
+        return [
+            FieldViolation(
+                field=filename,
+                error=f"{item['finding_type']}: {item['description']}",
+            )
+            for item in messages
+        ]
 
     def _derive_acceptance_request(
         self,
@@ -4066,13 +4110,13 @@ class RuntimeHostService:
                 )
             except Exception as exc:
                 raise RuntimeHostError("control_store_integrity_invalid") from exc
+            ledger = self._claim_ledger_for_render(store, snapshot)
         try:
             audited = audited_bytes.decode("utf-8")
             from multi_agent_brief.runtime_host_v2.reader_render import (
                 render_reader_markdown,
             )
 
-            ledger = self._claim_ledger_for_render(store, snapshot)
             reader = render_reader_markdown(
                 audited_markdown=audited,
                 ledger=ledger,
