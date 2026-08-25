@@ -20,7 +20,7 @@ from multi_agent_brief.sources.equity_universe import (
     EquityPeriodicUniverse,
 )
 
-CHART_RENDERER_VERSION = "market-chart-png-v1"
+CHART_RENDERER_VERSION = "market-chart-png-v2"
 CHART_OUTPUT_DIRECTORY = "output/charts/market_data"
 CHART_MANIFEST_PATH = "output/intermediate/market_data_chart_manifest.json"
 _WIDTH = 960
@@ -241,7 +241,10 @@ def _bar_asset(
     )
 
 
-def _toyo_asset(security: MarketDataSecurityV2 | None) -> MarketChartAsset | None:
+def _toyo_asset(
+    security: MarketDataSecurityV2 | None,
+    events: tuple[object, ...] | list[object] = (),
+) -> MarketChartAsset | None:
     if security is None or len(security.price_series) < 2:
         return None
     canvas = _Canvas()
@@ -262,6 +265,28 @@ def _toyo_asset(security: MarketDataSecurityV2 | None) -> MarketChartAsset | Non
         points.append((x, y))
     for first, second in zip(points, points[1:]):
         canvas.line(*first, *second, (29, 78, 216), thickness=4)
+    # Event-day markers: a vertical line at the first series point on or
+    # after each subject event date.  Co-movement only; never causal proof.
+    dates = [point.date for point in security.price_series]
+    for event in events:
+        event_date = getattr(event, "published_at", None)
+        event_ticker = getattr(event, "ticker", None)
+        if event_date is None or (event_ticker and event_ticker != security.ticker):
+            continue
+        index = next(
+            (i for i, value in enumerate(dates) if value >= event_date), None
+        )
+        if index is None:
+            continue
+        marker_x = points[index][0]
+        canvas.line(
+            marker_x,
+            top,
+            marker_x,
+            top + height,
+            (190, 18, 60),
+            thickness=2,
+        )
     return MarketChartAsset(
         chart_id=(
             "toyo-price-volume"
@@ -342,7 +367,7 @@ def render_market_chart_assets(
             securities=overseas,
             indexed=True,
         ),
-        _toyo_asset(subject),
+        _toyo_asset(subject, snapshot.events),
         _event_asset(snapshot),
         _bar_asset(
             chart_id="one-week-return",

@@ -877,6 +877,12 @@ def _replay_gate_outcomes(
             markdown=markdown,
             ledger=ledger,
         )
+        _append_chart_placement_findings(
+            raw,
+            binding=binding,
+            workspace=workspace,
+            markdown=markdown,
+        )
         _append_reader_projection_residue_finding(raw, markdown=markdown)
     return _classify_gate_outcomes(
         raw,
@@ -1165,6 +1171,42 @@ def _append_price_narrative_findings(
         threshold_pct=binding.run_direction.market_divergence_threshold_pct,
     ):
         target.append(item)
+
+
+def _append_chart_placement_findings(
+    raw: object,
+    *,
+    binding: RunContractBinding,
+    workspace: Path | None,
+    markdown: str,
+) -> None:
+    """Bind manifest charts to their sections; silent omission is blocking."""
+
+    intents = list(binding.run_direction.required_section_intents)
+    if not intents or not isinstance(raw, dict) or workspace is None:
+        return
+    findings = raw.get("final_abstract_quality")
+    if not isinstance(findings, list) or not all(
+        isinstance(item, dict) for item in findings
+    ):
+        return
+    from multi_agent_brief.quality_gates.chart_placement import (
+        chart_placement_findings,
+        manifest_chart_ids,
+    )
+
+    manifest_ids = manifest_chart_ids(
+        workspace / "output" / "intermediate" / "market_data_chart_manifest.json"
+    )
+    if not manifest_ids:
+        return
+    findings.extend(
+        chart_placement_findings(
+            markdown,
+            manifest_ids=manifest_ids,
+            required_intents=intents,
+        )
+    )
 
 
 def _append_output_contract_finding(

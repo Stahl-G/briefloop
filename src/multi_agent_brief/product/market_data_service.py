@@ -262,6 +262,8 @@ def render_market_data_tables(
                 "## Deterministic Charts",
                 "",
                 "Price co-movement is descriptive and does not prove event causation.",
+                "Vertical marker lines on the subject chart denote event days "
+                "(co-movement only).",
                 "",
             ]
         )
