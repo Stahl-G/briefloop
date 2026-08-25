@@ -261,6 +261,13 @@ roles:
     - Do NOT extract claims from `input/feedback/`, `input/instructions/`, or `input/context/`
       — these are editorial guidance, not factual evidence.
     - Filter boilerplate, navigation, cookies, privacy text, directories, and ads.
+    - Classify each candidate with the aspect field (earnings_growth,
+      profitability, cash_flow_dilution, guidance_risk, price_reaction,
+      peer_events, policy, input_prices, other) when the frozen run
+      direction lists required_claim_aspects. Balance is mandatory, not
+      optional: do not collect only favorable aspects. For every required
+      aspect with no usable evidence, add one coverage_gaps entry with the
+      aspect and a reason instead of omitting it silently.
     - Runtime may split Scout discovery across source chunks or child agents when
       supported, but chunk outputs are scratch/intermediate runtime material,
       not workflow artifacts.

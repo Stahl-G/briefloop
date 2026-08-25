@@ -97,10 +97,44 @@ def high_priority_background_candidate_ids(
     return tuple(sorted(invalid))
 
 
+def required_aspects_uncovered(
+    *,
+    candidates: tuple[CandidateClaimItem, ...] | list[CandidateClaimItem],
+    coverage_gap_aspects: tuple[str, ...] | list[str],
+    decisions: tuple[ScreeningDecisionItem, ...] | list[ScreeningDecisionItem],
+    direction: RunDirection,
+) -> tuple[str, ...]:
+    """Required claim aspects with neither selected evidence nor a scout gap.
+
+    A visible gap is lawful (the scout recorded that no evidence was
+    found); an invisible one is not.  Applies to Store-bound runs whose
+    frozen RunDirection lists required_claim_aspects for the core
+    subject.
+    """
+
+    required = [item for item in direction.required_claim_aspects if item]
+    if not required:
+        return ()
+    decisions_by_id = {item.candidate_id: item for item in decisions}
+    selected_aspects = {
+        item.aspect
+        for item in candidates
+        if item.aspect is not None
+        and decisions_by_id.get(item.candidate_id) is not None
+        and decisions_by_id[item.candidate_id].decision == "selected"
+    }
+    gap_aspects = set(coverage_gap_aspects)
+    return tuple(
+        aspect for aspect in required
+        if aspect not in selected_aspects and aspect not in gap_aspects
+    )
+
+
 __all__ = [
     "SourceTemporality",
     "TemporalBasis",
     "TemporalRole",
     "classify_source_temporality",
     "high_priority_background_candidate_ids",
+    "required_aspects_uncovered",
 ]

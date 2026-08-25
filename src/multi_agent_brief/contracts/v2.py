@@ -580,6 +580,19 @@ SourceLocator = Annotated[
 ]
 
 
+CLAIM_ASPECT_VALUES = [
+    "earnings_growth",
+    "profitability",
+    "cash_flow_dilution",
+    "guidance_risk",
+    "price_reaction",
+    "peer_events",
+    "policy",
+    "input_prices",
+    "other",
+]
+
+
 class CandidateClaimItem(StrictModel):
     candidate_id: ContractId
     source_id: ContractId
@@ -588,6 +601,14 @@ class CandidateClaimItem(StrictModel):
     topic: CleanText
     claim_type: Literal["fact", "trend", "risk", "opportunity", "estimate"]
     confidence: Literal["low", "medium", "high"]
+    aspect: Optional[Literal[tuple(CLAIM_ASPECT_VALUES)]] = None
+
+
+class CandidateCoverageGapItem(StrictModel):
+    """Scout's explicit record that one required aspect found no evidence."""
+
+    aspect: Literal[tuple(CLAIM_ASPECT_VALUES)]
+    reason: CleanText
 
 
 class ScreeningDecisionItem(StrictModel):
@@ -1811,12 +1832,16 @@ class CandidateClaimsProposal(StrictModel):
     run_id: ContractId
     created_at: IsoDateTime
     candidates: list[CandidateClaimItem] = Field(min_length=1)
+    coverage_gaps: list[CandidateCoverageGapItem] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def unique_candidates(self) -> "CandidateClaimsProposal":
         identities = [item.candidate_id for item in self.candidates]
         if len(identities) != len(set(identities)):
             raise ValueError("duplicate candidate identity")
+        gap_aspects = [item.aspect for item in self.coverage_gaps]
+        if len(gap_aspects) != len(set(gap_aspects)):
+            raise ValueError("duplicate coverage gap aspect")
         return self
 
 
@@ -2375,6 +2400,7 @@ class RunDirection(StrictModel):
     selector_max_items: Optional[PositiveInt] = None
     target_terms: list[CleanText] = Field(min_length=1)
     required_section_intents: list[CleanText] = Field(default_factory=list)
+    required_claim_aspects: list[CleanText] = Field(default_factory=list)
     market_divergence_threshold_pct: Optional[float] = None
     output_contract: Optional[RunOutputContract] = None
 
@@ -2387,6 +2413,7 @@ class RunDirection(StrictModel):
             "output_formats",
             "target_terms",
             "required_section_intents",
+            "required_claim_aspects",
         ):
             values = getattr(self, field_name)
             if len(values) != len(set(values)):
@@ -6809,8 +6836,19 @@ CandidateClaimsProposal.minimal_example = {
 }
 CandidateClaimsProposal.full_example = deepcopy(CandidateClaimsProposal.minimal_example)
 CandidateClaimsProposal.full_example["candidates"].append(
-    {**_CANDIDATE, "candidate_id": "CAND-002", "confidence": "medium"}
+    {
+        **_CANDIDATE,
+        "candidate_id": "CAND-002",
+        "confidence": "medium",
+        "aspect": "guidance_risk",
+    }
 )
+CandidateClaimsProposal.full_example["coverage_gaps"] = [
+    {
+        "aspect": "cash_flow_dilution",
+        "reason": "No cash-flow or dilution evidence was found in the frozen sources.",
+    }
+]
 
 ScreenedCandidatesProposal.minimal_example = {
     "schema_version": ScreenedCandidatesProposal.schema_id,

@@ -11,6 +11,7 @@ from multi_agent_brief.contracts.v2 import (
 from multi_agent_brief.core_run_v2.source_temporality import (
     classify_source_temporality,
     high_priority_background_candidate_ids,
+    required_aspects_uncovered,
 )
 
 
@@ -118,3 +119,86 @@ def test_selected_high_background_candidate_is_rejected_by_policy() -> None:
         {source.source_id: source},
         _direction(),
     ) == (candidate.candidate_id,)
+
+
+def _candidate(aspect: str | None, candidate_id: str = "CAND-001") -> CandidateClaimItem:
+    payload = {
+        "candidate_id": candidate_id,
+        "source_id": "SOURCE-001",
+        "statement": "Synthetic statement",
+        "evidence_text": "Synthetic evidence",
+        "topic": "topic",
+        "claim_type": "fact",
+        "confidence": "high",
+    }
+    if aspect is not None:
+        payload["aspect"] = aspect
+    return CandidateClaimItem.model_validate(payload, strict=True)
+
+
+def _decision(candidate_id: str, decision: str = "selected") -> ScreeningDecisionItem:
+    return ScreeningDecisionItem.model_validate(
+        {
+            "candidate_id": candidate_id,
+            "decision": decision,
+            "priority": None,
+            "reason_code": None,
+            "explanation": None,
+        },
+        strict=True,
+    )
+
+
+def _aspect_direction() -> RunDirection:
+    return _direction().model_copy(
+        update={"required_claim_aspects": ["earnings_growth", "cash_flow_dilution"]}
+    )
+
+
+def test_required_aspect_without_evidence_or_gap_is_uncovered() -> None:
+    candidates = [_candidate("earnings_growth")]
+    uncovered = required_aspects_uncovered(
+        candidates=candidates,
+        coverage_gap_aspects=[],
+        decisions=[_decision("CAND-001")],
+        direction=_aspect_direction(),
+    )
+    assert uncovered == ("cash_flow_dilution",)
+
+
+def test_scout_gap_entry_covers_a_missing_aspect() -> None:
+    uncovered = required_aspects_uncovered(
+        candidates=[_candidate("earnings_growth")],
+        coverage_gap_aspects=["cash_flow_dilution"],
+        decisions=[_decision("CAND-001")],
+        direction=_aspect_direction(),
+    )
+    assert uncovered == ()
+
+
+def test_screener_cannot_drop_last_selected_candidate_of_an_aspect() -> None:
+    uncovered = required_aspects_uncovered(
+        candidates=[
+            _candidate("earnings_growth"),
+            _candidate("cash_flow_dilution", "CAND-002"),
+        ],
+        coverage_gap_aspects=[],
+        decisions=[
+            _decision("CAND-001"),
+            _decision("CAND-002", decision="excluded"),
+        ],
+        direction=_aspect_direction(),
+    )
+    assert uncovered == ("cash_flow_dilution",)
+
+
+def test_no_required_aspects_means_no_uncovered() -> None:
+    assert (
+        required_aspects_uncovered(
+            candidates=[_candidate(None)],
+            coverage_gap_aspects=[],
+            decisions=[_decision("CAND-001")],
+            direction=_direction(),
+        )
+        == ()
+    )

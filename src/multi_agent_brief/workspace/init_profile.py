@@ -42,6 +42,9 @@ class InitProfile:
     # Reader-skeleton contract from the report pack; frozen into RunDirection
     # so the deterministic section gate reads Store state only.
     required_section_intents: list[str] = field(default_factory=list)
+    # Claim aspects the core subject must cover (selected evidence or an
+    # explicit scout gap) before screening can commit.
+    required_claim_aspects: list[str] = field(default_factory=list)
     # Percent move of the core subject that must be addressed in the
     # market-reaction section (None keeps the built-in default).
     market_divergence_threshold_pct: float | None = None
@@ -181,6 +184,10 @@ def build_controlstore_bootstrap(
             "required_section_intents": _unique_nonempty(
                 profile.required_section_intents,
                 field_name="required_section_intents",
+            ),
+            "required_claim_aspects": _unique_nonempty(
+                profile.required_claim_aspects,
+                field_name="required_claim_aspects",
             ),
             "market_divergence_threshold_pct": (
                 profile.market_divergence_threshold_pct
