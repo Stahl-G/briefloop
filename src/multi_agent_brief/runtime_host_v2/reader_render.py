@@ -68,6 +68,31 @@ def _compliance_footer(
     return f"**{meta}**\n\n{disclaimer}"
 
 
+def compliance_footer_text(
+    *,
+    run_direction: RunDirection,
+    run_id: str,
+    store_revision: int,
+) -> str:
+    """Single-line plain-text footer for non-markdown reader artifacts."""
+
+    zh = str(run_direction.output_language).startswith("zh")
+    disclaimer = _DISCLAIMER_ZH if zh else _DISCLAIMER_EN
+    window = (
+        f"{run_direction.report_window_start}"
+        f"~{run_direction.report_window_end}"
+    )
+    if zh:
+        return (
+            f"{run_id} r{store_revision} {window} 基准日 "
+            f"{run_direction.report_date} — {disclaimer}"
+        )
+    return (
+        f"{run_id} r{store_revision} {window} as-of "
+        f"{run_direction.report_date} — {disclaimer}"
+    )
+
+
 def render_reader_markdown(
     *,
     audited_markdown: str,

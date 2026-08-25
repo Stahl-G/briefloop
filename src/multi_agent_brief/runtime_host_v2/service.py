@@ -4094,10 +4094,38 @@ class RuntimeHostService:
         )
         relative = f"scratch/{request_id}/reader_brief.md"
         self._materialize_tool_input(relative, reader_bytes)
+        scratch_inputs: dict[str, str] = {"reader_brief": relative}
+        sha_map: dict[str, str] = {"reader_brief": sha256_hex(reader_bytes)}
+        revision_map: dict[str, int] = {}
         reader_artifact = next(
             (item for item in snapshot.artifacts if item.artifact_id == "reader_brief"),
             None,
         )
+        revision_map["reader_brief"] = (
+            0 if reader_artifact is None else reader_artifact.current_revision
+        )
+        if "docx" in current.verified.binding.run_direction.output_formats:
+            docx_bytes = self._render_reader_docx(
+                markdown_relative=relative,
+                run_direction=current.verified.binding.run_direction,
+                run_id=action.run_id,
+                store_revision=snapshot.store_revision,
+            )
+            docx_relative = f"scratch/{request_id}/reader_brief.docx"
+            self._materialize_tool_input(docx_relative, docx_bytes)
+            scratch_inputs["reader_brief_docx"] = docx_relative
+            sha_map["reader_brief_docx"] = sha256_hex(docx_bytes)
+            docx_artifact = next(
+                (
+                    item
+                    for item in snapshot.artifacts
+                    if item.artifact_id == "reader_brief_docx"
+                ),
+                None,
+            )
+            revision_map["reader_brief_docx"] = (
+                0 if docx_artifact is None else docx_artifact.current_revision
+            )
         request = FinalizeRenderRequest.model_validate(
             {
                 "schema_version": FinalizeRenderRequest.schema_id,
@@ -4112,20 +4140,59 @@ class RuntimeHostService:
                     "artifact_id": promotion.report_revision.artifact_id,
                     "revision": promotion.report_revision.revision,
                 },
-                "reader_scratch_inputs": {"reader_brief": relative},
-                "expected_reader_sha256": {"reader_brief": sha256_hex(reader_bytes)},
-                "expected_reader_revisions": {
-                    "reader_brief": (
-                        0
-                        if reader_artifact is None
-                        else reader_artifact.current_revision
-                    )
-                },
+                "reader_scratch_inputs": scratch_inputs,
+                "expected_reader_sha256": sha_map,
+                "expected_reader_revisions": revision_map,
                 "expected_store_revision": action.store_revision,
             },
             strict=True,
         )
         return CoreRunTerminalService(self.workspace).accept_finalize_render(request)
+
+    def _render_reader_docx(
+        self,
+        *,
+        markdown_relative: str,
+        run_direction,
+        run_id: str,
+        store_revision: int,
+    ) -> bytes:
+        """Render the docx reader artifact deterministically from the markdown."""
+
+        import tempfile
+
+        from multi_agent_brief.runtime_host_v2.reader_render import (
+            compliance_footer_text,
+        )
+
+        try:
+            from multi_agent_brief.outputs.ib_docx import convert
+        except ImportError as exc:
+            raise RuntimeHostError("reader_docx_dependency_unavailable") from exc
+        markdown_path = self.workspace / markdown_relative
+        descriptor, temporary = tempfile.mkstemp(suffix=".docx")
+        os.close(descriptor)
+        try:
+            convert(
+                markdown_path,
+                temporary,
+                title=str(run_direction.brief_title),
+                footer=compliance_footer_text(
+                    run_direction=run_direction,
+                    run_id=run_id,
+                    store_revision=store_revision,
+                ),
+                template="default",
+                image_root=self.workspace / "output",
+            )
+            return Path(temporary).read_bytes()
+        except Exception as exc:
+            raise RuntimeHostError("reader_docx_render_failed") from exc
+        finally:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
 
     def _apply_finalize_complete(self, current, action: CoreRunNextAction):
         snapshot = current.verified.snapshot

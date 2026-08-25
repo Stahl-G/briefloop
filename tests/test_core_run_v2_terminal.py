@@ -287,6 +287,147 @@ def test_finalize_render_persists_replays_conflicts_and_survives_restart(
         assert store.current_revision == revision
 
 
+def test_finalize_render_accepts_docx_reader_artifact_when_formats_include_docx(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("docx")
+    from multi_agent_brief.outputs.ib_docx import convert
+
+    workspace, run_id, clock = _finalize_ready_workspace(tmp_path)
+    reader_bytes = (
+        b"# ExampleCo reader brief\n\n## Executive Summary\n\n"
+        b"ExampleCo opened a public pilot facility on 2026-07-14.\n"
+    )
+    scratch = workspace / "scratch" / "terminal-render-docx"
+    scratch.mkdir(parents=True, exist_ok=True)
+    (scratch / "brief.md").write_bytes(reader_bytes)
+    convert(
+        scratch / "brief.md",
+        scratch / "brief.docx",
+        title="ExampleCo reader brief",
+        template="default",
+    )
+    docx_bytes = (scratch / "brief.docx").read_bytes()
+    assert docx_bytes[:2] == b"PK"
+
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+        promotion = classify_current_audit_promotion(
+            verified.snapshot,
+            store.read_artifact_revision_bytes,
+        )
+        assert promotion is not None
+        assert "docx" in verified.binding.run_direction.output_formats
+        expected_store_revision = verified.snapshot.store_revision
+
+    request = FinalizeRenderRequest.model_validate(
+        {
+            "schema_version": FinalizeRenderRequest.schema_id,
+            "request_id": "REQ-TERMINAL-RENDER-DOCX-001",
+            "run_id": run_id,
+            "audit_proposal_id": promotion.proposal_record.proposal_id,
+            "expected_audited_brief": {
+                "artifact_id": promotion.brief_revision.artifact_id,
+                "revision": promotion.brief_revision.revision,
+            },
+            "expected_audit_report": {
+                "artifact_id": promotion.report_revision.artifact_id,
+                "revision": promotion.report_revision.revision,
+            },
+            "reader_scratch_inputs": {
+                "reader_brief": "scratch/terminal-render-docx/brief.md",
+                "reader_brief_docx": "scratch/terminal-render-docx/brief.docx",
+            },
+            "expected_reader_sha256": {
+                "reader_brief": sha256_hex(reader_bytes),
+                "reader_brief_docx": sha256_hex(docx_bytes),
+            },
+            "expected_reader_revisions": {"reader_brief": 0, "reader_brief_docx": 0},
+            "expected_store_revision": expected_store_revision,
+        },
+        strict=True,
+    )
+    result = CoreRunTerminalService(workspace, clock=clock).accept_finalize_render(
+        request
+    )
+    assert (result.status, result.error_code) == ("committed", None)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        snapshot = store.load_snapshot(run_id)
+        render = next(
+            item
+            for item in snapshot.finalize_renders
+            if item.render_id == result.primary_record_id
+        )
+        assert sorted(
+            item.artifact_id for item in render.reader_artifacts
+        ) == ["reader_brief", "reader_brief_docx"]
+        docx_record = next(
+            item
+            for item in snapshot.artifacts
+            if item.artifact_id == "reader_brief_docx"
+        )
+        assert docx_record.path == "output/brief.docx"
+        assert docx_record.status == "valid"
+    assert (workspace / "output" / "brief.docx").exists()
+
+
+def test_finalize_render_rejects_corrupt_docx_reader_artifact(
+    tmp_path: Path,
+) -> None:
+    workspace, run_id, clock = _finalize_ready_workspace(tmp_path)
+    reader_bytes = (
+        b"# ExampleCo reader brief\n\n## Executive Summary\n\n"
+        b"ExampleCo opened a public pilot facility on 2026-07-14.\n"
+    )
+    scratch = workspace / "scratch" / "terminal-render-docx-bad"
+    scratch.mkdir(parents=True, exist_ok=True)
+    (scratch / "brief.md").write_bytes(reader_bytes)
+    (scratch / "brief.docx").write_bytes(b"not-a-zip-docx")
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+        promotion = classify_current_audit_promotion(
+            verified.snapshot,
+            store.read_artifact_revision_bytes,
+        )
+        assert promotion is not None
+        before_revision = verified.snapshot.store_revision
+
+    request = FinalizeRenderRequest.model_validate(
+        {
+            "schema_version": FinalizeRenderRequest.schema_id,
+            "request_id": "REQ-TERMINAL-RENDER-DOCX-BAD-001",
+            "run_id": run_id,
+            "audit_proposal_id": promotion.proposal_record.proposal_id,
+            "expected_audited_brief": {
+                "artifact_id": promotion.brief_revision.artifact_id,
+                "revision": promotion.brief_revision.revision,
+            },
+            "expected_audit_report": {
+                "artifact_id": promotion.report_revision.artifact_id,
+                "revision": promotion.report_revision.revision,
+            },
+            "reader_scratch_inputs": {
+                "reader_brief": "scratch/terminal-render-docx-bad/brief.md",
+                "reader_brief_docx": "scratch/terminal-render-docx-bad/brief.docx",
+            },
+            "expected_reader_sha256": {
+                "reader_brief": sha256_hex(reader_bytes),
+                "reader_brief_docx": sha256_hex(b"not-a-zip-docx"),
+            },
+            "expected_reader_revisions": {"reader_brief": 0, "reader_brief_docx": 0},
+            "expected_store_revision": before_revision,
+        },
+        strict=True,
+    )
+    result = CoreRunTerminalService(workspace, clock=clock).accept_finalize_render(
+        request
+    )
+    assert (result.status, result.error_code) == (
+        "failed_uncommitted",
+        "finalize_input_invalid",
+    )
+
+
 @pytest.mark.parametrize("case", ("existing_artifact_id", "missing_scratch"))
 def test_finalize_render_rejects_non_reader_or_unreadable_scratch_without_writes(
     tmp_path: Path,

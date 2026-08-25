@@ -878,6 +878,7 @@ def convert(
     footer: str | None = None,
     font: str | None = None,
     template: str = "default",
+    image_root: str | Path | None = None,
 ) -> Path:
     """Convert a Markdown file to a styled DOCX document.
 
@@ -890,6 +891,11 @@ def convert(
         font: East-Asian font name. Defaults to ``宋体``.
         template: Template ID (executive_brief, research_note, formal_internal_report).
                   Defaults to "default" which uses the standard style.
+        image_root: Optional directory that markdown image references resolve
+                  against when the markdown file does not sit beside its
+                  images (for example a scratch-input markdown whose
+                  ``charts/...`` targets live under the workspace output
+                  directory). Containment is still enforced.
 
     Returns:
         The *docx_path* as a :class:`~pathlib.Path`.
@@ -980,15 +986,28 @@ def convert(
             target = Path(block[2])
             if target.is_absolute() or target.suffix.lower() == ".svg":
                 raise ValueError("Markdown image must be a relative PNG or JPEG")
-            resolved_target = (markdown_directory / target).resolve()
-            image_root = (
-                markdown_directory.parent
-                if markdown_directory.name == "intermediate"
-                and markdown_directory.parent.name == "output"
-                else markdown_directory
+            explicit_image_root = (
+                Path(image_root).expanduser().resolve()
+                if image_root is not None
+                else None
+            )
+            resolved_target = (
+                (explicit_image_root / target).resolve()
+                if explicit_image_root is not None
+                else (markdown_directory / target).resolve()
+            )
+            containment_root = (
+                explicit_image_root
+                if explicit_image_root is not None
+                else (
+                    markdown_directory.parent
+                    if markdown_directory.name == "intermediate"
+                    and markdown_directory.parent.name == "output"
+                    else markdown_directory
+                )
             )
             try:
-                resolved_target.relative_to(image_root)
+                resolved_target.relative_to(containment_root)
             except ValueError as exc:
                 raise ValueError(
                     "Markdown image must remain inside the report output directory"

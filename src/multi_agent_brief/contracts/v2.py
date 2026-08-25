@@ -59,7 +59,7 @@ _WORKSPACE_PATH_PATTERN = (
 )
 _SCRATCH_INPUT_PATH_PATTERN = (
     r"^scratch/[A-Za-z0-9][A-Za-z0-9._:-]*/"
-    r"[A-Za-z0-9][A-Za-z0-9._:-]*\.(?:json|md)$"
+    r"[A-Za-z0-9][A-Za-z0-9._:-]*\.(?:json|md|docx)$"
 )
 _APPROVAL_REASON_MAX_LENGTH = 1000
 _MIME_TYPE_PATTERN = r"^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
