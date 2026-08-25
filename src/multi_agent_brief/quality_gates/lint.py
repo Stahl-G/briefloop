@@ -129,7 +129,14 @@ def brief_content_lint(
             report_window_start=direction.report_window_start or "",
         )
         for finding in audit.findings:
-            if finding.finding_type in {"number_without_source", "missing_claim"}:
+            # Only brief-fixable audit findings belong in the pre-submit
+            # lint; ledger/sourcing properties (missing dates, stale
+            # sources) are not repairable by the authoring roles here.
+            if finding.finding_type in {
+                "number_without_source",
+                "missing_claim",
+                "background_source_current_framing",
+            }:
                 _add(
                     finding.finding_type,
                     f"line {finding.line_number}: {finding.description}",

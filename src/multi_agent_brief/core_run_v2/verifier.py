@@ -5653,8 +5653,6 @@ class CoreRunDomainVerifier:
             or item.repair_owner != "editor"
             or item.stage_id != "editor"
             or item.artifact_id != "audited_brief"
-            or item.claim_id is not None
-            or item.source_id is not None
             for item in typed_findings
         ):
             raise CoreRunError("control_store_integrity_invalid")

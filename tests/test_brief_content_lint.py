@@ -106,3 +106,39 @@ def test_required_sections_lint_from_frozen_intents() -> None:
         item["finding_type"] == "required_section_missing"
         for item in findings
     )
+
+
+def test_background_framing_surfaces_at_lint_time() -> None:
+    ledger = ClaimLedger(
+        [
+            Claim.from_dict(
+                {
+                    "claim_id": "CL-BG-0001",
+                    "statement": "Old context statement.",
+                    "evidence_text": "Old context evidence.",
+                    "source_id": "SRC-BG",
+                    "claim_type": "fact",
+                    "confidence": "medium",
+                    "requires_audit": False,
+                    "created_by": "claim-ledger",
+                    "used_in_sections": [],
+                    "metadata": {"temporal_role": "background"},
+                }
+            )
+        ]
+    )
+    brief = (
+        "# ExampleCo Brief\n\n## Executive Summary\n\n"
+        "本周进展如下：ExampleCo 发布公告 [src:CL-BG-0001]。\n"
+    )
+    findings = brief_content_lint(
+        brief,
+        ledger=ledger,
+        direction=_direction(),
+        workspace=None,
+        snapshot=_EmptySnapshot(),
+    )
+    assert any(
+        item["finding_type"] == "background_source_current_framing"
+        for item in findings
+    )
