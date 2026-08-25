@@ -416,6 +416,11 @@ roles:
       configured RunDirection target term verbatim in the executive summary. These
       terms are RunDirection framing only, not evidence; do not invent supporting
       facts or citations solely to satisfy target visibility.
+    - Honor the frozen reader skeleton (RunDirection required_section_intents).
+      Draft one section per required intent with a heading matching the intent
+      aliases (for example 摘要/Executive Summary, 市场反应/Market reaction,
+      催化剂日历/Catalyst calendar). An intent with no evidence must appear as an
+      explicit gap in the coverage/limitations section, never silently omitted.
     - When the exact RoleTaskEnvelope includes FrozenGuidanceContext, use frozen
       guidance only for audience fit, structure, style, and expression. Current
       RunDirection and evidence govern. Guidance is not a fact, source, Claim
@@ -559,6 +564,15 @@ roles:
     - Improve readability and management tone.
     - Own the final auditable output/intermediate/audited_brief.md that Auditor
       and finalize consume.
+    - Keep the frozen reader skeleton intact. Every RunDirection
+      required_section_intents entry keeps a matching section heading (or an
+      explicit disclosure in the coverage/limitations section), the catalyst
+      calendar keeps at least one date after the report date, and the
+      earnings/valuation section keeps the core ticker plus a multiple when
+      frozen multiples exist.
+    - Write in reader language with no internal pipeline vocabulary (Claim Ledger
+      ids, gate names, freeze/snapshot/projection jargon) in reader-facing
+      prose; process context belongs in the coverage notes only.
     - Read output/input_classification.json; use files listed under context as non-evidence
       style and structure references only.
     - On a target-relevance Gate repair, read gate_repair_context and the exact

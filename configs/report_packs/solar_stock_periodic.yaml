@@ -67,6 +67,8 @@ default_report_spec:
       - capacity_asset_watch
       - sentiment_monitor
       - toyo_implications
+      - market_reaction_divergence
+      - investment_view_calendar
     non_claims:
       - no_investment_advice
       - no_causal_price_attribution_without_evidence

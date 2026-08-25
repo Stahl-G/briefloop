@@ -859,6 +859,15 @@ def _replay_gate_outcomes(
         binding=binding,
         workspace=workspace,
     )
+    _append_required_section_findings(
+        raw,
+        snapshot=snapshot,
+        binding=binding,
+        workspace=workspace,
+        markdown=markdown,
+        stage_id=stage_id,
+        target_artifact=target_artifact,
+    )
     if stage_id == "auditor":
         _append_reader_projection_residue_finding(raw, markdown=markdown)
     return _classify_gate_outcomes(
@@ -1008,6 +1017,85 @@ def _market_data_finding(
         "evidence_ref": evidence_ref,
         "metadata": metadata,
     }
+
+
+def _append_required_section_findings(
+    raw: object,
+    *,
+    snapshot: ControlStoreSnapshot,
+    binding: RunContractBinding,
+    workspace: Path | None,
+    markdown: str,
+    stage_id: str | None,
+    target_artifact: str,
+) -> None:
+    """Enforce the frozen reader-skeleton contract deterministically."""
+
+    intents = list(binding.run_direction.required_section_intents)
+    if not intents or not isinstance(raw, dict):
+        return
+    findings = raw.get("final_abstract_quality")
+    if not isinstance(findings, list) or not all(
+        isinstance(item, dict) for item in findings
+    ):
+        return
+    core_ticker: str | None = None
+    core_multiple_available = False
+    peer_multiples_count = 0
+    universe = None
+    if workspace is not None:
+        try:
+            from multi_agent_brief.sources.equity_universe import (
+                load_equity_universe,
+            )
+
+            universe = load_equity_universe(workspace)
+        except Exception:
+            universe = None
+    records = list(snapshot.market_data_snapshots)
+    latest = max(
+        records,
+        key=lambda item: (
+            item.as_of_date,
+            item.recorded_at,
+            item.market_data_snapshot_id,
+        ),
+    ) if records else None
+    if latest is not None and universe is not None:
+        core_tickers = list(universe.core_tickers)
+        multiple_fields = ("ps_ttm", "ev_ebitda_ttm", "pe_ttm")
+
+        def _has_multiple(security) -> bool:
+            return any(
+                field.field_id in multiple_fields
+                and field.status == "available"
+                and field.value_number is not None
+                for field in security.fields
+            )
+
+        for security in latest.securities:
+            if core_tickers and security.ticker in core_tickers:
+                core_ticker = security.ticker
+                core_multiple_available = _has_multiple(security)
+            elif _has_multiple(security):
+                peer_multiples_count += 1
+    from multi_agent_brief.quality_gates.section_contract import (
+        required_section_findings,
+    )
+
+    section_findings = required_section_findings(
+        markdown,
+        required_intents=intents,
+        report_date=binding.run_direction.report_date,
+        core_ticker=core_ticker,
+        core_multiple_available=core_multiple_available,
+        peer_multiples_count=peer_multiples_count,
+    )
+    for item in section_findings:
+        if stage_id is not None:
+            item["stage_id"] = stage_id
+        item["artifact_id"] = target_artifact
+        findings.append(item)
 
 
 def _append_output_contract_finding(

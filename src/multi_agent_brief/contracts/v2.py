@@ -2374,6 +2374,7 @@ class RunDirection(StrictModel):
     max_source_age_days: Optional[PositiveInt] = None
     selector_max_items: Optional[PositiveInt] = None
     target_terms: list[CleanText] = Field(min_length=1)
+    required_section_intents: list[CleanText] = Field(default_factory=list)
     output_contract: Optional[RunOutputContract] = None
 
     @model_validator(mode="after")
@@ -2384,6 +2385,7 @@ class RunDirection(StrictModel):
             "forbidden_sources",
             "output_formats",
             "target_terms",
+            "required_section_intents",
         ):
             values = getattr(self, field_name)
             if len(values) != len(set(values)):

@@ -39,6 +39,9 @@ class InitProfile:
     )
     task_objective: str = ""  # free-text task description
     forbidden_sources: list[str] = field(default_factory=list)
+    # Reader-skeleton contract from the report pack; frozen into RunDirection
+    # so the deterministic section gate reads Store state only.
+    required_section_intents: list[str] = field(default_factory=list)
     cadence: str = "weekly"
     max_source_age_days: int = 14
     selector_max_items: int = 20
@@ -79,6 +82,13 @@ def _ordered_unique_nonempty(values: list[str], *, field_name: str) -> list[str]
     normalized = [value.strip() for value in values if value.strip()]
     if not normalized or len(normalized) != len(set(normalized)):
         raise ValueError(f"{field_name} must be non-empty, ordered and unique")
+    return normalized
+
+
+def _unique_nonempty(values: list[str], *, field_name: str) -> list[str]:
+    normalized = [value.strip() for value in values if value.strip()]
+    if len(normalized) != len(set(normalized)):
+        raise ValueError(f"{field_name} must be unique")
     return normalized
 
 
@@ -165,6 +175,10 @@ def build_controlstore_bootstrap(
             "max_source_age_days": profile.max_source_age_days,
             "selector_max_items": profile.selector_max_items,
             "target_terms": list(focus_areas),
+            "required_section_intents": _unique_nonempty(
+                profile.required_section_intents,
+                field_name="required_section_intents",
+            ),
             "output_contract": output_contract,
         }
     )

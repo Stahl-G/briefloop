@@ -1429,6 +1429,13 @@ def _create_report_pack_workspace(
         audience_profile="management",
         focus_areas=focus_areas,
         task_objective=task_objective,
+        required_section_intents=[
+            str(item).strip()
+            for item in (spec.get("metadata") or {}).get(
+                "required_section_intents", []
+            )
+            if str(item).strip()
+        ],
         forbidden_sources=[
             "confidential material not approved for this workspace",
             "private messages",
