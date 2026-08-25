@@ -88,6 +88,10 @@ _PROCESS_WORDINGS = [
     "工作流状态",
     "产物注册表",
     "质量门禁",
+    "冻结快照",
+    "独立权威面",
+    "确定性投影",
+    "权威面",
 ]
 
 _CITATION_SECTION_TITLES = [
