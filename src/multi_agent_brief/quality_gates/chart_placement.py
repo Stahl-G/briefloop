@@ -100,8 +100,9 @@ def chart_placement_findings(
                     for reference in _CHART_FILE_RE.findall(section.body)
                 )
             )
-            if not placed_inside:
-                findings.append(
+            if placed_inside or _gap_disclosed(chart_id):
+                continue
+            findings.append(
                     {
                         "finding_type": "chart_placement_missing",
                         "gate_id": "final_abstract_quality",

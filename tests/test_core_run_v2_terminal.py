@@ -211,6 +211,25 @@ def _commit_finalize_render(
         assert promotion is not None
         assert promotion.is_current_lineage
         expected_store_revision = verified.snapshot.store_revision
+        docx_required = "docx" in verified.binding.run_direction.output_formats
+    scratch_inputs = {"reader_brief": "scratch/terminal-render-helper/brief.md"}
+    sha_map = {"reader_brief": sha256_hex(reader_bytes)}
+    revision_map: dict[str, int] = {"reader_brief": 0}
+    if docx_required:
+        from multi_agent_brief.outputs.ib_docx import convert
+
+        convert(
+            scratch / "brief.md",
+            scratch / "brief.docx",
+            title="ExampleCo reader brief",
+            template="default",
+        )
+        docx_bytes = (scratch / "brief.docx").read_bytes()
+        scratch_inputs["reader_brief_docx"] = (
+            "scratch/terminal-render-helper/brief.docx"
+        )
+        sha_map["reader_brief_docx"] = sha256_hex(docx_bytes)
+        revision_map["reader_brief_docx"] = 0
     request = FinalizeRenderRequest.model_validate(
         {
             "schema_version": FinalizeRenderRequest.schema_id,
@@ -225,11 +244,9 @@ def _commit_finalize_render(
                 "artifact_id": promotion.report_revision.artifact_id,
                 "revision": promotion.report_revision.revision,
             },
-            "reader_scratch_inputs": {
-                "reader_brief": "scratch/terminal-render-helper/brief.md"
-            },
-            "expected_reader_sha256": {"reader_brief": sha256_hex(reader_bytes)},
-            "expected_reader_revisions": {"reader_brief": 0},
+            "reader_scratch_inputs": scratch_inputs,
+            "expected_reader_sha256": sha_map,
+            "expected_reader_revisions": revision_map,
             "expected_store_revision": expected_store_revision,
         },
         strict=True,
@@ -528,6 +545,16 @@ def test_terminal_service_owns_finalize_render_and_complete(tmp_path: Path) -> N
         )
         assert promotion is not None
         before_revision = verified.snapshot.store_revision
+        assert "docx" in verified.binding.run_direction.output_formats
+    from multi_agent_brief.outputs.ib_docx import convert
+
+    convert(
+        scratch / "brief.md",
+        scratch / "brief.docx",
+        title="ExampleCo reader brief",
+        template="default",
+    )
+    docx_bytes = (scratch / "brief.docx").read_bytes()
     render_request = FinalizeRenderRequest.model_validate(
         {
             "schema_version": FinalizeRenderRequest.schema_id,
@@ -543,10 +570,19 @@ def test_terminal_service_owns_finalize_render_and_complete(tmp_path: Path) -> N
                 "revision": promotion.report_revision.revision,
             },
             "reader_scratch_inputs": {
-                "reader_brief": "scratch/terminal-render-service/brief.md"
+                "reader_brief": "scratch/terminal-render-service/brief.md",
+                "reader_brief_docx": (
+                    "scratch/terminal-render-service/brief.docx"
+                ),
             },
-            "expected_reader_sha256": {"reader_brief": sha256_hex(reader_bytes)},
-            "expected_reader_revisions": {"reader_brief": 0},
+            "expected_reader_sha256": {
+                "reader_brief": sha256_hex(reader_bytes),
+                "reader_brief_docx": sha256_hex(docx_bytes),
+            },
+            "expected_reader_revisions": {
+                "reader_brief": 0,
+                "reader_brief_docx": 0,
+            },
             "expected_store_revision": before_revision,
         },
         strict=True,
@@ -3892,3 +3928,58 @@ def test_archive_and_package_reconstruction_rejects_parameterized_forgeries(
             receipt,
         )
     assert error.value.code == f"{target}_membership_invalid"
+
+
+def test_finalize_render_requires_docx_when_formats_request_it(
+    tmp_path: Path,
+) -> None:
+    workspace, run_id, clock = _finalize_ready_workspace(tmp_path)
+    reader_bytes = (
+        b"# ExampleCo reader brief\n\n## Executive Summary\n\n"
+        b"ExampleCo opened a public pilot facility on 2026-07-14.\n"
+    )
+    scratch = workspace / "scratch" / "terminal-render-no-docx"
+    scratch.mkdir(parents=True, exist_ok=True)
+    (scratch / "brief.md").write_bytes(reader_bytes)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+        promotion = classify_current_audit_promotion(
+            verified.snapshot,
+            store.read_artifact_revision_bytes,
+        )
+        assert promotion is not None
+        assert "docx" in verified.binding.run_direction.output_formats
+        before_revision = verified.snapshot.store_revision
+
+    request = FinalizeRenderRequest.model_validate(
+        {
+            "schema_version": FinalizeRenderRequest.schema_id,
+            "request_id": "REQ-TERMINAL-RENDER-NO-DOCX-001",
+            "run_id": run_id,
+            "audit_proposal_id": promotion.proposal_record.proposal_id,
+            "expected_audited_brief": {
+                "artifact_id": promotion.brief_revision.artifact_id,
+                "revision": promotion.brief_revision.revision,
+            },
+            "expected_audit_report": {
+                "artifact_id": promotion.report_revision.artifact_id,
+                "revision": promotion.report_revision.revision,
+            },
+            "reader_scratch_inputs": {
+                "reader_brief": "scratch/terminal-render-no-docx/brief.md"
+            },
+            "expected_reader_sha256": {
+                "reader_brief": sha256_hex(reader_bytes)
+            },
+            "expected_reader_revisions": {"reader_brief": 0},
+            "expected_store_revision": before_revision,
+        },
+        strict=True,
+    )
+    result = CoreRunTerminalService(workspace, clock=clock).accept_finalize_render(
+        request
+    )
+    assert (result.status, result.error_code) == (
+        "failed_uncommitted",
+        "finalize_input_invalid",
+    )

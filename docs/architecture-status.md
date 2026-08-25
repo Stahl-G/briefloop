@@ -330,7 +330,7 @@ The roadmap mentions concepts that are not necessarily implemented yet. Treat th
 
 Features marked experimental, interface-only, or CLI-only should not be treated as stable user promises. Check the support matrix and CLI output before relying on them.
 
-### Reader-truth and balance package (pre-v0.16 slice, new runs only)
+### Reader-truth and balance package (pre-v0.16 slice, fresh workspaces only)
 
 Implemented and tested on the current line, but not yet part of a released
 version; existing initialized Stores keep their frozen contracts.
@@ -350,12 +350,16 @@ version; existing initialized Stores keep their frozen contracts.
 - The price-vs-narrative divergence gate blocks a one-sided brief when
   the core subject's frozen one-week return breaches
   `RunDirection.market_divergence_threshold_pct` (solar default 10%):
-  the move must be stated in a market-reaction section and backed by a
-  risk-type claim or an explicit no-evidence disclosure.
-- `RunDirection.required_claim_aspects` freezes the scout's mandatory
-  aspect buckets (solar: earnings growth, cash flow/dilution, guidance
-  risk, price reaction); screening rejects an aspect with neither
-  selected evidence nor a scout `coverage_gaps` entry.
+  the market-reaction section must name the core ticker and state its
+  move with matching direction, magnitude within ±0.05 percentage
+  points, and snapshot provenance — another company's same-magnitude
+  move cannot satisfy it — and back it with a risk-type claim or an
+  explicit no-evidence disclosure.
+- `RunDirection.required_claim_aspects` freezes the pack's aspect
+  vocabulary (solar: earnings growth, cash flow/dilution, guidance risk,
+  price reaction). Aspect tags do not bind to the core company, so an
+  uncovered aspect surfaces as a non-blocking `aspect_coverage_gap`
+  warning diagnostic in the coverage gate — never a delivery blocker.
 - Chart placement is contractual: bound charts must sit inside their
   bound sections, manifest charts may not be silently omitted, and the
   subject chart carries deterministic event-day markers
@@ -364,8 +368,6 @@ version; existing initialized Stores keep their frozen contracts.
   sharing the auditor gate rule bodies, so deterministic violations
   surface before accept instead of consuming the single preauthorized
   gate-repair cycle.
-- Solar workspace titles follow the actual window span (over 14 days
-  labels the product Monthly instead of Weekly).
 
 ## Contributor Rule
 

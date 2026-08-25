@@ -182,3 +182,19 @@ def test_subject_chart_renders_event_marker_bytes() -> None:
     assert plain is not None and marked is not None
     assert plain.png_bytes != marked.png_bytes
     assert marked.chart_id == "toyo-price-volume"
+
+
+def test_bound_chart_omission_with_explicit_disclosure_passes() -> None:
+    brief = _brief(reaction_charts=False, valuation_charts=True)
+    disclosed = brief + (
+        "\n## 覆盖缺口\n\n- toyo-price-volume、one-week-return "
+        "因篇幅原因未收录。\n"
+    )
+    assert (
+        chart_placement_findings(
+            disclosed,
+            manifest_ids=_MANIFEST,
+            required_intents=_INTENTS,
+        )
+        == []
+    )

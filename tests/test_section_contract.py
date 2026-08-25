@@ -130,3 +130,19 @@ def test_unknown_intent_falls_back_to_id_alias_matching() -> None:
         report_date="2026-08-25",
     )
     assert [f["finding_type"] for f in findings] == ["required_section_missing"]
+
+
+def test_calendar_no_known_dates_disclosure_is_lawful() -> None:
+    brief = (
+        "# Brief\n\n## 摘要\n\nBody.\n\n## 市场反应\n\nTOYO 周跌（行情快照）。\n\n"
+        "## 催化剂与投资要点\n\n暂无已知日期的催化剂；指引恢复后更新。\n\n"
+        "## 财报与估值\n\nTOYO P/S。\n"
+    )
+    assert (
+        required_section_findings(
+            brief,
+            required_intents=_INTENTS,
+            report_date="2026-08-25",
+        )
+        == []
+    )

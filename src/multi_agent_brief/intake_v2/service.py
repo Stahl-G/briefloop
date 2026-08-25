@@ -1935,7 +1935,6 @@ class IntakeService:
             from multi_agent_brief.core_run_v2.lineage import classify_current_lineage
             from multi_agent_brief.core_run_v2.source_temporality import (
                 high_priority_background_candidate_ids,
-                required_aspects_uncovered,
             )
 
             typed = cast(ScreenedCandidatesProposal, proposal)
@@ -1974,16 +1973,6 @@ class IntakeService:
                     direction,
                 ):
                     raise _KnownInvalid("screened_current_window_date_required")
-                uncovered = required_aspects_uncovered(
-                    candidates=parent_bytes.candidates,
-                    coverage_gap_aspects=[
-                        item.aspect for item in parent_bytes.coverage_gaps
-                    ],
-                    decisions=typed.decisions,
-                    direction=direction,
-                )
-                if uncovered:
-                    raise _KnownInvalid("scout_aspect_coverage_incomplete")
             return _ProposalLineage(parent_proposal_id=parent.proposal_id)
         if lane.lane == "claim-drafts":
             from multi_agent_brief.core_run_v2.errors import CoreRunError

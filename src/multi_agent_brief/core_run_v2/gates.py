@@ -13,6 +13,7 @@ from multi_agent_brief.contracts.v2 import (
     AcceptedProposalRecord,
     ArtifactRecord,
     ArtifactRevision,
+    RunDirection,
     CandidateClaimsProposal,
     CoreRunEventBinding,
     EventEnvelope,
@@ -853,6 +854,12 @@ def _replay_gate_outcomes(
             stage_id=stage_id,
             artifact_id=target_artifact,
         )
+    _append_aspect_coverage_findings(
+        raw,
+        candidates=candidates,
+        screened=screened,
+        direction=binding.run_direction,
+    )
     _append_solar_market_data_findings(
         raw,
         snapshot=snapshot,
@@ -1031,6 +1038,67 @@ def _market_data_finding(
         "evidence_ref": evidence_ref,
         "metadata": metadata,
     }
+
+
+def _append_aspect_coverage_findings(
+    raw: object,
+    *,
+    candidates,
+    screened,
+    direction: RunDirection,
+) -> None:
+    """Aspect-balance diagnostic: a visible warning, never a blocker.
+
+    The aspect tag alone cannot prove the evidence belongs to the core
+    company, so an uncovered required aspect surfaces as a warning for
+    the Human and the auditor rather than a blocking gate.
+    """
+
+    required = [item for item in direction.required_claim_aspects if item]
+    if not required or not isinstance(raw, dict):
+        return
+    target = raw.get("coverage_omission")
+    if not isinstance(target, list) or not all(
+        isinstance(item, dict) for item in target
+    ):
+        return
+    from multi_agent_brief.core_run_v2.source_temporality import (
+        required_aspects_uncovered,
+    )
+
+    uncovered = required_aspects_uncovered(
+        candidates=list(candidates.candidates),
+        coverage_gap_aspects=[item.aspect for item in candidates.coverage_gaps],
+        decisions=list(screened.decisions),
+        direction=direction,
+    )
+    for aspect in uncovered:
+        target.append(
+            {
+                "finding_type": "aspect_coverage_gap",
+                "gate_id": "coverage_omission",
+                "category": "aspect_coverage",
+                "severity": "medium",
+                "blocking_level": "warning",
+                "repair_owner": "human",
+                "stage_id": None,
+                "artifact_id": None,
+                "claim_id": None,
+                "source_id": None,
+                "description": (
+                    f"Required claim aspect '{aspect}' has neither selected "
+                    "evidence nor a scout coverage gap. Aspect tags do not "
+                    "bind to the core company, so this is a visibility "
+                    "diagnostic, not proof of balance."
+                ),
+                "recommendation": (
+                    "Check whether core-company evidence for this aspect "
+                    "exists; add it to the next run's scout scope or record "
+                    "an explicit coverage gap."
+                ),
+                "metadata": {"aspect": aspect},
+            }
+        )
 
 
 def _latest_market_context(

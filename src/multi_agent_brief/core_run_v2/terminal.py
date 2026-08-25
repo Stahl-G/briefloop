@@ -1254,16 +1254,16 @@ class CoreRunTerminalService:
                 raise CoreRunError("finalize_input_invalid")
             artifacts = {item.artifact_id: item for item in verified.snapshot.artifacts}
             contracts = {str(item["artifact_id"]): item for item in verified.artifacts}
-            allowed_reader_inputs = {"reader_brief"}
+            # The reader input set is exact: markdown always, docx exactly
+            # when the frozen output formats request it.
+            expected_reader_inputs = {"reader_brief"}
             if (
                 "docx"
                 in verified.binding.run_direction.output_formats
                 and "reader_brief_docx" in contracts
             ):
-                allowed_reader_inputs.add("reader_brief_docx")
-            if not set(request.reader_scratch_inputs) <= allowed_reader_inputs or (
-                "reader_brief" not in request.reader_scratch_inputs
-            ):
+                expected_reader_inputs.add("reader_brief_docx")
+            if set(request.reader_scratch_inputs) != expected_reader_inputs:
                 raise CoreRunError("finalize_input_invalid")
             rows: list[tuple[ArtifactRecord, ArtifactRevision, bytes]] = []
             residue_fingerprints: list[dict[str, object]] = []

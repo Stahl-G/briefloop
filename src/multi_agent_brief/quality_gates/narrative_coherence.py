@@ -10,6 +10,7 @@ an explicit no-evidence gap is present next to it.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from multi_agent_brief.core.citations import parse_internal_citation_markers
@@ -33,6 +34,21 @@ _GAP_MARKERS = (
     "unverified",
     "gap",
 )
+_PROVENANCE_MARKERS = ("行情", "snapshot", "market data")
+_DECLINE_WORDS = (
+    "下跌",
+    "跌",
+    "下滑",
+    "回落",
+    "decline",
+    "fell",
+    "down",
+    "drop",
+    "slump",
+)
+_RISE_WORDS = ("上涨", "涨", "上升", "回升", "rise", "rose", "gain", "climb")
+_NUMBER_RE = re.compile(r"[+-]?[−-]?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?")
+_VALUE_TOLERANCE = 0.05
 
 
 def _finding(
@@ -65,11 +81,43 @@ def _finding(
     }
 
 
-def _body_mentions_value(body: str, value: float) -> bool:
-    for decimals in (2, 1):
-        token = f"{abs(value):.{decimals}f}"
-        if token in body:
-            return True
+def _move_is_stated(body: str, core_ticker: str, return_1w: float) -> bool:
+    """True only when the section states THIS ticker's move with direction.
+
+    Binds all four review requirements: the core ticker must be named, a
+    provenance marker must be present, the percentage must match within
+    tolerance, and the direction (decline/rise wording or a signed
+    token) must agree with the sign of the frozen return.  Another
+    company's same-magnitude move can never satisfy this.
+    """
+
+    if core_ticker.lower() not in body.lower():
+        return False
+    if not any(marker in body.lower() for marker in _PROVENANCE_MARKERS):
+        return False
+    negative = return_1w < 0
+    for match in _NUMBER_RE.finditer(body):
+        token = match.group(0).replace(",", "").replace("−", "-")
+        try:
+            number = float(token)
+        except ValueError:
+            continue
+        if abs(abs(number) - abs(return_1w)) > _VALUE_TOLERANCE:
+            continue
+        line_start = body.rfind("\n", 0, match.start()) + 1
+        line_end = body.find("\n", match.end())
+        line = body[line_start : len(body) if line_end == -1 else line_end].lower()
+        if negative:
+            if number < 0:
+                return True
+            if any(word in line for word in _DECLINE_WORDS):
+                return True
+        else:
+            if number > 0 and (
+                token.startswith("+")
+                or any(word in line for word in _RISE_WORDS)
+            ):
+                return True
     return False
 
 
@@ -116,20 +164,25 @@ def price_narrative_findings(
         return []
     sections = sections_from_markdown(markdown)
     reaction = section_matching(sections, _MARKET_REACTION_INTENT)
-    if reaction is None or not _body_mentions_value(reaction.body, return_1w):
+    if reaction is None or not _move_is_stated(
+        reaction.body, core_ticker, return_1w
+    ):
         return [
             _finding(
                 finding_type="price_narrative_divergence_unaddressed",
                 description=(
                     f"The core subject {core_ticker} moved "
                     f"{return_1w:+.2f}% over the frozen one-week window "
-                    f"(threshold ±{threshold:.0f}%) but the brief has no "
-                    "market-reaction section stating the move."
+                    f"(threshold ±{threshold:.0f}%) but no market-reaction "
+                    "section names that ticker's move with matching "
+                    "direction and snapshot provenance."
                 ),
                 recommendation=(
-                    "Add a market-reaction section that states the frozen "
-                    "one-week move and either cites a risk-type claim or "
-                    "explicitly discloses that no cause evidence was found."
+                    "Add a market-reaction section that states the core "
+                    "ticker's one-week move (direction and magnitude from "
+                    "the frozen snapshot) and either cites a risk-type "
+                    "claim or explicitly discloses that no cause evidence "
+                    "was found."
                 ),
                 core_ticker=core_ticker,
                 return_1w=return_1w,

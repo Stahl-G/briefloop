@@ -81,3 +81,22 @@ def test_convert_keeps_legacy_intermediate_layout_without_image_root(
     docx_path = tmp_path / "brief.docx"
     convert(markdown, docx_path, title="Brief", template="default")
     assert docx_path.read_bytes()[:2] == b"PK"
+
+
+def test_convert_is_byte_deterministic(tmp_path: Path) -> None:
+    import hashlib
+
+    (tmp_path / "charts").mkdir()
+    (tmp_path / "charts" / "trend.png").write_bytes(_png(tmp_path))
+    markdown = tmp_path / "brief.md"
+    markdown.write_text(
+        "# Brief\n\n![Trend](charts/trend.png)\n\nTOYO 周报正文。\n",
+        encoding="utf-8",
+    )
+    first = tmp_path / "one.docx"
+    second = tmp_path / "two.docx"
+    convert(markdown, first, title="Brief")
+    convert(markdown, second, title="Brief")
+    assert hashlib.sha256(first.read_bytes()).hexdigest() == hashlib.sha256(
+        second.read_bytes()
+    ).hexdigest()

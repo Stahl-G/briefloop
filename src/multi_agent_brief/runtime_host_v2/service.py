@@ -12,9 +12,12 @@ from pathlib import PurePosixPath
 import stat
 from threading import Lock
 import time
-from typing import Iterator, Literal
+from typing import TYPE_CHECKING, Iterator, Literal
 
 from pydantic import ValidationError
+
+if TYPE_CHECKING:
+    from multi_agent_brief.core.claim_ledger import ClaimLedger
 
 from multi_agent_brief.contracts.errors import (
     FieldViolation,

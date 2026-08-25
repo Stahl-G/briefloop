@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Pre-v0.16 architecture slice (not yet a released version): the
 reader-truth and evidence-balance package for Solar Stock Periodic.
+Fresh workspaces only: the frozen run contract changes and existing
+workspaces are not guaranteed to keep running.
 
 ### Added
 
@@ -26,12 +28,14 @@ reader-truth and evidence-balance package for Solar Stock Periodic.
   multiple when peer multiples exist.
 - Price-vs-narrative divergence gate: a core-subject one-week move beyond
   the frozen threshold (solar default 10%) must be stated in a
-  market-reaction section and backed by a risk-type claim or an explicit
-  no-evidence disclosure.
-- Scout aspect-bucket coverage: pack-frozen `required_claim_aspects`
+  market-reaction section — bound to the core ticker, direction, and
+  magnitude within tolerance, with snapshot provenance — and backed by a
+  risk-type claim or an explicit no-evidence disclosure.
+- Scout aspect-bucket diagnostics: pack-frozen `required_claim_aspects`
   (solar: earnings growth, cash flow/dilution, guidance risk, price
-  reaction) each need selected evidence or an explicit scout
-  `coverage_gaps` entry before screening commits.
+  reaction) surface an uncovered aspect as a non-blocking warning
+  finding; aspect tags do not bind to the core company, so this is a
+  visibility diagnostic rather than a proof of balance.
 - Chart placement contract: bound charts must sit inside their bound
   sections, manifest charts may not be silently omitted, and the subject
   price/volume chart carries deterministic event-day markers
@@ -39,8 +43,6 @@ reader-truth and evidence-balance package for Solar Stock Periodic.
 - Pre-submit content lint: analyst/editor invocation validation runs the
   same deterministic rule bodies read-only, surfacing violations before
   accept instead of consuming the single preauthorized gate-repair cycle.
-- Solar workspace titles follow the actual window span (over 14 days is
-  labeled Monthly instead of Weekly).
 
 ## [0.15.3] — 2026-08-14
 

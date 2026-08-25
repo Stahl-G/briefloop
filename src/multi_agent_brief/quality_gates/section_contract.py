@@ -90,6 +90,17 @@ _LIMITATION_ALIASES = (
     "局限性",
 )
 
+# Explicit "no known dated catalyst" disclosures lawful in the calendar
+# section itself; the disclosure must be unambiguous, not a vague date.
+_NO_DATED_CATALYST_MARKERS = (
+    "暂无已知日期",
+    "暂无已知催化",
+    "无已知日期",
+    "无已知催化",
+    "no known dated catalyst",
+    "no dated catalyst known",
+)
+
 
 @dataclass(frozen=True)
 class _Section:
@@ -245,20 +256,26 @@ def required_section_findings(
         if intent == "investment_view_calendar" and not _has_future_date(
             section.body, report_date
         ):
-            findings.append(
-                _finding(
-                    finding_type="catalyst_future_date_missing",
-                    description=(
-                        "The investment view / catalyst calendar section "
-                        "contains no date after the report date."
-                    ),
-                    recommendation=(
-                        "Include at least one dated upcoming catalyst, or "
-                        "disclose that no dated catalyst is known."
-                    ),
-                    intent=intent,
-                )
+            lowered = section.body.lower()
+            disclosed_no_dates = any(
+                marker in lowered for marker in _NO_DATED_CATALYST_MARKERS
             )
+            if not disclosed_no_dates:
+                findings.append(
+                    _finding(
+                        finding_type="catalyst_future_date_missing",
+                        description=(
+                            "The investment view / catalyst calendar section "
+                            "contains no date after the report date and no "
+                            "explicit no-known-dates disclosure."
+                        ),
+                        recommendation=(
+                            "Include at least one dated upcoming catalyst, or "
+                            "state explicitly that no dated catalyst is known."
+                        ),
+                        intent=intent,
+                    )
+                )
         if (
             intent == "earnings_valuation"
             and core_ticker

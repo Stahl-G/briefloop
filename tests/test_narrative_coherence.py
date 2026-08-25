@@ -129,3 +129,69 @@ def test_threshold_is_configurable() -> None:
     assert [f["finding_type"] for f in findings] == [
         "price_narrative_divergence_unaddressed"
     ]
+
+
+def test_other_company_same_magnitude_rise_cannot_satisfy_gate() -> None:
+    """Review counter-example: FSLR +14.95% must not cover TOYO -14.95%."""
+
+    brief = (
+        "# Brief\n\n## 摘要\n\n收入增长 [src:CL-0001]。\n\n"
+        "## 市场反应与分歧\n\nFSLR 本周上涨 14.95%（行情快照）。"
+        "管理层提示政策风险 [src:CL-0002]。\n"
+    )
+    findings = price_narrative_findings(
+        brief,
+        core_ticker="TOYO",
+        return_1w=-14.95,
+        ledger=_ledger("fact", "risk"),
+    )
+    assert [f["finding_type"] for f in findings] == [
+        "price_narrative_divergence_unaddressed"
+    ]
+
+
+def test_wrong_direction_or_missing_provenance_fails() -> None:
+    base = "## 市场反应与分歧\n\nTOYO {}（{}）。风险提示 [src:CL-0002]。\n"
+    wrong_direction = (
+        "# Brief\n\n## 摘要\n\n收入 [src:CL-0001]。\n\n"
+        + base.format("本周上涨 14.95%", "行情快照")
+    )
+    assert (
+        price_narrative_findings(
+            wrong_direction,
+            core_ticker="TOYO",
+            return_1w=-14.95,
+            ledger=_ledger("fact", "risk"),
+        )
+        != []
+    )
+    no_provenance = (
+        "# Brief\n\n## 摘要\n\n收入 [src:CL-0001]。\n\n"
+        + base.format("本周下跌 14.95%", "市场综述")
+    )
+    assert (
+        price_narrative_findings(
+            no_provenance,
+            core_ticker="TOYO",
+            return_1w=-14.95,
+            ledger=_ledger("fact", "risk"),
+        )
+        != []
+    )
+
+
+def test_signed_token_and_tolerance_variants_pass() -> None:
+    signed = (
+        "# Brief\n\n## 摘要\n\n收入 [src:CL-0001]。\n\n"
+        "## 市场反应与分歧\n\nTOYO 周度收益 -14.9%（行情快照）；"
+        "政策风险 [src:CL-0002]。\n"
+    )
+    assert (
+        price_narrative_findings(
+            signed,
+            core_ticker="TOYO",
+            return_1w=-14.95,
+            ledger=_ledger("fact", "risk"),
+        )
+        == []
+    )

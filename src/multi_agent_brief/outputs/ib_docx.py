@@ -1042,10 +1042,56 @@ def convert(
 
     _add_footer(doc, effective_footer, font)
 
+    # Frozen-artifact determinism: core properties carry wall-clock values
+    # and ZIP entries carry creation timestamps by default, so the same
+    # input would produce different bytes.  Pin both to fixed epochs.
+    try:
+        from datetime import datetime, timezone as _tz
+
+        fixed = datetime(1980, 1, 1, 0, 0, 0, tzinfo=_tz.utc)
+        core = doc.core_properties
+        core.created = fixed
+        core.modified = fixed
+        core.last_modified_by = "briefloop"
+        core.revision = 1
+    except Exception:
+        pass
+
     out = Path(docx_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(out))
+    _normalize_docx_zip_timestamps(out)
     return out
+
+
+# Minimum representable MS-DOS ZIP timestamp; also our determinism epoch.
+_DOCX_FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
+
+
+def _normalize_docx_zip_timestamps(path: Path) -> None:
+    """Rewrite the docx ZIP with fixed entry timestamps and order.
+
+    Same markdown in, byte-identical docx out; required because the docx
+    is a frozen Store reader artifact.
+    """
+
+    import io
+    import zipfile
+
+    with zipfile.ZipFile(path, "r") as archive:
+        members = [
+            (info, archive.read(info.filename))
+            for info in archive.infolist()
+        ]
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as normalized:
+        for info, payload in members:
+            entry = zipfile.ZipInfo(info.filename, date_time=_DOCX_FIXED_ZIP_TIME)
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            entry.external_attr = info.external_attr
+            entry.create_system = 0
+            normalized.writestr(entry, payload)
+    path.write_bytes(buffer.getvalue())
 
 
 def _setup_document_styles_with_template(doc, font_name: str, template_config) -> None:

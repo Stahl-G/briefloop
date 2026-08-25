@@ -19,10 +19,11 @@ This page explains the public architecture migration from older Python-pipeline 
   migration, dual-read, dual-write, compatibility mode, or fallback.
 - Reader-output contract (pre-v0.16 slice): the finalized reader brief carries
   `[S#]` citation labels plus a source appendix and a deterministic compliance
-  footer; `output/brief.docx` is a Store reader artifact whenever the frozen
-  `output_formats` include docx (needs the `docx` extra; a missing dependency
-  fails closed at finalize render). Existing finalized artifacts are immutable
-  and unaffected.
+  footer; `output/brief.docx` is a required Store reader artifact whenever
+  the frozen `output_formats` include docx (needs the `docx` extra; a missing
+  dependency fails closed at finalize render). The docx is byte-deterministic
+  (core properties and ZIP timestamps are normalized). Fresh workspaces
+  only after this slice.
 - `RunDirection` gained additive optional fields (`required_section_intents`,
   `required_claim_aspects`, `market_divergence_threshold_pct`); older Stores
   parse with empty defaults, and the new deterministic gates (section
