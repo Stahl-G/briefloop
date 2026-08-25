@@ -265,7 +265,7 @@ roles:
       profitability, cash_flow_dilution, guidance_risk, price_reaction,
       peer_events, policy, input_prices, other) when the frozen run
       direction lists required_claim_aspects. Balance is mandatory, not
-      optional: do not collect only favorable aspects. For every required
+      optional; do not collect only favorable aspects. For every required
       aspect with no usable evidence, add one coverage_gaps entry with the
       aspect and a reason instead of omitting it silently.
     - Runtime may split Scout discovery across source chunks or child agents when

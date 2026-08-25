@@ -1379,6 +1379,13 @@ def _create_report_pack_workspace(
         if span_days < 1 or span_days > 30:
             raise ValueError("solar report window must span 2 through 31 calendar days")
         explicit_window = (window_start, window_end)
+        # The title cadence word follows the actual window span so a
+        # multi-week window is not mislabeled as a weekly product.
+        if solar_stock_direction and span_days > 14:
+            current_title = str(spec.get("title") or "")
+            if current_title.endswith("Weekly"):
+                spec["title"] = current_title[: -len("Weekly")] + "Monthly"
+                title = spec["title"]
     if solar_stock_direction and custom_equity_watchlist:
         focus_areas = [
             " ".join(equity_universe.core_tickers),

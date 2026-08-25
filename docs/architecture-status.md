@@ -330,6 +330,43 @@ The roadmap mentions concepts that are not necessarily implemented yet. Treat th
 
 Features marked experimental, interface-only, or CLI-only should not be treated as stable user promises. Check the support matrix and CLI output before relying on them.
 
+### Reader-truth and balance package (pre-v0.16 slice, new runs only)
+
+Implemented and tested on the current line, but not yet part of a released
+version; existing initialized Stores keep their frozen contracts.
+
+- The v2 finalize render derives the reader brief with `[S#]` citation
+  labels, a real source appendix, output-relative chart paths, and a
+  deterministic compliance footer; a `reader_brief_docx` artifact
+  (`output/brief.docx`) is produced whenever the frozen
+  `RunDirection.output_formats` includes docx (requires the `docx` extra;
+  fail-closed).
+- `RunDirection.required_section_intents` freezes the pack's reader
+  skeleton; the auditor gate batch blocks a brief missing a required
+  section (heading-alias match or an explicit coverage-gap disclosure),
+  a catalyst calendar without a post-report-date entry, or an
+  earnings/valuation section that ignores the core ticker and frozen
+  multiples.
+- The price-vs-narrative divergence gate blocks a one-sided brief when
+  the core subject's frozen one-week return breaches
+  `RunDirection.market_divergence_threshold_pct` (solar default 10%):
+  the move must be stated in a market-reaction section and backed by a
+  risk-type claim or an explicit no-evidence disclosure.
+- `RunDirection.required_claim_aspects` freezes the scout's mandatory
+  aspect buckets (solar: earnings growth, cash flow/dilution, guidance
+  risk, price reaction); screening rejects an aspect with neither
+  selected evidence nor a scout `coverage_gaps` entry.
+- Chart placement is contractual: bound charts must sit inside their
+  bound sections, manifest charts may not be silently omitted, and the
+  subject chart carries deterministic event-day markers
+  (`market-chart-png-v2`).
+- Analyst/editor invocation validation runs a read-only content lint
+  sharing the auditor gate rule bodies, so deterministic violations
+  surface before accept instead of consuming the single preauthorized
+  gate-repair cycle.
+- Solar workspace titles follow the actual window span (over 14 days
+  labels the product Monthly instead of Weekly).
+
 ## Contributor Rule
 
 Roadmap direction is not proof of implementation. When implementing a roadmap item, first identify the current code path, the owning validator or test, and whether the capability is public, experimental, or internal planning only.

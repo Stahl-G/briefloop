@@ -5,6 +5,43 @@ All notable changes to the multi-agent-brief-workflow project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Pre-v0.16 architecture slice (not yet a released version): the
+reader-truth and evidence-balance package for Solar Stock Periodic.
+
+### Added
+
+- Finalize render now derives the reader brief with `[S#]` citation labels,
+  a real source appendix, output-relative chart paths, and a deterministic
+  compliance footer; chart images render correctly across markdown, docx,
+  and the static HTML view.
+- `output/brief.docx` became a Store reader artifact produced whenever the
+  frozen `output_formats` include docx (requires the `docx` extra; missing
+  dependency fails closed).
+- Deterministic reader-skeleton gate: pack-frozen
+  `required_section_intents` must map to sections (or explicit coverage-gap
+  disclosures); the catalyst calendar needs a post-report date; the
+  earnings/valuation section must reference the core ticker and a frozen
+  multiple when peer multiples exist.
+- Price-vs-narrative divergence gate: a core-subject one-week move beyond
+  the frozen threshold (solar default 10%) must be stated in a
+  market-reaction section and backed by a risk-type claim or an explicit
+  no-evidence disclosure.
+- Scout aspect-bucket coverage: pack-frozen `required_claim_aspects`
+  (solar: earnings growth, cash flow/dilution, guidance risk, price
+  reaction) each need selected evidence or an explicit scout
+  `coverage_gaps` entry before screening commits.
+- Chart placement contract: bound charts must sit inside their bound
+  sections, manifest charts may not be silently omitted, and the subject
+  price/volume chart carries deterministic event-day markers
+  (`market-chart-png-v2`).
+- Pre-submit content lint: analyst/editor invocation validation runs the
+  same deterministic rule bodies read-only, surfacing violations before
+  accept instead of consuming the single preauthorized gate-repair cycle.
+- Solar workspace titles follow the actual window span (over 14 days is
+  labeled Monthly instead of Weekly).
+
 ## [0.15.3] — 2026-08-14
 
 ### Added
