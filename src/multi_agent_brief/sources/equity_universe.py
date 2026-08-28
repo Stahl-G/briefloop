@@ -1,8 +1,9 @@
 """Configurable equity-periodic watchlist.
 
-Solar Stock Periodic keeps a packaged default universe. Delivery never treats
-that default as a quota: missing non-core names are coverage disclosures.
-Core subject tickers come from report_spec metadata when present.
+Solar Stock Periodic keeps a packaged peer universe.  The core issuer ticker
+is an explicit Human input (`--core-ticker`), never a packaged default:
+packaged presets carry no real-issuer identity.  Delivery never treats
+that watchlist as a quota: missing non-core names are coverage disclosures.
 """
 
 from __future__ import annotations
@@ -13,9 +14,7 @@ from typing import Any, Iterable, Mapping
 
 from multi_agent_brief.product.report_spec import ReportSpecLoadError, load_report_spec
 
-PACKAGED_SOLAR_CORE_TICKERS = ("TOYO",)
 PACKAGED_SOLAR_PRIMARY_TICKERS = (
-    "TOYO",
     "TE",
     "FSLR",
     "CSIQ",
@@ -44,6 +43,7 @@ class EquityPeriodicUniverse:
     core_tickers: tuple[str, ...]
     primary_tickers: tuple[str, ...]
     overseas_tickers: tuple[str, ...]
+    core_names: tuple[str, ...] = ()
     event_only_entities: tuple[str, ...] = ()
     benchmark_ticker: str | None = None
 
@@ -97,12 +97,14 @@ def universe_from_mapping(metadata: Mapping[str, Any]) -> EquityPeriodicUniverse
     overseas = _unique(metadata.get("overseas_tickers") or ())
     if not primary and not overseas:
         return None
-    core = _unique(metadata.get("core_tickers") or ()) or primary[:1]
+    core = _unique(metadata.get("core_tickers") or ())
+    core_names = _unique(metadata.get("core_names") or ())
     events = _unique(metadata.get("event_only_entities") or ())
     return EquityPeriodicUniverse(
         core_tickers=core,
         primary_tickers=primary,
         overseas_tickers=overseas,
+        core_names=core_names,
         event_only_entities=events,
         benchmark_ticker=_benchmark_from_mapping(
             metadata, primary=primary, overseas=overseas
@@ -111,7 +113,7 @@ def universe_from_mapping(metadata: Mapping[str, Any]) -> EquityPeriodicUniverse
 
 
 DEFAULT_SOLAR_EQUITY_UNIVERSE = EquityPeriodicUniverse(
-    core_tickers=PACKAGED_SOLAR_CORE_TICKERS,
+    core_tickers=(),
     primary_tickers=PACKAGED_SOLAR_PRIMARY_TICKERS,
     overseas_tickers=PACKAGED_SOLAR_OVERSEAS_TICKERS,
     event_only_entities=PACKAGED_SOLAR_EVENT_ONLY_ENTITIES,
@@ -120,13 +122,21 @@ DEFAULT_SOLAR_EQUITY_UNIVERSE = EquityPeriodicUniverse(
 
 
 def is_packaged_solar_universe(universe: EquityPeriodicUniverse) -> bool:
+    """True when every non-core name is exactly the packaged solar preset."""
+
+    non_core_primary = tuple(
+        ticker
+        for ticker in universe.primary_tickers
+        if ticker not in universe.core_tickers
+    )
     return (
-        universe.watchlist == DEFAULT_SOLAR_EQUITY_UNIVERSE.watchlist
+        non_core_primary == DEFAULT_SOLAR_EQUITY_UNIVERSE.primary_tickers
+        and universe.overseas_tickers == DEFAULT_SOLAR_EQUITY_UNIVERSE.overseas_tickers
         and universe.event_only_entities
         == DEFAULT_SOLAR_EQUITY_UNIVERSE.event_only_entities
     )
 
-SOLAR_STOCK_CORE_SECURITIES = DEFAULT_SOLAR_EQUITY_UNIVERSE.core_tickers
+
 SOLAR_STOCK_PRIMARY_SECURITIES = DEFAULT_SOLAR_EQUITY_UNIVERSE.primary_tickers
 SOLAR_STOCK_OVERSEAS_SECURITIES = DEFAULT_SOLAR_EQUITY_UNIVERSE.overseas_tickers
 SOLAR_STOCK_EVENT_ONLY_ENTITIES = DEFAULT_SOLAR_EQUITY_UNIVERSE.event_only_entities
@@ -176,9 +186,7 @@ def listed_company_search_tasks(
                 "backfill": {
                     "enabled": True,
                     "recency_days": 30,
-                    "query": (
-                        f"{name} {ticker} official filing investor relations"
-                    ),
+                    "query": (f"{name} {ticker} official filing investor relations"),
                     "domains": [],
                     "max_results": 20,
                     "search_depth": "advanced",
@@ -212,7 +220,9 @@ def listed_company_search_tasks(
     return sorted(tasks, key=lambda item: str(item["task_id"]))
 
 
-def infer_listing_group(ticker: str, universe: EquityPeriodicUniverse | None = None) -> str:
+def infer_listing_group(
+    ticker: str, universe: EquityPeriodicUniverse | None = None
+) -> str:
     if universe is not None:
         return universe.group_for(ticker)
     if ticker in DEFAULT_SOLAR_EQUITY_UNIVERSE.overseas_tickers:
@@ -226,7 +236,6 @@ __all__ = [
     "DEFAULT_SOLAR_EQUITY_UNIVERSE",
     "EquityPeriodicUniverse",
     "PACKAGED_SOLAR_BENCHMARK_TICKER",
-    "SOLAR_STOCK_CORE_SECURITIES",
     "SOLAR_STOCK_EVENT_ONLY_ENTITIES",
     "SOLAR_STOCK_OVERSEAS_SECURITIES",
     "SOLAR_STOCK_PRIMARY_SECURITIES",

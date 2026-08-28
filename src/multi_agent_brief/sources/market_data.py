@@ -22,7 +22,7 @@ Manual JSON format (``*.json``)::
       "as_of_date": "2026-08-07",          // optional per-row default
       "securities": [
         {
-          "ticker": "TOYO",
+          "ticker": "DEMO",
           "exchange": "NasdaqCM",
           "currency": "USD",
           "as_of": "2026-08-07",            // optional when as_of_date is set

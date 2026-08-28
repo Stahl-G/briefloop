@@ -126,13 +126,13 @@ def test_finance_and_internet_profiles_are_conservative_skeletons() -> None:
         assert "no_release_authority" in payload["metadata"]["non_claims"]
 
 
-def test_solar_manufacturing_profile_is_dogfood_contract_only() -> None:
+def test_solar_manufacturing_profile_is_pilot_contract_only() -> None:
     payload = _policy_profile("solar_manufacturing_default")
 
     assert PolicyProfileContract.validate(payload) == []
     assert payload["industry"] == "solar_manufacturing"
     assert payload["metadata"]["boundary"] == "experimental_policy_profile_only"
-    assert payload["metadata"]["maturity"] == "solar_dogfood_profile"
+    assert payload["metadata"]["maturity"] == "solar_pilot_profile"
     assert "no_industry_compliance_judgment" in payload["metadata"]["non_claims"]
     assert "no_tax_advice" in payload["metadata"]["non_claims"]
     assert "no_investment_advice" in payload["metadata"]["non_claims"]

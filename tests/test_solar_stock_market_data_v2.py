@@ -1,6 +1,8 @@
+from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from xml.sax.saxutils import escape, quoteattr
@@ -8,11 +10,29 @@ import zipfile
 
 import pytest
 
-from multi_agent_brief.contracts.v2 import MarketDataFieldValueV2, MarketDataSecurityV2, MarketDataSeriesPointV2, MarketDataSnapshotV2
+from multi_agent_brief.contracts.v2 import (
+    MarketDataCorporateActionV2,
+    MarketDataFieldValueV2,
+    MarketDataFxRateV2,
+    MarketDataSecurityV2,
+    MarketDataSeriesPointV2,
+    MarketDataSnapshotV2,
+)
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
 from multi_agent_brief.core_run_v2.gates import _append_solar_market_data_findings
+from multi_agent_brief.product.market_data_charts import render_market_chart_assets
+from multi_agent_brief.product.market_data_service import MarketDataRecordInputV2
 from multi_agent_brief.sources.market_data import MarketDataError
-from multi_agent_brief.sources.market_data_xlsx import parse_toyo_weekly_xlsx
+from multi_agent_brief.sources.market_data_v2 import (
+    MarketDataProviderOutcomeV2,
+    YahooMarketDataV2Adapter,
+    merge_manual_workbook_with_yahoo,
+)
+from multi_agent_brief.sources.equity_universe import (
+    SOLAR_STOCK_EVENT_ONLY_ENTITIES,
+    universe_from_mapping,
+)
+from multi_agent_brief.sources.market_data_xlsx import parse_solar_weekly_xlsx
 from multi_agent_brief.sources.solar_stock_plan import (
     SOLAR_STOCK_OVERSEAS_SECURITIES,
     SOLAR_STOCK_PRIMARY_SECURITIES,
@@ -21,7 +41,7 @@ from multi_agent_brief.sources.solar_stock_plan import (
 
 _WINDOW = "Report window 2026-08-03 ~ 2026-08-12"
 _TREND_LABELS = (
-    ("TOYO", "TOYO Solar"),
+    ("DEMO", "Demo Solar Co."),
     ("TE", "T1 Energy"),
     ("FSLR", "First Solar"),
     ("CSIQ", "阿特斯"),
@@ -37,6 +57,19 @@ _CURRENCIES = {
     "WAAREEENER.NS": "INR",
     "VIKRAMSOLR.NS": "INR",
 }
+
+
+def _fixture_universe():
+    return universe_from_mapping(
+        {
+            "core_tickers": ["DEMO"],
+            "core_names": ["Demo Solar Co."],
+            "primary_tickers": ["DEMO", *SOLAR_STOCK_PRIMARY_SECURITIES],
+            "overseas_tickers": list(SOLAR_STOCK_OVERSEAS_SECURITIES),
+            "event_only_entities": list(SOLAR_STOCK_EVENT_ONLY_ENTITIES),
+            "benchmark_ticker": "TAN",
+        }
+    )
 
 
 @dataclass(frozen=True)
@@ -197,7 +230,7 @@ def _make_public_safe_workbook(
     sheets = {
         "PR事件复盘": [event_headers, event_row],
         "Sources": [["source"], ["public-safe fixture"]],
-        "TOYO周明细": [
+        "DEMO周明细": [
             ["日期", "收盘", "成交量(股)"],
             ["2026-08-03", 10.0, 100_000],
             ["2026-08-12", 11.0, 120_000],
@@ -206,7 +239,7 @@ def _make_public_safe_workbook(
         "海外对标": _comparison_rows(
             SOLAR_STOCK_OVERSEAS_SECURITIES[:2] + SOLAR_STOCK_OVERSEAS_SECURITIES[3:]
         ),
-        "美股对标": _comparison_rows(SOLAR_STOCK_PRIMARY_SECURITIES),
+        "美股对标": _comparison_rows(("DEMO", *SOLAR_STOCK_PRIMARY_SECURITIES)),
         "走势数据": [trend_headers, trend_start, trend_end],
     }
     workbook_sheets: list[str] = []
@@ -323,7 +356,7 @@ def test_xlsx_parser_rejects_external_link_packages(tmp_path: Path) -> None:
         archive.writestr("xl/externalLinks/externalLink1.xml", b"<externalLink/>")
 
     with pytest.raises(MarketDataError) as excinfo:
-        parse_toyo_weekly_xlsx(path)
+        parse_solar_weekly_xlsx(path, universe=_fixture_universe())
     assert str(excinfo.value) == "market_data_xlsx_unsafe"
 
 
@@ -331,18 +364,18 @@ def test_formula_cache_never_overrides_product_recomputation(tmp_path: Path) -> 
     path = tmp_path / "stale-formula-cache.xlsx"
     _make_public_safe_workbook(
         path,
-        formula_cache_overrides={("TOYO", "现价(美元)"): 999.0},
+        formula_cache_overrides={("DEMO", "现价(美元)"): 999.0},
     )
 
-    parsed = parse_toyo_weekly_xlsx(path)
-    toyo = next(item for item in parsed.securities if item.ticker == "TOYO")
-    latest_usd = _field_value(toyo, "latest_close_usd")
+    parsed = parse_solar_weekly_xlsx(path, universe=_fixture_universe())
+    subject = next(item for item in parsed.securities if item.ticker == "DEMO")
+    latest_usd = _field_value(subject, "latest_close_usd")
 
     assert latest_usd.value_number == pytest.approx(11.0)
     assert latest_usd.data_origin == "derived"
     assert latest_usd.derivation == "converted"
     assert any(
-        item.ticker == "TOYO"
+        item.ticker == "DEMO"
         and item.field_id == "latest_close_usd"
         and item.category == "formula_recompute_mismatch"
         and item.severity == "blocking"
@@ -366,7 +399,9 @@ def _gate_bound_snapshot(
     exclude_tickers: tuple[str, ...] = (),
 ) -> MarketDataSnapshotV2:
     payload = deepcopy(MarketDataSnapshotV2.minimal_example)
-    universe = SOLAR_STOCK_PRIMARY_SECURITIES + SOLAR_STOCK_OVERSEAS_SECURITIES
+    universe = (
+        ("DEMO",) + SOLAR_STOCK_PRIMARY_SECURITIES + SOLAR_STOCK_OVERSEAS_SECURITIES
+    )
     base_security = payload["securities"][0]
     securities = []
     for ticker in sorted(universe):
@@ -376,7 +411,9 @@ def _gate_bound_snapshot(
         security["ticker"] = ticker
         security["display_name"] = ticker
         security["universe"] = (
-            "primary" if ticker in SOLAR_STOCK_PRIMARY_SECURITIES else "overseas"
+            "primary"
+            if ticker == "DEMO" or ticker in SOLAR_STOCK_PRIMARY_SECURITIES
+            else "overseas"
         )
         securities.append(security)
     payload.update(
@@ -393,7 +430,7 @@ def _gate_bound_snapshot(
                         "gap_id": "market-gap-display-only-event",
                         "severity": "warning",
                         "category": "event_source_url_missing",
-                        "ticker": "TOYO",
+                        "ticker": "DEMO",
                         "field_id": None,
                         "source_locator": "PR事件复盘!A2",
                         "reason_code": "event_source_url_missing",
@@ -436,7 +473,14 @@ def test_solar_market_data_gate_blocks_missing_snapshot() -> None:
 
 
 
-def test_solar_market_data_gate_blocks_missing_core_subject() -> None:
+def test_solar_market_data_gate_blocks_missing_core_subject(tmp_path: Path) -> None:
+    (tmp_path / "report_spec.yaml").write_text(
+        "metadata:\n"
+        "  core_tickers: [DEMO]\n"
+        "  primary_tickers: [DEMO, TE, FSLR, CSIQ, JKS, NXT, DQ]\n"
+        "  overseas_tickers: [009830.KS, WAAREEENER.NS, PREMIERENE.NS, VIKRAMSOLR.NS]\n",
+        encoding="utf-8",
+    )
     raw: dict[str, list[dict[str, object]]] = {"material_fact": []}
     binding = SimpleNamespace(
         run_direction=SimpleNamespace(
@@ -449,9 +493,10 @@ def test_solar_market_data_gate_blocks_missing_core_subject() -> None:
     _append_solar_market_data_findings(
         raw,
         snapshot=SimpleNamespace(
-            market_data_snapshots=(_gate_bound_snapshot(exclude_tickers=("TOYO",)),)
+            market_data_snapshots=(_gate_bound_snapshot(exclude_tickers=("DEMO",)),)
         ),
         binding=binding,
+        workspace=tmp_path,
     )
 
     assert [item["finding_type"] for item in raw["material_fact"]] == [
@@ -460,5 +505,5 @@ def test_solar_market_data_gate_blocks_missing_core_subject() -> None:
     ]
     blocking = raw["material_fact"][0]
     assert blocking["blocking_level"] == "blocking"
-    assert blocking["metadata"]["core_missing_tickers"] == ["TOYO"]
-    assert blocking["metadata"]["watchlist_missing_tickers"] == ["TOYO"]
+    assert blocking["metadata"]["core_missing_tickers"] == ["DEMO"]
+    assert blocking["metadata"]["watchlist_missing_tickers"] == ["DEMO"]

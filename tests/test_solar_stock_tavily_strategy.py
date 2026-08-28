@@ -8,6 +8,7 @@ from threading import Thread
 
 import pytest
 
+from multi_agent_brief.sources.equity_universe import universe_from_mapping
 from multi_agent_brief.contracts.v2 import (
     RuntimeWebSearchAcquisitionSpecV3,
     RuntimeWebSearchTaskSpecV3,
@@ -38,6 +39,29 @@ def _json_bytes(value: object) -> bytes:
     ).encode("utf-8")
 
 
+def _demo_universe():
+    return universe_from_mapping(
+        {
+            "core_tickers": ["DEMO"],
+            "primary_tickers": ["DEMO", "TE", "FSLR", "CSIQ", "JKS", "NXT", "DQ"],
+            "overseas_tickers": [
+                "009830.KS",
+                "WAAREEENER.NS",
+                "PREMIERENE.NS",
+                "VIKRAMSOLR.NS",
+            ],
+            "event_only_entities": [
+                "Qcells",
+                "Illuminate USA",
+                "ES Foundry",
+                "Suniva",
+                "Talon PV",
+            ],
+            "benchmark_ticker": "TAN",
+        }
+    )
+
+
 def _frozen_spec() -> RuntimeWebSearchAcquisitionSpecV3:
     tasks = [
         RuntimeWebSearchTaskSpecV3.model_validate(
@@ -47,7 +71,7 @@ def _frozen_spec() -> RuntimeWebSearchAcquisitionSpecV3:
             },
             strict=True,
         ).model_dump(mode="json", exclude_unset=False)
-        for item in solar_stock_search_tasks()
+        for item in solar_stock_search_tasks(_demo_universe())
     ]
     payload = {
         "schema_version": RuntimeWebSearchAcquisitionSpecV3.schema_id,
@@ -100,7 +124,7 @@ def test_solar_stock_executes_twenty_atomic_searches_and_extracts_over_one_hundr
 
     monkeypatch.setattr(TavilyBackend, "_post_json", staticmethod(post_json))
     response = TavilyBackend().multi_acquisition_response(
-        solar_stock_search_tasks(),
+        solar_stock_search_tasks(_demo_universe()),
         max_unique_urls=800,
         extract_batch_size=20,
     )

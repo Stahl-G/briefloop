@@ -3,7 +3,7 @@ template_id: solar_stock_periodic
 report_type: solar_stock_periodic
 display_name: Solar Stock Periodic Template
 status: experimental
-section_order: [cover, executive_summary, primary_equity_comparison, overseas_equity_comparison, event_price_timeline, earnings_valuation, policy_input_dashboard, capacity_asset_watch, sentiment_monitor, toyo_implications, source_appendix]
+section_order: [cover, executive_summary, primary_equity_comparison, overseas_equity_comparison, event_price_timeline, earnings_valuation, policy_input_dashboard, capacity_asset_watch, sentiment_monitor, core_implications, source_appendix]
 section_aliases:
   cover: [Cover, 封面]
   executive_summary: [Executive Summary, 执行摘要, 核心摘要]
@@ -14,12 +14,12 @@ section_aliases:
   policy_input_dashboard: [Policy and Input Dashboard, 政策与产业价格仪表盘]
   capacity_asset_watch: [Capacity and Asset Watch, 产能与资产动态]
   sentiment_monitor: [Sentiment Monitor, 舆情监测]
-  toyo_implications: [Implications for TOYO, 对 TOYO 的启示]
+  core_implications: [Core Company Implications, 核心标的启示]
   source_appendix: [Source Appendix, 来源附录]
 reader_contract:
-  required_blocks: [cover, executive_summary, primary_equity_comparison, overseas_equity_comparison, event_price_timeline, earnings_valuation, policy_input_dashboard, capacity_asset_watch, sentiment_monitor, toyo_implications, source_appendix]
+  required_blocks: [cover, executive_summary, primary_equity_comparison, overseas_equity_comparison, event_price_timeline, earnings_valuation, policy_input_dashboard, capacity_asset_watch, sentiment_monitor, core_implications, source_appendix]
   required_table_sections: [primary_equity_comparison, overseas_equity_comparison, policy_input_dashboard]
   max_executive_summary_words: 260
   source_appendix_position: last
   citation_profile: executive
-metadata: {product_layer: report_template_registry, boundary: section_order_contract_only, dogfood_use_case: solar_stock_periodic_report}
+metadata: {product_layer: report_template_registry, boundary: section_order_contract_only, use_case: solar_stock_periodic_report}

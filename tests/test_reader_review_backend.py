@@ -267,7 +267,7 @@ def _industry_reader_workspace(
     # Init Web's ordinary-user canonical value is ``zh``; the evaluator maps
     # it to its internal ``zh-CN`` language contract after admission.
     monkeypatch.setitem(direction, "output_language", "zh")
-    monkeypatch.setitem(direction, "subject_name", "Toyo solar")
+    monkeypatch.setitem(direction, "subject_name", "Demo Solar Co.")
     monkeypatch.setitem(direction, "industry_or_theme", "美国光伏市场")
     monkeypatch.setitem(direction, "brief_title", "美国光伏市场周报")
     monkeypatch.setitem(direction, "task_objective", "跟踪市场和投融资并购动向")
@@ -424,7 +424,7 @@ def test_industry_weekly_zh_reader_review_composes_and_projects_all_units(
     assert [item["text"] for item in requirements] == [
         "跟踪市场和投融资并购动向",
         "Board / executive",
-        "Toyo solar",
+        "Demo Solar Co.",
         "美国光伏市场",
         "美国光伏市场周报",
         "weekly",

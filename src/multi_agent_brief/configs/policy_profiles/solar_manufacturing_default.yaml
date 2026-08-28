@@ -55,7 +55,7 @@ gate_policy:
   target_relevance: standard
 metadata:
   boundary: experimental_policy_profile_only
-  maturity: solar_dogfood_profile
+  maturity: solar_pilot_profile
   non_claims:
     - no_industry_compliance_judgment
     - no_tax_advice

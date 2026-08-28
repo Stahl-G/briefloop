@@ -39,3 +39,13 @@ advice, investment advice, or semantic-proof claims.
 ## Investment Disclaimer
 
 This project is for workflow automation and research brief generation only. It does not provide investment advice, trading signals, or financial recommendations.
+
+## Packaged Defaults And Provenance
+
+Packaged presets carry no real-issuer identity and no internal work products:
+defaults are generic or synthetic, and the core issuer ticker is an explicit
+Human input at workspace creation. Users are responsible for the
+authorization of every input they configure. `scripts/check_public_safety.py`
+enforces this boundary with default banned identity terms over tracked files
+in CI and pre-push. The policy governs current and future revisions; it does
+not rewrite published history or already-released packages.

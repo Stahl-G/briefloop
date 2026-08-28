@@ -163,8 +163,17 @@ def register_new_workspace(subparsers: argparse._SubParsersAction) -> None:
         action="append",
         dest="core_tickers",
         help=(
-            "Must-have subject ticker. Repeatable. Solar Stock Periodic / "
-            "equity-periodic only; missing these names can block delivery."
+            "Required subject ticker for solar-stock-periodic / equity-periodic: "
+            "packaged defaults carry no issuer identity. Repeatable. Missing "
+            "core names can block delivery."
+        ),
+    )
+    parser.add_argument(
+        "--core-name",
+        dest="core_name",
+        help=(
+            "Display name for the core subject ticker. Solar Stock Periodic / "
+            "equity-periodic only; optional, feeds search queries and focus areas."
         ),
     )
     parser.add_argument(
@@ -1241,6 +1250,7 @@ def _apply_equity_universe_overrides(
         for item in (getattr(args, "core_tickers", None) or [])
         if str(item).strip()
     ]
+    core_name = str(getattr(args, "core_name", "") or "").strip()
     if primary:
         metadata["primary_tickers"] = list(dict.fromkeys(primary))
         if not overseas:
@@ -1251,6 +1261,15 @@ def _apply_equity_universe_overrides(
         metadata["overseas_tickers"] = list(dict.fromkeys(overseas))
     if core:
         metadata["core_tickers"] = list(dict.fromkeys(core))
+        if not primary:
+            packaged_peers = [
+                str(item).strip()
+                for item in (metadata.get("primary_tickers") or [])
+                if str(item).strip()
+            ]
+            metadata["primary_tickers"] = list(dict.fromkeys(core + packaged_peers))
+        if core_name:
+            metadata["core_names"] = [core_name]
     elif primary:
         metadata["core_tickers"] = [metadata["primary_tickers"][0]]
 
@@ -1267,7 +1286,9 @@ def _equity_universe_from_spec(spec: Mapping[str, Any]) -> EquityPeriodicUnivers
 def _maybe_rewrite_equity_search_tasks(
     workspace: Path, universe: EquityPeriodicUniverse
 ) -> None:
-    if is_packaged_solar_universe(universe):
+    if not universe.core_tickers and is_packaged_solar_universe(universe):
+        # The coreless packaged preset keeps its seeded sector tasks; every
+        # real workspace carries a Human-provided core subject task instead.
         return
     sources_path = workspace / "sources.yaml"
     if not sources_path.is_file():
@@ -1340,15 +1361,24 @@ def _create_report_pack_workspace(
     )
     solar_stock_direction = pack.report_type == "solar_stock_periodic"
     equity_universe = DEFAULT_SOLAR_EQUITY_UNIVERSE
-    custom_equity_watchlist = False
     if solar_stock_direction:
         _apply_equity_universe_overrides(spec, args)
-        equity_universe = _equity_universe_from_spec(spec)
-        custom_equity_watchlist = not is_packaged_solar_universe(equity_universe)
-        if custom_equity_watchlist and not args.title:
-            spec["title"] = (
-                f"{equity_universe.core_tickers[0]} Capital Markets Weekly"
+        spec_metadata = spec.get("metadata")
+        if not (
+            isinstance(spec_metadata, dict)
+            and [
+                str(item).strip()
+                for item in (spec_metadata.get("core_tickers") or [])
+                if str(item).strip()
+            ]
+        ):
+            raise ValueError(
+                "solar-stock-periodic requires an explicit --core-ticker: "
+                "packaged defaults carry no issuer identity"
             )
+        equity_universe = _equity_universe_from_spec(spec)
+        if not args.title:
+            spec["title"] = f"{equity_universe.core_tickers[0]} Capital Markets Weekly"
             title = spec["title"]
     elif any(
         getattr(args, name, None)
@@ -1379,21 +1409,14 @@ def _create_report_pack_workspace(
         if span_days < 1 or span_days > 30:
             raise ValueError("solar report window must span 2 through 31 calendar days")
         explicit_window = (window_start, window_end)
-    if solar_stock_direction and custom_equity_watchlist:
-        focus_areas = [
-            " ".join(equity_universe.core_tickers),
-            "listed equities",
-            "earnings and valuation",
-            "company events and price reaction",
-        ]
-        task_objective = (
-            "Prepare a capital-markets equity periodic snapshot with comparison "
-            "tables for the configured watchlist. Missing non-core names are "
-            "coverage disclosures, not delivery blockers."
+    if solar_stock_direction:
+        core_name = (
+            equity_universe.core_names[0]
+            if equity_universe.core_names
+            else " ".join(equity_universe.core_tickers)
         )
-    elif solar_stock_direction:
         focus_areas = [
-            "TOYO Solar",
+            core_name,
             "listed solar equities",
             "earnings and valuation",
             "orders financing M&A capacity and asset events",
@@ -1404,7 +1427,8 @@ def _create_report_pack_workspace(
         task_objective = (
             "Prepare a capital-markets Solar Stock Periodic report with two equity "
             "comparison tables, event-to-trading-day mapping, policy and input-price "
-            "tracking, sentiment separation, and explicit implications for TOYO."
+            "tracking, sentiment separation, and explicit implications for the core "
+            "company."
         )
     else:
         focus_areas = [pack.display_name, "source-backed claims", "reader-ready brief"]

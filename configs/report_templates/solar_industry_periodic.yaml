@@ -72,4 +72,4 @@ reader_contract:
 metadata:
   product_layer: report_template_registry
   boundary: section_order_contract_only
-  dogfood_use_case: solar_industry_periodic_report
+  use_case: solar_industry_periodic_report

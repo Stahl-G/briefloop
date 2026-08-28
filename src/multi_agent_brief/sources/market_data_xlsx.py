@@ -1,9 +1,12 @@
-"""Deterministic OOXML ingestion for the TOYO weekly market workbook.
+"""Deterministic OOXML ingestion for the packaged solar weekly market workbook.
 
 The parser is deliberately profile-bound.  It reads values and formulas from
 the workbook package, recomputes the product metrics from their input cells,
 and emits strict MarketDataSnapshotV2 child records.  Excel formula caches are
 never authoritative and embedded chart pixels never become claim evidence.
+The profile carries no issuer identity: the subject ticker comes from the
+workspace universe, the subject detail sheet is matched by its ``周明细``
+suffix, and the subject trend column is the first unrecognized label.
 """
 
 from __future__ import annotations
@@ -36,10 +39,9 @@ from multi_agent_brief.sources.market_data import MarketDataError
 from multi_agent_brief.sources.equity_universe import (
     DEFAULT_SOLAR_EQUITY_UNIVERSE,
     EquityPeriodicUniverse,
-    SOLAR_STOCK_PRIMARY_SECURITIES,
 )
 
-TOYO_WEEKLY_XLSX_PROFILE_ID = "toyo-weekly-v1"
+SOLAR_WEEKLY_XLSX_PROFILE_ID = "solar-weekly-v1"
 MARKET_DATA_DERIVATION_VERSION = "solar-market-data-v2"
 _XLSX_BYTE_CAP = 32 * 1024 * 1024
 _XLSX_ENTRY_CAP = 5_000
@@ -56,14 +58,13 @@ _WINDOW_RE = re.compile(
 _REQUIRED_SHEETS = (
     "PR事件复盘",
     "Sources",
-    "TOYO周明细",
     "估值与多空",
     "海外对标",
     "美股对标",
     "走势数据",
 )
+_SUBJECT_SHEET_SUFFIX = "周明细"
 _TREND_TICKERS = {
-    "TOYO Solar": "TOYO",
     "T1 Energy": "TE",
     "First Solar": "FSLR",
     "阿特斯": "CSIQ",
@@ -75,7 +76,6 @@ _TREND_TICKERS = {
     "Vikram Solar": "VIKRAMSOLR.NS",
 }
 _SECURITY_META = {
-    "TOYO": ("TOYO Solar", "NASDAQ", "USD", "primary"),
     "TE": ("T1 Energy", "NYSE", "USD", "primary"),
     "FSLR": ("First Solar", "NASDAQ", "USD", "primary"),
     "CSIQ": ("Canadian Solar", "NASDAQ", "USD", "primary"),
@@ -92,6 +92,17 @@ _SECURITY_META = {
 def _ticker_meta(
     ticker: str, universe: EquityPeriodicUniverse
 ) -> tuple[str, str, str, str]:
+    if (
+        universe.core_tickers
+        and ticker == universe.core_tickers[0]
+        and universe.core_names
+    ):
+        return (
+            universe.core_names[0],
+            "UNKNOWN",
+            "USD",
+            universe.group_for(ticker),
+        )
     if ticker in _SECURITY_META:
         return _SECURITY_META[ticker]
     if ticker.endswith(".KS"):
@@ -494,14 +505,40 @@ def _unavailable_field(
     )
 
 
+def _subject_trend_label(header: Mapping[str, int]) -> str | None:
+    """The subject column is the first header label the preset does not know."""
+
+    known = {"日期", "TAN(基准)", *_TREND_TICKERS}
+    for label, column in sorted(header.items(), key=lambda item: item[1]):
+        if label not in known:
+            return label
+    return None
+
+
+def _subject_detail_sheet(workbook: XlsxWorkbook) -> str | None:
+    """The unique sheet whose name ends with the subject-detail suffix."""
+
+    matches = sorted(
+        name for name in workbook.sheets if name.endswith(_SUBJECT_SHEET_SUFFIX)
+    )
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
 def _parse_trend_series(
     workbook: XlsxWorkbook,
     source_sha256: str,
+    subject_ticker: str,
 ) -> tuple[dict[str, list[MarketDataSeriesPointV2]], MarketDataBenchmarkV2 | None]:
     sheet = workbook.sheet("走势数据")
-    header_row, header = sheet.find_row(("日期", "TOYO Solar", "TAN(基准)"))
+    header_row, header = sheet.find_row(("日期", "TAN(基准)"))
+    trend_labels = dict(_TREND_TICKERS)
+    subject_label = _subject_trend_label(header)
+    if subject_label is not None:
+        trend_labels[subject_label] = subject_ticker
     series: dict[str, list[MarketDataSeriesPointV2]] = {
-        ticker: [] for ticker in _TREND_TICKERS.values()
+        ticker: [] for ticker in trend_labels.values()
     }
     benchmark_points: list[MarketDataSeriesPointV2] = []
     row = header_row + 1
@@ -509,7 +546,7 @@ def _parse_trend_series(
         current_date = _iso_date(sheet.value(row, header["日期"]))
         if current_date is None:
             break
-        for label, ticker in _TREND_TICKERS.items():
+        for label, ticker in trend_labels.items():
             column = header.get(label)
             close = None if column is None else _number(sheet.value(row, column))
             if close is None:
@@ -564,12 +601,13 @@ def _parse_trend_series(
     return series, benchmark
 
 
-def _parse_toyo_volume(
+def _parse_subject_volume(
     workbook: XlsxWorkbook,
     points: list[MarketDataSeriesPointV2],
     source_sha256: str,
+    subject_sheet: str,
 ) -> list[MarketDataSeriesPointV2]:
-    sheet = workbook.sheet("TOYO周明细")
+    sheet = workbook.sheet(subject_sheet)
     header_row, header = sheet.find_row(("日期", "收盘", "成交量(股)"))
     volumes: dict[str, int] = {}
     row = header_row + 1
@@ -586,7 +624,7 @@ def _parse_toyo_volume(
         locator = point.source_locator
         volume = volumes.get(point.date)
         if volume is not None:
-            locator = f"{locator};TOYO周明细:{point.date}"
+            locator = f"{locator};{subject_sheet}:{point.date}"
         result.append(
             MarketDataSeriesPointV2.model_validate(
                 {
@@ -607,8 +645,9 @@ def _parse_comparison_fields(
     source_sha256: str,
     as_of: str,
     formula_caches: dict[str, tuple[float, str]],
+    universe: EquityPeriodicUniverse,
 ) -> list[MarketDataFieldValueV2]:
-    sheet_name = "美股对标" if ticker in SOLAR_STOCK_PRIMARY_SECURITIES else "海外对标"
+    sheet_name = "美股对标" if universe.group_for(ticker) == "primary" else "海外对标"
     sheet = workbook.sheet(sheet_name)
     header_row, header = sheet.find_row(("代码", "区间涨跌幅%", "区间日均成交量(股)"))
     for row, _values in sheet.rows():
@@ -825,7 +864,7 @@ def _recomputed_fields(
         fields.append(
             _available_field(
                 field_id="latest_close_usd",
-                # ``toyo-weekly-v1`` presents converted prices at two
+                # ``solar-weekly-v1`` presents converted prices at two
                 # decimals.  Reproduce that product rule rather than an
                 # arbitrary binary-float precision or Excel cache.
                 value=round(last.close / rate, 2),
@@ -1056,6 +1095,7 @@ def _parse_events(
     workbook: XlsxWorkbook,
     source_sha256: str,
     gaps: list[MarketDataGapV2],
+    subject_ticker: str,
 ) -> list[MarketDataEventReactionV2]:
     sheet = workbook.sheet("PR事件复盘")
     header_row, header = sheet.find_row(("事件", "发布日期", "超额收益%"))
@@ -1067,7 +1107,7 @@ def _parse_events(
         if not isinstance(title, str) or not title.strip() or published_at is None:
             break
         payload = {
-            "ticker": "TOYO",
+            "ticker": subject_ticker,
             "title": title.strip(),
             "published_at": published_at,
         }
@@ -1084,7 +1124,7 @@ def _parse_events(
             MarketDataEventReactionV2.model_validate(
                 {
                     "event_id": event_id,
-                    "ticker": "TOYO",
+                    "ticker": subject_ticker,
                     "title": title.strip(),
                     "published_at": published_at,
                     "publication_timing": "pre_market"
@@ -1129,7 +1169,7 @@ def _parse_events(
                         "gap_id": _stable_id("market-gap", {**payload, "kind": "url"}),
                         "severity": "warning",
                         "category": "event_source_url_missing",
-                        "ticker": "TOYO",
+                        "ticker": subject_ticker,
                         "field_id": None,
                         "source_locator": locator,
                         "reason_code": "event_original_url_missing",
@@ -1141,7 +1181,7 @@ def _parse_events(
     return sorted(result, key=lambda item: item.event_id)
 
 
-def parse_toyo_weekly_xlsx(
+def parse_solar_weekly_xlsx(
     path: str | Path,
     *,
     universe: EquityPeriodicUniverse | None = None,
@@ -1149,9 +1189,15 @@ def parse_toyo_weekly_xlsx(
     """Parse one workbook into validated snapshot children without Store writes."""
 
     watchlist = universe or DEFAULT_SOLAR_EQUITY_UNIVERSE
+    if not watchlist.core_tickers:
+        raise MarketDataError("market_data_xlsx_core_ticker_required")
+    subject_ticker = watchlist.core_tickers[0]
     source_path = Path(path).expanduser().resolve()
     workbook, payload = _read_ooxml(source_path)
-    if any(name not in workbook.sheets for name in _REQUIRED_SHEETS):
+    subject_sheet = _subject_detail_sheet(workbook)
+    if subject_sheet is None or any(
+        name not in workbook.sheets for name in _REQUIRED_SHEETS
+    ):
         raise MarketDataError("market_data_xlsx_profile_invalid")
     source_sha256 = hashlib.sha256(payload).hexdigest()
     report_start, report_end = _report_window(workbook.sheet("美股对标"))
@@ -1163,18 +1209,21 @@ def parse_toyo_weekly_xlsx(
             "source_name": source_path.name,
             "content_sha256": source_sha256,
             "content_size_bytes": len(payload),
-            "profile_id": TOYO_WEEKLY_XLSX_PROFILE_ID,
-            "parsed_sheet_names": sorted(_REQUIRED_SHEETS),
+            "profile_id": SOLAR_WEEKLY_XLSX_PROFILE_ID,
+            "parsed_sheet_names": sorted({*_REQUIRED_SHEETS, subject_sheet}),
             "contains_macros": False,
             "contains_external_links": False,
         },
         strict=True,
     )
-    series_by_ticker, benchmark = _parse_trend_series(workbook, source_sha256)
-    series_by_ticker["TOYO"] = _parse_toyo_volume(
+    series_by_ticker, benchmark = _parse_trend_series(
+        workbook, source_sha256, subject_ticker
+    )
+    series_by_ticker[subject_ticker] = _parse_subject_volume(
         workbook,
-        series_by_ticker.get("TOYO", []),
+        series_by_ticker.get(subject_ticker, []),
         source_sha256,
+        subject_sheet,
     )
     fx_rates = _parse_fx_rates(workbook, source_sha256, report_end)
     fx_by_currency = {item.base_currency: item for item in fx_rates}
@@ -1229,6 +1278,7 @@ def parse_toyo_weekly_xlsx(
                     source_sha256,
                     report_end,
                     formula_caches,
+                    watchlist,
                 ),
                 _recomputed_fields(
                     ticker,
@@ -1268,14 +1318,14 @@ def parse_toyo_weekly_xlsx(
                 strict=True,
             )
         )
-    events = _parse_events(workbook, source_sha256, gaps)
+    events = _parse_events(workbook, source_sha256, gaps, subject_ticker)
     gaps.append(
         MarketDataGapV2.model_validate(
             {
                 "gap_id": _stable_id("market-gap", {"kind": "legacy-image-3"}),
                 "severity": "warning",
                 "category": "display_only_chart_underlying_series_missing",
-                "ticker": "TOYO",
+                "ticker": subject_ticker,
                 "field_id": "one_month_price_volume_chart",
                 "source_locator": "embedded:image3.png",
                 "reason_code": "display_only_underlying_series_missing",
@@ -1320,8 +1370,8 @@ def parsed_workbook_debug_summary(parsed: ParsedMarketDataWorkbook) -> str:
 
 __all__ = [
     "MARKET_DATA_DERIVATION_VERSION",
-    "TOYO_WEEKLY_XLSX_PROFILE_ID",
+    "SOLAR_WEEKLY_XLSX_PROFILE_ID",
     "ParsedMarketDataWorkbook",
-    "parse_toyo_weekly_xlsx",
+    "parse_solar_weekly_xlsx",
     "parsed_workbook_debug_summary",
 ]

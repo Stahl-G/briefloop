@@ -21,7 +21,7 @@ schema-19 ReportPack，不是稳定产品基线。
 |---|---|---|---|
 | 工作区 onboarding | 收集简报目标、读者、节奏、来源模式和输出偏好，再创建 workspace | 默认在场 | `briefloop onboard`, `briefloop init --from-onboarding` |
 | 产品工作区骨架 | 从受支持的 baseline ReportPack 创建 conservative local-first workspace 和 `report_spec.yaml` | 受支持基线 | `briefloop new industry-weekly <workspace>`, `briefloop new management-monthly <workspace>`, `briefloop new document-review <workspace>` |
-| Solar Stock Periodic 工作区 | 创建 fresh schema-19 的实验性资本市场周报契约和 20 条 Tavily 发现计划 | 实验性 | `briefloop new solar-stock-periodic <workspace>`；JSON/CSV 或 profile-bound TOYO XLSX 可提供单独冻结的行情快照 |
+| Solar Stock Periodic 工作区 | 创建 fresh schema-19 的实验性资本市场周报契约和 20 条 Tavily 发现计划 | 实验性 | `briefloop new solar-stock-periodic <workspace> --core-ticker <TICKER>`（核心标的为必填 Human 输入）；JSON/CSV 或 profile-bound 太阳能周报 XLSX 可提供单独冻结的行情快照 |
 | Runtime handoff | 引导 SQLite ControlStore 并返回 Store 推导的下一动作 | 默认在场 | `briefloop run --workspace <workspace> --runtime codex`, `briefloop runtime next` |
 | 同 workspace 正常 successor | 从已 finalized 的当前 head 启动新 run；只有显式 opt-in 时才原子冻结兼容、active-approved 的 Human guidance | v0.15.3 实验性 | `briefloop runtime successor-start --workspace <workspace> --direction-json <json> --run-id <id> --include-approved-guidance`；仅 Analyst/Editor，效用 NOT MEASURED |
 | 状态查看 | 查看 Store 推导的 stage、动作、package readiness 和交付状态 | 默认在场 | `briefloop status --workspace <workspace> --json` |
@@ -36,7 +36,7 @@ schema-19 ReportPack，不是稳定产品基线。
 | Runtime web search | 让当前 agent runtime 用自己的搜索工具找来源 | 可选启用 | 不需要 BriefLoop API key |
 | 外部搜索 API | 使用 Tavily、Exa、Brave、Firecrawl、Serper 等搜索后端 | 可选启用 | 需要 API key |
 | Solar Stock Periodic 多任务 Tavily 路径 | 执行冻结的上市公司/事件主体/主题 20 任务计划；每条最多 20 个结果，分批 Extract，覆盖不足时定向补搜一次 | 实验性 | Search 摘要不是证据；实时有效性与覆盖率 NOT MEASURED |
-| Solar Stock Periodic 结构化行情 | 冻结 manual-first JSON/CSV/XLSX 或 Yahoo 补缺的价格、汇率、估值、事件、缺口和冲突，并投影两张表与七张确定性图 | 实验性 | 先用 `new ... --report-window-start <date> --report-window-end <date>` 冻结 Excel 周期，再运行 `briefloop market-data ingest --file <weekly.xlsx> --profile toyo-weekly-v1`；产品公式会重算，Excel 内嵌图表仅展示，市场同涨跌不是因果证据 |
+| Solar Stock Periodic 结构化行情 | 冻结 manual-first JSON/CSV/XLSX 或 Yahoo 补缺的价格、汇率、估值、事件、缺口和冲突，并投影两张表与七张确定性图 | 实验性 | 先用 `new ... --report-window-start <date> --report-window-end <date>` 冻结 Excel 周期，再运行 `briefloop market-data ingest --file <weekly.xlsx> --profile solar-weekly-v1`；产品公式会重算，Excel 内嵌图表仅展示，市场同涨跌不是因果证据 |
 | RSS / 新闻源 | 跟踪配置好的 RSS 和新闻 API | 可选启用 | 适合周度监控 |
 | SEC / filing 工具 | 拉取 filing，并解析 ticker / XBRL 来源 | 可选启用 | 适合公司跟踪和 IR 场景 |
 | 飞书 / Lark 来源集成 | 通过本地工具拉取配置好的飞书材料 | 可选启用 | 需要本地集成配置 |

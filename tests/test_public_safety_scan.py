@@ -1,5 +1,7 @@
+from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
@@ -15,6 +17,36 @@ def _load_module():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+
+
+def test_public_safety_default_terms_ban_identity_tokens_case_insensitively(tmp_path):
+    module = _load_module()
+    token = "TO" + "YO"
+    assert module.DEFAULT_BANNED_TERMS == (token.lower(),)
+
+    sample = tmp_path / "issuer.md"
+    sample.write_text(
+        "\n".join(
+            [
+                f"{token} close 4.38",
+                f"{token.title()} weekly workbook",
+                f"{token.lower()}-weekly-v1 profile",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    findings = module.scan([sample])
+
+    assert [finding.kind for finding in findings] == ["banned_term"] * 3
+    assert [finding.sample for finding in findings] == [
+        f"{token} close 4.38",
+        f"{token.title()} weekly workbook",
+        f"{token.lower()}-weekly-v1 profile",
+    ]
 
 
 
@@ -53,7 +85,9 @@ def test_public_safety_scan_catches_lark_recipient_and_file_token_prefixes(tmp_p
 
 
 
-def test_public_safety_scan_does_not_flag_common_words_starting_with_token_prefixes(tmp_path):
+def test_public_safety_scan_does_not_flag_common_words_starting_with_token_prefixes(
+    tmp_path,
+):
     module = _load_module()
     sample = tmp_path / "public_docs.md"
     sample.write_text(

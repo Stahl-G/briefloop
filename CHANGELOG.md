@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Removed every issuer identity from packaged defaults: the solar watchlist
+  now ships global peers only and `briefloop new solar-stock-periodic`
+  requires an explicit `--core-ticker` (optional `--core-name`), so the
+  subject search task is derived from Human input instead of a packaged
+  constant. The issuer-named implications section intent is now
+  `core_implications`.
+- Renamed the issuer-named workbook profile to `solar-weekly-v1`. The
+  parser matches the subject detail sheet by its `周明细` suffix and resolves
+  the subject trend column without any issuer name. Fresh workspaces only.
+- `scripts/check_public_safety.py` now enforces case-insensitive default
+  banned identity terms over tracked files (CI and pre-push), so packaged
+  defaults cannot regain a real-issuer identity.
+
 ### Added
 
 - Added an experimental CLI surface gate: the `experiments`, `eval`, `new`,
@@ -27,7 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   next entry).
 - Added the regenerated 80-case packaged detection corpus (deterministic generator, construction-time oracle) and the real codex auditor rollout path: `briefloop eval run` drives concurrent per-case rollouts with retry and appends reward-ledger records pinned to corpus, `agent_roles.yaml`, and reporting-contract digests. First measured baseline (2026-09-03): recall 1.000 in all three val runs, mean reward 0.931, spread 0.063; the fail-closed reward gate stays unrationalized while spread exceeds the 2.5-point threshold, and the defect-detection claim in `docs/claims.md` is now MEASURED with numbers.
 
-
 ## [0.15.3] — 2026-08-14
 
 ### Added
@@ -35,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added fresh-only schema 19 and strict `market_data_snapshot.v2` for Solar
   Stock Periodic, including workbook identity, adjusted-close history,
   corporate actions, FX, valuation fields, event reactions, gaps, and conflicts.
-- Added profile-bound ingestion for the TOYO weekly XLSX layout. Offline
+- Added profile-bound ingestion for the solar weekly XLSX layout. Offline
   `ingest` keeps verified workbook cells authoritative; workbook-aware `fetch`
   uses Yahoo only to fill missing securities, history, FX, and fields.
 - Added paired Solar workspace `--report-window-start/--report-window-end`
@@ -95,9 +109,9 @@ investment outcomes, or live provider reliability.
   URLs are Batch Extracted in groups of 20; an under-covered task can receive
   one deterministic 30-day targeted backfill; the safety envelope is 800
   unique URLs.
-- Added ReportPack, template, and policy-profile metadata for TOYO/global solar
+- Added ReportPack, template, and policy-profile metadata for global-solar
   capital-markets weeklies, including required sections for equity comparison,
-  events, policy/input signals, capacity/assets, sentiment, and TOYO
+  events, policy/input signals, capacity/assets, sentiment, and core-company
   implications.
 
 ### Changed

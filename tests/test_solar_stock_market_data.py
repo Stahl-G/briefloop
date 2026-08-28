@@ -1,3 +1,4 @@
+from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -9,7 +10,15 @@ import pytest
 
 from multi_agent_brief.cli.init_wizard import create_demo_workspace
 from multi_agent_brief.cli.main import main as cli_main
-from multi_agent_brief.contracts.v2 import CoreRunInitializeRequest, IntegrityCheckRequest, Invocation, InvocationStartRequest, MarketDataSnapshotV1
+from multi_agent_brief.contracts.v2 import (
+    CoreRunInitializeRequest,
+    IntegrityCheckRequest,
+    Invocation,
+    InvocationStartRequest,
+    MarketDataSecurityGapV1,
+    MarketDataSecurityV1,
+    MarketDataSnapshotV1,
+)
 from multi_agent_brief.control_store import SQLiteControlStore
 from multi_agent_brief.control_store.serialization import (
     canonical_fingerprint,
@@ -17,12 +26,25 @@ from multi_agent_brief.control_store.serialization import (
 )
 from multi_agent_brief.core_run_v2 import CoreRunService
 from multi_agent_brief.core_run_v2.integrity import read_workspace_file
-from multi_agent_brief.product.market_data_service import MARKET_DATA_TABLES_PATH, MarketDataService
-from multi_agent_brief.sources.market_data import YahooMarketDataAdapter
+from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
+from multi_agent_brief.sources.equity_universe import load_equity_universe
+from multi_agent_brief.product.market_data_service import (
+    MARKET_DATA_TABLES_PATH,
+    MarketDataService,
+    render_market_data_tables,
+)
+from multi_agent_brief.sources.market_data import (
+    MarketDataError,
+    MarketDataFetchOutcome,
+    YahooMarketDataAdapter,
+    load_manual_market_data_file,
+    merge_manual_first,
+)
 from multi_agent_brief.sources.solar_stock_plan import (
     SOLAR_STOCK_OVERSEAS_SECURITIES,
     SOLAR_STOCK_PRIMARY_SECURITIES,
 )
+from pydantic import ValidationError
 
 
 RUN_ID = "RUN-MARKET-DATA-001"
@@ -35,7 +57,7 @@ _WEEK_END = int(datetime(2026, 8, 10, tzinfo=timezone.utc).timestamp())
 
 def _security_payload(**overrides) -> dict[str, object]:
     payload: dict[str, object] = {
-        "ticker": "TOYO",
+        "ticker": "DEMO",
         "exchange": "NasdaqCM",
         "currency": "USD",
         "as_of": "2026-08-10",
@@ -407,7 +429,7 @@ def test_cli_ingest_records_and_projects(tmp_path: Path, capsys) -> None:
     manual.write_text(
         "ticker,exchange,currency,as_of,week_open,week_high,week_low,"
         "week_close,week_volume,weekly_change_pct,market_cap,trailing_pe\n"
-        "TOYO,NasdaqCM,USD,2026-08-10,,,,10.62,,,,\n",
+        "DEMO,NasdaqCM,USD,2026-08-10,,,,10.62,,,,\n",
         encoding="utf-8",
     )
     status = cli_main(
@@ -431,7 +453,7 @@ def test_cli_ingest_records_and_projects(tmp_path: Path, capsys) -> None:
     conflict.write_text(
         "ticker,exchange,currency,as_of,week_open,week_high,week_low,"
         "week_close,week_volume,weekly_change_pct,market_cap,trailing_pe\n"
-        "TOYO,NasdaqCM,USD,2026-08-10,,,,11.01,,,,\n",
+        "DEMO,NasdaqCM,USD,2026-08-10,,,,11.01,,,,\n",
         encoding="utf-8",
     )
     status = cli_main(
@@ -455,6 +477,18 @@ def test_cli_fetch_merges_manual_first_and_never_fabricates(
 ) -> None:
     workspace = tmp_path / "workspace"
     _bootstrap_workspace(workspace)
+    (workspace / "report_spec.yaml").write_text(
+        "\n".join(
+            [
+                "metadata:",
+                "  core_tickers: [DEMO]",
+                "  primary_tickers: [DEMO, TE, FSLR, CSIQ, JKS, NXT, DQ]",
+                "  overseas_tickers: [009830.KS, WAAREEENER.NS, PREMIERENE.NS, VIKRAMSOLR.NS]",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
     input_dir = workspace / "input" / "market_data"
     input_dir.mkdir(parents=True)
     (input_dir / "manual.json").write_text(
@@ -476,7 +510,7 @@ def test_cli_fetch_merges_manual_first_and_never_fabricates(
 
     bodies = {
         symbol: (200, _yahoo_chart_body())
-        for symbol in SOLAR_STOCK_PRIMARY_SECURITIES
+        for symbol in ("DEMO", *SOLAR_STOCK_PRIMARY_SECURITIES)
         if symbol != "DQ"
     }
     monkeypatch.setattr("urllib.request.urlopen", _mock_urlopen(bodies))
@@ -502,7 +536,7 @@ def test_cli_fetch_merges_manual_first_and_never_fabricates(
     )
     assert by_ticker["DQ"].price_series[0].data_origin == "manual_json"
     assert dq_close.value_number == 2.34
-    assert by_ticker["TOYO"].price_series[0].data_origin == "yahoo_chart_api"
+    assert by_ticker["DEMO"].price_series[0].data_origin == "yahoo_chart_api"
     assert {gap.ticker for gap in record.gaps} == set(SOLAR_STOCK_OVERSEAS_SECURITIES)
 
 

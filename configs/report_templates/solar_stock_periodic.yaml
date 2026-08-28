@@ -13,7 +13,7 @@ section_order:
   - policy_input_dashboard
   - capacity_asset_watch
   - sentiment_monitor
-  - toyo_implications
+  - core_implications
   - source_appendix
 section_aliases:
   cover: [Cover, 封面]
@@ -25,7 +25,7 @@ section_aliases:
   policy_input_dashboard: [Policy and Input Dashboard, 政策与产业价格仪表盘]
   capacity_asset_watch: [Capacity and Asset Watch, 产能与资产动态]
   sentiment_monitor: [Sentiment Monitor, 舆情监测]
-  toyo_implications: [Implications for TOYO, 对 TOYO 的启示]
+  core_implications: [Core Company Implications, 核心标的启示]
   source_appendix: [Source Appendix, 来源附录]
 reader_contract:
   required_blocks:
@@ -38,7 +38,7 @@ reader_contract:
     - policy_input_dashboard
     - capacity_asset_watch
     - sentiment_monitor
-    - toyo_implications
+    - core_implications
     - source_appendix
   required_table_sections:
     - primary_equity_comparison
@@ -50,4 +50,4 @@ reader_contract:
 metadata:
   product_layer: report_template_registry
   boundary: section_order_contract_only
-  dogfood_use_case: solar_stock_periodic_report
+  use_case: solar_stock_periodic_report

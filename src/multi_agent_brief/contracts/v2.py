@@ -1065,7 +1065,7 @@ class MarketDataWorkbookIdentityV2(StrictModel):
     source_name: CleanText
     content_sha256: Sha256
     content_size_bytes: NonNegativeInt
-    profile_id: Literal["toyo-weekly-v1"]
+    profile_id: Literal["solar-weekly-v1"]
     parsed_sheet_names: list[CleanText] = Field(min_length=7, max_length=16)
     contains_macros: Literal[False]
     contains_external_links: Literal[False]
@@ -7648,7 +7648,7 @@ RuntimeSourceSearchPlanV2.minimal_example = deepcopy(_RUNTIME_SOURCE_SEARCH_PLAN
 RuntimeSourceSearchPlanV2.full_example = deepcopy(_RUNTIME_SOURCE_SEARCH_PLAN_V2)
 
 _MARKET_DATA_SECURITY_V1 = {
-    "ticker": "TOYO",
+    "ticker": "DEMO",
     "exchange": "NasdaqCM",
     "currency": "USD",
     "as_of": "2026-08-07",
@@ -7695,18 +7695,18 @@ _MARKET_DATA_SNAPSHOT_V2 = {
     "report_window_start": "2026-08-03",
     "report_window_end": "2026-08-07",
     "as_of_date": "2026-08-07",
-    "universe_tickers": ["TOYO"],
+    "universe_tickers": ["DEMO"],
     "security_count": 1,
     "provider_ids": ["manual_xlsx"],
     "workbook": {
         "source_name": "public-safe-market-data.xlsx",
         "content_sha256": _SHA_A,
         "content_size_bytes": 1024,
-        "profile_id": "toyo-weekly-v1",
+        "profile_id": "solar-weekly-v1",
         "parsed_sheet_names": [
+            "DEMO周明细",
             "PR事件复盘",
             "Sources",
-            "TOYO周明细",
             "估值与多空",
             "海外对标",
             "美股对标",
@@ -7717,8 +7717,8 @@ _MARKET_DATA_SNAPSHOT_V2 = {
     },
     "securities": [
         {
-            "ticker": "TOYO",
-            "display_name": "Example Solar",
+            "ticker": "DEMO",
+            "display_name": "Demo Solar Co.",
             "universe": "primary",
             "exchange": "NASDAQ",
             "currency": "USD",

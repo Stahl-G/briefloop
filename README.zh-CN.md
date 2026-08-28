@@ -349,7 +349,7 @@ demo 用的是合成材料，主要用来展示证据链和门禁行为。真实
 
 v0.15.3 交付 Solar Stock Periodic 行情数据面：fresh-only schema 19 与严格
 `market_data_snapshot.v2`（工作簿身份、复权收盘历史、公司行动、FX、估值字段、
-事件反应、缺口与冲突）；TOYO 周报 XLSX 的 profile-bound 采集；成对的
+事件反应、缺口与冲突）；太阳能周报 XLSX 的 profile-bound 采集；成对的
 `--report-window-start/--report-window-end` 选项；Store-bound 对比表、事件时间线、
 七张确定性 PNG 图、JSON 读模型、hash-bound 图清单，以及本地 HTML 报告的第五个
 Market Data Tab。Solar 行情 Gate 会阻断缺失序列、窗口错配、阻断性工作簿缺口与
@@ -399,8 +399,8 @@ guidance 不提供 evidence，不改变 Claim Ledger、Gate、finalize、deliver
   `briefloop market-data
   fetch|ingest|project` 每个 run、每个 as-of 日期只冻结一份 append-only
   周度行情快照。除 JSON/CSV 外，可用
-  `ingest --file <weekly.xlsx> --profile toyo-weekly-v1` 离线读取 TOYO 周报
-  Excel；也可用 `fetch --workbook <weekly.xlsx> --profile toyo-weekly-v1`
+  `ingest --file <weekly.xlsx> --profile solar-weekly-v1` 离线读取太阳能周报
+  Excel；也可用 `fetch --workbook <weekly.xlsx> --profile solar-weekly-v1`
   让经验证的 Excel 单元格优先、Yahoo 只补缺失证券、复权历史、汇率或字段。
   投影包含两张股票表、事件时间线、七张确定性 PNG 图、JSON read model 与哈希绑定
   manifest，并显示在本地 HTML 的第五个 Market Data Tab。必需证券缺失和冲突保持

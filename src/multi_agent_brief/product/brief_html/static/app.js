@@ -49,7 +49,7 @@
             market_evidence: "证据资格",
             market_chart_us: "美股指数化走势",
             market_chart_overseas: "海外指数化走势",
-            market_chart_toyo: "TOYO 收盘与成交量",
+            market_chart_core: "核心标的收盘与成交量",
             market_chart_pr: "PR 事件同期超额收益",
             market_chart_weekly: "1周收益比较",
             market_chart_caps: "美元市值比较",
@@ -289,7 +289,7 @@
             market_evidence: "Evidence status",
             market_chart_us: "Indexed primary-equity trend",
             market_chart_overseas: "Indexed overseas-equity trend",
-            market_chart_toyo: "TOYO close and volume",
+            market_chart_core: "Core company close and volume",
             market_chart_pr: "PR event-day excess return",
             market_chart_weekly: "One-week return comparison",
             market_chart_caps: "USD market-cap comparison",
@@ -1071,7 +1071,7 @@
                 var y = top + height * (max - value) / Math.max(max - min, 1e-9);
                 return (index ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1);
             }).join(" ");
-            svg.appendChild(svgNode("path", {d: d, fill: "none", stroke: colors[rowIndex % colors.length], "stroke-width": row.ticker === "TOYO" ? 3.5 : 2.2, "stroke-linejoin": "round"}));
+            svg.appendChild(svgNode("path", {d: d, fill: "none", stroke: colors[rowIndex % colors.length], "stroke-width": row.ticker === options.subject ? 3.5 : 2.2, "stroke-linejoin": "round"}));
             var legendX = left + (rowIndex % 5) * 155;
             var legendY = 360 + Math.floor(rowIndex / 5) * 24;
             svg.appendChild(svgNode("line", {x1: legendX, y1: legendY, x2: legendX + 20, y2: legendY, stroke: colors[rowIndex % colors.length], "stroke-width": 3}));
@@ -1145,10 +1145,10 @@
         card.appendChild(svg); return card;
     }
 
-    function toyoPriceVolumeChart(security) {
+    function corePriceVolumeChart(security) {
         var card = el("figure", "market-chart-card");
-        card.appendChild(el("figcaption", null, t("market_chart_toyo")));
-        var svg = svgNode("svg", {viewBox: "0 0 920 420", role: "img", "aria-label": t("market_chart_toyo"), class: "market-chart-svg"});
+        card.appendChild(el("figcaption", null, t("market_chart_core")));
+        var svg = svgNode("svg", {viewBox: "0 0 920 420", role: "img", "aria-label": t("market_chart_core"), class: "market-chart-svg"});
         svg.appendChild(svgNode("rect", {x: 0, y: 0, width: 920, height: 420, fill: "#ffffff"}));
         var points = security ? (security.price_series || []) : [];
         if (points.length < 2) {
@@ -1204,16 +1204,19 @@
         section.appendChild(meta);
         var securities = market.securities || [];
         var byTicker = {};
+        var primaryTickers = market.primary_tickers || securities.filter(function (security) { return security.universe === "primary"; }).map(function (security) { return security.ticker; });
+        var overseasTickers = market.overseas_tickers || securities.filter(function (security) { return security.universe === "overseas"; }).map(function (security) { return security.ticker; });
+        var subjectTicker = (market.core_tickers || [])[0] || primaryTickers[0];
         securities.forEach(function (security) { byTicker[security.ticker] = security; });
-        marketTable(section, "market_primary", ["TOYO", "TE", "FSLR", "CSIQ", "JKS", "NXT", "DQ"], byTicker);
-        marketTable(section, "market_overseas", ["009830.KS", "WAAREEENER.NS", "PREMIERENE.NS", "VIKRAMSOLR.NS"], byTicker);
+        marketTable(section, "market_primary", primaryTickers, byTicker);
+        marketTable(section, "market_overseas", overseasTickers, byTicker);
 
         var charts = el("section", "panel-section market-section");
         charts.appendChild(el("p", "section-muted", t("market_chart_note")));
         var chartGrid = el("div", "market-chart-grid");
-        chartGrid.appendChild(lineChart("market_chart_us", securities.filter(function (security) { return security.universe === "primary"; }), {indexed: true}));
-        chartGrid.appendChild(lineChart("market_chart_overseas", securities.filter(function (security) { return security.universe === "overseas"; }), {indexed: true}));
-        chartGrid.appendChild(toyoPriceVolumeChart(byTicker.TOYO));
+        chartGrid.appendChild(lineChart("market_chart_us", securities.filter(function (security) { return security.universe === "primary"; }), {indexed: true, subject: subjectTicker}));
+        chartGrid.appendChild(lineChart("market_chart_overseas", securities.filter(function (security) { return security.universe === "overseas"; }), {indexed: true, subject: subjectTicker}));
+        chartGrid.appendChild(corePriceVolumeChart(byTicker[subjectTicker]));
         chartGrid.appendChild(eventBarChart(market.events || []));
         chartGrid.appendChild(fieldBarChart("market_chart_weekly", securities, "return_1w_pct", "%"));
         chartGrid.appendChild(fieldBarChart("market_chart_caps", securities, "market_cap_usd_millions", ""));

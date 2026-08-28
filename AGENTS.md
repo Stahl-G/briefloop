@@ -205,7 +205,7 @@ python3 -m pytest -q
 python3 scripts/generate_agent_configs.py --check
 python3 scripts/check_version_consistency.py
 python3 scripts/check_release_consistency.py --no-tag
-python3 scripts/check_capabilities.py
+python3 scripts/check_capabilities.py && python3 scripts/check_public_safety.py
 ```
 
 For install-path or runtime-handoff changes, also run a non-editable install smoke from outside the repo:

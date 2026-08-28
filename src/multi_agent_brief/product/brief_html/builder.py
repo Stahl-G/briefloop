@@ -28,6 +28,7 @@ from multi_agent_brief.product.market_data_read_model import (
     load_latest_market_data_snapshot,
     market_data_projection,
 )
+from multi_agent_brief.sources.equity_universe import load_equity_universe
 from multi_agent_brief.runtime_host_v2.projections import (
     build_local_run_presentation,
     build_quality_projection_from_local_run,
@@ -503,6 +504,7 @@ def build_brief_pages_data(
             "boundary": "store_projection_only_no_price_causation",
         }
     else:
+        universe = load_equity_universe(root)
         market_data = {
             "status": "available",
             "reason_code": None,
@@ -511,6 +513,9 @@ def build_brief_pages_data(
                 "missing values and conflicts remain visible. Price co-movement "
                 "does not prove event causation."
             ),
+            "core_tickers": list(universe.core_tickers),
+            "primary_tickers": list(universe.primary_tickers),
+            "overseas_tickers": list(universe.overseas_tickers),
             **market_data_projection(market_snapshot),
         }
     return {
