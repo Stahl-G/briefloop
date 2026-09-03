@@ -578,7 +578,12 @@ def _execution_authorization_for(
                 "title": str(source.get("title", "Synthetic source")),
                 "publisher": source.get("publisher"),
                 "published_at": str(source["published_at"]),
-                "retrieved_at": staging.NOW,
+                # Retrieved no earlier than publication: the seeding clock is
+                # frozen at 2026-07-15, but case sources may publish later,
+                # and a retrieval-before-publication record is an impossible
+                # evidence chronology the auditor rightly flags.  Same-day
+                # retrieval keeps the record self-consistent per source.
+                "retrieved_at": f"{source['published_at']}T12:00:00Z",
                 "source_category": "other",
                 "retrieval_source_type": "local_file",
                 "underlying_evidence_type": "filing",
