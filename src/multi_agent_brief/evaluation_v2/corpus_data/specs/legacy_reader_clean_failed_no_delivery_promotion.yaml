@@ -1,0 +1,18 @@
+spec_id: legacy_reader_clean_failed_no_delivery_promotion
+origin: ported from read-only legacy fixture reader_clean_failed_no_delivery_promotion
+scenario: |
+  A finalize-stage workspace where the reader-clean step has failed,
+  leaving an inspectable candidate brief whose internal claim citation
+  "[src:CL-0001]" is intact, plus a stale delivery file that must not be
+  treated as current delivery. The evidence itself contains no defect.
+  Legacy description: "Failed reader-clean leaves only an inspectable
+  candidate; stale delivery files are not current delivery."
+defect_plot: ""
+rollout_role: editor
+seeded_defects: []
+must_not_report: []
+clean_claim_guidance: |
+  The claim cited as CL-0001 in the candidate brief is properly supported
+  by its pack source and must not be flagged; the failed reader-clean and
+  the stale delivery file are delivery-control facts outside the ten
+  canonical finding types.

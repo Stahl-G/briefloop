@@ -1,0 +1,29 @@
+spec_id: legacy_third_party_price_snapshot_formal_block
+origin: ported from read-only legacy fixture third_party_price_snapshot_formal_block
+scenario: |
+  An audit-stage ledger preparing formal-release treatment, in which a
+  price-level claim (a valuation or market price that would be presented
+  as a formal number) is backed only by a third-party price snapshot -- an
+  aggregator or data-vendor view with no primary venue or official
+  disclosure behind it in the pack. Legacy description: "Third-party price
+  snapshots are explicit weak support that block formal-release
+  treatment." The legacy support matrix records this as
+  third_party_price_snapshot_formal_block.
+defect_plot: |
+  Give the price claim a single third-party snapshot source: dated and
+  on-point but explicitly secondary (aggregator terms, vendor view). The
+  pack must contain no primary venue record or official disclosure for
+  that price. The snapshot is accurate as far as it goes, so the defect is
+  the weakness of the support class for a formal number, not a wrong
+  price or a dead citation.
+rollout_role: auditor
+seeded_defects:
+  - defect_id: d1
+    finding_type: claim_support_matrix_blocking_support
+    expected_blocking_level: blocking
+must_not_report: []
+clean_claim_guidance: |
+  Indicative price mentions explicitly framed as third-party snapshots
+  rather than formal numbers are clean, and formal price claims backed by
+  a primary venue or official disclosure are fully supported; neither must
+  be flagged.

@@ -1,0 +1,45 @@
+spec_id: legacy_final_abstract_quality_warning_surface
+origin: ported from read-only legacy fixture final_abstract_quality_warning_surface
+scenario: |
+  A finalize-stage reader brief whose evidence side is completely clean --
+  every claim properly supported -- but whose abstract and title block
+  carry five reader-quality flaws. The flaws must surface as warning-only
+  diagnostics through the Quality Panel without blocking the run and
+  without repair text leaking into the delivered brief. Legacy
+  description: "Final reader quality risks are warning-only diagnostics
+  surfaced through Quality Panel." The legacy run expects exactly five
+  warning findings from the final_abstract_quality gate and
+  blocked=false.
+defect_plot: |
+  Embed all five presentation flaws in the abstract and title area of an
+  otherwise sound brief: the title promises a scope the abstract does not
+  cover; a comparative statement in the abstract is made without stating
+  its comparison basis; the brief has no limitations, scope, or
+  assumptions section; a key-case row in the abstract is missing required
+  fields; and the abstract contains an unsupported superlative ("the
+  largest", "best in class") that no source establishes. Every underlying
+  claim stays properly sourced, so these defects are presentational: each
+  must surface at warning level and none may escalate to blocking.
+rollout_role: editor
+seeded_defects:
+  - defect_id: d1
+    finding_type: final_scope_title_mismatch
+    expected_blocking_level: warning
+  - defect_id: d2
+    finding_type: final_missing_comparison_basis
+    expected_blocking_level: warning
+  - defect_id: d3
+    finding_type: final_missing_limitation_section
+    expected_blocking_level: warning
+  - defect_id: d4
+    finding_type: final_incomplete_key_case_fields
+    expected_blocking_level: warning
+  - defect_id: d5
+    finding_type: final_unsupported_superlative
+    expected_blocking_level: warning
+must_not_report: []
+clean_claim_guidance: |
+  All factual claims behind the abstract are properly supported by pack
+  sources and must not be flagged; the warnings target only the five
+  presentational flaws, so the correctly filled key-case rows and the
+  sourced non-superlative statements are the true-negative material.

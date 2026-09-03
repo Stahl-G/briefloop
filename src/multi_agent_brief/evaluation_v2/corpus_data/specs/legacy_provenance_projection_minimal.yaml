@@ -1,0 +1,18 @@
+spec_id: legacy_provenance_projection_minimal
+origin: ported from read-only legacy fixture provenance_projection_minimal
+scenario: |
+  A well-formed audit-stage workspace: every claim cites at least one pack
+  source, each claim is recorded in the artifact that carries it, artifacts
+  reference their claims back, decisions apply to stages, and gate findings
+  target stages. The provenance projection over this workspace is complete
+  with no defect present. Legacy description: "Provenance projection
+  connects runtime, claims, draft refs, decisions, and gate findings."
+defect_plot: ""
+rollout_role: auditor
+seeded_defects: []
+must_not_report: []
+clean_claim_guidance: |
+  Claims with a complete chain -- claim cites source, source exists in the
+  pack, claim appears in the draft, draft cites back -- are the
+  true-negative material; none of them may be flagged, and the scenario
+  must not provoke any of the ten canonical finding types.

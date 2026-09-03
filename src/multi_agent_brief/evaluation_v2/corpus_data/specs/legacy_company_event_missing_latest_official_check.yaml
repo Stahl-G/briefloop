@@ -1,0 +1,26 @@
+spec_id: legacy_company_event_missing_latest_official_check
+origin: ported from read-only legacy fixture company_event_missing_latest_official_check
+scenario: |
+  An audit-stage ledger with a claim about a company event (for example a
+  facility opening or a leadership change). The claim cites an official
+  source, but that source predates the event's latest official confirmation
+  -- a later announcement, filing, or correction exists in the pack and
+  completes or changes the record, and the claim does not account for it.
+  Legacy description: "Company-event claims missing latest official checks
+  are represented as insufficient-evidence records." The legacy support
+  matrix records this as latest_official_check_missing.
+defect_plot: |
+  Include in the pack both an earlier official source and a later official
+  confirmation or correction of the event, and cite the claim only to the
+  earlier source. The event itself is real and officially documented, so
+  the defect is specifically the missing latest official check, not a
+  fabricated or wholly unsupported event.
+rollout_role: auditor
+seeded_defects:
+  - defect_id: d1
+    finding_type: claim_support_matrix_blocking_support
+    expected_blocking_level: blocking
+must_not_report: []
+clean_claim_guidance: |
+  Event claims citing the latest official confirmation available in the
+  pack are properly supported and must not be flagged.

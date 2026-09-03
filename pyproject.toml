@@ -115,6 +115,10 @@ multi_agent_brief = [
   "evaluation_cases/fixtures/cases/*/workspace/output/intermediate/*.md",
   "evaluation_cases/fixtures/cases/*/workspace/output/intermediate/finalize_candidate/*/*.md",
   "evaluation_cases/fixtures/cases/*/workspace/output/intermediate/gates/*.json",
+  "evaluation_v2/corpus_data/manifest.yaml",
+  "evaluation_v2/corpus_data/cases/*.yaml",
+  "evaluation_v2/corpus_data/REVIEW.md",
+  "evaluation_v2/corpus_data/envelope-auditor-reporting.md",
 ]
 
 [tool.pytest.ini_options]

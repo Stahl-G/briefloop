@@ -1,0 +1,95 @@
+case_id: val_clean_10
+synthetic: true
+source_pack: |
+  config:
+    project:
+      name: ImaginaryCo Water
+      industry: synthetic utilities
+    report:
+      date: '2026-06-08'
+      cadence: weekly
+      max_source_age_days: 14
+    selector_max_items: 3
+  sources:
+  - source_id: SRC-0001
+    title: ImaginaryCo Water facility filing
+    publisher: Example Water Regulator
+    published_at: '2026-06-06'
+    url: https://example.invalid/sources/src-0001
+  - source_id: SRC-0002
+    title: ImaginaryCo Water quarterly disclosure
+    publisher: ImaginaryCo Water
+    published_at: '2026-06-03'
+    url: https://example.invalid/sources/src-0002
+  - source_id: SRC-0003
+    title: ImaginaryCo Water coverage in Sample Utility Monitor
+    publisher: Sample Utility Monitor
+    published_at: '2026-05-30'
+    url: https://example.invalid/sources/src-0003
+  claim_ledger:
+  - claim_id: CL-0001
+    statement: ImaginaryCo Water upgraded a treatment plant on 2026-06-06.
+    source_id: SRC-0001
+    evidence_text: A filing published by the Example Water Regulator records that ImaginaryCo Water upgraded a treatment plant on 2026-06-06.
+    source_url: https://example.invalid/claims/cl-0001
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-06-06'
+      importance: normal
+  - claim_id: CL-0002
+    statement: ImaginaryCo Water reported treatment uptime of 73 percent in its latest quarterly disclosure.
+    source_id: SRC-0002
+    evidence_text: The quarterly disclosure states treatment uptime of 73 percent for the reporting period.
+    source_url: https://example.invalid/claims/cl-0002
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-06-03'
+      importance: normal
+  - claim_id: CL-0003
+    statement: ImaginaryCo Water signed a municipal supply contract, according to trade coverage.
+    source_id: SRC-0003
+    evidence_text: Trade coverage in Sample Utility Monitor reports that ImaginaryCo Water signed a municipal supply contract.
+    source_url: https://example.invalid/claims/cl-0003
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-05-30'
+      importance: normal
+  claim_support_matrix: []
+  analyst_draft_snapshot: |
+    # ImaginaryCo Water Weekly Brief
+
+    ## Executive Summary
+
+    ImaginaryCo Water upgraded a treatment plant on 2026-06-06. [src:CL-0001]
+    ImaginaryCo Water reported treatment uptime of 73 percent in its latest quarterly disclosure. [src:CL-0002]
+
+    ## Detail
+
+    A filing published by the Example Water Regulator on 2026-06-06 recorded that ImaginaryCo Water upgraded a treatment plant. [src:CL-0001]
+    The quarterly disclosure states treatment uptime of 73 percent for the reporting period. [src:CL-0002]
+    Trade coverage in Sample Utility Monitor reports that ImaginaryCo Water signed a municipal supply contract. [src:CL-0003]
+  audited_brief: |
+    # ImaginaryCo Water Weekly Brief
+
+    ## Executive Summary
+
+    ImaginaryCo Water upgraded a treatment plant on 2026-06-06. [src:CL-0001]
+    ImaginaryCo Water reported treatment uptime of 73 percent in its latest quarterly disclosure. [src:CL-0002]
+
+    ## Detail
+
+    A filing published by the Example Water Regulator on 2026-06-06 recorded that ImaginaryCo Water upgraded a treatment plant. [src:CL-0001]
+    The quarterly disclosure states treatment uptime of 73 percent for the reporting period. [src:CL-0002]
+    Trade coverage in Sample Utility Monitor reports that ImaginaryCo Water signed a municipal supply contract. [src:CL-0003]
+report_date: '2026-06-08'
+rollout:
+  role: auditor
+  runtime: codex
+seeded_defects: []
+clean_claims:
+- CL-0001
+- CL-0002
+- CL-0003

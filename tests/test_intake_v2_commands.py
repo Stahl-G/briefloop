@@ -302,6 +302,9 @@ def test_intake_v2_imports_are_confined_to_bound_importers() -> None:
         # runtime authority and binds intake_v2 directly. Importers are
         # listed exactly (no prefixes); any new importer must be reviewed.
         "runtime_host_v2/service.py",
+        # evaluation_v2 staging stages candidate intake through the bound
+        # service, exactly as the core-run tests do.
+        "evaluation_v2/staging.py",
     }
     findings: list[str] = []
     for path in sorted(package_root.rglob("*.py")):

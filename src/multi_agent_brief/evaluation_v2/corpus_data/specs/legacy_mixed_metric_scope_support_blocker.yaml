@@ -1,0 +1,28 @@
+spec_id: legacy_mixed_metric_scope_support_blocker
+origin: ported from read-only legacy fixture mixed_metric_scope_support_blocker
+scenario: |
+  An audit-stage claim ledger in which one claim asserts a metric while
+  silently mixing scopes (for example annual-global versus
+  quarterly-regional). Each supporting source covers exactly one of the
+  scopes, so no source, and no combination of them, supports the claim as
+  stated. Legacy description: "Mixed metric scopes are represented as
+  explicit insufficient-evidence support records." The legacy support
+  matrix records this as a metric_scope_conflict.
+defect_plot: |
+  State the claim with a single metric phrasing that spans two scopes --
+  the wording must not disambiguate which scope it measures -- and attach
+  sources that each measure a different one of the scopes. The evidence
+  then looks plentiful (multiple citations, fresh dates, official origins)
+  but never lines up with the claim as written. The defect is the scope
+  conflict, which must land as an explicit insufficient-evidence support
+  record, not as a missing-citation problem.
+rollout_role: auditor
+seeded_defects:
+  - defect_id: d1
+    finding_type: claim_support_matrix_blocking_support
+    expected_blocking_level: blocking
+must_not_report: []
+clean_claim_guidance: |
+  Neighboring claims whose metric phrasing names one scope and whose
+  sources measure exactly that scope are fully supported and must not be
+  flagged.

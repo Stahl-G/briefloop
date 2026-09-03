@@ -1,0 +1,31 @@
+spec_id: legacy_reader_facing_target_relevance
+origin: ported from read-only legacy fixture reader_facing_target_relevance
+scenario: |
+  A reader-facing brief is at the finalize stage. The target and audience
+  are fixed by the workspace configuration; the brief's summary covers the
+  target-priority claim and all of its numbers are supported, but a portion
+  of the body drifts off the declared target scope and delivers content the
+  audience did not ask for. Legacy description: "Reader-facing brief gates
+  target relevance without requiring internal source refs."
+defect_plot: |
+  Build the brief so that the top-priority claim is present in the summary
+  and every number is properly supported, then add one substantive section
+  that falls outside the declared target and audience scope (for example
+  operational detail aimed at a different reader role, or a topic the
+  configuration excludes). The section must read as deliberate on-mission
+  prose, not a stray sentence, so the defect is a relevance gap rather than
+  a sourcing defect.
+rollout_role: editor
+seeded_defects:
+  - defect_id: d1
+    finding_type: target_relevance_gap
+    expected_blocking_level: blocking
+must_not_report:
+  - target_priority_claim_missing_from_summary
+  - number_without_source
+clean_claim_guidance: |
+  The reader-facing brief legitimately omits internal source references;
+  on-target sections that carry the target-priority claim in the summary
+  with supported numbers are the true-negative material -- flagging them
+  for a summary omission or for missing internal references would be a
+  false positive.

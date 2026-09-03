@@ -22,12 +22,17 @@ from multi_agent_brief.cli import (
     status_commands,
     runtime_commands,
     experiments_commands,
+    eval_commands,
     product_commands,
     secrets_commands,
     contract_commands,
     intake_v2_commands,
     core_v2_commands,
     market_data_commands,
+)
+from multi_agent_brief.cli.experimental import (
+    experimental_enabled,
+    hide_experimental_commands,
 )
 
 
@@ -66,6 +71,7 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
 
     # Experimental measurement harnesses
     experiments_commands.register(subparsers)
+    eval_commands.register(subparsers)
 
     # Workspace runtime kit install
     runtime_commands.register(subparsers)
@@ -91,6 +97,11 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
 
     # Meta
     subparsers.add_parser("version", help="Print package version.")
+
+    # Experimental commands stay registered and callable, but are removed from
+    # the default help surface.  Set BRIEFLOOP_EXPERIMENTAL=1 to list them.
+    if not experimental_enabled():
+        hide_experimental_commands(subparsers)
 
     return parser
 
@@ -143,6 +154,9 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "experiments":
         return experiments_commands.handle(args)
+
+    if cmd == "eval":
+        return eval_commands.handle(args)
 
     if cmd == "runtime":
         return runtime_commands.handle(args)

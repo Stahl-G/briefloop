@@ -1,0 +1,128 @@
+case_id: train_legacy_mixed_metric_scope_support_blocker
+synthetic: true
+source_pack: |
+  config:
+    project:
+      name: Synthetic Demo Company
+      industry: synthetic manufacturing
+    report:
+      date: '2026-01-12'
+      cadence: weekly
+      max_source_age_days: 14
+    selector_max_items: 4
+  sources:
+  - source_id: SRC-0001
+    title: Synthetic Demo Company facility filing
+    publisher: Synthetic Industrial Regulator
+    published_at: '2026-01-10'
+    url: https://example.invalid/sources/src-0001
+  - source_id: SRC-0002
+    title: Synthetic Demo Company quarterly disclosure
+    publisher: Synthetic Demo Company
+    published_at: '2026-01-07'
+    url: https://example.invalid/sources/src-0002
+  - source_id: SRC-0003
+    title: Synthetic Demo Company coverage in Synthetic Manufacturing Weekly
+    publisher: Synthetic Manufacturing Weekly
+    published_at: '2026-01-03'
+    url: https://example.invalid/sources/src-0003
+  - source_id: SRC-0004
+    title: Synthetic Demo Company annual global filing
+    publisher: Synthetic Industrial Regulator
+    published_at: '2026-01-08'
+    url: https://example.invalid/sources/src-0004
+  - source_id: SRC-0005
+    title: Synthetic Demo Company quarterly regional disclosure
+    publisher: Synthetic Demo Company
+    published_at: '2026-01-06'
+    url: https://example.invalid/sources/src-0005
+  claim_ledger:
+  - claim_id: CL-0001
+    statement: Synthetic Demo Company opened an assembly hall on 2026-01-10.
+    source_id: SRC-0001
+    evidence_text: A filing published by the Synthetic Industrial Regulator records that Synthetic Demo Company opened an assembly hall on 2026-01-10.
+    source_url: https://example.invalid/claims/cl-0001
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-01-10'
+      importance: normal
+  - claim_id: CL-0002
+    statement: Synthetic Demo Company reported output yield of 61 percent in its latest quarterly disclosure.
+    source_id: SRC-0002
+    evidence_text: The quarterly disclosure states output yield of 61 percent for the reporting period.
+    source_url: https://example.invalid/claims/cl-0002
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-01-07'
+      importance: normal
+  - claim_id: CL-0003
+    statement: Synthetic Demo Company signed a components agreement, according to trade coverage.
+    source_id: SRC-0003
+    evidence_text: Trade coverage in Synthetic Manufacturing Weekly reports that Synthetic Demo Company signed a components agreement.
+    source_url: https://example.invalid/claims/cl-0003
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-01-03'
+      importance: normal
+  - claim_id: CL-0004
+    statement: Synthetic Demo Company reported output yield of 65 percent across all regions and periods.
+    source_id: SRC-0004
+    evidence_text: The annual global filing measures the worldwide figure and the quarterly regional disclosure measures a single region; neither states the combined all-scope output yield of 65 percent.
+    source_url: https://example.invalid/claims/cl-0004
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-01-08'
+      importance: normal
+  claim_support_matrix:
+  - claim_id: CL-0004
+    support_label: insufficient_evidence
+    support_strength: none
+    support_reason: 'metric_scope_conflict: the support attached to this high-materiality claim is recorded as insufficient for delivery-blocking support.'
+    required_action: block_release
+    repair_owner: claim-ledger
+    decision_source: deterministic_support_matrix
+  analyst_draft_snapshot: |
+    # Synthetic Demo Company Weekly Brief
+
+    ## Executive Summary
+
+    Synthetic Demo Company opened an assembly hall on 2026-01-10. [src:CL-0001]
+    Synthetic Demo Company reported output yield of 61 percent in its latest quarterly disclosure. [src:CL-0002]
+
+    ## Detail
+
+    A filing published by the Synthetic Industrial Regulator on 2026-01-10 recorded that Synthetic Demo Company opened an assembly hall. [src:CL-0001]
+    The quarterly disclosure states output yield of 61 percent for the reporting period. [src:CL-0002]
+    Trade coverage in Synthetic Manufacturing Weekly reports that Synthetic Demo Company signed a components agreement. [src:CL-0003]
+    Synthetic Demo Company reported output yield of 65 percent across all regions and periods. [src:CL-0004]
+  audited_brief: |
+    # Synthetic Demo Company Weekly Brief
+
+    ## Executive Summary
+
+    Synthetic Demo Company opened an assembly hall on 2026-01-10. [src:CL-0001]
+    Synthetic Demo Company reported output yield of 61 percent in its latest quarterly disclosure. [src:CL-0002]
+
+    ## Detail
+
+    A filing published by the Synthetic Industrial Regulator on 2026-01-10 recorded that Synthetic Demo Company opened an assembly hall. [src:CL-0001]
+    The quarterly disclosure states output yield of 61 percent for the reporting period. [src:CL-0002]
+    Trade coverage in Synthetic Manufacturing Weekly reports that Synthetic Demo Company signed a components agreement. [src:CL-0003]
+    Synthetic Demo Company reported output yield of 65 percent across all regions and periods. [src:CL-0004]
+report_date: '2026-01-12'
+rollout:
+  role: auditor
+  runtime: codex
+seeded_defects:
+- defect_id: d1
+  finding_type: claim_support_matrix_blocking_support
+  locator: CL-0004
+  expected_blocking_level: blocking
+clean_claims:
+- CL-0001
+- CL-0002
+- CL-0003

@@ -3212,6 +3212,13 @@ def test_only_bound_modules_import_control_store() -> None:
         # Unit A admission/staging consumes deterministic serialization helpers.
         "runtime_host_v2/submission.py",
         "runtime_host_v2/source_routes.py",
+        # evaluation_v2 staging is the canonical core-run stage driver
+        # (extracted from the core-run tests and re-imported by them); it
+        # opens the Store to walk a run to a target stage. The rollout
+        # adapter consumes deterministic serialization helpers for its
+        # manifest and receipt digests.
+        "evaluation_v2/staging.py",
+        "evaluation_v2/codex_rollout.py",
     }
     findings: list[str] = []
     for path in sorted(package_root.rglob("*.py")):

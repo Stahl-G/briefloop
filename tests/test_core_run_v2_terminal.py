@@ -57,6 +57,7 @@ from multi_agent_brief.control_store.serialization import (
 from multi_agent_brief.core_run_v2 import CoreRunService, CoreRunTerminalService
 from multi_agent_brief.core_run_v2.errors import CoreRunError
 from multi_agent_brief.core_run_v2.integrity import read_workspace_file
+from multi_agent_brief.evaluation_v2 import staging as staging_fixture
 from multi_agent_brief.core_run_v2.lineage import classify_current_audit_promotion
 from multi_agent_brief.core_run_v2.next_action import classify_core_run_next_action
 from multi_agent_brief.core_run_v2.gates import (
@@ -175,6 +176,16 @@ def _authorized_finalize_ready_workspace(
 
     monkeypatch.setattr(
         core_fixture,
+        "_advance_to_scout_ready",
+        advance_authorized_source_prefix,
+    )
+    # The walk chain (_advance_to_claim_ledger_ready -> _advance_to_scout_ready,
+    # ... -> _advance_to_finalize_ready) was extracted into
+    # evaluation_v2.staging and resolves its internal callees from that
+    # module's globals, so the interception must land there as well;
+    # core_fixture stays patched for any direct caller.
+    monkeypatch.setattr(
+        staging_fixture,
         "_advance_to_scout_ready",
         advance_authorized_source_prefix,
     )

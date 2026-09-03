@@ -5,6 +5,29 @@ All notable changes to the multi-agent-brief-workflow project will be documented
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- Added an experimental CLI surface gate: the `experiments`, `eval`, `new`,
+  `packs`, `validate-report-spec`, `extract`, and `quality` commands are
+  hidden from default help behind `BRIEFLOOP_EXPERIMENTAL=1` while staying
+  callable for existing scripts.
+- Added the experimental `multi_agent_brief.evaluation_v2` agent-rollout
+  evaluation stack: strict case contracts with per-defect blocking levels and
+  derived case-level blocking, packaged corpus loading with production
+  composition thresholds, the paired reward
+  `R = defect_recall * true_negative_rate` (warning-level detections count
+  toward recall), an injectable-rollout split runner, and an offline
+  findings-to-outcome mapping for recorded quality-gate reports. The corpus
+  ships as an empty skeleton with 16 generator specs ported from the legacy
+  fixtures; superseded by the entries below (the adapter and the measured
+  baseline have since landed). Added `docs/claims.md` consolidating the public claims boundary,
+  including the defect-detection NOT MEASURED line (since measured; see the
+  next entry).
+- Added the regenerated 80-case packaged detection corpus (deterministic generator, construction-time oracle) and the real codex auditor rollout path: `briefloop eval run` drives concurrent per-case rollouts with retry and appends reward-ledger records pinned to corpus, `agent_roles.yaml`, and reporting-contract digests. First measured baseline (2026-09-03): recall 1.000 in all three val runs, mean reward 0.931, spread 0.063; the fail-closed reward gate stays unrationalized while spread exceeds the 2.5-point threshold, and the defect-detection claim in `docs/claims.md` is now MEASURED with numbers.
+
+
 ## [0.15.3] — 2026-08-14
 
 ### Added

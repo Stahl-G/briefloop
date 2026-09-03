@@ -1,0 +1,95 @@
+case_id: train_legacy_provenance_projection_minimal
+synthetic: true
+source_pack: |
+  config:
+    project:
+      name: Synthetic ProvenanceCo
+      industry: synthetic logistics
+    report:
+      date: '2026-01-12'
+      cadence: weekly
+      max_source_age_days: 14
+    selector_max_items: 3
+  sources:
+  - source_id: SRC-0001
+    title: Synthetic ProvenanceCo facility filing
+    publisher: Synthetic Logistics Regulator
+    published_at: '2026-01-10'
+    url: https://example.invalid/sources/src-0001
+  - source_id: SRC-0002
+    title: Synthetic ProvenanceCo quarterly disclosure
+    publisher: Synthetic ProvenanceCo
+    published_at: '2026-01-07'
+    url: https://example.invalid/sources/src-0002
+  - source_id: SRC-0003
+    title: Synthetic ProvenanceCo coverage in Synthetic Logistics Weekly
+    publisher: Synthetic Logistics Weekly
+    published_at: '2026-01-03'
+    url: https://example.invalid/sources/src-0003
+  claim_ledger:
+  - claim_id: CL-0001
+    statement: Synthetic ProvenanceCo opened a sorting center on 2026-01-10.
+    source_id: SRC-0001
+    evidence_text: A filing published by the Synthetic Logistics Regulator records that Synthetic ProvenanceCo opened a sorting center on 2026-01-10.
+    source_url: https://example.invalid/claims/cl-0001
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-01-10'
+      importance: normal
+  - claim_id: CL-0002
+    statement: Synthetic ProvenanceCo reported sorting throughput of 74 percent in its latest quarterly disclosure.
+    source_id: SRC-0002
+    evidence_text: The quarterly disclosure states sorting throughput of 74 percent for the reporting period.
+    source_url: https://example.invalid/claims/cl-0002
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-01-07'
+      importance: normal
+  - claim_id: CL-0003
+    statement: Synthetic ProvenanceCo signed a transport agreement, according to trade coverage.
+    source_id: SRC-0003
+    evidence_text: Trade coverage in Synthetic Logistics Weekly reports that Synthetic ProvenanceCo signed a transport agreement.
+    source_url: https://example.invalid/claims/cl-0003
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-01-03'
+      importance: normal
+  claim_support_matrix: []
+  analyst_draft_snapshot: |
+    # Synthetic ProvenanceCo Weekly Brief
+
+    ## Executive Summary
+
+    Synthetic ProvenanceCo opened a sorting center on 2026-01-10. [src:CL-0001]
+    Synthetic ProvenanceCo reported sorting throughput of 74 percent in its latest quarterly disclosure. [src:CL-0002]
+
+    ## Detail
+
+    A filing published by the Synthetic Logistics Regulator on 2026-01-10 recorded that Synthetic ProvenanceCo opened a sorting center. [src:CL-0001]
+    The quarterly disclosure states sorting throughput of 74 percent for the reporting period. [src:CL-0002]
+    Trade coverage in Synthetic Logistics Weekly reports that Synthetic ProvenanceCo signed a transport agreement. [src:CL-0003]
+  audited_brief: |
+    # Synthetic ProvenanceCo Weekly Brief
+
+    ## Executive Summary
+
+    Synthetic ProvenanceCo opened a sorting center on 2026-01-10. [src:CL-0001]
+    Synthetic ProvenanceCo reported sorting throughput of 74 percent in its latest quarterly disclosure. [src:CL-0002]
+
+    ## Detail
+
+    A filing published by the Synthetic Logistics Regulator on 2026-01-10 recorded that Synthetic ProvenanceCo opened a sorting center. [src:CL-0001]
+    The quarterly disclosure states sorting throughput of 74 percent for the reporting period. [src:CL-0002]
+    Trade coverage in Synthetic Logistics Weekly reports that Synthetic ProvenanceCo signed a transport agreement. [src:CL-0003]
+report_date: '2026-01-12'
+rollout:
+  role: auditor
+  runtime: codex
+seeded_defects: []
+clean_claims:
+- CL-0001
+- CL-0002
+- CL-0003

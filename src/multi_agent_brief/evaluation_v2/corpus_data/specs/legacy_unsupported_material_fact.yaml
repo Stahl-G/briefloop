@@ -1,0 +1,27 @@
+spec_id: legacy_unsupported_material_fact
+origin: ported from read-only legacy fixture unsupported_material_fact
+scenario: |
+  A single-topic brief about a synthetic company reaches the auditor stage.
+  The draft is dominated by properly sourced claims, but one headline-level
+  quantitative claim -- a material number that drives the brief's main
+  conclusion -- appears in the draft with no citation to any source in the
+  pack. Legacy description: "Unsupported material number blocks the auditor
+  gate."
+defect_plot: |
+  Plant exactly one material number as a bare fact in the draft's key
+  conclusion (for example a revenue or growth figure). Give it no source id,
+  no reference to any document in the source pack, and no claim-record
+  linkage, while every other number in the draft cites a pack source. The
+  number must be material enough that a brief built on it is unsound if the
+  number is wrong; the defect is the absence of any source, not a wrong
+  value.
+rollout_role: auditor
+seeded_defects:
+  - defect_id: d1
+    finding_type: number_without_source
+    expected_blocking_level: blocking
+must_not_report: []
+clean_claim_guidance: |
+  Every neighboring number in the draft is tied to a dated source in the
+  pack (for example "[S2] ExampleCo Q1 Results"); those correctly sourced
+  claims are the true-negative material and must not be flagged.
