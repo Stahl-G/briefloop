@@ -330,6 +330,73 @@ The roadmap mentions concepts that are not necessarily implemented yet. Treat th
 
 Features marked experimental, interface-only, or CLI-only should not be treated as stable user promises. Check the support matrix and CLI output before relying on them.
 
+### Reader-truth and balance package (pre-v0.16 slice, fresh workspaces only)
+
+Implemented and tested on the current line, but not yet part of a released
+version; existing initialized Stores keep their frozen contracts.
+
+- The v2 finalize render derives the reader brief with `[S#]` citation
+  labels, a real source appendix, output-relative chart paths, and a
+  deterministic compliance footer; a `reader_brief_docx` artifact
+  (`output/brief.docx`) is produced whenever the frozen
+  `RunDirection.output_formats` includes docx (requires the `docx` extra;
+  fail-closed).
+- `RunDirection.required_section_intents` freezes the pack's reader
+  skeleton; the auditor gate batch blocks a brief missing a required
+  section (heading-alias match or an explicit coverage-gap disclosure),
+  a catalyst calendar without a post-report-date entry, or an
+  earnings/valuation section that ignores the core ticker and frozen
+  multiples.
+- The price-vs-narrative divergence gate blocks a one-sided brief when
+  the core subject's frozen one-week return breaches
+  `RunDirection.market_divergence_threshold_pct` (solar default 10%):
+  the market-reaction section must name the core ticker and state its
+  move with matching direction, magnitude within ±0.05 percentage
+  points, and snapshot provenance — another company's same-magnitude
+  move cannot satisfy it — and back it with a risk-type claim or an
+  explicit no-evidence disclosure.
+- `RunDirection.required_claim_aspects` freezes the pack's aspect
+  vocabulary (solar: earnings growth, cash flow/dilution, guidance risk,
+  price reaction). Aspect tags do not bind to the core company, so an
+  uncovered aspect surfaces as a non-blocking `aspect_coverage_gap`
+  warning diagnostic in the coverage gate — never a delivery blocker.
+- Chart placement is contractual: bound charts must sit inside their
+  bound sections, manifest charts may not be silently omitted, and the
+  subject chart carries deterministic event-day markers
+  (`market-chart-png-v2`).
+- Analyst/editor invocation validation runs a read-only content lint
+  sharing the auditor gate rule bodies, so deterministic violations
+  surface before accept instead of consuming the single preauthorized
+  gate-repair cycle.
+
+### QoQ-contrast and catalyst-calendar slice (pre-v0.16 slice 2, fresh workspaces only)
+
+One product sentence: when the brief headlines year-over-year growth but
+the frozen numbers show the sequential comparison worsening, the reader
+must see the contrast.
+
+- Claim drafts may attach a structured metric scoped to one subject and
+  one of five cumulative metrics (revenue, net income, operating income,
+  adjusted EBITDA, shipments) with an exact calendar period and optional
+  prior-year same-period value. Non-cumulative metrics cannot be
+  expressed at all.
+- Python derives Q1 = H1 - Q2 only when the same subject, metric, unit,
+  and year carry exactly one half value and exactly one second-quarter
+  value; duplicates or cross-subject inputs surface as non-blocking
+  diagnostics and never pair.
+- The single blocking rule: a citing paragraph that headlines a
+  sign-conflicting YoY must show the derived QoQ percentage with the
+  correct sign (signed token or direction wording) in that same
+  paragraph. Everything else about structured metrics is a visible
+  warning.
+- Dated upcoming catalysts collected from drafts render as a
+  deterministic calendar table injected by Python into the final
+  markdown/docx/html (events after the report date only, same-day
+  events all shown, explicit empty-state line otherwise). There is no
+  calendar gate and no agent hand-written calendar.
+- The Tavily task matrix emits one stderr progress line per search task,
+  extract phase, and backfill selection; stdout JSON stays clean.
+
 ## Contributor Rule
 
 Roadmap direction is not proof of implementation. When implementing a roadmap item, first identify the current code path, the owning validator or test, and whether the capability is public, experimental, or internal planning only.

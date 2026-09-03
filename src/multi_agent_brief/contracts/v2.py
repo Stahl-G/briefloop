@@ -59,7 +59,7 @@ _WORKSPACE_PATH_PATTERN = (
 )
 _SCRATCH_INPUT_PATH_PATTERN = (
     r"^scratch/[A-Za-z0-9][A-Za-z0-9._:-]*/"
-    r"[A-Za-z0-9][A-Za-z0-9._:-]*\.(?:json|md)$"
+    r"[A-Za-z0-9][A-Za-z0-9._:-]*\.(?:json|md|docx)$"
 )
 _APPROVAL_REASON_MAX_LENGTH = 1000
 _MIME_TYPE_PATTERN = r"^[a-z0-9][a-z0-9!#$&^_.+-]*/[a-z0-9][a-z0-9!#$&^_.+-]*$"
@@ -580,6 +580,73 @@ SourceLocator = Annotated[
 ]
 
 
+CLAIM_ASPECT_VALUES = [
+    "earnings_growth",
+    "profitability",
+    "cash_flow_dilution",
+    "guidance_risk",
+    "price_reaction",
+    "peer_events",
+    "policy",
+    "input_prices",
+    "other",
+]
+
+
+# Only explicitly cumulative company metrics may carry a derivation.
+# Anything else (margins, prices, share counts, cash) must stay prose.
+CLAIM_METRIC_IDS = [
+    "revenue",
+    "net_income",
+    "operating_income",
+    "adjusted_ebitda",
+    "shipments",
+]
+
+CLAIM_METRIC_UNITS = [
+    "usd_millions",
+    "cny_millions",
+    "gw",
+    "mw",
+    "mt",
+]
+
+# Period grammar: YYYY (year), YYYYQn (calendar quarter), YYYYH1/YYYYH2,
+# YYYY-MM (month).  Anything else is rejected so the derived-metric
+# projection stays deterministic.
+_CLAIM_METRIC_PERIOD_RE = re.compile(
+    r"^\d{4}(?:Q[1-4]|H[1-2]|-(?:0[1-9]|1[0-2]))?$"
+)
+
+
+class ClaimMetricValue(StrictModel):
+    """One structured numeric value carried by a claim draft.
+
+    Scoped to one subject (company ticker or entity id) and one of the
+    five cumulative metrics.  When the same subject, metric, unit, and
+    year carry exactly one half value and exactly one second-quarter
+    value, the deterministic freeze derives the sequential comparison;
+    ambiguity is surfaced as a diagnostic, never guessed.
+    """
+
+    subject_id: ContractId
+    metric_id: Literal[tuple(CLAIM_METRIC_IDS)]
+    value: float
+    unit: Literal[tuple(CLAIM_METRIC_UNITS)]
+    period: str
+    comparison_period: Optional[str] = None
+    comparison_value: Optional[float] = None
+
+    @model_validator(mode="after")
+    def period_grammar_is_exact(self) -> "ClaimMetricValue":
+        for label in (self.period, self.comparison_period):
+            if label is not None and not _CLAIM_METRIC_PERIOD_RE.fullmatch(label):
+                raise ValueError(f"metric period must match the calendar grammar: {label}")
+        if (self.comparison_period is None) != (self.comparison_value is None):
+            raise ValueError("metric comparison period and value must be paired")
+        return self
+
+
 class CandidateClaimItem(StrictModel):
     candidate_id: ContractId
     source_id: ContractId
@@ -588,6 +655,14 @@ class CandidateClaimItem(StrictModel):
     topic: CleanText
     claim_type: Literal["fact", "trend", "risk", "opportunity", "estimate"]
     confidence: Literal["low", "medium", "high"]
+    aspect: Optional[Literal[tuple(CLAIM_ASPECT_VALUES)]] = None
+
+
+class CandidateCoverageGapItem(StrictModel):
+    """Scout's explicit record that one required aspect found no evidence."""
+
+    aspect: Literal[tuple(CLAIM_ASPECT_VALUES)]
+    reason: CleanText
 
 
 class ScreeningDecisionItem(StrictModel):
@@ -598,12 +673,26 @@ class ScreeningDecisionItem(StrictModel):
     explanation: Optional[CleanText] = None
 
 
+class ClaimUpcomingEvent(StrictModel):
+    """One dated future catalyst carried by a claim.
+
+    Optional on drafts; the freeze collects these into the ledger read
+    model so the catalyst calendar is a deterministic projection instead
+    of analyst recollection.
+    """
+
+    date: IsoDate
+    label: CleanText
+
+
 class ClaimDraftItem(StrictModel):
     draft_id: ContractId
     statement: CleanText
     evidence_text: CleanText
     source_ids: list[ContractId] = Field(min_length=1)
     claim_type: Literal["fact", "trend", "risk", "opportunity", "estimate"]
+    metric: Optional[ClaimMetricValue] = None
+    upcoming: Optional[ClaimUpcomingEvent] = None
 
     @model_validator(mode="after")
     def unique_sources(self) -> "ClaimDraftItem":
@@ -1811,12 +1900,16 @@ class CandidateClaimsProposal(StrictModel):
     run_id: ContractId
     created_at: IsoDateTime
     candidates: list[CandidateClaimItem] = Field(min_length=1)
+    coverage_gaps: list[CandidateCoverageGapItem] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def unique_candidates(self) -> "CandidateClaimsProposal":
         identities = [item.candidate_id for item in self.candidates]
         if len(identities) != len(set(identities)):
             raise ValueError("duplicate candidate identity")
+        gap_aspects = [item.aspect for item in self.coverage_gaps]
+        if len(gap_aspects) != len(set(gap_aspects)):
+            raise ValueError("duplicate coverage gap aspect")
         return self
 
 
@@ -2374,6 +2467,9 @@ class RunDirection(StrictModel):
     max_source_age_days: Optional[PositiveInt] = None
     selector_max_items: Optional[PositiveInt] = None
     target_terms: list[CleanText] = Field(min_length=1)
+    required_section_intents: list[CleanText] = Field(default_factory=list)
+    required_claim_aspects: list[CleanText] = Field(default_factory=list)
+    market_divergence_threshold_pct: Optional[float] = None
     output_contract: Optional[RunOutputContract] = None
 
     @model_validator(mode="after")
@@ -2384,12 +2480,25 @@ class RunDirection(StrictModel):
             "forbidden_sources",
             "output_formats",
             "target_terms",
+            "required_section_intents",
+            "required_claim_aspects",
         ):
             values = getattr(self, field_name)
             if len(values) != len(set(values)):
                 raise ValueError(f"{field_name} must contain unique values")
         if (self.report_window_start is None) != (self.report_window_end is None):
             raise ValueError("report window boundaries must be paired")
+        if (
+            self.market_divergence_threshold_pct is not None
+            and not (
+                0
+                < self.market_divergence_threshold_pct
+                <= 100
+            )
+        ):
+            raise ValueError(
+                "market divergence threshold must be in (0, 100] percent"
+            )
         if self.report_window_start is not None:
             if self.report_window_start > self.report_window_end:
                 raise ValueError("report window is not ordered")
@@ -3554,6 +3663,8 @@ class ClaimRecord(StrictModel):
     evidence_relation: Literal["direct"]
     applicability_reason: None = None
     limitations: list[CleanText] = Field(default_factory=list)
+    metric: Optional[ClaimMetricValue] = None
+    upcoming: Optional[ClaimUpcomingEvent] = None
     metadata: dict[str, JsonValue] = Field(default_factory=dict)
     created_at: IsoDateTime
     accepted_transaction_id: ContractId
@@ -6795,8 +6906,19 @@ CandidateClaimsProposal.minimal_example = {
 }
 CandidateClaimsProposal.full_example = deepcopy(CandidateClaimsProposal.minimal_example)
 CandidateClaimsProposal.full_example["candidates"].append(
-    {**_CANDIDATE, "candidate_id": "CAND-002", "confidence": "medium"}
+    {
+        **_CANDIDATE,
+        "candidate_id": "CAND-002",
+        "confidence": "medium",
+        "aspect": "guidance_risk",
+    }
 )
+CandidateClaimsProposal.full_example["coverage_gaps"] = [
+    {
+        "aspect": "cash_flow_dilution",
+        "reason": "No cash-flow or dilution evidence was found in the frozen sources.",
+    }
+]
 
 ScreenedCandidatesProposal.minimal_example = {
     "schema_version": ScreenedCandidatesProposal.schema_id,
@@ -6835,6 +6957,26 @@ ClaimDraftsProposal.minimal_example = {
     "drafts": [_DRAFT],
 }
 ClaimDraftsProposal.full_example = deepcopy(ClaimDraftsProposal.minimal_example)
+ClaimDraftsProposal.full_example["drafts"].append(
+    {
+        **_DRAFT,
+        "draft_id": "DRAFT-002",
+        "claim_type": "fact",
+        "metric": {
+            "subject_id": "EXCO",
+            "metric_id": "revenue",
+            "value": 118.2,
+            "unit": "usd_millions",
+            "period": "2026Q2",
+            "comparison_period": "2025Q2",
+            "comparison_value": 87.5,
+        },
+        "upcoming": {
+            "date": "2026-12-04",
+            "label": "Section 232 minimum import prices take effect",
+        },
+    }
+)
 
 AuditProposal.minimal_example = {
     "schema_version": AuditProposal.schema_id,

@@ -2191,17 +2191,33 @@ def test_negative_audit_after_gate_repair_routes_stable_human_review(
         assert store.current_revision == before_revision
 
 
+@pytest.mark.parametrize(
+    ("reader_issue", "finding_type", "expected_metadata"),
+    (
+        (
+            "malformed",
+            "reader_projection_invalid",
+            {
+                "projection_status": "invalid",
+                "reader_artifact_id": "reader_brief",
+            },
+        ),
+        (
+            "empty",
+            "reader_projection_empty",
+            {
+                "projection_status": "empty",
+                "reader_artifact_id": "reader_brief",
+            },
+        ),
+    ),
+)
 def test_reader_projection_issue_routes_editor_repair_before_finalize(
     tmp_path: Path,
+    reader_issue: str,
+    finding_type: str,
+    expected_metadata: dict[str, object],
 ) -> None:
-    reader_issue = "residue"
-    finding_type = "reader_projection_residue"
-    expected_metadata = {
-        "bare_claim_id_count": 1,
-        "process_wording_count": 1,
-        "reader_artifact_id": "reader_brief",
-        "residue_kinds": ["bare_claim_id", "process_wording"],
-    }
     if sys.platform == "win32":
         return
     workspace = _authorized_workspace(tmp_path)
@@ -2270,6 +2286,16 @@ def test_reader_projection_issue_routes_editor_repair_before_finalize(
     assert finding.claim_id is None
     assert finding.source_id is None
     assert finding.metadata == expected_metadata
+    if reader_issue == "malformed":
+        finding_payload = json.dumps(
+            finding.model_dump(mode="json", exclude_unset=False),
+            sort_keys=True,
+        )
+        assert finding.description == (
+            "The exact reader projection source is structurally invalid."
+        )
+        assert "Malformed projectable reader block" not in finding_payload
+        assert "trailing" not in finding_payload
     assert len(snapshot.gate_repair_cycles) == 1
     assert len(snapshot.gate_repair_outcomes) == 1
     assert snapshot.gate_repair_outcomes[0].disposition == "passed"
@@ -2362,3 +2388,95 @@ def test_active_gate_repair_contamination_is_zero_write_human_block(
     assert replay == blocked
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         assert store.current_revision == blocked_revision
+
+
+def test_editor_residue_is_rejected_at_submission_by_lint_not_repair(
+    tmp_path: Path,
+) -> None:
+    """Reader residue now surfaces at invocation-validate time.
+
+    The pre-submit lint shares the auditor gate rule bodies, so a brief
+    with process wording or bare claim ids is rejected as
+    ``proposal_invalid`` with typed violations before any accept, and the
+    run never needs its single gate-repair budget for residue.
+    """
+
+    if sys.platform == "win32":
+        return
+    workspace = _authorized_workspace(tmp_path)
+    service = _service(workspace)
+    role_sequence: list[str] = []
+    rejected_once = False
+    result = None
+
+    for _ in range(14):
+        result = service.continue_authorized()
+        if result.status == "finalized_local":
+            break
+        if result.status == "proposal_invalid":
+            assert rejected_once is False
+            rejected_once = True
+            assert result.violations, "lint violations must be typed"
+            assert any(
+                "reader_residue" in str(violation) for violation in result.violations
+            )
+            # The invocation stays active after a lint rejection; rewrite
+            # the same scratch with a clean brief.
+            assert result.trace is not None and result.trace.envelope_path
+            envelope = json.loads(
+                (workspace / result.trace.envelope_path).read_text(encoding="utf-8")
+            )
+            assert envelope["role_id"] == "editor"
+            _write_current_role_proposal(
+                workspace,
+                result,
+                initial_editor_reader_issue=None,
+            )
+            continue
+        assert result.status == "role_work_required", (
+            result.reason_code,
+            result.trace,
+        )
+        assert result.trace.envelope_path is not None
+        envelope = json.loads(
+            (workspace / result.trace.envelope_path).read_text(encoding="utf-8")
+        )
+        role_sequence.append(envelope["role_id"])
+        _write_current_role_proposal(
+            workspace,
+            result,
+            initial_editor_reader_issue="residue",
+        )
+    else:
+        raise AssertionError("lint-rejected editor brief did not finalize")
+
+    assert rejected_once
+    assert role_sequence == [
+        "scout",
+        "screener",
+        "claim-ledger",
+        "analyst",
+        "editor",
+        "auditor",
+    ]
+    assert result is not None
+    assert result.reason_code == "local_finalization_complete"
+    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        head = store.load_workspace_run_head()
+        assert head is not None
+        snapshot = store.load_snapshot(head.current_run_id)
+        assert snapshot.gate_repair_cycles == ()
+        assert snapshot.gate_repair_outcomes == ()
+        assert snapshot.finalize_renders and snapshot.finalizations
+        reader_record = next(
+            item
+            for item in snapshot.artifacts
+            if item.artifact_id == "reader_brief"
+        )
+        reader_text = store.read_artifact_revision_bytes(
+            head.current_run_id,
+            "reader_brief",
+            reader_record.current_revision,
+        ).decode("utf-8")
+    assert "Claim Ledger" not in reader_text
+    assert "CL-0001" not in reader_text

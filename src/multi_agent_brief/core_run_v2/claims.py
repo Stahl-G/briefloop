@@ -290,6 +290,18 @@ class ClaimFreezeService:
                         "evidence_relation": "direct",
                         "applicability_reason": None,
                         "limitations": [],
+                        "metric": (
+                            draft.metric.model_dump(mode="json", exclude_unset=False)
+                            if draft.metric is not None
+                            else None
+                        ),
+                        "upcoming": (
+                            draft.upcoming.model_dump(
+                                mode="json", exclude_unset=False
+                            )
+                            if draft.upcoming is not None
+                            else None
+                        ),
                         "metadata": {
                             "source_ids": list(source_ids),
                             **temporal_metadata,
@@ -347,6 +359,18 @@ class ClaimFreezeService:
                         "evidence_relation": "direct",
                         "applicability_reason": "",
                         "limitations": [],
+                        "metric": (
+                            draft.metric.model_dump(mode="json", exclude_unset=False)
+                            if draft.metric is not None
+                            else None
+                        ),
+                        "upcoming": (
+                            draft.upcoming.model_dump(
+                                mode="json", exclude_unset=False
+                            )
+                            if draft.upcoming is not None
+                            else None
+                        ),
                     }
                 )
             warnings = [
@@ -358,7 +382,19 @@ class ClaimFreezeService:
                 if len(draft_ids) > 1
             ]
             warnings.sort(key=lambda item: item["draft_ids"])
-            ledger_bytes = canonical_json_bytes({"claims": ledger_claims}) + b"\n"
+            from multi_agent_brief.core_run_v2.derived_metrics import (
+                collect_upcoming_events,
+                derive_sequential_metrics,
+            )
+
+            ledger_payload = {
+                "claims": ledger_claims,
+                "derived_metrics": derive_sequential_metrics(claims),
+                "upcoming_events": collect_upcoming_events(claims),
+            }
+            ledger_bytes = (
+                canonical_json_bytes(ledger_payload) + b"\n"
+            )
             ledger_digest = sha256_hex(ledger_bytes)
             ledger_revision_number = ledger.current_revision + 1
             event_id = derived_id("EVT-CLAIMS", request.request_id, fingerprint)

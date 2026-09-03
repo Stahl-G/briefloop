@@ -20,7 +20,7 @@ from multi_agent_brief.sources.equity_universe import (
     EquityPeriodicUniverse,
 )
 
-CHART_RENDERER_VERSION = "market-chart-png-v1"
+CHART_RENDERER_VERSION = "market-chart-png-v3"
 CHART_OUTPUT_DIRECTORY = "output/charts/market_data"
 CHART_MANIFEST_PATH = "output/intermediate/market_data_chart_manifest.json"
 _WIDTH = 960
@@ -152,6 +152,110 @@ def _frame(canvas: _Canvas) -> tuple[int, int, int, int]:
     return left, top, width, height
 
 
+# Compact 5x7 bitmap font (ASCII uppercase + digits + punctuation) so
+# chart legends and axis labels stay dependency-free and deterministic.
+_FONT_5X7: dict[str, tuple[str, ...]] = {
+    "A": ("01110", "10001", "10001", "11111", "10001", "10001", "10001"),
+    "B": ("11110", "10001", "10001", "11110", "10001", "10001", "11110"),
+    "C": ("01110", "10001", "10000", "10000", "10000", "10001", "01110"),
+    "D": ("11110", "10001", "10001", "10001", "10001", "10001", "11110"),
+    "E": ("11111", "10000", "10000", "11110", "10000", "10000", "11111"),
+    "F": ("11111", "10000", "10000", "11110", "10000", "10000", "10000"),
+    "G": ("01110", "10001", "10000", "10111", "10001", "10001", "01110"),
+    "H": ("10001", "10001", "10001", "11111", "10001", "10001", "10001"),
+    "I": ("11111", "00100", "00100", "00100", "00100", "00100", "11111"),
+    "J": ("00111", "00010", "00010", "00010", "00010", "10010", "01100"),
+    "K": ("10001", "10010", "10100", "11000", "10100", "10010", "10001"),
+    "L": ("10000", "10000", "10000", "10000", "10000", "10000", "11111"),
+    "M": ("10001", "11011", "10101", "10101", "10001", "10001", "10001"),
+    "N": ("10001", "10001", "11001", "10101", "10011", "10001", "10001"),
+    "O": ("01110", "10001", "10001", "10001", "10001", "10001", "01110"),
+    "P": ("11110", "10001", "10001", "11110", "10000", "10000", "10000"),
+    "Q": ("01110", "10001", "10001", "10001", "10101", "10011", "01111"),
+    "R": ("11110", "10001", "10001", "11110", "10100", "10010", "10001"),
+    "S": ("01111", "10000", "10000", "01110", "00001", "00001", "11110"),
+    "T": ("11111", "00100", "00100", "00100", "00100", "00100", "00100"),
+    "U": ("10001", "10001", "10001", "10001", "10001", "10001", "01110"),
+    "V": ("10001", "10001", "10001", "10001", "10001", "01010", "00100"),
+    "W": ("10001", "10001", "10001", "10101", "10101", "11011", "10001"),
+    "X": ("10001", "10001", "01010", "00100", "01010", "10001", "10001"),
+    "Y": ("10001", "10001", "01010", "00100", "00100", "00100", "00100"),
+    "Z": ("11111", "00001", "00010", "00100", "01000", "10000", "11111"),
+    "0": ("01110", "10001", "10011", "10101", "11001", "10001", "01110"),
+    "1": ("00100", "01100", "00100", "00100", "00100", "00100", "01110"),
+    "2": ("01110", "10001", "00001", "00110", "01000", "10000", "11111"),
+    "3": ("11110", "00001", "00001", "01110", "00001", "00001", "11110"),
+    "4": ("00010", "00110", "01010", "10010", "11111", "00010", "00010"),
+    "5": ("11111", "10000", "11110", "00001", "00001", "10001", "01110"),
+    "6": ("00110", "01000", "10000", "11110", "10001", "10001", "01110"),
+    "7": ("11111", "00001", "00010", "00100", "01000", "01000", "01000"),
+    "8": ("01110", "10001", "10001", "01110", "10001", "10001", "01110"),
+    "9": ("01110", "10001", "10001", "01111", "00001", "00010", "01100"),
+    ".": ("00000", "00000", "00000", "00000", "00000", "00110", "00110"),
+    ",": ("00000", "00000", "00000", "00000", "00110", "00110", "01100"),
+    "-": ("00000", "00000", "00000", "01110", "00000", "00000", "00000"),
+    "+": ("00000", "00100", "00100", "11111", "00100", "00100", "00000"),
+    "%": ("11001", "11010", "00010", "00100", "01000", "01011", "10011"),
+    "/": ("00001", "00010", "00010", "00100", "01000", "01000", "10000"),
+    ":": ("00000", "00110", "00110", "00000", "00110", "00110", "00000"),
+    "(": ("00010", "00100", "01000", "01000", "01000", "00100", "00010"),
+    ")": ("01000", "00100", "00010", "00010", "00010", "00100", "01000"),
+    " ": ("00000", "00000", "00000", "00000", "00000", "00000", "00000"),
+}
+
+_FONT_W = 5
+_FONT_H = 7
+_FONT_TRACK = 1  # horizontal tracking in pixels
+
+
+def _text_width(text: str) -> int:
+    return max(len(text) * (_FONT_W + _FONT_TRACK) - _FONT_TRACK, 0)
+
+
+def _draw_text(
+    canvas: _Canvas,
+    x: int,
+    y: int,
+    text: str,
+    color: tuple[int, int, int],
+) -> None:
+    """Draw one ASCII string with the built-in 5x7 font (top-left at x,y)."""
+
+    cursor = x
+    for char in text.upper():
+        glyph = _FONT_5X7.get(char)
+        if glyph is None:
+            cursor += _FONT_W + _FONT_TRACK
+            continue
+        for row_index, row in enumerate(glyph):
+            for column, bit in enumerate(row):
+                if bit == "1":
+                    canvas.rect(
+                        cursor + column,
+                        y + row_index,
+                        1,
+                        1,
+                        color,
+                    )
+        cursor += _FONT_W + _FONT_TRACK
+
+
+def _draw_legend(
+    canvas: _Canvas,
+    entries: list[tuple[str, tuple[int, int, int]]],
+    *,
+    x: int,
+    y: int,
+) -> None:
+    """One-row legend of colored swatches with labels."""
+
+    cursor = x
+    for label, color in entries:
+        canvas.rect(cursor, y + 2, 16, 4, color)
+        _draw_text(canvas, cursor + 22, y, label, (30, 41, 59))
+        cursor += 22 + _text_width(label) + 24
+
+
 def _line_asset(
     *,
     chart_id: str,
@@ -177,6 +281,15 @@ def _line_asset(
         return None
     canvas = _Canvas()
     left, top, width, height = _frame(canvas)
+    _draw_legend(
+        canvas,
+        [
+            (ticker, _COLORS[index % len(_COLORS)])
+            for index, (ticker, _values) in enumerate(rows)
+        ],
+        x=left,
+        y=14,
+    )
     all_values = [value for _ticker, values in rows for value in values]
     low, high = min(all_values), max(all_values)
     pad = max((high - low) * 0.1, abs(high) * 0.01, 0.1)
@@ -190,7 +303,6 @@ def _line_asset(
             points.append((x, y))
         for first, second in zip(points, points[1:]):
             canvas.line(*first, *second, _COLORS[index % len(_COLORS)], thickness=3)
-        canvas.rect(76 + index * 70, 420, 48, 8, _COLORS[index % len(_COLORS)])
     return MarketChartAsset(
         chart_id=chart_id,
         title=title,
@@ -214,7 +326,15 @@ def _bar_asset(
     if not rows:
         return None
     canvas = _Canvas()
-    left, top, width, height = _frame(canvas)
+    # Widen the bottom margin so ticker labels fit under the axis.
+    left, top, width, height = 70, 42, 840, 316
+    canvas.rect(0, 0, canvas.width, canvas.height, (255, 255, 255))
+    for index in range(5):
+        y = top + round(height * index / 4)
+        canvas.line(left, y, left + width, y, (226, 232, 240))
+    canvas.line(left, top, left, top + height, (100, 116, 139), thickness=2)
+    axis_y = top + height
+    canvas.line(left, axis_y, left + width, axis_y, (100, 116, 139), thickness=2)
     low = min(0.0, *(number for _ticker, number in rows))
     high = max(0.0, *(number for _ticker, number in rows))
     span = max(high - low, 1e-9)
@@ -222,7 +342,7 @@ def _bar_asset(
     canvas.line(left, zero, left + width, zero, (71, 85, 105), thickness=2)
     slot = width / len(rows)
     bar_width = max(8, min(58, round(slot * 0.6)))
-    for index, (_ticker, number) in enumerate(rows):
+    for index, (ticker, number) in enumerate(rows):
         x = left + round(slot * index + (slot - bar_width) / 2)
         y_value = top + round(height * (high - number) / span)
         y = min(zero, y_value)
@@ -233,6 +353,25 @@ def _bar_asset(
             max(1, abs(zero - y_value)),
             _COLORS[index % len(_COLORS)] if number >= 0 else (220, 38, 38),
         )
+        center = left + round(slot * index + slot / 2)
+        # Ticker label under the axis; value label above the bar.
+        label = ticker if _text_width(ticker) <= slot - 6 else ticker[: max(3, int((slot - 6) / (_FONT_W + _FONT_TRACK)) )]
+        _draw_text(
+            canvas,
+            center - _text_width(label) // 2,
+            axis_y + 8,
+            label,
+            (30, 41, 59),
+        )
+        value_text = f"{number:+.1f}%" if chart_id.endswith("return") else f"{number:.1f}"
+        value_y = max(top, y - 12) if number >= 0 else min(top + height - 9, max(y, y_value) + 4)
+        _draw_text(
+            canvas,
+            center - _text_width(value_text) // 2,
+            value_y,
+            value_text,
+            (71, 85, 105),
+        )
     return MarketChartAsset(
         chart_id=chart_id,
         title=title,
@@ -241,11 +380,24 @@ def _bar_asset(
     )
 
 
-def _subject_asset(security: MarketDataSecurityV2 | None) -> MarketChartAsset | None:
+def _subject_asset(
+    security: MarketDataSecurityV2 | None,
+    events: tuple[object, ...] | list[object] = (),
+) -> MarketChartAsset | None:
     if security is None or len(security.price_series) < 2:
         return None
     canvas = _Canvas()
     left, top, width, height = _frame(canvas)
+    _draw_legend(
+        canvas,
+        [
+            (f"{security.ticker} CLOSE", (29, 78, 216)),
+            ("VOLUME", (191, 219, 254)),
+            ("EVENT DAY", (190, 18, 60)),
+        ],
+        x=left,
+        y=14,
+    )
     prices = [point.close for point in security.price_series]
     volumes = [point.volume or 0 for point in security.price_series]
     low, high = min(prices), max(prices)
@@ -262,6 +414,28 @@ def _subject_asset(security: MarketDataSecurityV2 | None) -> MarketChartAsset | 
         points.append((x, y))
     for first, second in zip(points, points[1:]):
         canvas.line(*first, *second, (29, 78, 216), thickness=4)
+    # Event-day markers: a vertical line at the first series point on or
+    # after each subject event date.  Co-movement only; never causal proof.
+    dates = [point.date for point in security.price_series]
+    for event in events:
+        event_date = getattr(event, "published_at", None)
+        event_ticker = getattr(event, "ticker", None)
+        if event_date is None or (event_ticker and event_ticker != security.ticker):
+            continue
+        index = next(
+            (i for i, value in enumerate(dates) if value >= event_date), None
+        )
+        if index is None:
+            continue
+        marker_x = points[index][0]
+        canvas.line(
+            marker_x,
+            top,
+            marker_x,
+            top + height,
+            (190, 18, 60),
+            thickness=2,
+        )
     return MarketChartAsset(
         chart_id="subject-price-volume",
         title=f"{security.ticker} Close and Volume",
@@ -338,7 +512,7 @@ def render_market_chart_assets(
             securities=overseas,
             indexed=True,
         ),
-        _subject_asset(subject),
+        _subject_asset(subject, snapshot.events),
         _event_asset(snapshot),
         _bar_asset(
             chart_id="one-week-return",

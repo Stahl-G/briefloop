@@ -17,6 +17,25 @@ This page explains the public architecture migration from older Python-pipeline 
   SQLite `briefloop.db`; JSON/JSONL controls are projections only.
 - Existing JSON-only workspaces are unsupported. There is no importer, silent
   migration, dual-read, dual-write, compatibility mode, or fallback.
+- Reader-output contract (pre-v0.16 slice): the finalized reader brief carries
+  `[S#]` citation labels plus a source appendix and a deterministic compliance
+  footer; `output/brief.docx` is a required Store reader artifact whenever
+  the frozen `output_formats` include docx (needs the `docx` extra; a missing
+  dependency fails closed at finalize render). The docx is byte-deterministic
+  (core properties and ZIP timestamps are normalized). Fresh workspaces
+  only after this slice.
+- Claim drafts may carry an optional subject-scoped `metric` (five
+  cumulative metrics only) and dated `upcoming` fields; the frozen ledger
+  read model carries `derived_metrics` (strict-uniqueness Q1 = H1 - Q2
+  derivation with diagnostics) and `upcoming_events` (rendered by Python
+  into the final catalyst calendar table).
+
+- `RunDirection` gained additive optional fields (`required_section_intents`,
+  `required_claim_aspects`, `market_divergence_threshold_pct`); older Stores
+  parse with empty defaults, and the new deterministic gates (section
+  skeleton, aspect balance, price-narrative divergence, chart placement)
+  apply only to runs initialized after this slice. Scratch finalize inputs
+  may now reference `.docx` files.
 - `config.yaml` and `sources.yaml` are strict initialization inputs. Their exact
   bytes and normalized bindings are frozen into SQLite; later edits cannot
   change run legality.

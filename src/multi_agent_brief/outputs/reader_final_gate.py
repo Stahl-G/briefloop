@@ -88,6 +88,10 @@ _PROCESS_WORDINGS = [
     "工作流状态",
     "产物注册表",
     "质量门禁",
+    "冻结快照",
+    "独立权威面",
+    "确定性投影",
+    "权威面",
 ]
 
 _CITATION_SECTION_TITLES = [
@@ -95,9 +99,11 @@ _CITATION_SECTION_TITLES = [
     "source index",
     "citation table",
     "references",
+    "source appendix",
     "来源索引",
     "引用索引",
     "来源表",
+    "来源附录",
 ]
 
 _BLANK_CELL_VALUES = {"", "-", "--", "—", "n/a", "na", "null", "none", "无", "未提供", "unknown"}

@@ -94,6 +94,39 @@ def render_brief_pages_html(data: dict[str, Any]) -> bytes:
     return (html + "\n").encode("utf-8")
 
 
+def _write_report_projection(root: Path, data: dict[str, Any]) -> dict[str, Any]:
+    """Render the A4 research-report view from the same frozen payload."""
+
+    import secrets as _secrets
+
+    from .report import REPORT_OUTPUT_RELATIVE_PATH, render_report_html
+
+    markdown = (data.get("brief") or {}).get("markdown")
+    if not isinstance(markdown, str) or not markdown:
+        return {"brief_report": "", "brief_report_sha256": ""}
+    footer = "BriefLoop · 本报告基于公开信息与既定流程生成，不构成投资建议"
+    for line in markdown.splitlines():
+        stripped = line.strip("*").strip()
+        if line.startswith("**") and ("编号" in stripped or "report" in stripped.lower()):
+            footer = stripped
+            break
+    payload = render_report_html(
+        reader_markdown=markdown,
+        workspace=root,
+        page_footer_left=footer,
+    )
+    output_dir = root / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    temporary = output_dir / f".brief_report.html.tmp-{_secrets.token_hex(16)}"
+    target = root / REPORT_OUTPUT_RELATIVE_PATH
+    temporary.write_bytes(payload)
+    temporary.replace(target)
+    return {
+        "brief_report": REPORT_OUTPUT_RELATIVE_PATH.as_posix(),
+        "brief_report_sha256": _sha256_bytes(payload),
+    }
+
+
 def _replace_projection(workspace: Path, payload: bytes) -> Path:
     root_fd = -1
     output_fd = -1
@@ -234,6 +267,7 @@ def write_brief_pages(
     data = build_brief_pages_data(root, laj_view_path=laj_view_path)
     rendered = render_brief_pages_html(data)
     target = _replace_projection(root, rendered)
+    report_result = _write_report_projection(root, data)
     opened = False
     reason = "brief_html_headless"
     if open_browser:
@@ -248,6 +282,8 @@ def write_brief_pages(
         "workspace": str(root),
         "brief_pages": target.relative_to(root).as_posix(),
         "brief_pages_sha256": _sha256_bytes(rendered),
+        "brief_report": report_result["brief_report"],
+        "brief_report_sha256": report_result["brief_report_sha256"],
         "open_requested": open_browser,
         "browser_opened": opened,
         "reason_code": reason,

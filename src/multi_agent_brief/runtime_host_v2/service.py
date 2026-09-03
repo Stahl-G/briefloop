@@ -12,9 +12,12 @@ from pathlib import PurePosixPath
 import stat
 from threading import Lock
 import time
-from typing import Iterator, Literal
+from typing import TYPE_CHECKING, Iterator, Literal
 
 from pydantic import ValidationError
+
+if TYPE_CHECKING:
+    from multi_agent_brief.core.claim_ledger import ClaimLedger
 
 from multi_agent_brief.contracts.errors import (
     FieldViolation,
@@ -108,7 +111,6 @@ from multi_agent_brief.core_run_v2.tavily_source_binding import (
     expected_tavily_source_pack,
 )
 from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
-from multi_agent_brief.core.citations import remove_src_marker_spans
 from multi_agent_brief.core.env import WorkspaceEnvError, known_env_key_is_set
 from multi_agent_brief.intake_v2.errors import IntakeError
 from multi_agent_brief.intake_v2.scratch import ScratchReader, parse_json_object
@@ -129,7 +131,6 @@ from multi_agent_brief.sources.tavily_acquisition import (
 )
 from multi_agent_brief.outputs.reader_projection import (
     ReaderProjectionSourceError,
-    reader_projection_source_markdown,
 )
 
 from .contracts import (
@@ -1792,6 +1793,14 @@ class RuntimeHostService:
                 expected_run_id=envelope.run_id,
             )
         )
+        if (
+            spec.owner_kind == "owned"
+            and spec.proposal_model is None
+            and envelope.role_id in {"analyst", "editor"}
+        ):
+            violations = violations + tuple(
+                self._owned_brief_lint_violations(current, spec, outputs)
+            )
         request = None
         lane = None
         request_payload = None
@@ -1814,6 +1823,44 @@ class RuntimeHostService:
             acceptance_lane=lane,
             acceptance_payload=request_payload,
         )
+
+    def _owned_brief_lint_violations(
+        self,
+        current,
+        spec: "_RoleOutputSpec",
+        outputs: dict[str, bytes],
+    ) -> list["FieldViolation"]:
+        """Read-only content lint sharing the auditor gate rule bodies."""
+
+        filename = spec.filenames[0]
+        raw = outputs.get(filename)
+        if raw is None:
+            return []
+        try:
+            markdown = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return []
+        snapshot = current.verified.snapshot
+        with SQLiteControlStore.open(self.workspace / "briefloop.db") as store:
+            ledger = self._claim_ledger_for_render(store, snapshot)
+            ledger_payload = self._ledger_payload_for_render(store, snapshot)
+        from multi_agent_brief.quality_gates.lint import brief_content_lint
+
+        messages = brief_content_lint(
+            markdown,
+            ledger=ledger,
+            direction=current.verified.binding.run_direction,
+            workspace=self.workspace,
+            snapshot=snapshot,
+            ledger_payload=ledger_payload,
+        )
+        return [
+            FieldViolation(
+                field=filename,
+                error=f"{item['finding_type']}: {item['description']}",
+            )
+            for item in messages
+        ]
 
     def _derive_acceptance_request(
         self,
@@ -4013,6 +4060,74 @@ class RuntimeHostService:
         )
         return service.complete_stage(request)
 
+    @staticmethod
+    def _claim_ledger_for_render(store, snapshot) -> "ClaimLedger | None":
+        """Load the frozen claim ledger for the finalize reader projection.
+
+        Returns ``None`` when no ledger artifact exists yet; the reader
+        projection then falls back to plain marker removal.
+        """
+
+        record = next(
+            (
+                item
+                for item in snapshot.artifacts
+                if item.artifact_id == "claim_ledger"
+            ),
+            None,
+        )
+        if record is None:
+            return None
+        try:
+            payload = store.read_artifact_revision_bytes(
+                snapshot.run.run_id,
+                record.artifact_id,
+                record.current_revision,
+            )
+        except Exception as exc:
+            raise RuntimeHostError("control_store_integrity_invalid") from exc
+        try:
+            data = parse_json_object(payload)
+            rows = data.get("claims")
+            if not isinstance(rows, list):
+                raise ValueError("claims rows missing")
+            from multi_agent_brief.core.claim_ledger import ClaimLedger
+            from multi_agent_brief.core.schemas import Claim
+
+            return ClaimLedger([Claim.from_dict(item) for item in rows])
+        except (IntakeError, TypeError, ValueError) as exc:
+            raise RuntimeHostError("control_store_integrity_invalid") from exc
+
+    @staticmethod
+    def _ledger_payload_for_render(store, snapshot) -> dict | None:
+        """Parsed ledger artifact JSON including derived metrics/upcoming."""
+
+        record = next(
+            (
+                item
+                for item in snapshot.artifacts
+                if item.artifact_id == "claim_ledger"
+            ),
+            None,
+        )
+        if record is None:
+            return None
+        try:
+            payload = store.read_artifact_revision_bytes(
+                snapshot.run.run_id,
+                record.artifact_id,
+                record.current_revision,
+            )
+        except Exception as exc:
+            raise RuntimeHostError("control_store_integrity_invalid") from exc
+        try:
+            data = parse_json_object(payload)
+            if not isinstance(data, dict):
+                raise ValueError("ledger payload is not an object")
+            return data
+        except (IntakeError, TypeError, ValueError) as exc:
+            raise RuntimeHostError("control_store_integrity_invalid") from exc
+
     def _apply_finalize_render(self, current, action: CoreRunNextAction):
         snapshot = current.verified.snapshot
         with SQLiteControlStore.open(self.workspace / "briefloop.db") as store:
@@ -4030,12 +4145,32 @@ class RuntimeHostService:
                 )
             except Exception as exc:
                 raise RuntimeHostError("control_store_integrity_invalid") from exc
+            ledger = self._claim_ledger_for_render(store, snapshot)
+            ledger_payload = self._ledger_payload_for_render(store, snapshot)
         try:
             audited = audited_bytes.decode("utf-8")
-            reader = remove_src_marker_spans(
-                reader_projection_source_markdown(audited)
+            from multi_agent_brief.runtime_host_v2.reader_render import (
+                render_reader_markdown,
+            )
+
+            upcoming_events = []
+            if isinstance(ledger_payload, dict):
+                raw_upcoming = ledger_payload.get("upcoming_events")
+                if isinstance(raw_upcoming, list):
+                    upcoming_events = [
+                        row for row in raw_upcoming if isinstance(row, dict)
+                    ]
+            reader = render_reader_markdown(
+                audited_markdown=audited,
+                ledger=ledger,
+                run_direction=current.verified.binding.run_direction,
+                run_id=action.run_id,
+                store_revision=snapshot.store_revision,
+                upcoming_events=upcoming_events,
             ).strip()
         except (UnicodeDecodeError, ReaderProjectionSourceError) as exc:
+            raise RuntimeHostError("runtime_deterministic_input_invalid") from exc
+        except RuntimeError as exc:
             raise RuntimeHostError("runtime_deterministic_input_invalid") from exc
         if not reader:
             raise RuntimeHostError("runtime_deterministic_input_invalid")
@@ -4047,10 +4182,38 @@ class RuntimeHostService:
         )
         relative = f"scratch/{request_id}/reader_brief.md"
         self._materialize_tool_input(relative, reader_bytes)
+        scratch_inputs: dict[str, str] = {"reader_brief": relative}
+        sha_map: dict[str, str] = {"reader_brief": sha256_hex(reader_bytes)}
+        revision_map: dict[str, int] = {}
         reader_artifact = next(
             (item for item in snapshot.artifacts if item.artifact_id == "reader_brief"),
             None,
         )
+        revision_map["reader_brief"] = (
+            0 if reader_artifact is None else reader_artifact.current_revision
+        )
+        if "docx" in current.verified.binding.run_direction.output_formats:
+            docx_bytes = self._render_reader_docx(
+                markdown_relative=relative,
+                run_direction=current.verified.binding.run_direction,
+                run_id=action.run_id,
+                store_revision=snapshot.store_revision,
+            )
+            docx_relative = f"scratch/{request_id}/reader_brief.docx"
+            self._materialize_tool_input(docx_relative, docx_bytes)
+            scratch_inputs["reader_brief_docx"] = docx_relative
+            sha_map["reader_brief_docx"] = sha256_hex(docx_bytes)
+            docx_artifact = next(
+                (
+                    item
+                    for item in snapshot.artifacts
+                    if item.artifact_id == "reader_brief_docx"
+                ),
+                None,
+            )
+            revision_map["reader_brief_docx"] = (
+                0 if docx_artifact is None else docx_artifact.current_revision
+            )
         request = FinalizeRenderRequest.model_validate(
             {
                 "schema_version": FinalizeRenderRequest.schema_id,
@@ -4065,20 +4228,59 @@ class RuntimeHostService:
                     "artifact_id": promotion.report_revision.artifact_id,
                     "revision": promotion.report_revision.revision,
                 },
-                "reader_scratch_inputs": {"reader_brief": relative},
-                "expected_reader_sha256": {"reader_brief": sha256_hex(reader_bytes)},
-                "expected_reader_revisions": {
-                    "reader_brief": (
-                        0
-                        if reader_artifact is None
-                        else reader_artifact.current_revision
-                    )
-                },
+                "reader_scratch_inputs": scratch_inputs,
+                "expected_reader_sha256": sha_map,
+                "expected_reader_revisions": revision_map,
                 "expected_store_revision": action.store_revision,
             },
             strict=True,
         )
         return CoreRunTerminalService(self.workspace).accept_finalize_render(request)
+
+    def _render_reader_docx(
+        self,
+        *,
+        markdown_relative: str,
+        run_direction,
+        run_id: str,
+        store_revision: int,
+    ) -> bytes:
+        """Render the docx reader artifact deterministically from the markdown."""
+
+        import tempfile
+
+        from multi_agent_brief.runtime_host_v2.reader_render import (
+            compliance_footer_text,
+        )
+
+        try:
+            from multi_agent_brief.outputs.ib_docx import convert
+        except ImportError as exc:
+            raise RuntimeHostError("reader_docx_dependency_unavailable") from exc
+        markdown_path = self.workspace / markdown_relative
+        descriptor, temporary = tempfile.mkstemp(suffix=".docx")
+        os.close(descriptor)
+        try:
+            convert(
+                markdown_path,
+                temporary,
+                title=str(run_direction.brief_title),
+                footer=compliance_footer_text(
+                    run_direction=run_direction,
+                    run_id=run_id,
+                    store_revision=store_revision,
+                ),
+                template="default",
+                image_root=self.workspace / "output",
+            )
+            return Path(temporary).read_bytes()
+        except Exception as exc:
+            raise RuntimeHostError("reader_docx_render_failed") from exc
+        finally:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
 
     def _apply_finalize_complete(self, current, action: CoreRunNextAction):
         snapshot = current.verified.snapshot
