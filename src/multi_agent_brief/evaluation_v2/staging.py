@@ -113,6 +113,7 @@ def _initialize(
     role_ids: list[str] | None = None,
     output_contract: dict[str, object] | None = None,
     execution_authorization: dict[str, object] | None = None,
+    run_direction_overrides: dict[str, object] | None = None,
 ) -> CoreRunService:
     service = CoreRunService(workspace, clock=CLOCK)
     request = deepcopy(CoreRunInitializeRequest.minimal_example)
@@ -122,6 +123,8 @@ def _initialize(
         request["run_direction"]["output_contract"] = output_contract
     if execution_authorization is not None:
         request["execution_authorization"] = execution_authorization
+    if run_direction_overrides is not None:
+        request["run_direction"].update(run_direction_overrides)
     request.update(
         request_id="REQ-INIT-001",
         workspace_id=WORKSPACE_ID,

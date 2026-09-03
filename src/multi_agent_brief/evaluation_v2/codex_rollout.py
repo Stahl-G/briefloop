@@ -1,12 +1,14 @@
 """Codex rollout adapter: audit-report measurement plus the gate oracle.
 
-Only the pure half of the adapter lives here.  ``build_codex_rollout`` --
-the callable that materialises ``case.source_pack`` into a scratch
-workspace, drives the auditor role named by ``case.rollout`` through the
-packaged Codex kit, and reads back the recorded audit report -- lands with
-the Phase-2 rollout task and is deliberately NOT defined in this module,
-so the CLI seam (``multi_agent_brief.cli.eval_commands._build_rollout``)
-keeps failing closed until real invocation wiring exists.
+``build_codex_rollout`` -- the callable that materialises
+``case.source_pack`` into a scratch workspace, drives the auditor role
+named by ``case.rollout`` through the packaged Codex kit, and reads back
+the recorded audit report -- is defined at the bottom of this module on
+the file-level integration path (see its comment block for why the
+Store-bound paths are not used).  The CLI seam
+(``multi_agent_brief.cli.eval_commands._build_rollout``) resolves it
+lazily, so ``eval run`` still fails closed on the empty skeleton corpus
+until real cases exist.
 
 Why measurement reads the agent's audit report, not the gates (measured,
 not assumed): the deterministic gate evaluator's inputs are pure artifacts
@@ -349,3 +351,669 @@ def parse_gate_findings_for_oracle(
         _normalize_finding(finding, index=index)
         for index, finding in enumerate(findings)
     ]
+
+
+# ---------------------------------------------------------------------------
+# Real rollout: file-level adapter (validated end-to-end by the P2-T0 smokes)
+# ---------------------------------------------------------------------------
+#
+# Why file-level: the Store-bound paths (`runtime install`, `runtime
+# continue`) reject workspaces whose seeding used the extracted staging
+# chain, and re-initialising with a real codex binding diverges from that
+# chain at source-plan construction (observed: stage_artifact_binding_invalid).
+# The file-level path -- staged workspace, kit files, envelope-driven
+# `codex exec`, harvest from the envelope scratch directory -- is the one
+# empirically validated by two real rollouts plus the constrained-envelope
+# confirmation, so it is the integration path.
+
+from datetime import timedelta  # noqa: E402
+import hashlib  # noqa: E402
+import json  # noqa: E402
+import os  # noqa: E402
+import subprocess  # noqa: E402
+from importlib.resources import files as resource_files  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+import yaml  # noqa: E402
+
+from multi_agent_brief.evaluation_v2 import staging  # noqa: E402
+from multi_agent_brief.runtime_assets import install_runtime_kit  # noqa: E402
+
+#: Directory (under the workspace scratch tree) the envelope names as the
+#: rollout's output location.  The real rollouts wrote there even when the
+#: task text named a different path: the role contract's scratch convention
+#: wins, so the adapter harvests exactly here.
+ROLLOUT_SCRATCH_DIR = "scratch/eval-rollout"
+
+#: Sentinel-substituted workspace config.  Shape mirrors what a demo
+#: workspace init produces (proven against the seeding chain); every
+#: content-coupled field is substituted per case: the company must agree
+#: with the brief and ledger, claim-count minimums must match the seeded
+#: ledger size, and report dates drive the freshness window.
+_CONFIG_TEMPLATE = """project:
+  name: "@@BRIEF_TITLE@@"
+  company: "@@COMPANY@@"
+  industry: "@@INDUSTRY@@"
+  role: "strategy_office"
+  audience: "management"
+audience_profile:
+  id: "management"
+language:
+  interface: "en-US"
+  output: "en-US"
+  source_handling: "preserve_original"
+report:
+  cadence: "weekly"
+  date: "@@REPORT_DATE@@"
+  max_source_age_days: @@MAX_AGE@@
+  fail_on_stale_source: true
+input:
+  path: "input"
+output:
+  path: "output"
+  formats:
+    - "markdown"
+  filename_template: "{project_name}_{report_date}"
+  named_outputs: true
+brief_quality:
+  min_items: @@ITEMS@@
+  min_zh_chars: 3000
+  require_dates: true
+  allow_quiet_week_exception: false
+selector:
+  enabled: true
+  max_items: @@ITEMS@@
+  require_fresh_source: true
+  topic_diversity: true
+retrieval:
+  enabled: false
+audit:
+  fail_on_missing_source: true
+  fail_on_stale_source: true
+  redaction_scan: true
+  require_claim_citations: true
+safety:
+  no_investment_advice: true
+  no_legal_advice: true
+  no_trading_signals: true
+  require_human_review: true
+controlstore_v2:
+  schema_version: "briefloop.workspace_controlstore_bootstrap.v2"
+  workspace_id: "WS-EVALV200000000000000000000000000001"
+  run_id: "RUN-EVALV200000000000000000000000000001"
+  runtime: "codex"
+  role_topology: "single_session"
+  input_governance_required: true
+  gate_strictness:
+    coverage_omission: true
+    editor_new_fact: true
+    final_abstract_quality: true
+    material_fact: true
+    freshness: true
+    target_relevance: true
+  run_direction:
+    schema_version: "briefloop.run_direction.v2"
+    subject_name: "@@COMPANY@@"
+    industry_or_theme: "@@INDUSTRY@@"
+    brief_title: "@@BRIEF_TITLE@@"
+    task_objective: "Auditor detection evaluation on a seeded synthetic workspace."
+    audience: "management"
+    audience_profile: "management"
+    output_language: "en-US"
+    source_handling: "preserve_original"
+    cadence: "weekly"
+    focus_areas:
+      - "Operations"
+    excluded_topics: []
+    forbidden_sources: []
+    source_profile: "conservative"
+    web_search_mode: "disabled"
+    output_formats:
+      - "markdown"
+    report_date: "@@REPORT_DATE@@"
+    report_window_start: "@@WINDOW_START@@"
+    report_window_end: "@@REPORT_DATE@@"
+    max_source_age_days: @@MAX_AGE@@
+    selector_max_items: @@ITEMS@@
+    target_terms:
+      - "Operations"
+"""
+
+_USER_TEMPLATE = """# User Context
+
+## Company
+
+@@COMPANY@@
+
+## Industry
+
+@@INDUSTRY@@
+
+## Objective
+
+Produce the weekly brief for @@COMPANY@@ from the frozen claim ledger only.
+"""
+
+_COMMON_FRAME = """You are operating inside a BriefLoop workspace evaluation rollout.
+
+Environment facts (honest scoping):
+- This workspace was pre-seeded to your stage by deterministic tooling.
+- The Store-backed preflight commands (`briefloop contract show`,
+  `briefloop runtime invocation-validate`) are NOT available in this rollout;
+  do not run them. Work from the files named below.
+- Do not modify briefloop.db or anything outside the named outputs.
+- Finish by writing the required output file, then stop.
+"""
+
+
+def _reporting_contract() -> str:
+    """Read the harness-owned reporting contract packaged with the corpus."""
+    resource = (
+        resource_files("multi_agent_brief.evaluation_v2")
+        .joinpath("corpus_data", "envelope-auditor-reporting.md")
+        .read_text(encoding="utf-8")
+    )
+    return resource
+
+
+def _render_config(case: EvaluationCase, pack: Mapping[str, Any]) -> str:
+    config = pack.get("config") or {}
+    project = config.get("project") or {}
+    report = config.get("report") or {}
+    company = str(project.get("name", "Synthetic Company"))
+    industry = str(project.get("industry", "synthetic industry"))
+    report_date = case.report_date
+    max_age = int(report.get("max_source_age_days", 14))
+    items = len(pack.get("claim_ledger") or [])
+    from datetime import date
+
+    window_start = (
+        date.fromisoformat(report_date) - timedelta(days=max_age)
+    ).isoformat()
+    return (
+        _CONFIG_TEMPLATE.replace("@@BRIEF_TITLE@@", f"{company} Weekly Brief")
+        .replace("@@COMPANY@@", company)
+        .replace("@@INDUSTRY@@", industry)
+        .replace("@@REPORT_DATE@@", report_date)
+        .replace("@@WINDOW_START@@", window_start)
+        .replace("@@MAX_AGE@@", str(max_age))
+        .replace("@@ITEMS@@", str(items))
+    )
+
+
+def _execution_authorization_for(
+    workspace: Path, sources: list[Mapping[str, Any]]
+) -> dict[str, Any]:
+    """Build the init-time execution authorization for the case source pack.
+
+    Mirrors the authorized-pack intake lane the runtime supports for multi-
+    source runs (manifest-bound, atomic, one invocation): every case source
+    becomes one manifest member with its content written under ``input/``.
+    """
+    from multi_agent_brief.contracts.v2 import ExecutionSourceManifest
+    from multi_agent_brief.control_store.serialization import (
+        canonical_json_bytes,
+        sha256_hex,
+    )
+
+    members: list[dict[str, Any]] = []
+    for source in sources:
+        source_id = str(source["source_id"])
+        input_path = f"input/{source_id.lower()}.txt"
+        content = str(source.get("title", "synthetic source")).encode("utf-8")
+        target = workspace / input_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+        members.append(
+            {
+                "source_id": source_id,
+                "input_path": input_path,
+                "content_sha256": hashlib.sha256(content).hexdigest(),
+                "content_media_type": "text/plain",
+                "origin_type": "manual_evidence",
+                "acquisition_method": "manual_evidence",
+                "material_kind": "full_content",
+                "provider": None,
+                "locator": {"kind": "file", "path": input_path},
+                "title": str(source.get("title", "Synthetic source")),
+                "publisher": source.get("publisher"),
+                "published_at": str(source["published_at"]),
+                "retrieved_at": staging.NOW,
+                "source_category": "other",
+                "retrieval_source_type": "local_file",
+                "underlying_evidence_type": "filing",
+                "raw_underlying_evidence_type": None,
+                "document_kind": None,
+                "opened_at": None,
+                "resolved_at": None,
+            }
+        )
+    manifest = ExecutionSourceManifest.model_validate(
+        {"schema_version": ExecutionSourceManifest.schema_id, "members": members},
+        strict=True,
+    )
+    canonical = canonical_json_bytes(
+        manifest.model_dump(mode="json", exclude_unset=False)
+    )
+    return {
+        "schema_version": "briefloop.run_execution_authorization_input.v2",
+        "completion_target": "finalized_local",
+        "source_manifest": manifest.model_dump(mode="json", exclude_unset=False),
+        "source_manifest_sha256": sha256_hex(canonical),
+        "source_manifest_member_count": len(members),
+        "repair_budget": 1,
+    }
+
+
+def materialize_case_workspace(case: EvaluationCase, workspace: Path) -> None:
+    """Materialise ``case.source_pack`` into a seeded, editor-complete workspace.
+
+    Writes the content-coupled workspace files (config, sources, user
+    context), then drives the deterministic seeding chain from the extracted
+    staging module with the case's own sources, claims, analyst snapshot and
+    brief -- no canned payloads, no model calls.  After this the workspace
+    sits exactly where the P2-T0 smoke workspaces sat: everything the
+    auditor role reads is on disk under ``output/intermediate/``.
+    """
+    pack = yaml.safe_load(case.source_pack)
+    if not isinstance(pack, Mapping):
+        raise ValueError(f"case {case.case_id}: source_pack must be a YAML mapping")
+
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "config.yaml").write_text(
+        _render_config(case, pack), encoding="utf-8"
+    )
+    (workspace / "sources.yaml").write_text(
+        "source_strategy:\n"
+        '  profile: "conservative"\n'
+        "  enabled_providers:\n"
+        '    - "manual"\n'
+        "manual:\n"
+        "  enabled: true\n"
+        "  sources: []\n",
+        encoding="utf-8",
+    )
+    user = _USER_TEMPLATE
+    project = pack.get("config", {}).get("project", {})
+    user = user.replace("@@COMPANY@@", str(project.get("name", "Synthetic Company")))
+    user = user.replace("@@INDUSTRY@@", str(project.get("industry", "synthetic industry")))
+    (workspace / "user.md").write_text(user, encoding="utf-8")
+
+    sources = list(pack.get("sources") or [])
+    claims = list(pack.get("claim_ledger") or [])
+
+    authorization = _execution_authorization_for(workspace, sources)
+    report_config = (pack.get("config") or {}).get("report") or {}
+    max_age = int(report_config.get("max_source_age_days", 14))
+    from datetime import date as _date
+
+    window_start = (_date.fromisoformat(case.report_date) - timedelta(days=max_age)).isoformat()
+    project_config = (pack.get("config") or {}).get("project") or {}
+    company = str(project_config.get("name", "Synthetic Company"))
+    direction_overrides = {
+        "subject_name": company,
+        "industry_or_theme": str(project_config.get("industry", "synthetic industry")),
+        "brief_title": f"{company} Weekly Brief",
+        "report_date": case.report_date,
+        "report_window_start": window_start,
+        "report_window_end": case.report_date,
+        "max_source_age_days": max_age,
+        "selector_max_items": len(claims),
+    }
+    service = staging._initialize(
+        workspace,
+        execution_authorization=authorization,
+        input_governance_required=True,
+        run_direction_overrides=direction_overrides,
+    )
+    doctor = service.doctor_check(
+        staging._record(
+            staging.IntegrityCheckRequest,
+            request_id="REQ-DOCTOR-001",
+            run_id=staging.RUN_ID,
+            expected_store_revision=staging._store_revision(workspace),
+        )
+    )
+    assert doctor.status == "committed", doctor.to_dict()
+
+    pack_result = service.apply_authorized_source_pack()
+    assert pack_result.status == "committed", pack_result.to_dict()
+    from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
+
+    with staging.SQLiteControlStore.open(workspace / "briefloop.db") as store:
+        snapshot = CoreRunDomainVerifier().verify(store, staging.RUN_ID).snapshot
+    staging._complete_stage(
+        service, workspace,
+        stage_id="source-discovery",
+        artifacts=[
+            (
+                item.source_manifest_artifact.artifact_id,
+                item.source_manifest_artifact.revision,
+            )
+            for item in snapshot.run_execution_authorizations
+        ]
+        + [
+            (item.content_artifact_id, item.content_artifact_revision)
+            for item in snapshot.sources
+        ],
+    )
+    staging._complete_stage(
+        service, workspace,
+        stage_id="input-governance",
+        artifacts=[("input_classification", 1)],
+    )
+
+    scout = staging._start_invocation(
+        service, workspace,
+        request_id="REQ-INVOKE-SCOUT",
+        stage_id="scout", role_id="scout",
+    )
+    staging._submit_proposal(
+        workspace,
+        lane="candidate",
+        invocation_id=scout,
+        request_id="REQ-CANDIDATE-001",
+        artifact_id="candidate_claims",
+        payload={
+            "schema_version": "briefloop.candidate_claims_proposal.v2",
+            "proposal_id": "PROP-CANDIDATE-001",
+            "run_id": staging.RUN_ID,
+            "created_at": staging.NOW,
+            "candidates": [
+                {
+                    "candidate_id": f"CAND-{index:03d}",
+                    "source_id": claim["source_id"],
+                    "statement": claim["statement"],
+                    "evidence_text": claim.get("evidence_text", claim["statement"]),
+                    "topic": "operations",
+                    "claim_type": claim.get("claim_type", "fact"),
+                    "confidence": "high",
+                }
+                for index, claim in enumerate(claims, start=1)
+            ],
+        },
+    )
+    # Screening policy: selected+high requires current-window evidence, so a
+    # selected candidate backed by a source outside the report window (the
+    # stale-source defect material) must be selected at medium priority.
+    def _screening_priority(source_id: str) -> str:
+        for source in sources:
+            if source["source_id"] == source_id:
+                published = _date.fromisoformat(str(source["published_at"]))
+                start = _date.fromisoformat(window_start)
+                end = _date.fromisoformat(case.report_date)
+                return "high" if start <= published <= end else "medium"
+        return "medium"
+
+    screening = staging._start_invocation(
+        service, workspace,
+        request_id="REQ-INVOKE-SCREEN",
+        stage_id="scout", role_id="scout",
+    )
+    staging._submit_proposal(
+        workspace,
+        lane="screened",
+        invocation_id=screening,
+        request_id="REQ-SCREENED-001",
+        artifact_id="screened_candidates",
+        payload={
+            "schema_version": "briefloop.screened_candidates_proposal.v2",
+            "proposal_id": "PROP-SCREENED-001",
+            "run_id": staging.RUN_ID,
+            "candidate_claims_proposal_id": "PROP-CANDIDATE-001",
+            "created_at": staging.NOW,
+            "decisions": [
+                {
+                    "candidate_id": f"CAND-{index:03d}",
+                    "decision": "selected",
+                    "reason_code": "public_evidence_in_scope",
+                    "explanation": "Public evidence is in scope.",
+                    "priority": _screening_priority(claims[index - 1]["source_id"]),
+                }
+                for index in range(1, len(claims) + 1)
+            ],
+        },
+    )
+    staging._complete_stage(
+        service, workspace,
+        stage_id="scout",
+        artifacts=[("candidate_claims", 1), ("screened_candidates", 1)],
+    )
+
+    claims_invocation = staging._start_invocation(
+        service, workspace,
+        request_id="REQ-INVOKE-CLAIMS",
+        stage_id="claim-ledger", role_id="claim-ledger",
+    )
+    staging._submit_proposal(
+        workspace,
+        lane="claim-drafts",
+        invocation_id=claims_invocation,
+        request_id="REQ-CLAIM-DRAFTS-001",
+        artifact_id="claim_drafts",
+        payload={
+            "schema_version": "briefloop.claim_drafts_proposal.v2",
+            "proposal_id": "PROP-CLAIM-DRAFTS-001",
+            "run_id": staging.RUN_ID,
+            "screened_candidates_proposal_id": "PROP-SCREENED-001",
+            "created_at": staging.NOW,
+            "drafts": [
+                {
+                    "draft_id": f"DRAFT-{index:03d}",
+                    "statement": claim["statement"],
+                    "evidence_text": claim.get("evidence_text", claim["statement"]),
+                    "source_ids": [claim["source_id"]],
+                    "claim_type": claim.get("claim_type", "fact"),
+                }
+                for index, claim in enumerate(claims, start=1)
+            ],
+        },
+    )
+    frozen = staging.ClaimFreezeService(workspace, clock=staging.CLOCK).freeze(
+        staging._record(
+            staging.ClaimFreezeRequest,
+            request_id="REQ-FREEZE-001",
+            run_id=staging.RUN_ID,
+            claim_drafts_proposal_id="PROP-CLAIM-DRAFTS-001",
+            expected_claim_drafts_artifact={
+                "artifact_id": "claim_drafts",
+                "revision": 1,
+            },
+            expected_store_revision=staging._store_revision(workspace),
+            expected_ledger_revision=0,
+        )
+    )
+    assert frozen.status == "committed", frozen.to_dict()
+    staging._complete_stage(
+        service, workspace,
+        stage_id="claim-ledger",
+        artifacts=[("claim_drafts", 1), ("claim_ledger", 1)],
+    )
+
+    analyst = staging._start_invocation(
+        service, workspace,
+        request_id="REQ-INVOKE-ANALYST",
+        stage_id="analyst", role_id="analyst",
+    )
+    analyst_path = workspace / "scratch" / analyst / "analyst_draft_snapshot.md"
+    analyst_path.parent.mkdir(parents=True, exist_ok=True)
+    analyst_path.write_text(str(pack.get("analyst_draft_snapshot", "")), encoding="utf-8")
+    analyst_result = staging.ArtifactAcceptanceService(
+        workspace, clock=staging.CLOCK
+    ).submit_owned_artifact(
+        staging._record(
+            staging.OwnedArtifactSubmitRequest,
+            request_id="REQ-ARTIFACT-ANALYST",
+            run_id=staging.RUN_ID,
+            artifact_id="analyst_draft_snapshot",
+            invocation_id=analyst,
+            producer_tool_id="analyst-snapshot-v2",
+            input_path=analyst_path.relative_to(workspace).as_posix(),
+            expected_store_revision=staging._store_revision(workspace),
+            expected_artifact_revision=0,
+            expected_parent_artifact=None,
+        )
+    )
+    assert analyst_result.status == "committed", analyst_result.to_dict()
+    staging._complete_stage(
+        service, workspace,
+        stage_id="analyst",
+        artifacts=[("analyst_draft_snapshot", 1)],
+    )
+
+    editor = staging._start_invocation(
+        service, workspace,
+        request_id="REQ-INVOKE-EDITOR",
+        stage_id="editor", role_id="editor",
+    )
+    brief_path = workspace / "scratch" / editor / "audited_brief.md"
+    brief_path.parent.mkdir(parents=True, exist_ok=True)
+    brief_path.write_text(str(pack.get("audited_brief", "")), encoding="utf-8")
+    editor_result = staging.ArtifactAcceptanceService(
+        workspace, clock=staging.CLOCK
+    ).submit_owned_artifact(
+        staging._record(
+            staging.OwnedArtifactSubmitRequest,
+            request_id="REQ-ARTIFACT-EDITOR",
+            run_id=staging.RUN_ID,
+            artifact_id="audited_brief",
+            invocation_id=editor,
+            producer_tool_id=None,
+            input_path=brief_path.relative_to(workspace).as_posix(),
+            expected_store_revision=staging._store_revision(workspace),
+            expected_artifact_revision=0,
+            expected_parent_artifact={
+                "artifact_id": "analyst_draft_snapshot",
+                "revision": 1,
+            },
+        )
+    )
+    assert editor_result.status == "committed", editor_result.to_dict()
+    staging._complete_stage(
+        service, workspace,
+        stage_id="editor",
+        artifacts=[("analyst_draft_snapshot", 1), ("audited_brief", 1)],
+    )
+
+
+def _build_envelope(case: EvaluationCase) -> dict[str, Any]:
+    return {
+        "schema_version": "briefloop.role_task_envelope.v2",
+        "run_id": "RUN-EVAL-ROLLOUT",
+        "invocation_id": f"INV-EVAL-{case.case_id[:24]}",
+        "store_revision": 0,
+        "action_fingerprint": "0" * 64,
+        "role_id": case.rollout.role,
+        "stage_id": case.rollout.role,
+        "scratch_directory": ROLLOUT_SCRATCH_DIR,
+        "allowed_output_filenames": ["audit_report.json"],
+        "proposal_schema_id": "briefloop.audit_report_artifact.v2",
+        "adapter_binding_fingerprint": "0" * 64,
+        "source_plan_fingerprint": "0" * 64,
+        "executor_kind": "codex",
+        "context_mode": "workspace",
+        "review_mode": "none",
+        "dispatch_instruction": "execute_in_current_session",
+        "task_instructions": (
+            "Audit the frozen brief against the frozen claim ledger. Inputs: "
+            "output/intermediate/audited_brief.md, output/intermediate/claim_ledger.json, "
+            "config.yaml, user.md. Write audit_report.json under your scratch directory "
+            f"({ROLLOUT_SCRATCH_DIR}/audit_report.json) using the current AuditReport "
+            "contract (top-level audit_status, audit_score, findings, metadata). "
+            "Report every real defect you find with full detail in each finding."
+        ),
+    }
+
+
+def _role_instructions(workspace: Path, role: str) -> str:
+    agent_toml = workspace / ".codex" / "agents" / f"briefloop-{role}.toml"
+    text = agent_toml.read_text(encoding="utf-8")
+    start = text.index("developer_instructions = '''") + len(
+        "developer_instructions = '''"
+    )
+    end = text.index("'''", start)
+    return text[start:end].strip()
+
+
+def _harvest_audit_report(workspace: Path) -> Mapping[str, Any]:
+    """Read the rollout's audit report from the envelope scratch directory."""
+    report_path = workspace / ROLLOUT_SCRATCH_DIR / "audit_report.json"
+    if not report_path.exists():
+        candidates = sorted(
+            workspace.glob("scratch/*/audit_report.json"), key=lambda p: p.stat().st_mtime
+        )
+        if not candidates:
+            raise RuntimeError("rollout produced no audit_report.json under scratch/")
+        report_path = candidates[-1]
+    return json.loads(report_path.read_text(encoding="utf-8"))
+
+
+def build_codex_rollout(
+    *,
+    workdir: str | Path,
+    model: str | None = None,
+    exec_timeout_seconds: int = 900,
+):
+    """Build a real rollout function driving the packaged Codex kit per case.
+
+    Per case: materialise a seeded workspace (deterministic, no model
+    calls), install the kit files, launch ``codex exec`` with the role
+    instructions from the generated agent TOML plus the harness-owned
+    reporting contract, harvest the agent-written audit report from the
+    envelope scratch directory, and fold it into a ``RolloutOutcome``.
+    """
+    workdir = Path(workdir)
+    workdir.mkdir(parents=True, exist_ok=True)
+    contract_text = _reporting_contract()
+
+    def rollout(case: EvaluationCase) -> RolloutOutcome:
+        workspace = workdir / case.case_id
+        materialize_case_workspace(case, workspace)
+        if not (workspace / ".codex" / "agents" / "briefloop-auditor.toml").exists():
+            install_runtime_kit(workspace=workspace, runtime="codex")
+
+        envelope = _build_envelope(case)
+        prompt = (
+            f"{_COMMON_FRAME}\n\n## RoleTaskEnvelope (host-supplied)\n\n```json\n"
+            f"{json.dumps(envelope, indent=2)}\n```\n\n## Role instructions\n\n"
+            f"{_role_instructions(workspace, case.rollout.role)}\n\n{contract_text}"
+        )
+        cmd = [
+            "codex", "exec",
+            "--cd", str(workspace),
+            "-s", "workspace-write",
+            "--skip-git-repo-check",
+        ]
+        if model:
+            cmd += ["-m", model]
+        cmd.append("-")
+        env = dict(os.environ)
+        env.pop("CODEX_HOME", None)  # auth lives in the user's ~/.codex
+        proc = subprocess.run(
+            cmd,
+            input=prompt,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=exec_timeout_seconds,
+        )
+        log_dir = workspace / ROLLOUT_SCRATCH_DIR
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / "codex_stdout.txt").write_text(proc.stdout, encoding="utf-8")
+        (log_dir / "codex_stderr.txt").write_text(proc.stderr, encoding="utf-8")
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"codex exec failed for case {case.case_id} "
+                f"(exit {proc.returncode}); see {log_dir}"
+            )
+
+        payload = _harvest_audit_report(workspace)
+        findings, noncompliant = parse_reported_audit(payload)
+        return outcome_from_findings(
+            case,
+            findings,
+            blocked=payload.get("audit_status") == "fail",
+            noncompliant_finding_count=noncompliant,
+        )
+
+    return rollout
