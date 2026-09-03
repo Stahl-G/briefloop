@@ -213,9 +213,11 @@ def test_run_with_injected_rollout_scores_and_reports(
     assert payload["defect_recall"] == 1.0
     assert payload["true_negative_rate"] == 1.0
     assert payload["block_agreement"] == 1.0
+    assert payload["format_compliance"] == 1.0
     assert payload["reward"] == 1.0
 
     assert main(["eval", "run", "--corpus", str(manifest), "--split", "val"]) == 0
     out = capsys.readouterr().out
     assert "split            val" in out
+    assert "format_compliance 1.0000" in out
     assert "R                1.0000" in out

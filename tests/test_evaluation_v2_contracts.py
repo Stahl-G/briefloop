@@ -4,6 +4,11 @@
 than asserted, because the retired annotated corpus contains warning-only cases
 (``blocked: false`` carrying warning-level findings) that a boolean input field
 cannot express honestly.
+
+The measurable vocabulary is deliberately four detection types (the shrink
+from ten is a measurement-design decision, pinned here); the six
+finalize-family types live separately in ``GENERATION_DEFECT_TYPES`` with
+inverted polarity and no corpus representation.
 """
 
 from __future__ import annotations
@@ -12,7 +17,9 @@ import pytest
 from pydantic import ValidationError
 
 from multi_agent_brief.evaluation_v2.contracts import (
+    EVOLVABLE_ROLES,
     FINDING_TYPES,
+    GENERATION_DEFECT_TYPES,
     CorpusScore,
     EvaluationCase,
     ReportedFinding,
@@ -33,11 +40,11 @@ def _case_payload(**overrides):
             {
                 "defect_id": "d1",
                 "finding_type": "stale_source",
-                "locator": "source-002.md#L14",
+                "locator": "CL-0102",
                 "expected_blocking_level": "blocking",
             }
         ],
-        "clean_claims": ["source-001.md#L8"],
+        "clean_claims": ["CL-0101"],
     }
     payload.update(overrides)
     return payload
@@ -47,7 +54,7 @@ def _defect(defect_id: str = "d1", **overrides):
     defect = {
         "defect_id": defect_id,
         "finding_type": "stale_source",
-        "locator": "source-002.md#L14",
+        "locator": "CL-0102",
         "expected_blocking_level": "blocking",
     }
     defect.update(overrides)
@@ -64,11 +71,25 @@ def test_valid_case_parses():
 def test_case_rejects_unknown_finding_type():
     payload = _case_payload(
         seeded_defects=[
-            _defect(finding_type="not_a_real_type", locator="a#L1")
+            _defect(finding_type="not_a_real_type", locator="CL-0102")
         ]
     )
     with pytest.raises(ValidationError):
         EvaluationCase.model_validate(payload, strict=True)
+
+
+def test_case_rejects_generation_family_types_as_seeded_defects():
+    """The shrink is enforced by the schema: final_* and target_relevance_gap
+    measure generation quality (inverted polarity) and are NOT seedable
+    detection defects."""
+    for finding_type in sorted(GENERATION_DEFECT_TYPES):
+        with pytest.raises(ValidationError):
+            EvaluationCase.model_validate(
+                _case_payload(
+                    seeded_defects=[_defect(finding_type=finding_type)]
+                ),
+                strict=True,
+            )
 
 
 def test_case_rejects_non_synthetic():
@@ -102,30 +123,27 @@ def test_must_block_is_derived_not_a_model_field():
 
 
 def test_warning_only_case_parses_and_does_not_block():
-    """Real legacy shape: warning findings carried on an unblocked case."""
+    """Warning-level detection findings on an unblocked case: the shape a
+    boolean must_block field cannot express honestly."""
     payload = _case_payload(
-        case_id="final_abstract_quality_warning_surface",
-        rollout={"role": "editor", "runtime": "codex"},
+        case_id="warning_only_detection_case",
         seeded_defects=[
             _defect(
-                defect_id=f"d{index}",
-                finding_type=finding_type,
-                locator=f"draft.md#L{index + 1}",
+                defect_id="d1",
+                finding_type="stale_source",
+                locator="CL-0102",
                 expected_blocking_level="warning",
-            )
-            for index, finding_type in enumerate(
-                (
-                    "final_scope_title_mismatch",
-                    "final_missing_comparison_basis",
-                    "final_missing_limitation_section",
-                    "final_incomplete_key_case_fields",
-                    "final_unsupported_superlative",
-                )
-            )
+            ),
+            _defect(
+                defect_id="d2",
+                finding_type="target_priority_claim_missing_from_summary",
+                locator="audited_brief#L40",
+                expected_blocking_level="warning",
+            ),
         ],
     )
     case = EvaluationCase.model_validate(payload, strict=True)
-    assert len(case.seeded_defects) == 5
+    assert len(case.seeded_defects) == 2
     assert case.must_block is False
 
 
@@ -135,8 +153,8 @@ def test_mixed_blocking_and_warning_case_must_block():
             _defect(defect_id="d1", expected_blocking_level="blocking"),
             _defect(
                 defect_id="d2",
-                finding_type="final_unsupported_superlative",
-                locator="draft.md#L3",
+                finding_type="number_without_source",
+                locator="audited_brief#L3",
                 expected_blocking_level="warning",
             ),
         ]
@@ -150,15 +168,15 @@ def test_zero_defect_case_with_clean_claims_parses():
         _case_payload(seeded_defects=[]), strict=True
     )
     assert case.seeded_defects == []
-    assert case.clean_claims == ["source-001.md#L8"]
+    assert case.clean_claims == ["CL-0101"]
     assert case.must_block is False
 
 
 def test_defect_ids_must_be_unique_within_a_case():
     payload = _case_payload(
         seeded_defects=[
-            _defect(defect_id="d1", locator="a#L1"),
-            _defect(defect_id="d1", finding_type="number_without_source", locator="a#L2"),
+            _defect(defect_id="d1", locator="CL-0102"),
+            _defect(defect_id="d1", finding_type="number_without_source", locator="CL-0103"),
         ]
     )
     with pytest.raises(ValidationError):
@@ -172,13 +190,20 @@ def test_defect_rejects_info_blocking_level():
         )
 
 
-def test_finding_types_match_the_retired_corpus():
+def test_finding_types_are_exactly_the_four_detection_types():
     assert FINDING_TYPES == frozenset(
         {
             "claim_support_matrix_blocking_support",
             "number_without_source",
             "stale_source",
             "target_priority_claim_missing_from_summary",
+        }
+    )
+
+
+def test_generation_defect_types_are_the_six_finalize_family_types():
+    assert GENERATION_DEFECT_TYPES == frozenset(
+        {
             "target_relevance_gap",
             "final_incomplete_key_case_fields",
             "final_missing_comparison_basis",
@@ -187,11 +212,20 @@ def test_finding_types_match_the_retired_corpus():
             "final_unsupported_superlative",
         }
     )
+    # The shrink from 10 to 4 is deliberate: the two vocabularies partition
+    # the retired 10-type set and never overlap.
+    assert not FINDING_TYPES & GENERATION_DEFECT_TYPES
+    assert len(FINDING_TYPES | GENERATION_DEFECT_TYPES) == 10
+
+
+def test_evolvable_roles_are_auditor_only():
+    assert EVOLVABLE_ROLES == ("auditor",)
 
 
 def test_rollout_spec_rejects_unknown_role_and_runtime():
-    with pytest.raises(ValidationError):
-        RolloutSpec.model_validate({"role": "analyst", "runtime": "codex"}, strict=True)
+    for role in ("analyst", "editor", "screener", "claim-ledger", "scout"):
+        with pytest.raises(ValidationError):
+            RolloutSpec.model_validate({"role": role, "runtime": "codex"}, strict=True)
     with pytest.raises(ValidationError):
         RolloutSpec.model_validate({"role": "auditor", "runtime": "claude"}, strict=True)
 
@@ -201,16 +235,17 @@ def test_rollout_outcome_parses():
         {
             "case_id": "c1",
             "found_defect_ids": ["d1"],
-            "flagged_claim_locators": ["source-001.md#L8"],
+            "flagged_claim_locators": ["CL-0101"],
             "blocked": True,
         },
         strict=True,
     )
     assert outcome.found_defect_ids == ["d1"]
     assert outcome.blocked is True
+    assert outcome.noncompliant_finding_count == 0
 
 
-def test_rollout_outcome_carries_reported_findings():
+def test_rollout_outcome_carries_reported_findings_and_noncompliant_count():
     outcome = RolloutOutcome.model_validate(
         {
             "case_id": "c1",
@@ -220,15 +255,17 @@ def test_rollout_outcome_carries_reported_findings():
             "findings": [
                 {
                     "finding_type": "stale_source",
-                    "locator": "source-002.md#L14",
+                    "locator": "CL-0102",
                     "blocking_level": "warning",
                 }
             ],
+            "noncompliant_finding_count": 2,
         },
         strict=True,
     )
     assert isinstance(outcome.findings[0], ReportedFinding)
     assert outcome.findings[0].blocking_level == "warning"
+    assert outcome.noncompliant_finding_count == 2
     with pytest.raises(ValidationError):
         RolloutOutcome.model_validate(
             {
@@ -237,8 +274,25 @@ def test_rollout_outcome_carries_reported_findings():
                 "findings": [
                     {
                         "finding_type": "stale_source",
-                        "locator": "source-002.md#L14",
+                        "locator": "CL-0102",
                         "blocking_level": "info",
+                    }
+                ],
+            },
+            strict=True,
+        )
+    # A reported finding outside the detection vocabulary cannot even be
+    # recorded as a finding -- only counted.
+    with pytest.raises(ValidationError):
+        RolloutOutcome.model_validate(
+            {
+                "case_id": "c1",
+                "blocked": False,
+                "findings": [
+                    {
+                        "finding_type": "final_unsupported_superlative",
+                        "locator": "CL-0102",
+                        "blocking_level": "warning",
                     }
                 ],
             },
@@ -263,8 +317,25 @@ def test_corpus_score_rejects_extra_fields():
                 "clean_total": 0,
                 "clean_flagged": 0,
                 "block_agreement": 1.0,
+                "format_compliance": 1.0,
                 "case_count": 0,
                 "bonus": 1,
             },
             strict=True,
         )
+
+
+def test_corpus_score_requires_format_compliance():
+    payload = {
+        "defect_recall": 1.0,
+        "true_negative_rate": 1.0,
+        "reward": 1.0,
+        "seeded_total": 0,
+        "seeded_detected": 0,
+        "clean_total": 0,
+        "clean_flagged": 0,
+        "block_agreement": 1.0,
+        "case_count": 0,
+    }
+    with pytest.raises(ValidationError):
+        CorpusScore.model_validate(payload, strict=True)

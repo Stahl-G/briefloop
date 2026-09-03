@@ -146,6 +146,7 @@ def _handle_run(args: argparse.Namespace) -> int:
         print(f"defect_recall    {score.defect_recall:.4f}")
         print(f"true_neg_rate    {score.true_negative_rate:.4f}")
         print(f"block_agreement  {score.block_agreement:.4f}")
+        print(f"format_compliance {score.format_compliance:.4f}")
         print(f"R                {score.reward:.4f}")
     return 0
 

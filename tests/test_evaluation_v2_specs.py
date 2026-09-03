@@ -9,6 +9,14 @@ truth is constructed by the Phase-2 corpus generator, not ported (see
 in that review: exactly 16 files, 7 blocking / 1 warning-only / 8 no-defect,
 roles inferred from the legacy gate stages, and specs kept out of runtime
 package data.
+
+Vocabulary note: the legacy specs legitimately span BOTH evaluation
+vocabularies -- the 4 detection types (auditor-anchored specs, the only
+corpus-relevant ones today) and the 6 generation-family types (editor /
+finalize legacy scenarios, kept as legacy scenario records).  The shrink of
+the measurable vocabulary to 4 types does not rewrite history here: specs
+may use the union, and every auditor-anchored spec must use detection types
+only.
 """
 
 from __future__ import annotations
@@ -18,7 +26,10 @@ import tomllib
 
 import yaml
 
-from multi_agent_brief.evaluation_v2.contracts import FINDING_TYPES
+from multi_agent_brief.evaluation_v2.contracts import (
+    FINDING_TYPES,
+    GENERATION_DEFECT_TYPES,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 CORPUS_DATA = ROOT / "src" / "multi_agent_brief" / "evaluation_v2" / "corpus_data"
@@ -107,17 +118,29 @@ def test_specs_carry_no_locators():
 
 
 def test_seeded_defects_and_must_not_report_use_canonical_vocabulary():
+    """Specs span both vocabularies; auditor-anchored specs use detection
+    types only.  The 16 legacy specs keep describing their legacy scenarios:
+    (a) every finding type they name is inside the evaluation union
+    (detection or generation family), and (b) every DETECTION-corpus-relevant
+    spec -- an auditor-anchored role -- seeds detection types only."""
+    union = FINDING_TYPES | GENERATION_DEFECT_TYPES
     for stem, spec in _load_specs():
         defect_ids = []
         for defect in spec["seeded_defects"]:
             assert set(defect) == DEFECT_KEYS, f"{stem} defect keys drift"
-            assert defect["finding_type"] in FINDING_TYPES
+            assert defect["finding_type"] in union
             assert defect["expected_blocking_level"] in {"blocking", "warning"}
             defect_ids.append(defect["defect_id"])
         assert len(defect_ids) == len(set(defect_ids)), f"{stem} defect ids collide"
         assert isinstance(spec["must_not_report"], list)
         for finding_type in spec["must_not_report"]:
-            assert finding_type in FINDING_TYPES
+            assert finding_type in union
+        if spec["rollout_role"] == "auditor":
+            for defect in spec["seeded_defects"]:
+                assert defect["finding_type"] in FINDING_TYPES, (
+                    f"{stem} is auditor-anchored (detection-corpus-relevant) "
+                    "and must seed detection types only"
+                )
 
 
 def test_narrative_fields_non_empty_where_required():

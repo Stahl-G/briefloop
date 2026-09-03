@@ -41,7 +41,7 @@ ORDERED_FINDING_TYPES = sorted(FINDING_TYPES)
 def _defect(
     defect_id: str = "d1",
     finding_type: str = "stale_source",
-    locator: str = "source-002.md#L14",
+    locator: str = "CL-0102",
     expected_blocking_level: str = "blocking",
 ) -> dict:
     return {
@@ -55,7 +55,7 @@ def _defect(
 def _payload(
     case_id: str,
     defects: tuple[dict, ...] | list[dict] = (),
-    clean_claims: tuple[str, ...] | list[str] = ("source-001.md#L8",),
+    clean_claims: tuple[str, ...] | list[str] = ("CL-0101",),
 ) -> dict:
     return {
         "case_id": case_id,
@@ -77,7 +77,7 @@ def _blocking_payload(case_id: str, finding_type: str = "stale_source") -> dict:
 
 
 def _clean_payload(case_id: str) -> dict:
-    return _payload(case_id, defects=(), clean_claims=("source-001.md#L8",))
+    return _payload(case_id, defects=(), clean_claims=("CL-0101",))
 
 
 def _write_case_file(tmp_path: Path, rel: str, payload: dict) -> None:
@@ -138,6 +138,11 @@ def _spread(
         case_id = f"c_{split}_{index}"
         cases.append((case_id, split, _clean_payload(case_id)))
     return cases
+
+
+def _full_scale_cases() -> list[tuple[str, str, dict]]:
+    """A validate-clean 80-case corpus (24 blocking + 16 clean per split)."""
+    return _spread("train", 24, 16) + _spread("val", 24, 16)
 
 
 # ---------------------------------------------------------------------------
@@ -355,13 +360,16 @@ def test_pyproject_packages_corpus_data_explicitly():
         for pattern in patterns
         if pattern.startswith("evaluation_v2/corpus_data")
     }
-    # Explicit inclusion list only: manifest, case files, and the corpus
-    # review doc.  No blanket corpus_data glob, and the build-time specs/
-    # subtree stays out of runtime package data by not being listed.
+    # Explicit inclusion list only: manifest, case files, the corpus review
+    # doc, and the harness-owned auditor reporting contract the rollout
+    # adapter injects into every envelope.  No blanket corpus_data glob, and
+    # the build-time specs/ subtree stays out of runtime package data by not
+    # being listed.
     assert corpus_patterns == {
         "evaluation_v2/corpus_data/manifest.yaml",
         "evaluation_v2/corpus_data/cases/*.yaml",
         "evaluation_v2/corpus_data/REVIEW.md",
+        "evaluation_v2/corpus_data/envelope-auditor-reporting.md",
     }
 
 
@@ -460,18 +468,21 @@ def test_validate_threshold_overrides_are_explicit_and_blocking_floor_is_fixed(
 ):
     cases = []
     index = 0
+    n_types = len(ORDERED_FINDING_TYPES)
     for split in SPLITS:
         for _ in range(16):
             case_id = f"b_{split}_{index}"
+            # Two DIFFERENT finding types per case (same-type siblings are
+            # structurally rejected), cycling the 4-type vocabulary.
             defects = (
                 _defect(
                     defect_id="d1",
-                    finding_type=ORDERED_FINDING_TYPES[index % 10],
+                    finding_type=ORDERED_FINDING_TYPES[index % n_types],
                 ),
                 _defect(
                     defect_id="d2",
-                    finding_type=ORDERED_FINDING_TYPES[(index + 4) % 10],
-                    locator="source-003.md#L7",
+                    finding_type=ORDERED_FINDING_TYPES[(index + 2) % n_types],
+                    locator="CL-0203",
                 ),
             )
             cases.append(
@@ -499,3 +510,87 @@ def test_validate_threshold_overrides_are_explicit_and_blocking_floor_is_fixed(
     # the override could lower.
     assert MIN_BLOCKING_PER_SPLIT == 16
     assert "min_blocking_per_split" not in CorpusThresholds.__dataclass_fields__
+
+
+# ---------------------------------------------------------------------------
+# Structural invariants: locator forms and same-type siblings
+# ---------------------------------------------------------------------------
+
+
+def test_validate_rejects_same_type_seeded_twice_in_one_case(tmp_path):
+    # Anchor-level locators cannot disambiguate same-type siblings: two
+    # stale_source defects in one case could never be attributed honestly.
+    payload = _payload(
+        "b_train_0",
+        defects=(
+            _defect(defect_id="d1", locator="CL-0102"),
+            _defect(defect_id="d2", locator="CL-0103"),
+        ),
+        clean_claims=(),
+    )
+    cases = _full_scale_cases()
+    cases[0] = ("b_train_0", "train", payload)
+    manifest = _write_corpus(tmp_path, cases)
+    with pytest.raises(CorpusError, match="seeds finding_type 'stale_source' more than once"):
+        validate_corpus(load_corpus(manifest))
+
+
+def test_validate_rejects_defect_locators_outside_the_two_anchor_classes(tmp_path):
+    for bad_locator in (
+        "source-002.md#L14",  # source-file anchor: the auditor's report cannot name it
+        "audited_brief#L0",  # line zero
+        "audited_brief#L007",  # leading zero
+        "audited_brief",  # bare artifact, no line
+        "cl-0102",  # wrong claim prefix casing
+    ):
+        cases = _full_scale_cases()
+        cases[0] = ("b_train_0", "train", _blocking_payload("b_train_0"))
+        cases[0][2]["seeded_defects"][0]["locator"] = bad_locator
+        manifest = _write_corpus(tmp_path, cases)
+        with pytest.raises(CorpusError, match="neither claim-anchored"):
+            validate_corpus(load_corpus(manifest))
+
+
+def test_validate_rejects_clean_claims_that_are_not_claim_anchored(tmp_path):
+    for bad_claim in ("audited_brief#L3", "source-001.md#L8", "CL_", "CL-"):
+        cases = _full_scale_cases()
+        cases[-1] = ("c_val_15", "val", _clean_payload("c_val_15"))
+        cases[-1][2]["clean_claims"] = [bad_claim]
+        manifest = _write_corpus(tmp_path, cases)
+        with pytest.raises(CorpusError, match="not\\s+claim-anchored"):
+            validate_corpus(load_corpus(manifest))
+
+
+def test_validate_accepts_both_anchor_classes_for_seeded_defects(tmp_path):
+    # Claim-anchored and seeded-brief-anchored defects are both legal; the
+    # corpus is otherwise full-scale, so validation passes.
+    cases = _full_scale_cases()
+    cases[0] = (
+        "b_train_0",
+        "train",
+        _payload(
+            "b_train_0",
+            defects=(_defect(locator="audited_brief#L14"),),
+            clean_claims=(),
+        ),
+    )
+    manifest = _write_corpus(tmp_path, cases)
+    validate_corpus(load_corpus(manifest))  # does not raise
+
+
+def test_structural_invariants_survive_threshold_overrides(tmp_path):
+    # Thresholds may be lowered explicitly, but the structural locator
+    # rules have no override path at all: even a corpus that satisfies the
+    # lowered thresholds (34 cases, 16 blocking per split, ratio 32/34)
+    # still fails on a locator the measured auditor can never anchor on.
+    cases = _spread("train", 16, 1) + _spread("val", 16, 1)
+    cases[0][2]["seeded_defects"][0]["locator"] = "source-002.md#L14"
+    manifest = _write_corpus(tmp_path, cases)
+    with pytest.raises(CorpusError, match="neither claim-anchored"):
+        validate_corpus(
+            load_corpus(manifest),
+            thresholds=CorpusThresholds(
+                min_total_cases=34, min_split_cases=17, min_block_ratio=0.0,
+                max_block_ratio=1.0, min_cases_per_finding_type=0,
+            ),
+        )

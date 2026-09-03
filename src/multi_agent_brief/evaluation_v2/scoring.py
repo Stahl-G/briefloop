@@ -7,6 +7,12 @@ term to zero; a role that passes everything drives the first to zero.  This
 is what makes the red line "Precision-only quality gate ... can reward
 omission" structurally satisfied rather than merely promised.
 
+POLARITY: R measures DETECTION only, over the four-type auditor detection
+vocabulary (``FINDING_TYPES``).  Generation quality -- the finalize-family
+types in ``GENERATION_DEFECT_TYPES``, where FEWER findings is better -- is a
+separate metric with inverted polarity and is deliberately not folded into
+R; it has no corpus representation yet and is future work.
+
 Scoring is a pure function of ``(cases, outcomes)``: nothing about the role
 or its measured performance changes corpus composition or the measurements
 taken from it.
@@ -23,8 +29,15 @@ Measurement rules:
 * ``true_negative_rate`` is computed over the ``clean_claims`` of non-blocking
   cases only (cases whose derived ``must_block`` is False -- warning-only and
   defect-free cases).  A clean claim counts as flagged iff any reported
-  finding's locator equals it.  Clean claims living on blocking cases are
-  excluded from the denominator, not silently merged in.
+  finding's locator equals it -- regardless of that finding's type: a false
+  positive is a false positive whatever type vocabulary it was filed under.
+  Noncompliant findings carry no locator at all (they never entered
+  ``findings``), so they cannot flag a clean claim.
+* ``format_compliance`` is the aggregate share of reported findings that are
+  vocabulary-legal AND anchored:
+  ``sum(len(outcome.findings)) / sum(len(outcome.findings)
+  + outcome.noncompliant_finding_count)``.  An empty denominator yields 1.0.
+  It is reported in ``CorpusScore`` but NEVER enters ``R``.
 * An empty denominator yields 1.0: a split with zero seeded defects or zero
   in-scope clean claims must not crash or zero the product.
 * Every case must have exactly one outcome.  Duplicate outcomes, outcomes
@@ -75,6 +88,8 @@ def score_corpus(
     clean_total = 0
     clean_flagged = 0
     block_matches = 0
+    compliant_findings = 0
+    reported_findings = 0
 
     for case in cases:
         outcome = indexed.get(case.case_id)
@@ -89,7 +104,8 @@ def score_corpus(
             if (defect.finding_type, defect.locator) in reported_pairs
         )
 
-        # TNR scope: clean claims of non-blocking cases only.
+        # TNR scope: clean claims of non-blocking cases only.  The flag test
+        # is locator-equality alone -- deliberately blind to finding_type.
         if not case.must_block:
             reported_locators = {finding.locator for finding in outcome.findings}
             clean_total += len(case.clean_claims)
@@ -100,11 +116,15 @@ def score_corpus(
         if outcome.blocked is case.must_block:
             block_matches += 1
 
+        compliant_findings += len(outcome.findings)
+        reported_findings += len(outcome.findings) + outcome.noncompliant_finding_count
+
     defect_recall = 1.0 if seeded_total == 0 else seeded_detected / seeded_total
     true_negative_rate = (
         1.0 if clean_total == 0 else 1.0 - clean_flagged / clean_total
     )
     block_agreement = 1.0 if not cases else block_matches / len(cases)
+    format_compliance = 1.0 if reported_findings == 0 else compliant_findings / reported_findings
 
     return CorpusScore(
         defect_recall=defect_recall,
@@ -115,5 +135,6 @@ def score_corpus(
         clean_total=clean_total,
         clean_flagged=clean_flagged,
         block_agreement=block_agreement,
+        format_compliance=format_compliance,
         case_count=len(cases),
     )

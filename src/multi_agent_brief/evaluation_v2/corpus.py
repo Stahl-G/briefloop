@@ -34,15 +34,26 @@ Invariant tiers:
 * Aggregate, full-scale (``validate_corpus`` with ``DEFAULT_THRESHOLDS``):
   at least 80 cases, at least 40 per split, at least 16 blocking-level cases
   per split, a global blocking ratio in [0.55, 0.65], and at least 4 cases
-  per finding type across all 10 FINDING_TYPES members.  Unit-test and
+  per finding type across all 4 FINDING_TYPES members.  Unit-test and
   scaffolding corpora may lower these explicitly through
   ``CorpusThresholds``; overriding is never implicit, never environment
   driven, and never applies to the per-split blocking floor, which is a
   fixed constant protecting the val recall denominator.
+* Structural, auditor-locator (``validate_corpus`` always enforces them;
+  threshold overrides cannot switch them off): at most one seeded defect
+  per finding_type per case (anchor-level locators cannot disambiguate
+  same-type siblings, so a double hit could never be attributed honestly);
+  seeded-defect locators must be claim-anchored (``CL-...``) or
+  seeded-brief-anchored (``audited_brief#L<n>``), the two anchor classes
+  the auditor's reporting contract can express; clean claims must be
+  claim-anchored (clean claims are claim-scoped by construction).  Anything
+  else is a corpus error, because it names a position the measured
+  auditor can never anchor a finding on.
 """
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass
 from importlib.resources import files
@@ -76,6 +87,15 @@ MIN_BLOCKING_PER_SPLIT: Final = 16
 #: A case shipped with one can never score a recall hit, so it is a hard
 #: load-time error rather than a warning.
 PLACEHOLDER_LOCATOR: Final = "TO_BE_ANNOTATED"
+
+#: Auditor locator forms (``validate_corpus``).  A seeded defect is anchored
+#: either on a claim ledger id or on a line of the seeded audited brief --
+#: the two anchor classes the auditor's finding-reporting contract carries
+#: (``related_claim_id`` or ``line_number`` into audited_brief.md); a clean
+#: claim is claim-scoped by construction.  ``[1-9][0-9]*`` rejects leading
+#: zeros so one position has exactly one spelling.
+CLAIM_LOCATOR_PATTERN: Final = re.compile(r"^CL-[A-Za-z0-9._:-]+$")
+BRIEF_LINE_LOCATOR_PATTERN: Final = re.compile(r"^audited_brief#L[1-9][0-9]*$")
 
 _MANIFEST_KEYS: Final = frozenset({"schema_version", "cases"})
 _MANIFEST_ENTRY_KEYS: Final = frozenset({"case_id", "split", "path"})
@@ -306,6 +326,44 @@ def validate_corpus(
             f"{thresholds.min_cases_per_finding_type} cases: {', '.join(thin)}"
         )
 
+    for case in corpus.cases:
+        _enforce_structural_invariants(case)
+
+
+def _enforce_structural_invariants(case: EvaluationCase) -> None:
+    """Structural auditor-locator invariants; no threshold can disable them.
+
+    Enforced in ``validate_corpus`` (not at load time) so scaffolding can
+    load and inspect in-progress corpora, while no corpus can be VALIDATED
+    with locators the measured auditor can never anchor a finding on.
+    """
+    seen_types: set[str] = set()
+    for defect in case.seeded_defects:
+        if defect.finding_type in seen_types:
+            raise CorpusError(
+                f"case {case.case_id!r} seeds finding_type "
+                f"{defect.finding_type!r} more than once: anchor-level "
+                "locators cannot disambiguate same-type siblings"
+            )
+        seen_types.add(defect.finding_type)
+        if not (
+            CLAIM_LOCATOR_PATTERN.match(defect.locator)
+            or BRIEF_LINE_LOCATOR_PATTERN.match(defect.locator)
+        ):
+            raise CorpusError(
+                f"case {case.case_id!r} defect {defect.defect_id!r} locator "
+                f"{defect.locator!r} is neither claim-anchored "
+                f"({CLAIM_LOCATOR_PATTERN.pattern}) nor seeded-brief-anchored "
+                f"({BRIEF_LINE_LOCATOR_PATTERN.pattern})"
+            )
+    for claim in case.clean_claims:
+        if not CLAIM_LOCATOR_PATTERN.match(claim):
+            raise CorpusError(
+                f"case {case.case_id!r} clean claim {claim!r} is not "
+                f"claim-anchored ({CLAIM_LOCATOR_PATTERN.pattern}); clean "
+                "claims are claim-scoped by construction"
+            )
+
 
 def _load_case_entry(entry: object, root: Path) -> tuple[EvaluationCase, str]:
     """Load one manifest entry: ``case_id``, ``split``, relative ``path``."""
@@ -396,6 +454,8 @@ def _enforce_case_invariants(case: EvaluationCase, origin: str) -> None:
 
 
 __all__ = [
+    "BRIEF_LINE_LOCATOR_PATTERN",
+    "CLAIM_LOCATOR_PATTERN",
     "CORPUS_SCHEMA_VERSION",
     "DEFAULT_CORPUS",
     "DEFAULT_THRESHOLDS",

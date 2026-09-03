@@ -1,56 +1,66 @@
-"""Codex rollout adapter: the offline findings-to-outcome mapping.
+"""Codex rollout adapter: audit-report measurement plus the gate oracle.
 
 Only the pure half of the adapter lives here.  ``build_codex_rollout`` --
 the callable that materialises ``case.source_pack`` into a scratch
-workspace, drives the role named by ``case.rollout`` through the packaged
-Codex kit, and reads back the recorded quality-gate report -- lands with
+workspace, drives the auditor role named by ``case.rollout`` through the
+packaged Codex kit, and reads back the recorded audit report -- lands with
 the Phase-2 rollout task and is deliberately NOT defined in this module,
 so the CLI seam (``multi_agent_brief.cli.eval_commands._build_rollout``)
 keeps failing closed until real invocation wiring exists.
 
-What is here is the mapping a rollout hands its recorded findings through:
+Why measurement reads the agent's audit report, not the gates (measured,
+not assumed): the deterministic gate evaluator's inputs are pure artifacts
+-- the brief markdown, the claim ledger, the workspace config.  It never
+reads the agent's ``audit_report.json``, and the auditor role writes ONLY
+``audit_report.json``.  Gate findings therefore cannot measure the auditor:
+scoring auditor cases from gate findings is bit-identical whether the
+auditor was excellent, terrible, or never ran.  The two parsers below split
+the two jobs accordingly:
 
-* ``parse_reported_findings(payload)`` accepts a recorded
-  ``quality_gate_report.json`` payload and returns its raw finding
-  records.
-* ``outcome_from_findings(case, findings, *, blocked)`` validates each raw
-  finding into a ``ReportedFinding`` and folds them, plus the case's
-  ground truth, into a ``RolloutOutcome``.
+* ``parse_reported_audit(payload)`` is the MEASUREMENT parser.  It reads the
+  agent-written ``output/intermediate/audit_report.json`` (contract:
+  ``multi_agent_brief/contracts/schemas/audit_report.py``; observed in two
+  real codex rollouts) and returns the compliant findings plus the count of
+  noncompliant ones.  It must NOT crash on an unknown ``finding_type`` or a
+  missing anchor: in the 120-run measurement loop a bad finding is
+  recorded (noncompliant), never fatal.  The rollout envelope injects the
+  harness-owned reporting contract (``corpus_data/envelope-auditor-reporting.md``)
+  so every evaluated variant sees the identical vocabulary constraint.
+* ``parse_gate_findings_for_oracle(payload)`` is the CORPUS-CONSTRUCTION
+  oracle.  The generator uses it, once per constructed case, to verify each
+  seeded defect is gate-detectable before the case enters the corpus.
+  Loud errors on unknown vocabulary or positionless findings are correct
+  here: that is corpus-side validation of staged artifacts, a bad staging
+  must stop construction, and it never runs in the measurement loop.
 
-Raw finding record shape (producer: ``_finding()`` in
-``src/multi_agent_brief/quality_gates/evaluation.py``; recorded examples in
-``examples/reference-workspaces/industry-weekly-demo/artifacts/quality_gate_report.json``
-and
-``src/multi_agent_brief/evaluation_cases/fixtures/cases/provenance_projection_minimal/workspace/output/intermediate/quality_gate_report.json``):
-a record carries ``finding_id``, ``gate_id``, ``finding_type``,
-``category``, ``severity``, ``blocking_level`` with a redundant boolean
-mirror ``blocking``, repair/stage/artifact routing ids, ``claim_id``,
-``source_id``, ``line_number``, prose fields, and ``metadata``.  There is
-no ``locator`` field.
+Audit-report finding shape (from the contract and the two real rollouts):
+each finding carries ``finding_id``, ``severity`` (low|medium|high),
+``finding_type`` (a FREE string -- observed values include
+``unsupported_fact_missing_citation`` and ``target_scope_mismatch``, which
+are NOT the canonical vocabulary), ``description``; optionally
+``recommendation``, ``related_claim_id``, ``line_number`` (int|null),
+``evidence``.  Anchors appear as ``related_claim_id`` or ``line_number``
+when present; positions otherwise live only in prose, which is unusable.
 
-Field mapping onto ``ReportedFinding``:
+Measurement field mapping (``parse_reported_audit``):
 
-* ``finding_type`` -> verbatim; must be one of the evaluation contract's
-  ``FINDING_TYPES``.  The gate layer emits a wider vocabulary (for example
-  ``market_quote_metadata_incomplete``); a rollout reporting a type outside
-  the evaluation contract is a loud error, never a silent drop, because a
-  dropped finding would quietly read as a miss.
-* ``blocking_level`` -> verbatim; only ``blocking`` and ``warning`` are
-  accepted (finding producers never emit another level).  The ``blocking``
-  boolean mirror is ignored.
-* ``locator`` -> derived when not recorded explicitly: a non-blank
-  ``locator`` key on the record wins verbatim (extra keys are not
-  forbidden by the gate-report validator, and the Phase-2 rollout prompt
-  can require the role to record one); otherwise
-  ``"<anchor>#L<line_number>"`` with the first non-blank anchor of
-  ``source_id``, ``claim_id``, ``artifact_id`` when ``line_number`` is a
-  positive integer; otherwise the first non-blank anchor verbatim.  A
-  record naming no position at all is a loud error for the same reason as
-  an unknown type: it could never satisfy the double match.
+* compliant  =  ``finding_type`` within ``FINDING_TYPES`` AND an anchor
+  present AND a severity that maps onto the evaluation's two blocking
+  levels.  Compliant findings become ``ReportedFinding`` records:
+  ``locator`` = ``related_claim_id`` when present, else
+  ``"audited_brief#L<line_number>"`` (the auditor's input brief artifact);
+  ``blocking_level`` maps severity ``high`` -> ``blocking`` and
+  ``medium``/``low`` -> ``warning`` (the scorer never reads this level; it
+  is recorded so the raw outcome stays auditable).
+* everything else -- unknown type, no anchor, unmappable severity, or a
+  non-object entry -- increments ``noncompliant_finding_count`` and is
+  otherwise dropped from matching: it can never satisfy the double match,
+  and dropping it from ``findings`` (while counting it) is exactly the
+  "recorded, not fatal" behavior the measurement loop needs.
 
-``blocked`` is an argument, not derived here.  The delivery verdict lives
-in report-level state (``status`` / ``gate_results``) and reading it is
-the Phase-2 adapter's job; this function only passes it through.
+``blocked`` is an argument to ``outcome_from_findings``, not derived
+there.  The recommended derivation, on the same payload the findings were
+parsed from, is ``blocked = payload.get("audit_status") == "fail"``.
 
 Detection is level-agnostic: a seeded defect counts as found when
 ``finding_type`` AND ``locator`` both match a reported finding, whatever
@@ -65,19 +75,42 @@ from typing import Any, Iterable
 
 from multi_agent_brief.evaluation_v2.contracts import (
     FINDING_TYPES,
+    GENERATION_DEFECT_TYPES,
     EvaluationCase,
     ReportedFinding,
     RolloutOutcome,
 )
 from multi_agent_brief.quality_gates.contract import QUALITY_GATE_SCHEMA
 
+#: Measurement-side severity mapping: the agent's audit report carries a
+#: three-level severity; the evaluation contract records two blocking
+#: levels.  ``high`` is the only severity the envelope contract ties to
+#: delivery-blocking defects; ``medium`` and ``low`` are advisory.
+_SEVERITY_TO_BLOCKING: dict[str, str] = {
+    "high": "blocking",
+    "medium": "warning",
+    "low": "warning",
+}
+
+#: Oracle vocabulary: the corpus-construction oracle accepts every type the
+#: deterministic gates can legitimately raise on a staged case -- the four
+#: detection types plus the six generation-quality types (the demo
+#: reference workspace, for one, records a ``final_*`` warning alongside
+#: its staged defects).  This union is NOT the measurement vocabulary; the
+#: measurement loop accepts only ``FINDING_TYPES``.
+_ORACLE_TYPES: frozenset[str] = FINDING_TYPES | GENERATION_DEFECT_TYPES
+
 #: The only blocking levels finding producers emit; anything else --
 #: including the ``"none"`` the gate validator tolerates -- is rejected.
 _BLOCKING_LEVELS: tuple[str, ...] = ("blocking", "warning")
 
-#: Anchor preference for derived locators: a source is finer than a claim,
-#: a claim is finer than the artifact the finding was raised on.
+#: Anchor preference for derived oracle locators: a source is finer than a
+#: claim, a claim is finer than the artifact the finding was raised on.
 _LOCATOR_ANCHOR_KEYS: tuple[str, ...] = ("source_id", "claim_id", "artifact_id")
+
+#: The auditor's input brief artifact: the anchor ``line_number`` refers to
+#: when the agent's finding carries no ``related_claim_id``.
+_AUDITED_BRIEF_ANCHOR: str = "audited_brief"
 
 
 def _text_or_none(value: Any) -> str | None:
@@ -85,6 +118,131 @@ def _text_or_none(value: Any) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
+
+def _positive_int_or_none(value: Any) -> int | None:
+    """Return the value when it is a positive integer, else ``None``."""
+    if isinstance(value, int) and not isinstance(value, bool) and value >= 1:
+        return value
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Measurement: the agent's own audit report
+# ---------------------------------------------------------------------------
+
+
+def parse_reported_audit(
+    payload: Mapping[str, Any],
+) -> tuple[list[ReportedFinding], int]:
+    """Parse an agent-written ``audit_report.json`` payload for measurement.
+
+    Returns ``(compliant_findings, noncompliant_finding_count)``:
+    vocabulary-legal, anchored findings as ``ReportedFinding`` records in
+    reported order, plus the count of reported findings that are outside
+    the detection vocabulary, carry no anchor, or carry no mappable
+    severity.  A missing ``findings`` key counts as no findings.  Only
+    payload-level structural failures raise (payload not an object,
+    ``findings`` not a list); every finding-level defect is recorded, not
+    fatal.
+    """
+    if not isinstance(payload, Mapping):
+        raise ValueError("audit report payload must be a JSON object")
+
+    findings = payload.get("findings")
+    if findings is None:
+        findings = []
+    if not isinstance(findings, list):
+        raise ValueError("audit report payload must carry a 'findings' list")
+
+    compliant: list[ReportedFinding] = []
+    noncompliant = 0
+    for finding in findings:
+        record = _compliant_audit_finding(finding)
+        if record is None:
+            noncompliant += 1
+        else:
+            compliant.append(record)
+    return compliant, noncompliant
+
+
+def _compliant_audit_finding(finding: Any) -> ReportedFinding | None:
+    """Return the finding as a ``ReportedFinding``, or ``None`` when the
+    finding cannot be recorded compliantly (counted by the caller)."""
+    if not isinstance(finding, Mapping):
+        return None
+
+    finding_type = _text_or_none(finding.get("finding_type"))
+    if finding_type is None or finding_type not in FINDING_TYPES:
+        return None
+
+    related_claim_id = _text_or_none(finding.get("related_claim_id"))
+    line_number = _positive_int_or_none(finding.get("line_number"))
+    if related_claim_id is not None:
+        locator = related_claim_id
+    elif line_number is not None:
+        locator = f"{_AUDITED_BRIEF_ANCHOR}#L{line_number}"
+    else:
+        return None
+
+    severity = _text_or_none(finding.get("severity"))
+    if severity is None or severity not in _SEVERITY_TO_BLOCKING:
+        return None
+
+    return ReportedFinding(
+        finding_type=finding_type,
+        locator=locator,
+        blocking_level=_SEVERITY_TO_BLOCKING[severity],
+    )
+
+
+def outcome_from_findings(
+    case: EvaluationCase,
+    findings: Iterable[ReportedFinding],
+    *,
+    blocked: bool,
+    noncompliant_finding_count: int = 0,
+) -> RolloutOutcome:
+    """Fold parsed reported findings onto the case's ground truth.
+
+    ``findings`` are the compliant ``ReportedFinding`` records from
+    ``parse_reported_audit``; ``noncompliant_finding_count`` is the count it
+    returned alongside them.  ``found_defect_ids`` lists the seeded defects
+    whose ``(finding_type, locator)`` pair a finding matches
+    (level-agnostic, in case order); ``flagged_claim_locators`` lists the
+    clean-claim locators any finding's locator equals.
+
+    ``blocked`` is a passthrough argument.  The recommended derivation,
+    from the same audit-report payload the findings were parsed from, is
+    ``blocked = payload.get("audit_status") == "fail"``.
+    """
+    reported = list(findings)
+
+    reported_pairs = {(finding.finding_type, finding.locator) for finding in reported}
+    reported_locators = {finding.locator for finding in reported}
+
+    found_defect_ids = [
+        defect.defect_id
+        for defect in case.seeded_defects
+        if (defect.finding_type, defect.locator) in reported_pairs
+    ]
+    flagged_claim_locators = [
+        locator for locator in case.clean_claims if locator in reported_locators
+    ]
+
+    return RolloutOutcome(
+        case_id=case.case_id,
+        found_defect_ids=found_defect_ids,
+        flagged_claim_locators=flagged_claim_locators,
+        blocked=blocked,
+        findings=reported,
+        noncompliant_finding_count=noncompliant_finding_count,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Corpus construction: the deterministic gates as ground-truth oracle
+# ---------------------------------------------------------------------------
 
 
 def _derive_locator(
@@ -106,13 +264,8 @@ def _derive_locator(
         None,
     )
 
-    line_number = finding.get("line_number")
-    if (
-        isinstance(line_number, int)
-        and not isinstance(line_number, bool)
-        and line_number >= 1
-        and anchor is not None
-    ):
+    line_number = _positive_int_or_none(finding.get("line_number"))
+    if line_number is not None and anchor is not None:
         return f"{anchor}#L{line_number}"
 
     if anchor is not None:
@@ -125,8 +278,8 @@ def _derive_locator(
     )
 
 
-def _normalize_finding(finding: Mapping[str, Any], *, index: int) -> ReportedFinding:
-    """Validate one raw gate-report finding into a ``ReportedFinding``."""
+def _normalize_finding(finding: Mapping[str, Any], *, index: int) -> tuple[str, str]:
+    """Validate one raw gate-report finding into an oracle (type, locator) pair."""
     if not isinstance(finding, Mapping):
         raise ValueError(
             f"finding[{index}] must be an object, got {type(finding).__name__}"
@@ -137,11 +290,11 @@ def _normalize_finding(finding: Mapping[str, Any], *, index: int) -> ReportedFin
         raise ValueError(
             f"finding[{index}] is missing required non-blank 'finding_type'"
         )
-    if finding_type not in FINDING_TYPES:
+    if finding_type not in _ORACLE_TYPES:
         raise ValueError(
             f"finding[{index}] has unknown finding_type {finding_type!r}; "
-            f"expected one of the evaluation contract types: "
-            f"{sorted(FINDING_TYPES)}"
+            f"expected one of the oracle gate types: "
+            f"{sorted(_ORACLE_TYPES)}"
         )
 
     blocking_level = finding.get("blocking_level")
@@ -151,20 +304,32 @@ def _normalize_finding(finding: Mapping[str, Any], *, index: int) -> ReportedFin
             f"expected one of {list(_BLOCKING_LEVELS)}"
         )
 
-    return ReportedFinding(
-        finding_type=finding_type,
-        locator=_derive_locator(finding, index=index, finding_type=finding_type),
-        blocking_level=blocking_level,
+    return (
+        finding_type,
+        _derive_locator(finding, index=index, finding_type=finding_type),
     )
 
 
-def parse_reported_findings(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
-    """Extract the raw finding records from a recorded gate-report payload.
+def parse_gate_findings_for_oracle(
+    payload: Mapping[str, Any],
+) -> list[tuple[str, str]]:
+    """Corpus-construction oracle: parse a recorded gate-report payload.
 
     Accepts the payload exactly as the gate layer records it (top-level
     ``schema_version``, ``status``, ``gate_results``, ``findings``,
-    ``metadata``, timestamps) and returns shallow copies of the finding
-    records, in recorded order, for ``outcome_from_findings``.
+    ``metadata``, timestamps) and returns every finding as a
+    ``(finding_type, locator)`` pair, in recorded order, so the generator
+    can assert each seeded defect's pair is present -- the definition of
+    "gate-detectable at construction time".  Plain pairs, not
+    ``ReportedFinding`` records: the oracle legitimately observes
+    generation-family gate findings (see ``_ORACLE_TYPES``), which the
+    measurement-side ``ReportedFinding`` Literal deliberately cannot hold.
+
+    Unlike ``parse_reported_audit``, this parser is deliberately loud:
+    unknown vocabulary, missing positions, and payload-shape drift raise
+    ``ValueError`` instead of being counted, because a corpus case whose
+    staged artifacts do not produce matchable gate findings must stop
+    construction, and this parser never runs in the measurement loop.
     """
     if not isinstance(payload, Mapping):
         raise ValueError("quality-gate report payload must be a JSON object")
@@ -180,50 +345,7 @@ def parse_reported_findings(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
     if not isinstance(findings, list):
         raise ValueError("quality-gate report payload must carry a 'findings' list")
 
-    raw: list[dict[str, Any]] = []
-    for index, finding in enumerate(findings):
-        if not isinstance(finding, Mapping):
-            raise ValueError(f"findings[{index}] must be an object")
-        raw.append(dict(finding))
-    return raw
-
-
-def outcome_from_findings(
-    case: EvaluationCase,
-    findings: Iterable[Mapping[str, Any]],
-    *,
-    blocked: bool,
-) -> RolloutOutcome:
-    """Fold raw reported findings onto the case's ground truth.
-
-    Every raw finding is validated into a ``ReportedFinding`` and recorded
-    on the outcome in input order.  ``found_defect_ids`` lists the seeded
-    defects whose ``(finding_type, locator)`` pair a finding matches
-    (level-agnostic, in case order); ``flagged_claim_locators`` lists the
-    clean-claim locators any finding's locator equals; ``blocked`` is the
-    argument, passed through untouched.
-    """
-    reported = [
+    return [
         _normalize_finding(finding, index=index)
         for index, finding in enumerate(findings)
     ]
-
-    reported_pairs = {(finding.finding_type, finding.locator) for finding in reported}
-    reported_locators = {finding.locator for finding in reported}
-
-    found_defect_ids = [
-        defect.defect_id
-        for defect in case.seeded_defects
-        if (defect.finding_type, defect.locator) in reported_pairs
-    ]
-    flagged_claim_locators = [
-        locator for locator in case.clean_claims if locator in reported_locators
-    ]
-
-    return RolloutOutcome(
-        case_id=case.case_id,
-        found_defect_ids=found_defect_ids,
-        flagged_claim_locators=flagged_claim_locators,
-        blocked=blocked,
-        findings=reported,
-    )

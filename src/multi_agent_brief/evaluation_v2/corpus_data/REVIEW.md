@@ -146,8 +146,10 @@ this table cannot drift from the data.
    `findings_any` anywhere in the fixture set; it exists only as a
    `findings_absent` clause of `reader_facing_target_relevance`. It therefore
    enters these specs only through `must_not_report`, and the Phase-2
-   generator must author new positive coverage for it (it is one of the 10
-   canonical `FINDING_TYPES` requiring >= 4 corpus cases).
+   generator must author new positive coverage for it (at review time it was
+   one of 10 canonical `FINDING_TYPES`; the measurable vocabulary was later
+   deliberately shrunk to the 4 auditor detection types, and this type is
+   one of the 4 still requiring >= 4 corpus cases).
 4. `final_abstract_quality_warning_surface` has `findings_absent` clauses on
    `blocking_level` and `repair_owner` rather than `finding_type`. They encode
    "warnings must not escalate to blocking and must not be repaired into the
@@ -206,6 +208,20 @@ fields (observed: `unsupported_fact_missing_citation` instead of
 canonical Python gate findings; if an eval envelope wants agent-reported
 findings, the envelope's task instructions must constrain the reporting
 vocabulary and anchor fields — the role contract itself is not edited.
+
+T0b update (measurement-design correction): the plan above scored from gate
+findings, but the gate evaluator's inputs are pure artifacts (brief
+markdown, claim ledger, config) — it never reads the agent's
+`audit_report.json`, and the auditor role writes ONLY `audit_report.json`.
+Gate-based scoring for auditor cases is therefore bit-identical whether the
+auditor is excellent, terrible, or never ran. Measurement now reads the
+agent's own report (`evaluation_v2.codex_rollout.parse_reported_audit`),
+with the harness-owned vocabulary/anchor contract injected by the envelope
+(`envelope-auditor-reporting.md`, packaged and identical for every variant);
+the deterministic gates remain the ground-truth oracle during corpus
+construction (`parse_gate_findings_for_oracle`). The measurable vocabulary
+is accordingly the 4 auditor detection types; the 6 finalize-family types
+measure generation quality with inverted polarity and are future work.
 
 Corpus construction constraints observed the hard way: `config.yaml` must
 agree with seeded content (a company-name mismatch produced a whole extra

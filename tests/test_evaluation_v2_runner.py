@@ -25,7 +25,7 @@ from multi_agent_brief.evaluation_v2.runner import RolloutFn, SplitResult, run_s
 def _defect(
     defect_id: str = "d1",
     finding_type: str = "stale_source",
-    locator: str = "source-002.md#L14",
+    locator: str = "CL-0102",
     expected_blocking_level: str = "blocking",
 ) -> dict:
     return {
@@ -64,20 +64,20 @@ def _mixed_corpus() -> Corpus:
     The val order is c1, b1, w1 -- not alphabetical -- so the order test
     proves corpus order is preserved rather than accidentally sorted.
     """
-    train = _case("t1", clean_claims=["source-001.md#L4"])
-    b1 = _case("b1", defects=[_defect()], clean_claims=["source-001.md#L8"])
-    c1 = _case("c1", clean_claims=["source-001.md#L2", "source-001.md#L9"])
+    train = _case("t1", clean_claims=["CL-0104"])
+    b1 = _case("b1", defects=[_defect()], clean_claims=["CL-0101"])
+    c1 = _case("c1", clean_claims=["CL-0101", "CL-0109"])
     w1 = _case(
         "w1",
         defects=[
             _defect(
                 defect_id="d2",
-                finding_type="final_missing_limitation_section",
-                locator="draft.md#L40",
+                finding_type="target_priority_claim_missing_from_summary",
+                locator="audited_brief#L40",
                 expected_blocking_level="warning",
             )
         ],
-        clean_claims=["draft.md#L5"],
+        clean_claims=["CL-0108"],
     )
     return _corpus(
         (train, "train"),
@@ -89,7 +89,7 @@ def _mixed_corpus() -> Corpus:
 
 def _finding(
     finding_type: str = "stale_source",
-    locator: str = "source-002.md#L14",
+    locator: str = "CL-0102",
     blocking_level: str = "blocking",
 ) -> dict:
     return {
@@ -99,12 +99,18 @@ def _finding(
     }
 
 
-def _outcome(case_id: str, findings=(), blocked: bool = False) -> RolloutOutcome:
+def _outcome(
+    case_id: str,
+    findings=(),
+    blocked: bool = False,
+    noncompliant_finding_count: int = 0,
+) -> RolloutOutcome:
     return RolloutOutcome.model_validate(
         {
             "case_id": case_id,
             "blocked": blocked,
             "findings": list(findings),
+            "noncompliant_finding_count": noncompliant_finding_count,
         },
         strict=True,
     )
@@ -147,12 +153,13 @@ def test_run_split_all_detect_rollout_yields_hand_computed_score():
     """Perfect rollout over the mixed val split, hand-computed.
 
       c1: two clean claims, nothing flagged, not blocked (must_block False).
-      b1: d1 stale_source@source-002.md#L14 detected (double match), blocked;
-          its clean claim is out of TNR scope because b1.must_block is True.
+      b1: d1 stale_source@CL-0102 detected (double match), blocked; its
+          clean claim is out of TNR scope because b1.must_block is True.
       w1: d2 detected as a warning finding, not blocked; clean claim
-          draft.md#L5 unflagged.
+          CL-0108 unflagged.
 
-    recall = 2/2; TNR = 1 - 0/3; R = 1.0; block agreement 3/3.
+    recall = 2/2; TNR = 1 - 0/3; R = 1.0; block agreement 3/3;
+    format compliance = 2/2 (nothing noncompliant reported).
     """
     result = run_split(_mixed_corpus(), "val", _detect_all)
 
@@ -165,6 +172,7 @@ def test_run_split_all_detect_rollout_yields_hand_computed_score():
         clean_total=3,
         clean_flagged=0,
         block_agreement=1.0,
+        format_compliance=1.0,
         case_count=3,
     )
 
@@ -172,7 +180,7 @@ def test_run_split_all_detect_rollout_yields_hand_computed_score():
 def test_run_split_scores_the_outcomes_it_collected():
     """Partial rollout: hand-computed R = 1/2 * 2/3 = 1/3.
 
-      c1 (first in val order) flags clean claim source-001.md#L2.
+      c1 (first in val order) flags clean claim CL-0101.
       b1 detects d1 and blocks.
       w1 reports nothing and does not block (d2 missed).
 
@@ -184,7 +192,7 @@ def test_run_split_scores_the_outcomes_it_collected():
             findings=[
                 _finding(
                     finding_type="number_without_source",
-                    locator="source-001.md#L2",
+                    locator="CL-0101",
                 )
             ],
         ),
@@ -243,3 +251,38 @@ def test_split_result_exposes_outcomes_and_score():
     assert result.score.case_count == len(result.outcomes)
     with pytest.raises(dataclasses.FrozenInstanceError):
         result.outcomes = ()
+
+
+def test_run_split_aggregates_noncompliant_counts_into_format_compliance():
+    """A rollout that also reports unmatchable findings keeps R driven only
+    by the compliant findings while format compliance drops: 3 compliant
+    findings (d1, d2, plus one extra) against 3 noncompliant -> 3/6."""
+
+    def noisy_rollout(case: EvaluationCase) -> RolloutOutcome:
+        findings = [
+            _finding(
+                finding_type=defect.finding_type,
+                locator=defect.locator,
+                blocking_level=defect.expected_blocking_level,
+            )
+            for defect in case.seeded_defects
+        ]
+        if case.case_id == "b1":
+            findings.append(
+                _finding(finding_type="number_without_source", locator="CL-0199")
+            )
+            noncompliant = 3
+        else:
+            noncompliant = 0
+        return _outcome(
+            case.case_id,
+            findings=findings,
+            blocked=case.must_block,
+            noncompliant_finding_count=noncompliant,
+        )
+
+    result = run_split(_mixed_corpus(), "val", noisy_rollout)
+    assert result.score.defect_recall == 1.0
+    assert result.score.true_negative_rate == 1.0
+    assert result.score.reward == 1.0
+    assert result.score.format_compliance == pytest.approx(3 / 6)
