@@ -394,7 +394,7 @@ Current version: **v0.15.3**
 v0.15.3 ships the Solar Stock Periodic market-data surface: a fresh-only
 schema 19 and strict `market_data_snapshot.v2` for workbook identity,
 adjusted-close history, corporate actions, FX, valuation fields, event
-reactions, gaps, and conflicts; profile-bound ingestion of the TOYO weekly
+reactions, gaps, and conflicts; profile-bound ingestion of the packaged solar weekly
 XLSX layout; paired `--report-window-start/--report-window-end` options;
 Store-bound comparison tables, an event timeline, seven deterministic PNG
 charts, a JSON read model, a hash-bound chart manifest, and a fifth Market
@@ -441,7 +441,9 @@ Current entrypoints:
   current-report-bound `laj.json` may be displayed read-only with
   `briefloop quality html --workspace <path> --laj-view <laj.json>`
 - experimental Solar Stock Periodic ReportPack:
-  `briefloop new solar-stock-periodic <workspace>`. Use a fresh schema-19
+  `briefloop new solar-stock-periodic <workspace> --core-ticker <TICKER>`.
+The core issuer ticker is a required Human input; packaged defaults carry
+no issuer identity. Use a fresh schema-19
   workspace and the Store-frozen Tavily route for its 20-task discovery plan.
   `--search-backend tavily` is accepted for this pack at `new` time and
   freezes the same Tavily discovery authorization as `briefloop init --web`.
@@ -458,9 +460,9 @@ Current entrypoints:
   are required together and the Store direction cannot be changed by ingest.
   `briefloop market-data fetch|ingest|project` freezes one append-only weekly
   quote snapshot per run and as-of date. JSON/CSV remain supported; a
-  profile-bound TOYO workbook can be ingested offline with
-  `--file <weekly.xlsx> --profile toyo-weekly-v1`, or supplied to `fetch` with
-  `--workbook <weekly.xlsx> --profile toyo-weekly-v1` so verified workbook cells
+  profile-bound solar weekly workbook can be ingested offline with
+  `--file <weekly.xlsx> --profile solar-weekly-v1`, or supplied to `fetch` with
+  `--workbook <weekly.xlsx> --profile solar-weekly-v1` so verified workbook cells
   win and the bounded Yahoo adapter fills only missing fields. The projection
   writes the two equity tables, event timeline, seven deterministic PNG charts,
   a JSON read model, and a hash-bound chart manifest; the fifth local HTML tab

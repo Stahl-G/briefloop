@@ -34,7 +34,7 @@ default_report_spec:
   metadata:
     product_layer: report_pack_registry
     boundary: experimental_contract_only
-    dogfood_use_case: solar_industry_periodic_report
+    use_case: solar_industry_periodic_report
     required_section_intents:
       - executive_summary
       - supply_chain_price_tracker

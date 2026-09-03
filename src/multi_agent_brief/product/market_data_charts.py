@@ -241,7 +241,7 @@ def _bar_asset(
     )
 
 
-def _toyo_asset(security: MarketDataSecurityV2 | None) -> MarketChartAsset | None:
+def _subject_asset(security: MarketDataSecurityV2 | None) -> MarketChartAsset | None:
     if security is None or len(security.price_series) < 2:
         return None
     canvas = _Canvas()
@@ -263,13 +263,9 @@ def _toyo_asset(security: MarketDataSecurityV2 | None) -> MarketChartAsset | Non
     for first, second in zip(points, points[1:]):
         canvas.line(*first, *second, (29, 78, 216), thickness=4)
     return MarketChartAsset(
-        chart_id=(
-            "toyo-price-volume"
-            if security.ticker == "TOYO"
-            else "subject-price-volume"
-        ),
+        chart_id="subject-price-volume",
         title=f"{security.ticker} Close and Volume",
-        relative_path=f"{CHART_OUTPUT_DIRECTORY}/{'toyo-price-volume' if security.ticker == 'TOYO' else 'subject-price-volume'}.png",
+        relative_path=f"{CHART_OUTPUT_DIRECTORY}/subject-price-volume.png",
         png_bytes=canvas.png(),
     )
 
@@ -342,7 +338,7 @@ def render_market_chart_assets(
             securities=overseas,
             indexed=True,
         ),
-        _toyo_asset(subject),
+        _subject_asset(subject),
         _event_asset(snapshot),
         _bar_asset(
             chart_id="one-week-return",

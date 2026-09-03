@@ -47,7 +47,6 @@ YAHOO_V2_PROVIDER_ID = "yahoo_finance_chart_v2"
 
 _UNIVERSE = DEFAULT_SOLAR_EQUITY_UNIVERSE.watchlist
 _META = {
-    "TOYO": ("TOYO Solar", "NASDAQ", "USD", "primary"),
     "TE": ("T1 Energy", "NYSE", "USD", "primary"),
     "FSLR": ("First Solar", "NASDAQ", "USD", "primary"),
     "CSIQ": ("Canadian Solar", "NASDAQ", "USD", "primary"),

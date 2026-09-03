@@ -3,14 +3,14 @@ pack_id: solar_stock_periodic
 report_type: solar_stock_periodic
 display_name: Solar Stock Periodic
 status: experimental
-description: Capital-markets weekly. Packaged default watchlist is TOYO and global solar peers; override via report_spec metadata or --ticker / --core-ticker. Missing non-core names are coverage disclosures, not delivery blockers.
+description: Capital-markets weekly. Packaged default watchlist is global solar peers; the core issuer ticker is a required --core-ticker input at workspace creation. Missing non-core names are coverage disclosures, not delivery blockers.
 default_policy_profile: solar_stock_default
 default_report_spec:
   schema_version: briefloop.report_spec.v1
   report_pack: solar_stock_periodic
   policy_profile: solar_stock_default
   report_type: solar_stock_periodic
-  title: TOYO Solar Capital Markets Weekly
+  title: Capital Markets Weekly
   cadence: weekly
   audience: {label: management and capital-markets reader, language: zh-CN}
   source_policy: {mode: runtime_handoff, hidden_autonomous_crawling: false}
@@ -19,11 +19,10 @@ default_report_spec:
   metadata:
     product_layer: report_pack_registry
     boundary: experimental_contract_only
-    dogfood_use_case: solar_stock_periodic_report
-    core_tickers: [TOYO]
+    use_case: solar_stock_periodic_report
     benchmark_ticker: TAN
-    primary_tickers: [TOYO, TE, FSLR, CSIQ, JKS, NXT, DQ]
+    primary_tickers: [TE, FSLR, CSIQ, JKS, NXT, DQ]
     overseas_tickers: [009830.KS, WAAREEENER.NS, PREMIERENE.NS, VIKRAMSOLR.NS]
     event_only_entities: [Qcells, Illuminate USA, ES Foundry, Suniva, Talon PV]
-    required_section_intents: [executive_summary, primary_equity_comparison, overseas_equity_comparison, event_price_timeline, earnings_valuation, policy_input_dashboard, capacity_asset_watch, sentiment_monitor, toyo_implications]
+    required_section_intents: [executive_summary, primary_equity_comparison, overseas_equity_comparison, event_price_timeline, earnings_valuation, policy_input_dashboard, capacity_asset_watch, sentiment_monitor, core_implications]
     non_claims: [no_investment_advice, no_causal_price_attribution_without_evidence, no_search_snippet_evidence, no_release_authority]

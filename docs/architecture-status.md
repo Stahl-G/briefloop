@@ -50,7 +50,7 @@ page describes implemented runtime capability, not a breaking deep rename.
   no source promotion, and no later execution, finalization, approval,
   package, or delivery authority.
 - Experimental `solar-stock-periodic` is a schema-19, fresh-only ReportPack for
-  a TOYO/global solar capital-markets weekly. Its runtime freezes 20 independent
+  a global-solar capital-markets weekly around a Human-provided core ticker. Its runtime freezes 20 independent
   Tavily discovery tasks (11 listed companies, 5 event-only entities, and 4
   themes), requests up to 20 advanced Search results per task, permits one
   deterministic 30-day targeted backfill for under-covered tasks, and extracts
@@ -59,7 +59,7 @@ page describes implemented runtime capability, not a breaking deep rename.
   retained as evidence, and only successful non-empty Extract content enters
   the Claim Ledger path. The `market-data` CLI channel freezes one append-only
   snapshot per run and as-of date through a single Store transaction. The
-  strict v2 snapshot accepts manual JSON/CSV or the profile-bound TOYO XLSX
+  strict v2 snapshot accepts manual JSON/CSV or the profile-bound solar weekly XLSX
   layout; workbook cells win and a bounded, no-redirect Yahoo adapter may fill
   missing adjusted history, FX, securities, or fields. A deterministic
   projection renders primary/overseas tables, an event timeline, seven PNG

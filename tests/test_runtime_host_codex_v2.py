@@ -1,3 +1,4 @@
+from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import replace
@@ -13,18 +14,39 @@ import yaml
 from multi_agent_brief.cli.init_wizard import create_workspace
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.contracts import SchemaRegistry
-from multi_agent_brief.contracts.v2 import SourceProposal, TavilyAcquisitionBundleV2, TavilyExtractBatchExchange, TavilyExtractUrlOutcome, TavilySearchTaskExchange, TavilyTaskAcquisitionStatus
+from multi_agent_brief.contracts.v2 import (
+    InvocationStartRequest,
+    SourceProposal,
+    TavilyAcquisitionBundleV2,
+    TavilyExtractBatchExchange,
+    TavilyExtractUrlOutcome,
+    TavilySearchTaskExchange,
+    TavilyTaskAcquisitionStatus,
+)
 from multi_agent_brief.control_store import SQLiteControlStore
-from multi_agent_brief.control_store.serialization import canonical_json_bytes
+from multi_agent_brief.control_store.serialization import (
+    canonical_fingerprint,
+    canonical_json_bytes,
+)
 from multi_agent_brief.core_run_v2.errors import CoreRunResult
+from multi_agent_brief.core_run_v2.policy import derived_id
 from multi_agent_brief.core_run_v2.service import CoreRunService
+from multi_agent_brief.intake_v2.errors import IntakeResult
+from multi_agent_brief.intake_v2.service import IntakeService
 from multi_agent_brief.product.init_web.submit import (
     SUBMISSION_SCHEMA,
     InitWebSubmitter,
 )
 from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
 from multi_agent_brief.runtime_host_v2.errors import RuntimeHostError
-from multi_agent_brief.runtime_host_v2.service import RuntimeHostService, _ROLE_OUTPUTS, _role_task_instructions
+from multi_agent_brief.runtime_host_v2.service import (
+    RuntimeHostService,
+    _ROLE_OUTPUTS,
+    _role_task_instructions,
+    _strict_proposal_violations,
+    _target_relevance_task_instruction,
+)
+from multi_agent_brief.runtime_host_v2.submission import source_stage_root
 from multi_agent_brief.runtime_assets import install_runtime_kit
 from multi_agent_brief.sources.base import SourceItem
 from multi_agent_brief.sources.search_backends.tavily import TavilyBackend

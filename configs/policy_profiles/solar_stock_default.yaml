@@ -56,7 +56,7 @@ gate_policy:
   target_relevance: strict
 metadata:
   boundary: experimental_policy_profile_only
-  maturity: solar_stock_dogfood_profile
+  maturity: solar_stock_pilot_profile
   non_claims:
     - no_investment_advice
     - no_automatic_price_causality

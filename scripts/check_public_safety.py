@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan release/public files for private paths, tokens, and local banned terms."""
+"""Scan release/public files for private paths, tokens, and banned identity terms."""
 
 from __future__ import annotations
 
@@ -34,12 +34,19 @@ API_SECRET_RE = re.compile(
     r"(?i)\b(?:api[_-]?key|secret[_-]?key|access[_-]?token|refresh[_-]?token)"
     r"\s*[:=]\s*['\"]?[A-Za-z0-9_./+=-]{16,}"
 )
-COMMON_SECRET_RE = re.compile(r"\b(?:sk-[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{20,})\b")
+COMMON_SECRET_RE = re.compile(
+    r"\b(?:sk-[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{20,})\b"
+)
 SHA256_VALUE_RE = re.compile(
     r"(?<![A-Za-z0-9_])['\"]?(?:sha256|[A-Za-z0-9_]+_sha256)['\"]?"
     r"\s*[:=]\s*['\"]?(?P<hash>[0-9a-fA-F]{64})['\"]?",
     re.IGNORECASE,
 )
+
+# Identity tokens that must never appear in tracked files: packaged defaults
+# carry no real-issuer identity (see docs/security.md). Matching is
+# case-insensitive and substring-based, so every casing variant is caught.
+DEFAULT_BANNED_TERMS: tuple[str, ...] = ("toyo",)
 
 TEXT_SUFFIXES = {
     ".cfg",
@@ -127,6 +134,16 @@ def _banned_terms_from_env() -> list[str]:
     return [term.strip() for term in raw.split(",") if term.strip()]
 
 
+def _default_banned_terms() -> list[str]:
+    terms = list(DEFAULT_BANNED_TERMS)
+    known = {term.lower() for term in terms}
+    for term in _banned_terms_from_env():
+        if term.lower() not in known:
+            terms.append(term)
+            known.add(term.lower())
+    return terms
+
+
 def _is_probably_text(path: Path) -> bool:
     if path.name in {".env", ".env.local", ".env.production"}:
         return True
@@ -174,9 +191,16 @@ def _allowed_fixture(
         "src/multi_agent_brief/outputs/reader_final_gate.py",
     } and kind in {"user_path", "file_url"}:
         return True
-    if rel in _PUBLIC_TEST_FIXTURE_FINDINGS and kind in _PUBLIC_TEST_FIXTURE_FINDINGS[rel]:
+    if (
+        rel in _PUBLIC_TEST_FIXTURE_FINDINGS
+        and kind in _PUBLIC_TEST_FIXTURE_FINDINGS[rel]
+    ):
         return True
-    if _path_has_part(path, "tests") and "PUBLIC_SAFETY_TEST_FIXTURE" in line and kind != "banned_term":
+    if (
+        _path_has_part(path, "tests")
+        and "PUBLIC_SAFETY_TEST_FIXTURE" in line
+        and kind != "banned_term"
+    ):
         return True
     if kind == "file_url" and line.strip() in {
         "- `file://`",
@@ -220,12 +244,16 @@ def _sample(line: str, needle: str) -> str:
     return text[start:end]
 
 
-def _is_sha256_value(value: str, line: str, *, start: int | None = None, end: int | None = None) -> bool:
+def _is_sha256_value(
+    value: str, line: str, *, start: int | None = None, end: int | None = None
+) -> bool:
     if not re.fullmatch(r"[0-9a-fA-F]{64}", value):
         return False
     if start is None or end is None:
         return False
-    return any(match.span("hash") == (start, end) for match in SHA256_VALUE_RE.finditer(line))
+    return any(
+        match.span("hash") == (start, end) for match in SHA256_VALUE_RE.finditer(line)
+    )
 
 
 _LARK_TOKEN_CONTEXT_RE = re.compile(
@@ -248,17 +276,21 @@ def _looks_like_lark_token(value: str, line: str, start: int) -> bool:
         return True
     if value.startswith("fld") and re.fullmatch(r"fld[a-z-]{8,}", value):
         return True
-    context = line[max(0, start - 48):start]
+    context = line[max(0, start - 48) : start]
     return bool(_LARK_TOKEN_CONTEXT_RE.search(context))
 
 
-def scan(paths: list[Path] | None = None, *, banned_terms: list[str] | None = None) -> list[Finding]:
+def scan(
+    paths: list[Path] | None = None, *, banned_terms: list[str] | None = None
+) -> list[Finding]:
     findings: list[Finding] = []
-    banned = banned_terms if banned_terms is not None else _banned_terms_from_env()
+    banned = banned_terms if banned_terms is not None else _default_banned_terms()
 
     for path in _iter_scan_files(paths):
         if path.name in {".env", ".env.local", ".env.production"}:
-            findings.append(Finding(path=path, line=0, kind="env_file", sample=path.name))
+            findings.append(
+                Finding(path=path, line=0, kind="env_file", sample=path.name)
+            )
             continue
 
         text = _read_text(path)
@@ -266,11 +298,13 @@ def scan(paths: list[Path] | None = None, *, banned_terms: list[str] | None = No
             continue
 
         for lineno, line in enumerate(text.splitlines(), start=1):
+            lowered = line.lower()
             checks: list[tuple[str, str, int | None, int | None]] = []
             for term in banned:
-                if term in line:
-                    start = line.find(term)
-                    checks.append(("banned_term", term, start, start + len(term)))
+                index = lowered.find(term.lower())
+                if index >= 0:
+                    matched = line[index : index + len(term)]
+                    checks.append(("banned_term", matched, index, index + len(term)))
             for match in LARK_TOKEN_CANDIDATE_RE.finditer(line):
                 token = match.group(0)
                 if _looks_like_lark_token(token, line, match.start()):

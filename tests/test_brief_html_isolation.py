@@ -30,6 +30,8 @@ ALLOWED_IMPORTS = {
         "multi_agent_brief.product.review_session.contracts",
         "multi_agent_brief.product.post_final_assessment_projection",
         "multi_agent_brief.product.market_data_read_model",
+        # Read-only watchlist projection input for the market-data tab.
+        "multi_agent_brief.sources.equity_universe",
         "multi_agent_brief.runtime_host_v2.errors",
         "multi_agent_brief.runtime_host_v2.projections",
         "multi_agent_brief.semantic_evaluator.reader",

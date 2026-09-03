@@ -1,14 +1,25 @@
 """Tests for experimental product-layer ReportSpec and ReportPack contracts."""
 
+from __future__ import annotations
 
 import json
+import re
+import sys
 from pathlib import Path
 
+import pytest
 import yaml
 
-from multi_agent_brief.cli.main import main
+from multi_agent_brief.cli.main import build_parser, main
+from multi_agent_brief.contracts.registry import ContractRegistry
 from multi_agent_brief.contracts.schemas.report_spec import ReportSpecContract
+from multi_agent_brief.control_store import SQLiteControlStore
+from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
+from multi_agent_brief.product.report_pack import validate_report_pack_payload
 from multi_agent_brief.product.report_registry import ReportPackRegistry
+from multi_agent_brief.product.report_spec import validate_report_spec_payload
+from multi_agent_brief.runtime_host_v2.codex import load_codex_adapter_binding
+from multi_agent_brief.runtime_host_v2.initialization import initialize_or_open_runtime
 
 ROOT = Path(__file__).resolve().parent.parent
 EXPECTED_PACK_IDS = {
@@ -179,6 +190,49 @@ def test_validate_report_spec_cli_accepts_valid_spec(tmp_path: Path, capsys) -> 
 
 
 
+def test_new_solar_stock_workspace_requires_explicit_core_ticker(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "solar-stock-no-core"
+
+    assert main(["new", "solar-stock-periodic", str(workspace)]) == 1
+    output = capsys.readouterr().out
+    assert "requires an explicit --core-ticker" in output
+    assert "packaged defaults carry no issuer identity" in output
+    assert not workspace.exists()
+
+
+def test_new_solar_stock_workspace_freezes_explicit_workbook_window(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    workspace = tmp_path / "solar-stock-workbook-window"
+
+    assert (
+        main(
+            [
+                "new",
+                "solar-stock-periodic",
+                str(workspace),
+                "--core-ticker",
+                "DEMO",
+                "--report-window-start",
+                "2026-08-03",
+                "--report-window-end",
+                "2026-08-12",
+            ]
+        )
+        == 0
+    )
+
+    capsys.readouterr()
+    config = yaml.safe_load((workspace / "config.yaml").read_text(encoding="utf-8"))
+    direction = config["controlstore_v2"]["run_direction"]
+    assert direction["report_date"] == "2026-08-12"
+    assert direction["report_window_start"] == "2026-08-03"
+    assert direction["report_window_end"] == "2026-08-12"
+    assert direction["max_source_age_days"] == 9
 
 
 

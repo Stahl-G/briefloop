@@ -27,8 +27,8 @@ from multi_agent_brief.sources.market_data import (
     merge_manual_first,
 )
 from multi_agent_brief.sources.market_data_xlsx import (
-    TOYO_WEEKLY_XLSX_PROFILE_ID,
-    parse_toyo_weekly_xlsx,
+    SOLAR_WEEKLY_XLSX_PROFILE_ID,
+    parse_solar_weekly_xlsx,
 )
 from multi_agent_brief.sources.market_data_v2 import (
     YahooMarketDataV2Adapter,
@@ -69,7 +69,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     fetch_parser.add_argument(
         "--profile",
-        choices=[TOYO_WEEKLY_XLSX_PROFILE_ID],
+        choices=[SOLAR_WEEKLY_XLSX_PROFILE_ID],
         help="Required deterministic workbook profile when --workbook is used.",
     )
     fetch_parser.add_argument(
@@ -91,7 +91,7 @@ def register(subparsers: argparse._SubParsersAction) -> None:
     )
     ingest_parser.add_argument(
         "--profile",
-        choices=[TOYO_WEEKLY_XLSX_PROFILE_ID],
+        choices=[SOLAR_WEEKLY_XLSX_PROFILE_ID],
         help="Required deterministic workbook profile for XLSX input.",
     )
     ingest_parser.add_argument(
@@ -189,9 +189,9 @@ def _handle_fetch(args: argparse.Namespace, workspace: Path) -> dict[str, object
     service.require_recording_allowed()
     workbook_path = getattr(args, "workbook", None)
     if workbook_path is not None:
-        if getattr(args, "profile", None) != TOYO_WEEKLY_XLSX_PROFILE_ID:
+        if getattr(args, "profile", None) != SOLAR_WEEKLY_XLSX_PROFILE_ID:
             raise MarketDataError("market_data_xlsx_profile_required")
-        parsed = parse_toyo_weekly_xlsx(
+        parsed = parse_solar_weekly_xlsx(
             Path(workbook_path).expanduser().resolve(),
             universe=load_equity_universe(workspace),
         )
@@ -233,9 +233,9 @@ def _handle_ingest(args: argparse.Namespace, workspace: Path) -> dict[str, objec
     service.require_recording_allowed()
     file_path = Path(args.file).expanduser().resolve()
     if file_path.suffix.lower() == ".xlsx":
-        if getattr(args, "profile", None) != TOYO_WEEKLY_XLSX_PROFILE_ID:
+        if getattr(args, "profile", None) != SOLAR_WEEKLY_XLSX_PROFILE_ID:
             raise MarketDataError("market_data_xlsx_profile_required")
-        parsed = parse_toyo_weekly_xlsx(
+        parsed = parse_solar_weekly_xlsx(
             file_path, universe=load_equity_universe(workspace)
         )
         requested_as_of = getattr(args, "as_of", None)

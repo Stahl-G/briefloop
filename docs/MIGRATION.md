@@ -76,6 +76,12 @@ This page explains the public architecture migration from older Python-pipeline 
   Semantic Assessment Report producer/projection/adjudication stack are
   retired. The optional Semantic Assessment Report schema and reference
   validation remain non-blocking. None is a fallback for a SQLite workspace.
+- Packaged defaults carry no real-issuer identity: `solar-stock-periodic`
+  requires an explicit `--core-ticker` (optional `--core-name`), the workbook
+  profile is `solar-weekly-v1` (subject sheet matched by its `周明细` suffix,
+  subject ticker taken from the workspace universe), and the
+  `market_data_snapshot.v2` workbook-identity `profile_id` Literal changed.
+  Fresh workspaces only; older Stores are not supported.
 - Do not restore a Python full-pipeline as the standard generation path.
 - Do not treat roadmap goals as implemented modules.
 - Do not move hard constraints into user notes when validators or audit checks should enforce them.

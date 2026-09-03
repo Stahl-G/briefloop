@@ -130,13 +130,15 @@ the current Store action—not this list—decides what is next.
 Create a fresh schema19 workspace with:
 
 ```bash
-briefloop new solar-stock-periodic <workspace>
+briefloop new solar-stock-periodic <workspace> --core-ticker <TICKER>
 # When the workbook already defines the reporting period, freeze it before run:
 briefloop new solar-stock-periodic <workspace> \
+  --core-ticker <TICKER> \
   --report-window-start <YYYY-MM-DD> --report-window-end <YYYY-MM-DD>
 ```
 
-The paired report-window flags are the Human confirmation for the workbook
+The core issuer ticker is a required Human input; packaged defaults carry no
+issuer identity. The paired report-window flags are the Human confirmation for the workbook
 period. They must be set before Store initialization; market-data ingest never
 rewrites RunDirection.
 
@@ -156,9 +158,9 @@ Use the separate market-data channel as needed:
 briefloop market-data fetch --workspace <workspace>
 briefloop market-data ingest --workspace <workspace> --file <json-or-csv>
 briefloop market-data ingest --workspace <workspace> \
-  --file <weekly.xlsx> --profile toyo-weekly-v1
+  --file <weekly.xlsx> --profile solar-weekly-v1
 briefloop market-data fetch --workspace <workspace> \
-  --workbook <weekly.xlsx> --profile toyo-weekly-v1
+  --workbook <weekly.xlsx> --profile solar-weekly-v1
 briefloop market-data project --workspace <workspace>
 ```
 

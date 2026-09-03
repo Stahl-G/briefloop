@@ -7,7 +7,6 @@ from typing import Final
 
 from multi_agent_brief.sources.equity_universe import (
     EquityPeriodicUniverse,
-    SOLAR_STOCK_CORE_SECURITIES,
     SOLAR_STOCK_EVENT_ONLY_ENTITIES,
     SOLAR_STOCK_OVERSEAS_SECURITIES,
     SOLAR_STOCK_PRIMARY_SECURITIES,
@@ -41,8 +40,7 @@ def _task(
         "backfill": {
             "enabled": True,
             "recency_days": 30,
-            "query": backfill_query
-            or f"{query} official filing investor relations",
+            "query": backfill_query or f"{query} official filing investor relations",
             "domains": sorted(backfill_domains),
             "max_results": 20,
             "search_depth": "advanced",
@@ -50,14 +48,7 @@ def _task(
     }
 
 
-_SOLAR_STOCK_SEARCH_TASKS: Final[tuple[dict[str, object], ...]] = (
-    _task(
-        "solar-stock-listed-toyo",
-        "listed_company",
-        "TOYO Solar Nasdaq earnings guidance orders financing capacity asset disposal",
-        entity_id="TOYO",
-        backfill_domains=("sec.gov", "toyo-solar.com"),
-    ),
+_SOLAR_STOCK_SECTOR_TASKS: Final[tuple[dict[str, object], ...]] = (
     _task(
         "solar-stock-listed-te",
         "listed_company",
@@ -201,24 +192,51 @@ _SOLAR_STOCK_SEARCH_TASKS: Final[tuple[dict[str, object], ...]] = (
 )
 
 
-def solar_stock_search_tasks() -> list[dict[str, object]]:
-    """Return a detached copy of the exact 20-task solar default."""
+def _core_subject_task(universe: EquityPeriodicUniverse) -> dict[str, object]:
+    """The one issuer-bound task, derived from the Human-provided core ticker."""
 
-    return deepcopy(sorted(_SOLAR_STOCK_SEARCH_TASKS, key=lambda item: item["task_id"]))
+    ticker = universe.core_tickers[0]
+    name = universe.core_names[0] if universe.core_names else ""
+    slug = ticker.lower().replace(".", "-")
+    query = " ".join(
+        f"{name} {ticker} earnings guidance orders financing capacity "
+        "asset disposal".split()
+    )
+    return _task(
+        f"solar-stock-listed-{slug}",
+        "listed_company",
+        query,
+        entity_id=ticker,
+        backfill_domains=("sec.gov",),
+    )
+
+
+def solar_stock_search_tasks(
+    universe: EquityPeriodicUniverse | None = None,
+) -> list[dict[str, object]]:
+    """The frozen solar sector plan plus the run's explicit core-subject task.
+
+    The packaged sector plan carries no issuer identity: the core task
+    exists only when the workspace universe names a core ticker.
+    """
+
+    tasks = [deepcopy(task) for task in _SOLAR_STOCK_SECTOR_TASKS]
+    if universe is not None and universe.core_tickers:
+        tasks.append(_core_subject_task(universe))
+    return sorted(tasks, key=lambda item: str(item["task_id"]))
 
 
 def search_tasks_for_universe(
     universe: EquityPeriodicUniverse,
 ) -> list[dict[str, object]]:
-    """Use the frozen solar 20-task plan only for the packaged default universe."""
+    """Sector plan for the packaged preset (plus explicit core) or a custom watchlist."""
 
     if is_packaged_solar_universe(universe):
-        return solar_stock_search_tasks()
+        return solar_stock_search_tasks(universe)
     return listed_company_search_tasks(universe)
 
 
 __all__ = [
-    "SOLAR_STOCK_CORE_SECURITIES",
     "SOLAR_STOCK_EVENT_ONLY_ENTITIES",
     "SOLAR_STOCK_OVERSEAS_SECURITIES",
     "SOLAR_STOCK_PRIMARY_SECURITIES",
