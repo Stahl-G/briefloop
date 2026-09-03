@@ -1,0 +1,16 @@
+spec_id: legacy_release_readiness_forged_event_blocker
+origin: ported from read-only legacy fixture release_readiness_forged_event_blocker
+scenario: |
+  A finalize-stage workspace whose release-readiness report references an
+  event id that does not exist in the event log, so the report stays
+  invalid. The underlying brief content and its evidence are clean.
+  Legacy description: "Release readiness reports with forged event ids
+  stay invalid."
+defect_plot: ""
+rollout_role: editor
+seeded_defects: []
+must_not_report: []
+clean_claim_guidance: |
+  The brief's claims are properly supported and must not be flagged; the
+  forged event link is a control-record integrity problem outside the ten
+  canonical finding types, not a content defect.

@@ -1,0 +1,28 @@
+spec_id: legacy_media_only_legal_policy_blocks_research_review
+origin: ported from read-only legacy fixture media_only_legal_policy_blocks_research_review
+scenario: |
+  An audit-stage ledger containing a legal or policy claim (for example a
+  regulatory action or a policy change) whose every citation is media
+  coverage: press articles reporting on the matter, with no regulator,
+  agency, court, or company-filing source anywhere in the pack. Legacy
+  description: "Media-only legal or policy claims are represented as
+  unsupported official-source-missing records." The legacy support matrix
+  records this as official_source_missing.
+defect_plot: |
+  Make the claim a matter of law or policy, then support it exclusively
+  with credible-looking secondary press sources -- dated, on-topic, and
+  quoting accurately -- while the pack contains no primary official source
+  for it. The press coverage must be genuine evidence that the story
+  exists, so the defect is the missing official source for an official
+  fact, not thin or off-topic coverage.
+rollout_role: auditor
+seeded_defects:
+  - defect_id: d1
+    finding_type: claim_support_matrix_blocking_support
+    expected_blocking_level: blocking
+must_not_report: []
+clean_claim_guidance: |
+  Non-legal claims in the same ledger that cite media sources remain
+  properly supported (media is admissible evidence for market-reaction or
+  sentiment claims), and legal claims that cite an official primary source
+  are clean; neither kind must be flagged.

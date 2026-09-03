@@ -1,0 +1,18 @@
+spec_id: legacy_static_hermes_no_skip_finalize
+origin: ported from read-only legacy fixture static_hermes_no_skip_finalize
+scenario: |
+  A finalize-ready workspace in which the gate checks and state decisions
+  all precede finalize: nothing was skipped on the way to the final brief,
+  and the final content is free of defects. Legacy description: "Hermes
+  guidance keeps gates and state decisions before finalize." The legacy
+  case is a static contract with no workspace fixture; only its ordering
+  semantics carry over, as the clean-side twin of a skipped-gates
+  scenario.
+defect_plot: ""
+rollout_role: editor
+seeded_defects: []
+must_not_report: []
+clean_claim_guidance: |
+  Every claim in the final brief passed the upstream gates and is properly
+  supported; the brief is the true-negative material and must provoke none
+  of the ten canonical finding types.

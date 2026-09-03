@@ -1,0 +1,16 @@
+spec_id: legacy_unauthorized_institution_branding_blocks_release
+origin: ported from read-only legacy fixture unauthorized_institution_branding_blocks_release
+scenario: |
+  A finalize-stage internal draft that carries institution branding whose
+  use has not been authorized, so release readiness blocks public release
+  without authorizing it. The brief's factual content and its evidence are
+  clean. Legacy description: "Unauthorized synthetic institution branding
+  blocks release readiness without authorizing public release."
+defect_plot: ""
+rollout_role: editor
+seeded_defects: []
+must_not_report: []
+clean_claim_guidance: |
+  All claims in the branded draft are properly supported and must not be
+  flagged; the missing branding authorization is a release-control fact,
+  not one of the ten canonical finding types.

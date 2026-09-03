@@ -1,0 +1,16 @@
+spec_id: legacy_formal_release_missing_human_approval
+origin: ported from read-only legacy fixture formal_release_missing_human_approval
+scenario: |
+  A finalize-stage formal-release-candidate check in which the required
+  human approvals (content owner, evidence reviewer, legal or compliance
+  reviewer) are absent, so the release stays blocked. The content and its
+  evidence are clean. Legacy description: "Formal release-candidate checks
+  remain blocked without required human approvals."
+defect_plot: ""
+rollout_role: editor
+seeded_defects: []
+must_not_report: []
+clean_claim_guidance: |
+  The release-candidate brief's claims are properly supported and must not
+  be flagged; missing human approvals are release-control facts outside
+  the ten canonical finding types.

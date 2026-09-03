@@ -1,0 +1,25 @@
+spec_id: legacy_stale_current_claim
+origin: ported from read-only legacy fixture stale_current_claim
+scenario: |
+  A strict-mode audit pass with report date 2026-06-08 and a maximum source
+  age of 14 days. Most claims are backed by current sources, but one claim
+  is presented as the current state of affairs while its only backing
+  source is dated more than 14 days before the report date. Legacy
+  description: "Stale current-source metadata is deterministic and blocking
+  in strict mode."
+defect_plot: |
+  Date the source pack so fresh sources fall inside the 14-day window ending
+  2026-06-08, and give exactly one claim -- phrased in present tense as the
+  current situation -- a sole source dated just outside that window. The
+  source must remain the most recent one available for the claim, so the
+  defect is the staleness of a "current" claim, not a missing citation.
+rollout_role: auditor
+seeded_defects:
+  - defect_id: d1
+    finding_type: stale_source
+    expected_blocking_level: blocking
+must_not_report: []
+clean_claim_guidance: |
+  Claims citing sources inside the age window (dated within 14 days of the
+  report date) are properly supported current claims and must not be
+  flagged.

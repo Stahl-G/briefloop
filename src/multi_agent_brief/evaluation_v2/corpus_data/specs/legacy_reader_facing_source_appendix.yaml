@@ -1,0 +1,19 @@
+spec_id: legacy_reader_facing_source_appendix
+origin: ported from read-only legacy fixture reader_facing_source_appendix
+scenario: |
+  A finalize-stage brief whose cited claims are all properly supported. The
+  reader-facing source appendix lists exactly the cited sources under
+  reader-friendly titles (for example "[S1] ExampleCo Opens Demo Facility"
+  and "[S2] ExampleCo Q1 Results"), leaks no internal claim or source ids,
+  and omits unused sources. Legacy description: "Finalize writes a
+  reader-facing source appendix for cited claims without leaking internal
+  IDs."
+defect_plot: ""
+rollout_role: editor
+seeded_defects: []
+must_not_report: []
+clean_claim_guidance: |
+  The claims behind the [S1] and [S2] appendix entries are fully supported
+  by their pack sources and must not be flagged; a correct reader-facing
+  rendering without internal id leakage is the expected clean outcome, not
+  a defect.

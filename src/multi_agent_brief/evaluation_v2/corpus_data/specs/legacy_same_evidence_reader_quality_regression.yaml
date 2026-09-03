@@ -1,0 +1,19 @@
+spec_id: legacy_same_evidence_reader_quality_regression
+origin: ported from read-only legacy fixture same_evidence_reader_quality_regression
+scenario: |
+  A finalize-stage workspace whose evidence is identical to a
+  blocking-twin scenario but whose remaining issues are reader-quality
+  surfaces only: two materiality and focus exclusions and reader template
+  warnings stay visible through status and the Quality Panel, while the
+  delivery makes no ready-to-publish or approved-for-release claim. None
+  of the ten canonical finding types is present. Legacy description:
+  "Same-evidence reader-quality surfaces stay visible through status,
+  Quality Panel, and artifact validation."
+defect_plot: ""
+rollout_role: editor
+seeded_defects: []
+must_not_report: []
+clean_claim_guidance: |
+  The same-evidence claims are properly supported and must not be flagged;
+  visible quality-panel diagnostics that are not among the ten canonical
+  finding types must not be reported as findings.
