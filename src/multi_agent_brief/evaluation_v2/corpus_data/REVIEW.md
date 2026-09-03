@@ -212,3 +212,13 @@ agree with seeded content (a company-name mismatch produced a whole extra
 finding), claim-count minimums must match corpus scale (`min_items` noise),
 and source dates must be constructed relative to the case `report_date`
 (the freshness gate blocks anything outside the window).
+
+Follow-up smoke (constrained envelope, same case content): with the
+harness-owned reporting contract injected into the envelope, the real auditor
+produced exactly two findings — `stale_source` anchored `related_claim_id:
+CL-0001` and `number_without_source` anchored `line_number: 7` (byte-verified
+against the seeded brief line). Constraint produces compliance; the agent
+dropped an inexpressible out-of-scope finding it had reported when
+unconstrained, which is precisely why format compliance is reported alongside
+the reward. The rollout writes its report under the envelope scratch
+directory, so the adapter harvests there.
