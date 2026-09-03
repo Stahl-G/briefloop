@@ -1,22 +1,26 @@
-"""Experimental eval command: validate corpora, run splits once adapters land.
+"""Experimental eval command: validate corpora and run measured splits.
 
-``validate`` is fully functional today: it loads a corpus, prints its factual
-composition (total, per-split counts, blocking counts, per-finding-type
-coverage), and enforces the production thresholds.  The packaged skeleton
-corpus deliberately fails it -- reporting a reward-shaped verdict over an
-empty corpus would be a public claim exceeding the artifacts.
+``validate`` loads a corpus, prints its factual composition (total,
+per-split counts, blocking counts, per-finding-type coverage), and enforces
+the production thresholds.
 
-``run`` fails closed: no rollout backend exists yet, and a placeholder reward
-is never emitted.  ``_build_rollout`` is the single seam the codex rollout
-adapter (later rollout task) plugs into; until that module exists the command
-refuses before touching the corpus.
+``run`` drives one split through the real codex rollout adapter (the single
+seam is ``_build_rollout``), scores it, and appends exactly one record to
+the reward ledger -- the run and its record are one transaction: a run that
+cannot pin its identity digests (corpus, role instructions, reporting
+contract) refuses rather than appending an anonymous number.  If the
+adapter module is absent the command still fails closed before touching
+the corpus; a placeholder reward is never emitted.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import tempfile
 from collections import Counter
+from datetime import datetime, timezone
+from importlib.resources import as_file, files
 from pathlib import Path
 import sys
 
@@ -29,12 +33,21 @@ from multi_agent_brief.evaluation_v2.corpus import (
     load_corpus,
     validate_corpus,
 )
+from multi_agent_brief.evaluation_v2.reward_ledger import (
+    DEFAULT_LEDGER_PATH,
+    append_record,
+    corpus_digest,
+    envelope_digest,
+    record_from_score,
+    roles_digest,
+)
 from multi_agent_brief.evaluation_v2.runner import RolloutFn, run_split
 
 NO_ROLLOUT_ADAPTER_MESSAGE = (
-    "no rollout adapter is available yet; the codex adapter lands with the "
-    "rollout task"
+    "no rollout adapter is available; the codex rollout module is missing"
 )
+
+DEFAULT_WORKDIR = Path(tempfile.gettempdir()) / "briefloop-eval-rollouts"
 
 
 class RolloutAdapterUnavailable(RuntimeError):
@@ -80,6 +93,28 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         dest="json_output",
         help="Emit the score as machine-readable JSON.",
     )
+    run_parser.add_argument(
+        "--workdir",
+        default=str(DEFAULT_WORKDIR),
+        help="Directory for per-case rollout workspaces.",
+    )
+    run_parser.add_argument(
+        "--ledger",
+        default=str(DEFAULT_LEDGER_PATH),
+        help=f"Reward ledger to append the run record to (default: {DEFAULT_LEDGER_PATH}).",
+    )
+    run_parser.add_argument(
+        "--roles",
+        default="configs/agent_roles.yaml",
+        help="Path to agent_roles.yaml; its digest pins the role instructions.",
+    )
+    run_parser.add_argument(
+        "--run-index",
+        type=int,
+        default=1,
+        help="Repetition index for repeated runs of the same split (ledger field).",
+    )
+    run_parser.add_argument("--notes", default="", help="Ledger note for this run.")
 
 
 def handle(args: argparse.Namespace) -> int:
@@ -112,11 +147,11 @@ def _handle_validate(args: argparse.Namespace) -> int:
 
 
 def _handle_run(args: argparse.Namespace) -> int:
-    # Resolve the adapter first: while no rollout backend exists, refuse
-    # before reading anything, so no partial work or placeholder score can
-    # ever be produced.
+    # Resolve the adapter first: without a rollout backend, refuse before
+    # reading anything, so no partial work or placeholder score can ever be
+    # produced.
     try:
-        rollout = _build_rollout()
+        rollout = _build_rollout(workdir=Path(args.workdir))
     except RolloutAdapterUnavailable as exc:
         print(f"eval run unavailable: {exc}", file=sys.stderr)
         return 1
@@ -128,8 +163,42 @@ def _handle_run(args: argparse.Namespace) -> int:
         print(f"corpus invalid: {exc}", file=sys.stderr)
         return 1
 
+    # The ledger record pins the identity of everything that produced the
+    # number; a run whose identity cannot be established refuses instead of
+    # appending an anonymous measurement.  The reporting contract is a
+    # packaged asset (it ships with the corpus), so its digest comes from
+    # the package anchor, not from --corpus.
+    roles_path = Path(args.roles)
+    if not roles_path.exists():
+        print(
+            f"eval run: role instructions source not found at {roles_path}; "
+            "the reward record must pin roles_sha256, pass --roles",
+            file=sys.stderr,
+        )
+        return 1
+    corpus_data_dir = Path(args.corpus).resolve().parent
+    envelope_resource = (
+        files("multi_agent_brief.evaluation_v2")
+        .joinpath("corpus_data", "envelope-auditor-reporting.md")
+    )
+    with as_file(envelope_resource) as envelope_path:
+        envelope_sha = envelope_digest(envelope_path)
+
     result = run_split(corpus, args.split, rollout)
     score = result.score
+    record = record_from_score(
+        score,
+        split=args.split,
+        run_index=args.run_index,
+        case_count=score.case_count,
+        corpus_sha256=corpus_digest(corpus_data_dir),
+        roles_sha256=roles_digest(roles_path),
+        envelope_sha256=envelope_sha,
+        recorded_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        notes=args.notes,
+    )
+    ledger_path = Path(args.ledger)
+    append_record(ledger_path, record)
     if args.json_output:
         payload = score.model_dump()
         payload["split"] = result.split
@@ -148,15 +217,16 @@ def _handle_run(args: argparse.Namespace) -> int:
         print(f"block_agreement  {score.block_agreement:.4f}")
         print(f"format_compliance {score.format_compliance:.4f}")
         print(f"R                {score.reward:.4f}")
+        print(f"ledger           {ledger_path} (run_index {args.run_index})")
     return 0
 
 
-def _build_rollout() -> RolloutFn:
+def _build_rollout(*, workdir: Path) -> RolloutFn:
     """Single seam where the production rollout adapter plugs in.
 
-    The codex adapter module lands with the rollout task; until it exists
-    this raises ``RolloutAdapterUnavailable`` so ``eval run`` fails closed
-    instead of reporting a fabricated reward.
+    If the codex rollout module is missing this raises
+    ``RolloutAdapterUnavailable`` so ``eval run`` fails closed instead of
+    reporting a fabricated reward.
     """
     try:
         from multi_agent_brief.evaluation_v2.codex_rollout import (
@@ -164,7 +234,7 @@ def _build_rollout() -> RolloutFn:
         )
     except ImportError:
         raise RolloutAdapterUnavailable(NO_ROLLOUT_ADAPTER_MESSAGE) from None
-    return build_codex_rollout()
+    return build_codex_rollout(workdir=workdir)
 
 
 def _print_summary(corpus_path: str, corpus: Corpus) -> None:

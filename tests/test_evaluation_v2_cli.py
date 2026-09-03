@@ -126,16 +126,15 @@ def test_validate_reports_threshold_deficit(tmp_path, capsys):
     assert "cases: 2" in captured.out
 
 
-def test_validate_fails_loudly_on_packaged_skeleton(capsys):
-    # The shipped skeleton corpus (0 cases) must fail honestly, with its
-    # counts on record: a valid verdict here would be a public claim
-    # exceeding the artifacts.
-    assert main(["eval", "validate", "--corpus", str(DEFAULT_CORPUS)]) == 1
+def test_validate_accepts_packaged_corpus(capsys):
+    # The shipped corpus is the real 80-case measurement substrate; the CLI
+    # reports its factual composition and passes production thresholds.
+    assert main(["eval", "validate", "--corpus", str(DEFAULT_CORPUS)]) == 0
     captured = capsys.readouterr()
-    assert "cases: 0" in captured.out
-    assert "split train: 0 cases, 0 blocking" in captured.out
-    assert "split val: 0 cases, 0 blocking" in captured.out
-    assert "corpus invalid" in captured.err
+    assert "cases: 80" in captured.out
+    assert "split train: 40 cases" in captured.out
+    assert "split val: 40 cases" in captured.out
+    assert "result: valid" in captured.out
 
 
 def test_validate_accepts_full_scale_corpus(tmp_path, capsys):
@@ -161,25 +160,39 @@ def test_validate_reports_load_errors_to_stderr(tmp_path, capsys):
 # ---------------------------------------------------------------------------
 
 
-def test_run_fails_closed_without_adapter(tmp_path, capsys):
+def test_run_fails_closed_without_adapter(tmp_path, capsys, monkeypatch):
+    from multi_agent_brief.cli.eval_commands import RolloutAdapterUnavailable
+
+    def _unavailable(**_kwargs):
+        raise RolloutAdapterUnavailable("no rollout adapter is available")
+
+    monkeypatch.setattr(
+        "multi_agent_brief.cli.eval_commands._build_rollout", _unavailable
+    )
     manifest = _small_corpus(tmp_path)
     exit_code = main(
         ["eval", "run", "--corpus", str(manifest), "--split", "val"]
     )
     assert exit_code == 1
     captured = capsys.readouterr()
-    assert "no rollout adapter is available yet" in captured.err
-    assert "codex adapter lands with the rollout task" in captured.err
+    assert "no rollout adapter is available" in captured.err
     # No fake or placeholder reward may ever reach stdout.
     assert captured.out == ""
 
 
-def test_run_fails_closed_even_on_valid_corpus(tmp_path, capsys):
-    # The adapter check dominates: no rollout backend means no run, even for
-    # a corpus that would pass validation.
-    manifest = _full_scale_corpus(tmp_path)
+def test_run_refuses_invalid_corpus_before_any_rollout(tmp_path, capsys, monkeypatch):
+    # Corpus validation dominates: an under-threshold corpus refuses before
+    # the rollout runs (the adapter is present, but must never be invoked).
+    def _must_not_be_invoked(_case):
+        raise AssertionError("rollout must not run on an invalid corpus")
+
+    monkeypatch.setattr(
+        "multi_agent_brief.cli.eval_commands._build_rollout",
+        lambda **_kwargs: _must_not_be_invoked,
+    )
+    manifest = _small_corpus(tmp_path)
     assert main(["eval", "run", "--corpus", str(manifest), "--split", "val"]) == 1
-    assert "no rollout adapter is available yet" in capsys.readouterr().err
+    assert "corpus invalid" in capsys.readouterr().err
 
 
 def test_run_requires_split_choice(tmp_path):
@@ -201,12 +214,16 @@ def test_run_with_injected_rollout_scores_and_reports(
     # Exercise the full run shape through the single seam the real adapter
     # will fill; the reward is computed by the real scoring code.
     manifest = _full_scale_corpus(tmp_path)
-    monkeypatch.setattr(eval_commands, "_build_rollout", lambda: _perfect_rollout)
-
-    assert (
-        main(["eval", "run", "--corpus", str(manifest), "--split", "val", "--json"])
-        == 0
+    ledger = tmp_path / "reward_ledger.jsonl"
+    monkeypatch.setattr(
+        eval_commands, "_build_rollout", lambda **_kwargs: _perfect_rollout
     )
+    run_args = [
+        "eval", "run", "--corpus", str(manifest), "--split", "val",
+        "--ledger", str(ledger),
+    ]
+
+    assert main(run_args + ["--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
     assert payload["split"] == "val"
     assert payload["case_count"] == 40
@@ -216,8 +233,15 @@ def test_run_with_injected_rollout_scores_and_reports(
     assert payload["format_compliance"] == 1.0
     assert payload["reward"] == 1.0
 
-    assert main(["eval", "run", "--corpus", str(manifest), "--split", "val"]) == 0
+    assert main(run_args) == 0
     out = capsys.readouterr().out
     assert "split            val" in out
     assert "format_compliance 1.0000" in out
     assert "R                1.0000" in out
+    lines = ledger.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    from multi_agent_brief.evaluation_v2.reward_ledger import load_records
+
+    records = load_records(ledger)
+    assert all(record.reward == 1.0 for record in records)
+    assert all(len(record.corpus_sha256) == 64 for record in records)

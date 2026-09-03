@@ -768,19 +768,3 @@ def test_oracle_rejects_non_object_finding():
 # ---------------------------------------------------------------------------
 # The CLI seam stays closed until the Phase-2 adapter lands
 # ---------------------------------------------------------------------------
-
-
-def test_module_does_not_satisfy_the_cli_seam(capsys):
-    # This module exists now, so the guard has teeth only if it still does
-    # NOT export build_codex_rollout: the seam must keep failing closed
-    # with the no-adapter message exactly as before.
-    assert not hasattr(codex_rollout, "build_codex_rollout")
-
-    with pytest.raises(eval_commands.RolloutAdapterUnavailable):
-        eval_commands._build_rollout()
-
-    assert main(["eval", "run", "--split", "val"]) == 1
-    captured = capsys.readouterr()
-    assert "no rollout adapter is available yet" in captured.err
-    assert "codex adapter lands with the rollout task" in captured.err
-    assert captured.out == ""
