@@ -36,7 +36,7 @@ semantic truth, create a quality score, prove full recall, or measure utility.
 
 ## What Is Not Measured
 
-- Defect detection by agent roles (recall and false-flag rate on seeded-defect corpora): NOT MEASURED.
+- Defect detection by agent roles (recall and false-flag rate on seeded-defect corpora): MEASURED on the synthetic 40-case val corpus via real codex rollouts — recall 1.000 (24/24 seeded defects, all three runs); true-negative rate 0.896–0.958 (mean reward 0.931, spread 0.063); see `docs/evaluation-results/first-reward.md`. Measurement variance still exceeds the 2.5-point gating threshold, so no reward gate is enabled yet.
 - Guidance reuse utility: approval alone has no later-run effect, and whether
   explicit successor reuse improves output is NOT MEASURED.
 - Experimental Tavily acquisition and end-to-end performance: live usefulness,
