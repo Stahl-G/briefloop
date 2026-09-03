@@ -1,0 +1,116 @@
+case_id: train_tpc_05
+synthetic: true
+source_pack: |
+  config:
+    project:
+      name: PlaceholderCo Telecom
+      industry: synthetic telecom
+    report:
+      date: '2026-07-06'
+      cadence: weekly
+      max_source_age_days: 14
+    selector_max_items: 4
+  sources:
+  - source_id: SRC-0001
+    title: PlaceholderCo Telecom facility filing
+    publisher: Example Communications Authority
+    published_at: '2026-07-04'
+    url: https://example.invalid/sources/src-0001
+  - source_id: SRC-0002
+    title: PlaceholderCo Telecom quarterly disclosure
+    publisher: PlaceholderCo Telecom
+    published_at: '2026-07-01'
+    url: https://example.invalid/sources/src-0002
+  - source_id: SRC-0003
+    title: PlaceholderCo Telecom coverage in Sample Spectrum News
+    publisher: Sample Spectrum News
+    published_at: '2026-06-27'
+    url: https://example.invalid/sources/src-0003
+  - source_id: SRC-0004
+    title: PlaceholderCo Telecom priority program record
+    publisher: Example Communications Authority
+    published_at: '2026-07-03'
+    url: https://example.invalid/sources/src-0004
+  claim_ledger:
+  - claim_id: CL-0001
+    statement: PlaceholderCo Telecom activated a regional broadband ring on 2026-07-04.
+    source_id: SRC-0001
+    evidence_text: A filing published by the Example Communications Authority records that PlaceholderCo Telecom activated a regional broadband ring on 2026-07-04.
+    source_url: https://example.invalid/claims/cl-0001
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-07-04'
+      importance: normal
+  - claim_id: CL-0002
+    statement: PlaceholderCo Telecom reported network availability of 91 percent in its latest quarterly disclosure.
+    source_id: SRC-0002
+    evidence_text: The quarterly disclosure states network availability of 91 percent for the reporting period.
+    source_url: https://example.invalid/claims/cl-0002
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-07-01'
+      importance: normal
+  - claim_id: CL-0003
+    statement: PlaceholderCo Telecom expanded fixed-line coverage, according to trade coverage.
+    source_id: SRC-0003
+    evidence_text: Trade coverage in Sample Spectrum News reports that PlaceholderCo Telecom expanded fixed-line coverage.
+    source_url: https://example.invalid/claims/cl-0003
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-06-27'
+      importance: normal
+  - claim_id: CL-0004
+    statement: PlaceholderCo Telecom holds priority approval for broadband rollout under the Example Communications Authority program.
+    source_id: SRC-0004
+    evidence_text: A program record published by the Example Communications Authority lists PlaceholderCo Telecom with priority approval for broadband rollout.
+    source_url: https://example.invalid/claims/cl-0004
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-07-03'
+      importance: high
+  claim_support_matrix: []
+  analyst_draft_snapshot: |
+    # PlaceholderCo Telecom Weekly Brief
+
+    ## Executive Summary
+
+    PlaceholderCo Telecom activated a regional broadband ring on 2026-07-04. [src:CL-0001]
+    PlaceholderCo Telecom reported network availability of 91 percent in its latest quarterly disclosure. [src:CL-0002]
+
+    ## Detail
+
+    A filing published by the Example Communications Authority on 2026-07-04 recorded that PlaceholderCo Telecom activated a regional broadband ring. [src:CL-0001]
+    The quarterly disclosure states network availability of 91 percent for the reporting period. [src:CL-0002]
+    Trade coverage in Sample Spectrum News reports that PlaceholderCo Telecom expanded fixed-line coverage. [src:CL-0003]
+    PlaceholderCo Telecom holds priority approval for broadband rollout under the Example Communications Authority program. [src:CL-0004]
+  audited_brief: |
+    # PlaceholderCo Telecom Weekly Brief
+
+    ## Executive Summary
+
+    PlaceholderCo Telecom activated a regional broadband ring on 2026-07-04. [src:CL-0001]
+    PlaceholderCo Telecom reported network availability of 91 percent in its latest quarterly disclosure. [src:CL-0002]
+
+    ## Detail
+
+    A filing published by the Example Communications Authority on 2026-07-04 recorded that PlaceholderCo Telecom activated a regional broadband ring. [src:CL-0001]
+    The quarterly disclosure states network availability of 91 percent for the reporting period. [src:CL-0002]
+    Trade coverage in Sample Spectrum News reports that PlaceholderCo Telecom expanded fixed-line coverage. [src:CL-0003]
+    PlaceholderCo Telecom holds priority approval for broadband rollout under the Example Communications Authority program. [src:CL-0004]
+report_date: '2026-07-06'
+rollout:
+  role: auditor
+  runtime: codex
+seeded_defects:
+- defect_id: d1
+  finding_type: target_priority_claim_missing_from_summary
+  locator: CL-0004
+  expected_blocking_level: blocking
+clean_claims:
+- CL-0001
+- CL-0002
+- CL-0003

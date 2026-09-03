@@ -1,0 +1,116 @@
+case_id: train_tpc_01
+synthetic: true
+source_pack: |
+  config:
+    project:
+      name: Demo Dynamics
+      industry: synthetic manufacturing
+    report:
+      date: '2026-03-16'
+      cadence: weekly
+      max_source_age_days: 14
+    selector_max_items: 4
+  sources:
+  - source_id: SRC-0001
+    title: Demo Dynamics facility filing
+    publisher: Example Industrial Authority
+    published_at: '2026-03-14'
+    url: https://example.invalid/sources/src-0001
+  - source_id: SRC-0002
+    title: Demo Dynamics quarterly disclosure
+    publisher: Demo Dynamics
+    published_at: '2026-03-11'
+    url: https://example.invalid/sources/src-0002
+  - source_id: SRC-0003
+    title: Demo Dynamics coverage in Sample Factory Review
+    publisher: Sample Factory Review
+    published_at: '2026-03-07'
+    url: https://example.invalid/sources/src-0003
+  - source_id: SRC-0004
+    title: Demo Dynamics priority program record
+    publisher: Example Industrial Authority
+    published_at: '2026-03-13'
+    url: https://example.invalid/sources/src-0004
+  claim_ledger:
+  - claim_id: CL-0001
+    statement: Demo Dynamics opened a precision parts plant on 2026-03-14.
+    source_id: SRC-0001
+    evidence_text: A filing published by the Example Industrial Authority records that Demo Dynamics opened a precision parts plant on 2026-03-14.
+    source_url: https://example.invalid/claims/cl-0001
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-03-14'
+      importance: normal
+  - claim_id: CL-0002
+    statement: Demo Dynamics reported line utilization of 63 percent in its latest quarterly disclosure.
+    source_id: SRC-0002
+    evidence_text: The quarterly disclosure states line utilization of 63 percent for the reporting period.
+    source_url: https://example.invalid/claims/cl-0002
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-03-11'
+      importance: normal
+  - claim_id: CL-0003
+    statement: Demo Dynamics launched an automation retrofit, according to trade coverage.
+    source_id: SRC-0003
+    evidence_text: Trade coverage in Sample Factory Review reports that Demo Dynamics launched an automation retrofit.
+    source_url: https://example.invalid/claims/cl-0003
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-03-07'
+      importance: normal
+  - claim_id: CL-0004
+    statement: Demo Dynamics holds priority approval for plant expansion under the Example Industrial Authority program.
+    source_id: SRC-0004
+    evidence_text: A program record published by the Example Industrial Authority lists Demo Dynamics with priority approval for plant expansion.
+    source_url: https://example.invalid/claims/cl-0004
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-03-13'
+      importance: high
+  claim_support_matrix: []
+  analyst_draft_snapshot: |
+    # Demo Dynamics Weekly Brief
+
+    ## Executive Summary
+
+    Demo Dynamics opened a precision parts plant on 2026-03-14. [src:CL-0001]
+    Demo Dynamics reported line utilization of 63 percent in its latest quarterly disclosure. [src:CL-0002]
+
+    ## Detail
+
+    A filing published by the Example Industrial Authority on 2026-03-14 recorded that Demo Dynamics opened a precision parts plant. [src:CL-0001]
+    The quarterly disclosure states line utilization of 63 percent for the reporting period. [src:CL-0002]
+    Trade coverage in Sample Factory Review reports that Demo Dynamics launched an automation retrofit. [src:CL-0003]
+    Demo Dynamics holds priority approval for plant expansion under the Example Industrial Authority program. [src:CL-0004]
+  audited_brief: |
+    # Demo Dynamics Weekly Brief
+
+    ## Executive Summary
+
+    Demo Dynamics opened a precision parts plant on 2026-03-14. [src:CL-0001]
+    Demo Dynamics reported line utilization of 63 percent in its latest quarterly disclosure. [src:CL-0002]
+
+    ## Detail
+
+    A filing published by the Example Industrial Authority on 2026-03-14 recorded that Demo Dynamics opened a precision parts plant. [src:CL-0001]
+    The quarterly disclosure states line utilization of 63 percent for the reporting period. [src:CL-0002]
+    Trade coverage in Sample Factory Review reports that Demo Dynamics launched an automation retrofit. [src:CL-0003]
+    Demo Dynamics holds priority approval for plant expansion under the Example Industrial Authority program. [src:CL-0004]
+report_date: '2026-03-16'
+rollout:
+  role: auditor
+  runtime: codex
+seeded_defects:
+- defect_id: d1
+  finding_type: target_priority_claim_missing_from_summary
+  locator: CL-0004
+  expected_blocking_level: blocking
+clean_claims:
+- CL-0001
+- CL-0002
+- CL-0003

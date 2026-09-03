@@ -340,12 +340,16 @@ def test_default_corpus_anchor_resolves_to_real_manifest():
     assert default_corpus_manifest() == DEFAULT_CORPUS
 
 
-def test_packaged_skeleton_loads_but_fails_full_scale_validation():
+def test_packaged_corpus_loads_and_passes_full_scale_validation():
+    # The shipped corpus is the real 80-case measurement substrate (its
+    # skeleton era ended with the regenerated corpus); loading the packaged
+    # anchor and passing production validation is the composition guarantee.
     corpus = load_default_corpus()
-    assert corpus.cases == ()
-    assert corpus.splits == {}
-    with pytest.raises(CorpusError, match="splits must be exactly"):
-        validate_corpus(corpus)
+    assert len(corpus.cases) == 80
+    assert set(corpus.splits.values()) == {"train", "val"}
+    assert len(corpus.select("train")) == 40
+    assert len(corpus.select("val")) == 40
+    validate_corpus(corpus)
 
 
 def test_pyproject_packages_corpus_data_explicitly():

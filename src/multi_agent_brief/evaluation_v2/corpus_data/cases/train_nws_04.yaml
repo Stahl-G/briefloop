@@ -1,0 +1,101 @@
+case_id: train_nws_04
+synthetic: true
+source_pack: |
+  config:
+    project:
+      name: NotRealCo Insurance
+      industry: synthetic insurance
+    report:
+      date: '2026-03-16'
+      cadence: weekly
+      max_source_age_days: 14
+    selector_max_items: 3
+  sources:
+  - source_id: SRC-0001
+    title: NotRealCo Insurance facility filing
+    publisher: Example Insurance Supervisor
+    published_at: '2026-03-14'
+    url: https://example.invalid/sources/src-0001
+  - source_id: SRC-0002
+    title: NotRealCo Insurance quarterly disclosure
+    publisher: NotRealCo Insurance
+    published_at: '2026-03-11'
+    url: https://example.invalid/sources/src-0002
+  - source_id: SRC-0003
+    title: NotRealCo Insurance coverage in Sample Underwriter Weekly
+    publisher: Sample Underwriter Weekly
+    published_at: '2026-03-07'
+    url: https://example.invalid/sources/src-0003
+  claim_ledger:
+  - claim_id: CL-0001
+    statement: NotRealCo Insurance launched a parametric cover product on 2026-03-14.
+    source_id: SRC-0001
+    evidence_text: A filing published by the Example Insurance Supervisor records that NotRealCo Insurance launched a parametric cover product on 2026-03-14.
+    source_url: https://example.invalid/claims/cl-0001
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-03-14'
+      importance: normal
+  - claim_id: CL-0002
+    statement: NotRealCo Insurance reported claims ratio of 69 percent in its latest quarterly disclosure.
+    source_id: SRC-0002
+    evidence_text: The quarterly disclosure states claims ratio of 69 percent for the reporting period.
+    source_url: https://example.invalid/claims/cl-0002
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-03-11'
+      importance: normal
+  - claim_id: CL-0003
+    statement: NotRealCo Insurance renewed a reinsurance treaty, according to trade coverage.
+    source_id: SRC-0003
+    evidence_text: Trade coverage in Sample Underwriter Weekly reports that NotRealCo Insurance renewed a reinsurance treaty.
+    source_url: https://example.invalid/claims/cl-0003
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-03-07'
+      importance: normal
+  claim_support_matrix: []
+  analyst_draft_snapshot: |
+    # NotRealCo Insurance Weekly Brief
+
+    ## Executive Summary
+
+    NotRealCo Insurance launched a parametric cover product on 2026-03-14. [src:CL-0001]
+    NotRealCo Insurance reported claims ratio of 69 percent in its latest quarterly disclosure. [src:CL-0002]
+
+    ## Detail
+
+    A filing published by the Example Insurance Supervisor on 2026-03-14 recorded that NotRealCo Insurance launched a parametric cover product. [src:CL-0001]
+    The quarterly disclosure states claims ratio of 69 percent for the reporting period. [src:CL-0002]
+    Trade coverage in Sample Underwriter Weekly reports that NotRealCo Insurance renewed a reinsurance treaty. [src:CL-0003]
+    Management guidance points to full-year revenue of $290 million.
+  audited_brief: |
+    # NotRealCo Insurance Weekly Brief
+
+    ## Executive Summary
+
+    NotRealCo Insurance launched a parametric cover product on 2026-03-14. [src:CL-0001]
+    NotRealCo Insurance reported claims ratio of 69 percent in its latest quarterly disclosure. [src:CL-0002]
+
+    ## Detail
+
+    A filing published by the Example Insurance Supervisor on 2026-03-14 recorded that NotRealCo Insurance launched a parametric cover product. [src:CL-0001]
+    The quarterly disclosure states claims ratio of 69 percent for the reporting period. [src:CL-0002]
+    Trade coverage in Sample Underwriter Weekly reports that NotRealCo Insurance renewed a reinsurance treaty. [src:CL-0003]
+    Management guidance points to full-year revenue of $290 million.
+report_date: '2026-03-16'
+rollout:
+  role: auditor
+  runtime: codex
+seeded_defects:
+- defect_id: d1
+  finding_type: number_without_source
+  locator: audited_brief#L13
+  expected_blocking_level: blocking
+clean_claims:
+- CL-0001
+- CL-0002
+- CL-0003

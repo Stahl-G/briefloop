@@ -1,0 +1,116 @@
+case_id: train_stale_06
+synthetic: true
+source_pack: |
+  config:
+    project:
+      name: SampleCorp
+      industry: synthetic energy
+    report:
+      date: '2026-02-09'
+      cadence: weekly
+      max_source_age_days: 14
+    selector_max_items: 4
+  sources:
+  - source_id: SRC-0001
+    title: SampleCorp facility filing
+    publisher: National Sample Energy Authority
+    published_at: '2026-02-07'
+    url: https://example.invalid/sources/src-0001
+  - source_id: SRC-0002
+    title: SampleCorp quarterly disclosure
+    publisher: SampleCorp
+    published_at: '2026-02-04'
+    url: https://example.invalid/sources/src-0002
+  - source_id: SRC-0003
+    title: SampleCorp coverage in Example Energy Weekly
+    publisher: Example Energy Weekly
+    published_at: '2026-01-31'
+    url: https://example.invalid/sources/src-0003
+  - source_id: SRC-0004
+    title: SampleCorp operations disclosure
+    publisher: SampleCorp
+    published_at: '2026-01-20'
+    url: https://example.invalid/sources/src-0004
+  claim_ledger:
+  - claim_id: CL-0001
+    statement: SampleCorp commissioned a battery storage site on 2026-02-07.
+    source_id: SRC-0001
+    evidence_text: A filing published by the National Sample Energy Authority records that SampleCorp commissioned a battery storage site on 2026-02-07.
+    source_url: https://example.invalid/claims/cl-0001
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-02-07'
+      importance: normal
+  - claim_id: CL-0002
+    statement: SampleCorp reported generation uptime of 87 percent in its latest quarterly disclosure.
+    source_id: SRC-0002
+    evidence_text: The quarterly disclosure states generation uptime of 87 percent for the reporting period.
+    source_url: https://example.invalid/claims/cl-0002
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-02-04'
+      importance: normal
+  - claim_id: CL-0003
+    statement: SampleCorp signed a grid connection agreement, according to trade coverage.
+    source_id: SRC-0003
+    evidence_text: Trade coverage in Example Energy Weekly reports that SampleCorp signed a grid connection agreement.
+    source_url: https://example.invalid/claims/cl-0003
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-01-31'
+      importance: normal
+  - claim_id: CL-0004
+    statement: SampleCorp currently operates 7 substations across the region.
+    source_id: SRC-0004
+    evidence_text: An operations disclosure published on 2026-01-20 states that SampleCorp currently operates 7 substations across the region.
+    source_url: https://example.invalid/claims/cl-0004
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-01-20'
+      importance: normal
+  claim_support_matrix: []
+  analyst_draft_snapshot: |
+    # SampleCorp Weekly Brief
+
+    ## Executive Summary
+
+    SampleCorp commissioned a battery storage site on 2026-02-07. [src:CL-0001]
+    SampleCorp reported generation uptime of 87 percent in its latest quarterly disclosure. [src:CL-0002]
+
+    ## Detail
+
+    A filing published by the National Sample Energy Authority on 2026-02-07 recorded that SampleCorp commissioned a battery storage site. [src:CL-0001]
+    The quarterly disclosure states generation uptime of 87 percent for the reporting period. [src:CL-0002]
+    Trade coverage in Example Energy Weekly reports that SampleCorp signed a grid connection agreement. [src:CL-0003]
+    SampleCorp currently operates 7 substations across the region. [src:CL-0004]
+  audited_brief: |
+    # SampleCorp Weekly Brief
+
+    ## Executive Summary
+
+    SampleCorp commissioned a battery storage site on 2026-02-07. [src:CL-0001]
+    SampleCorp reported generation uptime of 87 percent in its latest quarterly disclosure. [src:CL-0002]
+
+    ## Detail
+
+    A filing published by the National Sample Energy Authority on 2026-02-07 recorded that SampleCorp commissioned a battery storage site. [src:CL-0001]
+    The quarterly disclosure states generation uptime of 87 percent for the reporting period. [src:CL-0002]
+    Trade coverage in Example Energy Weekly reports that SampleCorp signed a grid connection agreement. [src:CL-0003]
+    SampleCorp currently operates 7 substations across the region. [src:CL-0004]
+report_date: '2026-02-09'
+rollout:
+  role: auditor
+  runtime: codex
+seeded_defects:
+- defect_id: d1
+  finding_type: stale_source
+  locator: CL-0004
+  expected_blocking_level: blocking
+clean_claims:
+- CL-0001
+- CL-0002
+- CL-0003

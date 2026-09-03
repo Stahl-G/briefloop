@@ -1,0 +1,123 @@
+case_id: val_legacy_media_only_legal_policy_blocks_research_review
+synthetic: true
+source_pack: |
+  config:
+    project:
+      name: Synthetic MediaCo
+      industry: synthetic media
+    report:
+      date: '2026-01-12'
+      cadence: weekly
+      max_source_age_days: 14
+    selector_max_items: 4
+  sources:
+  - source_id: SRC-0001
+    title: Synthetic MediaCo facility filing
+    publisher: Synthetic Communications Regulator
+    published_at: '2026-01-10'
+    url: https://example.invalid/sources/src-0001
+  - source_id: SRC-0002
+    title: Synthetic MediaCo quarterly disclosure
+    publisher: Synthetic MediaCo
+    published_at: '2026-01-07'
+    url: https://example.invalid/sources/src-0002
+  - source_id: SRC-0003
+    title: Synthetic MediaCo coverage in Synthetic Press Review
+    publisher: Synthetic Press Review
+    published_at: '2026-01-03'
+    url: https://example.invalid/sources/src-0003
+  - source_id: SRC-0004
+    title: Synthetic MediaCo enforcement review coverage
+    publisher: Synthetic Press Review
+    published_at: '2026-01-10'
+    url: https://example.invalid/sources/src-0004
+  claim_ledger:
+  - claim_id: CL-0001
+    statement: Synthetic MediaCo launched a regional channel on 2026-01-10.
+    source_id: SRC-0001
+    evidence_text: A filing published by the Synthetic Communications Regulator records that Synthetic MediaCo launched a regional channel on 2026-01-10.
+    source_url: https://example.invalid/claims/cl-0001
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-01-10'
+      importance: normal
+  - claim_id: CL-0002
+    statement: Synthetic MediaCo reported audience reach of 62 percent in its latest quarterly disclosure.
+    source_id: SRC-0002
+    evidence_text: The quarterly disclosure states audience reach of 62 percent for the reporting period.
+    source_url: https://example.invalid/claims/cl-0002
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-01-07'
+      importance: normal
+  - claim_id: CL-0003
+    statement: Synthetic MediaCo renewed a broadcast license, according to trade coverage.
+    source_id: SRC-0003
+    evidence_text: Trade coverage in Synthetic Press Review reports that Synthetic MediaCo renewed a broadcast license.
+    source_url: https://example.invalid/claims/cl-0003
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-01-03'
+      importance: normal
+  - claim_id: CL-0004
+    statement: The Synthetic Communications Regulator opened an enforcement review of Synthetic MediaCo.
+    source_id: SRC-0004
+    evidence_text: Press coverage in Synthetic Press Review reports the enforcement review; no regulator, agency, or company filing in the pack documents it.
+    source_url: https://example.invalid/claims/cl-0004
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-01-10'
+      importance: normal
+  claim_support_matrix:
+  - claim_id: CL-0004
+    support_label: insufficient_evidence
+    support_strength: none
+    support_reason: 'official_source_missing: the support attached to this high-materiality claim is recorded as insufficient for delivery-blocking support.'
+    required_action: block_release
+    repair_owner: claim-ledger
+    decision_source: deterministic_support_matrix
+  analyst_draft_snapshot: |
+    # Synthetic MediaCo Weekly Brief
+
+    ## Executive Summary
+
+    Synthetic MediaCo launched a regional channel on 2026-01-10. [src:CL-0001]
+    Synthetic MediaCo reported audience reach of 62 percent in its latest quarterly disclosure. [src:CL-0002]
+
+    ## Detail
+
+    A filing published by the Synthetic Communications Regulator on 2026-01-10 recorded that Synthetic MediaCo launched a regional channel. [src:CL-0001]
+    The quarterly disclosure states audience reach of 62 percent for the reporting period. [src:CL-0002]
+    Trade coverage in Synthetic Press Review reports that Synthetic MediaCo renewed a broadcast license. [src:CL-0003]
+    The Synthetic Communications Regulator opened an enforcement review of Synthetic MediaCo. [src:CL-0004]
+  audited_brief: |
+    # Synthetic MediaCo Weekly Brief
+
+    ## Executive Summary
+
+    Synthetic MediaCo launched a regional channel on 2026-01-10. [src:CL-0001]
+    Synthetic MediaCo reported audience reach of 62 percent in its latest quarterly disclosure. [src:CL-0002]
+
+    ## Detail
+
+    A filing published by the Synthetic Communications Regulator on 2026-01-10 recorded that Synthetic MediaCo launched a regional channel. [src:CL-0001]
+    The quarterly disclosure states audience reach of 62 percent for the reporting period. [src:CL-0002]
+    Trade coverage in Synthetic Press Review reports that Synthetic MediaCo renewed a broadcast license. [src:CL-0003]
+    The Synthetic Communications Regulator opened an enforcement review of Synthetic MediaCo. [src:CL-0004]
+report_date: '2026-01-12'
+rollout:
+  role: auditor
+  runtime: codex
+seeded_defects:
+- defect_id: d1
+  finding_type: claim_support_matrix_blocking_support
+  locator: CL-0004
+  expected_blocking_level: blocking
+clean_claims:
+- CL-0001
+- CL-0002
+- CL-0003

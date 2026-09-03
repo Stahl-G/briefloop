@@ -1,0 +1,95 @@
+case_id: train_legacy_release_readiness_forged_event_blocker
+synthetic: true
+source_pack: |
+  config:
+    project:
+      name: Synthetic ReleaseCo
+      industry: synthetic software
+    report:
+      date: '2026-03-16'
+      cadence: weekly
+      max_source_age_days: 14
+    selector_max_items: 3
+  sources:
+  - source_id: SRC-0001
+    title: Synthetic ReleaseCo facility filing
+    publisher: Synthetic Software Board
+    published_at: '2026-03-14'
+    url: https://example.invalid/sources/src-0001
+  - source_id: SRC-0002
+    title: Synthetic ReleaseCo quarterly disclosure
+    publisher: Synthetic ReleaseCo
+    published_at: '2026-03-11'
+    url: https://example.invalid/sources/src-0002
+  - source_id: SRC-0003
+    title: Synthetic ReleaseCo coverage in Synthetic Software Weekly
+    publisher: Synthetic Software Weekly
+    published_at: '2026-03-07'
+    url: https://example.invalid/sources/src-0003
+  claim_ledger:
+  - claim_id: CL-0001
+    statement: Synthetic ReleaseCo shipped a release candidate on 2026-03-14.
+    source_id: SRC-0001
+    evidence_text: A filing published by the Synthetic Software Board records that Synthetic ReleaseCo shipped a release candidate on 2026-03-14.
+    source_url: https://example.invalid/claims/cl-0001
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-03-14'
+      importance: normal
+  - claim_id: CL-0002
+    statement: Synthetic ReleaseCo reported release pass rate of 88 percent in its latest quarterly disclosure.
+    source_id: SRC-0002
+    evidence_text: The quarterly disclosure states release pass rate of 88 percent for the reporting period.
+    source_url: https://example.invalid/claims/cl-0002
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-03-11'
+      importance: normal
+  - claim_id: CL-0003
+    statement: Synthetic ReleaseCo renewed a support agreement, according to trade coverage.
+    source_id: SRC-0003
+    evidence_text: Trade coverage in Synthetic Software Weekly reports that Synthetic ReleaseCo renewed a support agreement.
+    source_url: https://example.invalid/claims/cl-0003
+    claim_type: fact
+    confidence: medium
+    metadata:
+      published_at: '2026-03-07'
+      importance: normal
+  claim_support_matrix: []
+  analyst_draft_snapshot: |
+    # Synthetic ReleaseCo Weekly Brief
+
+    ## Executive Summary
+
+    Synthetic ReleaseCo shipped a release candidate on 2026-03-14. [src:CL-0001]
+    Synthetic ReleaseCo reported release pass rate of 88 percent in its latest quarterly disclosure. [src:CL-0002]
+
+    ## Detail
+
+    A filing published by the Synthetic Software Board on 2026-03-14 recorded that Synthetic ReleaseCo shipped a release candidate. [src:CL-0001]
+    The quarterly disclosure states release pass rate of 88 percent for the reporting period. [src:CL-0002]
+    Trade coverage in Synthetic Software Weekly reports that Synthetic ReleaseCo renewed a support agreement. [src:CL-0003]
+  audited_brief: |
+    # Synthetic ReleaseCo Weekly Brief
+
+    ## Executive Summary
+
+    Synthetic ReleaseCo shipped a release candidate on 2026-03-14. [src:CL-0001]
+    Synthetic ReleaseCo reported release pass rate of 88 percent in its latest quarterly disclosure. [src:CL-0002]
+
+    ## Detail
+
+    A filing published by the Synthetic Software Board on 2026-03-14 recorded that Synthetic ReleaseCo shipped a release candidate. [src:CL-0001]
+    The quarterly disclosure states release pass rate of 88 percent for the reporting period. [src:CL-0002]
+    Trade coverage in Synthetic Software Weekly reports that Synthetic ReleaseCo renewed a support agreement. [src:CL-0003]
+report_date: '2026-03-16'
+rollout:
+  role: auditor
+  runtime: codex
+seeded_defects: []
+clean_claims:
+- CL-0001
+- CL-0002
+- CL-0003

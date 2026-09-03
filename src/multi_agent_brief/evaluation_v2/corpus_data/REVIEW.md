@@ -238,3 +238,16 @@ dropped an inexpressible out-of-scope finding it had reported when
 unconstrained, which is precisely why format compliance is reported alongside
 the reward. The rollout writes its report under the envelope scratch
 directory, so the adapter harvests there.
+
+## Regeneration (2026-09-03, post-sampling rejection)
+
+The first corpus build was rejected by random-sampling rollout (see
+DECISIONS.md D3): real auditors correctly flagged clean claims whose brief
+sentences used generic expansion phrasing instead of the claim's own
+evidence.  The regenerated corpus derives every clean brief sentence from
+its claim -- executive lines restate the claim statement, detail lines
+repeat the claim evidence text -- and confines deliberate overstatement
+to seeded-defect sentences.  Composition is unchanged (80 cases, 40/40,
+24 blocking per split, ratio 0.60, four finding types at 12 each); the
+construction-time oracle (deterministic audit + target-priority gate)
+passed all 80 cases and `briefloop eval validate` exits 0.
