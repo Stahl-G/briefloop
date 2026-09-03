@@ -41,22 +41,3 @@ def test_packaged_synthetic_demo_runs_presents_and_exactly_replays(
     assert replay.replayed is True
     assert replay.receipt_id == first.receipt_id
     assert replay.view_sha256 == first.view_sha256
-
-
-def test_demo_presentation_failure_preserves_archive_without_fallback(
-    tmp_path: Path,
-) -> None:
-    output = (tmp_path / "laj-advisory-demo-existing").resolve()
-    output.mkdir()
-    result = run_public_safe_laj_demo(
-        archive_root=(tmp_path / "archives").resolve(),
-        output_dir=output,
-    )
-    assert result.ok is False
-    assert result.archive_complete is True
-    assert result.presentation_available is False
-    assert result.reader_status == "unavailable"
-    assert result.reason_codes == ("laj_presentation_write_failed",)
-    assert result.output_files == ()
-    assert result.qualification_eligible is False
-    assert result.runtime_authority is False

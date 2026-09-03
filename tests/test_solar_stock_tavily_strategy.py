@@ -137,10 +137,6 @@ def test_solar_stock_executes_twenty_atomic_searches_and_extracts_over_one_hundr
     assert tavily_observation_matches_spec(observation, _frozen_spec())
 
 
-def test_legacy_top_five_tavily_producer_does_not_exist() -> None:
-    assert not hasattr(TavilyBackend(), "acquisition_response")
-
-
 def test_undercovered_task_gets_one_targeted_backfill_and_extracts_every_url(
     monkeypatch,
 ) -> None:

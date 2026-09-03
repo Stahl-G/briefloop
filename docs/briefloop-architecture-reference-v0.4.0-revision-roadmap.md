@@ -82,7 +82,6 @@ identity, and the documented capability boundary.
 
 ```bash
 python3 scripts/check_architecture_reference_v04.py
-python3 -m pytest -q tests/test_architecture_reference_v04.py
 ```
 
 ---

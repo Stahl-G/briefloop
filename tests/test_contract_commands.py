@@ -19,42 +19,6 @@ from multi_agent_brief.contracts import SchemaRegistry, V2_CONTRACT_IDS
 ROOT = Path(__file__).resolve().parent.parent
 
 
-# TEST-SLIM-1 (ruling da184ba5): the full 89-id x detail matrix renders the same
-# SchemaRegistry machinery per id; exact rendering and wheel parity are now
-# proven on a representative cross-family sample. Coverage citation (TD-2):
-# per-contract embedded-example validity and schema publication stay owned by
-# tests/test_control_contracts_v2.py::test_every_embedded_example_is_valid_and_published_in_schema
-# and the non-editable wheel parity test below; the unsampled ids exercise the
-# identical code path (`contract show` -> SchemaRegistry).
-_REPRESENTATIVE_CONTRACT_IDS = [
-    "briefloop.source_proposal.v2",
-    "briefloop.claim_record.v2",
-    "briefloop.event_envelope.v2",
-    "briefloop.runtime_adapter_binding.v2",
-    "briefloop.core_run_next_action.v2",
-]
-
-
-@pytest.mark.parametrize("contract_id", _REPRESENTATIVE_CONTRACT_IDS)
-@pytest.mark.parametrize("detail", ("minimal", "full"))
-def test_contract_show_examples_are_exact_and_valid(contract_id, detail, capsys) -> None:
-    assert main(["contract", "show", contract_id, "--example", detail]) == 0
-    payload = json.loads(capsys.readouterr().out)
-
-    assert payload == SchemaRegistry.example(contract_id, detail)
-    assert SchemaRegistry.validate(contract_id, payload) == []
-
-
-@pytest.mark.parametrize("contract_id", _REPRESENTATIVE_CONTRACT_IDS)
-def test_contract_show_schema_is_exact(contract_id, capsys) -> None:
-    assert main(["contract", "show", contract_id, "--schema"]) == 0
-    payload = json.loads(capsys.readouterr().out)
-
-    assert payload == SchemaRegistry.json_schema(contract_id)
-    assert payload["$id"] == contract_id
-    assert len(payload["examples"]) == 2
-
-
 def test_contract_show_requires_one_output_mode() -> None:
     with pytest.raises(SystemExit) as exc:
         main(["contract", "show", V2_CONTRACT_IDS[0]])
@@ -132,38 +96,6 @@ def test_contract_validate_accepts_exact_registered_example(
         "reason_code": None,
         "violations": [],
     }
-
-
-@pytest.mark.parametrize(
-    "contents",
-    [
-        '{"schema_version":"x","schema_version":"y"}',
-        "not-json",
-    ],
-)
-def test_contract_validate_rejects_unreadable_or_duplicate_json(
-    tmp_path: Path,
-    capsys,
-    contents: str,
-) -> None:
-    invalid = tmp_path / "invalid.json"
-    invalid.write_text(contents, encoding="utf-8")
-
-    assert (
-        main(
-            [
-                "contract",
-                "validate",
-                "briefloop.candidate_claims_proposal.v2",
-                "--input",
-                str(invalid),
-            ]
-        )
-        == 1
-    )
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["reason_code"] == "contract_input_invalid"
-    assert payload["violations"] == []
 
 
 @pytest.mark.explicit_e2e

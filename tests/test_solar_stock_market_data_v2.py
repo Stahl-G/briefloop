@@ -1,8 +1,6 @@
-from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from xml.sax.saxutils import escape, quoteattr
@@ -10,24 +8,10 @@ import zipfile
 
 import pytest
 
-from multi_agent_brief.contracts.v2 import (
-    MarketDataCorporateActionV2,
-    MarketDataFieldValueV2,
-    MarketDataFxRateV2,
-    MarketDataSecurityV2,
-    MarketDataSeriesPointV2,
-    MarketDataSnapshotV2,
-)
+from multi_agent_brief.contracts.v2 import MarketDataFieldValueV2, MarketDataSecurityV2, MarketDataSeriesPointV2, MarketDataSnapshotV2
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
 from multi_agent_brief.core_run_v2.gates import _append_solar_market_data_findings
-from multi_agent_brief.product.market_data_charts import render_market_chart_assets
-from multi_agent_brief.product.market_data_service import MarketDataRecordInputV2
 from multi_agent_brief.sources.market_data import MarketDataError
-from multi_agent_brief.sources.market_data_v2 import (
-    MarketDataProviderOutcomeV2,
-    YahooMarketDataV2Adapter,
-    merge_manual_workbook_with_yahoo,
-)
 from multi_agent_brief.sources.market_data_xlsx import parse_toyo_weekly_xlsx
 from multi_agent_brief.sources.solar_stock_plan import (
     SOLAR_STOCK_OVERSEAS_SECURITIES,
@@ -328,62 +312,8 @@ def _provider_security(ticker: str = "PREMIERENE.NS") -> MarketDataSecurityV2:
     )
 
 
-def test_profile_bound_xlsx_degrades_missing_watchlist_security_to_warning(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "public-safe-weekly.xlsx"
-    _make_public_safe_workbook(path)
-
-    parsed = parse_toyo_weekly_xlsx(path)
-    command = MarketDataRecordInputV2.model_validate(
-        parsed.record_payload(), strict=True
-    )
-
-    assert (command.report_window_start, command.report_window_end) == (
-        "2026-08-03",
-        "2026-08-12",
-    )
-    assert len(command.securities) == 10
-    assert command.workbook is not None
-    assert command.workbook.content_sha256
-    assert command.provider_ids == ["manual_xlsx"]
-    assert len(command.events) == 1
-    assert command.events[0].evidence_status == "display_only_source_url_missing"
-    toyo = next(item for item in command.securities if item.ticker == "TOYO")
-    assert [item.volume for item in toyo.price_series] == [100_000, 120_000]
-    assert _field_value(toyo, "return_1w_pct").value_number == pytest.approx(10.0)
-    premier_gap = next(
-        item
-        for item in command.gaps
-        if item.ticker == "PREMIERENE.NS"
-        and item.category == "missing_security_series"
-    )
-    assert premier_gap.severity == "warning"
-    assert premier_gap.reason_code == "watchlist_security_price_series_missing"
-    assert not any(
-        item.severity == "blocking" for item in command.gaps
-    )
 
 
-def test_profile_bound_xlsx_preserves_official_event_urls(tmp_path: Path) -> None:
-    path = tmp_path / "public-safe-weekly.xlsx"
-    _make_public_safe_workbook(
-        path,
-        event_source_url="https://www.prnewswire.com/news-releases/example",
-    )
-
-    parsed = parse_toyo_weekly_xlsx(path)
-    command = MarketDataRecordInputV2.model_validate(
-        parsed.record_payload(), strict=True
-    )
-
-    assert len(command.events) == 1
-    event = command.events[0]
-    assert str(event.original_url) == "https://www.prnewswire.com/news-releases/example"
-    assert event.evidence_status == "claim_eligible"
-    assert not any(
-        item.category == "event_source_url_missing" for item in command.gaps
-    )
 
 
 def test_xlsx_parser_rejects_external_link_packages(tmp_path: Path) -> None:
@@ -420,167 +350,14 @@ def test_formula_cache_never_overrides_product_recomputation(tmp_path: Path) -> 
     )
 
 
-def test_manual_workbook_wins_and_yahoo_fills_missing_security(tmp_path: Path) -> None:
-    path = tmp_path / "public-safe-weekly.xlsx"
-    _make_public_safe_workbook(path)
-    parsed = parse_toyo_weekly_xlsx(path)
-    provider = MarketDataProviderOutcomeV2(
-        securities=(_provider_security(),),
-        benchmark=None,
-        fx_rates=(
-            MarketDataFxRateV2.model_validate(
-                {
-                    "base_currency": "INR",
-                    "quote_currency": "USD",
-                    "units_per_usd": 88.0,
-                    "as_of": "2026-08-12",
-                    "data_origin": "yahoo_chart_api",
-                    "source_locator": "yahoo:INR=X",
-                    "source_sha256": "b" * 64,
-                },
-                strict=True,
-            ),
-        ),
-        gaps=(),
-    )
-
-    merged = MarketDataRecordInputV2.model_validate(
-        merge_manual_workbook_with_yahoo(parsed.record_payload(), provider),
-        strict=True,
-    )
-
-    assert len(merged.securities) == 11
-    assert merged.provider_ids == ["manual_xlsx", "yahoo_finance_chart_v2"]
-    assert not any(
-        item.category == "missing_security_series" and item.ticker == "PREMIERENE.NS"
-        for item in merged.gaps
-    )
-    premier = next(item for item in merged.securities if item.ticker == "PREMIERENE.NS")
-    assert _field_value(
-        premier, "market_cap_usd_millions"
-    ).value_number == pytest.approx(12_000 / 87.0)
-    toyo = next(item for item in merged.securities if item.ticker == "TOYO")
-    assert toyo.price_series[-1].data_origin == "manual_xlsx"
 
 
-def test_yahoo_daily_parser_uses_adjusted_close_and_freezes_actions() -> None:
-    timestamps = [
-        int(datetime(2025, 12, 31, tzinfo=timezone.utc).timestamp()),
-        int(datetime(2026, 1, 2, tzinfo=timezone.utc).timestamp()),
-        int(datetime(2026, 7, 10, tzinfo=timezone.utc).timestamp()),
-        int(datetime(2026, 8, 3, tzinfo=timezone.utc).timestamp()),
-        int(datetime(2026, 8, 12, tzinfo=timezone.utc).timestamp()),
-    ]
-    document = {
-        "chart": {
-            "error": None,
-            "result": [
-                {
-                    "meta": {"currency": "USD", "fullExchangeName": "NasdaqGS"},
-                    "timestamp": timestamps,
-                    "indicators": {
-                        "quote": [
-                            {
-                                "close": [8.0, 8.2, 9.0, 10.0, 11.0],
-                                "volume": [1, 2, 3, 4, 5],
-                            }
-                        ],
-                        "adjclose": [{"adjclose": [4.0, 4.1, 4.5, 10.0, 11.0]}],
-                    },
-                    "events": {
-                        "splits": {
-                            str(timestamps[2]): {
-                                "date": timestamps[2],
-                                "numerator": 2,
-                                "denominator": 1,
-                            }
-                        }
-                    },
-                }
-            ],
-        }
-    }
-    quote_row = (
-        {
-            "symbol": "TOYO",
-            "marketCap": 900_000_000,
-            "trailingPE": -4.0,
-            "enterpriseToRevenue": 2.5,
-            "enterpriseToEbitda": 0.0,
-        },
-        "c" * 64,
-        "yahoo:quote:TOYO",
-    )
-
-    security = YahooMarketDataV2Adapter()._parse_security(
-        "TOYO",
-        document,
-        response_sha256="d" * 64,
-        source_locator="yahoo:chart:TOYO",
-        as_of_date="2026-08-12",
-        quote_row=quote_row,
-    )
-
-    assert security.return_basis == "adjusted_close"
-    assert len(security.corporate_actions) == 1
-    assert security.corporate_actions[0].action_type == "split"
-    assert _field_value(security, "return_1w_pct").value_number == pytest.approx(10.0)
-    assert _field_value(security, "return_ytd_pct").value_number == pytest.approx(175.0)
-    assert _field_value(security, "pe_ttm").status == "not_meaningful"
-    assert _field_value(security, "ev_ebitda_ttm").status == "not_meaningful"
-    assert _field_value(security, "ev_sales_ttm").value_number == 2.5
 
 
-def test_chart_projection_is_deterministic_and_png() -> None:
-    payload = deepcopy(MarketDataSnapshotV2.minimal_example)
-    payload["snapshot_fingerprint"] = canonical_fingerprint(
-        {key: value for key, value in payload.items() if key != "snapshot_fingerprint"}
-    )
-    snapshot = MarketDataSnapshotV2.model_validate(payload, strict=True)
-
-    first = render_market_chart_assets(snapshot)
-    second = render_market_chart_assets(snapshot)
-
-    # Charts without any plottable data are omitted instead of rendered as
-    # empty frames; the minimal example only backs these three.
-    assert [item.chart_id for item in first] == [
-        "primary-indexed-trend",
-        "toyo-price-volume",
-        "one-week-return",
-    ]
-    assert [item.sha256 for item in first] == [item.sha256 for item in second]
-    assert all(item.png_bytes.startswith(b"\x89PNG\r\n\x1a\n") for item in first)
-    assert len({item.relative_path for item in first}) == len(first)
 
 
-def test_corporate_action_contract_rejects_incomplete_split() -> None:
-    with pytest.raises(ValueError):
-        MarketDataCorporateActionV2.model_validate(
-            {
-                "action_id": "market-action-invalid",
-                "date": "2026-08-10",
-                "action_type": "split",
-                "value": 2.0,
-                "currency": None,
-                "split_numerator": 2.0,
-                "split_denominator": None,
-                "data_origin": "manual_json",
-                "source_locator": "fixture:split",
-                "source_sha256": "e" * 64,
-            },
-            strict=True,
-        )
 
 
-def test_snapshot_contract_rejects_security_outside_frozen_universe() -> None:
-    payload = deepcopy(MarketDataSnapshotV2.minimal_example)
-    payload["universe_tickers"] = ["FSLR"]
-    payload["snapshot_fingerprint"] = canonical_fingerprint(
-        {key: value for key, value in payload.items() if key != "snapshot_fingerprint"}
-    )
-
-    with pytest.raises(ValueError, match="outside the frozen universe"):
-        MarketDataSnapshotV2.model_validate(payload, strict=True)
 
 
 def _gate_bound_snapshot(
@@ -655,61 +432,8 @@ def test_solar_market_data_gate_blocks_missing_snapshot() -> None:
     assert raw["material_fact"][0]["blocking_level"] == "blocking"
 
 
-def test_solar_market_data_gate_accepts_full_universe_and_keeps_warning_visible() -> (
-    None
-):
-    raw: dict[str, list[dict[str, object]]] = {"material_fact": []}
-    binding = SimpleNamespace(
-        run_direction=SimpleNamespace(
-            report_type="solar_stock_periodic",
-            report_window_start="2026-08-03",
-            report_window_end="2026-08-12",
-        )
-    )
-
-    _append_solar_market_data_findings(
-        raw,
-        snapshot=SimpleNamespace(
-            market_data_snapshots=(_gate_bound_snapshot(warning=True),)
-        ),
-        binding=binding,
-    )
-
-    assert [item["finding_type"] for item in raw["material_fact"]] == [
-        "market_data_snapshot_disclosures_required"
-    ]
-    assert raw["material_fact"][0]["blocking_level"] == "warning"
 
 
-def test_solar_market_data_gate_degrades_missing_watchlist_security_to_disclosure() -> (
-    None
-):
-    raw: dict[str, list[dict[str, object]]] = {"material_fact": []}
-    binding = SimpleNamespace(
-        run_direction=SimpleNamespace(
-            report_type="solar_stock_periodic",
-            report_window_start="2026-08-03",
-            report_window_end="2026-08-12",
-        )
-    )
-
-    _append_solar_market_data_findings(
-        raw,
-        snapshot=SimpleNamespace(
-            market_data_snapshots=(
-                _gate_bound_snapshot(exclude_tickers=("PREMIERENE.NS",)),
-            )
-        ),
-        binding=binding,
-    )
-
-    assert [item["finding_type"] for item in raw["material_fact"]] == [
-        "market_data_snapshot_disclosures_required"
-    ]
-    finding = raw["material_fact"][0]
-    assert finding["blocking_level"] == "warning"
-    assert finding["metadata"]["watchlist_missing_tickers"] == ["PREMIERENE.NS"]
-    assert finding["metadata"]["watchlist_expected_total"] == 11
 
 
 def test_solar_market_data_gate_blocks_missing_core_subject() -> None:

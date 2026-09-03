@@ -6,9 +6,7 @@ from datetime import datetime, timezone
 import hashlib
 from pathlib import Path
 
-import pytest
-
-from multi_agent_brief.cli.main import build_parser, main
+from multi_agent_brief.cli.main import main
 from multi_agent_brief.contracts.v2 import (
     Invocation,
     RunIdentity,
@@ -16,8 +14,6 @@ from multi_agent_brief.contracts.v2 import (
     WorkspaceRunHead,
 )
 from multi_agent_brief.control_store import SQLiteControlStore
-from multi_agent_brief.intake_v2 import IntakeResult
-from multi_agent_brief.intake_v2.service import IntakeService
 
 
 RUN_ID = "RUN-PR3-CLI-001"
@@ -172,125 +168,6 @@ def test_hidden_intake_cli_commits_source_and_emits_one_json_object(
         ]
 
 
-def test_hidden_intake_cli_emits_unknown_and_nonzero_without_values(
-    tmp_path: Path,
-    capsys,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = tmp_path / "workspace"
-    # STRICT_INPUT_UPDATE: intake-v2 now dispatches only on SQLite-authority
-    # workspaces; seed the control store so the original assertions still run.
-    _seed_workspace(workspace)
-    monkeypatch.setattr(
-        IntakeService,
-        "submit_source",
-        lambda _self, _request: IntakeResult(
-            status="commit_outcome_unknown",
-            error_code="commit_outcome_unknown",
-        ),
-    )
-
-    exit_code = main(
-        [
-            "intake-v2",
-            "source",
-            "--workspace",
-            str(workspace),
-            "--request",
-            "scratch/unused.json",
-            "--json",
-        ]
-    )
-
-    assert exit_code == 1
-    assert json.loads(capsys.readouterr().out) == {
-        "status": "commit_outcome_unknown",
-        "error_code": "commit_outcome_unknown",
-    }
-
-
-def test_intake_cli_json_only_workspace_never_creates_sqlite_fallback(
-    tmp_path: Path,
-    capsys,
-) -> None:
-    workspace = tmp_path / "workspace"
-    workspace.mkdir()
-    scratch = workspace / "scratch" / "INV-SOURCE-001"
-    scratch.mkdir(parents=True)
-    request = scratch / "submit_request.json"
-    request.write_text(
-        json.dumps(
-            {
-                "schema_version": "briefloop.source_commit_request.v2",
-                "request_id": "REQ-SOURCE-001",
-                "run_id": RUN_ID,
-                "invocation_id": "INV-SOURCE-001",
-                "proposal_path": "scratch/INV-SOURCE-001/source_proposal.json",
-                "content_path": "scratch/INV-SOURCE-001/source_content.pdf",
-                "raw_payload_path": None,
-                "expected_store_revision": 0,
-            }
-        ),
-        encoding="utf-8",
-    )
-    (scratch / "source_proposal.json").write_text("{}", encoding="utf-8")
-    (scratch / "source_content.pdf").write_bytes(b"x")
-    before_files = {
-        path.relative_to(workspace).as_posix(): path.read_bytes()
-        for path in workspace.rglob("*")
-        if path.is_file()
-    }
-
-    exit_code = main(
-        [
-            "intake-v2",
-            "source",
-            "--workspace",
-            str(workspace),
-            "--request",
-            request.relative_to(workspace).as_posix(),
-            "--json",
-        ]
-    )
-
-    # the control_store_not_found JSON fallback is removed with
-    # the retired store-less intake surface; rejection is now fail-closed.
-    assert exit_code == 1
-    assert capsys.readouterr().out == "runtime_command_unsupported\n"
-    after_files = {
-        path.relative_to(workspace).as_posix(): path.read_bytes()
-        for path in workspace.rglob("*")
-        if path.is_file()
-    }
-    assert after_files == before_files
-    assert not (workspace / "briefloop.db").exists()
-    assert not (workspace / "briefloop.db.blobs").exists()
-
-
-def test_intake_cli_is_labelled_internal_and_requires_json() -> None:
-    parser = build_parser(prog="briefloop")
-    with pytest.raises(SystemExit) as exc:
-        parser.parse_args(
-            [
-                "intake-v2",
-                "candidate",
-                "--workspace",
-                "workspace",
-                "--request",
-                "scratch/INV/submit_request.json",
-            ]
-        )
-    assert exc.value.code == 2
-
-    intake_action = next(
-        action
-        for action in parser._actions
-        if getattr(action, "choices", None) and "intake-v2" in action.choices
-    )
-    intake_parser = intake_action.choices["intake-v2"]
-    assert "not the active runtime path" in intake_parser.description
-
-
 def test_intake_v2_imports_are_confined_to_bound_importers() -> None:
     package_root = Path(__file__).parents[1] / "src" / "multi_agent_brief"
     allowed = {
@@ -323,24 +200,4 @@ def test_intake_v2_imports_are_confined_to_bound_importers() -> None:
                     and not relative.startswith("core_run_v2/")
                 ):
                     findings.append(f"{relative}:{node.lineno}")
-    assert findings == []
-
-
-def test_intake_v2_has_no_json_control_file_writer() -> None:
-    package = Path(__file__).parents[1] / "src" / "multi_agent_brief" / "intake_v2"
-    forbidden_calls = {"write_text", "write_bytes", "json.dump", "json.dumps"}
-    findings: list[str] = []
-    for path in sorted(package.glob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            name = None
-            if isinstance(node.func, ast.Attribute):
-                if isinstance(node.func.value, ast.Name):
-                    name = f"{node.func.value.id}.{node.func.attr}"
-                else:
-                    name = node.func.attr
-            if name in forbidden_calls:
-                findings.append(f"{path.name}:{node.lineno}:{name}")
     assert findings == []

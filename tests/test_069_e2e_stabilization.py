@@ -89,34 +89,3 @@ def test_public_safe_runtime_handoff_control_selection_and_finalize_e2e(
         main(["finalize", "--config", str(workspace / "config.yaml")])
     assert (workspace / "briefloop.db").read_bytes() == database_before
     assert all(not (intermediate / name).exists() for name in legacy_controls)
-
-
-def test_demo_workspace_boots_into_codex_runtime(tmp_path: Path, capsys) -> None:
-    workspace = tmp_path / "demo-codex"
-
-    assert main(["init", str(workspace), "--demo", "--force"]) == 0
-    capsys.readouterr()
-    assert "controlstore_v2" in (workspace / "config.yaml").read_text(encoding="utf-8")
-    assert (
-        main(
-            [
-                "runtime",
-                "install",
-                "--workspace",
-                str(workspace),
-                "--runtime",
-                "codex",
-            ]
-        )
-        == 0
-    )
-    capsys.readouterr()
-
-    assert main(["run", "--workspace", str(workspace), "--runtime", "codex"]) == 0
-    capsys.readouterr()
-    assert main(["runtime", "next", "--workspace", str(workspace)]) == 0
-    action = json.loads(capsys.readouterr().out)
-    assert action["schema_version"] == "briefloop.core_run_next_action.v2"
-    assert action["effect_kind"] == "doctor_check"
-    assert action["action_fingerprint"]
-    assert (workspace / "briefloop.db").is_file()

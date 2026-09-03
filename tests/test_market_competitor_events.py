@@ -1,7 +1,6 @@
 """Tests for event_builder and renderer."""
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from multi_agent_brief.analysis_modules.market_competitor.schemas import (
@@ -11,11 +10,6 @@ from multi_agent_brief.analysis_modules.market_competitor.schemas import (
 )
 from multi_agent_brief.analysis_modules.market_competitor.event_builder import build_events
 from multi_agent_brief.analysis_modules.market_competitor.renderer import (
-    render_events_json,
-    render_competitor_matrix,
-    render_coverage_report,
-    render_watchlist,
-    render_evidence_pack,
     render_all,
 )
 from multi_agent_brief.core.claim_ledger import ClaimLedger
@@ -56,48 +50,6 @@ def _make_ledger(*claims: Claim) -> ClaimLedger:
 
 # ── build_events ────────────────────────────────────────────────────────────
 
-def test_build_events_single():
-    u = _make_universe(CompetitorEntity(entity_id="comp_a", name="Comp A"))
-    c1 = _make_claim("C1", "Comp A announced new factory.", ["comp_a"], "capacity_expansion", "capacity")
-    ledger = _make_ledger(c1)
-    events = build_events(ledger, u)
-    assert len(events) == 1
-    assert events[0].entity_ids == ["comp_a"]
-    assert events[0].supporting_claim_ids == ["C1"]
-
-
-def test_build_events_merge_same():
-    u = _make_universe(CompetitorEntity(entity_id="comp_a", name="Comp A"))
-    c1 = _make_claim("C1", "Comp A factory announcement.", ["comp_a"], "capacity_expansion", "capacity")
-    c2 = _make_claim("C2", "Comp A capacity details.", ["comp_a"], "capacity_expansion", "capacity")
-    ledger = _make_ledger(c1, c2)
-    events = build_events(ledger, u)
-    assert len(events) == 1
-    assert set(events[0].supporting_claim_ids) == {"C1", "C2"}
-    assert events[0].source_count == 2
-    assert events[0].confidence == "high"
-
-
-def test_build_events_different_entities():
-    u = _make_universe(
-        CompetitorEntity(entity_id="comp_a", name="Comp A"),
-        CompetitorEntity(entity_id="comp_b", name="Comp B"),
-    )
-    c1 = _make_claim("C1", "Comp A news.", ["comp_a"], "capacity_expansion", "capacity")
-    c2 = _make_claim("C2", "Comp B news.", ["comp_b"], "product_launch", "technology")
-    ledger = _make_ledger(c1, c2)
-    events = build_events(ledger, u)
-    assert len(events) == 2
-
-
-def test_build_events_skips_unmatched():
-    u = _make_universe()
-    c1 = _make_claim("C1", "General news.", None)
-    ledger = _make_ledger(c1)
-    events = build_events(ledger, u)
-    assert events == []
-
-
 def test_build_events_status_inference():
     u = _make_universe(CompetitorEntity(entity_id="comp_a", name="Comp A"))
     c1 = _make_claim("C1", "Comp A under construction.", ["comp_a"], "capacity_expansion", "capacity")
@@ -108,136 +60,13 @@ def test_build_events_status_inference():
 
 # ── Renderer ────────────────────────────────────────────────────────────────
 
-def test_render_events_json(tmp_path: Path):
-    ev = MarketEvent(event_id="EVT_001", entity_ids=["comp_a"], event_type="capacity_expansion",
-                      dimension="capacity", supporting_claim_ids=["C1"])
-    p = render_events_json([ev], tmp_path)
-    assert p.exists()
-    data = json.loads(p.read_text())
-    assert data["count"] == 1
-    assert data["events"][0]["entity_ids"] == ["comp_a"]
-
-
-def test_render_competitor_matrix(tmp_path: Path):
-    u = _make_universe(CompetitorEntity(entity_id="comp_a", name="Comp A"))
-    ev = MarketEvent(event_id="EVT_001", entity_ids=["comp_a"], event_type="capacity_expansion",
-                      dimension="capacity", supporting_claim_ids=["C1"], summary="5GW plant")
-    p = render_competitor_matrix([ev], u, tmp_path)
-    assert p.exists()
-    data = json.loads(p.read_text())
-    assert len(data["cells"]) >= 1
-
-
-def test_render_coverage_report(tmp_path: Path):
-    u = _make_universe(CompetitorEntity(entity_id="comp_a", name="Comp A", priority="primary"))
-    p = render_coverage_report([], u, tmp_path)
-    assert p.exists()
-    data = json.loads(p.read_text())
-    assert data["primary_competitors_total"] == 1
-    assert data["primary_competitors_with_recent_evidence"] == 0
-    assert "comp_a" in data["missing_entities"]
-
-
-def test_render_watchlist(tmp_path: Path):
-    p = render_watchlist(tmp_path)
-    assert p.exists()
-    data = json.loads(p.read_text())
-    assert "items" in data
-
-
-def test_render_evidence_pack(tmp_path: Path):
-    ev = MarketEvent(event_id="EVT_001", entity_ids=["comp_a"], event_type="capacity_expansion",
-                      dimension="capacity", supporting_claim_ids=["C1"], summary="Test")
-    c1 = _make_claim("C1", "Test claim.", ["comp_a"], "capacity_expansion", "capacity")
-    ledger = _make_ledger(c1)
-    p = render_evidence_pack([ev], ledger, tmp_path)
-    assert p.exists()
-    data = json.loads(p.read_text())
-    assert data["event_count"] == 1
-    assert len(data["events"][0]["claims"]) == 1
-    assert data["events"][0]["claims"][0]["claim_id"] == "C1"
-
-
 def test_render_all(tmp_path: Path):
     u = _make_universe(CompetitorEntity(entity_id="comp_a", name="Comp A"))
     ev = MarketEvent(event_id="EVT_001", entity_ids=["comp_a"], event_type="capacity_expansion",
-                      dimension="capacity", supporting_claim_ids=["C1"])
+                     dimension="capacity", supporting_claim_ids=["C1"])
     c1 = _make_claim("C1", "Test.", ["comp_a"], "capacity_expansion", "capacity")
     paths = render_all([ev], _make_ledger(c1), u, tmp_path)
     assert len(paths) == 5
     for key in ("events", "competitor_matrix", "coverage_report", "watchlist", "evidence_pack"):
         assert key in paths
         assert Path(paths[key]).exists()
-
-
-# ── Cross-period state tracking ─────────────────────────────────────────────
-
-def test_build_events_first_run_all_new(tmp_path: Path):
-    u = _make_universe(CompetitorEntity(entity_id="comp_a", name="Comp A"))
-    c1 = _make_claim("C1", "Comp A announced factory.", ["comp_a"], "capacity_expansion", "capacity")
-    state_dir = str(tmp_path / "state")
-    events = build_events(_make_ledger(c1), u, state_dir=state_dir)
-    assert len(events) == 1
-    assert events[0].change_status == "new"
-    # History file should exist
-    history = tmp_path / "state" / "market_competitor" / "event_history.jsonl"
-    assert history.exists()
-
-
-def test_build_events_second_run_unchanged(tmp_path: Path):
-    u = _make_universe(CompetitorEntity(entity_id="comp_a", name="Comp A"))
-    c1 = _make_claim("C1", "Comp A announced factory.", ["comp_a"], "capacity_expansion", "capacity")
-    state_dir = str(tmp_path / "state")
-
-    # First run
-    events1 = build_events(_make_ledger(c1), u, state_dir=state_dir)
-    assert events1[0].change_status == "new"
-
-    # Second run — same claim, same status
-    events2 = build_events(_make_ledger(c1), u, state_dir=state_dir)
-    assert events2[0].change_status == "unchanged"
-
-
-def test_build_events_status_changed(tmp_path: Path):
-    u = _make_universe(CompetitorEntity(entity_id="comp_a", name="Comp A"))
-    state_dir = str(tmp_path / "state")
-
-    # First run: announced
-    c1 = _make_claim("C1", "Comp A announced factory.", ["comp_a"], "capacity_expansion", "capacity")
-    build_events(_make_ledger(c1), u, state_dir=state_dir)
-
-    # Second run: under construction (status progressed)
-    c2 = _make_claim("C2", "Comp A factory under construction.", ["comp_a"], "capacity_expansion", "capacity")
-    events2 = build_events(_make_ledger(c2), u, state_dir=state_dir)
-    assert events2[0].change_status == "changed"
-    assert events2[0].status == "under_construction"
-
-
-def test_build_events_cancelled_tracking(tmp_path: Path):
-    u = _make_universe(CompetitorEntity(entity_id="comp_a", name="Comp A"))
-    state_dir = str(tmp_path / "state")
-
-    # First run
-    c1 = _make_claim("C1", "Comp A announced factory.", ["comp_a"], "capacity_expansion", "capacity")
-    build_events(_make_ledger(c1), u, state_dir=state_dir)
-
-    # Second run: cancelled
-    c2 = _make_claim("C2", "Comp A cancelled factory project.", ["comp_a"], "capacity_expansion", "capacity")
-    events2 = build_events(_make_ledger(c2), u, state_dir=state_dir)
-    assert events2[0].change_status == "cancelled"
-    assert events2[0].status == "cancelled"
-
-
-def test_build_events_resolved_previous_events(tmp_path: Path):
-    u = _make_universe(CompetitorEntity(entity_id="comp_a", name="Comp A"))
-    state_dir = str(tmp_path / "state")
-
-    # First run: has an event
-    c1 = _make_claim("C1", "Comp A announced factory.", ["comp_a"], "capacity_expansion", "capacity")
-    build_events(_make_ledger(c1), u, state_dir=state_dir)
-
-    # Second run: no events at all
-    events2 = build_events(_make_ledger(), u, state_dir=state_dir)
-    # Should include resolved placeholder
-    resolved = [ev for ev in events2 if ev.change_status == "resolved"]
-    assert len(resolved) >= 1

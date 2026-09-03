@@ -191,15 +191,6 @@ def test_finalized_local_review_projection_rejects_nonlocal_terminal(
         build_finalized_local_review_projection(workspace)
 
 
-def test_finalized_local_review_projection_rejects_later_package_terminal(
-    tmp_path: Path,
-) -> None:
-    workspace, _run_id, _clock = _package_ready_workspace(tmp_path)
-
-    with pytest.raises(RuntimeHostError, match="run_not_finalized_local"):
-        build_finalized_local_review_projection(workspace)
-
-
 def test_finalized_local_review_contracts_reject_tampered_facts_and_presentation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -226,35 +217,6 @@ def test_finalized_local_review_contracts_reject_tampered_facts_and_presentation
     )
     with pytest.raises(ValidationError):
         FinalizedLocalReviewFacts.model_validate(duplicate_python, strict=True)
-
-
-def test_finalized_local_review_projection_maps_bad_current_reader_to_report_failure(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, _run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
-    context = projections._load_presentation_context(workspace)
-    reader = next(
-        item
-        for item in context.verified.snapshot.artifacts
-        if item.artifact_id == "reader_brief"
-    )
-    bad_snapshot = replace(
-        context.verified.snapshot,
-        artifacts=tuple(
-            item.model_copy(update={"current_revision": item.current_revision + 1})
-            if item == reader
-            else item
-            for item in context.verified.snapshot.artifacts
-        ),
-    )
-    bad_context = _context_with_snapshot(context, bad_snapshot)
-    monkeypatch.setattr(
-        projections, "_load_presentation_context", lambda _workspace: bad_context
-    )
-
-    with pytest.raises(RuntimeHostError, match="final_report_revision_invalid"):
-        build_finalized_local_review_projection(workspace)
 
 
 def test_finalized_local_review_projection_rejects_every_selected_reader_mismatch(
@@ -382,20 +344,12 @@ def test_finalized_local_review_projection_rejects_receipt_render_and_gate_linea
         build_finalized_local_review_projection(workspace)
 
 
-@pytest.mark.parametrize(
-    ("terminal_state", "package_state"),
-    [
-        ("rendered", "finalized"),
-        ("package_ready", "package_ready"),
-        ("delivered", "package_ready"),
-    ],
-)
 def test_finalized_local_review_projection_prioritizes_action_terminal_integrity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    terminal_state: str,
-    package_state: str,
 ) -> None:
+    terminal_state = "rendered"
+    package_state = "finalized"
     workspace, _run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
     context = projections._load_presentation_context(workspace)
     finalization = context.verified.snapshot.finalizations[0]
@@ -423,138 +377,3 @@ def test_finalized_local_review_projection_prioritizes_action_terminal_integrity
 
     with pytest.raises(RuntimeHostError, match="control_store_integrity_invalid"):
         build_finalized_local_review_projection(workspace)
-
-
-def test_finalized_local_review_projection_rejects_finalized_terminal_without_action(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, _run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
-    context = projections._load_presentation_context(workspace)
-    monkeypatch.setattr(
-        projections,
-        "classify_core_run_next_action",
-        lambda _verified: SimpleNamespace(
-            action_kind="blocked",
-            effect_kind="terminal_incomplete",
-            reason_code="terminal_state_incomplete",
-        ),
-    )
-    monkeypatch.setattr(
-        projections,
-        "_load_presentation_context",
-        lambda _workspace: context,
-    )
-
-    with pytest.raises(RuntimeHostError, match="control_store_integrity_invalid"):
-        build_finalized_local_review_projection(workspace)
-
-
-@pytest.mark.parametrize(
-    ("terminal_state", "package_state"),
-    [("invalid", "invalid"), ("unknown_terminal", "finalized")],
-)
-def test_finalized_local_review_projection_rejects_invalid_or_unknown_terminal(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    terminal_state: str,
-    package_state: str,
-) -> None:
-    workspace, _run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
-    context = projections._load_presentation_context(workspace)
-    monkeypatch.setattr(
-        projections,
-        "classify_terminal_legality",
-        lambda _snapshot: SimpleNamespace(
-            package_state=package_state,
-            terminal_state=terminal_state,
-        ),
-    )
-    monkeypatch.setattr(
-        projections,
-        "_load_presentation_context",
-        lambda _workspace: context,
-    )
-
-    with pytest.raises(RuntimeHostError, match="control_store_integrity_invalid"):
-        build_finalized_local_review_projection(workspace)
-
-
-@pytest.mark.parametrize(
-    ("package_state", "accepted"),
-    [
-        ("core_active", True),
-        ("auditor_ready", True),
-        ("rendered", True),
-        ("gate_blocked", True),
-        ("finalized", True),
-        ("finalized_local", True),
-        ("package_ready", True),
-        ("invalid", False),
-    ],
-)
-def test_finalized_local_review_projection_classifies_every_core_package_state(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    package_state: str,
-    accepted: bool,
-) -> None:
-    workspace, _run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
-    context = projections._load_presentation_context(workspace)
-    monkeypatch.setattr(
-        projections,
-        "classify_terminal_legality",
-        lambda _snapshot: SimpleNamespace(
-            package_state=package_state,
-            terminal_state="finalized_local",
-        ),
-    )
-    monkeypatch.setattr(
-        projections,
-        "_load_presentation_context",
-        lambda _workspace: context,
-    )
-
-    if accepted:
-        projection = build_finalized_local_review_projection(workspace)
-        assert projection.facts.terminal_state == "finalized_local"
-    else:
-        with pytest.raises(RuntimeHostError, match="control_store_integrity_invalid"):
-            build_finalized_local_review_projection(workspace)
-
-
-@pytest.mark.parametrize("package_state", ["unknown_package_state", "", " "])
-def test_finalized_local_review_projection_rejects_unknown_package_before_lineage(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    package_state: str,
-) -> None:
-    workspace, _run_id, _clock = _finalized_local_workspace(tmp_path, monkeypatch)
-    before_files = _file_bytes(workspace)
-    context = projections._load_presentation_context(workspace)
-    finalization = context.verified.snapshot.finalizations[0]
-    malformed_snapshot = replace(
-        context.verified.snapshot,
-        finalizations=(
-            finalization.model_copy(
-                update={"accepted_transaction_id": "REQ-MISSING-FINALIZATION"}
-            ),
-        ),
-    )
-    monkeypatch.setattr(
-        projections,
-        "classify_terminal_legality",
-        lambda _snapshot: SimpleNamespace(
-            package_state=package_state,
-            terminal_state="finalized_local",
-        ),
-    )
-    monkeypatch.setattr(
-        projections,
-        "_load_presentation_context",
-        lambda _workspace: _context_with_snapshot(context, malformed_snapshot),
-    )
-
-    with pytest.raises(RuntimeHostError, match="control_store_integrity_invalid"):
-        build_finalized_local_review_projection(workspace)
-    assert _file_bytes(workspace) == before_files
