@@ -13,6 +13,7 @@ from multi_agent_brief.contracts.v2 import (
     AcceptedProposalRecord,
     ArtifactRecord,
     ArtifactRevision,
+    RunDirection,
     CandidateClaimsProposal,
     CoreRunEventBinding,
     EventEnvelope,
@@ -748,13 +749,12 @@ def _replay_gate_outcomes(
     if actual_signature != expected_signature:
         raise CoreRunError("gate_input_binding_invalid")
     try:
-        ledger = _claim_ledger(
-            store.read_artifact_revision_bytes(
-                snapshot.run.run_id,
-                ledger_revision.artifact_id,
-                ledger_revision.revision,
-            )
+        ledger_bytes = store.read_artifact_revision_bytes(
+            snapshot.run.run_id,
+            ledger_revision.artifact_id,
+            ledger_revision.revision,
         )
+        ledger = _claim_ledger(ledger_bytes)
         if evaluator_version == "2":
             sources_by_id = {item.source_id: item for item in snapshot.sources}
             for claim in ledger:
@@ -853,13 +853,48 @@ def _replay_gate_outcomes(
             stage_id=stage_id,
             artifact_id=target_artifact,
         )
+    _append_aspect_coverage_findings(
+        raw,
+        candidates=candidates,
+        screened=screened,
+        direction=binding.run_direction,
+    )
     _append_solar_market_data_findings(
         raw,
         snapshot=snapshot,
         binding=binding,
         workspace=workspace,
     )
+    _append_required_section_findings(
+        raw,
+        snapshot=snapshot,
+        binding=binding,
+        workspace=workspace,
+        markdown=markdown,
+        stage_id=stage_id,
+        target_artifact=target_artifact,
+    )
     if stage_id == "auditor":
+        _append_price_narrative_findings(
+            raw,
+            snapshot=snapshot,
+            binding=binding,
+            workspace=workspace,
+            markdown=markdown,
+            ledger=ledger,
+        )
+        _append_chart_placement_findings(
+            raw,
+            binding=binding,
+            workspace=workspace,
+            markdown=markdown,
+        )
+        _append_metric_pairing_findings(
+            raw,
+            ledger_bytes=ledger_bytes,
+            binding=binding,
+            markdown=markdown,
+        )
         _append_reader_projection_residue_finding(raw, markdown=markdown)
     return _classify_gate_outcomes(
         raw,
@@ -1008,6 +1043,277 @@ def _market_data_finding(
         "evidence_ref": evidence_ref,
         "metadata": metadata,
     }
+
+
+def _append_aspect_coverage_findings(
+    raw: object,
+    *,
+    candidates,
+    screened,
+    direction: RunDirection,
+) -> None:
+    """Aspect-balance diagnostic: a visible warning, never a blocker.
+
+    The aspect tag alone cannot prove the evidence belongs to the core
+    company, so an uncovered required aspect surfaces as a warning for
+    the Human and the auditor rather than a blocking gate.
+    """
+
+    required = [item for item in direction.required_claim_aspects if item]
+    if not required or not isinstance(raw, dict):
+        return
+    target = raw.get("coverage_omission")
+    if not isinstance(target, list) or not all(
+        isinstance(item, dict) for item in target
+    ):
+        return
+    from multi_agent_brief.core_run_v2.source_temporality import (
+        required_aspects_uncovered,
+    )
+
+    uncovered = required_aspects_uncovered(
+        candidates=list(candidates.candidates),
+        coverage_gap_aspects=[item.aspect for item in candidates.coverage_gaps],
+        decisions=list(screened.decisions),
+        direction=direction,
+    )
+    for aspect in uncovered:
+        target.append(
+            {
+                "finding_type": "aspect_coverage_gap",
+                "gate_id": "coverage_omission",
+                "category": "aspect_coverage",
+                "severity": "medium",
+                "blocking_level": "warning",
+                "repair_owner": "human",
+                "stage_id": None,
+                "artifact_id": None,
+                "claim_id": None,
+                "source_id": None,
+                "description": (
+                    f"Required claim aspect '{aspect}' has neither selected "
+                    "evidence nor a scout coverage gap. Aspect tags do not "
+                    "bind to the core company, so this is a visibility "
+                    "diagnostic, not proof of balance."
+                ),
+                "recommendation": (
+                    "Check whether core-company evidence for this aspect "
+                    "exists; add it to the next run's scout scope or record "
+                    "an explicit coverage gap."
+                ),
+                "metadata": {"aspect": aspect},
+            }
+        )
+
+
+def _latest_market_context(
+    snapshot: ControlStoreSnapshot,
+    workspace: Path | None,
+):
+    """Latest frozen snapshot plus workspace universe, or (None, None)."""
+
+    universe = None
+    if workspace is not None:
+        try:
+            from multi_agent_brief.sources.equity_universe import (
+                load_equity_universe,
+            )
+
+            universe = load_equity_universe(workspace)
+        except Exception:
+            universe = None
+    records = list(snapshot.market_data_snapshots)
+    if not records:
+        return None, universe
+    latest = max(
+        records,
+        key=lambda item: (
+            item.as_of_date,
+            item.recorded_at,
+            item.market_data_snapshot_id,
+        ),
+    )
+    return latest, universe
+
+
+def _append_required_section_findings(
+    raw: object,
+    *,
+    snapshot: ControlStoreSnapshot,
+    binding: RunContractBinding,
+    workspace: Path | None,
+    markdown: str,
+    stage_id: str | None,
+    target_artifact: str,
+) -> None:
+    """Enforce the frozen reader-skeleton contract deterministically."""
+
+    intents = list(binding.run_direction.required_section_intents)
+    if not intents or not isinstance(raw, dict):
+        return
+    findings = raw.get("final_abstract_quality")
+    if not isinstance(findings, list) or not all(
+        isinstance(item, dict) for item in findings
+    ):
+        return
+    core_ticker: str | None = None
+    core_multiple_available = False
+    peer_multiples_count = 0
+    latest, universe = _latest_market_context(snapshot, workspace)
+    if latest is not None and universe is not None:
+        core_tickers = list(universe.core_tickers)
+        multiple_fields = ("ps_ttm", "ev_ebitda_ttm", "pe_ttm")
+
+        def _has_multiple(security) -> bool:
+            return any(
+                field.field_id in multiple_fields
+                and field.status == "available"
+                and field.value_number is not None
+                for field in security.fields
+            )
+
+        for security in latest.securities:
+            if core_tickers and security.ticker in core_tickers:
+                core_ticker = security.ticker
+                core_multiple_available = _has_multiple(security)
+            elif _has_multiple(security):
+                peer_multiples_count += 1
+    from multi_agent_brief.quality_gates.section_contract import (
+        required_section_findings,
+    )
+
+    section_findings = required_section_findings(
+        markdown,
+        required_intents=intents,
+        report_date=binding.run_direction.report_date,
+        core_ticker=core_ticker,
+        core_multiple_available=core_multiple_available,
+        peer_multiples_count=peer_multiples_count,
+    )
+    for item in section_findings:
+        if stage_id is not None:
+            item["stage_id"] = stage_id
+        item["artifact_id"] = target_artifact
+        findings.append(item)
+
+
+def _append_price_narrative_findings(
+    raw: object,
+    *,
+    snapshot: ControlStoreSnapshot,
+    binding: RunContractBinding,
+    workspace: Path | None,
+    markdown: str,
+    ledger: "ClaimLedger | None",
+) -> None:
+    """Block one-sided narratives against a large frozen core-subject move."""
+
+    if not isinstance(raw, dict):
+        return
+    target = raw.get("material_fact")
+    if not isinstance(target, list) or not all(
+        isinstance(item, dict) for item in target
+    ):
+        return
+    latest, universe = _latest_market_context(snapshot, workspace)
+    if latest is None or universe is None or not universe.core_tickers:
+        return
+    core_tickers = set(universe.core_tickers)
+    core_ticker: str | None = None
+    return_1w: float | None = None
+    for security in latest.securities:
+        if security.ticker in core_tickers:
+            core_ticker = security.ticker
+            for field in security.fields:
+                if (
+                    field.field_id == "return_1w_pct"
+                    and field.status == "available"
+                    and field.value_number is not None
+                ):
+                    return_1w = float(field.value_number)
+            break
+    from multi_agent_brief.quality_gates.narrative_coherence import (
+        price_narrative_findings,
+    )
+
+    for item in price_narrative_findings(
+        markdown,
+        core_ticker=core_ticker,
+        return_1w=return_1w,
+        ledger=ledger,
+        threshold_pct=binding.run_direction.market_divergence_threshold_pct,
+    ):
+        target.append(item)
+
+
+def _append_chart_placement_findings(
+    raw: object,
+    *,
+    binding: RunContractBinding,
+    workspace: Path | None,
+    markdown: str,
+) -> None:
+    """Bind manifest charts to their sections; silent omission is blocking."""
+
+    intents = list(binding.run_direction.required_section_intents)
+    if not intents or not isinstance(raw, dict) or workspace is None:
+        return
+    findings = raw.get("final_abstract_quality")
+    if not isinstance(findings, list) or not all(
+        isinstance(item, dict) for item in findings
+    ):
+        return
+    from multi_agent_brief.quality_gates.chart_placement import (
+        chart_placement_findings,
+        manifest_chart_ids,
+    )
+
+    manifest_ids = manifest_chart_ids(
+        workspace / "output" / "intermediate" / "market_data_chart_manifest.json"
+    )
+    if not manifest_ids:
+        return
+    findings.extend(
+        chart_placement_findings(
+            markdown,
+            manifest_ids=manifest_ids,
+            required_intents=intents,
+        )
+    )
+
+
+def _append_metric_pairing_findings(
+    raw: object,
+    *,
+    ledger_bytes: bytes,
+    binding: RunContractBinding,
+    markdown: str,
+) -> None:
+    """Pair sign-conflicting YoY/QoQ metrics (catalysts render, not gate)."""
+
+    if not isinstance(raw, dict):
+        return
+    target = raw.get("material_fact")
+    if not isinstance(target, list) or not all(
+        isinstance(item, dict) for item in target
+    ):
+        return
+    try:
+        payload = parse_json_object(ledger_bytes)
+    except (IntakeError, TypeError, ValueError):
+        return
+    derived = payload.get("derived_metrics")
+    if not isinstance(derived, list) or not derived:
+        return
+    from multi_agent_brief.quality_gates.metric_pairing import (
+        metric_pairing_findings,
+    )
+
+    for item in metric_pairing_findings(
+        markdown,
+        derived_metrics=[row for row in derived if isinstance(row, dict)],
+    ):
+        target.append(item)
 
 
 def _append_output_contract_finding(

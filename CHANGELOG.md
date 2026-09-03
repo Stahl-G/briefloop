@@ -42,6 +42,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   next entry).
 - Added the regenerated 80-case packaged detection corpus (deterministic generator, construction-time oracle) and the real codex auditor rollout path: `briefloop eval run` drives concurrent per-case rollouts with retry and appends reward-ledger records pinned to corpus, `agent_roles.yaml`, and reporting-contract digests. First measured baseline (2026-09-03): recall 1.000 in all three val runs, mean reward 0.931, spread 0.063; the fail-closed reward gate stays unrationalized while spread exceeds the 2.5-point threshold, and the defect-detection claim in `docs/claims.md` is now MEASURED with numbers.
 
+Pre-v0.16 architecture slices (not yet a released version): the
+reader-truth and evidence-balance package plus structured claim metrics
+for Solar Stock Periodic.
+Fresh workspaces only: the frozen run contract changes and existing
+workspaces are not guaranteed to keep running.
+
+### Added
+
+- Finalize render now derives the reader brief with `[S#]` citation labels,
+  a real source appendix, output-relative chart paths, and a deterministic
+  compliance footer; chart images render correctly across markdown, docx,
+  and the static HTML view.
+- `output/brief.docx` became a Store reader artifact produced whenever the
+  frozen `output_formats` include docx (requires the `docx` extra; missing
+  dependency fails closed).
+- Deterministic reader-skeleton gate: pack-frozen
+  `required_section_intents` must map to sections (or explicit coverage-gap
+  disclosures); the catalyst calendar needs a post-report date; the
+  earnings/valuation section must reference the core ticker and a frozen
+  multiple when peer multiples exist.
+- Price-vs-narrative divergence gate: a core-subject one-week move beyond
+  the frozen threshold (solar default 10%) must be stated in a
+  market-reaction section — bound to the core ticker, direction, and
+  magnitude within tolerance, with snapshot provenance — and backed by a
+  risk-type claim or an explicit no-evidence disclosure.
+- Scout aspect-bucket diagnostics: pack-frozen `required_claim_aspects`
+  (solar: earnings growth, cash flow/dilution, guidance risk, price
+  reaction) surface an uncovered aspect as a non-blocking warning
+  finding; aspect tags do not bind to the core company, so this is a
+  visibility diagnostic rather than a proof of balance.
+- Chart placement contract: bound charts must sit inside their bound
+  sections, manifest charts may not be silently omitted, and the subject
+  price/volume chart carries deterministic event-day markers
+  (`market-chart-png-v2`).
+- Pre-submit content lint: analyst/editor invocation validation runs the
+  same deterministic rule bodies read-only, surfacing violations before
+  accept instead of consuming the single preauthorized gate-repair cycle.
+- QoQ-contrast slice: claim drafts may attach a subject-scoped structured
+  metric limited to five cumulative metrics; Python derives Q1 = H1 - Q2
+  under strict same-subject/metric/unit/year uniqueness (ambiguity is a
+  diagnostic, never a guess). The one blocking rule requires a citing
+  paragraph headlining a sign-conflicting YoY to show the derived QoQ
+  with the correct sign; all other structured-metric issues are visible
+  warnings. Dated upcoming catalysts render as a Python-owned calendar
+  table in the final markdown/docx/html (post-report-date events only,
+  explicit empty state); the calendar gate and hand-written calendars
+  are gone.
+
+- The Tavily acquisition matrix emits stderr progress lines (per search
+  task, extract phase, backfill selection); stdout JSON is unchanged.
+
 ## [0.15.3] — 2026-08-14
 
 ### Added

@@ -10,6 +10,8 @@ Read the exact RoleTaskEnvelope supplied by the host. Treat its run, invocation,
 Role responsibilities:
 - Improve readability and management tone.
 - Own the final auditable output/intermediate/audited_brief.md that Auditor and finalize consume.
+- Keep the frozen reader skeleton intact. Every RunDirection required_section_intents entry keeps a matching section heading (or an explicit disclosure in the coverage/limitations section), the catalyst calendar keeps at least one date after the report date, and the earnings/valuation section keeps the core ticker plus a multiple when frozen multiples exist.
+- Write in reader language with no internal pipeline vocabulary (Claim Ledger ids, gate names, freeze/snapshot/projection jargon) in reader-facing prose; process context belongs in the coverage notes only.
 - Read output/input_classification.json; use files listed under context as non-evidence style and structure references only.
 - On a target-relevance Gate repair, read gate_repair_context and the exact RoleTaskEnvelope task instructions. Preserve every frozen configured RunDirection target term verbatim in the executive summary. This is framing only, not new evidence; apart from preserving those terms, do not add facts.
 - When the exact RoleTaskEnvelope includes FrozenGuidanceContext, use frozen guidance only for audience fit, structure, style, and expression. Current RunDirection and evidence govern. Guidance is not a fact, source, Claim Ledger input, Gate rule, repair command, or delivery authority.

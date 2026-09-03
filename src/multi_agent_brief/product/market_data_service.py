@@ -154,22 +154,24 @@ def _display_field(field: MarketDataFieldValueV2 | None, *, decimals: int = 2) -
 def _comparison_table(
     snapshot: MarketDataSnapshotV2, tickers: tuple[str, ...]
 ) -> list[str]:
+    # Sell-side convention: metrics are rows, companies are columns, so a
+    # reader compares one metric across peers by scanning a single row.
     by_ticker = {item.ticker: item for item in snapshot.securities}
     present = [ticker for ticker in tickers if ticker in by_ticker]
-    # Optional columns render only when at least one displayed security has a
-    # frozen value; fully unavailable columns are dropped with a footnote
-    # instead of rendering an empty column.
-    optional_columns: tuple[tuple[str, str], ...] = (
-        ("1M %", "return_1m_pct"),
-        ("YTD %", "return_ytd_pct"),
-        ("P/S TTM", "ps_ttm"),
-        ("EV/Sales", "ev_sales_ttm"),
-        ("EV/EBITDA", "ev_ebitda_ttm"),
-        ("P/E TTM", "pe_ttm"),
+    # Optional metric rows render only when at least one displayed security
+    # has a frozen value; fully unavailable metrics are dropped with a
+    # footnote instead of rendering an empty row.
+    optional_metrics: tuple[tuple[str, str, int], ...] = (
+        ("1月涨跌 %", "return_1m_pct", 2),
+        ("年初至今 %", "return_ytd_pct", 2),
+        ("P/S TTM", "ps_ttm", 2),
+        ("EV/Sales", "ev_sales_ttm", 2),
+        ("EV/EBITDA", "ev_ebitda_ttm", 2),
+        ("P/E TTM", "pe_ttm", 2),
     )
     kept = [
-        (label, field_id)
-        for label, field_id in optional_columns
+        (label, field_id, decimals)
+        for label, field_id, decimals in optional_metrics
         if any(
             (field := _field(by_ticker[ticker], field_id)) is not None
             and field.value_number is not None
@@ -178,47 +180,46 @@ def _comparison_table(
     ]
     dropped = [
         label
-        for label, field_id in optional_columns
-        if (label, field_id) not in kept
+        for label, field_id, _decimals in optional_metrics
+        if (label, field_id, _decimals) not in kept
     ]
-    header = (
-        "| Ticker | Exchange | Currency | Latest Close | 1W %"
-        " | Market Cap USD (m)"
-        + "".join(f" | {label}" for label, _field_id in kept)
-        + " |"
-    )
-    divider = (
-        "| --- | --- | --- | ---: | ---: | ---:"
-        + " | ---:" * len(kept)
-        + " |"
-    )
+
+    def _cells(row: list[str]) -> str:
+        return "| " + " | ".join(row) + " |"
+
+    header = _cells(["指标"] + present)
+    divider = _cells(["---"] + ["---:"] * len(present))
     lines = [header, divider]
-    for ticker in present:
-        security = by_ticker[ticker]
-        cells = [
-            ticker,
-            security.exchange,
-            security.currency,
-            _display_field(_field(security, "latest_close_local")),
-            _display_field(_field(security, "return_1w_pct")),
-            _display_field(_field(security, "market_cap_usd_millions"), decimals=0),
-        ]
-        cells.extend(
-            _display_field(_field(security, field_id)) for _label, field_id in kept
-        )
-        lines.append("| " + " | ".join(cells) + " |")
+    metric_rows: list[tuple[str, str, int]] = [
+        ("交易所", "", 0),
+        ("币种", "", 0),
+        ("收盘价", "latest_close_local", 2),
+        ("1周涨跌 %", "return_1w_pct", 2),
+        ("市值 (百万 USD)", "market_cap_usd_millions", 0),
+        *kept,
+    ]
+    for label, field_id, decimals in metric_rows:
+        if field_id == "":
+            if label == "交易所":
+                cells = [label] + [by_ticker[t].exchange for t in present]
+            else:
+                cells = [label] + [by_ticker[t].currency for t in present]
+        else:
+            cells = [label] + [
+                _display_field(_field(by_ticker[t], field_id), decimals=decimals)
+                for t in present
+            ]
+        lines.append(_cells(cells))
     if dropped:
         lines.append(
-            "- Columns not shown (no frozen values in this snapshot): "
-            + ", ".join(dropped)
-            + "."
+            "- 指标未展示（本快照无冻结值）：" + "、".join(dropped) + "。"
         )
     if len(present) < len(tickers):
         missing = [ticker for ticker in tickers if ticker not in by_ticker]
         lines.append(
-            f"- Watchlist coverage {len(present)}/{len(tickers)}; missing: "
-            + ", ".join(missing)
-            + "."
+            f"- 观察名单覆盖 {len(present)}/{len(tickers)}；缺失："
+            + "、".join(missing)
+            + "。"
         )
     return lines
 
@@ -262,6 +263,8 @@ def render_market_data_tables(
                 "## Deterministic Charts",
                 "",
                 "Price co-movement is descriptive and does not prove event causation.",
+                "Vertical marker lines on the subject chart denote event days "
+                "(co-movement only).",
                 "",
             ]
         )

@@ -878,6 +878,7 @@ def convert(
     footer: str | None = None,
     font: str | None = None,
     template: str = "default",
+    image_root: str | Path | None = None,
 ) -> Path:
     """Convert a Markdown file to a styled DOCX document.
 
@@ -890,6 +891,11 @@ def convert(
         font: East-Asian font name. Defaults to ``宋体``.
         template: Template ID (executive_brief, research_note, formal_internal_report).
                   Defaults to "default" which uses the standard style.
+        image_root: Optional directory that markdown image references resolve
+                  against when the markdown file does not sit beside its
+                  images (for example a scratch-input markdown whose
+                  ``charts/...`` targets live under the workspace output
+                  directory). Containment is still enforced.
 
     Returns:
         The *docx_path* as a :class:`~pathlib.Path`.
@@ -980,15 +986,28 @@ def convert(
             target = Path(block[2])
             if target.is_absolute() or target.suffix.lower() == ".svg":
                 raise ValueError("Markdown image must be a relative PNG or JPEG")
-            resolved_target = (markdown_directory / target).resolve()
-            image_root = (
-                markdown_directory.parent
-                if markdown_directory.name == "intermediate"
-                and markdown_directory.parent.name == "output"
-                else markdown_directory
+            explicit_image_root = (
+                Path(image_root).expanduser().resolve()
+                if image_root is not None
+                else None
+            )
+            resolved_target = (
+                (explicit_image_root / target).resolve()
+                if explicit_image_root is not None
+                else (markdown_directory / target).resolve()
+            )
+            containment_root = (
+                explicit_image_root
+                if explicit_image_root is not None
+                else (
+                    markdown_directory.parent
+                    if markdown_directory.name == "intermediate"
+                    and markdown_directory.parent.name == "output"
+                    else markdown_directory
+                )
             )
             try:
-                resolved_target.relative_to(image_root)
+                resolved_target.relative_to(containment_root)
             except ValueError as exc:
                 raise ValueError(
                     "Markdown image must remain inside the report output directory"
@@ -1023,10 +1042,56 @@ def convert(
 
     _add_footer(doc, effective_footer, font)
 
+    # Frozen-artifact determinism: core properties carry wall-clock values
+    # and ZIP entries carry creation timestamps by default, so the same
+    # input would produce different bytes.  Pin both to fixed epochs.
+    try:
+        from datetime import datetime, timezone as _tz
+
+        fixed = datetime(1980, 1, 1, 0, 0, 0, tzinfo=_tz.utc)
+        core = doc.core_properties
+        core.created = fixed
+        core.modified = fixed
+        core.last_modified_by = "briefloop"
+        core.revision = 1
+    except Exception:
+        pass
+
     out = Path(docx_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(out))
+    _normalize_docx_zip_timestamps(out)
     return out
+
+
+# Minimum representable MS-DOS ZIP timestamp; also our determinism epoch.
+_DOCX_FIXED_ZIP_TIME = (1980, 1, 1, 0, 0, 0)
+
+
+def _normalize_docx_zip_timestamps(path: Path) -> None:
+    """Rewrite the docx ZIP with fixed entry timestamps and order.
+
+    Same markdown in, byte-identical docx out; required because the docx
+    is a frozen Store reader artifact.
+    """
+
+    import io
+    import zipfile
+
+    with zipfile.ZipFile(path, "r") as archive:
+        members = [
+            (info, archive.read(info.filename))
+            for info in archive.infolist()
+        ]
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as normalized:
+        for info, payload in members:
+            entry = zipfile.ZipInfo(info.filename, date_time=_DOCX_FIXED_ZIP_TIME)
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            entry.external_attr = info.external_attr
+            entry.create_system = 0
+            normalized.writestr(entry, payload)
+    path.write_bytes(buffer.getvalue())
 
 
 def _setup_document_styles_with_template(doc, font_name: str, template_config) -> None:

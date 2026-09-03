@@ -126,12 +126,14 @@ def _reader_brief(
     if len(renders) != 1:
         raise RuntimeHostError("reader_brief_projection_invalid")
     render = renders[0]
-    if (
-        len(render.reader_artifacts) != 1
-        or render.reader_artifacts[0].artifact_id != "reader_brief"
-    ):
+    markdown_references = [
+        item
+        for item in render.reader_artifacts
+        if item.artifact_id == "reader_brief"
+    ]
+    if len(markdown_references) != 1:
         raise RuntimeHostError("reader_brief_projection_invalid")
-    reference = render.reader_artifacts[0]
+    reference = markdown_references[0]
     records = [
         item for item in snapshot.artifacts if item.artifact_id == "reader_brief"
     ]

@@ -497,3 +497,17 @@ artifacts:
       - request_human_review
       - block_run
     retry_or_human_review_decision: request_human_review
+  - artifact_id: reader_brief_docx
+    path: output/brief.docx
+    format: docx
+    required: false
+    producer_stage: finalize
+    producer_role: python_tool
+    consumer_stages: []
+    validation_result: reference_only
+    blocking_reason: ""
+    allowed_decisions:
+      - finalize
+      - request_human_review
+      - block_run
+    retry_or_human_review_decision: request_human_review

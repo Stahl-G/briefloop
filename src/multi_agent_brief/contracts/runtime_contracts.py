@@ -56,7 +56,7 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 _STAGE_SPECS_SCHEMA = "multi-agent-brief-stage-specs/v1"
 _ARTIFACT_CONTRACTS_SCHEMA = "multi-agent-brief-artifact-contracts/v1"
-_SUPPORTED_ARTIFACT_FORMATS = frozenset({"html", "json", "markdown", "yaml"})
+_SUPPORTED_ARTIFACT_FORMATS = frozenset({"docx", "html", "json", "markdown", "yaml"})
 _SUPPORTED_PRODUCER_KINDS = ("workflow_stage", "control_tool")
 _CONTROL_OWNER_NAMESPACE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 

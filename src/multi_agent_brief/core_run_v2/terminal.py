@@ -914,6 +914,38 @@ class CoreRunTerminalService:
     def record_delivery_result(self, request: DeliveryResultRequest):
         return self._public(self._record_delivery_result, request)
 
+    def _docx_residue(self, content: bytes):
+        """Run the reader residue gate over an in-memory docx artifact."""
+
+        import tempfile
+
+        try:
+            from docx import Document  # type: ignore
+            from multi_agent_brief.outputs.reader_final_gate import (
+                detect_reader_residue_in_docx,
+            )
+        except ImportError as exc:
+            raise CoreRunError("finalize_input_invalid") from exc
+
+        descriptor, temporary = tempfile.mkstemp(suffix=".docx")
+        try:
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(content)
+            try:
+                Document(temporary)
+            except Exception as exc:
+                raise CoreRunError("finalize_input_invalid") from exc
+            return detect_reader_residue_in_docx(
+                Path(temporary),
+                artifact="reader_brief_docx",
+                allow_compliance_footer=True,
+            )
+        finally:
+            try:
+                os.unlink(temporary)
+            except OSError:
+                pass
+
     def accept_finalize_render(self, request: FinalizeRenderRequest):
         return self._public(self._accept_finalize_render, request)
 
@@ -1222,7 +1254,16 @@ class CoreRunTerminalService:
                 raise CoreRunError("finalize_input_invalid")
             artifacts = {item.artifact_id: item for item in verified.snapshot.artifacts}
             contracts = {str(item["artifact_id"]): item for item in verified.artifacts}
-            if set(request.reader_scratch_inputs) != {"reader_brief"}:
+            # The reader input set is exact: markdown always, docx exactly
+            # when the frozen output formats request it.
+            expected_reader_inputs = {"reader_brief"}
+            if (
+                "docx"
+                in verified.binding.run_direction.output_formats
+                and "reader_brief_docx" in contracts
+            ):
+                expected_reader_inputs.add("reader_brief_docx")
+            if set(request.reader_scratch_inputs) != expected_reader_inputs:
                 raise CoreRunError("finalize_input_invalid")
             rows: list[tuple[ArtifactRecord, ArtifactRevision, bytes]] = []
             residue_fingerprints: list[dict[str, object]] = []
@@ -1237,7 +1278,15 @@ class CoreRunTerminalService:
                         != request.expected_reader_sha256[artifact_id]
                     ):
                         raise CoreRunError("finalize_input_invalid")
-                    text = content.decode("utf-8")
+                    if artifact_id == "reader_brief_docx":
+                        residue = self._docx_residue(content)
+                    else:
+                        text = content.decode("utf-8")
+                        residue = detect_reader_residue(
+                            text,
+                            artifact_id,
+                            allow_compliance_footer=True,
+                        )
                 except (
                     IntakeError,
                     OSError,
@@ -1246,7 +1295,6 @@ class CoreRunTerminalService:
                     ValueError,
                 ) as exc:
                     raise CoreRunError("finalize_input_invalid") from exc
-                residue = detect_reader_residue(text, artifact_id)
                 if residue.status != "pass":
                     raise CoreRunError("finalize_input_invalid")
                 prior = artifacts.get(artifact_id)

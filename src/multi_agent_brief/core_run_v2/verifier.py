@@ -5448,6 +5448,16 @@ class CoreRunDomainVerifier:
                 "evidence_relation": "direct",
                 "applicability_reason": None,
                 "limitations": [],
+                "metric": (
+                    draft.metric.model_dump(mode="json", exclude_unset=False)
+                    if draft.metric is not None
+                    else None
+                ),
+                "upcoming": (
+                    draft.upcoming.model_dump(mode="json", exclude_unset=False)
+                    if draft.upcoming is not None
+                    else None
+                ),
                 "metadata": {
                     "source_ids": list(source_ids),
                     **temporal_metadata,
@@ -5514,6 +5524,16 @@ class CoreRunDomainVerifier:
                     "evidence_relation": "direct",
                     "applicability_reason": "",
                     "limitations": [],
+                    "metric": (
+                        draft.metric.model_dump(mode="json", exclude_unset=False)
+                        if draft.metric is not None
+                        else None
+                    ),
+                    "upcoming": (
+                        draft.upcoming.model_dump(mode="json", exclude_unset=False)
+                        if draft.upcoming is not None
+                        else None
+                    ),
                 }
             )
         warnings = [
@@ -5530,7 +5550,21 @@ class CoreRunDomainVerifier:
             for item in freeze.warnings
         ] != warnings or freeze.warning_count != len(warnings):
             raise CoreRunError("control_store_integrity_invalid")
-        ledger_bytes = canonical_json_bytes({"claims": ledger_claims}) + b"\n"
+        from multi_agent_brief.core_run_v2.derived_metrics import (
+            collect_upcoming_events,
+            derive_sequential_metrics,
+        )
+
+        ledger_bytes = (
+            canonical_json_bytes(
+                {
+                    "claims": ledger_claims,
+                    "derived_metrics": derive_sequential_metrics(claims),
+                    "upcoming_events": collect_upcoming_events(claims),
+                }
+            )
+            + b"\n"
+        )
         try:
             stored_ledger = store.read_artifact_revision_bytes(
                 snapshot.run.run_id,
@@ -5653,8 +5687,6 @@ class CoreRunDomainVerifier:
             or item.repair_owner != "editor"
             or item.stage_id != "editor"
             or item.artifact_id != "audited_brief"
-            or item.claim_id is not None
-            or item.source_id is not None
             for item in typed_findings
         ):
             raise CoreRunError("control_store_integrity_invalid")

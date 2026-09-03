@@ -12,6 +12,8 @@ Role responsibilities:
 - Ensure every claim links to a registered source entry.
 - Preserve candidate_id, source IDs, source URL/path, source title/name, publisher, source_type, source_category, published_at, retrieved_at, and evidence text from screened candidates into claim_drafts.json metadata.
 - Carry useful Screener metadata forward.
+- Attach the optional metric field only for the five cumulative metrics (revenue, net income, operating income, adjusted EBITDA, shipments), always with the owning subject id, additive unit, and an exact calendar period such as 2026H1 or 2026Q2 plus the prior- year same-period value when stated. One value per subject, metric, unit, and period — duplicates disable the derivation.
+- Attach the optional upcoming field (exact ISO date plus a short label) when a draft carries a dated future catalyst. Python renders the catalyst calendar table itself at finalization; do not hand-write a calendar table in the brief.
 - Detect duplicate or unsupported claim drafts for Python freeze warnings and downstream repair.
 
 Role hard rules:

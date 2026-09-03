@@ -261,6 +261,13 @@ roles:
     - Do NOT extract claims from `input/feedback/`, `input/instructions/`, or `input/context/`
       — these are editorial guidance, not factual evidence.
     - Filter boilerplate, navigation, cookies, privacy text, directories, and ads.
+    - Classify each candidate with the aspect field (earnings_growth,
+      profitability, cash_flow_dilution, guidance_risk, price_reaction,
+      peer_events, policy, input_prices, other) when the frozen run
+      direction lists required_claim_aspects. Balance is mandatory, not
+      optional; do not collect only favorable aspects. For every required
+      aspect with no usable evidence, add one coverage_gaps entry with the
+      aspect and a reason instead of omitting it silently.
     - Runtime may split Scout discovery across source chunks or child agents when
       supported, but chunk outputs are scratch/intermediate runtime material,
       not workflow artifacts.
@@ -384,6 +391,16 @@ roles:
       publisher, source_type, source_category, published_at, retrieved_at, and
       evidence text from screened candidates into claim_drafts.json metadata.
     - Carry useful Screener metadata forward.
+    - Attach the optional metric field only for the five cumulative
+      metrics (revenue, net income, operating income, adjusted EBITDA,
+      shipments), always with the owning subject id, additive unit, and
+      an exact calendar period such as 2026H1 or 2026Q2 plus the prior-
+      year same-period value when stated. One value per subject, metric,
+      unit, and period — duplicates disable the derivation.
+    - Attach the optional upcoming field (exact ISO date plus a short
+      label) when a draft carries a dated future catalyst. Python
+      renders the catalyst calendar table itself at finalization; do
+      not hand-write a calendar table in the brief.
     - Detect duplicate or unsupported claim drafts for Python freeze warnings and
       downstream repair.
     hard_rules:
@@ -416,11 +433,22 @@ roles:
       configured RunDirection target term verbatim in the executive summary. These
       terms are RunDirection framing only, not evidence; do not invent supporting
       facts or citations solely to satisfy target visibility.
+    - Honor the frozen reader skeleton (RunDirection required_section_intents).
+      Draft one section per required intent with a heading matching the intent
+      aliases (for example 摘要/Executive Summary, 市场反应/Market reaction,
+      催化剂日历/Catalyst calendar). An intent with no evidence must appear as an
+      explicit gap in the coverage/limitations section, never silently omitted.
     - When the exact RoleTaskEnvelope includes FrozenGuidanceContext, use frozen
       guidance only for audience fit, structure, style, and expression. Current
       RunDirection and evidence govern. Guidance is not a fact, source, Claim
       Ledger input, Gate rule, repair command, or delivery authority.
     - Draft management-ready sections using only frozen Claim Ledger material.
+    - Read the ledger read model's derived_metrics. Whenever a cited
+      metric's derived sequential comparison flips sign against its
+      headline growth, quote both numbers with the correct sign in the
+      same paragraph — the pairing gate blocks anything less. Leave the
+      catalyst calendar section as a heading-only placeholder; Python
+      renders the deterministic table into the final output.
     - Write output/intermediate/audited_brief.md as the Analyst working draft;
       Python freezes it into output/intermediate/analyst_draft_snapshot.md during
       analyst stage-complete.
@@ -465,8 +493,10 @@ roles:
       when present and valid, atomic_claim_graph.json.
     - For solar_stock_periodic, the Store-bound market-data snapshot and its
       table/chart projections are a separate deterministic reader surface, not
-      Claim Ledger evidence. Do not copy their numbers into narrative prose or
-      infer event causation unless a frozen Claim Ledger claim supports it.
+      Claim Ledger evidence. Market-data numbers may appear only in the
+      market-reaction section and the data-table sections, always marked
+      (行情快照) or equivalent, and never as causal narrative unless a frozen
+      Claim Ledger claim supports the cause.
     - Do not write the placeholder <claim_id> literally; use only claim IDs that exist in claim_ledger.json.
     - Always read claim_ledger.json before writing.
     - Do not edit output/intermediate/analyst_draft_snapshot.md; it is written by
@@ -559,6 +589,15 @@ roles:
     - Improve readability and management tone.
     - Own the final auditable output/intermediate/audited_brief.md that Auditor
       and finalize consume.
+    - Keep the frozen reader skeleton intact. Every RunDirection
+      required_section_intents entry keeps a matching section heading (or an
+      explicit disclosure in the coverage/limitations section), the catalyst
+      calendar keeps at least one date after the report date, and the
+      earnings/valuation section keeps the core ticker plus a multiple when
+      frozen multiples exist.
+    - Write in reader language with no internal pipeline vocabulary (Claim Ledger
+      ids, gate names, freeze/snapshot/projection jargon) in reader-facing
+      prose; process context belongs in the coverage notes only.
     - Read output/input_classification.json; use files listed under context as non-evidence
       style and structure references only.
     - On a target-relevance Gate repair, read gate_repair_context and the exact

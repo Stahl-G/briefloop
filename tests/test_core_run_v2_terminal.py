@@ -20,8 +20,11 @@ from multi_agent_brief.contracts.v2 import (
     CoreRunInitializeRequest,
     CoreRunEventBinding,
     DeliveryAttemptRecord,
+    DeliveryAttemptRequest,
     DeliveryAuthorizationRecord,
+    DeliveryAuthorizationRequest,
     DeliveryResultRecord,
+    DeliveryResultRequest,
     EventEnvelope,
     ExecutionSourceManifest,
     FinalizeCompleteRequest,
@@ -31,6 +34,7 @@ from multi_agent_brief.contracts.v2 import (
     FinalizationRecord,
     FinalizeRenderRecord,
     GateCheckRequest,
+    GateArtifactBinding,
     GateEvaluationRecord,
     PackageArtifactBinding,
     PackageReadyRecord,
@@ -53,12 +57,16 @@ from multi_agent_brief.control_store.serialization import (
 from multi_agent_brief.core_run_v2 import CoreRunService, CoreRunTerminalService
 from multi_agent_brief.core_run_v2.errors import CoreRunError
 from multi_agent_brief.core_run_v2.integrity import read_workspace_file
-from multi_agent_brief.evaluation_v2 import staging as staging_fixture
 from multi_agent_brief.core_run_v2.lineage import classify_current_audit_promotion
 from multi_agent_brief.core_run_v2.next_action import classify_core_run_next_action
-from multi_agent_brief.core_run_v2.gates import GateEvaluationService
+from multi_agent_brief.core_run_v2.gates import (
+    GateEvaluationService,
+    _gate_finding_record,
+    _replay_gate_outcomes,
+)
 from multi_agent_brief.core_run_v2.policy import (
     archive_artifact_usage,
+    derived_id,
     transaction_type_for,
 )
 from multi_agent_brief.core_run_v2.recovery import CoreEffect
@@ -170,14 +178,11 @@ def _authorized_finalize_ready_workspace(
         "_advance_to_scout_ready",
         advance_authorized_source_prefix,
     )
-    # The walk chain (_advance_to_claim_ledger_ready -> _advance_to_scout_ready,
-    # ... -> _advance_to_finalize_ready) was extracted into
-    # evaluation_v2.staging and resolves its internal callees from that
-    # module's globals, so the interception must land there as well;
-    # core_fixture stays patched for any direct caller.
+    # The stage chain lives in evaluation_v2.staging and resolves
+    # _advance_to_scout_ready inside its own module, so the prefix swap
+    # must land there too or the authorization never binds.
     monkeypatch.setattr(
-        staging_fixture,
-        "_advance_to_scout_ready",
+        "multi_agent_brief.evaluation_v2.staging._advance_to_scout_ready",
         advance_authorized_source_prefix,
     )
     monkeypatch.setattr(
@@ -213,6 +218,25 @@ def _commit_finalize_render(
         assert promotion is not None
         assert promotion.is_current_lineage
         expected_store_revision = verified.snapshot.store_revision
+        docx_required = "docx" in verified.binding.run_direction.output_formats
+    scratch_inputs = {"reader_brief": "scratch/terminal-render-helper/brief.md"}
+    sha_map = {"reader_brief": sha256_hex(reader_bytes)}
+    revision_map: dict[str, int] = {"reader_brief": 0}
+    if docx_required:
+        from multi_agent_brief.outputs.ib_docx import convert
+
+        convert(
+            scratch / "brief.md",
+            scratch / "brief.docx",
+            title="ExampleCo reader brief",
+            template="default",
+        )
+        docx_bytes = (scratch / "brief.docx").read_bytes()
+        scratch_inputs["reader_brief_docx"] = (
+            "scratch/terminal-render-helper/brief.docx"
+        )
+        sha_map["reader_brief_docx"] = sha256_hex(docx_bytes)
+        revision_map["reader_brief_docx"] = 0
     request = FinalizeRenderRequest.model_validate(
         {
             "schema_version": FinalizeRenderRequest.schema_id,
@@ -227,11 +251,9 @@ def _commit_finalize_render(
                 "artifact_id": promotion.report_revision.artifact_id,
                 "revision": promotion.report_revision.revision,
             },
-            "reader_scratch_inputs": {
-                "reader_brief": "scratch/terminal-render-helper/brief.md"
-            },
-            "expected_reader_sha256": {"reader_brief": sha256_hex(reader_bytes)},
-            "expected_reader_revisions": {"reader_brief": 0},
+            "reader_scratch_inputs": scratch_inputs,
+            "expected_reader_sha256": sha_map,
+            "expected_reader_revisions": revision_map,
             "expected_store_revision": expected_store_revision,
         },
         strict=True,
@@ -287,6 +309,147 @@ def test_finalize_render_persists_replays_conflicts_and_survives_restart(
             )
         assert error.value.code == "submission_replay_conflict"
         assert store.current_revision == revision
+
+
+def test_finalize_render_accepts_docx_reader_artifact_when_formats_include_docx(
+    tmp_path: Path,
+) -> None:
+    pytest.importorskip("docx")
+    from multi_agent_brief.outputs.ib_docx import convert
+
+    workspace, run_id, clock = _finalize_ready_workspace(tmp_path)
+    reader_bytes = (
+        b"# ExampleCo reader brief\n\n## Executive Summary\n\n"
+        b"ExampleCo opened a public pilot facility on 2026-07-14.\n"
+    )
+    scratch = workspace / "scratch" / "terminal-render-docx"
+    scratch.mkdir(parents=True, exist_ok=True)
+    (scratch / "brief.md").write_bytes(reader_bytes)
+    convert(
+        scratch / "brief.md",
+        scratch / "brief.docx",
+        title="ExampleCo reader brief",
+        template="default",
+    )
+    docx_bytes = (scratch / "brief.docx").read_bytes()
+    assert docx_bytes[:2] == b"PK"
+
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+        promotion = classify_current_audit_promotion(
+            verified.snapshot,
+            store.read_artifact_revision_bytes,
+        )
+        assert promotion is not None
+        assert "docx" in verified.binding.run_direction.output_formats
+        expected_store_revision = verified.snapshot.store_revision
+
+    request = FinalizeRenderRequest.model_validate(
+        {
+            "schema_version": FinalizeRenderRequest.schema_id,
+            "request_id": "REQ-TERMINAL-RENDER-DOCX-001",
+            "run_id": run_id,
+            "audit_proposal_id": promotion.proposal_record.proposal_id,
+            "expected_audited_brief": {
+                "artifact_id": promotion.brief_revision.artifact_id,
+                "revision": promotion.brief_revision.revision,
+            },
+            "expected_audit_report": {
+                "artifact_id": promotion.report_revision.artifact_id,
+                "revision": promotion.report_revision.revision,
+            },
+            "reader_scratch_inputs": {
+                "reader_brief": "scratch/terminal-render-docx/brief.md",
+                "reader_brief_docx": "scratch/terminal-render-docx/brief.docx",
+            },
+            "expected_reader_sha256": {
+                "reader_brief": sha256_hex(reader_bytes),
+                "reader_brief_docx": sha256_hex(docx_bytes),
+            },
+            "expected_reader_revisions": {"reader_brief": 0, "reader_brief_docx": 0},
+            "expected_store_revision": expected_store_revision,
+        },
+        strict=True,
+    )
+    result = CoreRunTerminalService(workspace, clock=clock).accept_finalize_render(
+        request
+    )
+    assert (result.status, result.error_code) == ("committed", None)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        snapshot = store.load_snapshot(run_id)
+        render = next(
+            item
+            for item in snapshot.finalize_renders
+            if item.render_id == result.primary_record_id
+        )
+        assert sorted(
+            item.artifact_id for item in render.reader_artifacts
+        ) == ["reader_brief", "reader_brief_docx"]
+        docx_record = next(
+            item
+            for item in snapshot.artifacts
+            if item.artifact_id == "reader_brief_docx"
+        )
+        assert docx_record.path == "output/brief.docx"
+        assert docx_record.status == "valid"
+    assert (workspace / "output" / "brief.docx").exists()
+
+
+def test_finalize_render_rejects_corrupt_docx_reader_artifact(
+    tmp_path: Path,
+) -> None:
+    workspace, run_id, clock = _finalize_ready_workspace(tmp_path)
+    reader_bytes = (
+        b"# ExampleCo reader brief\n\n## Executive Summary\n\n"
+        b"ExampleCo opened a public pilot facility on 2026-07-14.\n"
+    )
+    scratch = workspace / "scratch" / "terminal-render-docx-bad"
+    scratch.mkdir(parents=True, exist_ok=True)
+    (scratch / "brief.md").write_bytes(reader_bytes)
+    (scratch / "brief.docx").write_bytes(b"not-a-zip-docx")
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+        promotion = classify_current_audit_promotion(
+            verified.snapshot,
+            store.read_artifact_revision_bytes,
+        )
+        assert promotion is not None
+        before_revision = verified.snapshot.store_revision
+
+    request = FinalizeRenderRequest.model_validate(
+        {
+            "schema_version": FinalizeRenderRequest.schema_id,
+            "request_id": "REQ-TERMINAL-RENDER-DOCX-BAD-001",
+            "run_id": run_id,
+            "audit_proposal_id": promotion.proposal_record.proposal_id,
+            "expected_audited_brief": {
+                "artifact_id": promotion.brief_revision.artifact_id,
+                "revision": promotion.brief_revision.revision,
+            },
+            "expected_audit_report": {
+                "artifact_id": promotion.report_revision.artifact_id,
+                "revision": promotion.report_revision.revision,
+            },
+            "reader_scratch_inputs": {
+                "reader_brief": "scratch/terminal-render-docx-bad/brief.md",
+                "reader_brief_docx": "scratch/terminal-render-docx-bad/brief.docx",
+            },
+            "expected_reader_sha256": {
+                "reader_brief": sha256_hex(reader_bytes),
+                "reader_brief_docx": sha256_hex(b"not-a-zip-docx"),
+            },
+            "expected_reader_revisions": {"reader_brief": 0, "reader_brief_docx": 0},
+            "expected_store_revision": before_revision,
+        },
+        strict=True,
+    )
+    result = CoreRunTerminalService(workspace, clock=clock).accept_finalize_render(
+        request
+    )
+    assert (result.status, result.error_code) == (
+        "failed_uncommitted",
+        "finalize_input_invalid",
+    )
 
 
 @pytest.mark.parametrize("case", ("existing_artifact_id", "missing_scratch"))
@@ -372,6 +535,10 @@ def test_finalize_render_rejects_non_reader_or_unreadable_scratch_without_writes
         )
 
 
+
+
+
+
 def test_authorized_finalize_local_commits_nonpublishing_checkout_and_replays(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -431,15 +598,20 @@ def test_authorized_finalize_local_commits_nonpublishing_checkout_and_replays(
             producer_id="core-v2-test-probe",
             created_at=core_fixture.NOW,
         )
-        monkeypatch.setattr(sys, "platform", "win32")
-        with pytest.raises(CoreRunError, match="checkout_publication_unsupported"):
-            prepare_checkout_effect(
-                workspace=workspace,
-                snapshot=before,
-                transaction_id="REQ-WINDOWS-PROJECTION-PROBE-001",
-                created_at=clock(),
-                additional_revisions=(changed,),
-            )
+        # Scope the platform patch to the probe: the later finalize
+        # completion legitimately publishes a projection delta here.
+        with monkeypatch.context() as win32:
+            win32.setattr(sys, "platform", "win32")
+            with pytest.raises(
+                CoreRunError, match="checkout_publication_unsupported"
+            ):
+                prepare_checkout_effect(
+                    workspace=workspace,
+                    snapshot=before,
+                    transaction_id="REQ-WINDOWS-PROJECTION-PROBE-001",
+                    created_at=clock(),
+                    additional_revisions=(changed,),
+                )
 
     request = FinalizeCompleteRequest.model_validate(
         {
@@ -1438,6 +1610,10 @@ def test_terminal_approval_integrity_preflight_blocks_before_business_effect(
         assert snapshot.run_integrity_records[-1].status == "contaminated"
 
 
+
+
+
+
 class _InjectedTerminalFailure(RuntimeError):
     pass
 
@@ -2145,6 +2321,10 @@ def test_terminal_authorization_is_recordable_before_approval_but_not_consumable
         )
 
 
+
+
+
+
 def test_result_observation_uses_attempt_receipt_not_later_auth_or_approval(
     tmp_path: Path,
 ) -> None:
@@ -2476,6 +2656,12 @@ def test_real_uow_retry_consumption_closes_older_reconciliation_branch(
         )
         with pytest.raises(CoreRunError, match="historical_prefix_invalid"):
             CoreRunDomainVerifier().verify(store, run_id)
+
+
+
+
+
+
 
 
 def _initialized_workspace(tmp_path: Path) -> Path:
@@ -2919,3 +3105,58 @@ def test_archive_and_package_reconstruction_rejects_parameterized_forgeries(
             receipt,
         )
     assert error.value.code == f"{target}_membership_invalid"
+
+
+def test_finalize_render_requires_docx_when_formats_request_it(
+    tmp_path: Path,
+) -> None:
+    workspace, run_id, clock = _finalize_ready_workspace(tmp_path)
+    reader_bytes = (
+        b"# ExampleCo reader brief\n\n## Executive Summary\n\n"
+        b"ExampleCo opened a public pilot facility on 2026-07-14.\n"
+    )
+    scratch = workspace / "scratch" / "terminal-render-no-docx"
+    scratch.mkdir(parents=True, exist_ok=True)
+    (scratch / "brief.md").write_bytes(reader_bytes)
+    with SQLiteControlStore.open(workspace / "briefloop.db", clock=clock) as store:
+        verified = CoreRunDomainVerifier().verify(store, run_id)
+        promotion = classify_current_audit_promotion(
+            verified.snapshot,
+            store.read_artifact_revision_bytes,
+        )
+        assert promotion is not None
+        assert "docx" in verified.binding.run_direction.output_formats
+        before_revision = verified.snapshot.store_revision
+
+    request = FinalizeRenderRequest.model_validate(
+        {
+            "schema_version": FinalizeRenderRequest.schema_id,
+            "request_id": "REQ-TERMINAL-RENDER-NO-DOCX-001",
+            "run_id": run_id,
+            "audit_proposal_id": promotion.proposal_record.proposal_id,
+            "expected_audited_brief": {
+                "artifact_id": promotion.brief_revision.artifact_id,
+                "revision": promotion.brief_revision.revision,
+            },
+            "expected_audit_report": {
+                "artifact_id": promotion.report_revision.artifact_id,
+                "revision": promotion.report_revision.revision,
+            },
+            "reader_scratch_inputs": {
+                "reader_brief": "scratch/terminal-render-no-docx/brief.md"
+            },
+            "expected_reader_sha256": {
+                "reader_brief": sha256_hex(reader_bytes)
+            },
+            "expected_reader_revisions": {"reader_brief": 0},
+            "expected_store_revision": before_revision,
+        },
+        strict=True,
+    )
+    result = CoreRunTerminalService(workspace, clock=clock).accept_finalize_render(
+        request
+    )
+    assert (result.status, result.error_code) == (
+        "failed_uncommitted",
+        "finalize_input_invalid",
+    )

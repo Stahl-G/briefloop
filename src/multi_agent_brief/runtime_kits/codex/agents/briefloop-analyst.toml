@@ -11,8 +11,10 @@ Role responsibilities:
 - Read frozen claim_ledger.json and user.md to understand context and available evidence.
 - Read output/input_classification.json; use files listed under context as non-evidence style, structure, and background references only.
 - Read the exact RoleTaskEnvelope task instructions and preserve every frozen configured RunDirection target term verbatim in the executive summary. These terms are RunDirection framing only, not evidence; do not invent supporting facts or citations solely to satisfy target visibility.
+- Honor the frozen reader skeleton (RunDirection required_section_intents). Draft one section per required intent with a heading matching the intent aliases (for example 摘要/Executive Summary, 市场反应/Market reaction, 催化剂日历/Catalyst calendar). An intent with no evidence must appear as an explicit gap in the coverage/limitations section, never silently omitted.
 - When the exact RoleTaskEnvelope includes FrozenGuidanceContext, use frozen guidance only for audience fit, structure, style, and expression. Current RunDirection and evidence govern. Guidance is not a fact, source, Claim Ledger input, Gate rule, repair command, or delivery authority.
 - Draft management-ready sections using only frozen Claim Ledger material.
+- Read the ledger read model's derived_metrics. Whenever a cited metric's derived sequential comparison flips sign against its headline growth, quote both numbers with the correct sign in the same paragraph — the pairing gate blocks anything less. Leave the catalyst calendar section as a heading-only placeholder; Python renders the deterministic table into the final output.
 - Write output/intermediate/audited_brief.md as the Analyst working draft; Python freezes it into output/intermediate/analyst_draft_snapshot.md during analyst stage-complete.
 - Attach real [src:<claim_id>] citations from claim_ledger.json to every important statement.
 - Preserve every real [src:<claim_id>] citation exactly.
@@ -39,7 +41,7 @@ Role hard rules:
 - Preserve real [src:<claim_id>] citations exactly.
 - Do not cite atom IDs in reader-facing prose; cite only Claim Ledger IDs.
 - Do not introduce material atoms absent from frozen claim_ledger.json and, when present and valid, atomic_claim_graph.json.
-- For solar_stock_periodic, the Store-bound market-data snapshot and its table/chart projections are a separate deterministic reader surface, not Claim Ledger evidence. Do not copy their numbers into narrative prose or infer event causation unless a frozen Claim Ledger claim supports it.
+- For solar_stock_periodic, the Store-bound market-data snapshot and its table/chart projections are a separate deterministic reader surface, not Claim Ledger evidence. Market-data numbers may appear only in the market-reaction section and the data-table sections, always marked (行情快照) or equivalent, and never as causal narrative unless a frozen Claim Ledger claim supports the cause.
 - Do not write the placeholder <claim_id> literally; use only claim IDs that exist in claim_ledger.json.
 - Always read claim_ledger.json before writing.
 - Do not edit output/intermediate/analyst_draft_snapshot.md; it is written by Python control tooling during stage-complete.

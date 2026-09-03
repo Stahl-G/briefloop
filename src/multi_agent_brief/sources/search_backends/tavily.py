@@ -16,6 +16,7 @@ import os
 import re
 import socket
 import ssl
+import sys
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
@@ -306,6 +307,12 @@ def _normalized_published_date(value: str) -> str:
     if weekday is not None and parsed.strftime("%a") != weekday:
         return ""
     return parsed.astimezone(timezone.utc).date().isoformat()
+
+
+def _progress(message: str) -> None:
+    """Human progress line on stderr; the CLI's stdout JSON stays clean."""
+
+    print(f"[tavily-acquire] {message}", file=sys.stderr, flush=True)
 
 
 class TavilyBackend(SearchBackend):
@@ -747,8 +754,13 @@ class TavilyBackend(SearchBackend):
                 )
             )
             search_statuses[task_id].append(status)
+            _progress(f"search {phase} task={task_id} status={status}")
 
         def execute_extracts(urls: list[str], *, phase: str) -> None:
+            total_batches = (len(urls) + extract_batch_size - 1) // extract_batch_size
+            _progress(
+                f"extract {phase} start urls={len(urls)} batches={total_batches}"
+            )
             for start in range(0, len(urls), extract_batch_size):
                 batch_urls = sorted(urls[start : start + extract_batch_size])
                 payload: dict[str, Any] = {
@@ -937,6 +949,7 @@ class TavilyBackend(SearchBackend):
                     )
                 )
 
+        _progress(f"start tasks={len(tasks)}")
         for ordinal, task in enumerate(tasks, start=1):
             execute_search(task, phase="primary", ordinal=ordinal)
         primary_urls = sorted(search_items)[:max_unique_urls]
@@ -952,6 +965,7 @@ class TavilyBackend(SearchBackend):
             )
             < int(task["minimum_extract_successes"])
         ]
+        _progress(f"backfill under-covered tasks={len(backfill_tasks)}")
         for task in backfill_tasks:
             execute_search(
                 task,
