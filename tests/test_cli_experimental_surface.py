@@ -74,3 +74,40 @@ def test_hide_tolerates_absent_commands():
     subparsers.add_parser("keep", help="visible command")
     hide_experimental_commands(subparsers)
     assert "keep" in parser.format_help()
+
+
+def _command_subparsers(parser: argparse.ArgumentParser) -> argparse._SubParsersAction:
+    for action in parser._actions:
+        if getattr(action, "dest", None) == "command" and hasattr(action, "choices"):
+            return action
+    raise AssertionError("command subparsers not found")
+
+
+def test_build_parser_hides_experimental_by_default(monkeypatch):
+    monkeypatch.delenv("BRIEFLOOP_EXPERIMENTAL", raising=False)
+    from multi_agent_brief.cli.main import build_parser
+
+    parser = build_parser()
+    text = parser.format_help()
+    for command in EXPERIMENTAL_COMMANDS:
+        assert command not in text, f"{command} should be hidden by default"
+    assert "status" in text
+    assert "runtime" in text
+
+
+def test_build_parser_shows_experimental_when_opted_in(monkeypatch):
+    monkeypatch.setenv("BRIEFLOOP_EXPERIMENTAL", "1")
+    from multi_agent_brief.cli.main import build_parser
+
+    text = build_parser().format_help()
+    for command in EXPERIMENTAL_COMMANDS:
+        assert command in text, f"{command} should be visible when opted in"
+
+
+def test_hidden_experimental_commands_still_registered(monkeypatch):
+    monkeypatch.delenv("BRIEFLOOP_EXPERIMENTAL", raising=False)
+    from multi_agent_brief.cli.main import build_parser
+
+    subparsers = _command_subparsers(build_parser())
+    for command in EXPERIMENTAL_COMMANDS:
+        assert command in subparsers.choices
