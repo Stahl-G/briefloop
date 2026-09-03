@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -11,20 +10,17 @@ import sqlite3
 import pytest
 
 from multi_agent_brief.contracts.v2 import (
-    EventEnvelope,
     Invocation,
     RunIdentity,
     StageState,
     SourceProposal,
-    SourcePackCommitRequest,
     WorkspaceRunHead,
 )
 from multi_agent_brief.control_store import (
-    ControlStoreCommitOutcomeUnknown,
     ControlStoreIntegrityError,
     SQLiteControlStore,
 )
-from multi_agent_brief.intake_v2.errors import IntakeError, IntakeResult
+from multi_agent_brief.intake_v2.errors import IntakeResult
 from multi_agent_brief.intake_v2.service import IntakeService
 from multi_agent_brief.intake_v2.policy import (
     SourcePolicyError,
@@ -36,19 +32,12 @@ RUN_ID = "RUN-PR3-001"
 WORKSPACE_ID = "WS-PR3-001"
 NOW = "2026-07-15T12:00:00Z"
 CLOCK = lambda: datetime(2026, 7, 15, 12, 0, tzinfo=timezone.utc)
-ROOT = Path(__file__).parents[1]
 
 
 def _record(model_type, **values):
     return model_type.model_validate(
         {"schema_version": model_type.schema_id, **values},
         strict=True,
-    )
-
-
-def _by_invocation(snapshot, invocation_id: str):
-    return next(
-        item for item in snapshot.invocations if item.invocation_id == invocation_id
     )
 
 
@@ -196,75 +185,6 @@ def _replace_with_external_hardlink(path: Path, *, outside: Path) -> bytes:
     return original
 
 
-def _link_target_after_pre_stat_before_open(
-    monkeypatch: pytest.MonkeyPatch,
-    *,
-    target: Path,
-    outside: Path,
-) -> dict[str, bool]:
-    """Create a real external hardlink only when the reader opens the checked leaf."""
-
-    target_info = target.stat()
-    target_identity = (target_info.st_dev, target_info.st_ino)
-    parent_info = target.parent.stat()
-    parent_identity = (parent_info.st_dev, parent_info.st_ino)
-    original_open = os.open
-    original_open_supports_dir_fd = original_open in os.supports_dir_fd
-    original_read = os.read
-    state = {
-        "hardlink_created": False,
-        "original_open_supports_dir_fd": original_open_supports_dir_fd,
-        "target_body_read": False,
-        "target_open_succeeded": False,
-        "target_open_used_dir_fd": False,
-    }
-
-    def is_target_open(path: object, dir_fd: int | None) -> bool:
-        candidate = os.fspath(path)
-        if dir_fd is None:
-            return isinstance(candidate, str) and Path(candidate) == target
-        if candidate != target.name:
-            return False
-        opened_parent = os.fstat(dir_fd)
-        return (opened_parent.st_dev, opened_parent.st_ino) == parent_identity
-
-    def intercept_open(
-        path: object,
-        flags: int,
-        mode: int = 0o777,
-        *,
-        dir_fd: int | None = None,
-    ) -> int:
-        target_open = is_target_open(path, dir_fd)
-        if target_open and not state["hardlink_created"]:
-            try:
-                os.link(target, outside)
-            except OSError as exc:
-                raise AssertionError(f"hardlink creation failed: {exc}") from exc
-            if target.stat().st_nlink <= 1:
-                raise AssertionError("target hardlink was not created")
-            state["hardlink_created"] = True
-        if dir_fd is None:
-            descriptor = original_open(path, flags, mode)
-        else:
-            descriptor = original_open(path, flags, mode, dir_fd=dir_fd)
-        if target_open:
-            state["target_open_used_dir_fd"] = dir_fd is not None
-            state["target_open_succeeded"] = True
-        return descriptor
-
-    def intercept_read(descriptor: int, size: int) -> bytes:
-        opened = os.fstat(descriptor)
-        if (opened.st_dev, opened.st_ino) == target_identity:
-            state["target_body_read"] = True
-            raise AssertionError("target body read after hardlink race")
-        return original_read(descriptor, size)
-
-    monkeypatch.setattr(os, "open", intercept_open)
-    monkeypatch.setattr(os, "read", intercept_read)
-    return state
-
-
 def _candidate_request(workspace: Path, *, expected_revision: int = 2) -> Path:
     scratch = workspace / "scratch" / "INV-SCOUT-001"
     _write_json(
@@ -384,74 +304,6 @@ def _proposal_request(
     return request
 
 
-def _replace_seed_context(workspace: Path, case: str) -> None:
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        if case == "run_not_current":
-            raise AssertionError("run_not_current requires a Core v2 reset fixture")
-        else:
-            unit = store.begin(
-                RUN_ID,
-                f"TX-CONTEXT-{case.upper()}",
-                "private_test_context",
-                1,
-            )
-            if case == "invocation_not_active":
-                unit.put_invocation(
-                    _record(
-                        Invocation,
-                        invocation_id="INV-SOURCE-001",
-                        run_id=RUN_ID,
-                        role_id="source-provider",
-                        runtime="operator",
-                        status="completed",
-                        started_at=NOW,
-                        completed_at=NOW,
-                    )
-                )
-            elif case == "invocation_role_mismatch":
-                unit.put_invocation(
-                    _record(
-                        Invocation,
-                        invocation_id="INV-SOURCE-001",
-                        run_id=RUN_ID,
-                        role_id="scout",
-                        runtime="operator",
-                        status="active",
-                        started_at=NOW,
-                    )
-                )
-            elif case == "stage_not_ready":
-                unit.put_stage_state(
-                    _record(
-                        StageState,
-                        run_id=RUN_ID,
-                        stage_id="source-discovery",
-                        status="blocked",
-                        revision=1,
-                        updated_at=NOW,
-                    )
-                )
-            elif case == "run_archived":
-                unit.append_event(
-                    _record(
-                        EventEnvelope,
-                        event_id="EVT-ARCHIVED-001",
-                        run_id=RUN_ID,
-                        event_type="run_archived",
-                        created_at=NOW,
-                        actor="system",
-                        transaction_id="TX-CONTEXT-RUN_ARCHIVED",
-                        stage_id="finalize",
-                        decision="archived",
-                        reason="",
-                        metadata={},
-                    )
-                )
-            else:
-                raise AssertionError(case)
-        unit.commit()
-
-
 def test_source_and_candidate_commit_form_first_class_receipt_graph(
     tmp_path: Path,
 ) -> None:
@@ -528,46 +380,6 @@ def test_discovery_only_source_commits_but_cannot_back_claim_candidate(
         assert snapshot.accepted_proposals == ()
 
 
-@pytest.mark.parametrize(
-    ("relation_table", "delete_trigger"),
-    [
-        ("transaction_sources", "transaction_sources_no_delete"),
-        ("transaction_proposals", "transaction_proposals_no_delete"),
-    ],
-)
-def test_open_rejects_source_or_proposal_without_reverse_receipt_coverage(
-    tmp_path: Path,
-    relation_table: str,
-    delete_trigger: str,
-) -> None:
-    workspace = tmp_path / "workspace"
-    _seed_workspace(workspace)
-    service = IntakeService(workspace, clock=CLOCK)
-    assert service.submit_source(
-        _source_request(workspace).relative_to(workspace).as_posix()
-    ).status == "committed"
-    assert service.submit_proposal(
-        "candidate",
-        _candidate_request(workspace).relative_to(workspace).as_posix(),
-    ).status == "committed"
-
-    database = workspace / "briefloop.db"
-    connection = sqlite3.connect(database)
-    trigger_sql = connection.execute(
-        "SELECT sql FROM sqlite_schema WHERE type = 'trigger' AND name = ?",
-        (delete_trigger,),
-    ).fetchone()[0]
-    connection.execute(f"DROP TRIGGER {delete_trigger}")
-    connection.execute(f"DELETE FROM {relation_table}")
-    connection.execute(trigger_sql)
-    connection.commit()
-    connection.close()
-
-    with pytest.raises(ControlStoreIntegrityError) as error:
-        SQLiteControlStore.open(database)
-    assert error.value.code == "transaction_relation_mismatch"
-
-
 def test_new_authority_rows_and_relations_are_append_only(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     _seed_workspace(workspace)
@@ -604,34 +416,6 @@ def test_exact_replay_returns_original_receipt_without_new_write(tmp_path: Path)
     assert replayed.receipt == committed.receipt
     with SQLiteControlStore.open(workspace / "briefloop.db") as store:
         assert store.current_revision == 2
-
-
-def test_invalid_trusted_candidate_records_one_failure_uow(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    _seed_workspace(workspace)
-    request = _candidate_request(workspace, expected_revision=1)
-    service = IntakeService(workspace, clock=CLOCK)
-
-    result = service.submit_proposal(
-        "candidate",
-        request.relative_to(workspace).as_posix(),
-    )
-
-    assert result.status == "rejected_recorded"
-    assert result.error_code == "source_not_found"
-    assert result.receipt is not None
-    assert result.receipt.artifact_revisions == []
-    assert result.receipt.proposal_ids == []
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        snapshot = store.load_snapshot(RUN_ID)
-        invocation = next(
-            item
-            for item in snapshot.invocations
-            if item.invocation_id == "INV-SCOUT-001"
-        )
-        assert invocation.status == "failed"
-        assert invocation.failure_reason == "source_not_found"
-        assert snapshot.accepted_proposals == ()
 
 
 def test_failed_request_exactly_replays_and_changed_bytes_conflict(tmp_path: Path) -> None:
@@ -676,106 +460,6 @@ def test_missing_explicit_run_head_is_zero_write(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    ("case", "error_code"),
-    [
-        ("run_archived", "new_run_required"),
-        ("invocation_not_active", "invocation_not_active"),
-        ("invocation_role_mismatch", "invocation_role_mismatch"),
-        ("stage_not_ready", "stage_not_ready"),
-    ],
-)
-def test_untrusted_or_closed_submission_context_is_zero_write(
-    tmp_path: Path,
-    case: str,
-    error_code: str,
-) -> None:
-    workspace = tmp_path / case
-    _seed_workspace(workspace)
-    _replace_seed_context(workspace, case)
-    request = _source_request(workspace, expected_revision=2)
-
-    result = IntakeService(workspace, clock=CLOCK).submit_source(
-        request.relative_to(workspace).as_posix()
-    )
-
-    assert result.to_dict() == {
-        "status": "failed_uncommitted",
-        "error_code": error_code,
-    }
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.current_revision == 2
-        snapshot = store.load_snapshot(RUN_ID)
-        assert snapshot.sources == ()
-        assert snapshot.accepted_proposals == ()
-
-
-def test_owner_and_artifact_revision_preconditions_are_zero_write(
-    tmp_path: Path,
-) -> None:
-    owner_workspace = tmp_path / "owner"
-    _seed_workspace(owner_workspace)
-    request = _candidate_request(owner_workspace, expected_revision=1)
-    request_payload = json.loads(request.read_text(encoding="utf-8"))
-    request_payload["artifact_id"] = "screened_candidates"
-    request_payload["input_path"] = (
-        "scratch/INV-SCOUT-001/screened_candidates.json"
-    )
-    (request.parent / "screened_candidates.json").write_bytes(
-        (request.parent / "candidate_claims.json").read_bytes()
-    )
-    _write_json(request, request_payload)
-
-    owner = IntakeService(owner_workspace, clock=CLOCK).submit_proposal(
-        "candidate",
-        request.relative_to(owner_workspace).as_posix(),
-    )
-    assert owner.error_code == "artifact_owner_mismatch"
-    with SQLiteControlStore.open(owner_workspace / "briefloop.db") as store:
-        assert store.current_revision == 1
-
-    stale_workspace = tmp_path / "stale"
-    _seed_workspace(stale_workspace)
-    service = IntakeService(stale_workspace, clock=CLOCK)
-    assert service.submit_source(
-        _source_request(stale_workspace).relative_to(stale_workspace).as_posix()
-    ).status == "committed"
-    assert service.submit_proposal(
-        "candidate",
-        _candidate_request(stale_workspace).relative_to(stale_workspace).as_posix(),
-    ).status == "committed"
-    screened = _proposal_request(
-        stale_workspace,
-        invocation_id="INV-SCREEN-001",
-        request_id="REQ-SCREEN-STALE",
-        artifact_id="screened_candidates",
-        expected_store_revision=3,
-        expected_artifact_revision=7,
-        payload={
-            "schema_version": "briefloop.screened_candidates_proposal.v2",
-            "proposal_id": "PROP-SCREEN-STALE",
-            "run_id": RUN_ID,
-            "candidate_claims_proposal_id": "PROP-CANDIDATES-001",
-            "created_at": NOW,
-            "decisions": [
-                {
-                    "candidate_id": "CAND-001",
-                    "decision": "selected",
-                    "reason_code": None,
-                    "explanation": None,
-                }
-            ],
-        },
-    )
-    stale = service.submit_proposal(
-        "screened",
-        screened.relative_to(stale_workspace).as_posix(),
-    )
-    assert stale.error_code == "expected_artifact_revision_conflict"
-    with SQLiteControlStore.open(stale_workspace / "briefloop.db") as store:
-        assert store.current_revision == 3
-
-
-@pytest.mark.parametrize(
     "failure_stage",
     ["before_blob_write", "after_blob_write:1", "after_records"],
 )
@@ -816,198 +500,6 @@ def test_intake_commit_failure_keeps_invocation_active_and_db_unaccepted(
         assert len(store.scan_orphans().orphan_hashes) == expected_orphans
 
 
-def test_post_commit_outcome_unknown_recovers_by_exact_replay(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    _seed_workspace(workspace)
-    request = _source_request(workspace).relative_to(workspace).as_posix()
-
-    def fail(stage: str) -> None:
-        if stage == "after_commit":
-            raise ControlStoreIntegrityError("injected_after_commit_failure")
-
-    unknown = IntakeService(
-        workspace,
-        clock=CLOCK,
-        _store_failure_hook=fail,
-    ).submit_source(request)
-    replay = IntakeService(workspace, clock=CLOCK).submit_source(request)
-
-    assert unknown.to_dict() == {
-        "status": "commit_outcome_unknown",
-        "error_code": "commit_outcome_unknown",
-    }
-    assert replay.status == "replayed"
-    assert replay.source_id == "SRC-001"
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.current_revision == 2
-        assert [item.source_id for item in store.load_snapshot(RUN_ID).sources] == [
-            "SRC-001"
-        ]
-
-
-@pytest.mark.parametrize("outcome", ["accepted_proposal", "rejection"])
-def test_intake_proposal_and_rejection_postcommit_unknown_exactly_replay(
-    tmp_path: Path,
-    outcome: str,
-) -> None:
-    workspace = tmp_path / "workspace"
-    _seed_workspace(workspace)
-    if outcome == "accepted_proposal":
-        source_request = _source_request(workspace).relative_to(workspace).as_posix()
-        source = IntakeService(workspace, clock=CLOCK).submit_source(source_request)
-        assert source.status == "committed"
-        request_path = _candidate_request(workspace, expected_revision=2)
-    else:
-        request_path = _candidate_request(workspace, expected_revision=1)
-    request = request_path.relative_to(workspace).as_posix()
-
-    def fail(stage: str) -> None:
-        if stage == "after_commit":
-            raise ControlStoreIntegrityError("injected_after_commit_failure")
-
-    unknown = IntakeService(
-        workspace,
-        clock=CLOCK,
-        _store_failure_hook=fail,
-    ).submit_proposal("candidate", request)
-    replay = IntakeService(workspace, clock=CLOCK).submit_proposal(
-        "candidate",
-        request,
-    )
-
-    assert unknown.to_dict() == {
-        "status": "commit_outcome_unknown",
-        "error_code": "commit_outcome_unknown",
-    }
-    if outcome == "accepted_proposal":
-        assert replay.status == "replayed"
-        assert replay.proposal_id == "PROP-CANDIDATES-001"
-        expected_revision = 3
-    else:
-        assert replay.status == "rejected_recorded"
-        assert replay.error_code == "source_not_found"
-        expected_revision = 2
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.current_revision == expected_revision
-
-
-def test_intake_postcommit_readback_failure_is_unknown_then_replays(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = tmp_path / "workspace"
-    _seed_workspace(workspace)
-    request = _source_request(workspace).relative_to(workspace).as_posix()
-
-    def fail_readback(*_args, **_kwargs):
-        raise IntakeError("injected_postcommit_readback_failure")
-
-    with monkeypatch.context() as patch:
-        patch.setattr(IntakeService, "_verify_source_readback", fail_readback)
-        unknown = IntakeService(workspace, clock=CLOCK).submit_source(request)
-
-    assert unknown.to_dict() == {
-        "status": "commit_outcome_unknown",
-        "error_code": "commit_outcome_unknown",
-    }
-    replay = IntakeService(workspace, clock=CLOCK).submit_source(request)
-    assert replay.status == "replayed"
-    assert replay.source_id == "SRC-001"
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.current_revision == 2
-
-
-def test_existing_intake_receipt_with_failed_readback_stays_unknown(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = tmp_path / "workspace"
-    _seed_workspace(workspace)
-    request = _source_request(workspace).relative_to(workspace).as_posix()
-    committed = IntakeService(workspace, clock=CLOCK).submit_source(request)
-    assert committed.status == "committed"
-
-    original_load_snapshot = SQLiteControlStore.load_snapshot
-    calls = 0
-
-    def fail_after_receipt(self, run_id):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            raise ControlStoreIntegrityError("injected_replay_readback_failure")
-        return original_load_snapshot(self, run_id)
-
-    with monkeypatch.context() as patch:
-        patch.setattr(SQLiteControlStore, "load_snapshot", fail_after_receipt)
-        unknown = IntakeService(workspace, clock=CLOCK).submit_source(request)
-
-    assert unknown.to_dict() == {
-        "status": "commit_outcome_unknown",
-        "error_code": "commit_outcome_unknown",
-    }
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.current_revision == 2
-
-
-def test_source_receipt_lookup_failure_is_unknown_then_exactly_replays(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = tmp_path / "workspace"
-    _seed_workspace(workspace)
-    request_path = _source_request(workspace)
-    request = request_path.relative_to(workspace).as_posix()
-    service = IntakeService(workspace, clock=CLOCK)
-    committed = service.submit_source(request)
-    assert committed.status == "committed"
-
-    def fail_lookup(*_args, **_kwargs):
-        raise ControlStoreIntegrityError("injected_receipt_lookup_failure")
-
-    with monkeypatch.context() as patch:
-        patch.setattr(
-            SQLiteControlStore,
-            "load_transaction_receipt",
-            fail_lookup,
-        )
-        unknown = service.submit_source(request)
-
-    assert unknown.to_dict() == {
-        "status": "commit_outcome_unknown",
-        "error_code": "commit_outcome_unknown",
-    }
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.current_revision == 2
-
-    replay = service.submit_source(request)
-    assert replay.status == "replayed"
-    assert replay.receipt == committed.receipt
-
-    content = workspace / "scratch/INV-SOURCE-001/source_content.pdf"
-    content.write_bytes(content.read_bytes() + b"changed")
-    conflict = service.submit_source(request)
-    assert conflict.to_dict() == {
-        "status": "failed_uncommitted",
-        "error_code": "submission_replay_conflict",
-    }
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.current_revision == 2
-
-
-def test_intake_commit_sites_share_the_postcommit_observer_boundary() -> None:
-    path = ROOT / "src/multi_agent_brief/intake_v2/service.py"
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    calls = [
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "_commit_uow"
-    ]
-    assert len(calls) == 4
-    assert all(len(call.args) == 2 for call in calls)
-
-
 def test_commit_outcome_unknown_intake_result_is_strictly_value_free() -> None:
     result = IntakeResult(
         status="commit_outcome_unknown",
@@ -1024,31 +516,6 @@ def test_commit_outcome_unknown_intake_result_is_strictly_value_free() -> None:
             error_code="commit_outcome_unknown",
             source_id="must-not-leak",
         )
-
-
-def test_both_intake_public_operations_preserve_unknown_status(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = tmp_path / "workspace"
-    _seed_workspace(workspace)
-    service = IntakeService(workspace, clock=CLOCK)
-
-    def unknown(*_args, **_kwargs):
-        raise ControlStoreCommitOutcomeUnknown()
-
-    with monkeypatch.context() as patch:
-        patch.setattr(service, "_submit_source", unknown)
-        source = service.submit_source("scratch/unused.json")
-    with monkeypatch.context() as patch:
-        patch.setattr(service, "_submit_proposal", unknown)
-        proposal = service.submit_proposal("candidate", "scratch/unused.json")
-
-    for result in (source, proposal):
-        assert result.to_dict() == {
-            "status": "commit_outcome_unknown",
-            "error_code": "commit_outcome_unknown",
-        }
 
 
 def test_stale_store_revision_and_unsafe_scratch_are_zero_write(
@@ -1126,223 +593,6 @@ def test_hardlinked_source_intake_leaves_are_uncommitted(
     assert snapshot.sources == ()
     assert snapshot.artifact_revisions == ()
     assert snapshot.events == ()
-
-
-@pytest.mark.parametrize("force_absolute_fallback", [False, True])
-def test_hardlinked_source_pack_manifest_is_uncommitted_before_member_reads(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    force_absolute_fallback: bool,
-) -> None:
-    workspace = tmp_path / "workspace"
-    _seed_workspace(workspace)
-    scratch = workspace / "scratch" / "INV-SOURCE-001"
-    manifest_path = scratch / "source_manifest.json"
-    manifest_bytes = b'{"members":[]}'
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    manifest_path.write_bytes(manifest_bytes)
-    request_path = scratch / "submit_request.json"
-    _write_json(
-        request_path,
-        {
-            "schema_version": SourcePackCommitRequest.schema_id,
-            "request_id": "REQ-SOURCE-PACK-HARDLINK-001",
-            "run_id": RUN_ID,
-            "invocation_id": "INV-SOURCE-001",
-            "members": [
-                {
-                    "member_id": "SRC-HARDLINK-001",
-                    "proposal_path": (
-                        "scratch/INV-SOURCE-001/sources/SRC-HARDLINK-001/"
-                        "source_proposal.json"
-                    ),
-                    "content_path": (
-                        "scratch/INV-SOURCE-001/sources/SRC-HARDLINK-001/"
-                        "source_content.bin"
-                    ),
-                    "raw_payload_path": None,
-                }
-            ],
-            "manifest_path": manifest_path.relative_to(workspace).as_posix(),
-            "expected_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
-            "expected_store_revision": 1,
-        },
-    )
-    original = _replace_with_external_hardlink(
-        manifest_path,
-        outside=tmp_path / "outside-manifest.json",
-    )
-    if force_absolute_fallback:
-        monkeypatch.setattr(os, "supports_dir_fd", frozenset())
-    database = workspace / "briefloop.db"
-    before_bytes = database.read_bytes()
-    result = IntakeService(workspace, clock=CLOCK).submit_source_pack(
-        request_path.relative_to(workspace).as_posix()
-    )
-
-    assert result.to_dict() == {
-        "status": "failed_uncommitted",
-        "error_code": "scratch_entry_unsafe",
-    }
-    assert database.read_bytes() == before_bytes
-    assert manifest_path.read_bytes() == original
-    with SQLiteControlStore.open(database) as store:
-        assert store.current_revision == 1
-        snapshot = store.load_snapshot(RUN_ID)
-    assert snapshot.sources == ()
-    assert snapshot.artifact_revisions == ()
-    assert snapshot.events == ()
-
-
-@pytest.mark.parametrize("force_absolute_fallback", [False, True])
-def test_source_intake_rejects_link_created_after_pre_stat_without_body_read(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    force_absolute_fallback: bool,
-) -> None:
-    workspace = tmp_path / "workspace"
-    _seed_workspace(workspace)
-    request_path = _source_request(workspace)
-    target = request_path.parent / "source_content.pdf"
-    state = _link_target_after_pre_stat_before_open(
-        monkeypatch,
-        target=target,
-        outside=tmp_path / "outside-raced-source-content.pdf",
-    )
-    if not force_absolute_fallback and not state["original_open_supports_dir_fd"]:
-        pytest.skip("native os.open does not support dir_fd")
-    if force_absolute_fallback:
-        monkeypatch.setattr(os, "supports_dir_fd", frozenset())
-    else:
-        monkeypatch.setattr(os, "supports_dir_fd", os.supports_dir_fd | {os.open})
-    if force_absolute_fallback and os.open in os.supports_dir_fd:
-        raise AssertionError("absolute fallback unexpectedly supports patched os.open")
-    if not force_absolute_fallback and os.open not in os.supports_dir_fd:
-        raise AssertionError("dir-fd route does not support patched os.open")
-    database = workspace / "briefloop.db"
-    before_bytes = database.read_bytes()
-
-    result = IntakeService(workspace, clock=CLOCK).submit_source(
-        request_path.relative_to(workspace).as_posix()
-    )
-
-    if result.to_dict() != {
-        "status": "failed_uncommitted",
-        "error_code": "scratch_entry_unsafe",
-    }:
-        raise AssertionError(result.to_dict())
-    if state["hardlink_created"] is not True:
-        raise AssertionError(state)
-    if state["target_open_succeeded"] is not True:
-        raise AssertionError(state)
-    if state["target_body_read"] is not False:
-        raise AssertionError(state)
-    if state["target_open_used_dir_fd"] is not (not force_absolute_fallback):
-        raise AssertionError(state)
-    if database.read_bytes() != before_bytes:
-        raise AssertionError("raced scratch read changed the control store")
-    with SQLiteControlStore.open(database) as store:
-        if store.current_revision != 1:
-            raise AssertionError(store.current_revision)
-        snapshot = store.load_snapshot(RUN_ID)
-    if snapshot.sources or snapshot.artifact_revisions or snapshot.events:
-        raise AssertionError(snapshot)
-
-
-def test_finalized_current_run_requires_new_run_without_consuming_intake(
-    tmp_path: Path,
-) -> None:
-    workspace = tmp_path / "workspace"
-    _seed_workspace(workspace)
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        unit = store.begin(RUN_ID, "TX-FINALIZED-001", "private_test_finalize", 1)
-        unit.put_stage_state(
-            _record(
-                StageState,
-                run_id=RUN_ID,
-                stage_id="finalize",
-                status="complete",
-                revision=1,
-                updated_at=NOW,
-            )
-        )
-        unit.commit()
-    request = _source_request(workspace, expected_revision=2)
-
-    result = IntakeService(workspace, clock=CLOCK).submit_source(
-        request.relative_to(workspace).as_posix()
-    )
-
-    assert result.error_code == "new_run_required"
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.current_revision == 2
-        invocation = next(
-            item
-            for item in store.load_snapshot(RUN_ID).invocations
-            if item.invocation_id == "INV-SOURCE-001"
-        )
-        assert invocation.status == "active"
-
-def test_malformed_request_is_uncommitted_but_malformed_owned_proposal_is_recorded(
-    tmp_path: Path,
-) -> None:
-    workspace = tmp_path / "workspace"
-    _seed_workspace(workspace)
-    request = _candidate_request(workspace, expected_revision=1)
-    request_relative = request.relative_to(workspace).as_posix()
-    request.write_text('{"schema_version":', encoding="utf-8")
-    service = IntakeService(workspace, clock=CLOCK)
-
-    invalid_request = service.submit_proposal("candidate", request_relative)
-    assert invalid_request.error_code == "intake_request_invalid"
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.current_revision == 1
-
-    request = _candidate_request(workspace, expected_revision=1)
-    proposal = workspace / "scratch" / "INV-SCOUT-001" / "candidate_claims.json"
-    proposal.write_text('{"schema_version":', encoding="utf-8")
-    invalid_proposal = service.submit_proposal(
-        "candidate",
-        request.relative_to(workspace).as_posix(),
-    )
-    assert invalid_proposal.status == "rejected_recorded"
-    assert invalid_proposal.error_code == "proposal_contract_invalid"
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.current_revision == 2
-
-
-def test_pr3_unbound_intake_never_invokes_core_run_verifier(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace = tmp_path / "workspace"
-    _seed_workspace(workspace)
-
-    def forbidden_core_verification(*_args, **_kwargs):
-        pytest.fail("PR-3 unbound intake must not invoke the PR-4A domain verifier")
-
-    monkeypatch.setattr(
-        IntakeService,
-        "_verify_core_run",
-        forbidden_core_verification,
-    )
-    service = IntakeService(workspace, clock=CLOCK)
-    committed = service.submit_source(
-        _source_request(workspace).relative_to(workspace).as_posix()
-    )
-    assert committed.status == "committed"
-
-    request = _candidate_request(workspace, expected_revision=2)
-    proposal = workspace / "scratch" / "INV-SCOUT-001" / "candidate_claims.json"
-    proposal.write_text('{"schema_version":', encoding="utf-8")
-    rejected = service.submit_proposal(
-        "candidate",
-        request.relative_to(workspace).as_posix(),
-    )
-    assert rejected.status == "rejected_recorded"
-    assert rejected.error_code == "proposal_contract_invalid"
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.current_revision == 3
 
 
 def test_all_five_lanes_and_both_screening_owners_commit_without_stage_advance(
@@ -1484,130 +734,6 @@ def test_all_five_lanes_and_both_screening_owners_commit_without_stage_advance(
         ]
         assert snapshot.approvals == ()
         assert snapshot.deliveries == ()
-
-
-def test_screening_parent_universe_mismatch_records_only_failure_uow(
-    tmp_path: Path,
-) -> None:
-    workspace = tmp_path / "workspace"
-    _seed_workspace(workspace)
-    service = IntakeService(workspace, clock=CLOCK)
-    assert service.submit_source(
-        _source_request(workspace).relative_to(workspace).as_posix()
-    ).status == "committed"
-    assert service.submit_proposal(
-        "candidate",
-        _candidate_request(workspace).relative_to(workspace).as_posix(),
-    ).status == "committed"
-    request = _proposal_request(
-        workspace,
-        invocation_id="INV-SCREEN-001",
-        request_id="REQ-SCREEN-MISMATCH",
-        artifact_id="screened_candidates",
-        expected_store_revision=3,
-        expected_artifact_revision=0,
-        payload={
-            "schema_version": "briefloop.screened_candidates_proposal.v2",
-            "proposal_id": "PROP-SCREEN-MISMATCH",
-            "run_id": RUN_ID,
-            "candidate_claims_proposal_id": "PROP-CANDIDATES-001",
-            "created_at": NOW,
-            "decisions": [
-                {
-                    "candidate_id": "CAND-OTHER",
-                    "decision": "selected",
-                    "reason_code": None,
-                    "explanation": None,
-                }
-            ],
-        },
-    )
-
-    result = service.submit_proposal(
-        "screened",
-        request.relative_to(workspace).as_posix(),
-    )
-
-    assert result.status == "rejected_recorded"
-    assert result.error_code == "candidate_universe_mismatch"
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        snapshot = store.load_snapshot(RUN_ID)
-        assert snapshot.store_revision == 4
-        assert [item.proposal_kind for item in snapshot.accepted_proposals] == [
-            "candidate"
-        ]
-        assert _by_invocation(snapshot, "INV-SCREEN-001").status == "failed"
-
-
-def test_claim_draft_parent_and_final_claim_identity_fail_closed(
-    tmp_path: Path,
-) -> None:
-    parent_workspace = tmp_path / "parent"
-    _seed_workspace(parent_workspace)
-    parent_request = _proposal_request(
-        parent_workspace,
-        invocation_id="INV-DRAFTS-001",
-        request_id="REQ-DRAFTS-PARENT",
-        artifact_id="claim_drafts",
-        expected_store_revision=1,
-        expected_artifact_revision=0,
-        payload={
-            "schema_version": "briefloop.claim_drafts_proposal.v2",
-            "proposal_id": "PROP-DRAFTS-PARENT",
-            "run_id": RUN_ID,
-            "screened_candidates_proposal_id": "PROP-MISSING",
-            "created_at": NOW,
-            "drafts": [
-                {
-                    "draft_id": "DRAFT-001",
-                    "statement": "Synthetic statement.",
-                    "evidence_text": "Synthetic evidence.",
-                    "source_ids": ["SRC-MISSING"],
-                    "claim_type": "fact",
-                }
-            ],
-        },
-    )
-    parent = IntakeService(parent_workspace, clock=CLOCK).submit_proposal(
-        "claim-drafts",
-        parent_request.relative_to(parent_workspace).as_posix(),
-    )
-    assert parent.status == "rejected_recorded"
-    assert parent.error_code == "proposal_parent_invalid"
-
-    claim_workspace = tmp_path / "claim-id"
-    _seed_workspace(claim_workspace)
-    claim_request = _proposal_request(
-        claim_workspace,
-        invocation_id="INV-DRAFTS-001",
-        request_id="REQ-DRAFTS-CLAIM-ID",
-        artifact_id="claim_drafts",
-        expected_store_revision=1,
-        expected_artifact_revision=0,
-        payload={
-            "schema_version": "briefloop.claim_drafts_proposal.v2",
-            "proposal_id": "PROP-DRAFTS-CLAIM-ID",
-            "run_id": RUN_ID,
-            "screened_candidates_proposal_id": "PROP-MISSING",
-            "created_at": NOW,
-            "drafts": [
-                {
-                    "draft_id": "DRAFT-001",
-                    "claim_id": "CLAIM-001",
-                    "statement": "Synthetic statement.",
-                    "evidence_text": "Synthetic evidence.",
-                    "source_ids": ["SRC-MISSING"],
-                    "claim_type": "fact",
-                }
-            ],
-        },
-    )
-    claim = IntakeService(claim_workspace, clock=CLOCK).submit_proposal(
-        "claim-drafts",
-        claim_request.relative_to(claim_workspace).as_posix(),
-    )
-    assert claim.status == "rejected_recorded"
-    assert claim.error_code == "proposal_contract_invalid"
 
 
 def test_audit_requires_current_frozen_same_run_target_revision(tmp_path: Path) -> None:

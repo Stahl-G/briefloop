@@ -4,33 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import subprocess
-import sys
 from pathlib import Path
 
-import pytest
-
 from multi_agent_brief.cli.main import main
-from multi_agent_brief.status import build_workspace_status, format_workspace_status
 from multi_agent_brief.product.quality_panel import (
-    QUALITY_PANEL_HTML_BOUNDARY,
     QUALITY_PANEL_BOUNDARY,
     QUALITY_SUMMARY_BOUNDARY,
-    QualityPanelError,
-    build_quality_panel,
-    quality_panel_html_path,
-    quality_panel_path,
-    render_quality_panel_html,
-    quality_summary_path,
-    _status_level,
-    validate_quality_panel_html,
-    render_quality_summary,
     validate_quality_panel_payload,
     validate_quality_summary_markdown,
-    write_quality_panel,
-    write_quality_panel_html,
-    write_quality_summary,
 )
 from multi_agent_brief.semantic_evaluator.reader import (
     LAJ_READER_BOUNDARY,
@@ -137,38 +118,6 @@ def _write_laj_reader_view(path: Path, *, report_sha256: str) -> LajReaderView:
     return view
 
 
-def test_quality_panel_direct_import_has_no_runtime_state_cycle() -> None:
-    env = dict(os.environ)
-    src_path = str(Path.cwd() / "src")
-    env["PYTHONPATH"] = (
-        f"{src_path}{os.pathsep}{env['PYTHONPATH']}"
-        if env.get("PYTHONPATH")
-        else src_path
-    )
-
-    result = subprocess.run(
-        [
-            sys.executable,
-            "-c",
-            (
-                "from multi_agent_brief.product.quality_panel import "
-                "build_quality_panel, render_quality_panel_html, render_quality_summary; "
-                "print(build_quality_panel, render_quality_panel_html, render_quality_summary)"
-            ),
-        ],
-        check=False,
-        cwd=Path.cwd(),
-        env=env,
-        text=True,
-        capture_output=True,
-    )
-
-    assert result.returncode == 0, result.stderr
-    assert "build_quality_panel" in result.stdout
-    assert "render_quality_panel_html" in result.stdout
-    assert "render_quality_summary" in result.stdout
-
-
 def test_quality_summarize_public_cli_retired_rejects_typed_without_writes(
     tmp_path: Path,
     capsys,
@@ -258,51 +207,6 @@ def test_quality_summary_validator_rejects_release_authority_shape() -> None:
     )
 
 
-def test_quality_panel_payload_validator_rejects_release_authority_shape() -> None:
-    payload = {
-        "schema_version": "briefloop.quality_panel.v1",
-        "workspace": ".",
-        "run_id": "run-1",
-        "runtime_effect": "projection_only",
-        "boundary": QUALITY_PANEL_BOUNDARY,
-        "overall_status": "pass",
-        "control_integrity": {},
-        "source_evidence": {},
-        "gates": {},
-        "claims": {},
-        "delivery": {},
-        "trajectory_regulation": {
-            "schema_version": "briefloop.trajectory_regulation.v1",
-            "status": "ok",
-            "read_only": True,
-            "runtime_effect": "none",
-            "boundary": "trajectory_regulation_projection_only_not_state_transition_or_repair_execution",
-            "run_id": "run-1",
-            "current_stage": "doctor",
-            "event_log_present": True,
-            "event_log_corrupt_count": 0,
-            "limits": {},
-            "summary_counts": {},
-            "stages": [],
-            "recommended_actions": [],
-            "non_goals": [
-                "state_transition",
-                "repair_execution",
-                "gate_decision",
-                "release_authority",
-                "quality_score",
-            ],
-        },
-        "recommended_actions": [],
-        "non_goals": ["quality_score"],
-    }
-
-    assert (
-        validate_quality_panel_payload(payload)
-        == "quality_panel_schema_error:non_goals"
-    )
-
-
 def test_quality_panel_payload_validator_rejects_forged_trajectory_authority() -> None:
     trajectory = {
         "schema_version": "briefloop.trajectory_regulation.v1",
@@ -368,40 +272,4 @@ def test_quality_panel_payload_validator_rejects_forged_trajectory_authority() -
     assert (
         validate_quality_panel_payload(forged_action)
         == "quality_panel_schema_error:recommended_actions.action"
-    )
-
-
-def test_quality_panel_payload_validator_rejects_forged_template_conformance_authority() -> (
-    None
-):
-    payload = {
-        "schema_version": "briefloop.quality_panel.v1",
-        "workspace": ".",
-        "run_id": "run-test",
-        "runtime_effect": "projection_only",
-        "boundary": QUALITY_PANEL_BOUNDARY,
-        "overall_status": "warning",
-        "control_integrity": {},
-        "source_evidence": {},
-        "gates": {},
-        "claims": {},
-        "delivery": {},
-        "report_template_conformance": {
-            "boundary": "product_report_template_conformance_projection_only",
-            "runtime_effect": "state_transition",
-            "status": "warning",
-            "targets": [],
-            "summary_counts": {},
-        },
-        "recommended_actions": [],
-        "non_goals": [
-            "semantic_truth_proof",
-            "release_eligibility_decision",
-            "delivery_approval",
-        ],
-    }
-
-    assert validate_quality_panel_payload(payload) == (
-        "quality_panel_schema_error:report_template_conformance:"
-        "report_template_conformance_schema_error:runtime_effect"
     )

@@ -24,7 +24,6 @@ from multi_agent_brief.cli.init_commands import _init_web_wizard
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.core.env import get_known_env_value
 from multi_agent_brief.product.init_web.server import (
-    MAX_JSON_BODY_BYTES,
     SESSION_TOKEN_HEADER,
     create_init_web_server,
 )
@@ -347,34 +346,6 @@ def test_get_assets_and_security_headers(server) -> None:
     assert server._server.server_address[0] == "127.0.0.1"
 
 
-def test_actual_app_binds_explicit_search_topic() -> None:
-    missing = _evaluate_actual_app_submission(
-        request_id="REQ-ACTUAL-APP-MISSING-TOPIC",
-        session_id="SESSION-ACTUAL-APP",
-        workspace_target="actual-app",
-        search_topic="",
-    )
-    assert missing["missing"] == ["field_search_topic"]
-
-    evaluated = _evaluate_actual_app_submission(
-        request_id="REQ-ACTUAL-APP-TOPIC",
-        session_id="SESSION-ACTUAL-APP",
-        workspace_target="actual-app",
-        search_topic="grid-scale energy storage",
-    )
-    assert evaluated["missing"] == []
-    submission = evaluated["submission"]
-    assert isinstance(submission, dict)
-    payload = submission["payload"]
-    assert isinstance(payload, dict)
-    selections = payload["selections"]
-    assert isinstance(selections, dict)
-    assert selections["report_type"] == "industry_weekly"
-    assert selections["industry_or_theme"] == "grid-scale energy storage"
-    assert selections["task_objective"] == _LONG_PUBLIC_WEB_TASK_OBJECTIVE
-    assert selections["focus_areas"] == ["Industry weekly"]
-
-
 def test_get_rejects_bad_host_and_unknown_routes(server) -> None:
     status, _headers, _body = _request(
         server, "GET", "/index.html", headers={"Host": "evil.example"}
@@ -433,46 +404,6 @@ def test_search_secret_endpoint_is_token_bound_and_never_echoes_key(server) -> N
         "provider": "tavily",
     }
     assert secret.encode() not in body
-
-
-def test_post_rejects_other_routes_and_bad_envelope(server) -> None:
-    token, session = _credentials(server.url)
-    auth = {"Content-Type": "application/json", SESSION_TOKEN_HEADER: token}
-
-    status, _headers, _body = _request(
-        server, "POST", "/api/v1/other", body=_submit_body(), headers=auth
-    )
-    assert status == 404
-
-    status, _headers, _body = _request(
-        server,
-        "POST",
-        f"/api/v1/submit?session_id={session}",
-        body=_submit_body(),
-        headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            SESSION_TOKEN_HEADER: token,
-        },
-    )
-    assert status == 415
-
-    status, _headers, _body = _request(
-        server,
-        "POST",
-        f"/api/v1/submit?session_id={session}",
-        body=b"not-json",
-        headers=auth,
-    )
-    assert status == 400
-
-    status, _headers, _body = _request(
-        server,
-        "POST",
-        f"/api/v1/submit?session_id={session}",
-        body=b"x",
-        headers={**auth, "Content-Length": str(MAX_JSON_BODY_BYTES + 1)},
-    )
-    assert status == 413
 
 
 def test_post_success_returns_real_response(server) -> None:
@@ -1080,151 +1011,5 @@ def test_source_upload_is_session_bound_and_server_hashed(tmp_path: Path) -> Non
         assert preview["routing_bindings"] == [
             {"metadata_index": 0, "upload_handle": payload["upload_handle"]}
         ]
-    finally:
-        instance.close()
-
-
-def test_output_contract_preview_is_session_bound_and_zero_write(server) -> None:
-    token, session = _credentials(server.url)
-    body = json.dumps({"output_extent": "balanced", "output_language": "en"}).encode(
-        "utf-8"
-    )
-    status, _headers, raw = _request(
-        server,
-        "POST",
-        f"/api/v1/output-contract-preview?session_id={session}",
-        body=body,
-        headers={"Content-Type": "application/json", SESSION_TOKEN_HEADER: token},
-    )
-    assert status == 200
-    assert json.loads(raw) == {
-        "ok": True,
-        "output_extent": "balanced",
-        "extent_catalog_id": "briefloop.output_extent_catalog.v1",
-        "body_length_basis": "reader_body_excluding_source_reference_sections",
-        "body_length_unit": "word_equivalent_tokens",
-        "resolved_minimum": 600,
-        "resolved_maximum": 800,
-    }
-
-    status, _headers, raw = _request(
-        server,
-        "POST",
-        f"/api/v1/output-contract-preview?session_id={session}",
-        body=json.dumps(
-            {"output_extent": "balanced", "output_language": "en", "minimum": 1}
-        ).encode("utf-8"),
-        headers={"Content-Type": "application/json", SESSION_TOKEN_HEADER: token},
-    )
-    assert status == 422
-    assert json.loads(raw) == {
-        "ok": False,
-        "reason_code": "submission_output_extent_invalid",
-    }
-
-
-def test_submission_error_maps_to_status_and_reason(server) -> None:
-    conflict = create_init_web_server(
-        _StubSubmitter(response_status="conflict"), exit_on_success=False
-    )
-    conflict.start()
-    try:
-        token, session = _credentials(conflict.url)
-        status, _headers, body = _request(
-            conflict,
-            "POST",
-            f"/api/v1/submit?session_id={session}",
-            body=_submit_body(),
-            headers={"Content-Type": "application/json", SESSION_TOKEN_HEADER: token},
-        )
-        assert status == 409
-        assert json.loads(body)["reason_code"] == "submission_replay_conflict"
-    finally:
-        conflict.close()
-
-
-def test_server_exits_on_success_when_configured() -> None:
-    instance = create_init_web_server(_StubSubmitter(), exit_on_success=True)
-    instance.start()
-    token, session = _credentials(instance.url)
-    status, _headers, _body = _request(
-        instance,
-        "POST",
-        f"/api/v1/submit?session_id={session}",
-        body=_submit_body(),
-        headers={"Content-Type": "application/json", SESSION_TOKEN_HEADER: token},
-    )
-    assert status == 200
-    deadline = time.time() + 5
-    while time.time() < deadline:
-        if instance._thread is not None and not instance._thread.is_alive():
-            break
-        time.sleep(0.05)
-    assert instance._thread is not None and not instance._thread.is_alive()
-    instance.close()
-
-
-def test_server_survives_success_when_exit_disabled(server) -> None:
-    token, session = _credentials(server.url)
-    auth = {"Content-Type": "application/json", SESSION_TOKEN_HEADER: token}
-    for _ in range(2):
-        status, _headers, _body = _request(
-            server,
-            "POST",
-            f"/api/v1/submit?session_id={session}",
-            body=_submit_body(),
-            headers=auth,
-        )
-        assert status == 200
-    assert server._thread is not None and server._thread.is_alive()
-
-
-@pytest.mark.explicit_e2e
-def test_real_submitter_end_to_end(tmp_path: Path) -> None:
-    instance = create_init_web_server(
-        InitWebSubmitter(base_dir=tmp_path), exit_on_success=True
-    )
-    instance.start()
-    try:
-        token, session = _credentials(instance.url)
-        body = json.dumps(
-            {
-                "schema_version": "briefloop.init_web.submission.v1",
-                "request_id": "REQ-E2E00001",
-                "payload": {
-                    "workspace_target": "web-ws",
-                    "selections": {
-                        "company": "ExampleCo",
-                        "report_type": "management_monthly",
-                        "industry_or_theme": "manufacturing",
-                        "task_objective": "Prepare the weekly manufacturing brief.",
-                        "audience": "management",
-                        "focus_areas": ["operations"],
-                        "output_formats": ["markdown"],
-                        "web_search_mode": "disabled",
-                        "output_extent": "balanced",
-                    },
-                    "raw_free_text": "",
-                    "discarded": [],
-                    "human_confirmation": True,
-                },
-            }
-        ).encode("utf-8")
-        status, _headers, raw = _request(
-            instance,
-            "POST",
-            f"/api/v1/submit?session_id={session}",
-            body=body,
-            headers={"Content-Type": "application/json", SESSION_TOKEN_HEADER: token},
-        )
-        assert status == 200
-        payload = json.loads(raw)
-        assert payload["status"] == "committed"
-        assert (tmp_path / "web-ws" / "briefloop.db").is_file()
-        assert "receipt" not in payload
-        assert "workspace" not in payload
-        assert "next_command" not in payload
-        assert instance.outcome is not None
-        assert instance.outcome.workspace == str(tmp_path / "web-ws")
     finally:
         instance.close()

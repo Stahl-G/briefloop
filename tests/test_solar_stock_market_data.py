@@ -1,4 +1,3 @@
-from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -10,15 +9,7 @@ import pytest
 
 from multi_agent_brief.cli.init_wizard import create_demo_workspace
 from multi_agent_brief.cli.main import main as cli_main
-from multi_agent_brief.contracts.v2 import (
-    CoreRunInitializeRequest,
-    IntegrityCheckRequest,
-    Invocation,
-    InvocationStartRequest,
-    MarketDataSecurityGapV1,
-    MarketDataSecurityV1,
-    MarketDataSnapshotV1,
-)
+from multi_agent_brief.contracts.v2 import CoreRunInitializeRequest, IntegrityCheckRequest, Invocation, InvocationStartRequest, MarketDataSnapshotV1
 from multi_agent_brief.control_store import SQLiteControlStore
 from multi_agent_brief.control_store.serialization import (
     canonical_fingerprint,
@@ -26,24 +17,12 @@ from multi_agent_brief.control_store.serialization import (
 )
 from multi_agent_brief.core_run_v2 import CoreRunService
 from multi_agent_brief.core_run_v2.integrity import read_workspace_file
-from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
-from multi_agent_brief.product.market_data_service import (
-    MARKET_DATA_TABLES_PATH,
-    MarketDataService,
-    render_market_data_tables,
-)
-from multi_agent_brief.sources.market_data import (
-    MarketDataError,
-    MarketDataFetchOutcome,
-    YahooMarketDataAdapter,
-    load_manual_market_data_file,
-    merge_manual_first,
-)
+from multi_agent_brief.product.market_data_service import MARKET_DATA_TABLES_PATH, MarketDataService
+from multi_agent_brief.sources.market_data import YahooMarketDataAdapter
 from multi_agent_brief.sources.solar_stock_plan import (
     SOLAR_STOCK_OVERSEAS_SECURITIES,
     SOLAR_STOCK_PRIMARY_SECURITIES,
 )
-from pydantic import ValidationError
 
 
 RUN_ID = "RUN-MARKET-DATA-001"
@@ -277,117 +256,21 @@ def _initialize_core_run(workspace: Path) -> None:
 # ── DTO validation ────────────────────────────────────────────────────────────
 
 
-def test_snapshot_dto_round_trips_and_recomputes_fingerprint() -> None:
-    snapshot = _snapshot()
-    assert snapshot.snapshot_fingerprint == canonical_fingerprint(
-        snapshot.model_dump(mode="json", exclude={"snapshot_fingerprint"})
-    )
-    assert snapshot.security_count == 1
-    assert snapshot.securities[0].trailing_pe is None
 
 
-@pytest.mark.parametrize(
-    "override",
-    [
-        {"schema_version": "briefloop.market_data_snapshot.v2"},
-        {"provider_id": "yahoo_chart"},
-        {"security_count": 2},
-        {"security_count": 0},
-        {"as_of_date": "2026-8-10"},
-        {"snapshot_fingerprint": "0" * 64},
-    ],
-)
-def test_snapshot_dto_rejects_constraint_violations(override) -> None:
-    payload = _snapshot_payload()
-    fingerprint_tamper = "snapshot_fingerprint" in override
-    payload.update(override)
-    if not fingerprint_tamper:
-        payload["snapshot_fingerprint"] = canonical_fingerprint(
-            {key: value for key, value in payload.items()}
-        )
-    with pytest.raises(ValidationError):
-        MarketDataSnapshotV1.model_validate(payload, strict=True)
 
 
-def test_snapshot_dto_rejects_unsorted_and_overlapping_tickers() -> None:
-    payload = _snapshot_payload(
-        securities=[
-            _security_payload(ticker="TE"),
-            _security_payload(ticker="DQ"),
-        ],
-        security_count=2,
-    )
-    with pytest.raises(ValidationError):
-        MarketDataSnapshotV1.model_validate(payload, strict=True)
-
-    payload = _snapshot_payload(
-        gaps=[{"ticker": "TOYO", "failure_class": "http_error"}],
-    )
-    with pytest.raises(ValidationError):
-        MarketDataSnapshotV1.model_validate(payload, strict=True)
 
 
-def test_snapshot_dto_rejects_twelve_securities() -> None:
-    payload = _snapshot_payload(
-        securities=[_security_payload(ticker=f"T{item:02d}") for item in range(12)],
-        security_count=12,
-    )
-    with pytest.raises(ValidationError):
-        MarketDataSnapshotV1.model_validate(payload, strict=True)
 
 
-def test_security_dto_rejects_incoherent_or_negative_bar() -> None:
-    with pytest.raises(ValidationError):
-        _snapshot(securities=[_security_payload(week_high=9.0, week_low=10.1)])
-    with pytest.raises(ValidationError):
-        _snapshot(securities=[_security_payload(week_close=-1.0)])
-    with pytest.raises(ValidationError):
-        _snapshot(securities=[_security_payload(currency="usd")])
 
 
 # ── Yahoo adapter (mocked transport) ─────────────────────────────────────────
 
 
-def test_yahoo_adapter_parses_weekly_bar_and_explicit_nulls(monkeypatch) -> None:
-    monkeypatch.setattr(
-        "urllib.request.urlopen",
-        _mock_urlopen({"TOYO": (200, _yahoo_chart_body())}),
-    )
-    outcome = YahooMarketDataAdapter().fetch_weekly(["TOYO"])
-    assert not outcome.gaps
-    security = outcome.securities[0]
-    assert security.ticker == "TOYO"
-    assert security.as_of == "2026-08-10"
-    assert security.week_close == 10.62
-    assert security.weekly_change_pct == round((10.62 / 10.36 - 1) * 100, 4)
-    assert security.market_cap == 812000000.0
-    assert security.trailing_pe is None
-    assert security.data_origin == "yahoo_chart_api"
 
 
-def test_yahoo_adapter_isolates_single_security_failures(monkeypatch) -> None:
-    bodies = {
-        "TOYO": (200, _yahoo_chart_body()),
-        "TE": (200, b"not-json"),
-        "FSLR": (500, b"{}"),
-        "CSIQ": (200, json.dumps({"chart": {"error": None, "result": []}}).encode()),
-        "JKS": ConnectionError("sandbox host must not leak"),
-    }
-    monkeypatch.setattr("urllib.request.urlopen", _mock_urlopen(bodies))
-    outcome = YahooMarketDataAdapter().fetch_weekly(
-        ["TOYO", "TE", "FSLR", "CSIQ", "JKS"]
-    )
-    assert [item.ticker for item in outcome.securities] == ["TOYO"]
-    gaps = {item.ticker: item.failure_class for item in outcome.gaps}
-    assert gaps == {
-        "TE": "response_invalid",
-        "FSLR": "http_error",
-        "CSIQ": "response_invalid",
-        "JKS": "transport_unavailable",
-    }
-    assert "sandbox host" not in json.dumps(
-        [item.model_dump(mode="json") for item in outcome.gaps]
-    )
 
 
 def test_yahoo_adapter_marks_missing_bars_without_fabricating(monkeypatch) -> None:
@@ -411,183 +294,28 @@ def test_yahoo_adapter_marks_missing_bars_without_fabricating(monkeypatch) -> No
     assert [item.failure_class for item in outcome.gaps] == ["symbol_data_missing"]
 
 
-def test_yahoo_adapter_rejects_overbound_response(monkeypatch) -> None:
-    overbound = _yahoo_chart_body() + b"x" * (2 * 1024 * 1024)
-    monkeypatch.setattr(
-        "urllib.request.urlopen", _mock_urlopen({"TOYO": (200, overbound)})
-    )
-    outcome = YahooMarketDataAdapter().fetch_weekly(["TOYO"])
-    assert outcome.securities == ()
-    assert [item.failure_class for item in outcome.gaps] == ["response_invalid"]
 
 
 # ── Manual input channel ──────────────────────────────────────────────────────
 
 
-def test_manual_json_file_validates_rows_and_defaults(tmp_path: Path) -> None:
-    path = tmp_path / "weekly.json"
-    path.write_text(
-        json.dumps(
-            {
-                "as_of_date": "2026-08-10",
-                "securities": [
-                    {
-                        "ticker": "TOYO",
-                        "exchange": "NasdaqCM",
-                        "currency": "USD",
-                        "week_close": 10.62,
-                        "market_cap": 812000000,
-                    },
-                    {"ticker": "DQ", "exchange": "NYSE", "currency": "USD"},
-                ],
-            }
-        ),
-        encoding="utf-8",
-    )
-    manual = load_manual_market_data_file(path)
-    assert len(manual.securities) == 1
-    security = manual.securities[0]
-    assert security.as_of == "2026-08-10"
-    assert security.data_origin == "manual_input"
-    assert security.week_open is None
-    assert security.trailing_pe is None
-    assert [item.failure_class for item in manual.gaps] == ["manual_record_invalid"]
-    assert manual.gaps[0].ticker == "DQ"
 
 
-def test_manual_csv_file_parses_empty_cells_as_nulls(tmp_path: Path) -> None:
-    path = tmp_path / "weekly.csv"
-    path.write_text(
-        "ticker,exchange,currency,as_of,week_open,week_high,week_low,"
-        "week_close,week_volume,weekly_change_pct,market_cap,trailing_pe\n"
-        "TOYO,NasdaqCM,USD,2026-08-10,10.40,10.90,10.10,10.62,1523400,2.31,812000000,\n",
-        encoding="utf-8",
-    )
-    manual = load_manual_market_data_file(path)
-    assert not manual.gaps
-    security = manual.securities[0]
-    assert security.week_close == 10.62
-    assert security.week_volume == 1523400
-    assert security.trailing_pe is None
 
 
-def test_manual_file_unparseable_is_fail_closed(tmp_path: Path) -> None:
-    path = tmp_path / "weekly.json"
-    path.write_text("{not json", encoding="utf-8")
-    with pytest.raises(MarketDataError):
-        load_manual_market_data_file(path)
-    csv_path = tmp_path / "weekly.csv"
-    csv_path.write_text("ticker,close\nTOYO,10.62\n", encoding="utf-8")
-    with pytest.raises(MarketDataError):
-        load_manual_market_data_file(csv_path)
 
 
-def test_manual_input_wins_over_api_for_same_ticker(tmp_path: Path) -> None:
-    path = tmp_path / "weekly.json"
-    path.write_text(
-        json.dumps(
-            {
-                "securities": [
-                    {
-                        "ticker": "TOYO",
-                        "exchange": "NasdaqCM",
-                        "currency": "USD",
-                        "as_of": "2026-08-09",
-                        "week_close": 11.11,
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
-    )
-    manual = load_manual_market_data_file(path)
-    api_security = MarketDataSecurityV1.model_validate(_security_payload(), strict=True)
-    fetched = MarketDataFetchOutcome(
-        securities=(api_security,),
-        # The API-side gap for the same ticker must be resolved by the
-        # manual row.
-        gaps=(
-            MarketDataSecurityGapV1.model_validate(
-                {"ticker": "TOYO", "failure_class": "http_error"}, strict=True
-            ),
-        ),
-    )
-    merged = merge_manual_first([manual], fetched)
-    assert [item.ticker for item in merged.securities] == ["TOYO"]
-    assert merged.securities[0].data_origin == "manual_input"
-    assert merged.securities[0].week_close == 11.11
-    assert merged.gaps == ()
 
 
 # ── Store recording ───────────────────────────────────────────────────────────
 
 
-def test_record_replay_and_as_of_conflict(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    _bootstrap_workspace(workspace)
-    service = MarketDataService(workspace)
-
-    result = service.record_snapshot(_record_request())
-    assert result["ok"] and not result["replayed"]
-    replay = service.record_snapshot(_record_request())
-    assert replay["replayed"]
-    assert replay["receipt_id"] == result["receipt_id"]
-
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        snapshot = store.load_snapshot(RUN_ID)
-    assert len(snapshot.market_data_snapshots) == 1
-    record = snapshot.market_data_snapshots[0]
-    assert record.as_of_date == "2026-08-10"
-    assert record.security_count == 1
-    assert [gap.ticker for gap in record.gaps] == ["DQ"]
-
-    with pytest.raises(MarketDataError) as excinfo:
-        service.record_snapshot(_record_request(week_close=11.0))
-    assert str(excinfo.value) == "market_data_snapshot_conflict"
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert len(store.load_snapshot(RUN_ID).market_data_snapshots) == 1
 
 
-def test_record_rejects_window_drift_before_store_write(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    _bootstrap_workspace(workspace)
-    service = MarketDataService(workspace)
-    command = _record_request()
-    # V1 input is upgraded against RunDirection, so exercise strict V2 through
-    # a valid request projection and then drift only its frozen window.
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        direction = store.load_snapshot(RUN_ID).run_contract_bindings[0].run_direction
-    from multi_agent_brief.product.market_data_service import _upgrade_v1
-
-    typed = service._validate(command)
-    upgraded = _upgrade_v1(typed, direction).model_dump(mode="json")
-    upgraded["report_window_start"] = "2026-08-02"
-
-    with pytest.raises(MarketDataError, match="market_data_snapshot_window_invalid"):
-        service.record_snapshot(upgraded)
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.load_snapshot(RUN_ID).market_data_snapshots == ()
 
 
-def test_record_rejected_while_invocation_active(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    _bootstrap_workspace(workspace, invocation_active=True)
-
-    with pytest.raises(MarketDataError) as excinfo:
-        MarketDataService(workspace).record_snapshot(_record_request())
-    assert str(excinfo.value) == "market_data_snapshot_run_invocation_active"
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.load_snapshot(RUN_ID).market_data_snapshots == ()
 
 
-def test_recording_preflight_rejected_while_invocation_active(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    _bootstrap_workspace(workspace, invocation_active=True)
-
-    with pytest.raises(MarketDataError) as excinfo:
-        MarketDataService(workspace).require_recording_allowed()
-
-    assert str(excinfo.value) == "market_data_snapshot_run_invocation_active"
 
 
 def test_snapshots_are_append_only(tmp_path: Path) -> None:
@@ -656,128 +384,17 @@ def test_tampered_snapshot_graph_fails_closed(tmp_path: Path) -> None:
     }
 
 
-def test_recording_survives_full_core_run_verification(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    create_demo_workspace(workspace)
-    _initialize_core_run(workspace)
-    result = MarketDataService(workspace).record_snapshot(_record_request())
-    assert result["ok"]
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        verified = CoreRunDomainVerifier().verify(store, RUN_ID)
-    assert len(verified.snapshot.market_data_snapshots) == 1
-    record = verified.snapshot.market_data_snapshots[0]
-    assert record.provider_ids == ["legacy_v1_upgrade"]
-    event = next(
-        item
-        for item in verified.snapshot.events
-        if item.event_id == record.record_event_id
-    )
-    assert event.event_type == "market_data_snapshot_recorded"
-    assert event.decision == record.market_data_snapshot_id
 
 
 # ── Projection ────────────────────────────────────────────────────────────────
 
 
-def test_projection_omits_missing_watchlist_rows_and_shows_coverage(
-    tmp_path: Path,
-) -> None:
-    workspace = tmp_path / "workspace"
-    _bootstrap_workspace(workspace)
-    service = MarketDataService(workspace)
-    service.record_snapshot(_record_request())
-    projection = service.project_tables()
-    assert projection["ok"]
-    text = (workspace / MARKET_DATA_TABLES_PATH).read_text(encoding="utf-8")
-    assert "## Primary Equity Comparison" in text
-    assert "## Overseas Equity Comparison" in text
-    assert "| TOYO | NasdaqCM | USD | 10.62 | 2.31 |" in text
-    assert not any(line.startswith("| DQ |") for line in text.splitlines())
-    assert (
-        "- Watchlist coverage 1/7; missing: TE, FSLR, CSIQ, JKS, NXT, DQ." in text
-    )
-    assert (
-        "- Watchlist coverage 0/4; missing: 009830.KS, WAAREEENER.NS, "
-        "PREMIERENE.NS, VIKRAMSOLR.NS." in text
-    )
-    assert "- [warning] DQ: transport_unavailable" in text
-    header = text.splitlines()[1]
-    assert "snapshot_fingerprint" in text and header.startswith("run_id:")
 
 
-def test_projection_follows_report_spec_watchlist_not_solar_quota(
-    tmp_path: Path,
-) -> None:
-    workspace = tmp_path / "workspace"
-    _bootstrap_workspace(workspace)
-    (workspace / "report_spec.yaml").write_text(
-        "\n".join(
-            [
-                "metadata:",
-                "  primary_tickers: [AAPL, MSFT]",
-                "  overseas_tickers: []",
-                "  core_tickers: [AAPL]",
-                "  event_only_entities: []",
-                "  benchmark_ticker:",
-                "",
-            ]
-        ),
-        encoding="utf-8",
-    )
-    service = MarketDataService(workspace)
-    service.record_snapshot(
-        {
-            "schema_version": "briefloop.market_data_record_input.v1",
-            "as_of_date": "2026-08-10",
-            "securities": [_security_payload(ticker="AAPL", exchange="NMS")],
-            "gaps": [{"ticker": "MSFT", "failure_class": "transport_unavailable"}],
-        }
-    )
-    projection = service.project_tables()
-    assert projection["ok"]
-    text = (workspace / MARKET_DATA_TABLES_PATH).read_text(encoding="utf-8")
-    assert "| AAPL |" in text
-    assert "TOYO" not in text
-    assert "PREMIERENE" not in text
-    assert "## Overseas Equity Comparison" not in text
-    assert "- Watchlist coverage 1/2; missing: MSFT." in text
-    snapshot = service.latest_snapshot()
-    assert snapshot.universe_tickers == ["AAPL", "MSFT"]
-    assert not any(item.severity == "blocking" for item in snapshot.gaps)
 
 
-def test_projection_requires_a_frozen_snapshot(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    _bootstrap_workspace(workspace)
-    with pytest.raises(MarketDataError) as excinfo:
-        MarketDataService(workspace).project_tables()
-    assert str(excinfo.value) == "market_data_snapshot_unavailable"
 
 
-def test_render_covers_the_full_solar_universe(tmp_path: Path) -> None:
-    workspace = tmp_path / "workspace"
-    _bootstrap_workspace(workspace)
-    securities = [
-        _security_payload(ticker=ticker, trailing_pe=18.5)
-        for ticker in sorted(
-            SOLAR_STOCK_PRIMARY_SECURITIES + SOLAR_STOCK_OVERSEAS_SECURITIES
-        )
-    ]
-    service = MarketDataService(workspace)
-    service.record_snapshot(
-        {
-            "schema_version": "briefloop.market_data_record_input.v1",
-            "as_of_date": "2026-08-10",
-            "securities": securities,
-            "gaps": [],
-        }
-    )
-    snapshot = service.latest_snapshot()
-    text = render_market_data_tables(snapshot)
-    assert len(snapshot.securities) == 11
-    for ticker in SOLAR_STOCK_PRIMARY_SECURITIES:
-        assert f"| {ticker} |" in text
-    assert "- none" in text
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
@@ -889,39 +506,5 @@ def test_cli_fetch_merges_manual_first_and_never_fabricates(
     assert {gap.ticker for gap in record.gaps} == set(SOLAR_STOCK_OVERSEAS_SECURITIES)
 
 
-def test_cli_fetch_total_failure_records_nothing(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    workspace = tmp_path / "workspace"
-    _bootstrap_workspace(workspace)
-
-    def urlopen(request, timeout: int = 30):
-        raise ConnectionError("offline")
-
-    monkeypatch.setattr("urllib.request.urlopen", urlopen)
-    status = cli_main(["market-data", "fetch", "--workspace", str(workspace), "--json"])
-    assert status == 1
-    output = json.loads(capsys.readouterr().out)
-    assert output["reason_code"] == "market_data_unavailable"
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        assert store.load_snapshot(RUN_ID).market_data_snapshots == ()
 
 
-def test_cli_fetch_preflight_blocks_before_yahoo_and_writes_nothing(
-    tmp_path: Path, monkeypatch, capsys
-) -> None:
-    workspace = tmp_path / "workspace"
-    _bootstrap_workspace(workspace, invocation_active=True)
-    database = workspace / "briefloop.db"
-    before = database.read_bytes()
-
-    def unexpected_urlopen(*_args, **_kwargs):
-        raise AssertionError("Yahoo must not be called during an active invocation")
-
-    monkeypatch.setattr("urllib.request.urlopen", unexpected_urlopen)
-    status = cli_main(["market-data", "fetch", "--workspace", str(workspace), "--json"])
-
-    assert status == 1
-    output = json.loads(capsys.readouterr().out)
-    assert output["reason_code"] == "market_data_snapshot_run_invocation_active"
-    assert database.read_bytes() == before

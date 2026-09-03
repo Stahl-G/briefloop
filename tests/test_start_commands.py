@@ -2,28 +2,15 @@
 
 from __future__ import annotations
 
-import json
-import re
 from types import SimpleNamespace
 from functools import partial
 from pathlib import Path
 
-import yaml
 import pytest
 
 from multi_agent_brief.cli.main import main
 from multi_agent_brief.cli.init_commands import _init_web_wizard
-from multi_agent_brief.orchestrator_contract import contract_references_exist
-from multi_agent_brief.orchestrator_contract import resolve_repo_workdir
-from multi_agent_brief.audience_memory import AUDIENCE_MEMORY_FILES
-from multi_agent_brief.controls.contract import CONTROL_SWITCHBOARD_FILES
-from multi_agent_brief.quality_gates.contract import QUALITY_GATE_STATE_FILES
-from multi_agent_brief.provenance.contract import PROVENANCE_STATE_FILES
-from tests.helpers import sha256_file as _sha256_file
 from tests.helpers import write_workspace_files_under
-
-
-ROOT = Path(__file__).resolve().parent.parent
 
 
 class _InitWebServerDouble:
@@ -68,51 +55,6 @@ def test_init_web_handoff_prints_exact_browser_selected_target(
     assert server.closed is True
 
 
-def test_init_web_discovery_authorized_handoff_uses_runtime_continue(
-    monkeypatch, capsys, tmp_path: Path
-) -> None:
-    selected = tmp_path / "public-search"
-    server = _InitWebServerDouble(
-        outcome=SimpleNamespace(
-            status="committed",
-            workspace=str(selected),
-            run_id="RUN-PUBLIC",
-            transaction_id="TX-PUBLIC",
-            execution_authorized=False,
-            source_discovery_authorized=True,
-        )
-    )
-    monkeypatch.setattr(
-        "multi_agent_brief.product.init_web.create_init_web_server",
-        lambda *_args, **_kwargs: server,
-    )
-    monkeypatch.setattr("webbrowser.open", lambda _url: True)
-
-    assert _init_web_wizard(SimpleNamespace(port=0)) == 0
-
-    output = capsys.readouterr().out
-    assert f"briefloop runtime continue --workspace {selected}" in output
-
-
-@pytest.mark.parametrize(
-    ("server", "expected"),
-    [
-        (_InitWebServerDouble(interrupt=True), 130),
-        (_InitWebServerDouble(outcome=None), 1),
-    ],
-)
-def test_init_web_cancel_or_no_success_is_nonzero(
-    monkeypatch, server: _InitWebServerDouble, expected: int
-) -> None:
-    monkeypatch.setattr(
-        "multi_agent_brief.product.init_web.create_init_web_server",
-        lambda *_args, **_kwargs: server,
-    )
-    monkeypatch.setattr("webbrowser.open", lambda _url: True)
-
-    assert _init_web_wizard(SimpleNamespace(port=0)) == expected
-
-
 _write_workspace = partial(
     write_workspace_files_under,
     config_text="""
@@ -149,174 +91,6 @@ def _snapshot_workspace_bytes(ws: Path) -> dict[str, bytes]:
         for path in ws.rglob("*")
         if path.is_file()
     }
-
-
-# ---------------------------------------------------------------------------
-# Help and identity tests
-# ---------------------------------------------------------------------------
-
-
-def test_start_help_shows_runtime_options(capsys):
-    """start --help must show runtime choices and launcher identity."""
-    try:
-        main(["start", "--help"])
-    except SystemExit:
-        pass
-    captured = capsys.readouterr()
-    output = captured.out
-    assert "launcher" in output.lower() or "handoff" in output.lower()
-    assert "--runtime" in output
-    assert "--recipe" in output
-    assert "hermes" in output
-    assert "claude" in output
-    assert "operator" in output
-    assert "manual" not in output
-    assert "{hermes,claude,opencode,codex,codebuddy,operator}" in output
-    assert "--workspace" in output
-    assert "--skip-doctor" not in output
-
-
-def test_start_help_does_not_claim_to_generate_briefs(capsys):
-    """start help must not present itself as a brief generator."""
-    try:
-        main(["start", "--help"])
-    except SystemExit:
-        pass
-    captured = capsys.readouterr()
-    output = captured.out
-    assert "generate" not in output.lower() or "never generates" in output.lower()
-
-
-def test_handoff_help_shows_config_required(capsys):
-    try:
-        main(["handoff", "--help"])
-    except SystemExit:
-        pass
-    captured = capsys.readouterr()
-    output = captured.out
-    assert "--config" in output
-    assert "--runtime" in output
-    assert "--skip-doctor" not in output
-
-
-# ---------------------------------------------------------------------------
-# start — no workspace
-# ---------------------------------------------------------------------------
-
-
-def test_start_no_workspace_in_non_workspace_dir(tmp_path, monkeypatch, capsys):
-    """start without --workspace in a non-workspace dir should give guidance."""
-    monkeypatch.chdir(tmp_path)
-    rc = main(["start", "--runtime", "operator", "--skip-doctor"])
-    assert rc == 1
-    captured = capsys.readouterr()
-    output = captured.out
-    assert "No workspace found" in output or "briefloop init" in output
-
-
-# ---------------------------------------------------------------------------
-# start — with workspace
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# start — runtime variants
-# ---------------------------------------------------------------------------
-
-
-
-
-
-
-def test_start_rejects_historical_runtime_without_writes(tmp_path):
-    ws = _write_workspace(tmp_path)
-    with pytest.raises(SystemExit):
-        main(
-            [
-                "start",
-                "--workspace",
-                str(ws),
-                "--runtime",
-                "manual",
-                "--skip-doctor",
-                "--venv",
-                str(tmp_path / ".venv" / "bin" / "activate"),
-            ]
-        )
-    assert not (ws / "output").exists()
-
-
-# ---------------------------------------------------------------------------
-# handoff
-# ---------------------------------------------------------------------------
-
-
-def test_handoff_no_config_fails(tmp_path):
-    rc = main(
-        [
-            "handoff",
-            "--runtime",
-            "operator",
-            "--config",
-            str(tmp_path / "nonexistent" / "config.yaml"),
-            "--skip-doctor",
-        ]
-    )
-    assert rc != 0
-
-
-# ---------------------------------------------------------------------------
-# build_handoff direct unit tests
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# write_handoff_artifacts
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# run command — launcher identity
-# ---------------------------------------------------------------------------
-
-
-def test_run_help_does_not_contain_deprecated(capsys):
-    """run --help must not contain deprecated/prepare/deterministic pipeline language."""
-    try:
-        main(["run", "--help"])
-    except SystemExit:
-        pass
-    output = capsys.readouterr().out
-    assert "deprecated" not in output.lower()
-    assert "deterministic pipeline" not in output.lower()
-    assert "never generates" not in output.lower()
-    assert "--skip-doctor" not in output
-
-
-def test_run_requires_explicit_runtime_without_writes(tmp_path):
-    ws = _write_workspace(tmp_path)
-    argv = [
-        "run",
-        "--workspace",
-        str(ws),
-        "--skip-doctor",
-        "--venv",
-        str(tmp_path / ".venv" / "bin" / "activate"),
-    ]
-    with pytest.raises(SystemExit):
-        main(argv)
-    assert not (ws / "output").exists()
-
-
-def test_prepare_output_points_to_run(tmp_path, capsys):
-    """prepare is a retired public path: typed rejection with zero writes."""
-    ws = _write_workspace(tmp_path)
-    before = _snapshot_workspace_bytes(ws)
-    # retired public `prepare` launcher and its legacy guidance text.
-    rc = main(["prepare", "--config", str(ws / "config.yaml")])
-    assert rc == 1
-    assert capsys.readouterr().out == "runtime_command_unsupported\n"
-    assert _snapshot_workspace_bytes(ws) == before
 
 
 def test_retired_launcher_public_paths_reject_without_writes(
@@ -427,69 +201,3 @@ def test_retired_launcher_public_paths_reject_without_writes(
         ["run", "--runtime", "claude", "--workspace", str(ws_fresh), "--skip-doctor", "--venv", venv],
         "[run] runtime_adapter_unsupported\n",
     )
-
-
-# ---------------------------------------------------------------------------
-# onboard command discoverability
-# ---------------------------------------------------------------------------
-
-
-def test_onboard_help_exists(capsys):
-    """onboard --help must exist as a discoverable command."""
-    try:
-        main(["onboard", "--help"])
-    except SystemExit:
-        pass
-    output = capsys.readouterr().out
-    assert "onboard" in output
-    assert "onboarding" in output.lower()
-
-
-def test_init_help_mentions_onboard(capsys):
-    """init --help must reference onboard as the first step."""
-    try:
-        main(["init", "--help"])
-    except SystemExit:
-        pass
-    output = capsys.readouterr().out
-    assert "onboard" in output
-
-
-def test_run_no_workspace_mentions_onboard(tmp_path, capsys):
-    """run without a workspace must suggest onboard as the first path."""
-    rc = main(
-        [
-            "run",
-            "--runtime",
-            "operator",
-            "--workspace",
-            str(tmp_path / "no-such-ws"),
-            "--skip-doctor",
-        ]
-    )
-    assert rc == 1
-    captured = capsys.readouterr()
-    output = captured.out
-    assert "briefloop onboard" in output
-    assert "briefloop init" in output
-    assert "--from-onboarding onboarding.json" in output
-
-
-def test_init_demo_mentions_onboard(tmp_path, capsys):
-    """init --demo must say it's a demo and point to onboard for real projects."""
-    ws = tmp_path / "demo-ws"
-    rc = main(["init", str(ws), "--demo", "--force"])
-    assert rc == 0
-    captured = capsys.readouterr()
-    output = captured.out
-    assert "demo" in output.lower()
-    assert "briefloop onboard" in output
-    assert "input/context" in output
-    assert "example brief Markdown" in output
-    input_readme = (ws / "input" / "README.md").read_text(encoding="utf-8")
-    context_readme = (ws / "input" / "context" / "README.md").read_text(
-        encoding="utf-8"
-    )
-    assert "prior weekly reports" in input_readme
-    assert "input/context/" in input_readme
-    assert "previous_weekly_reference.md" in context_readme

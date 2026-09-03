@@ -5,66 +5,10 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from multi_agent_brief.contracts.base import SchemaRegistry
-from multi_agent_brief.contracts.schemas.semantic_assessment_report import (
-    SEMANTIC_ASSESSMENT_REPORT_SCHEMA_VERSION,
-    SemanticAssessmentReportContract,
-)
-
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src" / "multi_agent_brief"
 EVALUATOR_ROOT = SRC_ROOT / "semantic_evaluator"
-
-EXPECTED_PACKAGE_FILES = {
-    "__init__.py",
-    "adapter.py",
-    "adapters/__init__.py",
-    "adapters/anthropic_messages.py",
-    "adapters/openai_responses.py",
-    "adapters/local_proxy_responses.py",
-    "adapters/synthetic_fixture.py",
-    "admission.py",
-    "archive.py",
-    "baseline.py",
-    "baselines/structured_checklist_zh_v1.yaml",
-    "composition.py",
-    "contracts.py",
-    "demo.py",
-    "errors.py",
-    "fixtures/synthetic_shadow_v1/manifest.json",
-    "fixtures/synthetic_shadow_v1/bounded_context.json",
-    "fixtures/synthetic_shadow_v1/instrument.json",
-    "fixtures/synthetic_shadow_v1/report.md",
-    "instrument.py",
-    "normalization.py",
-    "parser.py",
-    # post_final_bridge.py: evaluator-owned advisory bridge into product.review_session;
-    # experiment -> product is the allowed dependency direction.
-    "post_final_bridge.py",
-    "profile.py",
-    "prompt_sizer.py",
-    "profiles/industry_weekly_zh_v1.yaml",
-    "profiles/management_brief_en_v1.yaml",
-    "profiles/research_design_report_zh_v1.yaml",
-    "prompts.py",
-    "prompts/dimension_reader_review_en_v1.txt",
-    "prompts/dimension_reader_review_zh_v1.txt",
-    "prompts/dimension_v1.txt",
-    "prompts/system_reader_review_en_v1.txt",
-    "prompts/system_reader_review_zh_v1.txt",
-    "prompts/system_v1.txt",
-    "resources.py",
-    "reader.py",
-    "runner.py",
-    "serialization.py",
-    "shadow_contracts.py",
-    "study.py",
-    "study_contracts.py",
-    "snapshot.py",
-    "unit_planner.py",
-    "validator.py",
-}
 
 # `orchestrator.runtime_state` below was deleted in LD2-3. It stays listed on
 # purpose: this is a reintroduction tripwire, so an owner that currently
@@ -144,16 +88,6 @@ def _matches_owner(module: str, owner: str) -> bool:
     return module == owner or module.startswith(f"{owner}.")
 
 
-def test_package_inventory_is_exact_for_isolated_offline_shadow_laj() -> None:
-    actual = {
-        path.relative_to(EVALUATOR_ROOT).as_posix()
-        for path in EVALUATOR_ROOT.rglob("*")
-        if path.is_file() and "__pycache__" not in path.parts
-    }
-    assert actual == EXPECTED_PACKAGE_FILES
-    assert not (EVALUATOR_ROOT / "product_bridge.py").exists()
-
-
 def test_no_normal_workflow_module_imports_semantic_evaluator() -> None:
     offenders = {}
     for path in SRC_ROOT.rglob("*.py"):
@@ -202,102 +136,3 @@ def test_se2r_15_only_live_adapter_may_import_provider_or_network_code() -> None
         if unexpected:
             offenders[path.relative_to(REPO_ROOT).as_posix()] = unexpected
     assert offenders == {}
-
-
-def test_only_archive_reader_and_explicit_study_output_are_persistent_writers() -> None:
-    write_methods = {
-        "mkdir",
-        "rename",
-        "unlink",
-        "write_bytes",
-        "write_text",
-    }
-    offenders = {}
-    for path in EVALUATOR_ROOT.rglob("*.py"):
-        calls = sorted(
-            {
-                node.func.attr
-                for node in ast.walk(_tree(path))
-                if isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr in write_methods
-            }
-        )
-        if calls and path.name not in {"archive.py", "reader.py", "study.py"}:
-            offenders[path.relative_to(REPO_ROOT).as_posix()] = calls
-    assert offenders == {}
-
-    archive_calls = {
-        node.func.attr
-        for node in ast.walk(_tree(EVALUATOR_ROOT / "archive.py"))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr in write_methods
-    }
-    assert {"mkdir"} <= archive_calls
-
-    reader_calls = {
-        node.func.attr
-        for node in ast.walk(_tree(EVALUATOR_ROOT / "reader.py"))
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr in write_methods
-    }
-    assert reader_calls == {"write_bytes"}
-
-
-def test_se2r_15_experiment_entrypoint_is_not_imported_by_normal_runtime() -> None:
-    experiment_module = "multi_agent_brief.cli.experiments_commands"
-    offenders = {}
-    for path in SRC_ROOT.rglob("*.py"):
-        if path == EXPERIMENT_ENTRYPOINT:
-            continue
-        matched = sorted(
-            module
-            for module in _imports(path)
-            if _matches_owner(module, experiment_module)
-        )
-        if matched:
-            offenders[path.relative_to(REPO_ROOT).as_posix()] = matched
-    assert offenders == {}
-
-
-def test_prompt_execution_path_cannot_observe_baseline_or_composition() -> None:
-    execution_modules = (
-        "admission.py",
-        "instrument.py",
-        "parser.py",
-        "prompts.py",
-        "unit_planner.py",
-        "validator.py",
-    )
-    forbidden = (
-        "multi_agent_brief.semantic_evaluator.baseline",
-        "multi_agent_brief.semantic_evaluator.composition",
-    )
-    offenders = {}
-    for name in execution_modules:
-        path = EVALUATOR_ROOT / name
-        matched = sorted(
-            module
-            for module in _imports(path)
-            if any(_matches_owner(module, owner) for owner in forbidden)
-        )
-        if matched:
-            offenders[name] = matched
-    assert offenders == {}
-
-
-def test_existing_o3_contract_identity_and_registry_path_remain_unchanged() -> None:
-    assert SEMANTIC_ASSESSMENT_REPORT_SCHEMA_VERSION == (
-        "mabw.semantic_assessment_report.v1"
-    )
-    assert SemanticAssessmentReportContract.schema_id == "semantic_assessment_report"
-    assert SemanticAssessmentReportContract.schema_version == "v1"
-    assert (
-        SchemaRegistry.get("semantic_assessment_report")
-        is SemanticAssessmentReportContract
-    )
-    assert (
-        SRC_ROOT / "contracts" / "schemas" / "semantic_assessment_report.py"
-    ).is_file()

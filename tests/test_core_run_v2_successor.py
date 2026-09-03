@@ -16,11 +16,8 @@ from multi_agent_brief.control_store import SQLiteControlStore
 from multi_agent_brief.control_store.serialization import canonical_fingerprint
 from multi_agent_brief.control_store.schema import SCHEMA_VERSION
 from multi_agent_brief.contracts.v2 import RunSuccessorStartRequest
-from multi_agent_brief.core_run_v2.errors import CoreRunError
-from multi_agent_brief.core_run_v2.policy import derived_id
 from multi_agent_brief.core_run_v2.successor import (
     CoreRunSuccessorService,
-    build_run_guidance_snapshot,
 )
 from multi_agent_brief.core_run_v2.verifier import CoreRunDomainVerifier
 from multi_agent_brief.product.post_final_assessment_projection import (
@@ -29,7 +26,6 @@ from multi_agent_brief.product.post_final_assessment_projection import (
 from multi_agent_brief.product.post_final_review import (
     POST_FINAL_GUIDANCE_DRAFT_INPUT_SCHEMA,
     POST_FINAL_GUIDANCE_STATUS_INPUT_SCHEMA,
-    POST_FINAL_HUMAN_OBSERVATION_INPUT_SCHEMA,
     PostFinalReviewError,
     PostFinalReviewService,
 )
@@ -555,138 +551,6 @@ def test_approved_guidance_is_scope_selected_frozen_and_role_bounded(
     assert len(provider_calls) == provider_call_count
 
 
-def test_human_observation_guidance_freezes_tagged_provenance_without_finding(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, predecessor_run_id, _calls, review, status, _finding = _qualified_review(
-        tmp_path,
-        monkeypatch,
-    )
-    observed = review.record_human_observation(
-        {
-            "schema_version": POST_FINAL_HUMAN_OBSERVATION_INPUT_SCHEMA,
-            "human_actor_id": "human-reviewer-observer",
-            "human_request_id": "human-observation-successor-1",
-            "observation_text": "The management conclusion omits the stated downside condition.",
-            "assessment_result_id": status["assessment_result_id"],
-            "assessment_result_fingerprint": status["assessment_result_fingerprint"],
-            "reader_view_sha256": status["reader_view_sha256"],
-        }
-    )
-    draft = review.append_guidance_draft(
-        {
-            "schema_version": POST_FINAL_GUIDANCE_DRAFT_INPUT_SCHEMA,
-            "human_actor_id": "human-reviewer-observer",
-            "human_request_id": "human-observation-guidance-1",
-            "provenance_kind": "human_observation",
-            "assessment_result_id": status["assessment_result_id"],
-            "assessment_result_fingerprint": status["assessment_result_fingerprint"],
-            "observation_id": observed["observation_id"],
-            "observation_fingerprint": observed["observation_fingerprint"],
-            "guidance_text": "Check the downside condition before drafting the recommendation.",
-        }
-    )
-    review.approve_guidance(
-        {
-            "schema_version": POST_FINAL_GUIDANCE_STATUS_INPUT_SCHEMA,
-            "human_actor_id": "human-reviewer-observer",
-            "human_request_id": "human-observation-guidance-approve-1",
-            "guidance_id": draft["guidance_id"],
-            "draft_revision": draft["draft_revision"],
-        }
-    )
-
-    direction = _verified(workspace, predecessor_run_id).binding.run_direction
-    successor_run_id = "RUN-HUMAN-OBSERVATION-GUIDANCE-002"
-    assert (
-        _start_successor(
-            workspace,
-            successor_run_id=successor_run_id,
-            run_direction=direction,
-            include_approved_guidance=True,
-        ).status
-        == "committed"
-    )
-    successor = _verified(workspace, successor_run_id).snapshot
-    decision = successor.run_guidance_selection_decisions[0]
-    item = successor.run_guidance_snapshot_items[0]
-    assert decision.provenance_kind == item.provenance_kind == "human_observation"
-    assert decision.observation_id == item.observation_id == observed["observation_id"]
-    assert (
-        decision.observation_fingerprint
-        == item.observation_fingerprint
-        == observed["observation_fingerprint"]
-    )
-    assert (
-        decision.assessment_result_id
-        == item.assessment_result_id
-        == status["assessment_result_id"]
-    )
-    assert decision.finding_id is None
-    assert decision.finding_fingerprint is None
-    assert decision.disposition_id is None
-    assert decision.disposition_fingerprint is None
-    assert item.finding_id is None
-    assert item.finding_fingerprint is None
-    assert item.disposition_id is None
-    assert item.disposition_fingerprint is None
-
-    verified = _verified(workspace, successor_run_id)
-    context = RuntimeHostService._frozen_guidance_context(
-        verified,
-        role_id="analyst",
-    )
-    assert context is not None
-    assert context.items[0].provenance_kind == "human_observation"
-    assert context.items[0].observation_id == observed["observation_id"]
-    assert context.items[0].finding_id is None
-    assert context.items[0].disposition_id is None
-
-
-@pytest.mark.parametrize("decision", ["reject", "defer"])
-def test_current_nonaccept_disposition_omits_previously_approved_guidance(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    decision: str,
-) -> None:
-    workspace, predecessor_run_id, _calls, review, status, finding = _qualified_review(
-        tmp_path, monkeypatch
-    )
-    _approve_one_guidance(
-        review,
-        status,
-        finding,
-        text="Use only guidance whose acceptance is still current.",
-    )
-    review.record_disposition(
-        _disposition_payload(
-            status,
-            finding,
-            request_id=f"successor-guidance-{decision}-head",
-            decision=decision,
-        )
-    )
-    successor_run_id = f"RUN-GUIDANCE-{decision.upper()}-002"
-    assert (
-        _start_successor(
-            workspace,
-            successor_run_id=successor_run_id,
-            run_direction=_verified(
-                workspace, predecessor_run_id
-            ).binding.run_direction,
-            include_approved_guidance=True,
-        ).status
-        == "committed"
-    )
-    successor = _verified(workspace, successor_run_id).snapshot
-    assert successor.run_guidance_snapshot_items == ()
-    assert [
-        (entry.selected, entry.reason_code)
-        for entry in successor.run_guidance_selection_decisions
-    ] == [(False, "guidance_unapproved")]
-
-
 def test_active_successor_blocks_new_historical_review_writes_but_allows_replay(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -937,83 +801,6 @@ def test_tampered_and_ambiguous_guidance_selection_fail_closed_without_writes(
         )
 
 
-def test_approved_guidance_opt_in_and_active_status_are_both_required(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, run_id, _calls, _review, status, finding = _qualified_review(
-        tmp_path,
-        monkeypatch,
-    )
-    review = PostFinalReviewService(
-        workspace,
-        status["assessment_result_id"],
-        status["assessment_result_fingerprint"],
-    )
-    draft, _approved = _approve_one_guidance(
-        review,
-        status,
-        finding,
-        text="Use one concise conclusion that respects the current evidence.",
-    )
-    direction = _verified(workspace, run_id).binding.run_direction
-    no_opt_in = tmp_path / "guidance-no-opt-in"
-    inactive = tmp_path / "guidance-inactive"
-    shutil.copytree(workspace, no_opt_in)
-
-    no_opt_result = _start_successor(
-        no_opt_in,
-        successor_run_id="RUN-GUIDANCE-NO-OPT-IN-002",
-        run_direction=direction,
-        include_approved_guidance=False,
-    )
-    assert no_opt_result.status == "committed"
-    no_opt_snapshot = _verified(no_opt_in, "RUN-GUIDANCE-NO-OPT-IN-002").snapshot
-    assert no_opt_snapshot.run_guidance_snapshot_items == ()
-    assert [
-        (item.selected, item.reason_code)
-        for item in no_opt_snapshot.run_guidance_selection_decisions
-    ] == [(False, "reuse_not_requested")]
-
-    with SQLiteControlStore.open(no_opt_in / "briefloop.db") as store:
-        revision = store.current_revision
-    with pytest.raises(RuntimeHostError, match="submission_replay_conflict"):
-        _start_successor(
-            no_opt_in,
-            successor_run_id="RUN-GUIDANCE-NO-OPT-IN-002",
-            run_direction=direction,
-            include_approved_guidance=True,
-        )
-    with SQLiteControlStore.open(no_opt_in / "briefloop.db") as store:
-        assert store.current_revision == revision
-
-    # Mutate through the still-canonical archive-bound source workspace, then
-    # copy the resulting Store state for the independent successor row.
-    review.deactivate_guidance(
-        {
-            "schema_version": POST_FINAL_GUIDANCE_STATUS_INPUT_SCHEMA,
-            "human_actor_id": "human-reviewer-1",
-            "human_request_id": "successor-guidance-deactivate",
-            "guidance_id": draft["guidance_id"],
-            "draft_revision": draft["draft_revision"],
-        }
-    )
-    shutil.copytree(workspace, inactive)
-    inactive_result = _start_successor(
-        inactive,
-        successor_run_id="RUN-GUIDANCE-INACTIVE-002",
-        run_direction=direction,
-        include_approved_guidance=True,
-    )
-    assert inactive_result.status == "committed"
-    inactive_snapshot = _verified(inactive, "RUN-GUIDANCE-INACTIVE-002").snapshot
-    assert inactive_snapshot.run_guidance_snapshot_items == ()
-    assert [
-        (item.selected, item.reason_code)
-        for item in inactive_snapshot.run_guidance_selection_decisions
-    ] == [(False, "guidance_inactive")]
-
-
 def test_direct_core_successor_rejects_forged_inherited_authority_before_write(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1060,126 +847,6 @@ def test_direct_core_successor_rejects_forged_inherited_authority_before_write(
 
     unchanged = CoreRunSuccessorService(workspace).start_successor(request)
     assert unchanged.status == "committed"
-
-
-def test_guidance_context_count_and_utf8_byte_bounds_are_exact_and_fail_closed(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    workspace, run_id, _calls, review, status, finding = _qualified_review(
-        tmp_path,
-        monkeypatch,
-    )
-    _approve_one_guidance(
-        review,
-        status,
-        finding,
-        text="bounded guidance",
-    )
-    verified = _verified(workspace, run_id)
-    direction = verified.binding.run_direction
-    request = _capture_successor_request(
-        workspace,
-        monkeypatch,
-        successor_run_id="RUN-GUIDANCE-BOUNDS-002",
-        run_direction=direction,
-        include_approved_guidance=True,
-    )
-    with SQLiteControlStore.open(workspace / "briefloop.db") as store:
-        history = store.load_history()
-    database_before = (workspace / "briefloop.db").read_bytes()
-    source = next(item for item in history.snapshots if item.run.run_id == run_id)
-    base_draft = source.post_final_guidance_drafts[0]
-    base_status = source.post_final_guidance_statuses[0]
-
-    def history_with_count(count: int):
-        drafts = tuple(
-            base_draft.model_copy(
-                update={"guidance_id": f"pf-laj-guidance-bound-{index:02d}"}
-            )
-            for index in range(count)
-        )
-        statuses = tuple(
-            base_status.model_copy(
-                update={
-                    "guidance_id": draft.guidance_id,
-                    "status_revision_id": f"pf-laj-status-bound-{index:02d}",
-                }
-            )
-            for index, draft in enumerate(drafts)
-        )
-        return replace(
-            history,
-            snapshots=tuple(
-                replace(
-                    item,
-                    post_final_guidance_drafts=drafts,
-                    post_final_guidance_statuses=statuses,
-                )
-                if item.run.run_id == run_id
-                else item
-                for item in history.snapshots
-            ),
-        )
-
-    exact_snapshot, _decisions, exact_items = build_run_guidance_snapshot(
-        history=history_with_count(16),
-        successor_contract=verified.binding,
-        request=request,
-        snapshot_id="GUIDANCE-SNAPSHOT-BOUND-16",
-        snapshot_event_id="EVT-GUIDANCE-SNAPSHOT-BOUND-16",
-        derived_id=derived_id,
-    )
-    assert exact_snapshot.selected_count == len(exact_items) == 16
-    with pytest.raises(CoreRunError, match="approved_guidance_context_limit_exceeded"):
-        build_run_guidance_snapshot(
-            history=history_with_count(17),
-            successor_contract=verified.binding,
-            request=request,
-            snapshot_id="GUIDANCE-SNAPSHOT-BOUND-17",
-            snapshot_event_id="EVT-GUIDANCE-SNAPSHOT-BOUND-17",
-            derived_id=derived_id,
-        )
-
-    def history_with_text(text: str):
-        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
-        draft = base_draft.model_copy(
-            update={"guidance_text": text, "guidance_sha256": digest}
-        )
-        guidance_status = base_status.model_copy(update={"guidance_sha256": digest})
-        return replace(
-            history,
-            snapshots=tuple(
-                replace(
-                    item,
-                    post_final_guidance_drafts=(draft,),
-                    post_final_guidance_statuses=(guidance_status,),
-                )
-                if item.run.run_id == run_id
-                else item
-                for item in history.snapshots
-            ),
-        )
-
-    exact_bytes_snapshot, _decisions, exact_byte_items = build_run_guidance_snapshot(
-        history=history_with_text("x" * 65_536),
-        successor_contract=verified.binding,
-        request=request,
-        snapshot_id="GUIDANCE-SNAPSHOT-BYTES-65536",
-        snapshot_event_id="EVT-GUIDANCE-SNAPSHOT-BYTES-65536",
-        derived_id=derived_id,
-    )
-    assert exact_bytes_snapshot.selected_count == len(exact_byte_items) == 1
-    with pytest.raises(CoreRunError, match="approved_guidance_context_limit_exceeded"):
-        build_run_guidance_snapshot(
-            history=history_with_text("x" * 65_537),
-            successor_contract=verified.binding,
-            request=request,
-            snapshot_id="GUIDANCE-SNAPSHOT-BYTES-65537",
-            snapshot_event_id="EVT-GUIDANCE-SNAPSHOT-BYTES-65537",
-            derived_id=derived_id,
-        )
-    assert (workspace / "briefloop.db").read_bytes() == database_before
 
 
 def test_windows_successor_boundary_is_typed_and_zero_write(

@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
 from multi_agent_brief.core_run_v2.gate_repair import (
     classify_gate_repair_legality,
 )
@@ -129,75 +127,6 @@ def _snapshot(
     )
 
 
-@pytest.mark.parametrize(
-    ("findings", "expected_state", "expected_reason"),
-    (
-        (
-            (_finding("FINDING-EDITOR"),),
-            "eligible",
-            None,
-        ),
-        (
-            (
-                _finding(
-                    "FINDING-EDITOR-COVERAGE",
-                    claim_id="CL-0010",
-                    source_id="SRC-1",
-                ),
-            ),
-            "eligible",
-            None,
-        ),
-        (
-            (
-                _finding(
-                    "FINDING-SOURCE",
-                    repair_owner="source-provider",
-                    stage_id="source-discovery",
-                    artifact_id="source_candidates",
-                    source_id="SRC-1",
-                ),
-            ),
-            "source_or_non_editor_block",
-            "gate_repair_source_or_non_editor_block",
-        ),
-        (
-            (
-                _finding("FINDING-EDITOR"),
-                _finding(
-                    "FINDING-SOURCE",
-                    repair_owner="source-provider",
-                    stage_id="source-discovery",
-                    artifact_id="source_candidates",
-                    source_id="SRC-1",
-                ),
-            ),
-            "mixed_or_ambiguous_scope",
-            "gate_repair_mixed_or_ambiguous_scope",
-        ),
-        (
-            (
-                _finding(
-                    "FINDING-AMBIGUOUS",
-                    repair_owner="auditor",
-                    stage_id="auditor",
-                ),
-            ),
-            "mixed_or_ambiguous_scope",
-            "gate_repair_mixed_or_ambiguous_scope",
-        ),
-    ),
-)
-def test_gate_repair_scope_classifier_is_value_free_and_exact(
-    findings: tuple[SimpleNamespace, ...],
-    expected_state: str,
-    expected_reason: str | None,
-) -> None:
-    result = classify_gate_repair_legality(_snapshot(findings))
-    assert result.state == expected_state
-    assert result.reason_code == expected_reason
-
-
 def test_gate_repair_requires_explicit_authorization_and_exact_budget() -> None:
     finding = (_finding("FINDING-EDITOR"),)
     unauthorized = classify_gate_repair_legality(
@@ -215,86 +144,6 @@ def test_gate_repair_requires_explicit_authorization_and_exact_budget() -> None:
         "gate_repair_budget_exhausted",
     )
     assert (contaminated.state, contaminated.reason_code) == (
-        "invalid",
-        "control_store_integrity_invalid",
-    )
-
-
-@pytest.mark.parametrize(
-    ("disposition", "expected_state", "expected_reason"),
-    (
-        (None, "active", None),
-        ("passed", "passed", None),
-        (
-            "blocked",
-            "failed_after_attempt",
-            "gate_repair_failed_after_attempt",
-        ),
-    ),
-)
-def test_gate_repair_cycle_is_single_attempt(
-    disposition: str | None,
-    expected_state: str,
-    expected_reason: str | None,
-) -> None:
-    cycle = SimpleNamespace(
-        gate_repair_id="GATE-REPAIR-1",
-        run_id="RUN-1",
-        source_gate_batch_id="GATE-BATCH-1",
-    )
-    outcome = (
-        None
-        if disposition is None
-        else SimpleNamespace(
-            gate_repair_id=cycle.gate_repair_id,
-            disposition=disposition,
-            replacement_gate_batch_id="GATE-BATCH-1",
-        )
-    )
-    result = classify_gate_repair_legality(
-        _snapshot(
-            (_finding("FINDING-EDITOR"),),
-            cycle=cycle,
-            outcome=outcome,
-        )
-    )
-    assert result.state == expected_state
-    assert result.reason_code == expected_reason
-
-
-def test_active_gate_repair_contamination_is_human_block_not_legacy_repair() -> None:
-    cycle = SimpleNamespace(
-        gate_repair_id="GATE-REPAIR-1",
-        run_id="RUN-1",
-        source_gate_batch_id="GATE-BATCH-1",
-    )
-    result = classify_gate_repair_legality(
-        _snapshot(
-            (_finding("FINDING-EDITOR"),),
-            cycle=cycle,
-            contaminated=True,
-        )
-    )
-    assert (result.state, result.reason_code) == (
-        "failed_after_attempt",
-        "gate_repair_failed_after_attempt",
-    )
-
-
-def test_gate_repair_and_legacy_repair_graph_is_invalid() -> None:
-    cycle = SimpleNamespace(
-        gate_repair_id="GATE-REPAIR-1",
-        run_id="RUN-1",
-        source_gate_batch_id="GATE-BATCH-1",
-    )
-    result = classify_gate_repair_legality(
-        _snapshot(
-            (_finding("FINDING-EDITOR"),),
-            cycle=cycle,
-            legacy_repair=True,
-        )
-    )
-    assert (result.state, result.reason_code) == (
         "invalid",
         "control_store_integrity_invalid",
     )

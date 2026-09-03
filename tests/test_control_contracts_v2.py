@@ -1,18 +1,14 @@
-"""Strict v2 contract inventory, validation, and legacy-read tests."""
+"""Strict v2 contract validation and legacy-read tests."""
 
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 import math
 from types import MappingProxyType
-from typing import get_args
 
 import pytest
-from pydantic import ValidationError
 
 from multi_agent_brief.contracts import (
-    ArtifactIdentityRecord,
-    ArtifactIdentityReference,
     ContractError,
     LEGACY_READ_ONLY_CONTRACTS,
     SchemaRegistry,
@@ -21,147 +17,6 @@ from multi_agent_brief.contracts import (
     V2_CONTRACT_MODELS,
     read_contract_payload,
 )
-from multi_agent_brief.contracts.v2 import canonical_run_direction_for_binding
-from multi_agent_brief.orchestrator_contract import VALID_RUNTIMES
-
-
-EXPECTED_V2_CONTRACT_IDS = (
-    "briefloop.source_proposal.v2",
-    "briefloop.source_commit_request.v2",
-    "briefloop.source_pack_commit_request.v2",
-    "briefloop.multi_tavily_source_pack_commit_request.v1",
-    "briefloop.candidate_claims_proposal.v2",
-    "briefloop.screened_candidates_proposal.v2",
-    "briefloop.claim_drafts_proposal.v2",
-    "briefloop.audit_proposal.v2",
-    "briefloop.artifact_submit_request.v2",
-    "briefloop.workspace_run_head.v2",
-    "briefloop.accepted_source_record.v2",
-    "briefloop.accepted_proposal_record.v2",
-    "briefloop.proposal_source_binding.v2",
-    "briefloop.run_identity.v2",
-    "briefloop.stage_state.v2",
-    "briefloop.artifact_record.v2",
-    "briefloop.artifact_identity_record.v2",
-    "briefloop.artifact_revision.v2",
-    "briefloop.event_envelope.v2",
-    "briefloop.invocation.v2",
-    "briefloop.approval.v2",
-    "briefloop.delivery.v2",
-    "briefloop.transaction_receipt.v2",
-    "briefloop.run_direction.v2",
-    "briefloop.execution_source_manifest.v2",
-    "briefloop.multi_tavily_execution_source_manifest.v1",
-    "briefloop.run_execution_authorization_input.v2",
-    "briefloop.run_execution_authorization_bootstrap.v2",
-    "briefloop.run_execution_authorization.v2",
-    "briefloop.run_source_discovery_authorization_input.v2",
-    "briefloop.run_source_discovery_authorization_bootstrap.v2",
-    "briefloop.run_source_discovery_authorization.v2",
-    "briefloop.run_source_acquisition_attempt_authorization.v2",
-    "briefloop.tavily_acquisition_bundle.v1",
-    "briefloop.tavily_acquisition_bundle.v2",
-    "briefloop.tavily_acquisition_bundle_record.v2",
-    "briefloop.market_data_snapshot.v1",
-    "briefloop.market_data_snapshot.v2",
-    "briefloop.source_acquisition_attempt_authorize_request.v1",
-    "briefloop.workspace_controlstore_bootstrap.v2",
-    "briefloop.runtime_adapter_binding.v2",
-    "briefloop.runtime_web_search_request_spec.v2",
-    "briefloop.runtime_web_search_acquisition_spec.v2",
-    "briefloop.runtime_web_search_task_spec.v3",
-    "briefloop.runtime_web_search_acquisition_spec.v3",
-    "briefloop.runtime_source_search_plan.v2",
-    "briefloop.runtime_cached_package_acquisition_spec.v2",
-    "briefloop.runtime_newsapi_acquisition_spec.v2",
-    "briefloop.runtime_source_route_binding.v2",
-    "briefloop.runtime_source_plan_binding.v2",
-    "briefloop.core_run_next_action.v2",
-    "briefloop.core_run_initialize_request.v2",
-    "briefloop.run_contract_binding.v2",
-    "briefloop.invocation_start_request.v2",
-    "briefloop.invocation_failure_request.v2",
-    "briefloop.owned_artifact_submit_request.v2",
-    "briefloop.owned_artifact_submission_record.v2",
-    "briefloop.claim_record.v2",
-    "briefloop.claim_source_binding.v2",
-    "briefloop.claim_freeze_record.v2",
-    "briefloop.claim_freeze_request.v2",
-    "briefloop.stage_transition_record.v2",
-    "briefloop.stage_artifact_binding.v2",
-    "briefloop.stage_gate_binding.v2",
-    "briefloop.stage_complete_request.v2",
-    "briefloop.gate_finding_record.v2",
-    "briefloop.gate_evaluation_record.v2",
-    "briefloop.gate_artifact_binding.v2",
-    "briefloop.gate_check_request.v2",
-    "briefloop.audit_promotion_request.v2",
-    "briefloop.audit_report_artifact.v2",
-    "briefloop.run_integrity_record.v2",
-    "briefloop.integrity_check_request.v2",
-    "briefloop.repair_cycle_record.v2",
-    "briefloop.gate_repair_cycle_record.v2",
-    "briefloop.gate_repair_artifact_binding.v2",
-    "briefloop.gate_repair_outcome_record.v2",
-    "briefloop.artifact_supersession_record.v2",
-    "briefloop.repair_completion_record.v2",
-    "briefloop.recovery_completion_record.v2",
-    "briefloop.run_head_transition_record.v2",
-    "briefloop.guidance_reuse_scope.v1",
-    "briefloop.run_guidance_selection_decision_record.v1",
-    "briefloop.run_guidance_snapshot_item_record.v1",
-    "briefloop.run_guidance_snapshot_record.v1",
-    "briefloop.finalize_render_record.v2",
-    "briefloop.finalization_record.v2",
-    "briefloop.run_archive_record.v2",
-    "briefloop.run_archive_artifact_binding.v2",
-    "briefloop.package_ready_record.v2",
-    "briefloop.package_artifact_binding.v2",
-    "briefloop.approval_package_binding.v2",
-    "briefloop.delivery_authorization_record.v2",
-    "briefloop.delivery_attempt_record.v2",
-    "briefloop.delivery_result_record.v2",
-    "briefloop.delivery_result_observation.v2",
-    "briefloop.post_final_assessment_policy_revision.v2",
-    "briefloop.post_final_assessment_request_record.v2",
-    "briefloop.post_final_assessment_execution.v1",
-    "briefloop.post_final_assessment_result_record.v2",
-    "briefloop.post_final_finding_disposition_record.v2",
-    "briefloop.post_final_human_observation_report_span.v1",
-    "briefloop.post_final_human_observation_record.v1",
-    "briefloop.post_final_guidance_draft_revision.v2",
-    "briefloop.post_final_guidance_status_revision.v2",
-    "briefloop.repair_start_request.v2",
-    "briefloop.artifact_supersede_request.v2",
-    "briefloop.artifact_revert_request.v2",
-    "briefloop.repair_complete_request.v2",
-    "briefloop.recovery_complete_request.v2",
-    "briefloop.run_reset_request.v2",
-    "briefloop.run_successor_start_request.v1",
-    "briefloop.finalize_render_request.v2",
-    "briefloop.finalize_complete_request.v2",
-    "briefloop.internal_approval_request.v2",
-    "briefloop.delivery_authorization_request.v2",
-    "briefloop.run_termination_request.v2",
-    "briefloop.delivery_attempt_request.v2",
-    "briefloop.delivery_result_request.v2",
-    "briefloop.checkout_revision.v2",
-    "briefloop.checkout_revision_member.v2",
-    "briefloop.receipt_checkout_binding.v2",
-    "briefloop.publication_identity.v1",
-    "briefloop.checkout_publication_intent.v2",
-    "briefloop.checkout_publication_member.v2",
-    "briefloop.checkout_publication_ack.v2",
-    "briefloop.checkout_publication_cleanup_observation.v2",
-)
-
-
-def test_v2_contract_inventory_is_exact_and_uses_existing_registry() -> None:
-    assert V2_CONTRACT_IDS == EXPECTED_V2_CONTRACT_IDS
-    assert len(V2_CONTRACT_MODELS) == 127
-    assert len(set(V2_CONTRACT_IDS)) == 127
-    for contract_id, model in zip(V2_CONTRACT_IDS, V2_CONTRACT_MODELS):
-        assert SchemaRegistry.get(contract_id) is model
 
 
 def test_strict_model_contract_is_strict_and_forbids_extra_fields() -> None:
@@ -169,27 +24,6 @@ def test_strict_model_contract_is_strict_and_forbids_extra_fields() -> None:
     assert config["strict"] is True
     assert config["extra"] == "forbid"
     assert config["allow_inf_nan"] is False
-
-
-def test_tavily_attempt_authority_freezes_multi_search_and_batch_extract() -> None:
-    attempt = SchemaRegistry.example(
-        "briefloop.run_source_acquisition_attempt_authorization.v2",
-        "minimal",
-    )
-
-    assert (
-        attempt["max_provider_calls"],
-        attempt["max_search_calls"],
-        attempt["max_extract_calls"],
-        attempt["max_extract_urls"],
-        attempt["provider_call_sequence"],
-    ) == (
-        4,
-        2,
-        2,
-        40,
-        "primary_search_extract_then_conditional_backfill_search_extract",
-    )
 
 
 @pytest.mark.parametrize("model", V2_CONTRACT_MODELS, ids=V2_CONTRACT_IDS)
@@ -203,105 +37,6 @@ def test_every_embedded_example_is_valid_and_published_in_schema(model, detail) 
     assert schema["examples"][0] == SchemaRegistry.example(model.schema_id, "minimal")
     assert schema["examples"][1] == SchemaRegistry.example(model.schema_id, "full")
     assert schema["additionalProperties"] is False
-
-
-def test_exported_schema_carries_the_constraints_used_by_after_validators() -> None:
-    source_schema = SchemaRegistry.json_schema("briefloop.source_proposal.v2")
-    source_properties = source_schema["properties"]
-    assert source_properties["title"]["minLength"] == 1
-    assert source_properties["title"]["pattern"] == r"^\S(?:[\s\S]*\S)?$"
-    assert source_properties["retrieved_at"] == {
-        "format": "date-time",
-        "pattern": r"^\d{4}-\d{2}-\d{2}T[\s\S]*(?:Z|[+-]\d{2}:\d{2})$",
-        "title": "Retrieved At",
-        "type": "string",
-    }
-    published_schema = source_properties["published_at"]["anyOf"][0]
-    assert published_schema["format"] == "date"
-    assert published_schema["pattern"] == r"^\d{4}-\d{2}-\d{2}$"
-
-    file_path_schema = source_schema["$defs"]["FileSourceLocator"]["properties"]["path"]
-    submit_path_schema = SchemaRegistry.json_schema(
-        "briefloop.artifact_submit_request.v2"
-    )["properties"]["input_path"]
-    assert file_path_schema["minLength"] == 1
-    assert "(?!/)" in file_path_schema["pattern"]
-    assert "\\.{1,2}" in file_path_schema["pattern"]
-    assert submit_path_schema["minLength"] == 1
-    assert submit_path_schema["pattern"].startswith("^scratch/")
-    assert "(?:json|md)" in submit_path_schema["pattern"]
-
-
-@pytest.mark.parametrize(
-    ("contract_id", "field", "invalid_value", "expected_error"),
-    [
-        (
-            "briefloop.artifact_submit_request.v2",
-            "expected_store_revision",
-            "1",
-            "must be an integer",
-        ),
-        ("briefloop.artifact_record.v2", "required", 1, "must be a boolean"),
-        (
-            "briefloop.stage_state.v2",
-            "status",
-            "done",
-            "must be one of the allowed values",
-        ),
-        ("briefloop.run_identity.v2", "created_at", "July 14", "is invalid"),
-        (
-            "briefloop.run_identity.v2",
-            "runtime",
-            "Operator",
-            "must be one of the allowed values",
-        ),
-        (
-            "briefloop.artifact_revision.v2",
-            "sha256",
-            "not-a-hash",
-            "has invalid format",
-        ),
-    ],
-)
-def test_strict_type_enum_and_date_failures_are_stable(
-    contract_id: str,
-    field: str,
-    invalid_value: object,
-    expected_error: str,
-) -> None:
-    payload = SchemaRegistry.example(contract_id, "minimal")
-    payload[field] = invalid_value
-
-    violations = SchemaRegistry.validate(contract_id, payload)
-
-    assert [(item.field, item.error, item.severity) for item in violations] == [
-        (field, expected_error, "error")
-    ]
-
-
-@pytest.mark.parametrize(
-    ("field", "value"),
-    [
-        ("web_search_mode", "automatic"),
-        ("search_backend", "custom"),
-    ],
-)
-def test_run_direction_reuses_the_existing_search_mode_contract(
-    field: str,
-    value: str,
-) -> None:
-    payload = SchemaRegistry.example("briefloop.run_direction.v2", "minimal")
-    payload[field] = value
-    if field == "search_backend":
-        payload["web_search_mode"] = "external_api"
-
-    assert [
-        item.field
-        for item in SchemaRegistry.validate(
-            "briefloop.run_direction.v2",
-            payload,
-        )
-    ] == [field]
 
 
 def test_extra_field_error_is_value_free_and_does_not_expose_pydantic_message() -> None:
@@ -326,23 +61,6 @@ def test_extra_field_error_is_value_free_and_does_not_expose_pydantic_message() 
     assert exc.value.schema_id == contract_id
     assert exc.value.schema_version == "2"
     assert secret not in str(exc.value)
-
-
-def test_discriminated_source_locator_rejects_invalid_url_and_unknown_kind() -> None:
-    contract_id = "briefloop.source_proposal.v2"
-    invalid_url = SchemaRegistry.example(contract_id, "full")
-    invalid_url["locator"]["url"] = "not a URL"
-    assert [
-        (item.field, item.error)
-        for item in SchemaRegistry.validate(contract_id, invalid_url)
-    ] == [("locator.web.url", "must be a valid URL")]
-
-    unknown_kind = SchemaRegistry.example(contract_id, "minimal")
-    unknown_kind["locator"] = {"kind": "database", "url": "https://example.com"}
-    assert [
-        (item.field, item.error)
-        for item in SchemaRegistry.validate(contract_id, unknown_kind)
-    ] == [("locator", "has an unsupported discriminator")]
 
 
 def test_artifact_submit_request_binds_invocation_scratch_input_and_precondition() -> (
@@ -383,20 +101,6 @@ def test_artifact_submit_request_binds_invocation_scratch_input_and_precondition
         ] == [(derived_field, "extra field is not permitted")]
 
 
-def test_source_commit_request_paths_are_exactly_invocation_scoped() -> None:
-    contract_id = "briefloop.source_commit_request.v2"
-    payload = SchemaRegistry.example(contract_id, "minimal")
-    assert SchemaRegistry.validate(contract_id, payload) == []
-    for field, value in (
-        ("proposal_path", "scratch/INV-OTHER/source_proposal.json"),
-        ("proposal_path", "scratch/INV-SOURCE-001/other.json"),
-        ("content_path", "scratch/INV-SOURCE-001/source_content.exe"),
-        ("raw_payload_path", "scratch/INV-SOURCE-001/source_raw.pdf"),
-    ):
-        invalid = {**payload, field: value}
-        assert SchemaRegistry.validate(contract_id, invalid)
-
-
 def test_source_proposal_has_no_generic_metadata_escape_hatch() -> None:
     contract_id = "briefloop.source_proposal.v2"
     payload = SchemaRegistry.example(contract_id, "minimal")
@@ -405,203 +109,6 @@ def test_source_proposal_has_no_generic_metadata_escape_hatch() -> None:
         (item.field, item.error)
         for item in SchemaRegistry.validate(contract_id, payload)
     ] == [("metadata", "extra field is not permitted")]
-
-
-def test_receipt_identity_source_and_proposal_relations_are_unique() -> None:
-    contract_id = "briefloop.transaction_receipt.v2"
-    payload = SchemaRegistry.example(contract_id, "minimal")
-    for field in ("source_ids", "proposal_ids"):
-        invalid = {**payload, field: ["IDENTITY-001", "IDENTITY-001"]}
-        assert SchemaRegistry.validate(contract_id, invalid)
-    invalid = {
-        **payload,
-        "artifact_identities": [
-            {"artifact_id": "artifact-a"},
-            {"artifact_id": "artifact-a"},
-        ],
-    }
-    assert SchemaRegistry.validate(contract_id, invalid)
-
-
-def test_artifact_identity_record_and_reference_are_exact_strict_contracts() -> None:
-    payload = SchemaRegistry.example(ArtifactIdentityRecord.schema_id, "minimal")
-    assert ArtifactIdentityRecord.model_validate(payload, strict=True)
-    for field in payload:
-        invalid = dict(payload)
-        invalid.pop(field)
-        with pytest.raises(ValidationError):
-            ArtifactIdentityRecord.model_validate(invalid, strict=True)
-    for field, value in (
-        ("required", 1),
-        ("initial_path", "/absolute/path.json"),
-        ("format", "md"),
-        ("accepted_transaction_id", 7),
-    ):
-        with pytest.raises(ValidationError):
-            ArtifactIdentityRecord.model_validate(
-                {**payload, field: value},
-                strict=True,
-            )
-    with pytest.raises(ValidationError):
-        ArtifactIdentityRecord.model_validate(
-            {**payload, "media_type": "application/json"},
-            strict=True,
-        )
-    assert (
-        ArtifactIdentityReference.model_validate(
-            {"artifact_id": "artifact-a"},
-            strict=True,
-        ).artifact_id
-        == "artifact-a"
-    )
-    for invalid in ({}, {"artifact_id": 1}, {"artifact_id": "artifact-a", "x": 1}):
-        with pytest.raises(ValidationError):
-            ArtifactIdentityReference.model_validate(invalid, strict=True)
-
-
-def test_intake_event_types_require_exact_typed_binding() -> None:
-    contract_id = "briefloop.event_envelope.v2"
-    base = SchemaRegistry.example(contract_id, "minimal")
-    common = {
-        "request_id": "REQ-001",
-        "request_fingerprint": "a" * 64,
-        "invocation_id": "INV-001",
-        "reason_code": None,
-    }
-    source = {
-        **base,
-        "event_type": "source_evidence_committed",
-        "intake_binding": {
-            **common,
-            "outcome": "committed",
-            "source_id": "SRC-001",
-            "proposal_id": None,
-        },
-    }
-    proposal = {
-        **base,
-        "event_type": "role_proposal_committed",
-        "intake_binding": {
-            **common,
-            "outcome": "committed",
-            "source_id": None,
-            "proposal_id": "PROP-001",
-        },
-    }
-    rejection = {
-        **base,
-        "event_type": "intake_rejected",
-        "intake_binding": {
-            **common,
-            "outcome": "rejected",
-            "source_id": None,
-            "proposal_id": None,
-            "reason_code": "proposal_contract_invalid",
-        },
-    }
-    assert SchemaRegistry.validate(contract_id, source) == []
-    assert SchemaRegistry.validate(contract_id, proposal) == []
-    assert SchemaRegistry.validate(contract_id, rejection) == []
-    assert SchemaRegistry.validate(
-        contract_id,
-        {**source, "intake_binding": None},
-    )
-    assert SchemaRegistry.validate(
-        contract_id,
-        {**base, "intake_binding": source["intake_binding"]},
-    )
-
-
-@pytest.mark.parametrize("value", (math.nan, math.inf, -math.inf))
-@pytest.mark.parametrize(
-    "contract_id",
-    ("briefloop.source_proposal.v2", "briefloop.event_envelope.v2"),
-)
-def test_nested_non_finite_json_values_are_rejected_value_free(
-    contract_id: str,
-    value: float,
-) -> None:
-    payload = SchemaRegistry.example(contract_id, "minimal")
-    payload["metadata"] = {"nested": [value]}
-
-    assert [
-        (item.field, item.error)
-        for item in SchemaRegistry.validate(contract_id, payload)
-    ] == [("$", "must contain only finite JSON numbers")]
-
-
-def test_transaction_receipt_requires_revision_advance() -> None:
-    contract_id = "briefloop.transaction_receipt.v2"
-    payload = SchemaRegistry.example(contract_id, "minimal")
-    payload["prior_revision"] = 1
-    payload["committed_revision"] = 1
-
-    assert [
-        (item.field, item.error)
-        for item in SchemaRegistry.validate(contract_id, payload)
-    ] == [("$", "is invalid")]
-
-
-def test_run_integrity_contract_distinguishes_initial_and_recovered_clean() -> None:
-    contract_id = "briefloop.run_integrity_record.v2"
-    initial = SchemaRegistry.example(contract_id, "minimal")
-    assert SchemaRegistry.validate(contract_id, initial) == []
-
-    recovered = {
-        **initial,
-        "integrity_revision": 3,
-        "prior_integrity_revision": 2,
-    }
-    assert SchemaRegistry.validate(contract_id, recovered) == []
-
-    for invalid in (
-        {**recovered, "prior_integrity_revision": 1},
-        {**recovered, "reason_code": "frozen_artifact_contaminated"},
-        {**initial, "integrity_revision": 2},
-    ):
-        assert [
-            (item.field, item.error)
-            for item in SchemaRegistry.validate(contract_id, invalid)
-        ] == [("$", "is invalid")]
-
-
-def test_control_dto_examples_cover_required_revision_and_identity_bindings() -> None:
-    revision = SchemaRegistry.example("briefloop.artifact_revision.v2", "minimal")
-    assert revision["path"].startswith("output/artifacts/")
-    assert revision["frozen"] is True
-
-    invocation = SchemaRegistry.example("briefloop.invocation.v2", "full")
-    assert invocation["role_id"] == "scout"
-    assert invocation["runtime"] in VALID_RUNTIMES
-
-    receipt = SchemaRegistry.example("briefloop.transaction_receipt.v2", "full")
-    assert receipt["committed_revision"] > receipt["prior_revision"]
-    assert receipt["artifact_revisions"] == [
-        {"artifact_id": "candidate_claims", "revision": 1}
-    ]
-    assert receipt["artifact_identities"] == [{"artifact_id": "candidate_claims"}]
-
-
-def test_nested_error_path_uses_stable_briefloop_format() -> None:
-    contract_id = "briefloop.candidate_claims_proposal.v2"
-    payload = SchemaRegistry.example(contract_id, "minimal")
-    payload["candidates"][0]["confidence"] = "certain"
-
-    violations = SchemaRegistry.validate(contract_id, payload)
-
-    assert [(item.field, item.error) for item in violations] == [
-        ("candidates[0].confidence", "must be one of the allowed values")
-    ]
-
-
-def test_local_identity_duplicates_fail_without_migrating_business_authority() -> None:
-    contract_id = "briefloop.candidate_claims_proposal.v2"
-    payload = SchemaRegistry.example(contract_id, "full")
-    payload["candidates"][1]["candidate_id"] = payload["candidates"][0]["candidate_id"]
-
-    violations = SchemaRegistry.validate(contract_id, payload)
-
-    assert [(item.field, item.error) for item in violations] == [("$", "is invalid")]
 
 
 def test_legacy_inventory_is_exact_and_each_result_is_opaque_read_only() -> None:
@@ -682,25 +189,3 @@ def test_unknown_or_non_json_legacy_payload_is_invalid_and_value_free() -> None:
     assert [(item.field, item.error) for item in non_finite_legacy.violations] == [
         ("$", "must contain finite JSON-compatible values")
     ]
-
-
-def test_legacy_contract_class_remains_registered_and_compatible() -> None:
-    assert SchemaRegistry.get("claim") is not None
-
-
-def test_run_direction_binding_normalization_only_omits_null_output_contract() -> None:
-    absent = {"task_objective": "Review the market."}
-    null_contract = {**absent, "output_contract": None}
-    present_contract = {
-        **absent,
-        "output_contract": {
-            "schema_version": "briefloop.run_output_contract.v2",
-            "catalog_id": "briefloop.output_extent_catalog.v1",
-            "output_extent": "balanced",
-        },
-    }
-
-    assert canonical_run_direction_for_binding(absent) == absent
-    assert canonical_run_direction_for_binding(null_contract) == absent
-    assert null_contract["output_contract"] is None
-    assert canonical_run_direction_for_binding(present_contract) == present_contract

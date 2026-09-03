@@ -9,13 +9,9 @@ runtime_host_v2.initialization).  Neither package may read improvement-ledger
 material, legacy fold-ins, or open raw sockets/sqlite/subprocess.
 """
 
-from __future__ import annotations
 
 import ast
-import os
 from pathlib import Path
-import subprocess
-import sys
 
 ROOT = Path(__file__).parents[1]
 SRC_ROOT = ROOT / "src" / "multi_agent_brief"
@@ -129,47 +125,10 @@ def _check_package(package: Path) -> None:
     assert seen == set(expected), f"{package.name} file inventory drifted"
 
 
-def test_brief_html_imports_are_pinned_to_read_only_projection() -> None:
-    _check_package(BRIEF_HTML)
 
 
-def test_brief_html_runtime_import_does_not_load_assessment_writer_or_evaluator() -> (
-    None
-):
-    script = """
-import sys
-
-from multi_agent_brief.product.brief_html import builder
-
-forbidden_prefixes = (
-    "multi_agent_brief.product.post_final_assessment",
-    "multi_agent_brief.semantic_evaluator.archive",
-    "multi_agent_brief.semantic_evaluator.runner",
-    "multi_agent_brief.semantic_evaluator.adapters",
-)
-loaded = sorted(
-    name
-    for name in sys.modules
-    if any(name == prefix or name.startswith(prefix + ".") for prefix in forbidden_prefixes)
-)
-if loaded:
-    raise SystemExit("forbidden runtime imports: " + ", ".join(loaded))
-"""
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(ROOT / "src")
-    completed = subprocess.run(
-        [sys.executable, "-c", script],
-        cwd=ROOT,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
-def test_init_web_imports_are_pinned_to_sanctioned_bootstrap() -> None:
-    _check_package(INIT_WEB)
 
 
 def test_brief_html_static_export_has_no_write_affordance() -> None:

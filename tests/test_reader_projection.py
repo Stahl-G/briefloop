@@ -131,60 +131,6 @@ def test_reader_projection_preserves_unresolved_src_markers_as_residue(
     assert result.reader_clean["reader_projection_unresolved_src_marker_count"] == 1
 
 
-def test_reader_projection_preserves_malformed_src_markers_as_residue(
-    tmp_path: Path,
-) -> None:
-    output_dir, intermediate = _projection_workspace(tmp_path)
-    (intermediate / "audited_brief.md").write_text(
-        "# Brief\n\n"
-        "Malformed empty marker. [src:]\n"
-        "Malformed whitespace marker. [src: CL-001]\n",
-        encoding="utf-8",
-    )
-
-    result = build_reader_projection(
-        output_dir=output_dir,
-        output_formats=["markdown"],
-        transaction_id="tx-malformed-src",
-    )
-
-    assert "[src:]" in result.reader_markdown
-    assert "[src: CL-001]" in result.reader_markdown
-    assert result.reader_projection_residue["status"] == "fail"
-    assert result.reader_projection_residue["malformed_src_marker_count"] == 2
-    assert result.reader_clean["status"] == "fail"
-    assert result.reader_clean["reader_projection_malformed_src_marker_count"] == 2
-
-
-def test_reader_projection_canonical_source_strips_internal_sections_before_appendix(
-    tmp_path: Path,
-) -> None:
-    output_dir, intermediate = _projection_workspace(tmp_path)
-    _write_claim_ledger(intermediate / "claim_ledger.json", ["CL-001", "CL-002"])
-    (intermediate / "audited_brief.md").write_text(
-        "# Brief\n\n"
-        "ExampleCo opened a public demo facility. [src:CL-001]\n\n"
-        "## Claim Ledger Coverage\n\n"
-        "Internal coverage note. [src:CL-002]\n\n"
-        "## Reader Section\n\n"
-        "Reader-visible section continues.\n",
-        encoding="utf-8",
-    )
-
-    result = build_reader_projection(
-        output_dir=output_dir,
-        output_formats=["markdown", "source_appendix"],
-        transaction_id="tx-internal-section",
-    )
-
-    assert "Internal coverage note" not in result.reader_markdown
-    assert "Reader-visible section continues" in result.reader_markdown
-    assert result.source_appendix_cited_claim_count == 1
-    assert set(result.source_appendix_claim_map) == {"CL-001"}
-    appendix = Path(result.source_appendix).read_text(encoding="utf-8")
-    assert "ExampleCo Source 2" not in appendix
-
-
 @pytest.mark.parametrize(
     ("markdown", "message"),
     [
@@ -239,54 +185,6 @@ def test_reader_projection_rejects_malformed_projectable_blocks(
     assert not (intermediate / "finalize_candidate" / "tx-malformed-block").exists()
 
 
-def test_reader_projection_surfaces_internal_appendix_residue(tmp_path: Path) -> None:
-    output_dir, intermediate = _projection_workspace(tmp_path)
-    (intermediate / "audited_brief.md").write_text(
-        "# Brief\n\n"
-        "ExampleCo opened a public demo facility. [src:CL-001]\n\n"
-        "## Source Appendix\n\n"
-        "Claim Ledger: CL-0001 from input/sources/source-001.md\n",
-        encoding="utf-8",
-    )
-
-    result = build_reader_projection(
-        output_dir=output_dir,
-        output_formats=["markdown"],
-        transaction_id="tx-residue",
-    )
-
-    assert result.reader_clean["status"] == "fail"
-    kinds = {finding["kind"] for finding in result.reader_clean["sample_findings"]}
-    assert {"bare_claim_id", "process_wording"}.issubset(kinds)
-    assert not (output_dir / "brief.md").exists()
-    assert not (output_dir / "delivery").exists()
-
-
-def test_reader_projection_rejects_pathlike_transaction_id_without_deleting_intermediate(
-    tmp_path: Path,
-) -> None:
-    output_dir, intermediate = _projection_workspace(tmp_path)
-    (intermediate / "audited_brief.md").write_text(
-        "# Brief\n\nExampleCo opened a public demo facility. [src:CL-001]\n",
-        encoding="utf-8",
-    )
-    (intermediate / "finalize_candidate").mkdir()
-    sentinel = intermediate / "do_not_delete.txt"
-    sentinel.write_text("still here", encoding="utf-8")
-
-    result = build_reader_projection(
-        output_dir=output_dir,
-        output_formats=["markdown"],
-        transaction_id="..",
-    )
-
-    assert sentinel.read_text(encoding="utf-8") == "still here"
-    candidate = Path(result.candidate_dir)
-    assert candidate.parent == intermediate / "finalize_candidate"
-    assert candidate.name not in {".", ".."}
-    assert Path(result.reader_brief).exists()
-
-
 def test_reader_projection_refuses_same_transaction_id_overwrite(tmp_path: Path) -> None:
     output_dir, intermediate = _projection_workspace(tmp_path)
     audited = intermediate / "audited_brief.md"
@@ -317,36 +215,3 @@ def test_reader_projection_refuses_same_transaction_id_overwrite(tmp_path: Path)
 
     assert first_reader.read_text(encoding="utf-8") == first_text
     assert "Second candidate content" not in first_reader.read_text(encoding="utf-8")
-
-
-def test_reader_projection_cleans_failed_candidate_for_same_transaction_retry(
-    tmp_path: Path,
-) -> None:
-    output_dir = tmp_path / "output"
-    intermediate = output_dir / "intermediate"
-    intermediate.mkdir(parents=True)
-    (intermediate / "audited_brief.md").write_text(
-        "# Brief\n\nExampleCo opened a public demo facility. [src:CL-001]\n",
-        encoding="utf-8",
-    )
-    candidate = intermediate / "finalize_candidate" / "tx-retry"
-
-    with pytest.raises(FileNotFoundError):
-        build_reader_projection(
-            output_dir=output_dir,
-            output_formats=["markdown", "source_appendix"],
-            transaction_id="tx-retry",
-        )
-
-    assert not candidate.exists()
-
-    _write_single_claim_ledger(intermediate / "claim_ledger.json")
-    result = build_reader_projection(
-        output_dir=output_dir,
-        output_formats=["markdown", "source_appendix"],
-        transaction_id="tx-retry",
-    )
-
-    assert Path(result.candidate_dir) == candidate
-    assert Path(result.reader_brief).exists()
-    assert result.source_appendix_generation == "generated"

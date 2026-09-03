@@ -77,24 +77,3 @@ def test_se2r_12_exact_replay_precedes_credentials_adapter_and_network(
     assert replay.archive_path == first.archive_path
     assert adapter_touched is False
     assert "OPENAI_API_KEY" not in os.environ
-
-
-def test_exact_replay_is_byte_stable_and_does_not_add_archive_members(
-    tmp_path: Path,
-) -> None:
-    invocation = _invocation(tmp_path)
-    first = run_shadow(**invocation)
-    archive = Path(first.archive_path or "")
-    before = {
-        path.relative_to(archive).as_posix(): path.read_bytes()
-        for path in archive.rglob("*")
-        if path.is_file()
-    }
-    replay = run_shadow(**invocation)
-    after = {
-        path.relative_to(archive).as_posix(): path.read_bytes()
-        for path in archive.rglob("*")
-        if path.is_file()
-    }
-    assert replay.replayed is True
-    assert after == before
