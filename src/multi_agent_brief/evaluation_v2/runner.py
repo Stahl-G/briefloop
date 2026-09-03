@@ -42,27 +42,45 @@ class SplitResult:
     score: CorpusScore
 
 
-def run_split(corpus: Corpus, split: str, rollout: RolloutFn) -> SplitResult:
+def run_split(
+    corpus: Corpus,
+    split: str,
+    rollout: RolloutFn,
+    *,
+    max_workers: int = 1,
+) -> SplitResult:
     """Run every case in ``split``, in corpus order, and score the results.
 
     Exactly one rollout call per selected case; the collected outcomes are
     passed untouched to ``score_corpus`` and returned alongside the score, so
     a result can always be audited down to the raw records it was computed
     from.
+
+    ``max_workers > 1`` drives the rollouts through a thread pool -- each
+    real rollout waits on a subprocess, so threads overlap the waiting.  The
+    RESULT is unchanged: outcomes are assembled in corpus order and every
+    case-id check still runs.
     """
     cases = corpus.select(split)
     if not cases:
         raise ValueError(f"split {split!r} has no cases")
 
-    outcomes: list[RolloutOutcome] = []
-    for case in cases:
+    def _checked(case: EvaluationCase) -> RolloutOutcome:
         outcome = rollout(case)
         if outcome.case_id != case.case_id:
             raise ValueError(
                 f"rollout for {case.case_id!r} returned outcome for "
                 f"{outcome.case_id!r}"
             )
-        outcomes.append(outcome)
+        return outcome
+
+    if max_workers > 1:
+        from concurrent.futures import ThreadPoolExecutor
+
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            outcomes = list(pool.map(_checked, cases))
+    else:
+        outcomes = [_checked(case) for case in cases]
 
     return SplitResult(
         split=split,

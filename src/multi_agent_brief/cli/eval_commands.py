@@ -114,6 +114,13 @@ def register(subparsers: argparse._SubParsersAction) -> None:
         default=1,
         help="Repetition index for repeated runs of the same split (ledger field).",
     )
+    run_parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=1,
+        help="Concurrent rollouts (each waits on a subprocess; results are "
+        "assembled in corpus order either way).",
+    )
     run_parser.add_argument("--notes", default="", help="Ledger note for this run.")
 
 
@@ -184,7 +191,7 @@ def _handle_run(args: argparse.Namespace) -> int:
     with as_file(envelope_resource) as envelope_path:
         envelope_sha = envelope_digest(envelope_path)
 
-    result = run_split(corpus, args.split, rollout)
+    result = run_split(corpus, args.split, rollout, max_workers=args.max_workers)
     score = result.score
     record = record_from_score(
         score,

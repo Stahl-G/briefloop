@@ -971,7 +971,7 @@ def build_codex_rollout(
     workdir.mkdir(parents=True, exist_ok=True)
     contract_text = _reporting_contract()
 
-    def rollout(case: EvaluationCase) -> RolloutOutcome:
+    def _rollout_once(case: EvaluationCase) -> RolloutOutcome:
         workspace = workdir / case.case_id
         materialize_case_workspace(case, workspace)
         if not (workspace / ".codex" / "agents" / "briefloop-auditor.toml").exists():
@@ -1020,5 +1020,17 @@ def build_codex_rollout(
             blocked=payload.get("audit_status") == "fail",
             noncompliant_finding_count=noncompliant,
         )
+
+    def rollout(case: EvaluationCase) -> RolloutOutcome:
+        try:
+            return _rollout_once(case)
+        except Exception:
+            # One full retry from a clean workspace: transient exec failures
+            # must not waste a 40-case measurement run, and seeding is
+            # deterministic so a wiped workspace rebuilds identically.
+            import shutil
+
+            shutil.rmtree(workdir / case.case_id, ignore_errors=True)
+            return _rollout_once(case)
 
     return rollout
