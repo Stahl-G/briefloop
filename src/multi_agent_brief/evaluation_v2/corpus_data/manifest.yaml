@@ -1,0 +1,20 @@
+# Packaged agent-rollout evaluation corpus manifest.
+#
+# Skeleton only: the corpus body (case YAML files under cases/) lands with
+# the Phase-2 corpus generator.  load_corpus() accepts this manifest today
+# so the packaged anchor (DEFAULT_CORPUS) and the loader stay exercised;
+# validate_corpus() deliberately fails on it until the full-scale
+# invariants (>= 80 cases, >= 40 and >= 16 blocking per split, blocking
+# ratio in [0.55, 0.65], >= 4 cases per finding type) are met.
+#
+# Entry shape (one per case, paths relative to this manifest and never
+# escaping corpus_data/):
+#   - case_id: stale_source_weekly_pack   # must equal the case file's case_id
+#     split: train                        # one of: train, val
+#     path: cases/train/stale_source_weekly_pack.yaml
+#
+# Each referenced file is validated through the strict EvaluationCase
+# contract (evaluation_v2/contracts.py); unknown manifest-level keys are
+# rejected, so extending this format requires a new schema_version.
+schema_version: briefloop-evaluation-corpus/v1
+cases: []
