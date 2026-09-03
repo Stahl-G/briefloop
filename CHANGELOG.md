@@ -21,10 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   toward recall), an injectable-rollout split runner, and an offline
   findings-to-outcome mapping for recorded quality-gate reports. The corpus
   ships as an empty skeleton with 16 generator specs ported from the legacy
-  fixtures; `briefloop eval validate` works today, `briefloop eval run` fails
-  closed until the codex rollout adapter lands, and no measured reward exists
-  yet. Added `docs/claims.md` consolidating the public claims boundary,
-  including the defect-detection NOT MEASURED line.
+  fixtures; superseded by the entries below (the adapter and the measured
+  baseline have since landed). Added `docs/claims.md` consolidating the public claims boundary,
+  including the defect-detection NOT MEASURED line (since measured; see the
+  next entry).
+- Added the regenerated 80-case packaged detection corpus (deterministic generator, construction-time oracle) and the real codex auditor rollout path: `briefloop eval run` drives concurrent per-case rollouts with retry and appends reward-ledger records pinned to corpus, `agent_roles.yaml`, and reporting-contract digests. First measured baseline (2026-09-03): recall 1.000 in all three val runs, mean reward 0.931, spread 0.063; the fail-closed reward gate stays unrationalized while spread exceeds the 2.5-point threshold, and the defect-detection claim in `docs/claims.md` is now MEASURED with numbers.
+
 
 ## [0.15.3] — 2026-08-14
 

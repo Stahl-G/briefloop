@@ -15,13 +15,14 @@ split measured the retest variance.
 
 ## Run identity
 
-| Pin | Value |
+| Pin | Meaning |
 |---|---|
-| corpus_sha256 | `fa690062c330f012…` (manifest + 80 case files) |
-| roles_sha256 | `477c0b7d81dd0f28…` (`configs/agent_roles.yaml`) |
-| envelope_sha256 | `83a170120312f6bb…` (auditor reporting contract) |
+| corpus_sha256 | digest over the corpus manifest plus all 80 case files |
+| roles_sha256 | digest of `configs/agent_roles.yaml`, the role instructions under evaluation |
+| envelope_sha256 | digest of the auditor reporting contract injected into every envelope |
 
-Per-run records with full digests: `docs/evaluation-results/reward_ledger.jsonl`.
+The full digest values for this baseline are recorded verbatim in
+`docs/evaluation-results/reward_ledger.jsonl` (records with run_index 1-3).
 
 ## Results
 
