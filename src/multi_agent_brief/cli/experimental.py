@@ -15,6 +15,7 @@ EXPERIMENTAL_ENV_VAR = "BRIEFLOOP_EXPERIMENTAL"
 EXPERIMENTAL_COMMANDS = frozenset(
     {
         "experiments",
+        "eval",
         "new",
         "packs",
         "validate-report-spec",

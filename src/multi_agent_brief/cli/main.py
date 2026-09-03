@@ -22,6 +22,7 @@ from multi_agent_brief.cli import (
     status_commands,
     runtime_commands,
     experiments_commands,
+    eval_commands,
     product_commands,
     secrets_commands,
     contract_commands,
@@ -70,6 +71,7 @@ def build_parser(*, prog: str | None = None) -> argparse.ArgumentParser:
 
     # Experimental measurement harnesses
     experiments_commands.register(subparsers)
+    eval_commands.register(subparsers)
 
     # Workspace runtime kit install
     runtime_commands.register(subparsers)
@@ -152,6 +154,9 @@ def _dispatch(args: argparse.Namespace) -> int:
 
     if cmd == "experiments":
         return experiments_commands.handle(args)
+
+    if cmd == "eval":
+        return eval_commands.handle(args)
 
     if cmd == "runtime":
         return runtime_commands.handle(args)

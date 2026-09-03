@@ -56,7 +56,15 @@ def test_experimental_enabled_reads_env(monkeypatch):
 
 def test_experimental_command_list_is_frozen():
     assert EXPERIMENTAL_COMMANDS == frozenset(
-        {"experiments", "new", "packs", "validate-report-spec", "extract", "quality"}
+        {
+            "experiments",
+            "eval",
+            "new",
+            "packs",
+            "validate-report-spec",
+            "extract",
+            "quality",
+        }
     )
 
 
