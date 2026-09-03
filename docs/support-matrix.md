@@ -77,7 +77,8 @@ validation unless that is stated separately.
 | `briefloop gates check/show/validate` | Unsupported on SQLite; retired public CLI |
 | `briefloop provenance build/show/validate` | Unsupported on SQLite; retired public CLI |
 | `briefloop improve propose/list/show/approve/reject/revert/stats/validate/rebuild` | Unsupported on SQLite; retired public CLI |
-| `briefloop eval-cases list/validate/run` | Retired (LD2-3); the legacy-runtime evaluation driver was deleted with the runtime-state stack. Packaged fixture data is preserved for the EF-1/EF-2 Store-native evaluation rebuild |
+| `briefloop eval-cases list/validate/run` | Retired (LD2-3); the legacy-runtime evaluation driver was deleted with the runtime-state stack. Packaged fixture data is preserved as the read-only source for the 16 generator specs reused by the experimental `evaluation_v2` corpus rebuild |
+| Agent-rollout evaluation stack (`evaluation_v2` strict case contracts with derived blocking levels, packaged corpus with production composition thresholds, paired reward R = defect recall × true-negative rate where warning-level detections count toward recall, `briefloop eval validate/run` behind `BRIEFLOOP_EXPERIMENTAL`) | Experimental; validate-only today: the corpus ships as an empty skeleton with 16 generator specs, `eval run` fails closed until the codex rollout adapter lands, and no measured reward exists yet |
 | `briefloop experiments 080 validate-case` | Retired (LD2-3); the 080 tooling was deleted with the legacy runtime-state stack. Scorecard reproduction is satisfied by git history and run archives |
 | MABW-080 archived experiment test suite | Retired (LD2-3); suite and on-demand CI job deleted with the 080 tooling. Scorecard reproduction is satisfied by git history and run archives |
 | `briefloop experiments 080 register-run` | Retired (LD2-3); the 080 tooling was deleted with the legacy runtime-state stack. Scorecard reproduction is satisfied by git history and run archives |
@@ -373,7 +374,7 @@ from any install to copy the packaged Codex workspace-local runtime kit.
 
 | Tool | Status |
 |---|---|
-| Packaged public-safe evaluation cases (`eval-cases`) | Retired (LD2-3); fixture data preserved for EF-1/EF-2 |
+| Packaged public-safe evaluation cases (`eval-cases`) | Retired (LD2-3); fixture data preserved as the read-only source for the `evaluation_v2` generator specs |
 | MABW-080 experiment case validator (`experiments 080 validate-case`) | Retired (LD2-3) |
 | MABW-080 run registration (`experiments 080 register-run`) | Retired (LD2-3) |
 | MABW-080 scorecard builder (`experiments 080 score-run`) | Retired (LD2-3) |
