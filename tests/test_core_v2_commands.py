@@ -358,6 +358,11 @@ def test_core_v2_imports_are_confined_to_bound_importers() -> None:
         # Bootstrap resolves the Human semantic extent once before freezing it
         # into the Store-bound RunDirection.
         "workspace/init_profile.py",
+        # evaluation_v2 staging drives the core-run stage machine for the
+        # experimental rollout evaluation; the rollout adapter invokes the
+        # domain verifier on the staged Store head.
+        "evaluation_v2/staging.py",
+        "evaluation_v2/codex_rollout.py",
     }
     findings: list[str] = []
     for path in sorted(package_root.rglob("*.py")):
