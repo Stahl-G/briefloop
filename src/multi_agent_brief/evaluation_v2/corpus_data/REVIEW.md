@@ -178,3 +178,37 @@ materializes source packs from these specs, at which point the strict
 `specs/`, so the spec files stay out of runtime package data. Both
 `tests/test_evaluation_v2_corpus.py` (exact pattern-set pin) and
 `tests/test_evaluation_v2_specs.py` (specs-stay-out pin) enforce this.
+
+## P2-T0 locator anchor observations (2026-09-03, 2 real codex exec rollouts)
+
+Measured on staged demo workspaces with the packaged kit role instructions
+(auditor on a seeded defective brief; editor writing its own brief, scored by
+the offline deterministic gate evaluation). Raw payloads archived under the
+repo's ignored planning directory.
+
+Observed anchor shapes:
+
+| Defect anchor | Canonical finding shape | Locator rule |
+|---|---|---|
+| Seeded source/claim (`claim_ledger`) | `stale_source` with `claim_id=CL-XXXX`, no line | locator = `<claim_id>` |
+| Seeded brief (`audited_brief`, auditor role) | gate finding `artifact_id=audited_brief` + `line_number` in the seeded file | locator = `<artifact>#L<line>` |
+| Rollout-written brief (editor role) | `target_relevance_gap` and `final_*` anchored on `audited_brief` with the line inside agent-written prose | locator = `<artifact>` only; the line is not knowable before rollout |
+
+Verdict for the generator: an anchor whose artifact is seeded before the
+rollout may carry a line number; an anchor whose artifact the rollout writes
+must stay anchor-only. `validate_corpus` will enforce this by finding-family
+plus `rollout.role`, together with "at most one seeded defect per finding_type
+per case" (anchor-level locators cannot disambiguate same-type siblings).
+
+Agent-written `audit_report.json` findings are free-typed and carry no anchor
+fields (observed: `unsupported_fact_missing_citation` instead of
+`number_without_source`, positions only in prose). Scoring therefore reads
+canonical Python gate findings; if an eval envelope wants agent-reported
+findings, the envelope's task instructions must constrain the reporting
+vocabulary and anchor fields — the role contract itself is not edited.
+
+Corpus construction constraints observed the hard way: `config.yaml` must
+agree with seeded content (a company-name mismatch produced a whole extra
+finding), claim-count minimums must match corpus scale (`min_items` noise),
+and source dates must be constructed relative to the case `report_date`
+(the freshness gate blocks anything outside the window).
