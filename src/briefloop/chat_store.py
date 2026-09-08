@@ -72,8 +72,9 @@ class ChatStore:
         session=self.session(sid)
         with self.store.tx() as c:
             messages=[self.decode(r) for r in c.execute('SELECT * FROM chat_messages WHERE session_id=? ORDER BY created,rowid',(sid,))]
-            usage_row=c.execute("SELECT data FROM chat_events WHERE session_id=? AND kind='thread/tokenUsage/updated' ORDER BY seq DESC LIMIT 1",(sid,)).fetchone()
-            token_usage=json.loads(usage_row['data']).get('tokenUsage') if usage_row else None
+            usage_row=c.execute("SELECT seq,data FROM chat_events WHERE session_id=? AND kind='thread/tokenUsage/updated' ORDER BY seq DESC LIMIT 1",(sid,)).fetchone()
+            changed=c.execute("SELECT seq FROM chat_events WHERE session_id=? AND kind='thread/providerChanged' ORDER BY seq DESC LIMIT 1",(sid,)).fetchone()
+            token_usage=json.loads(usage_row['data']).get('tokenUsage') if usage_row and (not changed or usage_row['seq']>changed['seq']) else None
             requests=[self.decode(r) for r in c.execute('SELECT id,session_id,data,status,created FROM chat_requests WHERE session_id=? ORDER BY created',(sid,))]
             events=[self.decode(r) for r in c.execute('SELECT * FROM chat_events WHERE session_id=? AND seq>? ORDER BY seq LIMIT 1000',(sid,after))]
         if not private:

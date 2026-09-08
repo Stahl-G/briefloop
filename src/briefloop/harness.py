@@ -39,7 +39,11 @@ class HarnessManager:
     def _config(runtime):
         value={**DEFAULT_RUNTIME,**(runtime or {})}
         if not isinstance(value['model'],str) or not value['model'].strip():raise ValueError('请选择模型')
-        if value['effort'] not in ('minimal','low','medium','high','xhigh','max','ultra','none'):raise ValueError('无效推理档位')
+        if value.get('effort') in (None,'','none'):value['effort']=None
+        elif not isinstance(value['effort'],str) or not value['effort'].strip():raise ValueError('无效推理档位')
+        provider=value.get('model_provider')
+        if provider is not None and not isinstance(provider,str):raise ValueError('model_provider 必须是 Codex 已配置的服务名称')
+        value['model_provider']=provider.strip() or None if isinstance(provider,str) else None
         if value['permission'] not in ('read-only','workspace-write'):raise ValueError('权限必须为仅阅读或工作区读写')
         return value
     def _client(self):
@@ -49,7 +53,7 @@ class HarnessManager:
                 if process is not None and process.poll() is not None:
                     self._disconnect();self.client=None;self._threads.clear();self._children.clear()
             if self.client is None:
-                self.client=self.client_factory(self.store.root/'chat-runtime',model=DEFAULT_RUNTIME['model'],effort=DEFAULT_RUNTIME['effort'])
+                self.client=self.client_factory(self.store.root/'chat-runtime')
                 threading.Thread(target=self._consume,args=(self.client,),daemon=True).start()
             return self.client
     def send(self,session_id,text,mode='queue',source_ids=None,runtime=None,message_id=None,display_text=None,allow_web=False):
@@ -61,7 +65,7 @@ class HarnessManager:
         if mode=='steer' and session.get('turn_id'):
             active=[m for m in self.snapshot(session_id)['messages'] if m.get('turn_id')==session['turn_id'] and m['role']=='user']
             actual=self._config(active[0]['runtime'] if active else session['runtime'])
-            if config['permission']!=actual['permission']:raise ValueError('运行中追加指令不能改变权限；请选择排队，在下一轮应用权限设置')
+            if any(config.get(k)!=actual.get(k) for k in ('permission','model','model_provider','effort')):raise ValueError('运行中追加指令不能改变模型、服务或权限；请选择排队，在下一轮应用设置')
         mid=message_id or uid('msg')
         with self._lock:
             prior=next((m for m in self.snapshot(session_id)['messages'] if m['id']==mid),None)
@@ -115,15 +119,26 @@ class HarnessManager:
                 instructions+='\n本轮权限：仅阅读。只能读取与解释现有资料，不修改文件，不启动生成、评分、反馈或学习任务。不要执行 workspace-action（其初始化也可能写入数据库）。需要索引时可通过 SQLite mode=ro 读取现有记录。用户需要写入时请说明切换为工作区读写后发起新一轮。'
             policy={'type':'readOnly','networkAccess':bool(message['allow_web'])} if config['permission']=='read-only' else {'type':'workspaceWrite','writableRoots':list(dict.fromkeys([str(self.store.root),session['cwd']])),'networkAccess':bool(message['allow_web'])}
             if thread_id:
-                client.request('thread/resume',{'threadId':thread_id,'cwd':session['cwd'],'model':config['model'],'approvalPolicy':'never','sandbox':config['permission'],'config':{'web_search':'live' if message['allow_web'] else 'disabled'},'developerInstructions':instructions})
+                bindings=self.store.rows("SELECT data FROM chat_events WHERE session_id=? AND kind='thread/bound' ORDER BY seq DESC LIMIT 1",(sid,))
+                previous_provider=json.loads(bindings[0]['data']).get('model_provider') if bindings else None
+                if previous_provider!=config.get('model_provider'):
+                    old_thread_id=thread_id;self._threads.pop(thread_id,None);thread_id=None
+                    self.chat.event(sid,'thread/providerChanged',{'previousThreadId':old_thread_id,'model_provider':config.get('model_provider'),'message':'已切换模型服务，新一轮使用新的 Codex 对话；旧消息保留查看，不自动发送到新服务。'})
+            thread_params={'cwd':session['cwd'],'model':config['model'],'approvalPolicy':'never','sandbox':config['permission'],'config':{'web_search':'live' if message['allow_web'] else 'disabled'},'developerInstructions':instructions}
+            if config.get('model_provider'):thread_params['modelProvider']=config['model_provider']
+            if thread_id:
+                client.request('thread/resume',{'threadId':thread_id,**thread_params})
             else:
-                result=client.request('thread/start',{'cwd':session['cwd'],'model':config['model'],'approvalPolicy':'never','sandbox':config['permission'],'config':{'web_search':'live' if message['allow_web'] else 'disabled'},'developerInstructions':instructions})
+                result=client.request('thread/start',thread_params)
                 thread_id=result['thread']['id']
+            self.chat.event(sid,'thread/bound',{'threadId':thread_id,'model_provider':config.get('model_provider')})
             with self._lock:
                 self._threads[thread_id]=sid;self.chat.update(sid,thread_id=thread_id)
                 if sid in self._cancel_requested:
                     self.chat.patch_message(mid,status='cancelled');self.chat.update(sid,status='interrupted');return
-                result=client.request('turn/start',{'threadId':thread_id,'model':config['model'],'effort':config['effort'],'clientUserMessageId':mid,'input':self._input(message),'cwd':session['cwd'],'sandboxPolicy':policy})
+                turn_params={'threadId':thread_id,'model':config['model'],'clientUserMessageId':mid,'input':self._input(message),'cwd':session['cwd'],'sandboxPolicy':policy}
+                if config.get('effort'):turn_params['effort']=config['effort']
+                result=client.request('turn/start',turn_params)
                 turn_id=result['turn']['id']
                 self.chat.update(sid,turn_id=turn_id,status='running')
                 self.chat.patch_message(mid,status='delivered',turn_id=turn_id)

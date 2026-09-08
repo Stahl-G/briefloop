@@ -61,7 +61,9 @@ class InteractiveRuntime:
         payload = json.loads(job['payload'])
         configured = payload.get('runtime', self.store.runtime_config())
         runtime = {'model': configured['model'],
-                   'effort': configured.get('reasoning_effort', configured.get('effort', 'high'))}
+                   'effort': configured.get('reasoning_effort', configured.get('effort'))}
+        if configured.get('model_provider'):
+            runtime['model_provider'] = configured['model_provider']
         saved = folder / 'execution.json'
         if saved.exists():
             previous = json.loads(saved.read_text())
@@ -103,7 +105,8 @@ class InteractiveRuntime:
                     binding['history'].append(binding['message_id'])
                 binding['message_id'] = uid('msg')
             _write(marker, binding)
-            fixed = f"本次所有模型工作固定使用 {runtime['model']} / {runtime['effort']}。子 agent 继承此配置，不得选择其他模型或更高推理档位。\n"
+            from .runtime import runtime_instruction
+            fixed = runtime_instruction(configured)
             if binding['history']:
                 fixed += '恢复这一个任务：先核对现有子 agent 和完整输出，复用已完成结果，只补未完成部分，不重新采样已完成稿件。\n'
             (folder / 'prompt.md').write_text(fixed + prompt, encoding='utf-8')

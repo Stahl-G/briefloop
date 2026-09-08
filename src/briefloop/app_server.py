@@ -13,14 +13,14 @@ import threading
 
 
 class AppServerClient:
-    def __init__(self, log_directory, *, model='gpt-5.6-luna', effort='high'):
+    def __init__(self, log_directory):
         root=Path(log_directory);root.mkdir(parents=True,exist_ok=True)
         executable=shutil.which('codex')
         if not executable:raise RuntimeError('Codex CLI 未安装')
-        self.model=model;self.effort=effort;self.notifications=Queue();self.server_requests=Queue()
+        self.notifications=Queue();self.server_requests=Queue()
         self._pending={};self._lock=threading.Lock();self._sequence=0
         self._stderr=(root/'app-server.stderr.log').open('a')
-        self.process=subprocess.Popen([executable,'--enable','multi_agent','-c','model='+json.dumps(model),'-c','model_reasoning_effort='+json.dumps(effort),'app-server','--listen','stdio://'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self._stderr,text=True,bufsize=1,start_new_session=True)
+        self.process=subprocess.Popen([executable,'--enable','multi_agent','app-server','--listen','stdio://'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self._stderr,text=True,bufsize=1,start_new_session=True)
         self._reader=threading.Thread(target=self._read,daemon=True);self._reader.start()
         try:
             self.identity=self.request('initialize',{'clientInfo':{'name':'briefloop','version':'0.1.0'},'capabilities':{'experimentalApi':True}})
@@ -66,11 +66,17 @@ class AppServerClient:
                 for future in self._pending.values():
                     if not future.done():future.set_exception(RuntimeError('会话连接已断开；未自动重发消息'))
 
-    def start_thread(self,cwd):
-        return self.request('thread/start',{'cwd':str(cwd),'model':self.model,'approvalPolicy':'never','sandbox':'workspace-write'})
+    def start_thread(self,cwd,*,model=None,model_provider=None):
+        params={'cwd':str(cwd),'approvalPolicy':'never','sandbox':'workspace-write'}
+        if model:params['model']=model
+        if model_provider:params['modelProvider']=model_provider
+        return self.request('thread/start',params)
 
-    def start_turn(self,thread_id,text,message_id):
-        return self.request('turn/start',{'threadId':thread_id,'model':self.model,'effort':self.effort,'clientUserMessageId':message_id,'input':[{'type':'text','text':text,'text_elements':[]}]})
+    def start_turn(self,thread_id,text,message_id,*,model=None,effort=None):
+        params={'threadId':thread_id,'clientUserMessageId':message_id,'input':[{'type':'text','text':text,'text_elements':[]}]}
+        if model:params['model']=model
+        if effort and effort!='none':params['effort']=effort
+        return self.request('turn/start',params)
 
     def steer(self,thread_id,turn_id,text,message_id):
         return self.request('turn/steer',{'threadId':thread_id,'expectedTurnId':turn_id,'clientUserMessageId':message_id,'input':[{'type':'text','text':text,'text_elements':[]}]})

@@ -4,10 +4,13 @@ from briefloop.store import Store
 from briefloop.harness import HarnessManager
 
 class RPC:
-    def __init__(self,*args,**kwargs):self.notifications=Queue();self.server_requests=Queue();self.calls=[];self.count=0
+    def __init__(self,*args,**kwargs):
+        assert not kwargs  # transport construction never binds a model/provider
+        self.notifications=Queue();self.server_requests=Queue();self.calls=[];self.count=0;self.threads=0
     def request(self,method,params):
         self.calls.append((method,params))
-        if method=='thread/start':return {'thread':{'id':'t1'}}
+        if method=='thread/start':
+            self.threads+=1;return {'thread':{'id':'t'+str(self.threads)}}
         if method=='turn/start':
             self.count+=1;return {'turn':{'id':'turn'+str(self.count)}}
         return {}
@@ -57,6 +60,23 @@ def test_queue_steering_and_public_stream(tmp_path):
     assert manager.client.calls[-1]==('answer',{'id':42,'result':{'answers':{'q':{'answers':['answer']}}}})
     manager.cancel(sid)
     assert manager.client.calls[-1]==('turn/interrupt',{'threadId':'t1','turnId':'turn2'})
+    manager.handle_notification({'method':'turn/completed','params':{'threadId':'t1','turn':{'id':'turn2','status':'interrupted'}}})
+    manager.send(sid,'custom provider',runtime={'model':'vendor/my-custom-model','model_provider':'responses-local','effort':'none'})
+    until(lambda:manager.snapshot(sid)['session']['turn_id']=='turn3')
+    thread_calls=[params for method,params in manager.client.calls if method=='thread/start']
+    assert thread_calls[-1]['model']=='vendor/my-custom-model'
+    assert thread_calls[-1]['modelProvider']=='responses-local'
+    turn_calls=[params for method,params in manager.client.calls if method=='turn/start']
+    assert 'effort' not in turn_calls[-1]
+    assert manager.snapshot(sid)['session']['thread_id']=='t2'
+    assert manager.snapshot(sid)['token_usage'] is None
+    manager.handle_notification({'method':'turn/completed','params':{'threadId':'t2','turn':{'id':'turn3','status':'completed'}}})
+    manager.send(sid,'back to configured default',runtime={'model_provider':None})
+    until(lambda:manager.snapshot(sid)['session']['turn_id']=='turn4')
+    thread_calls=[params for method,params in manager.client.calls if method=='thread/start']
+    assert 'modelProvider' not in thread_calls[-1]
+    assert manager.snapshot(sid)['session']['thread_id']=='t3'
+    assert any(e['kind']=='thread/providerChanged' for e in manager.snapshot(sid)['events'])
     manager.close()
 
 def test_sources_persist_and_failed_delivery_not_replayed(tmp_path):

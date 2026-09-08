@@ -73,14 +73,16 @@ def test_role_models_freeze_and_generation_scores_in_its_own_stage(tmp_path):
 
 def test_selected_model_reaches_cli_and_chat_transport_and_rejects_changed_resume(tmp_path):
     store=Store(tmp_path/'workspace')
-    selected={'model':'test-assessor','reasoning_effort':'medium'}
+    selected={'model':'vendor/custom-model','reasoning_effort':None,'model_provider':'configured-responses'}
     job=store.enqueue('learn',{'role_models':{'assessor':selected}})
     stage=stage_job(store,job,'assessor')
     with patch('briefloop.runtime.subprocess.Popen',side_effect=RuntimeError('no model call')) as process:
         with pytest.raises(RuntimeError,match='no model call'):
             CodexRuntime(store).execute(stage,'compare',tmp_path/'cli')
     command=process.call_args.args[0]
-    assert 'model="test-assessor"' in command and 'model_reasoning_effort="medium"' in command
+    assert 'model="vendor/custom-model"' in command
+    assert 'model_provider="configured-responses"' in command
+    assert not any('model_reasoning_effort=' in part for part in command)
     class CaptureHarness:
         def __init__(self):self.arguments=None
         def create_session(self,*args):return {'id':'session'}
@@ -89,7 +91,7 @@ def test_selected_model_reaches_cli_and_chat_transport_and_rejects_changed_resum
     capture=CaptureHarness()
     with pytest.raises(RuntimeError,match='no model call'):
         InteractiveRuntime(store,capture).execute(stage,'compare',tmp_path/'chat')
-    assert capture.arguments['runtime']=={'model':'test-assessor','effort':'medium'}
+    assert capture.arguments['runtime']=={'model':'vendor/custom-model','effort':None,'model_provider':'configured-responses'}
     changed={**stage,'payload':dump({**json.loads(stage['payload']),'runtime':store.runtime_config()})}
     with pytest.raises(ValueError,match='模型已改变'):
         CodexRuntime(store).execute(changed,'compare',tmp_path/'cli')
@@ -98,9 +100,9 @@ def test_selected_model_reaches_cli_and_chat_transport_and_rejects_changed_resum
 def test_evaluator_migration_preserves_settings_and_frozen_legacy_modes(tmp_path):
     astra={'model':'gpt-6-astra','reasoning_effort':'low'}
     other={'model':'gpt-5.6-terra','reasoning_effort':'medium'}
-    assert Settings(role_models={'scorer':astra,'assessor':other}).model_dump()['role_models']=={'evaluator':astra}
-    assert Settings(role_models={'assessor':other}).model_dump()['role_models']=={'evaluator':other}
-    assert Settings(role_models={'evaluator':other,'scorer':astra}).model_dump()['role_models']=={'evaluator':other}
+    assert Settings(role_models={'scorer':astra,'assessor':other}).model_dump(exclude_none=True)['role_models']=={'evaluator':astra}
+    assert Settings(role_models={'assessor':other}).model_dump(exclude_none=True)['role_models']=={'evaluator':other}
+    assert Settings(role_models={'evaluator':other,'scorer':astra}).model_dump(exclude_none=True)['role_models']=={'evaluator':other}
     store=Store(tmp_path/'workspace')
     store.set_meta('settings',{**store.settings(),'role_models':{'scorer':astra,'assessor':other}})
     assert store.settings()['role_models']=={'evaluator':astra}
@@ -146,3 +148,29 @@ def test_evaluator_prompts_run_directly_in_the_selected_independent_session(tmp_
     assert 'assessment.json' in assessment_prompt(store,brief,folder)
     assert 'comparison.json' in comparison_prompt(store,folder)
     assert 'spawn/delegate' in COMMON  # Research and learning delegation stays intact.
+
+
+def test_custom_provider_and_default_effort_freeze_without_changing_old_jobs(tmp_path):
+    from briefloop.chat_tools import workspace_action, chat_instructions
+    store=Store(tmp_path/'workspace')
+    older=store.enqueue('generate',{})
+    assert 'model_provider' not in json.loads(older['payload'])['runtime']
+    store.set_meta('settings',{**store.settings(),'model':'vendor/writer','model_provider':'local-responses',
+        'reasoning_effort':'none','role_models':{'evaluator':{'model':'vendor/judge','model_provider':'','reasoning_effort':''}}})
+    config=store.runtime_config()
+    assert config=={'model':'vendor/writer','model_provider':'local-responses','reasoning_effort':None}
+    current=store.enqueue('generate',{})
+    frozen=json.loads(current['payload'])
+    assert frozen['runtime']==config and frozen['role_models']['maintainer']==config
+    assert frozen['role_models']['evaluator']=={'model':'vendor/judge','reasoning_effort':None}
+    assert store.one('jobs',older['id'])['payload']==older['payload']
+    source=store.add_source('local','sample')
+    runtime={'model':'other/free-model','model_provider':'another-responses','reasoning_effort':None}
+    request={'action':'generate','requirements':{'title':'test','objective':'read local'},'source_ids':[source['id']],'runtime':runtime}
+    dispatched=workspace_action(store,request)
+    assert json.loads(store.one('jobs',dispatched['job_id'])['payload'])['runtime']==runtime
+    text=chat_instructions(store,{'model':runtime['model'],'model_provider':runtime['model_provider'],'effort':None})
+    example=next(line for line in text.splitlines() if line.startswith('- {"action":"generate"'))
+    assert json.loads(example[2:].split('：正式',1)[0])['runtime']==runtime
+    from briefloop.runtime import runtime_instruction
+    assert '不传 model override' in runtime_instruction(runtime)

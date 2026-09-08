@@ -23,7 +23,11 @@ def main():
     ts=tool.add_subparsers(dest='tool',required=True)
     add=ts.add_parser('add-url');add.add_argument('--run',required=True);add.add_argument('--url',required=True)
     read=ts.add_parser('read-source');read.add_argument('--id',required=True)
+    read.add_argument('--start-line',type=int);read.add_argument('--end-line',type=int);read.add_argument('--max-chars',type=int)
     join=ts.add_parser('join-scouts');join.add_argument('--files',nargs='+',required=True)
+    count=ts.add_parser('count-brief',help='按统一中英混合规则统计 Markdown 正文长度')
+    count.add_argument('--file',required=True,help='Markdown 正文文件，不包含 citations 元数据')
+    count.add_argument('--target-words',type=int);count.add_argument('--max-words',type=int)
     action=ts.add_parser('workspace-action',help='交互助手操作当前工作区')
     action.add_argument('--request',required=True)
     tavily_search=ts.add_parser('tavily-search',help='Tavily 搜索摘要，只发现来源')
@@ -72,13 +76,17 @@ def main():
         elif a.tool=='tavily-extract':
             from . import tavily
             print(json.dumps(tavily.extract(store,a.url,run_id=a.run,extract_depth=a.extract_depth),ensure_ascii=False))
-        elif a.tool=='read-source':print(store.source_text(a.id))
+        elif a.tool=='count-brief':
+            from .length import length_stats
+            result=length_stats(Path(a.file).expanduser().read_text(encoding='utf-8'),target_words=a.target_words,max_words=a.max_words)
+            print(json.dumps(result,ensure_ascii=False))
+        elif a.tool=='read-source':
+            from .scout_tools import read_source
+            print(read_source(store,a.id,start_line=a.start_line,end_line=a.end_line,max_chars=a.max_chars))
         elif a.tool=='join-scouts':
             from .scout_tools import join_scouts
             print(json.dumps(join_scouts(store,a.files),ensure_ascii=False))
         elif a.tool=='add-url':
-            from .sources import fetch
-            run=store.one('runs',a.run)
-            if not json.loads(run['requirements'])['allow_web']:raise ValueError('本轮仅允许本地来源')
-            result=fetch(store,a.url);store.attach_source(a.run,result['id'])
+            from .sources import fetch_for_run
+            result=fetch_for_run(store,a.run,a.url)
             print(json.dumps(result,ensure_ascii=False))

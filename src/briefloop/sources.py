@@ -141,3 +141,26 @@ def retry_source(store, source_id):
     originals=[p for p in (store.root/'sources').glob(source_id+'.*') if p!=store.root/old['path']]
     if not originals:raise ValueError('原始文件未保留，请重新上传；原失败记录仍保留')
     return upload(store,old['name'],originals[0].read_bytes())
+
+
+def existing_for_run(store,run_id,url):
+    """Best-effort reuse inside this run only; no cross-run freshness assumptions."""
+    url=url.strip()
+    for sid in reversed(store.source_ids(run_id)):
+        source=store.one('sources',sid)
+        if source['url']==url and source['status']=='ready':
+            try:store.source_text(sid)  # validate the retained snapshot still exists
+            except (ValueError,OSError):continue
+            return source
+    return None
+
+
+def fetch_for_run(store,run_id,url):
+    import json
+    run=store.one('runs',run_id)
+    if not json.loads(run['requirements']).get('allow_web'):raise ValueError('本轮仅允许本地来源')
+    previous=existing_for_run(store,run_id,url)
+    if previous:return {**previous,'reused':True}
+    source=fetch(store,url)
+    store.attach_source(run_id,source['id'])
+    return {**source,'reused':False}

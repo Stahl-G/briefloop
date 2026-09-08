@@ -12,6 +12,15 @@ def test_public_research_empty_inputs_and_actual_network_instructions(tmp_path):
     folder=store.root/'jobs'/'synthetic';folder.mkdir()
     prompt=generation_prompt(store,run,folder)
     assert json.loads((folder/'input.json').read_text())['sources']==[]
+    payload=json.loads((folder/'input.json').read_text())
+    from pathlib import Path
+    slots=payload['scout_slots']
+    assert len(slots)==store.settings()['max_parallel']
+    assert len({slot['result_file'] for slot in slots})==len(slots)
+    assert all(Path(slot[key]).is_absolute() for slot in slots for key in ('directory','result_file','schema_path'))
+    assert all(Path(slot['directory']).is_dir() and Path(slot['schema_path']).is_file() for slot in slots)
+    assert all(Path(slot['result_file']).parent==Path(slot['directory']) for slot in slots)
+    assert '不要假设 host 自动隔离工作目录' in prompt
     assert '至少安排一个 Scout' in prompt and 'add-url --run '+run['id'] in prompt
     assert 'read-source --id SOURCE_ID' in prompt and 'acquired source IDs' in prompt
     # Mimic registered acquisition without networking; join and scorer retain it.
@@ -80,7 +89,8 @@ def test_builtin_tavily_skill_only_enters_enabled_scout_context(tmp_path, monkey
             assert binding['target_roles']==['scout']
             content=Path(binding['path']).read_text()
             dispatch=Path(binding['dispatch_prompt_path']).read_text()
-            assert Path(binding['path']).is_absolute() and content in dispatch
+            assert Path(binding['path']).is_absolute() and binding['path'] in dispatch
+            assert content not in dispatch
             assert content in payload['role_skills']['scout']['instructions']
             assert 'retrieval_skill_path' not in payload['role_skills'].get('analyst',{})
             assert '{tool}' not in content and '{run_id}' not in content
@@ -91,3 +101,23 @@ def test_builtin_tavily_skill_only_enters_enabled_scout_context(tmp_path, monkey
             assert 'retrieval_skill' not in payload
             assert not (folder/'capabilities'/'tavily'/'SKILL.md').exists()
             assert 'tavily-search' not in prompt
+
+
+def test_evaluator_initial_sources_follow_citations_and_keep_full_index(tmp_path):
+    store=Store(tmp_path/'workspace')
+    sources=[store.add_source('source-'+str(i),'body-'+str(i),error='fetch failed' if i==5 else None) for i in range(6)]
+    run=store.create_run({'title':'brief','objective':'review coverage'},[row['id'] for row in sources])
+    citations=[{'source_id':sources[i]['id'],'locator':'line 1','excerpt':'body'} for i in (2,0,2)]
+    gaps=['important gap','g'*400]
+    brief=store.publish(run['id'],{'title':'brief','markdown':'body','citations':citations,'gaps':gaps})
+    folder=store.root/'jobs'/'evaluator-pack';folder.mkdir()
+    prompt=assessment_prompt(store,brief,folder)
+    pack=json.loads((folder/'input.json').read_text())
+    assert [row['id'] for row in pack['sources']]==[sources[2]['id'],sources[0]['id']]
+    assert pack['brief']['citations']==citations
+    assert len(pack['gaps'][1])==240
+    index=json.loads((folder/'source-index.json').read_text())
+    assert {row['id'] for row in index['sources']}=={row['id'] for row in sources}
+    assert index['sources'][5]['status']=='failed' and index['gaps']==gaps
+    assert '需要其他材料时' in prompt
+    assert store.one('briefs',brief['id'])==brief

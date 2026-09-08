@@ -6,7 +6,7 @@ import hashlib
 import json
 import sqlite3
 import uuid
-from .models import Requirements, Settings, BriefDraft, Assessment, ROLE_NAMES, normalize_role_models
+from .models import Requirements, Settings, BriefDraft, Assessment, ROLE_NAMES, normalize_role_models, runtime_fields
 
 
 def now():
@@ -121,7 +121,11 @@ class Store:
             c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", (key, dump(value)))
 
     def settings(self):
-        return Settings.model_validate(self.meta("settings")).model_dump()
+        result=Settings.model_validate(self.meta("settings")).model_dump()
+        if result.get('model_provider') is None:
+            result.pop('model_provider',None)
+        result['role_models']={role:runtime_fields(config) for role,config in result['role_models'].items()}
+        return result
 
     def add_source(self, name, text, *, url=None, error=None, source_id=None):
         sid = source_id or uid("src")
@@ -223,7 +227,7 @@ class Store:
 
     def runtime_config(self):
         settings=self.settings()
-        return {key:settings[key] for key in ('model','reasoning_effort')}
+        return runtime_fields(settings)
 
     def role_model_config(self, runtime=None):
         base=runtime or self.runtime_config()
@@ -231,14 +235,14 @@ class Store:
         return {role:dict(overrides.get(role,base)) for role in ROLE_NAMES}
 
     def enqueue(self, kind, payload):
-        runtime=payload.get('runtime',self.runtime_config())
+        runtime=runtime_fields(payload.get('runtime',self.runtime_config()))
         # Freeze inherited defaults too; later settings never mutate queued jobs.
         overrides=normalize_role_models(payload.get('role_models',self.role_model_config(runtime)))
         provider=payload.get('search_provider',self.settings()['search_provider'])
         if provider not in ('codex','tavily'):
             raise ValueError('无效搜索来源')
         payload={**payload,'runtime':runtime,'search_provider':provider,
-                 'role_models':{role:dict(overrides.get(role,runtime)) for role in ROLE_NAMES}}
+                 'role_models':{role:runtime_fields(overrides.get(role,runtime)) for role in ROLE_NAMES}}
         jid = uid("job")
         with self.tx() as c:
             c.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)", (jid, kind, "queued", dump(payload), None, None, now(), now()))
@@ -273,10 +277,18 @@ class Store:
         for j in jobs:
             events=self.rows("SELECT data FROM events WHERE job_id=? AND kind='learning_progress' ORDER BY seq DESC LIMIT 1",(j['id'],))
             j['progress']=json.loads(events[0]['data']) if events else None
+        from .length import length_stats
+        runs=self.rows("SELECT * FROM runs ORDER BY created DESC")
+        requirements={r['id']:json.loads(r['requirements']) for r in runs}
+        briefs=self.rows("SELECT b.* FROM briefs b JOIN runs r ON r.id=b.run_id WHERE r.mode='normal' ORDER BY b.rowid DESC")
+        for brief in briefs:
+            req=requirements[brief['run_id']]
+            # Historical requirements are not retroactively assigned a new budget.
+            brief['length_stats']=length_stats(brief['markdown'],target_words=req.get('target_words'),max_words=req.get('max_words'))
         return {"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "requirements": self.meta("requirements"), "settings": self.settings(),
                 "sources": self.rows("SELECT * FROM sources ORDER BY created"),
-                "runs": self.rows("SELECT * FROM runs ORDER BY created DESC"),
-                "briefs": self.rows("SELECT b.* FROM briefs b JOIN runs r ON r.id=b.run_id WHERE r.mode='normal' ORDER BY b.rowid DESC"),
+                "runs": runs,
+                "briefs": briefs,
                 "assessments": self.rows("SELECT * FROM assessments ORDER BY rowid DESC"),
                 "feedback": self.rows("SELECT * FROM feedback ORDER BY rowid DESC LIMIT 100"),
                 "jobs": jobs,

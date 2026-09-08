@@ -1,10 +1,13 @@
 """Small input contracts; report quality is assessed by agents, not these schemas."""
 from typing import Literal
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
 
 
 class Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+LENGTH_PRESETS = {'compact':(800,1000),'balanced':(1500,2000),'detailed':(2000,2500)}
 
 
 class Requirements(Model):
@@ -16,6 +19,17 @@ class Requirements(Model):
     allow_web: bool = False
     period: str = ""
     raw_input: str = ""
+    target_words: int | None = Field(default=None, ge=1)
+    max_words: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode='after')
+    def fill_length_preferences(self):
+        target,maximum=LENGTH_PRESETS[self.extent]
+        if self.target_words is None:self.target_words=target
+        if self.max_words is None:self.max_words=max(maximum,self.target_words)
+        if self.max_words<self.target_words:
+            raise ValueError('长度上限不能小于目标长度')
+        return self
 
 
 ROLE_NAMES = ('evaluator', 'maintainer', 'proposer')
@@ -38,12 +52,30 @@ def normalize_role_models(roles):
 
 class RoleModel(Model):
     model: str = Field(min_length=1, max_length=100)
-    reasoning_effort: Literal['low','medium','high','xhigh','max']
+    model_provider: str | None = Field(default=None, max_length=100)
+    reasoning_effort: str | None = Field(default=None, min_length=1, max_length=100)
+
+    @field_validator('model_provider','reasoning_effort',mode='before')
+    @classmethod
+    def optional_override(cls, value, info):
+        if isinstance(value,str):
+            value=value.strip()
+            if not value or info.field_name=='reasoning_effort' and value.lower()=='none':
+                return None
+        return value
 
 
-class Settings(Model):
+def runtime_fields(value):
+    # Provider names/model IDs are opaque Codex configuration, not a model catalog.
+    selected=RoleModel.model_validate({key:value[key] for key in ('model','reasoning_effort','model_provider') if key in value}).model_dump()
+    if selected['model_provider'] is None:
+        selected.pop('model_provider')
+    return selected
+
+
+class Settings(RoleModel):
     model: str = Field(default='gpt-5.6-luna', min_length=1, max_length=100)
-    reasoning_effort: Literal['low','medium','high','xhigh','max'] = 'high'
+    reasoning_effort: str | None = Field(default='high', min_length=1, max_length=100)
     role_models: dict[Literal['evaluator','maintainer','proposer'], RoleModel] = Field(default_factory=dict)
     search_provider: Literal['codex','tavily'] = 'codex'
     k: int = Field(default=1, ge=1, le=20)
