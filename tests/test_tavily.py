@@ -2,6 +2,7 @@ import hashlib
 from io import BytesIO
 import json
 import os
+import ssl
 import urllib.error
 import pytest
 from briefloop import tavily
@@ -15,7 +16,8 @@ def test_key_storage_search_and_sanitized_errors(tmp_path,monkeypatch):
     assert tavily.save_key('tvly-test-secret',key_file=keyfile)=={'configured':True,'source':'file'}
     assert keyfile.stat().st_mode & 0o777==0o600
     requests=[]
-    def respond(request,timeout):
+    def respond(request,timeout,context):
+        assert context.check_hostname and context.verify_mode==ssl.CERT_REQUIRED
         requests.append((request,json.loads(request.data)))
         return BytesIO(json.dumps({'results':[{'title':'Source','url':'https://example.test','content':'Snippet'}],'usage':{'credits':1}}).encode())
     monkeypatch.setattr(tavily.urllib.request,'urlopen',respond)
@@ -32,6 +34,10 @@ def test_key_storage_search_and_sanitized_errors(tmp_path,monkeypatch):
     monkeypatch.setattr(tavily.urllib.request,'urlopen',failure)
     with pytest.raises(tavily.TavilyError) as error:tavily.search('test',key_file=keyfile)
     assert '401' in str(error.value) and 'tvly-test-secret' not in str(error.value)
+    def tls_failure(*args,**kwargs):raise urllib.error.URLError(ssl.SSLCertVerificationError(1,'echo tvly-test-secret'))
+    monkeypatch.setattr(tavily.urllib.request,'urlopen',tls_failure)
+    with pytest.raises(tavily.TavilyError) as tls_error:tavily.search('test',key_file=keyfile)
+    assert '证书校验失败' in str(tls_error.value) and 'tvly-test-secret' not in str(tls_error.value)
     monkeypatch.setenv('TAVILY_API_KEY','tvly-environment')
     assert tavily.key_status(key_file=keyfile)['source']=='environment'
     assert tavily.delete_key(key_file=keyfile)=={'configured':True,'source':'environment'}
@@ -44,7 +50,7 @@ def test_extract_is_full_provider_text_and_failed_sources_remain_visible(tmp_pat
     store=Store(tmp_path/'workspace');requests=[]
     payload={'results':[{'url':'https://example.test/good','raw_content':'# Source\nAmount 123; capacity 45 MW.\n'+('Full body. '*1000)}],'failed_results':[{'url':'https://example.test/bad','error':'unreadable'}],'request_id':'test-id'}
     raw=json.dumps(payload).encode()
-    def respond(request,timeout):requests.append(json.loads(request.data));return BytesIO(raw)
+    def respond(request,timeout,context):requests.append(json.loads(request.data));return BytesIO(raw)
     monkeypatch.setattr(tavily.urllib.request,'urlopen',respond)
     result=tavily.extract(store,['https://example.test/good','https://example.test/bad'],key_file=keyfile)
     assert 'query' not in requests[0] and 'chunks_per_source' not in requests[0]

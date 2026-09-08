@@ -126,3 +126,23 @@ def test_evaluator_migration_preserves_settings_and_frozen_legacy_modes(tmp_path
     from briefloop.progress import role_label
     assert role_label('Scorer')=='Evaluator · 评分'
     assert role_label('Assessor')=='Evaluator · 比较'
+
+
+def test_evaluator_prompts_run_directly_in_the_selected_independent_session(tmp_path):
+    from briefloop.runtime import assessment_prompt, COMMON
+    from briefloop.learning import comparison_prompt
+    store=Store(tmp_path/'workspace')
+    source=store.add_source('source','计划交付，尚未完成。')
+    run=store.create_run({'title':'报告','objective':'保留状态限定'},[source['id']])
+    brief=store.publish(run['id'],{'title':'报告','markdown':'计划交付。'})
+    folder=store.root/'jobs'/'evaluator-test';folder.mkdir()
+    for prompt in (assessment_prompt(store,brief,folder),comparison_prompt(store,folder)):
+        assert '已启动的独立 Evaluator 会话' in prompt
+        assert '不创建新的 Evaluator 子会话或子 agent' in prompt
+        assert 'conversation.json / execution.json' in prompt
+        assert '你是 Orchestrator' not in prompt
+        assert 'spawn/delegate' not in prompt and 'fork_turns' not in prompt
+        assert 'agents.json' not in prompt
+    assert 'assessment.json' in assessment_prompt(store,brief,folder)
+    assert 'comparison.json' in comparison_prompt(store,folder)
+    assert 'spawn/delegate' in COMMON  # Research and learning delegation stays intact.

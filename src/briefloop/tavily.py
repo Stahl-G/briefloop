@@ -2,6 +2,7 @@
 import hashlib
 import json
 import os
+import ssl
 from pathlib import Path
 import tempfile
 import urllib.request
@@ -51,12 +52,21 @@ def delete_key(*,key_file=None):
     return key_status(key_file=key_file)
 
 
+def _ssl_context():
+    context=ssl.create_default_context()
+    # Python.org macOS installs may have no default CA bundle. Add the system
+    # trust bundle while retaining hostname and certificate verification.
+    system_bundle=Path('/etc/ssl/cert.pem')
+    if system_bundle.is_file():context.load_verify_locations(cafile=str(system_bundle))
+    return context
+
+
 def _post(endpoint,payload,*,key_file=None):
     key,_=_read_key(key_file)
     if not key:raise TavilyError('尚未配置 Tavily API Key，请在设置中填写')
     request=urllib.request.Request('https://api.tavily.com/'+endpoint,data=dump(payload).encode(),headers={'Authorization':'Bearer '+key,'Content-Type':'application/json','User-Agent':'BriefLoop/0.1'},method='POST')
     try:
-        with urllib.request.urlopen(request,timeout=65) as response:
+        with urllib.request.urlopen(request,timeout=65,context=_ssl_context()) as response:
             raw=response.read(25*1024*1024+1)
         if len(raw)>25*1024*1024:raise TavilyError('Tavily 响应过大，未保存不完整结果')
         if key.encode() in raw:raise TavilyError('Tavily 响应包含凭据信息，未保存或展示')
@@ -65,8 +75,16 @@ def _post(endpoint,payload,*,key_file=None):
         return result,raw
     except urllib.error.HTTPError as exc:
         raise TavilyError('Tavily 请求失败（HTTP '+str(exc.code)+'）；请检查密钥、额度和请求参数') from None
-    except (urllib.error.URLError,OSError,TimeoutError):
-        raise TavilyError('无法连接 Tavily 或请求超时；未自动重试') from None
+    except (urllib.error.URLError,OSError) as exc:
+        reason=exc.reason if isinstance(exc,urllib.error.URLError) else exc
+        if isinstance(reason,ssl.SSLCertVerificationError):
+            message='Tavily TLS 证书校验失败；请检查本机 CA 证书或代理证书配置，未关闭证书校验'
+        elif isinstance(reason,ssl.SSLError):
+            message='Tavily TLS 握手失败；请检查本机 TLS 或代理配置'
+        elif isinstance(reason,TimeoutError):
+            message='Tavily 请求超时；未自动重试'
+        else:message='无法连接 Tavily；请检查网络或代理配置，未自动重试'
+        raise TavilyError(message) from None
     except (json.JSONDecodeError,UnicodeDecodeError):
         raise TavilyError('Tavily 未返回有效 JSON') from None
 
