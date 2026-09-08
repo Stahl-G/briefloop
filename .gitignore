@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+private_planning/
+workspaces/
+.env
+.DS_Store
+
+node_modules/
