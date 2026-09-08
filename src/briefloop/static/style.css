@@ -4,3 +4,5 @@
 .run-progress{margin-bottom:24px;border-left:4px solid var(--green)}.run-progress .eyebrow{margin-bottom:7px}.run-progress h2{font-size:21px}.progress-message{white-space:pre-wrap;font-size:14px}.agent-progress{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin:16px 0}.agent-progress>div{padding:14px;background:var(--paper);border-radius:6px}.agent-progress strong{font-size:14px}.agent-progress span{float:right;color:var(--green);font-size:12px}.agent-progress p{font-size:12px;color:var(--muted);margin:8px 0 0}
 
 .model-settings{border:1px solid #bdcbbb;border-radius:8px;margin:24px 0;padding:18px;background:#f4f7f1}.model-settings legend{padding:0 8px;font-weight:600;color:var(--green)}.model-settings .row{margin-bottom:8px}.model-settings strong{display:block;color:var(--green)}
+
+.history-row{display:flex;justify-content:space-between;gap:24px;width:100%;padding:12px 8px;border-bottom:1px solid var(--line);text-align:left}.history-row span{color:var(--muted);font-size:13px}.toolbar button:disabled{opacity:.4;cursor:default}
