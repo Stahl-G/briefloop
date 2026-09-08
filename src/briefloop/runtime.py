@@ -33,7 +33,7 @@ COMMON = '''你在运行 BriefLoop 本地应用。用户已授权本轮研究、
 def generation_prompt(store, run, folder):
     req=json.loads(run['requirements'])
     skill=run.get('skill_override') if 'skill_override' in run else (store.one('skills',run['skill_id']) if run['skill_id'] else None)
-    sources=[{**store.one('sources',sid),'absolute_path':str(store.root/store.one('sources',sid)['path'])} for sid in json.loads(run['source_ids'])]
+    sources=[{**store.one('sources',sid),'absolute_path':str(store.root/store.one('sources',sid)['path'])} for sid in store.source_ids(run['id'])]
     payload={'requirements':req,'sources':sources,'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':store.settings()['max_parallel']}
     (folder/'input.json').write_text(dump(payload))
     tool=shlex.join([sys.executable,'-m','briefloop','tool','--workspace',str(store.root)])
@@ -67,7 +67,7 @@ def generation_prompt(store, run, folder):
 
 def assessment_prompt(store, brief, folder):
     run=store.one('runs',brief['run_id'])
-    (folder/'input.json').write_text(dump({'brief':brief,'run':run,'sources':store.rows('SELECT * FROM sources')}))
+    (folder/'input.json').write_text(dump({'brief':brief,'run':run,'sources':[{**store.one('sources',sid),'absolute_path':str(store.root/store.one('sources',sid)['path'])} for sid in store.source_ids(run['id'])]}))
     return COMMON+f'''
 只执行评分。读取 {folder/'input.json'}，调用一个独立 Scorer，核对任务要求、稿件及相关来源正文。
 评分结构见 {folder/'assessment.schema.json'}。brief_hash 必须是 {brief['hash']}。
@@ -117,12 +117,12 @@ class CodexRuntime:
             try:os.killpg(p.pid,signal.SIGTERM)
             except ProcessLookupError:pass
 
-    def execute(self, job, prompt, folder, on_tick=lambda: None):
+    def execute(self, job, prompt, folder, on_tick=lambda: None, *, resume_on_complete=False):
         folder.mkdir(parents=True,exist_ok=True)
         saved=folder/'execution.json'
         if saved.exists():
             result=json.loads(saved.read_text())
-            if result.get('returncode')==0:
+            if result.get('returncode')==0 and not resume_on_complete:
                 on_tick();return result
         attached=owned_live_process(folder)
         if attached:
@@ -143,13 +143,14 @@ class CodexRuntime:
         (folder/'prompt.md').write_text(prompt)
         log_path=folder/'events.jsonl'
         # Inherit the user's selected model/auth. No bypass flags or global config changes.
-        cmd=[binary,'-a','never','exec','--skip-git-repo-check','--sandbox','workspace-write','--json',
+        cmd=[binary,'--enable','multi_agent','-a','never','exec','--skip-git-repo-check','--sandbox','workspace-write','--json',
              '--add-dir',str(self.store.root),'-C',str(folder),'-o',str(folder/'last-message.txt'),'-']
         thread,_=log_state(log_path)
         if thread:
-            cmd=[binary,'-a','never','-C',str(folder),'exec','resume','--skip-git-repo-check','--json','-o',str(folder/'last-message.txt'),thread,'-']
+            cmd=[binary,'--enable','multi_agent','-a','never','-C',str(folder),'exec','resume','--skip-git-repo-check','--json','-o',str(folder/'last-message.txt'),thread,'-']
             prompt='恢复这一个任务。先核对已有原生子 agent 与完整输出，复用已完成结果，只补未完成部分；不要重新采样已经完成的稿件。\n'+prompt
-        if job.get('allow_web'):cmd[1:1]=['--search']
+        if job.get('allow_web'):cmd[1:1]=['--search','-c','sandbox_workspace_write.network_access=true']
+        else:cmd[1:1]=['-c','web_search="disabled"','-c','sandbox_workspace_write.network_access=false']
         started=time.monotonic()
         with log_path.open('a') as log, (folder/'stderr.log').open('a') as err:
             p=subprocess.Popen(cmd,stdin=subprocess.PIPE,stdout=log,stderr=err,text=True,start_new_session=True)

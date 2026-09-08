@@ -4,7 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from briefloop.store import Store, Conflict
-from briefloop.learning import enqueue_feedback
+from briefloop.learning import enqueue_feedback, apply_accepted
 from wikiskill import feedback_loop, native_agents
 
 
@@ -28,7 +28,9 @@ class CoreBehavior(unittest.TestCase):
         self.assertEqual(len(Store(self.tmp.name).snapshot()['briefs']),2)
 
     def test_feedback_batches_once_and_trials_do_not_change_user_requirements(self):
-        s=self.store;s.comment(self.brief['id'],'保持交付状态限定')
+        s=self.store;s.revise(self.brief['id'],'**预计**交付。')
+        self.assertEqual(len(s.rows('SELECT id FROM feedback')),0)
+        s.comment(self.brief['id'],'保持交付状态限定')
         job=enqueue_feedback(s);self.assertEqual(json.loads(job['payload'])['k'],1)
         s.set_meta('settings',{**s.settings(),'k':3})
         self.assertEqual(enqueue_feedback(s)['status'],'idle')
@@ -55,6 +57,13 @@ class CoreBehavior(unittest.TestCase):
                 result=feedback_loop.finish(root,pairs=[{'case_id':'synthetic','verdict':verdict,'regressions':regressions}])
                 self.assertEqual(result['history'][-1]['accepted'],expected)
                 self.assertEqual(result['phase'],'complete')
+                if expected:
+                    job=self.store.enqueue('learn',{'skill_id':None,'targets':['scout','analyst']})
+                    apply_accepted(self.store,job,root,result)
+                    self.assertIsNotNone(self.store.meta('active_skill'))
+                    self.store.bind_skill(None)
+                    apply_accepted(self.store,job,root,result)
+                    self.assertIsNone(self.store.meta('active_skill'))
 
 
 if __name__=='__main__':unittest.main()

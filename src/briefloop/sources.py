@@ -3,6 +3,8 @@ from html.parser import HTMLParser
 from io import BytesIO
 from pathlib import Path
 import subprocess
+import shutil
+import os
 import tempfile
 import urllib.request
 import urllib.error
@@ -30,11 +32,17 @@ def html_text(data):
 def extract(name, data):
     ext=Path(name).suffix.lower()
     if ext == '.pdf':
-        with tempfile.TemporaryDirectory(prefix='briefloop-read-') as tmp:
-            p=Path(tmp)/'source.pdf';p.write_bytes(data)
-            proc=subprocess.run(['pdftotext','-layout',str(p),'-'],capture_output=True,timeout=90)
-            if proc.returncode: raise ValueError('PDF 无法提取正文，可尝试联网寻找原始发布版本')
-            text=proc.stdout.decode('utf-8',errors='replace')
+        if shutil.which('pdftotext'):
+            with tempfile.TemporaryDirectory(prefix='briefloop-read-') as tmp:
+                p=Path(tmp)/'source.pdf';p.write_bytes(data)
+                proc=subprocess.run(['pdftotext','-layout',str(p),'-'],capture_output=True,timeout=90)
+                text=proc.stdout.decode('utf-8',errors='replace') if proc.returncode==0 else ''
+        else:text=''
+        if not text.strip():
+            try:
+                from pypdf import PdfReader
+                text='\n\n'.join(page.extract_text() or '' for page in PdfReader(BytesIO(data)).pages)
+            except Exception as exc:raise ValueError('PDF 无法提取正文，可能是扫描件或加密文档') from exc
     elif ext == '.docx':
         with zipfile.ZipFile(BytesIO(data)) as z:
             doc=ET.fromstring(z.read('word/document.xml'))
@@ -61,16 +69,29 @@ def upload(store, name, data):
 
 def _fetch(store, url):
     if not url.startswith(('https://','http://')):raise ValueError('请输入 HTTP(S) 来源地址')
-    req=urllib.request.Request(url,headers={'User-Agent':'BriefLoop/0.1 (local research reader)'})
-    with urllib.request.urlopen(req,timeout=40) as response:
-        data=response.read(15*1024*1024+1)
-        if len(data)>15*1024*1024:raise ValueError('网页过大，请下载后上传')
-        content_type=response.headers.get('Content-Type','')
-        name=url.rsplit('/',1)[-1] or '网页'
-        if 'pdf' in content_type:text=extract('source.pdf',data)
-        else:
-            decoded=data.decode(response.headers.get_content_charset() or 'utf-8',errors='replace')
-            text=html_text(decoded) if 'html' in content_type else decoded
+    name=url.rsplit('/',1)[-1] or '网页'
+    if shutil.which('curl'):
+        env=dict(os.environ)
+        for key,value in urllib.request.getproxies().items():
+            if key in ('http','https','all'):env.setdefault(key+'_proxy',value)
+        with tempfile.TemporaryDirectory(prefix='briefloop-web-') as tmp:
+            path=Path(tmp)/'response'
+            command=['curl','--fail','--silent','--show-error','--location','--proto','=http,https','--proto-redir','=http,https','--connect-timeout','12','--max-time','40','--max-filesize',str(15*1024*1024),'-A','BriefLoop/0.1 (local research reader)','-o',str(path),'-w','%{content_type}',url]
+            proc=subprocess.run(command,capture_output=True,text=True,env=env,timeout=45)
+            if proc.returncode:raise ValueError(proc.stderr.strip() or '网页读取失败')
+            data=path.read_bytes();content_type=proc.stdout;encoding='utf-8'
+    else:
+        req=urllib.request.Request(url,headers={'User-Agent':'BriefLoop/0.1 (local research reader)'})
+        with urllib.request.urlopen(req,timeout=40) as response:
+            data=response.read(15*1024*1024+1)
+            content_type=response.headers.get('Content-Type','')
+            encoding=response.headers.get_content_charset() or 'utf-8'
+    if len(data)>15*1024*1024:raise ValueError('网页过大，请下载后上传')
+    if 'pdf' in content_type:text=extract('source.pdf',data)
+    else:
+        decoded=data.decode(encoding,errors='replace')
+        text=html_text(decoded) if 'html' in content_type else decoded
+    if not text.strip():raise ValueError('网页没有可读取正文')
     return store.add_source(name,text,url=url)
 
 
@@ -80,3 +101,11 @@ def fetch(store, url):
     try:return _fetch(store,url)
     except (OSError,ValueError,subprocess.SubprocessError) as exc:
         return store.add_source(url.rsplit('/',1)[-1] or url,'',url=url,error=str(exc))
+
+
+def retry_source(store, source_id):
+    old=store.one('sources',source_id)
+    if old['url']:return fetch(store,old['url'])
+    originals=[p for p in (store.root/'sources').glob(source_id+'.*') if p!=store.root/old['path']]
+    if not originals:raise ValueError('原始文件未保留，请重新上传；原失败记录仍保留')
+    return upload(store,old['name'],originals[0].read_bytes())

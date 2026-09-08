@@ -17,7 +17,7 @@ def live_url(workspace):
         data=json.loads(marker.read_text())
         with urllib.request.urlopen(data['url']+'/api/state',timeout=2) as response:
             state=json.load(response)
-        if state['workspace']==workspace.name:return data['url']
+        if data.get('workspace_id') and state.get('workspace_id')==data['workspace_id']:return data['url']
     except (OSError,ValueError,KeyError):return None
 
 

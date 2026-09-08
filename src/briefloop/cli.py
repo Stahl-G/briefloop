@@ -53,4 +53,5 @@ def main():
             from .sources import fetch
             run=store.one('runs',a.run)
             if not json.loads(run['requirements'])['allow_web']:raise ValueError('本轮仅允许本地来源')
-            print(json.dumps(fetch(store,a.url),ensure_ascii=False))
+            result=fetch(store,a.url);store.attach_source(a.run,result['id'])
+            print(json.dumps(result,ensure_ascii=False))

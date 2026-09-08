@@ -37,10 +37,14 @@ def _experience(store, job):
             before=store.one('briefs',data['before'])
             diff='\n'.join(difflib.unified_diff(before['markdown'].splitlines(),b['markdown'].splitlines(),fromfile='before',tofile='user_revision',lineterm=''))
             text={'kind':'user_revision','requirements':json.loads(run['requirements']),'before':before['markdown'],
-                  'after':b['markdown'],'diff':diff,'sources':[store.one('sources',s) for s in json.loads(run['source_ids'])]}
+                  'after':b['markdown'],'diff':diff,'sources':[store.one('sources',s) for s in store.source_ids(run['id'])]}
         else:text={'kind':'user_comment','requirements':json.loads(run['requirements']),'brief':b['markdown'],'comment':data['text']}
+        text['assessments']=[{'version_id':row['version_id'],'assessment':json.loads(row['data'])} for row in store.rows('SELECT a.* FROM assessments a JOIN briefs b ON b.id=a.version_id WHERE b.run_id=?',(run['id'],))]
+        text['execution_records']=[{'job_id':j['id'],'status':j['status'],'result':json.loads(j['result']) if j['result'] else None,'trace_file':str(store.root/'jobs'/j['id']/'events.jsonl')} for j in store.rows("SELECT * FROM jobs WHERE kind='generate'") if json.loads(j['payload']).get('run_id')==run['id']]
+        text['context_note']='用户改稿与评论是反馈；评分是可争议的模型判断；执行记录用于追溯，不作为来源事实。'
         items.append({'text':dump(text),'source':fid})
     # Only a few existing tasks. Their source snapshots, not user rewrites, go to generation.
+    run_ids=run_ids[-3:]
     others=store.rows("SELECT * FROM runs WHERE mode='normal' ORDER BY created DESC")
     for r in others:
         if len(run_ids)>=3:break
@@ -57,8 +61,16 @@ def _sync_wiki(store,study):
 
 
 def _role(store,runtime,job,study,round_number,phase):
-    stage=store.root/'jobs'/job['id']/f'{round_number}-{phase}';stage.mkdir(parents=True,exist_ok=True)
     dispatch=native_agents.dispatch(study,'codex')
+    handoffs=dispatch.get('handoffs',[])
+    if not handoffs:
+        from wikiskill import product
+        failed=product.status(study).get('failed_requests',[])
+        if failed:
+            for request in failed:product.retry(study,request)
+            dispatch=native_agents.dispatch(study,'codex');handoffs=dispatch.get('handoffs',[])
+    if not handoffs:raise RuntimeError('没有可执行的学习任务，请查看 WikiSkill 状态')
+    stage=store.root/'jobs'/job['id']/f"{round_number}-{phase}-{handoffs[0]['request_id']}";stage.mkdir(parents=True,exist_ok=True)
     (stage/'handoffs.json').write_text(dump(dispatch))
     command=shlex.join([sys.executable,'-m','wikiskill'])
     prompt=COMMON+f'''
@@ -69,7 +81,7 @@ def _role(store,runtime,job,study,round_number,phase):
 如果 handoff 已经有 delegation，先核对那个真实句柄和已有结果，不重新创建。
 把实际 id、role、status 写到 agents.json。仅完成这一个 handoff 步骤，不启动下一轮、不擅自做比较或启用。
 '''
-    runtime.execute(job,prompt,stage)
+    runtime.execute(job,prompt,stage,resume_on_complete=True)
     state=feedback_loop.work(study)
     if state['phase']==phase:raise RuntimeError(f'{phase} 尚未完成或结果未被 WikiSkill 收集')
     _sync_wiki(store,study)
@@ -80,7 +92,8 @@ def _generate_trial(store,job,case,skill,folder,tag):
     marker=folder/'trial.json'
     if marker.exists():info=json.loads(marker.read_text())
     else:
-        run=store.create_run(json.loads(case['requirements']),json.loads(case['source_ids']),mode='trial',skill_id=skill['id'] if skill else None)
+        requirements={**json.loads(case['requirements']),'allow_web':False}
+        run=store.create_run(requirements,json.loads(case['source_ids']),mode='trial',skill_id=skill['id'] if skill else None)
         trial=store.enqueue('generate',{'run_id':run['id'],'skill_override':skill})
         # This is a child operation of the current learning worker, not a second queued worker.
         store.update_job(trial['id'],'running');info={'run_id':run['id'],'job_id':trial['id']};marker.write_text(dump(info))
@@ -126,7 +139,7 @@ def learn(store,runtime,job):
         candidate_skill={'id':'candidate_'+content_hash(text)[:16],'content':text,'targets':dump(payload['targets'])}
         comparisons=[]
         for case_id in ctx['cases']:
-            case=store.one('runs',case_id);case_dir=root/f'round-{n}'/case_id
+            case=store.one('runs',case_id);case['source_ids']=dump(store.source_ids(case_id));case_dir=root/f'round-{n}'/case_id
             originals=store.rows("SELECT * FROM briefs WHERE run_id=? AND author='agent' ORDER BY rowid LIMIT 1",(case_id,))
             if originals and case['skill_id']==payload['skill_id']:
                 baseline=originals[0]
@@ -134,7 +147,7 @@ def learn(store,runtime,job):
                 baseline=_generate_trial(store,{**job,'_runtime':runtime},case,current,case_dir/'baseline','baseline')
             proposed=_generate_trial(store,{**job,'_runtime':runtime},case,candidate_skill,case_dir/'candidate','candidate')
             comparisons.append({'case_id':case_id,'requirements':json.loads(case['requirements']),
-                'source_ids':json.loads(case['source_ids']),'feedback_preferences':[json.loads(x['text']).get('comment') for x in ctx['feedback'] if json.loads(x['text']).get('kind')=='user_comment'],'baseline':baseline,'candidate':proposed})
+                'source_ids':json.loads(case['source_ids']),'comparison_scope':'固定来源的阅读与写作，不评估本轮新的联网检索收益','feedback_preferences':[json.loads(x['text']).get('comment') for x in ctx['feedback'] if json.loads(x['text']).get('kind')=='user_comment'],'baseline':baseline,'candidate':proposed})
         folder=root/f'round-{n}'/'comparison';folder.mkdir(parents=True,exist_ok=True)
         (folder/'input.json').write_text(dump(comparisons))
         prompt=COMMON+f'''
@@ -148,13 +161,22 @@ regressions 只列会实质影响使用的新增事实、引用或核心覆盖�
         result=json.loads((folder/'comparison.json').read_text())
         if {p['case_id'] for p in result['pairs']}!={x['case_id'] for x in comparisons}:raise ValueError('比较案例不完整')
         state=feedback_loop.finish(study,pairs=result['pairs'],reason=result.get('reason',''),evidence_file=folder/'comparison.json')
-        if state['history'][-1]['accepted']:
-            sid='skill_'+content_hash(text)[:16]
-            with store.tx() as c:
-                c.execute('INSERT OR IGNORE INTO skills VALUES(?,?,?,?,?,?)',(sid,payload['skill_id'],text,dump(payload['targets']),result.get('reason',''),now()))
-            if store.meta('active_skill')==payload['skill_id']:
-                store.bind_skill(sid)
-            else:
-                store.event(job['id'],'adoption_deferred',{'skill_id':sid,'reason':'用户在比较期间切换了技能，保留当前选择'})
+    apply_accepted(store,job,study,state)
     _sync_wiki(store,study)
     return {'study':str(study),'rounds':len(state['history']),'history':state['history'],'active_skill':store.meta('active_skill')}
+
+
+def apply_accepted(store,job,study,state):
+    """Atomic, replayable deployment; a user rollback is never overwritten on resume."""
+    accepted=[x for x in state['history'] if x['accepted']]
+    if not accepted:return
+    decision=accepted[-1];payload=json.loads(job['payload'])
+    text=(Path(study)/decision['skill']['file']).read_text();sid='skill_'+content_hash(text)[:16]
+    with store.tx() as c:
+        if c.execute("SELECT seq FROM events WHERE job_id=? AND kind='adoption_processed'",(job['id'],)).fetchone():return
+        c.execute('INSERT OR IGNORE INTO skills VALUES(?,?,?,?,?,?)',(sid,payload['skill_id'],text,dump(payload['targets']),decision.get('reason',''),now()))
+        row=c.execute("SELECT value FROM meta WHERE key='active_skill'").fetchone()
+        current=json.loads(row['value']) if row else None
+        applied=current==payload['skill_id']
+        if applied:c.execute("INSERT OR REPLACE INTO meta VALUES('active_skill',?)",(dump(sid),))
+        c.execute('INSERT INTO events(job_id,kind,data,created) VALUES(?,?,?,?)',(job['id'],'adoption_processed',dump({'skill_id':sid,'applied':applied,'reason':decision.get('reason','') if applied else '保留用户在比较期间的技能选择'}),now()))

@@ -15,7 +15,9 @@ def reader_markdown(store,brief):
     if used:
         text+='\n\n## 来源\n\n'
         for i,sid in enumerate(used,1):
-            source=store.one('sources',sid)
+            try:source=store.one('sources',sid)
+            except ValueError:
+                text+=f'{i}. 引用未关联到来源，请补充核对。\n';continue
             locators=list(dict.fromkeys(r.get('locator','') for r in refs if r['source_id']==sid and r.get('locator')))
             title=source['name']
             if source['url']:title=f'[{title}]({source["url"]})'

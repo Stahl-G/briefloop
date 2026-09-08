@@ -50,7 +50,14 @@ def make_server(workspace, port=8765):
                     rounds=[]
                     for f in sorted(root.glob('round-*/comparison/input.json')):
                         comparison=f.with_name('comparison.json')
-                        rounds.append({'cases':json.loads(f.read_text()),'result':json.loads(comparison.read_text()) if comparison.exists() else None})
+                        from .exports import reader_markdown
+                        cases=json.loads(f.read_text())
+                        for case in cases:
+                            for side in ('baseline','candidate'):
+                                case[side]['reader_markdown']=reader_markdown(store,case[side])
+                                grades=store.rows('SELECT data FROM assessments WHERE version_id=? ORDER BY rowid DESC LIMIT 1',(case[side]['id'],))
+                                case[side]['assessment']=json.loads(grades[0]['data']) if grades else None
+                        rounds.append({'cases':cases,'result':json.loads(comparison.read_text()) if comparison.exists() else None})
                     self.send(200,{'job':job,'rounds':rounds})
                 elif u.path=='/api/download':
                     b=store.one('briefs',q['version'][0])
@@ -77,6 +84,7 @@ def make_server(workspace, port=8765):
                     data=base64.b64decode(body['data'],validate=True)
                     result=sources.upload(store,body['name'],data)
                 elif path=='/api/source-url':result=sources.fetch(store,body['url'])
+                elif path=='/api/retry-source':result=sources.retry_source(store,body['source_id'])
                 elif path=='/api/generate':
                     req=Requirements.model_validate(body['requirements'])
                     run=store.create_run(req.model_dump(),body.get('source_ids',[]))
@@ -118,7 +126,7 @@ def serve(workspace,port=8765):
     server=make_server(workspace,port)
     server.worker.start()
     url=f'http://127.0.0.1:{server.server_port}'
-    (server.store.root/'server.json').write_text(dump({'pid':os.getpid(),'url':url}))
+    (server.store.root/'server.json').write_text(dump({'pid':os.getpid(),'url':url,'workspace_id':server.store.meta('workspace_id')}))
     print(f'BriefLoop: {url}',flush=True)
     def stop(signum,frame):raise KeyboardInterrupt
     signal.signal(signal.SIGTERM,stop)

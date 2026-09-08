@@ -30,9 +30,13 @@ def semantic_signature(markdown):
     parts=[]
     for token in MarkdownIt('commonmark').enable('table').parse(markdown):
         if token.type=='inline':
+            text=[];links=[]
             for child in token.children or []:
-                if child.type in ('text','code_inline','image'):parts.append(child.content)
-                if child.type=='link_open':parts.append(child.attrGet('href') or '')
+                if child.type in ('text','code_inline','image'):text.append(child.content)
+                if child.type in ('softbreak','hardbreak'):text.append(' ')
+                if child.type=='link_open':links.append(child.attrGet('href') or '')
+            parts.append(' '.join(''.join(text).split()))
+            if links:parts.append(dump(links))
         elif token.type in ('fence','code_block'):parts.append(token.content)
     return '\n'.join(parts)
 
@@ -47,6 +51,7 @@ CREATE TABLE IF NOT EXISTS sources(id TEXT PRIMARY KEY, name TEXT NOT NULL, path
  url TEXT, status TEXT NOT NULL, error TEXT, hash TEXT NOT NULL, created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY, requirements TEXT NOT NULL,
  source_ids TEXT NOT NULL, skill_id TEXT, created TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS run_sources(run_id TEXT NOT NULL REFERENCES runs(id), source_id TEXT NOT NULL REFERENCES sources(id), PRIMARY KEY(run_id,source_id));
 CREATE TABLE IF NOT EXISTS briefs(id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
  parent_id TEXT REFERENCES briefs(id), author TEXT NOT NULL, markdown TEXT NOT NULL,
  hash TEXT NOT NULL, detail TEXT NOT NULL, editor_document TEXT, created TEXT NOT NULL);
@@ -76,6 +81,7 @@ class Store:
                 c.execute("ALTER TABLE runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'normal'")
             c.execute("INSERT OR IGNORE INTO meta VALUES('settings', ?)", (dump(Settings().model_dump()),))
             c.execute("INSERT OR IGNORE INTO meta VALUES('schema', '1')")
+            c.execute("INSERT OR IGNORE INTO meta VALUES('workspace_id', ?)",(dump(uid("workspace")),))
 
     @contextmanager
     def tx(self):
@@ -152,6 +158,15 @@ class Store:
                 c.execute("INSERT OR REPLACE INTO meta VALUES('requirements',?)", (dump(req.model_dump()),))
         return self.one("runs", rid)
 
+    def attach_source(self, run_id, source_id):
+        with self.tx() as c:
+            c.execute('INSERT OR IGNORE INTO run_sources VALUES(?,?)',(run_id,source_id))
+
+    def source_ids(self, run_id):
+        run=self.one('runs',run_id)
+        acquired=self.rows('SELECT source_id FROM run_sources WHERE run_id=? ORDER BY rowid',(run_id,))
+        return list(dict.fromkeys(json.loads(run['source_ids'])+[r['source_id'] for r in acquired]))
+
     def publish(self, run_id, draft, *, version_id=None):
         draft = BriefDraft.model_validate(draft)
         self.one("runs", run_id)
@@ -166,6 +181,8 @@ class Store:
                     raise Conflict("Completed draft differs")
             else:
                 c.execute("INSERT INTO briefs VALUES(?,?,?,?,?,?,?,?,?)", (vid, run_id, None, "agent", draft.markdown, sha, dump(draft.model_dump(exclude={"markdown"})), None, now()))
+            for ref in draft.citations:
+                c.execute("INSERT OR IGNORE INTO run_sources VALUES(?,?)",(run_id,ref.source_id))
         return self.one("briefs", vid)
 
     def revise(self, base_version, markdown, editor_document=None):
@@ -229,7 +246,7 @@ class Store:
         for j in jobs:
             events=self.rows("SELECT data FROM events WHERE job_id=? AND kind='learning_progress' ORDER BY seq DESC LIMIT 1",(j['id'],))
             j['progress']=json.loads(events[0]['data']) if events else None
-        return {"workspace": self.root.name, "requirements": self.meta("requirements"), "settings": self.settings(),
+        return {"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "requirements": self.meta("requirements"), "settings": self.settings(),
                 "sources": self.rows("SELECT * FROM sources ORDER BY created"),
                 "runs": self.rows("SELECT * FROM runs ORDER BY created DESC"),
                 "briefs": self.rows("SELECT b.* FROM briefs b JOIN runs r ON r.id=b.run_id WHERE r.mode='normal' ORDER BY b.rowid DESC"),
