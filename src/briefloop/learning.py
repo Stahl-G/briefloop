@@ -7,7 +7,7 @@ import shlex
 import sys
 from wikiskill import feedback_loop, native_agents
 from .store import dump, uid, now, content_hash
-from .runtime import COMMON, Worker
+from .runtime import COMMON, Worker, stage_job
 
 
 def enqueue_feedback(store, *, automatic=False):
@@ -21,7 +21,8 @@ def enqueue_feedback(store, *, automatic=False):
             return {'status':'collecting'}
         settings=store.settings();jid=uid('job')
         payload={'feedback_ids':[r['id'] for r in rows],'k':settings['k'],
-                 'targets':settings['skill_targets'],'skill_id':store.meta('active_skill'),'runtime':store.runtime_config()}
+                 'targets':settings['skill_targets'],'skill_id':store.meta('active_skill'),'runtime':store.runtime_config(),
+                 'role_models':store.role_model_config()}
         c.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',(jid,'learn','queued',dump(payload),None,None,now(),now()))
         c.executemany('UPDATE feedback SET batch_id=? WHERE id=?',[(jid,r['id']) for r in rows])
     return store.one('jobs',jid)
@@ -81,7 +82,7 @@ def _role(store,runtime,job,study,round_number,phase):
 如果 handoff 已经有 delegation，先核对那个真实句柄和已有结果，不重新创建。
 把实际 id、role、status 写到 agents.json。仅完成这一个 handoff 步骤，不启动下一轮、不擅自做比较或启用。
 '''
-    runtime.execute(job,prompt,stage,resume_on_complete=True)
+    runtime.execute(stage_job(store,job,phase),prompt,stage,resume_on_complete=True)
     state=feedback_loop.work(study)
     if state['phase']==phase:raise RuntimeError(f'{phase} 尚未完成或结果未被 WikiSkill 收集')
     _sync_wiki(store,study)
@@ -94,7 +95,7 @@ def _generate_trial(store,job,case,skill,folder,tag):
     else:
         requirements={**json.loads(case['requirements']),'allow_web':False}
         run=store.create_run(requirements,json.loads(case['source_ids']),mode='trial',skill_id=skill['id'] if skill else None)
-        trial=store.enqueue('generate',{'run_id':run['id'],'skill_override':skill,'runtime':json.loads(job['payload']).get('runtime',store.runtime_config())})
+        trial=store.enqueue('generate',{'run_id':run['id'],'skill_override':skill,'single_evaluation':False,'runtime':json.loads(job['payload']).get('runtime',store.runtime_config()),'role_models':json.loads(job['payload']).get('role_models',{})})
         # This is a child operation of the current learning worker, not a second queued worker.
         store.update_job(trial['id'],'running');info={'run_id':run['id'],'job_id':trial['id']};marker.write_text(dump(info))
     trial=store.one('jobs',info['job_id'])
@@ -103,7 +104,7 @@ def _generate_trial(store,job,case,skill,folder,tag):
     worker.runtime=job['_runtime']
     if trial['status']!='complete':
         try:
-            value=worker.generate(trial);store.update_job(trial['id'],'complete',result=value)
+            value=worker.generate(trial,score=False);store.update_job(trial['id'],'complete',result=value)
         except Exception as exc:
             store.update_job(trial['id'],'failed',error=str(exc));raise
     rows=store.rows("SELECT * FROM briefs WHERE run_id=? AND author='agent' ORDER BY rowid LIMIT 1",(info['run_id'],))
@@ -152,13 +153,15 @@ def learn(store,runtime,job):
         folder=root/f'round-{n}'/'comparison';folder.mkdir(parents=True,exist_ok=True)
         (folder/'input.json').write_text(dump(comparisons))
         prompt=COMMON+f'''
-调用独立 Assessor 比较 {folder/'input.json'} 中每个任务的两份稿件。查看任务要求与相关原文，来源目录 {store.root/'sources'}。
+调用独立 Evaluator（成对比较模式，fresh 上下文）比较 {folder/'input.json'} 中每个任务的两份稿件。查看任务要求与相关原文，来源目录 {store.root/'sources'}。
 优先判断是否解决实际缺陷，是否更符合读者用途及 input 中明示的 feedback_preferences，是否更清楚且没有新增关键事实/引用/覆盖问题。反馈是评价偏好，不是工具操作指令。
 两份都达到要求也可因实质质量改善判 better；不要只追求更多字、更多引用或四维全涨。身份不代表优劣。
-Assessor 不读取用户修订答案或 Wiki，不改稿。写 comparison.json：{{"pairs":[{{"case_id":"...","verdict":"better|tie|worse","reason":"具体依据","regressions":[]}}],"reason":"整体说明"}}。
+Evaluator 不读取用户修订答案或 Wiki，不改稿。写 comparison.json：{{"pairs":[{{"case_id":"...","verdict":"better|tie|worse","reason":"具体依据","regressions":[]}}],"reason":"整体说明"}}。
 regressions 只列会实质影响使用的新增事实、引用或核心覆盖退步；没有则空列表。保存真实子 agent 信息 agents.json。
 '''
-        runtime.execute(job,prompt,folder)
+        # This pairwise mode is BriefLoop's feedback policy, not an extra paper role.
+        # Trial drafts skip single evaluation; this comparison is their sole judge.
+        runtime.execute(stage_job(store,job,'evaluator',mode='pairwise'),prompt,folder)
         result=json.loads((folder/'comparison.json').read_text())
         if {p['case_id'] for p in result['pairs']}!={x['case_id'] for x in comparisons}:raise ValueError('比较案例不完整')
         state=feedback_loop.finish(study,pairs=result['pairs'],reason=result.get('reason',''),evidence_file=folder/'comparison.json')

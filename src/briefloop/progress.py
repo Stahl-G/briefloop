@@ -12,7 +12,11 @@ from .store import dump
 
 def role_label(role):
     text=str(role or '子任务')
-    for key,label in [('maintainer','Maintainer'),('proposer','Proposer'),('assessor','Assessor'),('scorer','Scorer'),('analyst','Analyst'),('scout','Scout')]:
+    if any(key in text.lower() for key in ('evaluator','scorer','assessor')):
+        if any(key in text.lower() for key in ('assessor','pairwise','比较')):return 'Evaluator · 比较'
+        if any(key in text.lower() for key in ('scorer','single','评分')):return 'Evaluator · 评分'
+        return 'Evaluator'
+    for key,label in [('maintainer','Maintainer'),('proposer','Proposer'),('analyst','Analyst'),('scout','Scout')]:
         if key in text.lower():
             number=re.search(r'(\d+)$',text)
             return label+(' '+number.group(1) if number else '')
@@ -66,7 +70,7 @@ class ProgressTracker:
         if paths[3].exists():stage='正文已保存，正在准备评分'
         if paths[4].exists():stage='评分已返回，正在保存结果'
         labels=' '.join(w.get('role','') for w in active)
-        for key,label in [('Scout','Scout 正在读取与核对来源'),('Analyst','Analyst 正在撰写简报'),('Scorer','Scorer 正在独立评分'),('Maintainer','Maintainer 正在整理经验'),('Proposer','Proposer 正在提出技能'),('Assessor','Assessor 正在比较新旧稿件')]:
+        for key,label in [('Scout','Scout 正在读取与核对来源'),('Analyst','Analyst 正在撰写简报'),('Evaluator · 比较','Evaluator 正在比较新旧稿件'),('Evaluator · 评分','Evaluator 正在独立评分'),('Evaluator','Evaluator 正在核对任务与来源'),('Maintainer','Maintainer 正在整理经验'),('Proposer','Proposer 正在提出技能')]:
             if key in labels:stage=label
         value={'stage':stage,'message':self.message,'agents':workers,'last_activity':datetime.fromtimestamp(log.stat().st_mtime if log.exists() else time.time(),timezone.utc).isoformat(),'draft_ready':paths[3].exists()}
         encoded=dump(value)

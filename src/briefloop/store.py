@@ -6,7 +6,7 @@ import hashlib
 import json
 import sqlite3
 import uuid
-from .models import Requirements, Settings, BriefDraft, Assessment
+from .models import Requirements, Settings, BriefDraft, Assessment, ROLE_NAMES, normalize_role_models
 
 
 def now():
@@ -225,12 +225,34 @@ class Store:
         settings=self.settings()
         return {key:settings[key] for key in ('model','reasoning_effort')}
 
+    def role_model_config(self, runtime=None):
+        base=runtime or self.runtime_config()
+        overrides=self.settings()['role_models']
+        return {role:dict(overrides.get(role,base)) for role in ROLE_NAMES}
+
     def enqueue(self, kind, payload):
-        payload={**payload,'runtime':payload.get('runtime',self.runtime_config())}
+        runtime=payload.get('runtime',self.runtime_config())
+        # Freeze inherited defaults too; later settings never mutate queued jobs.
+        overrides=normalize_role_models(payload.get('role_models',self.role_model_config(runtime)))
+        provider=payload.get('search_provider',self.settings()['search_provider'])
+        if provider not in ('codex','tavily'):
+            raise ValueError('无效搜索来源')
+        payload={**payload,'runtime':runtime,'search_provider':provider,
+                 'role_models':{role:dict(overrides.get(role,runtime)) for role in ROLE_NAMES}}
         jid = uid("job")
         with self.tx() as c:
             c.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)", (jid, kind, "queued", dump(payload), None, None, now(), now()))
         return self.one("jobs", jid)
+
+    def search_provider_for_run(self, run_id):
+        self.one('runs',run_id)
+        for row in self.rows("SELECT payload FROM jobs WHERE kind='generate' ORDER BY rowid DESC"):
+            payload=json.loads(row['payload'])
+            if payload.get('run_id')==run_id:
+                # Jobs predating provider selection used Codex, regardless of
+                # the currently selected preference in this workspace.
+                return payload.get('search_provider','codex')
+        return self.settings()['search_provider']
 
     def update_job(self, jid, status, *, result=None, error=None):
         with self.tx() as c:

@@ -1,7 +1,7 @@
 """Loopback application: real save/command API, no static feedback façade."""
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.resources import files
-from urllib.parse import urlsplit, parse_qs
+from urllib.parse import urlsplit, parse_qs, quote
 import base64
 import json
 import secrets
@@ -13,19 +13,32 @@ from markdown_it import MarkdownIt
 from pydantic import ValidationError
 from .models import Requirements, Settings, SaveRevision, Comment
 from .runtime import Worker
+from .harness import HarnessManager
+from .interactive_runtime import InteractiveRuntime
 from .store import Store, Conflict, dump
 from . import sources
 
 
-def make_server(workspace, port=8765):
-    store=Store(workspace);worker=Worker(store);token=secrets.token_urlsafe(24)
+def make_server(workspace, port=8765, *, paused=False):
+    store=Store(workspace)
+    lock=(store.root/'.server.lock').open('a+')
+    try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock.close();raise RuntimeError('这个工作区已有本地服务在运行')
+    harness=HarnessManager(store);worker=Worker(store)
+    worker.runtime=InteractiveRuntime(store,harness)
+    worker.opened_paused=paused
+    token=secrets.token_urlsafe(24)
     assets=files('briefloop').joinpath('static')
+    # Serve one UI/backend version for this process; builds must not replace a live UI halfway.
+    asset_bytes={name:assets.joinpath(name).read_bytes() for name in ('index.html','app.js','style.css')}
     class Handler(BaseHTTPRequestHandler):
         def log_message(self,format,*args): pass
-        def send(self,status,data,content_type='application/json; charset=utf-8'):
+        def send(self,status,data,content_type='application/json; charset=utf-8',download_name=None):
             payload=data if isinstance(data,bytes) else dump(data).encode()
             self.send_response(status)
             self.send_header('Content-Type',content_type)
+            if download_name:self.send_header('Content-Disposition',"attachment; filename*=UTF-8''"+quote(download_name))
             self.send_header('Content-Length',str(len(payload)))
             self.send_header('Cache-Control','no-store')
             self.send_header('X-Content-Type-Options','nosniff')
@@ -37,12 +50,30 @@ def make_server(workspace, port=8765):
             try:
                 u=urlsplit(self.path);q=parse_qs(u.query)
                 if u.path=='/api/state':self.send(200,store.snapshot())
+                elif u.path=='/api/workspaces':
+                    from .workspaces import list_workspaces
+                    self.send(200,list_workspaces(store))
+                elif u.path=='/api/harness/sessions':self.send(200,{'sessions':harness.list_sessions()})
+                elif u.path=='/api/harness/session':self.send(200,harness.snapshot(q['id'][0],int(q.get('after',['0'])[0])))
                 elif u.path=='/api/session':self.send(200,{'token':token})
                 elif u.path=='/api/runtime':
                     proc=worker.runtime.process
-                    self.send(200,{'server_pid':os.getpid(),'worker_alive':worker.thread.is_alive(),'job_id':worker.current,'pid':proc.pid if proc else None,'returncode':proc.poll() if proc else None})
+                    self.send(200,{'server_pid':os.getpid(),'worker_alive':worker.thread.is_alive(),'automatic_learning_paused':worker.opened_paused,'paused':worker.opened_paused,'job_id':worker.current,'pid':proc.pid if proc else None,'returncode':proc.poll() if proc else None})
                 elif u.path=='/api/source':
-                    sid=q['id'][0];self.send(200,{'source':store.one('sources',sid),'text':store.source_text(sid)})
+                    from .projections import source_details
+                    sid=q['id'][0];source,provenance,original=source_details(store,sid)
+                    self.send(200,{'source':source,'text':store.source_text(sid),'provenance':provenance,'original_url':'/api/source-original?id='+sid if original else None})
+                elif u.path=='/api/source-original':
+                    from .projections import source_details
+                    source,provenance,original=source_details(store,q['id'][0])
+                    if original is None:raise ValueError('该来源未保留原件')
+                    self.send(200,original.read_bytes(),'application/octet-stream',download_name=original.name)
+                elif u.path=='/api/learning-candidates':
+                    from .projections import learning_candidates
+                    self.send(200,learning_candidates(store))
+                elif u.path=='/api/tavily':
+                    from .tavily import key_status
+                    self.send(200,key_status())
                 elif u.path=='/api/events':
                     jid=q['job'][0];self.send(200,store.rows('SELECT * FROM events WHERE job_id=? ORDER BY seq',(jid,)))
                 elif u.path=='/api/learning-details':
@@ -66,11 +97,11 @@ def make_server(workspace, port=8765):
                     if q.get('format',['md'])[0]=='docx':self.send(200,docx_bytes(md),'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
                     else:self.send(200,md.encode(),'text/markdown; charset=utf-8')
                 elif u.path in ('/','/index.html'):
-                    self.send(200,assets.joinpath('index.html').read_bytes(),'text/html; charset=utf-8')
+                    self.send(200,asset_bytes['index.html'],'text/html; charset=utf-8')
                 elif u.path in ('/app.js','/style.css'):
-                    self.send(200,assets.joinpath(u.path[1:]).read_bytes(),'text/javascript' if u.path.endswith('.js') else 'text/css')
+                    self.send(200,asset_bytes[u.path[1:]],'text/javascript' if u.path.endswith('.js') else 'text/css')
                 else:self.send(404,{'error':'未找到页面'})
-            except (ValueError,KeyError,OSError) as exc:self.error(exc)
+            except (ValueError,KeyError,OSError,RuntimeError) as exc:self.error(exc)
         def do_POST(self):
             try:
                 origin=self.headers.get('Origin')
@@ -80,7 +111,17 @@ def make_server(workspace, port=8765):
                 n=int(self.headers.get('Content-Length','0'))
                 if not 0<n<25*1024*1024:raise ValueError('请求为空或过大')
                 body=json.loads(self.rfile.read(n));path=urlsplit(self.path).path
-                if path=='/api/upload':
+                if path=='/api/tavily':
+                    from .tavily import save_key,delete_key
+                    result=delete_key() if body.get('remove') else save_key(body['api_key'])
+                elif path=='/api/workspaces/open':
+                    from .workspaces import open_workspace
+                    result=open_workspace(store,body['path'],create=bool(body.get('create',False)))
+                elif path=='/api/harness/session':result=harness.create_session(body.get('title','新对话'),body.get('runtime'))
+                elif path=='/api/harness/message':result=harness.send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),allow_web=bool(body.get('allow_web',False)))
+                elif path=='/api/harness/answer':result=harness.answer(body['session_id'],body['request_id'],body['answers'])
+                elif path=='/api/harness/cancel':result=harness.cancel(body['session_id'])
+                elif path=='/api/upload':
                     data=base64.b64decode(body['data'],validate=True)
                     result=sources.upload(store,body['name'],data)
                 elif path=='/api/source-url':result=sources.fetch(store,body['url'])
@@ -97,6 +138,7 @@ def make_server(workspace, port=8765):
                 elif path=='/api/settings':
                     settings=Settings.model_validate({**store.settings(),**body})
                     store.set_meta('settings',settings.model_dump());result=settings.model_dump()
+                    if 'auto_learn' in body:worker.opened_paused=False
                 elif path=='/api/assess':
                     store.one('briefs',body['version_id']);result=store.enqueue('assess',{'version_id':body['version_id']})
                 elif path=='/api/learn':
@@ -111,19 +153,17 @@ def make_server(workspace, port=8765):
             except (ValueError,KeyError,OSError,ValidationError) as exc:self.error(exc)
             except Exception as exc:
                 self.send(500,{'error':str(exc)})
-    server=ThreadingHTTPServer(('127.0.0.1',port),Handler)
+    try:server=ThreadingHTTPServer(('127.0.0.1',port),Handler)
+    except OSError:
+        harness.close();lock.close();raise
     server.daemon_threads=True
-    lock=(store.root/'.server.lock').open('a+')
-    try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-    except BlockingIOError:
-        lock.close();server.server_close();raise RuntimeError('这个工作区已有本地服务在运行')
     server.workspace_lock=lock
-    server.store=store;server.worker=worker
+    server.store=store;server.worker=worker;server.harness=harness
     return server
 
 
-def serve(workspace,port=8765):
-    server=make_server(workspace,port)
+def serve(workspace,port=8765,*,paused=False):
+    server=make_server(workspace,port,paused=paused)
     server.worker.start()
     url=f'http://127.0.0.1:{server.server_port}'
     (server.store.root/'server.json').write_text(dump({'pid':os.getpid(),'url':url,'workspace_id':server.store.meta('workspace_id')}))
@@ -133,4 +173,4 @@ def serve(workspace,port=8765):
     try:server.serve_forever()
     except KeyboardInterrupt:pass
     finally:
-        server.worker.close();server.server_close();server.workspace_lock.close()
+        server.worker.close();server.harness.close();server.server_close();server.workspace_lock.close()

@@ -4,6 +4,7 @@ The coordinator chooses and invokes specialist agents. This module owns only
 transport, cancellation, progress capture and admitting completed artifacts.
 """
 from pathlib import Path
+from importlib.resources import files
 import json
 import os
 import shlex
@@ -13,7 +14,7 @@ import subprocess
 import sys
 import threading
 import time
-from .models import Assessment, BriefDraft, ScoutResult
+from .models import Assessment, BriefDraft, ScoutResult, ROLE_NAMES
 from .store import content_hash, dump, now
 from .skills import bind_context
 
@@ -30,39 +31,97 @@ COMMON = '''你在运行 BriefLoop 本地应用。用户已授权本轮研究、
 '''
 
 
+def stage_job(store, job, role, *, mode=None):
+    """One Evaluator configuration, separate single/pairwise native contexts.
+
+    Legacy keys are read by mode from frozen jobs, not normalized in place.
+    """
+    if role not in (*ROLE_NAMES,'scorer','assessor'):
+        raise ValueError('Unknown execution role: '+role)
+    original_role=role
+    if role in ('scorer','assessor','evaluator'):
+        role='evaluator'
+        mode=mode or ('pairwise' if original_role=='assessor' else 'single')
+        if mode not in ('single','pairwise'):
+            raise ValueError('Unknown evaluation mode: '+mode)
+    payload=json.loads(job['payload'])
+    base=payload.get('runtime',store.runtime_config())
+    roles=payload.get('role_models',{})
+    if role=='evaluator':
+        legacy='assessor' if mode=='pairwise' else 'scorer'
+        selected=roles.get('evaluator',roles.get(legacy,base))
+    else:
+        selected=roles.get(role,base)
+    context={'runtime_role':role,**({'evaluation_mode':mode} if role=='evaluator' else {})}
+    return {**job,**context,'allow_web':False,
+            'payload':dump({**payload,'runtime':dict(selected),**context})}
+
+
 def generation_prompt(store, run, folder):
     req=json.loads(run['requirements'])
+    provider=run.get('search_provider','codex')
     skill=run.get('skill_override') if 'skill_override' in run else (store.one('skills',run['skill_id']) if run['skill_id'] else None)
     sources=[{**store.one('sources',sid),'absolute_path':str(store.root/store.one('sources',sid)['path'])} for sid in store.source_ids(run['id'])]
-    payload={'requirements':req,'sources':sources,'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':store.settings()['max_parallel'],'reusable_research':run.get('reusable_research',[])}
-    (folder/'input.json').write_text(dump(payload))
+    payload={'requirements':req,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':store.settings()['max_parallel'],'reusable_research':run.get('reusable_research',[])}
     tool=shlex.join([sys.executable,'-m','briefloop','tool','--workspace',str(store.root)])
+    tavily_enabled=req['allow_web'] and provider=='tavily'
+    if tavily_enabled:
+        template=files('briefloop').joinpath('skill_assets','tavily','SKILL.md').read_text(encoding='utf-8')
+        retrieval_path=(folder/'capabilities'/'tavily'/'SKILL.md').resolve()
+        retrieval_path.parent.mkdir(parents=True,exist_ok=True)
+        content=template.replace('{tool}',tool).replace('{run_id}',run['id'])
+        retrieval_path.write_text(content,encoding='utf-8')
+        dispatch_path=retrieval_path.with_name('scout-dispatch.md')
+        dispatch_path.write_text('你是本轮负责找资料的 Scout。以下是你的实际检索技能上下文；先确认已收到完整技能，按分配主题执行。'
+            +'若你的任务消息只有文件路径，先完整读取 '+str(retrieval_path)+'，再用简短公开进度说明确认已读。'
+            +'仅凭父 Orchestrator 声称技能已启用不算获得技能。\n\n'+content,encoding='utf-8')
+        payload['retrieval_skill']={'path':str(retrieval_path),'target_roles':['scout'],
+                                    'dispatch_prompt_path':str(dispatch_path)}
+        # Feed the same explicit body through the existing per-role injection
+        # contract too; a parent-only description is not a Scout capability.
+        scout_binding=dict(payload['role_skills'].get('scout',{}))
+        scout_binding['instructions']=scout_binding.get('instructions','')+'\n\n'+dispatch_path.read_text(encoding='utf-8')
+        scout_binding['retrieval_skill_path']=str(retrieval_path)
+        payload['role_skills']['scout']=scout_binding
+    (folder/'input.json').write_text(dump(payload))
+    search=(f'''本轮冻结搜索源：Tavily。已生成仅供检索 Scout 的技能：{retrieval_path}。
+每个实际负责检索的 Scout，其 spawn/delegate 任务消息必须包含 {dispatch_path} 的完整内容，再加该 Scout 的具体分工和当前 scout 角色技能；也可传完整技能路径并明确要求先全文读取和公开确认已读。保存实际 dispatch prompt 与子 agent 句柄，以便核对。
+不要只在父任务里描述技能、仅写已启用，或要求子 agent 自己猜测工具。确认每个检索 Scout 收到完整技能或完成读取；只记录实际观察到的确认，不伪造。
+retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generation input.json 注入 Analyst、Evaluator、Maintainer 或 Proposer。他们只接收相应任务、来源及检索结果。'''
+            if tavily_enabled else
+            ('本轮冻结搜索源：Codex。允许联网时 Scout 使用 host 的原生网络搜索工具设计查询、筛选公开原始发布者；搜索摘要仅用于发现，后续仍须读取并登记正文。'
+             if req['allow_web'] else '本轮未允许联网，只处理已登记的材料，不加载外部检索技能。'))
+    registration='add-url 或明确的 Tavily extract' if tavily_enabled else 'add-url'
+    discovery=('初始来源为 0，这是正常的公开信息研究任务，不要求用户先上传材料。按目标、时间窗口与主题设计来源发现分工，至少安排一个 Scout；不要因为初始文件为 0 就安排 0 个 Scout。'
+               if not sources and req['allow_web'] else
+               '已有初始材料：先忠实读取，再按研究目标识别证据缺口；只有允许联网时才补充公开来源。')
     return COMMON+f'''
 本轮输入：{folder/'input.json'}。你的工作目录：{folder}。
+{discovery}
+{search}
 按 input.json 的 role_skills 给每个相应角色注入当前技能及版本；没有绑定则使用基础任务说明。保存实际角色任务和返回句柄。
 如果 additional_roles 有已注册的额外角色，由你按其 instruction 安排工作并把结果交接给写作或评价角色；不得忽略。
 如果 reusable_research 列有旧任务的文件，可作为待核对笔记复用以减少重复工作；不得恢复旧任务或旧模型的 agent 句柄。
-1. 读取需求与来源目录，写 plan.json：原始用户要求、推导的研究问题、读者/用途、证据要求、成稿结构及 Scout 分工。
+1. 读取需求与初始来源目录，写 plan.json：原始用户要求、目标时间窗口、推导的研究问题、读者/用途、证据要求、成稿结构及 Scout 分工。公开市场或行业周报按主题、主体、时间窗口安排 discovery Scout；计划应列需要查找的官方发布者、公开披露或统计来源，不能只按已有文件数分工。
 2. 根据数量、大小、主题和可用并发能力决定 Scout 数量，上限 {store.settings()['max_parallel']}；不要无条件开满。
-   同级并行 Scout 读取分配来源。给每个 Scout 专用任务说明：应寻找哪些事实/表头/脚注/时间限定、原文定位、冲突和缺口。
+   同级并行 Scout 读取已有材料或完成分配的公开来源发现任务。给每个 Scout 专用任务说明：主题、主体、时间范围、预期发布者、应寻找的事实/表头/脚注/时间限定、原文定位、冲突和缺口。
    每个 Scout 用各自 result.json 返回统一 ScoutResult，严格遵循 {folder/"scout.schema.json"}；顶层 sources/gaps，来源条目含 source_id、locator、excerpt、facts、conflicts、coverage_status。来源正文使用 input.json 的 absolute_path。
-   允许联网：{req['allow_web']}。若允许，来源有问题或信息不足时自主使用 host 的网络搜索工具，优先原始发布者。
-   找到 URL 后用 `{tool} add-url --run {run['id']} --url URL` 读取并登记正文，得到稳定 source_id；搜索摘要不是可引用证据。
+   允许联网：{req['allow_web']}。若允许，按上面的冻结搜索源从零来源开展查询，优先官方发布、上市公司披露、监管/交易所、原始统计或其他公开原始发布者；有初始材料时按需要补查。
+   找到 URL 后用 `{tool} add-url --run {run['id']} --url URL` 保存原始来源、提取可读正文并登记到本轮，得到真实稳定 source_id。只有成功读取的正文才能支持事实；搜索摘要或列出 URL 不算已验证。
+   {registration} 返回的新来源不在最初 input.json.sources 中也是正常的：在 Scout result.json 中使用返回的真实 source_id、准确 locator/excerpt 和缺口，后续交接保留所有实际取得的 acquired source IDs。不可编造 ID 或把新来源漏掉。
+   已上传材料和公开网页都是要核对的原文，不自动等于真实结论。保留数值、单位、主体、时间口径及计划/预计/已实现等状态；区分发布日期与事件/统计期间，检查表头和脚注。忠实引用原文，发现异常或冲突时标出依据与未确定之处，不静默改写原材料，不混用不可比口径。
    未开启联网时只读上传来源。部分失败保留缺口，不无限等待，不把无法读取写成没有变化。
-3. 收集 Scout 完成/失败结果后，用 `{tool} join-scouts --files SCOUT_RESULT_PATHS` 验证并结构合并，保存 joined-scouts.json；失败来源也在结果中列出，不丢掉。随后调用独立 Analyst。任务输入包括本轮 plan、Scout 结果、原始来源入口、只与 analyst 相关的当前技能。
+3. 收集 Scout 完成/失败结果后，用 `{tool} join-scouts --files SCOUT_RESULT_PATHS` 验证并结构合并，保存 joined-scouts.json；包括初始来源和本轮新取得的真实 source_id，失败来源及未覆盖问题也保留。
+   随后调用独立 Analyst。任务输入包括本轮 plan、joined-scouts.json、全部实际取得来源的 ID 与原文读取入口、只与 analyst 相关的当前技能。用 `{tool} read-source --id SOURCE_ID` 可读取包括 acquired sources 在内的登记正文；不要只给它最初可能为空的 input.json.sources。
+   Analyst 引用本轮实际来源 ID；新来源已由 {registration} 绑定本轮，应用随后独立评分时也会把这些 acquired sources 交给 Evaluator。若最终仍未获得可用原文，报告具体缺口与无法确认的范围，不用常识或搜索摘要编造市场事实。
    Analyst 直接写可读 Brief：按对读者的重要性取舍，解释变化与有证据支持的意义，区分事实与推断，保留关键条件。
    不要求每份报告都提行动建议；不逐篇复述材料，不用泛泛背景凑篇幅。
    引用格式为 [@source_id]，每条引用附准确 locator 和相关 excerpt。
    把 Analyst 结果保存 {folder/'draft.json'}，结构遵循 {folder/'draft.schema.json'}。
    草稿一保存应用就会展示；不需要 Editor、Auditor 或评分通过。
-4. draft.json 完整保存后，调用独立 Scorer。它读取已保存稿件、本轮需求和相关原文，不继承 Analyst 的自我评价。
-   先计算稿件 markdown 的 SHA256（UTF-8 原样），写入 brief_hash。
-   按任务完成程度评证据/覆盖/分析/表达四项 1–5（1根本不足，2明显不足，3达到要求，4充分完成，5对任务特别有帮助）。
-   每项检查对应需求与证据；遗漏以 requirement 定位，错误声明以 report_quote+source_id/locator/evidence 定位。
-   来源不足但如实限定不等于报告错误；Scorer 工具失败才是 incomplete，不给假分。
-   写 {folder/'assessment.json'}，遵循 {folder/'assessment.schema.json'}。
-   这只是建议，不能隐藏或改写 draft.json。
-5. 写 agents.json，包含实际子 agent id/role/status/产物路径。最终回复一句完成状态和文件位置。
+4. draft.json 完整保存后，写 agents.json，包含实际子 agent id/role/status/产物路径。
+   本会话到这里结束。评分由应用随后使用独立配置的 Evaluator 评分会话处理，不在这里调用 Evaluator 或生成 assessment.json。
+   最终回复一句完成状态和文件位置。
 '''
 
 
@@ -70,9 +129,11 @@ def assessment_prompt(store, brief, folder):
     run=store.one('runs',brief['run_id'])
     (folder/'input.json').write_text(dump({'brief':brief,'run':run,'sources':[{**store.one('sources',sid),'absolute_path':str(store.root/store.one('sources',sid)['path'])} for sid in store.source_ids(run['id'])]}))
     return COMMON+f'''
-只执行评分。读取 {folder/'input.json'}，调用一个独立 Scorer，核对任务要求、稿件及相关来源正文。
+只执行评分。使用全新上下文（fork_turns=none）的原生 Evaluator 子 agent（单稿评分模式），不继承写作会话。读取 {folder/'input.json'}，调用一个独立 Evaluator，核对任务要求、稿件及相关来源正文。
 评分结构见 {folder/'assessment.schema.json'}。brief_hash 必须是 {brief['hash']}。
-四项 1–5 是本轮要求完成程度，不是事实正确率。先检查再归纳分数，遗漏有 requirement，错误有原文依据。
+按任务完成程度评证据/覆盖/分析/表达四项 1–5（1根本不足，2明显不足，3达到要求，4充分完成，5对任务特别有帮助）。
+四项是本轮要求完成程度，不是事实正确率。先检查再归纳分数，遗漏有 requirement，错误以 report_quote+source_id/locator/evidence 定位。
+来源不足但如实限定不等于报告错误；Evaluator 工具失败才是 incomplete，不给假分。
 保存 assessment.json，原稿保持不变。记录真实子 agent 信息 agents.json。
 '''
 
@@ -127,11 +188,19 @@ class CodexRuntime:
             original_tick()
             try:tracker.update()
             except Exception:pass  # Progress projection must not interrupt model work.
+        configuration=json.loads(job['payload']).get('runtime',self.store.runtime_config())
+        binding=folder/'runtime-binding.json'
+        identity={'job_id':job['id'],'runtime':configuration}
+        if binding.exists() and json.loads(binding.read_text())!=identity:
+            raise ValueError('恢复会话的任务或模型已改变；请使用新的任务目录')
         saved=folder/'execution.json'
         if saved.exists():
             result=json.loads(saved.read_text())
+            if result.get('runtime') and result['runtime']!=configuration:
+                raise ValueError('已保存执行的模型配置与本阶段不一致')
             if result.get('returncode')==0 and not resume_on_complete:
                 on_tick();return result
+        binding.write_text(dump(identity))
         attached=owned_live_process(folder)
         if attached:
             self.attached_pid=attached
@@ -144,11 +213,10 @@ class CodexRuntime:
             finally:self.attached_pid=None
             _,terminal=log_state(folder/'events.jsonl')
             if terminal=='turn.completed':
-                result={'returncode':0,'recovered':True,'finished':now()}
+                result={'returncode':0,'recovered':True,'finished':now(),'runtime':configuration}
                 saved.write_text(dump(result));on_tick();return result
         binary=shutil.which('codex')
         if not binary:raise RuntimeError('未找到 Codex CLI，请安装并完成登录')
-        configuration=json.loads(job['payload']).get('runtime',self.store.runtime_config())
         prompt=f"本次所有模型工作固定使用 {configuration['model']} / {configuration['reasoning_effort']}。子 agent 继承此配置，不得选择其他模型或更高推理档位；若必须显式指定，也只能使用此配置。\n"+prompt
         (folder/'prompt.md').write_text(prompt)
         log_path=folder/'events.jsonl'
@@ -204,6 +272,7 @@ class CodexRuntime:
 
 class Worker:
     def __init__(self,store):
+        self.opened_paused=False
         self.store=store;self.runtime=CodexRuntime(store);self.stopping=threading.Event();self.current=None
         self.thread=threading.Thread(target=self.loop,name='briefloop-worker',daemon=True)
 
@@ -211,6 +280,9 @@ class Worker:
         # Old running jobs are not silently replayed; preserve them for explicit recovery.
         for job in self.store.rows("SELECT * FROM jobs WHERE status='running'"):
             self.store.update_job(job['id'],'interrupted',error='本地服务中断；已保存进度，可恢复')
+        if self.opened_paused:
+            for job in self.store.rows("SELECT * FROM jobs WHERE status='queued'"):
+                self.store.update_job(job['id'],'interrupted',error='打开工作区时保留旧任务，尚未执行；点击恢复可继续')
         self.thread.start()
 
     def close(self):
@@ -226,9 +298,13 @@ class Worker:
         if job['status'] not in ('failed','interrupted','cancelled'):raise ValueError('这个任务不需要恢复')
         payload=json.loads(job['payload'])
         current=self.store.runtime_config()
-        if payload.get('runtime')!=current:
+        current_roles=self.store.role_model_config(current)
+        old_roles={role:payload.get('role_models',{}).get(role,payload.get('runtime')) for role in ROLE_NAMES}
+        evaluation=stage_job(self.store,job,'evaluator',mode='pairwise' if job['kind']=='learn' else 'single')
+        old_roles['evaluator']=json.loads(evaluation['payload'])['runtime']
+        if payload.get('runtime')!=current or old_roles!=current_roles:
             # A different model gets a new attempt, never resumes expensive old child handles.
-            return self.store.enqueue(job['kind'],{**payload,'runtime':current,'previous_job_id':jid})
+            return self.store.enqueue(job['kind'],{**payload,'runtime':current,'role_models':current_roles,'previous_job_id':jid})
         self.store.update_job(jid,'queued')
         return self.store.one('jobs',jid)
 
@@ -236,7 +312,7 @@ class Worker:
         while not self.stopping.wait(.5):
             jobs=self.store.rows("SELECT * FROM jobs WHERE status='queued' ORDER BY rowid LIMIT 1")
             if not jobs:
-                if self.store.settings()['auto_learn']:
+                if self.store.settings()['auto_learn'] and not self.opened_paused:
                     try:
                         from .learning import enqueue_feedback
                         enqueue_feedback(self.store,automatic=True)
@@ -264,8 +340,9 @@ class Worker:
         (folder/'assessment.schema.json').write_text(dump(Assessment.model_json_schema()))
         return folder
 
-    def generate(self,job):
+    def generate(self,job,*,score=True):
         payload=json.loads(job['payload']);run=self.store.one('runs',payload['run_id']);folder=self.folder(job)
+        run['search_provider']=payload.get('search_provider','codex')
         if payload.get('previous_job_id'):
             previous=self.store.root/'jobs'/payload['previous_job_id']
             run['reusable_research']=[str(p) for p in previous.glob('scout*/result.json') if p.is_file()]
@@ -280,18 +357,29 @@ class Worker:
         result=self.runtime.execute(job,generation_prompt(self.store,run,folder),folder,publish)
         publish()
         brief=self.store.one('briefs',vid)
-        p=folder/'assessment.json'
-        if p.exists() and not self.store.rows('SELECT id FROM assessments WHERE version_id=?',(vid,)):
-            self.store.assess(vid,json.loads(p.read_text()))
-        if not p.exists():
-            recovery=folder/'score-recovery';recovery.mkdir(exist_ok=True)
-            (recovery/'assessment.schema.json').write_text(dump(Assessment.model_json_schema()))
-            self.runtime.execute(job,assessment_prompt(self.store,brief,recovery),recovery)
-            self.store.assess(vid,json.loads((recovery/'assessment.json').read_text()))
-        return {**result,'version_id':brief['id']}
+        if not score or payload.get('single_evaluation') is False:
+            return {**result,'version_id':brief['id']}
+        scoring=None
+        if not self.store.rows('SELECT id FROM assessments WHERE version_id=?',(vid,)):
+            legacy=folder/'assessment.json'
+            if 'role_models' not in payload and legacy.exists():
+                # Preserve results of old jobs that scored inside the writing turn.
+                self.store.assess(vid,json.loads(legacy.read_text()))
+            else:
+                score_folder=folder/'evaluation'
+                if not score_folder.exists() and (folder/'scorer').exists():
+                    score_folder=folder/'scorer'  # Resume old single-score artifacts.
+                if 'role_models' not in payload and (folder/'score-recovery').exists():
+                    score_folder=folder/'score-recovery'
+                score_folder.mkdir(exist_ok=True)
+                (score_folder/'assessment.schema.json').write_text(dump(Assessment.model_json_schema()))
+                evaluator=stage_job(self.store,job,'evaluator',mode='single')
+                scoring=self.runtime.execute(evaluator,assessment_prompt(self.store,brief,score_folder),score_folder)
+                self.store.assess(vid,json.loads((score_folder/'assessment.json').read_text()))
+        return {**result,'version_id':brief['id'],**({'scoring':scoring} if scoring else {})}
 
     def assess(self,job):
         payload=json.loads(job['payload']);brief=self.store.one('briefs',payload['version_id']);folder=self.folder(job)
-        result=self.runtime.execute(job,assessment_prompt(self.store,brief,folder),folder)
+        result=self.runtime.execute(stage_job(self.store,job,'evaluator',mode='single'),assessment_prompt(self.store,brief,folder),folder)
         record=self.store.assess(brief['id'],json.loads((folder/'assessment.json').read_text()))
         return {**result,'assessment_id':record['id']}

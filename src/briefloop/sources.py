@@ -2,6 +2,7 @@
 from html.parser import HTMLParser
 from io import BytesIO
 from pathlib import Path
+import hashlib
 import subprocess
 import shutil
 import os
@@ -18,6 +19,7 @@ class TextHTML(HTMLParser):
     def handle_starttag(self, tag, attrs):
         if tag in ('script','style','noscript'): self.skip += 1
         if tag in ('p','div','br','li','tr','h1','h2','h3'): self.parts.append('\n')
+        if tag in ('td','th'):self.parts.append('\t')
     def handle_endtag(self, tag):
         if tag in ('script','style','noscript') and self.skip: self.skip -= 1
     def handle_data(self, data):
@@ -29,9 +31,11 @@ def html_text(data):
     return '\n'.join(line.strip() for line in ''.join(p.parts).splitlines() if line.strip())
 
 
-def extract(name, data):
+def extract(name, data, *, with_extractor=False):
+    extractor="text decode utf-8-sig/gb18030"
     ext=Path(name).suffix.lower()
     if ext == '.pdf':
+        extractor='pdftotext -layout'
         if shutil.which('pdftotext'):
             with tempfile.TemporaryDirectory(prefix='briefloop-read-') as tmp:
                 p=Path(tmp)/'source.pdf';p.write_bytes(data)
@@ -41,19 +45,22 @@ def extract(name, data):
         if not text.strip():
             try:
                 from pypdf import PdfReader
+                extractor='pypdf.PdfReader.extract_text'
                 text='\n\n'.join(page.extract_text() or '' for page in PdfReader(BytesIO(data)).pages)
             except Exception as exc:raise ValueError('PDF 无法提取正文，可能是扫描件或加密文档') from exc
     elif ext == '.docx':
+        extractor='DOCX word/document.xml paragraph text'
         with zipfile.ZipFile(BytesIO(data)) as z:
             doc=ET.fromstring(z.read('word/document.xml'))
             text='\n'.join(''.join(n.itertext()) for n in doc.iter() if n.tag.endswith('}p'))
     elif ext in ('.html','.htm'):
+        extractor='briefloop.sources.TextHTML (utf-8)'
         text=html_text(data.decode('utf-8',errors='replace'))
     else:
         try:text=data.decode('utf-8-sig')
         except UnicodeDecodeError:text=data.decode('gb18030')
     if not text.strip(): raise ValueError('未能读取正文')
-    return text
+    return (text,extractor) if with_extractor else text
 
 
 def upload(store, name, data):
@@ -67,9 +74,8 @@ def upload(store, name, data):
         return store.add_source(name,'',error=str(exc),source_id=sid)
 
 
-def _fetch(store, url):
+def _fetch_bytes(url):
     if not url.startswith(('https://','http://')):raise ValueError('请输入 HTTP(S) 来源地址')
-    name=url.rsplit('/',1)[-1] or '网页'
     if shutil.which('curl'):
         env=dict(os.environ)
         for key,value in urllib.request.getproxies().items():
@@ -87,12 +93,38 @@ def _fetch(store, url):
             content_type=response.headers.get('Content-Type','')
             encoding=response.headers.get_content_charset() or 'utf-8'
     if len(data)>15*1024*1024:raise ValueError('网页过大，请下载后上传')
-    if 'pdf' in content_type:text=extract('source.pdf',data)
-    else:
-        decoded=data.decode(encoding,errors='replace')
-        text=html_text(decoded) if 'html' in content_type else decoded
-    if not text.strip():raise ValueError('网页没有可读取正文')
-    return store.add_source(name,text,url=url)
+    # curl reports Content-Type but does not separately report the charset.
+    if 'charset=' in content_type.lower():
+        from email.message import Message
+        header=Message();header['Content-Type']=content_type
+        encoding=header.get_content_charset() or encoding
+    return data,content_type,encoding
+
+
+def _fetch(store, url):
+    from .store import uid,now,content_hash,dump
+    data,content_type,encoding=_fetch_bytes(url)
+    sid=uid('src');name=url.rsplit('/',1)[-1] or '网页'
+    suffix='.pdf' if 'pdf' in content_type.lower() or data.startswith(b'%PDF-') else '.html' if 'html' in content_type.lower() else '.bin'
+    original=store.root/'sources'/(sid+'.original'+suffix)
+    original.write_bytes(data)
+    provenance={'url':url,'content_type':content_type,'fetched_at':now(),
+                'raw_sha256':hashlib.sha256(data).hexdigest(),
+                'original_path':str(original.relative_to(store.root))}
+    text='';error=None
+    extractor='PDF extraction' if suffix=='.pdf' else 'briefloop.sources.TextHTML ('+encoding+')' if suffix=='.html' else 'text decode ('+encoding+')'
+    try:
+        if suffix=='.pdf':text,extractor=extract('source.pdf',data,with_extractor=True)
+        else:
+            decoded=data.decode(encoding,errors='replace')
+            text=html_text(decoded) if suffix=='.html' else decoded
+        if not text.strip():raise ValueError('网页没有可读取正文')
+    except (ValueError,LookupError,OSError,subprocess.SubprocessError) as exc:
+        text='';error=str(exc)
+    provenance.update({'extractor':extractor,'text_sha256':content_hash(text),'extraction_status':'failed' if error else 'ready'})
+    if error:provenance['error']=error
+    (store.root/'sources'/(sid+'.provenance.json')).write_text(dump(provenance))
+    return store.add_source(name,text,url=url,error=error,source_id=sid)
 
 
 def fetch(store, url):

@@ -20,4 +20,4 @@ briefloop = "briefloop.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-briefloop = ["static/*"]
+briefloop = ["static/*", "skill_assets/*/*.md"]

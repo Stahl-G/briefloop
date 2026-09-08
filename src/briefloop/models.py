@@ -18,14 +18,47 @@ class Requirements(Model):
     raw_input: str = ""
 
 
+ROLE_NAMES = ('evaluator', 'maintainer', 'proposer')
+
+
+def normalize_role_models(roles):
+    # Settings/new-job projection only; never rewrite frozen historical jobs.
+    if not isinstance(roles,dict):
+        return roles
+    result=dict(roles)
+    if 'evaluator' not in result:
+        for previous in ('scorer','assessor'):
+            if previous in result:
+                result['evaluator']=result[previous]
+                break
+    result.pop('scorer',None)
+    result.pop('assessor',None)
+    return result
+
+
+class RoleModel(Model):
+    model: str = Field(min_length=1, max_length=100)
+    reasoning_effort: Literal['low','medium','high','xhigh','max']
+
+
 class Settings(Model):
     model: str = Field(default='gpt-5.6-luna', min_length=1, max_length=100)
     reasoning_effort: Literal['low','medium','high','xhigh','max'] = 'high'
+    role_models: dict[Literal['evaluator','maintainer','proposer'], RoleModel] = Field(default_factory=dict)
+    search_provider: Literal['codex','tavily'] = 'codex'
     k: int = Field(default=1, ge=1, le=20)
     auto_learn: bool = True
     max_parallel: int = Field(default=4, ge=1, le=16)
     timeout_minutes: int = Field(default=30, ge=1, le=240)
     skill_targets: list[str] = Field(default_factory=lambda: ["scout", "analyst"])
+
+
+    @model_validator(mode='before')
+    @classmethod
+    def migrate_evaluator_setting(cls, value):
+        if isinstance(value,dict) and 'role_models' in value:
+            return {**value,'role_models':normalize_role_models(value['role_models'])}
+        return value
 
 
 class Citation(Model):

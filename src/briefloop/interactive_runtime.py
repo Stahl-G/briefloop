@@ -1,0 +1,242 @@
+"""Job execution through the same durable, steerable harness as user chat.
+
+Each output folder binds to one conversation. Python observes files and public
+transport events; the agent still owns all research, writing and learning work.
+"""
+from pathlib import Path
+import json
+import threading
+import time
+from .harness import HarnessManager
+from .store import dump, now, uid
+
+TERMINAL = {'completed', 'failed', 'interrupted', 'cancelled'}
+
+
+def _write(path, value):
+    temporary = path.with_name(path.name + '.tmp')
+    temporary.write_text(dump(value), encoding='utf-8')
+    temporary.replace(path)
+
+
+def _message(snapshot, message_id):
+    return next((m for m in snapshot['messages'] if m['id'] == message_id), None)
+
+
+class InteractiveRuntime:
+    def __init__(self, store, harness=None):
+        self.store = store
+        self.harness = harness or HarnessManager(store)
+        self.cancelled = threading.Event()
+        self.lock = threading.RLock()
+        self.session_id = None
+
+    @property
+    def process(self):
+        # This process is shared: cancellation must interrupt a turn, never kill it.
+        with self.lock:
+            if self.session_id is None:
+                return None
+            return getattr(getattr(self.harness, 'client', None), 'process', None)
+
+    def cancel(self):
+        self.cancelled.set()
+        with self.lock:
+            session_id = self.session_id
+        if session_id:
+            self.harness.cancel(session_id)
+
+    def execute(self, job, prompt, folder, on_tick=lambda: None, *, resume_on_complete=False):
+        from .progress import ProgressTracker
+        folder = Path(folder)
+        folder.mkdir(parents=True, exist_ok=True)
+        tracker = ProgressTracker(self.store, job['id'], folder)
+        def tick():
+            on_tick()  # Admit a complete draft while its evaluator is still working.
+            try:
+                tracker.update()
+            except Exception:
+                pass  # A progress projection cannot interrupt model work.
+
+        payload = json.loads(job['payload'])
+        configured = payload.get('runtime', self.store.runtime_config())
+        runtime = {'model': configured['model'],
+                   'effort': configured.get('reasoning_effort', configured.get('effort', 'high'))}
+        saved = folder / 'execution.json'
+        if saved.exists():
+            previous = json.loads(saved.read_text())
+            if previous.get('runtime') and previous['runtime'] != configured:
+                raise ValueError('已保存执行的模型配置与本阶段不一致')
+            if previous.get('returncode') == 0 and not resume_on_complete:
+                tick()
+                return previous
+        if self.cancelled.is_set():
+            tick()
+            raise InterruptedError('任务已停止，已生成内容保留')
+
+        marker = folder / 'conversation.json'
+        binding = json.loads(marker.read_text()) if marker.exists() else None
+        snapshot = None
+        if binding:
+            if binding['job_id'] != job['id'] or binding['runtime'] != runtime:
+                raise ValueError('恢复会话的任务或模型已改变；请使用新的任务目录')
+            snapshot = self.harness.snapshot(binding['session_id'])
+        else:
+            evaluation_title='Evaluator · 比较' if job.get('evaluation_mode')=='pairwise' else 'Evaluator · 评分'
+            title = {'evaluator': evaluation_title, 'scorer': 'Evaluator · 评分', 'assessor': 'Evaluator · 比较', 'maintainer': '整理反馈经验', 'proposer': '提出技能改进'}.get(job.get('runtime_role'))
+            title = title or {'generate': '生成简报', 'assess': '核对简报评分', 'learn': '整理反馈与改进技能'}.get(job['kind'], '简报任务')
+            session = self.harness.create_session(title, runtime, folder)
+            binding = {'job_id': job['id'], 'session_id': session['id'], 'runtime': runtime,
+                       'message_id': None, 'history': []}
+            _write(marker, binding)
+
+        message = _message(snapshot, binding['message_id']) if snapshot else None
+        recovered = message is not None
+        new_turn = message is None or message['status'] in TERMINAL
+        if message and message['status'] == 'completed' and not resume_on_complete:
+            new_turn = False
+        if new_turn:
+            # Persist the id before dispatch. A crash before/after send can re-enter
+            # start_internal with that same id instead of duplicating the message.
+            if message is not None or not binding['message_id']:
+                if binding['message_id']:
+                    binding['history'].append(binding['message_id'])
+                binding['message_id'] = uid('msg')
+            _write(marker, binding)
+            fixed = f"本次所有模型工作固定使用 {runtime['model']} / {runtime['effort']}。子 agent 继承此配置，不得选择其他模型或更高推理档位。\n"
+            if binding['history']:
+                fixed += '恢复这一个任务：先核对现有子 agent 和完整输出，复用已完成结果，只补未完成部分，不重新采样已完成稿件。\n'
+            (folder / 'prompt.md').write_text(fixed + prompt, encoding='utf-8')
+            _write(saved, {'returncode': None, 'status': 'running', 'session_id': binding['session_id'],
+                           'message_id': binding['message_id'], 'runtime': configured})
+
+        sid = binding['session_id']
+        with self.lock:
+            self.session_id = sid
+        started = time.monotonic()
+        cursor = 0
+        seen_messages = set()
+        log_path = folder / 'events.jsonl'
+        if log_path.exists():
+            for line in log_path.read_text().splitlines():
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                cursor = max(cursor, event.get('harness_seq', 0))
+                if event.get('chat_message_id'):
+                    seen_messages.add(event['chat_message_id'])
+        try:
+            if new_turn:
+                if self.cancelled.is_set():
+                    raise InterruptedError('任务已停止，已生成内容保留')
+                label = {'generate': '请按已保存的要求研究来源并生成简报。',
+                         'assess': '请核对这份简报的要求、内容与来源并给出评分。',
+                         'learn': '请继续整理反馈、更新经验并完成当前技能改进步骤。'}.get(job['kind'], '请完成当前简报任务。')
+                evaluation_label='请使用 Evaluator 成对比较模式，依据任务与来源比较新旧稿件。' if job.get('evaluation_mode')=='pairwise' else '请使用 Evaluator 单稿评分模式，核对简报要求、内容与来源。'
+                label = {'evaluator': evaluation_label, 'scorer': '请使用 Evaluator 单稿评分模式核对简报。', 'assessor': '请使用 Evaluator 成对比较模式核对新旧稿件。', 'maintainer': '请从反馈中整理可复用经验。', 'proposer': '请依据经验提出技能改进。'}.get(job.get('runtime_role'), label)
+                self.harness.start_internal((folder / 'prompt.md').read_text(), session_id=sid,
+                    runtime=runtime, cwd=folder, job_id=job['id'], display_text=label,
+                    allow_web=bool(job.get('allow_web', False)), message_id=binding['message_id'])
+                self.store.event(job['id'], 'runtime_started', {'session_id': sid,
+                    'message_id': binding['message_id'], 'folder': str(folder), 'runtime': configured,
+                    'transport': 'app-server'})
+            while True:
+                snapshot = self.harness.snapshot(sid, after=cursor)
+                cursor = self._project(snapshot, log_path, cursor, seen_messages)
+                tick()
+                message = _message(snapshot, binding['message_id'])
+                if message is None:
+                    raise RuntimeError('已绑定的会话消息不存在，未自动重新发送')
+                status = message['status']
+                if self.cancelled.is_set():
+                    self.harness.cancel(sid)
+                    raise InterruptedError('任务已停止，已生成内容保留')
+                if status in TERMINAL:
+                    # Completion and its usage/message events can be persisted
+                    # immediately after the status transition. Refresh and drain
+                    # the paged public journal before admitting the result.
+                    while True:
+                        snapshot = self.harness.snapshot(sid, after=cursor)
+                        cursor = self._project(snapshot, log_path, cursor, seen_messages)
+                        if len(snapshot['events']) < 1000:
+                            break
+                    message = _message(snapshot, binding['message_id']) or message
+                    result = {'returncode': 0 if status == 'completed' else 1, 'status': status,
+                              'seconds': round(time.monotonic() - started, 2), 'finished': now(),
+                              'runtime': configured, 'session_id': sid, 'message_id': binding['message_id'],
+                              'recovered': recovered, 'usage': self._usage(log_path)}
+                    _write(saved, result)
+                    assistant = [m['text'] for m in snapshot['messages']
+                                 if m['role'] == 'assistant' and m.get('turn_id') == message.get('turn_id')]
+                    if assistant:
+                        (folder / 'last-message.txt').write_text('\n\n'.join(assistant), encoding='utf-8')
+                    tick()
+                    if status in ('interrupted', 'cancelled'):
+                        raise InterruptedError('会话已中断，已生成内容保留，可恢复')
+                    if status != 'completed':
+                        raise RuntimeError('Agent 执行失败；详情保存在会话与任务日志')
+                    return result
+                if time.monotonic() - started > self.store.settings()['timeout_minutes'] * 60:
+                    self.harness.cancel(sid)
+                    raise TimeoutError('运行超过本轮时间上限，已保留稿件和执行记录')
+                time.sleep(.5)
+        except Exception as exc:
+            if snapshot is not None:
+                active = _message(snapshot, binding['message_id'])
+                if active and active['status'] not in TERMINAL:
+                    try:
+                        self.harness.cancel(sid)
+                    except Exception:
+                        pass  # Preserve the original failure and bound session.
+            if isinstance(exc, (InterruptedError, TimeoutError)):
+                _write(saved, {'returncode': 1, 'status': 'interrupted', 'finished': now(),
+                               'session_id': sid, 'message_id': binding['message_id'], 'error': str(exc)})
+            with (folder / 'stderr.log').open('a', encoding='utf-8') as errors:
+                errors.write(str(exc) + '\n')
+            tick()
+            raise
+        finally:
+            with self.lock:
+                self.session_id = None
+
+    @staticmethod
+    def _project(snapshot, log_path, cursor, seen_messages):
+        with log_path.open('a', encoding='utf-8') as log:
+            for event in snapshot['events']:
+                if event['seq'] <= cursor:
+                    continue
+                cursor = event['seq']
+                kind, data = event['kind'], event['data']
+                value = {'type': kind.replace('/', '.'), 'harness_seq': cursor, 'data': data}
+                if kind in ('item/started', 'item/completed'):
+                    item = dict(data.get('item', {}))
+                    aliases = {'collabAgentToolCall': 'collab_tool_call', 'commandExecution': 'command_execution'}
+                    item['type'] = aliases.get(item.get('type'), item.get('type'))
+                    if 'agentsStates' in item:
+                        item['agents_states'] = item.pop('agentsStates')
+                    value['item'] = item
+                if kind == 'thread/tokenUsage/updated':
+                    value['usage'] = data.get('tokenUsage', {})
+                log.write(json.dumps(value, ensure_ascii=False) + '\n')
+            for message in snapshot['messages']:
+                if message['role'] == 'assistant' and message['status'] == 'completed' and message['id'] not in seen_messages:
+                    seen_messages.add(message['id'])
+                    log.write(json.dumps({'type': 'item.completed', 'chat_message_id': message['id'],
+                        'item': {'type': 'agent_message', 'text': message['text']}}, ensure_ascii=False) + '\n')
+        return cursor
+
+    @staticmethod
+    def _usage(path):
+        values = []
+        for line in path.read_text().splitlines():
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if 'usage' in event:
+                values.append(event['usage'])
+        return values
+
+
+CodexRuntime = InteractiveRuntime
