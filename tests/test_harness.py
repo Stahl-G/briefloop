@@ -77,6 +77,13 @@ def test_sources_persist_and_failed_delivery_not_replayed(tmp_path):
     assert snap['messages'][0]['status']=='failed'
     assert snap['messages'][0]['source_ids']==[source['id']]
     assert restored.client is None
+    task_cwd=store.root/'jobs'/'internal-check'
+    task_cwd.mkdir()
+    task=restored.start_internal('Write research output',cwd=task_cwd,display_text='Research')
+    until(lambda:restored.snapshot(task.session_id)['session']['turn_id'] is not None)
+    actual=next(params for method,params in restored.client.calls if method=='turn/start')
+    assert set(actual['sandboxPolicy']['writableRoots'])=={str(store.root),str(task_cwd)}
+    assert str(store.root.parent) not in actual['sandboxPolicy']['writableRoots']
     restored.close()
 
 def test_workspace_tool_inspects_and_enqueues_real_store(tmp_path,monkeypatch,capsys):

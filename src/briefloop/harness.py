@@ -113,7 +113,7 @@ class HarnessManager:
             instructions=chat_instructions(self.store,config,internal=internal,allow_web=bool(message["allow_web"]))
             if config['permission']=='read-only':
                 instructions+='\n本轮权限：仅阅读。只能读取与解释现有资料，不修改文件，不启动生成、评分、反馈或学习任务。不要执行 workspace-action（其初始化也可能写入数据库）。需要索引时可通过 SQLite mode=ro 读取现有记录。用户需要写入时请说明切换为工作区读写后发起新一轮。'
-            policy={'type':'readOnly','networkAccess':bool(message['allow_web'])} if config['permission']=='read-only' else {'type':'workspaceWrite','writableRoots':[session['cwd']],'networkAccess':bool(message['allow_web'])}
+            policy={'type':'readOnly','networkAccess':bool(message['allow_web'])} if config['permission']=='read-only' else {'type':'workspaceWrite','writableRoots':list(dict.fromkeys([str(self.store.root),session['cwd']])),'networkAccess':bool(message['allow_web'])}
             if thread_id:
                 client.request('thread/resume',{'threadId':thread_id,'cwd':session['cwd'],'model':config['model'],'approvalPolicy':'never','sandbox':config['permission'],'config':{'web_search':'live' if message['allow_web'] else 'disabled'},'developerInstructions':instructions})
             else:
