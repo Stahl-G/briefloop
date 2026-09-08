@@ -4,6 +4,8 @@ from pathlib import Path
 import tempfile
 import unittest
 from briefloop.store import Store, Conflict
+from briefloop.runtime import Worker, CodexRuntime
+from unittest.mock import patch
 from briefloop.learning import enqueue_feedback, apply_accepted
 from wikiskill import feedback_loop, native_agents
 
@@ -37,6 +39,24 @@ class CoreBehavior(unittest.TestCase):
         self.assertEqual(json.loads(s.one('jobs',job['id'])['payload'])['k'],1)
         s.create_run({'title':'试验任务','objective':'仅用于验证'},json.loads(self.run['source_ids']),mode='trial',skill_id=None)
         self.assertEqual(s.meta('requirements')['title'],'测试')
+
+    def test_model_change_creates_fresh_luna_attempt(self):
+        s=self.store
+        s.set_meta('settings',{**s.settings(),'model':'gpt-6-astra','reasoning_effort':'medium'})
+        old=s.enqueue('generate',{'run_id':self.run['id']});s.update_job(old['id'],'cancelled')
+        s.set_meta('settings',{**s.settings(),'model':'gpt-5.6-luna','reasoning_effort':'high'})
+        new=Worker(s).resume(old['id'])
+        self.assertNotEqual(new['id'],old['id'])
+        self.assertEqual(s.one('jobs',old['id'])['status'],'cancelled')
+        self.assertEqual(json.loads(new['payload'])['runtime'],{'model':'gpt-5.6-luna','reasoning_effort':'high'})
+        folder=s.root/'command-check'
+        with patch('briefloop.runtime.subprocess.Popen',side_effect=RuntimeError('no model call')) as spawn:
+            with self.assertRaisesRegex(RuntimeError,'no model call'):
+                CodexRuntime(s).execute(new,'Test only',folder)
+        command=spawn.call_args.args[0]
+        self.assertIn('model="gpt-5.6-luna"',command)
+        self.assertIn('model_reasoning_effort="high"',command)
+        self.assertNotIn('resume',command)
 
     def test_wikiskill_pairwise_accept_tie_and_regression(self):
         # Synthetic child IDs/output files exercise collection and selection only.

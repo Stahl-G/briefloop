@@ -34,13 +34,14 @@ def generation_prompt(store, run, folder):
     req=json.loads(run['requirements'])
     skill=run.get('skill_override') if 'skill_override' in run else (store.one('skills',run['skill_id']) if run['skill_id'] else None)
     sources=[{**store.one('sources',sid),'absolute_path':str(store.root/store.one('sources',sid)['path'])} for sid in store.source_ids(run['id'])]
-    payload={'requirements':req,'sources':sources,'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':store.settings()['max_parallel']}
+    payload={'requirements':req,'sources':sources,'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':store.settings()['max_parallel'],'reusable_research':run.get('reusable_research',[])}
     (folder/'input.json').write_text(dump(payload))
     tool=shlex.join([sys.executable,'-m','briefloop','tool','--workspace',str(store.root)])
     return COMMON+f'''
 本轮输入：{folder/'input.json'}。你的工作目录：{folder}。
 按 input.json 的 role_skills 给每个相应角色注入当前技能及版本；没有绑定则使用基础任务说明。保存实际角色任务和返回句柄。
 如果 additional_roles 有已注册的额外角色，由你按其 instruction 安排工作并把结果交接给写作或评价角色；不得忽略。
+如果 reusable_research 列有旧任务的文件，可作为待核对笔记复用以减少重复工作；不得恢复旧任务或旧模型的 agent 句柄。
 1. 读取需求与来源目录，写 plan.json：原始用户要求、推导的研究问题、读者/用途、证据要求、成稿结构及 Scout 分工。
 2. 根据数量、大小、主题和可用并发能力决定 Scout 数量，上限 {store.settings()['max_parallel']}；不要无条件开满。
    同级并行 Scout 读取分配来源。给每个 Scout 专用任务说明：应寻找哪些事实/表头/脚注/时间限定、原文定位、冲突和缺口。
@@ -119,6 +120,13 @@ class CodexRuntime:
 
     def execute(self, job, prompt, folder, on_tick=lambda: None, *, resume_on_complete=False):
         folder.mkdir(parents=True,exist_ok=True)
+        from .progress import ProgressTracker
+        tracker=ProgressTracker(self.store,job['id'],folder)
+        original_tick=on_tick
+        def on_tick():
+            original_tick()
+            try:tracker.update()
+            except Exception:pass  # Progress projection must not interrupt model work.
         saved=folder/'execution.json'
         if saved.exists():
             result=json.loads(saved.read_text())
@@ -140,6 +148,8 @@ class CodexRuntime:
                 saved.write_text(dump(result));on_tick();return result
         binary=shutil.which('codex')
         if not binary:raise RuntimeError('未找到 Codex CLI，请安装并完成登录')
+        configuration=json.loads(job['payload']).get('runtime',self.store.runtime_config())
+        prompt=f"本次所有模型工作固定使用 {configuration['model']} / {configuration['reasoning_effort']}。子 agent 继承此配置，不得选择其他模型或更高推理档位；若必须显式指定，也只能使用此配置。\n"+prompt
         (folder/'prompt.md').write_text(prompt)
         log_path=folder/'events.jsonl'
         # Inherit the user's selected model/auth. No bypass flags or global config changes.
@@ -151,11 +161,12 @@ class CodexRuntime:
             prompt='恢复这一个任务。先核对已有原生子 agent 与完整输出，复用已完成结果，只补未完成部分；不要重新采样已经完成的稿件。\n'+prompt
         if job.get('allow_web'):cmd[1:1]=['--search','-c','sandbox_workspace_write.network_access=true']
         else:cmd[1:1]=['-c','web_search="disabled"','-c','sandbox_workspace_write.network_access=false']
+        cmd[1:1]=['-c','model='+json.dumps(configuration['model']),'-c','model_reasoning_effort='+json.dumps(configuration['reasoning_effort'])]
         started=time.monotonic()
         with log_path.open('a') as log, (folder/'stderr.log').open('a') as err:
             p=subprocess.Popen(cmd,stdin=subprocess.PIPE,stdout=log,stderr=err,text=True,start_new_session=True)
             with self.lock:self.process=p
-            self.store.event(job['id'],'runtime_started',{'pid':p.pid,'folder':str(folder),'command':cmd})
+            self.store.event(job['id'],'runtime_started',{'pid':p.pid,'folder':str(folder),'command':cmd,'runtime':configuration})
             (folder/'process.json').write_text(dump({'pid':p.pid,'started':now()}))
             try:
                 p.stdin.write(prompt);p.stdin.close()
@@ -172,7 +183,7 @@ class CodexRuntime:
                         os.killpg(p.pid,signal.SIGKILL);p.wait()
                     raise InterruptedError('任务已停止，已生成内容保留')
                 on_tick()
-                result={'returncode':p.returncode,'seconds':round(time.monotonic()-started,2),'finished':now()}
+                result={'returncode':p.returncode,'seconds':round(time.monotonic()-started,2),'finished':now(),'runtime':configuration}
                 usage=[]
                 for line in log_path.read_text().splitlines():
                     try:event=json.loads(line)
@@ -213,7 +224,13 @@ class Worker:
     def resume(self,jid):
         job=self.store.one('jobs',jid)
         if job['status'] not in ('failed','interrupted','cancelled'):raise ValueError('这个任务不需要恢复')
+        payload=json.loads(job['payload'])
+        current=self.store.runtime_config()
+        if payload.get('runtime')!=current:
+            # A different model gets a new attempt, never resumes expensive old child handles.
+            return self.store.enqueue(job['kind'],{**payload,'runtime':current,'previous_job_id':jid})
         self.store.update_job(jid,'queued')
+        return self.store.one('jobs',jid)
 
     def loop(self):
         while not self.stopping.wait(.5):
@@ -249,6 +266,9 @@ class Worker:
 
     def generate(self,job):
         payload=json.loads(job['payload']);run=self.store.one('runs',payload['run_id']);folder=self.folder(job)
+        if payload.get('previous_job_id'):
+            previous=self.store.root/'jobs'/payload['previous_job_id']
+            run['reusable_research']=[str(p) for p in previous.glob('scout*/result.json') if p.is_file()]
         if 'skill_override' in payload:run['skill_override']=payload['skill_override']
         job['allow_web']=json.loads(run['requirements'])['allow_web']
         vid='brief_'+job['id'][4:]

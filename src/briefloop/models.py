@@ -19,6 +19,8 @@ class Requirements(Model):
 
 
 class Settings(Model):
+    model: str = Field(default='gpt-5.6-luna', min_length=1, max_length=100)
+    reasoning_effort: Literal['low','medium','high','xhigh','max'] = 'high'
     k: int = Field(default=1, ge=1, le=20)
     auto_learn: bool = True
     max_parallel: int = Field(default=4, ge=1, le=16)

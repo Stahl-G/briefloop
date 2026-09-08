@@ -40,7 +40,7 @@ def make_server(workspace, port=8765):
                 elif u.path=='/api/session':self.send(200,{'token':token})
                 elif u.path=='/api/runtime':
                     proc=worker.runtime.process
-                    self.send(200,{'worker_alive':worker.thread.is_alive(),'job_id':worker.current,'pid':proc.pid if proc else None,'returncode':proc.poll() if proc else None})
+                    self.send(200,{'server_pid':os.getpid(),'worker_alive':worker.thread.is_alive(),'job_id':worker.current,'pid':proc.pid if proc else None,'returncode':proc.poll() if proc else None})
                 elif u.path=='/api/source':
                     sid=q['id'][0];self.send(200,{'source':store.one('sources',sid),'text':store.source_text(sid)})
                 elif u.path=='/api/events':
@@ -103,7 +103,7 @@ def make_server(workspace, port=8765):
                     from .learning import enqueue_feedback
                     result=enqueue_feedback(store)
                 elif path=='/api/stop':worker.stop_job(body['job_id']);result={'ok':True}
-                elif path=='/api/resume':worker.resume(body['job_id']);result={'ok':True}
+                elif path=='/api/resume':result=worker.resume(body['job_id'])
                 elif path=='/api/rollback':store.bind_skill(body.get('skill_id'));result={'ok':True}
                 elif path=='/api/render':result={'html':MarkdownIt('commonmark',{'html':False}).enable('table').render(body['markdown'])}
                 else:self.send(404,{'error':'未知操作'});return

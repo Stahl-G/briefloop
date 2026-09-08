@@ -21,7 +21,7 @@ def enqueue_feedback(store, *, automatic=False):
             return {'status':'collecting'}
         settings=store.settings();jid=uid('job')
         payload={'feedback_ids':[r['id'] for r in rows],'k':settings['k'],
-                 'targets':settings['skill_targets'],'skill_id':store.meta('active_skill')}
+                 'targets':settings['skill_targets'],'skill_id':store.meta('active_skill'),'runtime':store.runtime_config()}
         c.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',(jid,'learn','queued',dump(payload),None,None,now(),now()))
         c.executemany('UPDATE feedback SET batch_id=? WHERE id=?',[(jid,r['id']) for r in rows])
     return store.one('jobs',jid)
@@ -94,7 +94,7 @@ def _generate_trial(store,job,case,skill,folder,tag):
     else:
         requirements={**json.loads(case['requirements']),'allow_web':False}
         run=store.create_run(requirements,json.loads(case['source_ids']),mode='trial',skill_id=skill['id'] if skill else None)
-        trial=store.enqueue('generate',{'run_id':run['id'],'skill_override':skill})
+        trial=store.enqueue('generate',{'run_id':run['id'],'skill_override':skill,'runtime':json.loads(job['payload']).get('runtime',store.runtime_config())})
         # This is a child operation of the current learning worker, not a second queued worker.
         store.update_job(trial['id'],'running');info={'run_id':run['id'],'job_id':trial['id']};marker.write_text(dump(info))
     trial=store.one('jobs',info['job_id'])
@@ -141,7 +141,8 @@ def learn(store,runtime,job):
         for case_id in ctx['cases']:
             case=store.one('runs',case_id);case['source_ids']=dump(store.source_ids(case_id));case_dir=root/f'round-{n}'/case_id
             originals=store.rows("SELECT * FROM briefs WHERE run_id=? AND author='agent' ORDER BY rowid LIMIT 1",(case_id,))
-            if originals and case['skill_id']==payload['skill_id']:
+            same_runtime=any(json.loads(j['payload']).get('runtime')==payload.get('runtime') for j in store.rows("SELECT * FROM jobs WHERE kind='generate' AND status='complete'") if json.loads(j['payload']).get('run_id')==case_id)
+            if originals and case['skill_id']==payload['skill_id'] and same_runtime:
                 baseline=originals[0]
             else:
                 baseline=_generate_trial(store,{**job,'_runtime':runtime},case,current,case_dir/'baseline','baseline')

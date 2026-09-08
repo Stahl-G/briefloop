@@ -221,7 +221,12 @@ class Store:
             c.execute("INSERT INTO feedback VALUES(?,?,?,?,?,?)", (fid, version_id, "comment", dump({"text": text}), None, now()))
         return {"id": fid}
 
+    def runtime_config(self):
+        settings=self.settings()
+        return {key:settings[key] for key in ('model','reasoning_effort')}
+
     def enqueue(self, kind, payload):
+        payload={**payload,'runtime':payload.get('runtime',self.runtime_config())}
         jid = uid("job")
         with self.tx() as c:
             c.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)", (jid, kind, "queued", dump(payload), None, None, now(), now()))
