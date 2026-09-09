@@ -36,6 +36,8 @@ def extract(name, data, *, with_extractor=False):
     extractor="text decode utf-8-sig/gb18030"
     ext=Path(name).suffix.lower()
     if ext == '.pdf':
+        from .media import pdf_metadata,PDF_NOTICE
+        pdf_metadata(data)
         extractor='pdftotext -layout'
         if shutil.which('pdftotext'):
             with tempfile.TemporaryDirectory(prefix='briefloop-read-') as tmp:
@@ -48,7 +50,11 @@ def extract(name, data, *, with_extractor=False):
                 from pypdf import PdfReader
                 extractor='pypdf.PdfReader.extract_text'
                 text='\n\n'.join(page.extract_text() or '' for page in PdfReader(BytesIO(data)).pages)
-            except Exception as exc:raise ValueError('PDF 无法提取正文，可能是扫描件或加密文档') from exc
+            except Exception as exc:raise ValueError('PDF 正文提取失败，原件已保留') from exc
+        if not text.strip():text=PDF_NOTICE;extractor+=' (visual reading required; no OCR)'
+    elif ext == '.xlsx':
+        from .workbook_figures import workbook_text
+        text=workbook_text(data);extractor='XLSX cells and saved formula values (no recalculation)'
     elif ext == '.docx':
         extractor='DOCX word/document.xml paragraph text'
         try:
@@ -67,15 +73,45 @@ def extract(name, data, *, with_extractor=False):
     return (text,extractor) if with_extractor else text
 
 
+def _source_content(store, name, data, *, content_type='', encoding='utf-8'):
+    from . import media
+    kind=media.detect_media_type(name,data,content_type)
+    metadata={'media_type':kind,'needs_visual':False,'pages':None}
+    if kind.startswith('image/'):
+        metadata.update(media.prepare_image(store,data))
+        return media.IMAGE_NOTICE,'Pillow image validation / EXIF transpose (no OCR)',metadata
+    if kind=='application/pdf':
+        metadata.update(media.pdf_metadata(data))
+        text,extractor=extract('source.pdf',data,with_extractor=True)
+        metadata['needs_visual']=text==media.PDF_NOTICE
+        return text,extractor,metadata
+    if content_type and kind=='text/html':
+        return html_text(data.decode(encoding,errors='replace')),'briefloop.sources.TextHTML ('+encoding+')',metadata
+    if content_type:
+        return data.decode(encoding,errors='replace'),'text decode ('+encoding+')',metadata
+    text,extractor=extract(name,data,with_extractor=True)
+    return text,extractor,metadata
+
+
 def upload(store, name, data):
-    from .store import uid
+    from .store import uid,now,content_hash,dump
+    from .media import detect_media_type,safe_source_path
     sid=uid('src');name=Path(name).name
-    original=store.root/'sources'/(sid+Path(name).suffix.lower())
-    if original.suffix=='.txt':original=original.with_suffix('.original.txt')
+    original=safe_source_path(store,'sources/'+sid+'.original'+Path(name).suffix.lower(),must_exist=False)
     original.write_bytes(data)
-    try:return store.add_source(name, extract(name,data), source_id=sid)
-    except (ValueError,OSError,subprocess.SubprocessError,zipfile.BadZipFile) as exc:
-        return store.add_source(name,'',error=str(exc),source_id=sid)
+    metadata={'original_path':str(original.relative_to(store.root)), 'original_kind':'uploaded_file',
+              'uploaded_at':now(),'raw_sha256':hashlib.sha256(data).hexdigest(),
+              'media_type':detect_media_type(name,data),'needs_visual':False,'pages':None}
+    text='';error=None;extractor='source extraction'
+    try:
+        text,extractor,details=_source_content(store,name,data)
+        metadata.update(details)
+        if not text.strip():raise ValueError('未能读取正文')
+    except (ValueError,OSError,subprocess.SubprocessError,zipfile.BadZipFile) as exc:error=str(exc);text=''
+    metadata.update({'extractor':extractor,'text_sha256':content_hash(text),'extraction_status':'failed' if error else 'ready'})
+    if error:metadata['error']=error
+    safe_source_path(store,'sources/'+sid+'.provenance.json',must_exist=False).write_text(dump(metadata))
+    return store.add_source(name,text,error=error,source_id=sid)
 
 
 def _fetch_bytes(url):
@@ -105,29 +141,35 @@ def _fetch_bytes(url):
     return data,content_type,encoding
 
 
+def _fetch_suffix(name,data,content_type):
+    from .media import detect_media_type
+    kind=detect_media_type(name,data,content_type)
+    return {'application/pdf':'.pdf','image/png':'.png','image/jpeg':'.jpg','image/webp':'.webp',
+            'image/gif':'.gif','image/tiff':'.tiff','image/bmp':'.bmp','text/html':'.html','text/plain':'.txt'}.get(kind,'.bin')
+
+
 def _fetch(store, url):
     from .store import uid,now,content_hash,dump
+    from .media import detect_media_type,safe_source_path
+    from urllib.parse import urlsplit,unquote
     data,content_type,encoding=_fetch_bytes(url)
-    sid=uid('src');name=url.rsplit('/',1)[-1] or '网页'
-    suffix='.pdf' if 'pdf' in content_type.lower() or data.startswith(b'%PDF-') else '.html' if 'html' in content_type.lower() else '.bin'
-    original=store.root/'sources'/(sid+'.original'+suffix)
+    sid=uid('src');name=Path(unquote(urlsplit(url).path)).name or '网页'
+    suffix=_fetch_suffix(name,data,content_type)
+    original=safe_source_path(store,'sources/'+sid+'.original'+suffix,must_exist=False)
     original.write_bytes(data)
     provenance={'url':url,'content_type':content_type,'fetched_at':now(),
-                'raw_sha256':hashlib.sha256(data).hexdigest(),
-                'original_path':str(original.relative_to(store.root))}
-    text='';error=None
-    extractor='PDF extraction' if suffix=='.pdf' else 'briefloop.sources.TextHTML ('+encoding+')' if suffix=='.html' else 'text decode ('+encoding+')'
+                'raw_sha256':hashlib.sha256(data).hexdigest(),'original_kind':'http_response',
+                'original_path':str(original.relative_to(store.root)),
+                'media_type':detect_media_type(name,data,content_type),'needs_visual':False,'pages':None}
+    text='';error=None;extractor='source extraction'
     try:
-        if suffix=='.pdf':text,extractor=extract('source.pdf',data,with_extractor=True)
-        else:
-            decoded=data.decode(encoding,errors='replace')
-            text=html_text(decoded) if suffix=='.html' else decoded
+        text,extractor,details=_source_content(store,name,data,content_type=content_type,encoding=encoding)
+        provenance.update(details)
         if not text.strip():raise ValueError('网页没有可读取正文')
-    except (ValueError,LookupError,OSError,subprocess.SubprocessError) as exc:
-        text='';error=str(exc)
+    except (ValueError,LookupError,OSError,subprocess.SubprocessError) as exc:text='';error=str(exc)
     provenance.update({'extractor':extractor,'text_sha256':content_hash(text),'extraction_status':'failed' if error else 'ready'})
     if error:provenance['error']=error
-    (store.root/'sources'/(sid+'.provenance.json')).write_text(dump(provenance))
+    safe_source_path(store,'sources/'+sid+'.provenance.json',must_exist=False).write_text(dump(provenance))
     return store.add_source(name,text,url=url,error=error,source_id=sid)
 
 
@@ -140,11 +182,11 @@ def fetch(store, url):
 
 
 def retry_source(store, source_id):
-    old=store.one('sources',source_id)
+    from .media import source_files
+    old,_,original=source_files(store,source_id)
     if old['url']:return fetch(store,old['url'])
-    originals=[p for p in (store.root/'sources').glob(source_id+'.*') if p!=store.root/old['path']]
-    if not originals:raise ValueError('原始文件未保留，请重新上传；原失败记录仍保留')
-    return upload(store,old['name'],originals[0].read_bytes())
+    if original is None:raise ValueError('原始文件未保留，请重新上传；原失败记录仍保留')
+    return upload(store,old['name'],original.read_bytes())
 
 
 def existing_for_run(store,run_id,url):

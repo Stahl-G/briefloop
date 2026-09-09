@@ -47,7 +47,7 @@ def test_search_provider_is_frozen_and_tavily_provenance_is_explicit(tmp_path):
     store.set_meta('settings',{**store.settings(),'search_provider':'tavily'})
     run=store.create_run({'title':'市场周报','objective':'核对公开披露','allow_web':True},[])
     job=store.enqueue('generate',{'run_id':run['id']})
-    store.set_meta('settings',{**store.settings(),'search_provider':'codex'})
+    store.set_meta('settings',{**store.settings(),'search_provider':'native'})
     payload=json.loads(store.one('jobs',job['id'])['payload'])
     assert payload['search_provider']=='tavily'
     assert store.search_provider_for_run(run['id'])=='tavily'
@@ -65,7 +65,7 @@ def test_search_provider_is_frozen_and_tavily_provenance_is_explicit(tmp_path):
     with store.tx() as connection:
         connection.execute('UPDATE jobs SET payload=? WHERE id=?',(dump(payload),job['id']))
     store.set_meta('settings',{**store.settings(),'search_provider':'tavily'})
-    assert store.search_provider_for_run(run['id'])=='codex'
+    assert store.search_provider_for_run(run['id'])=='native'
     text=chat_instructions(store,{'model':'gpt-5.6-luna','effort':'high'},allow_web=False)
     assert '当前正式研究搜索源：Tavily' in text
     assert '实际联网状态：未开启' in text
@@ -79,7 +79,7 @@ def test_builtin_tavily_skill_only_enters_enabled_scout_context(tmp_path, monkey
     monkeypatch.setenv('TAVILY_API_KEY','SYNTHETIC_SECRET_DO_NOT_INJECT')
     store=Store(tmp_path/'workspace')
     source=store.add_source('initial','已有公开资料')
-    for provider,allowed in [('tavily',True),('codex',True),('tavily',False)]:
+    for provider,allowed in [('tavily',True),('native',True),('tavily',False)]:
         run=store.create_run({'title':'研究','objective':'核对公开资料','allow_web':allowed},[source['id']])
         folder=store.root/'jobs'/run['id'];folder.mkdir()
         prompt=generation_prompt(store,{**run,'search_provider':provider},folder)

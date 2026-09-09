@@ -24,12 +24,24 @@ def _message(snapshot, message_id):
 
 
 class InteractiveRuntime:
-    def __init__(self, store, harness=None):
+    def __init__(self, store, harness=None, *, backends=None):
         self.store = store
-        self.harness = harness or HarnessManager(store)
+        if backends is None:
+            harness = harness or HarnessManager(store)
+            backends = {'codex': harness}
+        self.backends = backends
+        self.harness = backends['codex'] if 'codex' in backends else next(iter(backends.values()))
         self.cancelled = threading.Event()
         self.lock = threading.RLock()
         self.session_id = None
+        self.session_backend = None
+
+    def _harness_for(self, backend):
+        from .backends import validate_backend
+        try:
+            return self.backends[validate_backend(backend)]
+        except KeyError:
+            raise ValueError(f'后端 {backend} 未在此服务中启用')
 
     @property
     def process(self):
@@ -37,14 +49,45 @@ class InteractiveRuntime:
         with self.lock:
             if self.session_id is None:
                 return None
-            return getattr(getattr(self.harness, 'client', None), 'process', None)
+            harness = self.backends.get(self.session_backend) if self.session_backend else self.harness
+            return getattr(getattr(harness, 'client', None), 'process', None)
 
     def cancel(self):
         self.cancelled.set()
         with self.lock:
             session_id = self.session_id
-        if session_id:
-            self.harness.cancel(session_id)
+            harness = self.backends.get(self.session_backend) if self.session_backend else None
+        if session_id and harness is not None:
+            harness.cancel(session_id)
+
+    def _input_source_ids(self,job,folder):
+        """Only explicit/evaluator visual references become native attachments.
+
+        Coordinators receive the task-pack index, not every PDF page's pixels.
+        """
+        if 'input_source_ids' in job:return list(dict.fromkeys(job['input_source_ids']))
+        if job.get('runtime_role')!='evaluator':return []
+        path=folder/'input.json'
+        if not path.exists():return []
+        packet=json.loads(path.read_text())
+        ids=[]
+        if isinstance(packet,dict):
+            ids=[row.get('source_id') or row.get('id') for row in packet.get('sources',[])]
+        elif isinstance(packet,list):
+            for case in packet:
+                for side in ('baseline','candidate'):
+                    brief=case.get(side,{})
+                    detail=brief.get('detail') or {}
+                    if isinstance(detail,str):detail=json.loads(detail)
+                    ids.extend(ref['source_id'] for ref in detail.get('citations',brief.get('citations',[])))
+                    for row in (detail.get('report_data') or {}).get('records',[]):
+                        ids.extend(row[key] for key in ('source_id','previous_source_id') if row.get(key))
+        from .media import source_attachment
+        visual=[]
+        for sid in dict.fromkeys(sid for sid in ids if sid):
+            attachment=source_attachment(self.store,sid)
+            if (attachment.get('media_type') or '').startswith('image/') or attachment.get('media_type')=='application/pdf':visual.append(sid)
+        return visual
 
     def execute(self, job, prompt, folder, on_tick=lambda: None, *, resume_on_complete=False):
         from .progress import ProgressTracker
@@ -59,16 +102,23 @@ class InteractiveRuntime:
                 pass  # A progress projection cannot interrupt model work.
 
         payload = json.loads(job['payload'])
+        from .backends import validate_backend
+        backend = validate_backend(payload.get('agent_backend', 'codex'))
+        harness = self._harness_for(backend)
         configured = payload.get('runtime', self.store.runtime_config())
         runtime = {'model': configured['model'],
                    'effort': configured.get('reasoning_effort', configured.get('effort'))}
         if configured.get('model_provider'):
             runtime['model_provider'] = configured['model_provider']
+        if configured.get('model_variant'):
+            runtime['variant'] = configured['model_variant']
         saved = folder / 'execution.json'
         if saved.exists():
             previous = json.loads(saved.read_text())
             if previous.get('runtime') and previous['runtime'] != configured:
                 raise ValueError('已保存执行的模型配置与本阶段不一致')
+            if previous.get('backend', 'codex') != backend:
+                raise ValueError('已保存执行的后端与本阶段不一致；跨后端请用新任务目录')
             if previous.get('returncode') == 0 and not resume_on_complete:
                 tick()
                 return previous
@@ -80,16 +130,17 @@ class InteractiveRuntime:
         binding = json.loads(marker.read_text()) if marker.exists() else None
         snapshot = None
         if binding:
-            if binding['job_id'] != job['id'] or binding['runtime'] != runtime:
-                raise ValueError('恢复会话的任务或模型已改变；请使用新的任务目录')
-            snapshot = self.harness.snapshot(binding['session_id'])
+            if (binding['job_id'] != job['id'] or binding['runtime'] != runtime
+                    or binding.get('backend', 'codex') != backend):
+                raise ValueError('恢复会话的任务、后端或模型已改变；请使用新的任务目录')
+            snapshot = harness.snapshot(binding['session_id'])
         else:
             evaluation_title='Evaluator · 比较' if job.get('evaluation_mode')=='pairwise' else 'Evaluator · 评分'
             title = {'evaluator': evaluation_title, 'scorer': 'Evaluator · 评分', 'assessor': 'Evaluator · 比较', 'maintainer': '整理反馈经验', 'proposer': '提出技能改进'}.get(job.get('runtime_role'))
             title = title or {'generate': '生成简报', 'assess': '核对简报评分', 'learn': '整理反馈与改进技能'}.get(job['kind'], '简报任务')
-            session = self.harness.create_session(title, runtime, folder)
+            session = harness.create_session(title, runtime, folder)
             binding = {'job_id': job['id'], 'session_id': session['id'], 'runtime': runtime,
-                       'message_id': None, 'history': []}
+                       'backend': backend, 'message_id': None, 'history': []}
             _write(marker, binding)
 
         message = _message(snapshot, binding['message_id']) if snapshot else None
@@ -101,7 +152,7 @@ class InteractiveRuntime:
             # An explicit job resume may need another turn, but must not undo a
             # user's archive/delete choice. Completed cached turns bypass this.
             old_sid=binding['session_id']
-            session=self.harness.create_session('恢复简报任务',runtime,folder)
+            session=harness.create_session('恢复简报任务',runtime,folder)
             binding.setdefault('previous_session_ids',[]).append(old_sid)
             binding['session_id']=session['id']
             if binding.get('message_id'):binding.setdefault('history',[]).append(binding['message_id'])
@@ -117,16 +168,17 @@ class InteractiveRuntime:
                 binding['message_id'] = uid('msg')
             _write(marker, binding)
             from .runtime import runtime_instruction
-            fixed = runtime_instruction(configured)
+            fixed = runtime_instruction(configured, backend)
             if binding['history']:
                 fixed += '恢复这一个任务：先核对现有子 agent 和完整输出，复用已完成结果，只补未完成部分，不重新采样已完成稿件。\n'
             (folder / 'prompt.md').write_text(fixed + prompt, encoding='utf-8')
             _write(saved, {'returncode': None, 'status': 'running', 'session_id': binding['session_id'],
-                           'message_id': binding['message_id'], 'runtime': configured})
+                           'message_id': binding['message_id'], 'runtime': configured, 'backend': backend})
 
         sid = binding['session_id']
         with self.lock:
             self.session_id = sid
+            self.session_backend = backend
         started = time.monotonic()
         cursor = 0
         seen_messages = set()
@@ -149,15 +201,17 @@ class InteractiveRuntime:
                          'learn': '请继续整理反馈、更新经验并完成当前技能改进步骤。'}.get(job['kind'], '请完成当前简报任务。')
                 evaluation_label='请使用 Evaluator 成对比较模式，依据任务与来源比较新旧稿件。' if job.get('evaluation_mode')=='pairwise' else '请使用 Evaluator 单稿评分模式，核对简报要求、内容与来源。'
                 label = {'evaluator': evaluation_label, 'scorer': '请使用 Evaluator 单稿评分模式核对简报。', 'assessor': '请使用 Evaluator 成对比较模式核对新旧稿件。', 'maintainer': '请从反馈中整理可复用经验。', 'proposer': '请依据经验提出技能改进。'}.get(job.get('runtime_role'), label)
-                self.harness.start_internal((folder / 'prompt.md').read_text(), session_id=sid,
+                harness.start_internal((folder / 'prompt.md').read_text(), session_id=sid,
                     runtime=runtime, cwd=folder, job_id=job['id'], display_text=label,
                     allow_web=bool(job.get('allow_web', False)), message_id=binding['message_id'],
-                    search_provider=payload.get('search_provider','codex'))
+                    search_provider=payload.get('search_provider','codex'),
+                    source_ids=self._input_source_ids(job,folder))
                 self.store.event(job['id'], 'runtime_started', {'session_id': sid,
                     'message_id': binding['message_id'], 'folder': str(folder), 'runtime': configured,
-                    'transport': 'app-server'})
+                    'backend': backend,
+                    'transport': 'opencode-serve' if backend == 'opencode' else 'app-server'})
             while True:
-                snapshot = self.harness.snapshot(sid, after=cursor)
+                snapshot = harness.snapshot(sid, after=cursor)
                 cursor = self._project(snapshot, log_path, cursor, seen_messages)
                 tick()
                 message = _message(snapshot, binding['message_id'])
@@ -165,21 +219,21 @@ class InteractiveRuntime:
                     raise RuntimeError('已绑定的会话消息不存在，未自动重新发送')
                 status = message['status']
                 if self.cancelled.is_set():
-                    self.harness.cancel(sid)
+                    harness.cancel(sid)
                     raise InterruptedError('任务已停止，已生成内容保留')
                 if status in TERMINAL:
                     # Completion and its usage/message events can be persisted
                     # immediately after the status transition. Refresh and drain
                     # the paged public journal before admitting the result.
                     while True:
-                        snapshot = self.harness.snapshot(sid, after=cursor)
+                        snapshot = harness.snapshot(sid, after=cursor)
                         cursor = self._project(snapshot, log_path, cursor, seen_messages)
                         if len(snapshot['events']) < 1000:
                             break
                     message = _message(snapshot, binding['message_id']) or message
                     result = {'returncode': 0 if status == 'completed' else 1, 'status': status,
                               'seconds': round(time.monotonic() - started, 2), 'finished': now(),
-                              'runtime': configured, 'session_id': sid, 'message_id': binding['message_id'],
+                              'runtime': configured, 'backend': backend, 'session_id': sid, 'message_id': binding['message_id'],
                               'recovered': recovered, 'usage': self._usage(log_path)}
                     _write(saved, result)
                     assistant = [m['text'] for m in snapshot['messages']
@@ -193,7 +247,7 @@ class InteractiveRuntime:
                         raise RuntimeError('Agent 执行失败；详情保存在会话与任务日志')
                     return result
                 if time.monotonic() - started > self.store.settings()['timeout_minutes'] * 60:
-                    self.harness.cancel(sid)
+                    harness.cancel(sid)
                     raise TimeoutError('运行超过本轮时间上限，已保留稿件和执行记录')
                 time.sleep(.5)
         except Exception as exc:
@@ -201,12 +255,13 @@ class InteractiveRuntime:
                 active = _message(snapshot, binding['message_id'])
                 if active and active['status'] not in TERMINAL:
                     try:
-                        self.harness.cancel(sid)
+                        harness.cancel(sid)
                     except Exception:
                         pass  # Preserve the original failure and bound session.
             if isinstance(exc, (InterruptedError, TimeoutError)):
                 _write(saved, {'returncode': 1, 'status': 'interrupted', 'finished': now(),
-                               'session_id': sid, 'message_id': binding['message_id'], 'error': str(exc)})
+                               'session_id': sid, 'message_id': binding['message_id'], 'error': str(exc),
+                               'backend': backend})
             with (folder / 'stderr.log').open('a', encoding='utf-8') as errors:
                 errors.write(str(exc) + '\n')
             tick()
@@ -214,6 +269,7 @@ class InteractiveRuntime:
         finally:
             with self.lock:
                 self.session_id = None
+                self.session_backend = None
 
     @staticmethod
     def _project(snapshot, log_path, cursor, seen_messages):

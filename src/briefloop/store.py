@@ -124,7 +124,16 @@ class Store:
         result=Settings.model_validate(self.meta("settings")).model_dump()
         if result.get('model_provider') is None:
             result.pop('model_provider',None)
-        result['role_models']={role:runtime_fields(config) for role,config in result['role_models'].items()}
+        backend=result.get('agent_backend','codex')
+        shaped={}
+        for role,config in result['role_models'].items():
+            try:
+                shaped[role]=runtime_fields(config,backend)
+            except ValueError:
+                # A backend switch can strand old model ids; keep them visible
+                # so the UI can show them, and fail loudly only when enqueued.
+                shaped[role]={key:config[key] for key in ('model','model_provider','reasoning_effort','model_variant') if key in config}
+        result['role_models']=shaped
         return result
 
     def add_source(self, name, text, *, url=None, error=None, source_id=None):
@@ -151,6 +160,10 @@ class Store:
 
     def create_run(self, requirements, source_ids, **options):
         req = Requirements.model_validate(requirements)
+        for sid in req.reference_source_ids:
+            self.one("sources", sid)
+        if set(source_ids) & set(req.reference_source_ids):
+            raise ValueError("同一材料不能同时作为本期证据和风格参考，请选择用途")
         for sid in source_ids:
             self.one("sources", sid)
         if not source_ids and not req.allow_web:
@@ -163,6 +176,10 @@ class Store:
         return self.one("runs", rid)
 
     def attach_source(self, run_id, source_id):
+        run=self.one('runs',run_id)
+        if source_id in json.loads(run['requirements']).get('reference_source_ids',[]):
+            raise ValueError('风格参考不能登记为本期证据')
+        self.one('sources',source_id)
         with self.tx() as c:
             c.execute('INSERT OR IGNORE INTO run_sources VALUES(?,?)',(run_id,source_id))
 
@@ -171,11 +188,33 @@ class Store:
         acquired=self.rows('SELECT source_id FROM run_sources WHERE run_id=? ORDER BY rowid',(run_id,))
         return list(dict.fromkeys(json.loads(run['source_ids'])+[r['source_id'] for r in acquired]))
 
-    def publish(self, run_id, draft, *, version_id=None):
+    def publish(self, run_id, draft, *, version_id=None, parent_id=None):
         draft = BriefDraft.model_validate(draft)
-        self.one("runs", run_id)
+        run=self.one("runs", run_id)
+        references=set(json.loads(run['requirements']).get('reference_source_ids',[]))
         for ref in draft.citations:
             self.one("sources", ref.source_id)
+            if ref.source_id in references:
+                raise ValueError('风格参考不能作为报告事实引用')
+        if draft.report_data is not None:
+            from .report_tools import prepare_for_run
+            prepared=prepare_for_run(self,run_id,draft.report_data.model_dump(mode='json'))
+            draft.gaps=list(dict.fromkeys(draft.gaps+prepared['gaps']))
+            from .models import Citation
+            cited={(ref.source_id,ref.locator) for ref in draft.citations}
+            for row in draft.report_data.records:
+                for sid,locator in [(row.source_id,row.locator),(row.previous_source_id,row.previous_locator)]:
+                    if sid and (sid,locator) not in cited:
+                        draft.citations.append(Citation(source_id=sid,locator=locator));cited.add((sid,locator))
+        from .figure_support import validate_figures
+        assets=validate_figures(self,run_id,draft.markdown)
+        draft.figures=[f['figure_id'] for f in assets]
+        from .models import Citation
+        cited={ref.source_id for ref in draft.citations}
+        for figure in assets:
+            for source_id in figure['source_ids']:
+                if source_id not in cited:
+                    draft.citations.append(Citation(source_id=source_id,locator=figure['caption']));cited.add(source_id)
         vid = version_id or uid("brief")
         sha = content_hash(draft.markdown)
         with self.tx() as c:
@@ -184,7 +223,7 @@ class Store:
                 if existing["hash"] != sha:
                     raise Conflict("Completed draft differs")
             else:
-                c.execute("INSERT INTO briefs VALUES(?,?,?,?,?,?,?,?,?)", (vid, run_id, None, "agent", draft.markdown, sha, dump(draft.model_dump(exclude={"markdown"})), None, now()))
+                c.execute("INSERT INTO briefs VALUES(?,?,?,?,?,?,?,?,?)", (vid, run_id, parent_id, "agent", draft.markdown, sha, dump(draft.model_dump(mode="json",exclude={"markdown"})), None, now()))
             for ref in draft.citations:
                 c.execute("INSERT OR IGNORE INTO run_sources VALUES(?,?)",(run_id,ref.source_id))
         return self.one("briefs", vid)
@@ -200,10 +239,37 @@ class Store:
                 raise Conflict("稿件已有更新，请先保留本地编辑并重新加载最新版本")
             if markdown == base["markdown"]:
                 return dict(base)
-            c.execute("INSERT INTO briefs VALUES(?,?,?,?,?,?,?,?,?)", (vid, base["run_id"], base_version, "user", markdown, content_hash(markdown), base["detail"], dump(editor_document) if editor_document else None, now()))
+            detail=json.loads(base['detail'])
+            from .figure_support import validate_figures
+            detail['figures']=[f['figure_id'] for f in validate_figures(self,base['run_id'],markdown)]
+            if detail.get('report_data'):
+                import re
+                # Saved input numbers do not change when a user edits the prose/table.
+                if re.findall(r'[-+]?\d+(?:[.,]\d+)*',base['markdown'])!=re.findall(r'[-+]?\d+(?:[.,]\d+)*',markdown):
+                    detail['report_data_needs_review']=True
+            c.execute("INSERT INTO briefs VALUES(?,?,?,?,?,?,?,?,?)", (vid, base["run_id"], base_version, "user", markdown, content_hash(markdown), dump(detail), dump(editor_document) if editor_document else None, now()))
             if semantic_signature(markdown)!=semantic_signature(base['markdown']):
                 c.execute("INSERT INTO feedback VALUES(?,?,?,?,?,?)", (uid("feedback"), vid, "revision", dump({"before": base_version, "after": vid}), None, now()))
         return self.one("briefs", vid)
+
+    def attach_figures(self,base_version,markdown):
+        base=self.one('briefs',base_version)
+        from .figure_support import validate_figures
+        from .figures import figure_ids
+        import re
+        strip=lambda text:re.sub(r'!\[(?:\\.|[^\]\\])*\]\(briefloop-figure:[^)]+\)','',text).strip()
+        if strip(markdown)!=strip(base['markdown']):
+            # Whitespace around inserted images may differ, but prose must remain.
+            if re.sub(r'\s+',' ',strip(markdown))!=re.sub(r'\s+',' ',strip(base['markdown'])):
+                raise ValueError('补图接口只允许插入图表，不改写已有正文')
+        figures=validate_figures(self,base['run_id'],markdown)
+        detail=json.loads(base['detail']);detail['figures']=[f['figure_id'] for f in figures]
+        vid=uid('brief')
+        with self.tx() as c:
+            latest=c.execute('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(base['run_id'],)).fetchone()
+            if latest['id']!=base_version:raise Conflict('稿件已更新，请对照最新版本补图')
+            c.execute('INSERT INTO briefs VALUES(?,?,?,?,?,?,?,?,?)',(vid,base['run_id'],base_version,'agent',markdown,content_hash(markdown),dump(detail),None,now()))
+        return self.one('briefs',vid)
 
     def assess(self, version_id, value):
         brief = self.one("briefs", version_id)
@@ -227,35 +293,38 @@ class Store:
 
     def runtime_config(self):
         settings=self.settings()
-        return runtime_fields(settings)
+        return runtime_fields(settings,settings.get('agent_backend','codex'))
 
-    def role_model_config(self, runtime=None):
+    def role_model_config(self, runtime=None, backend=None):
         base=runtime or self.runtime_config()
+        backend=backend or self.settings().get('agent_backend','codex')
         overrides=self.settings()['role_models']
         return {role:dict(overrides.get(role,base)) for role in ROLE_NAMES}
 
     def enqueue(self, kind, payload):
-        runtime=runtime_fields(payload.get('runtime',self.runtime_config()))
+        from .backends import validate_backend
+        from .models import normalize_search_provider
+        backend=validate_backend(payload.get('agent_backend',self.settings().get('agent_backend','codex')))
+        runtime=runtime_fields(payload.get('runtime',self.runtime_config()),backend)
         # Freeze inherited defaults too; later settings never mutate queued jobs.
-        overrides=normalize_role_models(payload.get('role_models',self.role_model_config(runtime)))
-        provider=payload.get('search_provider',self.settings()['search_provider'])
-        if provider not in ('codex','tavily'):
-            raise ValueError('无效搜索来源')
-        payload={**payload,'runtime':runtime,'search_provider':provider,
-                 'role_models':{role:runtime_fields(overrides.get(role,runtime)) for role in ROLE_NAMES}}
+        overrides=normalize_role_models(payload.get('role_models',self.role_model_config(runtime,backend)))
+        provider=normalize_search_provider(payload.get('search_provider',self.settings()['search_provider']))
+        payload={**payload,'agent_backend':backend,'runtime':runtime,'search_provider':provider,
+                 'role_models':{role:runtime_fields(overrides.get(role,runtime),backend) for role in ROLE_NAMES}}
         jid = uid("job")
         with self.tx() as c:
             c.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)", (jid, kind, "queued", dump(payload), None, None, now(), now()))
         return self.one("jobs", jid)
 
     def search_provider_for_run(self, run_id):
+        from .models import normalize_search_provider
         self.one('runs',run_id)
         for row in self.rows("SELECT payload FROM jobs WHERE kind='generate' ORDER BY rowid DESC"):
             payload=json.loads(row['payload'])
             if payload.get('run_id')==run_id:
-                # Jobs predating provider selection used Codex, regardless of
+                # Jobs predating provider selection used native search, regardless of
                 # the currently selected preference in this workspace.
-                return payload.get('search_provider','codex')
+                return normalize_search_provider(payload.get('search_provider'))
         return self.settings()['search_provider']
 
     def update_job(self, jid, status, *, result=None, error=None):
