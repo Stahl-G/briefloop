@@ -52,7 +52,7 @@ def test_search_provider_is_frozen_and_tavily_provenance_is_explicit(tmp_path):
     assert payload['search_provider']=='tavily'
     assert store.search_provider_for_run(run['id'])=='tavily'
     folder=store.root/'jobs'/'provider-check';folder.mkdir()
-    prompt=generation_prompt(store,{**run,'search_provider':payload['search_provider']},folder)
+    generation_prompt(store,{**run,'search_provider':payload['search_provider']},folder)
     retrieval=json.loads((folder/'input.json').read_text())['retrieval_skill']
     from pathlib import Path
     skill_text=Path(retrieval['path']).read_text()

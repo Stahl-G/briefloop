@@ -5,7 +5,6 @@ from urllib.parse import urlsplit, parse_qs, quote
 import base64
 import json
 import secrets
-import threading
 import os
 import signal
 import fcntl
