@@ -79,7 +79,11 @@ def stage_job(store, job, role, *, mode=None):
 
 
 def generation_prompt(store, run, folder):
-    req=Requirements.model_validate(json.loads(run['requirements'])).model_dump()
+    raw_requirements=json.loads(run['requirements'])
+    req=Requirements.model_validate(raw_requirements).model_dump()
+    if 'research_budget' not in raw_requirements:req['research_budget']=None
+    from .research_budget import snapshot as budget_snapshot
+    research_budget=budget_snapshot(store,run['id'])
     provider=run.get('search_provider','codex')
     skill=run.get('skill_override') if 'skill_override' in run else (store.one('skills',run['skill_id']) if run['skill_id'] else None)
     sources=[{**store.one('sources',sid),'absolute_path':str(store.root/store.one('sources',sid)['path'])} for sid in store.source_ids(run['id'])]
@@ -94,7 +98,7 @@ def generation_prompt(store, run, folder):
         schema_path.write_text(dump(ScoutResult.model_json_schema()),encoding='utf-8')
         scout_slots.append({'slot_id':f'scout-{number}','directory':str(directory),
                             'result_file':str(directory/'result.json'),'schema_path':str(schema_path)})
-    payload={'requirements':req,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':max_parallel,'scout_slots':scout_slots,'reusable_research':run.get('reusable_research',[])}
+    payload={'requirements':req,'research_budget_status':research_budget,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':max_parallel,'scout_slots':scout_slots,'reusable_research':run.get('reusable_research',[])}
     tool=shlex.join([sys.executable,'-m','briefloop','tool','--workspace',str(store.root)])
     tavily_enabled=req['allow_web'] and provider=='tavily'
     if tavily_enabled:
@@ -132,6 +136,7 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
 本轮输入：{folder/'input.json'}。你的工作目录：{folder}。先按字段读取 requirements、sources 索引、scout_slots 和能力路径；不要为分工先展开全部技能正文或 schema。
 {discovery}
 {search}
+本轮共享硬预算见 input.json.research_budget_status：所有 Scout 共用，不是每人一份。受控工具在每次调用时事务检查并返回 remaining；出现 budget_exhausted 时保留现有来源和简短缺口，停止新增检索并交接，不重试消耗上限的操作。search_requests/candidate_urls 只硬计受控 Tavily Search，source_pages 硬计所有受控 add-url/Extract 的唯一 URL；同 URL 回退与缓存不重复算页，原生 Codex 搜索不可精确计量。旧任务 limits=null 表示未设置预算，不追溯限制。
 按 input.json.role_skills 给对应角色分配当前技能及版本；可让角色按路径读取自己对应的字段，没有绑定则使用基础任务说明。父会话不重复抄写已分配的技能。保存实际角色任务和返回句柄。
 如果 additional_roles 有已注册的额外角色，由你按其 instruction 安排工作并把结果交接给写作或评价角色；不得忽略。
 如果 reusable_research 列有旧任务的文件，可作为待核对笔记复用以减少重复工作；不得恢复旧任务或旧模型的 agent 句柄。
@@ -283,7 +288,9 @@ class CodexRuntime:
         if thread:
             cmd=[binary,'--enable','multi_agent','-a','never','-C',str(folder),'exec','resume','--skip-git-repo-check','--json','-o',str(folder/'last-message.txt'),thread,'-']
             prompt='恢复这一个任务。先核对已有原生子 agent 与完整输出，复用已完成结果，只补未完成部分；不要重新采样已经完成的稿件。\n'+prompt
-        if job.get('allow_web'):cmd[1:1]=['--search','-c','sandbox_workspace_write.network_access=true']
+        if job.get('allow_web') and json.loads(job['payload']).get('search_provider')=='tavily':
+            cmd[1:1]=['-c','web_search="disabled"','-c','sandbox_workspace_write.network_access=true']
+        elif job.get('allow_web'):cmd[1:1]=['--search','-c','sandbox_workspace_write.network_access=true']
         else:cmd[1:1]=['-c','web_search="disabled"','-c','sandbox_workspace_write.network_access=false']
         cmd[1:1]=['-c','model='+json.dumps(configuration['model'])]
         if configuration.get('model_provider'):

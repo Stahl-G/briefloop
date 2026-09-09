@@ -76,7 +76,7 @@ def test_selected_model_reaches_cli_and_chat_transport_and_rejects_changed_resum
     selected={'model':'vendor/custom-model','reasoning_effort':None,'model_provider':'configured-responses'}
     job=store.enqueue('learn',{'role_models':{'assessor':selected}})
     stage=stage_job(store,job,'assessor')
-    with patch('briefloop.runtime.subprocess.Popen',side_effect=RuntimeError('no model call')) as process:
+    with patch('briefloop.runtime.shutil.which',return_value='/fake/codex'), patch('briefloop.runtime.subprocess.Popen',side_effect=RuntimeError('no model call')) as process:
         with pytest.raises(RuntimeError,match='no model call'):
             CodexRuntime(store).execute(stage,'compare',tmp_path/'cli')
     command=process.call_args.args[0]

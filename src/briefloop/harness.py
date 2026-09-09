@@ -31,7 +31,25 @@ class HarnessManager:
         self.store=store;self.chat=ChatStore(store);self.client_factory=client_factory
         self.client=None;self._lock=threading.RLock();self._closed=threading.Event()
         self._threads={};self._children={};self._busy=set();self._items={};self._runtime={};self._cancel_requested=set()
-    def list_sessions(self):return self.chat.sessions()
+    def list_sessions(self,view='active'):return self.chat.sessions(view)
+    def _set_lifecycle(self,sid,lifecycle):
+        with self._lock:
+            if lifecycle!='active' and sid in self._busy:raise ValueError('会话正在启动，请先停止或等待完成')
+            self.chat.set_lifecycle(sid,lifecycle)
+            self.chat.event(sid,'session/lifecycle',{'lifecycle':lifecycle})
+            return self.snapshot(sid)
+    def archive(self,sid):return self._set_lifecycle(sid,'archived')
+    def restore(self,sid):return self._set_lifecycle(sid,'active')
+    def delete(self,sid):return self._set_lifecycle(sid,'deleted')
+    def archive_completed(self):
+        count=0
+        with self._lock:
+            for session in self.list_sessions():
+                if not self.snapshot(session['id'])['messages']:continue
+                try:self.archive(session['id'])
+                except ValueError:continue
+                count+=1
+        return {'count':count}
     def create_session(self,title='新对话',runtime=None,cwd=None):
         return self.chat.create(title,self._config(runtime),cwd or self.store.root)
     def snapshot(self,session_id,after=0):return self.chat.snapshot(session_id,after)
@@ -68,6 +86,7 @@ class HarnessManager:
             if any(config.get(k)!=actual.get(k) for k in ('permission','model','model_provider','effort')):raise ValueError('运行中追加指令不能改变模型、服务或权限；请选择排队，在下一轮应用设置')
         mid=message_id or uid('msg')
         with self._lock:
+            if self.chat.session(session_id)['lifecycle']!='active':raise ValueError('会话已归档或删除，请先恢复会话再发送消息；恢复不会重新运行旧消息')
             prior=next((m for m in self.snapshot(session_id)['messages'] if m['id']==mid),None)
             if prior:return prior
             message=self.chat.message(session_id,display_text if display_text is not None else text,source_ids=source_ids,mode=mode,mid=mid,runtime=config,prompt=text if display_text is not None else None,allow_web=allow_web)
@@ -80,14 +99,18 @@ class HarnessManager:
             else:self._schedule(session_id)
         message.pop("prompt",None)
         return message
-    def start_internal(self,text,*,session_id=None,runtime=None,cwd=None,job_id=None,display_text=None,allow_web=False,message_id=None):
+    def start_internal(self,text,*,session_id=None,runtime=None,cwd=None,job_id=None,display_text=None,allow_web=False,message_id=None,search_provider=None):
         runtime={**(runtime or {}),'permission':'workspace-write'}
+        if search_provider is not None:
+            if search_provider not in ('codex','tavily'):raise ValueError('无效搜索服务')
+            runtime['search_provider']=search_provider
         if session_id is None:session_id=self.create_session('简报任务',runtime,cwd)['id']
         self.chat.event(session_id,'session/internal',{})
         if job_id:self.chat.event(session_id,'job/attached',{'jobId':job_id})
         message=self.send(session_id,text,runtime=runtime,display_text=display_text,allow_web=allow_web,message_id=message_id)
         return InternalRun(self,session_id,message['id'])
     def _schedule(self,sid):
+        if self.chat.session(sid)['lifecycle']!='active':return
         if sid in self._busy or self.chat.session(sid).get('turn_id'):return
         if not any(m['status']=='queued' for m in self.snapshot(sid)['messages']):return
         self._busy.add(sid)
@@ -124,7 +147,8 @@ class HarnessManager:
                 if previous_provider!=config.get('model_provider'):
                     old_thread_id=thread_id;self._threads.pop(thread_id,None);thread_id=None
                     self.chat.event(sid,'thread/providerChanged',{'previousThreadId':old_thread_id,'model_provider':config.get('model_provider'),'message':'已切换模型服务，新一轮使用新的 Codex 对话；旧消息保留查看，不自动发送到新服务。'})
-            thread_params={'cwd':session['cwd'],'model':config['model'],'approvalPolicy':'never','sandbox':config['permission'],'config':{'web_search':'live' if message['allow_web'] else 'disabled'},'developerInstructions':instructions}
+            native_web=bool(message['allow_web']) and not (internal and config.get('search_provider')=='tavily')
+            thread_params={'cwd':session['cwd'],'model':config['model'],'approvalPolicy':'never','sandbox':config['permission'],'config':{'web_search':'live' if native_web else 'disabled'},'developerInstructions':instructions}
             if config.get('model_provider'):thread_params['modelProvider']=config['model_provider']
             if thread_id:
                 client.request('thread/resume',{'threadId':thread_id,**thread_params})

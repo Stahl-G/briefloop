@@ -1,4 +1,5 @@
 """Optional Tavily REST source discovery/extraction. Credentials stay outside workspaces."""
+from . import __version__
 import hashlib
 import json
 import os
@@ -64,7 +65,7 @@ def _ssl_context():
 def _post(endpoint,payload,*,key_file=None):
     key,_=_read_key(key_file)
     if not key:raise TavilyError('尚未配置 Tavily API Key，请在设置中填写')
-    request=urllib.request.Request('https://api.tavily.com/'+endpoint,data=dump(payload).encode(),headers={'Authorization':'Bearer '+key,'Content-Type':'application/json','User-Agent':'BriefLoop/0.1'},method='POST')
+    request=urllib.request.Request('https://api.tavily.com/'+endpoint,data=dump(payload).encode(),headers={'Authorization':'Bearer '+key,'Content-Type':'application/json','User-Agent':f'BriefLoop/{__version__}'},method='POST')
     try:
         with urllib.request.urlopen(request,timeout=65,context=_ssl_context()) as response:
             raw=response.read(25*1024*1024+1)
@@ -96,7 +97,7 @@ def check_run(store,run_id):
     return run
 
 
-def search(query,*,topic='general',time_range=None,start_date=None,end_date=None,include_domains=None,exclude_domains=None,max_results=5,search_depth='basic',key_file=None):
+def search(query,*,topic='general',time_range=None,start_date=None,end_date=None,include_domains=None,exclude_domains=None,max_results=5,search_depth='basic',key_file=None,store=None,run_id=None):
     if not isinstance(query,str) or not query.strip():raise TavilyError('搜索词不能为空')
     if topic not in ('general','news'):raise TavilyError('topic 必须是 general 或 news')
     if type(max_results) is not int or not 1<=max_results<=10:raise TavilyError('max_results 必须为 1–10')
@@ -107,25 +108,64 @@ def search(query,*,topic='general',time_range=None,start_date=None,end_date=None
             try:date.fromisoformat(value)
             except (ValueError,TypeError):raise TavilyError('日期使用 YYYY-MM-DD') from None
     if start_date and end_date and start_date>end_date:raise TavilyError('开始日期不能晚于结束日期')
+    reservation=None
+    if store is not None and run_id is not None:
+        check_run(store,run_id)
+        from . import research_budget as budget
+        try:reservation=budget.reserve_search(store,run_id,max_results)
+        except budget.BudgetExhausted as exc:return exc.result
+        max_results=reservation['max_results']
     payload={'query':query,'topic':topic,'max_results':max_results,'search_depth':search_depth,'include_answer':False,'include_raw_content':False,'auto_parameters':False,'include_usage':True}
     for name,value in (('time_range',time_range),('start_date',start_date),('end_date',end_date),('include_domains',include_domains),('exclude_domains',exclude_domains)):
         if value:payload[name]=value
-    result,_=_post('search',payload,key_file=key_file)
+    try:
+        result,raw=_post('search',payload,key_file=key_file)
+    except TavilyError as exc:
+        if reservation:
+            budget.save_discovery(store,run_id,reservation['request_id'],dump({'status':'failed','query':query,'error':str(exc)}).encode())
+        raise
+    discovery=None
+    if reservation:
+        # Preserve the complete provider response before any candidate limiting.
+        discovery=budget.save_discovery(store,run_id,reservation['request_id'],raw)
     results=[]
     for item in result.get('results',[]):
         if not isinstance(item,dict):continue
         results.append({'title':item.get('title',''),'url':item.get('url',''),'snippet':item.get('content',''),'kind':'search_snippet','score':item.get('score'),'published_date':item.get('published_date')})
-    return {'provider':'tavily','query':query,'results':results,'usage':result.get('usage'),'request_id':result.get('request_id'),'note':'搜索摘要仅用于发现来源。请读取原网页或用 tavily-extract 保存提供方提取正文后再引用。'}
+    output={'provider':'tavily','query':query,'results':results,'usage':result.get('usage'),'request_id':result.get('request_id'),'note':'搜索摘要仅用于发现来源。请读取原网页或用 tavily-extract 保存提供方提取正文后再引用。'}
+    if reservation:
+        admitted=budget.record_candidates(store,run_id,[row['url'] for row in results])
+        allowed=set(admitted['allowed_urls'])
+        output.update({'results':[row for row in results if budget.canonical_url(row['url']) in allowed],
+                       'status':'budget_exhausted' if admitted['unadmitted_urls'] else 'ok',
+                       'unadmitted_urls':admitted['unadmitted_urls'],'discovery_path':discovery,
+                       'remaining':admitted['budget']['remaining'],'budget':admitted['budget']})
+        if admitted['unadmitted_urls']:
+            output['message']='候选 URL 预算已用完；未纳入的 URL 和完整搜索响应已保留，不继续扩大检索'
+    return output
 
 
 def extract(store,urls,*,run_id=None,extract_depth='basic',key_file=None):
     if isinstance(urls,str):urls=[urls]
     if not isinstance(urls,list) or not urls or len(urls)>10 or not all(isinstance(url,str) and url.startswith(('https://','http://')) for url in urls):raise TavilyError('请提供 1–10 个 HTTP(S) 来源地址')
     if extract_depth not in ('basic','advanced'):raise TavilyError('无效提取深度')
-    if run_id:check_run(store,run_id)
+    cached=[]
+    if run_id:
+        check_run(store,run_id)
+        from .sources import existing_for_run
+        from . import research_budget as budget
+        pending=[]
+        for url in dict.fromkeys(urls):
+            previous=existing_for_run(store,run_id,url)
+            if previous:cached.append({**previous,'reused':True})
+            else:pending.append(url)
+        if not pending:return {'provider':'tavily','sources':cached,'reused':True,'budget':budget.snapshot(store,run_id)}
+        try:budget.reserve_pages(store,run_id,pending)
+        except budget.BudgetExhausted as exc:return {**exc.result,'sources':cached,'unprocessed_urls':pending}
+        urls=pending
     # No query/chunks_per_source: retain the full provider-extracted content.
     response,raw=_post('extract',{'urls':urls,'extract_depth':extract_depth,'format':'markdown','include_usage':True},key_file=key_file)
-    results=[]
+    results=list(cached)
     for url in dict.fromkeys(urls):
         item=next((x for x in response.get('results',[]) if isinstance(x,dict) and x.get('url')==url),None)
         if item is None and len(urls)==1 and len(response.get('results',[]))==1:item=response['results'][0]
@@ -140,4 +180,4 @@ def extract(store,urls,*,run_id=None,extract_depth='basic',key_file=None):
         source=store.add_source((item.get('title') if item else None) or url.rsplit('/',1)[-1] or url,text,url=url,error=error,source_id=sid)
         if run_id:store.attach_source(run_id,sid)
         results.append({**source,'provenance':provenance})
-    return {'provider':'tavily','sources':results,'usage':response.get('usage'),'request_id':response.get('request_id')}
+    return {'provider':'tavily','sources':results,'usage':response.get('usage'),'request_id':response.get('request_id'),**({'budget':budget.snapshot(store,run_id)} if run_id else {})}

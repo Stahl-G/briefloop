@@ -97,6 +97,17 @@ class InteractiveRuntime:
         new_turn = message is None or message['status'] in TERMINAL
         if message and message['status'] == 'completed' and not resume_on_complete:
             new_turn = False
+        if new_turn and snapshot and snapshot['session'].get('lifecycle','active')!='active':
+            # An explicit job resume may need another turn, but must not undo a
+            # user's archive/delete choice. Completed cached turns bypass this.
+            old_sid=binding['session_id']
+            session=self.harness.create_session('恢复简报任务',runtime,folder)
+            binding.setdefault('previous_session_ids',[]).append(old_sid)
+            binding['session_id']=session['id']
+            if binding.get('message_id'):binding.setdefault('history',[]).append(binding['message_id'])
+            binding['message_id']=None
+            snapshot=None;message=None
+            _write(marker,binding)
         if new_turn:
             # Persist the id before dispatch. A crash before/after send can re-enter
             # start_internal with that same id instead of duplicating the message.
@@ -140,7 +151,8 @@ class InteractiveRuntime:
                 label = {'evaluator': evaluation_label, 'scorer': '请使用 Evaluator 单稿评分模式核对简报。', 'assessor': '请使用 Evaluator 成对比较模式核对新旧稿件。', 'maintainer': '请从反馈中整理可复用经验。', 'proposer': '请依据经验提出技能改进。'}.get(job.get('runtime_role'), label)
                 self.harness.start_internal((folder / 'prompt.md').read_text(), session_id=sid,
                     runtime=runtime, cwd=folder, job_id=job['id'], display_text=label,
-                    allow_web=bool(job.get('allow_web', False)), message_id=binding['message_id'])
+                    allow_web=bool(job.get('allow_web', False)), message_id=binding['message_id'],
+                    search_provider=payload.get('search_provider','codex'))
                 self.store.event(job['id'], 'runtime_started', {'session_id': sid,
                     'message_id': binding['message_id'], 'folder': str(folder), 'runtime': configured,
                     'transport': 'app-server'})

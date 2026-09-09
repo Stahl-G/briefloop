@@ -7,10 +7,12 @@ import subprocess
 import sys
 import time
 from .store import Store
+from . import __version__
 
 
 def main():
     p=argparse.ArgumentParser(prog='briefloop',description='本地简报、改稿与持续学习')
+    p.add_argument('--version',action='version',version=f'BriefLoop {__version__}')
     sub=p.add_subparsers(dest='command',required=True)
     for name in ('serve','start','status','doctor'):
         parser=sub.add_parser(name)
@@ -71,7 +73,7 @@ def main():
         elif a.tool=='tavily-search':
             from . import tavily
             tavily.check_run(store,a.run)
-            result=tavily.search(a.query,topic=a.topic,time_range=a.time_range,start_date=a.start_date,end_date=a.end_date,include_domains=a.include_domain,exclude_domains=a.exclude_domain,max_results=a.max_results,search_depth=a.search_depth)
+            result=tavily.search(a.query,topic=a.topic,time_range=a.time_range,start_date=a.start_date,end_date=a.end_date,include_domains=a.include_domain,exclude_domains=a.exclude_domain,max_results=a.max_results,search_depth=a.search_depth,store=store,run_id=a.run)
             print(json.dumps(result,ensure_ascii=False))
         elif a.tool=='tavily-extract':
             from . import tavily

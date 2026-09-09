@@ -50,7 +50,7 @@ class CoreBehavior(unittest.TestCase):
         self.assertEqual(s.one('jobs',old['id'])['status'],'cancelled')
         self.assertEqual(json.loads(new['payload'])['runtime'],{'model':'gpt-5.6-luna','reasoning_effort':'high'})
         folder=s.root/'command-check'
-        with patch('briefloop.runtime.subprocess.Popen',side_effect=RuntimeError('no model call')) as spawn:
+        with patch('briefloop.runtime.shutil.which',return_value='/fake/codex'), patch('briefloop.runtime.subprocess.Popen',side_effect=RuntimeError('no model call')) as spawn:
             with self.assertRaisesRegex(RuntimeError,'no model call'):
                 CodexRuntime(s).execute(new,'Test only',folder)
         command=spawn.call_args.args[0]

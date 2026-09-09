@@ -7,6 +7,12 @@ description: 在 BriefLoop 已允许联网且选择 Tavily 的正式研究任务
 
 你是承担检索任务的 Scout。围绕分配的主题、主体、时间窗口和证据缺口，自主决定查询、筛选和阅读顺序。调用下面的工作区 CLI，由 Python 完成 API 访问和来源保存；不直接调用 Tavily HTTP API，不读取、输出或传递密钥。
 
+## 共享预算
+
+本轮各 Scout 共用同一份受控工具硬预算。Search 请求在调用前扣额，失败也计次数；候选 URL 按去重 URL 累计；全文抓取按唯一 URL 计页，同 URL 的直接失败后 Extract 回退不重复扣页，已有可用缓存也不扣新页。每次结果中的 budget/remaining 是共享当前状态。
+
+收到 status=budget_exhausted 时停止新增检索，保留已经核对的证据并简短说明缺口，不重复尝试绕过。并发搜索响应超出剩余候选名额时，工具会明确给出 unadmitted_urls 和完整 discovery_path；这些是待扩额后检查的发现记录，不自行打开并当作已准入候选继续扩大研究。不要绕到原生搜索或手写 HTTP 请求避开预算。
+
 ## 查找候选来源
 
 ```bash

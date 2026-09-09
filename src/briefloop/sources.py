@@ -1,5 +1,6 @@
 """Small source readers. Preserve originals; extraction failures stay visible."""
 from html.parser import HTMLParser
+from . import __version__
 from io import BytesIO
 from pathlib import Path
 import hashlib
@@ -82,12 +83,12 @@ def _fetch_bytes(url):
             if key in ('http','https','all'):env.setdefault(key+'_proxy',value)
         with tempfile.TemporaryDirectory(prefix='briefloop-web-') as tmp:
             path=Path(tmp)/'response'
-            command=['curl','--fail','--silent','--show-error','--location','--proto','=http,https','--proto-redir','=http,https','--connect-timeout','12','--max-time','40','--max-filesize',str(15*1024*1024),'-A','BriefLoop/0.1 (local research reader)','-o',str(path),'-w','%{content_type}',url]
+            command=['curl','--fail','--silent','--show-error','--location','--proto','=http,https','--proto-redir','=http,https','--connect-timeout','12','--max-time','40','--max-filesize',str(15*1024*1024),'-A',f'BriefLoop/{__version__} (local research reader)','-o',str(path),'-w','%{content_type}',url]
             proc=subprocess.run(command,capture_output=True,text=True,env=env,timeout=45)
             if proc.returncode:raise ValueError(proc.stderr.strip() or '网页读取失败')
             data=path.read_bytes();content_type=proc.stdout;encoding='utf-8'
     else:
-        req=urllib.request.Request(url,headers={'User-Agent':'BriefLoop/0.1 (local research reader)'})
+        req=urllib.request.Request(url,headers={'User-Agent':f'BriefLoop/{__version__} (local research reader)'})
         with urllib.request.urlopen(req,timeout=40) as response:
             data=response.read(15*1024*1024+1)
             content_type=response.headers.get('Content-Type','')
@@ -145,10 +146,11 @@ def retry_source(store, source_id):
 
 def existing_for_run(store,run_id,url):
     """Best-effort reuse inside this run only; no cross-run freshness assumptions."""
-    url=url.strip()
+    from .research_budget import canonical_url
+    url=canonical_url(url)
     for sid in reversed(store.source_ids(run_id)):
         source=store.one('sources',sid)
-        if source['url']==url and source['status']=='ready':
+        if source['url'] and canonical_url(source['url'])==url and source['status']=='ready':
             try:store.source_text(sid)  # validate the retained snapshot still exists
             except (ValueError,OSError):continue
             return source
@@ -160,7 +162,10 @@ def fetch_for_run(store,run_id,url):
     run=store.one('runs',run_id)
     if not json.loads(run['requirements']).get('allow_web'):raise ValueError('本轮仅允许本地来源')
     previous=existing_for_run(store,run_id,url)
-    if previous:return {**previous,'reused':True}
+    from . import research_budget as budget
+    if previous:return {**previous,'reused':True,'budget':budget.snapshot(store,run_id)}
+    try:budget.reserve_pages(store,run_id,[url])
+    except budget.BudgetExhausted as exc:return {**exc.result,'url':url}
     source=fetch(store,url)
     store.attach_source(run_id,source['id'])
-    return {**source,'reused':False}
+    return {**source,'reused':False,'budget':budget.snapshot(store,run_id)}

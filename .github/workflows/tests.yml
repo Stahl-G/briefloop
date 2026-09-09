@@ -1,0 +1,20 @@
+name: Tests
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --find-links vendor/wheels '.[dev]'
+      - run: python -m pytest -q
+      - run: briefloop --version
+      - run: python -c "from importlib.resources import files; assert files('briefloop').joinpath('skill_assets/tavily/SKILL.md').is_file()"

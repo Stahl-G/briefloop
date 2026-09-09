@@ -13,7 +13,7 @@ class FakeHarness:
 
     def create_session(self, title, runtime, cwd):
         sid = 'session-' + str(len(self.sessions))
-        self.sessions[sid] = {'session': {'id': sid, 'status': 'idle'}, 'messages': [], 'events': []}
+        self.sessions[sid] = {'session': {'id': sid, 'status': 'idle', 'lifecycle':'active'}, 'messages': [], 'events': []}
         return self.sessions[sid]['session']
 
     def start_internal(self, text, **kwargs):
@@ -73,6 +73,7 @@ def test_draft_publishes_before_completion_and_recovery_does_not_resend(tmp_path
     assert runtime.process is None
     assert '已保存稿件' in (folder / 'last-message.txt').read_text()
     assert 'agent_message' in (folder / 'events.jsonl').read_text()
+    harness.sessions[runtime.session_id or harness.starts[0][1]['session_id']]['session']['lifecycle']='archived'
     assert runtime.execute(job, 'unused', folder)['returncode'] == 0
     # Crash after turn completed but before execution.json admission.
     (folder / 'execution.json').unlink()
@@ -114,3 +115,21 @@ def test_stop_interrupts_only_attached_session_and_preserves_artifact(tmp_path):
     assert len(set(harness.cancelled)) == 1
     assert json.loads((folder / 'execution.json').read_text())['status'] == 'interrupted'
     assert runtime.process is None
+
+
+def test_explicit_resume_replaces_deleted_session_without_restoring_it(tmp_path,monkeypatch):
+    monkeypatch.setattr('briefloop.interactive_runtime.time.sleep',lambda _:None)
+    store,job,harness,runtime,folder=setup(tmp_path)
+    def fail():
+        if runtime.session_id and harness.sessions[runtime.session_id]['messages'][-1]['role']=='user':harness.finish(runtime.session_id,'failed')
+    with pytest.raises(RuntimeError):runtime.execute(job,'original prompt',folder,fail)
+    previous=json.loads((folder/'conversation.json').read_text())
+    harness.sessions[previous['session_id']]['session']['lifecycle']='deleted'
+    def complete():
+        if runtime.session_id and harness.sessions[runtime.session_id]['messages'][-1]['role']=='user':harness.finish(runtime.session_id)
+    assert runtime.execute(job,'resume the authorized job',folder,complete)['returncode']==0
+    current=json.loads((folder/'conversation.json').read_text())
+    assert current['session_id']!=previous['session_id']
+    assert current['previous_session_ids']==[previous['session_id']]
+    assert harness.sessions[previous['session_id']]['session']['lifecycle']=='deleted'
+    assert len(harness.starts)==2

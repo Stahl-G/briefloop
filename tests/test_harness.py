@@ -29,11 +29,12 @@ def test_queue_steering_and_public_stream(tmp_path):
     manager=HarnessManager(Store(tmp_path),RPC)
     sid=manager.create_session(runtime={'permission':'read-only'})['id']
     assert manager.client is None
-    one=manager.send(sid,'first',message_id='first')
+    one=manager.send(sid,'first',message_id='first',allow_web=True)
     until(lambda:manager.snapshot(sid)['session']['turn_id']=='turn1')
     assert manager.send(sid,'duplicate',message_id='first')['id']==one['id']
     first_turn=next(params for method,params in manager.client.calls if method=='turn/start')
-    assert first_turn['sandboxPolicy']=={'type':'readOnly','networkAccess':False}
+    assert first_turn['sandboxPolicy']=={'type':'readOnly','networkAccess':True}
+    assert next(params for method,params in manager.client.calls if method=='thread/start')['config']['web_search']=='live'
     manager.send(sid,'next',runtime={'permission':'workspace-write'})
     steer=manager.send(sid,'change direction',mode='steer',runtime={'permission':'read-only'})
     until(lambda:any(m['id']==steer['id'] and m['status']=='delivered' for m in manager.snapshot(sid)['messages']))
@@ -99,11 +100,15 @@ def test_sources_persist_and_failed_delivery_not_replayed(tmp_path):
     assert restored.client is None
     task_cwd=store.root/'jobs'/'internal-check'
     task_cwd.mkdir()
-    task=restored.start_internal('Write research output',cwd=task_cwd,display_text='Research')
+    task=restored.start_internal('Write research output',cwd=task_cwd,display_text='Research',allow_web=True,search_provider='tavily')
     until(lambda:restored.snapshot(task.session_id)['session']['turn_id'] is not None)
     actual=next(params for method,params in restored.client.calls if method=='turn/start')
     assert set(actual['sandboxPolicy']['writableRoots'])=={str(store.root),str(task_cwd)}
     assert str(store.root.parent) not in actual['sandboxPolicy']['writableRoots']
+    assert actual['sandboxPolicy']['networkAccess'] is True
+    start=next(params for method,params in restored.client.calls if method=='thread/start')
+    assert start['config']['web_search']=='disabled'
+    assert restored.snapshot(task.session_id)['messages'][0]['runtime']['search_provider']=='tavily'
     restored.close()
 
 def test_workspace_tool_inspects_and_enqueues_real_store(tmp_path,monkeypatch,capsys):
@@ -127,3 +132,35 @@ def test_workspace_tool_inspects_and_enqueues_real_store(tmp_path,monkeypatch,ca
     instructions=chat_instructions(store,{'model':'gpt-5.6-luna','effort':'high'})
     assert 'workspace-action' in instructions and str(store.root) in instructions
     assert '避免递归入队' in chat_instructions(store,{},internal=True)
+
+def test_session_lifecycle_keeps_reports_and_never_replays(tmp_path):
+    import pytest
+    store=Store(tmp_path);source=store.add_source('kept source','original')
+    run=store.create_run({'title':'kept','objective':'preserve'},[source['id']])
+    brief=store.publish(run['id'],{'title':'kept','markdown':'# Kept report'})
+    manager=HarnessManager(store,RPC);sid=manager.create_session()['id']
+    manager.send(sid,'hello')
+    until(lambda:manager.snapshot(sid)['session']['turn_id']=='turn1')
+    with pytest.raises(ValueError):manager.archive(sid)
+    with pytest.raises(ValueError):manager.delete(sid)
+    manager.handle_notification({'method':'turn/completed','params':{'threadId':'t1','turn':{'id':'turn1','status':'completed'}}})
+    until(lambda:sid not in manager._busy)
+    manager.archive(sid)
+    assert not manager.list_sessions()
+    assert manager.list_sessions('archived')[0]['id']==sid
+    calls=len(manager.client.calls)
+    with pytest.raises(ValueError):manager.send(sid,'must not run')
+    manager.restore(sid)
+    assert len(manager.client.calls)==calls
+    manager.delete(sid)
+    assert manager.snapshot(sid)['session']['lifecycle']=='deleted'
+    assert store.one('briefs',brief['id'])['markdown']=='# Kept report'
+    assert store.source_text(source['id'])=='original'
+    manager.restore(sid)
+    empty=manager.create_session()['id']
+    queued=manager.create_session()['id']
+    manager.chat.message(queued,'waiting')
+    assert manager.archive_completed()=={'count':1}
+    assert {s['id'] for s in manager.list_sessions()}=={empty,queued}
+    assert len(manager.client.calls)==calls
+    manager.close()

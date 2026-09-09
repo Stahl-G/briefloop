@@ -4,6 +4,7 @@ Connection initialization performs no turn/model request. Existing exec jobs are
 not taken over. UI integration opts into this transport for new sessions.
 """
 from concurrent.futures import Future
+from . import __version__
 import json
 from pathlib import Path
 from queue import Queue
@@ -23,7 +24,7 @@ class AppServerClient:
         self.process=subprocess.Popen([executable,'--enable','multi_agent','app-server','--listen','stdio://'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self._stderr,text=True,bufsize=1,start_new_session=True)
         self._reader=threading.Thread(target=self._read,daemon=True);self._reader.start()
         try:
-            self.identity=self.request('initialize',{'clientInfo':{'name':'briefloop','version':'0.1.0'},'capabilities':{'experimentalApi':True}})
+            self.identity=self.request('initialize',{'clientInfo':{'name':'briefloop','version':__version__},'capabilities':{'experimentalApi':True}})
             self.notify('initialized',{})
         except BaseException:
             self.close();raise

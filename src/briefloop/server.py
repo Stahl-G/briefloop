@@ -53,7 +53,7 @@ def make_server(workspace, port=8765, *, paused=False):
                 elif u.path=='/api/workspaces':
                     from .workspaces import list_workspaces
                     self.send(200,list_workspaces(store))
-                elif u.path=='/api/harness/sessions':self.send(200,{'sessions':harness.list_sessions()})
+                elif u.path=='/api/harness/sessions':self.send(200,{'sessions':harness.list_sessions(q.get('view',['active'])[0])})
                 elif u.path=='/api/harness/session':self.send(200,harness.snapshot(q['id'][0],int(q.get('after',['0'])[0])))
                 elif u.path=='/api/session':self.send(200,{'token':token})
                 elif u.path=='/api/runtime':
@@ -68,6 +68,9 @@ def make_server(workspace, port=8765, *, paused=False):
                     source,provenance,original=source_details(store,q['id'][0])
                     if original is None:raise ValueError('该来源未保留原件')
                     self.send(200,original.read_bytes(),'application/octet-stream',download_name=original.name)
+                elif u.path=='/api/research-budget':
+                    from .research_budget import snapshot
+                    self.send(200,snapshot(store,q['run'][0]))
                 elif u.path=='/api/learning-candidates':
                     from .projections import learning_candidates
                     self.send(200,learning_candidates(store))
@@ -120,6 +123,10 @@ def make_server(workspace, port=8765, *, paused=False):
                 elif path=='/api/harness/session':result=harness.create_session(body.get('title','新对话'),body.get('runtime'))
                 elif path=='/api/harness/message':result=harness.send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),allow_web=bool(body.get('allow_web',False)))
                 elif path=='/api/harness/answer':result=harness.answer(body['session_id'],body['request_id'],body['answers'])
+                elif path=='/api/harness/archive':result=harness.archive(body['session_id'])
+                elif path=='/api/harness/delete':result=harness.delete(body['session_id'])
+                elif path=='/api/harness/restore':result=harness.restore(body['session_id'])
+                elif path=='/api/harness/archive-completed':result=harness.archive_completed()
                 elif path=='/api/harness/cancel':result=harness.cancel(body['session_id'])
                 elif path=='/api/upload':
                     data=base64.b64decode(body['data'],validate=True)
