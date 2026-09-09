@@ -213,7 +213,7 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
    正文只保留 [@source_id] 这种行内引用；准确 locator 和相关 excerpt 仅放进 draft.json.citations 元数据，不把证据原文、定位信息或来源字段括号倾倒到正文。
    保存最终 draft.json 前，先把待提交的 markdown 原样写入 {folder/'draft-body.md'}，调用 `{tool} count-brief --file {shlex.quote(str(folder/'draft-body.md'))} --target-words {req['target_words']} --max-words {req['max_words']}` 检查，或使用完全相同算法计数；超限先压缩临时稿再保存最终 JSON。不要把 citations 元数据当正文计数，也不要在最终稿已经发布后才为长度反复改写它。
     把 Analyst 结果保存 {folder/'draft.json'}，结构遵循 {folder/'draft.schema.json'}。
-    重要数字绑定：金额、收入、利润指标、产能、订单、成交量、涨跌幅等关键数字，在 draft.json 中用 number_bindings 逐条记录原始值，例如 {{"label":"First Solar在手订单金额","value":13.6,"unit":"billion USD","period":"2026Q2","entity":"First Solar","source_id":"真实来源ID","locator":"10-Q原文位置"}}。unit 用英文常用单位（billion/million USD、GW/MW、% 等）。程序会把原始值换算后到正文中核对；正文必须出现换算一致的数值写法（如136亿美元），否则会被标记为未见绑定值。不要编造绑定，只记录真正核对过的数字。
+    重要数字绑定：关键金额、财务指标、产能、订单、成交量、涨跌幅用 number_bindings 记录原始 value/unit、label/entity/period、source_id/locator；另给 source_excerpt（来源中逐字存在、含原始数值与完整单位的摘录）、report_quote（正文中唯一的逐字片段）、number_text（该片段内唯一、完整的带符号数字与单位）。示例：{{"label":"公司订单金额","value":13.6,"unit":"billion USD","period":"本报告期","entity":"示例公司","source_id":"实际来源ID","locator":"实际原文位置","source_excerpt":"从真实来源逐字摘录，不照抄示例","report_quote":"示例公司订单为136亿美元。","number_text":"136亿美元"}}。示例仅说明字段，必须使用实际材料；不要编造绑定。程序只核对指定位置的数值、币种、单位换算以及摘录存在性，不证明主体、期间或指标含义正确。不能准确绑定或不支持的单位会标记未检查，不能声称全文已核验。
     草稿一保存应用就会展示；不需要 Editor、Auditor 或评分通过。
 4. draft.json 完整保存后，写 agents.json，包含实际子 agent id/role/status/产物路径。
    本会话到这里结束。评分由应用随后使用独立配置的 Evaluator 评分会话处理，不在这里调用 Evaluator 或生成 assessment.json。
@@ -247,6 +247,7 @@ def assessment_prompt(store, brief, folder, backend='codex'):
     input_pack['figures']=[{**f,'absolute_image_path':str(store.root/f['image_path'])} for f in validate_figures(store,run['id'],brief['markdown'])]
     from .delivery_checks import brief_checks
     input_pack['refcheck']=brief_checks(store,brief['id'])
+    input_pack['number_bindings']=detail.get('number_bindings',[])
     (folder/'input.json').write_text(dump(input_pack),encoding='utf-8')
     tool=shlex.join([sys.executable,'-m','briefloop','tool','--workspace',str(store.root)])
     no_question='本轮没有任何用户在旁可问：不要调用 question 工具；遇到含糊之处自行按任务目标决断，并在结果中记录假设。\n' if backend=='opencode' else ''
@@ -258,7 +259,7 @@ def assessment_prompt(store, brief, folder, backend='codex'):
 本轮是单稿评分模式。直接读取 {folder/'input.json'}；初始 sources 包含稿件 citations 和 report_data 的去重引用来源，所有引用元数据均保留。gaps 为最多 10 条、每条最多 240 字的简要提示。
 {no_question}先围绕引用和具体问题读取原文的相关范围，例如 `{tool} read-source --id SOURCE_ID --start-line 1 --end-line 80 --max-chars 6000`；根据实际行号定向扩展，不把截断当成全文。检查覆盖或追查缺口需要其他材料时，再读取 {index_path} 中本轮全部来源的轻量索引与完整 gaps，按需打开额外原文；没有在初始 sources 中列出不代表来源不存在，不要求默认全量读取。
 引用图像会作为带 source_id 锚点的原生图片输入，PDF 仅提供原件和页码索引。凡引用依赖图/表视觉内容，你要实际查看图像或按 locator 选择相关页，执行 `{tool} render-source --id SOURCE_ID --pages 1 3` 后{view_pages_word}；不要默认全本渲染。只读到抽取文本、作者摘录或父会话看过，不算你已核对图片。记录真实页码/图表定位；视觉输入被模型/provider拒绝、图像损坏或工具不可用时说明实际限制，不静默丢图、改模型或假装已验证。
-input.refcheck 是程序对本稿的确定性检查：broken_refs 必须逐条核对原文（断链引用支撑的结论不能成立）；numbers.unmatched 是绑定了原始值却在正文中找不到换算一致写法的数字（重点查金额数量级、单位倍率）；export.escaped_bold 说明导出件格式不完整。程序只负责"找出来"，对错由你对照原文判定。
+input.refcheck 是程序对本稿的确定性检查：broken_refs 必须逐条核对原文（断链引用支撑的结论不能成立）；numbers.unmatched 是指定正文数值与原始值不一致的项目；numbers.skipped 是缺少定位、来源不可核对或单位不支持的未检查项目。即使 matched，也只表示指定位置数值匹配，不证明主体、期间、指标或原文支持关系；请读取 number_bindings 对照原文检查这些含义；export.escaped_bold 说明导出件格式不完整。程序只负责"找出来"，对错由你对照原文判定。
 事实核对清单（程序不擅长，必须你来）：财务指标名称是否被偷换（如 Adjusted EBITDA 写成调整后利润）；事件先后与时区是否正确（如盘前公告写成盘后开盘）；政策条件与例外是否被压缩合并（如两种税负情形写成一种）；公司预期/会议纪要是否被升级成已获批、已融资、已到账；每条结论是否真有来源原文支持，而不只是引用存在。要求中明确点名的重要对象没有研究、只有"尚未核验"时，覆盖项扣分，不因写了缺口而豁免。
 评分结构见 {folder/'assessment.schema.json'}。brief_hash 必须是 {brief['hash']}。
 按任务完成程度评证据/覆盖/分析/表达四项 1–5（1根本不足，2明显不足，3达到要求，4充分完成，5对任务特别有帮助）。

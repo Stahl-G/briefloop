@@ -157,9 +157,9 @@ class Citation(Model):
 class NumberBinding(Model):
     """One important number traced to its origin; the program converts units.
 
-    value/unit describe the ORIGINAL (e.g. 13.6 / "billion USD"); the body
-    must contain an equivalent spelling (e.g. 136亿美元）. Only unambiguous
-    units are checked, the rest are recorded but skipped.
+    value/unit describe the original. Exact source and body spans prevent
+    matching a different fact elsewhere. Legacy bindings remain readable but
+    are marked unchecked until these spans are supplied.
     """
     label: str = ""
     value: float | None = None
@@ -168,6 +168,10 @@ class NumberBinding(Model):
     entity: str = ""
     source_id: str = ""
     locator: str = ""
+
+    report_quote: str = ""
+    number_text: str = ""
+    source_excerpt: str = ""
 
 
 class BriefDraft(Model):
