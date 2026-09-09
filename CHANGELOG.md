@@ -1,3 +1,34 @@
+# 变更记录
+
+## 0.17.0 — 2026-09-09
+
+本版将原工作流工具升级为本地 Codex Agent 工作台。
+
+### 新增
+
+- 持久对话、文件附件、消息排队与中途补充、公开工具和子 Agent 活动、上下文用量。
+- 对话归档、回收站、恢复与批量归档已结束对话；相关报告和来源保留。
+- 所有 Scout 共用的工具侧研究预算：Tavily 搜索尝试、候选 URL、全文来源 URL，含用量与耗尽提示。
+- 明确的正文目标字数、上限、自定义数值与已保存稿件计数。
+- Tavily Search／Extract 及 Scout 专属技能，保留原始响应并标明提取来源。
+- Evaluator、Wiki Maintainer、Skill Proposer 的独立配置，以及待验证候选的可见状态。
+
+### 调整
+
+- 单仓库执行 `./start.sh`，自动安装随项目提供的 WikiSkill wheel。
+- 模型 ID 与 Codex Responses provider 可自行填写，不限制为 OpenAI 型号。
+- Scout 使用独立输出位置；原文支持范围读取和同轮 URL 复用。
+- Evaluator 优先加载稿件引用来源，移除重复嵌套评价及试验稿的重复单稿评分。
+- 本版统一中文版文档，国际化和行业 Deep Research 延后。
+
+### 兼容边界
+
+旧历史和标签保留，旧工作区不自动迁移。请保留旧目录并新建工作区。本版以 macOS 本地路径为已验证范围。发布包不包含用户工作区、报告、凭据或私有计划；开发验证不调用真实模型或 Tavily。
+
+---
+
+## 历史版本记录（旧架构，保留原文）
+
 # Changelog
 
 All notable changes to the multi-agent-brief-workflow project will be documented in this file.

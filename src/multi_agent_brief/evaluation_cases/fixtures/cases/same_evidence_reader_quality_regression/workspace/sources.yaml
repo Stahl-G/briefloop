@@ -1,4 +1,0 @@
-manual:
-  enabled: true
-  include:
-    - input/sources/source-001.txt

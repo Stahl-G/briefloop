@@ -1,67 +1,13 @@
-# macOS
-.DS_Store
-
-# Windows
-Thumbs.db
-Desktop.ini
-
-# Python
 .venv/
 __pycache__/
 *.py[cod]
 .pytest_cache/
-.ruff_cache/
-.mypy_cache/
-output/
-dist/
-build/
 *.egg-info/
-
-# Documents
-*.docx
-*.pdf
-*.xlsx
-logs/
-
-# Workspace
-brief-workspace/
-onboarding.json
-.mabw-eval-cases/
-.understand-anything/
-
-# IDE and personal settings
-.codegraph/
-.reasonix/
-reasonix.toml
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-.claude/settings.local.json
-.codex/config.local.toml
-
-# Environment files (keep .env.example tracked)
-.env
-.env.*
-!.env.example
-.env.local
-.env.*.local
-
-# Personal notes
-notes/
-TODO.md
-.cache/
+build/
+dist/
 private_planning/
-docs/internal/
-docs/archive/mabw-architecture-reference-v0.1.md
-*.private.md
-*.internal.md
+workspaces/
+.env
+.DS_Store
 
-# Logs and backups
-*.log
-*.bak
-*.orig
-
-.claude/worktrees/
-.claude/launch.json
+node_modules/

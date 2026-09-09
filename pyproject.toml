@@ -1,137 +1,23 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "briefloop"
-version = "0.15.3"
-description = "Source-grounded, audit-ready multi-agent workflow for business and research briefs."
-readme = "README.md"
-requires-python = ">=3.12"
-license = "MIT"
-authors = [
-  {name = "BriefLoop contributors"}
-]
-keywords = [
-  "briefing",
-  "workflow",
-  "audit",
-  "traceability",
-  "multi-agent",
-]
-classifiers = [
-  "Environment :: Console",
-  "Intended Audience :: Developers",
-  "Operating System :: OS Independent",
-  "Programming Language :: Python :: 3",
-  "Programming Language :: Python :: 3.12",
-  "Topic :: Office/Business",
-  "Topic :: Software Development :: Quality Assurance",
-]
-dependencies = [
-  "pydantic>=2.13.4,<2.14",
-  "pyyaml>=6.0",
-]
+name = "briefloop-local"
+version = "0.17.0"
+description = "A local, editable briefing workspace with agent-driven learning"
+requires-python = ">=3.11"
+dependencies = ["pydantic>=2,<3", "markdown-it-py>=3,<5", "wikiskill-research==0.1.1+briefloop.2", "python-docx>=1", "pypdf>=5"]
 
 [project.optional-dependencies]
-docx = [
-  "python-docx>=1.0.0",
-]
-semantic-evaluator-openai = [
-  "openai>=2,<3",
-  "tiktoken>=0.9,<1",
-]
-semantic-evaluator-anthropic = [
-  "anthropic>=0.104,<0.105",
-]
-dev = [
-  "pytest>=8.0",
-  "pytest-split>=0.10,<1",
-  "pytest-timeout>=2.4,<3",
-  "pytest-xdist>=3.5",
-  "python-docx>=1.0.0",
-  "ruff>=0.8.0",
-  "setuptools>=68",
-  "wheel",
-]
+docx = ["python-docx>=1"]
+dev = ["pytest>=8"]
 
 [project.scripts]
-multi-agent-brief = "multi_agent_brief.cli.main:main"
-briefloop = "multi_agent_brief.cli.main:main"
-
-[project.urls]
-Homepage = "https://github.com/Stahl-G/briefloop"
-Repository = "https://github.com/Stahl-G/briefloop"
-Issues = "https://github.com/Stahl-G/briefloop/issues"
-Documentation = "https://github.com/Stahl-G/briefloop/tree/main/docs"
-Changelog = "https://github.com/Stahl-G/briefloop/blob/main/CHANGELOG.md"
+briefloop = "briefloop.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-multi_agent_brief = [
-  "control_store/migrations/*.sql",
-  "runtime_kits/codex/*.toml",
-  "runtime_kits/codex/agents/*.toml",
-  "runtime_kits/codex/skills/briefloop/*.md",
-  "runtime_kits/codex/skills/briefloop/references/*.md",
-  "semantic_evaluator/profiles/*.yaml",
-  "semantic_evaluator/prompts/*.txt",
-  "semantic_evaluator/baselines/*.yaml",
-  "semantic_evaluator/fixtures/synthetic_shadow_v1/*.json",
-  "semantic_evaluator/fixtures/synthetic_shadow_v1/*.md",
-  "product/review_session/static/*.html",
-  "product/review_session/static/*.js",
-  "product/review_session/static/*.css",
-  "product/review_session/static/*.json",
-  "product/review_session/static/*.txt",
-  "product/brief_html/static/*.html",
-  "product/brief_html/static/*.js",
-  "product/brief_html/static/*.css",
-  "product/brief_html/static/*.json",
-  "product/brief_html/static/*.txt",
-  "product/init_web/static/*.html",
-  "product/init_web/static/*.js",
-  "product/init_web/static/*.css",
-  "product/init_web/static/*.json",
-  "product/init_web/static/*.txt",
-  "configs/*.yaml",
-  "configs/policy_packs/*.yaml",
-  "configs/policy_profiles/*.yaml",
-  "configs/report_packs/*.yaml",
-  "configs/report_templates/*.yaml",
-  "evaluation_cases/fixtures/*.yaml",
-  "evaluation_cases/fixtures/cases/*/workspace/*.yaml",
-  "evaluation_cases/fixtures/cases/*/workspace/*.md",
-  "evaluation_cases/fixtures/cases/*/workspace/improvement/*.jsonl",
-  "evaluation_cases/fixtures/cases/*/workspace/improvement/*.md",
-  "evaluation_cases/fixtures/cases/*/workspace/input/*.md",
-  "evaluation_cases/fixtures/cases/*/workspace/input/sources/*.md",
-  "evaluation_cases/fixtures/cases/*/workspace/input/sources/*.txt",
-  "evaluation_cases/fixtures/cases/*/workspace/output/*.md",
-  "evaluation_cases/fixtures/cases/*/workspace/output/delivery/*.md",
-  "evaluation_cases/fixtures/cases/*/workspace/output/intermediate/*.json",
-  "evaluation_cases/fixtures/cases/*/workspace/output/intermediate/*.md",
-  "evaluation_cases/fixtures/cases/*/workspace/output/intermediate/finalize_candidate/*/*.md",
-  "evaluation_cases/fixtures/cases/*/workspace/output/intermediate/gates/*.json",
-  "evaluation_v2/corpus_data/manifest.yaml",
-  "evaluation_v2/corpus_data/cases/*.yaml",
-  "evaluation_v2/corpus_data/REVIEW.md",
-  "evaluation_v2/corpus_data/envelope-auditor-reporting.md",
-]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["src"]
-markers = [
-  "explicit_e2e: heavyweight end-to-end evidence run only when explicitly authorized; excluded from normal PR CI",
-  "macos_publication: exercises darwin-specific checkout publication primitives (F_FULLFSYNC, no_clobber_rename); the macOS CI job runs exactly this selection",
-  "timeout(seconds): per-node wall-clock bound supplied by pytest-timeout",
-]
-
-[tool.ruff]
-target-version = "py312"
-
-[tool.ruff.lint]
-select = ["E9", "F63", "F7", "F82"]
+briefloop = ["static/*", "skill_assets/*/*.md"]

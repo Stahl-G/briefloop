@@ -1,8 +1,0 @@
-project:
-  name: "Synthetic TargetCo"
-report:
-  date: "2026-06-09"
-output:
-  path: "output"
-input:
-  path: "input"

@@ -1,2 +1,0 @@
-"""Core pipeline primitives."""
-

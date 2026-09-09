@@ -1,0 +1,183 @@
+"""Loopback application: real save/command API, no static feedback façade."""
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from importlib.resources import files
+from urllib.parse import urlsplit, parse_qs, quote
+import base64
+import json
+import secrets
+import threading
+import os
+import signal
+import fcntl
+from markdown_it import MarkdownIt
+from pydantic import ValidationError
+from .models import Requirements, Settings, SaveRevision, Comment
+from .runtime import Worker
+from .harness import HarnessManager
+from .interactive_runtime import InteractiveRuntime
+from .store import Store, Conflict, dump
+from . import sources
+
+
+def make_server(workspace, port=8765, *, paused=False):
+    store=Store(workspace)
+    lock=(store.root/'.server.lock').open('a+')
+    try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock.close();raise RuntimeError('这个工作区已有本地服务在运行')
+    harness=HarnessManager(store);worker=Worker(store)
+    worker.runtime=InteractiveRuntime(store,harness)
+    worker.opened_paused=paused
+    token=secrets.token_urlsafe(24)
+    assets=files('briefloop').joinpath('static')
+    # Serve one UI/backend version for this process; builds must not replace a live UI halfway.
+    asset_bytes={name:assets.joinpath(name).read_bytes() for name in ('index.html','app.js','style.css')}
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,format,*args): pass
+        def send(self,status,data,content_type='application/json; charset=utf-8',download_name=None):
+            payload=data if isinstance(data,bytes) else dump(data).encode()
+            self.send_response(status)
+            self.send_header('Content-Type',content_type)
+            if download_name:self.send_header('Content-Disposition',"attachment; filename*=UTF-8''"+quote(download_name))
+            self.send_header('Content-Length',str(len(payload)))
+            self.send_header('Cache-Control','no-store')
+            self.send_header('X-Content-Type-Options','nosniff')
+            self.send_header('Referrer-Policy','same-origin')
+            self.end_headers();self.wfile.write(payload)
+        def error(self,exc):
+            self.send(409 if isinstance(exc,Conflict) else 400,{'error':str(exc)})
+        def do_GET(self):
+            try:
+                u=urlsplit(self.path);q=parse_qs(u.query)
+                if u.path=='/api/state':self.send(200,store.snapshot())
+                elif u.path=='/api/workspaces':
+                    from .workspaces import list_workspaces
+                    self.send(200,list_workspaces(store))
+                elif u.path=='/api/harness/sessions':self.send(200,{'sessions':harness.list_sessions(q.get('view',['active'])[0])})
+                elif u.path=='/api/harness/session':self.send(200,harness.snapshot(q['id'][0],int(q.get('after',['0'])[0])))
+                elif u.path=='/api/session':self.send(200,{'token':token})
+                elif u.path=='/api/runtime':
+                    proc=worker.runtime.process
+                    self.send(200,{'server_pid':os.getpid(),'worker_alive':worker.thread.is_alive(),'automatic_learning_paused':worker.opened_paused,'paused':worker.opened_paused,'job_id':worker.current,'pid':proc.pid if proc else None,'returncode':proc.poll() if proc else None})
+                elif u.path=='/api/source':
+                    from .projections import source_details
+                    sid=q['id'][0];source,provenance,original=source_details(store,sid)
+                    self.send(200,{'source':source,'text':store.source_text(sid),'provenance':provenance,'original_url':'/api/source-original?id='+sid if original else None})
+                elif u.path=='/api/source-original':
+                    from .projections import source_details
+                    source,provenance,original=source_details(store,q['id'][0])
+                    if original is None:raise ValueError('该来源未保留原件')
+                    self.send(200,original.read_bytes(),'application/octet-stream',download_name=original.name)
+                elif u.path=='/api/research-budget':
+                    from .research_budget import snapshot
+                    self.send(200,snapshot(store,q['run'][0]))
+                elif u.path=='/api/learning-candidates':
+                    from .projections import learning_candidates
+                    self.send(200,learning_candidates(store))
+                elif u.path=='/api/tavily':
+                    from .tavily import key_status
+                    self.send(200,key_status())
+                elif u.path=='/api/events':
+                    jid=q['job'][0];self.send(200,store.rows('SELECT * FROM events WHERE job_id=? ORDER BY seq',(jid,)))
+                elif u.path=='/api/learning-details':
+                    job=store.one('jobs',q['job'][0]);root=store.root/'jobs'/job['id']
+                    rounds=[]
+                    for f in sorted(root.glob('round-*/comparison/input.json')):
+                        comparison=f.with_name('comparison.json')
+                        from .exports import reader_markdown
+                        cases=json.loads(f.read_text())
+                        for case in cases:
+                            for side in ('baseline','candidate'):
+                                case[side]['reader_markdown']=reader_markdown(store,case[side])
+                                grades=store.rows('SELECT data FROM assessments WHERE version_id=? ORDER BY rowid DESC LIMIT 1',(case[side]['id'],))
+                                case[side]['assessment']=json.loads(grades[0]['data']) if grades else None
+                        rounds.append({'cases':cases,'result':json.loads(comparison.read_text()) if comparison.exists() else None})
+                    self.send(200,{'job':job,'rounds':rounds})
+                elif u.path=='/api/download':
+                    b=store.one('briefs',q['version'][0])
+                    from .exports import reader_markdown,docx_bytes
+                    md=reader_markdown(store,b)
+                    if q.get('format',['md'])[0]=='docx':self.send(200,docx_bytes(md),'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+                    else:self.send(200,md.encode(),'text/markdown; charset=utf-8')
+                elif u.path in ('/','/index.html'):
+                    self.send(200,asset_bytes['index.html'],'text/html; charset=utf-8')
+                elif u.path in ('/app.js','/style.css'):
+                    self.send(200,asset_bytes[u.path[1:]],'text/javascript' if u.path.endswith('.js') else 'text/css')
+                else:self.send(404,{'error':'未找到页面'})
+            except (ValueError,KeyError,OSError,RuntimeError) as exc:self.error(exc)
+        def do_POST(self):
+            try:
+                origin=self.headers.get('Origin')
+                expected=f'http://127.0.0.1:{self.server.server_port}'
+                if self.headers.get('X-BriefLoop-Token')!=token or origin and origin!=expected:
+                    self.send(403,{'error':'页面会话已过期，请刷新后重试'});return
+                n=int(self.headers.get('Content-Length','0'))
+                if not 0<n<25*1024*1024:raise ValueError('请求为空或过大')
+                body=json.loads(self.rfile.read(n));path=urlsplit(self.path).path
+                if path=='/api/tavily':
+                    from .tavily import save_key,delete_key
+                    result=delete_key() if body.get('remove') else save_key(body['api_key'])
+                elif path=='/api/workspaces/open':
+                    from .workspaces import open_workspace
+                    result=open_workspace(store,body['path'],create=bool(body.get('create',False)))
+                elif path=='/api/harness/session':result=harness.create_session(body.get('title','新对话'),body.get('runtime'))
+                elif path=='/api/harness/message':result=harness.send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),allow_web=bool(body.get('allow_web',False)))
+                elif path=='/api/harness/answer':result=harness.answer(body['session_id'],body['request_id'],body['answers'])
+                elif path=='/api/harness/archive':result=harness.archive(body['session_id'])
+                elif path=='/api/harness/delete':result=harness.delete(body['session_id'])
+                elif path=='/api/harness/restore':result=harness.restore(body['session_id'])
+                elif path=='/api/harness/archive-completed':result=harness.archive_completed()
+                elif path=='/api/harness/cancel':result=harness.cancel(body['session_id'])
+                elif path=='/api/upload':
+                    data=base64.b64decode(body['data'],validate=True)
+                    result=sources.upload(store,body['name'],data)
+                elif path=='/api/source-url':result=sources.fetch(store,body['url'])
+                elif path=='/api/retry-source':result=sources.retry_source(store,body['source_id'])
+                elif path=='/api/generate':
+                    req=Requirements.model_validate(body['requirements'])
+                    run=store.create_run(req.model_dump(),body.get('source_ids',[]))
+                    result=store.enqueue('generate',{'run_id':run['id']})
+                elif path=='/api/save':
+                    value=SaveRevision.model_validate(body)
+                    result=store.revise(value.base_version,value.markdown,value.editor_document)
+                elif path=='/api/comment':
+                    value=Comment.model_validate(body);result=store.comment(value.version_id,value.text)
+                elif path=='/api/settings':
+                    settings=Settings.model_validate({**store.settings(),**body})
+                    store.set_meta('settings',settings.model_dump());result=settings.model_dump()
+                    if 'auto_learn' in body:worker.opened_paused=False
+                elif path=='/api/assess':
+                    store.one('briefs',body['version_id']);result=store.enqueue('assess',{'version_id':body['version_id']})
+                elif path=='/api/learn':
+                    from .learning import enqueue_feedback
+                    result=enqueue_feedback(store)
+                elif path=='/api/stop':worker.stop_job(body['job_id']);result={'ok':True}
+                elif path=='/api/resume':result=worker.resume(body['job_id'])
+                elif path=='/api/rollback':store.bind_skill(body.get('skill_id'));result={'ok':True}
+                elif path=='/api/render':result={'html':MarkdownIt('commonmark',{'html':False}).enable('table').render(body['markdown'])}
+                else:self.send(404,{'error':'未知操作'});return
+                self.send(200,result)
+            except (ValueError,KeyError,OSError,ValidationError) as exc:self.error(exc)
+            except Exception as exc:
+                self.send(500,{'error':str(exc)})
+    try:server=ThreadingHTTPServer(('127.0.0.1',port),Handler)
+    except OSError:
+        harness.close();lock.close();raise
+    server.daemon_threads=True
+    server.workspace_lock=lock
+    server.store=store;server.worker=worker;server.harness=harness
+    return server
+
+
+def serve(workspace,port=8765,*,paused=False):
+    server=make_server(workspace,port,paused=paused)
+    server.worker.start()
+    url=f'http://127.0.0.1:{server.server_port}'
+    (server.store.root/'server.json').write_text(dump({'pid':os.getpid(),'url':url,'workspace_id':server.store.meta('workspace_id')}))
+    print(f'BriefLoop: {url}',flush=True)
+    def stop(signum,frame):raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM,stop)
+    try:server.serve_forever()
+    except KeyboardInterrupt:pass
+    finally:
+        server.worker.close();server.harness.close();server.server_close();server.workspace_lock.close()
