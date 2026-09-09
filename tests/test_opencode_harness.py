@@ -242,21 +242,6 @@ def _test_png():
     return buffer.getvalue()
 
 
-def test_image_source_becomes_direct_file_part(tmp_path):
-    from briefloop import sources
-    store = Store(tmp_path)
-    record = sources.upload(store, 'chart.png', _test_png())
-    assert record['status'] == 'ready'
-    manager = OpencodeHarness(store, FakeClient)
-    text, files = manager._input({'text': '看这张图', 'prompt': None, 'source_ids': [record['id']]})
-    assert len(files) == 1
-    part = files[0]
-    assert part['type'] == 'file' and part['mime'] == 'image/png'
-    assert part['url'].startswith('data:image/png;base64,')
-    assert record['id'] in text and '图片附件' in text
-    manager.close()
-
-
 def test_oversize_image_skipped_with_note(tmp_path, monkeypatch):
     import briefloop.opencode_harness as harness_module
     from briefloop import sources
@@ -280,7 +265,12 @@ def test_full_turn_sends_file_parts(tmp_path):
     until(lambda: any(m['role'] == 'assistant' and m['status'] == 'completed'
                       for m in manager.snapshot(sid)['messages']))
     sent = manager.client.prompts[0][2]
-    assert len(sent['files']) == 1 and sent['files'][0]['mime'] == 'image/png'
+    assert len(sent['files']) == 1
+    part = sent['files'][0]
+    assert part['type'] == 'file' and part['mime'] == 'image/png'
+    import base64
+    assert part['url'].startswith('data:image/png;base64,')
+    assert base64.b64decode(part['url'].split(',', 1)[1]) == _test_png()
     assert image['id'] in manager.client.prompts[0][1]
     manager.close()
 
@@ -378,3 +368,18 @@ def test_pending_tool_is_later_projected_as_complete(tmp_path):
     kinds=[e['kind'] for e in manager.store.rows('SELECT kind FROM chat_events WHERE session_id=?',(session['id'],))]
     assert kinds.count('item/started')==1
     assert kinds.count('item/completed')==1
+
+
+def test_child_history_keeps_only_current_turn_messages(tmp_path):
+    manager=OpencodeHarness(Store(tmp_path),FakeClient)
+    session=manager.create_session('History',{'model':'opencode-go/gpt-5.6-luna'})
+    class Children:
+        def children(self,owner):return [{'id':'child'}] if owner=='parent' else []
+        def messages(self,owner):
+            return [{'info':{'id':identity,'role':'assistant','time':{'created':created}},'parts':[{'type':'tool','id':identity+'-tool','tool':'read','state':{'status':'completed','input':{'filePath':'source'},'output':identity}}]} for identity,created in [('old',1000),('current',10000)]]
+    manager._client=lambda:Children()
+    manager._record_children(session['id'],'turn','parent',10000)
+    records=manager.store.rows("SELECT data FROM chat_events WHERE kind='tool/record'")
+    assert len(records)==1
+    value=json.loads(records[0]['data'])['record']
+    assert value['output']=='current' and value['native_message_id']=='current'

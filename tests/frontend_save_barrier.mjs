@@ -108,3 +108,17 @@ el('custom-provider').value='example';el('custom-base-url').value='https://examp
 for(const value of ['', 'true', 'false']){el('custom-supports-images').value=value;el('custom-api-key').value='test-only-key';await el('provider-form').onsubmit({preventDefault(){}});assert.equal(el('custom-api-key').value,'')}
 assert.deepEqual(providerBodies.map(body=>body.supports_images),[null,true,false]);
 console.log('PASS: custom provider preserves undeclared, image-enabled and image-disabled model settings');
+
+// Intake keeps a saved chapter responsibility for the same template, but not across templates.
+const templateReader=source.slice(source.indexOf('function readTemplateSections()'),source.indexOf('function templateSections()'));
+const chapterFields={'[data-title]':{value:'Current section'},select:{value:'required'}};
+el('template-sections').querySelectorAll=()=>[{dataset:{sectionId:'shared'},querySelector:selector=>chapterFields[selector]||null}];
+const templateContext=vm.createContext({$:el,parse:JSON.parse,state:{templates:[{id:'template-a',spec:JSON.stringify({sections:[{section_id:'shared',purpose:'Template A original purpose'}]})},{id:'template-b',spec:JSON.stringify({sections:[{section_id:'shared',purpose:'Template B purpose'}]})}],requirements:{template_id:'template-a',sections:[{section_id:'shared',purpose:'Saved task-specific purpose'}]}}});
+vm.runInContext(templateReader,templateContext);
+el('template-select').value='template-a';
+assert.equal(vm.runInContext('readTemplateSections()[0].purpose',templateContext),'Saved task-specific purpose');
+el('template-select').value='template-b';
+assert.equal(vm.runInContext('readTemplateSections()[0].purpose',templateContext),'Template B purpose');
+el('template-select').value='template-a';chapterFields['[data-purpose]']={value:'Explicit form edit'};
+assert.equal(vm.runInContext('readTemplateSections()[0].purpose',templateContext),'Explicit form edit');
+console.log('PASS: intake preserves same-template saved purpose and isolates purpose after a template switch');

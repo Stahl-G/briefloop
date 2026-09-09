@@ -57,6 +57,8 @@ def test_manifest_tamper_and_real_tool_history_binding(tmp_path):
     with pytest.raises(ValueError,match='核查包文件'):accept_review(store,'review_test',value)
     chat=ChatStore(store);session=chat.create('Current',{},store.root)
     job=store.rows('SELECT id FROM jobs')[0]['id'];chat.event(session['id'],'job/attached',{'jobId':job})
+    message=chat.message(session['id'],'Calculate report',status='completed',turn_id='turn')
+    store.event(job,'runtime_started',{'session_id':session['id'],'message_id':message['id']})
     journal_tool(chat,session['id'],'turn','tool-1','bash',{'command':'python calculate.py'},'result=50%',status='completed',exit_code=0)
     other=chat.create('Other',{},store.root)
     journal_tool(chat,other['id'],'other','tool-2','bash',{'command':'outside'},'not this report',status='completed')
@@ -143,13 +145,19 @@ def test_review_recovery_admits_saved_metadata_without_another_model_turn(tmp_pa
     review=store.rows('SELECT * FROM reviews WHERE id=?',('review_test',))[0]
     job=store.one('jobs',review['job_id']);folder=store.root/'jobs'/job['id']
     (folder/'review-id.json').write_text(json.dumps({'review_id':'review_test'}))
-    value['findings'][0].update(dimension='evidence',locator='Source L1')
+    value['findings'][0].update(dimension='evidence',locator='Source L1',suggestion='Correct the period using Source L1')
+    from briefloop.review import ReviewFinding
+    with pytest.raises(ValueError,match='不同处理建议'):
+        ReviewFinding.model_validate({**value['findings'][0],'suggested_action':'Delete everything'})
+    with pytest.raises(ValueError):
+        ReviewFinding.model_validate({**value['findings'][0],'unexpected_field':'Do not silently ignore'})
     original=json.dumps(value);(folder/'review.json').write_text(original)
     (folder/'admission-error.json').write_text(json.dumps({'error':'Old schema rejected locator'}))
     class NoModel:
         def execute(self,*args,**kwargs):raise AssertionError('Saved admissible result must not run a model')
     accepted=run_review(store,NoModel(),job,brief['id'],folder)
     assert accepted['status']=='complete' and accepted['result']['findings'][0]['locator']=='Source L1'
+    assert accepted['result']['findings'][0]['suggested_action']=='Correct the period using Source L1'
     assert (folder/'review.json').read_text()==original
     validate_applicable_review(store,'review_test',brief['id'])
     (store.root/source['path']).write_text('Revenue changed to 120 million USD.')
@@ -190,3 +198,67 @@ def test_requirements_cannot_be_downgraded_or_new_findings_silently_closed(tmp_p
     identity=target['requirements']['requirement_items'][0]['requirement_id']
     with pytest.raises(ValueError,match='必答要求'):
         accept_review(store,'review_test',{**value,'requirement_checks':[{'requirement_id':identity,'status':'manual','reason':'No answer available'}]})
+
+
+def test_historical_response_cannot_override_descendant_review(tmp_path):
+    from briefloop.review import _response_scope,validate_applicable_review
+    store,source,v1,value=fixture(tmp_path);accept_review(store,'review_test',value)
+    finding=review_status(store,v1['id'])['findings'][0]
+    v2=store.revise(v1['id'],'The unsupported sentence was removed.')
+    v3=store.revise(v2['id'],'The unsupported claim has been reintroduced.')
+    def review(brief,response,decision,identity):
+        folder,fp=saved_review(store,brief,identity,identity)
+        accept_review(store,identity,{**value,'fingerprint':fp,'version_id':brief['id'],'findings':[],
+            'response_checks':[{'response_id':response['id'],'decision':decision,'reason':'Checked this exact version'}],
+            'assessment':{**value['assessment'],'brief_hash':brief['hash']}})
+        return folder
+    r3=respond(store,finding['id'],v3['id'],'disagree','Defending the reintroduced claim')
+    folder3=review(v3,r3,'unresolved','review_v3')
+    r2=respond(store,finding['id'],v2['id'],'removed','Sentence was removed in this older revision')
+    review(v2,r2,'resolved','review_v2')
+    assert review_status(store,v1['id'])['findings'][0]['status']=='open'
+    assert review_status(store,v2['id'])['findings'][0]['status']=='resolved'
+    assert review_status(store,v3['id'])['findings'][0]['status']=='open'
+    assert set(_response_scope(store,folder3/'packet',v3['id']))=={r3['id']}
+    validate_applicable_review(store,'review_v3',v3['id'])
+    fresh=store.root/'fresh-v3';build_packet(store,v3['id'],fresh)
+    assert set(_response_scope(store,fresh/'packet',v3['id']))=={r3['id']}
+
+
+def test_tool_history_tracks_actual_job_turn_and_delegated_children(tmp_path):
+    from briefloop.chat_store import ChatStore
+    from briefloop.execution_records import journal_tool
+    store,source,brief,value=fixture(tmp_path);chat=ChatStore(store)
+    session=chat.create('Reused conversation',{},store.root);sid=session['id']
+    job=store.rows('SELECT id FROM jobs')[0]['id']
+    chat.event(sid,'job/attached',{'jobId':job})
+    first=chat.message(sid,'Report A',status='completed',turn_id='turn-a')
+    store.event(job,'runtime_started',{'session_id':sid,'message_id':first['id']})
+    journal_tool(chat,sid,'turn-a','a','bash',{},'report-a output',status='completed',native_session='root')
+    chat.event(sid,'item/started',{'turnId':'turn-a','threadId':'root','item':{'type':'collabAgentToolCall','receiverThreadIds':['child']}})
+    journal_tool(chat,sid,'child-turn-a','child-a','bash',{},'child-a output',status='completed',native_session='child')
+    other_source=store.add_source('Report B source','Unrelated synthetic source')
+    other_run=store.create_run({'title':'Other','objective':'Other'},[other_source['id']])
+    other_job=store.enqueue('generate',{'run_id':other_run['id']})
+    chat.event(sid,'job/attached',{'jobId':other_job['id']})
+    second=chat.message(sid,'Report B',status='completed',turn_id='turn-b')
+    store.event(other_job['id'],'runtime_started',{'session_id':sid,'message_id':second['id']})
+    journal_tool(chat,sid,'turn-b','b','bash',{},'unrelated-report-b output',status='completed',native_session='root')
+    chat.event(sid,'item/started',{'turnId':'turn-b','threadId':'root','item':{'type':'collabAgentToolCall','receiverThreadIds':['child']}})
+    journal_tool(chat,sid,'child-turn-b','child-b','bash',{},'unrelated-child-b output',status='completed',native_session='child')
+    journal_tool(chat,sid,'unbound-turn','unbound','bash',{},'unbound private conversation',status='completed',native_session='root')
+    build_packet(store,brief['id'],store.root/'scoped');packet=store.root/'scoped/packet'
+    tools=json.loads((packet/'history/tools.json').read_text())
+    recorded=[json.loads((packet/row['file']).read_text()) for row in tools]
+    assert {row['record']['output'] for row in recorded}=={'report-a output','child-a output'}
+    assert all(row['job_id']==job and row['session_id']==sid and row['message_id']==first['id'] and row['root_turn_id']=='turn-a' for row in recorded)
+    assert all(isinstance(row['event_seq'],int) for row in recorded)
+    child=next(row for row in recorded if row['record']['output']=='child-a output')
+    assert child['turn_id']=='child-turn-a' and child['native_session']=='child'
+    assert child['delegation']['root_turn_id']=='turn-a'
+    # A session association without a saved message/turn does not authorize
+    # collection. Preserve a metadata gap so absence isn't called successful QA.
+    with store.tx() as connection:connection.execute("DELETE FROM events WHERE job_id=? AND kind='runtime_started'",(job,))
+    build_packet(store,brief['id'],store.root/'unbound');packet=store.root/'unbound/packet'
+    assert json.loads((packet/'history/tools.json').read_text())==[]
+    assert json.loads((packet/'history/executions.json').read_text())[0]['tool_history_gaps']

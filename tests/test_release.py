@@ -16,14 +16,30 @@ from briefloop.release import (SCHEMA, eligibility, decision, enqueue_release, g
 from briefloop.audit_bundle import enqueue_bundle, generate_bundle, verify_bundle, bundle_file
 
 
-def reviewed_report(tmp_path, figure=False):
+def reviewed_report(tmp_path, figure=False, visual_sources=False):
     store = Store(tmp_path)
     with store.tx() as c:
         c.executescript(SCHEMA)
     source = store.add_source('Synthetic public filing', 'Revenue was USD 12 million.\nUnused private appendix line.')
+    visual_sources_to_bind = []
+    if visual_sources:
+        from PIL import Image
+        from pypdf import PdfWriter
+        from briefloop.sources import upload
+        png = BytesIO()
+        Image.new('RGB', (80, 50), 'green').save(png, format='PNG')
+        image_source = upload(store, 'Synthetic confidential appendix.png', png.getvalue())
+        pdf = BytesIO()
+        writer = PdfWriter()
+        writer.add_blank_page(width=120, height=160)
+        writer.write(pdf)
+        pdf_source = upload(store, 'Synthetic confidential appendix.pdf', pdf.getvalue())
+        visual_sources_to_bind = [(image_source, {'kind': 'image'}, 'The image appendix is available.'),
+                                  (pdf_source, {'kind': 'pdf', 'page': 1}, 'The PDF appendix is available.')]
     requirements = {'title': 'Revenue report', 'objective': 'Explain revenue', 'manual_sections': ['Financing']}
-    run = store.create_run(requirements, [source['id']])
+    run = store.create_run(requirements, [source['id'], *[item[0]['id'] for item in visual_sources_to_bind]])
     markdown = 'Revenue was USD 12 million.\n\nFinancing: pending.'
+    markdown += ''.join('\n\n' + item[2] for item in visual_sources_to_bind)
     if figure:
         from PIL import Image
         from briefloop.figures import register_figure
@@ -40,7 +56,10 @@ def reviewed_report(tmp_path, figure=False):
         job = store.enqueue('generate', {'run_id': run['id']})
         chat = ChatStore(store)
         session = chat.create('Synthetic transport', {}, store.root)
+        message = chat.message(session['id'], 'Synthetic figure calculation', status='completed', turn_id='synthetic')
         chat.event(session['id'], 'job/attached', {'jobId': job['id']})
+        store.event(job['id'], 'runtime_started', {'folder': str(store.root), 'session_id': session['id'],
+                    'message_id': message['id'], 'backend': 'synthetic', 'runtime': {'model': 'synthetic/fixture'}})
         journal_tool(chat, session['id'], 'synthetic', 'tool-1', 'bash',
                      {'command': 'python calculate.py', 'api_key': 'DO-NOT-INCLUDE-THIS'},
                      '12000000', status='completed', exit_code=0)
@@ -50,6 +69,15 @@ def reviewed_report(tmp_path, figure=False):
         'supports': [{'span_id': span['id'], 'supports_quote': 'Revenue was USD 12 million.'}]})
     block_id = next(iter(blocks(brief_document(brief))))
     bind_claim(store, brief['id'], claim['id'], block_id, 'Revenue was USD 12 million.')
+    visual_claims = []
+    for visual_source, locator, statement in visual_sources_to_bind:
+        from briefloop.evidence import node_text
+        visual_span = create_span(store, {'source_id': visual_source['id'], 'locator': locator})
+        visual_claim = create_claim(store, run['id'], {'statement': statement, 'kind': 'fact',
+            'supports': [{'span_id': visual_span['id'], 'supports_quote': statement}]})
+        visual_block = next(identity for identity, node in blocks(brief_document(brief)).items() if node_text(node) == statement)
+        bind_claim(store, brief['id'], visual_claim['id'], visual_block, statement)
+        visual_claims.append(visual_claim)
     folder = store.root / 'review_fixture'
     fingerprint, files = build_packet(store, brief['id'], folder)
     review_id = uid('review')
@@ -63,8 +91,9 @@ def reviewed_report(tmp_path, figure=False):
     from briefloop.execution_records import journal_tool
     chat = ChatStore(store)
     session = chat.create('Synthetic Reviewer transport', {'model': 'synthetic/fixture'}, folder)
+    message = chat.message(session['id'], 'Synthetic target review', status='completed', turn_id='synthetic-turn')
     store.event(review_job['id'], 'runtime_started', {'folder': str(folder), 'session_id': session['id'],
-                'backend': 'synthetic', 'runtime': {'model': 'synthetic/fixture'}})
+                'message_id': message['id'], 'backend': 'synthetic', 'runtime': {'model': 'synthetic/fixture'}})
     journal_tool(chat, session['id'], 'synthetic-turn', 'read-target', 'read',
                  {'filePath': str(folder / 'packet/target.json')}, 'Synthetic target read', status='completed')
     result = {'fingerprint': fingerprint, 'version_id': brief['id'], 'status': 'complete', 'summary': 'Synthetic source checked',
@@ -74,6 +103,7 @@ def reviewed_report(tmp_path, figure=False):
                                 'reason': 'Actual body checked'} for item in requirement_items(requirements)],
         'assessment': {'brief_hash': brief['hash'], 'status': 'complete', 'summary': 'Synthetic', 'overall': '达到要求',
                        'evidence': 4, 'coverage': 4, 'analysis': 4, 'expression': 4}}
+    result['claim_checks'].extend({'claim_id': item['id'], 'status': 'supported_for_scope', 'reason': 'Synthetic saved visual source fixture'} for item in visual_claims)
     accept_review(store, review_id, result)
     return store, source, brief, review_id
 
@@ -161,6 +191,13 @@ def test_repeated_click_and_cancel_retry_preserve_formal_identity(tmp_path):
     assert retry['job']['id'] != queued['job']['id']
     result = generate_release(store, retry['job'], threading.Event())
     assert result['release_id'] == queued['release']['id']
+    assert store.one('jobs', retry['job']['id'])['status'] == 'complete'
+    # Formal state and file-job success commit together. A late stop cannot
+    # turn this already-issued report's job into a cancelled task.
+    from briefloop.runtime import Worker
+    Worker(store).stop_job(retry['job']['id'])
+    assert store.one('jobs', retry['job']['id'])['status'] == 'complete'
+    assert get_release(store, result['release_id'])['status'] == 'released'
     # Completion after a lost worker acknowledgement reuses the verified file.
     assert generate_release(store, retry['job'], threading.Event()) == result
     assert validate_release(store, result['release_id'])['version_id'] == brief['id']
@@ -233,3 +270,90 @@ def test_audit_binds_figure_data_script_and_sanitized_tool_record(tmp_path):
             archive.writestr(name, blob)
     checked = verify_bundle(output.getvalue())
     assert not checked['valid'] and any('图表登记不一致' in text for text in checked['errors'])
+
+
+def test_restricted_sources_do_not_escape_through_figure_inputs(tmp_path, monkeypatch):
+    import briefloop.figures as figures
+    original_register = figures.register_figure
+
+    def register_with_source_copy(store, run_id, image, title, caption, source_ids, data_path, script_path):
+        raw = store.source_text(source_ids[0])
+        data_path.write_text(dump({'raw_source_extract': raw, 'plotted_revenue_millions': 12}))
+        script_path.write_text('source_text = ' + repr(raw) + '\nprint(12 * 1000000)')
+        return original_register(store, run_id, image, title, caption, source_ids, data_path, script_path)
+
+    monkeypatch.setattr(figures, 'register_figure', register_with_source_copy)
+    store, source, brief, review = reviewed_report(tmp_path, figure=True, visual_sources=True)
+    release, job = complete_release(store, brief)
+    report_bytes = release_file(store, release['id']).read_bytes()
+    all_source_ids = [item['id'] for item in release['data']['snapshot']['sources']]
+    packet_index = json.loads((store.root / release['data']['packet_path'] / 'index.json').read_text())
+    source_visuals = ['packet/' + name for item in packet_index['sources'] for name in item.get('visual_files', [])]
+    assert len(source_visuals) == 2
+    for mode in ('metadata', 'excerpt'):
+        queued = enqueue_bundle(store, release['id'], {identity: mode for identity in all_source_ids})
+        result = generate_bundle(store, queued, threading.Event())
+        path = store.root / result['path']
+        checked = verify_bundle(path)
+        assert checked['valid'] and not checked['complete_materials'], checked
+        with ZipFile(path) as archive:
+            assert archive.read('report.docx') == report_bytes
+            assert any(name.endswith('/image.png') for name in archive.namelist())
+            assert not any(name.endswith(('/data.json', '/script.py')) for name in archive.namelist())
+            assert not set(source_visuals).intersection(archive.namelist())
+            visual_index = json.loads(archive.read('packet/visual-inputs.json'))
+            assert {item.get('file') for item in visual_index['images']}.issuperset(name.removeprefix('packet/') for name in source_visuals)
+            assert all(b'Unused private appendix line.' not in archive.read(name) for name in archive.namelist())
+        missing = [item for item in checked['omissions'] if item.get('kind') == 'source_derived_figure']
+        assert len(missing) == 2 and all(source['id'] in item['source_ids'] for item in missing)
+        assert all(any(item.get('file') == name and item.get('source_id') in all_source_ids for item in checked['omissions']) for name in source_visuals)
+    # The user can still explicitly include originals and corresponding full
+    # calculation inputs; restrictions do not delete the stored artifacts.
+    queued = enqueue_bundle(store, release['id'], {identity: 'original' for identity in all_source_ids})
+    result = generate_bundle(store, queued, threading.Event())
+    with ZipFile(store.root / result['path']) as archive:
+        assert set(source_visuals).issubset(archive.namelist())
+        assert any(b'Unused private appendix line.' in archive.read(name)
+                   for name in archive.namelist() if name.endswith(('/data.json', '/script.py')))
+        blobs = {name: archive.read(name) for name in archive.namelist()}
+    # Merely relabelling a full package as metadata does not make its embedded
+    # source images authorized; offline validation checks that relationship.
+    manifest = json.loads(blobs['manifest.json'])
+    for permission in manifest['source_permissions'].values():
+        permission['mode'] = 'metadata'
+    manifest['complete_materials'] = False
+    blobs['manifest.json'] = dump(manifest).encode()
+    output = BytesIO()
+    with ZipFile(output, 'w', ZIP_DEFLATED) as archive:
+        for name, blob in blobs.items():
+            archive.writestr(name, blob)
+    checked = verify_bundle(output.getvalue())
+    assert not checked['valid'] and any('受限来源的原图或页面图' in error for error in checked['errors'])
+
+
+def test_offline_checks_all_frozen_review_files_and_tool_index(tmp_path):
+    store, source, brief, review = reviewed_report(tmp_path, figure=True)
+    release, job = complete_release(store, brief)
+    queued = enqueue_bundle(store, release['id'], {source['id']: 'original'})
+    result = generate_bundle(store, queued, threading.Event())
+    with ZipFile(store.root / result['path']) as archive:
+        original = {name: archive.read(name) for name in archive.namelist()}
+    tool_file = next(name for name in original if name.startswith('packet/history/tools/'))
+    view_file = next(name for name in original if name.endswith('.view.json'))
+    for operation, name in [('delete', tool_file), ('change', view_file)]:
+        blobs = dict(original)
+        manifest = json.loads(blobs['manifest.json'])
+        if operation == 'delete':
+            del blobs[name]
+            del manifest['files'][name]
+        else:
+            blobs[name] = blobs[name].replace(b'12 million', b'120 million')
+            manifest['files'][name] = sha(blobs[name])
+        blobs['manifest.json'] = dump(manifest).encode()
+        output = BytesIO()
+        with ZipFile(output, 'w', ZIP_DEFLATED) as archive:
+            for filename, blob in blobs.items():
+                archive.writestr(filename, blob)
+        checked = verify_bundle(output.getvalue())
+        assert not checked['valid'] and not checked['complete_materials']
+        assert any(name in error or name.removeprefix('packet/') in error for error in checked['errors'])

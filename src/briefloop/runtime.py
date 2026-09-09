@@ -15,6 +15,8 @@ from .industry_data import prepare_report_data
 from .store import dump, now
 from .skills import bind_context
 
+FILE_JOB_KINDS = ('export_docx', 'release', 'audit_bundle')
+
 
 COMMON = '''你在运行 BriefLoop 本地应用。用户已授权本轮研究、写作、评分。
 你是 Orchestrator，负责语义规划和调用真实原生子 agent。不要模拟多个角色自问自答。
@@ -314,6 +316,8 @@ class Worker:
         self.thread=threading.Thread(target=self.loop,name='briefloop-worker',daemon=True)
         self.review_current=None;self._review_runtime=None
         self.review_thread=threading.Thread(target=self.review_loop,name='briefloop-review-worker',daemon=True)
+        self.file_current=None;self._file_cancelled=threading.Event()
+        self.file_thread=threading.Thread(target=self.file_loop,name='briefloop-file-worker',daemon=True)
 
     @property
     def runtime(self):
@@ -335,27 +339,42 @@ class Worker:
         if self.opened_paused:
             for job in self.store.rows("SELECT * FROM jobs WHERE status='queued'"):
                 self.store.update_job(job['id'],'interrupted',error='打开工作区时保留旧任务，尚未执行；点击恢复可继续')
-        self.thread.start();self.review_thread.start()
+        self.thread.start();self.review_thread.start();self.file_thread.start()
 
     def close(self):
-        self.stopping.set();self.runtime.cancel()
+        self.stopping.set();self._file_cancelled.set();self.runtime.cancel()
         if self._review_runtime:self._review_runtime.cancel()
         self.thread.join(timeout=12)
         if self.review_thread.is_alive():self.review_thread.join(timeout=12)
+        if self.file_thread.is_alive():self.file_thread.join(timeout=12)
 
     def stop_job(self,jid):
         with self._claim_lock:
-            # Never cancel based on an earlier SELECT: the worker may have
-            # claimed it since then. Both paths serialize current/cancel state.
+            # Commit the stop before signalling a transport. A completed turn
+            # cannot overwrite this decision while settling its final result.
             with self.store.tx() as c:
-                changed=c.execute("UPDATE jobs SET status='cancelled',error=?,updated=? WHERE id=? AND status='queued'",
-                                  ('已取消排队',now(),jid)).rowcount
-            if not changed:
-                job=self.store.one('jobs',jid)
-                if job['status']=='running' and self.current==jid:self.runtime.cancel()
-                if job['status']=='running' and self.review_current==jid and self._review_runtime:self._review_runtime.cancel()
+                job=c.execute('SELECT status FROM jobs WHERE id=?',(jid,)).fetchone()
+                if not job:raise ValueError('任务不存在')
+                changed=c.execute("UPDATE jobs SET status='cancelled',error=?,updated=? WHERE id=? AND status IN ('queued','running')",
+                                  ('任务已停止，已生成内容保留',now(),jid)).rowcount
+            if changed:
+                if self.current==jid:self.runtime.cancel()
+                if self.review_current==jid and self._review_runtime:self._review_runtime.cancel()
+                if self.file_current==jid:self._file_cancelled.set()
             for child in self.store.rows("SELECT id FROM jobs WHERE status IN ('queued','running') AND json_extract(payload,'$.parent_job_id')=?",(jid,)):
                 if child['id']!=jid:self.stop_job(child['id'])
+
+    def _settle_job(self,jid,status,*,result=None,error=None,runtime=None):
+        """One terminal commit boundary shared by all worker lanes and stop."""
+        with self._claim_lock:
+            if status=='complete' and (self.stopping.is_set() or runtime is not None and runtime.cancelled.is_set()):
+                status='cancelled';error='任务已停止，已生成内容保留'
+            with self.store.tx() as c:
+                # A file job may atomically commit its own formal artifact and
+                # complete status. Preserve it, as well as any prior user stop.
+                c.execute("UPDATE jobs SET status=?,result=COALESCE(?,result),error=?,updated=? WHERE id=? AND status='running'",
+                          (status,dump(result) if result is not None else None,error,now(),jid))
+            return self.store.one('jobs',jid)
 
 
     def resume(self,jid):
@@ -395,15 +414,15 @@ class Worker:
                 self._review_runtime.cancelled.clear()
             try:
                 result=run_review(self.store,self._review_runtime,job,json.loads(job['payload'])['version_id'],self.folder(job))
-                if self._review_runtime.cancelled.is_set():raise InterruptedError('审阅已停止')
-                self.store.update_job(job['id'],'complete',result=result)
-            except InterruptedError as exc:self.store.update_job(job['id'],'cancelled',error=str(exc))
-            except Exception as exc:self.store.update_job(job['id'],'failed',error=str(exc))
-            finally:self.review_current=None
+                self._settle_job(job['id'],'complete',result=result,runtime=self._review_runtime)
+            except InterruptedError as exc:self._settle_job(job['id'],'cancelled',error=str(exc))
+            except Exception as exc:self._settle_job(job['id'],'failed',error=str(exc))
+            finally:
+                with self._claim_lock:self.review_current=None
 
     def loop(self):
         while not self.stopping.wait(.5):
-            jobs=self.store.rows("SELECT * FROM jobs WHERE status='queued' AND kind!='review' ORDER BY rowid LIMIT 1")
+            jobs=self.store.rows("SELECT * FROM jobs WHERE status='queued' AND kind!='review' AND kind NOT IN (?,?,?) ORDER BY rowid LIMIT 1",FILE_JOB_KINDS)
             if not jobs:
                 if self.store.settings()['auto_learn'] and not self.opened_paused:
                     try:
@@ -430,15 +449,6 @@ class Worker:
                         self.runtime.execute(job,TASK_CONTEXT+preparation_prompt(self.store,row,folder),folder,resume_on_complete=True)
                         row=prepare(self.store,row['id'],json.loads((folder/'template.json').read_text()))
                     result={'template_id':row['id'],'revision':row['revision'],'status':row['status']}
-                elif job['kind']=='export_docx':
-                    from .export_jobs import generate_word
-                    result=generate_word(self.store,job,self.runtime.cancelled)
-                elif job['kind']=='release':
-                    from .release import generate_release
-                    result=generate_release(self.store,job,self.runtime.cancelled)
-                elif job['kind']=='audit_bundle':
-                    from .audit_bundle import generate_bundle
-                    result=generate_bundle(self.store,job,self.runtime.cancelled)
                 elif job['kind']=='source_refresh':
                     from .source_updates import refresh
                     args=json.loads(job['payload'])
@@ -455,14 +465,44 @@ class Worker:
                     from .learning import learn
                     result=learn(self.store,self.runtime,job)
                 else:raise ValueError('Unknown job kind')
-                if self.runtime.cancelled.is_set():raise InterruptedError('任务已停止，已生成内容保留')
-                self.store.update_job(job['id'],'complete',result=result)
-            except InterruptedError as exc:self.store.update_job(job['id'],'cancelled',error=str(exc))
+                self._settle_job(job['id'],'complete',result=result,runtime=self.runtime)
+            except InterruptedError as exc:self._settle_job(job['id'],'cancelled',error=str(exc))
             except Exception as exc:
                 if job['kind']=='prepare_template':
                     with self.store.tx() as c:c.execute("UPDATE templates SET status='failed',error=? WHERE id=?",(str(exc),json.loads(job['payload'])['template_id']))
-                self.store.update_job(job['id'],'failed',error=str(exc))
-            finally:self.current=None
+                self._settle_job(job['id'],'failed',error=str(exc))
+            finally:
+                with self._claim_lock:self.current=None
+
+    def file_loop(self):
+        """Produce requested files even while generation or Review is running."""
+        while not self.stopping.wait(.5):
+            jobs=self.store.rows("SELECT * FROM jobs WHERE status='queued' AND kind IN (?,?,?) ORDER BY rowid LIMIT 1",FILE_JOB_KINDS)
+            if not jobs:continue
+            job=jobs[0]
+            with self._claim_lock:
+                if self.stopping.is_set():break
+                with self.store.tx() as c:
+                    claimed=c.execute("UPDATE jobs SET status='running',error=NULL,updated=? WHERE id=? AND status='queued'",
+                                      (now(),job['id'])).rowcount
+                if not claimed:continue
+                self.file_current=job['id'];self._file_cancelled.clear()
+            job=self.store.one('jobs',job['id'])
+            try:
+                if job['kind']=='export_docx':
+                    from .export_jobs import generate_word
+                    result=generate_word(self.store,job,self._file_cancelled)
+                elif job['kind']=='release':
+                    from .release import generate_release
+                    result=generate_release(self.store,job,self._file_cancelled)
+                else:
+                    from .audit_bundle import generate_bundle
+                    result=generate_bundle(self.store,job,self._file_cancelled)
+                self._settle_job(job['id'],'complete',result=result)
+            except InterruptedError as exc:self._settle_job(job['id'],'cancelled',error=str(exc))
+            except Exception as exc:self._settle_job(job['id'],'failed',error=str(exc))
+            finally:
+                with self._claim_lock:self.file_current=None
 
     def folder(self,job):
         folder=self.store.root/'jobs'/job['id'];folder.mkdir(exist_ok=True)
@@ -470,6 +510,24 @@ class Worker:
         (folder/'scout.schema.json').write_text(dump(ScoutResult.model_json_schema()))
         (folder/'assessment.schema.json').write_text(dump(Assessment.model_json_schema()))
         return folder
+
+    def _remember_generated_sources(self,folder,brief):
+        """Called only for a version newly admitted by this execution."""
+        from .review_learning import source_snapshot
+        path=folder/'generated-source-snapshots.json'
+        saved=json.loads(path.read_text()) if path.exists() else {}
+        if brief['id'] in saved:return
+        value={'brief_hash':brief['hash'],'captured_at':now()}
+        try:value['sources']=source_snapshot(self.store,brief['run_id'])
+        except (ValueError,OSError) as exc:value.update(sources=None,error=str(exc))
+        saved[brief['id']]=value
+        temporary=path.with_suffix('.tmp');temporary.write_text(dump(saved));temporary.replace(path)
+
+    def _generated_sources(self,folder,version_id):
+        path=folder/'generated-source-snapshots.json'
+        saved=json.loads(path.read_text()).get(version_id) if path.exists() else None
+        if not saved or saved['brief_hash']!=self.store.one('briefs',version_id)['hash'] or saved.get('sources') is None:return {}
+        return {'source_snapshot':saved['sources']}
 
     def generate(self,job,*,score=True):
         payload=json.loads(job['payload']);run=self.store.one('runs',payload['run_id']);folder=self.folder(job)
@@ -504,6 +562,7 @@ class Worker:
                 data['reader_contract']=contract
             normalized=BriefDraft.model_validate(data)
             sha=document_hash(normalized.editor_document)
+            known={row['id'] for row in self.store.rows('SELECT id FROM briefs WHERE run_id=?',(run['id'],))}
             try:record=self.store.publish(run['id'],data,version_id=vid)
             except Conflict:
                 for row in self.store.rows("SELECT id,hash FROM briefs WHERE run_id=? AND author='agent' ORDER BY rowid DESC",(run['id'],)):
@@ -518,16 +577,19 @@ class Worker:
                 except Conflict:
                     (folder/'draft-refinement-suggestion.json').write_text(dump(data));return
             latest[0]=record['id']
+            if record['id'] not in known:self._remember_generated_sources(folder,record)
             if self.thread.is_alive() and not checkpoint[0] and time.monotonic()-started>=180 and json.loads(run['requirements']).get('writing_mode')=='internal_report':
                 from .review import enqueue_review
-                enqueue_review(self.store,record['id'],payload={**payload,'parent_job_id':job['id'],'checkpoint':True})
-                checkpoint[0]=True
+                with self._claim_lock:
+                    if not self.runtime.cancelled.is_set() and not self.stopping.is_set() and self.store.one('jobs',job['id'])['status']!='cancelled':
+                        enqueue_review(self.store,record['id'],payload={**payload,'parent_job_id':job['id'],'checkpoint':True})
+                        checkpoint[0]=True
         result=self.runtime.execute(job,generation_prompt(self.store,run,folder,backend),folder,publish)
         publish()
         current=latest[0]
         brief=self.store.one('briefs',current)
         if not score or payload.get('single_evaluation') is False:
-            return {**result,'version_id':brief['id']}
+            return {**result,'version_id':brief['id'],**self._generated_sources(folder,brief['id'])}
         scoring=None
         if not self.store.rows('SELECT id FROM assessments WHERE version_id=?',(current,)):
             legacy=folder/'assessment.json'
@@ -546,6 +608,8 @@ class Worker:
                 scoring=self.assess_version(evaluator,brief,score_folder,backend)
         outcome={**result,'version_id':brief['id'],**({'scoring':scoring} if scoring else {})}
         if payload.get('auto_revision',False):outcome.update(self.auto_revise(job,brief,folder))
+        outcome.pop('source_snapshot',None)
+        outcome.update(self._generated_sources(folder,outcome['version_id']))
         return outcome
 
     def auto_revise(self,job,brief,folder):
@@ -585,7 +649,9 @@ class Worker:
             if not value.get('editor_document') and value.get('markdown'):
                 from .document_model import markdown_document
                 value['editor_document']=markdown_document(value['markdown'])
-            try:revised=self.store.publish(brief['run_id'],value,version_id=revision_id,parent_id=brief['id'])
+            try:
+                revised=self.store.publish(brief['run_id'],value,version_id=revision_id,parent_id=brief['id'])
+                self._remember_generated_sources(folder,revised)
             except Conflict as exc:
                 latest=self.store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(brief['run_id'],))[0]['id']
                 if latest not in (brief['id'],revision_id):
@@ -593,32 +659,94 @@ class Worker:
                 (stage/'admission-error.json').write_text(dump({'error':str(exc)}));raise
             except ValueError as exc:
                 (stage/'admission-error.json').write_text(dump({'error':str(exc)}));raise
-        bindings=folder/'revision'/'revision_bindings.json'
-        if bindings.exists():
-            from .evidence import bind_claim
-            for binding in json.loads(bindings.read_text()):
-                if not self.store.rows('SELECT id FROM claim_bindings WHERE version_id=? AND claim_id=? AND block_id=?',(revision_id,binding['claim_id'],binding['block_id'])):
-                    bind_claim(self.store,revision_id,binding['claim_id'],binding['block_id'],binding['quote'])
-        responses=folder/'revision'/'responses.json'
-        if responses.exists():
-            from .review import respond
-            for item in json.loads(responses.read_text()):
-                if not self.store.rows('SELECT id FROM review_responses WHERE finding_id=? AND version_id=?',(item['finding_id'],revision_id)):
-                    respond(self.store,item['finding_id'],revision_id,item['action'],item['reason'])
+        latest=self.store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(brief['run_id'],))[0]['id']
+        if latest!=revision_id:
+            return {'version_id':latest,'revision_status':'user_edit','revision_message':'用户已修改，保留当前人工稿；原修订的待处理记录仍保留','original_version_id':brief['id']}
+        if not self._revision_metadata(job,revised,folder,open_findings):
+            latest=self.store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(brief['run_id'],))[0]['id']
+            return {'version_id':latest,'revision_status':'user_edit','revision_message':'元数据修复期间用户已修改；修复工件保留，未替换人工稿','original_version_id':brief['id']}
         if not self.store.rows('SELECT id FROM assessments WHERE version_id=?',(revision_id,)):
             evaluation=folder/'revision-evaluation';evaluation.mkdir(exist_ok=True)
             (evaluation/'assessment.schema.json').write_text(dump(Assessment.model_json_schema()))
             evaluator=stage_job(self.store,{**job,'kind':'assess','payload':dump({**payload,'version_id':revision_id})},'evaluator',mode='single')
             self.store.event(job['id'],'revision_progress',{'stage':'checking','version_id':revision_id})
             self.assess_version(evaluator,revised,evaluation,payload.get('agent_backend','codex'))
-        return {'version_id':revision_id,'revision_status':'complete','original_version_id':brief['id']}
+        return {'version_id':revision_id,'revision_status':'complete','original_version_id':brief['id'],**self._generated_sources(folder,revision_id)}
+
+    def _revision_metadata(self,job,revised,folder,findings):
+        """Admit auxiliary files or repair them without generating another body."""
+        from .evidence import bind_claim,blocks,node_text,record
+        from .document_model import brief_document
+        from .review import respond
+        stage=folder/'revision';stage.mkdir(exist_ok=True)
+        error_file=stage/'metadata-admission-error.json'
+        names={'bindings':'revision_bindings.json','responses':'responses.json'}
+        expected={item['id'] for item in findings}
+        nodes=blocks(brief_document(revised))
+        def load():
+            return {key:json.loads((stage/name).read_text()) if (stage/name).exists() else [] for key,name in names.items()}
+        def admit(data):
+            if not isinstance(data,dict) or any(not isinstance(data.get(key),list) for key in names):raise ValueError('修订绑定及处理说明必须为数组')
+            for binding in data['bindings']:
+                if not isinstance(binding,dict) or any(not isinstance(binding.get(key),str) or not binding[key] for key in ('claim_id','block_id','quote')):raise ValueError('修订绑定缺少 claim_id/block_id/quote')
+                claim=record(self.store,'claims',binding['claim_id']);node=nodes.get(binding['block_id'])
+                if claim['run_id']!=revised['run_id'] or node is None or node_text(node).count(binding['quote'])!=1:raise ValueError('修订正文锚点缺失或不唯一，请对照已入库正文修复绑定')
+            response_ids=[]
+            for item in data['responses']:
+                if not isinstance(item,dict) or any(not isinstance(item.get(key),str) or not item[key].strip() for key in ('finding_id','action','reason')) or item['action'] not in ('corrected','removed','disagree'):raise ValueError('修订处理说明缺少有效 finding_id/action/reason')
+                response_ids.append(item['finding_id'])
+            if set(response_ids)!=expected or len(response_ids)!=len(set(response_ids)):raise ValueError('修订处理说明须逐项对应本轮发现，不能遗漏、重复或使用其他 finding_id')
+            for binding in data['bindings']:
+                if not self.store.rows('SELECT id FROM claim_bindings WHERE version_id=? AND claim_id=? AND block_id=? AND quote=?',(revised['id'],binding['claim_id'],binding['block_id'],binding['quote'])):
+                    bind_claim(self.store,revised['id'],binding['claim_id'],binding['block_id'],binding['quote'])
+            for item in data['responses']:
+                previous=self.store.rows('SELECT data FROM review_responses WHERE finding_id=? AND version_id=? ORDER BY rowid DESC LIMIT 1',(item['finding_id'],revised['id']))
+                if not previous or json.loads(previous[0]['data'])!={'action':item['action'],'reason':item['reason']}:
+                    respond(self.store,item['finding_id'],revised['id'],item['action'],item['reason'])
+        def remember(exc):
+            import hashlib
+            captured={name:(stage/name).read_text() for name in names.values() if (stage/name).exists()}
+            value={'version_id':revised['id'],'brief_hash':revised['hash'],'error':str(exc),'files':captured}
+            attempts=stage/'metadata-attempts';attempts.mkdir(exist_ok=True)
+            path=attempts/(hashlib.sha256(dump(value).encode()).hexdigest()+'.json')
+            if not path.exists():path.write_text(dump(value))
+            error_file.write_text(dump({**value,'record':str(path.relative_to(folder))}))
+        retry=error_file.exists()
+        try:
+            admit(load())
+            return True
+        except (ValueError,KeyError,TypeError) as exc:
+            remember(exc)
+            if not retry:raise
+        repair=stage/'metadata-repair';repair.mkdir(exist_ok=True)
+        (repair/'input.json').write_text(dump({'version_id':revised['id'],'brief_hash':revised['hash'],'document':brief_document(revised),
+            'findings':findings,'error':json.loads(error_file.read_text()),'candidate_claims':self.store.rows('SELECT id,data FROM claims WHERE run_id=?',(revised['run_id'],))}))
+        prompt=TASK_CONTEXT+f'''恢复这次已发布修订的绑定与处理说明。只读取 {repair/'input.json'}，正文版本 {revised['id']} 已固定，hash={revised['hash']}。
+只修正本次失败的 revision_bindings/responses 元数据，禁止重新生成正文、修改 draft.json、调用 revise_document 或发布另一版本，也不新增研究或改写来源。
+对照已保存 document 的真实 blockId 和唯一原句选绑定；使用现有真实 claim_id；每个 input.findings 的 finding_id 必须有 corrected/removed/disagree 与具体 reason。
+写入 {repair/'metadata.json'}，格式为 {{"version_id":"{revised['id']}","brief_hash":"{revised['hash']}","bindings":[{{"claim_id":"实际ID","block_id":"实际块ID","quote":"正文唯一片段"}}],"responses":[{{"finding_id":"实际ID","action":"corrected|removed|disagree","reason":"具体依据"}}]}}。完整数组包含原有正确项目。不要直接写数据库，运行器核对后接纳。
+'''
+        self.store.event(job['id'],'revision_progress',{'stage':'repairing_metadata','version_id':revised['id'],'message':'只修复已保存稿件的依据关联与处理说明'})
+        self.runtime.execute({**job,'kind':'repair_revision_metadata'},prompt,repair,resume_on_complete=(repair/'admission-error.json').exists())
+        latest=self.store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(revised['run_id'],))[0]['id']
+        if latest!=revised['id']:return False
+        try:
+            value=json.loads((repair/'metadata.json').read_text())
+            if not isinstance(value,dict) or value.get('version_id')!=revised['id'] or value.get('brief_hash')!=revised['hash']:raise ValueError('修复元数据未绑定已保存修订版本')
+            admit(value)
+        except (ValueError,KeyError,TypeError) as exc:
+            (repair/'admission-error.json').write_text(dump({'error':str(exc)}));remember(exc);raise
+        for key,name in names.items():
+            path=stage/name;temporary=path.with_suffix('.tmp');temporary.write_text(dump(value[key]));temporary.replace(path)
+        self.store.event(job['id'],'revision_progress',{'stage':'metadata_repaired','version_id':revised['id']})
+        return True
 
     def assess_version(self,job,brief,folder,backend):
         req=json.loads(self.store.one('runs',brief['run_id'])['requirements'])
         if req.get('writing_mode')=='internal_report':
-            from .review import run_review,enqueue_review,get_review
+            from .review import run_review
             if (folder/'review'/'review-id.json').exists() or not self.thread.is_alive():return run_review(self.store,self.runtime,job,brief['id'],folder/'review')
-            pending=enqueue_review(self.store,brief['id'],payload={**json.loads(job['payload']),'parent_job_id':job['id']})
+            pending=self._review_child(job,brief)
             while True:
                 record=self.store.one('jobs',pending['id'])
                 if record['status']=='complete':return json.loads(record['result'])
@@ -629,6 +757,31 @@ class Worker:
         result=self.runtime.execute(job,assessment_prompt(self.store,brief,folder,backend),folder)
         self.store.assess(brief['id'],json.loads((folder/'assessment.json').read_text()))
         return result
+
+    def _review_child(self,parent,brief):
+        """Resume an applicable saved child before scheduling another model turn."""
+        from .review import enqueue_review,validate_applicable_review,_snapshot,sha
+        payload={**json.loads(parent['payload']),'parent_job_id':parent['id']}
+        selected=json.loads(stage_job(self.store,parent,'evaluator',mode='single')['payload'])['runtime']
+        for child in self.store.rows("SELECT * FROM jobs WHERE kind='review' AND json_extract(payload,'$.parent_job_id')=? AND json_extract(payload,'$.version_id')=? ORDER BY rowid DESC",(parent['id'],brief['id'])):
+            previous=json.loads(child['payload'])
+            actual=json.loads(stage_job(self.store,child,'evaluator',mode='single')['payload'])['runtime']
+            if actual!=selected or previous.get('agent_backend','codex')!=payload.get('agent_backend','codex'):continue
+            marker=self.store.root/'jobs'/child['id']/'review-id.json'
+            try:
+                if marker.exists():validate_applicable_review(self.store,json.loads(marker.read_text())['review_id'],brief['id'])
+                else:
+                    expected=sha(dump({'snapshot':_snapshot(self.store,brief['id']),'runtime':previous['runtime']}).encode())
+                    if previous.get('review_input')!=expected:continue
+            except (ValueError,OSError):continue
+            with self._claim_lock:
+                if self.runtime.cancelled.is_set() or self.stopping.is_set():raise InterruptedError('报告已停止')
+                with self.store.tx() as c:
+                    c.execute("UPDATE jobs SET status='queued',error=NULL,updated=? WHERE id=? AND status IN ('failed','interrupted','cancelled')",(now(),child['id']))
+                return self.store.one('jobs',child['id'])
+        with self._claim_lock:
+            if self.runtime.cancelled.is_set() or self.stopping.is_set():raise InterruptedError('报告已停止')
+            return enqueue_review(self.store,brief['id'],payload=payload)
 
     def assess(self,job):
         payload=json.loads(job['payload']);brief=self.store.one('briefs',payload['version_id']);folder=self.folder(job)

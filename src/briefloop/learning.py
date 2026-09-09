@@ -41,10 +41,16 @@ def _experience(store, job):
                   'after':b['markdown'],'diff':diff,'sources':[store.one('sources',s) for s in store.source_ids(run['id'])]}
         elif f['kind']=='review_correction':
             before=store.one('briefs',data['before'])
-            text={**data,'requirements':json.loads(run['requirements']),'before_text':before['markdown'],'after_text':b['markdown']}
+            text={**data}
+            # New verified feedback retains the Review packet's exact evidence,
+            # requirements and versions. Preserve older feedback compatibly.
+            text.setdefault('requirements',json.loads(run['requirements']))
+            text.setdefault('before_text',before['markdown']);text.setdefault('after_text',b['markdown'])
         else:text={'kind':'user_comment','requirements':json.loads(run['requirements']),'brief':b['markdown'],'comment':data['text']}
-        text['assessments']=[{'version_id':row['version_id'],'assessment':json.loads(row['data'])} for row in store.rows('SELECT a.* FROM assessments a JOIN briefs b ON b.id=a.version_id WHERE b.run_id=?',(run['id'],))]
-        text['execution_records']=[{'job_id':j['id'],'status':j['status'],'result':json.loads(j['result']) if j['result'] else None,'trace_file':str(store.root/'jobs'/j['id']/'events.jsonl')} for j in store.rows("SELECT * FROM jobs WHERE kind='generate'") if json.loads(j['payload']).get('run_id')==run['id']]
+        if 'assessments' not in text:
+            text['assessments']=[{'version_id':row['version_id'],'assessment':json.loads(row['data'])} for row in store.rows('SELECT a.* FROM assessments a JOIN briefs b ON b.id=a.version_id WHERE b.run_id=?',(run['id'],))]
+        if 'execution_records' not in text:
+            text['execution_records']=[{'job_id':j['id'],'status':j['status'],'result':json.loads(j['result']) if j['result'] else None,'trace_file':str(store.root/'jobs'/j['id']/'events.jsonl')} for j in store.rows("SELECT * FROM jobs WHERE kind='generate'") if json.loads(j['payload']).get('run_id')==run['id']]
         text['context_note']='用户改稿与评论是反馈；review_correction仅表示独立复核过的处理，不把来源正常更新当原稿事实错误。评分仍是可争议的模型判断；执行记录用于追溯，不作为来源事实。'
         items.append({'text':dump(text),'source':fid})
     # Only a few existing tasks. Their source snapshots, not user rewrites, go to generation.
@@ -100,17 +106,25 @@ def _role(store,runtime,job,study,round_number,phase):
 
 
 def _generate_trial(store,job,case,skill,folder,tag):
+    from .review_learning import source_snapshot
+    selected=case.get('learning_source_ids',store.source_ids(case['id']))
+    expected=source_snapshot(store,case['id'],source_ids=selected)
     folder.mkdir(parents=True,exist_ok=True)
     marker=folder/'trial.json'
-    if marker.exists():info=json.loads(marker.read_text())
+    if marker.exists():
+        info=json.loads(marker.read_text())
+        if info.get('source_snapshot',expected)!=expected:
+            raise ValueError('学习试验的来源快照已变化，旧阶段保留；请基于新材料创建新学习任务')
     else:
         requirements={**json.loads(case['requirements']),'allow_web':False}
-        run=store.create_run(requirements,json.loads(case['source_ids']),mode='trial',skill_id=skill['id'] if skill else None)
+        run=store.create_run(requirements,selected,mode='trial',skill_id=skill['id'] if skill else None)
         parent=json.loads(job['payload'])
         trial=store.enqueue('generate',{'run_id':run['id'],'skill_override':skill,'single_evaluation':False,'runtime':parent.get('runtime',store.runtime_config()),'role_models':parent.get('role_models',{}),'agent_backend':parent.get('agent_backend',store.settings().get('agent_backend','codex'))})
         # This is a child operation of the current learning worker, not a second queued worker.
-        store.update_job(trial['id'],'running');info={'run_id':run['id'],'job_id':trial['id']};marker.write_text(dump(info))
+        store.update_job(trial['id'],'running');info={'run_id':run['id'],'job_id':trial['id'],'source_snapshot':expected};marker.write_text(dump(info))
     trial=store.one('jobs',info['job_id'])
+    if source_snapshot(store,info['run_id'])!=expected:
+        raise ValueError('保存的学习试验来源与本次案例不同，不能复用或续跑')
     worker=Worker(store)
     # Shared runtime ensures Stop cancels the current trial rather than an unrelated child.
     worker.runtime=job['_runtime']
@@ -119,9 +133,14 @@ def _generate_trial(store,job,case,skill,folder,tag):
             value=worker.generate(trial,score=False);store.update_job(trial['id'],'complete',result=value)
         except Exception as exc:
             store.update_job(trial['id'],'failed',error=str(exc));raise
-    rows=store.rows("SELECT * FROM briefs WHERE run_id=? AND author='agent' ORDER BY rowid LIMIT 1",(info['run_id'],))
-    if not rows:raise RuntimeError('候选执行没有生成稿件')
-    return rows[0]
+    saved=store.one('jobs',info['job_id']);result=json.loads(saved['result'] or '{}')
+    if _attempt_source_snapshot(store,saved,result)!=expected:
+        raise ValueError('学习试验未保存一致的来源快照，不能比较该稿件')
+    vid=result.get('version_id')
+    if not vid or not store.generated_by(vid,saved['id']):raise RuntimeError('候选执行没有返回其实际生成版本')
+    brief=store.one('briefs',vid)
+    if brief['run_id']!=info['run_id']:raise RuntimeError('候选返回版本不属于本次试验')
+    return brief
 
 
 def comparison_prompt(store,folder,backend='codex'):
@@ -136,9 +155,54 @@ regressions 只列会实质影响使用的新增事实、引用或核心覆盖�
 '''
 
 
+def _attempt_source_snapshot(store,job,result):
+    """Read the saved attempt, never reconstruct its past from a live run."""
+    if 'source_snapshot' in result:
+        rows=result['source_snapshot']
+        if not isinstance(rows,list):return None
+        result=[];seen=set()
+        for row in rows:
+            if not isinstance(row,dict) or set(row)!={'source_id','text_hash','original_hash'}:return None
+            if not isinstance(row['source_id'],str) or not isinstance(row['text_hash'],str):return None
+            if row['source_id'] in seen:return None
+            if row['original_hash'] is not None and not isinstance(row['original_hash'],str):return None
+            seen.add(row['source_id']);result.append(row)
+        return sorted(result,key=lambda row:row['source_id'])
+    # A legacy input can establish the initial source set. If acquired sources
+    # appeared later, the full-set comparison below fails conservatively.
+    path=store.root/'jobs'/job['id']/'input.json'
+    if (not path.is_file() or path.is_symlink()
+            or any(parent.is_symlink() for parent in path.parents if parent.is_relative_to(store.root))
+            or not path.resolve().is_relative_to(store.root.resolve())):return None
+    try:value=json.loads(path.read_text())
+    except (OSError,ValueError):return None
+    if not isinstance(value,dict):return None
+    rows=value.get('sources')
+    if not isinstance(rows,list):return None
+    from .media import source_files
+    out=[];seen=set()
+    for row in rows:
+        if not isinstance(row,dict):return None
+        sid=row.get('source_id',row.get('id'));text_hash=row.get('hash')
+        if not isinstance(sid,str) or not isinstance(text_hash,str) or sid in seen:return None
+        if row.get('id',sid)!=sid:return None
+        seen.add(sid)
+        try:_,_,original=source_files(store,sid)
+        except (ValueError,OSError):return None
+        original_hash=row.get('original_hash',row.get('raw_sha256'))
+        # An original path without a captured hash cannot prove the bytes the
+        # old model saw. Inline-only sources can be matched by text hash.
+        if (original or row.get('original_path')) and not isinstance(original_hash,str):return None
+        out.append({'source_id':sid,'text_hash':text_hash,'original_hash':original_hash})
+    return sorted(out,key=lambda row:row['source_id'])
+
+
 def _baseline_for_attempt(store, case, learning_payload):
     """Reuse only the version returned by a matching completed attempt."""
     if case['skill_id']!=learning_payload.get('skill_id'):return None
+    from .review_learning import source_snapshot
+    try:expected=source_snapshot(store,case['id'],source_ids=case.get('learning_source_ids',store.source_ids(case['id'])))
+    except (ValueError,OSError):return None
     for job in store.rows("SELECT * FROM jobs WHERE kind='generate' AND status='complete' ORDER BY rowid DESC"):
         payload=json.loads(job['payload'])
         if payload.get('run_id')!=case['id']:continue
@@ -148,6 +212,7 @@ def _baseline_for_attempt(store, case, learning_payload):
         # Skill overrides do not establish a like-for-like baseline.
         if payload.get('skill_override') is not None:continue
         result=json.loads(job['result'] or '{}');vid=result.get('version_id')
+        if _attempt_source_snapshot(store,job,result)!=expected:continue
         if not vid or not store.generated_by(vid,job['id']):continue
         try:brief=store.one('briefs',vid)
         except ValueError:continue
@@ -195,7 +260,7 @@ def learn(store,runtime,job):
                     metadata=json.loads(provenance.read_text())
                     if case_id in metadata.get('revision_for_runs',[]) or metadata.get('usage')=='revision_feedback':continue
                 evidence_ids.append(sid)
-            case['source_ids']=dump(evidence_ids);case_dir=root/f'round-{n}'/case_id
+            case['source_ids']=dump(evidence_ids);case['learning_source_ids']=evidence_ids;case_dir=root/f'round-{n}'/case_id
             baseline=_baseline_for_attempt(store,case,payload)
             if baseline is None:
                 baseline=_generate_trial(store,{**job,'_runtime':runtime},case,current,case_dir/'baseline','baseline')

@@ -29,6 +29,9 @@ def _usable_output(job, folder, store=None):
     if job.get('readonly_output'):
         try:return isinstance(json.loads((folder/job['readonly_output']).read_text()),dict)
         except (OSError,ValueError):return False
+    if job.get('kind')=='repair_revision_metadata':
+        try:return isinstance(json.loads((folder/'metadata.json').read_text()),dict)
+        except (OSError,ValueError):return False
     role=job.get('runtime_role')
     if role in ('evaluator','scorer','assessor'):
         name='comparison.json' if job.get('evaluation_mode')=='pairwise' or role=='assessor' else 'assessment.json'
@@ -139,6 +142,7 @@ class InteractiveRuntime:
         if job.get('readonly_output'):
             if backend!='opencode':raise ValueError('此后端的受限 Reviewer 工具策略尚未验证；审阅未完成，不能退回普通写权限')
             runtime.update(permission='read-only',review_root=str((folder/'packet').resolve()))
+            if job.get('review_id'):runtime['review_id']=job['review_id']
         if configured.get('model_provider'):
             runtime['model_provider'] = configured['model_provider']
         if configured.get('model_variant'):

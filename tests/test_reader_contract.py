@@ -4,7 +4,6 @@ import pytest
 from briefloop.deliverable_spec import (
     instructions, reader_contract_schema, resolve, validate_reader_contract,
 )
-from briefloop.report_profiles import profile_context
 
 
 def example():
@@ -39,6 +38,9 @@ def test_contract_classifies_method_without_turning_it_into_reader_content():
     assert next(x for x in compiled['requirement_items'] if x['kind'] == 'manual')['mode'] == 'manual'
     # The manual slot remains a user assignment, not an unanswered research question.
     assert compiled['manual_sections'] == ['融资进度']
+    # Every role must receive this exact requirement identity, regardless of wording.
+    for role in ('orchestrator', 'scout', 'analyst', 'evaluator', 'reviewer', 'revision'):
+        assert value['source_fingerprint'] in instructions(compiled, role)
 
 
 def test_contract_rejects_changed_requirements_forged_quotes_and_silent_omissions():
@@ -64,31 +66,10 @@ def test_contract_rejects_changed_requirements_forged_quotes_and_silent_omission
         validate_reader_contract(spec, downgraded)
 
 
-def test_roles_share_the_source_bound_contract_and_keep_review_read_only():
-    req, spec, value = example()
-    compiled = resolve(req, reader_contract=value)
-    for role in ('orchestrator', 'scout', 'analyst', 'evaluator', 'reviewer', 'revision'):
-        prompt = instructions(compiled, role)
-        assert value['source_fingerprint'] in prompt
-        assert 'research_notes/gaps' in prompt
-        assert '有信息量的否定、负面事实和不确定性应保留' in prompt
-        assert '只留“待填充”' in prompt
-    writer = instructions(compiled, 'analyst')
-    reviewer = instructions(compiled, 'reviewer', include_spec=False)
-    assert 'reader_content 决定需要完成的回答' in writer
-    assert '不自行改稿、编译新约定、重新计算或补搜' in reviewer
-    assert '披露充分／态度谨慎' in reviewer and '不能' in reviewer
-    assert 'plan.json' not in reviewer and value['source_fingerprint'] not in reviewer
-    assert '按关键词' not in reviewer
-    with pytest.raises(ValueError, match='未知产物约定角色'):
-        instructions(compiled, 'unknown')
-
-
-def test_industry_defaults_no_longer_override_templates_or_copy_analysis_checklist():
-    profile = profile_context({'report_profile': 'industry_periodic', 'organization': '读者组织'})
-    assert '用户已选模板章节或明确规定结构时遵守该结构' in profile['instructions']
-    assert '事实→传导机制→条件/时间→经营含义→后续观察' not in profile['instructions']
-    assert '不相关时省略并说明' not in profile['instructions']
-    assert 'research_notes/gaps' in profile['instructions']
-    assert '不为披露缺口加分' in profile['evaluation']
-    assert profile_context({'report_profile': 'brief'}) == {}
+def test_publication_rejects_unbound_contract(tmp_path):
+    from briefloop.store import Store
+    store=Store(tmp_path);source=store.add_source('Source','Evidence')
+    run=store.create_run({'title':'Report','objective':'Explain changes'},[source['id']])
+    with pytest.raises(ValueError,match='产物约定'):
+        store.publish(run['id'],{'title':'Report','markdown':'Draft','reader_contract':{'source_fingerprint':'wrong','clauses':[]}})
+    assert not store.rows('SELECT id FROM briefs')

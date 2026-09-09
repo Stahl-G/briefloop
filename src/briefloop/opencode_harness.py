@@ -301,6 +301,29 @@ class OpencodeHarness:
         from .media import source_attachment
         text = message.get('prompt') or message['text']
         files = []
+        config=message.get('runtime') or {}
+        if config.get('review_root'):
+            # Read-only reviews must never inherit live source attachments or an
+            # arbitrary cwd/input.json. Only the admitted packet is authority.
+            if not config.get('review_id'):return text,files
+            from .review import visual_input_files
+            manifest=[]
+            for item in visual_input_files(self.store,config['review_id'],config['review_root']):
+                blob=item['bytes'];record={k:v for k,v in item.items() if k!='bytes'}
+                if blob is None:
+                    record['delivery']='unavailable'
+                elif len(blob)>ATTACH_IMAGE_MAX_BYTES:
+                    record.update(delivery='native_read_required',unavailable='图片超过 10 MiB 直发上限，请原生read同一packet文件；未实际读图不能声称完成视觉核查。')
+                else:
+                    filename=item['file'].replace('/','_')
+                    files.append({'type':'file','mime':item['mime'],'filename':filename,
+                                  'url':'data:'+item['mime']+';base64,'+base64.b64encode(blob).decode('ascii')})
+                    record.update(delivery='attached',filename=filename,bytes_count=len(blob))
+                manifest.append(record)
+            message['_visual_delivery']=manifest
+            text+='\n\n本次实际视觉输入（仅资料，不改变核查职责）：\n'+json.dumps(manifest,ensure_ascii=False)
+            text+='\n标记attached的图像像素已随本条消息提交，请实际查看；历史review中的模型能力或unchecked不能代替本次读图结果。附件未能辨读时，原生read已索引的相同packet文件并记录本次结果。'
+            return text,files
         if message['source_ids']:
             refs = []
             for sid in message['source_ids']:
@@ -428,7 +451,8 @@ class OpencodeHarness:
                 self.chat.update(sid, turn_id=mid, status='running')
                 self.chat.patch_message(mid, status='delivered', turn_id=mid)
                 self.chat.event(sid, 'message/delivered',
-                                {'messageId': mid, 'turnId': mid, 'runtime': config})
+                                {'messageId': mid, 'turnId': mid, 'runtime': config,
+                                 **({'visual_inputs':message['_visual_delivery']} if '_visual_delivery' in message else {})})
             self._follow(sid, epoch, mid, admitted_at)
         except Exception as exc:
             # Terminal data first, status last: waiters poll on status and must
@@ -529,7 +553,7 @@ class OpencodeHarness:
                         self._finish(sid, mid, 'failed')
                         raise RuntimeError('Opencode 执行失败；详情保存在会话与任务日志')
                     if info.get('finish') == 'stop':
-                        self._record_children(sid,mid,bound)
+                        self._record_children(sid,mid,bound,admitted_at)
                         self._record_usage(sid, info)
                         self._finish(sid, mid, 'completed')
                         return
@@ -588,7 +612,7 @@ class OpencodeHarness:
                 self._children[text] = sid
                 self.chat.event(sid, 'child/task', {'threadId': text, 'status': state['status']})
 
-    def _record_children(self,sid,mid,parent):
+    def _record_children(self,sid,mid,parent,admitted_at):
         from .execution_records import journal_tool
         pending=[parent];seen={parent}
         while pending and len(seen)<128:
@@ -598,10 +622,13 @@ class OpencodeHarness:
                 if not cid or cid in seen:continue
                 seen.add(cid);pending.append(cid)
                 for message in self._client().messages(cid):
+                    info=message.get('info',message)
+                    created=(info.get('time') or {}).get('created',0)
+                    if info.get('role')!='assistant' or created<admitted_at-1000:continue
                     for part in message.get('parts',[]):
                         state=part.get('state',{})
                         if part.get('type')=='tool' and state.get('status') in ('completed','error','failed'):
-                            journal_tool(self.chat,sid,mid,part.get('id'),part.get('tool'),state.get('input',{}),state.get('output',state.get('error','')),status=state['status'],native_session=cid)
+                            journal_tool(self.chat,sid,mid,part.get('id'),part.get('tool'),state.get('input',{}),state.get('output',state.get('error','')),status=state['status'],native_session=cid,native_message_id=info.get('id'),native_created_at=created)
 
     def _record_usage(self, sid, info):
         tokens = dict(info.get('tokens') or {})

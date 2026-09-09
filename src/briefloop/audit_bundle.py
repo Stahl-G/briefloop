@@ -126,8 +126,22 @@ def generate_bundle(store, job, cancelled):
         for key in ('text_file', 'readable_text_file', 'original_file', 'cells_file'):
             if item.get(key):
                 source_files[item['id']].add('packet/' + item[key])
+        for name in item.get('visual_files', []):
+            source_files[item['id']].add('packet/' + name)
     all_original = all(item['mode'] == 'original' for item in permissions.values())
     target = json.loads(safe_file(folder, 'packet/target.json').read_text())
+    restricted_figure_files = {}
+    for figure in target.get('figures', []):
+        restricted = [sid for sid in figure['source_ids'] if permissions[sid]['mode'] != 'original']
+        if restricted:
+            # Data and scripts may preserve entire input workbooks, extracted
+            # rows or embedded source text. Follow registered provenance, not
+            # guesses about strings. The report image remains downloadable.
+            for key in ('data', 'script'):
+                path = figure.get(key + '_path')
+                if path:
+                    name = 'packet/figures/' + figure['figure_id'] + '/' + Path(path).name
+                    restricted_figure_files[name] = restricted
     filtered = _filter_snapshot(target, permissions)
     # Records contain both the export document and applied conflict outcomes.
     records = deepcopy(release['data'])
@@ -148,6 +162,11 @@ def generate_bundle(store, job, cancelled):
         matching = next((sid for sid, names in source_files.items() if name in names), None)
         if matching and permissions[matching]['mode'] != 'original':
             omissions.append({'file': name, 'source_id': matching, 'reason': permissions[matching]['reason']})
+            continue
+        if name in restricted_figure_files:
+            omissions.append({'file': name, 'source_ids': restricted_figure_files[name],
+                              'kind': 'source_derived_figure',
+                              'reason': '图表引用来源未全部授权原件；保留报告图片，省略可能包含完整来源的计算数据或脚本'})
             continue
         # These duplicate full source text or raw tool output. Restricted source
         # permission must not be defeated by an alternate copy in a history log.
@@ -178,6 +197,11 @@ def generate_bundle(store, job, cancelled):
     # exported as an extra user-owned document.
     if records['export_input'].get('template'):
         omissions.append({'kind': 'template_original', 'reason': '仅提供冻结模板标识、样式说明及最终Word，不打包历史模板原件'})
+    blobs['release-manifest.json'] = safe_file(store.root, release['result']['manifest_path']).read_bytes()
+    for item in transformations:
+        if item['file'] in release_manifest['files']:
+            item['original_sha256'] = release_manifest['files'][item['file']]
+        item['included_sha256'] = sha(blobs[item['file']])
     manifest = {'schema_version': SCHEMA_VERSION, 'release_id': release['id'], 'version_id': release['version_id'],
                 'run_id': release['data']['run_id'], 'review_id': release['data']['review_id'],
                 'review_fingerprint': release['data']['review_fingerprint'],
@@ -255,6 +279,7 @@ def verify_bundle(value):
                     errors.append('文件哈希不匹配：' + name)
             records = json.loads(archive.read('records.json'))
             target = json.loads(archive.read('packet/target.json'))
+            _check_package_coverage(archive, records, manifest, errors)
             report_hash = sha(archive.read('report.docx'))
             if report_hash != manifest['report_sha256']:
                 errors.append('正式Word哈希不匹配')
@@ -302,6 +327,8 @@ def _check_materials(archive, target, manifest, errors):
     names = set(manifest['files'])
     sources = {item['id']: item for item in target['sources']}
     index = json.loads(archive.read('packet/index.json'))
+    if index.get('files') != {key: value for key, value in manifest['review_files'].items() if key != 'index.json'} or index.get('fingerprint') != manifest['review_fingerprint'] or index.get('version_id') != manifest['version_id']:
+        errors.append('核查索引与冻结Review文件清单不一致')
     if {item['id'] for item in index['sources']} != set(sources):
         errors.append('来源索引与被审来源集合不一致')
     for item in index['sources']:
@@ -314,6 +341,17 @@ def _check_materials(archive, target, manifest, errors):
                 errors.append('来源文件与证据版本不一致：' + item['id'])
             if name not in names and not any(row.get('file') == name for row in manifest['omissions']):
                 errors.append('来源文件缺失且未说明：' + name)
+        for relative in item.get('visual_files', []):
+            name = 'packet/' + relative
+            if not relative.startswith('sources/' + item['id'] + '.') or relative not in manifest['review_files']:
+                errors.append('来源视觉索引未绑定所属来源或冻结文件：' + relative)
+            if name in names:
+                if manifest['source_permissions'][item['id']]['mode'] != 'original':
+                    errors.append('受限来源的原图或页面图不应出现在包中：' + relative)
+                if sha(archive.read(name)) != manifest['review_files'].get(relative):
+                    errors.append('来源视觉文件与核查输入不一致：' + relative)
+            elif not any(row.get('file') == name and row.get('source_id') == item['id'] for row in manifest['omissions']):
+                errors.append('来源视觉文件缺失且未声明所属来源的省略：' + relative)
     for figure in target.get('figures', []):
         if figure['run_id'] != manifest['run_id']:
             errors.append('图表属于其他报告：' + figure['figure_id'])
@@ -324,8 +362,61 @@ def _check_materials(archive, target, manifest, errors):
             path = figure.get(key + '_path')
             if path:
                 name = 'packet/figures/' + figure['figure_id'] + '/' + Path(path).name
-                if name not in names or sha(archive.read(name)) != figure['hashes'][key]:
+                omitted = any(item.get('file') == name for item in manifest['omissions'])
+                transformed = any(item.get('file') == name and item.get('original_sha256') == figure['hashes'][key]
+                                  for item in manifest['transformations'])
+                if (name not in names and not omitted) or (name in names and sha(archive.read(name)) != figure['hashes'][key] and not transformed):
                     errors.append('图表文件与计算/图表登记不一致：' + name)
+                if key == 'image' and (omitted or transformed):
+                    errors.append('正式报告图像不能省略或替换：' + name)
+    if 'packet/visual-inputs.json' in names:
+        visual = json.loads(archive.read('packet/visual-inputs.json'))
+        if visual.get('version_id') != manifest['version_id']:
+            errors.append('视觉输入索引属于其他报告版本')
+        source_visuals = {item['id']: set(item.get('visual_files', [])) for item in index['sources']}
+        figures = {item['figure_id']: item for item in target.get('figures', [])}
+        indexed = set()
+        for item in visual.get('images', []):
+            relative = item.get('file')
+            if not relative:
+                if not item.get('unavailable'):
+                    errors.append('视觉输入既无固定文件也没有不可用说明')
+                continue
+            indexed.add(relative)
+            name = 'packet/' + relative
+            if relative not in manifest['review_files'] or item.get('sha256') != manifest['review_files'].get(relative):
+                errors.append('视觉输入索引与冻结文件哈希不一致：' + relative)
+            if item.get('source_id') and relative not in source_visuals.get(item['source_id'], set()):
+                errors.append('视觉输入索引未绑定所属来源：' + relative)
+            if item.get('figure_id'):
+                figure = figures.get(item['figure_id'], {})
+                expected = 'figures/' + item['figure_id'] + '/' + Path(figure.get('image_path', '')).name
+                if relative != expected or item.get('sha256') != figure.get('hashes', {}).get('image'):
+                    errors.append('视觉输入索引未绑定报告图表：' + relative)
+            if name not in names and not any(row.get('file') == name for row in manifest['omissions']):
+                errors.append('视觉输入索引引用文件缺失且未说明：' + relative)
+        if any(not paths.issubset(indexed) for paths in source_visuals.values()):
+            errors.append('来源视觉文件未列入实际视觉输入索引')
+    if 'packet/history/tools.json' in names:
+        tool_index = json.loads(archive.read('packet/history/tools.json'))
+        executions = (json.loads(archive.read('packet/history/executions.json'))
+                      if 'packet/history/executions.json' in names else None)
+        job_ids = {item['job_id'] for item in executions} if executions is not None else None
+        for item in tool_index:
+            relative = item['file']
+            name = 'packet/' + relative
+            if not relative.startswith('history/tools/') or relative not in manifest['review_files']:
+                errors.append('工具索引引用不属于本次冻结核查包：' + relative)
+                continue
+            if job_ids is not None and item['job_id'] not in job_ids:
+                errors.append('工具索引引用了未记录的执行任务：' + relative)
+            if name not in names:
+                if not any(row.get('file') == name for row in manifest['omissions']):
+                    errors.append('工具索引引用的记录缺失且未说明：' + relative)
+                continue
+            saved = json.loads(archive.read(name))
+            if saved.get('job_id') != item['job_id'] or saved['record'].get('tool') != item['tool'] or saved['record'].get('status') != item['status']:
+                errors.append('工具记录与执行索引不一致：' + relative)
     for name in names:
         if not name.startswith('packet/history/tools/'):
             continue
@@ -333,6 +424,45 @@ def _check_materials(archive, target, manifest, errors):
         if tool.get('record_hash') and sha(dump({k: v for k, v in tool.items() if k != 'record_hash'}).encode()) != tool['record_hash']:
             if not any(row.get('file') == name for row in manifest['transformations']):
                 errors.append('实际工具记录哈希不一致：' + name)
+
+
+def _check_package_coverage(archive, records, manifest, errors):
+    """Every frozen input is present intact, explicitly transformed, or omitted."""
+    raw = archive.read('release-manifest.json')
+    release = json.loads(raw)
+    if sha(raw) != manifest['release_manifest_hash']:
+        errors.append('原始正式交付清单哈希不一致')
+    for key in ('release_id', 'version_id', 'run_id', 'review_id', 'review_fingerprint'):
+        if release.get(key) != manifest.get(key):
+            errors.append('原始正式交付清单关联不一致：' + key)
+    if release.get('fingerprint') != manifest['release_fingerprint'] or release.get('files') != manifest['original_files']:
+        errors.append('原始正式交付输入或文件清单不一致')
+    if manifest['review_files'] != records['review_files']:
+        errors.append('Review文件清单与固定交付记录不一致')
+    expected = dict(release['files'])
+    for relative, digest in manifest['review_files'].items():
+        name = 'packet/' + relative
+        if expected.get(name) != digest:
+            errors.append('Review文件哈希与原始正式件清单不一致：' + name)
+    present = set(manifest['files'])
+    omissions = {item['file']: item for item in manifest['omissions'] if item.get('file')}
+    transformed = {}
+    for item in manifest['transformations']:
+        name = item['file']
+        transformed[name] = item
+        if name not in present or not item.get('reason') or item.get('included_sha256') != manifest['files'].get(name):
+            errors.append('文件变换记录未绑定实际输出：' + name)
+        if name in expected and item.get('original_sha256') != expected[name]:
+            errors.append('文件变换记录未绑定原始输入：' + name)
+    for name, item in omissions.items():
+        if name not in expected or name in present or not item.get('reason'):
+            errors.append('文件省略记录与冻结输入不一致：' + name)
+    for name, digest in expected.items():
+        if name not in present:
+            if name not in omissions:
+                errors.append('冻结交付文件缺失且没有明确省略记录：' + name)
+        elif manifest['files'][name] != digest and name not in transformed:
+            errors.append('冻结交付文件改变且没有绑定变换记录：' + name)
 
 
 def _check_relationships(target, records, manifest, errors):

@@ -738,8 +738,12 @@ function renderWordExports(){
 $('research-notes').onclick=()=>action(async()=>{const version=await savedVersion();const record=await api('research-notes?version='+version);resetSourceMedia();$('source-title').textContent='核查与待补';$('source-original').hidden=true;$('source-provenance').hidden=true;$('source-link').textContent='';$('source-body').textContent=[...record.gaps,...record.notes.map(n=>JSON.stringify(n,null,2)),'引用核查',...record.citations.map(c=>c.source_name+' · '+(c.locator||'')+(c.excerpt?'\n'+c.excerpt:''))].join('\n\n');$('source-dialog').showModal()});
 
 function readTemplateSections(){
- const template=state?.templates?.find(t=>t.id===$('template-select').value),original=parse(template?.spec).sections||[];
- return [...$('template-sections').querySelectorAll('[data-section-id]')].map(row=>{const base=original.find(s=>s.section_id===row.dataset.sectionId)||{};return {section_id:row.dataset.sectionId,title:row.querySelector('[data-title]').value,purpose:base.purpose||'',mode:row.querySelector('select').value,placeholder:'待填充'}});
+ const templateId=$('template-select').value,template=state?.templates?.find(t=>t.id===templateId),original=parse(template?.spec).sections||[];
+ const saved=templateId&&state.requirements?.template_id===templateId?state.requirements.sections||[]:[];
+ return [...$('template-sections').querySelectorAll('[data-section-id]')].map(row=>{
+  const base=original.find(s=>s.section_id===row.dataset.sectionId)||{},requirement=saved.find(s=>s.section_id===row.dataset.sectionId);
+  return {section_id:row.dataset.sectionId,title:row.querySelector('[data-title]').value,purpose:row.querySelector('[data-purpose]')?.value??requirement?.purpose??base.purpose??'',mode:row.querySelector('select').value,placeholder:'待填充'};
+ });
 }
 function templateSections(){
  const selected=state?.templates?.find(t=>t.id===$('template-select').value),sections=parse(selected?.spec).sections||[];

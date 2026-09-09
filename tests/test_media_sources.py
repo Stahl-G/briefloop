@@ -31,6 +31,7 @@ def test_image_upload_preserves_original_normalizes_orientation_and_rejects_bad_
     store=Store(tmp_path);data=image_bytes('JPEG',orientation=6)
     source=sources.upload(store,'chart.jpeg',data)
     assert source['status']=='ready'
+    assert store.source_text(source['id'])==media.IMAGE_NOTICE
     metadata=json.loads((store.root/'sources'/f"{source['id']}.provenance.json").read_text())
     assert metadata['media_type']=='image/jpeg' and metadata['needs_visual'] is True
     assert metadata['raw_sha256']==hashlib.sha256(data).hexdigest()
@@ -43,9 +44,11 @@ def test_image_upload_preserves_original_normalizes_orientation_and_rejects_bad_
         assert image.getexif().get(274) is None
     text=read_source(store,source['id'])
     assert attachment['image_path'] in text and 'OCR' in text
-    broken=sources.upload(store,'broken.png',b'\x89PNG\r\n\x1a\nnot an image')
-    assert broken['status']=='failed'
-    assert media.source_attachment(store,broken['id'])['image_path'] is None
+    # Both a misleading extension and a truncated PNG must remain failed sources.
+    for invalid in (b'not a png at all',b'\x89PNG\r\n\x1a\nnot an image'):
+        broken=sources.upload(store,'broken.png',invalid)
+        assert broken['status']=='failed'
+        assert media.source_attachment(store,broken['id'])['image_path'] is None
     monkeypatch.setattr(media,'MAX_IMAGE_PIXELS',4)
     assert sources.upload(store,'large.png',image_bytes())['status']=='failed'
 

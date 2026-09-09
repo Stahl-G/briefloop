@@ -372,11 +372,15 @@ def generate_release(store, job, cancelled):
               'download_url': '/api/release-file?id=' + release['id']}
     with store.tx() as connection:
         active = connection.execute('SELECT status FROM jobs WHERE id=?', (job['id'],)).fetchone()
-        if cancelled.is_set() or active['status'] in ('cancelled', 'failed'):
+        if cancelled.is_set() or not active or active['status'] not in ('queued', 'running'):
             raise InterruptedError('正式交付已停止，文件未登记为正式件')
         updated = connection.execute("UPDATE releases SET status='released',result=?,updated=? WHERE id=? AND job_id=? AND status='pending'",
                                      (dump(result), now(), release['id'], job['id']))
         if updated.rowcount != 1:
             raise ValueError('正式交付任务已被新请求替代，旧任务不能登记正式件')
+        settled = connection.execute("UPDATE jobs SET status='complete',result=?,error=NULL,updated=? WHERE id=? AND status IN ('queued','running')",
+                                     (dump(result), now(), job['id']))
+        if settled.rowcount != 1:
+            raise InterruptedError('正式交付已停止，文件未登记为正式件')
     validate_release(store, release['id'])
     return result

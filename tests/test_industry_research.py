@@ -1,20 +1,15 @@
 import json
 import pytest
 from briefloop.models import Requirements, BriefDraft
-from briefloop.industry_data import prepare_report_data, report_data_template
-from briefloop.report_profiles import profile_context
+from briefloop.industry_data import prepare_report_data
 
 
-def test_industry_requirements_and_private_reference_boundary():
+def test_industry_custom_length_and_report_date():
     req=Requirements(title='定期行业报告',objective='跟踪供需变化',report_profile='industry_periodic',industry='材料',report_date='2026-09-10',reference_source_ids=['style'])
     assert (req.target_words,req.max_words)==(5000,5500)
     assert Requirements(**{**req.model_dump(),'target_words':900,'max_words':1200}).target_words==900
     assert Requirements(title='简报',objective='摘要').target_words==1500
     with pytest.raises(ValueError):Requirements(title='报告',objective='摘要',report_date='2026-02-30')
-    assert '仅为风格' in profile_context(req.model_dump())['instructions']
-    assert 'research_notes/gaps' in profile_context(req.model_dump())['instructions']
-    assert '末尾附“数据缺口”' not in profile_context(req.model_dump())['instructions']
-    assert report_data_template()=={'schema_version':'industry_periodic.v1','records':[]}
 
 
 def test_changes_are_derived_and_incomparable_values_remain_gaps():

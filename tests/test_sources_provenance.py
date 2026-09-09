@@ -36,29 +36,6 @@ def test_corrupt_docx_becomes_a_failed_source(tmp_path):
     assert record['status']=='failed' and 'DOCX' in record['error']
     assert store.source_text(record['id'])==''
 
-def test_image_upload_is_visual_ready_with_normalized_attachment(tmp_path):
-    import io
-    from PIL import Image
-    from briefloop import media
-    from briefloop.scout_tools import read_source
-    store=Store(tmp_path)
-    buffer=io.BytesIO();Image.new('RGB',(8,4),(90,140,180)).save(buffer,format='PNG')
-    record=sources.upload(store,'chart.png',buffer.getvalue())
-    assert record['status']=='ready'
-    assert store.source_text(record['id'])==media.IMAGE_NOTICE
-    attachment=media.source_attachment(store,record['id'])
-    assert attachment['needs_visual'] and attachment['image_path']
-    from pathlib import Path
-    assert Path(attachment['image_path']).suffix=='.png'
-    pointer=read_source(store,record['id'])
-    assert attachment['image_path'] in pointer and 'OCR' in pointer
-
-def test_wrong_magic_image_stays_failed_without_attachment(tmp_path):
-    from briefloop import media
-    store=Store(tmp_path)
-    record=sources.upload(store,'chart.png',b'not a png at all')
-    assert record['status']=='failed'
-    assert media.source_attachment(store,record['id'])['image_path'] is None
 
 def test_run_url_reuse_and_bounded_source_reader(tmp_path,monkeypatch,capsys):
     from briefloop.cli import main

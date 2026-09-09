@@ -238,6 +238,9 @@ class Store:
         run=self.one("runs", run_id)
         from .company_context import require_review
         company_review=require_review(self,run)
+        if draft.reader_contract is not None:
+            from .deliverable_spec import resolve,validate_reader_contract
+            draft.reader_contract=validate_reader_contract(resolve(json.loads(run['requirements'])),draft.reader_contract)
         references=set(json.loads(run['requirements']).get('reference_source_ids',[]))
         for ref in draft.citations:
             self.one("sources", ref.source_id)

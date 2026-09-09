@@ -4,7 +4,7 @@ import hashlib
 import json
 import shutil
 from typing import Literal
-from pydantic import Field
+from pydantic import Field, model_validator
 from .models import Model, Assessment
 from .store import dump, uid, now
 from .evidence import inspect_bindings
@@ -40,6 +40,15 @@ class ReviewFinding(Model):
     locator: str = ''
     response_to: str | None = Field(default=None,description='history/responses.json 中的处理说明 id（response_开头），不是 finding_id')
     resolution: Literal['resolved','dismissed_with_evidence'] | None = None
+
+    @model_validator(mode='before')
+    @classmethod
+    def accept_suggestion_alias(cls,value):
+        if isinstance(value,dict) and 'suggestion' in value:
+            if 'suggested_action' in value and value['suggested_action']!=value['suggestion']:
+                raise ValueError('suggestion 与 suggested_action 不能给出不同处理建议')
+            value=dict(value);value['suggested_action']=value.pop('suggestion')
+        return value
 
 
 class ResponseCheck(Model):
@@ -119,10 +128,26 @@ def _packet(store,review):
 
 
 def _ancestry(store,version_id):
-    versions=set();cursor=store.one('briefs',version_id)
+    versions={};cursor=store.one('briefs',version_id)
     while cursor:
-        versions.add(cursor['id']);cursor=store.one('briefs',cursor['parent_id']) if cursor['parent_id'] else None
+        versions[cursor['id']]=len(versions);cursor=store.one('briefs',cursor['parent_id']) if cursor['parent_id'] else None
     return versions
+
+
+def _latest_responses(rows,ancestry):
+    """Prefer the closest version, then the latest response within that version.
+
+    `rows` are in persisted row order. A new note on an old version must never
+    displace the response on a descendant, even if it was inserted later.
+    """
+    latest={}
+    for row in rows:
+        depth=ancestry.get(row['version_id'])
+        if depth is None:continue
+        previous=latest.get(row['finding_id'])
+        if previous is None or depth<=ancestry[previous['version_id']]:
+            latest[row['finding_id']]=row
+    return latest
 
 
 def _response_scope(store,packet,version_id):
@@ -130,10 +155,10 @@ def _response_scope(store,packet,version_id):
     # History stays complete, but a later explanation explicitly supersedes the
     # earlier explanation for the same finding. Only its exact id is actionable.
     ancestry=_ancestry(store,version_id)
-    latest={row['finding_id']:row for row in rows if row['version_id'] in ancestry}
+    latest=_latest_responses(rows,ancestry)
     scoped={row['id']:row for row in latest.values() if row['version_id']==version_id}
     current=store.rows('SELECT r.* FROM review_responses r JOIN review_findings f ON f.id=r.finding_id JOIN briefs b ON b.id=f.version_id WHERE b.run_id=? ORDER BY r.rowid',(store.one('briefs',version_id)['run_id'],))
-    current_latest={row['finding_id']:row for row in current if row['version_id'] in ancestry}
+    current_latest=_latest_responses(current,ancestry)
     current_ids={row['id'] for row in current_latest.values() if row['version_id']==version_id}
     if current_ids!=set(scoped) or any(current_latest.get(row['finding_id'],{}).get('id')!=identity for identity,row in scoped.items()):
         raise ValueError('审阅期间处理说明已更新，请复核最新 response_id')
@@ -219,6 +244,144 @@ def _snapshot(store,version_id,snapshot_version=5):
             'figures':validate_figures(store,run['id'],brief['markdown'])}
 
 
+def _tool_history(store,executions,save):
+    """Attach host records only through the job's persisted message/turn anchor.
+
+    Sessions are reusable. job/attached is a session association, never proof
+    that every future command in that session belongs to that job.
+    """
+    from .execution_records import sanitize
+    index=[]
+    if not store.rows("SELECT name FROM sqlite_master WHERE type='table' AND name='chat_messages'"):
+        return index
+    session_events={}
+    for execution in executions:
+        scopes={};gaps=[]
+        attached={row['session_id'] for row in store.rows("SELECT DISTINCT session_id FROM chat_events WHERE kind='job/attached' AND json_extract(data,'$.jobId')=?",(execution['job_id'],))}
+        for event in execution['events']:
+            if event['kind']!='runtime_started':continue
+            anchor=event['data'];sid=anchor.get('session_id');mid=anchor.get('message_id')
+            rows=store.rows("SELECT turn_id FROM chat_messages WHERE id=? AND session_id=? AND role='user'",(mid,sid))
+            owners=store.rows("SELECT DISTINCT job_id FROM events WHERE kind='runtime_started' AND json_extract(data,'$.session_id')=? AND json_extract(data,'$.message_id')=?",(sid,mid))
+            if sid not in attached or not rows or not rows[0]['turn_id'] or {row['job_id'] for row in owners}!={execution['job_id']}:
+                gaps.append({'session_id':sid,'message_id':mid,'reason':'缺少唯一任务、消息和实际执行轮次绑定，未归入工具证据'})
+                continue
+            scopes.setdefault(sid,{})[rows[0]['turn_id']]=mid
+        if attached and not scopes and not gaps:
+            gaps.append({'reason':'仅保存了会话关联，没有 runtime_started 消息与轮次绑定，未归入工具证据'})
+        for sid,turns in scopes.items():
+            if sid not in session_events:
+                rows=store.rows("SELECT seq,kind,data,created FROM chat_events WHERE session_id=? AND kind IN ('tool/record','item/started','item/completed','child/item/started','child/item/completed') ORDER BY seq",(sid,))
+                session_events[sid]=[{**row,'data':json.loads(row['data'])} for row in rows]
+            children={}
+            for event in session_events[sid]:
+                data=event['data'];turn=data.get('turnId');thread=data.get('threadId')
+                if event['kind']!='tool/record':
+                    item=data.get('item',{})
+                    if item.get('type')=='collabAgentToolCall':
+                        owner=children.get(thread,{}).get('root_turn_id',turn)
+                        for child in item.get('receiverThreadIds',[]):
+                            children[child]={'root_turn_id':owner,'parent_thread_id':thread,'delegation_event_seq':event['seq']}
+                    continue
+                record=data.get('record',{});native=record.get('native_session')
+                delegation=children.get(native,{})
+                root_turn=turn if turn in turns else delegation.get('root_turn_id')
+                if root_turn not in turns:continue
+                # Older persisted journals may predate the current sanitizer.
+                # Project them safely into a new packet, preserving their hash
+                # as a history reference without rewriting the original event.
+                public=sanitize(record)
+                if public!=record:
+                    public['redacted']=True
+                    public['record_hash']=sha(dump({k:v for k,v in public.items() if k!='record_hash'}).encode())
+                name=f"history/tools/{sid}-{event['seq']}.json"
+                identity={'job_id':execution['job_id'],'session_id':sid,'message_id':turns[root_turn],
+                          'turn_id':turn,'root_turn_id':root_turn,'native_session':native,'event_seq':event['seq']}
+                if turn!=root_turn:identity['delegation']=delegation
+                saved={**identity,'created':event['created'],'journal_record_hash':record.get('record_hash'),'record':public}
+                save(name,pack_dump(saved).encode())
+                index.append({**identity,'file':name,'tool':public['tool'],'status':public['status']})
+        if gaps:execution['tool_history_gaps']=gaps
+    return index
+
+
+def _visual_inputs(store,snapshot,packet,source_index,save):
+    """Prepare only current report figures and explicitly located visual evidence.
+
+    This is deterministic packet assembly, before the read-only Reviewer runs.
+    All model attachment bytes are subsequently read from this fixed packet.
+    """
+    visuals=[]
+    for figure in snapshot['figures']:
+        name='figures/'+figure['figure_id']+'/'+Path(figure['image_path']).name
+        visuals.append({'id':'figure:'+figure['figure_id'],'kind':'report_figure',
+                        'figure_id':figure['figure_id'],'title':figure['title'],
+                        'file':name,'sha256':sha((packet/name).read_bytes()),'mime':'image/png'})
+    selected={}
+    def collect(node):
+        for evidence in node.get('evidence',[]):
+            locator=evidence['data']['locator'];kind=locator['kind']
+            if kind not in ('image','pdf'):continue
+            key=(evidence['source_id'],locator.get('page') if kind=='pdf' else None)
+            selected.setdefault(key,{'kind':kind,'span_ids':[]})['span_ids'].append(evidence['id'])
+        for premise in node.get('premises',[]):collect(premise)
+    for node in snapshot['evidence']['bindings']:collect(node)
+    sources={item['id']:item for item in source_index}
+    for number,((sid,page),choice) in enumerate(selected.items()):
+        source=sources[sid];identity='source:'+sid+(':'+str(page) if page else '')
+        item={'id':identity,'kind':'source_evidence','source_id':sid,'page':page,
+              'span_ids':sorted(set(choice['span_ids'])),'title':source['name']}
+        if number>=8:
+            item['unavailable']='本次仅预装前 8 个已定位证据视觉，其他原件保留在核查包中；未逐一读图不得声称完成视觉核查。'
+            visuals.append(item);continue
+        try:
+            original=packet/source['original_file']
+            if sha(original.read_bytes())!=source['original_hash']:raise ValueError('证据原件与核查快照不一致')
+            if choice['kind']=='image':
+                from .figures import _normalized_image
+                png,_,_,_=_normalized_image(original.read_bytes());name='sources/'+sid+'.visual.png'
+            else:
+                from .media import render_source_pages,source_files
+                # The established renderer validates its source/page cache hashes.
+                # Compare the actual original to the frozen original as well.
+                _,_,live_original=source_files(store,sid)
+                if not live_original or sha(live_original.read_bytes())!=source['original_hash']:raise ValueError('PDF 原件在核查包准备期间发生变化')
+                rendered=render_source_pages(store,sid,[page])['pages'][0]
+                png=Path(rendered['path']).read_bytes();name=f'sources/{sid}.page-{page}.png'
+            save(name,png);source.setdefault('visual_files',[]).append(name)
+            item.update(file=name,sha256=sha(png),mime='image/png')
+        except (ValueError,OSError,KeyError,ImportError) as exc:item['unavailable']=str(exc)
+        visuals.append(item)
+    return {'version_id':snapshot['version_id'],'images':visuals,
+            'note':'仅记录本次可供读取的视觉输入。历史未核验项不描述本次所选模型的能力；附件成功提交也不自动证明视觉结论正确。'}
+
+
+def visual_input_files(store,review_id,packet_root):
+    """Return validated packet-local bytes, never paths supplied by an agent."""
+    review=get_review(store,review_id);packet,target,bound=_packet(store,review)
+    if packet.resolve()!=Path(packet_root).resolve():raise ValueError('视觉输入不属于当前 Reviewer 核查包')
+    if 'visual-inputs.json' in bound:
+        plan=json.loads((packet/'visual-inputs.json').read_text())
+        if plan.get('version_id')!=review['version_id']:raise ValueError('视觉输入属于另一正文版本')
+        images=plan['images']
+    else:
+        # Retained pre-attachment packets can expose their already-frozen figures;
+        # never read live figure locations or mutate an earlier packet on resume.
+        images=[{'id':'figure:'+figure['figure_id'],'kind':'report_figure','figure_id':figure['figure_id'],
+                 'title':figure['title'],'file':'figures/'+figure['figure_id']+'/'+Path(figure['image_path']).name,
+                 'mime':'image/png'} for figure in target['figures']]
+    output=[]
+    for item in images:
+        if not item.get('file'):
+            output.append({**item,'bytes':None});continue
+        name=item['file']
+        if name not in bound or (item.get('sha256') and item['sha256']!=bound[name]):raise ValueError('视觉输入未绑定到核查包文件清单')
+        blob=(packet/name).read_bytes()
+        if sha(blob)!=bound[name]:raise ValueError('Reviewer 图片在发送前发生变化')
+        output.append({**item,'sha256':bound[name],'bytes':blob})
+    return output
+
+
 def build_packet(store,version_id,folder):
     from .media import source_files
     snapshot=_snapshot(store,version_id);folder=Path(folder)
@@ -266,6 +429,8 @@ def build_packet(store,version_id,folder):
                 source=(store.root/path).resolve()
                 if not source.is_relative_to(store.root) or not source.is_file():raise ValueError('图表核查资源路径无效')
                 save('figures/'+figure['figure_id']+'/'+Path(path).name,source.read_bytes())
+    visual_inputs=_visual_inputs(store,snapshot,packet,source_index,save)
+    save('visual-inputs.json',pack_dump(visual_inputs).encode())
     # Only this report's persisted public history; never host-global DB queries.
     brief=store.one('briefs',version_id);versions=store.rows('SELECT id,parent_id,author,markdown,hash,created FROM briefs WHERE run_id=? ORDER BY rowid',(brief['run_id'],))
     save('history/versions.json',pack_dump(versions).encode())
@@ -280,24 +445,14 @@ def build_packet(store,version_id,folder):
         allowed={'runtime_started','runtime_progress','export_progress','revision_progress','company_review_complete'}
         executions.append({'job_id':job['id'],'kind':job['kind'],'status':job['status'],'runtime':payload.get('runtime'),
                            'backend':payload.get('agent_backend'),'events':[{'kind':e['kind'],'created':e['created'],'data':json.loads(e['data'])} for e in events if e['kind'] in allowed]})
-    tool_index=[]
-    has_chat=bool(store.rows("SELECT name FROM sqlite_master WHERE type='table' AND name='chat_events'"))
-    for execution in executions:
-        if not has_chat:continue
-        sessions=store.rows("SELECT DISTINCT session_id FROM chat_events WHERE kind='job/attached' AND json_extract(data,'$.jobId')=?",(execution['job_id'],))
-        for session in sessions:
-            records=store.rows("SELECT seq,data,created FROM chat_events WHERE session_id=? AND kind='tool/record' ORDER BY seq",(session['session_id'],))
-            for item in records:
-                record=json.loads(item['data'])['record'];name=f"history/tools/{session['session_id']}-{item['seq']}.json"
-                save(name,pack_dump({'created':item['created'],'job_id':execution['job_id'],'record':record}).encode())
-                tool_index.append({'file':name,'tool':record['tool'],'status':record['status'],'job_id':execution['job_id']})
+    tool_index=_tool_history(store,executions,save)
     save('history/tools.json',pack_dump(tool_index).encode())
     save('history/executions.json',pack_dump(executions).encode())
     responses=store.rows('SELECT r.*,f.data AS finding_data,f.status AS finding_status,f.version_id AS finding_version FROM review_responses r JOIN review_findings f ON f.id=r.finding_id JOIN briefs b ON b.id=f.version_id WHERE b.run_id=? ORDER BY r.rowid',(brief['run_id'],))
     save('history/responses.json',pack_dump([{**r,'data':json.loads(r['data']),'finding_data':json.loads(r['finding_data'])} for r in responses]).encode())
     fingerprint=sha(dump({'target':snapshot,'files':entries}).encode())
     index={'fingerprint':fingerprint,'version_id':version_id,'sources':source_index,
-           'files':entries,'history':['history/versions.json','history/executions.json','history/responses.json','history/tools.json','history/reviews.json'],
+           'files':entries,'visual_inputs':'visual-inputs.json','history':['history/versions.json','history/executions.json','history/responses.json','history/tools.json','history/reviews.json'],
            'limits':['执行历史只包含已保存的本任务记录；缺少的工具输出需标记未核验，不到宿主全局数据库补查。',
                      '无法读取图像的模型必须把视觉检查标为未完成；只读图表数据不等于已目视核验。']}
     save('index.json',pack_dump(index).encode())
@@ -425,7 +580,7 @@ def review_status(store,version_id):
     # A correction in one revision must not close an unchanged sibling draft or
     # rewrite the historical state of the version where the finding was raised.
     responses=store.rows('SELECT r.* FROM review_responses r JOIN review_findings f ON f.id=r.finding_id JOIN briefs b ON b.id=f.version_id WHERE b.run_id=? ORDER BY r.rowid',(brief['run_id'],))
-    latest={row['finding_id']:row for row in responses if row['version_id'] in ancestry}
+    latest=_latest_responses(responses,ancestry)
     decisions={}
     for row in store.rows("SELECT version_id,result FROM reviews WHERE result IS NOT NULL ORDER BY rowid"):
         if row['version_id'] not in ancestry:continue
@@ -484,8 +639,8 @@ def run_review(store,runtime,job,version_id,folder):
     schema=folder/'packet'/'output.schema.json'
     validate_applicable_review(store,identity,version_id)
     prompt=f'''你是独立只读 Reviewer，核对已保存产物与实际依据，不重新研究或运行计算。
-只读取 {folder/'packet'/'index.json'} 所索引的文件。JSON已分行；遇到单行截断，target-long-text.json提供长字段分块、sources/*.view.json提供原文行与分块，按顺序无分隔拼接，不把截断当缺失。先看target.json的本轮要求、正文和claim_evidence关联；核对具体原文与图表，必要时读history中的本报告历史。绝不查询宿主或其他工作区数据库。
-只有read工具可用。禁止bash、执行脚本、修改文件、联网、委派。history/reviews.json提供过去实际审阅；对已经核过且依赖未变的内容可复用范围，重点核对本次修改与处理说明，不重复扩大研究。发现需补搜/重算/改稿的问题交主Agent，不能自己执行。
+只读取 {folder/'packet'/'index.json'} 所索引的文件。JSON已分行；遇到单行截断，target-long-text.json提供长字段分块、sources/*.view.json提供原文行与分块，按顺序无分隔拼接，不把截断当缺失。先看target.json的本轮要求、正文和claim_evidence关联；核对具体原文与图表；本次报告图和已选证据视觉会作为原生图片附件交给当前选定模型，visual-inputs.json记录它们与固定文件的对应关系。先实际检查这些附件的轴、图注、单位和可见内容，附件不可读时用原生read读取同一packet文件；仍失败则说明本次失败。必要时读history中的本报告历史。绝不查询宿主或其他工作区数据库。
+只有read工具可用。禁止bash、执行脚本、修改文件、联网、委派。history/reviews.json提供过去实际审阅；只复用已完成且依赖未变的核查，历史的未核验/图像能力失败必须在本次实际输入上重新检查，不能据此判断当前模型能力。重点核对本次修改与处理说明，不重复扩大研究。发现需补搜/重算/改稿的问题交主Agent，不能自己执行。
 检查所有重要事实与判断是否有依据，包括作者未登记的主张；逐项核查已有claim并报告支持范围、反证、证据不足或未知。图像不可读、执行记录缺失和审阅失败不是通过。对每个遗漏、错误给正文片段及依据。
 企业报告的核查详情留本结果，不要求正文堆免责声明；准确日期/单位/计划性质应保留。缺口披露不抵消研究覆盖与读者要求。不要使用“无发现”代替完整性检查。
 核对target.json中的source_updates和source_timing，区分统计/事件有效期、披露/可得时间、抓取时间与本轮截止时间。更正或新期间的分类声明仍需对照旧新原件，不把proposed当已确认。
@@ -512,7 +667,7 @@ version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief
         error=json.loads((folder/'admission-error.json').read_text()).get('error','')
         prompt+='\n上次结果未通过接纳：'+error+'。仅修正结构化结果中的ID或字段，不重做已经完成的研究或改稿。response_to使用history/responses.json的id字段，finding_id是其关联的原始发现。'
     stage=stage_job(store,{**job,'payload':dump({**json.loads(job['payload']),'version_id':version_id})},'evaluator',mode='single')
-    stage.update(readonly_output='review.json',input_source_ids=[],allow_web=False)
+    stage.update(readonly_output='review.json',review_id=identity,input_source_ids=[],allow_web=False)
     with store.tx() as c:c.execute("UPDATE reviews SET status='running',updated=? WHERE id=?",(now(),identity))
     try:
         runtime.execute(stage,prompt,folder,resume_on_complete=(folder/'admission-error.json').exists())
