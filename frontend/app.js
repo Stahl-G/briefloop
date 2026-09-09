@@ -150,14 +150,33 @@ function gradeSummary(a){return a?`评分：证据 ${a.evidence??'—'}/5 · 覆
 
 function effectiveReportJobs(){
  const runId=pendingRun||current?.run_id;
+ const version=current?.run_id===runId?current:state.briefs.find(b=>b.run_id===runId);
  const superseded=new Set(state.jobs.map(j=>parse(j.payload).previous_job_id).filter(Boolean));
- return state.jobs.filter(j=>!['export_docx','release','audit_bundle'].includes(j.kind)&&!superseded.has(j.id)&&(j.kind==='learn'||!runId||parse(j.payload).run_id===runId||state.briefs.some(b=>b.run_id===runId&&b.id===parse(j.payload).version_id)));
+ const latestChecks=new Set();
+ return state.jobs.filter(j=>{
+  if(['export_docx','release','audit_bundle'].includes(j.kind)||superseded.has(j.id))return false;
+  if(j.kind==='learn'||!runId)return true;
+  const payload=parse(j.payload),result=parse(j.result)||{};
+  if(payload.run_id!==runId&&!state.briefs.some(b=>b.run_id===runId&&(b.id===payload.version_id||b.id===result.version_id)))return false;
+  // Keep ongoing work visible; finished attempts describe the selected document.
+  if(['running','queued'].includes(j.status)||!version)return true;
+  if(['review','assess'].includes(j.kind)){
+   if(payload.version_id!==version.id||latestChecks.has(j.kind))return false;
+   latestChecks.add(j.kind);return true;
+  }
+  if(['generate','revise'].includes(j.kind)){
+   // A failed producer may have admitted its document before recording a result.
+   const produced='brief_'+j.id.slice(4);
+   return result.version_id===version.id||version.id===produced||version.id===produced+'_r1'||(j.kind==='revise'&&payload.version_id===version.id);
+  }
+  return true;
+ });
 }
 let progressRequest=false;
 async function refreshProgress(){
  if(progressRequest||!state)return;
  const relevant=effectiveReportJobs();
- const job=relevant.find(j=>['running','queued'].includes(j.status));
+ const job=relevant.find(j=>j.status==='running')||relevant.find(j=>j.status==='queued');
  if(!job){
  const paused=relevant.find(j=>['cancelled','interrupted','failed'].includes(j.status));
  $('run-progress').hidden=!paused;

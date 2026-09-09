@@ -44,6 +44,49 @@ console.log('PASS: concurrent edits, comment binding, download version, save con
 // Learning jobs are workspace-scoped even without run_id/version_id.
 c.state.jobs.unshift({id:'learn',kind:'learn',status:'queued',payload:'{"feedback_ids":["f"]}'});
 assert.ok(vm.runInContext('effectiveReportJobs().some(j=>j.id==="learn")',c));
+
+// A completed revision and its Review replace the original draft's failed checks
+// in the progress panel, while those attempts remain in the history list.
+{
+ const nodes=new Map(),requests=[];
+ const node=id=>{if(!nodes.has(id))nodes.set(id,{hidden:false,innerHTML:''});return nodes.get(id)};
+ const job=(id,kind,status,payload,result=null)=>({id,kind,status,payload:JSON.stringify(payload),result:result===null?null:JSON.stringify(result),created:new Date().toISOString()});
+ const original={id:'brief_original',run_id:'report',parent_id:null};
+ const revised={id:'brief_revision_r1',run_id:'report',parent_id:original.id};
+ const producer=job('job_revision','revise','complete',{version_id:original.id},{version_id:revised.id});
+ const review=job('review_current','review','complete',{version_id:revised.id,parent_job_id:producer.id},{version_id:revised.id});
+ const oldReview=job('review_old','review','failed',{run_id:'report',version_id:original.id});
+ const oldGeneration=job('job_original','generate','failed',{run_id:'report'});
+ const history=[review,producer,oldReview,oldGeneration];
+ const view=vm.createContext({$:node,parse:s=>JSON.parse(s||'{}'),esc:String,modelLabel:()=> 'Selected model',page:()=>{},showSettings:()=>{},
+  current:revised,pendingRun:null,state:{jobs:history,briefs:[revised,original],runs:[],sources:[],settings:{timeout_minutes:30}},
+  api:async(route,payload)=>{requests.push({route,payload});return route.startsWith('events?')?[]:{}},action:async fn=>fn()});
+ vm.runInContext(progressCode+source.slice(source.indexOf('let progressRequest='),source.indexOf('function friendlyModel')),view);
+ assert.equal(vm.runInContext('effectiveReportJobs().map(j=>j.id).join(",")',view),'review_current,job_revision');
+ await view.refreshProgress();assert.equal(node('run-progress').hidden,true);
+ assert.deepEqual(history.map(j=>j.id),['review_current','job_revision','review_old','job_original']);
+ // A failed check of this exact revision remains actionable.
+ review.status='failed';await view.refreshProgress();assert.equal(node('run-progress').hidden,false);
+ await node('paused-resume').onclick();assert.equal(requests.at(-1).payload.job_id,review.id);
+ // A later successful Review of the same version also replaces a failed attempt
+ // when no previous_job_id link was recorded (e.g. an independently requested check).
+ const latestReview=job('review_latest','review','complete',{version_id:revised.id});
+ history.unshift(latestReview);await view.refreshProgress();assert.equal(node('run-progress').hidden,true);
+ // A producer can fail after admitting the revision, before its result is stored.
+ producer.status='failed';producer.result=null;await view.refreshProgress();
+ assert.equal(node('run-progress').hidden,false);await node('paused-resume').onclick();
+ assert.equal(requests.at(-1).payload.job_id,producer.id);producer.status='complete';producer.result=JSON.stringify({version_id:revised.id});
+ // Active work takes precedence over both completed/failed history and newer queued work.
+ const active=job('revision_active','revise','running',{version_id:revised.id});
+ history.unshift(job('review_queued','review','queued',{version_id:revised.id}),active);
+ await view.refreshProgress();assert.equal(node('run-progress').hidden,false);
+ await node('progress-stop').onclick();assert.equal(requests.at(-1).payload.job_id,active.id);
+ history.splice(0,2);
+ const learning=job('learning','learn','running',{feedback_ids:['feedback']});history.unshift(learning);
+ await view.refreshProgress();assert.equal(node('run-progress').hidden,false);
+ await node('progress-stop').onclick();assert.equal(requests.at(-1).payload.job_id,learning.id);
+ console.log('PASS: progress follows the selected revision and latest check; current failures, active work and learning remain visible');
+}
 // Use the real openBrief and pending logic with minimal editor/DOM fixtures.
 const opening=source.slice(source.indexOf('function tryOpenPending'),source.indexOf('function changed()'));
 let editorContent='';
