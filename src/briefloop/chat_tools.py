@@ -11,6 +11,22 @@ from .models import Requirements, Comment, Settings, runtime_fields
 def workspace_action(store, request):
     if not isinstance(request,dict):raise ValueError('请求必须是 JSON 对象')
     action=request.get('action')
+    if action=='evidence_span':
+        from .evidence import create_span
+        return create_span(store,request['evidence'])
+    if action=='claim_create':
+        from .evidence import create_claim
+        return create_claim(store,request['run_id'],request['claim'],request.get('previous_id'))
+    if action=='claim_bind':
+        from .evidence import bind_claim
+        return bind_claim(store,request['version_id'],request['claim_id'],request['block_id'],request['quote'])
+    if action=='read_run_report':
+        rows=store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(request['run_id'],))
+        if not rows:return {'status':'waiting_for_draft'}
+        return workspace_action(store,{'action':'read_report','version_id':rows[0]['id']})
+    if action=='evidence_read':
+        from .evidence import inspect_bindings
+        return inspect_bindings(store,request['version_id'])
     if action=='read_report':
         from .document_model import brief_document
         brief=store.one('briefs',request['version_id'])
@@ -19,7 +35,7 @@ def workspace_action(store, request):
         from pathlib import Path
         path=Path(request['document_file']).resolve()
         if not path.is_relative_to(store.root):raise ValueError('修订内容文件必须位于当前工作区')
-        return store.revise(request['base_version'],editor_document=json.loads(path.read_text()))
+        return store.revise(request['base_version'],editor_document=json.loads(path.read_text()),author='agent')
     if action=='templates':return {'templates':store.rows('SELECT * FROM templates ORDER BY created DESC')}
     if action=='template_import':
         from .media import source_files
@@ -132,6 +148,8 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 {command} REQUEST_FILE
 工具只调用现有工作区接口。action 支持：
 - {{"action":"inspect"}}：查看需求、来源 ID、简报版本 ID 和任务状态的简短索引。
+- 用 evidence_span 登记精确证据：{{"action":"evidence_span","evidence":{{"source_id":"实际ID","locator":{{"kind":"text","start_line":1,"end_line":3}},"excerpt":"该范围内逐字原文","entity":"主体","metric":"指标","period":"期间"}}}}。支持 pdf/page、xlsx/sheet/cells、image/region；保存位置不等于语义通过。
+- 用 claim_create 登记重要主张：run_id、claim（statement、kind=fact/source_opinion/calculation/inference/recommendation、importance=core/supporting、supports 每项含span_id/supports_quote/rationale、推断还需reasoning/assumptions），获得真实claim_id。用 claim_bind 的 version_id/claim_id/block_id/quote 绑定唯一正文位置；read_report返回稳定blockId。evidence_read读取绑定及失效状态。不要自行声明已审阅通过。
 - {{"action":"company_read"}}：读取本工作区企业背景及待确认冲突。企业内部周报开始前可提议维护，用户明确同意/拒绝后用 {{"action":"company_config","enabled":true}} 保存选择。
 - {{"action":"company_update","fact":{{"key":"主体/指标/期间","value":"有依据的企业背景","source_id":"真实来源ID","locator":"原文位置","effective_date":"YYYY-MM-DD","origin":"public|user"}}}}：已启用后更新企业背景。返回 pending 时向用户询问；用户明确回答后用 {{"action":"company_resolve","fact_id":"真实记录ID","accept":true}} 记录采用或拒绝。
 - {{"action":"export_word","version_id":"真实稿件ID"}}：用户要求时生成所选版本 Word，返回文件任务状态；完成后从任务结果取得下载地址。

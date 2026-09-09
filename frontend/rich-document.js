@@ -15,7 +15,7 @@ export const TextStyle=Mark.create({name:'textStyle',
 });
 export const Layout=Extension.create({name:'reportLayout',
  addGlobalAttributes(){return [
-  {types:['paragraph','heading'],attributes:{
+  {types:['paragraph','heading','image','table','tableCell','tableHeader'],attributes:{
    textAlign:{default:null,parseHTML:el=>el.style.textAlign||null,renderHTML:a=>a.textAlign?{style:'text-align:'+a.textAlign}:{}},
    blockId:{default:null,parseHTML:el=>el.getAttribute('data-block-id'),renderHTML:a=>a.blockId?{'data-block-id':a.blockId}:{}}
   }},

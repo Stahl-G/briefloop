@@ -1,5 +1,6 @@
 """One saved set of reader requirements shared by writing, evaluation and export."""
 import json
+import hashlib
 
 
 def resolve(requirements, template=None):
@@ -12,6 +13,7 @@ def resolve(requirements, template=None):
             'template_id': requirements.get('template_id'),
             'sections': sections, 'manual_sections': requirements.get('manual_sections', []), 'key_questions': requirements.get('key_questions', []),
             'writing_preferences': requirements.get('writing_preferences', []),
+            'requirement_items': requirement_items(requirements),
             'references': '正文短编号，图表简注，文末精简来源表；详细核查另存'}
 
 
@@ -37,3 +39,13 @@ def research_record(store, brief):
             'notes': detail.get('research_notes', []), 'gaps': detail.get('gaps', []),
             'citations': [{**ref, 'source_name': store.one('sources', ref['source_id'])['name']} for ref in refs],
             'assessments': [json.loads(x['data']) for x in store.rows('SELECT data FROM assessments WHERE version_id=? ORDER BY rowid DESC', (brief['id'],))]}
+
+
+def requirement_items(requirements):
+    items=[]
+    for kind,texts in [('objective',[requirements['objective']]),('question',requirements.get('key_questions',[])),('manual',requirements.get('manual_sections',[]))]:
+        for text in texts:
+            identity='req_'+hashlib.sha256((kind+'\0'+text).encode()).hexdigest()[:20]
+            items.append({'requirement_id':identity,'text':text,'mode':'manual' if kind=='manual' else 'required',
+                          'origin':'user_requirements','kind':kind})
+    return items

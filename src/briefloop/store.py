@@ -94,6 +94,8 @@ class Store:
         self.db = self.root/"briefloop.db"
         with self.tx() as c:
             c.executescript(SCHEMA)
+            from .evidence import SCHEMA as EVIDENCE_SCHEMA
+            c.executescript(EVIDENCE_SCHEMA)
             if 'mode' not in {r['name'] for r in c.execute('PRAGMA table_info(runs)')}:
                 c.execute("ALTER TABLE runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'normal'")
             c.execute("INSERT OR IGNORE INTO meta VALUES('settings', ?)", (dump(Settings().model_dump()),))
@@ -276,7 +278,8 @@ class Store:
                 c.execute("INSERT OR IGNORE INTO run_sources VALUES(?,?)",(run_id,ref.source_id))
         return self.one("briefs", vid)
 
-    def revise(self, base_version, markdown='', editor_document=None):
+    def revise(self, base_version, markdown='', editor_document=None, *, author='user'):
+        if author not in ('user','agent'):raise ValueError('无效修订作者')
         from .document_model import normalize_document, document_markdown, document_hash, source_ids
         if editor_document is not None:
             editor_document=normalize_document(editor_document)
@@ -314,8 +317,8 @@ class Store:
                 if re.findall(r'[-+]?\d+(?:[.,]\d+)*',base['markdown'])!=re.findall(r'[-+]?\d+(?:[.,]\d+)*',markdown):
                     detail['report_data_needs_review']=True
             sha=document_hash(editor_document) if editor_document is not None else content_hash(markdown)
-            c.execute("INSERT INTO briefs VALUES(?,?,?,?,?,?,?,?,?)", (vid, base["run_id"], base_version, "user", markdown, sha, dump(detail), dump(editor_document) if editor_document is not None else None, now()))
-            if semantic_signature(markdown)!=semantic_signature(base['markdown']):
+            c.execute("INSERT INTO briefs VALUES(?,?,?,?,?,?,?,?,?)", (vid, base["run_id"], base_version, author, markdown, sha, dump(detail), dump(editor_document) if editor_document is not None else None, now()))
+            if author=='user' and semantic_signature(markdown)!=semantic_signature(base['markdown']):
                 c.execute("INSERT INTO feedback VALUES(?,?,?,?,?,?)", (uid("feedback"), vid, "revision", dump({"before": base_version, "after": vid}), None, now()))
         return self.one("briefs", vid)
 

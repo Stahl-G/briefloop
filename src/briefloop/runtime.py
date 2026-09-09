@@ -237,7 +237,12 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
     把 Analyst 结果保存 {folder/'draft.json'}，结构遵循 {folder/'draft.schema.json'}。
     重要数字绑定：关键金额、财务指标、产能、订单、成交量、涨跌幅用 number_bindings 记录原始 value/unit、label/entity/period、source_id/locator；另给 source_excerpt（来源中逐字存在、含原始数值与完整单位的摘录）、report_quote（正文中唯一的逐字片段）、number_text（该片段内唯一、完整的带符号数字与单位）。示例：{{"label":"公司订单金额","value":13.6,"unit":"billion USD","period":"本报告期","entity":"示例公司","source_id":"实际来源ID","locator":"实际原文位置","source_excerpt":"从真实来源逐字摘录，不照抄示例","report_quote":"示例公司订单为136亿美元。","number_text":"136亿美元"}}。示例仅说明字段，必须使用实际材料；不要编造绑定。程序只核对指定位置的数值、币种、单位换算以及摘录存在性，不证明主体、期间或指标含义正确。不能准确绑定或不支持的单位会标记未检查，不能声称全文已核验。
     草稿一保存应用就会展示；不需要 Editor、Auditor 或评分通过。
-4. draft.json 完整保存后，写 agents.json，包含实际子 agent id/role/status/产物路径。
+4. draft.json 完整保存后，完成重要主张的证据登记，再写 agents.json。使用 `{tool} workspace-action --request REQUEST_JSON`：
+   a. read_run_report(run_id={run['id']})读取当前已保存稿件及其blockId；正文仍在接纳时会返回waiting_for_draft，稍后读取，不另起任务。
+   b. evidence_span 的 evidence包含 source_id、locator、excerpt、entity/metric/value/unit/period/category。文本locator为kind=text/start_line/end_line，PDF为kind=pdf/page，Excel为kind=xlsx/sheet/cells，图像为kind=image/region。excerpt应在指定位置逐字存在，不用全文其他数字替代。获得span_id。
+   c. claim_create(run_id,claim)登记重要事实与判断。claim含statement、kind(fact/source_opinion/calculation/inference/recommendation)、importance(core/supporting)、requirement_ids（来自input.deliverable_spec.requirement_items）、supports（span_id/supports_quote/rationale）；推断或建议另含reasoning/assumptions、可用premise_claim_ids关联前提；图表主张可附figure_ids。只绑定该证据实际支持的statement片段。
+   d. claim_bind(version_id,claim_id,block_id,quote)绑定正文所在块与唯一片段；调用evidence_read检查登记结果。不得把unreviewed写成已核验；即使完成绑定，重要主张是否遗漏、语义是否支持仍由独立Reviewer检查。
+   上述证据与核查信息保存在后台，不抄进报告正文。随后写 agents.json，包含实际子 agent id/role/status/产物路径。
    本会话到这里结束。评分由应用随后使用独立配置的 Evaluator 评分会话处理，不在这里调用 Evaluator 或生成 assessment.json。
    最终回复一句完成状态和文件位置。
 '''
@@ -272,6 +277,8 @@ def assessment_prompt(store, brief, folder, backend='codex'):
     from .delivery_checks import brief_checks
     input_pack['refcheck']=brief_checks(store,brief['id'])
     input_pack['number_bindings']=detail.get('number_bindings',[])
+    from .evidence import inspect_bindings
+    input_pack['claim_evidence']=inspect_bindings(store,brief['id'])
     (folder/'input.json').write_text(dump(input_pack),encoding='utf-8')
     tool=shlex.join([sys.executable,'-m','briefloop','tool','--workspace',str(store.root)])
     no_question='本轮没有任何用户在旁可问：不要调用 question 工具；遇到含糊之处自行按任务目标决断，并在结果中记录假设。\n' if backend=='opencode' else ''
