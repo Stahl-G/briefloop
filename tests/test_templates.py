@@ -9,6 +9,85 @@ from briefloop.templates import import_template, prepare, export_template
 from briefloop.export_jobs import enqueue_export, generate_word, output_path
 
 
+def test_rebuild_is_a_new_layout_version_preserving_legacy_and_preamble(tmp_path):
+    from copy import deepcopy
+    import hashlib
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from briefloop.templates import rebuild_template_version,template
+    original=Document()
+    original.add_paragraph('Monthly Report')
+    original.add_paragraph('August 2025')
+    original.add_paragraph('1. Summary')
+    callout=original.add_paragraph('An emphasized historical callout must not become the ordinary body style.')
+    shade=OxmlElement('w:shd');shade.set(qn('w:fill'),'E3F2FD');callout._p.get_or_add_pPr().append(shade)
+    border=OxmlElement('w:pBdr');left=OxmlElement('w:left');left.set(qn('w:val'),'single');border.append(left)
+    callout._p.get_or_add_pPr().append(border)
+    callout.runs[0].bold=True;callout.runs[0].font.color.rgb=RGBColor.from_string('1A568E')
+    ordinary=original.add_paragraph()
+    ordinary.add_run('Overview: ').bold=True
+    ordinary.add_run('The ordinary body uses an unshaded paragraph and keeps emphasis limited to its lead phrase.')
+    for run in ordinary.runs:run.font.size=Pt(11);run.font.color.rgb=RGBColor.from_string('222222')
+    original.add_paragraph('2. Operating implications')
+    original.add_paragraph('This is another ordinary paragraph with enough text to identify its role.')
+    source=BytesIO();original.save(source)
+    store=Store(tmp_path)
+    old=import_template(store,'Monthly.docx',source.getvalue())
+    old=prepare(store,old['id'],{'keep_blocks':[0,1],'paragraph_index':3,
+        'sections':[{'section_id':'summary','title':'1. Summary','index':2,'purpose':'Changes'},
+                    {'section_id':'impact','title':'2. Operating implications','index':5,'purpose':'Impact'}],
+        'fields':[{'old':'Monthly Report','field':'title'},{'old':'August 2025','field':'period'}]})
+    assert old['spec']['body_sample_index']==4
+    # A synthetic already-prepared v1 record models the shipped callout bug.
+    # Only this fixture is changed; rebuilding must leave it byte-for-byte alone.
+    legacy_path=store.root/'templates'/old['id']/'prepared.docx'
+    legacy_doc=Document(legacy_path);body_style=legacy_doc.styles[old['spec']['styles']['paragraph']]
+    if body_style.element.pPr is not None:body_style.element.remove(body_style.element.pPr)
+    body_style.element.append(deepcopy(callout._p.pPr));body_style.font.bold=True;body_style.font.color.rgb=RGBColor.from_string('1A568E')
+    for section in old['spec']['sections']:
+        style=legacy_doc.styles[old['spec']['styles']['heading:'+section['section_id']]]
+        style.paragraph_format.keep_with_next=None;style.paragraph_format.keep_together=None
+    legacy_doc.save(legacy_path)
+    legacy_spec={key:value for key,value in old['spec'].items() if key not in ('layout_version','cover_title_present','body_sample_index','preparation_spec')}
+    legacy_spec['prepared_hash']=hashlib.sha256(legacy_path.read_bytes()).hexdigest()
+    with store.tx() as c:c.execute('UPDATE templates SET spec=? WHERE id=?',(json.dumps(legacy_spec),old['id']))
+    before_bytes=legacy_path.read_bytes();before_spec=template(store,old['id'])['spec']
+    title='Current monthly report'
+    paragraph=lambda text:{'type':'paragraph','content':[{'type':'text','text':text}]}
+    document={'type':'doc','content':[paragraph('Preface before the first heading must survive.'),
+        {'type':'table','content':[{'type':'tableRow','content':[{'type':'tableCell','content':[paragraph('Preamble table must survive.')]}]}]},
+        {'type':'heading','attrs':{'level':1},'content':[{'type':'text','text':title}]},
+        paragraph('Reporting period note must survive.'),
+        {'type':'heading','attrs':{'level':2,'blockId':'summary'},'content':[{'type':'text','text':'1. Summary'}]},
+        *[paragraph('This paragraph presents the current business change and its operating consequences. '*18) for _ in range(3)],
+        {'type':'heading','attrs':{'level':2,'blockId':'impact'},'content':[{'type':'text','text':'2. Operating implications'}]},
+        paragraph('The next section remains with its explanation, while the earlier preface and table stay in place.')]}
+    current_source=store.add_source('Current synthetic material','Current business change and operating consequences.')
+    def export_for(record):
+        run=store.create_run({'title':title,'objective':'Explain','period':'August 2026','template_id':record['id']},[current_source['id']])
+        brief=store.publish(run['id'],{'title':title,'editor_document':document})
+        return export_template(store,brief,document,{})
+    legacy_output=export_for(old);(tmp_path/'legacy-output.docx').write_bytes(legacy_output)
+    jobs_before=len(store.rows('SELECT id FROM jobs'))
+    rebuilt=rebuild_template_version(store,old['id'])
+    assert rebuilt['status']=='ready' and rebuilt['parent_id']==old['id'] and rebuilt['revision']==old['revision']+1
+    assert len(store.rows('SELECT id FROM jobs'))==jobs_before
+    assert legacy_path.read_bytes()==before_bytes and template(store,old['id'])['spec']==before_spec
+    rendered=export_for(rebuilt);(tmp_path/'rebuilt-output.docx').write_bytes(rendered)
+    current=Document(BytesIO(rendered));legacy=Document(BytesIO(legacy_output))
+    assert sum(p.text==title for p in current.paragraphs)==1 and sum(p.text==title for p in legacy.paragraphs)==2
+    assert any(p.text=='Preface before the first heading must survive.' for p in current.paragraphs)
+    assert any(p.text=='Reporting period note must survive.' for p in current.paragraphs)
+    assert current.tables[0].cell(0,0).text=='Preamble table must survive.'
+    body_style=current.styles[rebuilt['spec']['styles']['paragraph']]
+    assert not body_style.element.xpath('./w:pPr/w:shd|./w:pPr/w:pBdr') and body_style.font.bold is not True
+    assert body_style.font.size==Pt(11) and str(body_style.font.color.rgb)=='222222'
+    for section in rebuilt['spec']['sections']:
+        style=current.styles[rebuilt['spec']['styles']['heading:'+section['section_id']]]
+        assert style.paragraph_format.keep_with_next is True and style.paragraph_format.keep_together is True
+    assert (tmp_path/'legacy-output.docx').read_bytes()==legacy_output
+
+
 def test_template_reuses_direct_styles_replaces_old_facts_and_locks_version(tmp_path):
     original=Document();original.sections[0].header.paragraphs[0].text='Example Corp · August 2025'
     original.add_paragraph('Monthly Report')

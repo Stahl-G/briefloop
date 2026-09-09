@@ -61,6 +61,9 @@ def workspace_action(store, request):
         if not path.is_relative_to(store.root):raise ValueError('修订内容文件必须位于当前工作区')
         return store.revise(request['base_version'],editor_document=json.loads(path.read_text()),author='agent')
     if action=='templates':return {'templates':store.rows('SELECT * FROM templates ORDER BY created DESC')}
+    if action=='template_rebuild':
+        from .templates import rebuild_template_version
+        return rebuild_template_version(store,request['template_id'])
     if action=='template_import':
         from .media import source_files
         from .templates import import_template
@@ -177,7 +180,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"company_read"}}：读取本工作区企业背景及待确认冲突。企业内部周报开始前可提议维护，用户明确同意/拒绝后用 {{"action":"company_config","enabled":true}} 保存选择。
 - {{"action":"company_update","fact":{{"key":"主体/指标/期间","value":"有依据的企业背景","source_id":"真实来源ID","locator":"原文位置","effective_date":"YYYY-MM-DD","origin":"public|user"}}}}：已启用后更新企业背景。返回 pending 时向用户询问；用户明确回答后用 {{"action":"company_resolve","fact_id":"真实记录ID","accept":true}} 记录采用或拒绝。
 - {{"action":"export_word","version_id":"真实稿件ID"}}：用户要求时生成所选版本 Word，返回文件任务状态；完成后从任务结果取得下载地址。
-- {{"action":"templates"}}：读取可选模板。用户要求上传材料用作主模板时用 {{"action":"template_import","source_id":"DOCX来源ID"}} 启动一次准备；准备完成后 generate.requirements.template_id 选择具体版本。
+- {{"action":"templates"}}：读取可选模板。用户要求上传材料用作主模板时用 {{"action":"template_import","source_id":"DOCX来源ID"}} 启动一次准备；准备完成后 generate.requirements.template_id 选择具体版本。需要重新准备已有模板版式时，用 {{"action":"template_rebuild","template_id":"已有模板ID"}} 从保留原件创建新模板版本；原模板和已绑定稿件保持不变，新任务选择返回的新模板ID。
 - {{"action":"read_report","version_id":"稿件ID"}}：读取富文档 JSON 和引用。用户明确要求修改内容/章节/图表时，将修改后的 JSON 保存到工作区文件，再用 {{"action":"revise_document","base_version":"刚读取版本ID","document_file":"工作区内JSON绝对路径"}} 保存新版本，不覆盖用户并发编辑。
 - {{"action":"import_word_revision","base_version":"用户指定基础版本","source_id":"DOCX来源ID"}}：导入用户修改的 Word。返回 needs_alignment 时先核对原件和基础版本，向用户说明对齐问题；仅按用户明确选择提供 accept_unaligned=true。用户希望更新模板时另用 template_import 并提供 parent_id。
 - {{"action":"generate","requirements":{{"title":"标题","objective":"用户目的","audience":"读者","language":"中文","extent":"compact|balanced|detailed","allow_web":{str(bool(allow_web)).lower()},"period":"时间范围"}},"source_ids":["真实来源ID"],"runtime":{runtime_json}}}：正式生成可在页面编辑的简报。

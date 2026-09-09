@@ -629,16 +629,25 @@ class Worker:
             latest=self.store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(brief['run_id'],))[0]['id']
             if latest!=brief['id']:return {'revision_status':'user_edit','revision_message':'用户已修改，保留当前人工稿；可按评分手动请求修订'}
             stage=folder/'revision';stage.mkdir(exist_ok=True)
+            from .evidence import inspect_bindings,EvidenceInput,ClaimInput
+            from .figures import read_figure
+            detail=json.loads(brief['detail'])
             (stage/'input.json').write_text(dump({'brief':brief,'assessment':assessment,
-                'requirements':json.loads(self.store.one('runs',brief['run_id'])['requirements']),'review_findings':open_findings,'conflicts':review_state['conflicts']}))
+                'requirements':json.loads(self.store.one('runs',brief['run_id'])['requirements']),'review_findings':open_findings,'conflicts':review_state['conflicts'],
+                'evidence':inspect_bindings(self.store,brief['id']),
+                'evidence_schema':EvidenceInput.model_json_schema(),'claim_schema':ClaimInput.model_json_schema(),
+                'figures':[read_figure(self.store,fid,brief['run_id']) for fid in detail.get('figures',[])]}))
             (stage/'draft.schema.json').write_text(dump(BriefDraft.model_json_schema()))
             from .deliverable_spec import resolve,instructions
             contract=json.loads(brief['detail']).get('reader_contract')
             spec=resolve(json.loads(self.store.one('runs',brief['run_id'])['requirements']),reader_contract=contract)
+            tool=f'{shlex.quote(sys.executable)} -m briefloop tool --workspace {shlex.quote(str(self.store.root))}'
             prompt=TASK_CONTEXT+instructions(spec,role='revision')+f'''本次仅针对已有报告进行一次修订。读取 {stage/'input.json'} 的原稿、评价和本轮要求。
 保留原稿已有的有效事实、图表及明确人工占位。核对来源，只修正有依据的错误、遗漏和写作问题；不重新开展无关研究，不改用户模板默认。
 必要来源按 source_id 从工作区 {self.store.root/'sources'} 定向读取，保留引用和 research_notes。按评分纠正问题，内部核查过程留在独立记录，不将免责声明加回正文。
+input.figures提供已登记图表、数据和脚本。图像本身有错误时，在工作区另存修正后的数据/脚本/图片并实际查看，使用 `{tool} register-figure --run {brief['run_id']} --image IMAGE_PATH --title TITLE --caption CAPTION --source SOURCE_ID --data DATA_PATH --script SCRIPT_PATH` 登记新快照；用返回的真实figure_id同步draft.figures与editor_document图片src（briefloop-figure:FIGURE_ID），旧资产保留。图中错误未改时不能仅改正文图注或写入gaps就声称已修正。
 需要新增或修正主张依据时，使用 workspace-action 的 evidence_span/claim_create/evidence_read 接口；修订原有主张时传 previous_id，不删历史。将待绑定到本次新正文的关联保存 {stage/'revision_bindings.json'}，格式为数组，每项 claim_id、block_id、quote。运行器会在新稿入库后绑定，不把关联写到旧稿。
+使用 `{tool} workspace-action --request REQUEST_JSON`：evidence_span请求为action/evidence（按input.evidence_schema），claim_create请求为action/run_id/claim（按input.claim_schema，可传previous_id）。input.evidence包含现有真实ID；新增ID必须取登记接口实际返回值，不能自拟rev_等占位符。
 对input.review_findings逐项处理，并将处理说明保存到 {stage/'responses.json'}，格式为数组，每项包含finding_id、action(corrected/removed/disagree)、reason（具体修改或异议依据）。这不是关闭发现，后续Reviewer独立复核。
 将完整修订稿写入 {stage/'draft.json'}，遵循 {stage/'draft.schema.json'}，正文使用 editor_document 富文档 JSON。仅做此轮修订，不自行启动下一轮评价或技能学习。
 '''
