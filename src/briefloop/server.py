@@ -24,9 +24,24 @@ def make_server(workspace, port=8765, *, paused=False):
     try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
     except BlockingIOError:
         lock.close();raise RuntimeError('这个工作区已有本地服务在运行')
-    harness=HarnessManager(store);worker=Worker(store)
-    worker.runtime=InteractiveRuntime(store,harness)
+    harness=HarnessManager(store)
+    from .opencode_harness import OpencodeHarness
+    from .backends import validate_backend
+    opencode_harness=OpencodeHarness(store)
+    worker=Worker(store)
+    worker.runtime=InteractiveRuntime(store,backends={'codex':harness,'opencode':opencode_harness})
     worker.opened_paused=paused
+    def pick_harness(runtime=None,session_id=None):
+        backend=(runtime or {}).get('backend')
+        if backend is None and session_id is not None:
+            for candidate in (harness,opencode_harness):
+                try:
+                    backend=candidate.chat.session(session_id)['runtime'].get('backend')
+                    break
+                except KeyError:
+                    continue
+        backend=backend or store.settings().get('agent_backend','codex')
+        return {'codex':harness,'opencode':opencode_harness}[validate_backend(backend)]
     token=secrets.token_urlsafe(24)
     assets=files('briefloop').joinpath('static')
     # Serve one UI/backend version for this process; builds must not replace a live UI halfway.
@@ -48,12 +63,21 @@ def make_server(workspace, port=8765, *, paused=False):
         def do_GET(self):
             try:
                 u=urlsplit(self.path);q=parse_qs(u.query)
-                if u.path=='/api/state':self.send(200,store.snapshot())
+                if u.path=='/api/state':
+                    snapshot=store.snapshot()
+                    for source in snapshot['sources']:
+                        sidecar=store.root/'sources'/(source['id']+'.provenance.json')
+                        if sidecar.is_file():
+                            try:
+                                meta=json.loads(sidecar.read_text())
+                                source['media_type']=meta.get('media_type');source['needs_visual']=bool(meta.get('needs_visual',False))
+                            except (ValueError,OSError):pass
+                    self.send(200,snapshot)
                 elif u.path=='/api/workspaces':
                     from .workspaces import list_workspaces
                     self.send(200,list_workspaces(store))
                 elif u.path=='/api/harness/sessions':self.send(200,{'sessions':harness.list_sessions(q.get('view',['active'])[0])})
-                elif u.path=='/api/harness/session':self.send(200,harness.snapshot(q['id'][0],int(q.get('after',['0'])[0])))
+                elif u.path=='/api/harness/session':self.send(200,pick_harness(session_id=q['id'][0]).snapshot(q['id'][0],int(q.get('after',['0'])[0])))
                 elif u.path=='/api/session':self.send(200,{'token':token})
                 elif u.path=='/api/runtime':
                     proc=worker.runtime.process
@@ -61,12 +85,34 @@ def make_server(workspace, port=8765, *, paused=False):
                 elif u.path=='/api/source':
                     from .projections import source_details
                     sid=q['id'][0];source,provenance,original=source_details(store,sid)
-                    self.send(200,{'source':source,'text':store.source_text(sid),'provenance':provenance,'original_url':'/api/source-original?id='+sid if original else None})
+                    from .media import source_attachment
+                    attachment=source_attachment(store,sid) if source['status']!='failed' else {'status':'failed','error':source.get('error'),'image_path':None}
+                    self.send(200,{'source':source,'text':store.source_text(sid),'provenance':provenance,'attachment':attachment,
+                        'image_url':'/api/source-image?id='+sid if attachment.get('image_path') and source['status']=='ready' else None,
+                        'original_url':'/api/source-original?id='+sid if original else None})
+                elif u.path=='/api/source-image':
+                    from pathlib import Path
+                    from .media import source_attachment,rendered_page_path
+                    sid=q['id'][0];attachment=source_attachment(store,sid)
+                    if attachment.get('status')!='ready':raise ValueError(attachment.get('error') or '来源不可读取')
+                    page=int(q['page'][0]) if q.get('page') else None
+                    path=rendered_page_path(store,sid,page) if page is not None else attachment.get('image_path')
+                    if not path:raise ValueError('尚无图片页面，请先选择 PDF 页码并点击查看页面')
+                    self.send(200,Path(path).read_bytes(),'image/png')
                 elif u.path=='/api/source-original':
                     from .projections import source_details
                     source,provenance,original=source_details(store,q['id'][0])
                     if original is None:raise ValueError('该来源未保留原件')
                     self.send(200,original.read_bytes(),'application/octet-stream',download_name=original.name)
+                elif u.path=='/api/report-data-template':
+                    from .industry_data import report_data_template
+                    self.send(200,report_data_template(),download_name='industry-report-data.json')
+                elif u.path=='/api/report-data-schema':
+                    from .industry_data import IndustryData
+                    self.send(200,IndustryData.model_json_schema())
+                elif u.path=='/api/report-data':
+                    from .report_tools import report_details
+                    self.send(200,report_details(store,store.one('briefs',q['version'][0])))
                 elif u.path=='/api/research-budget':
                     from .research_budget import snapshot
                     self.send(200,snapshot(store,q['run'][0]))
@@ -76,6 +122,15 @@ def make_server(workspace, port=8765, *, paused=False):
                 elif u.path=='/api/tavily':
                     from .tavily import key_status
                     self.send(200,key_status())
+                elif u.path=='/api/models':
+                    from .backends import validate_backend
+                    backend=validate_backend(q.get('backend',[store.settings().get('agent_backend','codex')])[0])
+                    if backend=='opencode':
+                        models=opencode_harness.list_models(refresh=q.get('refresh',[''])[0]=='1')
+                    else:
+                        models=[{'id':mid,'provider':'codex','name':name} for mid,name in
+                                [('gpt-5.6-luna','Luna'),('gpt-5.6-terra','Terra'),('gpt-5.6-sol','Sol'),('gpt-6-astra','Astra')]]
+                    self.send(200,{'backend':backend,'count':len(models),'models':models})
                 elif u.path=='/api/events':
                     jid=q['job'][0];self.send(200,store.rows('SELECT * FROM events WHERE job_id=? ORDER BY seq',(jid,)))
                 elif u.path=='/api/learning-details':
@@ -92,11 +147,29 @@ def make_server(workspace, port=8765, *, paused=False):
                                 case[side]['assessment']=json.loads(grades[0]['data']) if grades else None
                         rounds.append({'cases':cases,'result':json.loads(comparison.read_text()) if comparison.exists() else None})
                     self.send(200,{'job':job,'rounds':rounds})
+                elif u.path=='/api/figure':
+                    from .figure_support import export_figures
+                    brief=store.one('briefs',q['version'][0]);figures=export_figures(store,brief)
+                    if q['id'][0] not in figures:raise ValueError('这张图未引用在该稿件中')
+                    self.send(200,figures[q['id'][0]]['image_bytes'],'image/png')
                 elif u.path=='/api/download':
                     b=store.one('briefs',q['version'][0])
                     from .exports import reader_markdown,docx_bytes
                     md=reader_markdown(store,b)
-                    if q.get('format',['md'])[0]=='docx':self.send(200,docx_bytes(md),'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+                    if q.get('format',['md'])[0]=='bundle':
+                        from .figure_support import markdown_bundle
+                        self.send(200,markdown_bundle(store,b),'application/zip',download_name='report-with-figures.zip')
+                    elif q.get('format',['md'])[0]=='docx':
+                        from .figure_support import export_figures
+                        req=json.loads(store.one('runs',b['run_id'])['requirements']);detail=json.loads(b['detail'])
+                        report_data=detail.get('report_data')
+                        if report_data and not detail.get('report_data_needs_review'):
+                            report_data={**report_data,'records':[{**row,'source_label':store.one('sources',row['source_id'])['name']} for row in report_data['records']]}
+                        elif detail.get('report_data_needs_review'):report_data=None
+                        self.send(200,docx_bytes(md,report_profile=req.get('report_profile','brief'),title=detail.get('title',req.get('title','')),
+                            report_date=req.get('report_date',''),organization=req.get('organization',''),industry=req.get('industry',''),
+                            period=req.get('period',''),report_data=report_data,figures=export_figures(store,b)),
+                            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name='report.docx')
                     else:self.send(200,md.encode(),'text/markdown; charset=utf-8')
                 elif u.path in ('/','/index.html'):
                     self.send(200,asset_bytes['index.html'],'text/html; charset=utf-8')
@@ -119,19 +192,27 @@ def make_server(workspace, port=8765, *, paused=False):
                 elif path=='/api/workspaces/open':
                     from .workspaces import open_workspace
                     result=open_workspace(store,body['path'],create=bool(body.get('create',False)))
-                elif path=='/api/harness/session':result=harness.create_session(body.get('title','新对话'),body.get('runtime'))
-                elif path=='/api/harness/message':result=harness.send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),allow_web=bool(body.get('allow_web',False)))
-                elif path=='/api/harness/answer':result=harness.answer(body['session_id'],body['request_id'],body['answers'])
-                elif path=='/api/harness/archive':result=harness.archive(body['session_id'])
-                elif path=='/api/harness/delete':result=harness.delete(body['session_id'])
-                elif path=='/api/harness/restore':result=harness.restore(body['session_id'])
-                elif path=='/api/harness/archive-completed':result=harness.archive_completed()
-                elif path=='/api/harness/cancel':result=harness.cancel(body['session_id'])
+                elif path=='/api/harness/session':result=pick_harness(body.get('runtime')).create_session(body.get('title','新对话'),body.get('runtime'))
+                elif path=='/api/harness/message':result=pick_harness(body.get('runtime'),body['session_id']).send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),allow_web=bool(body.get('allow_web',False)))
+                elif path=='/api/harness/answer':result=pick_harness(session_id=body['session_id']).answer(body['session_id'],body['request_id'],body['answers'])
+                elif path=='/api/harness/archive':result=pick_harness(session_id=body['session_id']).archive(body['session_id'])
+                elif path=='/api/harness/delete':result=pick_harness(session_id=body['session_id']).delete(body['session_id'])
+                elif path=='/api/harness/restore':result=pick_harness(session_id=body['session_id']).restore(body['session_id'])
+                elif path=='/api/harness/archive-completed':result={'count':pick_harness({'backend':'codex'}).archive_completed('codex')['count']+pick_harness({'backend':'opencode'}).archive_completed('opencode')['count']}
+                elif path=='/api/harness/cancel':result=pick_harness(session_id=body['session_id']).cancel(body['session_id'])
                 elif path=='/api/upload':
                     data=base64.b64decode(body['data'],validate=True)
                     result=sources.upload(store,body['name'],data)
                 elif path=='/api/source-url':result=sources.fetch(store,body['url'])
                 elif path=='/api/retry-source':result=sources.retry_source(store,body['source_id'])
+                elif path=='/api/source-pages':
+                    from .media import render_source_pages
+                    result=render_source_pages(store,body['source_id'],body['pages'])
+                    for page in result['pages']:
+                        page['url']='/api/source-image?id='+body['source_id']+'&page='+str(page['page'])
+                elif path=='/api/report-data/prepare':
+                    from .report_tools import prepare_for_run
+                    result=prepare_for_run(store,body['run_id'],body['data'])
                 elif path=='/api/generate':
                     req=Requirements.model_validate(body['requirements'])
                     run=store.create_run(req.model_dump(),body.get('source_ids',[]))
@@ -161,10 +242,10 @@ def make_server(workspace, port=8765, *, paused=False):
                 self.send(500,{'error':str(exc)})
     try:server=ThreadingHTTPServer(('127.0.0.1',port),Handler)
     except OSError:
-        harness.close();lock.close();raise
+        harness.close();opencode_harness.close();lock.close();raise
     server.daemon_threads=True
     server.workspace_lock=lock
-    server.store=store;server.worker=worker;server.harness=harness
+    server.store=store;server.worker=worker;server.harness=harness;server.opencode_harness=opencode_harness
     return server
 
 
@@ -179,4 +260,4 @@ def serve(workspace,port=8765,*,paused=False):
     try:server.serve_forever()
     except KeyboardInterrupt:pass
     finally:
-        server.worker.close();server.harness.close();server.server_close();server.workspace_lock.close()
+        server.worker.close();server.harness.close();server.opencode_harness.close();server.server_close();server.workspace_lock.close()

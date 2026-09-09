@@ -1,5 +1,7 @@
 """Small input contracts; report quality is assessed by agents, not these schemas."""
 from typing import Literal
+from datetime import date
+from .industry_data import IndustryData
 from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
 
 
@@ -25,6 +27,11 @@ class ResearchBudget(Model):
 class Requirements(Model):
     title: str = Field(min_length=1, max_length=200)
     objective: str = Field(min_length=1, max_length=10000)
+    report_profile: Literal["brief", "industry_periodic"] = "brief"
+    report_date: str = ""
+    organization: str = ""
+    industry: str = ""
+    reference_source_ids: list[str] = Field(default_factory=list)
     audience: str = "自己"
     language: str = "中文"
     extent: Literal["compact", "balanced", "detailed"] = "balanced"
@@ -35,9 +42,16 @@ class Requirements(Model):
     target_words: int | None = Field(default=None, ge=1)
     max_words: int | None = Field(default=None, ge=1)
 
+    @field_validator('report_date')
+    @classmethod
+    def valid_report_date(cls, value):
+        if value and (len(value)!=10 or date.fromisoformat(value).isoformat()!=value):
+            raise ValueError('报告日期应为 YYYY-MM-DD')
+        return value
+
     @model_validator(mode='after')
     def fill_length_preferences(self):
-        target,maximum=LENGTH_PRESETS[self.extent]
+        target,maximum=(5000,5500) if self.report_profile=="industry_periodic" else LENGTH_PRESETS[self.extent]
         if self.target_words is None:self.target_words=target
         if self.max_words is None:self.max_words=max(maximum,self.target_words)
         if self.max_words<self.target_words:
@@ -46,6 +60,15 @@ class Requirements(Model):
 
 
 ROLE_NAMES = ('evaluator', 'maintainer', 'proposer')
+
+
+def normalize_search_provider(value):
+    # 'codex' was the original name for backend-native search; it now reads 'native'.
+    if value in (None, '', 'codex'):
+        return 'native'
+    if value not in ('native', 'tavily'):
+        raise ValueError('无效搜索来源')
+    return value
 
 
 def normalize_role_models(roles):
@@ -67,30 +90,45 @@ class RoleModel(Model):
     model: str = Field(min_length=1, max_length=100)
     model_provider: str | None = Field(default=None, max_length=100)
     reasoning_effort: str | None = Field(default=None, min_length=1, max_length=100)
+    model_variant: str | None = Field(default=None, min_length=1, max_length=100)
 
-    @field_validator('model_provider','reasoning_effort',mode='before')
+    @field_validator('model_provider', 'reasoning_effort', 'model_variant', mode='before')
     @classmethod
     def optional_override(cls, value, info):
-        if isinstance(value,str):
-            value=value.strip()
-            if not value or info.field_name=='reasoning_effort' and value.lower()=='none':
+        if isinstance(value, str):
+            value = value.strip()
+            if not value or info.field_name == 'reasoning_effort' and value.lower() == 'none':
                 return None
         return value
 
 
-def runtime_fields(value):
+def runtime_fields(value, backend='codex'):
+    if backend == 'opencode':
+        # Opencode models are provider/model in one string; effort is expressed
+        # as an optional variant. Codex-only keys are dropped, never sent.
+        from .backends.opencode_server import split_model
+        validated = RoleModel.model_validate(
+            {key: value[key] for key in ('model', 'model_variant') if key in value})
+        split_model(validated.model)
+        selected = {'model': validated.model}
+        if validated.model_variant is not None:
+            selected['model_variant'] = validated.model_variant
+        return selected
     # Provider names/model IDs are opaque Codex configuration, not a model catalog.
-    selected=RoleModel.model_validate({key:value[key] for key in ('model','reasoning_effort','model_provider') if key in value}).model_dump()
+    selected = RoleModel.model_validate(
+        {key: value[key] for key in ('model', 'reasoning_effort', 'model_provider') if key in value}).model_dump()
     if selected['model_provider'] is None:
         selected.pop('model_provider')
+    selected.pop('model_variant', None)
     return selected
 
 
 class Settings(RoleModel):
     model: str = Field(default='gpt-5.6-luna', min_length=1, max_length=100)
     reasoning_effort: str | None = Field(default='high', min_length=1, max_length=100)
+    agent_backend: Literal['codex', 'opencode'] = 'codex'
     role_models: dict[Literal['evaluator','maintainer','proposer'], RoleModel] = Field(default_factory=dict)
-    search_provider: Literal['codex','tavily'] = 'codex'
+    search_provider: Literal['native','tavily'] = 'native'
     k: int = Field(default=1, ge=1, le=20)
     auto_learn: bool = True
     max_parallel: int = Field(default=4, ge=1, le=16)
@@ -101,8 +139,12 @@ class Settings(RoleModel):
     @model_validator(mode='before')
     @classmethod
     def migrate_evaluator_setting(cls, value):
-        if isinstance(value,dict) and 'role_models' in value:
-            return {**value,'role_models':normalize_role_models(value['role_models'])}
+        if isinstance(value,dict):
+            value=dict(value)
+            if 'role_models' in value:
+                value['role_models']=normalize_role_models(value['role_models'])
+            if value.get('search_provider','native') not in ('native','tavily'):
+                value['search_provider']=normalize_search_provider(value.get('search_provider'))
         return value
 
 
@@ -113,6 +155,8 @@ class Citation(Model):
 
 
 class BriefDraft(Model):
+    figures: list[str] = Field(default_factory=list)
+    report_data: IndustryData | None = None
     title: str
     markdown: str = Field(min_length=1)
     citations: list[Citation] = Field(default_factory=list)

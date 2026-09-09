@@ -49,6 +49,25 @@ class CoreBehavior(unittest.TestCase):
         self.assertEqual(s.one('jobs',old['id'])['status'],'cancelled')
         self.assertEqual(json.loads(new['payload'])['runtime'],{'model':'gpt-5.6-luna','reasoning_effort':'high'})
 
+    def test_refined_draft_becomes_child_version_not_failure(self):
+        s=self.store
+        job=s.enqueue('generate',{'run_id':self.run['id']})
+        class FakeRuntime:
+            def execute(self_clone,job,prompt,folder,on_tick=lambda:None,**kwargs):
+                (folder/'draft.json').write_text(json.dumps({'title':'测试','markdown':'第一版。'}))
+                on_tick()
+                (folder/'draft.json').write_text(json.dumps({'title':'测试','markdown':'第一版。修订版。'}))
+                return {}
+        worker=Worker(s);worker.runtime=FakeRuntime()
+        result=worker.generate(job,score=False)
+        vid='brief_'+job['id'][4:]
+        self.assertEqual(s.one('briefs',vid)['markdown'],'第一版。')
+        child=s.one('briefs',result['version_id'])
+        self.assertNotEqual(child['id'],vid)
+        self.assertEqual(child['parent_id'],vid)
+        self.assertEqual(child['markdown'],'第一版。修订版。')
+        self.assertEqual(len(s.rows('SELECT id FROM briefs WHERE run_id=?',(self.run['id'],))),3)
+
     def test_wikiskill_pairwise_accept_tie_and_regression(self):
         # Synthetic child IDs/output files exercise collection and selection only.
         for verdict,regressions,expected in [('better',[],True),('tie',[],False),('better',['新增关键事实错误'],False)]:
