@@ -3,19 +3,13 @@
 The coordinator chooses and invokes specialist agents. This module owns only
 transport, cancellation, progress capture and admitting completed artifacts.
 """
-from pathlib import Path
 from importlib.resources import files
 import json
-import os
 import shlex
-import shutil
-import signal
-import subprocess
 import sys
 import threading
-import time
 from .models import Assessment, BriefDraft, ScoutResult, ROLE_NAMES, Requirements
-from .store import content_hash, dump, now
+from .store import dump
 from .skills import bind_context
 
 
@@ -199,149 +193,24 @@ def assessment_prompt(store, brief, folder):
 '''
 
 
-def owned_live_process(folder):
-    marker=folder/'process.json'
-    if not marker.exists():return None
-    try:
-        pid=int(json.loads(marker.read_text())['pid'])
-        command=subprocess.run(['ps','-p',str(pid),'-o','command='],capture_output=True,text=True,timeout=3).stdout
-        return pid if 'codex' in command and str(folder) in command else None
-    except (ValueError,OSError,KeyError,subprocess.SubprocessError):return None
-
-
-def log_state(path):
-    thread=None;terminal=None
-    if path.exists():
-        for line in path.read_text().splitlines():
-            try:e=json.loads(line)
-            except ValueError:continue
-            if e.get('type')=='thread.started':thread=e.get('thread_id')
-            if e.get('type') in ('turn.started','turn.completed','turn.failed'):terminal=e['type']
-    return thread,terminal
-
-
-class CodexRuntime:
-    def __init__(self, store):
-        self.store=store
-        self.process=None
-        self.attached_pid=None
-        self.lock=threading.Lock()
-        self.cancelled=threading.Event()
-
-    def cancel(self):
-        self.cancelled.set()
-        with self.lock:
-            p=self.process
-            attached=self.attached_pid
-        if attached:
-            try:os.killpg(attached,signal.SIGTERM)
-            except ProcessLookupError:pass
-        if p and p.poll() is None:
-            try:os.killpg(p.pid,signal.SIGTERM)
-            except ProcessLookupError:pass
-
-    def execute(self, job, prompt, folder, on_tick=lambda: None, *, resume_on_complete=False):
-        folder.mkdir(parents=True,exist_ok=True)
-        from .progress import ProgressTracker
-        tracker=ProgressTracker(self.store,job['id'],folder)
-        original_tick=on_tick
-        def on_tick():
-            original_tick()
-            try:tracker.update()
-            except Exception:pass  # Progress projection must not interrupt model work.
-        configuration=json.loads(job['payload']).get('runtime',self.store.runtime_config())
-        binding=folder/'runtime-binding.json'
-        identity={'job_id':job['id'],'runtime':configuration}
-        if binding.exists() and json.loads(binding.read_text())!=identity:
-            raise ValueError('恢复会话的任务或模型已改变；请使用新的任务目录')
-        saved=folder/'execution.json'
-        if saved.exists():
-            result=json.loads(saved.read_text())
-            if result.get('runtime') and result['runtime']!=configuration:
-                raise ValueError('已保存执行的模型配置与本阶段不一致')
-            if result.get('returncode')==0 and not resume_on_complete:
-                on_tick();return result
-        binding.write_text(dump(identity))
-        attached=owned_live_process(folder)
-        if attached:
-            self.attached_pid=attached
-            try:
-                while owned_live_process(folder):
-                    on_tick()
-                    if self.cancelled.is_set():
-                        self.cancel();raise InterruptedError('任务已停止')
-                    time.sleep(.5)
-            finally:self.attached_pid=None
-            _,terminal=log_state(folder/'events.jsonl')
-            if terminal=='turn.completed':
-                result={'returncode':0,'recovered':True,'finished':now(),'runtime':configuration}
-                saved.write_text(dump(result));on_tick();return result
-        binary=shutil.which('codex')
-        if not binary:raise RuntimeError('未找到 Codex CLI，请安装并完成登录')
-        prompt=runtime_instruction(configuration)+prompt
-        (folder/'prompt.md').write_text(prompt)
-        log_path=folder/'events.jsonl'
-        # Inherit the user's selected model/auth. No bypass flags or global config changes.
-        cmd=[binary,'--enable','multi_agent','-a','never','exec','--skip-git-repo-check','--sandbox','workspace-write','--json',
-             '--add-dir',str(self.store.root),'-C',str(folder),'-o',str(folder/'last-message.txt'),'-']
-        thread,_=log_state(log_path)
-        if thread:
-            cmd=[binary,'--enable','multi_agent','-a','never','-C',str(folder),'exec','resume','--skip-git-repo-check','--json','-o',str(folder/'last-message.txt'),thread,'-']
-            prompt='恢复这一个任务。先核对已有原生子 agent 与完整输出，复用已完成结果，只补未完成部分；不要重新采样已经完成的稿件。\n'+prompt
-        if job.get('allow_web') and json.loads(job['payload']).get('search_provider')=='tavily':
-            cmd[1:1]=['-c','web_search="disabled"','-c','sandbox_workspace_write.network_access=true']
-        elif job.get('allow_web'):cmd[1:1]=['--search','-c','sandbox_workspace_write.network_access=true']
-        else:cmd[1:1]=['-c','web_search="disabled"','-c','sandbox_workspace_write.network_access=false']
-        cmd[1:1]=['-c','model='+json.dumps(configuration['model'])]
-        if configuration.get('model_provider'):
-            cmd[1:1]=['-c','model_provider='+json.dumps(configuration['model_provider'])]
-        if configuration.get('reasoning_effort') not in (None,'','none'):
-            cmd[1:1]=['-c','model_reasoning_effort='+json.dumps(configuration['reasoning_effort'])]
-        started=time.monotonic()
-        with log_path.open('a') as log, (folder/'stderr.log').open('a') as err:
-            p=subprocess.Popen(cmd,stdin=subprocess.PIPE,stdout=log,stderr=err,text=True,start_new_session=True)
-            with self.lock:self.process=p
-            self.store.event(job['id'],'runtime_started',{'pid':p.pid,'folder':str(folder),'command':cmd,'runtime':configuration})
-            (folder/'process.json').write_text(dump({'pid':p.pid,'started':now()}))
-            try:
-                p.stdin.write(prompt);p.stdin.close()
-                while p.poll() is None:
-                    on_tick()
-                    if self.cancelled.is_set():
-                        self.cancel();break
-                    if time.monotonic()-started > self.store.settings()['timeout_minutes']*60:
-                        self.cancel();raise TimeoutError('运行超过本轮时间上限，已保留稿件和执行记录')
-                    time.sleep(.5)
-                if self.cancelled.is_set():
-                    try:p.wait(timeout=8)
-                    except subprocess.TimeoutExpired:
-                        os.killpg(p.pid,signal.SIGKILL);p.wait()
-                    raise InterruptedError('任务已停止，已生成内容保留')
-                on_tick()
-                result={'returncode':p.returncode,'seconds':round(time.monotonic()-started,2),'finished':now(),'runtime':configuration}
-                usage=[]
-                for line in log_path.read_text().splitlines():
-                    try:event=json.loads(line)
-                    except ValueError:continue
-                    if event.get('usage'):usage.append(event['usage'])
-                result['usage']=usage
-                saved.write_text(dump(result))
-                if p.returncode:
-                    raise RuntimeError('Agent 执行失败；详情保存在任务日志。'+(folder/'stderr.log').read_text()[-600:])
-                return result
-            finally:
-                if p.poll() is None:
-                    try:os.killpg(p.pid,signal.SIGTERM);p.wait(timeout=8)
-                    except (ProcessLookupError,subprocess.TimeoutExpired):
-                        if p.poll() is None:os.killpg(p.pid,signal.SIGKILL);p.wait()
-                with self.lock:self.process=None
-
-
 class Worker:
-    def __init__(self,store):
+    def __init__(self,store,runtime=None):
         self.opened_paused=False
-        self.store=store;self.runtime=CodexRuntime(store);self.stopping=threading.Event();self.current=None
+        self.store=store;self._runtime=runtime;self.stopping=threading.Event();self.current=None
         self.thread=threading.Thread(target=self.loop,name='briefloop-worker',daemon=True)
+
+    @property
+    def runtime(self):
+        # Production injects the shared InteractiveRuntime; this lazy default
+        # keeps a Worker built without one on a real transport.
+        if self._runtime is None:
+            from .interactive_runtime import InteractiveRuntime
+            self._runtime=InteractiveRuntime(self.store)
+        return self._runtime
+
+    @runtime.setter
+    def runtime(self,value):
+        self._runtime=value
 
     def start(self):
         # Old running jobs are not silently replayed; preserve them for explicit recovery.
