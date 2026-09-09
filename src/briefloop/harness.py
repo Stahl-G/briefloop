@@ -191,9 +191,11 @@ class HarnessManager:
                 self.chat.patch_message(mid,status='delivered',turn_id=turn_id)
                 self.chat.event(sid,'message/delivered',{'messageId':mid,'turnId':turn_id,'runtime':config})
         except Exception as exc:
-            self.chat.update(sid,status='failed',turn_id=None)
+            # Terminal data first, status last: waiters poll on status and must
+            # never observe 'failed' before its error event exists.
             if mid:self.chat.patch_message(mid,status='failed')
             self.chat.event(sid,'error',{'message':str(exc)})
+            self.chat.update(sid,status='failed',turn_id=None)
         finally:
             with self._lock:
                 self._busy.discard(sid)
@@ -208,7 +210,7 @@ class HarnessManager:
                 self.chat.patch_message(mid,status='delivered',turn_id=session['turn_id'])
                 self.chat.event(sid,'message/delivered',{'messageId':mid,'turnId':session['turn_id'],'mode':'steer'})
         except Exception as exc:
-            self.chat.patch_message(mid,status='failed');self.chat.event(sid,'error',{'message':str(exc),'messageId':mid})
+            self.chat.event(sid,'error',{'message':str(exc),'messageId':mid});self.chat.patch_message(mid,status='failed')
     def cancel(self,session_id):
         with self._lock:
             session=self.chat.session(session_id)

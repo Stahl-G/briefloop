@@ -385,10 +385,12 @@ class OpencodeHarness:
                                 {'messageId': mid, 'turnId': mid, 'runtime': config})
             self._follow(sid, epoch, mid, admitted_at)
         except Exception as exc:
-            self.chat.update(sid, status='failed', turn_id=None)
+            # Terminal data first, status last: waiters poll on status and must
+            # never observe 'failed' before its error event exists.
             if mid:
                 self.chat.patch_message(mid, status='failed')
             self.chat.event(sid, 'error', {'message': str(exc)})
+            self.chat.update(sid, status='failed', turn_id=None)
         finally:
             with self._lock:
                 if self._epoch.get(sid) == epoch:
@@ -475,8 +477,8 @@ class OpencodeHarness:
                         self._finish(sid, mid, 'failed')
                         raise RuntimeError('Opencode 执行失败；详情保存在会话与任务日志')
                     if info.get('finish') == 'stop':
-                        self._finish(sid, mid, 'completed')
                         self._record_usage(sid, info)
+                        self._finish(sid, mid, 'completed')
                         return
                     if time.monotonic() - last_activity > 120:
                         self.chat.event(sid, 'error', {'message': 'Opencode 子步骤完成后 120 秒无后续，已停止等待'})
