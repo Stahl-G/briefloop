@@ -39,10 +39,13 @@ def _experience(store, job):
             diff='\n'.join(difflib.unified_diff(before['markdown'].splitlines(),b['markdown'].splitlines(),fromfile='before',tofile='user_revision',lineterm=''))
             text={'kind':'user_revision','requirements':json.loads(run['requirements']),'before':before['markdown'],
                   'after':b['markdown'],'diff':diff,'sources':[store.one('sources',s) for s in store.source_ids(run['id'])]}
+        elif f['kind']=='review_correction':
+            before=store.one('briefs',data['before'])
+            text={**data,'requirements':json.loads(run['requirements']),'before_text':before['markdown'],'after_text':b['markdown']}
         else:text={'kind':'user_comment','requirements':json.loads(run['requirements']),'brief':b['markdown'],'comment':data['text']}
         text['assessments']=[{'version_id':row['version_id'],'assessment':json.loads(row['data'])} for row in store.rows('SELECT a.* FROM assessments a JOIN briefs b ON b.id=a.version_id WHERE b.run_id=?',(run['id'],))]
         text['execution_records']=[{'job_id':j['id'],'status':j['status'],'result':json.loads(j['result']) if j['result'] else None,'trace_file':str(store.root/'jobs'/j['id']/'events.jsonl')} for j in store.rows("SELECT * FROM jobs WHERE kind='generate'") if json.loads(j['payload']).get('run_id')==run['id']]
-        text['context_note']='用户改稿与评论是反馈；评分是可争议的模型判断；执行记录用于追溯，不作为来源事实。'
+        text['context_note']='用户改稿与评论是反馈；review_correction仅表示独立复核过的处理，不把来源正常更新当原稿事实错误。评分仍是可争议的模型判断；执行记录用于追溯，不作为来源事实。'
         items.append({'text':dump(text),'source':fid})
     # Only a few existing tasks. Their source snapshots, not user rewrites, go to generation.
     run_ids=run_ids[-3:]

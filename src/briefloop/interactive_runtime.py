@@ -26,10 +26,13 @@ def _message(snapshot, message_id):
 def _usable_output(job, folder, store=None):
     """A completed model turn is not evidence that its required artifact exists."""
     from .models import BriefDraft
+    if job.get('readonly_output'):
+        try:return isinstance(json.loads((folder/job['readonly_output']).read_text()),dict)
+        except (OSError,ValueError):return False
     role=job.get('runtime_role')
     if role in ('evaluator','scorer','assessor'):
         name='comparison.json' if job.get('evaluation_mode')=='pairwise' or role=='assessor' else 'assessment.json'
-    elif job['kind']=='generate':name='draft.json'
+    elif job['kind'] in ('generate','revise'):name='draft.json'
     elif job['kind']=='assess':name='assessment.json'
     else:return True  # WikiSkill handoffs already request resume_on_complete.
     try:
@@ -133,6 +136,9 @@ class InteractiveRuntime:
         configured = payload.get('runtime', self.store.runtime_config())
         runtime = {'model': configured['model'],
                    'effort': configured.get('reasoning_effort', configured.get('effort'))}
+        if job.get('readonly_output'):
+            if backend!='opencode':raise ValueError('此后端的受限 Reviewer 工具策略尚未验证；审阅未完成，不能退回普通写权限')
+            runtime.update(permission='read-only',review_root=str((folder/'packet').resolve()))
         if configured.get('model_provider'):
             runtime['model_provider'] = configured['model_provider']
         if configured.get('model_variant'):
@@ -260,11 +266,20 @@ class InteractiveRuntime:
                               'seconds': round(time.monotonic() - started, 2), 'finished': now(),
                               'runtime': configured, 'backend': backend, 'session_id': sid, 'message_id': binding['message_id'],
                               'recovered': recovered, 'usage': self._usage(log_path)}
-                    _write(saved, result)
                     assistant = [m['text'] for m in snapshot['messages']
                                  if m['role'] == 'assistant' and m.get('turn_id') == message.get('turn_id')]
                     if assistant:
                         (folder / 'last-message.txt').write_text('\n\n'.join(assistant), encoding='utf-8')
+                    if status=='completed' and job.get('readonly_output'):
+                        name=job['readonly_output']
+                        if name not in ('review.json','permission-probe.json'):raise ValueError('无效只读输出文件名')
+                        final='\n\n'.join(assistant).strip()
+                        if final.startswith('```'):
+                            final='\n'.join(final.splitlines()[1:-1])
+                        data=json.loads(final)
+                        if not isinstance(data,dict):raise ValueError('Reviewer 未返回 JSON 对象')
+                        _write(folder/name,data)
+                    _write(saved, result)
                     tick()
                     if status in ('interrupted', 'cancelled'):
                         raise InterruptedError('会话已中断，已生成内容保留，可恢复')

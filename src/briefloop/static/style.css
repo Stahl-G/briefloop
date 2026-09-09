@@ -87,3 +87,14 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 #editor .tiptap img.briefloop-figure{display:block;max-width:100%;height:auto;margin:18px auto;border:1px solid var(--line);border-radius:4px;background:white}#editor .tiptap img.briefloop-figure.ProseMirror-selectednode{outline:2px solid var(--green);outline-offset:3px}
 
 .evidence-card{padding:16px 0;border-bottom:1px solid #ddd}.evidence-card blockquote{white-space:pre-wrap;margin:12px;padding:12px;background:#f6f7f5}.evidence-card details{margin:12px 0}#evidence-dialog{max-width:850px;width:90vw}
+
+/* Formal files share the report controls; the editable draft remains independent. */
+#release-dialog,#audit-dialog,#source-updates-dialog,#review-dialog{width:min(90vw,800px);max-width:800px}
+#release-eligibility{padding:14px 18px;border:1px solid var(--line);border-radius:8px;background:var(--paper);margin:16px 0}
+#release-eligibility h3{margin:0 0 10px;font-size:15px}#release-eligibility ul{padding-left:22px}#release-eligibility li{margin:6px 0;line-height:1.7}.release-blockers{color:#94573e}
+#release-form>label,#release-change-fields>label{display:block;font-size:12px;margin:12px 0 5px}#release-form>button{margin-top:14px}#release-change-fields textarea{width:100%}
+.release-history{border-top:1px solid var(--line);margin-top:24px;padding-top:16px}.release-card{padding:14px 0;border-bottom:1px solid var(--line)}.release-card .section-title{gap:12px;flex-wrap:wrap}.release-card strong{font-size:13px}.release-actions,.audit-bulk-actions{display:flex;align-items:center;gap:14px;flex-wrap:wrap}.release-actions a{font-size:12px}.audit-bulk-actions{margin:18px 0}.audit-bulk-actions button{border:1px solid var(--line);font-size:12px;padding:7px 10px}
+.audit-source-row{display:grid;grid-template-columns:minmax(0,1fr) 210px;align-items:center;gap:15px;padding:10px 0;border-bottom:1px solid var(--line)}.audit-source-row span{overflow-wrap:anywhere;font-size:12px;line-height:1.6}.audit-source-row select{font-size:12px;padding:8px;margin:0}#audit-submit{margin-top:20px}
+.review-checks{margin:16px 0}.review-checks summary{cursor:pointer;font-size:13px}.review-checks li{line-height:1.7;margin:7px 0}.review-checks ul{padding-left:22px}.review-version{padding:16px 0;border-bottom:1px solid var(--line)}
+@media(max-width:560px){.audit-source-row{grid-template-columns:1fr;gap:8px}.release-actions{align-items:flex-start}.release-card .section-title{align-items:flex-start}.audit-source-row select{width:100%}}
+#source-refresh-form{padding:15px 0 20px;border-bottom:1px solid var(--line);margin-bottom:14px}#source-refresh-form>label{display:block;margin:10px 0 5px;font-size:12px}#source-refresh-form input,#source-refresh-form select{font-size:12px}

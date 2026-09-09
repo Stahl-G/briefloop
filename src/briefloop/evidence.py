@@ -179,7 +179,8 @@ def node_text(node):
 def node_signature(node):
     """Ignore typography but retain structure, values, source and image identity."""
     attrs={k:v for k,v in node.get('attrs',{}).items() if k in ('src','caption','sourceId','colspan','rowspan')}
-    return digest(dump({'type':node['type'],'text':node.get('text'),'attrs':attrs,
+    links=[m.get('attrs',{}).get('href') for m in node.get('marks',[]) if m.get('type')=='link']
+    return digest(dump({'type':node['type'],'text':node.get('text'),'attrs':attrs,**({'links':links} if links else {}),
                         'content':[node_signature(x) for x in node.get('content',[])]}))
 
 
@@ -207,28 +208,48 @@ def bind_claim(store,version_id,claim_id,block_id,quote):
     return {'id':identity,'version_id':version_id,'claim_id':claim_id,'status':'unreviewed'}
 
 
+def claim_closure(store,claim_id,trail=()):
+    if claim_id in trail:return {'claim_id':claim_id,'status':'premise_cycle','evidence':[],'premises':[]}
+    claim=record(store,'claims',claim_id);evidence=[];state='unreviewed'
+    for support in claim['data']['supports']:
+        span=record(store,'evidence_spans',support['span_id'])
+        try:
+            current,location=_read_location(store,EvidenceInput(source_id=span['source_id'],locator=span['data']['locator'],excerpt=span['data']['excerpt']))
+            intact=current['hash']==span['source_hash'] and location['raw_hash']==span['data']['raw_hash']
+        except (ValueError,OSError):intact=False
+        if not intact:state='source_changed'
+        evidence.append({**span,'source_name':store.one('sources',span['source_id'])['name'],'intact':intact,
+                         'supports_quote':support['supports_quote'],'rationale':support['rationale']})
+    premises=[claim_closure(store,identity,(*trail,claim_id)) for identity in claim['data'].get('premise_claim_ids',[])]
+    if any(p['status']!='unreviewed' for p in premises):state='premise_changed'
+    return {'claim_id':claim_id,'claim':claim,'status':state,'evidence':evidence,'premises':premises}
+
+
 def inspect_bindings(store,version_id):
     from .document_model import brief_document
     brief=store.one('briefs',version_id);nodes=blocks(brief_document(brief));versions=[];cursor=brief
     while cursor:
         versions.append(cursor['id']);cursor=store.one('briefs',cursor['parent_id']) if cursor['parent_id'] else None
-    result=[];seen=set()
+    candidates=[];seen=set()
     for vid in versions:
         for binding in store.rows('SELECT * FROM claim_bindings WHERE version_id=? ORDER BY rowid DESC',(vid,)):
             key=(binding['claim_id'],binding['block_id'])
             if key in seen:continue
-            seen.add(key);node=nodes.get(binding['block_id']);claim=record(store,'claims',binding['claim_id']);evidence=[]
-            state='unreviewed'
-            if node is None:state='anchor_missing'
-            elif node_signature(node)!=binding['block_hash'] or node_text(node).count(binding['quote'])!=1:state='needs_review'
-            for support in claim['data']['supports']:
-                span=record(store,'evidence_spans',support['span_id'])
-                try:
-                    current,location=_read_location(store,EvidenceInput(source_id=span['source_id'],locator=span['data']['locator'],excerpt=span['data']['excerpt']))
-                    intact=current['hash']==span['source_hash'] and location['raw_hash']==span['data']['raw_hash']
-                except (ValueError,OSError):intact=False
-                if not intact:state='source_changed'
-                evidence.append({**span,'source_name':store.one('sources',span['source_id'])['name'],'intact':intact,'supports_quote':support['supports_quote'],'rationale':support['rationale']})
-            result.append({**binding,'target_version':version_id,'inherited':vid!=version_id,'status':state,'claim':claim,'evidence':evidence})
+            seen.add(key);candidates.append(binding)
+    superseded=set()
+    for binding in candidates:
+        claim=record(store,'claims',binding['claim_id']);previous=claim['previous_id'];visited=set()
+        while previous and previous not in visited:
+            visited.add(previous);superseded.add((previous,binding['block_id']))
+            previous=record(store,'claims',previous)['previous_id']
+    result=[]
+    for binding in candidates:
+        if (binding['claim_id'],binding['block_id']) in superseded:continue
+        closure=claim_closure(store,binding['claim_id']);node=nodes.get(binding['block_id']);state=closure['status']
+        if node is None:state='anchor_missing'
+        elif node_signature(node)!=binding['block_hash'] or node_text(node).count(binding['quote'])!=1:state='needs_review'
+        if closure['status']!='unreviewed':state=closure['status']
+        result.append({**binding,'target_version':version_id,'inherited':binding['version_id']!=version_id,
+                       **closure,'status':state})
     return {'version_id':version_id,'bindings':result,'coverage_status':'not_reviewed',
             'note':'已登记绑定不代表完整覆盖；重要主张遗漏及语义支持仍待独立审阅。'}

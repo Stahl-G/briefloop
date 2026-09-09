@@ -61,3 +61,35 @@ def test_agent_revisions_do_not_become_user_learning_feedback(tmp_path):
     result=workspace_action(store,{'action':'revise_document','base_version':brief['id'],'document_file':str(path)})
     assert result['author']=='agent'
     assert not store.rows('SELECT id FROM feedback')
+
+
+def test_link_identity_and_broken_premise_propagate(tmp_path):
+    store,source,run,brief=case(tmp_path)
+    span=create_span(store,{'source_id':source['id'],'locator':{'kind':'text','start_line':1,'end_line':1}})
+    fact=create_claim(store,run['id'],{'statement':'Revenue 12 million USD.','kind':'fact','supports':[{'span_id':span['id'],'supports_quote':'12 million USD'}]})
+    inference=create_claim(store,run['id'],{'statement':'Working capital may increase.','kind':'inference','premise_claim_ids':[fact['id']],'reasoning':'Higher activity may increase inventory.'})
+    doc=json.loads(brief['editor_document']);doc['content'][0]['content'][0]['marks']=[{'type':'link','attrs':{'href':'#source-'+source['id']}}]
+    v=store.revise(brief['id'],editor_document=doc);bid=doc['content'][0]['attrs']['blockId'];bind_claim(store,v['id'],fact['id'],bid,'12 million USD')
+    another=store.add_source('Another','Other period');store.attach_source(run['id'],another['id'])
+    doc['content'][0]['content'][0]['marks'][0]['attrs']['href']='#source-'+another['id']
+    changed=store.revise(v['id'],editor_document=doc)
+    assert inspect_bindings(store,changed['id'])['bindings'][0]['status']=='needs_review'
+    doc['content'][0]['content'][0]['text']='Working capital may increase.'
+    updated=store.revise(changed['id'],editor_document=doc);bind_claim(store,updated['id'],inference['id'],bid,'Working capital may increase.')
+    (store.root/source['path']).write_text('Altered source')
+    row=next(x for x in inspect_bindings(store,updated['id'])['bindings'] if x['claim_id']==inference['id'])
+    assert row['status']=='premise_changed' and row['evidence']==[]
+    assert row['premises'][0]['evidence'][0]['intact'] is False
+
+
+def test_claim_replacement_only_supersedes_same_block(tmp_path):
+    store,source,run,brief=case(tmp_path)
+    doc=json.loads(brief['editor_document']);doc['content'].append({'type':'paragraph','attrs':{'blockId':'other-block'},'content':[{'type':'text','text':'Revenue was 12 million USD in H1.'}]})
+    base=store.revise(brief['id'],editor_document=doc)
+    fact=create_claim(store,run['id'],{'statement':'Revenue was 12 million USD in H1.','kind':'fact'})
+    first=doc['content'][0]['attrs']['blockId']
+    for block in [first,'other-block']:bind_claim(store,base['id'],fact['id'],block,'12 million USD')
+    revised=create_claim(store,run['id'],{'statement':'Revenue was 12 million USD in H1.','kind':'fact'},previous_id=fact['id'])
+    bind_claim(store,base['id'],revised['id'],first,'12 million USD')
+    current=inspect_bindings(store,base['id'])['bindings']
+    assert {(x['claim_id'],x['block_id']) for x in current}=={(revised['id'],first),(fact['id'],'other-block')}

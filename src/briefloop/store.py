@@ -96,6 +96,14 @@ class Store:
             c.executescript(SCHEMA)
             from .evidence import SCHEMA as EVIDENCE_SCHEMA
             c.executescript(EVIDENCE_SCHEMA)
+            from .review import SCHEMA as REVIEW_SCHEMA
+            c.executescript(REVIEW_SCHEMA)
+            from .conflicts import SCHEMA as CONFLICT_SCHEMA
+            c.executescript(CONFLICT_SCHEMA)
+            from .release import SCHEMA as RELEASE_SCHEMA
+            from .source_updates import SCHEMA as SOURCE_UPDATE_SCHEMA
+            c.executescript(RELEASE_SCHEMA)
+            c.executescript(SOURCE_UPDATE_SCHEMA)
             if 'mode' not in {r['name'] for r in c.execute('PRAGMA table_info(runs)')}:
                 c.execute("ALTER TABLE runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'normal'")
             c.execute("INSERT OR IGNORE INTO meta VALUES('settings', ?)", (dump(Settings().model_dump()),))
@@ -271,6 +279,7 @@ class Store:
                     raise Conflict("Completed draft differs")
                 old_detail=json.loads(existing['detail'])
                 old_detail.setdefault('research_notes',[])
+                old_detail.setdefault('reader_contract',None)
                 if old_detail!=detail:raise Conflict('Completed draft metadata differs; save a new version')
             else:
                 c.execute("INSERT INTO briefs VALUES(?,?,?,?,?,?,?,?,?)", (vid, run_id, parent_id, "agent", draft.markdown, sha, dump(detail), dump(draft.editor_document) if draft.editor_document is not None else None, now()))
@@ -402,16 +411,20 @@ class Store:
         return {role:dict(overrides.get(role,base)) for role in ROLE_NAMES}
 
     def enqueue(self, kind, payload):
-        from .backends import validate_backend
-        from .models import normalize_search_provider
-        backend=validate_backend(payload.get('agent_backend',self.settings().get('agent_backend','codex')))
-        runtime=runtime_fields(payload.get('runtime',self.runtime_config()),backend)
-        # Freeze inherited defaults too; later settings never mutate queued jobs.
-        overrides=normalize_role_models(payload.get('role_models',self.role_model_config(runtime,backend)))
-        provider=normalize_search_provider(payload.get('search_provider',self.settings()['search_provider']))
-        payload={**payload,'agent_backend':backend,'runtime':runtime,'search_provider':provider,
-                 'role_models':{role:runtime_fields(overrides.get(role,runtime),backend) for role in ROLE_NAMES}}
-        if kind=='generate':payload.setdefault('auto_revision',self.settings()['auto_revision'])
+        if kind not in ('export_docx','release','audit_bundle','source_refresh'):
+            from .backends import validate_backend
+            from .models import normalize_search_provider
+            backend=validate_backend(payload.get('agent_backend',self.settings().get('agent_backend','codex')))
+            runtime=runtime_fields(payload.get('runtime',self.runtime_config()),backend)
+            # Freeze inherited defaults too; later settings never mutate queued jobs.
+            overrides=normalize_role_models(payload.get('role_models',self.role_model_config(runtime,backend)))
+            provider=normalize_search_provider(payload.get('search_provider',self.settings()['search_provider']))
+            payload={**payload,'agent_backend':backend,'runtime':runtime,'search_provider':provider,
+                     'role_models':{role:runtime_fields(overrides.get(role,runtime),backend) for role in ROLE_NAMES}}
+            if kind=='generate':payload.setdefault('auto_revision',self.settings()['auto_revision'])
+            if kind=='generate' and payload.get('run_id'):
+                runs=self.rows('SELECT requirements FROM runs WHERE id=?',(payload['run_id'],))
+                if runs and json.loads(runs[0]['requirements']).get('writing_mode')=='internal_report':payload.setdefault('reader_contract_required',True)
         jid = uid("job")
         with self.tx() as c:
             c.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)", (jid, kind, "queued", dump(payload), None, None, now(), now()))
@@ -457,6 +470,7 @@ class Store:
             brief['length_stats']=length_stats(brief['markdown'],target_words=req.get('target_words'),max_words=req.get('max_words'))
         return {"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "requirements": self.meta("requirements"), "settings": self.settings(),
                 "templates":self.rows('SELECT * FROM templates ORDER BY created DESC'),
+                "conflicts":self.rows("SELECT id,status,data FROM conflicts WHERE status!='resolved' ORDER BY rowid DESC LIMIT 100"),
                 "company_context_pending":self.rows("SELECT * FROM company_facts WHERE status='pending' ORDER BY rowid DESC"),
                 "sources": self.rows("SELECT * FROM sources ORDER BY created"),
                 "runs": runs,

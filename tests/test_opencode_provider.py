@@ -33,3 +33,13 @@ def test_provider_validation_busy_and_cache_invalidation(tmp_path):
     assert manager.configure_provider(body)['model']=='deepseek/custom-model'
     assert manager._models_cache is None
     with pytest.raises(ValueError,match='Base URL'):manager.configure_provider({**body,'base_url':'https://secret@api.example.com'})
+
+
+def test_custom_image_capability_is_explicit_and_omission_preserves_existing(tmp_path):
+    client=object.__new__(OpencodeServerClient);calls=[]
+    client._request=lambda method,path,body=None:calls.append((method,path,body))
+    client.configure_provider(tmp_path,'provider','custom','https://example.test',supports_images=True)
+    model=calls[0][2]['provider']['provider']['models']['custom']
+    assert model['attachment'] is True and model['modalities']['input']==['text','image']
+    calls.clear();client.configure_provider(tmp_path,'provider','custom','https://example.test')
+    assert calls[0][2]['provider']['provider']['models']['custom']=={'name':'custom'}

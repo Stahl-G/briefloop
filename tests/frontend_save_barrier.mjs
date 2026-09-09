@@ -70,3 +70,41 @@ assert.equal(c.pendingRun,'new-run');
 for(const timer of timers.splice(0))timer();
 assert.equal(c.current.id,'new-report');assert.equal(c.pendingRun,null);assert.equal(editorContent,'New report');
 console.log('PASS: workspace learning progress and pending report survives save; comment stays on edited report');
+
+// Formal delivery waits for the current edit, while an audit bundle pins an existing release.
+const releaseCode=source.slice(source.indexOf('async function submitFormalRelease()'),source.indexOf("$('release-form').onsubmit="));
+const auditCode=source.slice(source.indexOf('async function submitAuditBundle()'),source.indexOf("$('audit-form').onsubmit="));
+vm.runInContext(releaseCode+'\n'+auditCode,c);
+c.dirty=true;c.pendingRun=null;c.current={id:'release-base',run_id:'r'};
+el('markdown-source').value='Corrected revenue';
+el('release-previous').value='release-old';el('release-change-type').value='correction';el('release-change-reason').value='Corrected unit from the original table';
+const release=vm.runInContext('submitFormalRelease()',c);
+assert.equal(calls.at(-1).route,'save');
+pending.shift().resolve({id:'release-corrected',run_id:'r'});await release;
+assert.equal(calls.at(-1).route,'release');
+assert.equal(calls.at(-1).payload.version_id,'release-corrected');
+assert.equal(calls.at(-1).payload.previous_id,'release-old');
+assert.equal(calls.at(-1).payload.change_type,'correction');
+// A later edit cannot change which archived release an audit bundle describes.
+c.current={id:'future-edit',run_id:'r'};c.dirty=true;c.auditTarget={id:'release-fixed'};
+el('audit-source-list').querySelectorAll=()=>[{dataset:{auditSource:'source-a'},value:'metadata'},{dataset:{auditSource:'source-b'},value:'excerpt'}];
+await vm.runInContext('submitAuditBundle()',c);
+assert.equal(calls.at(-1).route,'audit-bundle');
+assert.equal(calls.at(-1).payload.release_id,'release-fixed');
+assert.equal(calls.at(-1).payload.source_permissions['source-a'],'metadata');
+assert.equal(calls.at(-1).payload.source_permissions['source-b'],'excerpt');
+assert.equal(c.dirty,true);
+// A save conflict cannot create a formal release.
+c.dirty=true;const rejectedRelease=vm.runInContext('submitFormalRelease()',c);pending.shift().reject(Error('conflict'));
+await assert.rejects(rejectedRelease,/conflict/);assert.equal(calls.at(-1).route,'save');
+console.log('PASS: formal release waits for saved corrections; audit package uses fixed release and explicit material scope');
+
+// Provider image input declarations retain three distinct values across the real form handler.
+const providerCode=source.slice(source.indexOf("$('provider-form').onsubmit="),source.indexOf("$('timeout-minutes').onchange="));
+let providerBodies=[];
+const p=vm.createContext({$:el,api:async(route,body)=>{providerBodies.push({...body});return {model:'example/model'}},saveModel:async()=>{},refresh:async()=>{},renderBackend:()=>{},refreshModelSuggestions:async()=>{},chatActive:()=>true});
+vm.runInContext(providerCode,p);
+el('custom-provider').value='example';el('custom-base-url').value='https://example.test/v1';el('custom-model').value='model';
+for(const value of ['', 'true', 'false']){el('custom-supports-images').value=value;el('custom-api-key').value='test-only-key';await el('provider-form').onsubmit({preventDefault(){}});assert.equal(el('custom-api-key').value,'')}
+assert.deepEqual(providerBodies.map(body=>body.supports_images),[null,true,false]);
+console.log('PASS: custom provider preserves undeclared, image-enabled and image-disabled model settings');

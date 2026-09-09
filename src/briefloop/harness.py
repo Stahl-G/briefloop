@@ -321,6 +321,13 @@ class HarnessManager:
             if not sid:
                 sid=self._children.get(thread_id);child=True
             if not sid:return
+            if method=='item/completed':
+                recorded=params.get('item',{})
+                if recorded.get('type')=='commandExecution':
+                    from .execution_records import journal_tool
+                    journal_tool(self.chat,sid,params.get('turnId'),recorded.get('id'),'commandExecution',
+                                 {'command':recorded.get('command')},recorded.get('aggregatedOutput',''),
+                                 status=recorded.get('status','completed'),exit_code=recorded.get('exitCode'),native_session=thread_id)
             if child and method in ('turn/started','turn/completed'):
                 if method=='turn/completed':
                     child_turn=params.get('turn',{}).get('id') or params.get('turnId')

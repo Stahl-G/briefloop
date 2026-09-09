@@ -9,6 +9,7 @@ sessions are created with a deny ruleset (same shape as the CLI's own
 non-interactive mode), so ``answer()`` is unsupported by design.
 """
 import json
+from pathlib import Path
 import re
 import threading
 import time
@@ -34,6 +35,20 @@ def _permission_rules(config, allow_web, root):
     for approval. ``external_directory`` confines file tools to the workspace
     (last matching rule wins); everything else keeps server defaults.
     """
+    if config.get('review_root'):
+        # Native host policy: only read files from the generated packet. No
+        # shell, delegation, network, write tools, or inherited MCP tools.
+        import os
+        packet=Path(config['review_root']).resolve()
+        worktree=Path(config.get('review_worktree','/')).resolve()
+        rules=[{'permission':'*','action':'deny','pattern':'*'}]
+        for file in packet.rglob('*'):
+            if file.is_symlink():raise ValueError('Reviewer 核查包不能包含符号链接')
+            if not file.is_file():continue
+            for pattern in (str(file),os.path.relpath(file,worktree)):
+                rules.append({'permission':'read','action':'allow','pattern':pattern})
+        rules.append({'permission':'external_directory','action':'allow','pattern':str(packet)+'/**'})
+        return rules
     rules = [
         {'permission': 'question', 'action': 'deny', 'pattern': '*'},
         {'permission': 'plan_enter', 'action': 'deny', 'pattern': '*'},
@@ -103,6 +118,8 @@ class OpencodeHarness:
         model = str(body.get('model', '')).strip()
         base_url = str(body.get('base_url', '')).strip().rstrip('/')
         key = body.get('api_key') or None
+        supports_images=body.get('supports_images')
+        if supports_images is not None and type(supports_images) is not bool:raise ValueError('请选择沿用、支持或不支持图片')
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', provider):
             raise ValueError('Provider ID 只能包含字母、数字、下划线和短横线')
         if not model or len(provider + '/' + model) > 100 or any(c.isspace() for c in model):
@@ -115,7 +132,7 @@ class OpencodeHarness:
         with self._lock:
             if self._busy:
                 raise ValueError('当前有 Opencode 任务运行，请结束后再修改 Provider')
-            result = self._client().configure_provider(self.store.root, provider, model, base_url, key)
+            result = self._client().configure_provider(self.store.root, provider, model, base_url, key, supports_images)
             self._models_cache = None
             self._models_at = 0.0
             return result
@@ -237,7 +254,7 @@ class OpencodeHarness:
     def start_internal(self, text, *, session_id=None, runtime=None, cwd=None, job_id=None,
                        display_text=None, allow_web=False, message_id=None, search_provider=None,
                        source_ids=None):
-        runtime = {**(runtime or {}), 'permission': 'workspace-write', 'backend': 'opencode'}
+        runtime = {'permission':'workspace-write', **(runtime or {}), 'backend': 'opencode'}
         if search_provider is not None:
             from .models import normalize_search_provider
             runtime['search_provider'] = normalize_search_provider(search_provider)
@@ -372,11 +389,14 @@ class OpencodeHarness:
                 # The session carries the frozen model; per-prompt overrides
                 # are still sent (same as the official client) but the session
                 # model is what the turn actually uses.
+                if config.get('review_root'):
+                    config['review_worktree']=client.paths(session['cwd'])['worktree']
                 created = client.create_session(
                     session['title'], agent='build',
                     model=model_ref(config['model'], config.get('variant')),
                     permission=_permission_rules(config, bool(message['allow_web']), self.store.root),
-                    directory=session['cwd'])
+                    directory=session['cwd'],
+                    **({'require_permissions':True} if config.get('review_root') else {}))
                 self.chat.event(sid, 'session/bound',
                                 {'opencode_session': created['id'], 'backend': 'opencode'})
                 if created.pop('_permission_dropped', False):
@@ -393,6 +413,8 @@ class OpencodeHarness:
                                              backend='opencode')
             if config['permission'] == 'read-only':
                 instructions += '\n本轮权限：仅阅读。只能读取与解释现有资料，不修改文件，不启动生成、评分、反馈或学习任务。不要执行 workspace-action（其初始化也可能写入数据库）。需要索引时可通过 SQLite mode=ro 读取现有记录。用户需要写入时请说明切换为工作区读写后发起新一轮。'
+            if config.get('review_root'):
+                instructions='你是独立只读 Reviewer。只使用本次 packet 中的索引、原件和已保存执行记录。只允许原生 read 工具；禁止 shell、写入、委派、联网及查宿主数据库。需要更多研究或重算时提交发现给主 Agent。最终输出所要求的 JSON，由运行器保存；不要尝试写文件。'
             prompt_text, prompt_files = self._input(message, session['cwd'])
             prompt = instructions + '\n\n' + prompt_text
             with self._lock:
@@ -507,6 +529,7 @@ class OpencodeHarness:
                         self._finish(sid, mid, 'failed')
                         raise RuntimeError('Opencode 执行失败；详情保存在会话与任务日志')
                     if info.get('finish') == 'stop':
+                        self._record_children(sid,mid,bound)
                         self._record_usage(sid, info)
                         self._finish(sid, mid, 'completed')
                         return
@@ -557,11 +580,28 @@ class OpencodeHarness:
             seen_tools.add((*key, 'announced'))
             self.chat.event(sid, 'item/started', {'item': item, 'turnId': mid})
         if state.get('status') in ('completed', 'failed', 'error'):
+            from .execution_records import journal_tool
+            journal_tool(self.chat,sid,mid,part.get('id'),name,tool_input,state.get('output',state.get('error','')),status=state['status'],native_session=self._bound_session(sid))
             item = {**item, 'status': state['status']}
             self.chat.event(sid, 'item/completed', {'item': item, 'turnId': mid})
             for text in _task_children(part):
                 self._children[text] = sid
                 self.chat.event(sid, 'child/task', {'threadId': text, 'status': state['status']})
+
+    def _record_children(self,sid,mid,parent):
+        from .execution_records import journal_tool
+        pending=[parent];seen={parent}
+        while pending and len(seen)<128:
+            owner=pending.pop()
+            for child in self._client().children(owner):
+                cid=child.get('id')
+                if not cid or cid in seen:continue
+                seen.add(cid);pending.append(cid)
+                for message in self._client().messages(cid):
+                    for part in message.get('parts',[]):
+                        state=part.get('state',{})
+                        if part.get('type')=='tool' and state.get('status') in ('completed','error','failed'):
+                            journal_tool(self.chat,sid,mid,part.get('id'),part.get('tool'),state.get('input',{}),state.get('output',state.get('error','')),status=state['status'],native_session=cid)
 
     def _record_usage(self, sid, info):
         tokens = dict(info.get('tokens') or {})

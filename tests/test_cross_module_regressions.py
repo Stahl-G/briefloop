@@ -31,7 +31,7 @@ def test_cancel_between_select_and_claim_never_executes(tmp_path):
     rows=s.rows
     def delayed(query,args=()):
         value=rows(query,args)
-        if "status='queued' ORDER BY rowid LIMIT 1" in query:
+        if "SELECT * FROM jobs" in query and "status='queued'" in query and "kind!='review'" in query:
             if value and not selected.is_set():selected.set();assert released.wait(3)
             elif selected.is_set():checked.set()
         return value

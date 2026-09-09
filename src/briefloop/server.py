@@ -80,7 +80,8 @@ def make_server(workspace, port=8765, *, paused=False):
                 elif u.path=='/api/harness/session':self.send(200,pick_harness(session_id=q['id'][0]).snapshot(q['id'][0],int(q.get('after',['0'])[0])))
                 elif u.path=='/api/session':self.send(200,{'token':token})
                 elif u.path=='/api/runtime':
-                    proc=worker.runtime.process
+                    observed=worker._review_runtime if worker.review_current and not worker.current else worker.runtime
+                    proc=observed.process
                     self.send(200,{'server_pid':os.getpid(),'worker_alive':worker.thread.is_alive(),'automatic_learning_paused':worker.opened_paused,'paused':worker.opened_paused,'job_id':worker.current,'pid':proc.pid if proc else None,'returncode':proc.poll() if proc else None})
                 elif u.path=='/api/source':
                     from .projections import source_details
@@ -166,6 +167,27 @@ def make_server(workspace, port=8765, *, paused=False):
                     import hashlib
                     if hashlib.sha256(data).hexdigest()!=json.loads(job['result'])['sha256']:raise ValueError('Word 文件已变化，请重新生成')
                     self.send(200,data,'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name='report.docx')
+                elif u.path=='/api/release-state':
+                    from .release import eligibility,list_releases
+                    version=q['version'][0];brief=store.one('briefs',version)
+                    checked=eligibility(store,version);checked.pop('input',None)
+                    public=[]
+                    for row in list_releases(store,brief['run_id']):
+                        public.append({**{k:row.get(k) for k in ('id','version_id','status','job_id','previous_id','change_type','change_reason','created','result')},
+                                       'sources':[{'id':s['id'],'name':s['name']} for s in row['data']['snapshot']['sources']]})
+                    self.send(200,{'eligibility':checked,'releases':public})
+                elif u.path=='/api/release-file':
+                    from .release import release_file
+                    self.send(200,release_file(store,q['id'][0]).read_bytes(),'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name='formal-report.docx')
+                elif u.path=='/api/audit-file':
+                    from .audit_bundle import bundle_file
+                    self.send(200,bundle_file(store,q['job'][0]).read_bytes(),'application/zip',download_name='report-audit.zip')
+                elif u.path=='/api/source-update-state':
+                    from .source_updates import for_version
+                    self.send(200,for_version(store,q['version'][0]))
+                elif u.path=='/api/review-status':
+                    from .review import review_status
+                    self.send(200,review_status(store,q['version'][0]))
                 elif u.path=='/api/evidence':
                     from .evidence import inspect_bindings
                     self.send(200,inspect_bindings(store,q['version'][0]))
@@ -266,6 +288,24 @@ def make_server(workspace, port=8765, *, paused=False):
                     settings=Settings.model_validate({**store.settings(),**body})
                     store.set_meta('settings',settings.model_dump());result=settings.model_dump()
                     if 'auto_learn' in body:worker.opened_paused=False
+                elif path=='/api/release':
+                    from .release import enqueue_release
+                    result=enqueue_release(store,body['version_id'],previous_id=body.get('previous_id'),change_type=body.get('change_type'),change_reason=body.get('change_reason',''))
+                elif path=='/api/audit-bundle':
+                    from .audit_bundle import enqueue_bundle
+                    result=enqueue_bundle(store,body['release_id'],body.get('source_permissions',{}))
+                elif path=='/api/source-refresh':
+                    brief=store.one('briefs',body['version_id'])
+                    if body['source_id'] not in store.source_ids(brief['run_id']):raise ValueError('来源不属于本轮报告')
+                    result=store.enqueue('source_refresh',{'run_id':brief['run_id'],'version_id':brief['id'],'source_id':body['source_id'],'information_cutoff':body['information_cutoff']})
+                elif path=='/api/revise-findings':
+                    store.one('briefs',body['version_id']);result=store.enqueue('revise',{'version_id':body['version_id']})
+                elif path=='/api/review':
+                    from .review import enqueue_review
+                    result=enqueue_review(store,body['version_id'])
+                elif path=='/api/review-response':
+                    from .review import respond
+                    result=respond(store,body['finding_id'],body['version_id'],body['action'],body['reason'])
                 elif path=='/api/assess':
                     store.one('briefs',body['version_id']);result=store.enqueue('assess',{'version_id':body['version_id']})
                 elif path=='/api/learn':

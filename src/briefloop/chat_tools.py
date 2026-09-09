@@ -11,6 +11,30 @@ from .models import Requirements, Comment, Settings, runtime_fields
 def workspace_action(store, request):
     if not isinstance(request,dict):raise ValueError('请求必须是 JSON 对象')
     action=request.get('action')
+    if action=='source_snapshot':
+        from .source_updates import register_snapshot
+        return register_snapshot(store,request['source_id'],timing=request.get('timing'),logical_id=request.get('logical_id'),previous_id=request.get('previous_id'))
+    if action=='source_change':
+        from .source_updates import record_change
+        return record_change(store,request['change'],run_id=request.get('run_id'))
+    if action=='refresh_source':
+        from .source_updates import refresh
+        return refresh(store,request['run_id'],request['source_id'],information_cutoff=request['information_cutoff'],trigger=request.get('trigger','research_refresh'))
+    if action=='set_reader_contract':
+        from .deliverable_spec import save_reader_contract
+        return save_reader_contract(store,request['run_id'],request['reader_contract'])
+    if action=='conflict_create':
+        from .conflicts import create
+        return create(store,source_ids=request['source_ids'],description=request['description'],run_id=request.get('run_id'),kind=request.get('kind','contradiction'))
+    if action=='conflict_response':
+        from .conflicts import respond
+        return respond(store,request['conflict_id'],request['response_action'],request['reason'])
+    if action=='review_response':
+        from .review import respond
+        return respond(store,request['finding_id'],request['version_id'],request['response_action'],request['reason'])
+    if action=='review_status':
+        from .review import review_status
+        return review_status(store,request['version_id'])
     if action=='evidence_span':
         from .evidence import create_span
         return create_span(store,request['evidence'])
