@@ -1,5 +1,4 @@
 """No server/model launch: verify identity, bounded discovery and separate data."""
-import json
 import os
 from pathlib import Path
 from types import SimpleNamespace

@@ -1,6 +1,5 @@
 import argparse
 import json
-import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -26,11 +25,23 @@ def main():
     add=ts.add_parser('add-url');add.add_argument('--run',required=True);add.add_argument('--url',required=True)
     read=ts.add_parser('read-source');read.add_argument('--id',required=True)
     read.add_argument('--start-line',type=int);read.add_argument('--end-line',type=int);read.add_argument('--max-chars',type=int)
+    render=ts.add_parser('render-source',help='按需渲染 PDF 指定页面，不执行 OCR 或模型')
+    render.add_argument('--id',required=True);render.add_argument('--pages',nargs='+',type=int,required=True)
+    figure=ts.add_parser('register-figure',help='登记已生成图像及数据/脚本快照；不执行脚本')
+    figure.add_argument('--run',required=True);figure.add_argument('--image',required=True);figure.add_argument('--title',required=True)
+    figure.add_argument('--caption',default='');figure.add_argument('--source',action='append',default=[])
+    figure.add_argument('--data');figure.add_argument('--script')
     join=ts.add_parser('join-scouts');join.add_argument('--files',nargs='+',required=True)
+    document=ts.add_parser('normalize-document',help='检查富文档 JSON 并生成兼容 Markdown，用于导入与字数检查')
+    document.add_argument('--file',required=True);document.add_argument('--output')
     count=ts.add_parser('count-brief',help='按统一中英混合规则统计 Markdown 正文长度')
     count.add_argument('--file',required=True,help='Markdown 正文文件，不包含 citations 元数据')
     count.add_argument('--target-words',type=int);count.add_argument('--max-words',type=int)
-    action=ts.add_parser('workspace-action',help='交互助手操作当前工作区')
+    report_data=ts.add_parser('prepare-report-data',help='核对行业指标来源并计算变化；输出计算表与数据缺口')
+    report_data.add_argument('--run',required=True);report_data.add_argument('--file',required=True)
+    report_data.add_argument('--output',help='保存计算包 JSON 的路径；原始 records 写入 draft.report_data')
+    workbook=ts.add_parser('extract-workbook-figures',help='提取XLSX内嵌图像并列出需渲染的原生图表');workbook.add_argument('--id',required=True)
+    action=ts.add_parser('workspace-action' ,help='交互助手操作当前工作区')
     action.add_argument('--request',required=True)
     tavily_search=ts.add_parser('tavily-search',help='Tavily 搜索摘要，只发现来源')
     tavily_search.add_argument('--run',required=True);tavily_search.add_argument('--query',required=True)
@@ -67,7 +78,13 @@ def main():
         print(json.dumps({'codex':shutil.which('codex'),'pdftotext':shutil.which('pdftotext'),'workspace':str(Path(a.workspace).resolve()),'note':'检查命令存在；未启动模型、未验证登录'},ensure_ascii=False,indent=2))
     elif a.command=='tool':
         store=Store(a.workspace)
-        if a.tool=='workspace-action':
+        if a.tool=='normalize-document':
+            from .document_model import normalize_document,document_markdown
+            document=normalize_document(json.loads(Path(a.file).read_text()))
+            markdown=document_markdown(document)
+            if a.output:Path(a.output).write_text(markdown)
+            print(json.dumps({'document':document,'markdown':markdown},ensure_ascii=False))
+        elif a.tool=='workspace-action':
             from .chat_tools import workspace_action
             print(json.dumps(workspace_action(store,json.loads(Path(a.request).read_text())),ensure_ascii=False))
         elif a.tool=='tavily-search':
@@ -78,10 +95,27 @@ def main():
         elif a.tool=='tavily-extract':
             from . import tavily
             print(json.dumps(tavily.extract(store,a.url,run_id=a.run,extract_depth=a.extract_depth),ensure_ascii=False))
+        elif a.tool=='prepare-report-data':
+            from .report_tools import prepare_for_run
+            from .store import dump
+            result=prepare_for_run(store,a.run,json.loads(Path(a.file).read_text(encoding='utf-8')))
+            if a.output:
+                output=Path(a.output).expanduser().resolve();output.parent.mkdir(parents=True,exist_ok=True)
+                temporary=output.with_name(output.name+'.tmp');temporary.write_text(dump(result),encoding='utf-8');temporary.replace(output)
+            print(json.dumps(result,ensure_ascii=False))
+        elif a.tool=='extract-workbook-figures':
+            from .workbook_figures import extract_workbook_figures
+            print(json.dumps(extract_workbook_figures(store,a.id),ensure_ascii=False))
         elif a.tool=='count-brief':
             from .length import length_stats
             result=length_stats(Path(a.file).expanduser().read_text(encoding='utf-8'),target_words=a.target_words,max_words=a.max_words)
             print(json.dumps(result,ensure_ascii=False))
+        elif a.tool=='render-source':
+            from .media import render_source_pages
+            print(json.dumps(render_source_pages(store,a.id,a.pages),ensure_ascii=False))
+        elif a.tool=='register-figure':
+            from .figures import register_figure
+            print(json.dumps(register_figure(store,a.run,a.image,a.title,caption=a.caption,source_ids=a.source,data_path=a.data,script_path=a.script),ensure_ascii=False))
         elif a.tool=='read-source':
             from .scout_tools import read_source
             print(read_source(store,a.id,start_line=a.start_line,end_line=a.end_line,max_chars=a.max_chars))

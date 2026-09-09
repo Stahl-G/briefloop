@@ -23,6 +23,30 @@ def _message(snapshot, message_id):
     return next((m for m in snapshot['messages'] if m['id'] == message_id), None)
 
 
+def _usable_output(job, folder, store=None):
+    """A completed model turn is not evidence that its required artifact exists."""
+    from .models import BriefDraft
+    role=job.get('runtime_role')
+    if role in ('evaluator','scorer','assessor'):
+        name='comparison.json' if job.get('evaluation_mode')=='pairwise' or role=='assessor' else 'assessment.json'
+    elif job['kind']=='generate':name='draft.json'
+    elif job['kind']=='assess':name='assessment.json'
+    else:return True  # WikiSkill handoffs already request resume_on_complete.
+    try:
+        data=json.loads((folder/name).read_text())
+        if name=='draft.json':BriefDraft.model_validate(data)
+        elif name=='assessment.json':
+            if store is None:return False
+            payload=json.loads(job['payload'])
+            version=payload.get('version_id')
+            if job['kind']=='generate':version='brief_'+job['id'][4:]
+            if not version:return False
+            store.validate_assessment(version,data)
+        elif not isinstance(data,dict) or not isinstance(data.get('pairs'),list):return False
+        return True
+    except (OSError,ValueError):return False
+
+
 class InteractiveRuntime:
     def __init__(self, store, harness=None):
         self.store = store
@@ -46,10 +70,40 @@ class InteractiveRuntime:
         if session_id:
             self.harness.cancel(session_id)
 
+    def _input_source_ids(self,job,folder):
+        """Only explicit/evaluator visual references become native attachments.
+
+        Coordinators receive the task-pack index, not every PDF page's pixels.
+        """
+        if 'input_source_ids' in job:return list(dict.fromkeys(job['input_source_ids']))
+        if job.get('runtime_role')!='evaluator':return []
+        path=folder/'input.json'
+        if not path.exists():return []
+        packet=json.loads(path.read_text())
+        ids=[]
+        if isinstance(packet,dict):
+            ids=[row.get('source_id') or row.get('id') for row in packet.get('sources',[])]
+        elif isinstance(packet,list):
+            for case in packet:
+                for side in ('baseline','candidate'):
+                    brief=case.get(side,{})
+                    detail=brief.get('detail') or {}
+                    if isinstance(detail,str):detail=json.loads(detail)
+                    ids.extend(ref['source_id'] for ref in detail.get('citations',brief.get('citations',[])))
+                    for row in (detail.get('report_data') or {}).get('records',[]):
+                        ids.extend(row[key] for key in ('source_id','previous_source_id') if row.get(key))
+        from .media import source_attachment
+        visual=[]
+        for sid in dict.fromkeys(sid for sid in ids if sid):
+            attachment=source_attachment(self.store,sid)
+            if (attachment.get('media_type') or '').startswith('image/') or attachment.get('media_type')=='application/pdf':visual.append(sid)
+        return visual
+
     def execute(self, job, prompt, folder, on_tick=lambda: None, *, resume_on_complete=False):
         from .progress import ProgressTracker
         folder = Path(folder)
         folder.mkdir(parents=True, exist_ok=True)
+        resume_on_complete = resume_on_complete or not _usable_output(job, folder, self.store)
         tracker = ProgressTracker(self.store, job['id'], folder)
         def tick():
             on_tick()  # Admit a complete draft while its evaluator is still working.
@@ -152,7 +206,8 @@ class InteractiveRuntime:
                 self.harness.start_internal((folder / 'prompt.md').read_text(), session_id=sid,
                     runtime=runtime, cwd=folder, job_id=job['id'], display_text=label,
                     allow_web=bool(job.get('allow_web', False)), message_id=binding['message_id'],
-                    search_provider=payload.get('search_provider','codex'))
+                    search_provider=payload.get('search_provider','codex'),
+                    source_ids=self._input_source_ids(job,folder))
                 self.store.event(job['id'], 'runtime_started', {'session_id': sid,
                     'message_id': binding['message_id'], 'folder': str(folder), 'runtime': configured,
                     'transport': 'app-server'})
@@ -252,6 +307,3 @@ class InteractiveRuntime:
             if 'usage' in event:
                 values.append(event['usage'])
         return values
-
-
-CodexRuntime = InteractiveRuntime

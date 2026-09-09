@@ -1,5 +1,7 @@
 """Small input contracts; report quality is assessed by agents, not these schemas."""
 from typing import Literal
+from datetime import date
+from .industry_data import IndustryData
 from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
 
 
@@ -22,9 +24,29 @@ class ResearchBudget(Model):
     source_pages: int = Field(default=18, ge=0)
 
 
+class ReportSection(Model):
+    section_id: str = Field(min_length=1, max_length=120)
+    title: str = Field(min_length=1, max_length=200)
+    mode: Literal['required','optional','manual'] = 'required'
+    purpose: str = ''
+    placeholder: str = '待填充'
+
+
 class Requirements(Model):
     title: str = Field(min_length=1, max_length=200)
     objective: str = Field(min_length=1, max_length=10000)
+    report_profile: Literal["brief", "industry_periodic"] = "brief"
+    report_date: str = ""
+    organization: str = ""
+    industry: str = ""
+    reference_source_ids: list[str] = Field(default_factory=list)
+    template_id: str | None = None
+    writing_mode: Literal['general','internal_report'] = 'general'
+    sections: list[ReportSection] = Field(default_factory=list)
+    manual_sections: list[str] = Field(default_factory=list)
+    key_questions: list[str] = Field(default_factory=list)
+    writing_preferences: list[str] = Field(default_factory=list)
+    company_context_revision: str | None = None
     audience: str = "自己"
     language: str = "中文"
     extent: Literal["compact", "balanced", "detailed"] = "balanced"
@@ -35,9 +57,16 @@ class Requirements(Model):
     target_words: int | None = Field(default=None, ge=1)
     max_words: int | None = Field(default=None, ge=1)
 
+    @field_validator('report_date')
+    @classmethod
+    def valid_report_date(cls, value):
+        if value and (len(value)!=10 or date.fromisoformat(value).isoformat()!=value):
+            raise ValueError('报告日期应为 YYYY-MM-DD')
+        return value
+
     @model_validator(mode='after')
     def fill_length_preferences(self):
-        target,maximum=LENGTH_PRESETS[self.extent]
+        target,maximum=(5000,5500) if self.report_profile=="industry_periodic" else LENGTH_PRESETS[self.extent]
         if self.target_words is None:self.target_words=target
         if self.max_words is None:self.max_words=max(maximum,self.target_words)
         if self.max_words<self.target_words:
@@ -96,6 +125,9 @@ class Settings(RoleModel):
     max_parallel: int = Field(default=4, ge=1, le=16)
     timeout_minutes: int = Field(default=30, ge=1, le=240)
     skill_targets: list[str] = Field(default_factory=lambda: ["scout", "analyst"])
+    auto_revision: bool = True
+    default_template_id: str | None = None
+    company_context_enabled: bool | None = None
 
 
     @model_validator(mode='before')
@@ -113,10 +145,23 @@ class Citation(Model):
 
 
 class BriefDraft(Model):
+    figures: list[str] = Field(default_factory=list)
+    report_data: IndustryData | None = None
     title: str
-    markdown: str = Field(min_length=1)
+    markdown: str = ''
+    editor_document: dict | None = None
     citations: list[Citation] = Field(default_factory=list)
     gaps: list[str] = Field(default_factory=list)
+    research_notes: list[dict] = Field(default_factory=list)
+
+    @model_validator(mode='after')
+    def normalize_content(self):
+        if self.editor_document is not None:
+            from .document_model import normalize_document, document_markdown
+            self.editor_document = normalize_document(self.editor_document)
+            self.markdown = document_markdown(self.editor_document)
+        if not self.markdown.strip():raise ValueError('报告正文不能为空')
+        return self
 
 
 class Finding(Model):
@@ -152,20 +197,13 @@ class Assessment(Model):
 
 class SaveRevision(Model):
     base_version: str
-    markdown: str = Field(min_length=1)
+    markdown: str = ''
     editor_document: dict | None = None
 
 
 class Comment(Model):
     version_id: str
     text: str = Field(min_length=1, max_length=20000)
-
-
-class Comparison(Model):
-    verdict: Literal["better", "tie", "worse"]
-    reason: str
-    regressions: list[str] = Field(default_factory=list)
-    cases: list[dict] = Field(default_factory=list)
 
 
 class ScoutEvidence(Model):

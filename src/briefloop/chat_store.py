@@ -79,7 +79,8 @@ class ChatStore:
         return result
 
     def patch_message(self,mid,**values):
-        if not set(values)<={'text','status','turn_id'}:raise ValueError('Invalid message update')
+        if not set(values)<={'text','status','turn_id','mode'}:raise ValueError('Invalid message update')
+        if 'mode' in values and values['mode'] not in ('queue','steer'):raise ValueError('Invalid message mode')
         values['updated']=now()
         with self.store.tx() as c:c.execute('UPDATE chat_messages SET '+','.join(k+'=?' for k in values)+' WHERE id=?',(*values.values(),mid))
 

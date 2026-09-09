@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 from briefloop.models import ROLE_NAMES, Settings
 from briefloop.store import Store, dump
-from briefloop.runtime import Worker, CodexRuntime, stage_job
+from briefloop.runtime import Worker, stage_job
 from briefloop.interactive_runtime import InteractiveRuntime
 from briefloop.learning import enqueue_feedback, _role
 
@@ -71,30 +71,24 @@ def test_role_models_freeze_and_generation_scores_in_its_own_stage(tmp_path):
     assert json.loads(resumed['payload'])['role_models']['evaluator']==store.runtime_config()
 
 
-def test_selected_model_reaches_cli_and_chat_transport_and_rejects_changed_resume(tmp_path):
+def test_selected_model_reaches_chat_transport_and_rejects_changed_resume(tmp_path):
     store=Store(tmp_path/'workspace')
     selected={'model':'vendor/custom-model','reasoning_effort':None,'model_provider':'configured-responses'}
     job=store.enqueue('learn',{'role_models':{'assessor':selected}})
     stage=stage_job(store,job,'assessor')
-    with patch('briefloop.runtime.shutil.which',return_value='/fake/codex'), patch('briefloop.runtime.subprocess.Popen',side_effect=RuntimeError('no model call')) as process:
-        with pytest.raises(RuntimeError,match='no model call'):
-            CodexRuntime(store).execute(stage,'compare',tmp_path/'cli')
-    command=process.call_args.args[0]
-    assert 'model="vendor/custom-model"' in command
-    assert 'model_provider="configured-responses"' in command
-    assert not any('model_reasoning_effort=' in part for part in command)
     class CaptureHarness:
         def __init__(self):self.arguments=None
         def create_session(self,*args):return {'id':'session'}
         def start_internal(self,*args,**kwargs):
             self.arguments=kwargs;raise RuntimeError('no model call')
-    capture=CaptureHarness()
+    capture=CaptureHarness();folder=tmp_path/'chat'
     with pytest.raises(RuntimeError,match='no model call'):
-        InteractiveRuntime(store,capture).execute(stage,'compare',tmp_path/'chat')
+        InteractiveRuntime(store,capture).execute(stage,'compare',folder)
     assert capture.arguments['runtime']=={'model':'vendor/custom-model','effort':None,'model_provider':'configured-responses'}
+    # The saved execution carries the frozen runtime; a changed one must not resume it.
     changed={**stage,'payload':dump({**json.loads(stage['payload']),'runtime':store.runtime_config()})}
-    with pytest.raises(ValueError,match='模型已改变'):
-        CodexRuntime(store).execute(changed,'compare',tmp_path/'cli')
+    with pytest.raises(ValueError,match='模型配置'):
+        InteractiveRuntime(store,capture).execute(changed,'compare',folder)
 
 
 def test_evaluator_migration_preserves_settings_and_frozen_legacy_modes(tmp_path):

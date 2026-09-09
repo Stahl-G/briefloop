@@ -55,10 +55,13 @@ def _experience(store, job):
 
 
 def _sync_wiki(store,study):
+    if store.meta('last_study')!=str(study):
+        raise ValueError('已有更新的学习记录；旧任务不能覆盖当前 Wiki')
     state=feedback_loop.work(study)
     text='# 工作区 Wiki\n\n以下是从修订与执行中整理的经验，不是本期事实来源。\n'
     for name,p in state['patterns'].items():text+='\n## '+name+'\n\n'+p['content']+'\n\n依据：'+', '.join(p['sources'])+'\n'
-    (store.root/'wiki/index.md').write_text(text)
+    destination=store.root/'wiki/index.md'
+    temporary=destination.with_suffix('.tmp');temporary.write_text(text);temporary.replace(destination)
 
 
 def _role(store,runtime,job,study,round_number,phase):
@@ -123,6 +126,24 @@ regressions 只列会实质影响使用的新增事实、引用或核心覆盖�
 '''
 
 
+def _baseline_for_attempt(store, case, learning_payload):
+    """Reuse only the version returned by a matching completed attempt."""
+    if case['skill_id']!=learning_payload.get('skill_id'):return None
+    for job in store.rows("SELECT * FROM jobs WHERE kind='generate' AND status='complete' ORDER BY rowid DESC"):
+        payload=json.loads(job['payload'])
+        if payload.get('run_id')!=case['id']:continue
+        if payload.get('runtime')!=learning_payload.get('runtime'):continue
+        if payload.get('role_models')!=learning_payload.get('role_models'):continue
+        # Skill overrides do not establish a like-for-like baseline.
+        if payload.get('skill_override') is not None:continue
+        result=json.loads(job['result'] or '{}');vid=result.get('version_id')
+        if not vid or vid not in ('brief_'+job['id'][4:],'brief_'+job['id'][4:]+'_r1'):continue
+        try:brief=store.one('briefs',vid)
+        except ValueError:continue
+        if brief['run_id']==case['id'] and brief['author']=='agent':return brief
+    return None
+
+
 def learn(store,runtime,job):
     payload=json.loads(job['payload']);root=store.root/'jobs'/job['id'];root.mkdir(exist_ok=True)
     study=root/'study';context=root/'context.json'
@@ -134,6 +155,9 @@ def learn(store,runtime,job):
     skill_path=None
     if current:
         skill_path=root/'initial-skill.md';skill_path.write_text(current['content'])
+    previous=store.meta('last_study')
+    if study.exists() and previous and previous!=str(study):
+        raise ValueError('已有后续学习记录，不能直接恢复旧学习任务；请基于当前 Wiki 发起新的反馈学习。旧进度保留。')
     feedback_loop.begin(study,feedback=ctx['feedback'],skill=skill_path,rounds=payload['k'],previous=store.meta('last_study'))
     # Only this worker writes the workspace's Wiki; one study at a time.
     store.set_meta('last_study',str(study))
@@ -151,12 +175,18 @@ def learn(store,runtime,job):
         candidate_skill={'id':'candidate_'+content_hash(text)[:16],'content':text,'targets':dump(payload['targets'])}
         comparisons=[]
         for case_id in ctx['cases']:
-            case=store.one('runs',case_id);case['source_ids']=dump(store.source_ids(case_id));case_dir=root/f'round-{n}'/case_id
-            originals=store.rows("SELECT * FROM briefs WHERE run_id=? AND author='agent' ORDER BY rowid LIMIT 1",(case_id,))
-            same_runtime=any(json.loads(j['payload']).get('runtime')==payload.get('runtime') for j in store.rows("SELECT * FROM jobs WHERE kind='generate' AND status='complete'") if json.loads(j['payload']).get('run_id')==case_id)
-            if originals and case['skill_id']==payload['skill_id'] and same_runtime:
-                baseline=originals[0]
-            else:
+            case=store.one('runs',case_id)
+            # Imported user answers are feedback, never material for the candidate trial.
+            evidence_ids=[]
+            for sid in store.source_ids(case_id):
+                provenance=store.root/'sources'/(sid+'.provenance.json')
+                if provenance.is_file():
+                    metadata=json.loads(provenance.read_text())
+                    if case_id in metadata.get('revision_for_runs',[]) or metadata.get('usage')=='revision_feedback':continue
+                evidence_ids.append(sid)
+            case['source_ids']=dump(evidence_ids);case_dir=root/f'round-{n}'/case_id
+            baseline=_baseline_for_attempt(store,case,payload)
+            if baseline is None:
                 baseline=_generate_trial(store,{**job,'_runtime':runtime},case,current,case_dir/'baseline','baseline')
             proposed=_generate_trial(store,{**job,'_runtime':runtime},case,candidate_skill,case_dir/'candidate','candidate')
             comparisons.append({'case_id':case_id,'requirements':json.loads(case['requirements']),

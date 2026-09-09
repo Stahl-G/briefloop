@@ -1,26 +1,10 @@
 """Read-only source and learning views for the local interface."""
 import json
-from pathlib import Path
 
 
 def source_details(store, sid):
-    source=store.one('sources',sid)
-    provenance=None
-    record=store.root/'sources'/f'{sid}.provenance.json'
-    if record.exists():provenance=json.loads(record.read_text())
-    original=None
-    if provenance and provenance.get('original_path'):
-        path=(store.root/provenance['original_path']).resolve()
-        if path.is_relative_to((store.root/'sources').resolve()) and path.is_file():original=path
-    if original is None:
-        # Uploaded originals predate provenance sidecars; do not pretend an old
-        # downloaded plain-text source is the original web response.
-        if not source.get('url'):
-            extracted=(store.root/source['path']).resolve()
-            for path in sorted((store.root/'sources').glob(sid+'.*')):
-                if path.resolve()!=extracted and path.suffix!='.json' and path.is_file():
-                    original=path;break
-    return source,provenance,original
+    from .media import source_files
+    return source_files(store,sid)
 
 
 def learning_candidates(store):

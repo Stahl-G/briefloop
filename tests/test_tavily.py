@@ -1,7 +1,6 @@
 import hashlib
 from io import BytesIO
 import json
-import os
 import ssl
 import urllib.error
 import pytest

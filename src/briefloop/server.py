@@ -5,7 +5,6 @@ from urllib.parse import urlsplit, parse_qs, quote
 import base64
 import json
 import secrets
-import threading
 import os
 import signal
 import fcntl
@@ -49,7 +48,16 @@ def make_server(workspace, port=8765, *, paused=False):
         def do_GET(self):
             try:
                 u=urlsplit(self.path);q=parse_qs(u.query)
-                if u.path=='/api/state':self.send(200,store.snapshot())
+                if u.path=='/api/state':
+                    snapshot=store.snapshot()
+                    for source in snapshot['sources']:
+                        sidecar=store.root/'sources'/(source['id']+'.provenance.json')
+                        if sidecar.is_file():
+                            try:
+                                meta=json.loads(sidecar.read_text())
+                                source['media_type']=meta.get('media_type');source['needs_visual']=bool(meta.get('needs_visual',False))
+                            except (ValueError,OSError):pass
+                    self.send(200,snapshot)
                 elif u.path=='/api/workspaces':
                     from .workspaces import list_workspaces
                     self.send(200,list_workspaces(store))
@@ -62,12 +70,39 @@ def make_server(workspace, port=8765, *, paused=False):
                 elif u.path=='/api/source':
                     from .projections import source_details
                     sid=q['id'][0];source,provenance,original=source_details(store,sid)
-                    self.send(200,{'source':source,'text':store.source_text(sid),'provenance':provenance,'original_url':'/api/source-original?id='+sid if original else None})
+                    from .media import source_attachment
+                    attachment=source_attachment(store,sid) if source['status']!='failed' else {'status':'failed','error':source.get('error'),'image_path':None}
+                    self.send(200,{'source':source,'text':store.source_text(sid),'provenance':provenance,'attachment':attachment,
+                        'image_url':'/api/source-image?id='+sid if attachment.get('image_path') and source['status']=='ready' else None,
+                        'original_url':'/api/source-original?id='+sid if original else None})
+                elif u.path=='/api/source-image':
+                    from pathlib import Path
+                    from .media import source_attachment,rendered_page_path
+                    sid=q['id'][0];attachment=source_attachment(store,sid)
+                    if attachment.get('status')!='ready':raise ValueError(attachment.get('error') or '来源不可读取')
+                    page=int(q['page'][0]) if q.get('page') else None
+                    path=rendered_page_path(store,sid,page) if page is not None else attachment.get('image_path')
+                    if not path:raise ValueError('尚无图片页面，请先选择 PDF 页码并点击查看页面')
+                    self.send(200,Path(path).read_bytes(),'image/png')
                 elif u.path=='/api/source-original':
                     from .projections import source_details
                     source,provenance,original=source_details(store,q['id'][0])
                     if original is None:raise ValueError('该来源未保留原件')
                     self.send(200,original.read_bytes(),'application/octet-stream',download_name=original.name)
+                elif u.path=='/api/figure':
+                    from .figure_support import export_figures
+                    brief=store.one('briefs',q['version'][0]);figures=export_figures(store,brief)
+                    if q['id'][0] not in figures:raise ValueError('这张图未引用在该稿件中')
+                    self.send(200,figures[q['id'][0]]['image_bytes'],'image/png')
+                elif u.path=='/api/report-data-template':
+                    from .industry_data import report_data_template
+                    self.send(200,report_data_template(),download_name='industry-report-data.json')
+                elif u.path=='/api/report-data-schema':
+                    from .industry_data import IndustryData
+                    self.send(200,IndustryData.model_json_schema())
+                elif u.path=='/api/report-data':
+                    from .report_tools import report_details
+                    self.send(200,report_details(store,store.one('briefs',q['version'][0])))
                 elif u.path=='/api/research-budget':
                     from .research_budget import snapshot
                     self.send(200,snapshot(store,q['run'][0]))
@@ -93,11 +128,40 @@ def make_server(workspace, port=8765, *, paused=False):
                                 case[side]['assessment']=json.loads(grades[0]['data']) if grades else None
                         rounds.append({'cases':cases,'result':json.loads(comparison.read_text()) if comparison.exists() else None})
                     self.send(200,{'job':job,'rounds':rounds})
+                elif u.path=='/api/company-context':
+                    from .company_context import snapshot
+                    self.send(200,snapshot(store))
+                elif u.path=='/api/research-notes':
+                    from .deliverable_spec import research_record
+                    self.send(200,research_record(store,store.one('briefs',q['version'][0])),download_name='research-notes.json' if q.get('download') else None)
+                elif u.path=='/api/export-file':
+                    from .export_jobs import output_path
+                    job=store.one('jobs',q['job'][0])
+                    if job['status']!='complete':raise ValueError('Word 尚未制作完成')
+                    data=output_path(store,job).read_bytes()
+                    import hashlib
+                    if hashlib.sha256(data).hexdigest()!=json.loads(job['result'])['sha256']:raise ValueError('Word 文件已变化，请重新生成')
+                    self.send(200,data,'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name='report.docx')
                 elif u.path=='/api/download':
                     b=store.one('briefs',q['version'][0])
                     from .exports import reader_markdown,docx_bytes
                     md=reader_markdown(store,b)
-                    if q.get('format',['md'])[0]=='docx':self.send(200,docx_bytes(md),'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+                    if q.get('format',['md'])[0]=='bundle':
+                        from .figure_support import markdown_bundle
+                        self.send(200,markdown_bundle(store,b),'application/zip',download_name='report-with-figures.zip')
+                    elif q.get('format',['md'])[0]=='docx':
+                        from .figure_support import export_figures
+                        req=json.loads(store.one('runs',b['run_id'])['requirements']);detail=json.loads(b['detail'])
+                        report_data=detail.get('report_data')
+                        if report_data and not detail.get('report_data_needs_review'):
+                            report_data={**report_data,'records':[{**row,'source_label':store.one('sources',row['source_id'])['name']} for row in report_data['records']]}
+                        elif detail.get('report_data_needs_review'):report_data=None
+                        self.send(200,docx_bytes(md,report_profile=req.get('report_profile','brief'),title=detail.get('title',req.get('title','')),
+                            report_date=req.get('report_date',''),organization=req.get('organization',''),industry=req.get('industry',''),
+                            period=req.get('period',''),report_data=report_data,figures=export_figures(store,b),
+                            document=json.loads(b['editor_document']) if b.get('editor_document') else None,
+                            source_records={sid:store.one('sources',sid) for sid in store.source_ids(b['run_id'])}),
+                            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name='report.docx')
                     else:self.send(200,md.encode(),'text/markdown; charset=utf-8')
                 elif u.path in ('/','/index.html'):
                     self.send(200,asset_bytes['index.html'],'text/html; charset=utf-8')
@@ -133,6 +197,28 @@ def make_server(workspace, port=8765, *, paused=False):
                     result=sources.upload(store,body['name'],data)
                 elif path=='/api/source-url':result=sources.fetch(store,body['url'])
                 elif path=='/api/retry-source':result=sources.retry_source(store,body['source_id'])
+                elif path=='/api/source-pages':
+                    from .media import render_source_pages
+                    result=render_source_pages(store,body['source_id'],body['pages'])
+                    for page in result['pages']:
+                        page['url']='/api/source-image?id='+body['source_id']+'&page='+str(page['page'])
+                elif path=='/api/report-data/prepare':
+                    from .report_tools import prepare_for_run
+                    result=prepare_for_run(store,body['run_id'],body['data'])
+                elif path=='/api/import-revision':
+                    from .word_import import import_revision
+                    result=import_revision(store,body['base_version'],body.get('name','revision.docx'),
+                        base64.b64decode(body['data'],validate=True) if body.get('data') else b'',
+                        accept_unaligned=bool(body.get('accept_unaligned',False)),source_id=body.get('source_id'))
+                elif path=='/api/company-resolve':
+                    from .company_context import resolve_conflict
+                    result=resolve_conflict(store,body['fact_id'],body['accept'])
+                elif path=='/api/template-import':
+                    from .templates import import_template
+                    result=import_template(store,body['name'],base64.b64decode(body['data'],validate=True),body.get('parent_id'))
+                elif path=='/api/export':
+                    from .export_jobs import enqueue_export
+                    result=enqueue_export(store,body['version_id'])
                 elif path=='/api/generate':
                     req=Requirements.model_validate(body['requirements'])
                     run=store.create_run(req.model_dump(),body.get('source_ids',[]))
