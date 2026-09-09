@@ -179,6 +179,26 @@ class Citation(Model):
     excerpt: str = ""
 
 
+class NumberBinding(Model):
+    """One important number traced to its origin; the program converts units.
+
+    value/unit describe the original. Exact source and body spans prevent
+    matching a different fact elsewhere. Legacy bindings remain readable but
+    are marked unchecked until these spans are supplied.
+    """
+    label: str = ""
+    value: float | None = None
+    unit: str = ""
+    period: str = ""
+    entity: str = ""
+    source_id: str = ""
+    locator: str = ""
+
+    report_quote: str = ""
+    number_text: str = ""
+    source_excerpt: str = ""
+
+
 class BriefDraft(Model):
     figures: list[str] = Field(default_factory=list)
     report_data: IndustryData | None = None
@@ -187,6 +207,7 @@ class BriefDraft(Model):
     editor_document: dict | None = None
     citations: list[Citation] = Field(default_factory=list)
     gaps: list[str] = Field(default_factory=list)
+    number_bindings: list[NumberBinding] = Field(default_factory=list)
     research_notes: list[dict] = Field(default_factory=list)
 
     @model_validator(mode='after')

@@ -166,6 +166,9 @@ def make_server(workspace, port=8765, *, paused=False):
                     import hashlib
                     if hashlib.sha256(data).hexdigest()!=json.loads(job['result'])['sha256']:raise ValueError('Word 文件已变化，请重新生成')
                     self.send(200,data,'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name='report.docx')
+                elif u.path=='/api/version-checks':
+                    from .delivery_checks import brief_checks
+                    self.send(200,brief_checks(store,q['version'][0]))
                 elif u.path=='/api/download':
                     b=store.one('briefs',q['version'][0])
                     from .exports import reader_markdown,docx_bytes
