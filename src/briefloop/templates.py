@@ -129,7 +129,8 @@ def prepare(store,template_id,spec):
     def make_style(name,element):
         name=name+' '+row['id'][-6:]
         style=doc.styles.add_style(name,WD_STYLE_TYPE.PARAGRAPH)
-        style.base_style=doc.styles['Normal']
+        from docx.text.paragraph import Paragraph
+        style.base_style=Paragraph(element,doc).style
         if element.pPr is not None:
             props=deepcopy(element.pPr)
             for old in list(props):
@@ -161,7 +162,7 @@ def prepare(store,template_id,spec):
         if element.tag!=qn('w:sectPr') and index not in keep:doc.element.body.remove(element)
     _replace_text(doc,replacements)
     for section in doc.sections:
-        for part in (section.header,section.footer,section.first_page_header,section.first_page_footer):_replace_text(part,replacements)
+        for part in (section.header,section.footer,section.first_page_header,section.first_page_footer,section.even_page_header,section.even_page_footer):_replace_text(part,replacements)
     # Remove relationships whose historic images/embedded objects were removed.
     referenced={v for element in doc.element.iter() for k,v in element.attrib.items() if k in (qn('r:id'),qn('r:embed'),qn('r:link'))}
     for rid,rel in list(doc.part.rels.items()):
@@ -184,7 +185,7 @@ def export_template(store,brief,document,figures):
     replacements={'{{'+key+'}}':value for key,value in fields.items()}
     _replace_text(doc,replacements)
     for section in doc.sections:
-        for part in (section.header,section.footer,section.first_page_header,section.first_page_footer):_replace_text(part,replacements)
+        for part in (section.header,section.footer,section.first_page_header,section.first_page_footer,section.even_page_header,section.even_page_footer):_replace_text(part,replacements)
     document=deepcopy(document)
     by_title={s['title']:s['section_id'] for s in row['spec']['sections']}
     for node in document.get('content',[]):

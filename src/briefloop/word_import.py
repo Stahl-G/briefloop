@@ -126,12 +126,11 @@ def import_revision(store,base_version,name,data,*,accept_unaligned=False,source
                 cells.append(value);column+=cs
             rows.append({'type':'tableRow','content':cells})
         return {'type':'table','content':rows}
-    blocks=list(doc.element.body);started=not headings;matched=[]
+    blocks=list(doc.element.body);matched=[]
     for element in blocks:
         if element.tag==qn('w:p'):
             p=Paragraph(element,doc)
-            if p.text in headings:started=True;matched.append(p.text)
-            if not started:continue
+            if p.text in headings:matched.append(p.text)
             if p.text=='来源' and refs:break
             if p.style and p.style.name=='Caption' and generated and generated[-1]['type']=='image':
                 lines=p.text.splitlines();image=generated[-1]
@@ -139,7 +138,7 @@ def import_revision(store,base_version,name,data,*,accept_unaligned=False,source
                 image['attrs']['caption']='\n'.join(x for x in lines if not x.startswith('来源：'))
                 continue
             generated.extend(paragraph(element))
-        elif element.tag==qn('w:tbl') and started:generated.append(table(element))
+        elif element.tag==qn('w:tbl'):generated.append(table(element))
     document=normalize_document({'type':'doc','content':generated})
     projection=document_markdown(document)
     aligned=(not headings and SequenceMatcher(None,base['markdown'],projection).ratio()>.2 or
