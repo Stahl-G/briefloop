@@ -27,6 +27,15 @@ def test_web_snapshot_preserves_response_and_failed_extraction(tmp_path,monkeypa
     assert (store.root/failure_meta['original_path']).read_bytes()==blank
     assert store.source_text(failed['id'])==''
 
+def test_corrupt_docx_becomes_a_failed_source(tmp_path):
+    import io,zipfile
+    buffer=io.BytesIO()
+    with zipfile.ZipFile(buffer,'w') as archive:archive.writestr('other.xml','x')
+    store=Store(tmp_path)
+    record=sources.upload(store,'broken.docx',buffer.getvalue())
+    assert record['status']=='failed' and 'DOCX' in record['error']
+    assert store.source_text(record['id'])==''
+
 def test_run_url_reuse_and_bounded_source_reader(tmp_path,monkeypatch,capsys):
     from briefloop.cli import main
     from briefloop.scout_tools import read_source
