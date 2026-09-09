@@ -272,6 +272,39 @@ def test_full_turn_sends_file_parts(tmp_path):
     assert part['url'].startswith('data:image/png;base64,')
     assert base64.b64decode(part['url'].split(',', 1)[1]) == _test_png()
     assert image['id'] in manager.client.prompts[0][1]
+    # A comparison task carries list[case], with saved brief records on both sides.
+    # Use the production native serializer while substituting only its HTTP call.
+    from io import BytesIO
+    from PIL import Image
+    from briefloop.figures import register_figure
+    cases={};expected={}
+    folder=store.root/'comparison';folder.mkdir()
+    for side,color in (('baseline','red'),('candidate','green')):
+        run=store.create_run({'title':side,'objective':'Compare the chart'},[text_src['id']])
+        pixels=BytesIO();Image.new('RGB',(10,6),color).save(pixels,format='PNG')
+        plot=store.root/(side+'.png');plot.write_bytes(pixels.getvalue())
+        figure=register_figure(store,run['id'],plot,side,source_ids=[text_src['id']])
+        brief=store.publish(run['id'],{'title':side,'markdown':figure['markdown'],'figures':[figure['figure_id']]})
+        cases[side]=brief;expected['case-1_'+side+'_'+figure['figure_id']+'.png']=(store.root/figure['image_path']).read_bytes()
+        plot.write_bytes(b'Producer working file changed after registration')
+    (folder/'input.json').write_text(json.dumps([{'case_id':'case-test',**cases}]))
+    requests=[];original=manager.client.prompt_async
+    def capture(method,path,body):requests.append(body)
+    manager.client._request=capture
+    def serialize(session_id,text,**kwargs):
+        OpencodeServerClient.prompt_async(manager.client,session_id,text,**kwargs)
+        original(session_id,text,**kwargs)
+    manager.client.prompt_async=serialize
+    comparison=manager.create_session('Compare',{'model':'example/selected-vision'},folder)['id']
+    manager.send(comparison,'Compare saved versions',message_id='paired-images')
+    until(lambda:any(m['role']=='assistant' and m['status']=='completed' for m in manager.snapshot(comparison)['messages']))
+    body=requests[0];assert body['model']=={'providerID':'example','modelID':'selected-vision'}
+    files=[item for item in body['parts'] if item['type']=='file']
+    assert {item['filename']:base64.b64decode(item['url'].split(',',1)[1]) for item in files}==expected
+    context=body['parts'][0]['text']
+    owners=[json.loads(line.split('：',1)[1]) for line in context.splitlines() if line.startswith('比较图表归属：')]
+    assert [(owner['case_id'],owner['side'],owner['run_id'],owner['attachment']) for owner in owners]==[
+        ('case-test',side,cases[side]['run_id'],name) for side in ('baseline','candidate') for name in expected if '_'+side+'_' in name]
     manager.close()
 
 
