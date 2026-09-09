@@ -152,6 +152,9 @@ def make_server(workspace, port=8765, *, paused=False):
                     brief=store.one('briefs',q['version'][0]);figures=export_figures(store,brief)
                     if q['id'][0] not in figures:raise ValueError('这张图未引用在该稿件中')
                     self.send(200,figures[q['id'][0]]['image_bytes'],'image/png')
+                elif u.path=='/api/version-checks':
+                    from .delivery_checks import brief_checks
+                    self.send(200,brief_checks(store,q['version'][0]))
                 elif u.path=='/api/download':
                     b=store.one('briefs',q['version'][0])
                     from .exports import reader_markdown,docx_bytes

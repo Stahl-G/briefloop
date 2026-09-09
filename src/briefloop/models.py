@@ -154,6 +154,22 @@ class Citation(Model):
     excerpt: str = ""
 
 
+class NumberBinding(Model):
+    """One important number traced to its origin; the program converts units.
+
+    value/unit describe the ORIGINAL (e.g. 13.6 / "billion USD"); the body
+    must contain an equivalent spelling (e.g. 136亿美元）. Only unambiguous
+    units are checked, the rest are recorded but skipped.
+    """
+    label: str = ""
+    value: float | None = None
+    unit: str = ""
+    period: str = ""
+    entity: str = ""
+    source_id: str = ""
+    locator: str = ""
+
+
 class BriefDraft(Model):
     figures: list[str] = Field(default_factory=list)
     report_data: IndustryData | None = None
@@ -161,6 +177,7 @@ class BriefDraft(Model):
     markdown: str = Field(min_length=1)
     citations: list[Citation] = Field(default_factory=list)
     gaps: list[str] = Field(default_factory=list)
+    number_bindings: list[NumberBinding] = Field(default_factory=list)
 
 
 class Finding(Model):

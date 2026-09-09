@@ -53,7 +53,27 @@ function render(first){
  $('skills').innerHTML=`<div class="skill">${state.active_skill?'当前启用 '+esc(state.active_skill):'当前使用基础任务提示词'}${state.active_skill?'<button data-rollback="">回到基础版本</button>':''}</div>`+state.skills.map(s=>`<div class="skill"><strong>${esc(s.id)}</strong><p>${esc(s.reason)}</p>${s.id===state.active_skill?'<span class="tag">正在使用</span>':`<button data-rollback="${s.id}" class="outline">使用这个版本</button>`}</div>`).join('');document.querySelectorAll('[data-rollback]').forEach(b=>b.onclick=()=>action(()=>api('rollback',{skill_id:b.dataset.rollback||null}),'下一轮将使用所选技能'));
  if(state.wiki!==render.wiki){render.wiki=state.wiki;if(state.wiki)api('render',{markdown:state.wiki}).then(r=>$('wiki').innerHTML=r.html);else $('wiki').innerHTML='<h2>还没有学习经验</h2><p class="muted">生成简报后直接改稿，或留下评论。Maintainer 会在这里整理观察、方法与适用条件。</p>'}bindSources();
 }
-function openBrief(b){if(dirty){notice('请先保存当前修改，再切换版本',true);return}current=b;$('report-title').textContent=parse(b.detail).title||'简报';updateDownloads(b);if(editor)editor.destroy();editor=new Editor({element:$('editor'),editable:state.briefs.find(x=>x.run_id===b.run_id)?.id===b.id,extensions:[StarterKit.configure({link:{openOnClick:false}}),TableKit,Image.configure({HTMLAttributes:{class:'briefloop-figure'},allowBase64:false}),Markdown],content:toEditor(b.markdown),contentType:'markdown',onUpdate:changed});$('markdown-source').value=b.markdown;const historical=state.briefs.find(x=>x.run_id===b.run_id)?.id!==b.id;$('markdown-source').readOnly=historical;$('toolbar').querySelectorAll('button').forEach(x=>x.disabled=historical);$('save-state').textContent=historical?'历史记录（只读）':b.author==='user'?'当前编辑稿已自动保存':'原稿已保存';$('version-select').value=b.id;assessment();citations();renderBriefLength()}
+function openBrief(b){if(dirty){notice('请先保存当前修改，再切换版本',true);return}current=b;$('report-title').textContent=parse(b.detail).title||'简报';updateDownloads(b);if(editor)editor.destroy();editor=new Editor({element:$('editor'),editable:state.briefs.find(x=>x.run_id===b.run_id)?.id===b.id,extensions:[StarterKit.configure({link:{openOnClick:false}}),TableKit,Image.configure({HTMLAttributes:{class:'briefloop-figure'},allowBase64:false}),Markdown],content:toEditor(b.markdown),contentType:'markdown',onUpdate:changed});$('markdown-source').value=b.markdown;const historical=state.briefs.find(x=>x.run_id===b.run_id)?.id!==b.id;$('markdown-source').readOnly=historical;$('toolbar').querySelectorAll('button').forEach(x=>x.disabled=historical);$('save-state').textContent=historical?'历史记录（只读）':b.author==='user'?'当前编辑稿已自动保存':'原稿已保存';$('version-select').value=b.id;assessment();renderDeliveryChecks();citations();renderBriefLength()}
+async function renderDeliveryChecks(){
+ if(!current)return;const vid=current.id;
+ let c;try{c=await api('version-checks?version='+encodeURIComponent(vid))}catch(e){return}
+ if(!current||current.id!==vid||!$('assessment'))return;
+ const parts=[];
+ if(c.broken_refs.length)parts.push(`<span class="tag error">断链引用 ${c.broken_refs.length} 处：${c.broken_refs.map(esc).join('、')}</span>`);
+ else parts.push('<span class="tag">引用齐全</span>');
+ const un=c.numbers.unmatched;
+ if(un.length)parts.push(`<span class="tag error">数字未见绑定值 ${un.length} 项：${un.map(r=>esc(r.label||r.expected)).join('、')}</span>`);
+ else if(c.numbers.total)parts.push(`<span class="tag">数字绑定 ${c.numbers.total} 项一致</span>`);
+ if(c.numbers.skipped.length)parts.push(`<span class="tag">数字 ${c.numbers.skipped.length} 项单位不支持，仅记录</span>`);
+ if(c.export.escaped_bold)parts.push('<span class="tag error">导出件有转义加粗，格式不完整</span>');
+ if(c.assessment_overall)parts.push(`<span class="tag">模型评分：${esc(c.assessment_overall)}</span>`);
+ const ready=!c.broken_refs.length&&!un.length&&!c.export.escaped_bold;
+ parts.push(ready?'<span class="tag">可作正式交付候选</span>':'<span class="tag error">暂不建议作正式交付</span>');
+ const box=document.createElement('div');box.className='delivery-checks';
+ box.innerHTML='<strong>交付检查（程序）</strong> '+parts.join(' ');
+ const old=$('assessment').querySelector('.delivery-checks');if(old)old.remove();
+ $('assessment').prepend(box);
+}
 function changed(){dirty=true;renderBriefLength();$('save-state').textContent='有未保存修改';clearTimeout(saveTimer);saveTimer=setTimeout(save,1400)}
 $('version-select').onchange=e=>openBrief(state.briefs.find(b=>b.id===e.target.value));
 async function save(){if(!dirty||saving||!current)return;saving=true;$('save-state').textContent='保存中…';const text=markdownMode?$('markdown-source').value:fromEditor(editor.getMarkdown());try{current=await api('save',{base_version:current.id,markdown:text,editor_document:markdownMode?null:editor.getJSON()});dirty=(markdownMode?$('markdown-source').value:fromEditor(editor.getMarkdown()))!==text;$('save-state').textContent=dirty?'有新的修改':'已保存';updateDownloads(current);await refresh();if(dirty)saveTimer=setTimeout(save,1400);else scheduleLearning()}catch(e){$('save-state').textContent='未保存，请保留编辑';notice(e.message,true)}finally{saving=false}}
