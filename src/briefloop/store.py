@@ -141,7 +141,16 @@ class Store:
         result=Settings.model_validate(self.meta("settings")).model_dump()
         if result.get('model_provider') is None:
             result.pop('model_provider',None)
-        result['role_models']={role:runtime_fields(config) for role,config in result['role_models'].items()}
+        backend=result.get('agent_backend','codex')
+        shaped={}
+        for role,config in result['role_models'].items():
+            try:
+                shaped[role]=runtime_fields(config,backend)
+            except ValueError:
+                # A backend switch can strand old model ids; keep them visible
+                # so the UI can show them, and fail loudly only when enqueued.
+                shaped[role]={key:config[key] for key in ('model','model_provider','reasoning_effort','model_variant') if key in config}
+        result['role_models']=shaped
         return result
 
     def add_source(self, name, text, *, url=None, error=None, source_id=None):
@@ -168,6 +177,9 @@ class Store:
 
     def create_run(self, requirements, source_ids, **options):
         req = Requirements.model_validate(requirements)
+        if req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is None:
+            raise ValueError('请先选择是否维护企业背景知识库；可选择不维护并继续报告')
+        req.company_context_required=req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is True
         if self.settings().get('company_context_enabled') and not req.company_context_revision:
             from .company_context import snapshot
             req.company_context_revision=snapshot(self)['revision']
@@ -214,6 +226,8 @@ class Store:
             present={ref.source_id for ref in draft.citations}
             draft.citations.extend(Citation(source_id=sid) for sid in source_ids(draft.editor_document) if sid not in present)
         run=self.one("runs", run_id)
+        from .company_context import require_review
+        company_review=require_review(self,run)
         references=set(json.loads(run['requirements']).get('reference_source_ids',[]))
         for ref in draft.citations:
             self.one("sources", ref.source_id)
@@ -242,6 +256,7 @@ class Store:
         sha = document_hash(draft.editor_document) if draft.editor_document is not None else content_hash(draft.markdown)
         detail=draft.model_dump(mode='json',exclude={'markdown','editor_document'})
         if draft.editor_document is not None:detail['document_schema']=1
+        if company_review:detail['company_context']={'revision':company_review['revision'],'review':company_review}
         with self.tx() as c:
             if parent_id:
                 parent=c.execute('SELECT run_id FROM briefs WHERE id=?',(parent_id,)).fetchone()
@@ -354,6 +369,17 @@ class Store:
             c.execute("INSERT INTO assessments VALUES(?,?,?,?)", (aid, version_id, dump(assessment.model_dump()), now()))
         return self.one("assessments", aid)
 
+    def generated_by(self,version_id,job_id):
+        root='brief_'+job_id[4:];seen=set()
+        while version_id and version_id not in seen:
+            seen.add(version_id)
+            try:brief=self.one('briefs',version_id)
+            except ValueError:return False
+            if brief['author']!='agent':return False
+            if version_id==root:return True
+            version_id=brief['parent_id']
+        return False
+
     def comment(self, version_id, text):
         self.one("briefs", version_id)
         fid = uid("feedback")
@@ -363,22 +389,25 @@ class Store:
 
     def runtime_config(self):
         settings=self.settings()
-        return runtime_fields(settings)
+        if settings.get('model_selection_required'):raise ValueError('请先在设置中选择本次试验模型')
+        return runtime_fields(settings,settings.get('agent_backend','codex'))
 
-    def role_model_config(self, runtime=None):
+    def role_model_config(self, runtime=None, backend=None):
         base=runtime or self.runtime_config()
+        backend=backend or self.settings().get('agent_backend','codex')
         overrides=self.settings()['role_models']
         return {role:dict(overrides.get(role,base)) for role in ROLE_NAMES}
 
     def enqueue(self, kind, payload):
-        runtime=runtime_fields(payload.get('runtime',self.runtime_config()))
+        from .backends import validate_backend
+        from .models import normalize_search_provider
+        backend=validate_backend(payload.get('agent_backend',self.settings().get('agent_backend','codex')))
+        runtime=runtime_fields(payload.get('runtime',self.runtime_config()),backend)
         # Freeze inherited defaults too; later settings never mutate queued jobs.
-        overrides=normalize_role_models(payload.get('role_models',self.role_model_config(runtime)))
-        provider=payload.get('search_provider',self.settings()['search_provider'])
-        if provider not in ('codex','tavily'):
-            raise ValueError('无效搜索来源')
-        payload={**payload,'runtime':runtime,'search_provider':provider,
-                 'role_models':{role:runtime_fields(overrides.get(role,runtime)) for role in ROLE_NAMES}}
+        overrides=normalize_role_models(payload.get('role_models',self.role_model_config(runtime,backend)))
+        provider=normalize_search_provider(payload.get('search_provider',self.settings()['search_provider']))
+        payload={**payload,'agent_backend':backend,'runtime':runtime,'search_provider':provider,
+                 'role_models':{role:runtime_fields(overrides.get(role,runtime),backend) for role in ROLE_NAMES}}
         if kind=='generate':payload.setdefault('auto_revision',self.settings()['auto_revision'])
         jid = uid("job")
         with self.tx() as c:
@@ -386,13 +415,14 @@ class Store:
         return self.one("jobs", jid)
 
     def search_provider_for_run(self, run_id):
+        from .models import normalize_search_provider
         self.one('runs',run_id)
         for row in self.rows("SELECT payload FROM jobs WHERE kind='generate' ORDER BY rowid DESC"):
             payload=json.loads(row['payload'])
             if payload.get('run_id')==run_id:
-                # Jobs predating provider selection used Codex, regardless of
+                # Jobs predating provider selection used native search, regardless of
                 # the currently selected preference in this workspace.
-                return payload.get('search_provider','codex')
+                return normalize_search_provider(payload.get('search_provider'))
         return self.settings()['search_provider']
 
     def update_job(self, jid, status, *, result=None, error=None):

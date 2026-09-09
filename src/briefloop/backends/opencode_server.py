@@ -1,0 +1,237 @@
+"""Opencode backend transport, managed by BriefLoop.
+
+Spawns ``opencode serve`` as a child process (loopback only) and drives the
+v1 message surface — the same surface the official ``opencode run --attach``
+client uses:
+
+* ``POST /session?directory=...`` with ``{title, agent, model, permission}``
+* ``POST /session/{id}/prompt_async`` with ``{model, agent, parts}``
+* ``GET /session/{id}/message`` for polling completion and tool parts
+* ``POST /session/{id}/abort`` for cancellation
+* ``GET /session/{id}/children`` for subagent sessions
+
+Shapes verified against opencode 1.18.20 (spec embedded in ``GET /doc``):
+
+* create model is a ModelRef ``{providerID, id, variant?}``; prompt model is
+  ``{providerID, modelID}``. The v2 ``/api/session/*/prompt`` body has NO
+  model field — per-prompt models sent there are silently ignored, so the
+  session always carries the frozen model.
+* permission is a ruleset ``[{permission, action, pattern}]`` (same as the
+  CLI's non-interactive mode). Deny rules fail fast instead of hanging a
+  turn; ``external_directory`` allow/deny pairs scope file access to the
+  workspace (last matching rule wins).
+* a turn spans many assistant messages; intermediate ones complete with
+  ``finish='tool-calls'``. Only ``finish='stop'`` ends the turn.
+
+Only the standard library is used.
+"""
+import base64
+import json
+import os
+import secrets
+import shutil
+import socket
+import subprocess
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+
+EXPECTED_MAJOR = 1
+
+
+class OpencodeError(RuntimeError):
+    def __init__(self, message, *, status=None):
+        super().__init__(message)
+        self.status = status  # HTTP status when known; None for transport errors
+
+
+def split_model(model):
+    """'provider/model...' -> (providerID, rest). Provider/model namespaces are
+    opaque opencode configuration; only the first '/' separates them."""
+    if not isinstance(model, str) or '/' not in model.strip():
+        raise ValueError('opencode 模型必须是 provider/model 形式，例如 opencode-go/gpt-5.6-luna')
+    provider, _, rest = model.strip().partition('/')
+    if not provider or not rest:
+        raise ValueError('opencode 模型必须是 provider/model 形式，例如 opencode-go/gpt-5.6-luna')
+    return provider, rest
+
+
+def model_ref(model, variant=None):
+    """Session-level ModelRef {providerID, id, variant?}."""
+    provider, rest = split_model(model)
+    ref = {'providerID': provider, 'id': rest}
+    if variant:
+        ref['variant'] = variant
+    return ref
+
+
+def prompt_model(model):
+    """Per-prompt v1 model {providerID, modelID}."""
+    provider, rest = split_model(model)
+    return {'providerID': provider, 'modelID': rest}
+
+
+def _free_port():
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1', 0))
+        return sock.getsockname()[1]
+
+
+class OpencodeServerClient:
+    def __init__(self, log_directory, *, port=0, password=None, timeout=20):
+        root = Path(log_directory)
+        root.mkdir(parents=True, exist_ok=True)
+        executable = shutil.which('opencode')
+        if not executable:
+            raise RuntimeError('Opencode CLI 未安装')
+        self.executable = executable
+        self.timeout = timeout
+        self.port = port or _free_port()
+        self.password = password or secrets.token_urlsafe(24)
+        self._stderr = (root / 'opencode-serve.stderr.log').open('a')
+        env = {**os.environ, 'OPENCODE_SERVER_PASSWORD': self.password}
+        self.process = subprocess.Popen(
+            [executable, 'serve', '--port', str(self.port), '--hostname', '127.0.0.1'],
+            stdout=subprocess.DEVNULL, stderr=self._stderr, env=env, start_new_session=True)
+        self._lock = threading.Lock()
+        try:
+            self.version = self._wait_ready()
+        except BaseException:
+            self.close()
+            raise
+
+    @property
+    def base_url(self):
+        return f'http://127.0.0.1:{self.port}'
+
+    def _headers(self):
+        token = base64.b64encode(f'opencode:{self.password}'.encode()).decode()
+        return {'Content-Type': 'application/json', 'Authorization': 'Basic ' + token}
+
+    def _request(self, method, path, body=None):
+        data = json.dumps(body, ensure_ascii=False).encode() if body is not None else None
+        request = urllib.request.Request(self.base_url + path, data=data,
+                                         headers=self._headers(), method=method)
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                raw = response.read()
+        except urllib.error.HTTPError as exc:
+            raise OpencodeError(f'opencode {method} {path} 失败(HTTP {exc.code}): {exc.read()[:300]!r}',
+                                  status=exc.code)
+        except (urllib.error.URLError, OSError) as exc:
+            raise OpencodeError(f'opencode 服务不可达: {exc}')
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except ValueError:
+            raise OpencodeError(f'opencode 返回非 JSON: {raw[:200]!r}')
+
+    def _wait_ready(self):
+        deadline = time.monotonic() + 25
+        last = None
+        while time.monotonic() < deadline:
+            if self.process.poll() is not None:
+                raise RuntimeError('opencode serve 已退出')
+            try:
+                # /global/health requires auth once a server password is set.
+                request = urllib.request.Request(self.base_url + '/global/health',
+                                                 headers=self._headers())
+                with urllib.request.urlopen(request, timeout=2) as response:
+                    info = json.loads(response.read())
+                if info.get('healthy'):
+                    version = str(info.get('version', ''))
+                    if not version.startswith(str(EXPECTED_MAJOR) + '.'):
+                        raise RuntimeError(f'opencode 主版本 {version} 未验证，仅支持 1.x')
+                    return version
+            except (urllib.error.URLError, OSError, ValueError) as exc:
+                last = exc
+            time.sleep(.3)
+        raise RuntimeError(f'opencode serve 未就绪: {last}')
+
+    # -- v1 session surface -------------------------------------------------
+
+    def create_session(self, title, *, agent='build', model=None, permission=None, directory=None):
+        body = {'title': title}
+        if agent:
+            body['agent'] = agent
+        if model:
+            body['model'] = model if isinstance(model, dict) else model_ref(model)
+        # Directory binds the session cwd; verified via ?directory= on 1.18.20.
+        path = '/session'
+        if directory is not None:
+            path += '?directory=' + urllib.parse.quote(str(directory))
+        if permission is not None:
+            # Best effort: accepted by 1.18.20. Only schema rejections fall
+            # back to a bare session; auth/network failures must surface.
+            # The caller is told via `_permission_dropped` so it can record it.
+            try:
+                return self._request('POST', path, {**body, 'permission': permission})
+            except OpencodeError as exc:
+                if exc.status not in (400, 422):
+                    raise
+                bare = self._request('POST', path, body)
+                bare['_permission_dropped'] = True
+                return bare
+        return self._request('POST', path, body)
+
+    def prompt_async(self, session_id, text, *, model=None, agent='build', files=None):
+        parts=[{'type':'text','text':text}]
+        for item in files or []:
+            parts.append({'type':'file','mime':item['mime'],'filename':item.get('filename','image'),
+                          'url':item['url']})
+        body = {'parts': parts}
+        if agent:
+            body['agent'] = agent
+        if model:
+            body['model'] = model if isinstance(model, dict) else prompt_model(model)
+        self._request('POST', f'/session/{session_id}/prompt_async', body)
+
+    def messages(self, session_id):
+        return self._request('GET', f'/session/{session_id}/message')
+
+    def abort(self, session_id):
+        return self._request('POST', f'/session/{session_id}/abort')
+
+    def children(self, session_id):
+        return self._request('GET', f'/session/{session_id}/children')
+
+    def providers(self, directory=None):
+        """Provider catalog with models (for the model picker, not inference)."""
+        return self._request('GET', '/config/providers' + ('?directory=' + urllib.parse.quote(str(directory), safe='') if directory else ''))
+
+    def configure_provider(self, directory, provider, model, base_url, api_key=None):
+        """Use native configuration/auth APIs; never return credentials or config."""
+        query = '?directory=' + urllib.parse.quote(str(directory), safe='')
+        try:
+            self._request('PATCH', '/global/config', {'provider': {provider: {
+                'npm': '@ai-sdk/openai-compatible',
+                'options': {'baseURL': base_url},
+                'models': {model: {'name': model}}
+            }}})
+            if api_key:
+                self._request('PUT', '/auth/' + urllib.parse.quote(provider, safe=''),
+                              {'type': 'api', 'key': api_key})
+            self._request('POST', '/instance/dispose' + query)
+        except OpencodeError as exc:
+            # Native validation responses may echo request bodies containing keys.
+            raise ValueError('Opencode 配置未全部完成，请重试保存；HTTP ' + str(exc.status or '连接失败')) from None
+        return {'provider': provider, 'model': provider + '/' + model,
+                'base_url': base_url, 'key_saved': bool(api_key)}
+
+    def close(self):
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=8)
+        try:
+            self._stderr.close()
+        except (OSError, ValueError):
+            pass

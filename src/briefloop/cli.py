@@ -19,6 +19,7 @@ def main():
         if name in ('serve','start'):
             parser.add_argument('--port',type=int,default=8765)
             parser.add_argument('--paused',action='store_true',help='打开工作区但不自动重跑旧队列或反馈学习')
+            parser.add_argument('--backend',choices=('codex','opencode'),default=None,help='新任务默认走哪个 CLI 后端；不传则沿用工作区设置')
     tool=sub.add_parser('tool',help='agent 使用的来源工具')
     tool.add_argument('--workspace',required=True)
     ts=tool.add_subparsers(dest='tool',required=True)
@@ -58,11 +59,16 @@ def main():
     a=p.parse_args()
     if a.command=='serve':
         from .server import serve
+        if a.backend is not None:
+            from .models import Settings
+            store=Store(a.workspace)
+            settings=Settings.model_validate({**store.settings(),'agent_backend':a.backend})
+            store.set_meta('settings',settings.model_dump())
         serve(a.workspace,a.port,paused=a.paused)
     elif a.command=='start':
         root=Path(a.workspace).resolve();root.mkdir(parents=True,exist_ok=True)
         with (root/'server.log').open('a') as log:
-            proc=subprocess.Popen([sys.executable,'-m','briefloop','serve','--workspace',str(root),'--port',str(a.port)]+(['--paused'] if a.paused else []),stdout=log,stderr=log,start_new_session=True)
+            proc=subprocess.Popen([sys.executable,'-m','briefloop','serve','--workspace',str(root),'--port',str(a.port)]+(['--paused'] if a.paused else [])+(['--backend',a.backend] if a.backend else []),stdout=log,stderr=log,start_new_session=True)
         (root/'server.pid').write_text(str(proc.pid))
         for _ in range(80):
             if proc.poll() is not None:raise RuntimeError('服务未能启动，请查看 '+str(root/'server.log'))
@@ -75,7 +81,9 @@ def main():
         else:raise RuntimeError('服务尚未报告就绪，请查看 '+str(root/'server.log'))
     elif a.command=='status':print(json.dumps(Store(a.workspace).snapshot(),ensure_ascii=False,indent=2))
     elif a.command=='doctor':
-        print(json.dumps({'codex':shutil.which('codex'),'pdftotext':shutil.which('pdftotext'),'workspace':str(Path(a.workspace).resolve()),'note':'检查命令存在；未启动模型、未验证登录'},ensure_ascii=False,indent=2))
+        from .backends.opencode_server import EXPECTED_MAJOR
+        opencode=shutil.which('opencode')
+        print(json.dumps({'codex':shutil.which('codex'),'opencode':opencode,'opencode_expected_major':EXPECTED_MAJOR,'pdftotext':shutil.which('pdftotext'),'workspace':str(Path(a.workspace).resolve()),'note':'检查命令存在；未启动模型、未验证登录'},ensure_ascii=False,indent=2))
     elif a.command=='tool':
         store=Store(a.workspace)
         if a.tool=='normalize-document':

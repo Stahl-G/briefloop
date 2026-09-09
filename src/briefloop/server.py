@@ -24,9 +24,24 @@ def make_server(workspace, port=8765, *, paused=False):
     try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
     except BlockingIOError:
         lock.close();raise RuntimeError('这个工作区已有本地服务在运行')
-    harness=HarnessManager(store);worker=Worker(store)
-    worker.runtime=InteractiveRuntime(store,harness)
+    harness=HarnessManager(store)
+    from .opencode_harness import OpencodeHarness
+    from .backends import validate_backend
+    opencode_harness=OpencodeHarness(store)
+    worker=Worker(store)
+    worker.runtime=InteractiveRuntime(store,backends={'codex':harness,'opencode':opencode_harness})
     worker.opened_paused=paused
+    def pick_harness(runtime=None,session_id=None):
+        backend=(runtime or {}).get('backend')
+        if backend is None and session_id is not None:
+            for candidate in (harness,opencode_harness):
+                try:
+                    backend=candidate.chat.session(session_id)['runtime'].get('backend')
+                    break
+                except KeyError:
+                    continue
+        backend=backend or store.settings().get('agent_backend','codex')
+        return {'codex':harness,'opencode':opencode_harness}[validate_backend(backend)]
     token=secrets.token_urlsafe(24)
     assets=files('briefloop').joinpath('static')
     # Serve one UI/backend version for this process; builds must not replace a live UI halfway.
@@ -62,7 +77,7 @@ def make_server(workspace, port=8765, *, paused=False):
                     from .workspaces import list_workspaces
                     self.send(200,list_workspaces(store))
                 elif u.path=='/api/harness/sessions':self.send(200,{'sessions':harness.list_sessions(q.get('view',['active'])[0])})
-                elif u.path=='/api/harness/session':self.send(200,harness.snapshot(q['id'][0],int(q.get('after',['0'])[0])))
+                elif u.path=='/api/harness/session':self.send(200,pick_harness(session_id=q['id'][0]).snapshot(q['id'][0],int(q.get('after',['0'])[0])))
                 elif u.path=='/api/session':self.send(200,{'token':token})
                 elif u.path=='/api/runtime':
                     proc=worker.runtime.process
@@ -112,6 +127,15 @@ def make_server(workspace, port=8765, *, paused=False):
                 elif u.path=='/api/tavily':
                     from .tavily import key_status
                     self.send(200,key_status())
+                elif u.path=='/api/models':
+                    from .backends import validate_backend
+                    backend=validate_backend(q.get('backend',[store.settings().get('agent_backend','codex')])[0])
+                    if backend=='opencode':
+                        models=opencode_harness.list_models(refresh=q.get('refresh',[''])[0]=='1')
+                    else:
+                        models=[{'id':mid,'provider':'codex','name':name} for mid,name in
+                                [('gpt-5.6-luna','Luna'),('gpt-5.6-terra','Terra'),('gpt-5.6-sol','Sol'),('gpt-6-astra','Astra')]]
+                    self.send(200,{'backend':backend,'count':len(models),'models':models})
                 elif u.path=='/api/events':
                     jid=q['job'][0];self.send(200,store.rows('SELECT * FROM events WHERE job_id=? ORDER BY seq',(jid,)))
                 elif u.path=='/api/learning-details':
@@ -181,17 +205,21 @@ def make_server(workspace, port=8765, *, paused=False):
                 if path=='/api/tavily':
                     from .tavily import save_key,delete_key
                     result=delete_key() if body.get('remove') else save_key(body['api_key'])
+                elif path=='/api/opencode/provider':
+                    result=opencode_harness.configure_provider(body)
                 elif path=='/api/workspaces/open':
                     from .workspaces import open_workspace
                     result=open_workspace(store,body['path'],create=bool(body.get('create',False)))
-                elif path=='/api/harness/session':result=harness.create_session(body.get('title','新对话'),body.get('runtime'))
-                elif path=='/api/harness/message':result=harness.send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),allow_web=bool(body.get('allow_web',False)))
-                elif path=='/api/harness/answer':result=harness.answer(body['session_id'],body['request_id'],body['answers'])
-                elif path=='/api/harness/archive':result=harness.archive(body['session_id'])
-                elif path=='/api/harness/delete':result=harness.delete(body['session_id'])
-                elif path=='/api/harness/restore':result=harness.restore(body['session_id'])
-                elif path=='/api/harness/archive-completed':result=harness.archive_completed()
-                elif path=='/api/harness/cancel':result=harness.cancel(body['session_id'])
+                elif path=='/api/harness/session':result=pick_harness(body.get('runtime')).create_session(body.get('title','新对话'),body.get('runtime'))
+                elif path=='/api/harness/message':
+                    if store.settings().get('model_selection_required'):raise ValueError('请先选择本次试验模型')
+                    result=pick_harness(body.get('runtime'),body['session_id']).send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),allow_web=bool(body.get('allow_web',False)))
+                elif path=='/api/harness/answer':result=pick_harness(session_id=body['session_id']).answer(body['session_id'],body['request_id'],body['answers'])
+                elif path=='/api/harness/archive':result=pick_harness(session_id=body['session_id']).archive(body['session_id'])
+                elif path=='/api/harness/delete':result=pick_harness(session_id=body['session_id']).delete(body['session_id'])
+                elif path=='/api/harness/restore':result=pick_harness(session_id=body['session_id']).restore(body['session_id'])
+                elif path=='/api/harness/archive-completed':result={'count':pick_harness({'backend':'codex'}).archive_completed('codex')['count']+pick_harness({'backend':'opencode'}).archive_completed('opencode')['count']}
+                elif path=='/api/harness/cancel':result=pick_harness(session_id=body['session_id']).cancel(body['session_id'])
                 elif path=='/api/upload':
                     data=base64.b64decode(body['data'],validate=True)
                     result=sources.upload(store,body['name'],data)
@@ -248,10 +276,10 @@ def make_server(workspace, port=8765, *, paused=False):
                 self.send(500,{'error':str(exc)})
     try:server=ThreadingHTTPServer(('127.0.0.1',port),Handler)
     except OSError:
-        harness.close();lock.close();raise
+        harness.close();opencode_harness.close();lock.close();raise
     server.daemon_threads=True
     server.workspace_lock=lock
-    server.store=store;server.worker=worker;server.harness=harness
+    server.store=store;server.worker=worker;server.harness=harness;server.opencode_harness=opencode_harness
     return server
 
 
@@ -266,4 +294,4 @@ def serve(workspace,port=8765,*,paused=False):
     try:server.serve_forever()
     except KeyboardInterrupt:pass
     finally:
-        server.worker.close();server.harness.close();server.server_close();server.workspace_lock.close()
+        server.worker.close();server.harness.close();server.opencode_harness.close();server.server_close();server.workspace_lock.close()

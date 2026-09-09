@@ -14,6 +14,8 @@ class InternalRun:
         self.session_id=session_id;self.message_id=message_id
 
 class HarnessManager:
+    backend = 'codex'
+
     def __init__(self,store,client_factory=AppServerClient):
         self.store=store;self.chat=ChatStore(store);self.client_factory=client_factory
         self.client=None;self._lock=threading.RLock();self._closed=threading.Event()
@@ -28,17 +30,22 @@ class HarnessManager:
     def archive(self,sid):return self._set_lifecycle(sid,'archived')
     def restore(self,sid):return self._set_lifecycle(sid,'active')
     def delete(self,sid):return self._set_lifecycle(sid,'deleted')
-    def archive_completed(self):
+    def archive_completed(self,backend='codex'):
         count=0
         with self._lock:
             for session in self.list_sessions():
+                # The sessions table is shared across backends; only touch ours.
+                # Sessions predating the backend stamp are codex sessions.
+                if session.get('runtime',{}).get('backend','codex')!=backend:continue
                 if not self.snapshot(session['id'])['messages']:continue
                 try:self.archive(session['id'])
                 except ValueError:continue
                 count+=1
         return {'count':count}
     def create_session(self,title='新对话',runtime=None,cwd=None):
-        return self.chat.create(title,self._config(runtime),cwd or self.store.root)
+        # Sessions are pinned to codex at creation; a later workspace default
+        # change never hijacks them (send() merges over this stamped runtime).
+        return self.chat.create(title,{**self._config(runtime),'backend':'codex'},cwd or self.store.root)
     def snapshot(self,session_id,after=0):return self.chat.snapshot(session_id,after)
     @staticmethod
     def _config(runtime):
@@ -99,8 +106,8 @@ class HarnessManager:
     def start_internal(self,text,*,session_id=None,runtime=None,cwd=None,job_id=None,display_text=None,allow_web=False,message_id=None,search_provider=None,source_ids=None):
         runtime={**(runtime or {}),'permission':'workspace-write'}
         if search_provider is not None:
-            if search_provider not in ('codex','tavily'):raise ValueError('无效搜索服务')
-            runtime['search_provider']=search_provider
+            from .models import normalize_search_provider
+            runtime['search_provider']=normalize_search_provider(search_provider)
         if session_id is None:session_id=self.create_session('简报任务',runtime,cwd)['id']
         self.chat.event(session_id,'session/internal',{})
         if job_id:self.chat.event(session_id,'job/attached',{'jobId':job_id})
@@ -187,9 +194,11 @@ class HarnessManager:
                 self.chat.patch_message(mid,status='delivered',turn_id=turn_id)
                 self.chat.event(sid,'message/delivered',{'messageId':mid,'turnId':turn_id,'runtime':config})
         except Exception as exc:
-            self.chat.update(sid,status='failed',turn_id=None)
+            # Terminal data first, status last: waiters poll on status and must
+            # never observe 'failed' before its error event exists.
             if mid:self.chat.patch_message(mid,status='failed')
             self.chat.event(sid,'error',{'message':str(exc)})
+            self.chat.update(sid,status='failed',turn_id=None)
         finally:
             with self._lock:
                 self._busy.discard(sid)
@@ -211,7 +220,7 @@ class HarnessManager:
                 self.chat.patch_message(mid,status='delivered',turn_id=session['turn_id'])
                 self.chat.event(sid,'message/delivered',{'messageId':mid,'turnId':session['turn_id'],'mode':'steer'})
         except Exception as exc:
-            self.chat.patch_message(mid,status='failed');self.chat.event(sid,'error',{'message':str(exc),'messageId':mid})
+            self.chat.event(sid,'error',{'message':str(exc),'messageId':mid});self.chat.patch_message(mid,status='failed')
     def cancel(self,session_id):
         with self._lock:
             session=self.chat.session(session_id)

@@ -17,14 +17,23 @@ cd briefloop
 使用前需要：
 
 - macOS，以及 Python 3.11 或更新版本。
-- 已安装并完成认证的 Codex CLI；对话和任务执行需要它。
+- 已安装并完成认证的 Codex CLI 或 Opencode CLI；对话和任务执行需要其中之一。
 - 首次安装依赖需要网络。使用 Tavily 时另行配置自己的 Tavily Key。
 
-也可指定目录和端口：
+也可指定目录、端口和后端：
 
 ```sh
-./start.sh --workspace /path/to/workspace --port 8765 --no-open
+./start.sh --workspace /path/to/workspace --port 8765 --no-open --backend opencode
 ```
+
+## 执行后端：Codex / Opencode
+
+工作区默认使用 Codex（Responses 通道）。新任务可在启动时用 `--backend opencode` 切换，或在网页设置页切换；已排队/已开始的任务冻结原后端，不跟随切换。
+
+- Opencode 模型填完整 `provider/model`（如 `opencode-go/gpt-5.6-luna`），以本机 `opencode` 已登录的可选模型为准；BriefLoop 不枚举、不限制 provider。
+- 推理档位在 Opencode 下叫 variant（如 high / max），留空为默认；聊天沿用工作区主模型的 variant。
+- 限制（以诚实为准）：Opencode 没有每轮网络硬开关，关闭联网时靠指令与权限执行，bash 仍可能联网；不支持运行中追加提问与交互式提问；图片附件仅视觉模型可读。服务端版本要求 1.x。
+- 排查：任务失败先看任务日志；"模型 ID"类错误检查 `provider/model` 拼写与 `opencode auth login`；"90 秒未开始"多为模型不可用或登录失效。
 
 服务只监听本机。关闭网页不会停止正在执行的任务；从网页“停止”或关闭服务进程结束执行。
 
