@@ -4,8 +4,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from briefloop.store import Store, Conflict
-from briefloop.runtime import Worker, CodexRuntime
-from unittest.mock import patch
+from briefloop.runtime import Worker
 from briefloop.learning import enqueue_feedback, apply_accepted
 from wikiskill import feedback_loop, native_agents
 
@@ -49,14 +48,6 @@ class CoreBehavior(unittest.TestCase):
         self.assertNotEqual(new['id'],old['id'])
         self.assertEqual(s.one('jobs',old['id'])['status'],'cancelled')
         self.assertEqual(json.loads(new['payload'])['runtime'],{'model':'gpt-5.6-luna','reasoning_effort':'high'})
-        folder=s.root/'command-check'
-        with patch('briefloop.runtime.shutil.which',return_value='/fake/codex'), patch('briefloop.runtime.subprocess.Popen',side_effect=RuntimeError('no model call')) as spawn:
-            with self.assertRaisesRegex(RuntimeError,'no model call'):
-                CodexRuntime(s).execute(new,'Test only',folder)
-        command=spawn.call_args.args[0]
-        self.assertIn('model="gpt-5.6-luna"',command)
-        self.assertIn('model_reasoning_effort="high"',command)
-        self.assertNotIn('resume',command)
 
     def test_wikiskill_pairwise_accept_tie_and_regression(self):
         # Synthetic child IDs/output files exercise collection and selection only.

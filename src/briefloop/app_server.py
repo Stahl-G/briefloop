@@ -67,21 +67,6 @@ class AppServerClient:
                 for future in self._pending.values():
                     if not future.done():future.set_exception(RuntimeError('会话连接已断开；未自动重发消息'))
 
-    def start_thread(self,cwd,*,model=None,model_provider=None):
-        params={'cwd':str(cwd),'approvalPolicy':'never','sandbox':'workspace-write'}
-        if model:params['model']=model
-        if model_provider:params['modelProvider']=model_provider
-        return self.request('thread/start',params)
-
-    def start_turn(self,thread_id,text,message_id,*,model=None,effort=None):
-        params={'threadId':thread_id,'clientUserMessageId':message_id,'input':[{'type':'text','text':text,'text_elements':[]}]}
-        if model:params['model']=model
-        if effort and effort!='none':params['effort']=effort
-        return self.request('turn/start',params)
-
-    def steer(self,thread_id,turn_id,text,message_id):
-        return self.request('turn/steer',{'threadId':thread_id,'expectedTurnId':turn_id,'clientUserMessageId':message_id,'input':[{'type':'text','text':text,'text_elements':[]}]})
-
     def interrupt(self,thread_id,turn_id):
         return self.request('turn/interrupt',{'threadId':thread_id,'turnId':turn_id})
 

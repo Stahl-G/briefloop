@@ -51,9 +51,12 @@ def extract(name, data, *, with_extractor=False):
             except Exception as exc:raise ValueError('PDF 无法提取正文，可能是扫描件或加密文档') from exc
     elif ext == '.docx':
         extractor='DOCX word/document.xml paragraph text'
-        with zipfile.ZipFile(BytesIO(data)) as z:
-            doc=ET.fromstring(z.read('word/document.xml'))
-            text='\n'.join(''.join(n.itertext()) for n in doc.iter() if n.tag.endswith('}p'))
+        try:
+            with zipfile.ZipFile(BytesIO(data)) as z:
+                doc=ET.fromstring(z.read('word/document.xml'))
+                text='\n'.join(''.join(n.itertext()) for n in doc.iter() if n.tag.endswith('}p'))
+        except (KeyError,zipfile.BadZipFile,ET.ParseError) as exc:
+            raise ValueError('DOCX 无法读取正文，文件可能已损坏') from exc
     elif ext in ('.html','.htm'):
         extractor='briefloop.sources.TextHTML (utf-8)'
         text=html_text(data.decode('utf-8',errors='replace'))

@@ -1,6 +1,5 @@
 """Read-only source and learning views for the local interface."""
 import json
-from pathlib import Path
 
 
 def source_details(store, sid):

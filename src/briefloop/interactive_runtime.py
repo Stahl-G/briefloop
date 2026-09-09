@@ -252,6 +252,3 @@ class InteractiveRuntime:
             if 'usage' in event:
                 values.append(event['usage'])
         return values
-
-
-CodexRuntime = InteractiveRuntime

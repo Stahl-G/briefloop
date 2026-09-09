@@ -161,13 +161,6 @@ class Comment(Model):
     text: str = Field(min_length=1, max_length=20000)
 
 
-class Comparison(Model):
-    verdict: Literal["better", "tie", "worse"]
-    reason: str
-    regressions: list[str] = Field(default_factory=list)
-    cases: list[dict] = Field(default_factory=list)
-
-
 class ScoutEvidence(Model):
     source_id: str
     locator: str = ""

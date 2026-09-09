@@ -1,7 +1,6 @@
 """Persistent, bidirectional conversations backed by Codex CLI app-server."""
 import json
 import threading
-import time
 from queue import Empty
 from .app_server import AppServerClient
 from .chat_store import ChatStore
@@ -10,21 +9,8 @@ from .store import uid
 DEFAULT_RUNTIME={'model':'gpt-5.6-luna','effort':'high','permission':'workspace-write'}
 
 class InternalRun:
-    def __init__(self, manager, session_id, message_id):
-        self.manager=manager;self.session_id=session_id;self.message_id=message_id
-    def cancel(self):return self.manager.cancel(self.session_id)
-    def wait(self, timeout=None, cancel_event=None):
-        start=time.monotonic()
-        while True:
-            snapshot=self.manager.snapshot(self.session_id)
-            message=next(m for m in snapshot['messages'] if m['id']==self.message_id)
-            if cancel_event is not None and cancel_event.is_set():
-                self.cancel();raise RuntimeError('任务已停止')
-            if message['status'] in ('completed','failed','interrupted','cancelled'):
-                if message['status']!='completed':raise RuntimeError('会话任务 '+message['status'])
-                return snapshot
-            if timeout is not None and time.monotonic()-start>timeout:raise TimeoutError('等待会话完成超时；任务仍保留')
-            time.sleep(.1)
+    def __init__(self, session_id, message_id):
+        self.session_id=session_id;self.message_id=message_id
 
 class HarnessManager:
     def __init__(self,store,client_factory=AppServerClient):
@@ -108,7 +94,7 @@ class HarnessManager:
         self.chat.event(session_id,'session/internal',{})
         if job_id:self.chat.event(session_id,'job/attached',{'jobId':job_id})
         message=self.send(session_id,text,runtime=runtime,display_text=display_text,allow_web=allow_web,message_id=message_id)
-        return InternalRun(self,session_id,message['id'])
+        return InternalRun(session_id,message['id'])
     def _schedule(self,sid):
         if self.chat.session(sid)['lifecycle']!='active':return
         if sid in self._busy or self.chat.session(sid).get('turn_id'):return

@@ -87,9 +87,9 @@ def test_sources_persist_and_failed_delivery_not_replayed(tmp_path):
             return super().request(method,params)
     store=Store(tmp_path);source=store.add_source('test','original')
     manager=HarnessManager(store,Broken);sid=manager.create_session()['id']
-    message=manager.send(sid,'read',source_ids=[source['id']])
+    manager.send(sid,'read',source_ids=[source['id']])
     until(lambda:manager.snapshot(sid)['session']['status']=='failed')
-    internal=manager.start_internal('private long prompt',display_text='生成简报',session_id=sid,message_id='private')
+    manager.start_internal('private long prompt',display_text='生成简报',session_id=sid,message_id='private')
     until(lambda:any(m['id']=='private' and m['status']=='failed' for m in manager.snapshot(sid)['messages']))
     assert 'private long prompt' not in str(manager.snapshot(sid))
     manager.close()

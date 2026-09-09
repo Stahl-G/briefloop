@@ -31,7 +31,8 @@ class ProgressTracker:
         self.last=rows[0]['data'] if rows else None
 
     def update(self):
-        paths=[self.folder/n for n in ('events.jsonl','agents.json','plan.json','draft.json','assessment.json')]
+        paths=[self.folder/n for n in ('events.jsonl','agents.json','plan.json','draft.json','assessment.json')]+[
+            self.folder/'evaluation'/'assessment.json',self.folder/'scorer'/'assessment.json']
         signature=tuple((p.stat().st_mtime_ns,p.stat().st_size) if p.exists() else None for p in paths)
         if signature==self.signature:return
         self.signature=signature
@@ -68,7 +69,7 @@ class ProgressTracker:
         if paths[2].exists():stage='正在分配研究任务'
         if workers and not active:stage='子任务结果已返回，正在整理与交接'
         if paths[3].exists():stage='正文已保存，正在准备评分'
-        if paths[4].exists():stage='评分已返回，正在保存结果'
+        if any(path.exists() for path in paths[4:]):stage='评分已返回，正在保存结果'
         labels=' '.join(w.get('role','') for w in active)
         for key,label in [('Scout','Scout 正在读取与核对来源'),('Analyst','Analyst 正在撰写简报'),('Evaluator · 比较','Evaluator 正在比较新旧稿件'),('Evaluator · 评分','Evaluator 正在独立评分'),('Evaluator','Evaluator 正在核对任务与来源'),('Maintainer','Maintainer 正在整理经验'),('Proposer','Proposer 正在提出技能')]:
             if key in labels:stage=label

@@ -3,7 +3,6 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import threading
 from pathlib import Path
-import pytest
 from briefloop import research_budget as budget, sources, tavily
 from briefloop.models import Requirements,RESEARCH_BUDGET_PRESETS
 from briefloop.store import Store,dump
