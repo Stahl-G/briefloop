@@ -24,6 +24,14 @@ class ResearchBudget(Model):
     source_pages: int = Field(default=18, ge=0)
 
 
+class ReportSection(Model):
+    section_id: str = Field(min_length=1, max_length=120)
+    title: str = Field(min_length=1, max_length=200)
+    mode: Literal['required','optional','manual'] = 'required'
+    purpose: str = ''
+    placeholder: str = '待填充'
+
+
 class Requirements(Model):
     title: str = Field(min_length=1, max_length=200)
     objective: str = Field(min_length=1, max_length=10000)
@@ -32,6 +40,14 @@ class Requirements(Model):
     organization: str = ""
     industry: str = ""
     reference_source_ids: list[str] = Field(default_factory=list)
+    template_id: str | None = None
+    writing_mode: Literal['general','internal_report'] = 'general'
+    sections: list[ReportSection] = Field(default_factory=list)
+    manual_sections: list[str] = Field(default_factory=list)
+    key_questions: list[str] = Field(default_factory=list)
+    writing_preferences: list[str] = Field(default_factory=list)
+    company_context_revision: str | None = None
+    company_context_required: bool = False
     audience: str = "自己"
     language: str = "中文"
     extent: Literal["compact", "balanced", "detailed"] = "balanced"
@@ -124,9 +140,10 @@ def runtime_fields(value, backend='codex'):
 
 
 class Settings(RoleModel):
-    model: str = Field(default='gpt-5.6-luna', min_length=1, max_length=100)
+    model: str = Field(default='gpt-5.6-luna', max_length=100)
     reasoning_effort: str | None = Field(default='high', min_length=1, max_length=100)
     agent_backend: Literal['codex', 'opencode'] = 'codex'
+    model_selection_required: bool = False
     role_models: dict[Literal['evaluator','maintainer','proposer'], RoleModel] = Field(default_factory=dict)
     search_provider: Literal['native','tavily'] = 'native'
     k: int = Field(default=1, ge=1, le=20)
@@ -134,7 +151,15 @@ class Settings(RoleModel):
     max_parallel: int = Field(default=4, ge=1, le=16)
     timeout_minutes: int = Field(default=30, ge=1, le=240)
     skill_targets: list[str] = Field(default_factory=lambda: ["scout", "analyst"])
+    auto_revision: bool = True
+    default_template_id: str | None = None
+    company_context_enabled: bool | None = None
 
+
+    @model_validator(mode='after')
+    def selected_model_required(self):
+        if not self.model.strip() and not self.model_selection_required:raise ValueError('请选择模型')
+        return self
 
     @model_validator(mode='before')
     @classmethod
@@ -178,10 +203,21 @@ class BriefDraft(Model):
     figures: list[str] = Field(default_factory=list)
     report_data: IndustryData | None = None
     title: str
-    markdown: str = Field(min_length=1)
+    markdown: str = ''
+    editor_document: dict | None = None
     citations: list[Citation] = Field(default_factory=list)
     gaps: list[str] = Field(default_factory=list)
     number_bindings: list[NumberBinding] = Field(default_factory=list)
+    research_notes: list[dict] = Field(default_factory=list)
+
+    @model_validator(mode='after')
+    def normalize_content(self):
+        if self.editor_document is not None:
+            from .document_model import normalize_document, document_markdown
+            self.editor_document = normalize_document(self.editor_document)
+            self.markdown = document_markdown(self.editor_document)
+        if not self.markdown.strip():raise ValueError('报告正文不能为空')
+        return self
 
 
 class Finding(Model):
@@ -217,7 +253,7 @@ class Assessment(Model):
 
 class SaveRevision(Model):
     base_version: str
-    markdown: str = Field(min_length=1)
+    markdown: str = ''
     editor_document: dict | None = None
 
 

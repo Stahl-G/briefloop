@@ -104,6 +104,11 @@ def make_server(workspace, port=8765, *, paused=False):
                     source,provenance,original=source_details(store,q['id'][0])
                     if original is None:raise ValueError('该来源未保留原件')
                     self.send(200,original.read_bytes(),'application/octet-stream',download_name=original.name)
+                elif u.path=='/api/figure':
+                    from .figure_support import export_figures
+                    brief=store.one('briefs',q['version'][0]);figures=export_figures(store,brief)
+                    if q['id'][0] not in figures:raise ValueError('这张图未引用在该稿件中')
+                    self.send(200,figures[q['id'][0]]['image_bytes'],'image/png')
                 elif u.path=='/api/report-data-template':
                     from .industry_data import report_data_template
                     self.send(200,report_data_template(),download_name='industry-report-data.json')
@@ -147,11 +152,20 @@ def make_server(workspace, port=8765, *, paused=False):
                                 case[side]['assessment']=json.loads(grades[0]['data']) if grades else None
                         rounds.append({'cases':cases,'result':json.loads(comparison.read_text()) if comparison.exists() else None})
                     self.send(200,{'job':job,'rounds':rounds})
-                elif u.path=='/api/figure':
-                    from .figure_support import export_figures
-                    brief=store.one('briefs',q['version'][0]);figures=export_figures(store,brief)
-                    if q['id'][0] not in figures:raise ValueError('这张图未引用在该稿件中')
-                    self.send(200,figures[q['id'][0]]['image_bytes'],'image/png')
+                elif u.path=='/api/company-context':
+                    from .company_context import snapshot
+                    self.send(200,snapshot(store))
+                elif u.path=='/api/research-notes':
+                    from .deliverable_spec import research_record
+                    self.send(200,research_record(store,store.one('briefs',q['version'][0])),download_name='research-notes.json' if q.get('download') else None)
+                elif u.path=='/api/export-file':
+                    from .export_jobs import output_path
+                    job=store.one('jobs',q['job'][0])
+                    if job['status']!='complete':raise ValueError('Word 尚未制作完成')
+                    data=output_path(store,job).read_bytes()
+                    import hashlib
+                    if hashlib.sha256(data).hexdigest()!=json.loads(job['result'])['sha256']:raise ValueError('Word 文件已变化，请重新生成')
+                    self.send(200,data,'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name='report.docx')
                 elif u.path=='/api/version-checks':
                     from .delivery_checks import brief_checks
                     self.send(200,brief_checks(store,q['version'][0]))
@@ -171,7 +185,9 @@ def make_server(workspace, port=8765, *, paused=False):
                         elif detail.get('report_data_needs_review'):report_data=None
                         self.send(200,docx_bytes(md,report_profile=req.get('report_profile','brief'),title=detail.get('title',req.get('title','')),
                             report_date=req.get('report_date',''),organization=req.get('organization',''),industry=req.get('industry',''),
-                            period=req.get('period',''),report_data=report_data,figures=export_figures(store,b)),
+                            period=req.get('period',''),report_data=report_data,figures=export_figures(store,b),
+                            document=json.loads(b['editor_document']) if b.get('editor_document') else None,
+                            source_records={sid:store.one('sources',sid) for sid in store.source_ids(b['run_id'])}),
                             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name='report.docx')
                     else:self.send(200,md.encode(),'text/markdown; charset=utf-8')
                 elif u.path in ('/','/index.html'):
@@ -192,11 +208,15 @@ def make_server(workspace, port=8765, *, paused=False):
                 if path=='/api/tavily':
                     from .tavily import save_key,delete_key
                     result=delete_key() if body.get('remove') else save_key(body['api_key'])
+                elif path=='/api/opencode/provider':
+                    result=opencode_harness.configure_provider(body)
                 elif path=='/api/workspaces/open':
                     from .workspaces import open_workspace
                     result=open_workspace(store,body['path'],create=bool(body.get('create',False)))
                 elif path=='/api/harness/session':result=pick_harness(body.get('runtime')).create_session(body.get('title','新对话'),body.get('runtime'))
-                elif path=='/api/harness/message':result=pick_harness(body.get('runtime'),body['session_id']).send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),allow_web=bool(body.get('allow_web',False)))
+                elif path=='/api/harness/message':
+                    if store.settings().get('model_selection_required'):raise ValueError('请先选择本次试验模型')
+                    result=pick_harness(body.get('runtime'),body['session_id']).send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),allow_web=bool(body.get('allow_web',False)))
                 elif path=='/api/harness/answer':result=pick_harness(session_id=body['session_id']).answer(body['session_id'],body['request_id'],body['answers'])
                 elif path=='/api/harness/archive':result=pick_harness(session_id=body['session_id']).archive(body['session_id'])
                 elif path=='/api/harness/delete':result=pick_harness(session_id=body['session_id']).delete(body['session_id'])
@@ -216,6 +236,20 @@ def make_server(workspace, port=8765, *, paused=False):
                 elif path=='/api/report-data/prepare':
                     from .report_tools import prepare_for_run
                     result=prepare_for_run(store,body['run_id'],body['data'])
+                elif path=='/api/import-revision':
+                    from .word_import import import_revision
+                    result=import_revision(store,body['base_version'],body.get('name','revision.docx'),
+                        base64.b64decode(body['data'],validate=True) if body.get('data') else b'',
+                        accept_unaligned=bool(body.get('accept_unaligned',False)),source_id=body.get('source_id'))
+                elif path=='/api/company-resolve':
+                    from .company_context import resolve_conflict
+                    result=resolve_conflict(store,body['fact_id'],body['accept'])
+                elif path=='/api/template-import':
+                    from .templates import import_template
+                    result=import_template(store,body['name'],base64.b64decode(body['data'],validate=True),body.get('parent_id'))
+                elif path=='/api/export':
+                    from .export_jobs import enqueue_export
+                    result=enqueue_export(store,body['version_id'])
                 elif path=='/api/generate':
                     req=Requirements.model_validate(body['requirements'])
                     run=store.create_run(req.model_dump(),body.get('source_ids',[]))

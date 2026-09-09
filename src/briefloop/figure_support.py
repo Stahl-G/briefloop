@@ -28,10 +28,36 @@ def export_figures(store,brief):
 def markdown_bundle(store,brief):
     from .exports import reader_markdown
     figures=export_figures(store,brief);text=reader_markdown(store,brief)
+    explicit_captions={}
+    if brief.get('editor_document'):
+        document=json.loads(brief['editor_document']) if isinstance(brief['editor_document'],str) else brief['editor_document']
+        def collect(node):
+            if node.get('type')=='image':
+                attrs=node.get('attrs',{});fid=attrs.get('src','').removeprefix('briefloop-figure:')
+                explicit_captions.setdefault(fid,[]).append('caption' in attrs)
+            for child in node.get('content',[]):collect(child)
+        collect(document)
     output=BytesIO()
     with ZipFile(output,'w',ZIP_DEFLATED) as archive:
         for fid,figure in figures.items():
-            path='assets/'+fid+'.png';text=text.replace('briefloop-figure:'+fid,path)
+            path='assets/'+fid+'.png'
+            # Append the registered caption and provenance to each image, not
+            # just to a body-citation bibliography (figures may be sole users).
+            def plain(value):
+                value=str(value).replace('\n',' ').replace('\r',' ')
+                return re.sub(r'([\\`*_{}\[\]<>#!|])',r'\\\1',value)
+            caption='\n\n'+plain(figure['caption']) if figure['caption'] else ''
+            notes=''
+            if figure['source_labels']:
+                notes+='\n\n来源：'+'；'.join(plain(v) for v in figure['source_labels'])
+            marker=re.compile(r'(!\[(?:\\.|[^\]\\])*\]\()<?'+re.escape('briefloop-figure:'+fid)+r'>?(\s*(?:"[^"\n]*")?\))')
+            occurrences=iter(explicit_captions.get(fid,[]))
+            def replace(m):
+                # Rich projection already includes that node's caption (even an
+                # explicit empty caption must not revive the registered one).
+                extra='' if next(occurrences,False) else caption
+                return m[1]+path+m[2]+extra+notes
+            text=marker.sub(replace,text)
             archive.writestr(path,figure['image_bytes'])
         archive.writestr('report.md',text)
     return output.getvalue()

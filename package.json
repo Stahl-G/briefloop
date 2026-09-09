@@ -1,7 +1,17 @@
 {
   "private": true,
   "type": "module",
-  "scripts": {"build": "esbuild frontend/app.js --bundle --format=esm --minify --outfile=src/briefloop/static/app.js"},
-  "dependencies": {"@tiptap/core": "^3.0.0", "@tiptap/starter-kit": "^3.0.0", "@tiptap/extension-table": "^3.0.0", "@tiptap/extension-image": "3.31.3", "@tiptap/markdown": "^3.0.0"},
-  "devDependencies": {"esbuild": "^0.25.0"}
+  "scripts": {
+    "build": "esbuild frontend/app.js --bundle --format=esm --minify --outfile=src/briefloop/static/app.js"
+  },
+  "dependencies": {
+    "@tiptap/core": "^3.0.0",
+    "@tiptap/extension-image": "3.31.3",
+    "@tiptap/extension-table": "^3.0.0",
+    "@tiptap/markdown": "^3.0.0",
+    "@tiptap/starter-kit": "^3.0.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
 }

@@ -12,7 +12,8 @@ def test_industry_requirements_and_private_reference_boundary():
     assert Requirements(title='简报',objective='摘要').target_words==1500
     with pytest.raises(ValueError):Requirements(title='报告',objective='摘要',report_date='2026-02-30')
     assert '仅为风格' in profile_context(req.model_dump())['instructions']
-    assert '数据缺口' in profile_context(req.model_dump())['instructions']
+    assert 'research_notes/gaps' in profile_context(req.model_dump())['instructions']
+    assert '末尾附“数据缺口”' not in profile_context(req.model_dump())['instructions']
     assert report_data_template()=={'schema_version':'industry_periodic.v1','records':[]}
 
 

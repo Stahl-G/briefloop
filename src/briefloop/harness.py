@@ -1,7 +1,7 @@
 """Persistent, bidirectional conversations backed by Codex CLI app-server."""
 import json
-import threading
 from pathlib import Path
+import threading
 from queue import Empty
 from .app_server import AppServerClient
 from .chat_store import ChatStore
@@ -86,6 +86,8 @@ class HarnessManager:
             active=[m for m in self.snapshot(session_id)['messages'] if m.get('turn_id')==session['turn_id'] and m['role']=='user']
             actual=self._config(active[0]['runtime'] if active else session['runtime'])
             if any(config.get(k)!=actual.get(k) for k in ('permission','model','model_provider','effort')):raise ValueError('运行中追加指令不能改变模型、服务或权限；请选择排队，在下一轮应用设置')
+            if active and bool(active[0].get('allow_web'))!=bool(allow_web):
+                raise ValueError('运行中追加指令不能改变联网设置；请选择排队，在下一回合应用')
         mid=message_id or uid('msg')
         with self._lock:
             if self.chat.session(session_id)['lifecycle']!='active':raise ValueError('会话已归档或删除，请先恢复会话再发送消息；恢复不会重新运行旧消息')
@@ -156,6 +158,7 @@ class HarnessManager:
                 if not queued:return
                 message=queued[0];mid=message['id'];self.chat.patch_message(mid,status='sending')
                 self.chat.update(sid,status='starting')
+            input_blocks=self._input(message)
             client=self._client();thread_id=session['thread_id']
             config=self._config(message.get('runtime') or session['runtime'])
             from .chat_tools import chat_instructions
@@ -183,7 +186,7 @@ class HarnessManager:
                 self._threads[thread_id]=sid;self.chat.update(sid,thread_id=thread_id)
                 if sid in self._cancel_requested:
                     self.chat.patch_message(mid,status='cancelled');self.chat.update(sid,status='interrupted');return
-                turn_params={'threadId':thread_id,'model':config['model'],'clientUserMessageId':mid,'input':self._input(message),'cwd':session['cwd'],'sandboxPolicy':policy}
+                turn_params={'threadId':thread_id,'model':config['model'],'clientUserMessageId':mid,'input':input_blocks,'cwd':session['cwd'],'sandboxPolicy':policy}
                 if config.get('effort'):turn_params['effort']=config['effort']
                 result=client.request('turn/start',turn_params)
                 turn_id=result['turn']['id']
@@ -205,6 +208,13 @@ class HarnessManager:
             with self._lock:
                 session=self.chat.session(sid);message=next(m for m in self.snapshot(sid)['messages'] if m['id']==mid)
                 if not session['turn_id']:self._schedule(sid);return
+                active=[m for m in self.snapshot(sid)['messages'] if m.get('turn_id')==session['turn_id'] and m['role']=='user']
+                if active:
+                    actual=self._config(active[0]['runtime']);requested=self._config(message['runtime'])
+                    if any(actual.get(k)!=requested.get(k) for k in ('permission','model','model_provider','effort')) or bool(active[0].get('allow_web'))!=bool(message.get('allow_web')):
+                        self.chat.patch_message(mid,status='queued',mode='queue')
+                        self.chat.event(sid,'message/queued',{'messageId':mid,'mode':'queue','reason':'设置与当前回合不同，改为下一回合执行'})
+                        return
                 self.chat.patch_message(mid,status='sending')
                 self._client().request('turn/steer',{'threadId':session['thread_id'],'expectedTurnId':session['turn_id'],'clientUserMessageId':mid,'input':self._input(message)})
                 self.chat.patch_message(mid,status='delivered',turn_id=session['turn_id'])
@@ -249,7 +259,7 @@ class HarnessManager:
                 result={'answers':{}}
                 if sid:
                     questions=[{'id':q.get('id'),'question':q.get('question'),'options':q.get('options',[]),'header':q.get('header','')} for q in params.get('questions',[])]
-                    data={'questions':questions,'turnId':params.get('turnId')}
+                    data={'questions':questions,'turnId':params.get('turnId'),'threadId':params.get('threadId')}
                     rid=self.chat.add_request(sid,request['id'],data)
                     self.chat.event(sid,'input/requested',{'requestId':rid,**data})
                     continue
@@ -312,6 +322,12 @@ class HarnessManager:
                 sid=self._children.get(thread_id);child=True
             if not sid:return
             if child and method in ('turn/started','turn/completed'):
+                if method=='turn/completed':
+                    child_turn=params.get('turn',{}).get('id') or params.get('turnId')
+                    for request in self.snapshot(sid)['requests']:
+                        data=request['data']
+                        if child_turn and request['status']=='pending' and data.get('turnId')==child_turn and data.get('threadId',thread_id)==thread_id:
+                            self.chat.request_status(request['id'],'expired')
                 self.chat.event(sid,'child/'+method,{'threadId':thread_id,'status':params.get('turn',{}).get('status')})
                 return
             if child and method=='item/agentMessage/delta':return

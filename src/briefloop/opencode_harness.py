@@ -83,7 +83,7 @@ class OpencodeHarness:
         with self._lock:
             if not refresh and self._models_cache is not None and now - self._models_at < self.MODELS_CACHE_TTL:
                 return self._models_cache
-        data = self._client().providers()
+        data = self._client().providers(self.store.root)
         models = []
         for provider in data.get('providers', []):
             pid = provider.get('id', '')
@@ -95,6 +95,30 @@ class OpencodeHarness:
         with self._lock:
             self._models_cache, self._models_at = models, now
         return models
+
+    def configure_provider(self, body):
+        import re
+        from urllib.parse import urlsplit
+        provider = str(body.get('provider', '')).strip()
+        model = str(body.get('model', '')).strip()
+        base_url = str(body.get('base_url', '')).strip().rstrip('/')
+        key = body.get('api_key') or None
+        if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', provider):
+            raise ValueError('Provider ID 只能包含字母、数字、下划线和短横线')
+        if not model or len(provider + '/' + model) > 100 or any(c.isspace() for c in model):
+            raise ValueError('请填写有效的模型 ID（Provider 与模型合计不超过 100 字符）')
+        url = urlsplit(base_url)
+        if url.scheme not in ('http', 'https') or not url.hostname or url.username or url.password or url.query or url.fragment:
+            raise ValueError('请填写不含账号、查询参数的 HTTP(S) API Base URL')
+        if key is not None and (not isinstance(key, str) or not key.strip() or len(key) > 8192):
+            raise ValueError('API Key 格式无效')
+        with self._lock:
+            if self._busy:
+                raise ValueError('当前有 Opencode 任务运行，请结束后再修改 Provider')
+            result = self._client().configure_provider(self.store.root, provider, model, base_url, key)
+            self._models_cache = None
+            self._models_at = 0.0
+            return result
 
     # -- sessions ---------------------------------------------------------
 
@@ -459,9 +483,15 @@ class OpencodeHarness:
                     self.chat.patch_message(current['id'], text=text)
                     last_activity = time.monotonic()
                 tools_before = len(seen_tools)
-                for part in assistant.get('parts', []):
-                    if part.get('type') == 'tool':
-                        self._project_tool(sid, mid, assistant.get('id'), part, seen_tools)
+                # Earlier tool messages can finish between polls or while the next
+                # assistant round is already streaming. Project their transitions too.
+                for message in messages:
+                    record = message.get('info', message)
+                    if record.get('role') != 'assistant' or (record.get('time') or {}).get('created', 0) < admitted_at - 1000:
+                        continue
+                    for part in message.get('parts', []):
+                        if part.get('type') == 'tool':
+                            self._project_tool(sid, mid, message.get('id', record.get('id')), part, seen_tools)
                 if len(seen_tools) != tools_before:
                     last_activity = time.monotonic()
                 if (info.get('time') or {}).get('completed'):
@@ -509,9 +539,11 @@ class OpencodeHarness:
         name = part.get('tool', '')
         state = part.get('state') or {}
         key = (assistant_id, part.get('id'), name)
-        if key in seen_tools:
+        status = state.get('status', 'running')
+        transition = (*key, status)
+        if transition in seen_tools:
             return
-        seen_tools.add(key)
+        seen_tools.add(transition)
         item = {'id': part.get('id', assistant_id), 'type': 'opencode_tool',
                 'tool': name, 'status': state.get('status', 'running')}
         tool_input = state.get('input', part.get('input', {})) or {}
@@ -521,7 +553,9 @@ class OpencodeHarness:
         elif name == 'task':
             item['subagent_type'] = tool_input.get('subagent_type', '')
             item['description'] = tool_input.get('description', '')
-        self.chat.event(sid, 'item/started', {'item': item, 'turnId': mid})
+        if (*key, 'announced') not in seen_tools:
+            seen_tools.add((*key, 'announced'))
+            self.chat.event(sid, 'item/started', {'item': item, 'turnId': mid})
         if state.get('status') in ('completed', 'failed', 'error'):
             item = {**item, 'status': state['status']}
             self.chat.event(sid, 'item/completed', {'item': item, 'turnId': mid})

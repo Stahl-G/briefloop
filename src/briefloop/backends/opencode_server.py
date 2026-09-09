@@ -200,9 +200,28 @@ class OpencodeServerClient:
     def children(self, session_id):
         return self._request('GET', f'/session/{session_id}/children')
 
-    def providers(self):
+    def providers(self, directory=None):
         """Provider catalog with models (for the model picker, not inference)."""
-        return self._request('GET', '/config/providers')
+        return self._request('GET', '/config/providers' + ('?directory=' + urllib.parse.quote(str(directory), safe='') if directory else ''))
+
+    def configure_provider(self, directory, provider, model, base_url, api_key=None):
+        """Use native configuration/auth APIs; never return credentials or config."""
+        query = '?directory=' + urllib.parse.quote(str(directory), safe='')
+        try:
+            self._request('PATCH', '/global/config', {'provider': {provider: {
+                'npm': '@ai-sdk/openai-compatible',
+                'options': {'baseURL': base_url},
+                'models': {model: {'name': model}}
+            }}})
+            if api_key:
+                self._request('PUT', '/auth/' + urllib.parse.quote(provider, safe=''),
+                              {'type': 'api', 'key': api_key})
+            self._request('POST', '/instance/dispose' + query)
+        except OpencodeError as exc:
+            # Native validation responses may echo request bodies containing keys.
+            raise ValueError('Opencode 配置未全部完成，请重试保存；HTTP ' + str(exc.status or '连接失败')) from None
+        return {'provider': provider, 'model': provider + '/' + model,
+                'base_url': base_url, 'key_saved': bool(api_key)}
 
     def close(self):
         if self.process.poll() is None:

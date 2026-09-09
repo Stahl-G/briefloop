@@ -25,10 +25,16 @@ def reader_markdown(store,brief):
     return text
 
 
-def docx_bytes(markdown, *, report_profile="brief", title="", report_date="", organization="", period="", report_data=None, industry="", figures=None):
+def docx_bytes(markdown='', *, report_profile="brief", title="", report_date="", organization="", period="", report_data=None, industry="", figures=None, document=None, source_records=None):
     from docx import Document
     from .industry_export import append_inline, configure_document, style_heading, style_table, append_data_chart
     industry_report = report_profile == 'industry_periodic'
+    if document is not None:
+        from .document_export import render_document
+        doc=Document()
+        if industry_report:configure_document(doc,title=title,report_date=report_date,organization=organization,period=period,industry=industry)
+        render_document(doc,document,figures=figures,sources=source_records)
+        output=BytesIO();doc.save(output);return output.getvalue()
     tokens=MarkdownIt('commonmark').enable('table').parse(markdown)
     levels=[int(t.tag[1]) for t in tokens if t.type=='heading_open']
     if industry_report and len(tokens)>=3 and tokens[0].type=='heading_open' and tokens[0].tag=='h1' and levels.count(1)==1 and 2 in levels:

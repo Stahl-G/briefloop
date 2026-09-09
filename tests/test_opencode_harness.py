@@ -152,7 +152,7 @@ class FakeClient:
     def children(self, session_id):
         return []
 
-    def providers(self):
+    def providers(self, directory=None):
         self.provider_calls = getattr(self, 'provider_calls', 0) + 1
         return {'providers': [{'id': 'b-prov', 'models': {'m2': {'name': 'M Two'}, 'm1': {}}},
                               {'id': 'a-prov', 'models': {'m0': {'name': 'M Zero'}}}]}
@@ -364,3 +364,17 @@ def test_pack_figures_attaches_cited_images_and_notes_missing(tmp_path, monkeypa
     monkeypatch.setattr(harness_module, 'ATTACH_IMAGE_MAX_BYTES', 10)
     capped = OpencodeHarness._pack_figures(folder)
     assert capped[0][1] is None and '过大' in capped[0][0]
+
+
+def test_pending_tool_is_later_projected_as_complete(tmp_path):
+    manager=OpencodeHarness(Store(tmp_path),FakeClient)
+    session=manager.create_session('progress',{'model':'opencode-go/gpt-5.6-luna'})
+    seen=set()
+    part={'id':'tool-1','type':'tool','tool':'read','state':{'status':'pending'}}
+    manager._project_tool(session['id'],'turn','assistant',part,seen)
+    part['state']['status']='completed'
+    manager._project_tool(session['id'],'turn','assistant',part,seen)
+    manager._project_tool(session['id'],'turn','assistant',part,seen)
+    kinds=[e['kind'] for e in manager.store.rows('SELECT kind FROM chat_events WHERE session_id=?',(session['id'],))]
+    assert kinds.count('item/started')==1
+    assert kinds.count('item/completed')==1

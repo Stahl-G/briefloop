@@ -59,5 +59,29 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 
 /* Industry periodic report settings share the existing form language. */
 .industry-profile-options{padding:18px;margin:0 0 20px;border:1px solid #dce3d4;border-radius:10px;background:#f5f7ef}.industry-profile-options details{margin-top:16px}.industry-profile-options summary{cursor:pointer;font-weight:600}.industry-profile-options summary span{font-size:.85em;font-weight:400;color:#747b73}#reference-source-list{max-height:240px;overflow:auto;margin:12px 0}#reference-source-list .check{align-items:flex-start;font-size:.9rem}#reference-source-list span{overflow-wrap:anywhere}
+
+/* Full suggestion menu alongside an unrestricted model ID. */
+.model-picker{position:relative;display:inline-flex;align-items:center;min-width:0;width:100%}.model-picker>input{width:100%;padding-right:30px!important}.model-picker-select{position:absolute;right:2px;top:50%;transform:translateY(-50%);width:26px!important;min-width:0!important;height:26px!important;padding:2px 4px!important;border:0;background:transparent;color:var(--muted);font-size:12px!important;appearance:none;cursor:pointer}.model-picker-select option{font-size:12px}.model-picker-select:disabled{opacity:.4}.send-controls>.model-picker{width:170px;flex:0 1 170px}.send-controls>.model-picker>input{width:100%}
+#settings-dialog .chat-provider-row{display:block;padding:12px 0;border-top:1px solid var(--border,#d8ded1);font-size:12px}#settings-dialog .chat-provider-row>label{display:block;font-size:12px;font-weight:600}#settings-dialog .chat-provider-row>input{width:100%;max-width:none;height:34px;border:1px solid var(--border,#d8ded1);border-radius:6px;padding:6px 9px;margin:7px 0;font-size:12px}#settings-dialog .chat-provider-row>span{display:block;margin:0;font-size:11px}
+@media(max-width:560px){.send-controls>.model-picker{width:135px;flex-basis:135px}}
+
+.source-preview-image{display:block;max-width:100%;max-height:65vh;margin:12px auto;object-fit:contain;border:1px solid var(--line);border-radius:4px}#source-images figure{margin:14px 0}#source-images figcaption{font-size:12px;color:var(--muted)}#source-page-controls{display:flex;align-items:center;gap:8px;flex-wrap:wrap}#source-page-controls[hidden]{display:none}#source-page-controls input{width:105px;margin:0}.attachment-chip>[data-preview-attachment]{border:0;background:transparent;color:inherit;font-size:inherit;padding:0;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Registered report figures stay in the editable document flow. */
+#editor .tiptap img.briefloop-figure{display:block;max-width:100%;height:auto;margin:18px auto;border:1px solid var(--line);border-radius:4px;background:white}#editor .tiptap img.briefloop-figure.ProseMirror-selectednode{outline:2px solid var(--green);outline-offset:3px}
+
+/* Keep the small rich-document toolbar readable at the existing report width. */
+.toolbar{flex-wrap:wrap;align-items:center;gap:4px}
+.toolbar button{flex:0 0 auto;white-space:nowrap;padding:6px 8px;font-size:12px}
+.toolbar label{display:inline-flex;align-items:center;gap:4px;margin:0 4px;font-size:12px;white-space:nowrap}
+.toolbar input[type=color]{width:30px;height:28px;padding:2px;margin:0}
+.toolbar select{width:auto;max-width:110px;padding:5px 8px;margin:0;font-size:12px}
+.toolbar button[aria-pressed=true]{background:#e4ece1}
+.tiptap .report-image{margin:22px 0;text-align:center}
+.tiptap .report-image img{max-width:100%;height:auto;display:block;margin:auto}
+.tiptap .report-image figcaption{font:13px/1.6 var(--font);color:var(--muted);margin-top:8px}
+#template-sections .row{gap:8px;margin:8px 0}#template-sections select{max-width:135px}
+#word-exports .job{gap:12px;flex-wrap:wrap}#word-exports progress{width:100%;height:8px}
+
 /* Registered report figures stay in the editable document flow. */
 #editor .tiptap img.briefloop-figure{display:block;max-width:100%;height:auto;margin:18px auto;border:1px solid var(--line);border-radius:4px;background:white}#editor .tiptap img.briefloop-figure.ProseMirror-selectednode{outline:2px solid var(--green);outline-offset:3px}

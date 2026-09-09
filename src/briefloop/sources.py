@@ -54,7 +54,10 @@ def extract(name, data, *, with_extractor=False):
         if not text.strip():text=PDF_NOTICE;extractor+=' (visual reading required; no OCR)'
     elif ext == '.xlsx':
         from .workbook_figures import workbook_text
-        text=workbook_text(data);extractor='XLSX cells and saved formula values (no recalculation)'
+        try:text=workbook_text(data)
+        except (KeyError,zipfile.BadZipFile,ET.ParseError) as exc:
+            raise ValueError('XLSX 无法读取工作簿，文件可能已损坏') from exc
+        extractor='XLSX cells and saved formula values (no recalculation)'
     elif ext == '.docx':
         extractor='DOCX word/document.xml paragraph text'
         try:
@@ -73,6 +76,23 @@ def extract(name, data, *, with_extractor=False):
     return (text,extractor) if with_extractor else text
 
 
+def _office_suffix(name, data, content_type=''):
+    mime=content_type.split(';',1)[0].strip().lower()
+    known={'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':'.xlsx',
+           'application/vnd.openxmlformats-officedocument.wordprocessingml.document':'.docx'}
+    if mime in known:return known[mime]
+    suffix=Path(name).suffix.lower()
+    if suffix in ('.xlsx','.docx'):return suffix
+    if data.startswith(b'PK'):
+        try:
+            with zipfile.ZipFile(BytesIO(data)) as archive:
+                names=set(archive.namelist())
+                if 'xl/workbook.xml' in names:return '.xlsx'
+                if 'word/document.xml' in names:return '.docx'
+        except zipfile.BadZipFile:pass
+    return None
+
+
 def _source_content(store, name, data, *, content_type='', encoding='utf-8'):
     from . import media
     kind=media.detect_media_type(name,data,content_type)
@@ -85,6 +105,12 @@ def _source_content(store, name, data, *, content_type='', encoding='utf-8'):
         text,extractor=extract('source.pdf',data,with_extractor=True)
         metadata['needs_visual']=text==media.PDF_NOTICE
         return text,extractor,metadata
+    office=_office_suffix(name,data,content_type)
+    if office:
+        text,extractor=extract('source'+office,data,with_extractor=True)
+        return text,extractor,metadata
+    if data.startswith(b'PK'):
+        raise ValueError('不支持的 ZIP 文件，不能作为文本读取')
     if content_type and kind=='text/html':
         return html_text(data.decode(encoding,errors='replace')),'briefloop.sources.TextHTML ('+encoding+')',metadata
     if content_type:
@@ -144,6 +170,8 @@ def _fetch_bytes(url):
 def _fetch_suffix(name,data,content_type):
     from .media import detect_media_type
     kind=detect_media_type(name,data,content_type)
+    office=_office_suffix(name,data,content_type)
+    if office:return office
     return {'application/pdf':'.pdf','image/png':'.png','image/jpeg':'.jpg','image/webp':'.webp',
             'image/gif':'.gif','image/tiff':'.tiff','image/bmp':'.bmp','text/html':'.html','text/plain':'.txt'}.get(kind,'.bin')
 

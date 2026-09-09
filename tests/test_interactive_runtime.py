@@ -60,7 +60,7 @@ def test_draft_publishes_before_completion_and_recovery_does_not_resend(tmp_path
         if runtime.session_id is None: return
         sid = runtime.session_id
         if not (folder / 'draft.json').exists():
-            (folder / 'draft.json').write_text('{"markdown":"已生成"}')
+            (folder / 'draft.json').write_text('{"title":"Test","markdown":"已生成"}')
         observations.append(harness.sessions[sid]['messages'][0]['status'])
         assert runtime.process.pid == 123
         if len(observations) == 2: harness.finish(sid)
@@ -132,4 +132,17 @@ def test_explicit_resume_replaces_deleted_session_without_restoring_it(tmp_path,
     assert current['session_id']!=previous['session_id']
     assert current['previous_session_ids']==[previous['session_id']]
     assert harness.sessions[previous['session_id']]['session']['lifecycle']=='deleted'
+    assert len(harness.starts)==2
+
+
+def test_completed_turn_without_output_retries_then_reuses_valid_artifact(tmp_path):
+    store,job,harness,runtime,folder=setup(tmp_path)
+    def complete():
+        if runtime.session_id and harness.sessions[runtime.session_id]['messages'][-1]['role']=='user':
+            harness.finish(runtime.session_id)
+    runtime.execute(job,'first',folder,complete)
+    runtime.execute(job,'retry missing output',folder,complete)
+    assert len(harness.starts)==2
+    (folder/'draft.json').write_text('{"title":"Test","markdown":"Ready"}')
+    runtime.execute(job,'reuse',folder)
     assert len(harness.starts)==2

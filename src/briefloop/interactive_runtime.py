@@ -23,6 +23,30 @@ def _message(snapshot, message_id):
     return next((m for m in snapshot['messages'] if m['id'] == message_id), None)
 
 
+def _usable_output(job, folder, store=None):
+    """A completed model turn is not evidence that its required artifact exists."""
+    from .models import BriefDraft
+    role=job.get('runtime_role')
+    if role in ('evaluator','scorer','assessor'):
+        name='comparison.json' if job.get('evaluation_mode')=='pairwise' or role=='assessor' else 'assessment.json'
+    elif job['kind']=='generate':name='draft.json'
+    elif job['kind']=='assess':name='assessment.json'
+    else:return True  # WikiSkill handoffs already request resume_on_complete.
+    try:
+        data=json.loads((folder/name).read_text())
+        if name=='draft.json':BriefDraft.model_validate(data)
+        elif name=='assessment.json':
+            if store is None:return False
+            payload=json.loads(job['payload'])
+            version=payload.get('version_id')
+            if job['kind']=='generate' and not version:version='brief_'+job['id'][4:]
+            if not version:return False
+            store.validate_assessment(version,data)
+        elif not isinstance(data,dict) or not isinstance(data.get('pairs'),list):return False
+        return True
+    except (OSError,ValueError):return False
+
+
 class InteractiveRuntime:
     def __init__(self, store, harness=None, *, backends=None):
         self.store = store
@@ -93,6 +117,7 @@ class InteractiveRuntime:
         from .progress import ProgressTracker
         folder = Path(folder)
         folder.mkdir(parents=True, exist_ok=True)
+        resume_on_complete = resume_on_complete or not _usable_output(job, folder, self.store)
         tracker = ProgressTracker(self.store, job['id'], folder)
         def tick():
             on_tick()  # Admit a complete draft while its evaluator is still working.
@@ -137,7 +162,7 @@ class InteractiveRuntime:
         else:
             evaluation_title='Evaluator · 比较' if job.get('evaluation_mode')=='pairwise' else 'Evaluator · 评分'
             title = {'evaluator': evaluation_title, 'scorer': 'Evaluator · 评分', 'assessor': 'Evaluator · 比较', 'maintainer': '整理反馈经验', 'proposer': '提出技能改进'}.get(job.get('runtime_role'))
-            title = title or {'generate': '生成简报', 'assess': '核对简报评分', 'learn': '整理反馈与改进技能'}.get(job['kind'], '简报任务')
+            title = title or {'company_review':'维护企业背景', 'generate': '生成简报', 'assess': '核对简报评分', 'learn': '整理反馈与改进技能'}.get(job['kind'], '简报任务')
             session = harness.create_session(title, runtime, folder)
             binding = {'job_id': job['id'], 'session_id': session['id'], 'runtime': runtime,
                        'backend': backend, 'message_id': None, 'history': []}
@@ -196,7 +221,7 @@ class InteractiveRuntime:
             if new_turn:
                 if self.cancelled.is_set():
                     raise InterruptedError('任务已停止，已生成内容保留')
-                label = {'generate': '请按已保存的要求研究来源并生成简报。',
+                label = {'company_review':'先检查并维护本轮企业背景，完成后再进入报告写作。', 'generate': '请按已保存的要求研究来源并生成简报。',
                          'assess': '请核对这份简报的要求、内容与来源并给出评分。',
                          'learn': '请继续整理反馈、更新经验并完成当前技能改进步骤。'}.get(job['kind'], '请完成当前简报任务。')
                 evaluation_label='请使用 Evaluator 成对比较模式，依据任务与来源比较新旧稿件。' if job.get('evaluation_mode')=='pairwise' else '请使用 Evaluator 单稿评分模式，核对简报要求、内容与来源。'

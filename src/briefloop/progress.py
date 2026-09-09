@@ -65,7 +65,7 @@ class ProgressTracker:
             except (ValueError,OSError):pass
         workers=list(self.workers.values())
         active=[w for w in workers if w.get('status') not in ('completed','done','closed','failed','errored')]
-        stage='正在整理任务要求'
+        stage='正在检查并维护企业背景' if self.folder.name=='company-review' else '正在整理任务要求'
         if paths[2].exists():stage='正在分配研究任务'
         if workers and not active:stage='子任务结果已返回，正在整理与交接'
         if paths[3].exists():stage='正文已保存，正在准备评分'
