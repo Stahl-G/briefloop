@@ -54,11 +54,34 @@ function render(first){
  if(state.wiki!==render.wiki){render.wiki=state.wiki;if(state.wiki)api('render',{markdown:state.wiki}).then(r=>$('wiki').innerHTML=r.html);else $('wiki').innerHTML='<h2>还没有学习经验</h2><p class="muted">生成简报后直接改稿，或留下评论。Maintainer 会在这里整理观察、方法与适用条件。</p>'}bindSources();
 }
 function openBrief(b){if(dirty){notice('请先保存当前修改，再切换版本',true);return}current=b;$('report-title').textContent=parse(b.detail).title||'简报';updateDownloads(b);if(editor)editor.destroy();editor=new Editor({element:$('editor'),editable:state.briefs.find(x=>x.run_id===b.run_id)?.id===b.id,extensions:[StarterKit.configure({link:{openOnClick:false}}),TableKit,Image.configure({HTMLAttributes:{class:'briefloop-figure'},allowBase64:false}),Markdown],content:toEditor(b.markdown),contentType:'markdown',onUpdate:changed});$('markdown-source').value=b.markdown;const historical=state.briefs.find(x=>x.run_id===b.run_id)?.id!==b.id;$('markdown-source').readOnly=historical;$('toolbar').querySelectorAll('button').forEach(x=>x.disabled=historical);$('save-state').textContent=historical?'历史记录（只读）':b.author==='user'?'当前编辑稿已自动保存':'原稿已保存';$('version-select').value=b.id;assessment();citations();renderBriefLength()}
-function changed(){dirty=true;renderBriefLength();$('save-state').textContent='有未保存修改';clearTimeout(saveTimer);saveTimer=setTimeout(save,1400)}
+async function renderDeliveryChecks(){
+ const ticket=(renderDeliveryChecks.ticket||0)+1;renderDeliveryChecks.ticket=ticket;
+ if(!current||!$('assessment'))return;const vid=current.id;
+ const old=$('assessment').querySelector('.delivery-checks');if(old)old.remove();
+ const box=document.createElement('div');box.className='delivery-checks';
+ box.textContent=dirty?'有未保存修改；下列检查仅针对已保存版本。':'正在检查已保存版本…';
+ $('assessment').prepend(box);
+ let c;try{c=await api('version-checks?version='+encodeURIComponent(vid))}catch(e){if(box.isConnected)box.textContent='检查暂不可用，请稍后重试；未判定通过。';return}
+ if(!current||current.id!==vid||ticket!==renderDeliveryChecks.ticket||!box.isConnected)return;
+ const parts=[];
+ if(dirty)parts.push('<span class="tag">有未保存修改；仅检查已保存版本</span>');
+ parts.push(c.broken_refs.length?`<span class="tag error">断链引用 ${c.broken_refs.length} 处：${c.broken_refs.map(esc).join('、')}</span>`:'<span class="tag">正文引用可定位；支持关系仍需评价</span>');
+ const n=c.numbers;
+ parts.push(`<span class="tag">${n.status==='not_checked'?'未做数值核对':n.status==='partial'?'部分绑定已检查':'已检查提交的绑定'}：提交 ${n.total} 项，已检查 ${n.checked} 项，匹配 ${n.matched} 项</span>`);
+ if(n.unmatched.length)parts.push(`<span class="tag error">绑定数值不一致 ${n.unmatched.length} 项：${n.unmatched.map(r=>esc(r.label||r.expected)).join('、')}</span>`);
+ if(n.skipped.length)parts.push(`<span class="tag">未检查 ${n.skipped.length} 项：${n.skipped.map(r=>esc((r.label||'未命名')+'：'+r.reason)).join('；')}</span>`);
+ if(c.export.escaped_bold)parts.push('<span class="tag error">存在转义加粗，请检查排版</span>');
+ if(c.export.figure_error)parts.push('<span class="tag error">图表资源不可用：'+esc(c.export.figure_error)+'</span>');
+ else if(c.export.figure_markers.length)parts.push('<span class="tag">含图表：独立交付请下载 Word 或含图片的 Markdown 包</span>');
+ if(c.assessment_overall)parts.push(`<span class="tag">模型评分：${esc(c.assessment_overall)}</span>`);
+ box.innerHTML='<strong>已保存版本检查</strong> '+parts.join(' ')+'<p class="help">数值检查仅覆盖已提交并成功定位的绑定，不代表正文数字已全部核验；事实含义、研究覆盖与交付质量仍需评价。</p>';
+}
+
+function changed(){dirty=true;renderDeliveryChecks.ticket=(renderDeliveryChecks.ticket||0)+1;const check=$('assessment').querySelector('.delivery-checks');if(check)check.textContent='有未保存修改；保存后重新检查。';renderBriefLength();$('save-state').textContent='有未保存修改';clearTimeout(saveTimer);saveTimer=setTimeout(save,1400)}
 $('version-select').onchange=e=>openBrief(state.briefs.find(b=>b.id===e.target.value));
 async function save(){if(!dirty||saving||!current)return;saving=true;$('save-state').textContent='保存中…';const text=markdownMode?$('markdown-source').value:fromEditor(editor.getMarkdown());try{current=await api('save',{base_version:current.id,markdown:text,editor_document:markdownMode?null:editor.getJSON()});dirty=(markdownMode?$('markdown-source').value:fromEditor(editor.getMarkdown()))!==text;$('save-state').textContent=dirty?'有新的修改':'已保存';updateDownloads(current);await refresh();if(dirty)saveTimer=setTimeout(save,1400);else scheduleLearning()}catch(e){$('save-state').textContent='未保存，请保留编辑';notice(e.message,true)}finally{saving=false}}
 function scheduleLearning(){ /* Worker consumes the durable feedback after inactivity. */ }
-function assessment(){if(!current)return;const r=state.assessments.find(a=>a.version_id===current.id);if(!r){$('assessment').innerHTML='<p class="muted">尚未评分</p><p class="help">你可以先阅读和修改。评分针对这个版本独立运行。</p>';return}const d=parse(r.data);$('assessment').innerHTML=`<div class="judgment">${esc(d.overall)}</div><p>${esc(d.summary)}</p><div class="grades">${[['evidence','证据与准确性'],['coverage','覆盖与取舍'],['analysis','分析有效性'],['expression','表达与可用性']].map(([k,l])=>`<div class="grade"><span>${l}</span><strong>${d[k]??'—'}</strong><small>${d[k]?' / 5':''}</small></div>`).join('')}</div><p class="help">等级是本轮要求完成程度，评分可有不同意见。</p>${(d.findings||[]).map(f=>`<details class="finding"><summary>${f.severity==='major'?'●':'○'} ${esc(f.description)}</summary>${f.report_quote?`<blockquote>${esc(f.report_quote)}</blockquote>`:''}<p>${esc(f.requirement)}</p><p>${esc(f.evidence)}</p>${f.source_id?`<button data-source="${esc(f.source_id)}">查看来源 · ${esc(f.locator)}</button>`:''}<p>${esc(f.suggestion)}</p></details>`).join('')}`;bindSources()}
+function assessment(){if(!current)return;queueMicrotask(renderDeliveryChecks);const r=state.assessments.find(a=>a.version_id===current.id);if(!r){$('assessment').innerHTML='<p class="muted">尚未评分</p><p class="help">你可以先阅读和修改。评分针对这个版本独立运行。</p>';return}const d=parse(r.data);$('assessment').innerHTML=`<div class="judgment">${esc(d.overall)}</div><p>${esc(d.summary)}</p><div class="grades">${[['evidence','证据与准确性'],['coverage','覆盖与取舍'],['analysis','分析有效性'],['expression','表达与可用性']].map(([k,l])=>`<div class="grade"><span>${l}</span><strong>${d[k]??'—'}</strong><small>${d[k]?' / 5':''}</small></div>`).join('')}</div><p class="help">等级是本轮要求完成程度，评分可有不同意见。</p>${(d.findings||[]).map(f=>`<details class="finding"><summary>${f.severity==='major'?'●':'○'} ${esc(f.description)}</summary>${f.report_quote?`<blockquote>${esc(f.report_quote)}</blockquote>`:''}<p>${esc(f.requirement)}</p><p>${esc(f.evidence)}</p>${f.source_id?`<button data-source="${esc(f.source_id)}">查看来源 · ${esc(f.locator)}</button>`:''}<p>${esc(f.suggestion)}</p></details>`).join('')}`;bindSources()}
 function citations(){const refs=(parse(current.detail).citations||[]).filter(r=>toEditor(current.markdown).includes('#source-'+r.source_id));$('citations').innerHTML=refs.length?'引用来源 '+refs.map(r=>`<button data-source="${esc(r.source_id)}">${esc(state.sources.find(s=>s.id===r.source_id)?.name||r.source_id)} · ${esc(r.locator)}</button>`).join(''):'尚无引用记录';bindSources()}
 function bindSources(){document.querySelectorAll('[data-source]').forEach(b=>b.onclick=()=>action(async()=>{const r=await api('source?id='+b.dataset.source);showSource(r)}))}
 $('close-source').onclick=()=>$('source-dialog').close();
