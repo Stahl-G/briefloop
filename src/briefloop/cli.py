@@ -82,8 +82,8 @@ def main():
     elif a.command=='status':print(json.dumps(Store(a.workspace).snapshot(),ensure_ascii=False,indent=2))
     elif a.command=='doctor':
         from .backends.opencode_server import EXPECTED_MAJOR
-        opencode=shutil.which('opencode')
-        print(json.dumps({'codex':shutil.which('codex'),'opencode':opencode,'opencode_expected_major':EXPECTED_MAJOR,'pdftotext':shutil.which('pdftotext'),'workspace':str(Path(a.workspace).resolve()),'note':'检查命令存在；未启动模型、未验证登录'},ensure_ascii=False,indent=2))
+        from .host_bins import find as _find_host_bin
+        print(json.dumps({'codex':_find_host_bin('codex'),'opencode':_find_host_bin('opencode'),'opencode_expected_major':EXPECTED_MAJOR,'pdftotext':_find_host_bin('pdftotext'),'workspace':str(Path(a.workspace).resolve()),'note':'检查命令存在；未启动模型、未验证登录'},ensure_ascii=False,indent=2))
     elif a.command=='tool':
         store=Store(a.workspace)
         if a.tool=='normalize-document':

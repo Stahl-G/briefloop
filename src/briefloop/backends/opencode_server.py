@@ -86,9 +86,10 @@ class OpencodeServerClient:
     def __init__(self, log_directory, *, port=0, password=None, timeout=20):
         root = Path(log_directory)
         root.mkdir(parents=True, exist_ok=True)
-        executable = shutil.which('opencode')
+        from ..host_bins import SEARCH_HINT, find as _find_host_bin
+        executable = _find_host_bin('opencode')
         if not executable:
-            raise RuntimeError('Opencode CLI 未安装')
+            raise RuntimeError('未找到 Opencode CLI；'+SEARCH_HINT)
         self.executable = executable
         self.timeout = timeout
         self.port = port or _free_port()

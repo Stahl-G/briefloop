@@ -781,13 +781,15 @@ $('report-data-open').onclick=()=>action(async()=>{
 
 
 // An explicit select lists every suggestion; the text input stays unrestricted.
+function emptyCatalogLabel(backend,catalog){const why=String(catalog?.diagnostic||'').trim()||'没有读取到模型列表';return `${runtimeName(backend)}：${why}（可直接输入模型 ID）`}
 function refreshInlineModelPickers(){
  const chatBackend=modelTargetBackend('chat-model');
- if(!modelCatalogs.has(chatBackend))fetchModelCatalog(false,chatBackend).then(()=>refreshInlineModelPickers()).catch(()=>{});
+ if(!modelCatalogs.has(chatBackend))fetchModelCatalog(false,chatBackend).then(()=>refreshInlineModelPickers()).catch(e=>{modelCatalogs.set(chatBackend,{backend:chatBackend,at:0,models:[],diagnostic:e.message||'模型目录读取失败'});refreshInlineModelPickers()});
  document.querySelectorAll('.model-picker-select').forEach(select=>{
   const input=select.parentElement.querySelector('input');select.replaceChildren(new Option('▾',''));
-  const models=modelCatalogs.get(modelTargetBackend(input?.id))?.models||[];
+  const backend=modelTargetBackend(input?.id),catalog=modelCatalogs.get(backend),models=catalog?.models||[];
   for(const model of models)select.add(new Option(model.name+' · '+model.id,model.id));
+  if(!models.length){const warn=new Option(emptyCatalogLabel(backend,catalog),'__empty__');warn.disabled=true;select.add(warn)}
   select.add(new Option('输入其他模型 ID…','__custom__'));
   select.add(new Option('搜索全部模型…','__browse__'));
   if(input?.dataset.roleModel)select.add(new Option('继承主链模型','__inherit__'));
