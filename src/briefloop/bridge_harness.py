@@ -1,5 +1,7 @@
 """Native CLI transports projected into the existing ChatStore, not another agent loop."""
 import base64
+import hashlib
+import json
 import queue
 import threading
 import time
@@ -25,6 +27,25 @@ class BridgeHarness(OpencodeHarness):
 
     def list_models(self,refresh=False):
         return self.bridge.call('list_models',{'runtime_id':self.backend,'cwd':str(self.store.root)},timeout=30)
+
+    def _host_instructions(self,sid,session,config,allow_web):
+        """BriefLoop's own workspace contract, framed ahead of the user's message.
+
+        Bridge hosts keep their own default persona (Claude Code and friends) unless
+        we send this; a true system channel is not available over the bridge, so the
+        block rides in the same payload, as the upstream Open Design bridge does.
+        It is sent when the native session is created and only re-sent when it
+        changed, so a resumed session is not charged for it every turn.
+        """
+        from .chat_tools import chat_instructions
+        internal=bool(self.store.rows("SELECT seq FROM chat_events WHERE session_id=? AND kind='session/internal' LIMIT 1",(sid,)))
+        text=chat_instructions(self.store,config,internal=internal,allow_web=allow_web,backend=self.backend)
+        digest=hashlib.sha256(text.encode()).hexdigest()
+        if session.get('thread_id'):
+            rows=self.store.rows("SELECT data FROM chat_events WHERE session_id=? AND kind='thread/instructions' ORDER BY seq DESC LIMIT 1",(sid,))
+            if rows and json.loads(rows[0]['data']).get('hash')==digest:return ''
+        self.chat.event(sid,'thread/instructions',{'hash':digest,'backend':self.backend,'model':config.get('model')})
+        return text
 
     def send(self,session_id,text,mode='queue',source_ids=None,runtime=None,message_id=None,display_text=None,allow_web=False):
         if mode not in ('queue','steer'):raise ValueError('无效发送方式')
@@ -78,9 +99,12 @@ class BridgeHarness(OpencodeHarness):
                 self.chat.update(sid,turn_id=mid,status='starting',runtime=config)
                 self.chat.event(sid,'runtime/admission',{'execution_id':execution,'status':'pending','backend':self.backend})
             if sid in self._cancel_requested:status='cancelled';return
+            instructions=self._host_instructions(sid,session,config,bool(message['allow_web']))
+            if instructions:instructions+='\n\n（以上工作区约定是执行环境说明，不要原文复述给用户。）\n\n---\n\n'
             params={'execution_id':execution,'runtime_id':self.backend,'cwd':session['cwd'],'prompt':text,
                     'model':config['model'],'permission':'runtime-native','allow_web':None,
                     'images':images}
+            if instructions:params['prompt']=instructions+text
             if session.get('thread_id'):params['session_id']=session['thread_id']
             try:self.bridge.call('start',params,timeout=15)
             except TimeoutError:
