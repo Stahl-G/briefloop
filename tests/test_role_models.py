@@ -124,6 +124,21 @@ def test_evaluator_migration_preserves_settings_and_frozen_legacy_modes(tmp_path
     assert role_label('Assessor')=='Evaluator · 比较'
 
 
+def test_role_model_from_another_runtime_inherits_instead_of_blocking(tmp_path):
+    store=Store(tmp_path/'workspace')
+    store.set_meta('settings',{**store.settings(),'agent_backend':'codex','model':'gpt-5.6-luna',
+        'model_selection_required':False,'role_models':{'evaluator':{'model':'gpt-5.6-luna','reasoning_effort':'high'}}})
+    store.set_meta('settings',{**store.settings(),'agent_backend':'opencode','model':'opencode-go/gpt-5.6-luna',
+        'model_selection_required':False})
+    # The stranded Codex id stays visible so the user can clear it...
+    assert store.settings()['role_models']['evaluator']['model']=='gpt-5.6-luna'
+    # ...but it must not fail the whole run with the other runtime's model rules.
+    payload=json.loads(store.enqueue('generate',{})['payload'])
+    assert payload['runtime']=={'model':'opencode-go/gpt-5.6-luna'}
+    assert payload['role_models']['evaluator']==payload['runtime']
+    assert payload['role_models']['maintainer']==payload['runtime']
+
+
 def test_custom_provider_and_default_effort_freeze_without_changing_old_jobs(tmp_path):
     from briefloop.chat_tools import workspace_action, chat_instructions
     store=Store(tmp_path/'workspace')

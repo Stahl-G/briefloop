@@ -26,5 +26,6 @@ jobs:
       - run: python -m pytest -q
       - run: node tests/frontend_save_barrier.mjs
       - run: node tests/frontend_model_selection.mjs
+      - run: node tests/frontend_setup_state.mjs
       - run: briefloop --version
       - run: python -c "from importlib.resources import files; assert files('briefloop').joinpath('skill_assets/tavily/SKILL.md').is_file()"

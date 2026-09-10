@@ -428,7 +428,20 @@ class Store:
         base=runtime or self.runtime_config()
         backend=backend or self.settings().get('agent_backend','codex')
         overrides=self.settings()['role_models']
-        return {role:dict(overrides.get(role,base)) for role in ROLE_NAMES}
+        roles={}
+        for role in ROLE_NAMES:
+            candidate=overrides.get(role)
+            if not candidate:
+                roles[role]=dict(base)
+                continue
+            try:
+                roles[role]=runtime_fields(candidate,backend)
+            except ValueError:
+                # A role model saved for another runtime cannot run here. Inherit the
+                # main chain instead of failing the whole job; settings() still shows
+                # the stranded value so it can be cleared or re-picked.
+                roles[role]=dict(base)
+        return roles
 
     def enqueue(self, kind, payload):
         if kind not in ('export_docx','release','audit_bundle','source_refresh'):
