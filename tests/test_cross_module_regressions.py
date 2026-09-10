@@ -17,7 +17,8 @@ def test_baseline_is_bound_to_completed_attempt(tmp_path):
     s.update_job(old['id'],'failed')
     job=s.enqueue('generate',{'run_id':run['id']})
     brief=s.publish(run['id'],{'title':'Current','markdown':'Current'},version_id='brief_'+job['id'][4:])
-    s.update_job(job['id'],'complete',result={'version_id':brief['id']})
+    from briefloop.review_learning import source_snapshot
+    s.update_job(job['id'],'complete',result={'version_id':brief['id'],'source_snapshot':source_snapshot(s,run['id'])})
     payload=json.loads(job['payload']);payload['skill_id']=None
     assert _baseline_for_attempt(s,run,payload)['id']==brief['id']
     payload['runtime']={'model':'different'}
@@ -31,7 +32,7 @@ def test_cancel_between_select_and_claim_never_executes(tmp_path):
     rows=s.rows
     def delayed(query,args=()):
         value=rows(query,args)
-        if "status='queued' ORDER BY rowid LIMIT 1" in query:
+        if "SELECT * FROM jobs" in query and "status='queued'" in query and "kind!='review'" in query:
             if value and not selected.is_set():selected.set();assert released.wait(3)
             elif selected.is_set():checked.set()
         return value

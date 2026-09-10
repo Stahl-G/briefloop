@@ -155,7 +155,7 @@ class OpencodeServerClient:
 
     # -- v1 session surface -------------------------------------------------
 
-    def create_session(self, title, *, agent='build', model=None, permission=None, directory=None):
+    def create_session(self, title, *, agent='build', model=None, permission=None, directory=None, require_permissions=False):
         body = {'title': title}
         if agent:
             body['agent'] = agent
@@ -172,7 +172,7 @@ class OpencodeServerClient:
             try:
                 return self._request('POST', path, {**body, 'permission': permission})
             except OpencodeError as exc:
-                if exc.status not in (400, 422):
+                if require_permissions or exc.status not in (400, 422):
                     raise
                 bare = self._request('POST', path, body)
                 bare['_permission_dropped'] = True
@@ -200,18 +200,24 @@ class OpencodeServerClient:
     def children(self, session_id):
         return self._request('GET', f'/session/{session_id}/children')
 
+    def paths(self,directory):
+        return self._request('GET','/path?directory='+urllib.parse.quote(str(directory),safe=''))
+
     def providers(self, directory=None):
         """Provider catalog with models (for the model picker, not inference)."""
         return self._request('GET', '/config/providers' + ('?directory=' + urllib.parse.quote(str(directory), safe='') if directory else ''))
 
-    def configure_provider(self, directory, provider, model, base_url, api_key=None):
+    def configure_provider(self, directory, provider, model, base_url, api_key=None, supports_images=None):
         """Use native configuration/auth APIs; never return credentials or config."""
         query = '?directory=' + urllib.parse.quote(str(directory), safe='')
+        model_config={'name':model}
+        if supports_images is not None:
+            model_config.update(attachment=supports_images,modalities={'input':['text','image'] if supports_images else ['text'],'output':['text']})
         try:
             self._request('PATCH', '/global/config', {'provider': {provider: {
                 'npm': '@ai-sdk/openai-compatible',
                 'options': {'baseURL': base_url},
-                'models': {model: {'name': model}}
+                'models': {model: model_config}
             }}})
             if api_key:
                 self._request('PUT', '/auth/' + urllib.parse.quote(provider, safe=''),
@@ -221,7 +227,7 @@ class OpencodeServerClient:
             # Native validation responses may echo request bodies containing keys.
             raise ValueError('Opencode 配置未全部完成，请重试保存；HTTP ' + str(exc.status or '连接失败')) from None
         return {'provider': provider, 'model': provider + '/' + model,
-                'base_url': base_url, 'key_saved': bool(api_key)}
+                'base_url': base_url, 'key_saved': bool(api_key),'supports_images':supports_images}
 
     def close(self):
         if self.process.poll() is None:

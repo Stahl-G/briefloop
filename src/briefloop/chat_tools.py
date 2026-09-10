@@ -7,10 +7,71 @@ import shlex
 import sys
 from .models import Requirements, Comment, Settings, runtime_fields
 
+WORKSPACE_ACTIONS = (
+    'capabilities','source_snapshot','source_change','source_impacts','refresh_source',
+    'set_reader_contract','conflict_create','conflict_response','review_response','review_status',
+    'evidence_span','claim_create','claim_bind','read_run_report','evidence_read','read_report',
+    'revise_document','templates','template_rebuild','template_import','import_word_revision',
+    'company_review_complete','company_read','company_config','company_update','company_resolve',
+    'export_word','inspect','generate','assess','comment','learn',
+)
+
 
 def workspace_action(store, request):
     if not isinstance(request,dict):raise ValueError('请求必须是 JSON 对象')
     action=request.get('action')
+    if action=='capabilities':
+        from .source_updates import SourceTimes,ChangeInput
+        from .evidence import EvidenceInput,ClaimInput
+        return {'actions':list(WORKSPACE_ACTIONS),'schemas':{
+            'source_snapshot.timing':SourceTimes.model_json_schema(),
+            'source_change.change':ChangeInput.model_json_schema(),
+            'evidence_span.evidence':EvidenceInput.model_json_schema(),
+            'claim_create.claim':ClaimInput.model_json_schema()},
+            'authority':'当前执行此命令的运行时接口；不从其他源码目录推定已安装能力。'}
+    if action=='source_impacts':
+        from .source_updates import impacts
+        return impacts(store,request['source_id'])
+    if action=='source_snapshot':
+        from .source_updates import register_snapshot
+        return register_snapshot(store,request['source_id'],timing=request.get('timing'),logical_id=request.get('logical_id'),previous_id=request.get('previous_id'))
+    if action=='source_change':
+        from .source_updates import record_change
+        return record_change(store,request['change'],run_id=request.get('run_id'))
+    if action=='refresh_source':
+        from .source_updates import refresh
+        return refresh(store,request['run_id'],request['source_id'],information_cutoff=request['information_cutoff'],trigger=request.get('trigger','research_refresh'))
+    if action=='set_reader_contract':
+        from .deliverable_spec import save_reader_contract
+        return save_reader_contract(store,request['run_id'],request['reader_contract'])
+    if action=='conflict_create':
+        from .conflicts import create
+        return create(store,source_ids=request['source_ids'],description=request['description'],run_id=request.get('run_id'),kind=request.get('kind','contradiction'))
+    if action=='conflict_response':
+        from .conflicts import respond
+        return respond(store,request['conflict_id'],request['response_action'],request['reason'])
+    if action=='review_response':
+        from .review import respond
+        return respond(store,request['finding_id'],request['version_id'],request['response_action'],request['reason'])
+    if action=='review_status':
+        from .review import review_status
+        return review_status(store,request['version_id'])
+    if action=='evidence_span':
+        from .evidence import create_span
+        return create_span(store,request['evidence'])
+    if action=='claim_create':
+        from .evidence import create_claim
+        return create_claim(store,request['run_id'],request['claim'],request.get('previous_id'))
+    if action=='claim_bind':
+        from .evidence import bind_claim
+        return bind_claim(store,request['version_id'],request['claim_id'],request['block_id'],request['quote'])
+    if action=='read_run_report':
+        rows=store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(request['run_id'],))
+        if not rows:return {'status':'waiting_for_draft'}
+        return workspace_action(store,{'action':'read_report','version_id':rows[0]['id']})
+    if action=='evidence_read':
+        from .evidence import inspect_bindings
+        return inspect_bindings(store,request['version_id'])
     if action=='read_report':
         from .document_model import brief_document
         brief=store.one('briefs',request['version_id'])
@@ -19,8 +80,11 @@ def workspace_action(store, request):
         from pathlib import Path
         path=Path(request['document_file']).resolve()
         if not path.is_relative_to(store.root):raise ValueError('修订内容文件必须位于当前工作区')
-        return store.revise(request['base_version'],editor_document=json.loads(path.read_text()))
+        return store.revise(request['base_version'],editor_document=json.loads(path.read_text()),author='agent')
     if action=='templates':return {'templates':store.rows('SELECT * FROM templates ORDER BY created DESC')}
+    if action=='template_rebuild':
+        from .templates import rebuild_template_version
+        return rebuild_template_version(store,request['template_id'])
     if action=='template_import':
         from .media import source_files
         from .templates import import_template
@@ -87,7 +151,7 @@ def workspace_action(store, request):
     if action=='learn':
         from .learning import enqueue_feedback
         return enqueue_feedback(store)
-    raise ValueError('支持的 action：inspect、generate、assess、comment、learn')
+    raise ValueError('不支持的 action；当前接口：'+', '.join(WORKSPACE_ACTIONS))
 
 
 def chat_instructions(store, runtime, *, internal=False, allow_web=False, backend='codex'):
@@ -131,11 +195,17 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 你可以调用本地工作区工具：先写一个 JSON 请求文件，再执行
 {command} REQUEST_FILE
 工具只调用现有工作区接口。action 支持：
+- {{"action":"capabilities"}}：返回当前运行时的完整接口名和证据/来源更正输入schema。需要确认能力或字段时调用此接口；工作区可能位于另一源码checkout下，不通过阅读仓库文件推定运行时功能，不直接改数据库。
 - {{"action":"inspect"}}：查看需求、来源 ID、简报版本 ID 和任务状态的简短索引。
+- {{"action":"source_snapshot","source_id":"实际来源ID","timing":{{"available_at":"带时区的ISO时间","basis":"原文定位或用户明确提供的时间依据"}}}}：追加来源时间快照；可给published_at/effective_start/effective_end，不拿抓取时间代替可得时间。修改已有注释需传previous_id，历史保留。
+- {{"action":"source_change","change":{{"old_source_id":"原来源ID","new_source_id":"新来源ID","kind":"correction","relation":"corrects","description":"更正内容","scope":"主体/指标/期间","relationship_evidence":"两份原件的具体定位和更正依据","importance":"core","information_cutoff":"带时区的ISO截止时间"}}}}：登记后来来源与旧来源的工作区级关系提议并交共用Conflict核查，不能把提议当已核实，不覆盖旧报告。可选run_id仅用于新旧来源已同属该报告的情况，不为登记后来更正向历史报告补塞来源。kind还支持update/unknown，字段与枚举以capabilities为准。
+- {{"action":"source_impacts","source_id":"原来源ID"}}：读取直接及间接受影响主张、稿件和正式件，供用户在“来源更新”页面处理。
+- 用 evidence_span 登记精确证据：{{"action":"evidence_span","evidence":{{"source_id":"实际ID","locator":{{"kind":"text","start_line":1,"end_line":3}},"excerpt":"该范围内逐字原文","entity":"主体","metric":"指标","period":"期间"}}}}。支持 pdf/page、xlsx/sheet/cells、image/region；保存位置不等于语义通过。
+- 用 claim_create 登记重要主张：run_id、claim（statement、kind=fact/source_opinion/calculation/inference/recommendation、importance=core/supporting、supports 每项含span_id/supports_quote/rationale、推断还需reasoning/assumptions），获得真实claim_id。用 claim_bind 的 version_id/claim_id/block_id/quote 绑定唯一正文位置；read_report返回稳定blockId。evidence_read读取绑定及失效状态。不要自行声明已审阅通过。
 - {{"action":"company_read"}}：读取本工作区企业背景及待确认冲突。企业内部周报开始前可提议维护，用户明确同意/拒绝后用 {{"action":"company_config","enabled":true}} 保存选择。
 - {{"action":"company_update","fact":{{"key":"主体/指标/期间","value":"有依据的企业背景","source_id":"真实来源ID","locator":"原文位置","effective_date":"YYYY-MM-DD","origin":"public|user"}}}}：已启用后更新企业背景。返回 pending 时向用户询问；用户明确回答后用 {{"action":"company_resolve","fact_id":"真实记录ID","accept":true}} 记录采用或拒绝。
 - {{"action":"export_word","version_id":"真实稿件ID"}}：用户要求时生成所选版本 Word，返回文件任务状态；完成后从任务结果取得下载地址。
-- {{"action":"templates"}}：读取可选模板。用户要求上传材料用作主模板时用 {{"action":"template_import","source_id":"DOCX来源ID"}} 启动一次准备；准备完成后 generate.requirements.template_id 选择具体版本。
+- {{"action":"templates"}}：读取可选模板。用户要求上传材料用作主模板时用 {{"action":"template_import","source_id":"DOCX来源ID"}} 启动一次准备；准备完成后 generate.requirements.template_id 选择具体版本。需要重新准备已有模板版式时，用 {{"action":"template_rebuild","template_id":"已有模板ID"}} 从保留原件创建新模板版本；原模板和已绑定稿件保持不变，新任务选择返回的新模板ID。
 - {{"action":"read_report","version_id":"稿件ID"}}：读取富文档 JSON 和引用。用户明确要求修改内容/章节/图表时，将修改后的 JSON 保存到工作区文件，再用 {{"action":"revise_document","base_version":"刚读取版本ID","document_file":"工作区内JSON绝对路径"}} 保存新版本，不覆盖用户并发编辑。
 - {{"action":"import_word_revision","base_version":"用户指定基础版本","source_id":"DOCX来源ID"}}：导入用户修改的 Word。返回 needs_alignment 时先核对原件和基础版本，向用户说明对齐问题；仅按用户明确选择提供 accept_unaligned=true。用户希望更新模板时另用 template_import 并提供 parent_id。
 - {{"action":"generate","requirements":{{"title":"标题","objective":"用户目的","audience":"读者","language":"中文","extent":"compact|balanced|detailed","allow_web":{str(bool(allow_web)).lower()},"period":"时间范围"}},"source_ids":["真实来源ID"],"runtime":{runtime_json}}}：正式生成可在页面编辑的简报。

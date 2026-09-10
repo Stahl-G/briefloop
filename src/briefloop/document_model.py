@@ -17,11 +17,12 @@ CHILDREN = {
     'codeBlock': {'text'},
 }
 ATTRS = {
+    'table': {'blockId'},
     'paragraph': {'textAlign', 'blockId'}, 'heading': {'level', 'textAlign', 'blockId'},
     'orderedList': {'start', 'type'}, 'codeBlock': {'language'},
-    'tableCell': {'colspan', 'rowspan', 'colwidth', 'backgroundColor', 'textAlign', 'align'},
-    'tableHeader': {'colspan', 'rowspan', 'colwidth', 'backgroundColor', 'textAlign', 'align'},
-    'image': {'src', 'alt', 'title', 'width', 'height', 'caption'},
+    'tableCell': {'colspan', 'rowspan', 'colwidth', 'backgroundColor', 'textAlign', 'align', 'blockId'},
+    'tableHeader': {'colspan', 'rowspan', 'colwidth', 'backgroundColor', 'textAlign', 'align', 'blockId'},
+    'image': {'src', 'alt', 'title', 'width', 'height', 'caption', 'blockId'},
     'citation': {'sourceId'},
 }
 MARKS = {'bold': set(), 'italic': set(), 'strike': set(), 'underline': set(),
@@ -141,7 +142,7 @@ def normalize_document(value):
     result = walk(value)
     if result['type'] != 'doc': raise ValueError('报告根节点必须为 doc')
     if len(json.dumps(result, ensure_ascii=False)) > 3_000_000: raise ValueError('报告文档过大')
-    return result
+    return anchor_document(result)
 
 
 def document_hash(document):
@@ -263,3 +264,19 @@ def source_ids(document):
 def brief_document(brief):
     raw = brief.get('editor_document')
     return normalize_document(json.loads(raw) if isinstance(raw, str) else raw) if raw else markdown_document(brief['markdown'])
+
+
+def anchor_document(document):
+    """Persist IDs for editable content; existing IDs survive ordinary edits."""
+    seen=set()
+    def walk(node,path):
+        if node['type'] in ('paragraph','heading','table','tableCell','tableHeader','image'):
+            attrs=node.setdefault('attrs',{})
+            identity=attrs.get('blockId')
+            if not identity or identity in seen:
+                identity='block_'+hashlib.sha256(json.dumps([path,node],ensure_ascii=False,sort_keys=True).encode()).hexdigest()[:20]
+                attrs['blockId']=identity
+            seen.add(identity)
+        for i,child in enumerate(node.get('content',[])):walk(child,path+[i])
+    walk(document,[])
+    return document

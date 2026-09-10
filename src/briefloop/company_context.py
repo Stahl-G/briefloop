@@ -31,24 +31,25 @@ def propose(store, value):
         previous=c.execute("SELECT * FROM company_facts WHERE fact_key=? AND status='accepted' ORDER BY rowid DESC LIMIT 1",(value['key'],)).fetchone()
         if previous and previous['value']==value['value'] and previous['source_id']==source['id'] and previous['effective_date']==value['effective_date']:
             return dict(previous)
-        status='pending' if origin=='user' and previous and previous['value']!=value['value'] else 'accepted'
+        status='pending' if previous and previous['value']!=value['value'] else 'accepted'
         # Older-dated reports enrich history without replacing a newer effective fact.
-        if previous and value['effective_date']<previous['effective_date']:status='historical'
+        if previous and previous['value']==value['value'] and value['effective_date']<previous['effective_date']:status='historical'
         fid=uid('fact')
         c.execute('INSERT INTO company_facts VALUES(?,?,?,?,?,?,?,?,?,?,?)',(fid,value['key'],value['value'],source['id'],value.get('locator',''),value['effective_date'],origin,status,previous['id'] if previous else None,now(),None))
+    if status=='pending':
+        from .conflicts import create
+        create(store,source_ids=[previous['source_id'],source['id']],fact_ids=[previous['id'],fid],description='企业背景同一条目存在分歧：'+value['key'])
     return store.rows('SELECT * FROM company_facts WHERE id=?',(fid,))[0]
 
 
 def resolve_conflict(store,fact_id,accept):
     if type(accept) is not bool:raise ValueError('请选择采用或保留原记录')
-    with store.tx() as c:
-        row=c.execute('SELECT * FROM company_facts WHERE id=?',(fact_id,)).fetchone()
-        if not row:raise ValueError('背景记录不存在')
-        if row['status']!='pending':raise ValueError('此条记录不再等待确认')
-        latest=c.execute("SELECT id FROM company_facts WHERE fact_key=? AND status='accepted' ORDER BY rowid DESC LIMIT 1",(row['fact_key'],)).fetchone()
-        if accept and latest and latest['id']!=row['previous_id']:raise ValueError('企业背景已有新的更新，请重新比较冲突')
-        c.execute('UPDATE company_facts SET status=?,resolved_at=? WHERE id=?',('accepted' if accept else 'rejected',now(),fact_id))
-    return snapshot(store)
+    from .conflicts import respond
+    for row in store.rows("SELECT * FROM conflicts WHERE status!='resolved'"):
+        if fact_id in json.loads(row['data'])['fact_ids']:
+            respond(store,row['id'],'prefer_new' if accept else 'keep_current','用户已选择'+('采用提交材料' if accept else '保留原记录')+'；仍需 Reviewer 对照原件复核')
+            return snapshot(store)
+    raise ValueError('此条目没有待处理的来源冲突')
 
 
 def prompt(store, run_id=None):
@@ -61,7 +62,7 @@ def prompt(store, run_id=None):
     return ('本工作区已启用企业背景知识库。先读当前背景：'+dump(context)+
             '\n本次按既有联网权限和共享预算扫描公司公开 PR、年报、季报等更新。用 company_update 保存有来源和有效日期的背景。'
             '区分披露日/统计期，新一期数值用明确的指标期间作为key；保留日期与来源。用户上传内容与已有记录冲突时工具返回pending，向用户提问并调用company_resolve。'
-            '公开资料之间的未决冲突保留在research_notes，不强行覆盖。引用背景时回到对应来源，确认本期适用性；背景摘要不是独立的新事实来源。')
+            '公开资料和用户材料的分歧均保留冲突记录并交Reviewer复核；用户选择不等于冲突已解决。引用背景时回到对应来源，确认本期适用性；背景摘要不是独立的新事实来源。')
 
 
 def review_status(store, run_id):
@@ -88,9 +89,6 @@ def complete_review(store, run_id, reviewed_sources, summary):
     missing=allowed-{item['source_id'] for item in sources}
     if missing:raise ValueError('企业背景检查尚未覆盖本轮材料：'+', '.join(sorted(missing)))
     context=snapshot(store)
-    if context['pending']:
-        store.set_meta('company_review_pending:'+run_id,{'reviewed_sources':sources,'summary':summary,'pending_ids':[x['id'] for x in context['pending']]})
-        raise ValueError('企业背景存在待确认的用户材料冲突，请在企业背景面板处理后恢复报告；正文尚未开始')
     if any(item['result']=='used' for item in sources) and not context['facts']:
         raise ValueError('已发现可用背景资料，请先用 company_update 保存企业背景条目')
     value={'run_id':run_id,'reviewed_sources':sources,'summary':summary.strip(),

@@ -12,7 +12,7 @@ async function api(path,data,retried=false){const r=await fetch('/api/'+path,dat
 function page(name){for(const id of ['chat','report','setup','learning'])$(id).hidden=id!==name;document.querySelectorAll('nav [data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===name));if(name==='learning')refreshCandidates();if(name==='setup')moveSearchSettings('setup');else if($('tavily-key'))$('tavily-key').value=''}
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>page(b.dataset.page));
 async function action(fn,message){try{await fn();if(message)notice(message);await refresh()}catch(e){notice(e.message,true)}}
-async function refresh(first=false){try{const next=await api('state');$('connection').textContent='本地已连接';const signature=JSON.stringify(next);state=next;renderWordExports();if(first||signature!==refresh.signature){refresh.signature=signature;render(first)}await refreshProgress();if(first||!$('learning').hidden)await refreshCandidates();if(first||!$('report').hidden)await refreshReportBudget()}catch(e){$('connection').textContent='连接中断';if(first)notice(e.message,true)}}
+async function refresh(first=false){try{const next=await api('state');$('connection').textContent='本地已连接';const signature=JSON.stringify(next);state=next;renderWordExports();if($('release-dialog')?.open)refreshReleaseState().catch(e=>notice(e.message,true));if(first||signature!==refresh.signature){refresh.signature=signature;render(first)}await refreshProgress();if(first||!$('learning').hidden)await refreshCandidates();if(first||!$('report').hidden)await refreshReportBudget()}catch(e){$('connection').textContent='连接中断';if(first)notice(e.message,true)}}
 // BEGIN_FIGURE_EDITOR_MAPPING: also exercised against the real MarkdownManager.
 const figureImagePattern=/(!\[(?:\\.|[^\]\\])*\]\()\s*(<?[^)\s]+>?)(\s+(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'))?\s*(\))/g;
 function figureIdFromUrl(value){
@@ -35,7 +35,8 @@ function updateDownloads(brief){
 const statuses={queued:'等待运行',running:'正在运行',complete:'已完成',failed:'未完成',interrupted:'已中断',cancelled:'已停止'};
 function render(first){
  renderTemplates(first);
- if(first){$('timeout-minutes').value=state.settings.timeout_minutes;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.settings.auto_learn;$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',effortValue(state.settings,'reasoning_effort'));$('model-provider').value=state.settings.model_provider||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.model_variant||'';updateModelLabel();renderRoleModels();renderBackend();$('search-provider').value=state.settings.search_provider==='tavily'?'tavily':'native';renderSearchProvider();refreshModelSuggestions();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{})}
+ if($('review-open'))$('review-open').textContent='审阅与需处理'+(state.conflicts?.length?' · '+state.conflicts.length+' 项来源分歧':'');
+ if(first){$('timeout-minutes').value=state.settings.timeout_minutes;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.settings.auto_learn;$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',effortValue(state.settings,'reasoning_effort'));$('model-provider').value=state.settings.model_provider||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.model_variant||'';updateModelLabel();renderRoleModels();renderBackend();$('search-provider').value=state.settings.search_provider==='tavily'?'tavily':'native';renderSearchProvider();refreshModelSuggestions();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{})}
  $('source-count').textContent=state.sources.length+' 份';$('source-list').innerHTML=state.sources.map(s=>`<div class="source-item"><input type="checkbox" data-check="${s.id}" ${selected.has(s.id)?'checked':''} aria-label="选择 ${esc(s.name)}"><button data-source="${s.id}">${esc(s.name)}</button><span class="tag ${s.status==='failed'?'error':''}">${s.status==='failed'?'读取失败':s.needs_visual?'需视觉读取':'可读取'}</span>${s.status==='failed'?`<button data-retry-source="${s.id}">重试</button>`:''}</div>`).join('');
  document.querySelectorAll('[data-retry-source]').forEach(b=>b.onclick=()=>action(async()=>{const s=await api('retry-source',{source_id:b.dataset.retrySource});selected.delete(b.dataset.retrySource);selected.add(s.id);notice(s.status==='ready'?'来源已重新读取':s.error,s.status!=='ready')}));
  document.querySelectorAll('[data-check]').forEach(b=>b.onchange=()=>{if(b.checked){selected.add(b.dataset.check);referenceSelected.delete(b.dataset.check);renderReferenceSources()}else selected.delete(b.dataset.check)});renderReferenceSources();
@@ -51,7 +52,7 @@ function render(first){
 
  tryOpenPending();if(!current&&state.briefs.length)openBrief(state.briefs[0],{follow:true});if(current&&followUpdates&&!dirty&&!saving){const latest=state.briefs.find(b=>b.run_id===current.run_id);if(latest?.parent_id===current.id&&latest.author==='agent')openBrief(latest,{follow:true})}if(current){$('version-select').value=current.id;assessment();citations();renderBriefLength()}
  $('empty').hidden=!!current||state.jobs.length>0;$('document-area').hidden=!current;
- $('jobs').innerHTML=state.jobs.map(j=>`<div class="job"><span class="tag ${j.status==='failed'?'error':''}">${statuses[j.status]}</span><div class="job-main">${{generate:'生成简报',assess:'重新评分',learn:'WikiSkill 学习',export_docx:'生成 Word',prepare_template:'准备模板'}[j.kind]}<small>${j.kind==='export_docx'?'本地脚本':parse(j.payload).runtime?esc(modelLabel(parse(j.payload).runtime)):'旧任务：沿用当时本机配置'} · ${j.progress?`第 ${j.progress.round}/${j.progress.k} 轮 · ${{maintainer:'整理经验',proposer:'提出候选',validation:'验证候选'}[j.progress.phase]||j.progress.phase} · `:''}${esc(j.error||new Date(j.created).toLocaleString())}</small></div>${j.kind==='learn'?`<button data-details="${j.id}">查看比较</button>`:''}${['queued','running'].includes(j.status)?`<button data-stop="${j.id}">停止</button>`:''}${['failed','interrupted','cancelled'].includes(j.status)?`<button data-resume="${j.id}">恢复</button>`:''}</div>`).join('');
+ $('jobs').innerHTML=state.jobs.map(j=>`<div class="job"><span class="tag ${j.status==='failed'?'error':''}">${statuses[j.status]}</span><div class="job-main">${{generate:'生成简报',assess:'重新评分',review:'独立审阅',revise:'按审阅修订',learn:'WikiSkill 学习',export_docx:'生成工作稿 Word',release:'制作正式 Word',audit_bundle:'制作审计包',source_refresh:'复查来源',prepare_template:'准备模板'}[j.kind]}<small>${['export_docx','release','audit_bundle'].includes(j.kind)?'本地脚本':j.kind==='source_refresh'?'来源工具':parse(j.payload).runtime?esc(modelLabel(parse(j.payload).runtime)):'旧任务：沿用当时本机配置'} · ${j.progress?`第 ${j.progress.round}/${j.progress.k} 轮 · ${{maintainer:'整理经验',proposer:'提出候选',validation:'验证候选'}[j.progress.phase]||j.progress.phase} · `:''}${esc(j.error||(j.kind==='source_refresh'?sourceRefreshOutcome(parse(j.result).outcome):'')||new Date(j.created).toLocaleString())}</small></div>${j.kind==='learn'?`<button data-details="${j.id}">查看比较</button>`:''}${['queued','running'].includes(j.status)?`<button data-stop="${j.id}">停止</button>`:''}${['failed','interrupted','cancelled'].includes(j.status)?`<button data-resume="${j.id}">恢复</button>`:''}</div>`).join('');
  document.querySelectorAll('[data-stop]').forEach(b=>b.onclick=()=>action(()=>api('stop',{job_id:b.dataset.stop})));document.querySelectorAll('[data-resume]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.resume})));
  document.querySelectorAll('[data-details]').forEach(b=>b.onclick=()=>action(async()=>{const d=await api('learning-details?job='+b.dataset.details);$('source-title').textContent='技能比较与依据';$('source-original').hidden=true;$('source-provenance').hidden=true;$('source-link').textContent='';$('source-body').textContent=d.rounds.length?d.rounds.map((r,i)=>`第 ${i+1} 轮\n${r.result?.reason||'比较尚未完成'}\n${(r.result?.pairs||[]).map(p=>({better:'候选更好',tie:'差不多，保留原技能',worse:'原稿更好'}[p.verdict])+': '+p.reason).join('\n')}\n\n`+r.cases.map(c=>`任务：${c.requirements.title}\n\n旧版\n${gradeSummary(c.baseline.assessment)}\n${c.baseline.reader_markdown||c.baseline.markdown}\n\n候选\n${gradeSummary(c.candidate.assessment)}\n${c.candidate.reader_markdown||c.candidate.markdown}`).join('\n\n')).join('\n\n'):d.job.error||'比较尚未开始；先整理 Wiki 和提出候选。';$('source-dialog').showModal()}));
  $('skills').innerHTML=`<div class="skill">${state.active_skill?'当前启用 '+esc(state.active_skill):'当前使用基础任务提示词'}${state.active_skill?'<button data-rollback="">回到基础版本</button>':''}</div>`+state.skills.map(s=>`<div class="skill"><strong>${esc(s.id)}</strong><p>${esc(s.reason)}</p>${s.id===state.active_skill?'<span class="tag">正在使用</span>':`<button data-rollback="${s.id}" class="outline">使用这个版本</button>`}</div>`).join('');document.querySelectorAll('[data-rollback]').forEach(b=>b.onclick=()=>action(()=>api('rollback',{skill_id:b.dataset.rollback||null}),'下一轮将使用所选技能'));
@@ -129,7 +130,7 @@ function assessment(){if(!current)return;queueMicrotask(renderDeliveryChecks);co
 function citations(){const refs=(parse(current.detail).citations||[]).filter(r=>toEditor(current.markdown).includes('#source-'+r.source_id));$('citations').innerHTML=refs.length?'引用来源 '+refs.map(r=>`<button data-source="${esc(r.source_id)}">${esc(state.sources.find(s=>s.id===r.source_id)?.name||r.source_id)} · ${esc(r.locator)}</button>`).join(''):'尚无引用记录';bindSources()}
 function bindSources(){document.querySelectorAll('[data-source]').forEach(b=>b.onclick=()=>action(async()=>{const r=await api('source?id='+b.dataset.source);showSource(r)}))}
 $('close-source').onclick=()=>$('source-dialog').close();
-$('requirements').onsubmit=e=>{e.preventDefault();action(async()=>{const f=new FormData(e.target),req=Object.fromEntries(f.entries());if(req.writing_mode==='internal_report'&&state.settings.company_context_enabled==null){$('company-choice-dialog').showModal();return}req.allow_web=f.has('allow_web');req.target_words=Number(req.target_words);req.max_words=Number(req.max_words);req.research_budget=readResearchBudget();req.reference_source_ids=req.report_profile==='industry_periodic'?[...referenceSelected]:[];req.template_id=req.template_id||null;req.sections=readTemplateSections();req.manual_sections=(req.manual_sections_text||'').split('\n').map(x=>x.trim()).filter(Boolean);for(const title of req.manual_sections){const found=req.sections.find(s=>s.title===title);if(found){found.mode='manual';found.placeholder='待填充'}}delete req.manual_sections_text;req.raw_input=req.objective;delete req.runtime_model;delete req.runtime_effort;await saveModel();if(current)await savedVersion();const job=await api('generate',{requirements:req,source_ids:[...selected].filter(id=>!req.reference_source_ids.includes(id))});pendingRun=parse(job.payload).run_id;page('report');notice('任务已排队，后台会生成简报')})};
+$('requirements').onsubmit=e=>{e.preventDefault();action(async()=>{const f=new FormData(e.target),req=Object.fromEntries(f.entries());if(req.writing_mode==='internal_report'&&state.settings.company_context_enabled==null){$('company-choice-dialog').showModal();return}req.allow_web=f.has('allow_web');req.target_words=Number(req.target_words);req.max_words=Number(req.max_words);req.research_budget=readResearchBudget();req.reference_source_ids=req.report_profile==='industry_periodic'?[...referenceSelected]:[];req.template_id=req.template_id||null;req.sections=readTemplateSections();req.key_questions=(req.key_questions_text||'').split('\n').map(x=>x.trim()).filter(Boolean);delete req.key_questions_text;req.manual_sections=(req.manual_sections_text||'').split('\n').map(x=>x.trim()).filter(Boolean);for(const title of req.manual_sections){const found=req.sections.find(s=>s.title===title);if(found){found.mode='manual';found.placeholder='待填充'}}delete req.manual_sections_text;req.raw_input=req.objective;delete req.runtime_model;delete req.runtime_effort;await saveModel();if(current)await savedVersion();const job=await api('generate',{requirements:req,source_ids:[...selected].filter(id=>!req.reference_source_ids.includes(id))});pendingRun=parse(job.payload).run_id;page('report');notice('任务已排队，后台会生成简报')})};
 $('upload').onchange=e=>action(async()=>{for(const f of e.target.files){const buf=new Uint8Array(await f.arrayBuffer());let b='';for(let i=0;i<buf.length;i+=8192)b+=String.fromCharCode(...buf.subarray(i,i+8192));const s=await api('upload',{name:f.name,data:btoa(b)});selected.add(s.id)}e.target.value=''},'来源已保存');
 $('add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('source-url').value});selected.add(s.id);$('source-url').value='';notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
 $('rescore').onclick=()=>action(async()=>{await savedVersion();await api('assess',{version_id:current.id})},'已提交评分');
@@ -149,14 +150,33 @@ function gradeSummary(a){return a?`评分：证据 ${a.evidence??'—'}/5 · 覆
 
 function effectiveReportJobs(){
  const runId=pendingRun||current?.run_id;
+ const version=current?.run_id===runId?current:state.briefs.find(b=>b.run_id===runId);
  const superseded=new Set(state.jobs.map(j=>parse(j.payload).previous_job_id).filter(Boolean));
- return state.jobs.filter(j=>j.kind!=='export_docx'&&!superseded.has(j.id)&&(j.kind==='learn'||!runId||parse(j.payload).run_id===runId||state.briefs.some(b=>b.run_id===runId&&b.id===parse(j.payload).version_id)));
+ const latestChecks=new Set();
+ return state.jobs.filter(j=>{
+  if(['export_docx','release','audit_bundle'].includes(j.kind)||superseded.has(j.id))return false;
+  if(j.kind==='learn'||!runId)return true;
+  const payload=parse(j.payload),result=parse(j.result)||{};
+  if(payload.run_id!==runId&&!state.briefs.some(b=>b.run_id===runId&&(b.id===payload.version_id||b.id===result.version_id)))return false;
+  // Keep ongoing work visible; finished attempts describe the selected document.
+  if(['running','queued'].includes(j.status)||!version)return true;
+  if(['review','assess'].includes(j.kind)){
+   if(payload.version_id!==version.id||latestChecks.has(j.kind))return false;
+   latestChecks.add(j.kind);return true;
+  }
+  if(['generate','revise'].includes(j.kind)){
+   // A failed producer may have admitted its document before recording a result.
+   const produced='brief_'+j.id.slice(4);
+   return result.version_id===version.id||version.id===produced||version.id===produced+'_r1'||(j.kind==='revise'&&payload.version_id===version.id);
+  }
+  return true;
+ });
 }
 let progressRequest=false;
 async function refreshProgress(){
  if(progressRequest||!state)return;
  const relevant=effectiveReportJobs();
- const job=relevant.find(j=>['running','queued'].includes(j.status));
+ const job=relevant.find(j=>j.status==='running')||relevant.find(j=>j.status==='queued');
  if(!job){
  const paused=relevant.find(j=>['cancelled','interrupted','failed'].includes(j.status));
  $('run-progress').hidden=!paused;
@@ -165,6 +185,11 @@ async function refreshProgress(){
 }
  progressRequest=true;
  try{
+  if(job.kind==='source_refresh'){
+   const payload=parse(job.payload),source=state.sources.find(s=>s.id===payload.source_id);
+   $('run-progress').hidden=false;$('run-progress').innerHTML=`<div class="section-title"><h2>${job.status==='queued'?'来源复查已排队':'正在复查来源'}</h2><button class="outline" id="progress-stop">停止任务</button></div><p>${esc(source?.name||'当前来源')}</p><p class="help">按本轮联网范围和预算获取新快照；已有来源与报告保留。复查完成后，来源变化仍需判断和复核。</p>`;
+   $('progress-stop').onclick=()=>action(()=>api('stop',{job_id:job.id}));return;
+  }
   const [events,live]=await Promise.all([api('events?job='+job.id),api('runtime')]);
   const last=[...events].reverse().find(e=>e.kind==='runtime_progress');
   const p=last?parse(last.data):{};const started=[...events].reverse().find(e=>e.kind==='runtime_started');const start=started?parse(started.data):{};
@@ -721,17 +746,23 @@ $('paragraph-align').onchange=e=>{if(!editor)return;const type=editor.isActive('
 function renderWordExports(){
  const box=$('word-exports');if(!box||!state)return;
  const scope=current?.id||'';box.dataset.version=scope;
- const jobs=state.jobs.filter(j=>j.kind==='export_docx'&&(!current||parse(j.payload).run_id===current.run_id));
+ const fileKinds={export_docx:'工作稿 Word',release:'正式 Word',audit_bundle:'审计包'};
+ const jobs=state.jobs.filter(j=>fileKinds[j.kind]&&(!current||parse(j.payload).run_id===current.run_id));
  box.hidden=!jobs.length;
- box.innerHTML=jobs.slice(0,3).map(j=>{const result=parse(j.result),payload=parse(j.payload);return `<div class="job"><span>${j.status==='complete'?'Word 已生成':statuses[j.status]||j.status}</span><small>${payload.version_id===current?.id?'当前稿件版本':'历史稿件版本'}</small>${j.status==='complete'?`<a href="${esc(result.download_url)}" download="report.docx">下载 Word</a>`:`<span>${esc(j.error||'正文已固定，制作不影响继续编辑')}</span>`}</div>`}).join('');
+ box.innerHTML=jobs.slice(0,6).map(j=>{const result=parse(j.result),payload=parse(j.payload);const url=j.kind==='release'?'/api/release-file?id='+encodeURIComponent(payload.release_id):j.kind==='audit_bundle'?'/api/audit-file?job='+encodeURIComponent(j.id):result.download_url;return `<div class="job"><span>${fileKinds[j.kind]} · ${j.status==='complete'?'已制作':statuses[j.status]||esc(j.status)}</span><small>${payload.version_id===current?.id?'当前稿件版本':'历史稿件版本'}</small>${j.status==='complete'&&url?`<a href="${esc(url)}" download>下载${fileKinds[j.kind]}</a>`:`<span>${esc(j.error||'使用提交时固定的版本，可继续编辑')}</span>`}</div>`}).join('');
  const active=jobs.find(j=>j.status==='running');
- if(active)api('events?job='+active.id).then(events=>{const last=[...events].reverse().find(e=>e.kind==='export_progress');if(last&&box.isConnected&&box.dataset.version===scope){const p=parse(last.data);const meter=document.createElement('div');meter.textContent=p.message;const progress=document.createElement('progress');progress.max=p.total;progress.value=p.step;meter.append(progress);box.append(meter)}}).catch(()=>{});
+ if(active)api('events?job='+active.id).then(events=>{const last=[...events].reverse().find(e=>e.kind==='export_progress');if(last&&box.isConnected&&box.dataset.version===scope){const p=parse(last.data);const meter=document.createElement('div');meter.textContent=p.message;const progress=document.createElement('progress');if(Number.isFinite(p.total)&&Number.isFinite(p.step)){progress.max=p.total;progress.value=p.step}progress.setAttribute('aria-label',p.message||'文件制作中');meter.append(progress);box.append(meter)}}).catch(()=>{});
 }
+
 $('research-notes').onclick=()=>action(async()=>{const version=await savedVersion();const record=await api('research-notes?version='+version);resetSourceMedia();$('source-title').textContent='核查与待补';$('source-original').hidden=true;$('source-provenance').hidden=true;$('source-link').textContent='';$('source-body').textContent=[...record.gaps,...record.notes.map(n=>JSON.stringify(n,null,2)),'引用核查',...record.citations.map(c=>c.source_name+' · '+(c.locator||'')+(c.excerpt?'\n'+c.excerpt:''))].join('\n\n');$('source-dialog').showModal()});
 
 function readTemplateSections(){
- const template=state?.templates?.find(t=>t.id===$('template-select').value),original=parse(template?.spec).sections||[];
- return [...$('template-sections').querySelectorAll('[data-section-id]')].map(row=>{const base=original.find(s=>s.section_id===row.dataset.sectionId)||{};return {section_id:row.dataset.sectionId,title:row.querySelector('[data-title]').value,purpose:base.purpose||'',mode:row.querySelector('select').value,placeholder:'待填充'}});
+ const templateId=$('template-select').value,template=state?.templates?.find(t=>t.id===templateId),original=parse(template?.spec).sections||[];
+ const saved=templateId&&state.requirements?.template_id===templateId?state.requirements.sections||[]:[];
+ return [...$('template-sections').querySelectorAll('[data-section-id]')].map(row=>{
+  const base=original.find(s=>s.section_id===row.dataset.sectionId)||{},requirement=saved.find(s=>s.section_id===row.dataset.sectionId);
+  return {section_id:row.dataset.sectionId,title:row.querySelector('[data-title]').value,purpose:row.querySelector('[data-purpose]')?.value??requirement?.purpose??base.purpose??'',mode:row.querySelector('select').value,placeholder:'待填充'};
+ });
 }
 function templateSections(){
  const selected=state?.templates?.find(t=>t.id===$('template-select').value),sections=parse(selected?.spec).sections||[];
@@ -761,12 +792,12 @@ $('word-import-file').onchange=e=>action(async()=>{const file=e.target.files[0];
 
 $('template-default').onclick=()=>action(()=>api('settings',{default_template_id:$('template-select').value||null}),'已保存工作区默认模板');
 
-$('provider-open').onclick=()=>{$('provider-result').textContent='';$('provider-dialog').showModal()};
+$('provider-open').onclick=()=>{$('provider-result').textContent='';$('custom-supports-images').value='';$('provider-dialog').showModal()};
 $('provider-close').onclick=()=>{$('custom-api-key').value='';$('provider-dialog').close()};
 $('provider-dialog').addEventListener('close',()=>{$('custom-api-key').value=''});
 $('provider-form').onsubmit=async event=>{
  event.preventDefault();const button=$('provider-save');button.disabled=true;$('provider-result').textContent='正在保存到 Opencode…';
- const body={provider:$('custom-provider').value.trim(),base_url:$('custom-base-url').value.trim(),model:$('custom-model').value.trim(),api_key:$('custom-api-key').value};
+ const body={provider:$('custom-provider').value.trim(),base_url:$('custom-base-url').value.trim(),model:$('custom-model').value.trim(),api_key:$('custom-api-key').value,supports_images:$('custom-supports-images').value===''?null:$('custom-supports-images').value==='true'};
  $('custom-api-key').value='';
  try{
   const result=await api('opencode/provider',body);body.api_key='';
@@ -789,3 +820,135 @@ async function chooseCompanyContext(enabled){
 $('company-choice-enable').onclick=()=>action(()=>chooseCompanyContext(true));
 $('company-choice-skip').onclick=()=>action(()=>chooseCompanyContext(false));
 $('company-choice-cancel').onclick=()=>$('company-choice-dialog').close();
+
+async function showEvidence(blockId=null){
+ const version=await savedVersion();if(!version)return;
+ const data=await api('evidence?version='+encodeURIComponent(version));
+ $('evidence-summary').textContent=data.note;
+ const states={unreviewed:'语义待审阅',needs_review:'正文已改，需复核',anchor_missing:'正文锚点已失效',source_changed:'来源已变，需复核',premise_changed:'前提依据已变，需复核',premise_cycle:'前提关联异常'};
+ const rows=blockId?data.bindings.filter(b=>b.block_id===blockId):data.bindings;
+ $('evidence-list').innerHTML=rows.length?rows.map(b=>`<article class="evidence-card"><span class="tag">${esc(states[b.status]||b.status)}</span><h3>${esc(b.claim.data.statement)}</h3><p>正文：${esc(b.quote)}</p>${b.claim.data.reasoning?`<p>推断依据：${esc(b.claim.data.reasoning)}</p>`:''}${b.evidence.map(e=>`<details open><summary>${esc(e.source_name)} · ${esc(evidenceLocation(e.data.locator))}</summary><p>支持范围：${esc(e.supports_quote)}</p><blockquote>${esc(e.data.excerpt)}</blockquote><p class="help">${esc(e.data.extraction_method)} · ${esc(e.data.location_status)}${e.intact?'':' · 原件或文本已变化'}</p><button type="button" data-evidence-source="${esc(e.source_id)}">查看原始来源</button></details>`).join('')}${premiseCards(b.premises||[])}</article>`).join(''):'<p>当前范围尚未登记证据绑定，不能据此判断已经核验。</p>';
+ $('evidence-list').querySelectorAll('[data-evidence-source]').forEach(button=>button.onclick=()=>{ $('evidence-dialog').close();action(async()=>showSource(await api('source?id='+encodeURIComponent(button.dataset.evidenceSource)))) });
+ $('evidence-dialog').showModal();
+}
+$('evidence-open').onclick=()=>action(()=>showEvidence());
+$('evidence-close').onclick=()=>$('evidence-dialog').close();
+$('evidence-selection').onclick=()=>action(()=>{
+ const selection=editor?.state.selection;let id=selection?.node?.attrs.blockId;
+ if(!id&&selection)for(let depth=selection.$from.depth;depth>0;depth--){id=selection.$from.node(depth).attrs.blockId;if(id)break}
+ return showEvidence(id||null);
+});
+function evidenceLocation(locator){
+ if(locator.kind==='text')return `第 ${locator.start_line}–${locator.end_line} 行`;
+ if(locator.kind==='pdf')return `第 ${locator.page} 页`;
+ if(locator.kind==='xlsx')return `${locator.sheet} · ${locator.cells}`;
+ return locator.region?'图像指定区域':'图像原件';
+}
+
+$('review-start').onclick=()=>action(async()=>{const version=await savedVersion();if(version)await api('review',{version_id:version})},'已提交独立只读审阅');
+$('review-close').onclick=()=>$('review-dialog').close();
+$('review-open').onclick=()=>action(async()=>{
+ const version=await savedVersion();if(!version)return;const data=await api('review-status?version='+encodeURIComponent(version));
+ const states={queued:'等待审阅',running:'审阅中',complete:'已返回审阅结果',incomplete:'审阅未完成',cancelled:'已停止',open:'待处理',addressed_pending_review:'已回应，待复核',resolved:'已复核解决',dismissed_with_evidence:'有依据排除'};
+ $('review-list').innerHTML=(data.conflicts||[]).filter(c=>c.status!=='resolved').map(c=>`<article class="evidence-card"><span class="tag error">来源分歧 · ${esc(states[c.status]||c.status)}</span><p>${esc(c.data.description)}</p><p>已提醒不等于已解决，需由独立Reviewer核对双方依据。</p></article>`).join('')+(data.reviews||[]).map(r=>reviewResultHTML(r,states,data.requirements||parse(state.runs.find(run=>run.id===current?.run_id)?.requirements))).join('')+(data.reviews.length?'':'<p>当前版本尚未审阅，不能视为已通过。</p>')+data.findings.map(f=>`<article class="evidence-card"><span class="tag">${esc(states[f.status]||f.status)} · ${f.data.severity==='major'?'重要问题':'一般问题'}</span><h3>${esc(f.data.description)}</h3><blockquote>${esc(f.data.report_quote)}</blockquote><p>依据：${esc(f.data.evidence)}</p><p>${esc(f.data.suggested_action)}</p><p class="help">目标版本：${esc(f.version_id)}</p>${['open','addressed_pending_review'].includes(f.status)?`<form data-finding-response="${f.id}"><select name="action"><option value="corrected">已修改当前稿</option><option value="removed">已移除相关主张</option><option value="disagree">提出有依据的异议</option></select><textarea name="reason" required placeholder="说明修改位置或异议依据"></textarea><button type="submit">提交处理说明，等待复核</button></form>`:''}</article>`).join('');
+ $('review-list').querySelectorAll('[data-finding-response]').forEach(form=>form.onsubmit=e=>{e.preventDefault();action(async()=>{const target=await savedVersion();await api('review-response',{finding_id:form.dataset.findingResponse,version_id:target,action:form.elements.action.value,reason:form.elements.reason.value});$('review-dialog').close()},'处理说明已保存；只有独立复核才能关闭问题')});
+ $('review-dialog').showModal();
+});
+
+$('review-revise').onclick=()=>action(async()=>{const version=await savedVersion();if(version)await api('revise-findings',{version_id:version})},'已安排一次针对性修订及独立复核');
+
+function premiseCards(premises){return premises.map(p=>`<details><summary>间接依据／前提：${esc(p.claim?.data.statement||p.claim_id)}${p.status==='unreviewed'?'':' · 依据需复核'}</summary>${(p.evidence||[]).map(e=>`<p>${esc(e.source_name)} · ${esc(evidenceLocation(e.data.locator))}</p><blockquote>${esc(e.data.excerpt)}</blockquote><button type="button" data-evidence-source="${esc(e.source_id)}">查看原始来源</button>`).join('')}${premiseCards(p.premises||[])}</details>`).join('')}
+
+// Formal delivery is an explicit action over a saved version; draft export stays available.
+let releaseView={version:null,data:null,loading:false},auditTarget=null;
+const releaseStatus={pending:'等待制作',released:'正式件已保存',failed:'制作未完成',cancelled:'已停止'};
+const changeTypeLabel={initial:'首次交付',correction:'更正',update:'后续信息更新'};
+const displayDate=value=>value?new Date(value).toLocaleString():'时间未记录';
+function releaseEligibilityHTML(eligibility){
+ if(!eligibility)return '<p>交付条件暂不可用，尚未判定通过。</p>';
+ const blockers=eligibility.blockers||[],notices=eligibility.notices||[];
+ return `<h3>${eligibility.eligible?'当前版本满足正式交付条件':'当前版本还有需处理事项'}</h3>${blockers.length?`<ul class="release-blockers">${blockers.map(item=>`<li>${esc(item.message||item)}</li>`).join('')}</ul>`:''}${notices.length?`<details open><summary>保留的提示 · ${notices.length} 项</summary><ul>${notices.map(item=>`<li>${esc(item.message||item)}</li>`).join('')}</ul></details>`:''}${eligibility.eligible?'':'<p class="help">工作稿仍可编辑和下载。请在“审阅与需处理”中处理问题后复核。</p>'}`;
+}
+function releaseCardHTML(release){
+ const job=state.jobs.find(j=>j.id===release.job_id),status=release.status==='released'?releaseStatus.released:statuses[job?.status]||releaseStatus[release.status]||release.status;
+ const change=changeTypeLabel[release.change_type]||(release.previous_id?'关联旧正式件':'首次交付');
+ return `<article class="release-card"><div class="section-title"><strong>${esc(change)} · ${esc(displayDate(release.created))}</strong><span class="tag">${esc(status)}</span></div><p class="help">${release.version_id===current?.id?'当前正在查看的稿件版本':'历史稿件版本'}${release.previous_id?' · 关联旧正式件 '+esc(release.previous_id.slice(-8)):''}</p>${release.change_reason?`<p>${esc(release.change_reason)}</p>`:''}${job?.error?`<p class="error">${esc(job.error)}</p>`:''}${release.status==='released'?`<div class="release-actions"><a href="/api/release-file?id=${encodeURIComponent(release.id)}" download>下载正式 Word</a><button type="button" data-audit-release="${esc(release.id)}">导出审计包…</button></div>`:'<p class="help">任务进度见报告下方的文件制作记录。</p>'}</article>`;
+}
+async function refreshReleaseState(){
+ if(releaseView.loading||!$('release-dialog').open)return;
+ const version=current?.id;if(!version)return;
+ releaseView.loading=true;
+ try{
+  const data=await api('release-state?version='+encodeURIComponent(version));
+  if(!$('release-dialog').open||current?.id!==version)return;
+  releaseView.version=version;releaseView.data=data;
+  $('release-eligibility').innerHTML=(dirty?'<p class="help">有未保存修改，下列条件针对上次保存的版本。</p>':'')+releaseEligibilityHTML(data.eligibility);
+  $('release-submit').disabled=dirty||saving||!data.eligibility?.eligible||releaseView.submitting;
+  const released=(data.releases||[]).filter(r=>r.status==='released');
+  const previous=$('release-previous'),choices=released.map(r=>r.id).join(',');
+  if(previous.dataset.choices!==choices){const chosen=previous.value;previous.innerHTML='<option value="">首次交付</option>'+released.map(r=>`<option value="${esc(r.id)}">${esc(displayDate(r.created))} · ${esc(changeTypeLabel[r.change_type]||'正式件')} · ${esc(r.id.slice(-8))}</option>`).join('');previous.dataset.choices=choices;if(released.some(r=>r.id===chosen))previous.value=chosen;updateReleaseChangeFields()}
+  const html=(data.releases||[]).map(releaseCardHTML).join('')||'<p class="help">此报告尚无正式交付记录。</p>';
+  if($('release-list').innerHTML!==html){$('release-list').innerHTML=html;$('release-list').querySelectorAll('[data-audit-release]').forEach(button=>button.onclick=()=>openAuditBundle(button.dataset.auditRelease))}
+ }finally{releaseView.loading=false}
+}
+function updateReleaseChangeFields(){const linked=!!$('release-previous').value;$('release-change-fields').hidden=!linked;$('release-change-reason').required=linked}
+$('release-previous').onchange=updateReleaseChangeFields;
+$('release-open').onclick=()=>action(async()=>{await savedVersion();$('release-eligibility').textContent='正在核对当前版本的交付条件…';$('release-submit').disabled=true;$('release-dialog').showModal();await refreshReleaseState()});
+$('release-close').onclick=()=>$('release-dialog').close();
+async function submitFormalRelease(){
+ const previous=$('release-previous').value,changeType=$('release-change-type').value,reason=$('release-change-reason').value.trim();
+ if(previous&&!reason)throw Error('请说明本次更正或更新的依据和影响');
+ const version=await savedVersion();
+ const payload={version_id:version};if(previous)Object.assign(payload,{previous_id:previous,change_type:changeType,change_reason:reason});
+ const result=await api('release',payload);
+ return result;
+}
+$('release-form').onsubmit=event=>{event.preventDefault();if(releaseView.submitting)return;releaseView.submitting=true;$('release-submit').disabled=true;action(async()=>{try{await submitFormalRelease();$('release-dialog').close();notice('正式 Word 已排队，使用本次提交时固定的版本')}finally{releaseView.submitting=false;await refreshReleaseState()}})};
+function openAuditBundle(releaseId){
+ const release=releaseView.data?.releases.find(r=>r.id===releaseId);if(!release||release.status!=='released'){notice('请先等待正式件制作完成',true);return}
+ auditTarget=release;
+ $('audit-target').textContent='正式件：'+displayDate(release.created)+' · '+(changeTypeLabel[release.change_type]||'首次交付')+' · '+release.id.slice(-8);
+ $('audit-source-list').innerHTML=(release.sources||release.data?.snapshot?.sources||[]).map(source=>`<label class="audit-source-row"><span>${esc(source.name||source.id)}</span><select data-audit-source="${esc(source.id)}" aria-label="${esc(source.name||source.id)}的打包范围"><option value="metadata">仅定位，不含原件和摘录</option><option value="excerpt">定位与证据摘录</option><option value="original">原件及证据摘录</option></select></label>`).join('')||'<p class="help">此正式件没有登记来源文件。</p>';
+ $('audit-submit').disabled=false;$('audit-dialog').showModal();
+}
+$('audit-close').onclick=()=>$('audit-dialog').close();
+$('audit-all-original').onclick=()=>{$('audit-source-list').querySelectorAll('[data-audit-source]').forEach(select=>select.value='original')};
+$('audit-all-metadata').onclick=()=>{$('audit-source-list').querySelectorAll('[data-audit-source]').forEach(select=>select.value='metadata')};
+async function submitAuditBundle(){
+ if(!auditTarget)throw Error('请先选择一个已保存的正式件');
+ const releaseId=auditTarget.id,permissions=Object.fromEntries([...$('audit-source-list').querySelectorAll('[data-audit-source]')].map(select=>[select.dataset.auditSource,select.value]));
+ return api('audit-bundle',{release_id:releaseId,source_permissions:permissions});
+}
+$('audit-form').onsubmit=event=>{event.preventDefault();if($('audit-submit').disabled)return;$('audit-submit').disabled=true;action(async()=>{try{await submitAuditBundle();$('audit-dialog').close();$('release-dialog').close();notice('审计包已排队，完成后可在文件制作记录下载')}finally{$('audit-submit').disabled=false}})};
+$('source-updates-close').onclick=()=>$('source-updates-dialog').close();
+$('source-updates-open').onclick=()=>action(async()=>{
+ const version=await savedVersion(),data=await api('source-update-state?version='+encodeURIComponent(version)),changes=Array.isArray(data)?data:data.changes||[];
+ const run=state.runs.find(item=>item.id===current.run_id),requirements=parse(run?.requirements),allowed=new Set(parse(run?.source_ids||'[]'));
+ const sources=state.sources.filter(source=>allowed.has(source.id));
+ $('source-refresh-source').innerHTML=sources.map(source=>`<option value="${esc(source.id)}">${esc(source.name)}</option>`).join('');
+ const localTime=new Date();localTime.setMinutes(localTime.getMinutes()-localTime.getTimezoneOffset());$('source-refresh-cutoff').value=localTime.toISOString().slice(0,16);
+ $('source-refresh-scope').textContent=requirements.allow_web?'按本轮已允许的联网范围和剩余预算复查；不会自动增加预算。':'本轮仅使用已有材料；在线复查不会执行，本地材料更新需上传独立的新文件。';
+ $('source-refresh-submit').disabled=!sources.length;
+ const availabilityLabel={after_cutoff:'本轮信息截止后披露',available_by_cutoff:'本轮信息截止前可得',availability_unknown:'可得时间未确认',overlapping_date_precision:'披露日期与截止日期重叠，需核对'};
+ const sourceName=id=>state.sources.find(s=>s.id===id)?.name||id;
+ $('source-updates-list').innerHTML=changes.map(change=>`<article class="evidence-card"><span class="tag">${change.review_status==='resolved'?'已复核处理':'待独立复核'} · ${esc(changeTypeLabel[change.data?.kind]||'变化性质待核对')}</span><h3>${esc(change.data?.description)}</h3><p>${esc(sourceName(change.old_source_id))} → ${esc(sourceName(change.new_source_id))}</p><p>适用范围：${esc(change.data?.scope)}</p><p>${esc(availabilityLabel[change.data?.new_availability]||'可得时间未确认')}</p><p class="help">关联 ${change.current_impacts?.versions?.length||0} 个稿件版本、${change.current_impacts?.releases?.length||0} 份正式件；历史文件保留。</p><button type="button" data-update-source="${esc(change.old_source_id)}">查看原来源</button><button type="button" data-update-source="${esc(change.new_source_id)}">查看新来源</button></article>`).join('')||'<p>当前版本没有已登记的来源更新。此状态不表示来源已全部复查。</p>';
+ const refreshes=state.jobs.filter(job=>job.kind==='source_refresh'&&parse(job.payload).run_id===run?.id);
+ if(refreshes.length)$('source-updates-list').insertAdjacentHTML('afterbegin','<h3>最近复查</h3>'+refreshes.slice(0,5).map(job=>{const result=parse(job.result),payload=parse(job.payload);return `<article class="evidence-card"><strong>${esc(sourceName(payload.source_id))}</strong><p>${esc(job.error||sourceRefreshOutcome(result.outcome)||statuses[job.status]||job.status)}</p>${result.new_source_id?`<button type="button" data-update-source="${esc(result.new_source_id)}">查看本次取得的快照</button>`:''}<p class="help">${esc(displayDate(job.created))}</p></article>`}).join(''));
+ $('source-updates-list').querySelectorAll('[data-update-source]').forEach(button=>button.onclick=()=>{$('source-updates-dialog').close();action(async()=>showSource(await api('source?id='+encodeURIComponent(button.dataset.updateSource))))});
+ $('source-updates-dialog').showModal();
+});
+
+function reviewResultHTML(review,states,requirements={}){
+ const result=review.result||{},items=requirements.requirement_items||[],labels={covered:'已回答',manual:'用户安排人工填写',partial:'部分完成',missing:'未完成'};
+ const unchecked=[...(result.unchecked_items||[]),...(result.unchecked||[]).map(description=>({description,importance:'unknown'}))];
+ return `<article class="review-version"><strong>${esc(states[review.status]||review.status)}</strong><p>${esc(result.summary||'当前没有完整审阅结果')}</p><p class="help">${result.coverage_scan_complete?'已检查正文是否遗漏重要主张绑定':'重要主张覆盖尚未完成检查'}；正式交付另按当前版本的条件判断。</p>${unchecked.length?`<details class="review-checks" open><summary>尚未核验 · ${unchecked.length} 项</summary><ul>${unchecked.map(item=>`<li><span class="tag">${item.importance==='core'?'核心事项':item.importance==='supporting'?'非核心事项':'重要性未确定'}</span> ${esc(item.description)}</li>`).join('')}</ul></details>`:''}${result.requirement_checks?.length?`<details class="review-checks" open><summary>本轮要求落实情况</summary><ul>${result.requirement_checks.map(item=>`<li><strong>${esc(labels[item.status]||item.status)}</strong> · ${esc(items.find(req=>req.requirement_id===item.requirement_id)?.text||item.requirement_id)}<br>${esc(item.reason)}</li>`).join('')}</ul></details>`:'<p class="help">尚无逐项要求核查结果。</p>'}</article>`;
+}
+
+$('source-refresh-form').onsubmit=event=>{event.preventDefault();action(async()=>{
+ const source=$('source-refresh-source').value,cutoff=$('source-refresh-cutoff').value;
+ if(!source||!cutoff)throw Error('请选择来源与本轮信息截止时间');
+ const version=await savedVersion();await api('source-refresh',{version_id:version,source_id:source,information_cutoff:new Date(cutoff).toISOString()});
+ $('source-updates-dialog').close();notice('来源复查已排队，可在任务记录查看结果');
+})};
+
+function sourceRefreshOutcome(outcome){return {not_authorized:'本轮未允许联网，未执行在线复查',local_source_requires_upload:'本地来源更新需上传独立的新文件',budget_exhausted:'本轮预算已用尽，未获取新快照',fetch_failed:'新快照读取未成功，保留原来源',unchanged_snapshot:'实际取得的快照未变化',changed_needs_review:'取得的快照有变化，待判断影响并独立复核'}[outcome]||''}

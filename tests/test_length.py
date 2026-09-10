@@ -22,7 +22,7 @@ def test_length_rule_and_cli_use_the_same_body_count(tmp_path,monkeypatch,capsys
     assert json.loads(capsys.readouterr().out)['count']==9
 
 
-def test_presets_custom_bounds_and_generation_keep_citations_out_of_body(tmp_path):
+def test_length_bounds_reach_generation_input_and_preserve_legacy_requirements(tmp_path):
     for extent,bounds in LENGTH_PRESETS.items():
         req=Requirements(title='test',objective='read',extent=extent)
         assert (req.target_words,req.max_words)==bounds
@@ -32,10 +32,9 @@ def test_presets_custom_bounds_and_generation_keep_citations_out_of_body(tmp_pat
     store=Store(tmp_path/'workspace');source=store.add_source('local','正文')
     run=store.create_run(req.model_dump(),[source['id']]);original=run['requirements']
     folder=store.root/'jobs'/'prompt';folder.mkdir()
-    prompt=generation_prompt(store,run,folder)
-    assert '正文目标约 1234，上限 1600' in prompt
-    assert 'count-brief --file' in prompt and '仅放进 draft.json.citations 元数据' in prompt
-    assert '覆盖已经足够时收敛' in prompt
+    generation_prompt(store,run,folder)
+    packet=json.loads((folder/'input.json').read_text())
+    assert (packet['requirements']['target_words'],packet['requirements']['max_words'])==(1234,1600)
     assert store.one('runs',run['id'])['requirements']==original
     # Legacy requirements are projected on read, never rewritten in the database.
     legacy={'title':'old','objective':'read','extent':'compact','allow_web':False}

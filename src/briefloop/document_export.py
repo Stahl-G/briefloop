@@ -10,6 +10,23 @@ ALIGN = {'left': WD_ALIGN_PARAGRAPH.LEFT, 'center': WD_ALIGN_PARAGRAPH.CENTER,
          'right': WD_ALIGN_PARAGRAPH.RIGHT, 'justify': WD_ALIGN_PARAGRAPH.JUSTIFY}
 
 
+def without_duplicate_cover_heading(document,title):
+    """Drop one repeated cover H1, preserving every surrounding block and table."""
+    from copy import deepcopy
+    result=deepcopy(document)
+    label=' '.join(title.split())
+    if not label:return result
+    for index,node in enumerate(result.get('content',[])):
+        if node.get('type')!='heading':continue
+        children=node.get('content',[])
+        plain=all(child.get('type')=='text' and not any(mark.get('type')=='link' for mark in child.get('marks',[])) for child in children)
+        text=' '.join(''.join(child.get('text','') for child in children).split())
+        if node.get('attrs',{}).get('level')==1 and plain and text==label:
+            del result['content'][index]
+        break
+    return result
+
+
 def render_document(doc, document, *, figures=None, sources=None, append_sources=True, styles=None):
     from .industry_export import append_figure
     document = normalize_document(document); figures = figures or {}; sources = sources or {}; styles = styles or {}

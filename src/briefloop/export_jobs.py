@@ -11,7 +11,7 @@ from .figure_support import export_figures
 def export_input(store, brief):
     requirements = json.loads(store.one('runs', brief['run_id'])['requirements'])
     figures = export_figures(store, brief)
-    identity = {'renderer': 3, 'version_id': brief['id'], 'brief_hash': brief['hash'],
+    identity = {'renderer': 3 if requirements.get('template_id') else 4, 'version_id': brief['id'], 'brief_hash': brief['hash'],
                 'document': brief_document(brief), 'detail': json.loads(brief['detail']),
                 'requirements': requirements,
                 'figures': {fid: {**{k: v for k, v in f.items() if k != 'image_bytes'},
@@ -64,7 +64,7 @@ def generate_word(store, job, cancelled):
         blob = docx_bytes(document=identity['document'], report_profile=req.get('report_profile', 'brief'),
                           title=detail.get('title', req.get('title', '')), report_date=req.get('report_date', ''),
                           organization=req.get('organization', ''), period=req.get('period', ''), industry=req.get('industry', ''),
-                          figures=figures, source_records={sid: store.one('sources', sid) for sid in store.source_ids(brief['run_id'])})
+                          figures=figures, source_records={sid: store.one('sources', sid) for sid in store.source_ids(brief['run_id'])},language=req.get('language'))
     stage(3, '检查 Word 文件和资源')
     from docx import Document
     from io import BytesIO

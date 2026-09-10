@@ -25,8 +25,9 @@ def reader_markdown(store,brief):
     return text
 
 
-def docx_bytes(markdown='', *, report_profile="brief", title="", report_date="", organization="", period="", report_data=None, industry="", figures=None, document=None, source_records=None):
+def docx_bytes(markdown='', *, report_profile="brief", title="", report_date="", organization="", period="", report_data=None, industry="", figures=None, document=None, source_records=None, language=None):
     from docx import Document
+    from .default_fonts import native_default_fonts
     from .industry_export import append_inline, configure_document, style_heading, style_table, append_data_chart
     industry_report = report_profile == 'industry_periodic'
     if document is not None:
@@ -34,7 +35,7 @@ def docx_bytes(markdown='', *, report_profile="brief", title="", report_date="",
         doc=Document()
         if industry_report:configure_document(doc,title=title,report_date=report_date,organization=organization,period=period,industry=industry)
         render_document(doc,document,figures=figures,sources=source_records)
-        output=BytesIO();doc.save(output);return output.getvalue()
+        output=BytesIO();doc.save(output);return native_default_fonts(output.getvalue(),language=language)
     tokens=MarkdownIt('commonmark').enable('table').parse(markdown)
     levels=[int(t.tag[1]) for t in tokens if t.type=='heading_open']
     if industry_report and len(tokens)>=3 and tokens[0].type=='heading_open' and tokens[0].tag=='h1' and levels.count(1)==1 and 2 in levels:
@@ -83,4 +84,4 @@ def docx_bytes(markdown='', *, report_profile="brief", title="", report_date="",
         elif t.type in ('fence','code_block'):doc.add_paragraph(t.content)
     # Old callers retain the legacy chart; new callers pass a mapping, even {}.
     if industry_report and report_data and figures is None and not explicit_figures: append_data_chart(doc, report_data)
-    buf=BytesIO();doc.save(buf);return buf.getvalue()
+    buf=BytesIO();doc.save(buf);return native_default_fonts(buf.getvalue(),language=language)

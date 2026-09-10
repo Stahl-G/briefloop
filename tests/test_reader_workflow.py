@@ -20,10 +20,16 @@ def test_background_public_update_and_user_conflict_preserve_history(tmp_path):
     pending=propose(store,{'key':'capacity','value':'14','source_id':source['id'],'effective_date':'2026-09-01','origin':'user'})
     assert pending['status']=='pending' and snapshot(store)['facts'][0]['value']=='12'
     after=resolve_conflict(store,pending['id'],True)
-    assert after['facts'][0]['value']=='14' and not after['pending']
+    assert after['facts'][0]['value']=='12' and after['pending']
+    conflict=store.rows('SELECT id,status FROM conflicts')[0]
+    assert conflict['status']=='addressed_pending_review'
+    from briefloop.conflicts import accept_check
+    with store.tx() as c:accept_check(store,c,conflict['id'],'adopt_new','Synthetic reviewed evidence','review_fixture',pending['id'])
+    assert snapshot(store)['facts'][0]['value']=='14' and not snapshot(store)['pending']
     assert store.rows('SELECT * FROM company_facts WHERE id=?',(first['id'],))[0]['value']=='12'
     historical=propose(store,{'key':'capacity','value':'8','source_id':public['id'],'effective_date':'2025-09-01','origin':'public'})
-    assert historical['status']=='historical' and snapshot(store)['facts'][0]['value']=='14'
+    assert historical['status']=='pending' and snapshot(store)['facts'][0]['value']=='14'
+    assert len(store.rows("SELECT id FROM conflicts WHERE status!='resolved'"))==1
 
 
 class RevisionRuntime:
@@ -34,6 +40,9 @@ class RevisionRuntime:
             pack=json.loads((folder/'input.json').read_text());brief=pack['brief']
             if self.user_edit:self.store.revise(brief['id'],'USER CORRECTION')
             (folder/'draft.json').write_text(json.dumps({'title':'Report','editor_document':{'type':'doc','content':[{'type':'paragraph','content':[{'type':'text','text':'Corrected report'}]}]}}))
+        elif job.get('readonly_output'):
+            pack=json.loads((folder/'packet'/'target.json').read_text());index=json.loads((folder/'packet'/'index.json').read_text())
+            (folder/'review.json').write_text(json.dumps({'version_id':pack['version_id'],'fingerprint':index['fingerprint'],'status':'complete','summary':'Synthetic review','coverage_scan_complete':True,'assessment':{'brief_hash':pack['brief_hash'],'summary':'still a minor issue','overall':'建议修改','evidence':4,'coverage':4,'analysis':4,'expression':4}}))
         else:
             pack=json.loads((folder/'input.json').read_text());sha=pack['brief']['hash']
             (folder/'assessment.json').write_text(json.dumps({'brief_hash':sha,'summary':'still a minor issue','overall':'建议修改','evidence':4,'coverage':4,'analysis':4,'expression':4}))
@@ -53,7 +62,7 @@ def test_one_revision_only_and_user_edit_wins(tmp_path,user_edit):
         assert runtime.calls==['revision']
     else:
         assert result['version_id']==latest['id'] and latest['parent_id']==brief['id']
-        assert runtime.calls==['revision','revision-evaluation']
+        assert runtime.calls==['revision','review']
         again=worker.auto_revise(job,brief,folder)
         assert again['version_id']==latest['id'] and len(runtime.calls)==2
 

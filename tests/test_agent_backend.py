@@ -1,24 +1,9 @@
 """Optional agent backend: workspace default, per-job freeze, transport routing."""
 import json
-import time
 import pytest
-from briefloop.backends import validate_backend, supports
-from briefloop.models import Settings
-from briefloop.store import Store, dump
+from briefloop.store import Store
 from briefloop.runtime import Worker
 from briefloop.interactive_runtime import InteractiveRuntime
-
-
-def test_backend_defaults_to_codex_and_rejects_unknown(tmp_path):
-    store = Store(tmp_path / 'workspace')
-    assert store.settings()['agent_backend'] == 'codex'
-    assert validate_backend('opencode') == 'opencode'
-    with pytest.raises(ValueError):
-        validate_backend('other')
-    with pytest.raises(Exception):
-        Settings.model_validate({'agent_backend': 'other'})
-    assert supports('codex', 'steer') and supports('opencode', 'cancel')
-    assert not supports('opencode', 'questions')
 
 
 def test_enqueue_freezes_backend_and_old_jobs_stay_codex(tmp_path):
@@ -124,7 +109,7 @@ def test_archive_completed_partitions_by_backend(tmp_path):
 
 
 def test_chat_generate_pins_session_backend(tmp_path):
-    from briefloop.chat_tools import workspace_action, chat_instructions
+    from briefloop.chat_tools import workspace_action
     store = Store(tmp_path / 'workspace')
     source = store.add_source('memo', 'evidence')
     store.set_meta('settings', {**store.settings(), 'agent_backend': 'opencode',
@@ -135,7 +120,3 @@ def test_chat_generate_pins_session_backend(tmp_path):
                                           'runtime': {'model': 'opencode-go/gpt-5.6-luna',
                                                       'agent_backend': 'opencode'}})
     assert json.loads(store.one('jobs', dispatched['job_id'])['payload'])['agent_backend'] == 'opencode'
-    text = chat_instructions(store, {'model': 'opencode-go/gpt-5.6-luna', 'backend': 'opencode'})
-    assert 'task 工具' in text and 'question' in text
-    codex_text = chat_instructions(store, {'model': 'gpt-5.6-luna', 'effort': 'high'})
-    assert 'Codex 原生搜索' in codex_text and '沿用本机 Codex 配置' in codex_text

@@ -209,6 +209,7 @@ class BriefDraft(Model):
     gaps: list[str] = Field(default_factory=list)
     number_bindings: list[NumberBinding] = Field(default_factory=list)
     research_notes: list[dict] = Field(default_factory=list)
+    reader_contract: dict | None = None
 
     @model_validator(mode='after')
     def normalize_content(self):

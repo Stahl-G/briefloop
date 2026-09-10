@@ -17,6 +17,50 @@ def para(text, **attrs):
     return {'type': 'paragraph', 'attrs': attrs, 'content': [{'type': 'text', 'text': text}]}
 
 
+def test_default_fonts_keep_bilingual_content_format_and_unicode_bullets():
+    from lxml import etree
+    from docx import Document
+    W='http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    A='http://schemas.openxmlformats.org/drawingml/2006/main'
+    ns={'w':W,'a':A,'m':'http://schemas.openxmlformats.org/officeDocument/2006/math'}
+    markdown='# 中文与English\n\n保留正文提到的 Calibri 名称和 **重点数字12.5%**。\n\n- 项目甲\n- Bullet B\n\n| 指标 | Value |\n|---|---|\n|收入|12.5|\n\n```text\n数据 = 12.5\n```'
+    rich=markdown_document(markdown)
+    rich['content'][1]['content'][0].setdefault('marks',[]).append({'type':'textStyle','attrs':{'color':'#C00000'}})
+    # Exercise rich generic and retained Markdown industry entry points, which
+    # both start from a stock default DOCX and have different typography setup.
+    outputs=[docx_bytes(document=rich),docx_bytes(markdown,report_profile='industry_periodic',title='中文与English',language='中文')]
+    for payload in outputs:
+        doc=Document(BytesIO(payload))
+        assert any('保留正文提到的 Calibri 名称' in p.text for p in doc.paragraphs)
+        assert any(run.bold for p in doc.paragraphs for run in p.runs if '重点数字' in run.text)
+        assert doc.tables[0].cell(1,0).text=='收入'
+        assert any('数据 = 12.5' in p.text for p in doc.paragraphs)
+        with ZipFile(BytesIO(payload)) as archive:
+            styles=etree.fromstring(archive.read('word/styles.xml'))
+            assert styles.find('w:docDefaults/w:rPrDefault/w:rPr/w:lang',ns).get('{'+W+'}eastAsia')=='zh-CN'
+            for name in archive.namelist():
+                if not name.startswith('word/') or not name.endswith('.xml'):continue
+                xml=etree.fromstring(archive.read(name))
+                for fonts in xml.findall('.//w:rFonts',ns):
+                    values={etree.QName(key).localname:value for key,value in fonts.attrib.items()}
+                    assert values.get('ascii')=='Arial' and values.get('hAnsi')=='Arial'
+                    assert 'eastAsia' not in values and not any('theme' in key.lower() for key in values)
+                assert all(node.get('{'+W+'}name')=='Arial' for node in xml.findall('.//w:font',ns))
+                assert all(node.get('typeface')=='Arial' for node in xml.findall('.//a:fontScheme//a:latin',ns))
+                assert not xml.findall('.//a:fontScheme//a:font',ns)
+                assert not xml.findall('.//m:mathFont',ns)
+                for level in xml.findall('.//w:lvl',ns):
+                    kind=level.find('w:numFmt',ns);text=level.find('w:lvlText',ns)
+                    if kind is not None and kind.get('{'+W+'}val')=='bullet':assert text.get('{'+W+'}val')=='•'
+    with ZipFile(BytesIO(outputs[0])) as archive:assert b'C00000' in archive.read('word/document.xml')
+    # Explicit non-Simplified-Chinese requests do not inherit the Chinese
+    # heuristic merely because their text also contains Han characters.
+    explicit=docx_bytes('日本語の報告',language='ja-JP')
+    with ZipFile(BytesIO(explicit)) as archive:
+        styles=etree.fromstring(archive.read('word/styles.xml'))
+        assert all(node.get('{'+W+'}eastAsia')!='zh-CN' for node in styles.findall('.//w:lang',ns))
+
+
 def test_rich_edit_survives_reload_and_word_without_markdown_loss(tmp_path):
     store = Store(tmp_path)
     source = store.add_source('Evidence', 'Revenue 12, prior 13.')
@@ -95,10 +139,11 @@ if(!markdown.includes('Color')||!markdown.includes('[@src_test]'))throw Error(ma
 
 def test_word_job_keeps_clicked_version_while_user_edits(tmp_path):
     import threading
-    from briefloop.export_jobs import enqueue_export, generate_word, output_path
+    from briefloop.export_jobs import enqueue_export, generate_word, output_path, export_input
     store=Store(tmp_path);source=store.add_source('Evidence','Revenue 12')
     run=store.create_run({'title':'Report','objective':'Explain'},[source['id']])
     before=store.publish(run['id'],{'title':'Report','editor_document':{'type':'doc','content':[para('Revenue 12')]}})
+    assert export_input(store,before)[0]['renderer']==4
     job=enqueue_export(store,before['id'])
     assert enqueue_export(store,before['id'])['id']==job['id']
     after=store.revise(before['id'],editor_document={'type':'doc','content':[para('Revenue 14')]})

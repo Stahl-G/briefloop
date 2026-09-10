@@ -5,6 +5,7 @@ from docx.oxml.ns import qn
 from docx.shared import Mm, Pt, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_CELL_VERTICAL_ALIGNMENT
+from .default_fonts import WESTERN_FONT
 
 BLUE = '17466B'
 
@@ -112,17 +113,15 @@ def configure_document(doc, *, title='', report_date='', organization='', period
     section.header_distance = section.footer_distance = Mm(12.7)
     section.different_first_page_header_footer = True
     normal = doc.styles['Normal']
-    normal.font.name = 'Microsoft YaHei'
+    normal.font.name = WESTERN_FONT
     normal.font.size = Pt(10.5)
     normal.font.color.rgb = RGBColor.from_string('2D2D2D')
-    normal.element.get_or_add_rPr().rFonts.set(qn('w:eastAsia'), '微软雅黑')
     normal.paragraph_format.line_spacing = Pt(18)
     normal.paragraph_format.space_after = Pt(6)
     normal.paragraph_format.widow_control = True
     for name, size in [('Title', 28), ('Subtitle', 16), ('Heading 1', 16), ('Heading 2', 13), ('Heading 3', 11)]:
         style = doc.styles[name]
-        style.font.name = 'Microsoft YaHei'
-        style.element.get_or_add_rPr().rFonts.set(qn('w:eastAsia'), '微软雅黑')
+        style.font.name = WESTERN_FONT
         style.font.size = Pt(size)
         style.font.color.rgb = RGBColor.from_string(BLUE)
         style.paragraph_format.keep_with_next = True
