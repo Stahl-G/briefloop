@@ -16,7 +16,7 @@ from briefloop.release import (SCHEMA, eligibility, decision, enqueue_release, g
 from briefloop.audit_bundle import enqueue_bundle, generate_bundle, verify_bundle, bundle_file
 
 
-def reviewed_report(tmp_path, figure=False, visual_sources=False):
+def reviewed_report(tmp_path, figure=False, visual_sources=False, review_free_text=False):
     store = Store(tmp_path)
     with store.tx() as c:
         c.executescript(SCHEMA)
@@ -104,7 +104,41 @@ def reviewed_report(tmp_path, figure=False, visual_sources=False):
         'assessment': {'brief_hash': brief['hash'], 'status': 'complete', 'summary': 'Synthetic', 'overall': '达到要求',
                        'evidence': 4, 'coverage': 4, 'analysis': 4, 'expression': 4}}
     result['claim_checks'].extend({'claim_id': item['id'], 'status': 'supported_for_scope', 'reason': 'Synthetic saved visual source fixture'} for item in visual_claims)
+    if review_free_text:
+        private_excerpt=store.source_text(source['id']).splitlines()[1]
+        assert private_excerpt not in brief['markdown'] and private_excerpt not in span['data']['excerpt']
+        result['summary']='Review notes quote an unused appendix: '+private_excerpt
+        result['claim_checks'][0]['reason']='The selected line is enough; unused appendix: '+private_excerpt
+        result['assessment']['summary']='Accepted report; appendix note: '+private_excerpt
+        result['assessment']['checks']=[{'check':'optional appendix','notes':{private_excerpt:'unused'}}]
+        result['requirement_checks'][0]['reason']='Covered without the appendix: '+private_excerpt
+        result['unchecked_items']=[{'description':'Noncore appendix omitted from analysis: '+private_excerpt,'importance':'supporting'}]
+        result['findings']=[{'kind':'expression','severity':'minor','claim_ids':[claim['id']],
+            'block_ids':[block_id],'report_quote':'Revenue was USD 12 million.',
+            'description':'Optional appendix phrasing: '+private_excerpt,'evidence':private_excerpt,
+            'suggested_action':'Keep this appendix out of the report: '+private_excerpt}]
     accept_review(store, review_id, result)
+    if review_free_text:
+        from briefloop.review import respond
+        finding=store.rows('SELECT id FROM review_findings WHERE review_id=?',(review_id,))[0]
+        response=respond(store,finding['id'],brief['id'],'disagree','The appendix was not used: '+private_excerpt)
+        folder=store.root/'review_followup_fixture'
+        fingerprint,files=build_packet(store,brief['id'],folder)
+        review_id=uid('review');review_job=store.enqueue('review',{'version_id':brief['id']})
+        with store.tx() as connection:
+            connection.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)',
+                (review_id,brief['id'],review_job['id'],fingerprint,'running',
+                 dump({'packet_path':'review_followup_fixture/packet','files':files}),None,now(),now()))
+        session=chat.create('Synthetic Reviewer followup',{'model':'synthetic/fixture'},folder)
+        message=chat.message(session['id'],'Synthetic followup review',status='completed',turn_id='synthetic-followup')
+        store.event(review_job['id'],'runtime_started',{'folder':str(folder),'session_id':session['id'],
+            'message_id':message['id'],'backend':'synthetic','runtime':{'model':'synthetic/fixture'}})
+        journal_tool(chat,session['id'],'synthetic-followup','read-history','read',
+            {'filePath':str(folder/'packet/history/responses.json')},private_excerpt,status='completed')
+        result={**deepcopy(result),'fingerprint':fingerprint,
+            'response_checks':[{'response_id':response['id'],'decision':'dismissed_with_evidence',
+                                'reason':'The report does not include this appendix: '+private_excerpt}]}
+        accept_review(store,review_id,result)
     return store, source, brief, review_id
 
 
@@ -258,6 +292,13 @@ def test_audit_binds_figure_data_script_and_sanitized_tool_record(tmp_path):
         assert len(records) == 1 and b'12000000' in records[0]
         assert b'DO-NOT-INCLUDE-THIS' not in records[0]
         blobs = {name: archive.read(name) for name in names}
+    legacy=deepcopy(blobs)
+    legacy_manifest=json.loads(legacy['manifest.json']);legacy_manifest['schema_version']=1
+    legacy['manifest.json']=dump(legacy_manifest).encode()
+    legacy_output=BytesIO()
+    with ZipFile(legacy_output,'w',ZIP_DEFLATED) as archive:
+        for name,blob in legacy.items():archive.writestr(name,blob)
+    assert verify_bundle(legacy_output.getvalue())['valid']
     # Adjusting only archive checksums cannot hide a script/data mismatch with
     # the immutable figure's hashes and source association.
     blobs[script] = b'print(120 * 1000000)'
@@ -283,11 +324,17 @@ def test_restricted_sources_do_not_escape_through_figure_inputs(tmp_path, monkey
         return original_register(store, run_id, image, title, caption, source_ids, data_path, script_path)
 
     monkeypatch.setattr(figures, 'register_figure', register_with_source_copy)
-    store, source, brief, review = reviewed_report(tmp_path, figure=True, visual_sources=True)
+    store, source, brief, review = reviewed_report(tmp_path, figure=True, visual_sources=True, review_free_text=True)
     release, job = complete_release(store, brief)
     report_bytes = release_file(store, release['id']).read_bytes()
     all_source_ids = [item['id'] for item in release['data']['snapshot']['sources']]
     packet_index = json.loads((store.root / release['data']['packet_path'] / 'index.json').read_text())
+    private_excerpt=store.source_text(source['id']).splitlines()[1]
+    assert private_excerpt in release['data']['review_result']['summary']
+    assert private_excerpt in release['data']['review_result']['claim_checks'][0]['reason']
+    assert any(private_excerpt in item['data']['evidence'] for item in release['data']['findings'])
+    for history in ('reviews','responses'):
+        assert private_excerpt in (store.root/release['data']['packet_path']/('history/'+history+'.json')).read_text()
     source_visuals = ['packet/' + name for item in packet_index['sources'] for name in item.get('visual_files', [])]
     assert len(source_visuals) == 2
     for mode in ('metadata', 'excerpt'):
@@ -303,16 +350,56 @@ def test_restricted_sources_do_not_escape_through_figure_inputs(tmp_path, monkey
             assert not set(source_visuals).intersection(archive.namelist())
             visual_index = json.loads(archive.read('packet/visual-inputs.json'))
             assert {item.get('file') for item in visual_index['images']}.issuperset(name.removeprefix('packet/') for name in source_visuals)
-            assert all(b'Unused private appendix line.' not in archive.read(name) for name in archive.namelist())
+            leaks=[name for name in archive.namelist() if private_excerpt.encode() in archive.read(name)]
+            assert not leaks, {'mode':mode,'leaked_members':leaks}
+            target=json.loads(archive.read('packet/target.json'))
+            selected_span=next(item for binding in target['evidence']['bindings'] for item in binding['evidence'] if item['source_id']==source['id'])
+            if mode=='excerpt':assert selected_span['data']['excerpt']=='Revenue was USD 12 million.'
+            else:assert 'excerpt' not in selected_span['data']
+            restricted_blobs={name:archive.read(name) for name in archive.namelist()}
         missing = [item for item in checked['omissions'] if item.get('kind') == 'source_derived_figure']
         assert len(missing) == 2 and all(source['id'] in item['source_ids'] for item in missing)
         assert all(any(item.get('file') == name and item.get('source_id') in all_source_ids for item in checked['omissions']) for name in source_visuals)
+        if mode=='metadata':
+            def packed(blobs):
+                output=BytesIO()
+                with ZipFile(output,'w',ZIP_DEFLATED) as archive:
+                    for name,blob in blobs.items():archive.writestr(name,blob)
+                return output.getvalue()
+            tampered=deepcopy(restricted_blobs)
+            records=json.loads(tampered['records.json'])
+            records['review_result']['findings'][0]['evidence']=private_excerpt
+            tampered['records.json']=dump(records).encode()
+            manifest=json.loads(tampered['manifest.json'])
+            manifest['files']['records.json']=sha(tampered['records.json'])
+            for transformation in manifest['transformations']:
+                if transformation['file']=='records.json':transformation['included_sha256']=sha(tampered['records.json'])
+            tampered['manifest.json']=dump(manifest).encode()
+            checked_tamper=verify_bundle(packed(tampered))
+            assert not checked_tamper['valid'] and any('未投影的自由文本' in error for error in checked_tamper['errors'])
+            legacy=deepcopy(restricted_blobs)
+            manifest=json.loads(legacy['manifest.json']);manifest['schema_version']=1
+            legacy['manifest.json']=dump(manifest).encode()
+            legacy_blob=packed(legacy)
+            assert not verify_bundle(legacy_blob)['valid']
+            path.write_bytes(legacy_blob)
+            store.update_job(queued['id'],'complete',result={**result,'sha256':sha(legacy_blob)})
+            with pytest.raises(ValueError,match='旧受限审计包'):bundle_file(store,queued['id'])
+            assert enqueue_bundle(store,release['id'],{identity:mode for identity in all_source_ids})['id']!=queued['id']
     # The user can still explicitly include originals and corresponding full
     # calculation inputs; restrictions do not delete the stored artifacts.
     queued = enqueue_bundle(store, release['id'], {identity: 'original' for identity in all_source_ids})
     result = generate_bundle(store, queued, threading.Event())
     with ZipFile(store.root / result['path']) as archive:
         assert set(source_visuals).issubset(archive.namelist())
+        records=json.loads(archive.read('records.json'))
+        assert private_excerpt in records['review_result']['summary']
+        assert private_excerpt in records['review_result']['claim_checks'][0]['reason']
+        assert private_excerpt in records['review_result']['findings'][0]['evidence']
+        assert private_excerpt in records['review_result']['response_checks'][0]['reason']
+        assert any(private_excerpt in item['data']['evidence'] for item in records['findings'])
+        for history in ('reviews','responses'):
+            assert private_excerpt.encode() in archive.read('packet/history/'+history+'.json')
         assert any(b'Unused private appendix line.' in archive.read(name)
                    for name in archive.namelist() if name.endswith(('/data.json', '/script.py')))
         blobs = {name: archive.read(name) for name in archive.namelist()}

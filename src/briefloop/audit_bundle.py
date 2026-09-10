@@ -13,7 +13,91 @@ from zipfile import ZipFile, ZIP_DEFLATED, BadZipFile
 from .store import dump
 from .release import get_release, validate_release, safe_file, sha
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+
+_OMITTED_TEXT = '[omitted: source export permissions]'
+# Only structural metadata survives in unattributed research records. New free
+# text fields are restricted by default, rather than relying on a growing list
+# of known quote/summary/reason aliases.
+_METADATA_FIELDS = set(('status kind type mode severity importance category author backend model '
+    'model_provider model_variant reasoning_effort effort variant policy decision resolution action '
+    'created updated started finished native_created_at captured_at published_at available_at '
+    'effective_start effective_end saved_at fetched_at version revision renderer snapshot_version '
+    'schema_version coverage_scan_complete evidence coverage analysis expression score width height '
+    'page start_line end_line row column count exit_code returncode seconds bytes_count '
+    'source_hash original_hash raw_hash text_hash brief_hash hash sha256 fingerprint '
+    'review_fingerprint release_fingerprint export_fingerprint image_hash record_hash captured_hash '
+    'file filename path packet_path image_path data_path script_path original_path '
+    'text_file readable_text_file original_file cells_file visual_files mime media_type tool transport '
+    'target_version finding_version change_type classification_status old_availability new_availability '
+    'redacted delivery name url').split())
+_HASH_MAPS = {'files', 'review_files', 'hashes', 'source_hashes'}
+_IDENTITY_FIELDS = set(('id source_id version_id run_id review_id job_id parent_id previous_id '
+    'claim_id span_id block_id binding_id finding_id response_id session_id message_id turn_id '
+    'tool_id figure_id requirement_id logical_id source_ids claim_ids block_ids figure_ids '
+    'premise_claim_ids requirement_ids finding_ids response_ids native_session native_message_id').split())
+_NUMERIC_FIELDS = {'evidence', 'coverage', 'analysis', 'expression', 'score', 'value'}
+_FREE_CONTAINERS = {'research_notes', 'report_data', 'company_context', 'gaps', 'reader_contract', 'checks'}
+
+
+def _project_records(value, permissions, filename, omissions=None):
+    """Project every record copy; only explicitly selected span text is exempt.
+
+    A finding or response can quote several sources without source-level
+    attribution. Even a claim's rationale is not a registered excerpt. Keep
+    those records' identity and outcomes, but withhold their free text when any
+    source is restricted. The final published document is a separate deliverable.
+    """
+    if all(p['mode'] == 'original' for p in permissions.values()):
+        return value
+    report_paths = ({('document',)} if filename == 'packet/target.json' else
+                    {('snapshot', 'document'), ('export_input', 'document')} if filename == 'records.json' else set())
+
+    def omit(path, original):
+        if original in (None, '', _OMITTED_TEXT, '[credential omitted]'):
+            return original
+        if omissions is not None:
+            omissions.append({'kind': 'record_field', 'record_file': filename,
+                              'json_pointer': '/' + '/'.join(str(p).replace('~', '~0').replace('/', '~1') for p in path),
+                              'reason': '记录自由文本无法逐来源归属；存在受限来源，未随包提供',
+                              'original_sha256': sha(dump(original).encode())})
+        return _OMITTED_TEXT
+
+    def walk(node, path=(), key='', span_source=None):
+        if key in _FREE_CONTAINERS:
+            return omit(path, node)
+        hash_map = (key in _HASH_MAPS and isinstance(node, dict) and all(
+            isinstance(v, str) and len(v) == 64 and all(c in '0123456789abcdef' for c in v) for v in node.values()))
+        if path in report_paths or hash_map:
+            return deepcopy(node)
+        if isinstance(node, dict):
+            # Only the validated, source-bound EvidenceSpan data is an approved
+            # excerpt carrier. Arbitrary review objects cannot opt into this.
+            source = (node.get('source_id') if str(node.get('id', '')).startswith('span_')
+                      and node.get('source_id') in permissions and 'source_hash' in node else None)
+            if span_source and key == 'data':
+                allowed = permissions[span_source]['mode']
+                result = {}
+                for k, v in node.items():
+                    if k == 'locator' and isinstance(v, dict):
+                        result[k] = deepcopy(v)
+                    elif allowed == 'original' or allowed == 'excerpt' and k == 'excerpt':
+                        result[k] = deepcopy(v)
+                    else:
+                        result[k] = walk(v, path + (k,), k)
+                return result
+            return {k: walk(v, path + (k,), k, source) for k, v in node.items()}
+        if isinstance(node, list):
+            return [walk(v, path + (i,), key) for i, v in enumerate(node)]
+        if key in _NUMERIC_FIELDS:
+            return node if key != 'value' and isinstance(node, (int, float, bool)) else omit(path, node)
+        if key == 'overall' and node in ('达到要求', '建议修改', '存在重大问题', '评估未完成'):
+            return node
+        if key in _METADATA_FIELDS or key in _IDENTITY_FIELDS:
+            return node
+        return omit(path, node)
+
+    return walk(value)
 
 
 def permissions_for(source_ids, permissions):
@@ -114,6 +198,15 @@ def generate_bundle(store, job, cancelled):
 
     def json_blob(name, value):
         before = value
+        value = _project_records(value, permissions, name, omissions)
+        if value != before:
+            transform = {'file': name, 'reason': '按来源权限省略无法逐来源归属的记录自由文本'}
+            if name == 'records.json':
+                transform['export_input_projection'] = {
+                    'original_sha256': sha(dump(before['export_input']).encode()),
+                    'included_sha256': sha(dump(value['export_input']).encode())}
+            transformations.append(transform)
+        before = value
         value = _scrub(value)
         if value != before:
             transformations.append({'file': name, 'reason': '已移除凭据字段或隐藏推理字段'})
@@ -175,6 +268,9 @@ def generate_bundle(store, job, cancelled):
             continue
         if name.endswith('.json'):
             value = json.loads(safe_file(folder, name).read_text())
+            if not all_original and not matching and not name.startswith('packet/figures/') and name != 'packet/output.schema.json':
+                json_blob(name, value)
+                continue
             scrubbed = _scrub(value)
             if scrubbed != value:
                 json_blob(name, value)
@@ -182,7 +278,7 @@ def generate_bundle(store, job, cancelled):
         copy(name)
     json_blob('records.json', records)
     json_blob('review-execution.json', records.get('review_execution', {'status': 'unavailable', 'sessions': []}))
-    if filtered == target and _scrub(filtered) == filtered:
+    if all_original and filtered == target and _scrub(filtered) == filtered:
         copy('packet/target.json')
     else:
         json_blob('packet/target.json', filtered)
@@ -247,6 +343,11 @@ def bundle_file(store, job):
     path = safe_file(store.root, result['path'])
     if sha(path.read_bytes()) != result['sha256']:
         raise ValueError('审计包文件已变化，请重新导出')
+    with ZipFile(path) as archive:
+        manifest = json.loads(archive.read('manifest.json'))
+        if manifest.get('schema_version', 1) < 2 and any(
+                p['mode'] != 'original' for p in manifest['source_permissions'].values()):
+            raise ValueError('旧受限审计包未应用完整记录权限投影，请重新导出；原文件保留')
     return path
 
 
@@ -269,7 +370,7 @@ def verify_bundle(value):
                 if path.is_absolute() or '..' in path.parts or '\\' in name:
                     raise ValueError('包中含越界路径')
             manifest = json.loads(archive.read('manifest.json'))
-            if manifest.get('schema_version') != SCHEMA_VERSION:
+            if manifest.get('schema_version') not in (1, SCHEMA_VERSION):
                 raise ValueError('不支持的审计包版本')
             omissions = manifest['omissions']
             if set(names) != set(manifest['files']) | {'manifest.json'}:
@@ -279,6 +380,7 @@ def verify_bundle(value):
                     errors.append('文件哈希不匹配：' + name)
             records = json.loads(archive.read('records.json'))
             target = json.loads(archive.read('packet/target.json'))
+            _check_record_permissions(archive, manifest, errors)
             _check_package_coverage(archive, records, manifest, errors)
             report_hash = sha(archive.read('report.docx'))
             if report_hash != manifest['report_sha256']:
@@ -293,7 +395,14 @@ def verify_bundle(value):
                 errors.append('Reviewer查询记录与固定交付输入不一致')
             if review['version_id'] != manifest['version_id'] or review['fingerprint'] != manifest['review_fingerprint']:
                 errors.append('Review绑定不一致')
-            if records['export_input']['version_id'] != manifest['version_id'] or records['export_fingerprint'] != sha(dump(records['export_input']).encode()):
+            export_hash = sha(dump(records['export_input']).encode())
+            projected = next((item.get('export_input_projection') for item in manifest['transformations']
+                              if item['file'] == 'records.json' and item.get('export_input_projection')), None)
+            restricted = any(p['mode'] != 'original' for p in manifest['source_permissions'].values())
+            export_bound = (records['export_fingerprint'] == export_hash or
+                            restricted and manifest.get('schema_version') == SCHEMA_VERSION and projected == {
+                                'original_sha256': records['export_fingerprint'], 'included_sha256': export_hash})
+            if records['export_input']['version_id'] != manifest['version_id'] or not export_bound:
                 errors.append('Word固定输入与版本不一致')
             transformed_files = {item['file'] for item in manifest['transformations']}
             if 'records.json' not in transformed_files and sha(dump(records).encode()) != manifest['release_fingerprint']:
@@ -323,6 +432,30 @@ def verify_bundle(value):
             'release_id': manifest.get('release_id'), 'version_id': manifest.get('version_id')}
 
 
+def _check_record_permissions(archive, manifest, errors):
+    permissions = manifest['source_permissions']
+    if all(p['mode'] == 'original' for p in permissions.values()):
+        return
+    if manifest.get('schema_version', 1) < 2:
+        errors.append('旧受限审计包缺少完整记录权限投影，请重新导出')
+        return
+    exempt = {'manifest.json', 'release-manifest.json', 'packet/output.schema.json'}
+    index = json.loads(archive.read('packet/index.json'))
+    for source in index['sources']:
+        if permissions[source['id']]['mode'] == 'original':
+            exempt.update('packet/' + source[k] for k in ('text_file', 'readable_text_file', 'original_file', 'cells_file') if source.get(k))
+    target = json.loads(archive.read('packet/target.json'))
+    for figure in target.get('figures', []):
+        if all(permissions[sid]['mode'] == 'original' for sid in figure['source_ids']):
+            exempt.update('packet/figures/' + figure['figure_id'] + '/' + Path(figure[k + '_path']).name
+                          for k in ('data', 'script') if figure.get(k + '_path'))
+    for name in manifest['files']:
+        if name.endswith('.json') and name not in exempt:
+            value = json.loads(archive.read(name))
+            if _project_records(value, permissions, name) != value:
+                errors.append('受限审计记录仍含未投影的自由文本：' + name)
+
+
 def _check_materials(archive, target, manifest, errors):
     names = set(manifest['files'])
     sources = {item['id']: item for item in target['sources']}
@@ -333,6 +466,9 @@ def _check_materials(archive, target, manifest, errors):
         errors.append('来源索引与被审来源集合不一致')
     for item in index['sources']:
         source = sources.get(item['id'], {})
+        for key in ('text_file', 'readable_text_file', 'original_file', 'cells_file'):
+            if item.get(key) and 'packet/' + item[key] in names and manifest['source_permissions'][item['id']]['mode'] != 'original':
+                errors.append('受限来源原文不应出现在包中：' + item['id'])
         for key, hash_key in (('text_file', 'hash'), ('original_file', 'original_hash')):
             if not item.get(key):
                 continue
