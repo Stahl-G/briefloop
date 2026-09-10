@@ -165,9 +165,24 @@ class InteractiveRuntime:
         binding = json.loads(marker.read_text()) if marker.exists() else None
         snapshot = None
         if binding:
-            if (binding['job_id'] != job['id'] or binding['runtime'] != runtime
-                    or binding.get('backend', 'codex') != backend):
+            if binding['job_id'] != job['id'] or binding.get('backend', 'codex') != backend:
                 raise ValueError('恢复会话的任务、后端或模型已改变；请使用新的任务目录')
+            if binding['runtime'] != runtime:
+                legacy = {key: value for key, value in runtime.items() if key != 'review_id'}
+                if (job.get('readonly_output') != 'review.json' or not runtime.get('review_id')
+                        or binding['runtime'] != legacy):
+                    raise ValueError('恢复会话的任务、后端或模型已改变；请使用新的任务目录')
+                # Earlier Review bindings predate this attachment identity. Add
+                # only that identity after validating the same job/version and
+                # fixed packet; model and native permission settings stay exact.
+                from .review import get_review, validate_applicable_review
+                review = get_review(self.store, runtime['review_id'])
+                if (review['job_id'] != job['id'] or review['version_id'] != payload.get('version_id')
+                        or (self.store.root / review['data']['packet_path']).resolve() != Path(runtime['review_root'])):
+                    raise ValueError('旧 Reviewer 会话未绑定当前任务、正文与核查包')
+                validate_applicable_review(self.store, review['id'], review['version_id'])
+                binding['runtime'] = runtime
+                _write(marker, binding)
             snapshot = harness.snapshot(binding['session_id'])
         else:
             evaluation_title='Evaluator · 比较' if job.get('evaluation_mode')=='pairwise' else 'Evaluator · 评分'

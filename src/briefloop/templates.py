@@ -212,7 +212,10 @@ def prepare(store,template_id,spec):
             if body:
                 runs=[run for run in element.iter(qn('w:r')) if ''.join(run.itertext()).strip()]
                 for child in list(properties):
-                    if child.tag not in {qn('w:'+tag) for tag in ('b','bCs','i','iCs','u','strike','dstrike','highlight','vertAlign')}:continue
+                    # A run-level override is a paragraph default only when it
+                    # belongs to every text run. This applies to color, font,
+                    # size and other properties as well as bold/italic. Mixed
+                    # local styling falls back to the original paragraph style.
                     if any(run.rPr is None or run.rPr.find(child.tag) is None or dict(run.rPr.find(child.tag).attrib)!=dict(child.attrib) for run in runs):
                         properties.remove(child)
             style.element.append(properties)

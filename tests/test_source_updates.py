@@ -55,12 +55,14 @@ def test_correction_propagates_to_premises_and_keeps_historical_release(tmp_path
     original_release = store.rows('SELECT * FROM releases')[0]
     new = store.add_source('Correction', 'Correction: H1 revenue was USD 120 million.', url='https://example.test/correction')
     store.attach_source(run['id'], new['id'])
-    change = record_change(store, change_request(old, new), run_id=run['id'])
+    from briefloop.chat_tools import workspace_action
+    change = workspace_action(store, {'action':'source_change','change':change_request(old,new),'run_id':run['id']})
     affected = change['current_impacts']
     assert affected['direct_claim_ids'] == [fact['id']]
     assert affected['indirect_claim_ids'] == [inference['id']]
     assert affected['versions'][0]['version_id'] == brief['id']
     assert affected['releases'][0]['release_id'] == 'release_old'
+    assert workspace_action(store, {'action':'source_impacts','source_id':old['id']})['releases'][0]['release_id']=='release_old'
     assert change['data']['new_availability'] == 'after_cutoff'
     assert change['data']['old_availability'] == 'available_by_cutoff'
     assert change['data']['classification_status'] == 'proposed'
