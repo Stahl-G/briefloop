@@ -52,3 +52,18 @@ p.chat.session.runtime.backend='kimi';p.runtimeCatalog=[];p.chat.session.runtime
 vm.runInContext('renderChatRuntimePermissions()',p);
 assert.equal(select.options.length,1);assert.equal(select.hidden,true);assert.equal(select.value,'runtime-native');
 console.log('PASS: chat permission options come from the runtime and hide when there is no choice');
+
+// A model catalogue that failed to load must explain itself, not render as a blank list.
+const pickerCode=source.slice(source.indexOf('function emptyCatalogLabel('),source.indexOf('function setupModelPickers('));
+const optionList=[];const pickerSelect={replaceChildren(){optionList.length=0},add(option){optionList.push(option)}};
+pickerSelect.parentElement={querySelector:()=>({id:'chat-model',dataset:{}})};
+const pc=vm.createContext({document:{querySelectorAll:()=>[pickerSelect]},console,Option:class{constructor(text,value){this.text=text;this.value=value}},
+ modelCatalogs:new Map([['opencode',{backend:'opencode',models:[],diagnostic:'未找到 Opencode CLI；已查找 PATH、~/.opencode/bin'}]])});
+pc.modelTargetBackend=()=> 'opencode';pc.fetchModelCatalog=async()=>[];pc.runtimeName=id=>id;pc.$=()=>({options:[]});
+vm.runInContext(pickerCode,pc);
+vm.runInContext('refreshInlineModelPickers()',pc);
+const warning=optionList.find(option=>option.value==='__empty__');
+assert.ok(warning,'an empty catalogue adds an explanatory entry');
+assert.match(warning.text,/未找到 Opencode CLI/);
+assert.equal(warning.disabled,true);
+console.log('PASS: an unavailable model catalogue explains itself instead of showing a blank list');

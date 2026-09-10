@@ -16,8 +16,9 @@ import threading
 class AppServerClient:
     def __init__(self, log_directory):
         root=Path(log_directory);root.mkdir(parents=True,exist_ok=True)
-        executable=shutil.which('codex')
-        if not executable:raise RuntimeError('Codex CLI 未安装')
+        from .host_bins import SEARCH_HINT, find as _find_host_bin
+        executable=_find_host_bin('codex')
+        if not executable:raise RuntimeError('未找到 Codex CLI；'+SEARCH_HINT)
         self.notifications=Queue();self.server_requests=Queue()
         self._pending={};self._lock=threading.Lock();self._sequence=0
         self._stderr=(root/'app-server.stderr.log').open('a')
