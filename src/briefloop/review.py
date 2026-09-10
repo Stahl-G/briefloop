@@ -385,6 +385,11 @@ def visual_input_files(store,review_id,packet_root):
 def build_packet(store,version_id,folder):
     from .media import source_files
     snapshot=_snapshot(store,version_id);folder=Path(folder)
+    # A saved reader contract must survive into the packet. Losing it silently would
+    # let the Reviewer check content without the user's own delivery interpretation.
+    saved_contract=snapshot['detail'].get('reader_contract')
+    if saved_contract and snapshot['requirements'].get('reader_contract')!=saved_contract:
+        raise ValueError('核查包丢失了本轮已保存的读者约定')
     packet=folder/'packet'
     if packet.is_symlink():raise ValueError('核查包目录不能是符号链接')
     packet.mkdir(parents=True,exist_ok=True);entries={};source_index=[]

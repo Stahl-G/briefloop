@@ -9,7 +9,8 @@ import pytest
 from briefloop.store import Store, dump, now, uid
 from briefloop.evidence import create_span, create_claim, bind_claim, blocks
 from briefloop.document_model import brief_document
-from briefloop.deliverable_spec import requirement_items
+from briefloop.deliverable_spec import (reader_contract_schema, requirement_items, resolve,
+                                        validate_reader_contract)
 from briefloop.review import build_packet, accept_review
 from briefloop.release import (SCHEMA, eligibility, decision, enqueue_release, generate_release,
                                get_release, release_file, sha, validate_release)
@@ -444,3 +445,35 @@ def test_offline_checks_all_frozen_review_files_and_tool_index(tmp_path):
         checked = verify_bundle(output.getvalue())
         assert not checked['valid'] and not checked['complete_materials']
         assert any(name in error or name.removeprefix('packet/') in error for error in checked['errors'])
+
+
+def _saved_contract(base, kind, quote):
+    return validate_reader_contract(base, {
+        'source_fingerprint': reader_contract_schema(base)['properties']['source_fingerprint']['const'],
+        'clauses': [{'requirement_id': base['requirement_items'][0]['requirement_id'],
+                     'kind': kind, 'source_quote': quote, 'instruction': quote}]})
+
+
+def test_writing_constraint_gate_ignores_which_input_field_it_came_from():
+    # The same sentence typed into the objective or into writing_preferences must not
+    # change whether an unfinished interpretation blocks formal delivery.
+    req = {'title': 'Internal report', 'objective': '说明客户交付变化。不要重复免责声明。',
+           'writing_mode': 'internal_report'}
+    base = resolve(req)
+    review = {'status': 'complete', 'coverage_scan_complete': True, 'requirement_checks': []}
+    empty = {'evidence': {'bindings': []}, 'conflicts': []}
+    soft = resolve(req, reader_contract=_saved_contract(base, 'writing_preference', '不要重复免责声明。'))
+    soft_result = decision({**empty, 'requirements': soft}, review, [])
+    assert soft_result['eligible'] and soft_result['notices'][0]['code'] == 'writing_preference'
+    hard = resolve(req, reader_contract=_saved_contract(base, 'reader_content', '说明客户交付变化。'))
+    hard_result = decision({**empty, 'requirements': hard}, review, [])
+    assert not hard_result['eligible'] and hard_result['blockers'][0]['code'] == 'requirement_unfinished'
+
+
+def test_must_fix_expression_anchor_and_overall_consistency():
+    from briefloop.models import must_fix, overall_inconsistent
+    assert must_fix({'status': 'complete', 'overall': '建议修改', 'expression': 2})
+    assert overall_inconsistent({'status': 'complete', 'overall': '达到要求', 'expression': 2})
+    assert not must_fix({'status': 'complete', 'overall': '达到要求', 'expression': 3})
+    assert not must_fix({'status': 'incomplete', 'overall': '评估未完成', 'expression': 2})
+    assert not overall_inconsistent({'status': 'complete', 'overall': '建议修改', 'expression': 2})

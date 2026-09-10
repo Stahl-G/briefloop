@@ -254,6 +254,28 @@ class Assessment(Model):
         return self
 
 
+# Expression anchor 2 means a reader must do real editing before the body is usable
+# (repeated noise, internal checklists, mechanical labels). At or below it the body is
+# "must fix": the existing single revision is triggered even when the overall verdict
+# would otherwise look passing.
+MUST_FIX_EXPRESSION = 2
+
+
+def must_fix(assessment) -> bool:
+    data = assessment if isinstance(assessment, dict) else assessment.model_dump()
+    if data.get('status') != 'complete':
+        return False
+    score = data.get('expression')
+    return isinstance(score, int) and score <= MUST_FIX_EXPRESSION
+
+
+def overall_inconsistent(assessment) -> bool:
+    """A must-fix body cannot be summarised as '达到要求'; flag the self-contradiction
+    instead of silently letting a low expression score pass as complete."""
+    data = assessment if isinstance(assessment, dict) else assessment.model_dump()
+    return data.get('overall') == '达到要求' and must_fix(data)
+
+
 class SaveRevision(Model):
     base_version: str
     markdown: str = ''
