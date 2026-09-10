@@ -21,6 +21,20 @@
 
 新 CLI 使用宿主原生权限，关闭联网向 Agent 表达本轮不主动搜索的要求。受限 Reviewer 仍只使用已经验证了宿主文件、写入、联网和委派限制的通道。
 
+## 输入区只显示宿主真正支持的能力
+
+| 能力 | 表现 |
+| --- | --- |
+| `permission_modes` | 权限下拉按宿主声明的档位生成；只有一种时不显示这个下拉，不再出现"宿主原生权限"这种抽象选项 |
+| `steer` | 只有支持运行中追加的宿主提供"立即补充"（目前是 Codex）；Opencode 与 bridge CLI 只能排队 |
+| `images` | 明确声明不支持读图的宿主（如 MiMo）在附图时当场提示并跳过该文件 |
+| `network_control` | Codex 之外的宿主没有每轮网络硬开关；"联网"是向宿主放行的要求，最终能否联网由宿主决定 |
+| `questions`、`cancel`、`resume` | 宿主支持时才出现对应交互：权限提问卡片、停止按钮、续接同一原生会话 |
+
+"默认"表示使用宿主自己配置的模型。能读到宿主配置时下拉会显示解析结果：Claude Code 读 `~/.claude/settings.json` 的模型别名与 `ANTHROPIC_DEFAULT_*_MODEL` / `ANTHROPIC_MODEL` 映射，例如「默认：deepseek-v4-pro（别名 opus）」；读不到时保持通用标签。下拉末尾的"搜索全部模型…"打开可搜索列表，手填 ID 始终可用。
+
+打开联网会向宿主放行它自己的联网工具：Claude Code 追加 `--allowedTools WebSearch WebFetch`，ACP 宿主走各自的权限协商。放行不等于一定成功，宿主仍可能拒绝；此时错误如实显示，不会假装已经搜索。
+
 ## API 提供商
 
 设置 → 模型与提供商 → API 提供商。可保存多份配置，包括名称、Provider ID、协议、Base URL、API Key 和模型 ID。密钥由本机 OpenCode 凭据存储保存，页面不回显，报告任务只引用 provider/model。
