@@ -103,7 +103,9 @@ class BridgeHarness(OpencodeHarness):
             if instructions:instructions+='\n\n（以上工作区约定是执行环境说明，不要原文复述给用户。）\n\n---\n\n'
             params={'execution_id':execution,'runtime_id':self.backend,'cwd':session['cwd'],'prompt':text,
                     'model':config['model'],'permission':'runtime-native','allow_web':None,
-                    'images':images}
+                    'images':images,
+                    # The host owns its search tools; grant them only when this turn asked for web access.
+                    'web_tools':bool(message['allow_web'])}
             if instructions:params['prompt']=instructions+text
             if session.get('thread_id'):params['session_id']=session['thread_id']
             try:self.bridge.call('start',params,timeout=15)

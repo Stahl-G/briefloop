@@ -1342,6 +1342,7 @@ async function runStream(p, state) {
   let args = claude ? ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"] : ["run", "--format", "json"];
   if (p.model && p.model !== "default") args.push("--model", p.model);
   if (p.session_id) args.push(claude ? "--resume" : "--session", p.session_id);
+  if (claude && p.web_tools === true) args.push("--allowedTools", "WebSearch", "WebFetch");
   if (!claude && p.images?.length) throw Error("MiMo direct image transport not verified");
   const route = claude ? await loadMmdRouteLaunchEnv(env, p.model) : null;
   const child = launch(state.bin, args, p.cwd, route ? { ...env, ...route } : env);

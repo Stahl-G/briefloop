@@ -88,8 +88,11 @@ class ChatStore:
         with self.store.tx() as c:c.execute('INSERT INTO chat_events(session_id,kind,data,created) VALUES(?,?,?,?)',(sid,kind,dump(data),now()))
 
     def snapshot(self,sid,after=0,private=False):
-        session=self.session(sid)
+        # The session row belongs to the same read transaction as the journal. Read
+        # separately, a poll can pair a stale session (still running) with messages
+        # that already finished, which is what the chat UI polls several times a second.
         with self.store.tx() as c:
+            session=self.decode(c.execute('SELECT s.*, ('+BUSY_SQL+') AS busy FROM chat_sessions s WHERE id=?',(sid,)).fetchone())
             messages=[self.decode(r) for r in c.execute('SELECT * FROM chat_messages WHERE session_id=? ORDER BY created,rowid',(sid,))]
             usage_row=c.execute("SELECT seq,data FROM chat_events WHERE session_id=? AND kind='thread/tokenUsage/updated' ORDER BY seq DESC LIMIT 1",(sid,)).fetchone()
             changed=c.execute("SELECT seq FROM chat_events WHERE session_id=? AND kind='thread/providerChanged' ORDER BY seq DESC LIMIT 1",(sid,)).fetchone()
