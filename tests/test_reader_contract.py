@@ -1,4 +1,5 @@
 """Requirement handoff checks, not automated judgments of prose quality."""
+import json
 from copy import deepcopy
 import pytest
 from briefloop.deliverable_spec import (
@@ -73,3 +74,25 @@ def test_publication_rejects_unbound_contract(tmp_path):
     with pytest.raises(ValueError,match='产物约定'):
         store.publish(run['id'],{'title':'Report','markdown':'Draft','reader_contract':{'source_fingerprint':'wrong','clauses':[]}})
     assert not store.rows('SELECT id FROM briefs')
+
+
+def test_scout_contract_and_saved_contract_reach_the_dispatch(tmp_path):
+    # The scout contract must actually be written and handed over through the real
+    # dispatch, and the Scout must be pointed at the saved plan.json contract rather
+    # than a file that predates it.
+    from briefloop.models import Requirements
+    from briefloop.runtime import generation_prompt
+    from briefloop.store import Store
+    store = Store(tmp_path / 'workspace')
+    store.set_meta('settings', {**store.settings(), 'company_context_enabled': False})
+    source = store.add_source('local', '正文')
+    run = store.create_run(Requirements(title='Internal report', objective='面向管理层总结交付。不要重复免责声明。',
+                                        writing_mode='internal_report').model_dump(), [source['id']])
+    folder = store.root / 'jobs' / 'prompt'; folder.mkdir(parents=True)
+    prompt = generation_prompt(store, run, folder)
+    contract_path = (folder / 'scout-contract.md').resolve()
+    assert contract_path.is_file() and '研究交接' in contract_path.read_text()
+    payload = json.loads((folder / 'input.json').read_text())
+    assert payload['scout_contract_path'] == str(contract_path)
+    assert str(contract_path) in prompt
+    assert 'plan.json' in prompt and 'reader_contract' in prompt
