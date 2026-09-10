@@ -64,6 +64,8 @@ TASK_CONTEXT = """你在 BriefLoop 中执行一项已授权的本地任务。直
 
 
 def runtime_instruction(configuration, backend='codex'):
+    if backend not in ('codex','opencode'):
+        return f"本阶段执行引擎固定为 {backend}，模型为 {configuration['model']}。使用宿主提供的工具完成工作；没有原生子任务能力时自行完成，不启动嵌套模型 CLI，也不伪造子任务 ID。\n"
     if backend == 'opencode':
         variant = configuration.get('model_variant') or configuration.get('reasoning_effort')
         variant_label = variant if variant not in (None, '', 'none') else '不指定（Opencode/provider 默认）'
@@ -183,7 +185,7 @@ def generation_prompt(store, run, folder, backend='codex'):
 父会话不必先读取技能全文再复制两份；input.role_skills 中的正文仍可按需使用，但不要重复展开已通过技能路径分配的内容。保存实际 dispatch prompt、子 agent 句柄及真实读取确认，不伪造。
 retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generation input.json 注入 Analyst、Evaluator、Maintainer 或 Proposer。他们只接收相应任务、来源及检索结果。'''
                 if tavily_enabled else
-                ('本轮冻结搜索源：Codex。允许联网时 Scout 使用 host 的原生网络搜索工具设计查询、筛选公开原始发布者；搜索摘要仅用于发现，后续仍须读取并登记正文。'
+                ('本轮冻结搜索源：当前执行引擎。允许联网时 Scout 使用 host 的原生网络搜索工具设计查询、筛选公开原始发布者；搜索摘要仅用于发现，后续仍须读取并登记正文。'
                  if req['allow_web'] else '本轮未允许联网，只处理已登记的材料，不加载外部检索技能。'))
     if backend == 'opencode' and tavily_enabled:
         search = search.replace('实际 spawn/delegate 消息优先使用精简任务', '实际 task 工具消息优先使用精简任务')

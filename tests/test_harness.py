@@ -164,3 +164,14 @@ def test_session_lifecycle_keeps_reports_and_never_replays(tmp_path):
     assert {s['id'] for s in manager.list_sessions()}=={empty,queued}
     assert len(manager.client.calls)==calls
     manager.close()
+
+
+def test_host_default_model_is_not_sent_as_a_literal_api_model(tmp_path):
+    manager=HarnessManager(Store(tmp_path),RPC)
+    try:
+        sid=manager.create_session(runtime={'model':'default'})['id']
+        manager.send(sid,'hello')
+        until(lambda:manager.client is not None and any(method=='turn/start' for method,_ in manager.client.calls))
+        starts=[params for method,params in manager.client.calls if method in ('thread/start','turn/start')]
+        assert all('model' not in params for params in starts)
+    finally:manager.close()

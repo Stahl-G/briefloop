@@ -43,3 +43,27 @@ def test_custom_image_capability_is_explicit_and_omission_preserves_existing(tmp
     assert model['attachment'] is True and model['modalities']['input']==['text','image']
     calls.clear();client.configure_provider(tmp_path,'provider','custom','https://example.test')
     assert calls[0][2]['provider']['provider']['models']['custom']=={'name':'custom'}
+
+
+@pytest.mark.parametrize('protocol,package',[('chat-completions','@ai-sdk/openai-compatible'),('responses','@ai-sdk/openai'),('anthropic-messages','@ai-sdk/anthropic')])
+def test_explicit_protocol_and_unknown_limits(tmp_path,protocol,package):
+    client=object.__new__(OpencodeServerClient);calls=[]
+    client._request=lambda method,path,body=None:calls.append((method,path,body))
+    client.configure_provider(tmp_path,'custom','model','https://gateway.test/v1',protocol=protocol,output_limit=2000)
+    config=calls[0][2]['provider']['custom']
+    assert config['npm']==package
+    assert config['models']['model']['limit']=={'output':2000}
+    calls.clear()
+    with pytest.raises(ValueError):
+        client.configure_provider(tmp_path,'custom','model','https://gateway.test/v1',protocol='unsupported')
+    assert not calls
+
+
+def test_provider_settings_never_projects_credentials():
+    client=object.__new__(OpencodeServerClient)
+    client._request=lambda *args:{'provider':{'private':{'npm':'@ai-sdk/openai',
+        'options':{'apiKey':'SECRET','baseURL':'https://user:SECRET@example.test/v1?token=SECRET'},
+        'models':{'m':{'name':'m'}}}},'other_secret':'SECRET'}
+    result=client.provider_settings()
+    assert 'SECRET' not in str(result)
+    assert result[0]['base_url']=='' and result[0]['protocol']=='responses'
