@@ -250,7 +250,7 @@ async function fetchModelCatalog(force=false,backend=backendValue()){
  const now=Date.now(),cached=modelCatalogs.get(backend);
  if(!force&&cached&&now-cached.at<3600000){if(backend===backendValue())modelCatalog=cached;return cached.models;}
  const data=await api('models?backend='+encodeURIComponent(backend)+(force?'&refresh=1':''));
- const catalog={backend,at:now,models:(data.models||[]).map(m=>typeof m==='string'?{id:m,name:friendlyModel(m)}:{...m,name:m.id==='default'?'宿主默认模型':m.name||m.label||friendlyModel(m.id),provider:m.provider||runtimeName(backend)}),diagnostic:data.diagnostic||data.error||'',source:data.source||''};modelCatalogs.set(backend,catalog);if(backend===backendValue())modelCatalog=catalog;return catalog.models;
+ const catalog={backend,at:now,models:(data.models||[]).map(m=>typeof m==='string'?{id:m,name:friendlyModel(m)}:{...m,name:m.name||m.label||friendlyModel(m.id),provider:m.provider||runtimeName(backend)}),diagnostic:data.diagnostic||data.error||'',source:data.source||''};modelCatalogs.set(backend,catalog);if(backend===backendValue())modelCatalog=catalog;return catalog.models;
 }
 async function refreshModelSuggestions(force=false){
  const backend=backendValue();$('model-suggestions').innerHTML='';refreshInlineModelPickers();
@@ -292,8 +292,6 @@ function pickModel(id){
 $('model-picker-close').onclick=()=>$('model-picker').close();
 $('model-picker-search').oninput=()=>renderModelPicker();
 $('model-picker-refresh').onclick=()=>action(async()=>{await refreshModelSuggestions(true);await renderModelPicker()},'模型目录已刷新');
-$('browse-models').onclick=()=>openModelPicker('model-select');
-$('chat-browse-models').onclick=()=>openModelPicker('chat-model');
 $('model-select').onchange=()=>action(saveModel,'模型已保存；下一次启动生效');$('effort-select').onchange=()=>action(saveModel,'推理档位已保存；下一次启动生效');$('model-provider').onchange=()=>action(saveModel,'Provider 已保存；下一次启动生效');
 
 $('version-history').onclick=()=>action(async()=>{
@@ -791,6 +789,7 @@ function refreshInlineModelPickers(){
   const models=modelCatalogs.get(modelTargetBackend(input?.id))?.models||[];
   for(const model of models)select.add(new Option(model.name+' · '+model.id,model.id));
   select.add(new Option('输入其他模型 ID…','__custom__'));
+  select.add(new Option('搜索全部模型…','__browse__'));
   if(input?.dataset.roleModel)select.add(new Option('继承主链模型','__inherit__'));
  });
 }
@@ -803,10 +802,12 @@ function setupModelPickers(root=document){
   const models=modelCatalogs.get(modelTargetBackend(input?.id))?.models||[];
   for(const model of models)select.add(new Option(model.name+' · '+model.id,model.id));
   select.add(new Option('输入其他模型 ID…','__custom__'));
+  select.add(new Option('搜索全部模型…','__browse__'));
   if(input.dataset.roleModel)select.add(new Option('继承主链模型','__inherit__'));
   select.onchange=()=>{
    const model=select.value;select.value='';if(input.disabled)return;
    if(model==='__custom__'){input.focus();input.select();return}
+   if(model==='__browse__'){openModelPicker(input.id);return}
    if(!model)return;input.value=model==='__inherit__'?'':model;
    input.dispatchEvent(new Event('input',{bubbles:true}));input.dispatchEvent(new Event('change',{bubbles:true}));input.focus();
   };

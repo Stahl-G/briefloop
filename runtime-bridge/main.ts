@@ -18,6 +18,27 @@ const exec = promisify(execFile);
 const acpArgs = {kimi:['acp'],hermes:['acp'],reasonix:['acp'],kilo:['acp'],kiro:['acp'],vibe:[]};
 const active = new Map<string, any>();
 const defaults = [{id:'default',label:'宿主默认模型'}];
+function claudeConfiguredModel(){
+  // Claude Code keeps its default model alias and any alias→model mapping in its own
+  // settings; answering a configured user with a bare "default" is not acceptable.
+  try{
+    const file=JSON.parse(readFileSync(path.join(homedir(),'.claude','settings.json'),'utf8'));
+    const alias=typeof file?.model==='string'?file.model.trim():'';
+    const configured=file?.env&&typeof file.env==='object'?file.env:{};
+    const merged={...configured,...env};
+    const concrete=(alias?merged['ANTHROPIC_DEFAULT_'+alias.toUpperCase()+'_MODEL']:'')||merged.ANTHROPIC_MODEL||'';
+    return {alias,concrete:typeof concrete==='string'?concrete.trim():''};
+  }catch{return {alias:'',concrete:''}}
+}
+function hostDefaultLabel(id:string){
+  if(id!=='claude')return defaults[0].label;
+  const {alias,concrete}=claudeConfiguredModel();
+  if(concrete&&alias)return `默认：${concrete}（别名 ${alias}）`;
+  if(concrete)return `默认：${concrete}`;
+  if(alias)return `默认：${alias}`;
+  return defaults[0].label;
+}
+function hostDefaults(id:string){return [{id:'default',label:hostDefaultLabel(id)}]}
 const env = {...process.env}; delete env.CLAUDECODE;
 const dirs = [...(env.PATH||'').split(path.delimiter), path.join(homedir(),'.local/bin'),path.join(homedir(),'.kimi-code/bin'),path.join(homedir(),'.opencode/bin'),path.join(homedir(),'.npm-global/bin'),path.join(homedir(),'.bun/bin'),path.join(homedir(),'.cargo/bin'),path.join(homedir(),'.dsh/bin'),'/opt/homebrew/bin','/usr/local/bin'];
 env.PATH=[...new Set(dirs)].join(path.delimiter);
@@ -44,7 +65,7 @@ async function listModels(p:any){const d=defFor(p.runtime_id),bin=findBin(d,p.pa
  const r=await exec(bin,['doctor','--json'],{env,cwd:p.cwd||process.cwd(),timeout:10000,maxBuffer:1024*1024});const d=JSON.parse(r.stdout);
  return {models:[...defaults,...(d.providers||[]).filter(x=>typeof x.name==='string').map(x=>({id:x.name,label:x.name+(x.model?' · '+x.model:''),provider:x.kind||'configured',model_id:x.model}))],source:'native_config',note:'Models declared by the host; account availability is checked by a model call.'};
  }
- const fallback=[...defaults,...(fallbackModels[p.runtime_id]||[])];
+ const fallback=[...hostDefaults(p.runtime_id),...(fallbackModels[p.runtime_id]||[])];
  if(p.runtime_id==='claude'){const routed=await loadMmdRouteModels(env,fallback);return {models:routed||fallback,source:routed?'local_routes':'builtin_hints',note:'内置选项与已配置路由；可手动输入其他模型 ID。'};}
  try{
   if(p.runtime_id==='codex'){const r=await exec(bin,['debug','models'],{env,timeout:5000,maxBuffer:4*1024*1024});const models=parseCodexDebugModels(r.stdout);return {models:models||fallback,source:models?'host':'builtin_hints'};}
