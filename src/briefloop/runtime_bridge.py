@@ -21,8 +21,9 @@ class RuntimeBridge:
 
     def _start(self):
         if self._process is not None and self._process.poll() is None:return
-        node=shutil.which('node')
-        if not node:raise RuntimeError('需要本机 Node.js 20+ 来运行多 Runtime bridge')
+        from .host_bins import SEARCH_HINT, find as _find_host_bin
+        node=_find_host_bin('node')
+        if not node:raise RuntimeError('需要本机 Node.js 20+ 来运行多 Runtime bridge；'+SEARCH_HINT)
         self._process=subprocess.Popen([node,str(files('briefloop').joinpath('static/runtime-bridge.mjs'))],
             stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,bufsize=1)
         threading.Thread(target=self._read,args=(self._process,),daemon=True).start()
