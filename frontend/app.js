@@ -316,18 +316,39 @@ function restoreDraft(){
  const saved=d&&(d.backend===backend||(!d.backend&&sessionRuntime))?d:null;
  const fallback={model:state.settings.model_selection_required?'':state.settings.model,backend,effort:state.settings.reasoning_effort};
  const runtime=saved||sessionRuntime||fallback;
- $('chat-input').value=d?.text||'';chat.attachments=new Set(d?.sources||[]);$('chat-allow-web').checked=d?.allow_web||false;
+ // Searching is the expected default for a fresh chat; a saved draft keeps the user's own choice.
+ $('chat-input').value=d?.text||'';chat.attachments=new Set(d?.sources||[]);$('chat-allow-web').checked=d&&('allow_web' in d)?!!d.allow_web:true;
  $('chat-model').value=runtime.model||'';assignEffort('chat-effort',effortValue(runtime,'effort'));
  $('chat-model-provider').value=runtime.model_provider||'';$('chat-permission').value=runtime.permission||'workspace-write';
  renderAttachments();updateComposer();autoSizeChatInput();refreshInlineModelPickers();
 }
+const PERMISSION_MODES={
+ 'workspace-write':{label:'读写工作区',note:'本轮可以读取并修改工作区文件。'},
+ 'read-only':{label:'只读',note:'本轮只读取和解释资料，不修改文件，也不启动生成、评分或学习任务。'},
+ 'runtime-native':{label:'由 CLI 自己控制',note:'该 CLI 按自己的权限设置运行，BriefLoop 不限制它的文件与联网范围。'}
+};
+function permissionModes(runtime){
+ const caps=((runtimeCatalog||[]).find(r=>r.id===runtime)||{}).capabilities;
+ // Before discovery finishes, fall back to what each host family supports.
+ const modes=(caps?.permission_modes||(['codex','opencode'].includes(runtime)?['workspace-write','read-only']:['runtime-native'])).filter(mode=>PERMISSION_MODES[mode]);
+ return modes.length?modes:['workspace-write'];
+}
 function renderChatRuntimePermissions(){
- const backend=chat.session?.runtime?.backend||state.settings.agent_backend||'codex',native=!['codex','opencode'].includes(backend),select=$('chat-permission');
- if(![...select.options].some(o=>o.value==='runtime-native'))select.add(new Option('宿主原生权限','runtime-native'));
- for(const option of select.options){option.hidden=native?option.value!=='runtime-native':option.value==='runtime-native'}
- let note=$('runtime-native-note');if(!note){note=document.createElement('p');note.id='runtime-native-note';note.className='help';note.setAttribute('role','status');$('composer-help').after(note)}
- if(native)select.value='runtime-native';
- note.hidden=!native;note.textContent=`${runtimeName(backend)} 使用宿主原生权限，联网和工具访问由宿主管理。关闭联网表示本轮不主动搜索；此宿主未提供独立网络隔离。`;
+ const backend=chat.session?.runtime?.backend||state.settings.agent_backend||'codex',select=$('chat-permission'),modes=permissionModes(backend);
+ const signature=JSON.stringify([backend,modes]);
+ if(renderChatRuntimePermissions.signature!==signature){
+  renderChatRuntimePermissions.signature=signature;
+  select.replaceChildren(...modes.map(mode=>new Option(PERMISSION_MODES[mode].label,mode)));
+  select.title=modes.map(mode=>PERMISSION_MODES[mode].note).join(' ');
+  // One option is not a choice; hide the control instead of showing an abstract label.
+  select.hidden=modes.length<2;
+ }
+ if(!modes.includes(select.value))select.value=modes[0];
+ // Only offer mid-run interjection where the runtime can actually take it.
+ const declaredCaps=((runtimeCatalog||[]).find(r=>r.id===backend)||{}).capabilities;
+ const canSteer=declaredCaps?declaredCaps.steer!==false:backend==='codex';
+ for(const option of $('chat-mode').options){if(option.value==='steer'){option.hidden=!canSteer;option.disabled=!canSteer}}
+ if(!canSteer&&$('chat-mode').value==='steer')$('chat-mode').value='queue';
  $('chat-effort').hidden=backend!=='codex';document.querySelector('.chat-provider-row').hidden=backend!=='codex';
 }
 function runtimeChoice(){const model=$('chat-model').value.trim();if(!model)throw Error('请输入模型 ID');const backend=chat.session?.runtime?.backend||state.settings.agent_backend||'codex';if(!['codex','opencode'].includes(backend)){return {model,backend,permission:'runtime-native'}}if(backend==='opencode'){if(!model.includes('/'))throw Error('Opencode 模型必须是 provider/model 形式，例如 opencode-go/gpt-5.6-luna');return {model,backend,variant:state.settings.model_variant||null,permission:$('chat-permission').value}}return {model,backend,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,permission:$('chat-permission').value}}
@@ -432,7 +453,13 @@ $('chat-attach').onclick=()=>$('chat-upload').click();
 $('attach-existing').onclick=()=>{const show=$('existing-sources').hidden;$('existing-sources').hidden=!show;$('attach-existing').setAttribute('aria-expanded',String(show));renderAttachments()};
 $('chat-upload').onchange=async event=>{
  const input=event.target,files=[...input.files];input.value='';if(!files.length)return;chat.uploading++;chatError();updateComposer();
- try{for(const file of files){const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));const source=await api('upload',{name:file.name,data:btoa(binary)});if(source.status==='failed'){chatError(`${file.name} 读取失败：${source.error||'请检查文件后重试'}`);continue}chat.attachments.add(source.id);selected.add(source.id)}await refresh();renderAttachments();rememberDraft()}catch(e){chatError('上传未完成：'+e.message)}finally{chat.uploading--;updateComposer()}
+ const chatBackend=chat.session?.runtime?.backend||state.settings.agent_backend||'codex';
+ const canImages=((runtimeCatalog||[]).find(r=>r.id===chatBackend)||{}).capabilities?.images!==false;
+ try{for(const file of files){
+   // A host that cannot take images must say so at attach time; the turn would
+   // otherwise fail after the whole message was queued.
+   if(file.type.startsWith('image/')&&!canImages){chatError(`${file.name}：${runtimeName(chatBackend)} 不支持直接读图；请改用支持读图的宿主，或先转成文字材料。`);continue}
+   const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=8192)binary+=String.fromCharCode(...bytes.subarray(i,i+8192));const source=await api('upload',{name:file.name,data:btoa(binary)});if(source.status==='failed'){chatError(`${file.name} 读取失败：${source.error||'请检查文件后重试'}`);continue}chat.attachments.add(source.id);selected.add(source.id)}await refresh();renderAttachments();rememberDraft()}catch(e){chatError('上传未完成：'+e.message)}finally{chat.uploading--;updateComposer()}
 };
 document.querySelectorAll('[data-prompt]').forEach(b=>b.onclick=()=>{$('chat-input').value=b.dataset.prompt;rememberDraft();updateComposer();$('chat-input').focus()});
 async function initChat(){

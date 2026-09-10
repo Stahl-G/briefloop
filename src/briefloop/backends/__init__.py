@@ -12,6 +12,17 @@ BACKENDS = ('codex', 'opencode', *BRIDGE_BACKENDS)
 
 DEFAULT_BACKEND = 'codex'
 
+# Shown to users and to the chat model; never infer a host's name from another host.
+BACKEND_LABELS = {
+    'codex': 'Codex CLI',
+    'opencode': 'Opencode CLI',
+    'claude': 'Claude Code',
+    'kimi': 'Kimi CLI',
+    'hermes': 'Hermes',
+    'reasonix': 'DeepSeek Reasonix',
+    'mimo': 'MiMo Code',
+}
+
 # Verified against opencode 1.18.20 (v1 message surface, same as the official
 # `run --attach` client): queue prompt, abort, message polling, task tool.
 # v1 has no in-flight steer — steering a live opencode turn is refused and the

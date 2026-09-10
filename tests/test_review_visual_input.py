@@ -34,7 +34,9 @@ class RecordingClient(OpencodeServerClient):
 
 class RecordedReviewHarness(OpencodeHarness):
     def _schedule(self,sid):
-        if sid in self._busy:return
+        # Mirror the production guard. Dispatching with an empty queue recurses
+        # forever, because _dispatch re-schedules an idle session from its finally.
+        if sid in self._busy or not any(m['status']=='queued' for m in self.chat.snapshot(sid)['messages']):return
         self._busy.add(sid);self._epoch[sid]=self._epoch.get(sid,0)+1
         self._dispatch(sid,self._epoch[sid])
     def _follow(self,sid,epoch,mid,admitted_at):
