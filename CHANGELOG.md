@@ -1,5 +1,14 @@
 # 变更记录
 
+## 0.17.1 — 2026-09-10
+
+- 接入 Codex、OpenCode、Claude、Kimi、Hermes、Reasonix、MiMo，统一模型目录与手填入口。
+- 自定义 API 显式支持 Chat Completions、Responses、Anthropic Messages，保存与测试分开。
+- 独立设置页面，兼顾浏览器窗口和未来 Electron 的共享界面。
+- 报告编辑、版本绑定、证据追溯、独立审阅与 Word 导出。
+- 执行采用用户设置的时限，移除额外的模型测试时限。
+- 添加合成周报示例；本地截图、报告、工作区和凭据不进入源码发布。
+
 ## 0.17.0 — 2026-09-09
 
 本版将原工作流工具升级为本地 Codex Agent 工作台。

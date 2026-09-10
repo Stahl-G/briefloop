@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "briefloop-local"
-version = "0.17.0"
+version = "0.17.1"
 description = "A local, editable briefing workspace with agent-driven learning"
 requires-python = ">=3.11"
 dependencies = ["pydantic>=2,<3", "markdown-it-py>=3,<5", "wikiskill-research==0.1.1+briefloop.2", "python-docx>=1", "pypdf>=5", "Pillow>=11", "pypdfium2>=4,<6", "openpyxl>=3.1,<4"]

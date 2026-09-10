@@ -7,3 +7,8 @@ recursive-include src/briefloop/skill_assets *.md
 prune workspaces
 prune private_planning
 global-exclude __pycache__ *.py[cod] .DS_Store
+
+recursive-include runtime-bridge *.ts *.mjs *.json *.md
+recursive-include third_party/open-design *
+recursive-include examples *.md *.txt
+prune output
