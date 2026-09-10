@@ -222,11 +222,11 @@ function runtimeName(id){return runtimeCatalog.find(r=>r.id===id)?.name||id}
 function renderRuntimeDiscovery(){
  const select=$('agent-backend'),chosen=select.value||state.settings.agent_backend||'codex';
  select.replaceChildren();
- for(const runtime of runtimeCatalog){const option=new Option(runtime.name+(runtime.available?'':' · 未就绪'),runtime.id);option.disabled=!runtime.available;select.add(option)}
+ for(const runtime of runtimeCatalog){const option=new Option(runtime.name+(runtime.available?'':(runtime.installed?' · 尚未支持':' · 未安装')),runtime.id);option.disabled=!runtime.available;select.add(option)}
  if(![...select.options].some(o=>o.value===chosen))select.add(new Option(chosen+' · 未检测到',chosen));select.value=chosen;
  const modelBlock=$('settings-model-block');
  const installed=runtimeCatalog.filter(r=>r.installed).sort((a,b)=>Number(b.id===chosen)-Number(a.id===chosen)),missing=runtimeCatalog.filter(r=>!r.installed);
- const row=r=>`<article data-runtime-card="${esc(r.id)}" class="runtime-card ${r.id===chosen?'selected':''}"><div class="runtime-card-head"><span class="runtime-monogram" aria-hidden="true">${esc(r.name.slice(0,1))}</span><div><h3>${esc(r.name)}${r.id===chosen?'<span class="runtime-selected">当前使用</span>':''}</h3><p>${esc(r.version||'版本未确认')}</p></div><button type="button" class="outline" data-runtime-select="${esc(r.id)}" ${r.available?'':'disabled'}>${r.id===chosen?'已选择':r.available?'选择':'待接通'}</button>${r.available?`<button type="button" class="outline" data-runtime-test="${esc(r.id)}" ${r.id!==chosen?'disabled':''}>测试</button>`:''}</div>${r.id===chosen?`<p class="runtime-current-model">模型 <strong>${esc(state.settings.model_selection_required?'待选择':state.settings.model||'宿主默认')}</strong></p>`:''}<details><summary>安装与能力</summary><p class="runtime-path">${esc(r.path||'未安装')}</p><p>${esc(r.diagnostic||'已找到本机 CLI，实际能力以运行结果为准。')}</p></details></article>`;
+ const row=r=>`<article data-runtime-card="${esc(r.id)}" class="runtime-card ${r.id===chosen?'selected':''}"><div class="runtime-card-head"><span class="runtime-monogram" aria-hidden="true">${esc(r.name.slice(0,1))}</span><div><h3>${esc(r.name)}${r.id===chosen?'<span class="runtime-selected">当前使用</span>':''}</h3><p>${esc(r.version||'版本未确认')}</p></div><button type="button" class="outline" data-runtime-select="${esc(r.id)}" ${r.available?'':'disabled'}>${r.id===chosen?'已选择':r.available?'选择':(r.installed?'尚未支持':'未安装')}</button>${r.available?`<button type="button" class="outline" data-runtime-test="${esc(r.id)}" ${r.id!==chosen?'disabled':''}>测试</button>`:''}</div>${r.id===chosen?`<p class="runtime-current-model">模型 <strong>${esc(state.settings.model_selection_required?'待选择':state.settings.model||'宿主默认')}</strong></p>`:''}<details><summary>安装与能力</summary><p class="runtime-path">${esc(r.path||'未安装')}</p><p>${esc(r.diagnostic||'已找到本机 CLI，实际能力以运行结果为准。')}</p></details></article>`;
  $('runtime-discovery-details').innerHTML=installed.map(row).join('')+`<details class="runtime-uninstalled"><summary>未安装的 CLI · ${missing.length}</summary><p>${missing.map(r=>esc(r.name)).join(' · ')}</p></details>`;
  const selectedCard=[...$('runtime-discovery-details').querySelectorAll('[data-runtime-card]')].find(c=>c.dataset.runtimeCard===chosen);
  if(selectedCard)selectedCard.append(modelBlock);else $('settings-cli').append(modelBlock);
@@ -242,7 +242,7 @@ async function refreshRuntimeDiscovery(force=false){
  $('runtime-discovery-status').textContent='正在检测本机 CLI…';$('runtime-discovery-refresh').disabled=true;
  try{const data=await api('runtimes'+(force?'?refresh=1':''));runtimeCatalog=data.runtimes||[];renderRuntimeDiscovery();$('runtime-discovery-status').textContent=`已接入 ${runtimeCatalog.filter(r=>r.available).length} 个本机 CLI；账号与模型可通过短测试验证。`;await refreshModelSuggestions(force)}catch(e){$('runtime-discovery-status').textContent='检测失败：'+e.message}finally{$('runtime-discovery-refresh').disabled=false}
 }
-$('agent-backend').onchange=()=>action(async()=>{const backend=backendValue();await api('settings',{agent_backend:backend,model_selection_required:true});state.settings.agent_backend=backend;state.settings.model_selection_required=true;$('model-select').value='';$('chat-model').value='';modelCatalog={backend:null,at:0,models:[]};if(chat.session&&!chatActive()&&chat.session.runtime?.backend!==backend)await newChat();renderRuntimeDiscovery();renderRoleModels();renderBackend();updateComposer();await refreshModelSuggestions()},'Runtime 已保存；请选择或输入模型');$('model-variant').onchange=()=>action(saveModel,'Variant 已保存；下一次启动生效');
+$('agent-backend').onchange=()=>action(async()=>{const backend=backendValue(),dropped=Object.keys(state.settings.role_models||{}).length;await api('settings',{agent_backend:backend,model_selection_required:true,role_models:{}});state.settings.agent_backend=backend;state.settings.model_selection_required=true;state.settings.role_models={};$('model-select').value='';$('chat-model').value='';modelCatalog={backend:null,at:0,models:[]};if(chat.session&&!chatActive()&&chat.session.runtime?.backend!==backend)await newChat();renderRuntimeDiscovery();renderRoleModels();renderBackend();updateComposer();await refreshModelSuggestions();notice(dropped?'宿主已切换；原宿主的角色模型已清空，留空即继承主链模型':'Runtime 已保存；请选择或输入模型')});$('model-variant').onchange=()=>action(saveModel,'Variant 已保存；下一次启动生效');
 let modelCatalog={backend:null,at:0,models:[]};
 const modelCatalogs=new Map();
 function modelTargetBackend(target){return target==='chat-model'?chat.session?.runtime?.backend||backendValue():backendValue()}
@@ -717,6 +717,8 @@ $('report-profile').onchange=()=>{
  }else{
   industryLengthChoice=[$('target-words').value,$('max-words').value];
   [$('target-words').value,$('max-words').value]=briefLengthChoice||LENGTH_PRESETS[$('length-preset').value]||LENGTH_PRESETS.balanced;
+  // 普通简报没有参考材料这个概念，之前标为参考的材料要回到本期材料里。
+  for(const id of referenceSelected){if((state.sources||[]).some(s=>s.id===id&&s.status!=='failed')){selected.add(id);const evidence=$('source-list').querySelector(`[data-check="${CSS.escape(id)}"]`);if(evidence)evidence.checked=true}}
  }
  $('industry-profile-options').hidden=!industryProfileActive();$('length-preset').disabled=industryProfileActive();$('length-preset').closest('label').hidden=industryProfileActive();validateLengthInputs();
 };
@@ -809,6 +811,9 @@ $('research-notes').onclick=()=>action(async()=>{const version=await savedVersio
 
 function readTemplateSections(){
  const templateId=$('template-select').value,template=state?.templates?.find(t=>t.id===templateId),original=parse(template?.spec).sections||[];
+ // Never submit a report whose chosen template is not ready; falling back to the
+ // general layout would silently change the deliverable.
+ if(template&&template.status&&template.status!=='ready')throw Error('所选模板尚未就绪：'+template.name+'；请改用通用模板，或等模板准备完成后再提交');
  const saved=templateId&&state.requirements?.template_id===templateId?state.requirements.sections||[]:[];
  return [...$('template-sections').querySelectorAll('[data-section-id]')].map(row=>{
   const base=original.find(s=>s.section_id===row.dataset.sectionId)||{},requirement=saved.find(s=>s.section_id===row.dataset.sectionId);
@@ -819,16 +824,28 @@ function templateSections(){
  const selected=state?.templates?.find(t=>t.id===$('template-select').value),sections=parse(selected?.spec).sections||[];
  $('template-sections').innerHTML=sections.map(s=>`<div class="row" data-section-id="${esc(s.section_id)}"><input data-title aria-label="章节标题" value="${esc(s.title)}"><select aria-label="章节职责"><option value="required">必写</option><option value="optional">按资料选用</option><option value="manual">人工填写</option></select></div>`).join('');
 }
+function applyTemplateSectionEdits(){
+ const templateId=$('template-select').value;
+ if(!templateId||state?.requirements?.template_id!==templateId)return;
+ for(const section of state.requirements.sections||[]){const row=[...$('template-sections').querySelectorAll('[data-section-id]')].find(r=>r.dataset.sectionId===section.section_id);if(row){row.querySelector('[data-title]').value=section.title;row.querySelector('select').value=section.mode||'required'}}
+}
+function unreadyTemplate(id){const template=(state?.templates||[]).find(t=>t.id===id);return template&&template.status&&template.status!=='ready'?template:null}
 function renderTemplates(first=false){
  const select=$('template-select');if(!select||!state)return;
- const signature=JSON.stringify(state.templates||[]);if(!first&&signature===renderTemplates.signature)return;renderTemplates.signature=signature;
+ // Rebuild only when the template list or the picked template changes, so edits in
+ // the section rows survive unrelated state refreshes.
+ const signature=JSON.stringify([select.value,(state.templates||[]).map(t=>[t.id,t.status,t.revision])]);if(!first&&signature===renderTemplates.signature)return;renderTemplates.signature=signature;
  const chosen=first?(state.requirements?.template_id||state.settings.default_template_id||''):select.value;
- select.innerHTML='<option value="">通用模板</option>'+(state.templates||[]).filter(t=>t.status==='ready').map(t=>`<option value="${esc(t.id)}">${esc(t.name)} · v${t.revision}</option>`).join('');select.value=chosen;
- $('template-status').textContent=(state.templates||[]).filter(t=>t.status!=='ready').map(t=>t.name+'：'+(t.error||'模板准备中，可在任务列表查看或恢复')).join('；');
+ const blocked=unreadyTemplate(chosen);
+ select.innerHTML='<option value="">通用模板</option>'+(state.templates||[]).filter(t=>t.status==='ready').map(t=>`<option value="${esc(t.id)}">${esc(t.name)} · v${t.revision}</option>`).join('')
+  +(blocked?`<option value="${esc(blocked.id)}">${esc(blocked.name)} · 尚未就绪</option>`:'');
+ select.value=chosen;
+ $('template-status').textContent=[(state.templates||[]).filter(t=>t.status!=='ready').map(t=>t.name+'：'+(t.error||'模板准备中，可在任务列表查看或恢复')).join('；'),
+  blocked?'当前选中的模板尚未就绪，请改用通用模板或等它准备完成。':''].filter(Boolean).join(' ');
  templateSections();
- if(first)for(const s of state.requirements?.sections||[]){const row=[...$('template-sections').querySelectorAll('[data-section-id]')].find(r=>r.dataset.sectionId===s.section_id);if(row){row.querySelector('[data-title]').value=s.title;row.querySelector('select').value=s.mode||'required'}}
+ applyTemplateSectionEdits();
 }
-$('template-select').onchange=templateSections;
+$('template-select').onchange=()=>{templateSections();applyTemplateSectionEdits()};
 $('template-import-button').onclick=()=>$('template-file').click();
 $('template-file').onchange=e=>action(async()=>{const file=e.target.files[0];if(!file)return;const bytes=new Uint8Array(await file.arrayBuffer());let raw='';for(let i=0;i<bytes.length;i+=8192)raw+=String.fromCharCode(...bytes.subarray(i,i+8192));await api('template-import',{name:file.name,data:btoa(raw)});e.target.value='';notice('模板已上传，主 Agent 将准备章节和版式，完成后可在我的模板中选择')});
 
