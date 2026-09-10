@@ -407,6 +407,23 @@ class Store:
         if settings.get('model_selection_required'):raise ValueError('请先在设置中选择用于报告和学习的模型')
         return runtime_fields(settings,settings.get('agent_backend','codex'))
 
+    def confirm_runtime_choice(self,backend,runtime):
+        """A runtime the user actually ran counts as a chosen model.
+
+        Chat sessions carry their own runtime, so without this the workspace could
+        show a selected model while still refusing to start a report because the
+        pending-selection flag was never cleared.
+        """
+        settings=self.settings()
+        if not settings.get('model_selection_required'):return settings
+        backend=backend or settings.get('agent_backend','codex')
+        fields=runtime_fields(runtime or {},backend)
+        if not str(fields.get('model') or '').strip():return settings
+        if backend not in ('codex','opencode'):fields.update(model_provider=None,model_variant=None)
+        updated=Settings.model_validate({**settings,**fields,'agent_backend':backend,'model_selection_required':False})
+        self.set_meta('settings',updated.model_dump())
+        return updated.model_dump()
+
     def role_model_config(self, runtime=None, backend=None):
         base=runtime or self.runtime_config()
         backend=backend or self.settings().get('agent_backend','codex')

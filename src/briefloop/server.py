@@ -50,6 +50,10 @@ def make_server(workspace, port=8765, *, paused=False):
                     continue
         backend=backend or store.settings().get('agent_backend','codex')
         return managers[validate_backend(backend)]
+    def choose_runtime(store_,runtime):
+        # A chat turn carries the runtime the user just picked; treat it as the choice.
+        try:store_.confirm_runtime_choice((runtime or {}).get('backend'),runtime or {})
+        except ValueError:pass
     def test_runtime(body):
         backend=validate_backend(body.get('backend'))
         model=str(body.get('model','')).strip()
@@ -271,8 +275,11 @@ def make_server(workspace, port=8765, *, paused=False):
                 elif path=='/api/workspaces/open':
                     from .workspaces import open_workspace
                     result=open_workspace(store,body['path'],create=bool(body.get('create',False)))
-                elif path=='/api/harness/session':result=pick_harness(body.get('runtime')).create_session(body.get('title','新对话'),body.get('runtime'))
+                elif path=='/api/harness/session':
+                    choose_runtime(store,body.get('runtime'))
+                    result=pick_harness(body.get('runtime')).create_session(body.get('title','新对话'),body.get('runtime'))
                 elif path=='/api/harness/message':
+                    choose_runtime(store,body.get('runtime'))
                     result=pick_harness(body.get('runtime'),body['session_id']).send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),allow_web=bool(body.get('allow_web',False)))
                 elif path=='/api/harness/answer':result=pick_harness(session_id=body['session_id']).answer(body['session_id'],body['request_id'],body['answers'])
                 elif path=='/api/harness/archive':result=pick_harness(session_id=body['session_id']).archive(body['session_id'])
@@ -317,7 +324,10 @@ def make_server(workspace, port=8765, *, paused=False):
                 elif path=='/api/comment':
                     value=Comment.model_validate(body);result=store.comment(value.version_id,value.text)
                 elif path=='/api/settings':
-                    settings=Settings.model_validate({**store.settings(),**body})
+                    merged={**store.settings(),**body}
+                    # Saving a model is the explicit choice the pending flag waits for.
+                    if 'model_selection_required' not in body and str(body.get('model') or '').strip():merged['model_selection_required']=False
+                    settings=Settings.model_validate(merged)
                     store.set_meta('settings',settings.model_dump());result=settings.model_dump()
                     if 'auto_learn' in body:worker.opened_paused=False
                 elif path=='/api/release':
