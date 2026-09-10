@@ -1124,6 +1124,29 @@ var exec = promisify(execFile);
 var acpArgs = { kimi: ["acp"], hermes: ["acp"], reasonix: ["acp"], kilo: ["acp"], kiro: ["acp"], vibe: [] };
 var active = /* @__PURE__ */ new Map();
 var defaults = [{ id: "default", label: "\u5BBF\u4E3B\u9ED8\u8BA4\u6A21\u578B" }];
+function claudeConfiguredModel() {
+  try {
+    const file = JSON.parse(readFileSync(path2.join(homedir2(), ".claude", "settings.json"), "utf8"));
+    const alias = typeof file?.model === "string" ? file.model.trim() : "";
+    const configured = file?.env && typeof file.env === "object" ? file.env : {};
+    const merged = { ...configured, ...env };
+    const concrete = (alias ? merged["ANTHROPIC_DEFAULT_" + alias.toUpperCase() + "_MODEL"] : "") || merged.ANTHROPIC_MODEL || "";
+    return { alias, concrete: typeof concrete === "string" ? concrete.trim() : "" };
+  } catch {
+    return { alias: "", concrete: "" };
+  }
+}
+function hostDefaultLabel(id) {
+  if (id !== "claude") return defaults[0].label;
+  const { alias, concrete } = claudeConfiguredModel();
+  if (concrete && alias) return `\u9ED8\u8BA4\uFF1A${concrete}\uFF08\u522B\u540D ${alias}\uFF09`;
+  if (concrete) return `\u9ED8\u8BA4\uFF1A${concrete}`;
+  if (alias) return `\u9ED8\u8BA4\uFF1A${alias}`;
+  return defaults[0].label;
+}
+function hostDefaults(id) {
+  return [{ id: "default", label: hostDefaultLabel(id) }];
+}
 var env = { ...process.env };
 delete env.CLAUDECODE;
 var dirs = [...(env.PATH || "").split(path2.delimiter), path2.join(homedir2(), ".local/bin"), path2.join(homedir2(), ".kimi-code/bin"), path2.join(homedir2(), ".opencode/bin"), path2.join(homedir2(), ".npm-global/bin"), path2.join(homedir2(), ".bun/bin"), path2.join(homedir2(), ".cargo/bin"), path2.join(homedir2(), ".dsh/bin"), "/opt/homebrew/bin", "/usr/local/bin"];
@@ -1249,7 +1272,7 @@ async function listModels(p) {
     const d2 = JSON.parse(r.stdout);
     return { models: [...defaults, ...(d2.providers || []).filter((x) => typeof x.name === "string").map((x) => ({ id: x.name, label: x.name + (x.model ? " \xB7 " + x.model : ""), provider: x.kind || "configured", model_id: x.model }))], source: "native_config", note: "Models declared by the host; account availability is checked by a model call." };
   }
-  const fallback = [...defaults, ...fallbacks_default[p.runtime_id] || []];
+  const fallback = [...hostDefaults(p.runtime_id), ...fallbacks_default[p.runtime_id] || []];
   if (p.runtime_id === "claude") {
     const routed = await loadMmdRouteModels(env, fallback);
     return { models: routed || fallback, source: routed ? "local_routes" : "builtin_hints", note: "\u5185\u7F6E\u9009\u9879\u4E0E\u5DF2\u914D\u7F6E\u8DEF\u7531\uFF1B\u53EF\u624B\u52A8\u8F93\u5165\u5176\u4ED6\u6A21\u578B ID\u3002" };
