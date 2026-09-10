@@ -1,8 +1,8 @@
 # BriefLoop 0.17.1
 
-一个使用 Codex / Opencode 的单人本地 Agent 工作台：围绕问题寻找来源、生成可编辑报告、独立评价，并把反馈整理成后续可用的经验。
+一个单人本地 Agent 工作台：接上本机已经装好的 Codex CLI、Opencode CLI、Claude Code、Kimi、Hermes、DeepSeek Reasonix 或 MiMo Code，围绕问题寻找来源、生成可编辑报告、独立评价，并把反馈整理成后续可用的经验。
 
-本版界面与文档以中文为主。国际化和行业 Deep Research 留到后续版本。
+界面与文档为中文，报告正文可选中文或英文。研究深度取决于所选宿主自身的能力和本次报告的共享预算，本版不提供托管式 Deep Research 服务。
 
 ## 快速开始
 
@@ -17,7 +17,7 @@ cd briefloop
 使用前需要：
 
 - macOS，以及 Python 3.11 或更新版本。
-- 已安装并完成认证的 Codex CLI 或 Opencode CLI；对话和任务执行需要其中之一。
+- 至少一个已安装并完成认证的执行宿主：Codex CLI、Opencode CLI、Claude Code、Kimi、Hermes、DeepSeek Reasonix 或 MiMo Code。Codex 与 Opencode 走原生通道，其余 CLI 通过本地 bridge 接入，需要 Node.js 20+。
 - 首次安装依赖需要网络。使用 Tavily 时另行配置自己的 Tavily Key。
 
 也可指定目录、端口和后端：
@@ -26,14 +26,27 @@ cd briefloop
 ./start.sh --workspace /path/to/workspace --port 8765 --no-open --backend opencode
 ```
 
-## 执行后端：Codex / Opencode
+## 执行后端与模型
 
-工作区默认使用 Codex（Responses 通道）。新任务可在启动时用 `--backend opencode` 切换，或在网页设置页切换；已排队/已开始的任务冻结原后端，不跟随切换。
+工作区默认使用 Codex（Responses 通道）。执行宿主可在启动时用 `--backend` 指定，或在网页设置页切换；已排队/已开始的任务冻结原后端，不跟随切换。设置页会检测本机已安装的 CLI，并读取各自的模型目录。
+
+| 宿主 | 接入方式 | 模型目录 |
+| --- | --- | --- |
+| Codex | 原生 app-server | 原生 `debug models` |
+| Opencode | 本机原生服务 | 本机 provider/model 配置 |
+| Claude Code | bridge（stream-json） | 本机路由；无路由时给内置建议 |
+| Kimi、Hermes | bridge（ACP） | ACP 模型目录；读取失败给内置建议 |
+| Reasonix | bridge（ACP） | 原生 `doctor --json` |
+| MiMo | bridge（JSON 事件流） | 原生 `models --verbose` |
+
+模型下拉只提供建议，任何宿主都接受手填模型 ID。`默认` 表示"用宿主自己配置的模型"：能读到宿主配置时（例如 Claude Code 的 `~/.claude/settings.json`）会显示解析出的真实模型名，读不到时保持通用标签。角色模型（Evaluator、Wiki Maintainer、Skill Proposer）可以分别指定，留空继承主链。
+
+输入区的控件跟随当前宿主的能力，而不是固定的 Codex 选项：权限档位来自 runtime 声明的 `permission_modes`（只有一种时不显示这个下拉）；`立即补充` 只在支持运行中追加的宿主出现；不支持读图的宿主在附图时直接提示。联网开关会向宿主放行它自己的联网工具（例如 Claude Code 的 `WebSearch` / `WebFetch`），放行后能否联网仍由宿主账号与权限决定。
 
 - Opencode 模型填完整 `provider/model`（如 `opencode-go/gpt-5.6-luna`），以本机 `opencode` 已登录的可选模型为准；BriefLoop 不枚举、不限制 provider。
 - 推理档位在 Opencode 下叫 variant（如 high / max），留空为默认；聊天沿用工作区主模型的 variant。
-- 限制（以诚实为准）：Opencode 没有每轮网络硬开关，关闭联网时靠指令与权限执行，bash 仍可能联网；不支持运行中追加提问与交互式提问；图片附件仅视觉模型可读。服务端版本要求 1.x。
-- 排查：任务失败先看任务日志；"模型 ID"类错误检查 `provider/model` 拼写与 `opencode auth login`；"90 秒未开始"多为模型不可用或登录失效。
+- 限制（以诚实为准）：Codex 之外的宿主没有每轮网络硬开关，关闭联网时靠指令与权限执行，宿主自带的 shell 仍可能联网；只有 Codex 支持运行中追加（Opencode 与 bridge CLI 会明确拒绝）；图片附件只在宿主支持读图时可用。
+- 排查：任务失败先看任务日志；"模型 ID"类错误检查 `provider/model` 拼写与宿主登录状态；bridge 相关报错先确认 Node.js 20+ 与本机 CLI 已认证。
 
 服务只监听本机。关闭网页不会停止正在执行的任务；从网页“停止”或关闭服务进程结束执行。
 
@@ -50,7 +63,7 @@ cd briefloop
 
 1. 在“材料与需求”填写目的、读者、时间范围和字数要求。可上传材料，也可仅开启联网。
 2. 选择搜索工具。Tavily 的输入口就在联网开关下；保存 Key 不会自动验证或发起收费搜索。
-3. 在“设置”确认主模型及角色模型。模型 ID 可自行填写；可选 provider 名称沿用本机 Codex 已配置的 Responses provider，不限定 OpenAI 型号。
+3. 在“设置”确认执行宿主、主模型及角色模型。模型 ID 可自行填写；Codex 的 provider 填本机已配置的 Responses provider 名称，其它宿主用它自己的配置；需要接第三方 API 时在“API 提供商”里登记协议、Base URL、Key 和模型。
 4. 点击生成。草稿保存后即可查看，评分独立完成；低分或评分失败不会隐藏原稿。
 5. 按需修改正文、保存反馈或明确启动学习。注意自动学习开关：启用后，编辑静默约 30 秒会合并反馈并启动模型任务。
 
@@ -76,7 +89,7 @@ Evaluator 的单稿评分与产物比较共用角色配置，每次使用独立�
 
 预算由整次报告中的 Scout 共享，不是每个 Scout 各拿一份，也不要求花完。失败的 Tavily Search 调用仍计次；同一 URL 的直接获取、Extract 回退及重试不重复扣全文 URL。达到额度后保留材料、说明缺口，不自动加额。
 
-搜索请求和候选额度适用于受控 Tavily 工具；原生 Codex 搜索无法在此精确计量，页面会明确区分。全文额度统计受控工具处理的不同 URL，不是 PDF 页数、阅读完成数量或所有 HTTP 请求次数。
+搜索请求和候选额度适用于受控 Tavily 工具；宿主自带的搜索（Codex、Opencode、各 CLI 的联网工具）无法在此精确计量，页面会明确区分。全文额度统计受控工具处理的不同 URL，不是 PDF 页数、阅读完成数量或所有 HTTP 请求次数。
 
 ## 正文篇幅
 
@@ -94,7 +107,7 @@ Evaluator 的单稿评分与产物比较共用角色配置，每次使用独立�
 
 ## 图片与 PDF 页面（开发中新增）
 
-支持图片原件保存、预览及 Codex 原生图片输入；PDF 可按需渲染指定页，由研究或评价 Agent 查看图表。图片无需先转成 OCR 文本，读取失败会如实显示，不自动更换模型。只查看来源或本地渲染 PDF 不调用模型，发送给视觉模型则使用所选账户额度。详见 [多模态来源](docs/多模态来源.md)。
+支持图片原件保存、预览，以及按宿主能力发送原生图片输入（Codex 用 `localImage`，bridge CLI 用归一化后的 PNG 附件，不支持读图的宿主会在附图时直接提示）；PDF 可按需渲染指定页，由研究或评价 Agent 查看图表。图片无需先转成 OCR 文本，读取失败会如实显示，不自动更换模型。只查看来源或本地渲染 PDF 不调用模型，发送给视觉模型则使用所选账户额度。详见 [多模态来源](docs/多模态来源.md)。
 
 ## 行业定期报告（开发中新增）
 
@@ -123,6 +136,7 @@ Word 按按钮制作，完成后下载；不实时更新 Word，不提供网页�
 检索预算不保证覆盖完整，模型评分也不代表事实正确率。本版没有重新开展效果或 Token 节省实验，不将离线测试描述为质量提升证明。
 
 - [使用指南](docs/使用指南.md)
+- [多 Runtime 与模型设置](docs/多Runtime与模型.md)
 - [变更记录](CHANGELOG.md)
 - [来源与许可](THIRD_PARTY_NOTICES.md)
 
