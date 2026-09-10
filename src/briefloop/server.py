@@ -208,7 +208,7 @@ def make_server(workspace, port=8765, *, paused=False):
                         if report_data and not detail.get('report_data_needs_review'):
                             report_data={**report_data,'records':[{**row,'source_label':store.one('sources',row['source_id'])['name']} for row in report_data['records']]}
                         elif detail.get('report_data_needs_review'):report_data=None
-                        self.send(200,docx_bytes(md,report_profile=req.get('report_profile','brief'),title=detail.get('title',req.get('title','')),
+                        self.send(200,docx_bytes(md,report_profile=req.get('report_profile','brief'),title=detail.get('title',req.get('title','')),language=req.get('language'),
                             report_date=req.get('report_date',''),organization=req.get('organization',''),industry=req.get('industry',''),
                             period=req.get('period',''),report_data=report_data,figures=export_figures(store,b),
                             document=json.loads(b['editor_document']) if b.get('editor_document') else None,
