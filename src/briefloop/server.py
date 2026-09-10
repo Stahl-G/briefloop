@@ -273,7 +273,6 @@ def make_server(workspace, port=8765, *, paused=False):
                     result=open_workspace(store,body['path'],create=bool(body.get('create',False)))
                 elif path=='/api/harness/session':result=pick_harness(body.get('runtime')).create_session(body.get('title','新对话'),body.get('runtime'))
                 elif path=='/api/harness/message':
-                    if store.settings().get('model_selection_required'):raise ValueError('请先选择本次试验模型')
                     result=pick_harness(body.get('runtime'),body['session_id']).send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),allow_web=bool(body.get('allow_web',False)))
                 elif path=='/api/harness/answer':result=pick_harness(session_id=body['session_id']).answer(body['session_id'],body['request_id'],body['answers'])
                 elif path=='/api/harness/archive':result=pick_harness(session_id=body['session_id']).archive(body['session_id'])

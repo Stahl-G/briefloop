@@ -308,8 +308,18 @@ $('close-history').onclick=()=>$('history-dialog').close();
 const chat = {view:'active',sessions:[],id:null,session:null,messages:[],requests:[],events:new Map(),after:0,busy:false,uploading:0,polling:false,drafts:new Map(),attachments:new Set(),request:null};
 const chatStates={idle:'准备就绪',starting:'正在启动',running:'正在处理',complete:'已完成',completed:'已完成',failed:'运行失败',interrupted:'已中断',cancelled:'已停止',queued:'已排队',sending:'发送中',delivered:'已发送',streaming:'正在回复'};
 const chatActive=()=>['running','starting'].includes(chat.session?.status);
-function rememberDraft(){chat.drafts.set(chat.id||'new',{text:$('chat-input').value,sources:[...chat.attachments],model:$('chat-model').value,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,allow_web:$('chat-allow-web').checked,permission:$('chat-permission').value});try{sessionStorage.setItem('briefloop-chat-drafts',JSON.stringify([...chat.drafts].slice(-30)))}catch{}}
-function restoreDraft(){const d=chat.drafts.get(chat.id||'new');$('chat-input').value=d?.text||'';chat.attachments=new Set(d?.sources||[]);$('chat-allow-web').checked=d?.allow_web||false;const fallback={model:state.settings.model,backend:state.settings.agent_backend,effort:state.settings.reasoning_effort};const runtime=d||chat.session?.runtime||fallback;$('chat-model').value=state.settings.model_selection_required?'':runtime.model||state.settings.model||'gpt-5.6-luna';assignEffort('chat-effort',effortValue(runtime,'effort'));$('chat-model-provider').value=runtime.model_provider||'';$('chat-permission').value=runtime.permission||'workspace-write';renderAttachments();updateComposer();autoSizeChatInput()}
+function rememberDraft(){chat.drafts.set(chat.id||'new',{text:$('chat-input').value,sources:[...chat.attachments],backend:chat.session?.runtime?.backend||state.settings.agent_backend||'codex',model:$('chat-model').value,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,allow_web:$('chat-allow-web').checked,permission:$('chat-permission').value});try{sessionStorage.setItem('briefloop-chat-drafts',JSON.stringify([...chat.drafts].slice(-30)))}catch{}}
+function restoreDraft(){
+ const d=chat.drafts.get(chat.id||'new'),sessionRuntime=chat.session?.runtime;
+ const backend=sessionRuntime?.backend||state.settings.agent_backend||'codex';
+ const saved=d&&(d.backend===backend||(!d.backend&&sessionRuntime))?d:null;
+ const fallback={model:state.settings.model_selection_required?'':state.settings.model,backend,effort:state.settings.reasoning_effort};
+ const runtime=saved||sessionRuntime||fallback;
+ $('chat-input').value=d?.text||'';chat.attachments=new Set(d?.sources||[]);$('chat-allow-web').checked=d?.allow_web||false;
+ $('chat-model').value=runtime.model||'';assignEffort('chat-effort',effortValue(runtime,'effort'));
+ $('chat-model-provider').value=runtime.model_provider||'';$('chat-permission').value=runtime.permission||'workspace-write';
+ renderAttachments();updateComposer();autoSizeChatInput();
+}
 function renderChatRuntimePermissions(){
  const backend=chat.session?.runtime?.backend||state.settings.agent_backend||'codex',native=!['codex','opencode'].includes(backend),select=$('chat-permission');
  if(![...select.options].some(o=>o.value==='runtime-native'))select.add(new Option('宿主原生权限','runtime-native'));
@@ -411,7 +421,7 @@ $('new-session').onclick=newChat;
 $('chat-input').oninput=()=>{rememberDraft();updateComposer()};
 $('chat-input').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();if(!$('chat-send').disabled)$('chat-form').requestSubmit()}};
 $('chat-mode').onchange=updateComposer;
-for(const id of ['chat-model','chat-effort','chat-model-provider'])$(id).onchange=()=>{rememberDraft();updateComposer()};
+for(const id of ['chat-model','chat-effort','chat-model-provider'])$(id).onchange=()=>{rememberDraft();chatError();updateComposer()};
 $('chat-stop').onclick=async()=>{if(!chat.id||chat.busy)return;chat.busy=true;updateComposer();try{await api('harness/cancel',{session_id:chat.id});await pollChat(true)}catch(e){chatError(e.message)}finally{chat.busy=false;updateComposer()}};
 $('chat-attach').onclick=()=>$('chat-upload').click();
 $('attach-existing').onclick=()=>{const show=$('existing-sources').hidden;$('existing-sources').hidden=!show;$('attach-existing').setAttribute('aria-expanded',String(show));renderAttachments()};

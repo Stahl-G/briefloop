@@ -404,7 +404,7 @@ class Store:
 
     def runtime_config(self):
         settings=self.settings()
-        if settings.get('model_selection_required'):raise ValueError('请先在设置中选择本次试验模型')
+        if settings.get('model_selection_required'):raise ValueError('请先在设置中选择用于报告和学习的模型')
         return runtime_fields(settings,settings.get('agent_backend','codex'))
 
     def role_model_config(self, runtime=None, backend=None):

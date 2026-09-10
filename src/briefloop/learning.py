@@ -114,7 +114,7 @@ def _generate_trial(store,job,case,skill,folder,tag):
     if marker.exists():
         info=json.loads(marker.read_text())
         if info.get('source_snapshot',expected)!=expected:
-            raise ValueError('学习试验的来源快照已变化，旧阶段保留；请基于新材料创建新学习任务')
+            raise ValueError('学习验证的来源快照已变化，旧阶段保留；请基于新材料创建新学习任务')
     else:
         requirements={**json.loads(case['requirements']),'allow_web':False}
         run=store.create_run(requirements,selected,mode='trial',skill_id=skill['id'] if skill else None)
@@ -124,7 +124,7 @@ def _generate_trial(store,job,case,skill,folder,tag):
         store.update_job(trial['id'],'running');info={'run_id':run['id'],'job_id':trial['id'],'source_snapshot':expected};marker.write_text(dump(info))
     trial=store.one('jobs',info['job_id'])
     if source_snapshot(store,info['run_id'])!=expected:
-        raise ValueError('保存的学习试验来源与本次案例不同，不能复用或续跑')
+        raise ValueError('保存的学习验证来源与本次案例不同，不能复用或续跑')
     worker=Worker(store)
     # Shared runtime ensures Stop cancels the current trial rather than an unrelated child.
     worker.runtime=job['_runtime']
@@ -135,11 +135,11 @@ def _generate_trial(store,job,case,skill,folder,tag):
             store.update_job(trial['id'],'failed',error=str(exc));raise
     saved=store.one('jobs',info['job_id']);result=json.loads(saved['result'] or '{}')
     if _attempt_source_snapshot(store,saved,result)!=expected:
-        raise ValueError('学习试验未保存一致的来源快照，不能比较该稿件')
+        raise ValueError('学习验证未保存一致的来源快照，不能比较该稿件')
     vid=result.get('version_id')
     if not vid or not store.generated_by(vid,saved['id']):raise RuntimeError('候选执行没有返回其实际生成版本')
     brief=store.one('briefs',vid)
-    if brief['run_id']!=info['run_id']:raise RuntimeError('候选返回版本不属于本次试验')
+    if brief['run_id']!=info['run_id']:raise RuntimeError('候选返回版本不属于本次学习验证')
     return brief
 
 
