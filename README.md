@@ -1,4 +1,4 @@
-# BriefLoop 0.17.0
+# BriefLoop 0.17.1
 
 一个使用 Codex / Opencode 的单人本地 Agent 工作台：围绕问题寻找来源、生成可编辑报告、独立评价，并把反馈整理成后续可用的经验。
 
