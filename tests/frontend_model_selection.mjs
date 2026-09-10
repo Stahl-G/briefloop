@@ -11,3 +11,18 @@ vm.runInContext('restoreDraft()',c);assert.equal(el('chat-model').value,'default
 c.chat.drafts.set('new',{text:'keep this text',backend:'codex',model:'old-codex-model'});
 vm.runInContext('restoreDraft()',c);assert.equal(el('chat-model').value,'');assert.equal(el('chat-input').value,'keep this text');
 console.log('PASS: explicit chat choice survives pending workspace selection; model does not cross runtime boundaries');
+
+// Failed first send binds the unsent draft to the newly created session.
+c.chat={id:null,session:null,busy:false,uploading:0,attachments:new Set(),drafts:new Map(),request:null};
+c.localStorage={setItem(){}};c.sessionStorage={setItem(){}};c.crypto={randomUUID:()=> 'fixed-request'};
+c.runtimeChoice=()=>({backend:'claude',model:'default',permission:'runtime-native'});
+c.api=async route=>{if(route==='harness/session')return {id:'new-session',runtime:{backend:'claude',model:'default'}};throw Error('send failed')};
+c.chatActive=()=>false;c.chatError=()=>{};c.pollChat=async()=>{};
+el('chat-input').value='你是谁';el('chat-input').focus=()=>{};el('chat-model').value='default';el('chat-model-provider').value='';
+vm.runInContext(source.slice(source.indexOf('function rememberDraft(){'),source.indexOf('function restoreDraft(){')),c);
+vm.runInContext(source.slice(source.indexOf('async function sendChat(event){'),source.indexOf("$('chat-form').onsubmit=")),c);
+await vm.runInContext('sendChat({preventDefault(){}})',c);
+assert.equal(c.chat.drafts.get('new-session').text,'你是谁');
+assert.equal(c.chat.drafts.get('new-session').model,'default');
+vm.runInContext('restoreDraft()',c);assert.equal(el('chat-input').value,'你是谁');
+console.log('PASS: failed initial send preserves text and model on the created session');
