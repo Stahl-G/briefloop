@@ -237,19 +237,20 @@ function renderRuntimeDiscovery(){
  $('runtime-discovery-details').querySelectorAll('[data-runtime-select]').forEach(button=>button.onclick=()=>{if(button.dataset.runtimeSelect===backendValue())return;select.value=button.dataset.runtimeSelect;select.dispatchEvent(new Event('change'))});
 }
 async function refreshRuntimeDiscovery(force=false){
- const select=$('agent-backend');if(!select.value)select.add(new Option(state.settings.agent_backend||'codex',state.settings.agent_backend||'codex'));
+ const select=$('agent-backend');if(!select.value){const backend=state.settings.agent_backend||'codex';if(!Array.from(select.options).some(o=>o.value===backend))select.add(new Option(backend,backend));select.value=backend;}
  if(!$('runtime-discovery-status')){const box=document.createElement('section');box.className='runtime-discovery';box.innerHTML='<div class="section-title"><strong>本机 Runtime</strong><button type="button" id="runtime-discovery-refresh" class="outline">重新检测</button></div><p id="runtime-discovery-status" class="help" role="status"></p><div id="runtime-discovery-details" class="help"></div><p id="runtime-model-status" class="help" role="status"></p>';$('settings-runtime-list').append(box);$('runtime-discovery-refresh').onclick=()=>refreshRuntimeDiscovery(true)}
  $('runtime-discovery-status').textContent='正在检测本机 CLI…';$('runtime-discovery-refresh').disabled=true;
  try{const data=await api('runtimes'+(force?'?refresh=1':''));runtimeCatalog=data.runtimes||[];renderRuntimeDiscovery();$('runtime-discovery-status').textContent=`已接入 ${runtimeCatalog.filter(r=>r.available).length} 个本机 CLI；账号与模型可通过短测试验证。`;await refreshModelSuggestions(force)}catch(e){$('runtime-discovery-status').textContent='检测失败：'+e.message}finally{$('runtime-discovery-refresh').disabled=false}
 }
 $('agent-backend').onchange=()=>action(async()=>{const backend=backendValue();await api('settings',{agent_backend:backend,model_selection_required:true});state.settings.agent_backend=backend;state.settings.model_selection_required=true;$('model-select').value='';$('chat-model').value='';modelCatalog={backend:null,at:0,models:[]};if(chat.session&&!chatActive()&&chat.session.runtime?.backend!==backend)await newChat();renderRuntimeDiscovery();renderRoleModels();renderBackend();updateComposer();await refreshModelSuggestions()},'Runtime 已保存；请选择或输入模型');$('model-variant').onchange=()=>action(saveModel,'Variant 已保存；下一次启动生效');
 let modelCatalog={backend:null,at:0,models:[]};
-async function fetchModelCatalog(force=false){
- const backend=backendValue(),now=Date.now();
- if(!force&&modelCatalog.backend===backend&&now-modelCatalog.at<3600000)return modelCatalog.models;
+const modelCatalogs=new Map();
+function modelTargetBackend(target){return target==='chat-model'?chat.session?.runtime?.backend||backendValue():backendValue()}
+async function fetchModelCatalog(force=false,backend=backendValue()){
+ const now=Date.now(),cached=modelCatalogs.get(backend);
+ if(!force&&cached&&now-cached.at<3600000){if(backend===backendValue())modelCatalog=cached;return cached.models;}
  const data=await api('models?backend='+encodeURIComponent(backend)+(force?'&refresh=1':''));
- if(backend!==backendValue())return [];
- modelCatalog={backend,at:now,models:(data.models||[]).map(m=>typeof m==='string'?{id:m,name:friendlyModel(m)}:{...m,name:m.id==='default'?'宿主默认模型':m.name||m.label||friendlyModel(m.id),provider:m.provider||runtimeName(backend)}),diagnostic:data.diagnostic||data.error||'',source:data.source||''};return modelCatalog.models;
+ const catalog={backend,at:now,models:(data.models||[]).map(m=>typeof m==='string'?{id:m,name:friendlyModel(m)}:{...m,name:m.id==='default'?'宿主默认模型':m.name||m.label||friendlyModel(m.id),provider:m.provider||runtimeName(backend)}),diagnostic:data.diagnostic||data.error||'',source:data.source||''};modelCatalogs.set(backend,catalog);if(backend===backendValue())modelCatalog=catalog;return catalog.models;
 }
 async function refreshModelSuggestions(force=false){
  const backend=backendValue();$('model-suggestions').innerHTML='';refreshInlineModelPickers();
@@ -266,9 +267,9 @@ async function openModelPicker(targetId){
   await renderModelPicker();
 }
 async function renderModelPicker(){
-  const backend=backendValue();let models,status;
+  const backend=modelTargetBackend(modelPickerTarget);let models,status;
   try{
-    models=await fetchModelCatalog(false);status=`${runtimeName(backend)} · ${models.length} 个模型；可手填模型 ID`;
+    models=await fetchModelCatalog(false,backend);status=`${runtimeName(backend)} · ${models.length} 个模型；可手填模型 ID`;
   }catch(e){models=[];status='读取失败：'+e.message+'；可直接手填模型 ID'}
   const q=$('model-picker-search').value.trim().toLowerCase();
   const shown=models.filter(m=>!q||m.id.toLowerCase().includes(q)||(m.name||'').toLowerCase().includes(q)||(m.provider||'').toLowerCase().includes(q));
@@ -318,7 +319,7 @@ function restoreDraft(){
  $('chat-input').value=d?.text||'';chat.attachments=new Set(d?.sources||[]);$('chat-allow-web').checked=d?.allow_web||false;
  $('chat-model').value=runtime.model||'';assignEffort('chat-effort',effortValue(runtime,'effort'));
  $('chat-model-provider').value=runtime.model_provider||'';$('chat-permission').value=runtime.permission||'workspace-write';
- renderAttachments();updateComposer();autoSizeChatInput();
+ renderAttachments();updateComposer();autoSizeChatInput();refreshInlineModelPickers();
 }
 function renderChatRuntimePermissions(){
  const backend=chat.session?.runtime?.backend||state.settings.agent_backend||'codex',native=!['codex','opencode'].includes(backend),select=$('chat-permission');
@@ -410,11 +411,15 @@ async function pollChat(force=false){
 async function sendChat(event){
  event.preventDefault();if(chat.busy||chat.uploading||chat.session&&chat.session.lifecycle&&chat.session.lifecycle!=='active')return;const text=$('chat-input').value.trim()||(chat.attachments.size?'请查看附件。':'');if(!text)return;chat.busy=true;chatError();updateComposer();
  try{
-  const runtime=runtimeChoice();if(!chat.id){const result=await api('harness/session',{title:text.slice(0,48),runtime});chat.session=result.session||result;chat.id=chat.session.id;if(!chat.id)throw Error('未能创建会话');localStorage.setItem('briefloop-chat-session',chat.id)}
+  const runtime=runtimeChoice();if(!chat.id){const result=await api('harness/session',{title:text.slice(0,48),runtime});chat.session=result.session||result;chat.id=chat.session.id;if(!chat.id)throw Error('未能创建会话');localStorage.setItem('briefloop-chat-session',chat.id);rememberDraft()}
   const payload={session_id:chat.id,text,mode:chatActive()?$('chat-mode').value:'queue',source_ids:[...chat.attachments],runtime,allow_web:$('chat-allow-web').checked};const signature=JSON.stringify(payload);
   if(!chat.request||chat.request.signature!==signature)chat.request={signature,message_id:crypto.randomUUID()};
-  await api('harness/message',{...payload,message_id:chat.request.message_id});chat.request=null;$('chat-input').value='';chat.attachments.clear();rememberDraft();renderAttachments();await pollChat(true);
- }catch(e){chatError(e.message+'。消息仍保留在输入框中，可修改或再次发送。')}finally{chat.busy=false;updateComposer();$('chat-input').focus()}
+  await api('harness/message',{...payload,message_id:chat.request.message_id});chat.request=null;$('chat-input').value='';chat.attachments.clear();rememberDraft();renderAttachments();
+  // The runtime used here is the chosen model; keep the pending-selection state in sync.
+  state.settings={...state.settings,model_selection_required:false,model:runtime.model,agent_backend:runtime.backend||state.settings.agent_backend};
+  $('model-select').value=runtime.model;renderRuntimeDiscovery();updateModelLabel();
+  await pollChat(true);
+ }catch(e){rememberDraft();chatError(e.message+'。消息仍保留在输入框中，可修改或再次发送。')}finally{chat.busy=false;updateComposer();$('chat-input').focus()}
 }
 $('chat-form').onsubmit=sendChat;
 $('new-session').onclick=newChat;
@@ -750,9 +755,12 @@ $('report-data-open').onclick=()=>action(async()=>{
 
 // An explicit select lists every suggestion; the text input stays unrestricted.
 function refreshInlineModelPickers(){
+ const chatBackend=modelTargetBackend('chat-model');
+ if(!modelCatalogs.has(chatBackend))fetchModelCatalog(false,chatBackend).then(()=>refreshInlineModelPickers()).catch(()=>{});
  document.querySelectorAll('.model-picker-select').forEach(select=>{
   const input=select.parentElement.querySelector('input');select.replaceChildren(new Option('▾',''));
-  for(const option of $('model-suggestions').options)select.add(new Option(option.label+' · '+option.value,option.value));
+  const models=modelCatalogs.get(modelTargetBackend(input?.id))?.models||[];
+  for(const model of models)select.add(new Option(model.name+' · '+model.id,model.id));
   select.add(new Option('输入其他模型 ID…','__custom__'));
   if(input?.dataset.roleModel)select.add(new Option('继承主链模型','__inherit__'));
  });
@@ -763,7 +771,8 @@ function setupModelPickers(root=document){
   const wrap=document.createElement('span');wrap.className='model-picker';input.before(wrap);wrap.append(input);
   const select=document.createElement('select');select.className='model-picker-select';select.setAttribute('aria-label',input.id==='chat-model'?'选择模型':'选择'+(input.getAttribute('aria-label')||'模型'));select.title='常用模型建议；也可直接在左侧输入其他模型 ID';
   select.add(new Option('▾',''));
-  for(const option of $('model-suggestions').options)select.add(new Option(option.label+' · '+option.value,option.value));
+  const models=modelCatalogs.get(modelTargetBackend(input?.id))?.models||[];
+  for(const model of models)select.add(new Option(model.name+' · '+model.id,model.id));
   select.add(new Option('输入其他模型 ID…','__custom__'));
   if(input.dataset.roleModel)select.add(new Option('继承主链模型','__inherit__'));
   select.onchange=()=>{
