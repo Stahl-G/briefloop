@@ -10,4 +10,7 @@ workspaces/
 .env
 .DS_Store
 
-node_modules/
+node_modules
+
+# Local reports, website screenshots and private execution artifacts
+output/

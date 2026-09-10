@@ -7,7 +7,8 @@ backends mid-flight; a backend change starts a new attempt instead of resuming
 old child handles.
 """
 
-BACKENDS = ('codex', 'opencode')
+BRIDGE_BACKENDS = ('claude','kimi','hermes','reasonix','mimo')
+BACKENDS = ('codex', 'opencode', *BRIDGE_BACKENDS)
 
 DEFAULT_BACKEND = 'codex'
 
@@ -23,9 +24,9 @@ CAPABILITIES = {
 
 def validate_backend(name):
     if name not in BACKENDS:
-        raise ValueError('agent_backend 必须是 codex 或 opencode')
+        raise ValueError('未接入的 agent_backend：'+str(name))
     return name
 
 
 def supports(backend, capability):
-    return capability in CAPABILITIES[validate_backend(backend)]
+    return capability in CAPABILITIES.get(validate_backend(backend),frozenset({'cancel'}))

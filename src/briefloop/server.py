@@ -19,6 +19,8 @@ from . import sources
 
 
 def make_server(workspace, port=8765, *, paused=False):
+    from .runtime_bridge import RuntimeBridge
+    bridge=RuntimeBridge()
     store=Store(workspace)
     lock=(store.root/'.server.lock').open('a+')
     try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -29,19 +31,37 @@ def make_server(workspace, port=8765, *, paused=False):
     from .backends import validate_backend
     opencode_harness=OpencodeHarness(store)
     worker=Worker(store)
-    worker.runtime=InteractiveRuntime(store,backends={'codex':harness,'opencode':opencode_harness})
+    from .bridge_harness import BridgeHarness
+    from .backends import BRIDGE_BACKENDS
+    bridge_harnesses={name:BridgeHarness(store,bridge,name) for name in BRIDGE_BACKENDS}
+    managers={'codex':harness,'opencode':opencode_harness,**bridge_harnesses}
+    worker.runtime=InteractiveRuntime(store,backends=managers)
     worker.opened_paused=paused
     def pick_harness(runtime=None,session_id=None):
         backend=(runtime or {}).get('backend')
-        if backend is None and session_id is not None:
-            for candidate in (harness,opencode_harness):
+        if session_id is not None:
+            for candidate in managers.values():
                 try:
-                    backend=candidate.chat.session(session_id)['runtime'].get('backend')
+                    owner=candidate.chat.session(session_id)['runtime'].get('backend','codex')
+                    if backend is not None and backend!=owner:raise ValueError('切换执行引擎请新建会话；当前会话沿用原宿主')
+                    backend=owner
                     break
                 except KeyError:
                     continue
         backend=backend or store.settings().get('agent_backend','codex')
-        return {'codex':harness,'opencode':opencode_harness}[validate_backend(backend)]
+        return managers[validate_backend(backend)]
+    def test_runtime(body):
+        backend=validate_backend(body.get('backend'))
+        model=str(body.get('model','')).strip()
+        if not model:raise ValueError('请先选择测试模型')
+        manager=managers[backend]
+        root=store.root/'runtime-tests'/secrets.token_hex(8);root.mkdir(parents=True)
+        runtime={'backend':backend,'model':model,'permission':'read-only' if backend in ('codex','opencode') else 'runtime-native'}
+        session=manager.create_session(backend+' · 连接测试',runtime,root)
+        message=manager.send(session['id'],'Reply with OK only. Do not use tools.',runtime=runtime,allow_web=False)
+        manager.chat.event(session['id'],'runtime/test',{'backend':backend,'model':model,'kind':'short_model_call'})
+        return {'session_id':session['id'],'message_id':message['id'],'status':'submitted'}
+
     token=secrets.token_urlsafe(24)
     assets=files('briefloop').joinpath('static')
     # Serve one UI/backend version for this process; builds must not replace a live UI halfway.
@@ -128,14 +148,21 @@ def make_server(workspace, port=8765, *, paused=False):
                 elif u.path=='/api/tavily':
                     from .tavily import key_status
                     self.send(200,key_status())
+                elif u.path=='/api/opencode/providers':
+                    self.send(200,{'configurations':opencode_harness._client().provider_settings()})
+                elif u.path=='/api/runtimes':
+                    self.send(200,bridge.discover())
                 elif u.path=='/api/models':
                     from .backends import validate_backend
                     backend=validate_backend(q.get('backend',[store.settings().get('agent_backend','codex')])[0])
                     if backend=='opencode':
                         models=opencode_harness.list_models(refresh=q.get('refresh',[''])[0]=='1')
+                    elif backend in bridge_harnesses:
+                        catalog=bridge_harnesses[backend].list_models(refresh=q.get('refresh',[''])[0]=='1')
+                        self.send(200,{'backend':backend,**catalog});return
                     else:
-                        models=[{'id':mid,'provider':'codex','name':name} for mid,name in
-                                [('gpt-5.6-luna','Luna'),('gpt-5.6-terra','Terra'),('gpt-5.6-sol','Sol'),('gpt-6-astra','Astra')]]
+                        catalog=bridge.call('list_models',{'runtime_id':'codex','cwd':str(store.root)})
+                        self.send(200,{'backend':backend,**catalog});return
                     self.send(200,{'backend':backend,'count':len(models),'models':models})
                 elif u.path=='/api/events':
                     jid=q['job'][0];self.send(200,store.rows('SELECT * FROM events WHERE job_id=? ORDER BY seq',(jid,)))
@@ -233,6 +260,12 @@ def make_server(workspace, port=8765, *, paused=False):
                 if path=='/api/tavily':
                     from .tavily import save_key,delete_key
                     result=delete_key() if body.get('remove') else save_key(body['api_key'])
+                elif path=='/api/runtime-test':
+                    result=test_runtime(body)
+                elif path=='/api/opencode/provider-catalog':
+                    result=opencode_harness._client().probe_provider_catalog(str(body.get('provider','')))
+                elif path=='/api/opencode/provider-test':
+                    result=opencode_harness.test_provider_model(body)
                 elif path=='/api/opencode/provider':
                     result=opencode_harness.configure_provider(body)
                 elif path=='/api/workspaces/open':
@@ -246,7 +279,7 @@ def make_server(workspace, port=8765, *, paused=False):
                 elif path=='/api/harness/archive':result=pick_harness(session_id=body['session_id']).archive(body['session_id'])
                 elif path=='/api/harness/delete':result=pick_harness(session_id=body['session_id']).delete(body['session_id'])
                 elif path=='/api/harness/restore':result=pick_harness(session_id=body['session_id']).restore(body['session_id'])
-                elif path=='/api/harness/archive-completed':result={'count':pick_harness({'backend':'codex'}).archive_completed('codex')['count']+pick_harness({'backend':'opencode'}).archive_completed('opencode')['count']}
+                elif path=='/api/harness/archive-completed':result={'count':sum(manager.archive_completed(name)['count'] for name,manager in managers.items())}
                 elif path=='/api/harness/cancel':result=pick_harness(session_id=body['session_id']).cancel(body['session_id'])
                 elif path=='/api/upload':
                     data=base64.b64decode(body['data'],validate=True)
@@ -324,7 +357,7 @@ def make_server(workspace, port=8765, *, paused=False):
     except OSError:
         harness.close();opencode_harness.close();lock.close();raise
     server.daemon_threads=True
-    server.workspace_lock=lock
+    server.workspace_lock=lock;server.runtime_bridge=bridge;server.bridge_harnesses=bridge_harnesses
     server.store=store;server.worker=worker;server.harness=harness;server.opencode_harness=opencode_harness
     return server
 
@@ -340,4 +373,5 @@ def serve(workspace,port=8765,*,paused=False):
     try:server.serve_forever()
     except KeyboardInterrupt:pass
     finally:
-        server.worker.close();server.harness.close();server.opencode_harness.close();server.server_close();server.workspace_lock.close()
+        for manager in server.bridge_harnesses.values():manager.close()
+        server.worker.close();server.harness.close();server.opencode_harness.close();server.runtime_bridge.close();server.server_close();server.workspace_lock.close()

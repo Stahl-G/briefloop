@@ -1,0 +1,197 @@
+[
+  {
+    "id": "aider",
+    "name": "Aider",
+    "bins": [
+      "aider"
+    ]
+  },
+  {
+    "id": "amp",
+    "name": "Amp",
+    "bins": [
+      "amp"
+    ]
+  },
+  {
+    "id": "amr",
+    "name": "AMR",
+    "bins": [
+      "vela"
+    ]
+  },
+  {
+    "id": "antigravity",
+    "name": "Antigravity",
+    "bins": [
+      "agy"
+    ]
+  },
+  {
+    "id": "atomcode",
+    "name": "AtomCode CLI",
+    "bins": [
+      "atomcode"
+    ]
+  },
+  {
+    "id": "byok-opencode",
+    "name": "BYOK OpenCode",
+    "bins": [
+      "opencode-cli",
+      "opencode"
+    ]
+  },
+  {
+    "id": "claude",
+    "name": "Claude Code",
+    "bins": [
+      "claude",
+      "openclaude"
+    ]
+  },
+  {
+    "id": "codebuddy",
+    "name": "Codebuddy Code",
+    "bins": [
+      "codebuddy",
+      "cbc"
+    ]
+  },
+  {
+    "id": "codex",
+    "name": "Codex CLI",
+    "bins": [
+      "codex"
+    ]
+  },
+  {
+    "id": "copilot",
+    "name": "GitHub Copilot CLI",
+    "bins": [
+      "copilot"
+    ]
+  },
+  {
+    "id": "cursor-agent",
+    "name": "Cursor Agent",
+    "bins": [
+      "cursor-agent"
+    ]
+  },
+  {
+    "id": "deepseek-harness",
+    "name": "DeepSeek Harness",
+    "bins": [
+      "dsh"
+    ]
+  },
+  {
+    "id": "deepseek",
+    "name": "DeepSeek TUI",
+    "bins": [
+      "deepseek",
+      "codewhale"
+    ]
+  },
+  {
+    "id": "devin",
+    "name": "Devin for Terminal",
+    "bins": [
+      "devin"
+    ]
+  },
+  {
+    "id": "grok-build",
+    "name": "Grok Build",
+    "bins": [
+      "grok"
+    ]
+  },
+  {
+    "id": "hermes",
+    "name": "Hermes",
+    "bins": [
+      "hermes"
+    ]
+  },
+  {
+    "id": "kilo",
+    "name": "Kilo",
+    "bins": [
+      "kilo"
+    ]
+  },
+  {
+    "id": "kimi",
+    "name": "Kimi CLI",
+    "bins": [
+      "kimi"
+    ]
+  },
+  {
+    "id": "kiro",
+    "name": "Kiro CLI",
+    "bins": [
+      "kiro-cli"
+    ]
+  },
+  {
+    "id": "mimo",
+    "name": "MiMo Code",
+    "bins": [
+      "mimo"
+    ]
+  },
+  {
+    "id": "opencode",
+    "name": "OpenCode",
+    "bins": [
+      "opencode-cli",
+      "opencode"
+    ]
+  },
+  {
+    "id": "pi",
+    "name": "Pi",
+    "bins": [
+      "pi"
+    ]
+  },
+  {
+    "id": "qoder",
+    "name": "Qoder CLI",
+    "bins": [
+      "qodercli"
+    ]
+  },
+  {
+    "id": "qwen",
+    "name": "Qwen Code",
+    "bins": [
+      "qwen"
+    ]
+  },
+  {
+    "id": "reasonix",
+    "name": "DeepSeek Reasonix",
+    "bins": [
+      "reasonix",
+      "dsnix"
+    ]
+  },
+  {
+    "id": "trae-cli",
+    "name": "Trae CLI",
+    "bins": [
+      "traecli"
+    ]
+  },
+  {
+    "id": "vibe",
+    "name": "Mistral Vibe CLI",
+    "bins": [
+      "vibe-acp"
+    ]
+  }
+]

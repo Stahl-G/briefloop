@@ -175,18 +175,23 @@ class HarnessManager:
                     self.chat.event(sid,'thread/providerChanged',{'previousThreadId':old_thread_id,'model_provider':config.get('model_provider'),'message':'已切换模型服务，新一轮使用新的 Codex 对话；旧消息保留查看，不自动发送到新服务。'})
             native_web=bool(message['allow_web']) and not (internal and config.get('search_provider')=='tavily')
             thread_params={'cwd':session['cwd'],'model':config['model'],'approvalPolicy':'never','sandbox':config['permission'],'config':{'web_search':'live' if native_web else 'disabled'},'developerInstructions':instructions}
+            if config['model']=='default':thread_params.pop('model',None)
             if config.get('model_provider'):thread_params['modelProvider']=config['model_provider']
             if thread_id:
-                client.request('thread/resume',{'threadId':thread_id,**thread_params})
+                result=client.request('thread/resume',{'threadId':thread_id,**thread_params})
             else:
                 result=client.request('thread/start',thread_params)
                 thread_id=result['thread']['id']
-            self.chat.event(sid,'thread/bound',{'threadId':thread_id,'model_provider':config.get('model_provider')})
+            actual_model=result.get('model') if config['model']=='default' else config['model']
+            self.chat.event(sid,'thread/bound',{'threadId':thread_id,'model_provider':config.get('model_provider'),'actual_model':actual_model})
             with self._lock:
                 self._threads[thread_id]=sid;self.chat.update(sid,thread_id=thread_id)
                 if sid in self._cancel_requested:
                     self.chat.patch_message(mid,status='cancelled');self.chat.update(sid,status='interrupted');return
                 turn_params={'threadId':thread_id,'model':config['model'],'clientUserMessageId':mid,'input':input_blocks,'cwd':session['cwd'],'sandboxPolicy':policy}
+                if config['model']=='default':
+                    if actual_model:turn_params['model']=actual_model
+                    else:turn_params.pop('model',None)
                 if config.get('effort'):turn_params['effort']=config['effort']
                 result=client.request('turn/start',turn_params)
                 turn_id=result['turn']['id']

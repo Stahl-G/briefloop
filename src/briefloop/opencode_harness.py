@@ -118,6 +118,17 @@ class OpencodeHarness:
         model = str(body.get('model', '')).strip()
         base_url = str(body.get('base_url', '')).strip().rstrip('/')
         key = body.get('api_key') or None
+        protocol=body.get('protocol','chat-completions')
+        if protocol not in ('chat-completions','responses','anthropic-messages'):
+            raise ValueError('请选择支持的 API 协议')
+        name=body.get('name') or provider
+        if not isinstance(name,str) or len(name)>120:raise ValueError('配置名称不能超过 120 字符')
+        limits=[]
+        for field in ('context_limit','output_limit'):
+            value=body.get(field)
+            if value is not None and (type(value) is not int or value<1):
+                raise ValueError('Token 上限必须是正整数，未知时留空')
+            limits.append(value)
         supports_images=body.get('supports_images')
         if supports_images is not None and type(supports_images) is not bool:raise ValueError('请选择沿用、支持或不支持图片')
         if not re.fullmatch(r'[A-Za-z0-9_-]{1,80}', provider):
@@ -127,15 +138,35 @@ class OpencodeHarness:
         url = urlsplit(base_url)
         if url.scheme not in ('http', 'https') or not url.hostname or url.username or url.password or url.query or url.fragment:
             raise ValueError('请填写不含账号、查询参数的 HTTP(S) API Base URL')
+        if protocol=='anthropic-messages' and not re.search(r'/v[0-9]+(?:/|$)',url.path):
+            base_url+='/v1'
         if key is not None and (not isinstance(key, str) or not key.strip() or len(key) > 8192):
             raise ValueError('API Key 格式无效')
         with self._lock:
             if self._busy:
                 raise ValueError('当前有 Opencode 任务运行，请结束后再修改 Provider')
-            result = self._client().configure_provider(self.store.root, provider, model, base_url, key, supports_images)
+            result = self._client().configure_provider(self.store.root, provider, model, base_url, key, supports_images, protocol, name, *limits)
             self._models_cache = None
             self._models_at = 0.0
             return result
+
+    def test_provider_model(self, body):
+        """An explicitly requested, visible native tool test; no report job."""
+        provider=str(body.get('provider',''));model=str(body.get('model',''))
+        configs=self._client().provider_settings()
+        if not any(c['provider']==provider and c['model']==model for c in configs):
+            raise ValueError('请先保存该 Provider 与模型')
+        root=self.store.root/'provider-tests'/uid('probe')
+        root.mkdir(parents=True)
+        token=uid('fixture')
+        (root/'sample.txt').write_text(token,encoding='utf-8')
+        runtime={'backend':'opencode','model':provider+'/'+model,'permission':'read-only',
+                 'review_root':str(root),'review_worktree':str(root)}
+        session=self.create_session(provider+' · 工具测试',runtime,root)
+        message=self.send(session['id'],'使用 read 工具读取 sample.txt，并只回复该文件内容。',
+                          runtime=runtime,allow_web=False)
+        return {'session_id':session['id'],'message_id':message['id'],'kind':'model_tool_call',
+                'status':'submitted'}
 
     # -- sessions ---------------------------------------------------------
 

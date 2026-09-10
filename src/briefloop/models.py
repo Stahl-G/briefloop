@@ -119,6 +119,8 @@ class RoleModel(Model):
 
 
 def runtime_fields(value, backend='codex'):
+    if backend not in ('codex','opencode'):
+        return {'model':RoleModel.model_validate({'model':value['model']}).model}
     if backend == 'opencode':
         # Opencode models are provider/model in one string; effort is expressed
         # as an optional variant. Codex-only keys are dropped, never sent.
@@ -142,7 +144,7 @@ def runtime_fields(value, backend='codex'):
 class Settings(RoleModel):
     model: str = Field(default='gpt-5.6-luna', max_length=100)
     reasoning_effort: str | None = Field(default='high', min_length=1, max_length=100)
-    agent_backend: Literal['codex', 'opencode'] = 'codex'
+    agent_backend: Literal['codex', 'opencode','claude','kimi','hermes','reasonix','mimo'] = 'codex'
     model_selection_required: bool = False
     role_models: dict[Literal['evaluator','maintainer','proposer'], RoleModel] = Field(default_factory=dict)
     search_provider: Literal['native','tavily'] = 'native'

@@ -27,7 +27,7 @@ def main():
     parser=argparse.ArgumentParser(description='安装依赖并启动 BriefLoop；无需另行 clone WikiSkill')
     parser.add_argument('--workspace',type=Path,default=root/'workspaces/default')
     parser.add_argument('--port',type=int,default=0)
-    parser.add_argument('--backend',choices=('codex','opencode'),default=None,help='新任务默认走哪个 CLI 后端；不传则沿用工作区设置')
+    parser.add_argument('--backend',choices=('codex','opencode','claude','kimi','hermes','reasonix','mimo'),default=None,help='新任务默认走哪个 CLI 后端；不传则沿用工作区设置')
     parser.add_argument('--no-open',action='store_true')
     args=parser.parse_args();workspace=args.workspace.expanduser().resolve()
     url=live_url(workspace)
