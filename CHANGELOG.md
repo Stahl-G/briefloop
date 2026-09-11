@@ -1,5 +1,12 @@
 # 变更记录
 
+## 0.18.0 — 2026-09-11
+
+- 公开发布身份统一：Python 分发名 `briefloop-local` → `briefloop`，CLI 仍为 `briefloop`。
+- 补丁版 WikiSkill 内联为本发行版的顶层 `wikiskill` 模块，移除未发布的外部依赖；`pip install briefloop` 自包含可用。
+- 同步 README、升级说明与使用指南；修正“已发布到 PyPI”与实际状态不一致的说明。
+- GitHub 仓库简介、主页与 topics 更新为多运行时 Agent 工作台定位。
+
 ## 0.17.1 — 2026-09-10
 
 - 接入 Codex、OpenCode、Claude、Kimi、Hermes、Reasonix、MiMo，统一模型目录与手填入口。

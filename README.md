@@ -1,4 +1,4 @@
-# BriefLoop 0.17.1
+# BriefLoop 0.18.0
 
 一个本地 Agent 工作台：接上本机已经装好的 Codex CLI、Opencode CLI、Claude Code、Kimi、Hermes、DeepSeek Reasonix 或 MiMo Code，围绕问题寻找来源、生成可编辑报告、独立评价，并把反馈整理成后续可用的经验。
 
@@ -12,7 +12,14 @@ cd briefloop
 ./start.sh
 ```
 
-只需这一个仓库。首次启动自动创建 `.venv`、安装 Python 依赖和随仓库提供的 WikiSkill wheel、启动本地服务并打开网页；无需第二次 clone，也无需手动构建前端。
+只需这一个仓库。首次启动自动创建 `.venv`、安装 Python 依赖（WikiSkill 已内联）、启动本地服务并打开网页；无需第二次 clone，也无需手动构建前端。
+
+也可从 PyPI 安装（分发名 `briefloop`，WikiSkill 已内联，无需额外 wheel）：
+
+```sh
+pip install briefloop
+briefloop start --workspace /path/to/workspace
+```
 
 使用前需要：
 
@@ -146,7 +153,7 @@ Word 按按钮制作，完成后下载；不实时更新 Word，不提供网页�
 ```sh
 npm ci
 npm run build
-.venv/bin/python -m pip install --find-links vendor/wheels '.[dev]'
+.venv/bin/python -m pip install -e '.[dev]'
 .venv/bin/python -m pytest -q
 ```
 
