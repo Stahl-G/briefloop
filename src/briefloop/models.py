@@ -1,11 +1,15 @@
 """Small input contracts; report quality is assessed by agents, not these schemas."""
-from typing import Literal
+from typing import Literal, get_args
 from datetime import date
 from .industry_data import IndustryData
-from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
+from pydantic import BaseModel, Field, ConfigDict, ValidationError, model_validator, field_validator
 
 
 class Model(BaseModel):
+    # extra="forbid" is right for request bodies: the caller is still there and can
+    # retry. It is wrong for an artifact an agent hands over at the end of a long
+    # run, where the same strictness costs the whole run. Read those through
+    # prune_unknown/describe_invalid instead of validating the raw file.
     model_config = ConfigDict(extra="forbid")
 
 
@@ -311,3 +315,75 @@ class ScoutEvidence(Model):
 class ScoutResult(Model):
     sources: list[ScoutEvidence]
     gaps: list[str] = Field(default_factory=list)
+
+
+def _contract_model(annotation):
+    """The single contract model a field holds, or None for free-form values."""
+    found = []
+    stack = [annotation]
+    while stack:
+        current = stack.pop()
+        arguments = get_args(current)
+        if arguments:
+            stack.extend(arguments)
+        elif isinstance(current, type) and issubclass(current, BaseModel):
+            found.append(current)
+    return found[0] if len(found) == 1 else None
+
+
+def prune_unknown(value, model, path=''):
+    """Drop keys the contract does not define and report each dropped path.
+
+    A key an agent invented or misspelled must not cost a finished run. Dropping
+    it is recorded, never silent, and free-form fields (editor_document,
+    research_notes, reader_contract) keep everything they were given.
+    """
+    if not isinstance(value, dict):
+        return value, []
+    dropped = []
+    result = {}
+    for key, item in value.items():
+        if key not in model.model_fields:
+            dropped.append(f'{path}.{key}'.lstrip('.'))
+            continue
+        nested = _contract_model(model.model_fields[key].annotation)
+        if nested is not None:
+            if isinstance(item, list):
+                entries = []
+                for index, entry in enumerate(item):
+                    # Same path notation Pydantic uses, so dropped keys and validation
+                    # errors read the same way in one report.
+                    cleaned, lost = prune_unknown(entry, nested, f'{path}.{key}.{index}'.lstrip('.'))
+                    entries.append(cleaned)
+                    dropped.extend(lost)
+                item = entries
+            else:
+                item, lost = prune_unknown(item, nested, f'{path}.{key}'.lstrip('.'))
+                dropped.extend(lost)
+        result[key] = item
+    return result, dropped
+
+
+def describe_invalid(error):
+    """Name the offending fields instead of handing a raw Pydantic dump to the user."""
+    parts = []
+    for detail in error.errors():
+        location = '.'.join(str(x) for x in detail['loc']) or '(顶层)'
+        parts.append(f"{location}：{detail['msg']}")
+    return '；'.join(dict.fromkeys(parts))
+
+
+def check_artifact(value, model):
+    """Self-check an agent artifact before the host reads it, in the host's own terms."""
+    pruned, dropped = prune_unknown(value, model)
+    report = {'status': 'ok', 'unknown_fields': dropped, 'errors': []}
+    if dropped:
+        report['note'] = '这些键不在契约内，发布时会被丢弃并记入任务日志；若其中有必需内容，请改放到契约字段。'
+    try:
+        model.model_validate(pruned)
+    except ValidationError as exc:
+        report['status'] = 'invalid'
+        report['errors'] = [{'field': '.'.join(str(x) for x in detail['loc']), 'message': detail['msg']}
+                            for detail in exc.errors()]
+        report['message'] = describe_invalid(exc)
+    return report

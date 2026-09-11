@@ -556,7 +556,7 @@ class Worker:
         from .company_context import prepare_review
         prepare_review(self.store,self.runtime,job,run,folder,backend)
         vid='brief_'+job['id'][4:]
-        latest=[vid];checkpoint=[False];started=time.monotonic()
+        latest=[vid];checkpoint=[False];started=time.monotonic();reported=[None]
         def publish():
             from .store import Conflict
             from .document_model import markdown_document,document_hash
@@ -564,6 +564,11 @@ class Worker:
             if not p.exists():return
             try:data=json.loads(p.read_text())
             except (json.JSONDecodeError,UnicodeDecodeError):return
+            from .models import prune_unknown,describe_invalid
+            data,dropped=prune_unknown(data,BriefDraft)
+            if dropped and dropped!=reported[0]:
+                reported[0]=dropped
+                self.store.event(job['id'],'draft_fields_dropped',{'fields':dropped})
             if not data.get('editor_document') and data.get('markdown'):
                 data['editor_document']=markdown_document(data['markdown'])
             if payload.get('reader_contract_required'):
@@ -573,7 +578,14 @@ class Worker:
                     plan=json.loads((folder/'plan.json').read_text())
                     contract=save_reader_contract(self.store,run['id'],plan.get('reader_contract'))
                 data['reader_contract']=contract
-            normalized=BriefDraft.model_validate(data)
+            from pydantic import ValidationError
+            try:normalized=BriefDraft.model_validate(data)
+            except ValidationError as exc:
+                # The agent's work is the expensive part: keep the rejected draft and
+                # say which field was wrong, rather than losing it to a raw dump.
+                (folder/'draft-invalid.json').write_text(dump(data))
+                raise ValueError('draft.json 不符合稿件契约（'+describe_invalid(exc)
+                                 +'）；原稿保留在 draft-invalid.json') from None
             sha=document_hash(normalized.editor_document)
             known={row['id'] for row in self.store.rows('SELECT id FROM briefs WHERE run_id=?',(run['id'],))}
             try:record=self.store.publish(run['id'],data,version_id=vid)
