@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 
+from .deliverable_spec import requirement_severity
 from .store import dump, now, uid
 
 SCHEMA = '''
@@ -79,6 +80,7 @@ def decision(snapshot, review_result, findings):
         else:
             issue('core_unchecked', item['description'])
     requirements = snapshot['requirements']['requirement_items']
+    severity = requirement_severity(snapshot['requirements'])
     req_checks = {item['requirement_id']: item for item in review_result.get('requirement_checks', [])}
     for requirement in requirements:
         identity = requirement['requirement_id']
@@ -86,7 +88,12 @@ def decision(snapshot, review_result, findings):
             continue
         check = req_checks.get(identity)
         if not check or check.get('status') != 'covered':
-            if requirement.get('kind') == 'writing':
+            # A writing/method/manual clause is soft even when it came from the objective;
+            # only reader_content clauses are unfinished deliverables. Without a contract
+            # fall back to the raw requirement kind.
+            soft = severity.get(identity) == 'soft' or (
+                identity not in severity and requirement.get('kind') == 'writing')
+            if soft:
                 notices.append({'code': 'writing_preference', 'message': requirement['text'], 'requirement_id': identity})
             else:
                 issue('requirement_unfinished', '必答要求尚未核实完成：' + requirement['text'], requirement_id=identity)
