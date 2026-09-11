@@ -32,6 +32,26 @@ def requirement_severity(spec):
             for identity, found in kinds.items()}
 
 
+def clause_items(spec):
+    """Deterministic, consumption-side view of the saved reader contract clauses.
+
+    The identity binds requirement, kind, quote and instruction, so two clauses that
+    quote the same sentence but carry different jobs never merge. Nothing here is
+    written into the spec, so the requirement fingerprint is unchanged; a clause is
+    identified inside one frozen review packet by (packet fingerprint + clause_id).
+    """
+    contract = spec.get('reader_contract') or {}
+    items = []
+    for clause in contract.get('clauses', []):
+        payload = json.dumps([clause['requirement_id'], clause['kind'], clause['source_quote'], clause['instruction']],
+                             ensure_ascii=False, separators=(',', ':'), sort_keys=True)
+        items.append({'clause_id': 'clause_' + hashlib.sha256(payload.encode()).hexdigest()[:16],
+                      'requirement_id': clause['requirement_id'], 'kind': clause['kind'],
+                      'source_quote': clause['source_quote'], 'instruction': clause['instruction'],
+                      'severity': 'soft' if clause['kind'] in SOFT_CONTRACT_KINDS else 'hard'})
+    return items
+
+
 def resolve(requirements, template=None, *, reader_contract=None):
     sections = requirements.get('sections') or (template or {}).get('sections', [])
     spec = {'schema_version': 2, 'title': requirements['title'],

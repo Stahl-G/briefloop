@@ -70,6 +70,14 @@ class RequirementCheck(Model):
     reason: str = Field(min_length=1)
 
 
+class ClauseCheck(Model):
+    """One reader-contract clause result. The clause_id is produced by the program."""
+    clause_id: str
+    status: Literal['covered', 'partial', 'missing', 'not_applicable', 'unverified']
+    reason: str = Field(min_length=1)
+    basis: list[str] = Field(default_factory=list)
+
+
 class UncheckedItem(Model):
     description: str = Field(min_length=1)
     importance: Literal['core','supporting']
@@ -85,6 +93,7 @@ class ReviewOutput(Model):
     unchecked: list[str] = Field(default_factory=list)
     unchecked_items: list[UncheckedItem] = Field(default_factory=list)
     requirement_checks: list[RequirementCheck] = Field(default_factory=list)
+    clause_checks: list[ClauseCheck] = Field(default_factory=list)
     findings: list[ReviewFinding] = Field(default_factory=list)
     response_checks: list[ResponseCheck] = Field(default_factory=list)
     conflict_checks: list[ConflictCheck] = Field(default_factory=list)
@@ -464,6 +473,21 @@ def build_packet(store,version_id,folder):
     return fingerprint,entries
 
 
+def validate_clause_checks(spec, clause_checks, status):
+    """New-protocol completeness: the reviewer must answer every frozen clause."""
+    from .deliverable_spec import clause_items
+    clauses = {c['clause_id']: c for c in clause_items(spec)}
+    supplied = [check.clause_id for check in clause_checks]
+    if len(supplied) != len(set(supplied)) or not set(supplied).issubset(clauses):
+        raise ValueError('条款核查引用范围外或重复的 clause_id')
+    for check in clause_checks:
+        if check.status == 'not_applicable' and clauses[check.clause_id]['kind'] == 'reader_content':
+            raise ValueError('内容条款不能被标为不适用')
+    if status == 'complete' and set(supplied) != set(clauses):
+        raise ValueError('完整审阅必须逐条给出 clause_checks；缺少='
+                         + ','.join(sorted(set(clauses) - set(supplied))))
+
+
 def accept_review(store,review_id,value):
     result=ReviewOutput.model_validate(value);review=get_review(store,review_id)
     if result.version_id!=review['version_id'] or result.fingerprint!=review['fingerprint']:
@@ -496,6 +520,8 @@ def accept_review(store,review_id,value):
         if check.requirement_id not in allowed_requirements or check.requirement_id in seen_requirements:raise ValueError('要求核查引用范围外或重复的 requirement_id')
         seen_requirements.add(check.requirement_id)
         if check.status=='manual' and requirements[check.requirement_id]['mode']!='manual':raise ValueError('Reviewer 不能把必答要求改为人工待填')
+    if review['data'].get('protocol','legacy')=='clauses_v1':
+        validate_clause_checks(current['requirements'],result.clause_checks,result.status)
     for finding in result.findings:
         if finding.resolution and not finding.response_to:raise ValueError('关闭发现必须指向准确的 response_id')
         if not finding.response_to:
@@ -626,7 +652,9 @@ def run_review(store,runtime,job,version_id,folder):
             return accept_review(store,identity,review['result'])
     else:
         fingerprint,files=build_packet(store,version_id,folder);identity=uid('review')
-        data={'files':files,'packet_path':str((folder/'packet').relative_to(store.root))}
+        from .deliverable_spec import clause_items as _clause_items
+        protocol='clauses_v1' if _clause_items(_snapshot(store,version_id)['requirements']) else 'legacy'
+        data={'files':files,'packet_path':str((folder/'packet').relative_to(store.root)),'protocol':protocol}
         with store.tx() as c:c.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)',(identity,version_id,job['id'],fingerprint,'queued',dump(data),None,now(),now()))
         marker.write_text(dump({'review_id':identity}));review=get_review(store,identity)
     # A transport-complete result can have failed only schema admission. Retry
@@ -643,6 +671,11 @@ def run_review(store,runtime,job,version_id,folder):
             (folder/'admission-error.json').write_text(dump({'error':str(exc),'original_output':str(archived.relative_to(folder))}))
     schema=folder/'packet'/'output.schema.json'
     validate_applicable_review(store,identity,version_id)
+    target=json.loads((folder/'packet'/'target.json').read_text())
+    from .deliverable_spec import clause_items
+    clauses=clause_items(target['requirements'])
+    requirement_instruction=('本次为条款级审阅：对下表的 reader_contract 条款逐条给 clause_checks（clause_id、status(covered/partial/missing/not_applicable/unverified)、reason、basis）。clause_id 必须逐字复制程序给出的 ID，不要自行计算或改写。reader_content 核对正文是否实际回答；research_method 核对方法是否落实（过程要求需有来源、核查或执行记录，无法确认写 unverified）；writing_preference 核对呈现；manual_assignment 只核对占位。not_applicable 仅限条款自身带适用条件且本稿不满足，并给依据；内容条款不得标为不适用。必须逐条覆盖；仍要对照原始要求，发现漏拆或误分类用 finding 指出。' if clauses else
+        '对requirements.requirement_items逐项给requirement_checks：requirement_id、status(covered/manual/partial/missing)、reason。manual只能用于用户原要求中mode=manual的项目，不得自行降低必答要求。')
     prompt=f'''你是独立只读 Reviewer，核对已保存产物与实际依据，不重新研究或运行计算。
 只读取 {folder/'packet'/'index.json'} 所索引的文件。JSON已分行；遇到单行截断，target-long-text.json提供长字段分块、sources/*.view.json提供原文行与分块，按顺序无分隔拼接，不把截断当缺失。先看target.json的本轮要求、正文和claim_evidence关联；核对具体原文与图表；本次报告图和已选证据视觉会作为原生图片附件交给当前选定模型，visual-inputs.json记录它们与固定文件的对应关系。先实际检查这些附件的轴、图注、单位和可见内容，附件不可读时用原生read读取同一packet文件；仍失败则说明本次失败。必要时读history中的本报告历史。绝不查询宿主或其他工作区数据库。
 只有read工具可用。禁止bash、执行脚本、修改文件、联网、委派。history/reviews.json提供过去实际审阅；只复用已完成且依赖未变的核查，历史的未核验/图像能力失败必须在本次实际输入上重新检查，不能据此判断当前模型能力。重点核对本次修改与处理说明，不重复扩大研究。发现需补搜/重算/改稿的问题交主Agent，不能自己执行。
@@ -652,14 +685,16 @@ def run_review(store,runtime,job,version_id,folder):
 核对target.json中的conflicts，按明确更正、不同口径、预测归属或未决分歧分类，逐项给conflict_checks；不要因日期新或官方标签一刀切采用。
 claim_checks可以使用target.evidence.bindings、premises闭包以及candidate_claims中的真实claim_id。candidate_claims是已登记但未用于正文的候选，不能当成当前正文已使用；若其内容实际出现在正文却未绑定，应记录missing_binding，不编造新claim_id。
 对history/responses.json每条当前版本的作者回应，必须在response_checks单独给response_id、decision(resolved/dismissed_with_evidence/unresolved)、reason。findings只放新发现，不要因已修复问题从findings消失就省略response_checks。作者说已修复不算解决，须对照修订和证据；图像不可读等遗留问题应明确unresolved，不重复创建同一发现。
-对requirements.requirement_items逐项给requirement_checks：requirement_id、status(covered/manual/partial/missing)、reason。manual只能用于用户原要求中mode=manual的项目，不得自行降低必答要求。未核验事项用unchecked_items记录description及importance(core/supporting)；普通表达建议使用minor finding，不冒充核心未核验。
+{requirement_instruction}
+未核验事项用unchecked_items记录description及importance(core/supporting)；普通表达建议使用minor finding，不冒充核心未核验。
 最终回复一个符合 {schema} 的 JSON 对象，不加Markdown或说明，不写文件；运行器保存结果。
 version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief_hash={store.one('briefs',version_id)['hash']}。
 四维评分使用既有标准，不用高分抵消重大错误。review.status表示是否完成审阅，claim_checks.status表示依据结论。coverage_scan_complete仅在确实检查了正文重要主张遗漏后设true；未核验项写unchecked。
 '''
-    target=json.loads((folder/'packet'/'target.json').read_text())
     from .deliverable_spec import instructions
     prompt+='\n'+instructions(target['requirements'],role='reviewer',include_spec=False)
+    if clauses:
+        prompt+='\n本次条款清单（clause_checks.clause_id 只能取这些值）：'+dump([{k:c[k] for k in ('clause_id','kind','source_quote','instruction')} for c in clauses])
     ids=set()
     def collect_ids(node):
         ids.add(node['claim_id'])
