@@ -23,6 +23,9 @@ def test_public_research_empty_inputs_and_actual_network_instructions(tmp_path):
     assert '不要假设 host 自动隔离工作目录' in prompt
     assert '至少安排一个 Scout' in prompt and 'add-url --run '+run['id'] in prompt
     assert 'read-source --id SOURCE_ID' in prompt and 'acquired source IDs' in prompt
+    assert all(mark in prompt for mark in ('侦察','聚焦','补缺'))
+    assert '获取失败要按原因换路径' in prompt and '不把所有查询限定在官网' in prompt
+    assert '不重复已经失败或已充分覆盖的相近查询' in prompt
     # Mimic registered acquisition without networking; join and scorer retain it.
     acquired=store.add_source('官方披露','预计下一季度交付 10 台。',url='https://example.com/disclosure')
     store.attach_source(run['id'],acquired['id'])
@@ -76,6 +79,9 @@ def test_builtin_tavily_skill_only_enters_enabled_scout_context(tmp_path, monkey
     from pathlib import Path
     asset=files('briefloop').joinpath('skill_assets','tavily','SKILL.md')
     assert asset.is_file() and 'name: tavily' in asset.read_text()
+    skill_text=asset.read_text()
+    assert '检索节奏' in skill_text and all(mark in skill_text for mark in ('侦察','聚焦','补缺'))
+    assert '获取失败：按原因换路径' in skill_text and '不永久拉黑整个域名' in skill_text
     monkeypatch.setenv('TAVILY_API_KEY','SYNTHETIC_SECRET_DO_NOT_INJECT')
     store=Store(tmp_path/'workspace')
     source=store.add_source('initial','已有公开资料')
