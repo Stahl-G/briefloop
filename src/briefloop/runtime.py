@@ -154,7 +154,8 @@ def generation_prompt(store, run, folder, backend='codex'):
         schema_path=directory/'scout.schema.json'
         schema_path.write_text(dump(ScoutResult.model_json_schema()),encoding='utf-8')
         scout_slots.append({'slot_id':f'scout-{number}','directory':str(directory),
-                            'result_file':str(directory/'result.json'),'schema_path':str(schema_path)})
+                            'result_file':str(directory/'result.json'),'schema_path':str(schema_path),
+                            'scout_contract_path':str(scout_contract)})
     payload={'deliverable_spec':deliverable,'report_profile':report_profile,'reference_sources':references,'requirements':req,'research_budget_status':research_budget,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':max_parallel,'scout_slots':scout_slots,'scout_contract_path':str(scout_contract),'reusable_research':run.get('reusable_research',[])}
     tool=shlex.join([sys.executable,'-m','briefloop','tool','--workspace',str(store.root)])
     tavily_enabled=req['allow_web'] and provider=='tavily'
