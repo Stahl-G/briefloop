@@ -506,6 +506,13 @@ function renderActivities(){
  const active=entries.filter(e=>['running','inProgress','started','pending'].includes(e.status));$('activity-title').textContent=active.length?`正在进行 · ${active.at(-1).label}`:'工具与子 Agent 活动';
  $('activity-list').innerHTML=entries.map(e=>`<details class="activity-item" data-activity-key="${esc(e.key)}" ${opened.has(e.key)?'open':''}><summary><span class="activity-indicator ${['failed','declined','error'].includes(e.status)?'failed':(['running','inProgress','started','pending'].includes(e.status)?'running':'done')}"></span><strong>${esc(e.label)}</strong><span>${esc(chatStates[e.status]||({inProgress:'正在执行',started:'正在执行',done:'已完成',success:'已完成',declined:'未执行',error:'未完成'}[e.status])||e.status)}</span><time>${messageTime(e.created)}</time></summary>${e.detail?`<pre>${esc(e.detail)}</pre>`:''}</details>`).join('');
 }
+function reasoningHTML(message){
+ if(message.role!=='assistant'||!message.reasoning)return '';
+ const running=['streaming','sending'].includes(message.status);
+ const lines=(message.reasoning||'').split('\n').map(line=>line.trim()).filter(Boolean);
+ const peek=running?(lines.at(-1)||''):(lines[0]||'');
+ return `<details class="message-reasoning" data-running="${running?'1':'0'}"><summary><span class="reasoning-icon" aria-hidden="true">✻</span><strong>${running?'思考中':'思考过程'}</strong>${peek?`<span class="reasoning-peek">${esc(peek)}</span>`:''}</summary><div class="reasoning-body">${esc(message.reasoning)}</div></details>`;
+}
 function renderMessages(){
  const scroll=$('chat-scroll'),nearEnd=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<140;
  const signature=JSON.stringify(chat.messages);if(signature!==renderMessages.signature){renderMessages.signature=signature;
@@ -513,9 +520,11 @@ function renderMessages(){
  for(const message of chat.messages){
   let node=nodes.get(message.id);if(!node){node=document.createElement('article');node.dataset.messageId=message.id;$('chat-messages').append(node)}nodes.delete(message.id);
   const messageSignature=JSON.stringify(message);if(node.dataset.signature===messageSignature)continue;node.dataset.signature=messageSignature;node.className=`chat-message ${message.role==='user'?'from-user':'from-assistant'} ${message.mode==='notice'?'task-notice':''} ${['failed','interrupted','cancelled'].includes(message.status)?'message-error':''}`;
+  const reasoningOpen=!!node.querySelector('.message-reasoning')?.open;
   const files=(message.source_ids||[]).map(id=>({id,name:state?.sources.find(s=>s.id===id)?.name||id}));
   const label=message.role==='user'?'你':(message.mode==='notice'?'任务状态':'BriefLoop');
-  node.innerHTML=`<div class="message-heading"><strong>${label}</strong><span>${messageTime(message.created)}</span><span class="message-state">${esc(chatStates[message.status]||message.status)}${message.mode==='steer'&&message.role==='user'?' · 中途补充':''}</span></div><div class="message-body">${esc(message.text||(['streaming','sending'].includes(message.status)?'…':''))}</div>${files.length?`<div class="message-files">${files.map(file=>`<button type="button" data-message-source="${esc(file.id)}">▤ ${esc(file.name)}</button>`).join('')}</div>`:''}${messageActionsHTML()}`;
+  node.innerHTML=`<div class="message-heading"><strong>${label}</strong><span>${messageTime(message.created)}</span><span class="message-state">${esc(chatStates[message.status]||message.status)}${message.mode==='steer'&&message.role==='user'?' · 中途补充':''}</span></div>${reasoningHTML(message)}<div class="message-body">${esc(message.text||(['streaming','sending'].includes(message.status)?'…':''))}</div>${files.length?`<div class="message-files">${files.map(file=>`<button type="button" data-message-source="${esc(file.id)}">▤ ${esc(file.name)}</button>`).join('')}</div>`:''}${messageActionsHTML()}`;
+  const reasoning=node.querySelector('.message-reasoning');if(reasoning&&reasoningOpen)reasoning.open=true;
   const reqBlock=/```briefloop-requirements\s*([\s\S]*?)```/.exec(message.text||'');if(reqBlock){const apply=document.createElement('button');apply.type='button';apply.className='outline apply-requirements';apply.textContent='应用到材料与需求';apply.onclick=()=>applyRequirements(reqBlock[1].trim());node.append(apply)}
   bindMessageActions(node,message);
   node.querySelectorAll('[data-message-source]').forEach(button=>button.onclick=()=>action(async()=>showSource(await api('source?id='+encodeURIComponent(button.dataset.messageSource)))));

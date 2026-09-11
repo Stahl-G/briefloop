@@ -210,8 +210,8 @@ class OpencodeHarness:
     def create_session(self, title='新对话', runtime=None, cwd=None):
         return self.chat.create(title, self._config(runtime), cwd or self.store.root)
 
-    def snapshot(self, session_id, after=0):
-        return self.chat.snapshot(session_id, after)
+    def snapshot(self, session_id, after=0, reasoning=False):
+        return self.chat.snapshot(session_id, after, reasoning=reasoning)
 
     @staticmethod
     def _config(runtime):
@@ -573,12 +573,18 @@ class OpencodeHarness:
                     if not existing:
                         self.chat.message(sid, '', role='assistant', status='streaming',
                                           mid=uid('msg'), turn_id=mid)
-                text = ''.join(part.get('text', '') for part in assistant.get('parts', [])
-                               if part.get('type') == 'text')
-                current = next(m for m in self.snapshot(sid)['messages']
+                parts = assistant.get('parts', [])
+                text = ''.join(part.get('text', '') for part in parts if part.get('type') == 'text')
+                reasoning = ''.join(part.get('text', '') for part in parts if part.get('type') == 'reasoning')
+                current = next(m for m in self.snapshot(sid, reasoning=True)['messages']
                                if m['turn_id'] == mid and m['role'] == 'assistant')
+                changed = {}
                 if text != current['text']:
-                    self.chat.patch_message(current['id'], text=text)
+                    changed['text'] = text
+                if reasoning != (current.get('reasoning') or ''):
+                    changed['reasoning'] = reasoning
+                if changed:
+                    self.chat.patch_message(current['id'], **changed)
                     last_activity = time.monotonic()
                 tools_before = len(seen_tools)
                 # Earlier tool messages can finish between polls or while the next

@@ -141,7 +141,8 @@ class FakeClient:
             info['time']['completed'] = now
         return [{'info': {'id': 'msg_u1', 'role': 'user', 'time': {'created': now - 1}}, 'parts': []},
                 {'info': info,
-                 'parts': [{'type': 'text', 'text': 'hello done'},
+                 'parts': [{'type': 'reasoning', 'text': 'weighing options'},
+                           {'type': 'text', 'text': 'hello done'},
                            {'type': 'tool', 'tool': 'bash', 'id': 'call_1',
                             'state': {'status': 'completed', 'input': {'command': 'pwd'}}}]}]
 
@@ -193,6 +194,8 @@ def test_harness_drives_turn_and_projects_events(tmp_path):
                       for m in manager.snapshot(sid)['messages']))
     snap = manager.snapshot(sid)
     assert snap['messages'][-1]['text'] == 'hello done'
+    assert 'reasoning' not in snap['messages'][-1]
+    assert manager.snapshot(sid, reasoning=True)['messages'][-1]['reasoning'] == 'weighing options'
     kinds = [e['kind'] for e in snap['events']]
     assert 'message/delivered' in kinds
     assert 'item/completed' in kinds
