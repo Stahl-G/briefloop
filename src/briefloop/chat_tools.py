@@ -3,9 +3,15 @@
 These enqueue the existing product jobs; no second generation pipeline lives here.
 """
 import json
+import os
 import shlex
 import sys
 from .models import Requirements, Comment, Settings, runtime_fields
+
+
+def _notify_owner(request):
+    """Conversation that owns a task started from chat; never guessed."""
+    return request.get('session_id') or os.environ.get('BRIEFLOOP_CHAT_SESSION') or None
 
 WORKSPACE_ACTIONS = (
     'capabilities','source_snapshot','source_change','source_impacts','refresh_source',
@@ -132,6 +138,8 @@ def workspace_action(store, request):
         if not isinstance(source_ids,list) or not all(isinstance(x,str) for x in source_ids):raise ValueError('source_ids 必须是来源 ID 数组')
         run=store.create_run(requirements.model_dump(),source_ids)
         payload={'run_id':run['id']}
+        owner=_notify_owner(request)
+        if owner:payload['session_id']=owner
         if request.get('runtime'):
             from .backends import validate_backend
             backend=validate_backend(request['runtime'].get('agent_backend',store.settings().get('agent_backend','codex')))
@@ -142,7 +150,10 @@ def workspace_action(store, request):
         return {'job_id':job['id'],'run_id':run['id'],'status':job['status'],'message':'已提交生成任务；后台将在专门的可交互会话生成并保存简报。'}
     if action=='assess':
         store.one('briefs',request['version_id'])
-        job=store.enqueue('assess',{'version_id':request['version_id']})
+        payload={'version_id':request['version_id']}
+        owner=_notify_owner(request)
+        if owner:payload['session_id']=owner
+        job=store.enqueue('assess',payload)
         return {'job_id':job['id'],'status':job['status'],'message':'已提交该版本的评分任务。'}
     if action=='comment':
         comment=Comment.model_validate({'version_id':request['version_id'],'text':request['text']})

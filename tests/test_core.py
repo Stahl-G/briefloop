@@ -47,7 +47,8 @@ class CoreBehavior(unittest.TestCase):
         s.set_meta('settings',{**s.settings(),'model':'gpt-5.6-luna','reasoning_effort':'high'})
         resumed=Worker(s).resume(old['id'])
         self.assertEqual(resumed['id'],old['id'])
-        self.assertEqual(s.one('jobs',old['id'])['payload'],frozen)
+        kept={k:v for k,v in json.loads(s.one('jobs',old['id'])['payload']).items() if k!='attempt'}
+        self.assertEqual(kept,json.loads(frozen))
 
     def test_refined_draft_becomes_child_version_not_failure(self):
         s=self.store

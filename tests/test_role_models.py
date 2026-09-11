@@ -69,7 +69,7 @@ def test_role_models_freeze_and_generation_scores_in_its_own_stage(tmp_path):
     store.set_meta('settings',{**store.settings(),'role_models':{}})
     resumed=Worker(store).resume(job['id'])
     assert resumed['id']==job['id'] and resumed['status']=='queued'
-    assert store.one('jobs',job['id'])['payload']==frozen
+    assert {k:v for k,v in json.loads(store.one('jobs',job['id'])['payload']).items() if k!='attempt'}==json.loads(frozen)
 
 
 def test_selected_model_reaches_chat_transport_and_rejects_changed_resume(tmp_path):
@@ -118,7 +118,7 @@ def test_evaluator_migration_preserves_settings_and_frozen_legacy_modes(tmp_path
     store.update_job(job['id'],'failed')
     resumed=Worker(store).resume(job['id'])
     assert resumed['id']==job['id'] and resumed['status']=='queued'
-    assert store.one('jobs',job['id'])['payload']==frozen
+    assert {k:v for k,v in json.loads(store.one('jobs',job['id'])['payload']).items() if k!='attempt'}==json.loads(frozen)
     from briefloop.progress import role_label
     assert role_label('Scorer')=='Evaluator · 评分'
     assert role_label('Assessor')=='Evaluator · 比较'

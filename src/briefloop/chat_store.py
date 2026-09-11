@@ -22,12 +22,18 @@ class ChatStore:
         self.store=store
         with store.tx() as c:
             c.executescript(SCHEMA)
-            c.execute("UPDATE chat_requests SET status='expired' WHERE status='pending'")
             session_columns={r['name'] for r in c.execute('PRAGMA table_info(chat_sessions)')}
             if 'lifecycle' not in session_columns:c.execute("ALTER TABLE chat_sessions ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'active'")
             columns={r['name'] for r in c.execute('PRAGMA table_info(chat_messages)')}
             for name,definition in (('runtime',"TEXT NOT NULL DEFAULT '{}'"),('prompt',"TEXT"),('allow_web',"INTEGER NOT NULL DEFAULT 0")):
                 if name not in columns:c.execute('ALTER TABLE chat_messages ADD COLUMN '+name+' '+definition)
+
+    def recover_stale(self):
+        """Startup recovery only. Never run from a notification or a normal write:
+        marking other sessions interrupted here would silently break a live turn's
+        cancel/resume and pending questions."""
+        with self.store.tx() as c:
+            c.execute("UPDATE chat_requests SET status='expired' WHERE status='pending'")
             c.execute("UPDATE chat_sessions SET status='interrupted',turn_id=NULL WHERE status IN ('running','starting','stopping')")
             c.execute("UPDATE chat_messages SET status='interrupted' WHERE status IN ('sending','streaming','delivered')")
 
@@ -105,31 +111,6 @@ class ChatStore:
         if not private:
             for message in messages:message.pop('prompt',None)
         return {'session':session,'messages':messages,'events':events,'requests':requests,'token_usage':token_usage}
-
-    def truncate(self, sid, message_id):
-        """Drop a message and everything after it. Chat only; report files are separate."""
-        with self.store.tx() as c:
-            anchor=c.execute('SELECT rowid FROM chat_messages WHERE session_id=? AND id=?',(sid,message_id)).fetchone()
-            if not anchor:raise KeyError('消息不存在')
-            c.execute('DELETE FROM chat_messages WHERE session_id=? AND rowid>=?',(sid,anchor['rowid']))
-        return self.session(sid)
-
-    def fork(self, sid, message_id, title=None):
-        """Copy a session and its messages up to a message into a new session."""
-        source=self.session(sid)
-        with self.store.tx() as c:
-            anchor=c.execute('SELECT rowid FROM chat_messages WHERE session_id=? AND id=?',(sid,message_id)).fetchone()
-            if not anchor:raise KeyError('消息不存在')
-            rows=[dict(r) for r in c.execute('SELECT * FROM chat_messages WHERE session_id=? AND rowid<=? ORDER BY rowid',(sid,anchor['rowid']))]
-            new=uid('chat');date=now()
-            c.execute('INSERT INTO chat_sessions(id,title,thread_id,turn_id,status,runtime,cwd,created,updated) VALUES(?,?,NULL,NULL,?,?,?,?,?)',
-                      (new,(title or ('分支 · '+(source['title'] or '对话')))[:80],'idle',dump(source['runtime']),source['cwd'],date,date))
-            for row in rows:
-                c.execute('INSERT INTO chat_messages(id,session_id,role,text,status,mode,source_ids,turn_id,item_id,created,updated,runtime,prompt,allow_web) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                          (uid('msg'),new,row['role'],row['text'],row['status'],row['mode'],row['source_ids'],row['turn_id'],row['item_id'],row['created'],row['updated'],row['runtime'],None,row['allow_web']))
-            c.execute('INSERT INTO chat_events(session_id,kind,data,created) VALUES(?,?,?,?)',
-                      (new,'session/forked',dump({'parent_session_id':sid,'message_id':message_id}),date))
-        return self.session(new)
 
     def add_request(self,sid,rpc_id,data):
         rid=uid('question')

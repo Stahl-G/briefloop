@@ -27,6 +27,9 @@ def make_server(workspace, port=8765, *, paused=False):
     except BlockingIOError:
         lock.close();raise RuntimeError('这个工作区已有本地服务在运行')
     harness=HarnessManager(store)
+    # Recover stale chat state once, at service start. Notifications and normal
+    # writes must never run this global recovery.
+    harness.chat.recover_stale()
     from .opencode_harness import OpencodeHarness
     from .backends import validate_backend
     opencode_harness=OpencodeHarness(store)
@@ -287,14 +290,6 @@ def make_server(workspace, port=8765, *, paused=False):
                 elif path=='/api/harness/restore':result=pick_harness(session_id=body['session_id']).restore(body['session_id'])
                 elif path=='/api/harness/archive-completed':result={'count':sum(manager.archive_completed(name)['count'] for name,manager in managers.items())}
                 elif path=='/api/harness/cancel':result=pick_harness(session_id=body['session_id']).cancel(body['session_id'])
-                elif path=='/api/harness/revert':
-                    session_id=body['session_id'];chat=pick_harness(session_id=session_id).chat
-                    if chat.session(session_id)['busy']:raise ValueError('会话仍在运行，请先停止或等待完成')
-                    chat.truncate(session_id,body['message_id']);result=chat.snapshot(session_id)
-                elif path=='/api/harness/fork':
-                    session_id=body['session_id'];chat=pick_harness(session_id=session_id).chat
-                    if chat.session(session_id)['busy']:raise ValueError('会话仍在运行，请先停止或等待完成')
-                    result={'session':chat.fork(session_id,body['message_id'],body.get('title'))}
                 elif path=='/api/upload':
                     data=base64.b64decode(body['data'],validate=True)
                     result=sources.upload(store,body['name'],data)
@@ -325,7 +320,9 @@ def make_server(workspace, port=8765, *, paused=False):
                 elif path=='/api/generate':
                     req=Requirements.model_validate(body['requirements'])
                     run=store.create_run(req.model_dump(),body.get('source_ids',[]))
-                    result=store.enqueue('generate',{'run_id':run['id']})
+                    payload={'run_id':run['id']}
+                    if body.get('session_id'):payload['session_id']=body['session_id']
+                    result=store.enqueue('generate',payload)
                 elif path=='/api/save':
                     value=SaveRevision.model_validate(body)
                     result=store.revise(value.base_version,value.markdown,value.editor_document)
@@ -357,13 +354,14 @@ def make_server(workspace, port=8765, *, paused=False):
                     from .review import respond
                     result=respond(store,body['finding_id'],body['version_id'],body['action'],body['reason'])
                 elif path=='/api/assess':
-                    store.one('briefs',body['version_id']);result=store.enqueue('assess',{'version_id':body['version_id']})
+                    store.one('briefs',body['version_id']);payload={'version_id':body['version_id']}
+                    if body.get('session_id'):payload['session_id']=body['session_id']
+                    result=store.enqueue('assess',payload)
                 elif path=='/api/learn':
                     from .learning import enqueue_feedback
                     result=enqueue_feedback(store)
                 elif path=='/api/stop':worker.stop_job(body['job_id']);result={'ok':True}
                 elif path=='/api/resume':result=worker.resume(body['job_id'])
-                elif path=='/api/job-dismiss':result=store.dismiss_job(body['job_id'])
                 elif path=='/api/rollback':store.bind_skill(body.get('skill_id'));result={'ok':True}
                 elif path=='/api/render':result={'html':MarkdownIt('commonmark',{'html':False}).enable('table').render(body['markdown'])}
                 else:self.send(404,{'error':'未知操作'});return

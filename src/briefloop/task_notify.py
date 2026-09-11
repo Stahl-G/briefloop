@@ -26,21 +26,12 @@ def _chat_ready(store):
 
 
 def target_session(store, payload):
-    """Prefer the task's explicit session, else the newest user conversation.
-
-    Job execution sessions are marked internal and never chosen; the fallback is
-    what lets a task the main agent started (no session_id) report progress into
-    the conversation the user is actually reading.
-    """
-    if not _chat_ready(store):
-        return None
+    """Only an explicit session_id owns a task's notifications. A task with no
+    conversation is listed in the task area and never posts into a guessed chat."""
     session = payload.get('session_id')
-    if session and store.rows('SELECT id FROM chat_sessions WHERE id=?', (session,)):
-        return session
-    rows = store.rows("SELECT id FROM chat_sessions s WHERE lifecycle='active' "
-                      "AND NOT EXISTS(SELECT 1 FROM chat_events e WHERE e.session_id=s.id AND e.kind='session/internal') "
-                      "ORDER BY updated DESC LIMIT 1")
-    return rows[0]['id'] if rows else None
+    if not session or not _chat_ready(store):
+        return None
+    return session if store.rows('SELECT id FROM chat_sessions WHERE id=?', (session,)) else None
 
 
 def status_text(kind, status, error=None):
@@ -59,14 +50,15 @@ def status_text(kind, status, error=None):
 
 
 def notify(store, job, status, *, text=None):
-    """Post one status note per (job, status) into the task's conversation."""
+    """Post one status note per (job, attempt, status) into the task's conversation."""
     body = text or status_text(job.get('kind'), status, job.get('error'))
     if not body:
         return None
-    session = target_session(store, _payload(job))
+    payload = _payload(job)
+    session = target_session(store, payload)
     if not session:
         return None
-    marker = f"task:{job['id']}:{status}"
+    marker = f"task:{job['id']}:{payload.get('attempt', 1)}:{status}"
     if store.rows("SELECT seq FROM chat_events WHERE session_id=? AND kind='task/status' "
                   "AND json_extract(data,'$.marker')=?", (session, marker)):
         return None

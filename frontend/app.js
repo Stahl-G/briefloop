@@ -81,14 +81,8 @@ const TASK_LABELS={generate:'生成简报',assess:'重新评分',review:'独立�
 // Generic message actions: every entry renders as a small icon button under the message.
 const MESSAGE_ACTIONS=[
  {id:'copy',label:'复制回复',run:copyMessage,icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>'},
- {id:'fork',label:'创建分支',run:forkMessage,icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="9" r="2.2"/><path d="M6 8.2v7.6M8.2 7.4c6 0 7.8 1 7.8 3.2"/></svg>'},
- {id:'revert',label:'撤销到此',run:revertMessage,icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 5.5V9h3.5"/></svg>'},
 ];
-const forkPending=new Map();
 async function copyMessage(message){try{await navigator.clipboard.writeText(message.text||'')}catch(e){notice('复制失败：'+e.message,true);return}notice('已复制消息文本')}
-function messageTranscript(index){return chat.messages.slice(0,index+1).map(m=>(m.role==='user'?'用户':'BriefLoop')+'：'+(m.text||'')).join('\n')}
-async function forkMessage(message){const index=chat.messages.findIndex(m=>m.id===message.id);forkPending.set('__next__',messageTranscript(index));const result=await api('harness/fork',{session_id:chat.id,message_id:message.id});const session=result.session;forkPending.set(session.id,forkPending.get('__next__'));forkPending.delete('__next__');await pollChat(true);await selectChat(session.id);notice('已创建分支对话，可直接继续')}
-async function revertMessage(message){await api('harness/revert',{session_id:chat.id,message_id:message.id});notice('已撤销该消息及之后');await pollChat(true)}
 function messageActionsHTML(){return '<div class="message-actions-row">'+MESSAGE_ACTIONS.map(a=>`<button type="button" class="message-action" data-action="${a.id}" data-tip="${esc(a.label)}" aria-label="${esc(a.label)}">${a.icon}</button>`).join('')+'</div>'}
 function bindMessageActions(node,message){node.querySelectorAll('.message-action').forEach(b=>{const action=MESSAGE_ACTIONS.find(a=>a.id===b.dataset.action);if(action)b.onclick=()=>Promise.resolve(action.run(message)).catch(e=>notice(e.message,true))})}
 function taskFor(id){return state.jobs.find(j=>j.id===id)}
@@ -101,18 +95,34 @@ function openTask(job){
 }
 function renderTasks(){
  const box=$('task-list');if(!box)return;
- const tasks=state.jobs.filter(j=>TASK_LABELS[j.kind]&&j.status!=='dismissed').slice(0,15);
+ const open=['queued','running','failed','interrupted','cancelled'];
+ const tasks=state.jobs.filter(j=>TASK_LABELS[j.kind]&&open.includes(j.status)).slice(0,15);
  box.innerHTML=tasks.length?tasks.map(j=>{
   const running=['queued','running'].includes(j.status);
-  const terminal=['failed','interrupted','cancelled','complete'].includes(j.status);
-  const dot=j.status==='complete'?'done':['failed','interrupted','cancelled'].includes(j.status)?'error':running?'running':'';
+  const dot=['failed','interrupted','cancelled'].includes(j.status)?'error':running?'running':'';
   const milestone=j.progress?` · 第 ${j.progress.round}/${j.progress.k} 轮`:'';
-  return `<div class="task-item"><button type="button" class="task-main" data-task-open="${j.id}" title="打开任务"><i class="task-dot ${dot}"></i><span class="task-text"><strong>${TASK_LABELS[j.kind]}</strong><small>${esc(statuses[j.status]||j.status)}${milestone}${j.error?' · '+esc(j.error):''}</small></span></button>${running?`<button type="button" class="task-icon" data-task-stop="${j.id}" title="停止">■</button>`:''}${['failed','interrupted','cancelled'].includes(j.status)?`<button type="button" class="task-icon" data-task-resume="${j.id}" title="恢复（沿用原模型）">↻</button>`:''}${terminal?`<button type="button" class="task-icon" data-task-dismiss="${j.id}" title="从列表移除">✕</button>`:''}</div>`;
- }).join(''):'<p class="help">暂无任务</p>';
+  return `<div class="task-item"><button type="button" class="task-main" data-task-open="${j.id}" title="打开任务"><i class="task-dot ${dot}"></i><span class="task-text"><strong>${TASK_LABELS[j.kind]}</strong><small>${esc(statuses[j.status]||j.status)}${milestone}${j.error?' · '+esc(j.error):''}</small></span></button>${running?`<button type="button" class="task-icon" data-task-stop="${j.id}" title="停止">■</button>`:''}${['failed','interrupted','cancelled'].includes(j.status)?`<button type="button" class="task-icon" data-task-resume="${j.id}" title="恢复（沿用原模型）">↻</button>`:''}</div>`;
+ }).join(''):'<p class="help">暂无未完成的任务</p>';
  box.querySelectorAll('[data-task-open]').forEach(b=>b.onclick=()=>openTask(taskFor(b.dataset.taskOpen)));
  box.querySelectorAll('[data-task-stop]').forEach(b=>b.onclick=()=>action(()=>api('stop',{job_id:b.dataset.taskStop})));
  box.querySelectorAll('[data-task-resume]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.taskResume})));
- box.querySelectorAll('[data-task-dismiss]').forEach(b=>b.onclick=()=>action(()=>api('job-dismiss',{job_id:b.dataset.taskDismiss}),'已从任务列表移除'));
+}
+function renderArtifacts(){
+ const box=$('artifact-list');if(!box||!state)return;
+ const rows=[],seen=new Set();
+ for(const brief of state.briefs){if(seen.has(brief.run_id))continue;seen.add(brief.run_id);rows.push({brief})}
+ const fileKinds={export_docx:'工作稿 Word',release:'正式 Word',audit_bundle:'审计包'};
+ for(const j of state.jobs){
+  if(!fileKinds[j.kind]||j.status!=='complete')continue;
+  const payload=parse(j.payload),result=parse(j.result);
+  const url=j.kind==='release'?'/api/release-file?id='+encodeURIComponent(payload.release_id):j.kind==='audit_bundle'?'/api/audit-file?job='+encodeURIComponent(j.id):result.download_url;
+  rows.push({label:fileKinds[j.kind],url});
+ }
+ const items=rows.slice(0,8);
+ box.innerHTML=items.length?items.map(it=>it.brief
+  ?`<button type="button" class="artifact-item" data-artifact-brief="${esc(it.brief.id)}"><span>${esc(parse(it.brief.detail).title||'简报草稿')}</span><small>打开稿件</small></button>`
+  :`<a class="artifact-item" href="${esc(it.url||'#')}" download><span>${esc(it.label)}</span><small>下载</small></a>`).join(''):'<p class="help">暂无产物</p>';
+ box.querySelectorAll('[data-artifact-brief]').forEach(b=>b.onclick=()=>{const brief=state.briefs.find(x=>x.id===b.dataset.artifactBrief);if(brief){openBrief(brief,{follow:false});page('report')}});
 }
 function render(first){
  renderTemplates(first);
@@ -133,8 +143,8 @@ function render(first){
 
  tryOpenPending();if(!current&&state.briefs.length)openBrief(state.briefs[0],{follow:true});if(current&&followUpdates&&!dirty&&!saving){const latest=state.briefs.find(b=>b.run_id===current.run_id);if(latest?.parent_id===current.id&&latest.author==='agent')openBrief(latest,{follow:true})}if(current){$('version-select').value=current.id;assessment();citations();renderBriefLength()}
  $('empty').hidden=!!current||state.jobs.length>0;$('document-area').hidden=!current;
- $('jobs').innerHTML=state.jobs.filter(j=>j.status!=='dismissed').map(j=>`<div class="job"><span class="tag ${j.status==='failed'?'error':''}">${statuses[j.status]}</span><div class="job-main">${{generate:'生成简报',assess:'重新评分',review:'独立审阅',revise:'按审阅修订',learn:'WikiSkill 学习',export_docx:'生成工作稿 Word',release:'制作正式 Word',audit_bundle:'制作审计包',source_refresh:'复查来源',prepare_template:'准备模板'}[j.kind]}<small>${['export_docx','release','audit_bundle'].includes(j.kind)?'本地脚本':j.kind==='source_refresh'?'来源工具':parse(j.payload).runtime?esc(modelLabel(parse(j.payload).runtime)):'旧任务：沿用当时本机配置'} · ${j.progress?`第 ${j.progress.round}/${j.progress.k} 轮 · ${{maintainer:'整理经验',proposer:'提出候选',validation:'验证候选'}[j.progress.phase]||j.progress.phase} · `:''}${esc(j.error||(j.kind==='source_refresh'?sourceRefreshOutcome(parse(j.result).outcome):'')||new Date(j.created).toLocaleString())}</small></div>${j.kind==='learn'?`<button data-details="${j.id}">查看比较</button>`:''}${['queued','running'].includes(j.status)?`<button data-stop="${j.id}">停止</button>`:''}${['failed','interrupted','cancelled'].includes(j.status)?`<button data-resume="${j.id}">恢复</button>`:''}${['failed','interrupted','cancelled','complete'].includes(j.status)?`<button data-dismiss="${j.id}">移除</button>`:''}</div>`).join('');
- document.querySelectorAll('[data-stop]').forEach(b=>b.onclick=()=>action(()=>api('stop',{job_id:b.dataset.stop})));document.querySelectorAll('[data-resume]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.resume})));document.querySelectorAll('[data-dismiss]').forEach(b=>b.onclick=()=>action(()=>api('job-dismiss',{job_id:b.dataset.dismiss}),'已从任务列表移除'));renderTasks();
+ $('jobs').innerHTML=state.jobs.filter(j=>j.status!=='dismissed').map(j=>`<div class="job"><span class="tag ${j.status==='failed'?'error':''}">${statuses[j.status]}</span><div class="job-main">${{generate:'生成简报',assess:'重新评分',review:'独立审阅',revise:'按审阅修订',learn:'WikiSkill 学习',export_docx:'生成工作稿 Word',release:'制作正式 Word',audit_bundle:'制作审计包',source_refresh:'复查来源',prepare_template:'准备模板'}[j.kind]}<small>${['export_docx','release','audit_bundle'].includes(j.kind)?'本地脚本':j.kind==='source_refresh'?'来源工具':parse(j.payload).runtime?esc(modelLabel(parse(j.payload).runtime)):'旧任务：沿用当时本机配置'} · ${j.progress?`第 ${j.progress.round}/${j.progress.k} 轮 · ${{maintainer:'整理经验',proposer:'提出候选',validation:'验证候选'}[j.progress.phase]||j.progress.phase} · `:''}${esc(j.error||(j.kind==='source_refresh'?sourceRefreshOutcome(parse(j.result).outcome):'')||new Date(j.created).toLocaleString())}</small></div>${j.kind==='learn'?`<button data-details="${j.id}">查看比较</button>`:''}${['queued','running'].includes(j.status)?`<button data-stop="${j.id}">停止</button>`:''}${['failed','interrupted','cancelled'].includes(j.status)?`<button data-resume="${j.id}">恢复</button>`:''}</div>`).join('');
+ document.querySelectorAll('[data-stop]').forEach(b=>b.onclick=()=>action(()=>api('stop',{job_id:b.dataset.stop})));document.querySelectorAll('[data-resume]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.resume})));renderTasks();renderArtifacts();
  document.querySelectorAll('[data-details]').forEach(b=>b.onclick=()=>action(async()=>{const d=await api('learning-details?job='+b.dataset.details);$('source-title').textContent='技能比较与依据';$('source-original').hidden=true;$('source-provenance').hidden=true;$('source-link').textContent='';$('source-body').textContent=d.rounds.length?d.rounds.map((r,i)=>`第 ${i+1} 轮\n${r.result?.reason||'比较尚未完成'}\n${(r.result?.pairs||[]).map(p=>({better:'候选更好',tie:'差不多，保留原技能',worse:'原稿更好'}[p.verdict])+': '+p.reason).join('\n')}\n\n`+r.cases.map(c=>`任务：${c.requirements.title}\n\n旧版\n${gradeSummary(c.baseline.assessment)}\n${c.baseline.reader_markdown||c.baseline.markdown}\n\n候选\n${gradeSummary(c.candidate.assessment)}\n${c.candidate.reader_markdown||c.candidate.markdown}`).join('\n\n')).join('\n\n'):d.job.error||'比较尚未开始；先整理 Wiki 和提出候选。';$('source-dialog').showModal()}));
  $('skills').innerHTML=`<div class="skill">${state.active_skill?'当前启用 '+esc(state.active_skill):'当前使用基础任务提示词'}${state.active_skill?'<button data-rollback="">回到基础版本</button>':''}</div>`+state.skills.map(s=>`<div class="skill"><strong>${esc(s.id)}</strong><p>${esc(s.reason)}</p>${s.id===state.active_skill?'<span class="tag">正在使用</span>':`<button data-rollback="${s.id}" class="outline">使用这个版本</button>`}</div>`).join('');document.querySelectorAll('[data-rollback]').forEach(b=>b.onclick=()=>action(()=>api('rollback',{skill_id:b.dataset.rollback||null}),'下一轮将使用所选技能'));
  if(state.wiki!==render.wiki){render.wiki=state.wiki;if(state.wiki)api('render',{markdown:state.wiki}).then(r=>$('wiki').innerHTML=r.html);else $('wiki').innerHTML='<h2>还没有学习经验</h2><p class="muted">生成简报后直接改稿，或留下评论。Maintainer 会在这里整理观察、方法与适用条件。</p>'}bindSources();
@@ -537,8 +547,7 @@ async function sendChat(event){
  event.preventDefault();if(chat.busy||chat.uploading||chat.session&&chat.session.lifecycle&&chat.session.lifecycle!=='active')return;const text=$('chat-input').value.trim()||(chat.attachments.size?'请查看附件。':'');if(!text)return;const discuss=/^\/discuss\b\s*/i.test(text),displayText=text.replace(/^\/discuss\b\s*/i,'').trim()||'讨论需求',sendText=discuss?(DISCUSS_INSTRUCTION+(displayText!=='讨论需求'?('\n\n用户补充：'+displayText):'')):text;chat.busy=true;chatError();updateComposer();
  try{
   const runtime=runtimeChoice();if(!chat.id){const result=await api('harness/session',{title:displayText.slice(0,48),runtime});chat.session=result.session||result;chat.id=chat.session.id;if(!chat.id)throw Error('未能创建会话');localStorage.setItem('briefloop-chat-session',chat.id);rememberDraft()}
-  const forkContext=forkPending.has(chat.id)?('以下为本分支之前的对话记录，供你参考：\n'+forkPending.get(chat.id)+'\n\n'):'';forkPending.delete(chat.id);
-  const payload={session_id:chat.id,text:forkContext+sendText,display_text:sendText===displayText?undefined:displayText,mode:chatActive()?$('chat-mode').value:'queue',source_ids:[...chat.attachments],runtime,allow_web:$('chat-allow-web').checked};const signature=JSON.stringify(payload);
+  const payload={session_id:chat.id,text:sendText,display_text:sendText===displayText?undefined:displayText,mode:chatActive()?$('chat-mode').value:'queue',source_ids:[...chat.attachments],runtime,allow_web:$('chat-allow-web').checked};const signature=JSON.stringify(payload);
   if(!chat.request||chat.request.signature!==signature)chat.request={signature,message_id:crypto.randomUUID()};
   await api('harness/message',{...payload,message_id:chat.request.message_id});chat.request=null;$('chat-input').value='';chat.attachments.clear();rememberDraft();renderAttachments();
   // The runtime used here is the chosen model; keep the pending-selection state in sync.

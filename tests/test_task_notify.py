@@ -1,51 +1,83 @@
-"""Background tasks report their start and end into the active conversation."""
+"""Background task notes: owned conversation, one per attempt, no global side effects."""
+import json
+
+from briefloop import task_notify
 from briefloop.chat_store import ChatStore
-from briefloop.store import Store
+from briefloop.store import Store, dump
 
 
 def _notes(chat, session_id):
     return [m for m in chat.snapshot(session_id)['messages'] if m['mode'] == 'notice']
 
 
-def test_task_reports_start_and_terminal_once(tmp_path):
+def test_note_does_not_disturb_another_running_session(tmp_path):
     store = Store(tmp_path)
     chat = ChatStore(store)
-    session = chat.create('工作对话', {'model': 'x', 'backend': 'codex'}, tmp_path)
-    job = store.enqueue('generate', {'run_id': 'r1', 'session_id': session['id']})
-    notes = _notes(chat, session['id'])
-    assert len(notes) == 1 and '已开始任务' in notes[0]['text']
-    store.update_job(job['id'], 'complete')
-    notes = _notes(chat, session['id'])
-    assert len(notes) == 2 and '已完成' in notes[1]['text']
-    store.update_job(job['id'], 'complete')  # a repeated settle must not repeat the note
+    a = chat.create('A', {'model': 'x', 'backend': 'codex'}, tmp_path)
+    b = chat.create('B', {'model': 'x', 'backend': 'codex'}, tmp_path)
+    chat.update(b['id'], status='running', turn_id='native-turn')
+    chat.message(b['id'], 'reply', role='assistant', status='streaming', turn_id='native-turn')
+    chat.add_request(b['id'], {'id': 1}, {'method': 'x'})
+    store.enqueue('audit_bundle', {'session_id': a['id']})
+    session = chat.session(b['id'])
+    assert session['status'] == 'running' and session['turn_id'] == 'native-turn' and session['busy'] is True
+    assert chat.snapshot(b['id'])['messages'][0]['status'] == 'streaming'
+    assert chat.snapshot(b['id'])['requests'][0]['status'] == 'pending'
+
+
+def test_note_requires_an_owned_session(tmp_path):
+    store = Store(tmp_path)
+    chat = ChatStore(store)
+    other = chat.create('另一个对话', {}, tmp_path)
+    store.enqueue('generate', {'run_id': 'r1'})  # no session_id: never guess a conversation
+    assert _notes(chat, other['id']) == []
+
+
+def test_note_dedups_per_attempt_and_notifies_a_second_failure(tmp_path):
+    store = Store(tmp_path)
+    chat = ChatStore(store)
+    session = chat.create('对话', {}, tmp_path)
+    job = store.enqueue('audit_bundle', {'session_id': session['id']})
+    assert len(_notes(chat, session['id'])) == 1  # queued
+    job = store.one('jobs', job['id'])
+    task_notify.notify(store, job, 'failed')
+    task_notify.notify(store, job, 'failed')  # replay of the same attempt
     assert len(_notes(chat, session['id'])) == 2
+    payload = json.loads(job['payload']); payload['attempt'] = 2
+    with store.tx() as c:
+        c.execute('UPDATE jobs SET payload=? WHERE id=?', (dump(payload), job['id']))
+    task_notify.notify(store, store.one('jobs', job['id']), 'failed')  # a new attempt
+    assert len(_notes(chat, session['id'])) == 3
 
 
-def test_task_without_session_reports_to_the_active_conversation(tmp_path):
+def test_worker_settle_sends_the_terminal_note(tmp_path):
+    from briefloop.runtime import Worker
     store = Store(tmp_path)
     chat = ChatStore(store)
-    session = chat.create('你是谁', {}, tmp_path)
-    store.enqueue('generate', {'run_id': 'r1'})  # e.g. the main agent started it
-    notes = _notes(chat, session['id'])
-    assert len(notes) == 1 and '已开始任务' in notes[0]['text']
+    session = chat.create('对话', {}, tmp_path)
+    job = store.enqueue('audit_bundle', {'session_id': session['id']})
+    with store.tx() as c:
+        c.execute("UPDATE jobs SET status='running' WHERE id=?", (job['id'],))
+    Worker(store)._settle_job(job['id'], 'complete', result={'ok': True})
+    assert any('已完成' in m['text'] for m in _notes(chat, session['id']))
 
 
-def test_internal_execution_sessions_are_neither_listed_nor_targeted(tmp_path):
+def test_worker_stop_sends_the_cancelled_note(tmp_path):
+    from briefloop.runtime import Worker
+    store = Store(tmp_path)
+    chat = ChatStore(store)
+    session = chat.create('对话', {}, tmp_path)
+    job = store.enqueue('audit_bundle', {'session_id': session['id']})
+    with store.tx() as c:
+        c.execute("UPDATE jobs SET status='running' WHERE id=?", (job['id'],))
+    Worker(store).stop_job(job['id'])
+    assert any('已停止' in m['text'] for m in _notes(chat, session['id']))
+
+
+def test_internal_execution_sessions_are_not_listed(tmp_path):
     store = Store(tmp_path)
     chat = ChatStore(store)
     visible = chat.create('对话', {}, tmp_path)
     internal = chat.create('生成简报', {}, tmp_path)
     chat.event(internal['id'], 'session/internal', {})
     assert [s['id'] for s in chat.sessions('active')] == [visible['id']]
-    store.enqueue('audit_bundle', {})  # no session_id: must not land in the internal session
-    assert _notes(chat, visible['id']) and not _notes(chat, internal['id'])
-
-
-def test_dismiss_hides_a_finished_task_but_not_a_running_one(tmp_path):
-    import pytest
-    store = Store(tmp_path)
-    job = store.enqueue('audit_bundle', {})
-    with pytest.raises(ValueError):
-        store.dismiss_job(job['id'])
-    store.update_job(job['id'], 'complete')
-    assert store.dismiss_job(job['id'])['status'] == 'dismissed'

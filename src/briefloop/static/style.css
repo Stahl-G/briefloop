@@ -163,3 +163,7 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 .apply-requirements{margin-top:6px;font-size:12px}
 .settings-session-note{background:var(--paper);border:1px solid var(--line);border-radius:7px;padding:9px 12px;margin:10px 0}
 .settings-session-note button{margin-left:6px}
+.artifact-item{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;text-align:left;padding:5px 6px;border-radius:6px;background:none;font-size:12px;color:var(--ink);text-decoration:none}
+.artifact-item:hover{background:#edf0e9}
+.artifact-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.artifact-item small{color:var(--muted);flex:none}

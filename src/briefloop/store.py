@@ -478,19 +478,10 @@ class Store:
         return self.settings()['search_provider']
 
     def update_job(self, jid, status, *, result=None, error=None):
+        # Terminal task notifications fire from the Worker's own settle/stop boundary
+        # (_settle_job / stop_job), which is where production jobs actually finish.
         with self.tx() as c:
             c.execute("UPDATE jobs SET status=?,result=COALESCE(?,result),error=?,updated=? WHERE id=?", (status, dump(result) if result is not None else None, error, now(), jid))
-        from .task_notify import TERMINAL, notify as _notify_task
-        if status in TERMINAL:
-            _notify_task(self, self.one("jobs", jid), status)
-
-    def dismiss_job(self, jid):
-        """Hide a finished task from the lists without deleting its records."""
-        job = self.one('jobs', jid)
-        if job['status'] in ('queued', 'running'):
-            raise ValueError('任务仍在运行，请先停止')
-        self.update_job(jid, 'dismissed')
-        return self.one('jobs', jid)
 
     def event(self, job_id, kind, data):
         with self.tx() as c:

@@ -1,4 +1,6 @@
 """Resume continues the same task; it must not spawn a new attempt on every click."""
+import json
+
 from briefloop.runtime import Worker
 from briefloop.store import Store
 
@@ -14,4 +16,5 @@ def test_resume_requeues_the_same_job_regardless_of_current_settings(tmp_path):
     store.set_meta('settings', {**store.settings(), 'agent_backend': 'opencode', 'model': 'new-model'})
     resumed = Worker(store).resume(job['id'])
     assert resumed['id'] == job['id'] and resumed['status'] == 'queued'
+    assert json.loads(resumed['payload'])['attempt'] == 2
     assert len(store.rows("SELECT id FROM jobs WHERE kind='generate'")) == 1
