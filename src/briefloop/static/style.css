@@ -123,3 +123,12 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 .tiptap .suggestion-fix{background:#fdf6e3;border-bottom:2px dashed #b8860b;border-radius:2px;cursor:help}
 .finding-toggle{display:block;margin:8px 0}
 .finding-toggle input{width:auto;margin-right:6px;accent-color:var(--green)}
+.highlight-tip{position:fixed;z-index:200;max-width:340px;padding:12px 14px;background:white;border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 28px #1e23201f;font:13px/1.6 var(--font);color:var(--ink);pointer-events:none}
+.highlight-tip-head{font:600 12px/1.4 var(--mono);margin-bottom:6px;color:#c0392b}
+.highlight-tip-head.suggestion{color:#8a6414}
+.highlight-tip blockquote{margin:0 0 8px;padding:6px 10px;background:var(--paper);border-radius:5px;color:var(--muted)}
+.highlight-tip p{margin:6px 0 0;color:var(--muted)}
+.highlight-tip p strong{display:block;color:var(--ink);font-weight:550}
+.highlight-tip-hint{margin-top:8px!important;font-size:11px;color:var(--muted)}
+.finding.flash{background:#fde7e2;transition:background .3s}
+.finding.flash[open]{box-shadow:inset 3px 0 0 #c0392b;padding-left:10px}
