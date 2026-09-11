@@ -167,3 +167,5 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 .artifact-item:hover{background:#edf0e9}
 .artifact-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .artifact-item small{color:var(--muted);flex:none}
+.chat-setup-cta{margin:0 0 18px;padding:14px 16px;background:var(--paper);border:1px solid var(--line);border-radius:8px}
+.chat-setup-cta p{margin:0 0 10px;color:var(--muted)}
