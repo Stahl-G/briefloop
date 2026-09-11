@@ -2,6 +2,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import json
 import threading
+import pytest
 from pathlib import Path
 from briefloop import research_budget as budget, sources, tavily
 from briefloop.models import Requirements,RESEARCH_BUDGET_PRESETS
@@ -31,7 +32,16 @@ def test_parallel_failed_searches_share_a_hard_request_limit(tmp_path,monkeypatc
     assert len(calls)==2
     state=budget.snapshot(store,run['id'])
     assert state['used']['search_requests']==2 and state['remaining']['search_requests']==0
-    assert len(list((store.root/'discovery'/run['id']).glob('*.json')))==2
+    files=[p for p in (store.root/'discovery'/run['id']).glob('*.json') if not p.name.endswith('.request.json')]
+    assert len(files)==2
+    records=[p for p in (store.root/'discovery'/run['id']).glob('*.request.json')]
+    assert len(records)==2
+    import json as _json
+    for record in records:
+        data=_json.loads(record.read_text())
+        assert data['outcome']=='failed' and data['failure_kind']=='provider_error'
+        assert data['query'].startswith('q') and data['provider']=='tavily' and data['operation']=='search'
+        assert data['local_request_id'] and data['provider_request_id'] is None
 
 
 def test_candidate_overflow_is_explicit_and_complete_response_is_retained(tmp_path,monkeypatch):
@@ -92,3 +102,58 @@ def test_defaults_native_scope_and_legacy_missing_budget_are_explicit(tmp_path):
     assert budget.snapshot(store,run['id'])['limits'] is None
     assert budget.snapshot(store,run['id'])['remaining']['source_pages'] is None
     assert 'research_budget' not in json.loads(store.one('runs',run['id'])['requirements'])
+
+
+def test_http_failure_kinds_are_stable():
+    assert tavily._http_kind(401)=='auth' and tavily._http_kind(403)=='auth'
+    assert tavily._http_kind(402)=='quota' and tavily._http_kind(429)=='rate_limit'
+    assert tavily._http_kind(500)=='provider_error' and tavily._http_kind(400)=='provider_error'
+
+
+def test_failed_search_records_kind_and_parameters(tmp_path,monkeypatch):
+    store,run=make_run(tmp_path,{'search_requests':2,'candidate_urls':10,'source_pages':2})
+    def failure(*args,**kwargs):raise tavily._marked('auth failed','auth',401)
+    monkeypatch.setattr(tavily,'_post',failure)
+    with pytest.raises(tavily.TavilyError) as info:
+        tavily.search('blocked query',topic='news',start_date='2026-09-05',end_date='2026-09-11',store=store,run_id=run['id'])
+    assert info.value.failure_kind=='auth'
+    record=json.loads(Path(info.value.request_record_path).read_text())
+    assert record['outcome']=='failed' and record['failure_kind']=='auth'
+    assert record['query']=='blocked query' and record['parameters']['topic']=='news'
+    assert record['parameters']['start_date']=='2026-09-05'
+    assert record['raw_response_path'] is None and record['provider_request_id'] is None
+
+
+def test_success_envelope_separates_local_and_provider_request_ids(tmp_path,monkeypatch):
+    store,run=make_run(tmp_path,{'search_requests':2,'candidate_urls':10,'source_pages':2})
+    response={'results':[{'url':'https://example.test/a','content':'snippet'}],'request_id':'provider-abc','usage':{'credits':1}}
+    raw=json.dumps(response).encode()
+    monkeypatch.setattr(tavily,'_post',lambda *args,**kwargs:(response,raw))
+    out=tavily.search('query',store=store,run_id=run['id'])
+    assert out['provider_request_id']=='provider-abc'
+    assert out['local_request_id'] and out['local_request_id']!=out['provider_request_id']
+    record=json.loads(Path(out['request_record_path']).read_text())
+    assert record['outcome']=='success' and record['failure_kind'] is None
+    assert record['provider_request_id']=='provider-abc' and record['local_request_id']==out['local_request_id']
+    assert record['admitted_urls']==['https://example.test/a'] and record['unadmitted_urls']==[]
+    assert record['raw_response_path']==out['discovery_path']
+    assert record['parameters']['max_results']==5
+
+
+def test_unknown_failure_kind_is_rejected_and_cli_payload_is_structured():
+    with pytest.raises(ValueError):
+        tavily._marked('x','not_a_kind')
+    from briefloop import cli
+    exc=tavily._marked('auth failed','auth',401)
+    payload=cli._tavily_failure('search',exc)
+    assert payload=={'provider':'tavily','operation':'search','status':'failed','failure_kind':'auth','http_status':401,'error':'auth failed','request_record_path':None}
+
+
+def test_extract_separates_budget_refusal_from_extraction_failure(tmp_path,monkeypatch):
+    store,run=make_run(tmp_path,{'search_requests':2,'candidate_urls':10,'source_pages':2})
+    monkeypatch.setattr(tavily,'_post',lambda *args,**kwargs:({'results':[{'url':'https://example.test/a','raw_content':''}],'request_id':'p1'},b'{}'))
+    out=tavily.extract(store,['https://example.test/a'],run_id=run['id'])
+    assert out['extraction_failed_urls']==['https://example.test/a']
+    assert 'unadmitted_urls' not in out
+    record=json.loads(Path(out['request_record_path']).read_text())
+    assert record['unadmitted_urls']==[] and record['extraction_failed_urls']==['https://example.test/a']
