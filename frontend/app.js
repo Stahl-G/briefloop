@@ -156,9 +156,9 @@ const WELCOME_PURPOSES=[
  {id:'public',label:'公开研究',prompt:'请围绕我的研究目标查找公开资料，写一份有依据的简报。',fields:{writing_mode:'general',report_profile:'brief',allow_web:true}},
  {id:'industry',label:'行业报告',prompt:'请做一份行业定期报告，先确认行业、目标组织、报告日期与覆盖期间。',fields:{writing_mode:'general',report_profile:'industry_periodic'}},
 ];
-let welcomeIndex=0,welcomePurpose=null,welcomeModelChosen=false;
+let welcomeIndex=0,welcomePurpose=null;
 function welcomeAvailable(){return (runtimeCatalog||[]).filter(r=>r.available)}
-function chooseWelcomeHost(id){const select=$('agent-backend');if(select&&select.value!==id){select.value=id;select.dispatchEvent(new Event('change'))}if(state&&state.settings){state.settings.model_selection_required=true;state.settings.model=''}welcomeModelChosen=false;renderWelcome()}
+function chooseWelcomeHost(id){const select=$('agent-backend');if(select&&select.value!==id){select.value=id;select.dispatchEvent(new Event('change'))}if(state&&state.settings){state.settings.model_selection_required=true;state.settings.model=''}renderWelcome()}
 function applyWelcomePurpose(id){const purpose=WELCOME_PURPOSES.find(p=>p.id===id);if(!purpose)return;welcomePurpose=id;$('chat-input').value=purpose.prompt;rememberDraft();if(purpose.fields)sessionStorage.setItem('briefloop-welcome-fields',JSON.stringify(purpose.fields));renderWelcome()}
 function applyPendingSetupFields(){let fields=null;try{fields=JSON.parse(sessionStorage.getItem('briefloop-welcome-fields')||'null')}catch{}if(!fields)return;sessionStorage.removeItem('briefloop-welcome-fields');const form=$('requirements');if(!form)return;for(const [name,value] of Object.entries(fields)){const el=form.elements[name];if(!el)continue;if(el.type==='checkbox')el.checked=!!value;else el.value=value;el.dispatchEvent(new Event('change',{bubbles:true}))}}
 function renderWelcome(){
@@ -167,7 +167,7 @@ function renderWelcome(){
  if(!runtimeScanned&&!avail.length){box.innerHTML='<p class="help">正在检测本机宿主…</p>';$('welcome-choice').textContent='正在检测本机宿主…';$('welcome-start').disabled=true;return}
  box.innerHTML=avail.length?avail.map(r=>`<button type="button" class="welcome-host ${r.id===chosen?'selected':''}" data-welcome-host="${esc(r.id)}"><strong>${esc(r.name)}</strong><small>${esc(r.version||'版本未确认')}${r.id===chosen?' · 当前选择':''}</small></button>`).join(''):'<p class="help">未检测到可用宿主。请先安装并登录一个 CLI，或在设置里配置 API 提供商。</p>';
  box.querySelectorAll('[data-welcome-host]').forEach(b=>b.onclick=()=>{welcomeIndex=Math.max(0,avail.findIndex(r=>r.id===b.dataset.welcomeHost));chooseWelcomeHost(b.dataset.welcomeHost)});
- const model=state?.settings?.model_selection_required?'':(welcomeModelChosen?(state?.settings?.model||''):'');
+ const model=state?.settings?.model_selection_required?'':state?.settings?.model;
  $('welcome-choice').textContent=`将使用：${runtimeName(chosen)} · ${model?friendlyModel(model):'待选择模型'}`;
  $('welcome-start').disabled=!model;
  const pbox=$('welcome-purposes');
@@ -176,7 +176,7 @@ function renderWelcome(){
 }
 $('welcome-model').onclick=()=>openModelPicker('model-select');
 $('welcome-cycle').onclick=()=>{const avail=welcomeAvailable();if(avail.length<2)return;welcomeIndex=(welcomeIndex+1)%avail.length;chooseWelcomeHost(avail[welcomeIndex].id)};
-$('welcome-start').onclick=()=>{const settings=state?.settings||{};if(!welcomeModelChosen||!settings.model||settings.model_selection_required){notice('请先选择模型',true);return}$('welcome').hidden=true;page('chat');$('chat-model').value=settings.model;if(settings.model_provider!=null)$('chat-model-provider').value=settings.model_provider||'';if(settings.reasoning_effort)assignEffort('chat-effort',effortValue(settings,'reasoning_effort'));updateComposer();$('chat-input').focus();rememberDraft()};
+$('welcome-start').onclick=()=>{const settings=state?.settings||{};if(!settings.model||settings.model_selection_required){notice('请先选择模型',true);return}$('welcome').hidden=true;page('chat');$('chat-model').value=settings.model;if(settings.model_provider!=null)$('chat-model-provider').value=settings.model_provider||'';if(settings.reasoning_effort)assignEffort('chat-effort',effortValue(settings,'reasoning_effort'));updateComposer();$('chat-input').focus();rememberDraft()};
 function render(first){
  renderTemplates(first);
  if($('review-open'))$('review-open').textContent='审阅与需处理'+(state.conflicts?.length?' · '+state.conflicts.length+' 项来源分歧':'');
@@ -360,7 +360,7 @@ function modelLabel(cfg){if(!cfg?.model)return '未指定模型';const prefix=cf
 function backendValue(){return ($('agent-backend')&&$('agent-backend').value)||state.settings.agent_backend||'codex'}
 function renderBackend(){const op=backendValue()==='opencode',codex=backendValue()==='codex';$('variant-field').hidden=!op;document.querySelector('.main-provider-field').style.display=codex?'':'none';$('effort-select').hidden=!codex;$('effort-select').closest('label').hidden=!codex;$('model-select').placeholder=op?'如 opencode-go/gpt-5.6-luna':'输入任意模型 ID';document.querySelectorAll('.role-variant-field').forEach(e=>e.hidden=!op);document.querySelectorAll('.role-provider-field').forEach(e=>e.style.display=codex?'':'none');document.querySelectorAll('.role-effort-select').forEach(e=>e.style.display=codex?'':'none');renderSearchProvider();updateModelLabel()}
 function updateModelLabel(){const op=backendValue()==='opencode';const cfg=op?{model:$('model-select').value.trim(),model_variant:$('model-variant').value.trim()||null,agent_backend:'opencode'}:{model:$('model-select').value.trim(),reasoning_effort:$('effort-select').value,model_provider:$('model-provider').value.trim(),agent_backend:backendValue()};$('execution-choice').textContent='即将使用：'+modelLabel(cfg);if($('setup-model-summary'))$('setup-model-summary').textContent=modelLabel(cfg);$('generate-button').textContent='使用 '+modelLabel(cfg)+' 生成简报 →';$('model-select').title=cfg.model?friendlyModel(cfg.model)+' · '+cfg.model:'输入模型 ID'}
-async function saveModel(){const model=$('model-select').value.trim();if(!model)throw Error('请输入模型 ID');const op=backendValue()==='opencode';if(op){if(!model.includes('/'))throw Error('Opencode 模型必须是 provider/model 形式');await api('settings',{agent_backend:'opencode',model_selection_required:false,model,model_variant:$('model-variant').value.trim()||null})}else if(backendValue()!=='codex')await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,model_provider:null,model_variant:null});else await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,reasoning_effort:$('effort-select').value,model_provider:$('model-provider').value.trim()||null});updateModelLabel();if($('welcome')&&!$('welcome').hidden){welcomeModelChosen=true;renderWelcome()}}
+async function saveModel(){const model=$('model-select').value.trim();if(!model)throw Error('请输入模型 ID');const op=backendValue()==='opencode';if(op){if(!model.includes('/'))throw Error('Opencode 模型必须是 provider/model 形式');await api('settings',{agent_backend:'opencode',model_selection_required:false,model,model_variant:$('model-variant').value.trim()||null})}else if(backendValue()!=='codex')await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,model_provider:null,model_variant:null});else await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,reasoning_effort:$('effort-select').value,model_provider:$('model-provider').value.trim()||null});updateModelLabel();if($('welcome')&&!$('welcome').hidden)renderWelcome()}
 let runtimeCatalog=[],runtimeScanned=false;
 function runtimeName(id){return runtimeCatalog.find(r=>r.id===id)?.name||id}
 function renderSettingsSessionNote(){

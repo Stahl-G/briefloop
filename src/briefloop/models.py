@@ -145,7 +145,7 @@ class Settings(RoleModel):
     model: str = Field(default='gpt-5.6-luna', max_length=100)
     reasoning_effort: str | None = Field(default='high', min_length=1, max_length=100)
     agent_backend: Literal['codex', 'opencode','claude','kimi','hermes','reasonix','mimo'] = 'codex'
-    model_selection_required: bool = False
+    model_selection_required: bool = True
     role_models: dict[Literal['evaluator','maintainer','proposer'], RoleModel] = Field(default_factory=dict)
     search_provider: Literal['native','tavily'] = 'native'
     k: int = Field(default=1, ge=1, le=20)

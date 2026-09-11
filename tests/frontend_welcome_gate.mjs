@@ -11,7 +11,7 @@ el('welcome-runtimes').querySelectorAll=()=>[];el('welcome-purposes').querySelec
 const welcomeCode=source.slice(source.indexOf('let welcomeIndex=0'),source.indexOf("$('welcome-model').onclick"));
 const c=vm.createContext({
  $:el,esc:String,runtimeName:id=>id,friendlyModel:m=>m,
- state:{settings:{agent_backend:'codex',model:'gpt-5.6-luna',model_selection_required:false}},
+ state:{settings:{agent_backend:'codex',model:'gpt-5.6-luna',model_selection_required:true}},
  runtimeCatalog:[{id:'codex',name:'Codex CLI',available:true}],runtimeScanned:true,
  WELCOME_PURPOSES:[{id:'public',label:'公开研究',prompt:'写一份有依据的简报'}],
  openModelPicker:()=>{},Event:class{constructor(t){this.type=t}},notice:()=>{},
@@ -19,10 +19,10 @@ const c=vm.createContext({
 });
 vm.runInContext(welcomeCode,c);
 vm.runInContext('renderWelcome()',c);
-assert.equal(el('welcome-start').disabled,true,'factory default model must not count as a choice');
-vm.runInContext('welcomeModelChosen=true',c);
+assert.equal(el('welcome-start').disabled,true,'a fresh workspace must not treat the factory default as a choice');
+vm.runInContext('state.settings.model_selection_required=false',c);
 vm.runInContext('renderWelcome()',c);
-assert.equal(el('welcome-start').disabled,false,'an explicit model choice enables 开始');
+assert.equal(el('welcome-start').disabled,false,'a saved model selection enables 开始');
 console.log('PASS: the welcome gate requires an explicit model choice, not the factory default');
 
 // Clicking the sidebar cannot bypass the first-run page.
