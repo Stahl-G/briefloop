@@ -143,8 +143,13 @@ def decision(snapshot, review_result, findings, protocol='legacy'):
     for binding in snapshot['evidence']['bindings']:
         check_claim(binding)
     def finding_is_soft(data):
+        # Presentation findings are always soft. Only a compliance-type finding on a
+        # purely soft requirement may soften; factual and evidence findings keep their
+        # blocking power even when they reference a method or writing clause.
         if data.get('kind') == 'expression':
             return True
+        if data.get('kind') not in ('missing_requirement', 'execution_gap'):
+            return False
         identities = data.get('requirement_ids') or []
         return bool(identities) and all(severity.get(identity) == 'soft' for identity in identities)
 

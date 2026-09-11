@@ -673,7 +673,10 @@ def run_review(store,runtime,job,version_id,folder):
     validate_applicable_review(store,identity,version_id)
     target=json.loads((folder/'packet'/'target.json').read_text())
     from .deliverable_spec import clause_items
-    clauses=clause_items(target['requirements'])
+    # The persisted protocol decides the prompt, not whether clauses happen to exist;
+    # a legacy review restored after upgrade must keep the legacy instruction.
+    protocol=review['data'].get('protocol','legacy')
+    clauses=clause_items(target['requirements']) if protocol=='clauses_v1' else []
     requirement_instruction=('本次为条款级审阅：对下表的 reader_contract 条款逐条给 clause_checks（clause_id、status(covered/partial/missing/not_applicable/unverified)、reason、basis）。clause_id 必须逐字复制程序给出的 ID，不要自行计算或改写。reader_content 核对正文是否实际回答；research_method 核对方法是否落实（过程要求需有来源、核查或执行记录，无法确认写 unverified）；writing_preference 核对呈现；manual_assignment 只核对占位。not_applicable 仅限条款自身带适用条件且本稿不满足，并给依据；内容条款不得标为不适用。必须逐条覆盖；仍要对照原始要求，发现漏拆或误分类用 finding 指出。' if clauses else
         '对requirements.requirement_items逐项给requirement_checks：requirement_id、status(covered/manual/partial/missing)、reason。manual只能用于用户原要求中mode=manual的项目，不得自行降低必答要求。')
     prompt=f'''你是独立只读 Reviewer，核对已保存产物与实际依据，不重新研究或运行计算。

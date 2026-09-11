@@ -576,3 +576,34 @@ def test_soft_requirement_finding_does_not_reblock_delivery():
         'requirement_ids': [objective]}}]
     result = decision(base, review, soft_finding, protocol='clauses_v1')
     assert result['eligible'] and result['notices'][0]['code'] == 'finding_notice'
+
+
+def test_factual_finding_under_soft_requirement_still_blocks():
+    # A method clause is soft, but a factual or evidence finding it reveals is not.
+    spec = _clause_contract('核对计划与实际状态。', [
+        {'kind': 'research_method', 'source_quote': '核对计划与实际状态。', 'instruction': '核对计划与实际'}])
+    objective = spec['requirement_items'][0]['requirement_id']
+    review = _clause_review(spec, {'research_method': 'covered'})
+    base = {'requirements': spec, 'evidence': {'bindings': []}, 'conflicts': []}
+    for kind in ('contradiction', 'missing_binding', 'insufficient_evidence'):
+        finding = [{'id': 'f', 'status': 'open', 'data': {
+            'kind': kind, 'severity': 'major', 'description': '把计划写成已投产',
+            'requirement_ids': [objective]}}]
+        blocked = decision(base, review, finding, protocol='clauses_v1')
+        assert not blocked['eligible'] and blocked['blockers'][0]['code'] == 'finding_unresolved', kind
+    # Only a compliance-type finding on a purely soft requirement is a notice.
+    soft = [{'id': 'f', 'status': 'open', 'data': {
+        'kind': 'missing_requirement', 'severity': 'major', 'description': '方法说明缺失',
+        'requirement_ids': [objective]}}]
+    assert decision(base, review, soft, protocol='clauses_v1')['eligible']
+
+
+def test_same_result_follows_the_persisted_protocol():
+    # The stored protocol, not the presence of clause_checks, decides the gate.
+    spec = _clause_contract('说明交付变化。', [
+        {'kind': 'reader_content', 'source_quote': '说明交付变化。', 'instruction': '说明交付变化'}])
+    review = _clause_review(spec, {'reader_content': 'covered'})
+    base = {'requirements': spec, 'evidence': {'bindings': []}, 'conflicts': []}
+    assert decision(base, review, [], protocol='clauses_v1')['eligible']
+    legacy = decision(base, review, [], protocol='legacy')
+    assert not legacy['eligible'] and legacy['blockers'][0]['code'] == 'requirement_unfinished'
