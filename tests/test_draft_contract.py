@@ -1,5 +1,7 @@
 """A finished draft must survive schema drift; only the offending key is lost."""
 import json
+import subprocess
+import sys
 import pytest
 from briefloop.models import BriefDraft, check_artifact, prune_unknown
 from briefloop.interactive_runtime import InteractiveRuntime
@@ -86,6 +88,19 @@ def test_an_unfinished_draft_file_cannot_cancel_the_live_turn(tmp_path, monkeypa
     reasons = [json.loads(row['data'])['error'] for row in
                store.rows("SELECT data FROM events WHERE job_id=? AND kind='draft_admission_deferred'", (job['id'],))]
     assert len(reasons) == 1 and '报告正文不能为空' in reasons[0]
+
+
+def test_check_draft_reports_drift_in_band_before_the_host_reads_it(tmp_path):
+    draft = tmp_path / 'draft.json'
+    draft.write_text(json.dumps({'title': '周报', 'markdown': '正文。', 'summary': '自创键'}, ensure_ascii=False))
+    done = subprocess.run([sys.executable, '-m', 'briefloop', 'tool', '--workspace', str(tmp_path / 'workspace'),
+                           'check-draft', '--file', str(draft)], capture_output=True, text=True, check=True)
+    report = json.loads(done.stdout)
+    assert report['status'] == 'ok' and report['unknown_fields'] == ['summary']
+    draft.write_text(json.dumps({'markdown': '正文。'}, ensure_ascii=False))
+    failed = subprocess.run([sys.executable, '-m', 'briefloop', 'tool', '--workspace', str(tmp_path / 'workspace'),
+                             'check-draft', '--file', str(draft)], capture_output=True, text=True)
+    assert failed.returncode == 1 and json.loads(failed.stdout)['errors'][0]['field'] == 'title'
 
 
 def test_free_form_fields_keep_every_key_they_were_given():
