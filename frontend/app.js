@@ -553,7 +553,6 @@ function renderMessages(){
 }
 function renderChat(){
  $('chat').classList.toggle('is-empty',chat.messages.length===0&&!chatActive());
- const cta=$('chat-setup-cta');if(cta)cta.hidden=!(state&&(state.settings?.model_selection_required||!state.settings?.model)&&chat.messages.length===0);
  $('chat-title').textContent=chat.session?.title||'新对话';const runtime=chat.session?.runtime;const pending=chat.messages.filter(m=>m.role==='user'&&m.status==='queued').length;
  $('chat-status').textContent=`${chatStates[chat.session?.status]||'准备就绪'}${runtime?' · '+modelLabel({model:runtime.model,reasoning_effort:runtime.effort,model_provider:runtime.model_provider}):''}${pending?' · '+pending+' 条消息排队中':''}`;
  renderMessages();renderActivities();renderRequests();renderContext();renderSessions();renderSessionLifecycle();updateComposer();
@@ -620,11 +619,15 @@ async function initChat(){
   page('chat');restoreDraft();
   try{await pollChat(true)}
   catch(e){
-   // A saved conversation can be gone after a workspace reset or delete. Drop it and
-   // show the empty new-conversation state instead of a raw "会话或消息不存在".
-   chatError(sessionMissing(e)?'':e.message);
-   chat.id=null;chat.session=null;chat.messages=[];localStorage.removeItem('briefloop-chat-session');
-   await pollChat().catch(()=>{});
+   if(sessionMissing(e)){
+    // The saved conversation is gone (workspace reset/delete): drop it and show the
+    // empty new-conversation state instead of a raw "会话或消息不存在".
+    chatError();chat.id=null;chat.session=null;chat.messages=[];localStorage.removeItem('briefloop-chat-session');
+    await pollChat().catch(()=>{});
+   }else{
+    // A network/5xx must not discard a session that may still be usable.
+    chatError(e.message);
+   }
   }
   if(chat.session)restoreDraft();
  }
@@ -696,7 +699,7 @@ function renderContext(){
 }
 $('chat-permission').onchange=()=>{rememberDraft();updateComposer()};
 function showSettings(){$('timeout-minutes').value=state.settings.timeout_minutes;moveSearchSettings('settings');page('settings-dialog');$('settings-dialog').scrollIntoView({block:'start'});refreshRuntimeDiscovery();updateLearningPause().catch(()=>{});refreshTavilySettings().catch(()=>{})}
-$('settings-open').onclick=showSettings;$('chat-setup-open').onclick=showSettings;$('settings-close').onclick=()=>page('chat');
+$('settings-open').onclick=showSettings;$('settings-close').onclick=()=>page('chat');
 {
  const modelPanel=document.querySelector('.model-settings');const shortcut=document.createElement('div');shortcut.className='setup-settings-shortcut';shortcut.innerHTML='<div><span>生成模型</span><strong id="setup-model-summary">Luna / high</strong></div><button type="button" class="outline">模型与角色设置</button>';shortcut.querySelector('button').onclick=showSettings;modelPanel.before(shortcut);$('settings-model-block').append(modelPanel);
  const providerRow=document.querySelector('.chat-provider-row');providerRow.querySelector('label').textContent='当前对话 Provider';providerRow.querySelector('span').textContent='用于当前对话下一次执行';$('settings-model-block').append(providerRow);
