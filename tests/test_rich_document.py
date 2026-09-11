@@ -154,3 +154,22 @@ def test_word_job_keeps_clicked_version_while_user_edits(tmp_path):
         assert 'Revenue 12' in xml and 'Revenue 14' not in xml
     assert result['version_id']==before['id']
     assert enqueue_export(store,after['id'])['id']!=job['id']
+
+
+def test_reader_highlight_mapping_is_pure():
+    repo = Path(__file__).parents[1]
+    script = '''
+import {readerHighlights} from './frontend/rich-document.js';
+const major={dimension:'evidence',severity:'major',report_quote:'A'};
+const mustExpression={dimension:'expression',severity:'minor',report_quote:'B'};
+const suggestion={dimension:'evidence',severity:'minor',report_quote:'C'};
+const noQuote={dimension:'evidence',severity:'minor'};
+const kinds=(findings,options)=>readerHighlights(findings,options).map(x=>x.quote+x.kind);
+const must=kinds([major,mustExpression,suggestion,noQuote],{expression:2,showSuggestions:false});
+if(JSON.stringify(must)!==JSON.stringify(['Amust','Bmust']))throw Error('must '+JSON.stringify(must));
+const suggestions=kinds([major,suggestion],{expression:3,showSuggestions:true});
+if(JSON.stringify(suggestions)!==JSON.stringify(['Amust','Csuggestion']))throw Error('suggestions '+JSON.stringify(suggestions));
+if(kinds([suggestion],{expression:3,showSuggestions:false}).length)throw Error('hidden suggestions');
+'''
+    result = subprocess.run(['node', '--input-type=module', '-e', script], cwd=repo, capture_output=True, text=True, check=False)
+    assert result.returncode == 0, result.stderr

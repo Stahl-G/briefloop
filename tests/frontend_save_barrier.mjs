@@ -93,7 +93,7 @@ let editorContent='';
 c.changed=()=>{};
 c.updateFormattingTools=()=>{};
 c.Editor=class {constructor(options){editorContent=options.content}destroy(){}};
-c.StarterKit={configure:()=>({})};c.TableKit={};c.ReportImage={configure:()=>({})};c.Markdown={};c.TextStyle={};c.Layout={};c.Citation={};
+c.StarterKit={configure:()=>({})};c.TableKit={};c.ReportImage={configure:()=>({})};c.Markdown={};c.TextStyle={};c.Layout={};c.Citation={};c.MustFixHighlight={};
 c.toEditor=x=>x;c.editor=null;c.assessment=()=>{};c.citations=()=>{};c.renderBriefLength=()=>{};
 el('toolbar').querySelectorAll=()=>[];
 vm.runInContext(opening,c);

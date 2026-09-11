@@ -59,3 +59,16 @@ export function savedDocument(document){
  });
  function clear(node){if(node.type==='citation')delete node.attrs.label;for(const child of node.content||[])clear(child)}clear(output);return output;
 }
+// Which findings mark the body for the reader. Must-fix marks are always shown;
+// suggestions are opt-in. Pure so it can be checked without a browser.
+export function readerHighlights(findings=[],{expression=null,showSuggestions=false}={}){
+ const mustFixBody=typeof expression==='number'&&expression<=2;
+ const isMust=finding=>finding.severity==='major'||(mustFixBody&&finding.dimension==='expression');
+ const items=[];
+ for(const finding of findings){
+  if(!finding||!finding.report_quote)continue;
+  if(isMust(finding))items.push({quote:finding.report_quote,kind:'must',finding});
+  else if(showSuggestions)items.push({quote:finding.report_quote,kind:'suggestion',finding});
+ }
+ return items;
+}

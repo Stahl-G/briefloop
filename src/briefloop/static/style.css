@@ -117,3 +117,9 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 #save-state{white-space:nowrap;font-size:11px}
 .report-grid>aside{min-width:0}
 .delivery-checks .tag{display:block;max-width:100%;white-space:normal;overflow-wrap:anywhere;margin:6px 0;line-height:1.65}
+
+/* Reader-appropriateness marks in the editor; editor-only, never saved or exported. */
+.tiptap .must-fix{background:#fde7e2;border-bottom:2px solid #c0392b;border-radius:2px;cursor:help}
+.tiptap .suggestion-fix{background:#fdf6e3;border-bottom:2px dashed #b8860b;border-radius:2px;cursor:help}
+.finding-toggle{display:block;margin:8px 0}
+.finding-toggle input{width:auto;margin-right:6px;accent-color:var(--green)}
