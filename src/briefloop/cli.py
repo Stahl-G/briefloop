@@ -9,6 +9,15 @@ from .store import Store
 from . import __version__
 
 
+def _tavily_failure(operation,exc):
+    """A structured, redacted failure so the Scout's path-switching can act on it."""
+    return {'provider':'tavily','operation':operation,'status':'failed',
+            'failure_kind':getattr(exc,'failure_kind','provider_error'),
+            'http_status':getattr(exc,'status',None),
+            'error':str(exc),
+            'request_record_path':getattr(exc,'request_record_path',None)}
+
+
 def main():
     p=argparse.ArgumentParser(prog='briefloop',description='本地简报、改稿与持续学习')
     p.add_argument('--version',action='version',version=f'BriefLoop {__version__}')
@@ -97,12 +106,21 @@ def main():
             print(json.dumps(workspace_action(store,json.loads(Path(a.request).read_text())),ensure_ascii=False))
         elif a.tool=='tavily-search':
             from . import tavily
-            tavily.check_run(store,a.run)
-            result=tavily.search(a.query,topic=a.topic,time_range=a.time_range,start_date=a.start_date,end_date=a.end_date,include_domains=a.include_domain,exclude_domains=a.exclude_domain,max_results=a.max_results,search_depth=a.search_depth,store=store,run_id=a.run)
-            print(json.dumps(result,ensure_ascii=False))
+            try:
+                tavily.check_run(store,a.run)
+                result=tavily.search(a.query,topic=a.topic,time_range=a.time_range,start_date=a.start_date,end_date=a.end_date,include_domains=a.include_domain,exclude_domains=a.exclude_domain,max_results=a.max_results,search_depth=a.search_depth,store=store,run_id=a.run)
+            except tavily.TavilyError as exc:
+                print(json.dumps(_tavily_failure('search',exc),ensure_ascii=False))
+            else:
+                print(json.dumps(result,ensure_ascii=False))
         elif a.tool=='tavily-extract':
             from . import tavily
-            print(json.dumps(tavily.extract(store,a.url,run_id=a.run,extract_depth=a.extract_depth),ensure_ascii=False))
+            try:
+                result=tavily.extract(store,a.url,run_id=a.run,extract_depth=a.extract_depth)
+            except tavily.TavilyError as exc:
+                print(json.dumps(_tavily_failure('extract',exc),ensure_ascii=False))
+            else:
+                print(json.dumps(result,ensure_ascii=False))
         elif a.tool=='prepare-report-data':
             from .report_tools import prepare_for_run
             from .store import dump

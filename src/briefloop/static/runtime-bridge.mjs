@@ -1317,6 +1317,7 @@ async function runAcp(p, state) {
     if (m.method !== "session/update" || !state.promptStarted) return;
     const u = m.params?.update || {};
     if (u.sessionUpdate === "agent_message_chunk" && u.content?.type === "text") emit(p.execution_id, "text", { text: u.content.text, delta: true });
+    else if (u.sessionUpdate === "agent_thought_chunk" && u.content?.type === "text") emit(p.execution_id, "reasoning", { text: u.content.text, delta: true });
     else if (["tool_call", "tool_call_update"].includes(u.sessionUpdate) && !["think", "thinking", "reasoning"].includes(u.kind)) emit(p.execution_id, "tool", { id: u.toolCallId, name: u.title || u.kind || "Tool", status: u.status, input: u.rawInput, output: u.rawOutput });
     else if (u.sessionUpdate === "usage_update") emit(p.execution_id, "usage", { usage: u.usage || u });
   }, (m, reply) => {
@@ -1387,6 +1388,7 @@ async function runStream(p, state) {
         if (m.type === "assistant") {
           for (const b of m.message?.content || []) {
             if (b.type === "text") emit(p.execution_id, "text", { text: b.text, delta: true });
+            if (b.type === "thinking" && b.thinking) emit(p.execution_id, "reasoning", { text: b.thinking, delta: true });
             if (b.type === "tool_use" && !/^(think|thinking|reasoning)$/i.test(b.name)) emit(p.execution_id, "tool", { id: b.id, name: b.name, status: "running", input: b.input });
           }
         }
@@ -1404,6 +1406,7 @@ async function runStream(p, state) {
       } else {
         const part = m.part || {};
         if (m.type === "text") emit(p.execution_id, "text", { text: part.text || m.text || "", delta: true });
+        if (m.type === "reasoning" || part.type === "reasoning") emit(p.execution_id, "reasoning", { text: part.text || m.text || "", delta: true });
         if (m.type === "tool_use" && !/^(think|thinking|reasoning)$/i.test(part.tool)) emit(p.execution_id, "tool", { id: part.callID, name: part.tool, status: part.state?.status, input: part.state?.input, output: part.state?.output });
         if (m.type === "step_finish") {
           resultSeen = true;

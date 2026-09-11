@@ -23,6 +23,10 @@ def test_public_research_empty_inputs_and_actual_network_instructions(tmp_path):
     assert '不要假设 host 自动隔离工作目录' in prompt
     assert '至少安排一个 Scout' in prompt and 'add-url --run '+run['id'] in prompt
     assert 'read-source --id SOURCE_ID' in prompt and 'acquired source IDs' in prompt
+    assert all(mark in prompt for mark in ('侦察','聚焦','补缺'))
+    assert '整批 Scout 合计 1–2 条' in prompt and '分三轮推进检索' in prompt
+    assert '获取失败要按原因换路径' not in prompt,'Tavily-specific switching belongs in the skill, not every prompt'
+    assert '不重复已经失败或已充分覆盖的相近查询' in prompt
     # Mimic registered acquisition without networking; join and scorer retain it.
     acquired=store.add_source('官方披露','预计下一季度交付 10 台。',url='https://example.com/disclosure')
     store.attach_source(run['id'],acquired['id'])
@@ -76,6 +80,9 @@ def test_builtin_tavily_skill_only_enters_enabled_scout_context(tmp_path, monkey
     from pathlib import Path
     asset=files('briefloop').joinpath('skill_assets','tavily','SKILL.md')
     assert asset.is_file() and 'name: tavily' in asset.read_text()
+    skill_text=asset.read_text()
+    assert '检索节奏' in skill_text and all(mark in skill_text for mark in ('侦察','聚焦','补缺'))
+    assert '获取失败：按原因换路径' in skill_text and '不永久拉黑整个域名' in skill_text
     monkeypatch.setenv('TAVILY_API_KEY','SYNTHETIC_SECRET_DO_NOT_INJECT')
     store=Store(tmp_path/'workspace')
     source=store.add_source('initial','已有公开资料')
@@ -97,10 +104,15 @@ def test_builtin_tavily_skill_only_enters_enabled_scout_context(tmp_path, monkey
             assert run['id'] in content and '公开确认已读' in prompt
             assert 'SYNTHETIC_SECRET_DO_NOT_INJECT' not in prompt+content+dispatch+dump(payload)
             assert 'Analyst、Evaluator、Maintainer' in prompt
+            assert '受控 Tavily Search' in prompt and '三类 remaining' in prompt
         else:
             assert 'retrieval_skill' not in payload
             assert not (folder/'capabilities'/'tavily'/'SKILL.md').exists()
             assert 'tavily-search' not in prompt
+            assert '不精确计量原生搜索次数' in prompt and '三类 remaining' not in prompt
+            if not allowed:
+                assert '不安排公开检索' in prompt and '分三轮推进检索' not in prompt
+                assert '必须能从开放搜索进入' not in prompt,'a no-web task must not promise open search'
 
 
 def test_evaluator_initial_sources_follow_citations_and_keep_full_index(tmp_path):

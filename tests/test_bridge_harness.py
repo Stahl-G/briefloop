@@ -13,6 +13,7 @@ class BridgeFixture:
         if method=='start':
             self.starts.append(params)
             for event in [{'kind':'session','session_id':'native-session'},
+                          {'kind':'reasoning','text':'weighing options'},
                           {'kind':'text','text':'visible answer'},
                           {'kind':'tool','id':'native-item','name':'read','status':'completed','input':{'path':'sample.txt'},'output':'data'},
                           {'kind':'end','status':'completed'}]:self.sinks[params['execution_id']].put(event)
@@ -32,6 +33,8 @@ def test_bridge_turn_is_durable_and_same_message_is_not_redispatched(tmp_path):
     assert snap['messages'][0]['status']=='completed'
     assert snap['session']['thread_id']=='native-session'
     assert snap['messages'][1]['text']=='visible answer'
+    assert 'reasoning' not in snap['messages'][1]
+    assert h.snapshot(s['id'],reasoning=True)['messages'][1]['reasoning']=='weighing options'
     assert bridge.starts[0]['execution_id']=='fixed-admission'
     assert bridge.starts[0]['allow_web'] is None
     h.send(s['id'],'read the fixture',message_id='fixed-admission')
