@@ -12,7 +12,7 @@ import time
 from .models import Assessment, BriefDraft, ScoutResult, ROLE_NAMES, Requirements
 from .report_profiles import profile_context
 from .industry_data import prepare_report_data
-from .store import dump, now
+from .store import Conflict, dump, now
 from .skills import bind_context
 
 FILE_JOB_KINDS = ('export_docx', 'release', 'audit_bundle')
@@ -613,7 +613,20 @@ class Worker:
                 score_folder.mkdir(exist_ok=True)
                 (score_folder/'assessment.schema.json').write_text(dump(Assessment.model_json_schema()))
                 evaluator=stage_job(self.store,{**job,'payload':dump({**payload,'version_id':current})},'evaluator',mode='single')
-                scoring=self.assess_version(evaluator,brief,score_folder,backend)
+                try:
+                    scoring=self.assess_version(evaluator,brief,score_folder,backend)
+                except InterruptedError:
+                    raise
+                except Conflict:
+                    # Admission recovery: a rejected binding needs a new turn, not a
+                    # tolerant completion.
+                    raise
+                except (ValueError, RuntimeError, OSError) as exc:
+                    # The draft is already saved. A failed review or scoring must not make
+                    # the whole generation look failed: the evaluation panel shows it as
+                    # unfinished and the review can be re-run on its own.
+                    self.store.event(job['id'],'assessment_failed',{'error':str(exc)})
+                    scoring={'status':'incomplete','error':str(exc)}
         outcome={**result,'version_id':brief['id'],**({'scoring':scoring} if scoring else {})}
         if payload.get('auto_revision',False):outcome.update(self.auto_revise(job,brief,folder))
         outcome.pop('source_snapshot',None)

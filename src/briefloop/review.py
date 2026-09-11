@@ -4,7 +4,7 @@ import hashlib
 import json
 import shutil
 from typing import Literal
-from pydantic import Field, model_validator
+from pydantic import ConfigDict, Field, model_validator
 from .models import Model, Assessment
 from .store import dump, uid, now
 from .evidence import inspect_bindings
@@ -38,6 +38,10 @@ class ReviewFinding(Model):
     suggested_action: str = ''
     dimension: Literal['evidence','coverage','analysis','expression'] | None = None
     locator: str = ''
+    # Tolerated drift: the model sometimes labels a clause id or a source on the
+    # review finding. Keep it rather than failing the whole task on a stray key.
+    requirement: str = ''
+    source_id: str | None = None
     response_to: str | None = Field(default=None,description='history/responses.json 中的处理说明 id（response_开头），不是 finding_id')
     resolution: Literal['resolved','dismissed_with_evidence'] | None = None
 
@@ -84,6 +88,10 @@ class UncheckedItem(Model):
 
 
 class ReviewOutput(Model):
+    # The reviewer occasionally emits a stray top-level key (for example `overall`,
+    # which belongs to the assessment). Ignore extras so schema drift cannot fail a
+    # generation task; the required fields below are still enforced.
+    model_config = ConfigDict(extra='ignore')
     fingerprint: str
     version_id: str
     status: Literal['complete','incomplete']
@@ -97,7 +105,9 @@ class ReviewOutput(Model):
     findings: list[ReviewFinding] = Field(default_factory=list)
     response_checks: list[ResponseCheck] = Field(default_factory=list)
     conflict_checks: list[ConflictCheck] = Field(default_factory=list)
-    assessment: Assessment
+    # A review may arrive without a score; findings and checks stay usable and the
+    # panel simply shows "尚未评分". Generation must not fail because scoring did.
+    assessment: Assessment | None = None
 
 
 def pack_dump(value):return json.dumps(value,ensure_ascii=False,sort_keys=True,indent=2)
@@ -494,7 +504,7 @@ def accept_review(store,review_id,value):
         raise ValueError('Reviewer 输出未绑定本次正文与核查包')
     if review['result']:
         if ReviewOutput.model_validate(review['result']).model_dump()!=result.model_dump():raise ValueError('已保存Review不可覆盖，请建立新审阅')
-        store.validate_assessment(result.version_id,result.assessment.model_dump())
+        if result.assessment is not None:store.validate_assessment(result.version_id,result.assessment.model_dump())
         with store.tx() as c:_save_assessment(c,review_id,result)
         from .review_learning import record_verified_corrections
         record_verified_corrections(store,review_id)
@@ -545,7 +555,7 @@ def accept_review(store,review_id,value):
     conflict_ids=[check.conflict_id for check in result.conflict_checks]
     if len(conflict_ids)!=len(set(conflict_ids)) or not set(conflict_ids).issubset(allowed_conflicts):raise ValueError('冲突复核引用范围外或重复的 conflict_id')
     if result.status=='complete' and set(conflict_ids)!=allowed_conflicts:raise ValueError('完整审阅遗漏冲突复核')
-    store.validate_assessment(result.version_id,result.assessment.model_dump())
+    if result.assessment is not None:store.validate_assessment(result.version_id,result.assessment.model_dump())
     with store.tx() as c:
         existing=c.execute('SELECT result FROM reviews WHERE id=?',(review_id,)).fetchone()
         serialized=dump(result.model_dump())
@@ -573,6 +583,7 @@ def accept_review(store,review_id,value):
 
 
 def _save_assessment(connection,review_id,result):
+    if result.assessment is None:return
     identity='assessment_'+review_id;serialized=dump(result.assessment.model_dump())
     previous=connection.execute('SELECT version_id,data FROM assessments WHERE id=?',(identity,)).fetchone()
     if previous and (previous['version_id']!=result.version_id or previous['data']!=serialized):raise ValueError('已保存Review评分不可覆盖')
@@ -693,6 +704,7 @@ claim_checks可以使用target.evidence.bindings、premises闭包以及candidate
 最终回复一个符合 {schema} 的 JSON 对象，不加Markdown或说明，不写文件；运行器保存结果。
 version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief_hash={store.one('briefs',version_id)['hash']}。
 四维评分使用既有标准，不用高分抵消重大错误。review.status表示是否完成审阅，claim_checks.status表示依据结论。coverage_scan_complete仅在确实检查了正文重要主张遗漏后设true；未核验项写unchecked。
+字段边界（不要混用两套 finding）：顶层 overall/四维分数只属于 assessment；assessment 必须给出，不能省略。assessment.findings 用 dimension/severity/description/report_quote/requirement/source_id/locator/evidence/suggestion。顶层 findings 是核查发现，用 kind/severity/description/evidence，可带 claim_ids/block_ids/requirement_ids（条款可用 requirement_ids 关联，不要写 requirement 或 source_id）。
 '''
     from .deliverable_spec import instructions
     prompt+='\n'+instructions(target['requirements'],role='reviewer',include_spec=False)
