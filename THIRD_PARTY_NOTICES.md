@@ -1,7 +1,7 @@
 # 来源与许可
 
 - 原 BriefLoop（multi-agent-brief-workflow，920e2eef）：MIT。复用纸白/深绿/系统字体设计取值及来源、版本管理经验；未复制旧控制状态机。许可见 LICENSE。
-- WikiSkill（Stahl-G/wikiskill，9df975b）：MIT，源码在独立 WikiSkill 仓库维护；BriefLoop 的 vendor/wheels 提供其已构建 wheel 并自动安装，用户无需第二次 clone。版本 0.1.1+briefloop.2，完整许可包含在 wheel metadata。
+- WikiSkill（Stahl-G/wikiskill，9df975b）：MIT。0.18.0 起作为顶层 `wikiskill` 包内联在本发行版（源码取自上游补丁版，非 wheel 依赖），随包携带完整许可与 NOTICE，见 `src/wikiskill/_licenses/`。上游源码在独立 WikiSkill 仓库维护。
 - Tiptap / ProseMirror 及前端依赖由 package-lock.json 固定。各自许可保留在包中；esbuild 输出许可文件一并打包。
 
 - DeepSeek Harness（本地参考版本 c389f96bf3，MIT）：参考其侧栏、输入区与设置的交互组织，BriefLoop 界面独立实现，未引入其 Cordis 运行时。
