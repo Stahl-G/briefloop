@@ -42,6 +42,7 @@ def test_queue_steering_and_public_stream(tmp_path):
     manager.handle_notification({'method':'item/reasoning/textDelta','params':{'threadId':'t1','delta':'private reasoning'}})
     manager.handle_notification({'method':'item/agentMessage/delta','params':{'threadId':'t1','turnId':'turn1','itemId':'i','delta':'hello'}})
     assert manager.snapshot(sid)['messages'][-1]['text']=='hello'
+    assert manager.snapshot(sid,reasoning=True)['messages'][-1]['reasoning']=='private reasoning'
     assert 'private reasoning' not in str(manager.snapshot(sid))
     manager.handle_notification({'method':'item/completed','params':{'threadId':'t1','turnId':'turn1','item':{'id':'spawn','type':'collabAgentToolCall','tool':'spawnAgent','status':'completed','receiverThreadIds':['child'],'agentsStates':{'child':{'status':'running'}}}}})
     manager.handle_notification({'method':'turn/completed','params':{'threadId':'child','turn':{'id':'childturn','status':'completed'}}})

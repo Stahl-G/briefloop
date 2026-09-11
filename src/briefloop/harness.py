@@ -19,7 +19,7 @@ class HarnessManager:
     def __init__(self,store,client_factory=AppServerClient):
         self.store=store;self.chat=ChatStore(store);self.client_factory=client_factory
         self.client=None;self._lock=threading.RLock();self._closed=threading.Event()
-        self._threads={};self._children={};self._busy=set();self._items={};self._runtime={};self._cancel_requested=set()
+        self._threads={};self._children={};self._busy=set();self._items={};self._runtime={};self._cancel_requested=set();self._reasoning={};self._reasoning_target={}
     def list_sessions(self,view='active'):return self.chat.sessions(view)
     def _set_lifecycle(self,sid,lifecycle):
         with self._lock:
@@ -46,7 +46,7 @@ class HarnessManager:
         # Sessions are pinned to codex at creation; a later workspace default
         # change never hijacks them (send() merges over this stamped runtime).
         return self.chat.create(title,{**self._config(runtime),'backend':'codex'},cwd or self.store.root)
-    def snapshot(self,session_id,after=0):return self.chat.snapshot(session_id,after)
+    def snapshot(self,session_id,after=0,reasoning=False):return self.chat.snapshot(session_id,after,reasoning=reasoning)
     @staticmethod
     def _config(runtime):
         value={**DEFAULT_RUNTIME,**(runtime or {})}
@@ -317,8 +317,8 @@ class HarnessManager:
         self.chat.update(sid,turn_id=None,status='idle' if status=='completed' else status)
     def handle_notification(self,notification):
         method=notification.get('method','');params=notification.get('params',{})
-        # Deliberate whitelist: no reasoning deltas, summaries or raw turn dump.
-        if 'reasoning' in method.lower():return
+        # Reasoning is kept for the local chat view only; audit/report/progress
+        # exports build from execution records, never from chat reasoning.
         with self._lock:
             thread_id=params.get('threadId')
             sid=self._threads.get(thread_id)
@@ -326,6 +326,15 @@ class HarnessManager:
             if not sid:
                 sid=self._children.get(thread_id);child=True
             if not sid:return
+            if not child and 'reasoning' in method.lower():
+                if 'delta' not in method.lower():return
+                turn_id=params.get('turnId') or self.chat.session(sid)['turn_id']
+                key=(sid,turn_id)
+                accumulated=self._reasoning.get(key,'')+params.get('delta','')
+                self._reasoning[key]=accumulated
+                mid=self._reasoning_target.get(key)
+                if mid:self.chat.patch_message(mid,reasoning=accumulated)
+                return
             if method=='item/completed':
                 recorded=params.get('item',{})
                 if recorded.get('type')=='commandExecution':
@@ -349,16 +358,26 @@ class HarnessManager:
                 mid=self._items.get(key)
                 if not mid:
                     mid=self.chat.message(sid,'',role='assistant',status='streaming',item_id=item_id,turn_id=turn_id)['id'];self._items[key]=mid
-                old=next(m for m in self.snapshot(sid)['messages'] if m['id']==mid)
-                self.chat.patch_message(mid,text=old['text']+params.get('delta',''))
+                old=next(m for m in self.snapshot(sid,reasoning=True)['messages'] if m['id']==mid)
+                self._reasoning_target[(sid,turn_id)]=mid
+                values={'text':old['text']+params.get('delta','')}
+                accumulated=self._reasoning.get((sid,turn_id),'')
+                if accumulated and accumulated!=old.get('reasoning'):values['reasoning']=accumulated
+                self.chat.patch_message(mid,**values)
                 self.chat.event(sid,method,{'itemId':item_id,'delta':params.get('delta','')})
             elif method in ('item/started','item/completed'):
                 item=params.get('item',{});kind=item.get('type','')
                 if kind=='agentMessage' and not child:
                     key=(sid,item['id']);mid=self._items.get(key)
+                    values={'text':item.get('text',''),'status':'completed' if method.endswith('completed') else 'streaming'}
+                    accumulated=self._reasoning.get((sid,turn_id),'')
+                    if accumulated:values['reasoning']=accumulated
                     if mid:
-                        self.chat.patch_message(mid,text=item.get('text',''),status='completed' if method.endswith('completed') else 'streaming')
-                    else:self._items[key]=self.chat.message(sid,item.get('text',''),role='assistant',status='completed' if method.endswith('completed') else 'streaming',item_id=item['id'],turn_id=turn_id)['id']
+                        self._reasoning_target[(sid,turn_id)]=mid
+                        self.chat.patch_message(mid,**values)
+                    else:
+                        created=self.chat.message(sid,item.get('text',''),role='assistant',status='completed' if method.endswith('completed') else 'streaming',item_id=item['id'],turn_id=turn_id)['id'];self._items[key]=created;self._reasoning_target[(sid,turn_id)]=created
+                        if accumulated:self.chat.patch_message(created,reasoning=accumulated)
                 elif kind in ('commandExecution','fileChange','mcpToolCall','webSearch','collabAgentToolCall','imageView','dynamicToolCall'):
                     fields=('id','type','status','command','cwd','tool','server','receiverThreadIds','senderThreadId','agentsStates','query','model','reasoningEffort')
                     public={k:item[k] for k in fields if k in item}

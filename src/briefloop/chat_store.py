@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS chat_sessions(id TEXT PRIMARY KEY,title TEXT NOT NULL
  turn_id TEXT,status TEXT NOT NULL,runtime TEXT NOT NULL,cwd TEXT NOT NULL,created TEXT NOT NULL,updated TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS chat_messages(id TEXT PRIMARY KEY,session_id TEXT NOT NULL REFERENCES chat_sessions(id),
  role TEXT NOT NULL,text TEXT NOT NULL,status TEXT NOT NULL,mode TEXT NOT NULL,source_ids TEXT NOT NULL,
- turn_id TEXT,item_id TEXT,created TEXT NOT NULL,updated TEXT NOT NULL);
+ turn_id TEXT,item_id TEXT,created TEXT NOT NULL,updated TEXT NOT NULL,reasoning TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS chat_requests(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,rpc_id TEXT NOT NULL,data TEXT NOT NULL,status TEXT NOT NULL,created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS chat_events(seq INTEGER PRIMARY KEY AUTOINCREMENT,session_id TEXT NOT NULL,
  kind TEXT NOT NULL,data TEXT NOT NULL,created TEXT NOT NULL);
@@ -25,7 +25,7 @@ class ChatStore:
             session_columns={r['name'] for r in c.execute('PRAGMA table_info(chat_sessions)')}
             if 'lifecycle' not in session_columns:c.execute("ALTER TABLE chat_sessions ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'active'")
             columns={r['name'] for r in c.execute('PRAGMA table_info(chat_messages)')}
-            for name,definition in (('runtime',"TEXT NOT NULL DEFAULT '{}'"),('prompt',"TEXT"),('allow_web',"INTEGER NOT NULL DEFAULT 0")):
+            for name,definition in (('runtime',"TEXT NOT NULL DEFAULT '{}'"),('prompt',"TEXT"),('allow_web',"INTEGER NOT NULL DEFAULT 0"),('reasoning',"TEXT NOT NULL DEFAULT ''")):
                 if name not in columns:c.execute('ALTER TABLE chat_messages ADD COLUMN '+name+' '+definition)
 
     def recover_stale(self):
@@ -88,7 +88,7 @@ class ChatStore:
         return result
 
     def patch_message(self,mid,**values):
-        if not set(values)<={'text','status','turn_id','mode'}:raise ValueError('Invalid message update')
+        if not set(values)<={'text','status','turn_id','mode','reasoning'}:raise ValueError('Invalid message update')
         if 'mode' in values and values['mode'] not in ('queue','steer'):raise ValueError('Invalid message mode')
         values['updated']=now()
         with self.store.tx() as c:c.execute('UPDATE chat_messages SET '+','.join(k+'=?' for k in values)+' WHERE id=?',(*values.values(),mid))
@@ -96,7 +96,7 @@ class ChatStore:
     def event(self,sid,kind,data):
         with self.store.tx() as c:c.execute('INSERT INTO chat_events(session_id,kind,data,created) VALUES(?,?,?,?)',(sid,kind,dump(data),now()))
 
-    def snapshot(self,sid,after=0,private=False):
+    def snapshot(self,sid,after=0,private=False,reasoning=False):
         # The session row belongs to the same read transaction as the journal. Read
         # separately, a poll can pair a stale session (still running) with messages
         # that already finished, which is what the chat UI polls several times a second.
@@ -110,6 +110,8 @@ class ChatStore:
             events=[self.decode(r) for r in c.execute('SELECT * FROM chat_events WHERE session_id=? AND seq>? ORDER BY seq LIMIT 1000',(sid,after))]
         if not private:
             for message in messages:message.pop('prompt',None)
+        if not reasoning:
+            for message in messages:message.pop('reasoning',None)
         return {'session':session,'messages':messages,'events':events,'requests':requests,'token_usage':token_usage}
 
     def add_request(self,sid,rpc_id,data):

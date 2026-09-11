@@ -104,7 +104,7 @@ def make_server(workspace, port=8765, *, paused=False):
                     from .workspaces import list_workspaces
                     self.send(200,list_workspaces(store))
                 elif u.path=='/api/harness/sessions':self.send(200,{'sessions':harness.list_sessions(q.get('view',['active'])[0])})
-                elif u.path=='/api/harness/session':self.send(200,pick_harness(session_id=q['id'][0]).snapshot(q['id'][0],int(q.get('after',['0'])[0])))
+                elif u.path=='/api/harness/session':self.send(200,pick_harness(session_id=q['id'][0]).snapshot(q['id'][0],int(q.get('after',['0'])[0]),reasoning=q.get('reasoning',['0'])[0]=='1'))
                 elif u.path=='/api/session':self.send(200,{'token':token})
                 elif u.path=='/api/runtime':
                     observed=worker._review_runtime if worker.review_current and not worker.current else worker.runtime

@@ -170,3 +170,13 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 .chat-setup-cta{margin:0 0 18px;padding:14px 16px;background:var(--paper);border:1px solid var(--line);border-radius:8px}
 .chat-setup-cta p{margin:0 0 10px;color:var(--muted)}
 .chat-runtime-label{font:500 11px/1 var(--mono);color:var(--green);background:#eef4ef;border-radius:5px;padding:4px 7px;white-space:nowrap}
+
+.message-reasoning{margin:2px 0 10px;border:1px solid var(--line);border-radius:9px;background:#f6f8f2;font-size:12px}
+.message-reasoning>summary{display:flex;align-items:center;gap:7px;padding:7px 11px;cursor:pointer;list-style:none;color:#6d7a63}
+.message-reasoning>summary::-webkit-details-marker{display:none}
+.message-reasoning .reasoning-icon{color:var(--green);font-size:11px}
+.message-reasoning[data-running="1"] .reasoning-icon{animation:reasoning-pulse 1.4s ease-in-out infinite}
+.message-reasoning>summary strong{font-weight:550;white-space:nowrap}
+.reasoning-peek{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.reasoning-body{padding:0 12px 11px;color:#5c6653;line-height:1.75;white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto}
+@keyframes reasoning-pulse{0%,100%{opacity:.35}50%{opacity:1}}
