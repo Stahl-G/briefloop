@@ -197,3 +197,61 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 .reasoning-peek{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .reasoning-body{padding:0 12px 11px;color:#5c6653;line-height:1.75;white-space:pre-wrap;overflow-wrap:anywhere;max-height:320px;overflow:auto}
 @keyframes reasoning-pulse{0%,100%{opacity:.35}50%{opacity:1}}
+
+/* ===== Report workspace redesign (DESIGN.md) ===== */
+:root{--surface:#fff;--soft:#f4f6ef;--warn:#8a6d1a;--danger:#a5472e;--radius-sm:6px;--radius-pill:100px;--rail-width:340px;--space-1:4px;--space-2:8px;--space-3:12px;--space-4:16px;--space-5:24px;--space-6:32px}
+.report-topbar{display:flex;align-items:center;gap:var(--space-4);min-height:58px;padding:8px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.report-crumbs{display:flex;align-items:baseline;gap:8px;min-width:0;flex:1}
+.report-crumb{font-size:12px;color:var(--muted);white-space:nowrap}
+.report-crumb-sep{color:var(--line)}
+.report-crumbs h1{font:600 20px/1.35 var(--font);letter-spacing:-.02em;margin:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:52ch}
+.report-crumbs .brief-length{font-size:11px;color:var(--muted);margin:0}
+.report-actions{display:flex;align-items:center;gap:8px;flex:none;flex-wrap:wrap}
+.report-status{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;line-height:1;padding:5px 9px;border-radius:var(--radius-pill);border:1px solid var(--line);background:var(--soft);color:var(--muted);white-space:nowrap}
+.chip.ok{background:#eef6f0;border-color:#bcd6c4;color:var(--green)}
+.chip.warn{background:#fbf6e7;border-color:#e6dcc0;color:var(--warn)}
+.chip.danger{background:#fbf0ec;border-color:#e4c9bd;color:var(--danger)}
+.report-version{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.report-version select{width:auto;max-width:230px;margin:0;height:32px;padding:4px 8px;font-size:12px;border-radius:var(--radius-sm)}
+.ghost{background:transparent;border:1px solid transparent;color:var(--muted);padding:7px 10px;font-size:12px;border-radius:var(--radius-sm)}
+.ghost:hover{background:var(--soft);color:var(--ink)}
+.menu-wrap{position:relative}
+.popover{position:absolute;right:0;top:calc(100% + 6px);z-index:60;min-width:190px;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:0 8px 26px #1422181f;padding:5px;display:flex;flex-direction:column;gap:1px}
+.popover a,.popover button{display:block;width:100%;text-align:left;padding:9px 11px;border-radius:7px;font-size:13px;color:var(--ink);background:transparent;border:0;white-space:nowrap}
+.popover a:hover,.popover button:hover{background:var(--soft)}
+.seg-tabs,.rail-tabs{display:flex;align-items:center;gap:4px;border-bottom:1px solid var(--line)}
+.seg-tabs button,.rail-tabs button{border:0;background:transparent;color:var(--muted);font-size:13px;padding:9px 12px;border-bottom:2px solid transparent;border-radius:0}
+.seg-tabs button:hover,.rail-tabs button:hover{color:var(--ink)}
+.seg-tabs button.active,.rail-tabs button.active{color:var(--ink);border-bottom-color:var(--green);font-weight:550}
+.report-tabs{margin:10px 0 14px}
+.report-grid{display:grid;grid-template-columns:minmax(0,1fr) var(--rail-width);gap:var(--space-5);align-items:start}
+.report-grid.panel-collapsed{grid-template-columns:minmax(0,1fr)}
+.report-grid.panel-collapsed .rail{display:none}
+.rail{align-self:start;position:sticky;top:12px;display:flex;flex-direction:column;gap:0;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;max-height:calc(100dvh - 40px)}
+.rail-head{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:0 6px 0 2px;border-bottom:1px solid var(--line)}
+.rail-head .rail-tabs{border-bottom:0;flex:1;min-width:0;overflow:auto}
+.rail-head .rail-tabs button{font-size:12px;padding:11px 9px;white-space:nowrap}
+.rail-pane{padding:var(--space-4);overflow:auto;display:flex;flex-direction:column;gap:var(--space-4)}
+.rail-actions{display:flex;flex-wrap:wrap;gap:8px}
+.report-sources{display:flex;flex-direction:column}
+.source-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 2px;border-bottom:1px solid var(--line);font-size:12px}
+.source-row .name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.assistant-summary{display:flex;flex-direction:column;gap:var(--space-4)}
+.assistant-card{border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--surface)}
+.assistant-card h3{font-size:12px;color:var(--muted);font-weight:550;margin:0 0 8px}
+.assistant-card p{margin:0;font-size:12px;color:var(--muted);line-height:1.7}
+.kv{display:flex;justify-content:space-between;gap:12px;font-size:12px;padding:4px 0}
+.kv dt{color:var(--muted);margin:0}.kv dd{margin:0;color:var(--ink)}
+.attention{display:flex;align-items:flex-start;gap:8px;font-size:12px;padding:6px 0;color:var(--ink)}
+.attention .badge{flex:none;font-size:10px;padding:3px 7px;border-radius:var(--radius-pill);border:1px solid var(--line)}
+.attention .badge.warn{background:#fbf6e7;border-color:#e6dcc0;color:var(--warn)}
+.attention .badge.danger{background:#fbf0ec;border-color:#e4c9bd;color:var(--danger)}
+.assistant-form{display:flex;gap:8px;align-items:flex-end}
+.assistant-form textarea{min-height:40px;max-height:120px;resize:vertical;font-size:13px}
+.assistant-form button{flex:none;height:40px;padding:0 14px}
+.assistant-chips{display:flex;gap:6px;flex-wrap:wrap}
+.assistant-chips button{font-size:11px;padding:6px 10px;border:1px solid var(--line);border-radius:var(--radius-pill);background:transparent;color:var(--muted)}
+.assistant-chips button:hover{background:var(--soft);color:var(--ink)}
+@media(max-width:1150px){.report-grid{grid-template-columns:minmax(0,1fr)}.rail{position:fixed;right:0;top:0;height:100dvh;width:min(400px,92vw);z-index:80;border-radius:0;max-height:none;box-shadow:-8px 0 30px #1422181f}}
+@media(max-width:780px){.report-crumbs h1{font-size:16px}.report-actions{gap:6px}.report-version select{max-width:140px}}

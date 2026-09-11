@@ -198,7 +198,7 @@ function render(first){
  tryOpenPending();if(!current&&state.briefs.length)openBrief(state.briefs[0],{follow:true});if(current&&followUpdates&&!dirty&&!saving){const latest=state.briefs.find(b=>b.run_id===current.run_id);if(latest?.parent_id===current.id&&latest.author==='agent')openBrief(latest,{follow:true})}if(current){$('version-select').value=current.id;assessment();citations();renderBriefLength()}
  $('empty').hidden=!!current||state.jobs.length>0;$('document-area').hidden=!current;
  $('jobs').innerHTML=state.jobs.filter(j=>j.status!=='dismissed').map(j=>`<div class="job"><span class="tag ${j.status==='failed'?'error':''}">${statuses[j.status]}</span><div class="job-main">${{generate:'生成简报',assess:'重新评分',review:'独立审阅',revise:'按审阅修订',learn:'WikiSkill 学习',export_docx:'生成工作稿 Word',release:'制作正式 Word',audit_bundle:'制作审计包',source_refresh:'复查来源',prepare_template:'准备模板'}[j.kind]}<small>${['export_docx','release','audit_bundle'].includes(j.kind)?'本地脚本':j.kind==='source_refresh'?'来源工具':parse(j.payload).runtime?esc(modelLabel(parse(j.payload).runtime)):'旧任务：沿用当时本机配置'} · ${j.progress?`第 ${j.progress.round}/${j.progress.k} 轮 · ${{maintainer:'整理经验',proposer:'提出候选',validation:'验证候选'}[j.progress.phase]||j.progress.phase} · `:''}${esc(j.error||(j.kind==='source_refresh'?sourceRefreshOutcome(parse(j.result).outcome):'')||new Date(j.created).toLocaleString())}</small></div>${j.kind==='learn'?`<button data-details="${j.id}">查看比较</button>`:''}${['queued','running'].includes(j.status)?`<button data-stop="${j.id}">停止</button>`:''}${['failed','interrupted','cancelled'].includes(j.status)?`<button data-resume="${j.id}">恢复</button>`:''}</div>`).join('');
- document.querySelectorAll('[data-stop]').forEach(b=>b.onclick=()=>action(()=>api('stop',{job_id:b.dataset.stop})));document.querySelectorAll('[data-resume]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.resume})));renderTasks();renderArtifacts();if($('welcome')&&!$('welcome').hidden)renderWelcome();
+ document.querySelectorAll('[data-stop]').forEach(b=>b.onclick=()=>action(()=>api('stop',{job_id:b.dataset.stop})));document.querySelectorAll('[data-resume]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.resume})));renderTasks();renderArtifacts();renderAssistantSummary();renderReportStatus();if($('welcome')&&!$('welcome').hidden)renderWelcome();
  document.querySelectorAll('[data-details]').forEach(b=>b.onclick=()=>action(async()=>{const d=await api('learning-details?job='+b.dataset.details);$('source-title').textContent='技能比较与依据';$('source-original').hidden=true;$('source-provenance').hidden=true;$('source-link').textContent='';$('source-body').textContent=d.rounds.length?d.rounds.map((r,i)=>`第 ${i+1} 轮\n${r.result?.reason||'比较尚未完成'}\n${(r.result?.pairs||[]).map(p=>({better:'候选更好',tie:'差不多，保留原技能',worse:'原稿更好'}[p.verdict])+': '+p.reason).join('\n')}\n\n`+r.cases.map(c=>`任务：${c.requirements.title}\n\n旧版\n${gradeSummary(c.baseline.assessment)}\n${c.baseline.reader_markdown||c.baseline.markdown}\n\n候选\n${gradeSummary(c.candidate.assessment)}\n${c.candidate.reader_markdown||c.candidate.markdown}`).join('\n\n')).join('\n\n'):d.job.error||'比较尚未开始；先整理 Wiki 和提出候选。';$('source-dialog').showModal()}));
  $('skills').innerHTML=`<div class="skill">${state.active_skill?'当前启用 '+esc(state.active_skill):'当前使用基础任务提示词'}${state.active_skill?'<button data-rollback="">回到基础版本</button>':''}</div>`+state.skills.map(s=>`<div class="skill"><strong>${esc(s.id)}</strong><p>${esc(s.reason)}</p>${s.id===state.active_skill?'<span class="tag">正在使用</span>':`<button data-rollback="${s.id}" class="outline">使用这个版本</button>`}</div>`).join('');document.querySelectorAll('[data-rollback]').forEach(b=>b.onclick=()=>action(()=>api('rollback',{skill_id:b.dataset.rollback||null}),'下一轮将使用所选技能'));
  if(state.wiki!==render.wiki){render.wiki=state.wiki;if(state.wiki)api('render',{markdown:state.wiki}).then(r=>$('wiki').innerHTML=r.html);else $('wiki').innerHTML='<h2>还没有学习经验</h2><p class="muted">生成简报后直接改稿，或留下评论。Maintainer 会在这里整理观察、方法与适用条件。</p>'}bindSources();
@@ -1336,3 +1336,54 @@ function settingsModelTab(name){
  $('agent-backend').closest('label').classList.add('runtime-select-legacy');
  document.querySelector('.model-settings legend').textContent='当前模型与角色';
 }
+/* ===== Report workspace redesign (see DESIGN.md) ===== */
+const REPORT_TABS=['assistant','sources','checks','discuss'];
+function setReportTab(name){
+ const panel=$('report-panel');if(!panel)return;
+ if(!REPORT_TABS.includes(name))name='assistant';
+ panel.querySelectorAll('[data-pane]').forEach(p=>{p.hidden=p.dataset.pane!==name});
+ document.querySelectorAll('#report-panel [data-report-tab],#report-tabs [data-report-tab]').forEach(b=>b.classList.toggle('active',b.dataset.reportTab===name));
+ document.querySelectorAll('#report-tabs [data-report-view]').forEach(b=>b.classList.toggle('active',b.dataset.reportView==='edit'));
+ expandReportPanel();
+}
+function expandReportPanel(){const grid=$('report-grid');if(grid)grid.classList.remove('panel-collapsed');try{localStorage.setItem('briefloop-report-panel','open')}catch{}}
+function collapseReportPanel(){const grid=$('report-grid');if(grid)grid.classList.add('panel-collapsed');try{localStorage.setItem('briefloop-report-panel','closed')}catch{}}
+function toggleReportPanel(){const grid=$('report-grid');if(!grid)return;grid.classList.contains('panel-collapsed')?expandReportPanel():collapseReportPanel()}
+function expandReportChat(sessionId){page('chat');if(sessionId&&chat.sessions.some(s=>s.id===sessionId))selectChat(sessionId).catch(()=>{})}
+function renderReportStatus(){
+ const box=$('report-status');if(!box)return;
+ const chips=['<span class="chip">已保存</span>'];
+ const a=current&&state.assessments.find(x=>x.version_id===current.id);
+ if(a){const d=parse(a.data);chips.push(d.status==='complete'?`<span class="chip ok">已评分${d.overall?' · '+esc(d.overall):''}</span>`:'<span class="chip">评分中</span>')}
+ else{const pending=!!(current&&state.jobs.some(j=>['generate','revise','assess'].includes(j.kind)&&['queued','running'].includes(j.status)&&(()=>{const p=parse(j.payload);return p.version_id===current.id||p.run_id===current.run_id})()));chips.push(pending?'<span class="chip">评分中</span>':'<span class="chip warn">未评分</span>')}
+ const conflicts=(state.conflicts||[]).length;if(conflicts)chips.push(`<span class="chip danger">来源分歧 ${conflicts}</span>`);
+ box.innerHTML=chips.join('');
+}
+function renderAssistantSummary(){
+ const box=$('assistant-summary');if(!box)return;
+ if(!current){box.innerHTML='';return}
+ const run=(state.runs||[]).find(r=>r.id===current.run_id),req=run?parse(run.requirements):{};
+ const conflicts=(state.conflicts||[]).length;
+ const kv=[['时间范围',req.period],['读者',req.audience],['已登记来源',(state.sources||[]).length+' 个']].filter(([,v])=>v);
+ const cards=[];
+ if(kv.length)cards.push(`<dl class="assistant-card">${kv.map(([k,v])=>`<div class="kv"><dt>${esc(k)}</dt><dd>${esc(String(v))}</dd></div>`).join('')}</dl>`);
+ cards.push(`<div class="assistant-card"><h3>需要关注</h3>${conflicts?`<div class="attention"><span class="badge danger">数据冲突</span><span>有 ${conflicts} 项来源分歧待处理</span></div>`:'<p>暂未发现待处理冲突；评分与审阅完成后会显示在这里。</p>'}</div>`);
+ box.innerHTML=cards.join('');
+}
+function sendReportQuestion(text){
+ const q=(text||'').trim();if(!q)return;
+ const input=$('assistant-input');if(input)input.value='';
+ const chatInput=$('chat-input');if(chatInput)chatInput.value=q;
+ if(typeof rememberDraft==='function')rememberDraft();
+ page('chat');
+ const form=$('chat-form');if(form)form.requestSubmit();
+}
+document.querySelectorAll('#report-panel [data-report-tab],#report-tabs [data-report-tab]').forEach(b=>b.onclick=()=>setReportTab(b.dataset.reportTab));
+document.querySelectorAll('#report-tabs [data-report-view]').forEach(b=>b.onclick=()=>{document.querySelectorAll('#report-tabs [data-report-view]').forEach(x=>x.classList.toggle('active',x===b))});
+if($('report-panel-toggle'))$('report-panel-toggle').onclick=toggleReportPanel;
+document.querySelectorAll('.menu-wrap').forEach(wrap=>{const toggle=wrap.querySelector('button[aria-haspopup="menu"]'),pop=wrap.querySelector('.popover');if(!toggle||!pop)return;toggle.onclick=e=>{e.stopPropagation();const open=pop.hidden;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'));pop.hidden=!open;toggle.setAttribute('aria-expanded',String(open))}});
+document.addEventListener('click',()=>{document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'))});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'))}});
+if($('assistant-form'))$('assistant-form').onsubmit=e=>{e.preventDefault();sendReportQuestion($('assistant-input').value)};
+document.querySelectorAll('[data-assistant-prompt]').forEach(b=>b.onclick=()=>{const input=$('assistant-input');if(input){input.value=b.dataset.assistantPrompt;input.focus()}});
+try{if(localStorage.getItem('briefloop-report-panel')==='closed')collapseReportPanel()}catch{}
