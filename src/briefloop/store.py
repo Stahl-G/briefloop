@@ -404,7 +404,9 @@ class Store:
 
     def runtime_config(self):
         settings=self.settings()
-        if settings.get('model_selection_required'):raise ValueError('请先在设置中选择用于报告和学习的模型')
+        # A fresh workspace ships the factory model with the gate still set; the
+        # flag alone must not block programmatic runs that already have a model.
+        if settings.get('model_selection_required') and not str(settings.get('model') or '').strip():raise ValueError('请先在设置中选择用于报告和学习的模型')
         return runtime_fields(settings,settings.get('agent_backend','codex'))
 
     def confirm_runtime_choice(self,backend,runtime):
