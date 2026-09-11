@@ -261,3 +261,10 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 .report-row:hover{background:var(--soft);border-color:#c7d3bd}
 .report-row-title{font-size:14px;font-weight:550;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .report-row-meta{font-size:11px;color:var(--muted);flex:none}
+.source-row{gap:12px;white-space:nowrap}
+.source-row .name{flex:1;min-width:0;max-width:none}
+.source-row .tag,.source-row .row-actions{flex:none}
+.source-row .row-actions{display:flex;gap:6px}
+.source-row button{flex:none;white-space:nowrap;font-size:11px;padding:4px 9px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--muted)}
+.source-row button:hover{background:var(--soft);color:var(--ink)}
+.panel .source-row{font-size:12.5px}

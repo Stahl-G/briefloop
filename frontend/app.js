@@ -1396,11 +1396,12 @@ function renderReports(){
  box.innerHTML=rows.length?rows.map(b=>`<button type="button" class="report-row" data-report-open="${esc(b.id)}"><span class="report-row-title">${esc(parse(b.detail).title||'简报')}</span><span class="report-row-meta">${messageTime(b.created)}</span></button>`).join(''):'<p class="help">还没有报告。点“＋ 新建报告”开始。</p>';
  box.querySelectorAll('[data-report-open]').forEach(el=>el.onclick=()=>{const b=state.briefs.find(x=>x.id===el.dataset.reportOpen);if(b&&openBrief(b,{follow:false}))page('report')});
 }
+function sourceLabel(s){const n=s.name||s.id||'';try{const u=new URL(n);const tail=(u.pathname&&u.pathname!=='/')?u.pathname:'';return (u.hostname.replace(/^www\./,'')+tail).slice(0,140)}catch{return n}}
 function renderSourcesPage(){
  const box=$('sources-page-list');if(!box||!state)return;
  if($('sources-page-count'))$('sources-page-count').textContent=(state.sources||[]).length+' 份';
  const sig=JSON.stringify((state.sources||[]).map(s=>[s.id,s.status,s.needs_visual,s.name]));if(renderSourcesPage.sig===sig)return;renderSourcesPage.sig=sig;
- box.innerHTML=(state.sources||[]).length?state.sources.map(s=>`<div class="source-row"><span class="name">${esc(s.name)}</span><span class="tag ${s.status==='failed'?'error':''}">${s.status==='failed'?'读取失败':s.needs_visual?'需视觉读取':'可读取'}</span><button type="button" data-sources-open="${esc(s.id)}">打开</button>${s.status==='failed'?`<button type="button" data-sources-retry="${esc(s.id)}">重试</button>`:''}</div>`).join(''):'<p class="help">还没有来源。</p>';
+ box.innerHTML=(state.sources||[]).length?state.sources.map(s=>`<div class="source-row" title="${esc(s.name)}"><span class="name">${esc(sourceLabel(s))}</span><span class="tag ${s.status==='failed'?'error':''}">${s.status==='failed'?'读取失败':s.needs_visual?'需视觉读取':'可读取'}</span><span class="row-actions"><button type="button" data-sources-open="${esc(s.id)}">打开</button>${s.status==='failed'?`<button type="button" data-sources-retry="${esc(s.id)}">重试</button>`:''}</span></div>`).join(''):'<p class="help">还没有来源。</p>';
  box.querySelectorAll('[data-sources-open]').forEach(b=>b.onclick=()=>action(async()=>showSource(await api('source?id='+encodeURIComponent(b.dataset.sourcesOpen)))));
  box.querySelectorAll('[data-sources-retry]').forEach(b=>b.onclick=()=>action(async()=>{const s=await api('retry-source',{source_id:b.dataset.sourcesRetry});notice(s.status==='ready'?'来源已重新读取':s.error,s.status!=='ready')}));
 }
