@@ -22,6 +22,7 @@ FAILURE_KINDS=('auth','quota','rate_limit','timeout','tls','network','invalid_re
 
 
 def _marked(message,kind='provider_error',status=None):
+    if kind not in FAILURE_KINDS:raise ValueError('未知的 failure_kind：'+str(kind))
     error=TavilyError(message);error.failure_kind=kind;error.status=status;return error
 
 
@@ -217,9 +218,11 @@ def extract(store,urls,*,run_id=None,extract_depth='basic',key_file=None):
         if run_id:store.attach_source(run_id,sid)
         results.append({**source,'provenance':provenance})
     envelope['provider_request_id']=response.get('request_id');envelope['outcome']='success'
-    envelope['admitted_urls']=list(dict.fromkeys(urls));envelope['unadmitted_urls']=failed
+    envelope['admitted_urls']=list(dict.fromkeys(urls));envelope['unadmitted_urls']=[]
+    envelope['extraction_failed_urls']=failed
     output={'provider':'tavily','sources':results,'usage':response.get('usage'),'request_id':response.get('request_id'),
-            'local_request_id':local_id,'provider_request_id':response.get('request_id'),'outcome':'success','failure_kind':None,'request_record_path':None}
+            'local_request_id':local_id,'provider_request_id':response.get('request_id'),'outcome':'success','failure_kind':None,
+            'extraction_failed_urls':failed,'request_record_path':None}
     if run_id:
         envelope['raw_response_path']=budget.save_discovery(store,run_id,local_id,raw)
         envelope['budget_after']=budget.snapshot(store,run_id)

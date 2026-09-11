@@ -138,3 +138,22 @@ def test_success_envelope_separates_local_and_provider_request_ids(tmp_path,monk
     assert record['admitted_urls']==['https://example.test/a'] and record['unadmitted_urls']==[]
     assert record['raw_response_path']==out['discovery_path']
     assert record['parameters']['max_results']==5
+
+
+def test_unknown_failure_kind_is_rejected_and_cli_payload_is_structured():
+    with pytest.raises(ValueError):
+        tavily._marked('x','not_a_kind')
+    from briefloop import cli
+    exc=tavily._marked('auth failed','auth',401)
+    payload=cli._tavily_failure('search',exc)
+    assert payload=={'provider':'tavily','operation':'search','status':'failed','failure_kind':'auth','http_status':401,'error':'auth failed','request_record_path':None}
+
+
+def test_extract_separates_budget_refusal_from_extraction_failure(tmp_path,monkeypatch):
+    store,run=make_run(tmp_path,{'search_requests':2,'candidate_urls':10,'source_pages':2})
+    monkeypatch.setattr(tavily,'_post',lambda *args,**kwargs:({'results':[{'url':'https://example.test/a','raw_content':''}],'request_id':'p1'},b'{}'))
+    out=tavily.extract(store,['https://example.test/a'],run_id=run['id'])
+    assert out['extraction_failed_urls']==['https://example.test/a']
+    assert 'unadmitted_urls' not in out
+    record=json.loads(Path(out['request_record_path']).read_text())
+    assert record['unadmitted_urls']==[] and record['extraction_failed_urls']==['https://example.test/a']
