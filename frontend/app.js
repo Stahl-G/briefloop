@@ -63,6 +63,33 @@ function updateDownloads(brief){
 
 const statuses={queued:'等待运行',running:'正在运行',complete:'已完成',failed:'未完成',interrupted:'已中断',cancelled:'已停止'};
 const DISCUSS_INSTRUCTION='（讨论模式：现在不要生成报告，也不要启动生成任务。）请先和我逐条确认这份简报的需求：目的与要回答的问题、读者、时间范围、必答问题、人工填写章节、篇幅与格式偏好。确认清楚后，在回复的最后单独给出一个 ```briefloop-requirements 代码块，内容是 JSON：{"title":"","objective":"","audience":"","period":"","key_questions":[],"manual_sections":[],"writing_preferences":[],"report_profile":"brief","writing_mode":"internal_report","target_words":1500,"max_words":2000}。只讨论和确认，不写文件、不生成报告。';
+const CHAT_COMMANDS=[
+ {name:'discuss',desc:'讨论需求：先确认目的、读者、范围，不直接生成'},
+ {name:'new',desc:'开始一个新对话'},
+ {name:'help',desc:'查看可用命令'},
+];
+const COMMAND_HELP='可用命令：'+CHAT_COMMANDS.map(c=>'/'+c.name+' — '+c.desc).join('；');
+let commandIndex=0;
+function commandPanel(){return $('chat-commands')}
+function renderCommands(){
+ const panel=commandPanel();if(!panel)return;
+ const input=$('chat-input'),match=/^\/(\w*)$/.exec(input.value);
+ if(!match){panel.hidden=true;panel.innerHTML='';panel._items=[];commandIndex=0;return}
+ const query=match[1].toLowerCase(),items=CHAT_COMMANDS.filter(c=>c.name.startsWith(query));
+ if(!items.length){panel.hidden=true;panel.innerHTML='';panel._items=[];commandIndex=0;return}
+ if(commandIndex>=items.length)commandIndex=0;
+ panel._items=items;
+ panel.innerHTML=items.map((c,i)=>`<button type="button" class="chat-command${i===commandIndex?' active':''}" data-command-index="${i}"><span class="chat-command-name">/${esc(c.name)}</span><span class="chat-command-desc">${esc(c.desc)}</span></button>`).join('');
+ panel.hidden=false;
+ panel.querySelectorAll('[data-command-index]').forEach(button=>button.onmousedown=event=>{event.preventDefault();commandIndex=Number(button.dataset.commandIndex);acceptCommand()});
+}
+function acceptCommand(){
+ const panel=commandPanel();if(!panel)return;
+ const item=(panel._items||[])[commandIndex];if(!item)return;
+ const input=$('chat-input');input.value='/'+item.name+' ';
+ panel.hidden=true;panel.innerHTML='';panel._items=[];commandIndex=0;
+ rememberDraft();updateComposer();input.focus();input.setSelectionRange(input.value.length,input.value.length);
+}
 function applyRequirements(text){
  let data;try{data=JSON.parse(text)}catch(e){notice('要求清单无法解析：'+e.message,true);return}
  const form=$('requirements');if(!form)return;
@@ -571,7 +598,7 @@ async function pollChat(force=false){
  }catch(e){if(force)throw e;else if(!$('chat').hidden){if(sessionMissing(e)){chat.id=null;chat.session=null;chat.messages=[];localStorage.removeItem('briefloop-chat-session');chatError();renderChat()}else{$('chat-status').textContent='会话连接中断，正在重连';chatError(e.message)}}}finally{chat.polling=false}
 }
 async function sendChat(event){
- event.preventDefault();if(chat.busy||chat.uploading||chat.session&&chat.session.lifecycle&&chat.session.lifecycle!=='active')return;const text=$('chat-input').value.trim()||(chat.attachments.size?'请查看附件。':'');if(!text)return;const discuss=/^\/discuss\b\s*/i.test(text),displayText=text.replace(/^\/discuss\b\s*/i,'').trim()||'讨论需求',sendText=discuss?(DISCUSS_INSTRUCTION+(displayText!=='讨论需求'?('\n\n用户补充：'+displayText):'')):text;chat.busy=true;chatError();updateComposer();
+ event.preventDefault();if(chat.busy||chat.uploading||chat.session&&chat.session.lifecycle&&chat.session.lifecycle!=='active')return;const rawInput=$('chat-input').value.trim();const command=/^\/(\w+)(?:\s+([\s\S]*))?$/.exec(rawInput);if(command){const name=command[1].toLowerCase();if(name==='new'){const panel=commandPanel();if(panel)panel.hidden=true;await newChat();return}if(name==='help'){notice(COMMAND_HELP);$('chat-input').value='';const panel=commandPanel();if(panel)panel.hidden=true;updateComposer();return}}const text=rawInput||(chat.attachments.size?'请查看附件。':'');if(!text)return;const discuss=/^\/discuss\b\s*/i.test(text),displayText=text.replace(/^\/discuss\b\s*/i,'').trim()||'讨论需求',sendText=discuss?(DISCUSS_INSTRUCTION+(displayText!=='讨论需求'?('\n\n用户补充：'+displayText):'')):text;chat.busy=true;chatError();updateComposer();
  try{
   const runtime=runtimeChoice();if(!chat.id){const result=await api('harness/session',{title:displayText.slice(0,48),runtime});chat.session=result.session||result;chat.id=chat.session.id;if(!chat.id)throw Error('未能创建会话');localStorage.setItem('briefloop-chat-session',chat.id);rememberDraft()}
   const payload={session_id:chat.id,text:sendText,display_text:sendText===displayText?undefined:displayText,mode:chatActive()?$('chat-mode').value:'queue',source_ids:[...chat.attachments],runtime,allow_web:$('chat-allow-web').checked};const signature=JSON.stringify(payload);
@@ -585,8 +612,22 @@ async function sendChat(event){
 }
 $('chat-form').onsubmit=sendChat;
 $('new-session').onclick=newChat;
-$('chat-input').oninput=()=>{rememberDraft();updateComposer()};
-$('chat-input').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();if(!$('chat-send').disabled)$('chat-form').requestSubmit()}};
+$('chat-input').oninput=()=>{rememberDraft();updateComposer();renderCommands()};
+$('chat-input').onkeydown=e=>{
+ const panel=commandPanel();
+ if(panel&&!panel.hidden){
+  const items=panel._items||[];
+  if(e.key==='ArrowDown'&&items.length){e.preventDefault();commandIndex=(commandIndex+1)%items.length;renderCommands();return}
+  if(e.key==='ArrowUp'&&items.length){e.preventDefault();commandIndex=(commandIndex-1+items.length)%items.length;renderCommands();return}
+  if(e.key==='Tab'&&items.length){e.preventDefault();acceptCommand();return}
+  if(e.key==='Escape'){e.preventDefault();panel.hidden=true;return}
+  if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing&&items.length){
+   const exact=items.some(c=>('/'+c.name)===e.target.value.trim().toLowerCase());
+   if(!exact){e.preventDefault();acceptCommand();return}
+  }
+ }
+ if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();if(!$('chat-send').disabled)$('chat-form').requestSubmit()}
+};
 $('chat-mode').onchange=updateComposer;
 for(const id of ['chat-model','chat-effort','chat-model-provider'])$(id).onchange=()=>{rememberDraft();chatError();updateComposer()};
 $('chat-stop').onclick=async()=>{if(!chat.id||chat.busy)return;chat.busy=true;updateComposer();try{await api('harness/cancel',{session_id:chat.id});await pollChat(true)}catch(e){chatError(e.message)}finally{chat.busy=false;updateComposer()}};
