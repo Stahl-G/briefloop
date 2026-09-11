@@ -65,10 +65,11 @@ def test_role_models_freeze_and_generation_scores_in_its_own_stage(tmp_path):
             _role(store,LearningRecorder(),learning,tmp_path/'study',1,phase)
     assert learning_calls==[roles['maintainer'],roles['proposer']]
     store.update_job(job['id'],'failed')
+    frozen=store.one('jobs',job['id'])['payload']
     store.set_meta('settings',{**store.settings(),'role_models':{}})
     resumed=Worker(store).resume(job['id'])
-    assert resumed['id']!=job['id']
-    assert json.loads(resumed['payload'])['role_models']['evaluator']==store.runtime_config()
+    assert resumed['id']==job['id'] and resumed['status']=='queued'
+    assert {k:v for k,v in json.loads(store.one('jobs',job['id'])['payload']).items() if k!='attempt'}==json.loads(frozen)
 
 
 def test_selected_model_reaches_chat_transport_and_rejects_changed_resume(tmp_path):
@@ -116,9 +117,8 @@ def test_evaluator_migration_preserves_settings_and_frozen_legacy_modes(tmp_path
     assert single['evaluation_mode']=='single' and pairwise['evaluation_mode']=='pairwise'
     store.update_job(job['id'],'failed')
     resumed=Worker(store).resume(job['id'])
-    assert resumed['id']!=job['id']
-    assert json.loads(resumed['payload'])['role_models']['evaluator']==astra
-    assert store.one('jobs',job['id'])['payload']==frozen
+    assert resumed['id']==job['id'] and resumed['status']=='queued'
+    assert {k:v for k,v in json.loads(store.one('jobs',job['id'])['payload']).items() if k!='attempt'}==json.loads(frozen)
     from briefloop.progress import role_label
     assert role_label('Scorer')=='Evaluator · 评分'
     assert role_label('Assessor')=='Evaluator · 比较'

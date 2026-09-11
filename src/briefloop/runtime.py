@@ -369,6 +369,8 @@ class Worker:
                 if self.current==jid:self.runtime.cancel()
                 if self.review_current==jid and self._review_runtime:self._review_runtime.cancel()
                 if self.file_current==jid:self._file_cancelled.set()
+                from .task_notify import notify as _notify_task
+                _notify_task(self.store,self.store.one('jobs',jid),'cancelled')
             for child in self.store.rows("SELECT id FROM jobs WHERE status IN ('queued','running') AND json_extract(payload,'$.parent_job_id')=?",(jid,)):
                 if child['id']!=jid:self.stop_job(child['id'])
 
@@ -382,27 +384,22 @@ class Worker:
                 # complete status. Preserve it, as well as any prior user stop.
                 c.execute("UPDATE jobs SET status=?,result=COALESCE(?,result),error=?,updated=? WHERE id=? AND status='running'",
                           (status,dump(result) if result is not None else None,error,now(),jid))
-            return self.store.one('jobs',jid)
+            job=self.store.one('jobs',jid)
+        from .task_notify import TERMINAL, notify as _notify_task
+        if job['status'] in TERMINAL:
+            _notify_task(self.store,job,job['status'])
+        return job
 
 
     def resume(self,jid):
         job=self.store.one('jobs',jid)
         if job['status'] not in ('failed','interrupted','cancelled'):raise ValueError('这个任务不需要恢复')
-        payload=json.loads(job['payload'])
-        if job['kind'] in ('export_docx','release','audit_bundle','source_refresh'):
-            self.store.update_job(jid,'queued');return self.store.one('jobs',jid)
-        current=self.store.runtime_config()
-        current_roles=self.store.role_model_config(current)
-        from .backends import validate_backend
-        backend=validate_backend(payload.get('agent_backend','codex'))
-        current_backend=self.store.settings().get('agent_backend','codex')
-        old_roles={role:payload.get('role_models',{}).get(role,payload.get('runtime')) for role in ROLE_NAMES}
-        evaluation=stage_job(self.store,job,'evaluator',mode='pairwise' if job['kind']=='learn' else 'single')
-        old_roles['evaluator']=json.loads(evaluation['payload'])['runtime']
-        if payload.get('runtime')!=current or old_roles!=current_roles or backend!=current_backend:
-            # A different model or backend gets a new attempt, never resumes
-            # expensive old child handles.
-            return self.store.enqueue(job['kind'],{**payload,'runtime':current,'role_models':current_roles,'previous_job_id':jid,'agent_backend':current_backend})
+        # Resume continues the same task with its frozen model and backend, as a new
+        # attempt. The attempt number lets a second failure notify again, while a
+        # replayed settle of one attempt stays deduplicated.
+        payload=json.loads(job['payload']);payload['attempt']=int(payload.get('attempt',1))+1
+        with self.store.tx() as c:
+            c.execute('UPDATE jobs SET payload=? WHERE id=?',(dump(payload),jid))
         self.store.update_job(jid,'queued')
         return self.store.one('jobs',jid)
 
@@ -596,6 +593,8 @@ class Worker:
         publish()
         current=latest[0]
         brief=self.store.one('briefs',current)
+        from .task_notify import notify as _notify_task
+        _notify_task(self.store, job, 'draft_ready', text='简报草稿已保存，可以查看和编辑。')
         if not score or payload.get('single_evaluation') is False:
             return {**result,'version_id':brief['id'],**self._generated_sources(folder,brief['id'])}
         scoring=None

@@ -27,6 +27,9 @@ def make_server(workspace, port=8765, *, paused=False):
     except BlockingIOError:
         lock.close();raise RuntimeError('这个工作区已有本地服务在运行')
     harness=HarnessManager(store)
+    # Recover stale chat state once, at service start. Notifications and normal
+    # writes must never run this global recovery.
+    harness.chat.recover_stale()
     from .opencode_harness import OpencodeHarness
     from .backends import validate_backend
     opencode_harness=OpencodeHarness(store)
@@ -280,7 +283,7 @@ def make_server(workspace, port=8765, *, paused=False):
                     result=pick_harness(body.get('runtime')).create_session(body.get('title','新对话'),body.get('runtime'))
                 elif path=='/api/harness/message':
                     choose_runtime(store,body.get('runtime'))
-                    result=pick_harness(body.get('runtime'),body['session_id']).send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),allow_web=bool(body.get('allow_web',False)))
+                    result=pick_harness(body.get('runtime'),body['session_id']).send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),display_text=body.get('display_text'),allow_web=bool(body.get('allow_web',False)))
                 elif path=='/api/harness/answer':result=pick_harness(session_id=body['session_id']).answer(body['session_id'],body['request_id'],body['answers'])
                 elif path=='/api/harness/archive':result=pick_harness(session_id=body['session_id']).archive(body['session_id'])
                 elif path=='/api/harness/delete':result=pick_harness(session_id=body['session_id']).delete(body['session_id'])
@@ -317,7 +320,9 @@ def make_server(workspace, port=8765, *, paused=False):
                 elif path=='/api/generate':
                     req=Requirements.model_validate(body['requirements'])
                     run=store.create_run(req.model_dump(),body.get('source_ids',[]))
-                    result=store.enqueue('generate',{'run_id':run['id']})
+                    payload={'run_id':run['id']}
+                    if body.get('session_id'):payload['session_id']=body['session_id']
+                    result=store.enqueue('generate',payload)
                 elif path=='/api/save':
                     value=SaveRevision.model_validate(body)
                     result=store.revise(value.base_version,value.markdown,value.editor_document)
@@ -349,7 +354,9 @@ def make_server(workspace, port=8765, *, paused=False):
                     from .review import respond
                     result=respond(store,body['finding_id'],body['version_id'],body['action'],body['reason'])
                 elif path=='/api/assess':
-                    store.one('briefs',body['version_id']);result=store.enqueue('assess',{'version_id':body['version_id']})
+                    store.one('briefs',body['version_id']);payload={'version_id':body['version_id']}
+                    if body.get('session_id'):payload['session_id']=body['session_id']
+                    result=store.enqueue('assess',payload)
                 elif path=='/api/learn':
                     from .learning import enqueue_feedback
                     result=enqueue_feedback(store)

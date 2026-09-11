@@ -24,15 +24,15 @@ def test_enqueue_freezes_backend_and_old_jobs_stay_codex(tmp_path):
         store.enqueue('generate', {'runtime': {'model': 'gpt-5.6-luna'}})
 
 
-def test_resume_across_backend_starts_new_attempt(tmp_path):
+def test_resume_across_backend_keeps_the_frozen_backend(tmp_path):
     store = Store(tmp_path / 'workspace')
     job = store.enqueue('generate', {'run_id': 'run-x'})
     store.update_job(job['id'], 'failed')
     store.set_meta('settings', {**store.settings(), 'agent_backend': 'opencode',
                                 'model': 'opencode-go/gpt-5.6-luna'})
     resumed = Worker(store).resume(job['id'])
-    assert resumed['id'] != job['id']
-    assert json.loads(resumed['payload'])['agent_backend'] == 'opencode'
+    assert resumed['id'] == job['id'] and resumed['status'] == 'queued'
+    assert json.loads(resumed['payload'])['agent_backend'] == 'codex'
 
 
 def test_runtime_routes_by_frozen_backend_and_pins_binding(tmp_path):

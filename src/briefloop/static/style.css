@@ -132,3 +132,38 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 .highlight-tip-hint{margin-top:8px!important;font-size:11px;color:var(--muted)}
 .finding.flash{background:#fde7e2;transition:background .3s}
 .finding.flash[open]{box-shadow:inset 3px 0 0 #c0392b;padding-left:10px}
+
+/* Sidebar current tasks: report tasks are jobs, not conversations. */
+.task-block{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+.task-heading{font:500 11px/1.4 var(--mono);letter-spacing:.06em;color:var(--muted);margin-bottom:8px}
+.task-item{display:flex;align-items:center;gap:4px;padding:3px 0;font-size:12px}
+.task-main{display:flex;align-items:center;gap:8px;flex:1;min-width:0;text-align:left;padding:5px 6px;border-radius:6px;background:none}
+.task-main:hover{background:#edf0e9}
+.task-text{flex:1;min-width:0}
+.task-text strong{display:block;font-weight:550}
+.task-text small{display:block;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.task-dot{width:8px;height:8px;border-radius:50%;background:var(--line);flex:none}
+.task-dot.running{background:#2f8f4e;animation:pulse 1.2s infinite}
+.task-dot.done{background:var(--green)}
+.task-dot.error{background:#c0392b}
+.task-icon{padding:2px 6px;font-size:11px;border:1px solid var(--line);border-radius:6px;color:var(--muted);flex:none}
+.task-icon:hover{color:var(--ink)}
+/* Proactive task notes in the chat. */
+.chat-message.task-notice{background:var(--paper);border:1px dashed var(--line);border-radius:8px;padding:10px 14px;margin:6px 0;font-size:13px}
+.chat-message.task-notice .message-heading strong{color:var(--green)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+/* Message actions: small inline icon buttons under each message. */
+.message-actions-row{display:flex;align-items:center;gap:2px;margin-top:6px}
+.message-action{position:relative;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:0;border-radius:6px;color:var(--muted);background:none}
+.message-action:hover{color:var(--ink);background:#edf0e9}
+.message-action svg{width:16px;height:16px}
+.message-action::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#1e2320;color:#fff;font:500 12px/1 var(--font);padding:6px 9px;border-radius:6px;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .12s;z-index:20}
+.message-action:hover::after{opacity:1}
+.apply-requirements{margin-top:6px;font-size:12px}
+.settings-session-note{background:var(--paper);border:1px solid var(--line);border-radius:7px;padding:9px 12px;margin:10px 0}
+.settings-session-note button{margin-left:6px}
+.artifact-item{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;text-align:left;padding:5px 6px;border-radius:6px;background:none;font-size:12px;color:var(--ink);text-decoration:none}
+.artifact-item:hover{background:#edf0e9}
+.artifact-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.artifact-item small{color:var(--muted);flex:none}

@@ -22,12 +22,18 @@ class ChatStore:
         self.store=store
         with store.tx() as c:
             c.executescript(SCHEMA)
-            c.execute("UPDATE chat_requests SET status='expired' WHERE status='pending'")
             session_columns={r['name'] for r in c.execute('PRAGMA table_info(chat_sessions)')}
             if 'lifecycle' not in session_columns:c.execute("ALTER TABLE chat_sessions ADD COLUMN lifecycle TEXT NOT NULL DEFAULT 'active'")
             columns={r['name'] for r in c.execute('PRAGMA table_info(chat_messages)')}
             for name,definition in (('runtime',"TEXT NOT NULL DEFAULT '{}'"),('prompt',"TEXT"),('allow_web',"INTEGER NOT NULL DEFAULT 0")):
                 if name not in columns:c.execute('ALTER TABLE chat_messages ADD COLUMN '+name+' '+definition)
+
+    def recover_stale(self):
+        """Startup recovery only. Never run from a notification or a normal write:
+        marking other sessions interrupted here would silently break a live turn's
+        cancel/resume and pending questions."""
+        with self.store.tx() as c:
+            c.execute("UPDATE chat_requests SET status='expired' WHERE status='pending'")
             c.execute("UPDATE chat_sessions SET status='interrupted',turn_id=NULL WHERE status IN ('running','starting','stopping')")
             c.execute("UPDATE chat_messages SET status='interrupted' WHERE status IN ('sending','streaming','delivered')")
 
@@ -51,7 +57,10 @@ class ChatStore:
 
     def sessions(self,view='active'):
         if view not in ('active','archived','deleted'):raise ValueError('无效会话分类')
-        with self.store.tx() as c:return [self.decode(r) for r in c.execute('SELECT s.*, ('+BUSY_SQL+') AS busy FROM chat_sessions s WHERE lifecycle=? ORDER BY updated DESC',(view,))]
+        with self.store.tx() as c:return [self.decode(r) for r in c.execute(
+            'SELECT s.*, ('+BUSY_SQL+') AS busy FROM chat_sessions s WHERE lifecycle=? '
+            "AND NOT EXISTS(SELECT 1 FROM chat_events e WHERE e.session_id=s.id AND e.kind='session/internal') "
+            'ORDER BY updated DESC',(view,))]
 
     def set_lifecycle(self,sid,lifecycle):
         if lifecycle not in ('active','archived','deleted'):raise ValueError('无效会话分类')
