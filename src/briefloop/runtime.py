@@ -203,6 +203,10 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
         retrieval_strategy=('分三轮推进检索，而不是让每个支线先一次深挖到底。第一轮侦察：整批 Scout 合计 1–2 条互补查询（不是每个 Scout 各 1–2 条），找出本期重要事件、候选主体、候选标题、URL 与可能日期；`AI news`、`AI weekly`、`artificial intelligence news` 这类同义改写不算不同方向。第二轮聚焦：按首轮线索选择互不重复的信息需求，可用意图包括 event discovery（范围内还有哪些重要变化）、entity check（某关键主体是否漏检或只有零散线索）、primary verification（定位一手正文与关键限定）、gap repair（补齐日期、指标、发布状态、冲突）；可用实体别名、原语言产品名、首轮出现的完整发布标题或明确指标词。第三轮补缺：仅当仍有高价值具体缺口时，用同一 Scout 多轮或再派少量同类任务；优先补"重要事件没有可用正文"，其次补"改变结论的指标/日期/条件"，不要给材料已充分的支线再堆重复来源。轮数是执行安排，不替代硬预算，满足任务可提前停止，不要求花完搜索次数；每条查询都要能回答"相对已有材料，这次想多知道什么"，不重复已经失败或已充分覆盖的相近查询。发现阶段可用综述、媒体、索引页发现事件及原始链接，取证阶段再优先一手来源'+('；具体搜索参数、获取失败后的换路与停止条件见本轮 Scout 技能。' if tavily_enabled else '。'))
     dispatch_word = 'spawn/delegate' if backend == 'codex' else 'task 工具'
     id_word = '真实 agent ID' if backend == 'codex' else '真实子 agent 会话 ID（task 结果中的 ses_ ID）'
+    if tavily_enabled:
+        budget_note='本轮共享硬预算见 input.json.research_budget_status：所有 Scout 共用，不是每人一份。受控 Tavily Search/Extract 在每次调用时事务检查并返回 remaining；search_requests/candidate_urls 只硬计受控 Tavily Search，source_pages 硬计所有受控 add-url/Extract 的唯一 URL，同 URL 回退与缓存不重复算页。出现 budget_exhausted 时保留现有来源，把简短缺口写入研究交接记录，停止新增检索并交接，不重试消耗上限的操作。派发每个批次前先对照三类 remaining（搜索请求、候选 URL、唯一正文 URL）：前轮不要一次占满全部预算，给补缺同时留出搜索、候选和正文名额；三类是各自独立的硬上限，剩下搜索次数但候选或正文名额不足时不要绕过。旧任务 limits=null 表示未设置预算，不追溯限制。'
+    else:
+        budget_note='本轮检索由宿主原生工具执行，BriefLoop 不精确计量原生搜索次数与候选 URL（input.json.research_budget_status 中这两项在原生模式下为空或未知，不是额度，不要当成可用次数去核对）；只有受控 add-url/Extract 的唯一正文 URL（source_pages）按事务计量。出现 budget_exhausted 时保留现有来源并简要交接缺口，不重试消耗上限的操作；派发每批前按剩余 source_pages 留出补缺名额，不把它当成可任意扩张的额度。旧任务 limits=null 表示未设置预算，不追溯限制。'
     native_word = '原生 Codex 搜索不可精确计量' if backend == 'codex' else '原生 Opencode 搜索不可精确计量'
     view_word = '使用 view_image 直接读图' if backend == 'codex' else '用 read 工具直接读取图像路径'
     view_pages_word = '使用 view_image 读取页图' if backend == 'codex' else '用 read 工具读取返回的页图'
@@ -224,7 +228,7 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
 企业背景操作使用同一工具 `{tool} workspace-action --request REQUEST_JSON`，支持 company_read、company_config(enabled)、company_update(fact 包含 key/value/source_id/locator/effective_date/origin)、company_resolve(fact_id/accept)。只根据用户明确回答设置是否维护及采用冲突资料。
 行业数据整理入口：`{tool} prepare-report-data --run {run['id']} --file RAW_JSON --output PREPARED_JSON`（仅行业报告需要）。Analyst 接收 input.report_profile 和 reference_sources；参考资料不是当期证据，原始数值 records 写 draft.report_data，不复制 calculations/markdown 到 report_data。
 {search}
-本轮共享硬预算见 input.json.research_budget_status：所有 Scout 共用，不是每人一份。受控工具在每次调用时事务检查并返回 remaining；出现 budget_exhausted 时保留现有来源，把简短缺口写入研究交接记录，停止新增检索并交接，不重试消耗上限的操作。search_requests/candidate_urls 只硬计受控 Tavily Search，source_pages 硬计所有受控 add-url/Extract 的唯一 URL；同 URL 回退与缓存不重复算页，{native_word}。旧任务 limits=null 表示未设置预算，不追溯限制。派发每个批次前先对照三类 remaining（搜索请求、候选 URL、唯一正文 URL）：前轮不要一次占满全部预算，给补缺同时留出搜索、候选和正文名额；预算尾部优先补"重要事件没有可用正文"，不给材料已充分的支线加重复来源。搜索请求与候选和正文名额是各自独立的硬上限，剩下搜索次数但候选或正文名额不足时，同样不要绕过对应预算扩大研究。
+预算与停止条件：{budget_note}
 按 input.json.role_skills 给对应角色分配当前技能及版本；可让角色按路径读取自己对应的字段，没有绑定则使用基础任务说明。父会话不重复抄写已分配的技能。保存实际角色任务和返回句柄。
 如果 additional_roles 有已注册的额外角色，由你按其 instruction 安排工作并把结果交接给写作或评价角色；不得忽略。
 如果 reusable_research 列有旧任务的文件，可作为待核对笔记复用以减少重复工作；不得恢复旧任务或旧模型的 agent 句柄。

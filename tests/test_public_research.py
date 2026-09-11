@@ -104,10 +104,12 @@ def test_builtin_tavily_skill_only_enters_enabled_scout_context(tmp_path, monkey
             assert run['id'] in content and '公开确认已读' in prompt
             assert 'SYNTHETIC_SECRET_DO_NOT_INJECT' not in prompt+content+dispatch+dump(payload)
             assert 'Analyst、Evaluator、Maintainer' in prompt
+            assert '受控 Tavily Search' in prompt and '三类 remaining' in prompt
         else:
             assert 'retrieval_skill' not in payload
             assert not (folder/'capabilities'/'tavily'/'SKILL.md').exists()
             assert 'tavily-search' not in prompt
+            assert '不精确计量原生搜索次数' in prompt and '三类 remaining' not in prompt
             if not allowed:
                 assert '不安排公开检索' in prompt and '分三轮推进检索' not in prompt
                 assert '必须能从开放搜索进入' not in prompt,'a no-web task must not promise open search'
