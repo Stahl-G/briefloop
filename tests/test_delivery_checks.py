@@ -90,3 +90,13 @@ def test_delivery_gaps_need_related_and_impact_and_are_counted(tmp_path):
     checked = brief_checks(store, brief['id'])['gaps']
     assert checked['total'] == 2 and checked['open'] == 1
     assert checked['open_records'][0]['related'] == '利润是否改善'
+
+
+def test_legacy_free_text_gaps_stay_visible(tmp_path):
+    store = Store(tmp_path)
+    source = store.add_source('local', '正文')
+    run = store.create_run({'title': 'Report', 'objective': 'Explain'}, [source['id']])
+    brief = store.publish(run['id'], {'title': 'Report', 'markdown': '正文', 'gaps': ['单位成本未取得']})
+    checked = brief_checks(store, brief['id'])['gaps']
+    assert checked['legacy'] and checked['open'] == 1
+    assert checked['open_records'][0]['impact'] == '单位成本未取得'

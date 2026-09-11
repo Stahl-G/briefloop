@@ -514,3 +514,14 @@ def test_must_fix_expression_anchor_and_overall_consistency():
     assert not must_fix({'status': 'complete', 'overall': '达到要求', 'expression': 3})
     assert not must_fix({'status': 'incomplete', 'overall': '评估未完成', 'expression': 2})
     assert not overall_inconsistent({'status': 'complete', 'overall': '建议修改', 'expression': 2})
+
+
+def test_formal_gate_surfaces_open_and_unresolved_gaps():
+    review = {'status': 'complete', 'coverage_scan_complete': True, 'requirement_checks': []}
+    base = {'requirements': {'requirement_items': []}, 'evidence': {'bindings': []}, 'conflicts': []}
+    open_gap = decision({**base, 'detail': {'gap_records': [
+        {'related': '利润', 'impact': '利润改善无法由材料支持', 'status': 'open'}]}}, review, [])
+    assert open_gap['eligible'] and open_gap['notices'][0]['code'] == 'delivery_gap_open'
+    unresolved = decision({**base, 'detail': {'gap_records': [
+        {'related': '利润', 'impact': '单位成本缺口仍未解决', 'status': 'unresolved'}]}}, review, [])
+    assert not unresolved['eligible'] and unresolved['blockers'][0]['code'] == 'gap_unresolved'

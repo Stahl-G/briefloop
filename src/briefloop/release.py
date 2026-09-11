@@ -141,6 +141,15 @@ def decision(snapshot, review_result, findings):
             notices.append({'code': 'noncore_conflict', 'message': conflict['data']['description'], 'conflict_id': conflict['id']})
         else:
             issue('conflict_unresolved', conflict['data']['description'], conflict_id=conflict['id'])
+    detail = snapshot.get('detail') or {}
+    gap_records = detail.get('gap_records') or [{'impact': str(text), 'status': 'open'} for text in (detail.get('gaps') or [])]
+    for record in gap_records:
+        if record.get('status') == 'resolved':
+            continue
+        if record.get('status') == 'unresolved':
+            issue('gap_unresolved', '存在未解决的交付缺口：' + str(record.get('impact', '')), related=record.get('related', ''))
+        else:
+            notices.append({'code': 'delivery_gap_open', 'message': str(record.get('impact', '')), 'related': record.get('related', '')})
     return {'eligible': not blockers, 'blockers': blockers, 'notices': notices}
 
 
