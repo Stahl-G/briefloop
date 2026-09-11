@@ -267,19 +267,19 @@ async function openModelPicker(targetId){
   await renderModelPicker();
 }
 async function renderModelPicker(){
-  const backend=modelTargetBackend(modelPickerTarget);let models,status;
+  const backend=modelTargetBackend(modelPickerTarget);let models,status,error='';
   try{
     models=await fetchModelCatalog(false,backend);status=`${runtimeName(backend)} · ${models.length} 个模型；可手填模型 ID`;
-  }catch(e){models=[];status='读取失败：'+e.message+'；可直接手填模型 ID'}
+  }catch(e){models=[];error=e.message||'模型目录读取失败'}
   const q=$('model-picker-search').value.trim().toLowerCase();
   const shown=models.filter(m=>!q||m.id.toLowerCase().includes(q)||(m.name||'').toLowerCase().includes(q)||(m.provider||'').toLowerCase().includes(q));
-  $('model-picker-status').textContent=(models.length?status:emptyCatalogLabel(backend,modelCatalogs.get(backend)))+(q?` · 筛出 ${shown.length} 个`:'');
+  $('model-picker-status').textContent=(error?('读取失败：'+error+'；可直接手填模型 ID'):(models.length?status:emptyCatalogLabel(backend,modelCatalogs.get(backend))))+(q?` · 筛出 ${shown.length} 个`:'');
   let lastProvider=null,html='';
   for(const m of shown){
     if(m.provider!==lastProvider){lastProvider=m.provider;html+=`<h3 class="workspace-list-heading">${esc(m.provider)}</h3>`}
     html+=`<button type="button" class="workspace-choice" data-model-pick="${esc(m.id)}"><span><strong>${esc(m.id)}</strong><small>${esc(m.name||'')}</small></span><em>选用</em></button>`;
   }
-  $('model-picker-list').innerHTML=html||(models.length?'<p class="help">没有匹配的模型。可直接输入完整模型 ID 后按回车选用。</p>':'<p class="help">'+esc(emptyCatalogLabel(backend,modelCatalogs.get(backend)))+'</p>');
+  $('model-picker-list').innerHTML=html||(error?('<p class="help">读取失败：'+esc(error)+'</p>'):(models.length?'<p class="help">没有匹配的模型。可直接输入完整模型 ID 后按回车选用。</p>':'<p class="help">'+esc(emptyCatalogLabel(backend,modelCatalogs.get(backend)))+'</p>'));
   $('model-picker-list').querySelectorAll('[data-model-pick]').forEach(b=>b.onclick=()=>pickModel(b.dataset.modelPick));
 }
 function pickModel(id){

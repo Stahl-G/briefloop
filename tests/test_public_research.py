@@ -17,7 +17,7 @@ def test_public_research_empty_inputs_and_actual_network_instructions(tmp_path):
     slots=payload['scout_slots']
     assert len(slots)==store.settings()['max_parallel']
     assert len({slot['result_file'] for slot in slots})==len(slots)
-    assert all(Path(slot[key]).is_absolute() for slot in slots for key in ('directory','result_file','schema_path'))
+    assert all(Path(slot[key]).is_absolute() for slot in slots for key in ('directory','result_file','schema_path','scout_contract_path'))
     assert all(Path(slot['directory']).is_dir() and Path(slot['schema_path']).is_file() for slot in slots)
     assert all(Path(slot['result_file']).parent==Path(slot['directory']) for slot in slots)
     assert '不要假设 host 自动隔离工作目录' in prompt
