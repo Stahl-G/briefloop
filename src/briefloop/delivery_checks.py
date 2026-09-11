@@ -173,8 +173,11 @@ def brief_checks(store, version_id):
         export['figure_error'] = None
     except (ValueError, OSError) as exc:
         export['figure_error'] = str(exc)
+    records = detail.get('gap_records') or []
+    open_gaps = [r for r in records if r.get('status') != 'resolved']
     return {'version_id': version_id,
             'broken_refs': check_refs(store, brief['markdown']),
+            'gaps': {'total': len(records), 'open': len(open_gaps), 'open_records': open_gaps},
             'numbers': {'total': len(numbers), 'checked': checked,
                         'matched': sum(r['found'] for r in numbers),
                         'status': 'not_checked' if not checked else 'partial' if checked < len(numbers) else 'checked_bindings',

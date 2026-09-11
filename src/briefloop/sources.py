@@ -1,11 +1,11 @@
 """Small source readers. Preserve originals; extraction failures stay visible."""
 from html.parser import HTMLParser
 from . import __version__
+from .host_bins import find as find_host_bin
 from io import BytesIO
 from pathlib import Path
 import hashlib
 import subprocess
-import shutil
 import os
 import tempfile
 import urllib.request
@@ -39,10 +39,11 @@ def extract(name, data, *, with_extractor=False):
         from .media import pdf_metadata,PDF_NOTICE
         pdf_metadata(data)
         extractor='pdftotext -layout'
-        if shutil.which('pdftotext'):
+        pdftotext=find_host_bin('pdftotext')
+        if pdftotext:
             with tempfile.TemporaryDirectory(prefix='briefloop-read-') as tmp:
                 p=Path(tmp)/'source.pdf';p.write_bytes(data)
-                proc=subprocess.run(['pdftotext','-layout',str(p),'-'],capture_output=True,timeout=90)
+                proc=subprocess.run([pdftotext,'-layout',str(p),'-'],capture_output=True,timeout=90)
                 text=proc.stdout.decode('utf-8',errors='replace') if proc.returncode==0 else ''
         else:text=''
         if not text.strip():
@@ -142,13 +143,14 @@ def upload(store, name, data):
 
 def _fetch_bytes(url):
     if not url.startswith(('https://','http://')):raise ValueError('请输入 HTTP(S) 来源地址')
-    if shutil.which('curl'):
+    curl=find_host_bin('curl')
+    if curl:
         env=dict(os.environ)
         for key,value in urllib.request.getproxies().items():
             if key in ('http','https','all'):env.setdefault(key+'_proxy',value)
         with tempfile.TemporaryDirectory(prefix='briefloop-web-') as tmp:
             path=Path(tmp)/'response'
-            command=['curl','--fail','--silent','--show-error','--location','--proto','=http,https','--proto-redir','=http,https','--connect-timeout','12','--max-time','40','--max-filesize',str(15*1024*1024),'-A',f'BriefLoop/{__version__} (local research reader)','-o',str(path),'-w','%{content_type}',url]
+            command=[curl,'--fail','--silent','--show-error','--location','--proto','=http,https','--proto-redir','=http,https','--connect-timeout','12','--max-time','40','--max-filesize',str(15*1024*1024),'-A',f'BriefLoop/{__version__} (local research reader)','-o',str(path),'-w','%{content_type}',url]
             proc=subprocess.run(command,capture_output=True,text=True,env=env,timeout=45)
             if proc.returncode:raise ValueError(proc.stderr.strip() or '网页读取失败')
             data=path.read_bytes();content_type=proc.stdout;encoding='utf-8'

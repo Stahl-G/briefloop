@@ -273,13 +273,13 @@ async function renderModelPicker(){
   }catch(e){models=[];status='读取失败：'+e.message+'；可直接手填模型 ID'}
   const q=$('model-picker-search').value.trim().toLowerCase();
   const shown=models.filter(m=>!q||m.id.toLowerCase().includes(q)||(m.name||'').toLowerCase().includes(q)||(m.provider||'').toLowerCase().includes(q));
-  $('model-picker-status').textContent=status+(q?` · 筛出 ${shown.length} 个`:'');
+  $('model-picker-status').textContent=(models.length?status:emptyCatalogLabel(backend,modelCatalogs.get(backend)))+(q?` · 筛出 ${shown.length} 个`:'');
   let lastProvider=null,html='';
   for(const m of shown){
     if(m.provider!==lastProvider){lastProvider=m.provider;html+=`<h3 class="workspace-list-heading">${esc(m.provider)}</h3>`}
     html+=`<button type="button" class="workspace-choice" data-model-pick="${esc(m.id)}"><span><strong>${esc(m.id)}</strong><small>${esc(m.name||'')}</small></span><em>选用</em></button>`;
   }
-  $('model-picker-list').innerHTML=html||'<p class="help">没有匹配的模型。</p>';
+  $('model-picker-list').innerHTML=html||(models.length?'<p class="help">没有匹配的模型。可直接输入完整模型 ID 后按回车选用。</p>':'<p class="help">'+esc(emptyCatalogLabel(backend,modelCatalogs.get(backend)))+'</p>');
   $('model-picker-list').querySelectorAll('[data-model-pick]').forEach(b=>b.onclick=()=>pickModel(b.dataset.modelPick));
 }
 function pickModel(id){

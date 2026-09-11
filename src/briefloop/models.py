@@ -201,6 +201,14 @@ class NumberBinding(Model):
     source_excerpt: str = ""
 
 
+class GapRecord(Model):
+    """One delivery-affecting gap. Tool failures stay in execution records instead."""
+    related: str = Field(min_length=1)
+    impact: str = Field(min_length=1)
+    action: str = ""
+    status: Literal["open", "addressed", "review_needed", "resolved", "unresolved"] = "open"
+
+
 class BriefDraft(Model):
     figures: list[str] = Field(default_factory=list)
     report_data: IndustryData | None = None
@@ -209,6 +217,7 @@ class BriefDraft(Model):
     editor_document: dict | None = None
     citations: list[Citation] = Field(default_factory=list)
     gaps: list[str] = Field(default_factory=list)
+    gap_records: list[GapRecord] = Field(default_factory=list)
     number_bindings: list[NumberBinding] = Field(default_factory=list)
     research_notes: list[dict] = Field(default_factory=list)
     reader_contract: dict | None = None
