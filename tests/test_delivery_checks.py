@@ -1,4 +1,6 @@
 """Regressions for false assurance in version-scoped delivery checks."""
+import pytest
+
 from briefloop.delivery_checks import brief_checks, check_export, check_numbers, normalized
 from briefloop.store import Store
 
@@ -73,3 +75,18 @@ def test_version_checks_distinguish_absent_partial_conflict_and_stale(tmp_path):
     assert checks['status'] == 'not_checked'
     assert check_export(r'a \*\*b\*\*')['escaped_bold']
     assert check_export('![图](briefloop-figure:fig_01)')['figure_markers'] == ['fig_01']
+
+
+def test_delivery_gaps_need_related_and_impact_and_are_counted(tmp_path):
+    from briefloop.models import GapRecord
+    with pytest.raises(ValueError):
+        GapRecord(related='利润问题', impact='')
+    store = Store(tmp_path)
+    source = store.add_source('local', '正文')
+    run = store.create_run({'title': 'Report', 'objective': 'Explain'}, [source['id']])
+    brief = store.publish(run['id'], {'title': 'Report', 'markdown': '正文', 'gap_records': [
+        {'related': '利润是否改善', 'impact': '现有材料不足以支持利润改善结论', 'action': '补查单位成本', 'status': 'open'},
+        {'related': '旧的次要缺口', 'impact': '已补查', 'status': 'resolved'}]})
+    checked = brief_checks(store, brief['id'])['gaps']
+    assert checked['total'] == 2 and checked['open'] == 1
+    assert checked['open_records'][0]['related'] == '利润是否改善'

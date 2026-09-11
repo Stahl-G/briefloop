@@ -127,7 +127,7 @@ def instructions(spec, role='analyst', *, include_spec=True):
               '围绕读者目的取舍信息，写成连贯、直接、有依据的报告。准确保留日期、单位、事实状态与必要条件；内部研究过程写入 research_notes/gaps，按用户明确需要安排正文。')
     common = '''本轮明确要求优先于模板默认，其次是兼容技能及通用默认。原始 objective 可能混合内容目标、研究方法和写作偏好，要执行各自职责，不将整段要求抄成正文。
 模板主章节默认固定；用户明确要求可增删、改名或重排。sections 指定的职责、顺序和人工占位必须落实。mode=manual 只写指定 placeholder；manual_sections 放在相应已有主章节内并只留“待填充”，不开展替代研究、不作为覆盖不足。
-影响交付的缺口写入 research_notes 时带四字段：关联对象（哪条必答问题、判断或正文位置）、具体影响、建议处理、当前状态；默认状态为待处理，只有独立评价或核查确认后才能写不影响。工具失败、覆盖清单、计算过程等执行信息只留在独立记录，不写进正文。'''
+影响交付的缺口写入 draft.gap_records，每条含 related（哪条必答问题、判断或正文位置）、impact、action、status 四字段；status 默认 open，只有独立评价或核查确认后才能标 resolved。纯执行信息（工具失败、覆盖清单、计算过程）不写入 gap_records，也不写入正文。'''
     role_text = {
         'orchestrator': '''规划交接：在已有 plan.json 的 reader_contract 字段保存本轮要求解释，按 reader_contract.schema.json 逐条写 requirement_id、逐字 source_quote、kind、instruction。objective 中混合的要求按含义拆成 reader_content（应回答的问题与内容范围）、research_method（如何核查与研究）、writing_preference（呈现方式）、manual_assignment（人工分工）；每项原始要求都必须覆盖。Python只校验出处及结构，不能替你判断语义；不得把必答内容改成可选或用方法约束替代正文任务。明确指令有冲突且影响结果时才提问，其余直接执行。
 传给Scout的是具体研究任务和对应方法；传给Analyst的是同一份已保存约定、原始要求和证据索引。由你核对归类完整且没有改变用户意思，交接保留同一份约定，后续评价和修订复用。''',
