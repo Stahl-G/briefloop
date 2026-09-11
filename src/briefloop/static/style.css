@@ -170,3 +170,15 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 .chat-setup-cta{margin:0 0 18px;padding:14px 16px;background:var(--paper);border:1px solid var(--line);border-radius:8px}
 .chat-setup-cta p{margin:0 0 10px;color:var(--muted)}
 .chat-runtime-label{font:500 11px/1 var(--mono);color:var(--green);background:#eef4ef;border-radius:5px;padding:4px 7px;white-space:nowrap}
+/* First-run welcome: pick a host and model once, then enter the chat. */
+.welcome-wrap{max-width:640px;margin:6vh auto;padding:0 6px}
+.welcome-runtimes{display:grid;gap:8px;margin:16px 0}
+.welcome-host{display:flex;justify-content:space-between;align-items:center;gap:12px;width:100%;text-align:left;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:white}
+.welcome-host:hover{background:#f6f8f4}
+.welcome-host.selected{border-color:var(--green);box-shadow:inset 0 0 0 1px var(--green)}
+.welcome-host small{color:var(--muted)}
+.welcome-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0}
+.welcome-purposes{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}
+.welcome-purpose{padding:8px 12px;border:1px solid var(--line);border-radius:20px;background:white;font-size:13px}
+.welcome-purpose.selected{border-color:var(--green);color:var(--green)}
+.welcome-cta{display:flex;align-items:center;gap:12px;margin-top:18px}
