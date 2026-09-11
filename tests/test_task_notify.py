@@ -39,3 +39,13 @@ def test_internal_execution_sessions_are_neither_listed_nor_targeted(tmp_path):
     assert [s['id'] for s in chat.sessions('active')] == [visible['id']]
     store.enqueue('audit_bundle', {})  # no session_id: must not land in the internal session
     assert _notes(chat, visible['id']) and not _notes(chat, internal['id'])
+
+
+def test_dismiss_hides_a_finished_task_but_not_a_running_one(tmp_path):
+    import pytest
+    store = Store(tmp_path)
+    job = store.enqueue('audit_bundle', {})
+    with pytest.raises(ValueError):
+        store.dismiss_job(job['id'])
+    store.update_job(job['id'], 'complete')
+    assert store.dismiss_job(job['id'])['status'] == 'dismissed'

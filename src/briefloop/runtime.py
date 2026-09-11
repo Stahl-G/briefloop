@@ -388,21 +388,9 @@ class Worker:
     def resume(self,jid):
         job=self.store.one('jobs',jid)
         if job['status'] not in ('failed','interrupted','cancelled'):raise ValueError('这个任务不需要恢复')
-        payload=json.loads(job['payload'])
-        if job['kind'] in ('export_docx','release','audit_bundle','source_refresh'):
-            self.store.update_job(jid,'queued');return self.store.one('jobs',jid)
-        current=self.store.runtime_config()
-        current_roles=self.store.role_model_config(current)
-        from .backends import validate_backend
-        backend=validate_backend(payload.get('agent_backend','codex'))
-        current_backend=self.store.settings().get('agent_backend','codex')
-        old_roles={role:payload.get('role_models',{}).get(role,payload.get('runtime')) for role in ROLE_NAMES}
-        evaluation=stage_job(self.store,job,'evaluator',mode='pairwise' if job['kind']=='learn' else 'single')
-        old_roles['evaluator']=json.loads(evaluation['payload'])['runtime']
-        if payload.get('runtime')!=current or old_roles!=current_roles or backend!=current_backend:
-            # A different model or backend gets a new attempt, never resumes
-            # expensive old child handles.
-            return self.store.enqueue(job['kind'],{**payload,'runtime':current,'role_models':current_roles,'previous_job_id':jid,'agent_backend':current_backend})
+        # Resume continues the same task with its frozen model and backend. Starting a
+        # different attempt whenever the current settings differ made every 恢复 click
+        # enqueue another job, piling up duplicates. A new execution is a new task.
         self.store.update_job(jid,'queued')
         return self.store.one('jobs',jid)
 

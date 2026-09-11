@@ -484,6 +484,14 @@ class Store:
         if status in TERMINAL:
             _notify_task(self, self.one("jobs", jid), status)
 
+    def dismiss_job(self, jid):
+        """Hide a finished task from the lists without deleting its records."""
+        job = self.one('jobs', jid)
+        if job['status'] in ('queued', 'running'):
+            raise ValueError('任务仍在运行，请先停止')
+        self.update_job(jid, 'dismissed')
+        return self.one('jobs', jid)
+
     def event(self, job_id, kind, data):
         with self.tx() as c:
             c.execute("INSERT INTO events(job_id,kind,data,created) VALUES(?,?,?,?)", (job_id, kind, dump(data), now()))

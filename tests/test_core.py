@@ -39,15 +39,15 @@ class CoreBehavior(unittest.TestCase):
         s.create_run({'title':'试验任务','objective':'仅用于验证'},json.loads(self.run['source_ids']),mode='trial',skill_id=None)
         self.assertEqual(s.meta('requirements')['title'],'测试')
 
-    def test_model_change_creates_fresh_luna_attempt(self):
+    def test_model_change_keeps_the_frozen_resume_attempt(self):
         s=self.store
         s.set_meta('settings',{**s.settings(),'model':'gpt-6-astra','reasoning_effort':'medium'})
         old=s.enqueue('generate',{'run_id':self.run['id']});s.update_job(old['id'],'cancelled')
+        frozen=s.one('jobs',old['id'])['payload']
         s.set_meta('settings',{**s.settings(),'model':'gpt-5.6-luna','reasoning_effort':'high'})
-        new=Worker(s).resume(old['id'])
-        self.assertNotEqual(new['id'],old['id'])
-        self.assertEqual(s.one('jobs',old['id'])['status'],'cancelled')
-        self.assertEqual(json.loads(new['payload'])['runtime'],{'model':'gpt-5.6-luna','reasoning_effort':'high'})
+        resumed=Worker(s).resume(old['id'])
+        self.assertEqual(resumed['id'],old['id'])
+        self.assertEqual(s.one('jobs',old['id'])['payload'],frozen)
 
     def test_refined_draft_becomes_child_version_not_failure(self):
         s=self.store
