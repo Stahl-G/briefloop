@@ -289,6 +289,20 @@ function updateModelLabel(){const op=backendValue()==='opencode';const cfg=op?{m
 async function saveModel(){const model=$('model-select').value.trim();if(!model)throw Error('请输入模型 ID');const op=backendValue()==='opencode';if(op){if(!model.includes('/'))throw Error('Opencode 模型必须是 provider/model 形式');await api('settings',{agent_backend:'opencode',model_selection_required:false,model,model_variant:$('model-variant').value.trim()||null})}else if(backendValue()!=='codex')await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,model_provider:null,model_variant:null});else await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,reasoning_effort:$('effort-select').value,model_provider:$('model-provider').value.trim()||null});updateModelLabel()}
 let runtimeCatalog=[];
 function runtimeName(id){return runtimeCatalog.find(r=>r.id===id)?.name||id}
+function renderSettingsSessionNote(){
+ const box=$('settings-session-note');if(!box)return;
+ const session=chat.session,backend=session?.runtime?.backend,chosen=backendValue();
+ if(!session){box.hidden=false;box.innerHTML='当前没有打开的会话。本页的模型与执行引擎设置用于新会话。';return}
+ const model=session.runtime?.model;
+ const head=`当前会话：<strong>${esc(runtimeName(backend))} · ${esc(model?friendlyModel(model):'宿主默认')}</strong>`;
+ box.hidden=false;
+ if(chosen&&chosen!==backend){
+  box.innerHTML=head+`。本页把执行引擎设为 <strong>${esc(runtimeName(chosen))}</strong>，与当前会话不同；换引擎需要新开会话。 <button type="button" class="outline" id="settings-new-session">用以上设置开新会话</button>`;
+  const button=$('settings-new-session');if(button)button.onclick=()=>newChat();
+ }else{
+  box.innerHTML=head+'。本页改动用于新会话；当前会话的模型可在对话里的模型选择器调整。';
+ }
+}
 function renderRuntimeDiscovery(){
  const select=$('agent-backend'),chosen=select.value||state.settings.agent_backend||'codex';
  select.replaceChildren();
@@ -305,6 +319,7 @@ function renderRuntimeDiscovery(){
  const r=await api('runtime-test',{backend:button.dataset.runtimeTest,model});await selectChat(r.session_id);
  },'已提交模型测试；进展见对话，可随时停止'));
  $('runtime-discovery-details').querySelectorAll('[data-runtime-select]').forEach(button=>button.onclick=()=>{if(button.dataset.runtimeSelect===backendValue())return;select.value=button.dataset.runtimeSelect;select.dispatchEvent(new Event('change'))});
+ renderSettingsSessionNote();
 }
 async function refreshRuntimeDiscovery(force=false){
  const select=$('agent-backend');if(!select.value){const backend=state.settings.agent_backend||'codex';if(!Array.from(select.options).some(o=>o.value===backend))select.add(new Option(backend,backend));select.value=backend;}
@@ -312,7 +327,7 @@ async function refreshRuntimeDiscovery(force=false){
  $('runtime-discovery-status').textContent='正在检测本机 CLI…';$('runtime-discovery-refresh').disabled=true;
  try{const data=await api('runtimes'+(force?'?refresh=1':''));runtimeCatalog=data.runtimes||[];renderRuntimeDiscovery();$('runtime-discovery-status').textContent=`已接入 ${runtimeCatalog.filter(r=>r.available).length} 个本机 CLI；账号与模型可通过短测试验证。`;await refreshModelSuggestions(force)}catch(e){$('runtime-discovery-status').textContent='检测失败：'+e.message}finally{$('runtime-discovery-refresh').disabled=false}
 }
-$('agent-backend').onchange=()=>action(async()=>{const backend=backendValue(),dropped=Object.keys(state.settings.role_models||{}).length;await api('settings',{agent_backend:backend,model_selection_required:true,role_models:{}});state.settings.agent_backend=backend;state.settings.model_selection_required=true;state.settings.role_models={};$('model-select').value='';$('chat-model').value='';modelCatalog={backend:null,at:0,models:[]};if(chat.session&&!chatActive()&&chat.session.runtime?.backend!==backend)await newChat();renderRuntimeDiscovery();renderRoleModels();renderBackend();updateComposer();await refreshModelSuggestions();notice(dropped?'宿主已切换；原宿主的角色模型已清空，留空即继承主链模型':'Runtime 已保存；请选择或输入模型')});$('model-variant').onchange=()=>action(saveModel,'Variant 已保存；下一次启动生效');
+$('agent-backend').onchange=()=>action(async()=>{const backend=backendValue(),dropped=Object.keys(state.settings.role_models||{}).length;await api('settings',{agent_backend:backend,model_selection_required:true,role_models:{}});state.settings.agent_backend=backend;state.settings.model_selection_required=true;state.settings.role_models={};$('model-select').value='';$('chat-model').value='';modelCatalog={backend:null,at:0,models:[]};renderRuntimeDiscovery();renderRoleModels();renderBackend();updateComposer();await refreshModelSuggestions();notice(dropped?'宿主已切换；原宿主的角色模型已清空，留空即继承主链模型':'Runtime 已保存；请选择或输入模型')});$('model-variant').onchange=()=>action(saveModel,'Variant 已保存；下一次启动生效');
 let modelCatalog={backend:null,at:0,models:[]};
 const modelCatalogs=new Map();
 function modelTargetBackend(target){return target==='chat-model'?chat.session?.runtime?.backend||backendValue():backendValue()}
@@ -363,6 +378,14 @@ $('model-picker-close').onclick=()=>$('model-picker').close();
 $('model-picker-search').oninput=()=>renderModelPicker();
 $('model-picker-refresh').onclick=()=>action(async()=>{await refreshModelSuggestions(true);await renderModelPicker()},'模型目录已刷新');
 $('model-select').onchange=()=>action(saveModel,'模型已保存；下一次启动生效');$('effort-select').onchange=()=>action(saveModel,'推理档位已保存；下一次启动生效');$('model-provider').onchange=()=>action(saveModel,'Provider 已保存；下一次启动生效');$('model-browse').onclick=()=>openModelPicker('model-select');
+$('model-apply-session').onclick=()=>{
+ const session=chat.session;
+ if(!session){notice('当前没有打开的会话，请先新建或选择对话',true);return}
+ if(chatActive()){notice('会话正在运行，请等待或停止后再应用',true);return}
+ if(session.runtime?.backend!==backendValue()){notice('执行引擎不同，不能应用到当前会话；请用「用以上设置开新会话」',true);return}
+ const model=$('model-select').value.trim();if(!model){notice('请先选择或输入模型 ID',true);return}
+ $('chat-model').value=model;updateComposer();renderSettingsSessionNote();notice('已应用到当前会话，下一条消息生效（执行引擎按会话固定）');
+};
 
 $('version-history').onclick=()=>action(async()=>{
  await savedVersion();if(!current)return;

@@ -158,3 +158,5 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 .message-action::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#1e2320;color:#fff;font:500 12px/1 var(--font);padding:6px 9px;border-radius:6px;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .12s;z-index:20}
 .message-action:hover::after{opacity:1}
 .apply-requirements{margin-top:6px;font-size:12px}
+.settings-session-note{background:var(--paper);border:1px solid var(--line);border-radius:7px;padding:9px 12px;margin:10px 0}
+.settings-session-note button{margin-left:6px}
