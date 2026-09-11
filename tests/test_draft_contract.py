@@ -103,6 +103,13 @@ def test_check_draft_reports_drift_in_band_before_the_host_reads_it(tmp_path):
     assert failed.returncode == 1 and json.loads(failed.stdout)['errors'][0]['field'] == 'title'
 
 
+def test_a_made_up_citation_id_says_which_id_it_was(tmp_path):
+    store, run, source = make_run(tmp_path)
+    with pytest.raises(ValueError, match='src_invented'):
+        store.publish(run['id'], {'title': '周报', 'markdown': '正文。',
+                                  'citations': [{'source_id': 'src_invented'}]})
+
+
 def test_free_form_fields_keep_every_key_they_were_given():
     document = {'type': 'doc', 'content': [], 'editorOnlyExtra': 1}
     cleaned, dropped = prune_unknown({'title': 't', 'markdown': 'x', 'editor_document': document,
