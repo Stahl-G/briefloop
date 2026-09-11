@@ -243,7 +243,10 @@ class Store:
             draft.reader_contract=validate_reader_contract(resolve(json.loads(run['requirements'])),draft.reader_contract)
         references=set(json.loads(run['requirements']).get('reference_source_ids',[]))
         for ref in draft.citations:
-            self.one("sources", ref.source_id)
+            try:self.one("sources", ref.source_id)
+            except ValueError:
+                # A made-up or mistyped id must say which one, not "Record not found".
+                raise ValueError('引用的来源 '+ref.source_id+' 不在本工作区；请使用登记工具返回的真实 source_id') from None
             if ref.source_id in references:
                 raise ValueError('风格参考不能作为报告事实引用')
         if draft.report_data is not None:

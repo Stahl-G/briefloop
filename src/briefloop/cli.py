@@ -47,6 +47,8 @@ def main():
     count=ts.add_parser('count-brief',help='按统一中英混合规则统计 Markdown 正文长度')
     count.add_argument('--file',required=True,help='Markdown 正文文件，不包含 citations 元数据')
     count.add_argument('--target-words',type=int);count.add_argument('--max-words',type=int)
+    check=ts.add_parser('check-draft',help='按稿件契约自检 draft.json；只检查不发布')
+    check.add_argument('--file',required=True)
     report_data=ts.add_parser('prepare-report-data',help='核对行业指标来源并计算变化；输出计算表与数据缺口')
     report_data.add_argument('--run',required=True);report_data.add_argument('--file',required=True)
     report_data.add_argument('--output',help='保存计算包 JSON 的路径；原始 records 写入 draft.report_data')
@@ -132,6 +134,11 @@ def main():
         elif a.tool=='extract-workbook-figures':
             from .workbook_figures import extract_workbook_figures
             print(json.dumps(extract_workbook_figures(store,a.id),ensure_ascii=False))
+        elif a.tool=='check-draft':
+            from .models import BriefDraft, check_artifact
+            report=check_artifact(json.loads(Path(a.file).expanduser().read_text(encoding='utf-8')),BriefDraft)
+            print(json.dumps(report,ensure_ascii=False))
+            if report['status']!='ok':raise SystemExit(1)
         elif a.tool=='count-brief':
             from .length import length_stats
             result=length_stats(Path(a.file).expanduser().read_text(encoding='utf-8'),target_words=a.target_words,max_words=a.max_words)

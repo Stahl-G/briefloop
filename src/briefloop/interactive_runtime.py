@@ -125,8 +125,21 @@ class InteractiveRuntime:
         folder.mkdir(parents=True, exist_ok=True)
         resume_on_complete = resume_on_complete or not _usable_output(job, folder, self.store)
         tracker = ProgressTracker(self.store, job['id'], folder)
+        deferred = [None]
         def tick():
-            on_tick()  # Admit a complete draft while its evaluator is still working.
+            try:
+                on_tick()  # Admit a complete draft while its evaluator is still working.
+            except Exception as exc:
+                # An artifact the agent is still writing cannot interrupt model work or
+                # replace the real failure. The caller publishes authoritatively once
+                # the turn ends and reports the reason from there.
+                reason = str(exc)
+                if reason != deferred[0]:
+                    deferred[0] = reason
+                    try:
+                        self.store.event(job['id'], 'draft_admission_deferred', {'error': reason})
+                    except Exception:
+                        pass
             try:
                 tracker.update()
             except Exception:
