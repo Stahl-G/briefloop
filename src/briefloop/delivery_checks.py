@@ -174,10 +174,18 @@ def brief_checks(store, version_id):
     except (ValueError, OSError) as exc:
         export['figure_error'] = str(exc)
     records = detail.get('gap_records') or []
-    open_gaps = [r for r in records if r.get('status') != 'resolved']
+    legacy = detail.get('gaps') or []
+    if records:
+        open_records = [r for r in records if r.get('status') != 'resolved']
+        total = len(records)
+    else:
+        # Older drafts only filled the free-text list; keep those gaps visible.
+        open_records = [{'impact': str(text), 'status': 'open', 'legacy': True} for text in legacy]
+        total = len(legacy)
     return {'version_id': version_id,
             'broken_refs': check_refs(store, brief['markdown']),
-            'gaps': {'total': len(records), 'open': len(open_gaps), 'open_records': open_gaps},
+            'gaps': {'total': total, 'open': len(open_records), 'open_records': open_records,
+                     'legacy': bool(legacy and not records)},
             'numbers': {'total': len(numbers), 'checked': checked,
                         'matched': sum(r['found'] for r in numbers),
                         'status': 'not_checked' if not checked else 'partial' if checked < len(numbers) else 'checked_bindings',
