@@ -3,11 +3,11 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "briefloop-local"
-version = "0.17.1"
+name = "briefloop"
+version = "0.18.0"
 description = "Local multi-runtime agent workbench for sourced briefings, independent review and skill learning"
 requires-python = ">=3.11"
-dependencies = ["pydantic>=2,<3", "markdown-it-py>=3,<5", "wikiskill-research==0.1.1+briefloop.2", "python-docx>=1", "pypdf>=5", "Pillow>=11", "pypdfium2>=4,<6", "openpyxl>=3.1,<4"]
+dependencies = ["pydantic>=2,<3", "markdown-it-py>=3,<5", "python-docx>=1", "pypdf>=5", "Pillow>=11", "pypdfium2>=4,<6", "openpyxl>=3.1,<4"]
 
 [project.optional-dependencies]
 docx = ["python-docx>=1"]
@@ -21,3 +21,4 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 briefloop = ["static/*", "skill_assets/*/*.md"]
+wikiskill = ["**/*"]

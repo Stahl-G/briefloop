@@ -115,3 +115,17 @@ def save_discovery(store,run_id,request_id,raw):
     path=folder/(request_id+'.json')
     path.write_bytes(raw)
     return str(path)
+
+
+def save_request_record(store,run_id,request_id,record):
+    """Persist the redacted request envelope next to the raw provider response.
+
+    The envelope records what was actually sent and what happened (parameters,
+    local/provider request ids, outcome, failure kind, admitted URLs, budget),
+    without credentials or hidden reasoning. Raw responses stay separate so old
+    readers are unaffected.
+    """
+    folder=store.root/'discovery'/run_id;folder.mkdir(parents=True,exist_ok=True)
+    path=folder/(request_id+'.request.json')
+    path.write_text(dump(record),encoding='utf-8')
+    return str(path)

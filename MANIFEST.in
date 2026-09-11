@@ -1,6 +1,5 @@
 recursive-include docs *.md
 include VERSION README.md THIRD_PARTY_NOTICES.md CHANGELOG.md bootstrap.py start.sh package.json package-lock.json
-recursive-include vendor/wheels *.whl *.md
 recursive-include frontend *.js
 recursive-include src/briefloop/static *
 recursive-include src/briefloop/skill_assets *.md
