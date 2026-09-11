@@ -135,23 +135,6 @@ function renderTasks(){
  box.querySelectorAll('[data-task-resume]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.taskResume})));
  box.querySelectorAll('[data-task-dismiss]').forEach(b=>b.onclick=()=>action(()=>api('task-dismiss',{job_id:b.dataset.taskDismiss})));
 }
-function renderArtifacts(){
- const box=$('artifact-list');if(!box||!state)return;
- const rows=[],seen=new Set();
- for(const brief of state.briefs){if(seen.has(brief.run_id))continue;seen.add(brief.run_id);rows.push({brief})}
- const fileKinds={export_docx:'工作稿 Word',release:'正式 Word',audit_bundle:'审计包'};
- for(const j of state.jobs){
-  if(!fileKinds[j.kind]||j.status!=='complete')continue;
-  const payload=parse(j.payload),result=parse(j.result);
-  const url=j.kind==='release'?'/api/release-file?id='+encodeURIComponent(payload.release_id):j.kind==='audit_bundle'?'/api/audit-file?job='+encodeURIComponent(j.id):result.download_url;
-  rows.push({label:fileKinds[j.kind],url});
- }
- const items=rows.slice(0,8);
- box.innerHTML=items.length?items.map(it=>it.brief
-  ?`<button type="button" class="artifact-item" data-artifact-brief="${esc(it.brief.id)}"><span>${esc(parse(it.brief.detail).title||'简报草稿')}</span><small>打开稿件</small></button>`
-  :`<a class="artifact-item" href="${esc(it.url||'#')}" download><span>${esc(it.label)}</span><small>下载</small></a>`).join(''):'<p class="help">暂无产物</p>';
- box.querySelectorAll('[data-artifact-brief]').forEach(b=>b.onclick=()=>{const brief=state.briefs.find(x=>x.id===b.dataset.artifactBrief);if(brief){openBrief(brief,{follow:false});page('report')}});
-}
 const WELCOME_PURPOSES=[
  {id:'internal',label:'内部简报',prompt:'/discuss 我要做一份面向管理层的内部简报，请先和我确认目的、读者、必答问题、篇幅与格式。',fields:{writing_mode:'internal_report',report_profile:'brief'}},
  {id:'public',label:'公开研究',prompt:'请围绕我的研究目标查找公开资料，写一份有依据的简报。',fields:{writing_mode:'general',report_profile:'brief',allow_web:true}},
@@ -198,7 +181,7 @@ function render(first){
  tryOpenPending();if(!current&&state.briefs.length)openBrief(state.briefs[0],{follow:true});if(current&&followUpdates&&!dirty&&!saving){const latest=state.briefs.find(b=>b.run_id===current.run_id);if(latest?.parent_id===current.id&&latest.author==='agent')openBrief(latest,{follow:true})}if(current){$('version-select').value=current.id;assessment();citations();renderBriefLength()}
  $('empty').hidden=!!current||state.jobs.length>0;$('document-area').hidden=!current;
  $('jobs').innerHTML=state.jobs.filter(j=>j.status!=='dismissed').map(j=>`<div class="job"><span class="tag ${j.status==='failed'?'error':''}">${statuses[j.status]}</span><div class="job-main">${{generate:'生成简报',assess:'重新评分',review:'独立审阅',revise:'按审阅修订',learn:'WikiSkill 学习',export_docx:'生成工作稿 Word',release:'制作正式 Word',audit_bundle:'制作审计包',source_refresh:'复查来源',prepare_template:'准备模板'}[j.kind]}<small>${['export_docx','release','audit_bundle'].includes(j.kind)?'本地脚本':j.kind==='source_refresh'?'来源工具':parse(j.payload).runtime?esc(modelLabel(parse(j.payload).runtime)):'旧任务：沿用当时本机配置'} · ${j.progress?`第 ${j.progress.round}/${j.progress.k} 轮 · ${{maintainer:'整理经验',proposer:'提出候选',validation:'验证候选'}[j.progress.phase]||j.progress.phase} · `:''}${esc(j.error||(j.kind==='source_refresh'?sourceRefreshOutcome(parse(j.result).outcome):'')||new Date(j.created).toLocaleString())}</small></div>${j.kind==='learn'?`<button data-details="${j.id}">查看比较</button>`:''}${['queued','running'].includes(j.status)?`<button data-stop="${j.id}">停止</button>`:''}${['failed','interrupted','cancelled'].includes(j.status)?`<button data-resume="${j.id}">恢复</button>`:''}</div>`).join('');
- document.querySelectorAll('[data-stop]').forEach(b=>b.onclick=()=>action(()=>api('stop',{job_id:b.dataset.stop})));document.querySelectorAll('[data-resume]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.resume})));renderTasks();renderArtifacts();renderAssistantSummary();renderReportStatus();renderReports();renderSourcesPage();renderTemplatesPage();if($('welcome')&&!$('welcome').hidden)renderWelcome();
+ document.querySelectorAll('[data-stop]').forEach(b=>b.onclick=()=>action(()=>api('stop',{job_id:b.dataset.stop})));document.querySelectorAll('[data-resume]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.resume})));renderTasks();renderAssistantSummary();renderReportStatus();renderReports();renderSourcesPage();renderTemplatesPage();if($('welcome')&&!$('welcome').hidden)renderWelcome();
  document.querySelectorAll('[data-details]').forEach(b=>b.onclick=()=>action(async()=>{const d=await api('learning-details?job='+b.dataset.details);$('source-title').textContent='技能比较与依据';$('source-original').hidden=true;$('source-provenance').hidden=true;$('source-link').textContent='';$('source-body').textContent=d.rounds.length?d.rounds.map((r,i)=>`第 ${i+1} 轮\n${r.result?.reason||'比较尚未完成'}\n${(r.result?.pairs||[]).map(p=>({better:'候选更好',tie:'差不多，保留原技能',worse:'原稿更好'}[p.verdict])+': '+p.reason).join('\n')}\n\n`+r.cases.map(c=>`任务：${c.requirements.title}\n\n旧版\n${gradeSummary(c.baseline.assessment)}\n${c.baseline.reader_markdown||c.baseline.markdown}\n\n候选\n${gradeSummary(c.candidate.assessment)}\n${c.candidate.reader_markdown||c.candidate.markdown}`).join('\n\n')).join('\n\n'):d.job.error||'比较尚未开始；先整理 Wiki 和提出候选。';$('source-dialog').showModal()}));
  $('skills').innerHTML=`<div class="skill">${state.active_skill?'当前启用 '+esc(state.active_skill):'当前使用基础任务提示词'}${state.active_skill?'<button data-rollback="">回到基础版本</button>':''}</div>`+state.skills.map(s=>`<div class="skill"><strong>${esc(s.id)}</strong><p>${esc(s.reason)}</p>${s.id===state.active_skill?'<span class="tag">正在使用</span>':`<button data-rollback="${s.id}" class="outline">使用这个版本</button>`}</div>`).join('');document.querySelectorAll('[data-rollback]').forEach(b=>b.onclick=()=>action(()=>api('rollback',{skill_id:b.dataset.rollback||null}),'下一轮将使用所选技能'));
  if(state.wiki!==render.wiki){render.wiki=state.wiki;if(state.wiki)api('render',{markdown:state.wiki}).then(r=>$('wiki').innerHTML=r.html);else $('wiki').innerHTML='<h2>还没有学习经验</h2><p class="muted">生成简报后直接改稿，或留下评论。Maintainer 会在这里整理观察、方法与适用条件。</p>'}bindSources();
@@ -1388,13 +1371,22 @@ if($('assistant-form'))$('assistant-form').onsubmit=e=>{e.preventDefault();sendR
 document.querySelectorAll('[data-assistant-prompt]').forEach(b=>b.onclick=()=>{const input=$('assistant-input');if(input){input.value=b.dataset.assistantPrompt;input.focus()}});
 try{if(localStorage.getItem('briefloop-report-panel')==='closed')collapseReportPanel()}catch{}
 /* ===== Object pages: reports / sources / templates ===== */
+function reportStatus(b){
+ const a=(state.assessments||[]).find(x=>x.version_id===b.id);
+ if(a){const d=parse(a.data);if(d.status==='complete')return {label:'已评分'+(d.overall?' · '+d.overall:''),cls:'ok'}}
+ if((state.jobs||[]).some(j=>j.kind==='release'&&j.status==='complete'&&parse(j.payload).version_id===b.id))return {label:'已正式交付',cls:'ok'};
+ if((state.jobs||[]).some(j=>['generate','revise','assess','review'].includes(j.kind)&&['queued','running'].includes(j.status)&&(()=>{const p=parse(j.payload);return p.run_id===b.run_id||p.version_id===b.id})()))return {label:'处理中',cls:''};
+ return {label:'草稿',cls:''};
+}
+function runSourceCount(runId){const run=(state.runs||[]).find(r=>r.id===runId);if(!run)return 0;try{const ids=parse(run.source_ids);return Array.isArray(ids)?ids.length:0}catch{return 0}}
 function renderReports(){
  const box=$('reports-list');if(!box||!state)return;
  const seen=new Set(),rows=[];
  for(const b of (state.briefs||[])){if(seen.has(b.run_id))continue;seen.add(b.run_id);rows.push(b)}
- const sig=JSON.stringify(rows.map(b=>[b.id,b.run_id,parse(b.detail).title,b.created]));if(renderReports.sig===sig)return;renderReports.sig=sig;
- box.innerHTML=rows.length?rows.map(b=>`<button type="button" class="report-row" data-report-open="${esc(b.id)}"><span class="report-row-title">${esc(parse(b.detail).title||'简报')}</span><span class="report-row-meta">${messageTime(b.created)}</span></button>`).join(''):'<p class="help">还没有报告。点“＋ 新建报告”开始。</p>';
+ const sig=JSON.stringify(rows.map(b=>{const st=reportStatus(b);return [b.id,b.run_id,parse(b.detail).title,b.created,st.label,runSourceCount(b.run_id)]}));if(renderReports.sig===sig)return;renderReports.sig=sig;
+ box.innerHTML=rows.length?rows.map(b=>{const st=reportStatus(b),sources=runSourceCount(b.run_id);const when=new Date(b.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});return `<button type="button" class="report-row" data-report-open="${esc(b.id)}"><span class="report-row-main"><span class="report-row-title">${esc(parse(b.detail).title||'简报')}</span><span class="report-row-meta"><span class="chip ${st.cls}">${esc(st.label)}</span>${sources?' · '+sources+' 个来源':''} · ${esc(when)}</span></span><span class="report-row-cta">打开 →</span></button>`}).join(''):'<div class="empty-inline"><p class="help">还没有报告。生成后会显示在这里。</p><button type="button" class="primary" id="reports-new">＋ 新建报告</button></div>';
  box.querySelectorAll('[data-report-open]').forEach(el=>el.onclick=()=>{const b=state.briefs.find(x=>x.id===el.dataset.reportOpen);if(b&&openBrief(b,{follow:false}))page('report')});
+ const fresh=$('reports-new');if(fresh)fresh.onclick=()=>page('setup');
 }
 function sourceState(s){return s.status==='failed'?'failed':s.needs_visual?'visual':'ready'}
 function sourceHost(s){try{return new URL(s.name).hostname.replace(/^www\./,'')}catch{return ''}}

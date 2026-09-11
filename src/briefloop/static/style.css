@@ -273,3 +273,9 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 .source-toolbar select{width:auto;height:34px;padding:6px 8px;font-size:12px}
 .source-toolbar button{flex:none;height:34px;padding:0 12px;font-size:12px}
 .host-badge{display:inline-block;font-size:10px;color:var(--muted);background:var(--soft);border:1px solid var(--line);border-radius:100px;padding:1px 7px;margin-right:7px;vertical-align:middle}
+.report-row{align-items:center}
+.report-row-main{display:flex;flex-direction:column;gap:4px;min-width:0;flex:1}
+.report-row-meta{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:11px;color:var(--muted)}
+.report-row-meta .chip{font-size:10px;padding:3px 8px}
+.report-row-cta{flex:none;color:var(--green);font-size:12px;font-weight:550}
+.empty-inline{display:flex;flex-direction:column;align-items:flex-start;gap:12px;padding:28px;border:1px dashed var(--line);border-radius:10px;background:var(--surface)}
