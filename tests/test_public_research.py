@@ -133,3 +133,18 @@ def test_evaluator_initial_sources_follow_citations_and_keep_full_index(tmp_path
     assert index['sources'][5]['status']=='failed' and index['gaps']==gaps
     assert '需要其他材料时' in prompt
     assert store.one('briefs',brief['id'])==brief
+
+
+def test_chat_surfaces_the_search_source_and_recommends_tavily(tmp_path,monkeypatch):
+    from briefloop import tavily as tavily_module
+    monkeypatch.setattr(tavily_module,'key_status',lambda **kwargs:{'configured':False,'source':None})
+    store=Store(tmp_path/'workspace')
+    runtime={'model':'gpt-5.6-luna','effort':'high'}
+    native=chat_instructions(store,runtime)
+    assert '当前搜索源是宿主原生搜索' in native and '建议在' in native and 'Tavily' in native
+    store.set_meta('settings',{**store.settings(),'search_provider':'tavily'})
+    missing=chat_instructions(store,runtime)
+    assert '尚未配置 API Key' in missing and '不要用原生搜索冒充 Tavily' in missing
+    monkeypatch.setattr(tavily_module,'key_status',lambda **kwargs:{'configured':True,'source':'file'})
+    ready=chat_instructions(store,runtime)
+    assert '当前搜索源：Tavily（已配置）' in ready

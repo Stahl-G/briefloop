@@ -11,7 +11,7 @@ class IndustryMetric(BaseModel):
     region: str = ''
     unit: str = Field(min_length=1)
     current: float | None = None
-    current_date: date
+    current_date: date | None = None
     as_of: date | None = None
     previous_as_of: date | None = None
     previous: float | None = None
@@ -42,6 +42,7 @@ def prepare_report_data(payload):
     for i,row in enumerate(data.records):
         value=None; reason=''
         if row.current is None: reason='本期值缺失'
+        elif row.current_date is None: reason='缺少本期指标日期 current_date'
         elif row.category!='actual' and row.as_of is None: reason='预测、指引或一致预期缺少取得数据的截至日 as_of'
         elif row.comparison!='none':
             if row.previous is None or row.previous_date is None: reason='比较值或日期缺失'
@@ -62,7 +63,7 @@ def prepare_report_data(payload):
     for row,result in zip(data.records,results):
         change=result['gap'] or ('—' if result['change'] is None else f"{result['change']:+.2f} {result['change_unit']}")
         label=' / '.join(v for v in (row.metric,row.product,row.region) if v)
-        values=[label,f'{row.current:g} {row.unit}' if row.current is not None else '未提供',f'{row.current_date} / {row.as_of or "未注明"}',
+        values=[label,f'{row.current:g} {row.unit}' if row.current is not None else '未提供',f'{row.current_date or "未注明"} / {row.as_of or "未注明"}',
                 f'{row.previous:g} {row.previous_unit or row.unit} / {row.previous_date} / {row.previous_as_of or "未注明"}' if row.previous is not None else '未提供',change,f'{category_names[row.category]} / {row.tax_basis or "未注明"}',f'[@{row.source_id}]'+(f' [@{row.previous_source_id}]' if row.previous_source_id else '')]
         lines.append('| '+' | '.join(cell(v) for v in values)+' |')
     return {**data.model_dump(mode='json'),'calculations':results,'gaps':gaps,'markdown':'\n'.join(lines)}
