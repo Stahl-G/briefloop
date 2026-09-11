@@ -1352,7 +1352,7 @@ function toggleReportPanel(){const grid=$('report-grid');if(!grid)return;grid.cl
 function expandReportChat(sessionId){page('chat');if(sessionId&&chat.sessions.some(s=>s.id===sessionId))selectChat(sessionId).catch(()=>{})}
 function renderReportStatus(){
  const box=$('report-status');if(!box)return;
- const chips=['<span class="chip">已保存</span>'];
+ const chips=[];
  const a=current&&state.assessments.find(x=>x.version_id===current.id);
  if(a){const d=parse(a.data);chips.push(d.status==='complete'?`<span class="chip ok">已评分${d.overall?' · '+esc(d.overall):''}</span>`:'<span class="chip">评分中</span>')}
  else{const pending=!!(current&&state.jobs.some(j=>['generate','revise','assess'].includes(j.kind)&&['queued','running'].includes(j.status)&&(()=>{const p=parse(j.payload);return p.version_id===current.id||p.run_id===current.run_id})()));chips.push(pending?'<span class="chip">评分中</span>':'<span class="chip warn">未评分</span>')}
