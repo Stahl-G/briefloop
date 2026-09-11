@@ -1,4 +1,4 @@
-"""Background tasks report their start and end into the conversation that began them."""
+"""Background tasks report their start and end into the active conversation."""
 from briefloop.chat_store import ChatStore
 from briefloop.store import Store
 
@@ -21,9 +21,21 @@ def test_task_reports_start_and_terminal_once(tmp_path):
     assert len(_notes(chat, session['id'])) == 2
 
 
-def test_task_without_session_does_not_guess_a_conversation(tmp_path):
+def test_task_without_session_reports_to_the_active_conversation(tmp_path):
     store = Store(tmp_path)
     chat = ChatStore(store)
-    other = chat.create('另一个对话', {}, tmp_path)
-    store.enqueue('generate', {'run_id': 'r1'})
-    assert _notes(chat, other['id']) == []
+    session = chat.create('你是谁', {}, tmp_path)
+    store.enqueue('generate', {'run_id': 'r1'})  # e.g. the main agent started it
+    notes = _notes(chat, session['id'])
+    assert len(notes) == 1 and '已开始任务' in notes[0]['text']
+
+
+def test_internal_execution_sessions_are_neither_listed_nor_targeted(tmp_path):
+    store = Store(tmp_path)
+    chat = ChatStore(store)
+    visible = chat.create('对话', {}, tmp_path)
+    internal = chat.create('生成简报', {}, tmp_path)
+    chat.event(internal['id'], 'session/internal', {})
+    assert [s['id'] for s in chat.sessions('active')] == [visible['id']]
+    store.enqueue('audit_bundle', {})  # no session_id: must not land in the internal session
+    assert _notes(chat, visible['id']) and not _notes(chat, internal['id'])

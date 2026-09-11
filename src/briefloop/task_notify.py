@@ -26,11 +26,21 @@ def _chat_ready(store):
 
 
 def target_session(store, payload):
-    """Only an explicit session_id is used; a task never guesses a conversation."""
-    session = payload.get('session_id')
-    if not session or not _chat_ready(store):
+    """Prefer the task's explicit session, else the newest user conversation.
+
+    Job execution sessions are marked internal and never chosen; the fallback is
+    what lets a task the main agent started (no session_id) report progress into
+    the conversation the user is actually reading.
+    """
+    if not _chat_ready(store):
         return None
-    return session if store.rows('SELECT id FROM chat_sessions WHERE id=?', (session,)) else None
+    session = payload.get('session_id')
+    if session and store.rows('SELECT id FROM chat_sessions WHERE id=?', (session,)):
+        return session
+    rows = store.rows("SELECT id FROM chat_sessions s WHERE lifecycle='active' "
+                      "AND NOT EXISTS(SELECT 1 FROM chat_events e WHERE e.session_id=s.id AND e.kind='session/internal') "
+                      "ORDER BY updated DESC LIMIT 1")
+    return rows[0]['id'] if rows else None
 
 
 def status_text(kind, status, error=None):

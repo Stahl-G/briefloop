@@ -78,22 +78,19 @@ function applyRequirements(text){
  page('setup');notice('已填入材料与需求，请检查后生成');
 }
 const TASK_LABELS={generate:'生成简报',assess:'重新评分',review:'独立审阅',revise:'按审阅修订',learn:'WikiSkill 学习',export_docx:'生成工作稿 Word',release:'制作正式 Word',audit_bundle:'制作审计包',source_refresh:'复查来源',prepare_template:'准备模板'};
-// Generic message actions: any action registered here appears in the message palette.
-const forkPending=new Map();
+// Generic message actions: every entry renders as a small icon button under the message.
 const MESSAGE_ACTIONS=[
- {id:'copy',label:'复制消息文本',hint:'复制到剪贴板',run:copyMessage},
- {id:'fork',label:'在新对话中创建分支',hint:'把到此为止的对话复制到新会话',run:forkMessage},
- {id:'revert',label:'撤销该消息及之后',hint:'删除此消息及其后的消息（不改报告文件）',run:revertMessage},
+ {id:'copy',label:'复制消息文本',run:copyMessage,icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>'},
+ {id:'fork',label:'在新对话中创建分支',run:forkMessage,icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="9" r="2.2"/><path d="M6 8.2v7.6M8.2 7.4c6 0 7.8 1 7.8 3.2"/></svg>'},
+ {id:'revert',label:'撤销该消息及之后',run:revertMessage,icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 5.5V9h3.5"/></svg>'},
 ];
-let messagePalette=null,paletteMessage=null,paletteMatches=[];
+const forkPending=new Map();
 async function copyMessage(message){try{await navigator.clipboard.writeText(message.text||'')}catch(e){notice('复制失败：'+e.message,true);return}notice('已复制消息文本')}
 function messageTranscript(index){return chat.messages.slice(0,index+1).map(m=>(m.role==='user'?'用户':'BriefLoop')+'：'+(m.text||'')).join('\n')}
 async function forkMessage(message){const index=chat.messages.findIndex(m=>m.id===message.id);forkPending.set('__next__',messageTranscript(index));const result=await api('harness/fork',{session_id:chat.id,message_id:message.id});const session=result.session;forkPending.set(session.id,forkPending.get('__next__'));forkPending.delete('__next__');await pollChat(true);await selectChat(session.id);notice('已创建分支对话，可直接继续')}
 async function revertMessage(message){await api('harness/revert',{session_id:chat.id,message_id:message.id});notice('已撤销该消息及之后');await pollChat(true)}
-function paletteElement(){if(messagePalette)return messagePalette;messagePalette=document.createElement('dialog');messagePalette.className='message-actions';messagePalette.innerHTML='<div class="palette-head"><strong>消息操作</strong><span class="help">esc</span></div><input id="message-action-search" placeholder="搜索操作…" autocomplete="off"><div id="message-action-list"></div>';document.body.append(messagePalette);return messagePalette}
-function renderMessagePalette(){const list=paletteElement().querySelector('#message-action-list');list.innerHTML=paletteMatches.map((a,i)=>`<button type="button" class="palette-item ${i===0?'active':''}" data-action="${a.id}"><strong>${esc(a.label)}</strong><small>${esc(a.hint)}</small></button>`).join('')||'<p class="help">没有匹配的操作。</p>';list.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>runPalette(paletteMatches.findIndex(a=>a.id===b.dataset.action)))}
-function runPalette(index){const action=paletteMatches[index];if(!action)return;const message=paletteMessage;paletteElement().close();Promise.resolve(action.run(message)).catch(e=>notice(e.message,true))}
-function openMessageActions(message){paletteMessage=message;paletteMatches=MESSAGE_ACTIONS.slice();const box=paletteElement();renderMessagePalette();box.showModal();const search=box.querySelector('#message-action-search');search.value='';search.focus();search.oninput=()=>{const q=search.value.trim().toLowerCase();paletteMatches=MESSAGE_ACTIONS.filter(a=>!q||a.label.toLowerCase().includes(q)||a.id.includes(q));renderMessagePalette()};search.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();runPalette(0)}else if(e.key==='Escape'){e.preventDefault();box.close()}}}
+function messageActionsHTML(){return '<div class="message-actions-row">'+MESSAGE_ACTIONS.map(a=>`<button type="button" class="message-action" data-action="${a.id}" title="${esc(a.label)}" aria-label="${esc(a.label)}">${a.icon}</button>`).join('')+'</div>'}
+function bindMessageActions(node,message){node.querySelectorAll('.message-action').forEach(b=>{const action=MESSAGE_ACTIONS.find(a=>a.id===b.dataset.action);if(action)b.onclick=()=>Promise.resolve(action.run(message)).catch(e=>notice(e.message,true))})}
 function renderTasks(){
  const box=$('task-list');if(!box)return;
  const tasks=state.jobs.filter(j=>TASK_LABELS[j.kind]).slice(0,15);
@@ -473,9 +470,9 @@ function renderMessages(){
   const messageSignature=JSON.stringify(message);if(node.dataset.signature===messageSignature)continue;node.dataset.signature=messageSignature;node.className=`chat-message ${message.role==='user'?'from-user':'from-assistant'} ${message.mode==='notice'?'task-notice':''} ${['failed','interrupted','cancelled'].includes(message.status)?'message-error':''}`;
   const files=(message.source_ids||[]).map(id=>({id,name:state?.sources.find(s=>s.id===id)?.name||id}));
   const label=message.role==='user'?'你':(message.mode==='notice'?'任务状态':'BriefLoop');
-  node.innerHTML=`<div class="message-heading"><strong>${label}</strong><span>${messageTime(message.created)}</span><span class="message-state">${esc(chatStates[message.status]||message.status)}${message.mode==='steer'&&message.role==='user'?' · 中途补充':''}</span></div><div class="message-body">${esc(message.text||(['streaming','sending'].includes(message.status)?'…':''))}</div>${files.length?`<div class="message-files">${files.map(file=>`<button type="button" data-message-source="${esc(file.id)}">▤ ${esc(file.name)}</button>`).join('')}</div>`:''}`;
+  node.innerHTML=`<div class="message-heading"><strong>${label}</strong><span>${messageTime(message.created)}</span><span class="message-state">${esc(chatStates[message.status]||message.status)}${message.mode==='steer'&&message.role==='user'?' · 中途补充':''}</span></div><div class="message-body">${esc(message.text||(['streaming','sending'].includes(message.status)?'…':''))}</div>${files.length?`<div class="message-files">${files.map(file=>`<button type="button" data-message-source="${esc(file.id)}">▤ ${esc(file.name)}</button>`).join('')}</div>`:''}${messageActionsHTML()}`;
   const reqBlock=/```briefloop-requirements\s*([\s\S]*?)```/.exec(message.text||'');if(reqBlock){const apply=document.createElement('button');apply.type='button';apply.className='outline apply-requirements';apply.textContent='应用到材料与需求';apply.onclick=()=>applyRequirements(reqBlock[1].trim());node.append(apply)}
-  const more=document.createElement('button');more.type='button';more.className='message-more';more.textContent='⋯';more.setAttribute('aria-label','消息操作');more.onclick=()=>openMessageActions(message);node.append(more);
+  bindMessageActions(node,message);
   node.querySelectorAll('[data-message-source]').forEach(button=>button.onclick=()=>action(async()=>showSource(await api('source?id='+encodeURIComponent(button.dataset.messageSource)))));
   if(message.role==='assistant'&&message.status==='completed'&&message.text&&message.mode!=='notice'){api('render',{markdown:message.text}).then(result=>{if(node.isConnected&&node.dataset.signature===messageSignature){node.querySelector('.message-body').innerHTML=result.html;node.querySelector('.message-body').classList.add('rendered-markdown');if(nearEnd)scroll.scrollTop=scroll.scrollHeight}}).catch(()=>{})}
  }
