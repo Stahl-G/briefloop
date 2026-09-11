@@ -454,20 +454,57 @@ def _saved_contract(base, kind, quote):
                      'kind': kind, 'source_quote': quote, 'instruction': quote}]})
 
 
-def test_writing_constraint_gate_ignores_which_input_field_it_came_from():
-    # The same sentence typed into the objective or into writing_preferences must not
-    # change whether an unfinished interpretation blocks formal delivery.
-    req = {'title': 'Internal report', 'objective': '说明客户交付变化。不要重复免责声明。',
-           'writing_mode': 'internal_report'}
-    base = resolve(req)
-    review = {'status': 'complete', 'coverage_scan_complete': True, 'requirement_checks': []}
+def _review_with(covered_ids):
+    return {'status': 'complete', 'coverage_scan_complete': True,
+            'requirement_checks': [{'requirement_id': i, 'status': 'covered', 'reason': 'checked'} for i in covered_ids]}
+
+
+def test_writing_gate_follows_meaning_not_input_field():
+    sentence = '不要重复免责声明。'
     empty = {'evidence': {'bindings': []}, 'conflicts': []}
-    soft = resolve(req, reader_contract=_saved_contract(base, 'writing_preference', '不要重复免责声明。'))
-    soft_result = decision({**empty, 'requirements': soft}, review, [])
-    assert soft_result['eligible'] and soft_result['notices'][0]['code'] == 'writing_preference'
-    hard = resolve(req, reader_contract=_saved_contract(base, 'reader_content', '说明客户交付变化。'))
-    hard_result = decision({**empty, 'requirements': hard}, review, [])
-    assert not hard_result['eligible'] and hard_result['blockers'][0]['code'] == 'requirement_unfinished'
+    # 1) The sentence lives in writing_preferences: a missing interpretation is a notice.
+    pref = {'title': 'Internal report', 'objective': '说明客户交付变化。', 'writing_mode': 'internal_report',
+            'writing_preferences': [sentence]}
+    pref_spec = resolve(pref)
+    by_kind = {item['kind']: item for item in pref_spec['requirement_items']}
+    pref_result = decision({**empty, 'requirements': pref_spec},
+                           _review_with([by_kind['objective']['requirement_id']]), [])
+    assert pref_result['eligible'] and pref_result['notices'][0]['code'] == 'writing_preference'
+    # 2) The same sentence inside the objective, classified as a writing preference, is
+    #    still soft: the gate follows the meaning, not the field it was typed into.
+    obj = {'title': 'Internal report', 'objective': sentence, 'writing_mode': 'internal_report'}
+    obj_soft = resolve(obj, reader_contract=_saved_contract(resolve(obj), 'writing_preference', sentence))
+    obj_result = decision({**empty, 'requirements': obj_soft}, _review_with([]), [])
+    assert obj_result['eligible'] and obj_result['notices'][0]['code'] == 'writing_preference'
+    # 3) A mixed objective that also carries real content stays hard even with a writing clause.
+    mixed = {'title': 'Internal report', 'objective': '说明客户交付变化。' + sentence,
+             'writing_mode': 'internal_report'}
+    mixed_base = resolve(mixed)
+    identity = mixed_base['requirement_items'][0]['requirement_id']
+    contract = validate_reader_contract(mixed_base, {
+        'source_fingerprint': reader_contract_schema(mixed_base)['properties']['source_fingerprint']['const'],
+        'clauses': [{'requirement_id': identity, 'kind': 'reader_content', 'source_quote': '说明客户交付变化。', 'instruction': 'x'},
+                    {'requirement_id': identity, 'kind': 'writing_preference', 'source_quote': sentence, 'instruction': 'y'}]})
+    hard = resolve(mixed, reader_contract=contract)
+    assert not decision({**empty, 'requirements': hard}, _review_with([]), [])['eligible']
+
+
+def test_review_packet_refuses_to_drop_a_saved_contract(tmp_path, monkeypatch):
+    from briefloop import review
+    store = Store(tmp_path)
+    source = store.add_source('Source', 'Evidence')
+    store.set_meta('settings', {**store.settings(), 'company_context_enabled': False})
+    req = {'title': 'Internal report', 'objective': '说明交付变化。不要重复免责声明。', 'writing_mode': 'internal_report'}
+    run = store.create_run(req, [source['id']])
+    base = resolve(json.loads(store.one('runs', run['id'])['requirements']))
+    contract = _saved_contract(base, 'writing_preference', '不要重复免责声明。')
+    brief = store.publish(run['id'], {'title': 'R', 'markdown': '正文', 'reader_contract': contract})
+    original = review._snapshot(store, brief['id'])
+    assert original['requirements']['reader_contract'] == original['detail']['reader_contract']
+    dropped = {**original, 'requirements': {**original['requirements'], 'reader_contract': None}}
+    monkeypatch.setattr(review, '_snapshot', lambda store, version_id: dropped)
+    with pytest.raises(ValueError, match='读者约定'):
+        build_packet(store, brief['id'], store.root / 'packet-drop')
 
 
 def test_must_fix_expression_anchor_and_overall_consistency():
