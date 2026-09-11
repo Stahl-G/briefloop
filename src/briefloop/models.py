@@ -242,6 +242,9 @@ class Finding(Model):
     locator: str = ""
     evidence: str = ""
     suggestion: str = ""
+    # Tolerated drift: scoring findings occasionally reuse review-finding keys.
+    kind: str | None = None
+    block_ids: list[str] = Field(default_factory=list)
 
 
 class Assessment(Model):
