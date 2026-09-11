@@ -115,7 +115,7 @@ class BridgeHarness(OpencodeHarness):
             self.chat.event(sid,'runtime/admission',{'execution_id':execution,'status':'accepted'})
             self.chat.patch_message(mid,status='delivered');self.chat.update(sid,status='running')
             assistant=self.chat.message(sid,'',role='assistant',status='streaming',turn_id=mid,runtime=config)
-            output='';tools={};started=time.monotonic()
+            output='';reasoning='';tools={};started=time.monotonic()
             while True:
                 if sid in self._cancel_requested:self.bridge.call('cancel',{'execution_id':execution})
                 if time.monotonic()-started>self.store.settings()['timeout_minutes']*60:
@@ -125,6 +125,8 @@ class BridgeHarness(OpencodeHarness):
                 kind=event['kind']
                 if kind=='text':
                     output+=event.get('text','');self.chat.patch_message(assistant['id'],text=output)
+                elif kind=='reasoning':
+                    reasoning+=event.get('text','');self.chat.patch_message(assistant['id'],reasoning=reasoning)
                 elif kind=='session':
                     self.chat.update(sid,thread_id=event['session_id'])
                     self.chat.event(sid,'runtime/session',{'execution_id':execution,**event})

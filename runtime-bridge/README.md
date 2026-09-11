@@ -14,7 +14,7 @@ stdin/stdout 各一行 JSON：请求 `{id,method,params}`，应答 `{id,result}`
 - `cancel {execution_id}`：发送 ACP cancel 并终止该执行拥有的进程组。
 - `answer {execution_id,request_id,option_id?}`：回应 ACP 权限请求。只接受宿主列出的 optionId；不传代表取消，不自动批准。
 
-事件：`text {text,delta:true}`、`session {session_id,capabilities?}`、`tool {id,name,status,input?,output?}`、`question {request_id,type,title,options}`、`usage {usage,cost?}`、`error {message}`、`end {status:"completed"|"failed"|"cancelled",error?}`。
+事件：`text {text,delta:true}`、`reasoning {text,delta:true}`、`session {session_id,capabilities?}`、`tool {id,name,status,input?,output?}`、`question {request_id,type,title,options}`、`usage {usage,cost?}`、`error {message}`、`end {status:"completed"|"failed"|"cancelled",error?}`。
 
 ## 实现状态
 
@@ -27,12 +27,12 @@ stdin/stdout 各一行 JSON：请求 `{id,method,params}`，应答 `{id,result}`
 | Codex、OpenCode | 原有 native manager | 本 bridge 检测它们；Python facade 负责分发给已存在的执行管理器 |
 | 其他已知 CLI | 仅检测 | 未实现执行，不显示为已接通；DSH 需要另外验证已安装 profile，当前不自动创建 profile |
 
-ACP `agent_thought_chunk` 与其他隐藏推理不进入事件。只传明确的可见消息、工具活动和用量。并不将此通道宣称为通用敏感资料脱敏器；执行日志和审计包仍由 BriefLoop 的现有记录层处理。
+ACP `agent_thought_chunk`（以及 Claude `thinking` 块、Opencode `reasoning` part）作为独立的 `reasoning` 事件传给本地聊天展示，不与可见正文或工具事件混在一起；执行日志、通知与审计包仍由 BriefLoop 的既有记录层排除推理。并不将此通道宣称为通用敏感资料脱敏器；执行日志和审计包仍由 BriefLoop 的现有记录层处理。
 
 新增宿主使用 **宿主原生权限**：`read-only`、`workspace-write` 等宿主未验证的保证在启动前拒绝。`allow_web:null` 表示宿主管理网络；应用另按本轮要求指示是否主动检索，不能把指令当成网络隔离。不用提示词冒充禁止联网、不把原生权限叫成工作区隔离。受限 Reviewer 应选择已经能执行核查边界的原生管理器。ACP 的恢复与图片能力直到 handshake 才知道，静态字段为 `negotiated`，前端不能把它视为无条件 true。
 
 ## 最小验证
 
-`node --test runtime-bridge/bridge.test.mjs`：4 个合成协议行为覆盖宿主模型/会话、权限回答、隐藏推理排除、限制拒绝、取消和失败状态。测试不调用真实模型。每个本机 CLI 的短真实调用由试点验收记录单独说明，不以协议 fixture 宣称实机成功。
+`node --test runtime-bridge/bridge.test.mjs`：4 个合成协议行为覆盖宿主模型/会话、权限回答、推理独立事件通道、限制拒绝、取消和失败状态。测试不调用真实模型。每个本机 CLI 的短真实调用由试点验收记录单独说明，不以协议 fixture 宣称实机成功。
 
 模型目录直接复用上游 ACP、Codex 和 OpenCode 解析函数及 Claude 本机路由发现。Reasonix 使用原生 doctor 模型配置。内置建议标注来源，不作为选择白名单；用户仍可手填模型。
