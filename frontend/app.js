@@ -550,7 +550,7 @@ async function newChat(){
 async function pollChat(force=false){
  if(chat.polling&&!force)return;chat.polling=true;const sid=chat.id,after=chat.after,view=chat.view;
  try{
-  const [list,snapshot]=await Promise.all([api('harness/sessions?view='+view),sid?api(`harness/session?id=${encodeURIComponent(sid)}&after=${after}`):Promise.resolve(null)]);
+  const [list,snapshot]=await Promise.all([api('harness/sessions?view='+view),sid?api(`harness/session?id=${encodeURIComponent(sid)}&after=${after}&reasoning=1`):Promise.resolve(null)]);
   if(view===chat.view)chat.sessions=list.sessions||[];if(sid===chat.id&&snapshot){chat.session=snapshot.session;chat.tokenUsage=snapshot.token_usage||null;chat.messages=snapshot.messages||[];chat.requests=snapshot.requests||[];for(const event of snapshot.events||[]){chat.events.set(event.seq,event);chat.after=Math.max(chat.after,event.seq)}}renderChat();
  }catch(e){if(force)throw e;else if(!$('chat').hidden){if(sessionMissing(e)){chat.id=null;chat.session=null;chat.messages=[];localStorage.removeItem('briefloop-chat-session');chatError();renderChat()}else{$('chat-status').textContent='会话连接中断，正在重连';chatError(e.message)}}}finally{chat.polling=false}
 }

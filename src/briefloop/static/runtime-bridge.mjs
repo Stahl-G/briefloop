@@ -1171,7 +1171,7 @@ function wire(value) {
 }
 function emit(id, kind, data = {}) {
   const state = active.get(id);
-  if (state && ((kind === "text" || kind === "reasoning") && data.text?.trim() || kind === "tool")) state.publicActivity = true;
+  if (state && (kind === "text" && data.text?.trim() || kind === "tool")) state.publicActivity = true;
   wire({ method: "event", params: { execution_id: id, kind, ...data } });
 }
 function protocol(id) {

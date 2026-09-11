@@ -45,7 +45,7 @@ env.PATH=[...new Set(dirs)].join(path.delimiter);
 function findBin(def:any, custom?:string) {for(const f of custom?[path.resolve(custom)]:def.bins.flatMap((b:string)=>dirs.map(d=>path.join(d,b)))) {try {accessSync(f,constants.X_OK);return f;} catch {}}return null;}
 function defFor(id:string) {const d=catalog.find(d=>d.id===id); if(!d)throw Error('Unknown runtime: '+id);return d;}
 function wire(value:any){process.stdout.write(JSON.stringify(value)+'\n');}
-function emit(id:string,kind:string,data:any={}){const state=active.get(id);if(state&&(((kind==='text'||kind==='reasoning')&&data.text?.trim())||kind==='tool'))state.publicActivity=true;wire({method:'event',params:{execution_id:id,kind,...data}});}
+function emit(id:string,kind:string,data:any={}){const state=active.get(id);if(state&&((kind==='text'&&data.text?.trim())||kind==='tool'))state.publicActivity=true;wire({method:'event',params:{execution_id:id,kind,...data}});}
 function protocol(id:string){return id in acpArgs?'acp':id==='claude'?'claude-stream-json':id==='mimo'?'opencode-json':id==='codex'||id==='opencode'?'native-manager':null;}
 function capabilities(id:string){const p=protocol(id);return {chat:!!p,cancel:!!p,resume:p==='acp'?'negotiated':p==='claude-stream-json'||p==='opencode-json',images:p==='acp'?'negotiated':p==='claude-stream-json',questions:p==='acp',steer:false,read_only:false,network_control:false,permission_modes:['runtime-native']};}
 function terminate(child:any){if(!child?.pid)return;try{process.kill(-child.pid,'SIGTERM');}catch{try{child.kill('SIGTERM');}catch{}}setTimeout(()=>{try{process.kill(-child.pid,'SIGKILL');}catch{}},1200).unref();}
