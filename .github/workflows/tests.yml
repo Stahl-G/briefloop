@@ -26,6 +26,7 @@ jobs:
       - run: python -m pytest -q
       - run: node tests/frontend_save_barrier.mjs
       - run: node tests/frontend_chat_commands.mjs
+      - run: node tests/frontend_welcome_gate.mjs
       - run: node tests/frontend_model_selection.mjs
       - run: node tests/frontend_setup_state.mjs
       - run: briefloop --version
