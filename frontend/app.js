@@ -80,16 +80,16 @@ function applyRequirements(text){
 const TASK_LABELS={generate:'生成简报',assess:'重新评分',review:'独立审阅',revise:'按审阅修订',learn:'WikiSkill 学习',export_docx:'生成工作稿 Word',release:'制作正式 Word',audit_bundle:'制作审计包',source_refresh:'复查来源',prepare_template:'准备模板'};
 // Generic message actions: every entry renders as a small icon button under the message.
 const MESSAGE_ACTIONS=[
- {id:'copy',label:'复制消息文本',run:copyMessage,icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>'},
- {id:'fork',label:'在新对话中创建分支',run:forkMessage,icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="9" r="2.2"/><path d="M6 8.2v7.6M8.2 7.4c6 0 7.8 1 7.8 3.2"/></svg>'},
- {id:'revert',label:'撤销该消息及之后',run:revertMessage,icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 5.5V9h3.5"/></svg>'},
+ {id:'copy',label:'复制回复',run:copyMessage,icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>'},
+ {id:'fork',label:'创建分支',run:forkMessage,icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.2"/><circle cx="6" cy="18" r="2.2"/><circle cx="18" cy="9" r="2.2"/><path d="M6 8.2v7.6M8.2 7.4c6 0 7.8 1 7.8 3.2"/></svg>'},
+ {id:'revert',label:'撤销到此',run:revertMessage,icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4 5.5V9h3.5"/></svg>'},
 ];
 const forkPending=new Map();
 async function copyMessage(message){try{await navigator.clipboard.writeText(message.text||'')}catch(e){notice('复制失败：'+e.message,true);return}notice('已复制消息文本')}
 function messageTranscript(index){return chat.messages.slice(0,index+1).map(m=>(m.role==='user'?'用户':'BriefLoop')+'：'+(m.text||'')).join('\n')}
 async function forkMessage(message){const index=chat.messages.findIndex(m=>m.id===message.id);forkPending.set('__next__',messageTranscript(index));const result=await api('harness/fork',{session_id:chat.id,message_id:message.id});const session=result.session;forkPending.set(session.id,forkPending.get('__next__'));forkPending.delete('__next__');await pollChat(true);await selectChat(session.id);notice('已创建分支对话，可直接继续')}
 async function revertMessage(message){await api('harness/revert',{session_id:chat.id,message_id:message.id});notice('已撤销该消息及之后');await pollChat(true)}
-function messageActionsHTML(){return '<div class="message-actions-row">'+MESSAGE_ACTIONS.map(a=>`<button type="button" class="message-action" data-action="${a.id}" title="${esc(a.label)}" aria-label="${esc(a.label)}">${a.icon}</button>`).join('')+'</div>'}
+function messageActionsHTML(){return '<div class="message-actions-row">'+MESSAGE_ACTIONS.map(a=>`<button type="button" class="message-action" data-action="${a.id}" data-tip="${esc(a.label)}" aria-label="${esc(a.label)}">${a.icon}</button>`).join('')+'</div>'}
 function bindMessageActions(node,message){node.querySelectorAll('.message-action').forEach(b=>{const action=MESSAGE_ACTIONS.find(a=>a.id===b.dataset.action);if(action)b.onclick=()=>Promise.resolve(action.run(message)).catch(e=>notice(e.message,true))})}
 function renderTasks(){
  const box=$('task-list');if(!box)return;

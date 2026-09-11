@@ -152,7 +152,9 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 
 /* Message actions: small inline icon buttons under each message. */
 .message-actions-row{display:flex;align-items:center;gap:2px;margin-top:6px}
-.message-action{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:0;border-radius:6px;color:var(--muted);background:none}
+.message-action{position:relative;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border:0;border-radius:6px;color:var(--muted);background:none}
 .message-action:hover{color:var(--ink);background:#edf0e9}
 .message-action svg{width:16px;height:16px}
+.message-action::after{content:attr(data-tip);position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);background:#1e2320;color:#fff;font:500 12px/1 var(--font);padding:6px 9px;border-radius:6px;white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .12s;z-index:20}
+.message-action:hover::after{opacity:1}
 .apply-requirements{margin-top:6px;font-size:12px}
