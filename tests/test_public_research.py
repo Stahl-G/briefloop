@@ -24,7 +24,8 @@ def test_public_research_empty_inputs_and_actual_network_instructions(tmp_path):
     assert '至少安排一个 Scout' in prompt and 'add-url --run '+run['id'] in prompt
     assert 'read-source --id SOURCE_ID' in prompt and 'acquired source IDs' in prompt
     assert all(mark in prompt for mark in ('侦察','聚焦','补缺'))
-    assert '获取失败要按原因换路径' in prompt and '不把所有查询限定在官网' in prompt
+    assert '整批 Scout 合计 1–2 条' in prompt and '分三轮推进检索' in prompt
+    assert '获取失败要按原因换路径' not in prompt,'Tavily-specific switching belongs in the skill, not every prompt'
     assert '不重复已经失败或已充分覆盖的相近查询' in prompt
     # Mimic registered acquisition without networking; join and scorer retain it.
     acquired=store.add_source('官方披露','预计下一季度交付 10 台。',url='https://example.com/disclosure')
@@ -107,6 +108,9 @@ def test_builtin_tavily_skill_only_enters_enabled_scout_context(tmp_path, monkey
             assert 'retrieval_skill' not in payload
             assert not (folder/'capabilities'/'tavily'/'SKILL.md').exists()
             assert 'tavily-search' not in prompt
+            if not allowed:
+                assert '不安排公开检索' in prompt and '分三轮推进检索' not in prompt
+                assert '必须能从开放搜索进入' not in prompt,'a no-web task must not promise open search'
 
 
 def test_evaluator_initial_sources_follow_citations_and_keep_full_index(tmp_path):

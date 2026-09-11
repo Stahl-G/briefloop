@@ -197,6 +197,10 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
                if not sources and req['allow_web'] else
                '已有初始材料：先忠实读取，再按研究目标识别证据缺口；只有允许联网时才补充公开来源。')
     common = COMMON if backend == 'codex' else COMMON_OPENCODE
+    if not req['allow_web']:
+        retrieval_strategy='本轮未开启联网：只读取上传材料与已有来源，不安排公开检索，也不承诺开放搜索或分轮搜索；按已有材料识别证据缺口并如实交接。'
+    else:
+        retrieval_strategy=('分三轮推进检索，而不是让每个支线先一次深挖到底。第一轮侦察：整批 Scout 合计 1–2 条互补查询（不是每个 Scout 各 1–2 条），找出本期重要事件、候选主体、候选标题、URL 与可能日期；`AI news`、`AI weekly`、`artificial intelligence news` 这类同义改写不算不同方向。第二轮聚焦：按首轮线索选择互不重复的信息需求，可用意图包括 event discovery（范围内还有哪些重要变化）、entity check（某关键主体是否漏检或只有零散线索）、primary verification（定位一手正文与关键限定）、gap repair（补齐日期、指标、发布状态、冲突）；可用实体别名、原语言产品名、首轮出现的完整发布标题或明确指标词。第三轮补缺：仅当仍有高价值具体缺口时，用同一 Scout 多轮或再派少量同类任务；优先补"重要事件没有可用正文"，其次补"改变结论的指标/日期/条件"，不要给材料已充分的支线再堆重复来源。轮数是执行安排，不替代硬预算，满足任务可提前停止，不要求花完搜索次数；每条查询都要能回答"相对已有材料，这次想多知道什么"，不重复已经失败或已充分覆盖的相近查询。发现阶段可用综述、媒体、索引页发现事件及原始链接，取证阶段再优先一手来源'+('；具体搜索参数、获取失败后的换路与停止条件见本轮 Scout 技能。' if tavily_enabled else '。'))
     dispatch_word = 'spawn/delegate' if backend == 'codex' else 'task 工具'
     id_word = '真实 agent ID' if backend == 'codex' else '真实子 agent 会话 ID（task 结果中的 ses_ ID）'
     native_word = '原生 Codex 搜索不可精确计量' if backend == 'codex' else '原生 Opencode 搜索不可精确计量'
@@ -224,10 +228,9 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
 按 input.json.role_skills 给对应角色分配当前技能及版本；可让角色按路径读取自己对应的字段，没有绑定则使用基础任务说明。父会话不重复抄写已分配的技能。保存实际角色任务和返回句柄。
 如果 additional_roles 有已注册的额外角色，由你按其 instruction 安排工作并把结果交接给写作或评价角色；不得忽略。
 如果 reusable_research 列有旧任务的文件，可作为待核对笔记复用以减少重复工作；不得恢复旧任务或旧模型的 agent 句柄。
-1. 读取需求与初始来源目录，写 plan.json（包含reader_contract，遵守 {folder/'reader_contract.schema.json'}，把内容目标、研究方法、写作偏好和人工分工分开解释并绑定逐字来源及requirement_id）。写作交接前调用 `{tool} workspace-action --request REQUEST_JSON`，action=set_reader_contract、run_id={run['id']}、reader_contract为同一对象；工具校验通过后才进入写作。计划还包含原始用户要求、目标时间窗口、推导的研究问题、读者/用途、证据要求、成稿结构及 Scout 分工。公开市场或行业周报按主题、主体、时间窗口安排 discovery Scout；计划应列需要查找的官方发布者、公开披露或统计来源，不能只按已有文件数分工。计划应给出侦察/聚焦/补缺的轮次安排与预计预算区间，并说明来源政策（何时优先一手、是否允许二手），但不写死全部查询；重点主体只是检索线索，不是必须写入的报道名单，未知的新公司和新事件必须能从开放搜索进入。
+1. 读取需求与初始来源目录，写 plan.json（包含reader_contract，遵守 {folder/'reader_contract.schema.json'}，把内容目标、研究方法、写作偏好和人工分工分开解释并绑定逐字来源及requirement_id）。写作交接前调用 `{tool} workspace-action --request REQUEST_JSON`，action=set_reader_contract、run_id={run['id']}、reader_contract为同一对象；工具校验通过后才进入写作。计划还包含原始用户要求、目标时间窗口、推导的研究问题、读者/用途、证据要求、成稿结构及 Scout 分工。公开市场或行业周报按主题、主体、时间窗口安排 discovery Scout；计划应列需要查找的官方发布者、公开披露或统计来源，不能只按已有文件数分工。计划还应说明来源政策（何时优先一手、是否允许二手）；重点主体只是检索线索，不是必须写入的报道名单。
 2. 根据数量、大小、主题和可用并发能力决定 Scout 数量，上限 {max_parallel}；不要无条件开满。input.json.scout_slots 是预分配的文件位，不替你决定主题或实际派发数量。
-   分三轮推进检索，而不是让每个支线先一次深挖到底。第一轮侦察：1–2 条互补查询，找出本期重要事件、候选主体、候选标题、URL 与可能日期；`AI news`、`AI weekly`、`artificial intelligence news` 这类同义改写不算不同方向。第二轮聚焦：按首轮线索选择互不重复的信息需求，可用意图包括 event discovery（范围内还有哪些重要变化）、entity check（某关键主体是否漏检或只有零散线索）、primary verification（定位一手正文与关键限定）、gap repair（补齐日期、指标、发布状态、冲突）；可用实体别名、原语言产品名、首轮出现的完整发布标题、明确指标词，找一手来源时使用 include-domain。第三轮补缺：仅当仍有高价值具体缺口时，用同一 Scout 多轮或再派少量同类任务；优先补"重要事件没有可用正文"，其次补"改变结论的指标/日期/条件"，不要给材料已充分的支线再堆第三、第四份重复来源。探索轮数是执行安排，不替代硬预算，满足任务可提前停止，不要求花完搜索次数。
-   每条查询都要能回答"相对已有材料，这次想多知道什么"；不要围绕原始大问题反复同义改写，也不重复已经失败或已充分覆盖的相近查询。
+   {retrieval_strategy}
    同级并行 Scout 读取已有材料或完成分配的公开来源发现任务。给每个 Scout 专用任务说明：主题、主体、时间范围、预期发布者、应寻找的事实/表头/脚注/时间限定、原文定位、冲突和缺口。
    为每个实际派发的 Scout 选择一个不同的 scout_slots 条目，把该条目的 directory、result_file、schema_path、scout_contract_path 四个绝对路径完整写进其实际 {dispatch_word} 任务消息，并记录{id_word}与 slot_id/result_file 的对应关系。
    同时把 {scout_contract} 的绝对路径与 plan.json（{folder/'plan.json'}）中本轮已保存的 reader_contract 交给每个 Scout，要求开始时完整读取一次；方法限制、抓取失败与研究状态写入研究结果，不抄进正文。
@@ -237,7 +240,6 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
    {registration} 返回的新来源不在最初 input.json.sources 中也是正常的：在 Scout result.json 中使用返回的真实 source_id、准确 locator/excerpt 和缺口，后续交接保留所有实际取得的 acquired source IDs。不可编造 ID 或把新来源漏掉。
    已上传材料和公开网页都是要核对的原文，不自动等于真实结论。保留数值、单位、主体、时间口径及计划/预计/已实现等状态；区分发布日期与事件/统计期间，检查表头和脚注。忠实引用原文，发现异常或冲突时标出依据与未确定之处，不静默改写原材料，不混用不可比口径。
    未开启联网时只读上传来源。失败或期外来源的状态已在来源记录中保留，不在子任务回复中倾倒整份清单；gaps 简短说明重要影响及相关来源 ID，不删证据，不把无法读取写成没有变化。需要原文时先用 `{tool} read-source --id SOURCE_ID --start-line 1 --end-line 80 --max-chars 6000` 读取相关部分，再按实际行号定向扩展，不把截断当全文，不反复 dump 全文。
-   获取失败要按原因换路径，不重复同一动作：官网正文 403 时，在预算内对同 URL 做一次 Extract，或改查已发现的其它官方渠道（官网索引、changelog、官方仓库、模型卡），不把整个主体判为"没有事件"，也不反复重试相同直接请求；Extract 也失败时，用已发现事件的独特标题定向补查，或读来源政策允许的可靠二手正文并明确归属与局限，不用搜索摘要补写技术参数；精确域名加 news 为空时，判断是否过滤过窄，改 general、放宽域名或日期范围，不把过滤后的空结果当作事实不存在；HTTP 200 但为挑战页或空壳时标为正文不可用，另选取证路径；重要来源互相冲突时保留各自独立原文并补查决定性条件与时间口径，不多数表决、不静默改原文。同一域名加获取方式加本轮的连续失败只减少继续使用该已失败方法，不永久拉黑整个域名；直接抓取、Extract、官网索引等不同路径分别记录状态。达到本轮停止条件后不再扩大研究，不用"同 URL 去重不扣页"规避预算。
 3. 父会话主要接收 Scout 的短摘要、状态和结果路径；用 `{tool} join-scouts --files SCOUT_RESULT_PATHS > {shlex.quote(str(folder/'joined-scouts.json'))}` 做结构与来源 ID 校验和合并。文件列表必须是实际已派发槽位的 result_file 绝对路径；确认工具成功与文件存在即可，不再次逐项机械校验全部 JSON/schema/引用。缺少结果表示该槽未完成，不能复制另一槽或根目录文件冒充补交。只有工具报错才定向查看相关槽；证据判断由后续 Analyst/Evaluator 按需核对原文。
    随后调用独立 Analyst，要求其读取 {folder/'analyst-writing.md'} 并使用plan中同一份已通过校验的reader_contract；研究方法约束用于执行，不抄到正文。任务输入包括本轮 plan、joined-scouts.json、全部实际取得来源的 ID 与原文读取入口、只与 analyst 相关的当前技能。用 `{tool} read-source --id SOURCE_ID` 可读取包括 acquired sources 在内的登记正文；不要只给它最初可能为空的 input.json.sources。
    Analyst 引用本轮实际来源 ID；新来源已由 {registration} 绑定本轮，应用随后独立评分时也会把这些 acquired sources 交给 Evaluator。若最终仍未获得可用原文，将具体缺口与无法确认范围写入research_notes/gaps，不用常识或搜索摘要编造市场事实。
