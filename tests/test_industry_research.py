@@ -55,3 +55,15 @@ def test_forecast_vintage_and_reverse_comparison_are_visible_gaps():
     reversed_dates=prepare_report_data({'records':[{**row,'as_of':'2026-09-08','previous':10,'previous_date':'2028-12-31','comparison':'pct','comparable':True,'previous_unit':'台','previous_tax_basis':'','previous_category':'forecast'}]})
     assert reversed_dates['calculations'][0]['change'] is None
     assert '晚于' in reversed_dates['gaps'][0]
+
+
+def test_missing_current_date_becomes_a_gap_not_a_draft_failure():
+    # A model that emits only as_of must not fail the entire report: the record
+    # falls into the data gaps and the draft still validates.
+    record={'metric':'指标','unit':'%','current':4.5,'as_of':'2026-09-08','source_id':'s1'}
+    prepared=prepare_report_data({'records':[record]})
+    assert prepared['gaps'] and 'current_date' in prepared['gaps'][0]
+    assert prepared['calculations'][0]['change'] is None
+    assert '未注明' in prepared['markdown']
+    draft=BriefDraft(title='报告',markdown='正文',report_data={'records':[record]})
+    assert draft.report_data.records[0].current_date is None
