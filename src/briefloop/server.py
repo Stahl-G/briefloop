@@ -362,6 +362,10 @@ def make_server(workspace, port=8765, *, paused=False):
                     result=enqueue_feedback(store)
                 elif path=='/api/stop':worker.stop_job(body['job_id']);result={'ok':True}
                 elif path=='/api/resume':result=worker.resume(body['job_id'])
+                elif path=='/api/task-dismiss':
+                    job=store.one('jobs',body['job_id'])
+                    if job['status'] not in ('failed','interrupted','cancelled'):raise ValueError('只有已结束且未完成的任务可以清除')
+                    store.update_job(job['id'],'dismissed',error=job['error']);result={'ok':True}
                 elif path=='/api/rollback':store.bind_skill(body.get('skill_id'));result={'ok':True}
                 elif path=='/api/render':result={'html':MarkdownIt('commonmark',{'html':False}).enable('table').render(body['markdown'])}
                 else:self.send(404,{'error':'未知操作'});return

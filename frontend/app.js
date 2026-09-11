@@ -128,11 +128,12 @@ function renderTasks(){
   const running=['queued','running'].includes(j.status);
   const dot=['failed','interrupted','cancelled'].includes(j.status)?'error':running?'running':'';
   const milestone=j.progress?` · 第 ${j.progress.round}/${j.progress.k} 轮`:'';
-  return `<div class="task-item"><button type="button" class="task-main" data-task-open="${j.id}" title="打开任务"><i class="task-dot ${dot}"></i><span class="task-text"><strong>${TASK_LABELS[j.kind]}</strong><small>${esc(statuses[j.status]||j.status)}${milestone}${j.error?' · '+esc(j.error):''}</small></span></button>${running?`<button type="button" class="task-icon" data-task-stop="${j.id}" title="停止">■</button>`:''}${['failed','interrupted','cancelled'].includes(j.status)?`<button type="button" class="task-icon" data-task-resume="${j.id}" title="恢复（沿用原模型）">↻</button>`:''}</div>`;
+  return `<div class="task-item"><button type="button" class="task-main" data-task-open="${j.id}" title="打开任务"><i class="task-dot ${dot}"></i><span class="task-text"><strong>${TASK_LABELS[j.kind]}</strong><small>${esc(statuses[j.status]||j.status)}${milestone}${j.error?' · '+esc(j.error):''}</small></span></button>${running?`<button type="button" class="task-icon" data-task-stop="${j.id}" title="停止">■</button>`:''}${['failed','interrupted','cancelled'].includes(j.status)?`<button type="button" class="task-icon" data-task-resume="${j.id}" title="恢复（沿用原模型）">↻</button><button type="button" class="task-icon" data-task-dismiss="${j.id}" title="清除这个未完成任务（保留记录）">✕</button>`:''}</div>`;
  }).join(''):'<p class="help">暂无未完成的任务</p>';
  box.querySelectorAll('[data-task-open]').forEach(b=>b.onclick=()=>openTask(taskFor(b.dataset.taskOpen)));
  box.querySelectorAll('[data-task-stop]').forEach(b=>b.onclick=()=>action(()=>api('stop',{job_id:b.dataset.taskStop})));
  box.querySelectorAll('[data-task-resume]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.taskResume})));
+ box.querySelectorAll('[data-task-dismiss]').forEach(b=>b.onclick=()=>action(()=>api('task-dismiss',{job_id:b.dataset.taskDismiss})));
 }
 function renderArtifacts(){
  const box=$('artifact-list');if(!box||!state)return;
@@ -324,7 +325,7 @@ async function refreshProgress(){
  if(!job){
  const paused=relevant.find(j=>['cancelled','interrupted','failed'].includes(j.status));
  $('run-progress').hidden=!paused;
- if(paused){const service=await api('runtime');$('run-progress').innerHTML=`<div class="section-title"><h2>${paused.status==='failed'?'任务未完成':'任务已暂停'}</h2><button id="paused-resume" class="primary">恢复任务（沿用原模型）</button></div><p>当前没有继续执行这个任务。已有来源和产物保留。</p><p class="help">本地服务 PID ${service.server_pid||'—'}（页面与任务管理） · ${service.pid?'模型进程 PID '+service.pid:'本工作区没有模型进程'}</p><p class="help">${esc(paused.error||'')}</p><p class="help">恢复会沿用该任务原来的模型与后端；要改用当前设置，请新建任务。</p><button id="paused-settings" class="outline">修改模型与要求</button>`;$('paused-settings').onclick=()=>page('setup');$('paused-resume').onclick=()=>action(()=>api('resume',{job_id:paused.id}),'已按页面显示的模型提交')}
+ if(paused){const service=await api('runtime');$('run-progress').innerHTML=`<div class="section-title"><h2>${paused.status==='failed'?'任务未完成':'任务已暂停'}</h2><button id="paused-resume" class="primary">恢复任务（沿用原模型）</button></div><p>当前没有继续执行这个任务。已有来源和产物保留。</p><p class="help">本地服务 PID ${service.server_pid||'—'}（页面与任务管理） · ${service.pid?'模型进程 PID '+service.pid:'本工作区没有模型进程'}</p><p class="help">${esc(paused.error||'')}</p><p class="help">恢复会沿用该任务原来的模型与后端；要改用当前设置，请新建任务。</p><button id="paused-settings" class="outline">修改模型与要求</button><button id="paused-dismiss" class="outline">清除这个任务</button>`;$('paused-settings').onclick=()=>page('setup');$('paused-resume').onclick=()=>action(()=>api('resume',{job_id:paused.id}),'已按页面显示的模型提交');$('paused-dismiss').onclick=()=>action(()=>api('task-dismiss',{job_id:paused.id}),'已清除这个未完成任务')}
  return
 }
  progressRequest=true;
