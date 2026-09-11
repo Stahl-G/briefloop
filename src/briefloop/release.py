@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 
-from .deliverable_spec import requirement_severity
+from .deliverable_spec import clause_items, requirement_severity
 from .store import dump, now, uid
 
 SCHEMA = '''
@@ -57,7 +57,7 @@ def list_releases(store, run_id):
         (run_id,))]
 
 
-def decision(snapshot, review_result, findings):
+def decision(snapshot, review_result, findings, protocol='legacy'):
     """Pure delivery rules; returns named blockers and non-blocking notices."""
     blockers = []
     notices = []
@@ -81,22 +81,38 @@ def decision(snapshot, review_result, findings):
             issue('core_unchecked', item['description'])
     requirements = snapshot['requirements']['requirement_items']
     severity = requirement_severity(snapshot['requirements'])
-    req_checks = {item['requirement_id']: item for item in review_result.get('requirement_checks', [])}
-    for requirement in requirements:
-        identity = requirement['requirement_id']
-        if requirement.get('mode') == 'manual':
-            continue
-        check = req_checks.get(identity)
-        if not check or check.get('status') != 'covered':
-            # A writing/method/manual clause is soft even when it came from the objective;
-            # only reader_content clauses are unfinished deliverables. Without a contract
-            # fall back to the raw requirement kind.
-            soft = severity.get(identity) == 'soft' or (
-                identity not in severity and requirement.get('kind') == 'writing')
-            if soft:
-                notices.append({'code': 'writing_preference', 'message': requirement['text'], 'requirement_id': identity})
-            else:
-                issue('requirement_unfinished', '必答要求尚未核实完成：' + requirement['text'], requirement_id=identity)
+    if protocol == 'clauses_v1':
+        # The clause results are the only authority for requirement fulfilment; the
+        # parent requirement rollup is not consulted, so a soft clause can never make
+        # the whole objective hard (or hide a missing content answer).
+        clause_checks = {item['clause_id']: item for item in review_result.get('clause_checks', [])}
+        for clause in clause_items(snapshot['requirements']):
+            check = clause_checks.get(clause['clause_id'])
+            status = check.get('status') if check else None
+            if clause['kind'] == 'reader_content':
+                if status in ('missing', 'partial'):
+                    issue('content_unmet', '内容要求未完成：' + clause['instruction'], clause_id=clause['clause_id'])
+                elif status != 'covered':
+                    notices.append({'code': 'content_unverified', 'message': clause['instruction'], 'clause_id': clause['clause_id']})
+            elif status not in ('covered', 'not_applicable'):
+                notices.append({'code': 'clause_unmet', 'message': clause['instruction'], 'clause_id': clause['clause_id']})
+    else:
+        req_checks = {item['requirement_id']: item for item in review_result.get('requirement_checks', [])}
+        for requirement in requirements:
+            identity = requirement['requirement_id']
+            if requirement.get('mode') == 'manual':
+                continue
+            check = req_checks.get(identity)
+            if not check or check.get('status') != 'covered':
+                # A writing/method/manual clause is soft even when it came from the objective;
+                # only reader_content clauses are unfinished deliverables. Without a contract
+                # fall back to the raw requirement kind.
+                soft = severity.get(identity) == 'soft' or (
+                    identity not in severity and requirement.get('kind') == 'writing')
+                if soft:
+                    notices.append({'code': 'writing_preference', 'message': requirement['text'], 'requirement_id': identity})
+                else:
+                    issue('requirement_unfinished', '必答要求尚未核实完成：' + requirement['text'], requirement_id=identity)
     checks = {item['claim_id']: item for item in review_result.get('claim_checks', [])}
     visited = set()
 
@@ -126,11 +142,24 @@ def decision(snapshot, review_result, findings):
 
     for binding in snapshot['evidence']['bindings']:
         check_claim(binding)
+    def finding_is_soft(data):
+        # Presentation findings are always soft. Only a compliance-type finding on a
+        # purely soft requirement may soften; factual and evidence findings keep their
+        # blocking power even when they reference a method or writing clause.
+        if data.get('kind') == 'expression':
+            return True
+        if data.get('kind') not in ('missing_requirement', 'execution_gap'):
+            return False
+        identities = data.get('requirement_ids') or []
+        return bool(identities) and all(severity.get(identity) == 'soft' for identity in identities)
+
     for finding in findings:
         data = finding['data']
         if finding['status'] in ('resolved', 'dismissed_with_evidence'):
             continue
-        if data.get('kind') == 'expression' or data.get('severity') == 'minor':
+        # A writing/method problem must not re-block through a "major" finding; a
+        # concrete factual or evidence finding still blocks.
+        if finding_is_soft(data) or data.get('severity') == 'minor':
             notices.append({'code': 'finding_notice', 'message': data['description'], 'finding_id': finding['id']})
         else:
             issue('finding_unresolved', data['description'], finding_id=finding['id'])
@@ -146,10 +175,10 @@ def decision(snapshot, review_result, findings):
     for record in gap_records:
         if record.get('status') == 'resolved':
             continue
-        if record.get('status') == 'unresolved':
-            issue('gap_unresolved', '存在未解决的交付缺口：' + str(record.get('impact', '')), related=record.get('related', ''))
-        else:
-            notices.append({'code': 'delivery_gap_open', 'message': str(record.get('impact', '')), 'related': record.get('related', '')})
+        # Unresolved gaps are surfaced but do not block on their own; a core evidence
+        # gap still blocks through the claim and conflict checks.
+        code = 'delivery_gap_unresolved' if record.get('status') == 'unresolved' else 'delivery_gap_open'
+        notices.append({'code': code, 'message': str(record.get('impact', '')), 'related': record.get('related', '')})
     return {'eligible': not blockers, 'blockers': blockers, 'notices': notices}
 
 
@@ -216,7 +245,8 @@ def eligibility(store, version_id):
     except (ValueError, OSError) as exc:
         result['blockers'].append({'code': 'input_unverified', 'message': str(exc)})
         return result
-    result.update(decision(snapshot, review['result'], status['findings']))
+    result.update(decision(snapshot, review['result'], status['findings'],
+                           (review.get('data') or {}).get('protocol', 'legacy')))
     result['review_id'] = review['id']
     if result['eligible']:
         run = store.one('runs', brief['run_id'])

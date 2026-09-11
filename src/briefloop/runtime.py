@@ -278,7 +278,7 @@ def assessment_prompt(store, brief, folder, backend='codex'):
     index_path.write_text(dump({'sources':index,'gaps':gaps}),encoding='utf-8')
     brief_context={key:brief[key] for key in ('id','run_id','markdown','hash') if key in brief}
     brief_context.update({'title':detail.get('title',''),'citations':citations})
-    from .deliverable_spec import resolve,instructions
+    from .deliverable_spec import clause_items, instructions, resolve
     deliverable=resolve(json.loads(run['requirements']),reader_contract=detail.get('reader_contract'))
     input_pack={'deliverable_spec':deliverable,'editor_document':json.loads(brief['editor_document']) if brief.get('editor_document') else None,'report_profile':report_profile,'report_data':report_data,'brief':brief_context,'run':{'id':run['id'],'requirements':run['requirements']},
                 'sources':[records[sid] for sid in cited_ids],
@@ -290,6 +290,7 @@ def assessment_prompt(store, brief, folder, backend='codex'):
     input_pack['refcheck']=brief_checks(store,brief['id'])
     input_pack['number_bindings']=detail.get('number_bindings',[])
     input_pack['gap_records']=detail.get('gap_records',[])
+    input_pack['clause_index']=clause_items(deliverable)
     from .evidence import inspect_bindings
     input_pack['claim_evidence']=inspect_bindings(store,brief['id'])
     (folder/'input.json').write_text(dump(input_pack),encoding='utf-8')
@@ -305,7 +306,7 @@ def assessment_prompt(store, brief, folder, backend='codex'):
 本轮是单稿评分模式。直接读取 {folder/'input.json'}；初始 sources 包含稿件 citations 和 report_data 的去重引用来源，所有引用元数据均保留。gaps 为最多 10 条、每条最多 240 字的简要提示。
 {no_question}先围绕引用和具体问题读取原文的相关范围，例如 `{tool} read-source --id SOURCE_ID --start-line 1 --end-line 80 --max-chars 6000`；根据实际行号定向扩展，不把截断当成全文。检查覆盖或追查缺口需要其他材料时，再读取 {index_path} 中本轮全部来源的轻量索引与完整 gaps，按需打开额外原文；没有在初始 sources 中列出不代表来源不存在，不要求默认全量读取。
 引用图像会作为带 source_id 锚点的原生图片输入，PDF 仅提供原件和页码索引。凡引用依赖图/表视觉内容，你要实际查看图像或按 locator 选择相关页，执行 `{tool} render-source --id SOURCE_ID --pages 1 3` 后{view_pages_word}；不要默认全本渲染。只读到抽取文本、作者摘录或父会话看过，不算你已核对图片。记录真实页码/图表定位；视觉输入被模型/provider拒绝、图像损坏或工具不可用时说明实际限制，不静默丢图、改模型或假装已验证。
-input.refcheck 是程序对本稿的确定性检查：broken_refs 必须逐条核对原文（断链引用支撑的结论不能成立）；numbers.unmatched 是指定正文数值与原始值不一致的项目；numbers.skipped 是缺少定位、来源不可核对或单位不支持的未检查项目。即使 matched，也只表示指定位置数值匹配，不证明主体、期间、指标或原文支持关系；请读取 number_bindings 对照原文检查这些含义；export.escaped_bold 说明导出件格式不完整。程序只负责"找出来"，对错由你对照原文判定。refcheck.gaps 统计影响交付的缺口（total/open/open_records）：related 是否对应真实必答问题或正文位置、impact 是否成立、status 是否未经独立确认就写 resolved，由你对照原件判断；仍有 open 的记录不因写了缺口就免除覆盖评价。
+input.refcheck 是程序对本稿的确定性检查：broken_refs 必须逐条核对原文（断链引用支撑的结论不能成立）；numbers.unmatched 是指定正文数值与原始值不一致的项目；numbers.skipped 是缺少定位、来源不可核对或单位不支持的未检查项目。即使 matched，也只表示指定位置数值匹配，不证明主体、期间、指标或原文支持关系；请读取 number_bindings 对照原文检查这些含义；export.escaped_bold 说明导出件格式不完整。程序只负责"找出来"，对错由你对照原文判定。refcheck.gaps 统计影响交付的缺口（total/open/open_records）：related 是否对应真实必答问题或正文位置、impact 是否成立、status 是否未经独立确认就写 resolved，由你对照原件判断；仍有 open 的记录不因写了缺口就免除覆盖评价。input.clause_index 是本轮已保存的读者约定条款（clause_id/kind/source_quote/instruction）。四维评价按条款对齐：reader_content 决定覆盖；research_method 约束证据与分析；writing_preference 决定表达；manual_assignment 只核对占位；发现可引用对应条款的 instruction 说明违反点。
 事实核对清单（程序不擅长，必须你来）：财务指标名称是否被偷换（如 Adjusted EBITDA 写成调整后利润）；事件先后与时区是否正确（如盘前公告写成盘后开盘）；政策条件与例外是否被压缩合并（如两种税负情形写成一种）；公司预期/会议纪要是否被升级成已获批、已融资、已到账；每条结论是否真有来源原文支持，而不只是引用存在。要求中明确点名的重要对象没有研究、只有"尚未核验"时，覆盖项扣分，不因写了缺口而豁免。
 评分结构见 {folder/'assessment.schema.json'}。brief_hash 必须是 {brief['hash']}。
 按任务完成程度评证据/覆盖/分析/表达四项 1–5（1根本不足，2明显不足，3达到要求，4充分完成，5对任务特别有帮助）。

@@ -96,3 +96,47 @@ def test_scout_contract_and_saved_contract_reach_the_dispatch(tmp_path):
     assert payload['scout_contract_path'] == str(contract_path)
     assert str(contract_path) in prompt
     assert 'plan.json' in prompt and 'reader_contract' in prompt
+
+
+def test_clause_identity_binds_instruction():
+    from briefloop.deliverable_spec import clause_items
+    req = {'title': 'Internal report', 'objective': '说明交付变化。', 'writing_mode': 'internal_report'}
+    base = resolve(req)
+    identity = base['requirement_items'][0]['requirement_id']
+
+    def contract(first, second):
+        return validate_reader_contract(base, {
+            'source_fingerprint': reader_contract_schema(base)['properties']['source_fingerprint']['const'],
+            'clauses': [{'requirement_id': identity, 'kind': 'research_method', 'source_quote': '说明交付变化。', 'instruction': first},
+                        {'requirement_id': identity, 'kind': 'research_method', 'source_quote': '说明交付变化。', 'instruction': second}]})
+
+    spec = resolve(req, reader_contract=contract('量化变化', '解释原因'))
+    items = clause_items(spec)
+    # Same quote, different instruction -> two identities, both soft.
+    assert len(items) == 2 and items[0]['clause_id'] != items[1]['clause_id']
+    assert all(item['kind'] == 'research_method' and item['severity'] == 'soft' for item in items)
+    assert [item['clause_id'] for item in clause_items(resolve(req, reader_contract=contract('量化变化', '解释原因')))] == [item['clause_id'] for item in items]
+    # Nothing derived is written into the spec or the frozen contract.
+    assert 'clause_items' not in spec and all('clause_id' not in clause for clause in spec['reader_contract']['clauses'])
+
+
+def test_new_protocol_requires_every_clause():
+    from briefloop.deliverable_spec import clause_items
+    from briefloop.review import ClauseCheck, validate_clause_checks
+    req = {'title': 'Internal report', 'objective': '说明交付变化。不要重复免责声明。', 'writing_mode': 'internal_report'}
+    base = resolve(req)
+    identity = base['requirement_items'][0]['requirement_id']
+    contract = validate_reader_contract(base, {
+        'source_fingerprint': reader_contract_schema(base)['properties']['source_fingerprint']['const'],
+        'clauses': [{'requirement_id': identity, 'kind': 'reader_content', 'source_quote': '说明交付变化。', 'instruction': '说明变化'},
+                    {'requirement_id': identity, 'kind': 'writing_preference', 'source_quote': '不要重复免责声明。', 'instruction': '不重复免责'}]})
+    spec = resolve(req, reader_contract=contract)
+    clauses = clause_items(spec)
+    full = [ClauseCheck(clause_id=clause['clause_id'], status='covered', reason='ok') for clause in clauses]
+    validate_clause_checks(spec, full, 'complete')
+    with pytest.raises(ValueError, match='缺少'):
+        validate_clause_checks(spec, full[:-1], 'complete')
+    content = next(clause for clause in clauses if clause['kind'] == 'reader_content')
+    bad = [ClauseCheck(clause_id=content['clause_id'], status='not_applicable', reason='x')] + [check for check in full if check.clause_id != content['clause_id']]
+    with pytest.raises(ValueError, match='内容条款'):
+        validate_clause_checks(spec, bad, 'complete')

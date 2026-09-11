@@ -522,6 +522,88 @@ def test_formal_gate_surfaces_open_and_unresolved_gaps():
     open_gap = decision({**base, 'detail': {'gap_records': [
         {'related': '利润', 'impact': '利润改善无法由材料支持', 'status': 'open'}]}}, review, [])
     assert open_gap['eligible'] and open_gap['notices'][0]['code'] == 'delivery_gap_open'
+    # Unresolved gaps are surfaced but do not block on their own; a core evidence gap
+    # still blocks through the claim and conflict checks.
     unresolved = decision({**base, 'detail': {'gap_records': [
         {'related': '利润', 'impact': '单位成本缺口仍未解决', 'status': 'unresolved'}]}}, review, [])
-    assert not unresolved['eligible'] and unresolved['blockers'][0]['code'] == 'gap_unresolved'
+    assert unresolved['eligible'] and unresolved['notices'][0]['code'] == 'delivery_gap_unresolved'
+
+
+def _clause_contract(objective, clauses):
+    spec = resolve({'title': 'Internal report', 'objective': objective, 'writing_mode': 'internal_report'})
+    identity = spec['requirement_items'][0]['requirement_id']
+    value = {'source_fingerprint': reader_contract_schema(spec)['properties']['source_fingerprint']['const'],
+             'clauses': [{'requirement_id': identity, **clause} for clause in clauses]}
+    return resolve({'title': 'Internal report', 'objective': objective, 'writing_mode': 'internal_report'},
+                   reader_contract=validate_reader_contract(spec, value))
+
+
+def _clause_review(spec, statuses):
+    from briefloop.deliverable_spec import clause_items
+    checks = [{'clause_id': clause['clause_id'], 'status': statuses[clause['kind']], 'reason': 'checked'}
+              for clause in clause_items(spec)]
+    return {'status': 'complete', 'coverage_scan_complete': True, 'clause_checks': checks}
+
+
+def test_clause_protocol_keeps_writing_soft_and_content_hard():
+    spec = _clause_contract('说明交付变化。不要重复免责声明。', [
+        {'kind': 'reader_content', 'source_quote': '说明交付变化。', 'instruction': '说明交付变化'},
+        {'kind': 'writing_preference', 'source_quote': '不要重复免责声明。', 'instruction': '不重复免责'}])
+    base = {'evidence': {'bindings': []}, 'conflicts': []}
+    # Content answered, writing unmet: the parent objective is not consulted, so this
+    # stays eligible with a soft notice.
+    soft = _clause_review(spec, {'reader_content': 'covered', 'writing_preference': 'missing'})
+    result = decision({**base, 'requirements': spec}, soft, [], protocol='clauses_v1')
+    assert result['eligible'] and any(n['code'] == 'clause_unmet' for n in result['notices'])
+    # Content missing blocks even though the writing clause is fine.
+    hard = _clause_review(spec, {'reader_content': 'partial', 'writing_preference': 'covered'})
+    blocked = decision({**base, 'requirements': spec}, hard, [], protocol='clauses_v1')
+    assert not blocked['eligible'] and blocked['blockers'][0]['code'] == 'content_unmet'
+    # "Cannot confirm" never blocks; it is a notice.
+    unverified = _clause_review(spec, {'reader_content': 'unverified', 'writing_preference': 'covered'})
+    assert decision({**base, 'requirements': spec}, unverified, [], protocol='clauses_v1')['eligible']
+
+
+def test_soft_requirement_finding_does_not_reblock_delivery():
+    spec = _clause_contract('说明交付变化。不要重复免责声明。', [
+        {'kind': 'reader_content', 'source_quote': '说明交付变化。', 'instruction': '说明交付变化'},
+        {'kind': 'writing_preference', 'source_quote': '不要重复免责声明。', 'instruction': '不重复免责'}])
+    objective = spec['requirement_items'][0]['requirement_id']
+    review = _clause_review(spec, {'reader_content': 'covered', 'writing_preference': 'covered'})
+    base = {'requirements': spec, 'evidence': {'bindings': []}, 'conflicts': []}
+    soft_finding = [{'id': 'f', 'status': 'open', 'data': {
+        'kind': 'expression', 'severity': 'major', 'description': '重复免责声明',
+        'requirement_ids': [objective]}}]
+    result = decision(base, review, soft_finding, protocol='clauses_v1')
+    assert result['eligible'] and result['notices'][0]['code'] == 'finding_notice'
+
+
+def test_factual_finding_under_soft_requirement_still_blocks():
+    # A method clause is soft, but a factual or evidence finding it reveals is not.
+    spec = _clause_contract('核对计划与实际状态。', [
+        {'kind': 'research_method', 'source_quote': '核对计划与实际状态。', 'instruction': '核对计划与实际'}])
+    objective = spec['requirement_items'][0]['requirement_id']
+    review = _clause_review(spec, {'research_method': 'covered'})
+    base = {'requirements': spec, 'evidence': {'bindings': []}, 'conflicts': []}
+    for kind in ('contradiction', 'missing_binding', 'insufficient_evidence'):
+        finding = [{'id': 'f', 'status': 'open', 'data': {
+            'kind': kind, 'severity': 'major', 'description': '把计划写成已投产',
+            'requirement_ids': [objective]}}]
+        blocked = decision(base, review, finding, protocol='clauses_v1')
+        assert not blocked['eligible'] and blocked['blockers'][0]['code'] == 'finding_unresolved', kind
+    # Only a compliance-type finding on a purely soft requirement is a notice.
+    soft = [{'id': 'f', 'status': 'open', 'data': {
+        'kind': 'missing_requirement', 'severity': 'major', 'description': '方法说明缺失',
+        'requirement_ids': [objective]}}]
+    assert decision(base, review, soft, protocol='clauses_v1')['eligible']
+
+
+def test_same_result_follows_the_persisted_protocol():
+    # The stored protocol, not the presence of clause_checks, decides the gate.
+    spec = _clause_contract('说明交付变化。', [
+        {'kind': 'reader_content', 'source_quote': '说明交付变化。', 'instruction': '说明交付变化'}])
+    review = _clause_review(spec, {'reader_content': 'covered'})
+    base = {'requirements': spec, 'evidence': {'bindings': []}, 'conflicts': []}
+    assert decision(base, review, [], protocol='clauses_v1')['eligible']
+    legacy = decision(base, review, [], protocol='legacy')
+    assert not legacy['eligible'] and legacy['blockers'][0]['code'] == 'requirement_unfinished'
