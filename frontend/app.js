@@ -1396,12 +1396,24 @@ function renderReports(){
  box.innerHTML=rows.length?rows.map(b=>`<button type="button" class="report-row" data-report-open="${esc(b.id)}"><span class="report-row-title">${esc(parse(b.detail).title||'简报')}</span><span class="report-row-meta">${messageTime(b.created)}</span></button>`).join(''):'<p class="help">还没有报告。点“＋ 新建报告”开始。</p>';
  box.querySelectorAll('[data-report-open]').forEach(el=>el.onclick=()=>{const b=state.briefs.find(x=>x.id===el.dataset.reportOpen);if(b&&openBrief(b,{follow:false}))page('report')});
 }
-function sourceLabel(s){const n=s.name||s.id||'';try{const u=new URL(n);const tail=(u.pathname&&u.pathname!=='/')?u.pathname:'';return (u.hostname.replace(/^www\./,'')+tail).slice(0,140)}catch{return n}}
+function sourceState(s){return s.status==='failed'?'failed':s.needs_visual?'visual':'ready'}
+function sourceHost(s){try{return new URL(s.name).hostname.replace(/^www\./,'')}catch{return ''}}
+function sourceLabel(s){const n=s.name||s.id||'';try{const u=new URL(n);return (u.pathname&&u.pathname!=='/')?u.pathname:n}catch{return n}}
 function renderSourcesPage(){
  const box=$('sources-page-list');if(!box||!state)return;
- if($('sources-page-count'))$('sources-page-count').textContent=(state.sources||[]).length+' 份';
- const sig=JSON.stringify((state.sources||[]).map(s=>[s.id,s.status,s.needs_visual,s.name]));if(renderSourcesPage.sig===sig)return;renderSourcesPage.sig=sig;
- box.innerHTML=(state.sources||[]).length?state.sources.map(s=>`<div class="source-row" title="${esc(s.name)}"><span class="name">${esc(sourceLabel(s))}</span><span class="tag ${s.status==='failed'?'error':''}">${s.status==='failed'?'读取失败':s.needs_visual?'需视觉读取':'可读取'}</span><span class="row-actions"><button type="button" data-sources-open="${esc(s.id)}">打开</button>${s.status==='failed'?`<button type="button" data-sources-retry="${esc(s.id)}">重试</button>`:''}</span></div>`).join(''):'<p class="help">还没有来源。</p>';
+ const all=state.sources||[];
+ const q=($('sources-search')?.value||'').trim().toLowerCase();
+ const filter=$('sources-filter')?.value||'all';
+ const failed=all.filter(s=>sourceState(s)==='failed');
+ if($('sources-page-count'))$('sources-page-count').textContent=all.length+' 份'+(failed.length?` · ${failed.length} 失败`:'');
+ if($('sources-retry-all'))$('sources-retry-all').disabled=!failed.length;
+ const rows=all.filter(s=>{
+  if(filter!=='all'&&sourceState(s)!==filter)return false;
+  if(!q)return true;
+  return (s.name||'').toLowerCase().includes(q)||sourceHost(s).toLowerCase().includes(q)||(s.id||'').toLowerCase().includes(q);
+ });
+ const sig=JSON.stringify([q,filter,rows.map(s=>[s.id,s.status,s.needs_visual,s.name])]);if(renderSourcesPage.sig===sig)return;renderSourcesPage.sig=sig;
+ box.innerHTML=rows.length?rows.map(s=>{const host=sourceHost(s);return `<div class="source-row" title="${esc(s.name)}"><span class="name">${host?`<span class="host-badge">${esc(host)}</span>`:''}${esc(sourceLabel(s))}</span><span class="tag ${s.status==='failed'?'error':''}">${s.status==='failed'?'读取失败':s.needs_visual?'需视觉读取':'可读取'}</span><span class="row-actions"><button type="button" data-sources-open="${esc(s.id)}">打开</button>${s.status==='failed'?`<button type="button" data-sources-retry="${esc(s.id)}">重试</button>`:''}</span></div>`}).join(''):'<p class="help">没有匹配的来源。</p>';
  box.querySelectorAll('[data-sources-open]').forEach(b=>b.onclick=()=>action(async()=>showSource(await api('source?id='+encodeURIComponent(b.dataset.sourcesOpen)))));
  box.querySelectorAll('[data-sources-retry]').forEach(b=>b.onclick=()=>action(async()=>{const s=await api('retry-source',{source_id:b.dataset.sourcesRetry});notice(s.status==='ready'?'来源已重新读取':s.error,s.status!=='ready')}));
 }
@@ -1415,3 +1427,6 @@ if($('new-report'))$('new-report').onclick=()=>page('setup');
 if($('sources-upload'))$('sources-upload').onchange=e=>action(async()=>{for(const f of e.target.files){const buf=new Uint8Array(await f.arrayBuffer());let b='';for(let i=0;i<buf.length;i+=8192)b+=String.fromCharCode(...buf.subarray(i,i+8192));await api('upload',{name:f.name,data:btoa(b)})}e.target.value=''},'来源已保存');
 if($('sources-add-url'))$('sources-add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('sources-url').value});$('sources-url').value='';notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
 if($('templates-upload'))$('templates-upload').onchange=e=>action(async()=>{const file=e.target.files[0];if(!file)return;const bytes=new Uint8Array(await file.arrayBuffer());let raw='';for(let i=0;i<bytes.length;i+=8192)raw+=String.fromCharCode(...bytes.subarray(i,i+8192));await api('template-import',{name:file.name,data:btoa(raw)});e.target.value='';notice('模板已上传，BriefLoop 将准备章节和版式')});
+if($('sources-search'))$('sources-search').oninput=()=>{renderSourcesPage.sig='';renderSourcesPage()};
+if($('sources-filter'))$('sources-filter').onchange=()=>{renderSourcesPage.sig='';renderSourcesPage()};
+if($('sources-retry-all'))$('sources-retry-all').onclick=()=>action(async()=>{const list=(state.sources||[]).filter(s=>s.status==='failed');if(!list.length)return;for(const s of list){try{await api('retry-source',{source_id:s.id})}catch(e){}}notice(`已重试 ${list.length} 个失败来源`)});
