@@ -228,7 +228,7 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
 2. 根据数量、大小、主题和可用并发能力决定 Scout 数量，上限 {max_parallel}；不要无条件开满。input.json.scout_slots 是预分配的文件位，不替你决定主题或实际派发数量。
    给每个领域先安排少量聚焦查询，每个 Scout 优先筛选约 4–6 条核心证据，不必凑满；覆盖不足才少量追加，先验证最关键的主体、时期和指标。覆盖已经足够时收敛，不重复相近检索来凑数量。按本轮可用时间分配检索、核对和写作预算，保留写作与长度检查时间；到预算末尾交付已核对来源与具体缺口，不无限等待或扩张研究范围。
    同级并行 Scout 读取已有材料或完成分配的公开来源发现任务。给每个 Scout 专用任务说明：主题、主体、时间范围、预期发布者、应寻找的事实/表头/脚注/时间限定、原文定位、冲突和缺口。
-   为每个实际派发的 Scout 选择一个不同的 scout_slots 条目，把该条目的 directory、result_file、schema_path 三个绝对路径完整写进其实际 {dispatch_word} 任务消息，并记录{id_word}与 slot_id/result_file 的对应关系。
+   为每个实际派发的 Scout 选择一个不同的 scout_slots 条目，把该条目的 directory、result_file、schema_path、scout_contract_path 四个绝对路径完整写进其实际 {dispatch_word} 任务消息，并记录{id_word}与 slot_id/result_file 的对应关系。
    同时把 {scout_contract} 的绝对路径与 plan.json（{folder/'plan.json'}）中本轮已保存的 reader_contract 交给每个 Scout，要求开始时完整读取一次；方法限制、抓取失败与研究状态写入研究结果，不抄进正文。
    原生子 agent 可能共享同一个 cwd；不要假设 host 自动隔离工作目录。每个 Scout 只在指定 directory 中写临时文件，并把统一 ScoutResult 保存到指定的绝对 result_file，禁止使用根目录 result.json 或只写相对 result.json。严格遵循其 schema_path：顶层 sources/gaps，来源条目含 source_id、locator、excerpt、facts、conflicts、coverage_status。来源正文使用 input.json 的 absolute_path。
    允许联网：{req['allow_web']}。若允许，按上面的冻结搜索源从零来源开展查询，优先官方发布、上市公司披露、监管/交易所、原始统计或其他公开原始发布者；有初始材料时按需要补查。
