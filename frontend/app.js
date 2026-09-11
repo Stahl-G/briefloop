@@ -19,7 +19,7 @@ function buildHighlightDecorations(doc){
  return DecorationSet.create(doc,decos);
 }
 const MustFixHighlight=Extension.create({name:'mustFixHighlight',addProseMirrorPlugins(){return [new Plugin({key:mustFixKey,state:{init:(_,editorState)=>buildHighlightDecorations(editorState.doc),apply:(tr,old)=>tr.docChanged||tr.getMeta(mustFixKey)?buildHighlightDecorations(tr.doc):old},props:{decorations:editorState=>mustFixKey.getState(editorState)}})]}})
-function applyHighlights(){if(editor&&editor.view)editor.view.dispatch(editor.state.tr.setMeta(mustFixKey,true))}
+function applyHighlights(){if(editor&&editor.view)editor.view.dispatch(editor.state.tr.setMeta(mustFixKey,true).setMeta('addToHistory',false))}
 function findingTitle(f){return [(f.requirement?'要求：'+f.requirement:''),f.description||'',(f.suggestion?'建议：'+f.suggestion:'')].filter(Boolean).join('\n')}
 const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),parse=s=>JSON.parse(s||'{}');
 let followUpdates=true;
