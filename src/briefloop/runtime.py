@@ -596,6 +596,8 @@ class Worker:
         publish()
         current=latest[0]
         brief=self.store.one('briefs',current)
+        from .task_notify import notify as _notify_task
+        _notify_task(self.store, job, 'draft_ready', text='简报草稿已保存，可以查看和编辑。')
         if not score or payload.get('single_evaluation') is False:
             return {**result,'version_id':brief['id'],**self._generated_sources(folder,brief['id'])}
         scoring=None

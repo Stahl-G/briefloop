@@ -132,3 +132,20 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 .highlight-tip-hint{margin-top:8px!important;font-size:11px;color:var(--muted)}
 .finding.flash{background:#fde7e2;transition:background .3s}
 .finding.flash[open]{box-shadow:inset 3px 0 0 #c0392b;padding-left:10px}
+
+/* Sidebar current tasks: report tasks are jobs, not conversations. */
+.task-block{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+.task-heading{font:500 11px/1.4 var(--mono);letter-spacing:.06em;color:var(--muted);margin-bottom:8px}
+.task-item{display:flex;align-items:center;gap:8px;padding:6px 4px;font-size:12px}
+.task-item .task-main{flex:1;min-width:0}
+.task-item strong{display:block;font-weight:550}
+.task-item small{display:block;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.task-dot{width:8px;height:8px;border-radius:50%;background:var(--line);flex:none}
+.task-dot.running{background:#2f8f4e;animation:pulse 1.2s infinite}
+.task-dot.done{background:var(--green)}
+.task-dot.error{background:#c0392b}
+.task-item button{padding:2px 6px;font-size:11px;border:1px solid var(--line)}
+/* Proactive task notes in the chat. */
+.chat-message.task-notice{background:var(--paper);border:1px dashed var(--line);border-radius:8px;padding:10px 14px;margin:6px 0;font-size:13px}
+.chat-message.task-notice .message-heading strong{color:var(--green)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}

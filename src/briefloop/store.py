@@ -461,7 +461,10 @@ class Store:
         jid = uid("job")
         with self.tx() as c:
             c.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)", (jid, kind, "queued", dump(payload), None, None, now(), now()))
-        return self.one("jobs", jid)
+        job = self.one("jobs", jid)
+        from .task_notify import notify as _notify_task
+        _notify_task(self, job, 'queued')
+        return job
 
     def search_provider_for_run(self, run_id):
         from .models import normalize_search_provider
@@ -477,6 +480,9 @@ class Store:
     def update_job(self, jid, status, *, result=None, error=None):
         with self.tx() as c:
             c.execute("UPDATE jobs SET status=?,result=COALESCE(?,result),error=?,updated=? WHERE id=?", (status, dump(result) if result is not None else None, error, now(), jid))
+        from .task_notify import TERMINAL, notify as _notify_task
+        if status in TERMINAL:
+            _notify_task(self, self.one("jobs", jid), status)
 
     def event(self, job_id, kind, data):
         with self.tx() as c:
