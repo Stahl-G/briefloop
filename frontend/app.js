@@ -131,7 +131,7 @@ const WELCOME_PURPOSES=[
 ];
 let welcomeIndex=0,welcomePurpose=null;
 function welcomeAvailable(){return (runtimeCatalog||[]).filter(r=>r.available)}
-function chooseWelcomeHost(id){const select=$('agent-backend');if(select&&select.value!==id){select.value=id;select.dispatchEvent(new Event('change'))}renderWelcome()}
+function chooseWelcomeHost(id){const select=$('agent-backend');if(select&&select.value!==id){select.value=id;select.dispatchEvent(new Event('change'))}if(state&&state.settings){state.settings.model_selection_required=true;state.settings.model=''}renderWelcome()}
 function applyWelcomePurpose(id){const purpose=WELCOME_PURPOSES.find(p=>p.id===id);if(!purpose)return;welcomePurpose=id;$('chat-input').value=purpose.prompt;rememberDraft();if(purpose.fields)sessionStorage.setItem('briefloop-welcome-fields',JSON.stringify(purpose.fields));renderWelcome()}
 function applyPendingSetupFields(){let fields=null;try{fields=JSON.parse(sessionStorage.getItem('briefloop-welcome-fields')||'null')}catch{}if(!fields)return;sessionStorage.removeItem('briefloop-welcome-fields');const form=$('requirements');if(!form)return;for(const [name,value] of Object.entries(fields)){const el=form.elements[name];if(!el)continue;if(el.type==='checkbox')el.checked=!!value;else el.value=value;el.dispatchEvent(new Event('change',{bubbles:true}))}}
 function renderWelcome(){
@@ -140,7 +140,7 @@ function renderWelcome(){
  if(!runtimeScanned&&!avail.length){box.innerHTML='<p class="help">正在检测本机宿主…</p>';$('welcome-choice').textContent='正在检测本机宿主…';$('welcome-start').disabled=true;return}
  box.innerHTML=avail.length?avail.map(r=>`<button type="button" class="welcome-host ${r.id===chosen?'selected':''}" data-welcome-host="${esc(r.id)}"><strong>${esc(r.name)}</strong><small>${esc(r.version||'版本未确认')}${r.id===chosen?' · 当前选择':''}</small></button>`).join(''):'<p class="help">未检测到可用宿主。请先安装并登录一个 CLI，或在设置里配置 API 提供商。</p>';
  box.querySelectorAll('[data-welcome-host]').forEach(b=>b.onclick=()=>{welcomeIndex=Math.max(0,avail.findIndex(r=>r.id===b.dataset.welcomeHost));chooseWelcomeHost(b.dataset.welcomeHost)});
- const model=state?.settings?.model;
+ const model=state?.settings?.model_selection_required?'':state?.settings?.model;
  $('welcome-choice').textContent=`将使用：${runtimeName(chosen)} · ${model?friendlyModel(model):'待选择模型'}`;
  $('welcome-start').disabled=!model;
  const pbox=$('welcome-purposes');
