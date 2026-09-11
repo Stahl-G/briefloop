@@ -124,6 +124,7 @@ function renderTasks(){
  const box=$('task-list');if(!box)return;
  const open=['queued','running','failed','interrupted','cancelled'];
  const tasks=state.jobs.filter(j=>TASK_LABELS[j.kind]&&open.includes(j.status)).slice(0,15);
+ const block=box.closest('.task-block');if(block)block.hidden=!tasks.length;
  box.innerHTML=tasks.length?tasks.map(j=>{
   const running=['queued','running'].includes(j.status);
   const dot=['failed','interrupted','cancelled'].includes(j.status)?'error':running?'running':'';
