@@ -103,6 +103,31 @@ class ChatStore:
             for message in messages:message.pop('prompt',None)
         return {'session':session,'messages':messages,'events':events,'requests':requests,'token_usage':token_usage}
 
+    def truncate(self, sid, message_id):
+        """Drop a message and everything after it. Chat only; report files are separate."""
+        with self.store.tx() as c:
+            anchor=c.execute('SELECT rowid FROM chat_messages WHERE session_id=? AND id=?',(sid,message_id)).fetchone()
+            if not anchor:raise KeyError('消息不存在')
+            c.execute('DELETE FROM chat_messages WHERE session_id=? AND rowid>=?',(sid,anchor['rowid']))
+        return self.session(sid)
+
+    def fork(self, sid, message_id, title=None):
+        """Copy a session and its messages up to a message into a new session."""
+        source=self.session(sid)
+        with self.store.tx() as c:
+            anchor=c.execute('SELECT rowid FROM chat_messages WHERE session_id=? AND id=?',(sid,message_id)).fetchone()
+            if not anchor:raise KeyError('消息不存在')
+            rows=[dict(r) for r in c.execute('SELECT * FROM chat_messages WHERE session_id=? AND rowid<=? ORDER BY rowid',(sid,anchor['rowid']))]
+            new=uid('chat');date=now()
+            c.execute('INSERT INTO chat_sessions(id,title,thread_id,turn_id,status,runtime,cwd,created,updated) VALUES(?,?,NULL,NULL,?,?,?,?,?)',
+                      (new,(title or ('分支 · '+(source['title'] or '对话')))[:80],'idle',dump(source['runtime']),source['cwd'],date,date))
+            for row in rows:
+                c.execute('INSERT INTO chat_messages(id,session_id,role,text,status,mode,source_ids,turn_id,item_id,created,updated,runtime,prompt,allow_web) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                          (uid('msg'),new,row['role'],row['text'],row['status'],row['mode'],row['source_ids'],row['turn_id'],row['item_id'],row['created'],row['updated'],row['runtime'],None,row['allow_web']))
+            c.execute('INSERT INTO chat_events(session_id,kind,data,created) VALUES(?,?,?,?)',
+                      (new,'session/forked',dump({'parent_session_id':sid,'message_id':message_id}),date))
+        return self.session(new)
+
     def add_request(self,sid,rpc_id,data):
         rid=uid('question')
         with self.store.tx() as c:c.execute('INSERT INTO chat_requests VALUES(?,?,?,?,?,?)',(rid,sid,dump(rpc_id),dump(data),'pending',now()))

@@ -287,6 +287,14 @@ def make_server(workspace, port=8765, *, paused=False):
                 elif path=='/api/harness/restore':result=pick_harness(session_id=body['session_id']).restore(body['session_id'])
                 elif path=='/api/harness/archive-completed':result={'count':sum(manager.archive_completed(name)['count'] for name,manager in managers.items())}
                 elif path=='/api/harness/cancel':result=pick_harness(session_id=body['session_id']).cancel(body['session_id'])
+                elif path=='/api/harness/revert':
+                    session_id=body['session_id'];chat=pick_harness(session_id=session_id).chat
+                    if chat.session(session_id)['busy']:raise ValueError('会话仍在运行，请先停止或等待完成')
+                    chat.truncate(session_id,body['message_id']);result=chat.snapshot(session_id)
+                elif path=='/api/harness/fork':
+                    session_id=body['session_id'];chat=pick_harness(session_id=session_id).chat
+                    if chat.session(session_id)['busy']:raise ValueError('会话仍在运行，请先停止或等待完成')
+                    result={'session':chat.fork(session_id,body['message_id'],body.get('title'))}
                 elif path=='/api/upload':
                     data=base64.b64decode(body['data'],validate=True)
                     result=sources.upload(store,body['name'],data)

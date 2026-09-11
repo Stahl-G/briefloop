@@ -149,3 +149,14 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 .chat-message.task-notice{background:var(--paper);border:1px dashed var(--line);border-radius:8px;padding:10px 14px;margin:6px 0;font-size:13px}
 .chat-message.task-notice .message-heading strong{color:var(--green)}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+/* Message action palette and the per-message trigger. */
+.message-more{font-size:12px;color:var(--muted);padding:2px 8px;border:1px solid var(--line);border-radius:6px;align-self:flex-start;margin-top:4px}
+.message-more:hover{color:var(--ink)}
+.apply-requirements{margin-top:6px;font-size:12px}
+dialog.message-actions{width:min(420px,92vw);padding:16px 18px}
+dialog.message-actions .palette-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+dialog.message-actions #message-action-search{padding:8px 10px;margin-bottom:8px}
+.palette-item{display:flex;flex-direction:column;align-items:flex-start;width:100%;text-align:left;padding:8px 10px;border-radius:6px}
+.palette-item small{color:var(--muted);font-size:12px}
+.palette-item.active,.palette-item:hover{background:#edf0e9}
