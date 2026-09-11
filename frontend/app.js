@@ -610,9 +610,10 @@ async function initChat(){
  try{const list=await api('harness/sessions?view=active');chat.sessions=list.sessions||[]}catch{chat.sessions=[]}
  const recoverable=!!chat.id&&chat.sessions.some(s=>s.id===chat.id);
  const settings=state&&state.settings;
- const hasModel=!!(settings&&settings.model)&&!settings.model_selection_required;
+ const fresh=chat.sessions.length===0&&!((state&&state.runs)||[]).length&&!((state&&state.briefs)||[]).length;
+ const needsModel=!!(settings&&settings.model_selection_required);
  const running=!!((state&&state.jobs)||[]).some(j=>['queued','running'].includes(j.status));
- if(!recoverable&&!hasModel&&!running){
+ if(!recoverable&&!running&&(fresh||needsModel)){
   // Cold start: no conversation to recover, no host/model chosen, nothing running.
   chat.id=null;localStorage.removeItem('briefloop-chat-session');page('welcome');renderWelcome();
  }else{
