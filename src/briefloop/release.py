@@ -57,7 +57,7 @@ def list_releases(store, run_id):
         (run_id,))]
 
 
-def decision(snapshot, review_result, findings, protocol='legacy'):
+def decision(snapshot, review_result, findings, protocol='legacy', *, clauses=None):
     """Pure delivery rules; returns named blockers and non-blocking notices."""
     blockers = []
     notices = []
@@ -80,13 +80,17 @@ def decision(snapshot, review_result, findings, protocol='legacy'):
         else:
             issue('core_unchecked', item['description'])
     requirements = snapshot['requirements']['requirement_items']
-    severity = requirement_severity(snapshot['requirements'])
+    # Frozen clause IDs survive permission-based redaction of their text.
+    # Do not derive new IDs from omitted instructions in an offline audit.
+    if clauses is None:
+        clauses = clause_items(snapshot['requirements'])
+    severity = requirement_severity({'reader_contract': {'clauses': clauses}})
     if protocol == 'clauses_v1':
         # The clause results are the only authority for requirement fulfilment; the
         # parent requirement rollup is not consulted, so a soft clause can never make
         # the whole objective hard (or hide a missing content answer).
         clause_checks = {item['clause_id']: item for item in review_result.get('clause_checks', [])}
-        for clause in clause_items(snapshot['requirements']):
+        for clause in clauses:
             check = clause_checks.get(clause['clause_id'])
             status = check.get('status') if check else None
             if clause['kind'] == 'reader_content':
@@ -255,6 +259,8 @@ def eligibility(store, version_id):
                   'brief_hash': brief['hash'], 'export_input': identity,
                   'export_fingerprint': sha(dump(identity).encode()),
                   'review_id': review['id'], 'review_fingerprint': review['fingerprint'],
+                  'review_protocol': (review.get('data') or {}).get('protocol', 'legacy'),
+                  'review_clauses': clause_items(snapshot['requirements']),
                   'review_result': review['result'], 'review_files': review['data']['files'],
                   'review_execution': _review_execution(store, review),
                   'packet_path': review['data']['packet_path'], 'snapshot': snapshot,

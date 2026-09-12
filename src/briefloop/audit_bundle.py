@@ -23,7 +23,7 @@ _METADATA_FIELDS = set(('status kind type mode severity importance category auth
     'model_provider model_variant reasoning_effort effort variant policy decision resolution action '
     'created updated started finished native_created_at captured_at published_at available_at '
     'effective_start effective_end saved_at fetched_at version revision renderer snapshot_version '
-    'schema_version coverage_scan_complete evidence coverage analysis expression score width height '
+    'schema_version review_protocol coverage_scan_complete evidence coverage analysis expression score width height '
     'page start_line end_line row column count exit_code returncode seconds bytes_count '
     'source_hash original_hash raw_hash text_hash brief_hash hash sha256 fingerprint '
     'review_fingerprint release_fingerprint export_fingerprint image_hash record_hash captured_hash '
@@ -34,7 +34,7 @@ _METADATA_FIELDS = set(('status kind type mode severity importance category auth
 _HASH_MAPS = {'files', 'review_files', 'hashes', 'source_hashes'}
 _IDENTITY_FIELDS = set(('id source_id version_id run_id review_id job_id parent_id previous_id '
     'claim_id span_id block_id binding_id finding_id response_id session_id message_id turn_id '
-    'tool_id figure_id requirement_id logical_id source_ids claim_ids block_ids figure_ids '
+    'tool_id figure_id clause_id requirement_id logical_id source_ids claim_ids block_ids figure_ids '
     'premise_claim_ids requirement_ids finding_ids response_ids native_session native_message_id').split())
 _NUMERIC_FIELDS = {'evidence', 'coverage', 'analysis', 'expression', 'score', 'value'}
 _FREE_CONTAINERS = {'research_notes', 'report_data', 'company_context', 'gaps', 'reader_contract', 'checks'}
@@ -635,7 +635,8 @@ def _check_relationships(target, records, manifest, errors):
     # Re-run only deterministic delivery rules against the accepted frozen state.
     # This never promotes an incomplete review to semantic support.
     from .release import decision
-    gate = decision(records['snapshot'], records['review_result'], records['findings'])
+    gate = decision(records['snapshot'], records['review_result'], records['findings'],
+                    records.get('review_protocol', 'legacy'), clauses=records.get('review_clauses'))
     if not gate['eligible']:
         errors.extend('包内仍有正式交付阻断：' + item['message'] for item in gate['blockers'])
 
