@@ -29,7 +29,7 @@ console.log('PASS: the welcome gate requires an explicit model choice, not the f
 const pageCode=source.slice(source.indexOf('function page(name){'),source.indexOf("document.querySelectorAll('[data-page]')"));
 const notices=[];
 const p=vm.createContext({
- $:el,notice:(s)=>notices.push(s),document:{querySelectorAll:()=>[]},
+ $:el,notice:(s)=>notices.push(s),document:{querySelectorAll:()=>[],body:{classList:{contains:()=>false,remove:()=>{}}}},
  refreshCandidates:()=>{},moveSearchSettings:()=>{},applyPendingSearchInline:()=>{},applyPendingSetupFields:()=>{},
 });
 el('welcome').hidden=false;

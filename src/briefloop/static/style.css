@@ -432,3 +432,13 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 .outline-text{width:100%;font:13px/1.9 var(--mono);border:1px solid var(--line);border-radius:8px;padding:12px 14px;min-height:260px;resize:vertical;background:var(--surface);color:var(--ink)}
 .outline-actions{display:flex;gap:10px;margin-top:12px}
 .outline-actions .primary,.outline-actions .outline{height:36px;padding:0 16px;font-size:12.5px}
+/* Report chat drawer (expandable full conversation) */
+.report-chat-backdrop{position:fixed;inset:0;background:#172a2055;z-index:85}
+body.report-chat-open #chat{position:fixed;right:0;top:0;left:auto;width:min(600px,96vw);max-width:none;height:100dvh;min-height:0;margin:0;z-index:90;background:var(--paper);border-left:1px solid var(--line);box-shadow:-10px 0 34px #14221826;padding:0 20px 12px;overflow:visible}
+body.report-chat-open #chat .chat-heading{padding:14px 0 12px}
+body.report-chat-open #chat .chat-scroll{padding:18px 4px}
+body.report-chat-open #chat .chat-composer{max-width:none;width:100%}
+body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){padding:24px 35px;overflow:auto}
+@media(max-width:1150px){body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){padding:24px 35px}}
+@media(max-width:780px){body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){padding:20px 15px}}
+@media(max-width:560px){body.report-chat-open #chat{width:100vw;left:0;border-left:0}body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){padding:20px 15px}}
