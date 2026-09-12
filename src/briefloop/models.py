@@ -225,6 +225,7 @@ class BriefDraft(Model):
     number_bindings: list[NumberBinding] = Field(default_factory=list)
     research_notes: list[dict] = Field(default_factory=list)
     reader_contract: dict | None = None
+    reconciliation_id: str | None = None
 
     @model_validator(mode='after')
     def normalize_content(self):
@@ -310,11 +311,14 @@ class ScoutEvidence(Model):
     facts: list[str] = Field(default_factory=list)
     conflicts: list[str] = Field(default_factory=list)
     coverage_status: str = Field(min_length=1)
+    claim_ids: list[str] = Field(default_factory=list)
 
 
 class ScoutResult(Model):
     sources: list[ScoutEvidence]
     gaps: list[str] = Field(default_factory=list)
+    search_summary: str = ""
+    retrieval_notes: list[dict] = Field(default_factory=list)
 
 
 def _contract_model(annotation):
