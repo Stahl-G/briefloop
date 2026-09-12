@@ -38,7 +38,7 @@ let followUpdates=true;
 let token='',state,current,pendingRun=null,editor,dirty=false,saving=false,saveTimer,learnTimer,markdownMode=false,selected=new Set(),referenceSelected=new Set();
 function notice(s,error=false){$('notice').textContent=s;$('notice').classList.toggle('error',error);$('notice').hidden=false;clearTimeout(notice.timer);notice.timer=setTimeout(()=>$('notice').hidden=true,error?12000:4500)}
 async function api(path,data,retried=false){const r=await fetch('/api/'+path,data===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json','X-BriefLoop-Token':token},body:JSON.stringify(data)});const b=await r.json();if(r.status===403&&data!==undefined&&!retried){token=(await api('session')).token;return api(path,data,true)}if(!r.ok)throw Error(b.error||'操作失败');return b}
-function page(name){if(name!=='welcome'&&name!=='settings-dialog'&&$('welcome')&&!$('welcome').hidden){notice('请先在欢迎页选择执行宿主和模型');name='welcome'}if(name!=='settings-dialog'&&$('custom-api-key'))$('custom-api-key').value='';for(const id of ['chat','report','reports','sources','templates','setup','learning','settings-dialog','welcome'])$(id).hidden=id!==name;document.querySelectorAll('nav [data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===name));if(name==='learning')refreshCandidates();if(name==='setup'){moveSearchSettings('setup');applyPendingSetupFields()}else if($('tavily-key'))$('tavily-key').value=''}
+function page(name){if(document.body.classList.contains('report-chat-open')){document.body.classList.remove('report-chat-open');const c=$('report-chat-close');if(c)c.hidden=true;const b=$('report-chat-backdrop');if(b)b.hidden=true}if(name!=='welcome'&&name!=='settings-dialog'&&$('welcome')&&!$('welcome').hidden){notice('请先在欢迎页选择执行宿主和模型');name='welcome'}if(name!=='settings-dialog'&&$('custom-api-key'))$('custom-api-key').value='';for(const id of ['chat','report','reports','sources','templates','setup','learning','settings-dialog','welcome'])$(id).hidden=id!==name;document.querySelectorAll('nav [data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===name));if(name==='learning')refreshCandidates();if(name==='setup'){moveSearchSettings('setup');applyPendingSetupFields()}else if($('tavily-key'))$('tavily-key').value=''}
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>page(b.dataset.page));
 async function action(fn,message){try{await fn();if(message)notice(message);await refresh()}catch(e){notice(e.message,true)}}
 async function refresh(first=false){try{const next=await api('state');$('connection').textContent='本地已连接';const signature=JSON.stringify(next);state=next;renderWordExports();if($('release-dialog')?.open)refreshReleaseState().catch(e=>notice(e.message,true));if(first||signature!==refresh.signature){refresh.signature=signature;render(first)}await refreshProgress();if(first||!$('learning').hidden)await refreshCandidates();if(first||!$('report').hidden)await refreshReportBudget()}catch(e){$('connection').textContent='连接中断';if(first)notice(e.message,true)}}
@@ -1337,7 +1337,21 @@ function setReportTab(name){
 function expandReportPanel(){const grid=$('report-grid');if(grid)grid.classList.remove('panel-collapsed');try{localStorage.setItem('briefloop-report-panel','open')}catch{}}
 function collapseReportPanel(){const grid=$('report-grid');if(grid)grid.classList.add('panel-collapsed');try{localStorage.setItem('briefloop-report-panel','closed')}catch{}}
 function toggleReportPanel(){const grid=$('report-grid');if(!grid)return;grid.classList.contains('panel-collapsed')?expandReportPanel():collapseReportPanel()}
-function expandReportChat(sessionId){page('chat');if(sessionId&&chat.sessions.some(s=>s.id===sessionId))selectChat(sessionId).catch(()=>{})}
+function openReportChat(sessionId){
+ const chatEl=$('chat');if(!chatEl)return;
+ chatEl.hidden=false;document.body.classList.add('report-chat-open');
+ const close=$('report-chat-close');if(close)close.hidden=false;
+ const backdrop=$('report-chat-backdrop');if(backdrop)backdrop.hidden=false;
+ if(sessionId&&chat.sessions.some(s=>s.id===sessionId)&&chat.id!==sessionId)selectChat(sessionId).catch(()=>{});
+ const input=$('chat-input');if(input)setTimeout(()=>input.focus(),0);
+}
+function closeReportChat(){
+ document.body.classList.remove('report-chat-open');
+ const close=$('report-chat-close');if(close)close.hidden=true;
+ const backdrop=$('report-chat-backdrop');if(backdrop)backdrop.hidden=true;
+ const chatEl=$('chat');if(chatEl)chatEl.hidden=true;
+}
+function expandReportChat(sessionId){openReportChat(sessionId)}
 function renderReportStatus(){
  const box=$('report-status');if(!box)return;
  const chips=[];
@@ -1361,9 +1375,9 @@ function renderAssistantSummary(){
 function sendReportQuestion(text){
  const q=(text||'').trim();if(!q)return;
  const input=$('assistant-input');if(input)input.value='';
+ openReportChat();
  const chatInput=$('chat-input');if(chatInput)chatInput.value=q;
  if(typeof rememberDraft==='function')rememberDraft();
- page('chat');
  const form=$('chat-form');if(form)form.requestSubmit();
 }
 document.querySelectorAll('#report-panel [data-report-tab],#report-tabs [data-report-tab]').forEach(b=>b.onclick=()=>setReportTab(b.dataset.reportTab));
@@ -1448,3 +1462,6 @@ if($('reports-search'))$('reports-search').oninput=()=>{renderReports.sig='';ren
 ['reports-filter-status','reports-filter-time','reports-filter-source'].forEach(id=>{const el=$(id);if(el)el.onchange=()=>{renderReports.sig='';renderReports()}});
 document.querySelectorAll('[data-reports-view]').forEach(b=>b.onclick=()=>{renderReports.view=b.dataset.reportsView;document.querySelectorAll('[data-reports-view]').forEach(x=>x.classList.toggle('active',x===b));renderReports.sig='';renderReports()});
 if($('report-tasks-all'))$('report-tasks-all').onclick=()=>{renderTasks.showAll=!renderTasks.showAll;renderTasks()};
+if($('report-chat-expand'))$('report-chat-expand').onclick=()=>openReportChat();
+if($('report-chat-close'))$('report-chat-close').onclick=()=>closeReportChat();
+if($('report-chat-backdrop'))$('report-chat-backdrop').onclick=()=>closeReportChat();
