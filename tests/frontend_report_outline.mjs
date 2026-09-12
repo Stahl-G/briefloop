@@ -27,4 +27,41 @@ assert.equal(editorContent,'## New heading\nBody');
 vm.runInContext("setReportView('outline')",c);
 assert.ok(el('report-outline').innerHTML.includes('New heading'));
 assert.ok(!el('report-outline').innerHTML.includes('Old heading'));
+
+// Editing the outline textarea must survive switching edit <-> outline.
+const outlineBox=el('outline-text');
+outlineBox.value='## Edited heading\n## Another';
+outlineBox.oninput();
+vm.runInContext("setReportView('edit')",c);
+vm.runInContext("setReportView('outline')",c);
+assert.ok(el('report-outline').innerHTML.includes('Edited heading'));
+
+// Reset clears the edit and restores the current document headings.
+el('outline-reset').onclick();
+assert.equal(outlineBox.value,'## New heading');
+vm.runInContext("setReportView('edit')",c);
+vm.runInContext("setReportView('outline')",c);
+assert.ok(el('report-outline').innerHTML.includes('New heading'));
+assert.ok(!el('report-outline').innerHTML.includes('Edited heading'));
 console.log('PASS: opening a report leaves outline view and shows the new report in the editor');
+console.log('PASS: outline edits persist across view switches and reset restores document headings');
+
+// applyOutlineToSetup must only change manual_sections_text, never unrelated fields.
+{
+ const applyCode=source.slice(source.indexOf('function applyOutlineToSetup'),source.indexOf('function expandReportPanel'));
+ const calls=[];
+ const outlineEl={value:'## Alpha\n\n## Beta\n123\n## Gamma'};
+ const form={elements:{manual_sections_text:{value:''},objective:{value:'ORIGINAL'},report_profile:{value:'p'}}};
+ const a=vm.createContext({console,Promise,
+  $:id=>id==='outline-text'?outlineEl:id==='requirements'?form:null,
+  applyRequirements:x=>calls.push(x),notice:()=>{}});
+ vm.runInContext(applyCode,a);
+ vm.runInContext('applyOutlineToSetup()',a);
+ assert.deepEqual(calls,[JSON.stringify({manual_sections:['Alpha','Beta','123','Gamma']})]);
+ assert.equal(form.elements.objective.value,'ORIGINAL');
+ assert.equal(form.elements.report_profile.value,'p');
+ outlineEl.value='   ';
+ vm.runInContext('applyOutlineToSetup()',a);
+ assert.equal(calls.length,1);
+ console.log('PASS: applying the outline touches only manual_sections_text and rejects an empty outline');
+}
