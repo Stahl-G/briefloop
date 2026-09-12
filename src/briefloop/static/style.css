@@ -442,3 +442,11 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 @media(max-width:1150px){body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){padding:24px 35px}}
 @media(max-width:780px){body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){padding:20px 15px}}
 @media(max-width:560px){body.report-chat-open #chat{width:100vw;left:0;border-left:0}body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){padding:20px 15px}}
+/* Live "working" status instead of a bare ellipsis */
+.typing-status{display:inline-flex;align-items:center;gap:8px;color:var(--muted);font-size:13px}
+.typing-dots{display:inline-flex;gap:3px}
+.typing-dots i{width:5px;height:5px;border-radius:50%;background:currentColor;opacity:.35;animation:typing-bounce 1.2s infinite}
+.typing-dots i:nth-child(2){animation-delay:.15s}
+.typing-dots i:nth-child(3){animation-delay:.3s}
+@keyframes typing-bounce{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-2px)}}
+@media(prefers-reduced-motion:reduce){.typing-dots i{animation:none}}
