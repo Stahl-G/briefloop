@@ -21,7 +21,7 @@ def test_quality_run_requires_freeze_before_any_controlled_request(tmp_path):
     with pytest.raises(research_plan.AdmissionError, match='尚未冻结'):
         budget.reserve_pages(store, run['id'], ['https://example.test/a'])
     plan = research_plan.freeze(store, run['id'])
-    assert plan['budget'] == {'search_requests': 12, 'candidate_urls': 60, 'source_pages': 18}
+    assert plan['budget'] == {'search_requests': 30, 'candidate_urls': 150, 'source_pages': 60}
     reserved = budget.reserve_search(store, run['id'], 5)
     assert reserved['round_id'] == plan['current_round_id']
     entry = research_plan.pending_requests(store, run['id'])[reserved['request_id']]
@@ -66,13 +66,13 @@ def test_closed_round_blocks_new_requests(tmp_path):
         budget.reserve_search(store, run['id'], 5)
 
 
-def test_per_round_breadth_limits_search_attempts(tmp_path):
+def test_per_round_breadth_is_soft_advisory(tmp_path):
     store, run = quality_run(tmp_path)
-    research_plan.freeze(store, run['id'])  # standard: breadth 6
-    for _ in range(6):
+    plan = research_plan.freeze(store, run['id'])  # standard: breadth 8
+    for _ in range(10):
         budget.reserve_search(store, run['id'], 1)
-    with pytest.raises(research_plan.AdmissionError, match='本轮查询尝试已达上限'):
-        budget.reserve_search(store, run['id'], 1)
+    # Per-round breadth is an advisory ceiling, not a hard stop; the global budget still applies.
+    assert research_plan.round_usage(store, run['id'], plan['current_round_id'])['search'] == 10
 
 
 def test_round_lifecycle_creates_real_gaps_and_files(tmp_path):
@@ -90,7 +90,10 @@ def test_round_lifecycle_creates_real_gaps_and_files(tmp_path):
     assert (store.root / 'research' / run['id'] / 'rounds' / '1' / 'outcome.json').exists()
     second = research_plan.begin_round(store, run['id'], target_gap_ids=[gap_id])
     assert second['index'] == 2
-    assert research_plan.round_usage(store, run['id'], second['round_id'])['breadth'] == 6
+    assert research_plan.round_usage(store, run['id'], second['round_id'])['breadth'] == 8
+    research_plan.finish_round(store, run['id'])
+    third = research_plan.begin_round(store, run['id'])
+    assert third['index'] == 3
     research_plan.finish_round(store, run['id'])
     with pytest.raises(research_plan.AdmissionError, match='最大联网轮次'):
         research_plan.begin_round(store, run['id'])

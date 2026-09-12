@@ -1040,7 +1040,7 @@ $('archive-completed').onclick=async()=>{
 document.addEventListener('click',event=>{if(!event.target.closest('#session-actions-menu')&&!event.target.closest('[data-manage-session]'))closeSessionMenu()});
 document.addEventListener('keydown',event=>{if(event.key==='Escape')closeSessionMenu()});
 
-const RESEARCH_BUDGET_PRESETS={weekly:{search_requests:12,candidate_urls:60,source_pages:18},monthly:{search_requests:30,candidate_urls:200,source_pages:45}};
+const RESEARCH_BUDGET_PRESETS={weekly:{search_requests:30,candidate_urls:150,source_pages:60},monthly:{search_requests:80,candidate_urls:400,source_pages:150}};
 const BUDGET_FIELDS={search_requests:'budget-search-requests',candidate_urls:'budget-candidate-urls',source_pages:'budget-source-pages'};
 function readResearchBudget(){return Object.fromEntries(Object.entries(BUDGET_FIELDS).map(([key,id])=>[key,Number($(id).value)]))}
 function reflectBudgetPreset(){const current=readResearchBudget();$('budget-preset').value=Object.keys(RESEARCH_BUDGET_PRESETS).find(name=>Object.keys(BUDGET_FIELDS).every(key=>current[key]===RESEARCH_BUDGET_PRESETS[name][key]))||'custom'}

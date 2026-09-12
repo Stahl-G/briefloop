@@ -14,12 +14,12 @@ PROTOCOL = 'quality_v1'
 BUDGET_FIELDS = ('search_requests', 'candidate_urls', 'source_pages')
 STRUCTURE_FIELDS = ('breadth', 'depth', 'parallel')
 
-# Product starting values, not quality-tuned optima. Standard keeps the legacy
-# weekly budget (12/60/18); quick and deep are explicit.
+# Product starting values, not quality-tuned optima. Per-round breadth is advisory;
+# the run budget below is the hard ceiling.
 PRESETS = {
-    'quick': {'breadth': 3, 'depth': 1, 'parallel': 2, 'search_requests': 3, 'candidate_urls': 15, 'source_pages': 6},
-    'standard': {'breadth': 6, 'depth': 2, 'parallel': 2, 'search_requests': 12, 'candidate_urls': 60, 'source_pages': 18},
-    'deep': {'breadth': 8, 'depth': 3, 'parallel': 2, 'search_requests': 24, 'candidate_urls': 120, 'source_pages': 48},
+    'quick': {'breadth': 3, 'depth': 1, 'parallel': 2, 'search_requests': 6, 'candidate_urls': 30, 'source_pages': 12},
+    'standard': {'breadth': 8, 'depth': 3, 'parallel': 2, 'search_requests': 30, 'candidate_urls': 150, 'source_pages': 60},
+    'deep': {'breadth': 12, 'depth': 4, 'parallel': 2, 'search_requests': 80, 'candidate_urls': 400, 'source_pages': 150},
 }
 DEFAULT_PRESET = 'standard'
 
