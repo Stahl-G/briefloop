@@ -253,7 +253,13 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
    未开启联网时只读上传来源。失败或期外来源的状态已在来源记录中保留，不在子任务回复中倾倒整份清单；gaps 简短说明重要影响及相关来源 ID，不删证据，不把无法读取写成没有变化。需要原文时先用 `{tool} read-source --id SOURCE_ID --start-line 1 --end-line 80 --max-chars 6000` 读取相关部分，再按实际行号定向扩展，不把截断当全文，不反复 dump 全文。
 3. 父会话主要接收 Scout 的短摘要、状态和结果路径；用 `{tool} join-scouts --files SCOUT_RESULT_PATHS > {shlex.quote(str(folder/'joined-scouts.json'))}` 做结构与来源 ID 校验和合并。文件列表必须是实际已派发槽位的 result_file 绝对路径；确认工具成功与文件存在即可，不再次逐项机械校验全部 JSON/schema/引用。缺少结果表示该槽未完成，不能复制另一槽或根目录文件冒充补交。只有工具报错才定向查看相关槽；证据判断由后续 Analyst/Evaluator 按需核对原文。
    随后调用独立 Analyst，要求其读取 {folder/'analyst-writing.md'} 并使用plan中同一份已通过校验的reader_contract；研究方法约束用于执行，不抄到正文。任务输入包括本轮 plan、joined-scouts.json、全部实际取得来源的 ID 与原文读取入口、只与 analyst 相关的当前技能。用 `{tool} read-source --id SOURCE_ID` 可读取包括 acquired sources 在内的登记正文；不要只给它最初可能为空的 input.json.sources。
-   Analyst 引用本轮实际来源 ID；新来源已由 {registration} 绑定本轮，应用随后独立评分时也会把这些 acquired sources 交给 Evaluator。若最终仍未获得可用原文，将具体缺口与无法确认范围写入research_notes/gaps，不用常识或搜索摘要编造市场事实。
+    Analyst 引用本轮实际来源 ID；新来源已由 {registration} 绑定本轮，应用随后独立评分时也会把这些 acquired sources 交给 Evaluator。若最终仍未获得可用原文，将具体缺口与无法确认范围写入research_notes/gaps，不用常识或搜索摘要编造市场事实。
+    动笔前做一次“写作前证据对照”，不新增角色，使用 `{tool} workspace-action --request REQUEST_JSON`：
+    1. reconciliation_candidates(run_id={run['id']}) 读取本轮冻结候选（已登记来源 + 已登记来源陈述）；未提取候选的来源也应保留在覆盖清单中。
+    2. 对与重要问题相关的来源陈述，先用 evidence_span 登记真实片段，再用 claim_create 以 claim_role="source_statement"（可带 attribution）登记；来源不明的记忆只能记为待查问题，不能伪造来源。
+    3. 回查足以判断关系的原文，按可比较条件（主体/指标/对象范围/单位与分母/期间/条件/归属/actual|plan|forecast|opinion）判断关系，取 compatible/different_scope/temporal_sequence/correction/supersession/republication/attributed_difference/contradiction/unknown；一条关系至少两个不同来源陈述，有方向的显式给方向，不做传递推断。
+    4. reconciliation_save(run_id={run['id']}, reconciliation={{status, examined_claim_ids, unexamined_claim_ids, relations:[{{member_claim_ids, relation, scope, basis_span_ids, reason, proposed_treatment, affected_requirement_ids}}], open_questions, coverage_notes}})：examined 与 unexamined 必须明确划分候选清单全部来源陈述；只有确实需要处理的分歧才用 conflict_create 登记（带 participants 的 claim_id/span_ids、scope、importance，可选 reconciliation_id）。对照只记录关系与依据，不代替正文主张的支持范围核查。
+    5. 把返回的 reconciliation_id 写进 draft.json.reconciliation_id；正文按对照结论组织并执行必要限定，不把来源陈述直接当作报告事实，也不平均或投票选赢家。
    Analyst 直接写可读 Brief：按对读者的重要性取舍，解释变化与有证据支持的意义，区分事实与推断，保留关键条件。
    按本轮产物约定决定分析深度和行动建议，避免逐篇复述材料或用泛泛背景凑篇幅。
    正文目标约 {req['target_words']}，上限 {req['max_words']} 个计数单位；接近目标优先保留关键信息，正文不得超过上限。规则：中文汉字每字计 1，连续英文字母或数字串计 1；排除 Markdown 语法、URL 和 [@source_id] 引用，标题、列表与表格文字计入正文。

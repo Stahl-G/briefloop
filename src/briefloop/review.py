@@ -54,6 +54,18 @@ class ReviewFinding(Model):
             value=dict(value);value['suggested_action']=value.pop('suggestion')
         return value
 
+    @model_validator(mode='before')
+    @classmethod
+    def fill_missing_description(cls,value):
+        # Models occasionally omit the description and put the text in evidence
+        # or suggested_action; keep the finding instead of failing the whole review.
+        if isinstance(value,dict) and not str(value.get('description','') or '').strip():
+            for key in ('evidence','suggested_action','report_quote','requirement'):
+                fallback=value.get(key)
+                if isinstance(fallback,str) and fallback.strip():
+                    value=dict(value);value['description']=fallback.strip();break
+        return value
+
 
 class ResponseCheck(Model):
     response_id: str
