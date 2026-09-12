@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {materialSelection} from '../frontend/mcp-selection.js';
+const records=[{id:'one',enabled:true,state:'connected',max_response_bytes:1048576,capabilities:{resources:[{uri:'private://a'}],tools:[{name:'write'},{name:'search'}]}}];
+assert.equal(materialSelection(records,new Map(),0,0),null,'unselected connections never add authorization');
+const chosen=new Map([['one',{resources:new Set(['private://a']),tools:new Set(['search'])}]]);
+assert.deepEqual(materialSelection(records,chosen,10,2097152),{selections:[{connector_id:'one',resources:['private://a'],tools:['search']}],max_calls:10,max_total_bytes:2097152});
+assert.throws(()=>materialSelection(records,chosen,10,512),/单次响应/);
+assert.throws(()=>materialSelection(records,chosen,0,2097152),/次数/);
+assert.throws(()=>materialSelection([{...records[0],enabled:false}],chosen,10,2097152),/不再可用/);
+assert.throws(()=>materialSelection([{...records[0],capabilities:{resources:[],tools:[]}}],chosen,10,2097152),/不再可用/);
+console.log('PASS: explicit MCP selection freezes exact items and budgets; disconnected or removed selection does not silently disappear');
