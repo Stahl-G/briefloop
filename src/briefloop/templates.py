@@ -322,4 +322,7 @@ def export_template(store,brief,document,figures):
         styles={**table_defaults(Document(original)),**styles}
     render_document(doc,document,figures=figures,styles=styles,
                     sources={sid:store.one('sources',sid) for sid in store.source_ids(brief['run_id'])})
+    if ' TOC ' in doc.element.xml:
+        from .industry_export import enable_update_fields
+        enable_update_fields(doc)
     out=BytesIO();doc.save(out);return out.getvalue()

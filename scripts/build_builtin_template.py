@@ -115,6 +115,26 @@ def add_sample_table(doc):
     return table
 
 
+def add_toc_block(doc):
+    label = doc.add_paragraph()
+    label.paragraph_format.space_before = Pt(6)
+    label.paragraph_format.space_after = Pt(10)
+    run = label.add_run('目录')
+    run.bold = True
+    run.font.size = Pt(15)
+    run.font.color.rgb = RGBColor.from_string(INK)
+    set_east_asia(run._r, '黑体')
+    holder = doc.add_paragraph()
+    field = OxmlElement('w:fldSimple')
+    field.set(qn('w:instr'), ' TOC \\o "1-3" \\h \\z \\u ')
+    placeholder = OxmlElement('w:r')
+    placeholder_text = OxmlElement('w:t')
+    placeholder_text.text = '目录将在打开文档时自动生成'
+    placeholder.append(placeholder_text)
+    field.append(placeholder)
+    holder._p.append(field)
+
+
 def add_header_footer(section):
     section.different_first_page_header_footer = True
     header = section.header
@@ -158,6 +178,8 @@ def build():
     title.style = doc.styles['Heading 1']
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     add_cover_paragraph(doc, '{{period}} · {{report_date}}', size=11, color=MUTED, space_before=16)
+    add_page_break(doc)
+    add_toc_block(doc)
     add_page_break(doc)
     numerals = ('一', '二', '三', '四', '五', '六')
     for (sid, title, purpose), numeral in zip(SECTIONS, numerals):

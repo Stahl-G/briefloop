@@ -143,7 +143,7 @@ def test_word_job_keeps_clicked_version_while_user_edits(tmp_path):
     store=Store(tmp_path);source=store.add_source('Evidence','Revenue 12')
     run=store.create_run({'title':'Report','objective':'Explain'},[source['id']])
     before=store.publish(run['id'],{'title':'Report','editor_document':{'type':'doc','content':[para('Revenue 12')]}})
-    assert export_input(store,before)[0]['renderer']==4
+    assert export_input(store,before)[0]['renderer']==6
     job=enqueue_export(store,before['id'])
     assert enqueue_export(store,before['id'])['id']==job['id']
     after=store.revise(before['id'],editor_document={'type':'doc','content':[para('Revenue 14')]})

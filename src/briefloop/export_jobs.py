@@ -11,7 +11,7 @@ from .figure_support import export_figures
 def export_input(store, brief):
     requirements = json.loads(store.one('runs', brief['run_id'])['requirements'])
     figures = export_figures(store, brief)
-    identity = {'renderer': 3 if requirements.get('template_id') else 4, 'version_id': brief['id'], 'brief_hash': brief['hash'],
+    identity = {'renderer': 5 if requirements.get('template_id') else 6, 'version_id': brief['id'], 'brief_hash': brief['hash'],
                 'document': brief_document(brief), 'detail': json.loads(brief['detail']),
                 'requirements': requirements,
                 'figures': {fid: {**{k: v for k, v in f.items() if k != 'image_bytes'},

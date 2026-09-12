@@ -148,7 +148,7 @@ def test_template_reuses_direct_styles_replaces_old_facts_and_locks_version(tmp_
         {'type':'heading','attrs':{'level':2,'blockId':'impact'},'content':[{'type':'text','text':'二、经营影响'}]},
         {'type':'paragraph','content':[{'type':'text','text':'Impact on customers'}]}]}
     brief=store.publish(run['id'],{'title':'August Report','editor_document':doc})
-    assert export_input(store,brief)[0]['renderer']==3
+    assert export_input(store,brief)[0]['renderer']==5
     job=enqueue_export(store,brief['id']);result=generate_word(store,job,threading.Event())
     with ZipFile(output_path(store,job)) as archive:
         xml=archive.read('word/document.xml').decode();styles=archive.read('word/styles.xml').decode()
