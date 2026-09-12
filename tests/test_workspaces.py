@@ -65,7 +65,7 @@ def test_stop_workspace_refuses_current_and_verifies_before_killing(tmp_path, mo
     other=tmp_path/'other';other.mkdir()
     assert workspaces.stop_workspace(store,str(other))['stopped'] is False
     (other/'server.json').write_text(dump({'pid':999999,'url':'http://127.0.0.1:1','workspace_id':None}))
-    monkeypatch.setattr(workspaces,'_active_server',lambda root,wid:{'url':'http://127.0.0.1:1','path':str(root),'workspace_id':wid,'reused':True})
+    monkeypatch.setattr(workspaces,'_active_server',lambda root,wid:{'url':'http://127.0.0.1:1','path':str(root),'workspace_id':wid,'reused':True,'pid':999999})
     killed=[]
     def fake_kill(pid,sig=0):
         if sig==0:raise ProcessLookupError()
@@ -74,3 +74,23 @@ def test_stop_workspace_refuses_current_and_verifies_before_killing(tmp_path, mo
     result=workspaces.stop_workspace(store,str(other))
     assert result['stopped'] is True and killed==[(999999,signal.SIGTERM)]
     assert not (other/'server.json').exists()
+
+
+def test_stop_workspace_keeps_markers_while_process_survives(tmp_path, monkeypatch):
+    import signal
+    from briefloop import workspaces
+    from briefloop.store import Store, dump
+    store=Store(tmp_path/'current')
+    other=tmp_path/'other';other.mkdir()
+    (other/'server.json').write_text(dump({'pid':999999,'url':'http://127.0.0.1:1','workspace_id':None}))
+    monkeypatch.setattr(workspaces,'_active_server',lambda root,wid:{'url':'http://127.0.0.1:1','path':str(root),'workspace_id':wid,'reused':True,'pid':999999})
+    monkeypatch.setattr(workspaces,'STOP_GRACE_SECONDS',0)
+    monkeypatch.setattr(workspaces,'STOP_KILL_GRACE_SECONDS',0)
+    killed=[]
+    def fake_kill(pid,sig=0):
+        killed.append((pid,sig))
+    monkeypatch.setattr(workspaces.os,'kill',fake_kill)
+    result=workspaces.stop_workspace(store,str(other))
+    assert result['stopped'] is False and result['pid']==999999
+    assert (other/'server.json').exists()
+    assert (999999,signal.SIGTERM) in killed and (999999,signal.SIGKILL) in killed

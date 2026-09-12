@@ -701,7 +701,7 @@ async function saveRoleModels(){
 let workspaceInventory=null,workspaceSwitching=false;
 function workspaceListHTML(result,current,attr){
  const list=result.workspaces||[];
- return list.length?list.map((w,i)=>`<div class="workspace-row"><button type="button" class="workspace-choice" ${attr}="${i}" ${w.path===current.path?'disabled':''}><span><strong>${esc(w.name||w.path)}</strong><small>${esc(w.path)}</small></span><em>${w.path===current.path?'当前':(w.running?'运行中':'打开 ↗')}</em></button>${w.path!==current.path&&w.running?`<button type="button" class="workspace-stop" data-stop-workspace="${esc(w.path)}" title="停止该工作区服务">停止</button>`:''}</div>`).join(''):'<p class="help">还没有其他工作区。</p>';
+ return list.length?list.map((w,i)=>`<div class="workspace-row"><button type="button" class="workspace-choice" ${attr}="${i}" ${w.path===current.path?'disabled':''}><span><strong>${esc(w.name||w.path)}</strong><small>${esc(w.path)}</small></span><em>${w.path===current.path?'当前':(w.running?'运行中 · 打开 ↗':'打开 ↗')}</em></button>${w.path!==current.path&&w.running?`<button type="button" class="workspace-stop" data-stop-workspace="${esc(w.path)}" title="停止该工作区服务">停止</button>`:''}</div>`).join(''):'<p class="help">还没有其他工作区。</p>';
 }
 function wireWorkspaceList(box,result,attr){
  if(!box)return;
