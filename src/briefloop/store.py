@@ -244,6 +244,10 @@ class Store:
             from .deliverable_spec import resolve,validate_reader_contract
             draft.reader_contract=validate_reader_contract(resolve(json.loads(run['requirements'])),draft.reader_contract)
         references=set(json.loads(run['requirements']).get('reference_source_ids',[]))
+        if draft.reconciliation_id:
+            from .reconciliation import exists
+            if not exists(self,run_id,draft.reconciliation_id):
+                raise ValueError('稿件引用的对照记录不存在或不属于本报告：'+draft.reconciliation_id)
         for ref in draft.citations:
             try:self.one("sources", ref.source_id)
             except ValueError:
