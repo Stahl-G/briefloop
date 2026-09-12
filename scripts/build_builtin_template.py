@@ -31,11 +31,11 @@ ASSETS = Path(__file__).resolve().parent.parent / 'src' / 'briefloop' / 'templat
 # ------------------------------------------------------------------ themes
 
 THEMES = (
-    {'code': 't1', 'label': '极简蓝', 'primary': '2563EB', 'heading_east': 'PingFang SC', 'body_east': 'PingFang SC', 'body_size': 11},
-    {'code': 't2', 'label': '商务蓝', 'primary': '1565C0', 'heading_east': '微软雅黑', 'body_east': '微软雅黑', 'body_size': 9.5},
-    {'code': 't3', 'label': '学术黑', 'primary': '1E2320', 'heading_east': '黑体', 'body_east': '宋体', 'body_size': 12},
-    {'code': 't4', 'label': '政务蓝红', 'primary': '003087', 'heading_east': '黑体', 'body_east': '仿宋_GB2312', 'body_size': 14},
-    {'code': 't5', 'label': '创意橙', 'primary': 'FF6B35', 'heading_east': '阿里巴巴普惠体', 'body_east': '阿里巴巴普惠体', 'body_size': 12},
+    {'code': 't1', 'label': '品牌绿', 'primary': '006838', 'heading_east': '黑体', 'body_east': '宋体', 'body_size': 10.5},
+    {'code': 't2', 'label': '极简蓝', 'primary': '2563EB', 'heading_east': 'PingFang SC', 'body_east': 'PingFang SC', 'body_size': 11},
+    {'code': 't3', 'label': '珊瑚红', 'primary': 'C62828', 'heading_east': '微软雅黑', 'body_east': '微软雅黑', 'body_size': 9.5},
+    {'code': 't4', 'label': '石墨黑', 'primary': '1E2320', 'heading_east': '黑体', 'body_east': '宋体', 'body_size': 12},
+    {'code': 't5', 'label': '典雅灰', 'primary': '8A9089', 'heading_east': '微软雅黑', 'body_east': '宋体', 'body_size': 10.5},
 )
 INK = '1E2320'
 MUTED = '6A706B'
@@ -49,7 +49,7 @@ GENRES = (
                   ('analysis', '分析', '影响推演'), ('conclusion', '结论', '判断与建议'),
                   ('risks', '风险提示', '不确定性')),
      'cover': 'standard', 'table': {'kind': 'three_line'}, 'footer': 'page', 'header': True, 'toc': True},
-    {'stem': 'business-report-zh', 'label': '商务报告',
+    {'stem': 'business-report-zh', 'label': '商业报告',
      'sections': (('views', '核心观点', '开门见山的判断'), ('events', '事件回顾', '本期大事'),
                   ('impact', '影响分析', '短中长期影响'), ('data', '数据附录', '关键指标'),
                   ('risks', '风险提示', '不确定性')),

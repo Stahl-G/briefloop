@@ -1697,38 +1697,86 @@ async function openSourceDrawer(id,usage){
  renderSourceText(result);
 }
 function closeSourceDrawer(){const d=$('source-drawer'),b=$('source-drawer-backdrop');if(d)d.hidden=true;if(b)b.hidden=true}
-const THEME_COLORS={'极简蓝':'#2563EB','商务蓝':'#1565C0','学术黑':'#1E2320','政务蓝红':'#003087','创意橙':'#FF6B35'};
+const GENRE_ORDER=['商业报告','券商研报','学术论文','会议纪要','合同','上市公司年报','政府公文','通用报告'];
+const GENRE_META={
+ '商业报告':{desc:'适用于商业分析、市场研究等。',icon:'briefcase',tile:'#E8F1FD',color:'#1565C0'},
+ '券商研报':{desc:'适用于证券研究、行业分析。',icon:'chart',tile:'#FDECEA',color:'#C62828'},
+ '学术论文':{desc:'适用于学术研究、论文写作。',icon:'book',tile:'#E6F2EC',color:'#006838'},
+ '会议纪要':{desc:'适用于会议记录、讨论要点。',icon:'users',tile:'#EFEAFD',color:'#6741D9'},
+ '合同':{desc:'适用于各类合同、协议。',icon:'file',tile:'#E8F1FD',color:'#1565C0'},
+ '上市公司年报':{desc:'适用于上市公司年度报告。',icon:'bars',tile:'#E8F1FD',color:'#1565C0'},
+ '政府公文':{desc:'适用于政府机关公文、政策文件；红头与字体按 GB/T 9704 固定。',icon:'landmark',tile:'#FDECEA',color:'#C8102E'},
+ '通用报告':{desc:'适用于各类通用型报告。',icon:'layers',tile:'#EEF0EE',color:'#5B6360'},
+};
+const ICONS={
+ briefcase:'<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>',
+ chart:'<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
+ book:'<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
+ users:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+ file:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
+ bars:'<line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/>',
+ landmark:'<line x1="3" y1="22" x2="21" y2="22"/><line x1="5" y1="22" x2="5" y2="11"/><line x1="9" y1="22" x2="9" y2="11"/><line x1="15" y1="22" x2="15" y2="11"/><line x1="19" y1="22" x2="19" y2="11"/><path d="M2 11L12 3l10 8z"/>',
+ layers:'<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+};
+const THEME_COLORS={'品牌绿':'#006838','极简蓝':'#2563EB','珊瑚红':'#C62828','石墨黑':'#1E2320','典雅灰':'#8A9089'};
 const THEME_ORDER=Object.keys(THEME_COLORS);
+function splitTemplateName(name){const i=name.lastIndexOf('·');return i<0?{genre:name,theme:''}:{genre:name.slice(0,i),theme:name.slice(i+1)}}
+function templatePickState(){
+ const builtins=(state.templates||[]).filter(t=>t.origin==='builtin'&&t.name.includes('·')).map(t=>({id:t.id,...splitTemplateName(t.name),status:t.status}));
+ const genres={};for(const item of builtins)(genres[item.genre]=genres[item.genre]||[]).push(item);
+ for(const genre in genres)genres[genre].sort((a,b)=>THEME_ORDER.indexOf(a.theme)-THEME_ORDER.indexOf(b.theme));
+ return {builtins,genres};
+}
+let templatePick=null;
 function renderTemplatesPage(){
  const box=$('templates-page-list');if(!box||!state)return;
  const list=state.templates||[];
- const sig=JSON.stringify([state.settings&&state.settings.default_template_id,...list.map(t=>[t.id,t.status,t.revision,t.name,t.origin])]);if(renderTemplatesPage.sig===sig)return;renderTemplatesPage.sig=sig;
- const mine=list.filter(t=>t.origin!=='builtin');
- const genres={};
- for(const t of list.filter(t=>t.origin==='builtin'&&t.name.includes('·'))){
-  const i=t.name.lastIndexOf('·'),genre=t.name.slice(0,i),theme=t.name.slice(i+1);
-  (genres[genre]=genres[genre]||[]).push({id:t.id,theme,status:t.status});
+ const sig=JSON.stringify([state.settings&&state.settings.default_template_id,templatePick,...list.map(t=>[t.id,t.status,t.revision,t.name,t.origin])]);
+ if(renderTemplatesPage.sig===sig)return;renderTemplatesPage.sig=sig;
+ const {builtins,genres}=templatePickState();
+ if(!templatePick||!builtins.some(t=>t.id===templatePick.id)){
+  const saved=builtins.find(t=>t.id===(state.settings||{}).default_template_id);
+  const picked=saved||builtins.find(t=>t.genre==='商业报告'&&t.theme==='品牌绿')||builtins[0];
+  templatePick=picked?{genre:picked.genre,theme:picked.theme,id:picked.id}:null;
  }
  const fallback=(state.settings||{}).default_template_id;
- const cards=Object.entries(genres).sort((a,b)=>a[0].localeCompare(b[0],'zh')).map(([genre,items])=>{
-  items.sort((a,b)=>THEME_ORDER.indexOf(a.theme)-THEME_ORDER.indexOf(b.theme));
-  const chips=items.map(it=>{
-   const dot=THEME_COLORS[it.theme]?`<span class="dot" style="background:${THEME_COLORS[it.theme]}"></span>`:'';
-   const active=fallback===it.id;
-   const title=it.theme==='政务蓝红'&&genre==='政府公文'?'公文版式按 GB/T 9704 固定红头与字体':`新建报告默认使用${genre}·${it.theme}`;
-   return `<button class="theme-chip${active?' active':''}" data-template="${esc(it.id)}" title="${esc(title)}" ${it.status!=='ready'?'disabled':''}>${dot}${esc(it.theme)}</button>`;
-  }).join('');
-  return `<div class="builtin-card"><span class="name">${esc(genre)}</span><span class="chips">${chips}</span></div>`;
+ const cards=GENRE_ORDER.filter(g=>genres[g]).map(genre=>{
+  const meta=GENRE_META[genre]||{desc:'',icon:'file',tile:'#EEF0EE',color:'#5B6360'};
+  const items=genres[genre];
+  const chosen=templatePick&&templatePick.genre===genre?templatePick.theme:items[0].theme;
+  const selected=templatePick&&templatePick.genre===genre;
+  const dots=items.map(it=>`<button type="button" class="color-dot${chosen===it.theme?' selected':''}" style="background:${THEME_COLORS[it.theme]||'#999'};color:${THEME_COLORS[it.theme]||'#999'}" data-genre="${esc(genre)}" data-theme="${esc(it.theme)}" data-id="${esc(it.id)}" title="${esc(genre+' · '+it.theme)}" aria-label="${esc(genre+' '+it.theme)}"></button>`).join('');
+  return `<div class="tpl-card${selected?' selected':''}" data-genre="${esc(genre)}"><span class="tpl-check">✓</span>`
+   +`<span class="tpl-icon" style="background:${meta.tile};color:${meta.color}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[meta.icon]||''}</svg></span>`
+   +`<span class="tpl-name">${esc(genre)}</span><span class="tpl-desc">${esc(meta.desc)}</span>`
+   +`<span class="tpl-dots"><span class="label">配色</span>${dots}</span></div>`;
  }).join('');
- box.innerHTML=(cards?`<p class="help">内置版式：点颜色选择主题，选中的主题将成为新建报告的默认版式</p>${cards}`:'')
-  +(mine.length?`<p class="help">我的模板</p>${mine.map(t=>`<div class="source-row"><span class="name">${esc(t.name)} · v${t.revision}</span><span class="tag ${t.status!=='ready'?'error':''}">${t.status==='ready'?'可用':esc(t.error||'准备中')}</span></div>`).join('')}`:'')
-  +(!list.length?'<p class="help">还没有模板。上传一个 Word 作为版式模板。</p>':'');
- box.querySelectorAll('.theme-chip:not([disabled])').forEach(b=>b.onclick=()=>action(async()=>{
-  await api('settings',{default_template_id:b.dataset.template});
-  state.settings={...(state.settings||{}),default_template_id:b.dataset.template};
-  notice('已设为新建报告的默认版式');
+ const pickedLabel=templatePick?`已选：<strong>${esc(templatePick.genre)} · ${esc(templatePick.theme)}</strong>`:'已选：—';
+ const mine=list.filter(t=>t.origin!=='builtin');
+ const mineRows=mine.length?`<p class="help">我的模板</p>`+mine.map(t=>`<div class="source-row"><span class="name">${esc(t.name)} · v${t.revision}</span><span class="tag ${t.status!=='ready'?'error':''}">${t.status==='ready'?'可用':esc(t.error||'准备中')}</span></div>`).join(''):'';
+ box.innerHTML=(cards?`<div class="tpl-grid">${cards}</div><div class="tpl-bar"><span class="picked">${pickedLabel}</span><button type="button" id="template-apply" class="primary" ${templatePick?'':'disabled'}>使用该模板 →</button></div>`:'')
+  +mineRows+(!list.length?'<p class="help">还没有模板。上传一个 Word 作为版式模板。</p>':'');
+ if(!cards)return;
+ box.querySelectorAll('.tpl-card').forEach(card=>card.onclick=event=>{
+  if(event.target.closest('.color-dot'))return;
+  const genre=card.dataset.genre;const items=genres[genre]||[];
+  const keepTheme=templatePick&&templatePick.genre===genre?templatePick.theme:items[0].theme;
+  const target=items.find(i=>i.theme===keepTheme)||items[0];
+  templatePick={genre,theme:target.theme,id:target.id};renderTemplatesPage.sig='';renderTemplatesPage();
+ });
+ box.querySelectorAll('.color-dot').forEach(dot=>dot.onclick=event=>{
+  event.stopPropagation();
+  templatePick={genre:dot.dataset.genre,theme:dot.dataset.theme,id:dot.dataset.id};
   renderTemplatesPage.sig='';renderTemplatesPage();
- }));
+ });
+ const apply=$('template-apply');
+ if(apply)apply.onclick=()=>action(async()=>{
+  if(!templatePick)return;
+  await api('settings',{default_template_id:templatePick.id});
+  state.settings={...(state.settings||{}),default_template_id:templatePick.id};
+  notice(`已选用 ${templatePick.genre} · ${templatePick.theme}；新建报告将默认使用`);
+  renderTemplatesPage.sig='';page('setup');
+ });
 }
 if($('new-report'))$('new-report').onclick=()=>page('setup');
 if($('sources-upload'))$('sources-upload').onchange=e=>action(async()=>{for(const f of e.target.files){const buf=new Uint8Array(await f.arrayBuffer());let b='';for(let i=0;i<buf.length;i+=8192)b+=String.fromCharCode(...buf.subarray(i,i+8192));await api('upload',{name:f.name,data:btoa(b)})}e.target.value=''},'来源已保存');
