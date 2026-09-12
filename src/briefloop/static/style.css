@@ -420,3 +420,15 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 #source-drawer-images figure{margin:14px 0}
 #source-drawer-images figcaption{font-size:12px;color:var(--muted)}
 .source-drawer-body .source-provenance{margin:0}
+/* Outline view */
+.report-outline{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);padding:18px 22px;margin-bottom:14px}
+.outline-list{list-style:none;margin:0;padding:0}
+.outline-list li{margin:2px 0}
+.outline-list button{width:100%;text-align:left;padding:7px 10px;border-radius:7px;font-size:13px;color:var(--ink)}
+.outline-list button:hover{background:var(--soft)}
+.outline-lv2 button{padding-left:26px;font-size:12.5px;color:var(--muted)}
+.outline-lv3 button{padding-left:42px;font-size:12px;color:var(--muted)}
+/* Editable outline */
+.outline-text{width:100%;font:13px/1.9 var(--mono);border:1px solid var(--line);border-radius:8px;padding:12px 14px;min-height:260px;resize:vertical;background:var(--surface);color:var(--ink)}
+.outline-actions{display:flex;gap:10px;margin-top:12px}
+.outline-actions .primary,.outline-actions .outline{height:36px;padding:0 16px;font-size:12.5px}

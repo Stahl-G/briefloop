@@ -197,7 +197,7 @@ function tryOpenPending(){
  if(incoming&&openBrief(incoming,{follow:true})){pendingRun=null;return true}
  return false;
 }
-function openBrief(b,{follow=false}={}){if(dirty||saving){notice('请先保存当前修改，再切换版本',true);return false}followUpdates=follow;current=b;$('report-title').textContent=parse(b.detail).title||'简报';updateDownloads(b);if(editor)editor.destroy();highlightQuotes=[];editor=new Editor({element:$('editor'),editable:state.briefs.find(x=>x.run_id===b.run_id)?.id===b.id,extensions:[StarterKit.configure({link:{openOnClick:false}}),TableKit,ReportImage.configure({HTMLAttributes:{class:'briefloop-figure'},allowBase64:false}),TextStyle,Layout,Citation,Markdown,MustFixHighlight],content:b.editor_document?editorDocument(parse(b.editor_document),b.id):toEditor(b.markdown),...(b.editor_document?{}:{contentType:'markdown'}),onUpdate:changed,onSelectionUpdate:updateFormattingTools});$('markdown-source').value=b.markdown;const historical=state.briefs.find(x=>x.run_id===b.run_id)?.id!==b.id;$('markdown-source').readOnly=historical;$('toolbar').querySelectorAll('button,input,select').forEach(x=>x.disabled=historical);$('save-state').textContent=historical?'历史记录（只读）':b.author==='user'?'当前编辑稿已自动保存':'原稿已保存';$('version-select').value=b.id;assessment();citations();renderBriefLength();return true}
+function openBrief(b,{follow=false}={}){if(dirty||saving){notice('请先保存当前修改，再切换版本',true);return false}followUpdates=follow;current=b;$('report-title').textContent=parse(b.detail).title||'简报';updateDownloads(b);if(editor)editor.destroy();highlightQuotes=[];editor=new Editor({element:$('editor'),editable:state.briefs.find(x=>x.run_id===b.run_id)?.id===b.id,extensions:[StarterKit.configure({link:{openOnClick:false}}),TableKit,ReportImage.configure({HTMLAttributes:{class:'briefloop-figure'},allowBase64:false}),TextStyle,Layout,Citation,Markdown,MustFixHighlight],content:b.editor_document?editorDocument(parse(b.editor_document),b.id):toEditor(b.markdown),...(b.editor_document?{}:{contentType:'markdown'}),onUpdate:changed,onSelectionUpdate:updateFormattingTools});$('markdown-source').value=b.markdown;const historical=state.briefs.find(x=>x.run_id===b.run_id)?.id!==b.id;$('markdown-source').readOnly=historical;$('toolbar').querySelectorAll('button,input,select').forEach(x=>x.disabled=historical);$('save-state').textContent=historical?'历史记录（只读）':b.author==='user'?'当前编辑稿已自动保存':'原稿已保存';$('version-select').value=b.id;assessment();citations();renderBriefLength();setReportView('edit');return true}
 async function renderDeliveryChecks(){
  const ticket=(renderDeliveryChecks.ticket||0)+1;renderDeliveryChecks.ticket=ticket;
  if(!current||!$('assessment'))return;const vid=current.id;
@@ -233,7 +233,7 @@ function save(){
  savePromise=(async()=>{try{
   current=await api('save',{base_version:base,markdown:markdownMode?text:'',editor_document:markdownMode?null:JSON.parse(text)});
   dirty=(markdownMode?$('markdown-source').value:JSON.stringify(savedDocument(editor.getJSON())))!==text;
-  $('save-state').textContent=dirty?'有新的修改':'已保存';updateDownloads(current);await refresh();
+  $('save-state').textContent=dirty?'有新的修改':'已保存';updateDownloads(current);await refresh();const outline=$('report-outline');if(outline&&!outline.hidden)setReportView('outline');
   if(dirty)saveTimer=setTimeout(save,1400);else scheduleLearning();
  }catch(e){lastSaveError=e;$('save-state').textContent='未保存，请保留编辑';notice(e.message,true)}
  finally{saving=false;savePromise=null;
@@ -1398,8 +1398,46 @@ function setReportTab(name){
  if(!REPORT_TABS.includes(name))name='assistant';
  panel.querySelectorAll('[data-pane]').forEach(p=>{p.hidden=p.dataset.pane!==name});
  document.querySelectorAll('#report-panel [data-report-tab],#report-tabs [data-report-tab]').forEach(b=>b.classList.toggle('active',b.dataset.reportTab===name));
- document.querySelectorAll('#report-tabs [data-report-view]').forEach(b=>b.classList.toggle('active',b.dataset.reportView==='edit'));
  expandReportPanel();
+}
+function outlineHeadings(){
+ const out=[];
+ if(editor&&editor.state&&editor.state.doc)editor.state.doc.descendants(node=>{if(node.type.name==='heading')out.push({level:Number(node.attrs.level)||2,text:node.textContent,blockId:node.attrs.blockId||null})});
+ if(out.length)return out;
+ let fenced=false;for(const line of String((current&&current.markdown)||'').split('\n')){if(/^\s*(```|~~~)/.test(line)){fenced=!fenced;continue}if(fenced)continue;const m=/^(#{1,3})\s+(.+?)\s*$/.exec(line);if(m)out.push({level:m[1].length,text:m[2],blockId:null})}
+ return out;
+}
+function setReportView(view){
+ if(!['edit','outline'].includes(view))view='edit';
+ const grid=$('report-grid'),outline=$('report-outline');
+ document.querySelectorAll('#report-tabs [data-report-view]').forEach(b=>b.classList.toggle('active',b.dataset.reportView===view));
+ if(outline)outline.hidden=view!=='outline';
+ if(grid)grid.hidden=view==='outline';
+ if(view==='outline')renderOutline();
+}
+function outlineText(){return outlineHeadings().map(h=>'#'.repeat(h.level)+' '+h.text).join('\n')}
+function jumpToOutline(index){
+ setReportView('edit');const item=outlineHeadings()[index];if(!item)return;
+ const root=(editor&&editor.view&&editor.view.dom)||$('editor');if(!root)return;
+ const headings=[...root.querySelectorAll('h1,h2,h3')];
+ const hit=(item.blockId&&headings.find(h=>h.getAttribute('data-block-id')===item.blockId))||headings[index];
+ if(hit)hit.scrollIntoView({block:'center',behavior:'smooth'});
+}
+let outlineDraft={key:null,text:null};
+function renderOutline(){
+ const box=$('report-outline');if(!box)return;const items=outlineHeadings();const key=(current&&current.id)||'';const base=outlineText();const text=(outlineDraft.key===key&&outlineDraft.text!=null)?outlineDraft.text:base;
+ const list=items.length?`<ul class="outline-list">${items.map((h,i)=>`<li class="outline-lv${h.level}"><button type="button" data-outline-index="${i}">${esc(h.text)}</button></li>`).join('')}</ul>`:'<p class="help">这份报告还没有小标题。</p>';
+ box.innerHTML=`<p class="help">点击章节定位到正文；下面每行一个章节，用 # / ## 表示层级（1–3 级）。可增删或调整顺序，然后把它带到「材料与需求」作为下一份简报的章节。</p>${list}<textarea id="outline-text" class="outline-text" rows="12" spellcheck="false" placeholder="## 核心摘要&#10;## 需求与竞争">${esc(text)}</textarea><div class="outline-actions"><button type="button" id="outline-apply" class="primary">用它做下一份报告 →</button><button type="button" id="outline-reset" class="outline">从当前稿件还原</button></div>`;
+ box.querySelectorAll('[data-outline-index]').forEach(b=>b.onclick=()=>jumpToOutline(Number(b.dataset.outlineIndex)));
+ const t=$('outline-text');if(t)t.oninput=()=>{outlineDraft={key,text:t.value}};
+ const reset=$('outline-reset');if(reset)reset.onclick=()=>{outlineDraft={key:null,text:null};if(t)t.value=base};
+ const apply=$('outline-apply');if(apply)apply.onclick=()=>applyOutlineToSetup();
+}
+function applyOutlineToSetup(){
+ const value=($('outline-text')?.value||'').trim();
+ const titles=value?value.split('\n').map(l=>l.replace(/^#{1,6}\s*/,'').trim()).filter(Boolean):[];
+ if(!titles.length){notice('大纲为空',true);return}
+ applyRequirements(JSON.stringify({manual_sections:titles}));
 }
 function expandReportPanel(){const grid=$('report-grid');if(grid)grid.classList.remove('panel-collapsed');try{localStorage.setItem('briefloop-report-panel','open')}catch{}}
 function collapseReportPanel(){const grid=$('report-grid');if(grid)grid.classList.add('panel-collapsed');try{localStorage.setItem('briefloop-report-panel','closed')}catch{}}
@@ -1433,8 +1471,9 @@ function sendReportQuestion(text){
  page('chat');
  const form=$('chat-form');if(form)form.requestSubmit();
 }
-document.querySelectorAll('#report-panel [data-report-tab],#report-tabs [data-report-tab]').forEach(b=>b.onclick=()=>setReportTab(b.dataset.reportTab));
-document.querySelectorAll('#report-tabs [data-report-view]').forEach(b=>b.onclick=()=>{document.querySelectorAll('#report-tabs [data-report-view]').forEach(x=>x.classList.toggle('active',x===b))});
+document.querySelectorAll('#report-panel [data-report-tab]').forEach(b=>b.onclick=()=>setReportTab(b.dataset.reportTab));
+document.querySelectorAll('#report-tabs [data-report-tab]').forEach(b=>b.onclick=()=>{setReportView('edit');setReportTab(b.dataset.reportTab)});
+document.querySelectorAll('#report-tabs [data-report-view]').forEach(b=>b.onclick=()=>setReportView(b.dataset.reportView));
 if($('report-panel-toggle'))$('report-panel-toggle').onclick=toggleReportPanel;
 document.querySelectorAll('.menu-wrap').forEach(wrap=>{const toggle=wrap.querySelector('button[aria-haspopup="menu"]'),pop=wrap.querySelector('.popover');if(!toggle||!pop)return;toggle.onclick=e=>{e.stopPropagation();const open=pop.hidden;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'));pop.hidden=!open;toggle.setAttribute('aria-expanded',String(open))}});
 document.addEventListener('click',()=>{document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'))});
