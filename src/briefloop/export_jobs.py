@@ -8,8 +8,12 @@ from .document_model import brief_document
 from .figure_support import export_figures
 
 
-def export_input(store, brief):
+def export_input(store, brief, template_override=None):
     requirements = json.loads(store.one('runs', brief['run_id'])['requirements'])
+    if template_override:
+        # Same saved content, different layout: the override only swaps the
+        # rendering template and must change the export fingerprint.
+        requirements = {**requirements, 'template_id': template_override}
     figures = export_figures(store, brief)
     identity = {'renderer': 5 if requirements.get('template_id') else 6, 'version_id': brief['id'], 'brief_hash': brief['hash'],
                 'document': brief_document(brief), 'detail': json.loads(brief['detail']),
@@ -24,9 +28,9 @@ def export_input(store, brief):
     return identity, figures
 
 
-def enqueue_export(store, version_id):
+def enqueue_export(store, version_id, template_override=None):
     brief = store.one('briefs', version_id)
-    identity, _ = export_input(store, brief)
+    identity, _ = export_input(store, brief, template_override)
     digest = hashlib.sha256(dump(identity).encode()).hexdigest()
     # Repeated clicks share only an identical immutable input, never another draft.
     for job in store.rows("SELECT * FROM jobs WHERE kind='export_docx' ORDER BY rowid DESC LIMIT 50"):
@@ -35,7 +39,9 @@ def enqueue_export(store, version_id):
             if job['status'] != 'complete':return job
             path=output_path(store,job)
             if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest()==json.loads(job['result'] or '{}').get('sha256'):return job
-    return store.enqueue('export_docx', {'version_id': version_id, 'run_id': brief['run_id'], 'fingerprint': digest})
+    payload = {'version_id': version_id, 'run_id': brief['run_id'], 'fingerprint': digest}
+    if template_override:payload['template_id'] = template_override
+    return store.enqueue('export_docx', payload)
 
 
 def output_path(store, job):
@@ -52,14 +58,14 @@ def generate_word(store, job, cancelled):
         if cancelled.is_set(): raise InterruptedError('Word 制作已停止')
         store.event(job['id'], 'export_progress', {'step': step, 'total': 4, 'message': message})
     stage(1, '读取已保存的报告版本')
-    identity, figures = export_input(store, brief)
+    identity, figures = export_input(store, brief, payload.get('template_id'))
     if hashlib.sha256(dump(identity).encode()).hexdigest() != payload['fingerprint']:
         raise ValueError('导出输入已变化，请对当前报告重新生成 Word')
     req = identity['requirements']; detail = identity['detail']
     stage(2, '填充正文、表格和图表')
     if req.get('template_id'):
         from .templates import export_template
-        blob = export_template(store, brief, identity['document'], figures)
+        blob = export_template(store, brief, identity['document'], figures, template_id=payload.get('template_id'))
     else:
         blob = docx_bytes(document=identity['document'], report_profile=req.get('report_profile', 'brief'),
                           title=detail.get('title', req.get('title', '')), report_date=req.get('report_date', ''),

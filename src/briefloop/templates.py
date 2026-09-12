@@ -326,9 +326,12 @@ def prepare(store,template_id,spec):
     return template(store,template_id)
 
 
-def export_template(store,brief,document,figures):
+def export_template(store,brief,document,figures,template_id=None):
     from .document_export import render_document,without_duplicate_cover_heading
-    req=json.loads(store.one('runs',brief['run_id'])['requirements']);row=template(store,req['template_id'])
+    req=json.loads(store.one('runs',brief['run_id'])['requirements'])
+    selected_id=template_id or req.get('template_id')
+    if not selected_id:raise ValueError('未选择模板')
+    row=template(store,selected_id)
     if row['status']!='ready':raise ValueError('模板尚未准备完成')
     path=_path(store,row,'prepared.docx')
     if hashlib.sha256(path.read_bytes()).hexdigest()!=row['spec']['prepared_hash']:raise ValueError('模板底稿已变化，请创建新模板版本')

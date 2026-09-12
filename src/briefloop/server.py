@@ -319,7 +319,7 @@ def make_server(workspace, port=8765, *, paused=False):
                     result=import_template(store,body['name'],base64.b64decode(body['data'],validate=True),body.get('parent_id'))
                 elif path=='/api/export':
                     from .export_jobs import enqueue_export
-                    result=enqueue_export(store,body['version_id'])
+                    result=enqueue_export(store,body['version_id'],body.get('template_id'))
                 elif path=='/api/generate':
                     req=Requirements.model_validate(body['requirements'])
                     run=store.create_run(req.model_dump(),body.get('source_ids',[]))

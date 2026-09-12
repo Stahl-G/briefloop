@@ -66,6 +66,13 @@ const fromEditor=md=>mapFigureImages(md.replace(/\[([^\]]+)\]\(#source-(src_[a-z
 // END_FIGURE_EDITOR_MAPPING
 function updateDownloads(brief){
  const query='version='+encodeURIComponent(brief.id);$('download').href='/api/download?'+query;$('download-docx').href='/api/download?format=docx&'+query;
+ const picker=$('export-template');
+ if(picker){
+  const chosen=picker.value;
+  const ready=(state.templates||[]).filter(t=>t.status==='ready');
+  picker.innerHTML='<option value="">跟随报告设置</option>'+ready.map(t=>`<option value="${esc(t.id)}">${esc(t.name)}（换版式）</option>`).join('');
+  picker.value=[...picker.options].some(o=>o.value===chosen)?chosen:'';
+ }
  const bundle=$('download-bundle');if(bundle){bundle.href='/api/download?format=bundle&'+query;bundle.hidden=!/briefloop-figure:[A-Za-z0-9_-]+/.test(brief.markdown)}
 }
 
@@ -304,7 +311,11 @@ async function savedVersion(){
 }
 for(const id of ['download','download-docx','download-bundle']){
  const link=$(id);if(!link)continue;
- link.onclick=async e=>{e.preventDefault();try{const version=await savedVersion();if(id==='download-docx'){await api('export',{version_id:version});notice('Word 已排队制作');await refresh();return}const format=id==='download-docx'?'docx':id==='download-bundle'?'bundle':null;window.location.assign('/api/download?version='+encodeURIComponent(version)+(format?'&format='+format:''))}catch(e){notice('下载未开始：'+e.message,true)}};
+ link.onclick=async e=>{e.preventDefault();try{const version=await savedVersion();if(id==='download-docx'){
+   const override=$('export-template')?$('export-template').value:'';
+   await api('export',override?{version_id:version,template_id:override}:{version_id:version});
+   const label=override?(state.templates||[]).find(t=>t.id===override)?.name:'';
+   notice(label?`Word 已排队制作（版式：${label}）`:'Word 已排队制作');await refresh();return}const format=id==='download-docx'?'docx':id==='download-bundle'?'bundle':null;window.location.assign('/api/download?version='+encodeURIComponent(version)+(format?'&format='+format:''))}catch(e){notice('下载未开始：'+e.message,true)}};
 }
 
 function scheduleLearning(){ /* Worker consumes the durable feedback after inactivity. */ }

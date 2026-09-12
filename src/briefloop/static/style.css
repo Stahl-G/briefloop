@@ -534,3 +534,6 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 .tpl-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);padding:12px 16px;margin-top:14px}
 .tpl-bar .picked{font-size:14px;color:var(--ink)}
 .tpl-bar .picked strong{color:var(--green)}
+
+.export-template-row{display:flex;align-items:center;gap:8px;padding:6px 12px;font-size:13px;color:var(--ink)}
+.export-template-row select{max-width:200px}
