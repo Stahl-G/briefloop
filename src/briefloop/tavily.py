@@ -126,24 +126,27 @@ def search(query,*,topic='general',time_range=None,start_date=None,end_date=None
             except (ValueError,TypeError):raise TavilyError('日期使用 YYYY-MM-DD') from None
     if start_date and end_date and start_date>end_date:raise TavilyError('开始日期不能晚于结束日期')
     parameters={'topic':topic,'max_results':max_results,'search_depth':search_depth,'include_domains':list(include_domains or []),'exclude_domains':list(exclude_domains or []),'time_range':time_range,'start_date':start_date,'end_date':end_date}
-    reservation=None;local_id=None
+    reservation=None;local_id=None;round_id=None
     if store is not None and run_id is not None:
         check_run(store,run_id)
         from . import research_budget as budget
         try:reservation=budget.reserve_search(store,run_id,max_results)
         except budget.BudgetExhausted as exc:return exc.result
-        max_results=reservation['max_results'];parameters['max_results']=max_results;local_id=reservation['request_id']
+        max_results=reservation['max_results'];parameters['max_results']=max_results;local_id=reservation['request_id'];round_id=reservation['round_id']
     payload={'query':query,'topic':topic,'max_results':max_results,'search_depth':search_depth,'include_answer':False,'include_raw_content':False,'auto_parameters':False,'include_usage':True}
     for name,value in (('time_range',time_range),('start_date',start_date),('end_date',end_date),('include_domains',include_domains),('exclude_domains',exclude_domains)):
         if value:payload[name]=value
-    envelope={'local_request_id':local_id,'provider_request_id':None,'query_id':None,'run_id':run_id,'round_id':None,'provider':'tavily','operation':'search','query':query,'parameters':parameters,'outcome':None,'failure_kind':None,'raw_response_path':None,'admitted_urls':[],'unadmitted_urls':[],'budget_after':{}}
+    envelope={'local_request_id':local_id,'provider_request_id':None,'query_id':None,'run_id':run_id,'round_id':round_id,'provider':'tavily','operation':'search','query':query,'parameters':parameters,'outcome':None,'failure_kind':None,'raw_response_path':None,'admitted_urls':[],'unadmitted_urls':[],'budget_after':{}}
     try:
         result,raw=_post('search',payload,key_file=key_file)
     except TavilyError as exc:
         envelope['outcome']='failed';envelope['failure_kind']=getattr(exc,'failure_kind','provider_error')
         if reservation:
             budget.save_discovery(store,run_id,reservation['request_id'],dump({'status':'failed','query':query,'error':str(exc)}).encode())
-            exc.request_record_path=budget.save_request_record(store,run_id,reservation['request_id'],envelope)
+            path=budget.save_request_record(store,run_id,reservation['request_id'],envelope)
+            exc.request_record_path=path
+            from .research_plan import settle_request
+            settle_request(store,run_id,reservation['request_id'],'failed',failure_kind=envelope['failure_kind'],record_path=path)
         raise
     discovery=None
     if reservation:
@@ -157,6 +160,7 @@ def search(query,*,topic='general',time_range=None,start_date=None,end_date=None
     envelope['outcome']='success';envelope['failure_kind']=None
     output={'provider':'tavily','query':query,'results':results,'usage':result.get('usage'),'request_id':result.get('request_id'),
             'local_request_id':local_id,'provider_request_id':result.get('request_id'),'outcome':'success','failure_kind':None,'request_record_path':None,
+            'round_id':round_id,
             'note':'搜索摘要仅用于发现来源。请读取原网页或用 tavily-extract 保存提供方提取正文后再引用。'}
     if reservation:
         admitted=budget.record_candidates(store,run_id,[row['url'] for row in results])
@@ -167,6 +171,8 @@ def search(query,*,topic='general',time_range=None,start_date=None,end_date=None
                        'unadmitted_urls':admitted['unadmitted_urls'],'discovery_path':discovery,
                        'remaining':admitted['budget']['remaining'],'budget':admitted['budget']})
         output['request_record_path']=budget.save_request_record(store,run_id,reservation['request_id'],envelope)
+        from .research_plan import settle_request
+        settle_request(store,run_id,reservation['request_id'],'completed',record_path=output['request_record_path'])
         if admitted['unadmitted_urls']:
             output['message']='候选 URL 预算已用完；未纳入的 URL 和完整搜索响应已保留，不继续扩大检索'
     return output
@@ -176,7 +182,7 @@ def extract(store,urls,*,run_id=None,extract_depth='basic',key_file=None):
     if isinstance(urls,str):urls=[urls]
     if not isinstance(urls,list) or not urls or len(urls)>10 or not all(isinstance(url,str) and url.startswith(('https://','http://')) for url in urls):raise TavilyError('请提供 1–10 个 HTTP(S) 来源地址')
     if extract_depth not in ('basic','advanced'):raise TavilyError('无效提取深度')
-    cached=[];local_id=None
+    cached=[];local_id=None;round_id=None
     if run_id:
         check_run(store,run_id)
         from .sources import existing_for_run
@@ -188,19 +194,25 @@ def extract(store,urls,*,run_id=None,extract_depth='basic',key_file=None):
             if previous:cached.append({**previous,'reused':True})
             else:pending.append(url)
         if not pending:return {'provider':'tavily','sources':cached,'reused':True,'budget':budget.snapshot(store,run_id)}
-        try:budget.reserve_pages(store,run_id,pending)
+        try:reservation=budget.reserve_pages(store,run_id,pending,request_id=local_id)
         except budget.BudgetExhausted as exc:
             envelope={'local_request_id':local_id,'provider_request_id':None,'query_id':None,'run_id':run_id,'round_id':None,'provider':'tavily','operation':'extract','query':None,'parameters':{'urls':pending,'extract_depth':extract_depth,'format':'markdown'},'outcome':'budget_exhausted','failure_kind':'budget','raw_response_path':None,'admitted_urls':[],'unadmitted_urls':pending,'budget_after':exc.result.get('budget',{})}
             path=budget.save_request_record(store,run_id,local_id,envelope)
             return {**exc.result,'sources':cached,'unprocessed_urls':pending,'local_request_id':local_id,'request_record_path':path}
+        round_id=reservation['round_id']
         urls=pending
     parameters={'urls':list(dict.fromkeys(urls)),'extract_depth':extract_depth,'format':'markdown'}
-    envelope={'local_request_id':local_id,'provider_request_id':None,'query_id':None,'run_id':run_id,'round_id':None,'provider':'tavily','operation':'extract','query':None,'parameters':parameters,'outcome':None,'failure_kind':None,'raw_response_path':None,'admitted_urls':[],'unadmitted_urls':[],'budget_after':{}}
+    envelope={'local_request_id':local_id,'provider_request_id':None,'query_id':None,'run_id':run_id,'round_id':round_id,'provider':'tavily','operation':'extract','query':None,'parameters':parameters,'outcome':None,'failure_kind':None,'raw_response_path':None,'admitted_urls':[],'unadmitted_urls':[],'budget_after':{}}
     try:
         response,raw=_post('extract',{'urls':urls,'extract_depth':extract_depth,'format':'markdown','include_usage':True},key_file=key_file)
     except TavilyError as exc:
         envelope['outcome']='failed';envelope['failure_kind']=getattr(exc,'failure_kind','provider_error')
-        if local_id:exc.request_record_path=budget.save_request_record(store,run_id,local_id,envelope)
+        if local_id:
+            path=budget.save_request_record(store,run_id,local_id,envelope)
+            exc.request_record_path=path
+            if round_id:
+                from .research_plan import settle_request
+                settle_request(store,run_id,local_id,'failed',failure_kind=envelope['failure_kind'],record_path=path)
         raise
     results=list(cached);failed=[]
     for url in dict.fromkeys(urls):
@@ -222,10 +234,14 @@ def extract(store,urls,*,run_id=None,extract_depth='basic',key_file=None):
     envelope['extraction_failed_urls']=failed
     output={'provider':'tavily','sources':results,'usage':response.get('usage'),'request_id':response.get('request_id'),
             'local_request_id':local_id,'provider_request_id':response.get('request_id'),'outcome':'success','failure_kind':None,
+            'round_id':round_id,
             'extraction_failed_urls':failed,'request_record_path':None}
     if run_id:
         envelope['raw_response_path']=budget.save_discovery(store,run_id,local_id,raw)
         envelope['budget_after']=budget.snapshot(store,run_id)
         output['budget']=envelope['budget_after']
         output['request_record_path']=budget.save_request_record(store,run_id,local_id,envelope)
+        if round_id:
+            from .research_plan import settle_request
+            settle_request(store,run_id,local_id,'completed',record_path=output['request_record_path'])
     return output

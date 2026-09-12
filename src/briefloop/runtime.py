@@ -553,6 +553,10 @@ class Worker:
             run['reusable_research']=[str(p) for p in previous.glob('scout*/result.json') if p.is_file()]
         if 'skill_override' in payload:run['skill_override']=payload['skill_override']
         job['allow_web']=json.loads(run['requirements'])['allow_web']
+        from .research_plan import freeze as freeze_research_plan,is_quality
+        if is_quality(self.store,run['id']):
+            # Freeze from the already-authorized budget before any controlled call.
+            freeze_research_plan(self.store,run['id'],owner_job_id=job['id'])
         from .company_context import prepare_review
         prepare_review(self.store,self.runtime,job,run,folder,backend)
         vid='brief_'+job['id'][4:]
