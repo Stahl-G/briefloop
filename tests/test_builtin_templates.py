@@ -12,11 +12,17 @@ def test_builtin_ships_prepares_is_idempotent_and_exports(tmp_path):
     store = Store(tmp_path)
     import_builtin(store)
     rows = store.rows('SELECT id,name,status,origin FROM templates')
-    assert [(r['name'], r['status'], r['origin']) for r in rows] == [('研报版式', 'ready', 'builtin')]
-    record = template(store, rows[0]['id'])
-    assert [s['section_id'] for s in record['spec']['sections']] == ['summary', 'dynamics', 'data', 'analysis', 'risks', 'appendix']
+    assert len(rows) == 13 and {r['origin'] for r in rows} == {'builtin'}
+    assert all(r['status'] == 'ready' for r in rows)
+    labels = {r['name'] for r in rows}
+    assert {'通用报告', '商务报告', '学术论文', '政府公文', '上市公司年报', '合同', '会议纪要', '券商研报'} <= labels
+    assert len({name for name in labels if name.startswith('商务报告·')}) == 5
+    record = template(store, next(r['id'] for r in rows if r['name'] == '通用报告'))
+    assert [s['section_id'] for s in record['spec']['sections']] == ['summary', 'background', 'analysis', 'conclusion', 'risks']
+    research = template(store, next(r['id'] for r in rows if r['name'] == '券商研报'))
+    assert [s['section_id'] for s in research['spec']['sections']] == ['views', 'events', 'forecast', 'risks', 'disclaimer']
     import_builtin(store)
-    assert len(store.rows('SELECT id FROM templates')) == 1
+    assert len(store.rows('SELECT id FROM templates')) == 13
 
     source = store.add_source('Synthetic material', 'Synthetic evidence for the report.')
     run = store.create_run({'title': 'AI 行业周报', 'objective': 'Explain', 'period': '2026 年第 37 周',

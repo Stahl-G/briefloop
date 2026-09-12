@@ -182,7 +182,24 @@ def rebuild_template_version(store,template_id):
         raise
 
 
-BUILTIN_TEMPLATES = (('research-report-zh.docx', 'research-report-zh.spec.json', '研报版式'),)
+BUILTIN_TEMPLATES = tuple(
+    (f'{stem}.docx', f'{stem}.spec.json', label)
+    for stem, label in (
+        ('general-report-zh', '通用报告'),
+        ('business-report-zh', '商务报告'),
+        ('academic-paper-zh', '学术论文'),
+        ('government-doc-zh', '政府公文'),
+        ('annual-report-zh', '上市公司年报'),
+        ('legal-contract-zh', '合同'),
+        ('meeting-minutes-zh', '会议纪要'),
+        ('stock-research-zh', '券商研报'),
+        ('business-report-t1', '商务报告·极简蓝'),
+        ('business-report-t2', '商务报告·商务蓝'),
+        ('business-report-t3', '商务报告·学术黑'),
+        ('business-report-t4', '商务报告·政务蓝红'),
+        ('business-report-t5', '商务报告·创意橙'),
+    )
+)
 
 
 def import_builtin(store):
@@ -304,7 +321,13 @@ def export_template(store,brief,document,figures):
     document=deepcopy(document)
     if row['spec'].get('layout_version',1)>=2 and row['spec'].get('cover_title_present'):
         document=without_duplicate_cover_heading(document,fields['title'])
-    by_title={s['title']:s['section_id'] for s in row['spec']['sections']}
+    by_title={}
+    for section in row['spec']['sections']:
+        by_title.setdefault(section['title'],section['section_id'])
+        # Body headings usually carry numbering ("一、摘要") that template
+        # anchors may not; normalize both sides with prepare's prefix rule.
+        plain=re.sub(r'^(?:[一二三四五六七八九十百]+[、．.]|\d+[.、])\s*','',section['title']).strip()
+        by_title.setdefault(plain,section['section_id'])
     known={s['section_id'] for s in row['spec']['sections']}
     # Published documents always carry auto block anchors, so a title match must
     # also win over a non-section anchor — otherwise template styles only apply
@@ -315,6 +338,9 @@ def export_template(store,brief,document,figures):
             if current in known:continue
             text=''.join(c.get('text','') for c in node.get('content',[]))
             if text in by_title:node.setdefault('attrs',{})['blockId']=by_title[text]
+            else:
+                plain=re.sub(r'^(?:[一二三四五六七八九十百]+[、．.]|\d+[.、])\s*','',text).strip()
+                if plain in by_title:node.setdefault('attrs',{})['blockId']=by_title[plain]
     styles=row['spec']['styles']
     if 'table_properties' not in styles:
         original=_path(store,row,'original.docx')

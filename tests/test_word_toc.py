@@ -44,7 +44,8 @@ def test_brief_profile_stays_without_toc(tmp_path):
 def test_builtin_template_export_keeps_toc_and_bookmarks_content(tmp_path):
     store = Store(tmp_path)
     import_builtin(store)
-    record = store.rows('SELECT id FROM templates')[0]
+    from briefloop.templates import template
+    record = template(store, next(r['id'] for r in store.rows('SELECT id,name FROM templates') if r['name'] == '通用报告'))
     document = {'type': 'doc', 'content': [
         {'type': 'heading', 'attrs': {'level': 2}, 'content': [{'type': 'text', 'text': '一、摘要'}]},
         {'type': 'paragraph', 'content': [{'type': 'text', 'text': '结论。'}]},

@@ -1,0 +1,62 @@
+{
+ "sections": [
+  {
+   "section_id": "views",
+   "title": "核心观点",
+   "index": 7,
+   "purpose": "开门见山的判断"
+  },
+  {
+   "section_id": "events",
+   "title": "事件回顾",
+   "index": 8,
+   "purpose": "本期大事"
+  },
+  {
+   "section_id": "impact",
+   "title": "影响分析",
+   "index": 9,
+   "purpose": "短中长期影响"
+  },
+  {
+   "section_id": "data",
+   "title": "数据附录",
+   "index": 10,
+   "purpose": "关键指标"
+  },
+  {
+   "section_id": "risks",
+   "title": "风险提示",
+   "index": 11,
+   "purpose": "不确定性"
+  }
+ ],
+ "keep_blocks": [
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6
+ ],
+ "paragraph_index": 12,
+ "fields": [
+  {
+   "old": "{{title}}",
+   "field": "title"
+  },
+  {
+   "old": "{{organization}}",
+   "field": "organization"
+  },
+  {
+   "old": "{{period}}",
+   "field": "period"
+  },
+  {
+   "old": "{{report_date}}",
+   "field": "report_date"
+  }
+ ]
+}
