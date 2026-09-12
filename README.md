@@ -39,7 +39,7 @@ briefloop start --workspace /path/to/workspace
 
 ## Windows 原生预览
 
-Windows 可使用同一套 Python 服务与网页，尚未提供 Electron 安装包。已验证范围为独立安装、中文工作区、合成稿编辑与保存、Word 导出、工作区互斥锁和退出重开；真实模型生成及独立核查仍需按宿主验证，不能沿用 macOS 的验证结论。
+Windows 可使用同一套 Python 服务与网页，尚未提供 Electron 安装包。已验证独立安装、中文工作区、编辑保存、Word 导出、互斥锁和退出重开，并使用 OpenCode + Muse Spark 1.3 Free 完成真实合成稿生成。独立审阅与其他宿主仍须按实际结果核对，不能沿用 macOS 的验证结论。
 
 安装 Python 3.11+ 后，在 PowerShell 中运行：
 
