@@ -19,6 +19,7 @@ c.runtimeChoice=()=>({backend:'claude',model:'default',permission:'runtime-nativ
 c.api=async route=>{if(route==='harness/session')return {id:'new-session',runtime:{backend:'claude',model:'default'}};throw Error('send failed')};
 c.chatActive=()=>false;c.chatError=()=>{};c.pollChat=async()=>{};
 el('chat-input').value='你是谁';el('chat-input').focus=()=>{};el('chat-model').value='default';el('chat-model-provider').value='';
+vm.runInContext(source.slice(source.indexOf('const fastCapabilities='),source.indexOf('const fastCapabilityRequests=')),c);
 vm.runInContext(source.slice(source.indexOf('function rememberDraft(){'),source.indexOf('function restoreDraft(){')),c);
 vm.runInContext(source.slice(source.indexOf('async function sendChat(event){'),source.indexOf("$('chat-form').onsubmit=")),c);
 await vm.runInContext('sendChat({preventDefault(){}})',c);
