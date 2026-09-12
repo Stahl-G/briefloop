@@ -53,3 +53,4 @@ def test_workspace_open_checks_identity_and_launches_paused_without_touching_old
     created=open_workspace(current,'relative-created',create=True)
     assert created['path']==str(current.root.parent/'relative-created')
     assert (Path(created['path'])/'briefloop.db').is_file()
+

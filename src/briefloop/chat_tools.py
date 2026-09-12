@@ -221,6 +221,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 工具只调用现有工作区接口。action 支持：
 - {{"action":"capabilities"}}：返回当前运行时的完整接口名和证据/来源更正输入schema。需要确认能力或字段时调用此接口；工作区可能位于另一源码checkout下，不通过阅读仓库文件推定运行时功能，不直接改数据库。
 - {{"action":"inspect"}}：查看需求、来源 ID、简报版本 ID 和任务状态的简短索引。
+做不同主题的报告时不要在当前工作区硬混：当用户想做一份与当前工作区主题明显不同、希望彼此隔离的报告时，先确认；用户同意后，不要在对话里自己新建或写入工作区（当前“读写工作区”权限只覆盖本工作区，新建同级目录会被权限挡住），而是在回复末尾单独给出一个 ```briefloop-workspace 代码块，内容为 JSON：{{"name":"新工作区名称"}}（可选 path 绝对路径）。界面会渲染「新建并切换工作区」按钮，由页面创建并切换到新工作区；不要声称你已切换界面。同一主题的续写、修订或同一批材料不要新建工作区。
 - {{"action":"source_snapshot","source_id":"实际来源ID","timing":{{"available_at":"带时区的ISO时间","basis":"原文定位或用户明确提供的时间依据"}}}}：追加来源时间快照；可给published_at/effective_start/effective_end，不拿抓取时间代替可得时间。修改已有注释需传previous_id，历史保留。
 - {{"action":"source_change","change":{{"old_source_id":"原来源ID","new_source_id":"新来源ID","kind":"correction","relation":"corrects","description":"更正内容","scope":"主体/指标/期间","relationship_evidence":"两份原件的具体定位和更正依据","importance":"core","information_cutoff":"带时区的ISO截止时间"}}}}：登记后来来源与旧来源的工作区级关系提议并交共用Conflict核查，不能把提议当已核实，不覆盖旧报告。可选run_id仅用于新旧来源已同属该报告的情况，不为登记后来更正向历史报告补塞来源。kind还支持update/unknown，字段与枚举以capabilities为准。
 - {{"action":"source_impacts","source_id":"原来源ID"}}：读取直接及间接受影响主张、稿件和正式件，供用户在“来源更新”页面处理。
