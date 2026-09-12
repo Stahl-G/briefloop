@@ -41,15 +41,17 @@ def render_document(doc, document, *, figures=None, sources=None, append_sources
         for child in parse_xml(serialized):
             if target.find(child.tag) is None:target.append(deepcopy(child))
 
-    bookmark_count = [0]
+    existing_bookmarks = doc.element.xpath('.//w:bookmarkStart')
+    bookmark_count = [max((int(node.get(qn('w:id'))) for node in existing_bookmarks
+                           if (node.get(qn('w:id')) or '').isdigit()), default=0)]
 
     def anchor_heading(paragraph, name):
         # Word bookmark names must start with a letter and avoid spaces;
         # document_model's blockId ("block_<hex>") already qualifies.
-        identifier = str(len(bookmark_count) + 1)
+        identifier = str(bookmark_count[0] + 1)
         start = OxmlElement('w:bookmarkStart'); start.set(qn('w:id'), identifier); start.set(qn('w:name'), name)
         end = OxmlElement('w:bookmarkEnd'); end.set(qn('w:id'), identifier)
-        paragraph._p.insert(0, start)
+        paragraph._p.insert(1 if paragraph._p.pPr is not None else 0, start)
         paragraph._p.append(end)
         bookmark_count[0] += 1
 
@@ -159,4 +161,6 @@ def render_document(doc, document, *, figures=None, sources=None, append_sources
             p = doc.add_paragraph(f'{i}. ' + source.get('name', sid))
             if source.get('url'):
                 inline(p, [{'type': 'text', 'text': ' 原文', 'marks': [{'type': 'link', 'attrs': {'href': source['url']}}]}])
+    from .industry_export import populate_table_of_contents
+    populate_table_of_contents(doc)
     return doc

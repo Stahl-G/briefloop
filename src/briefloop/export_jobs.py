@@ -15,7 +15,7 @@ def export_input(store, brief, template_override=None):
         # rendering template and must change the export fingerprint.
         requirements = {**requirements, 'template_id': template_override}
     figures = export_figures(store, brief)
-    identity = {'renderer': 5 if requirements.get('template_id') else 6, 'version_id': brief['id'], 'brief_hash': brief['hash'],
+    identity = {'renderer': 7 if requirements.get('template_id') else 8, 'version_id': brief['id'], 'brief_hash': brief['hash'],
                 'document': brief_document(brief), 'detail': json.loads(brief['detail']),
                 'requirements': requirements,
                 'figures': {fid: {**{k: v for k, v in f.items() if k != 'image_bytes'},

@@ -25,6 +25,15 @@ def test_industry_periodic_export_has_toc_and_heading_bookmarks(tmp_path):
         settings_xml = archive.read('word/settings.xml').decode()
     assert ' TOC ' in document_xml and '目录' in document_xml
     assert 'w:updateFields' in settings_xml
+    from lxml import etree
+    tree = etree.fromstring(document_xml.encode())
+    starts = tree.findall('.//' + W + 'bookmarkStart')
+    ids = [node.get(W + 'id') for node in starts]
+    assert len(set(ids)) == len(ids), 'each heading must have a unique Word bookmark identity'
+    assert ids == [node.get(W + 'id') for node in tree.findall('.//' + W + 'bookmarkEnd')]
+    toc = next(field for field in tree.findall('.//' + W + 'fldSimple') if ' TOC ' in field.get(W + 'instr', ''))
+    assert [link.get(W + 'anchor') for link in toc.findall(W + 'hyperlink')] == ['block_a', 'block_b', 'block_c']
+    assert '目录将在打开文档时自动生成' not in document_xml
     names = [line for line in document_xml.split('w:bookmarkStart ') if 'w:name=' in line]
     assert len(names) == 3
     assert 'w:name="block_a"' in document_xml and 'w:name="block_c"' in document_xml

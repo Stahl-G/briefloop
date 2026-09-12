@@ -1785,6 +1785,8 @@ function renderTemplatesPage(){
   if(!templatePick)return;
   await api('settings',{default_template_id:templatePick.id});
   state.settings={...(state.settings||{}),default_template_id:templatePick.id};
+  $('template-select').value=templatePick.id;
+  templateSections();
   notice(`已选用 ${templatePick.genre} · ${templatePick.theme}；新建报告将默认使用`);
   renderTemplatesPage.sig='';page('setup');
  });

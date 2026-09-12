@@ -181,6 +181,29 @@ def insert_table_of_contents(doc):
     doc.add_page_break()
 
 
+def populate_table_of_contents(doc):
+    """Keep a linked heading list visible until the reader recalculates pages."""
+    fields = [field for field in doc.element.xpath('.//w:fldSimple')
+              if ' TOC ' in (field.get(qn('w:instr')) or '')]
+    if not fields:return
+    headings = []
+    for paragraph in doc.paragraphs:
+        anchors = paragraph._p.xpath('./w:bookmarkStart')
+        if anchors and paragraph.text.strip():
+            headings.append((anchors[0].get(qn('w:name')), paragraph.text))
+    for field in fields:
+        for child in list(field):field.remove(child)
+        for index, (anchor, title) in enumerate(headings):
+            if index:
+                line = OxmlElement('w:r');line.append(OxmlElement('w:br'));field.append(line)
+            link = OxmlElement('w:hyperlink');link.set(qn('w:anchor'), anchor)
+            run = OxmlElement('w:r');text = OxmlElement('w:t');text.text = title
+            run.append(text);link.append(run);field.append(link)
+        if not headings:
+            run = OxmlElement('w:r');text = OxmlElement('w:t');text.text = '暂无可列入目录的标题'
+            run.append(text);field.append(run)
+
+
 def enable_update_fields(doc):
     """Ask Word/WPS to recalculate fields (TOC, page counts) when the file opens."""
     settings = doc.settings.element

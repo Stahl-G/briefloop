@@ -9,7 +9,7 @@ const source = fs.readFileSync('frontend/app.js', 'utf8');
 // empty state stay below the gallery.
 const code = source.slice(source.indexOf("const GENRE_ORDER="), source.indexOf("if($('new-report'))"));
 const handlers = [];
-const elements = {'templates-page-list': {innerHTML: '', querySelectorAll(sel) {
+const elements = {'template-select': {value: 'tpl_biz_g'}, 'templates-page-list': {innerHTML: '', querySelectorAll(sel) {
   if (sel !== '.tpl-card' && sel !== '.color-dot') return [];
   const out = [];
   for (const match of this.innerHTML.matchAll(/<div class="tpl-card[^"]*" data-genre="([^"]*)"/g)) out.push({dataset: {genre: match[1]}, set onclick(fn) { handlers.push(['card', match[1], fn]); }});
@@ -22,6 +22,7 @@ const elements = {'templates-page-list': {innerHTML: '', querySelectorAll(sel) {
 }}};
 const context = vm.createContext({
   $: id => id === 'template-apply' ? {onclick: null, set onclick(fn) { handlers.push(['apply', null, fn]); }} : elements[id],
+  templateSections: () => context.sectionSelections.push(elements['template-select'].value),
   esc: String, action: fn => fn(), notice: message => context.notices.push(message), page: target => context.pages.push(target),
   api: async (path, body) => { context.calls.push([path, body]); return {}; },
   state: {
@@ -35,7 +36,7 @@ const context = vm.createContext({
     ],
   },
 });
-context.notices = []; context.pages = []; context.calls = [];
+context.sectionSelections = []; context.notices = []; context.pages = []; context.calls = [];
 vm.runInContext(code, context);
 vm.runInContext('renderTemplatesPage()', context);
 let html = elements['templates-page-list'].innerHTML;
@@ -58,6 +59,8 @@ assert.ok(html.includes('data-id="tpl_biz_b"'), 'the chosen dot stays bound to i
 handlers.find(h => h[0] === 'apply')[2]();
 await new Promise(resolve => setImmediate(resolve));
 assert.equal(JSON.stringify(context.calls[0]), JSON.stringify(['settings', {default_template_id: 'tpl_biz_b'}]), 'apply persists the default template');
+assert.equal(elements['template-select'].value, 'tpl_biz_b', 'apply selects the template in the form used by generation');
+assert.deepEqual(context.sectionSelections, ['tpl_biz_b'], 'apply rebuilds the selected template sections');
 assert.deepEqual(context.pages, ['setup'], 'apply opens the new-report form');
 assert.ok(context.notices.length >= 1, 'apply confirms with a notice');
 

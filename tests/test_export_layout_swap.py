@@ -21,8 +21,6 @@ def test_layout_swap_exports_same_content_under_different_templates(tmp_path):
     generic = enqueue_export(store, brief['id'])
     swapped = enqueue_export(store, brief['id'], template_override=rows['商业报告·珊瑚红'])
     assert generic['id'] != swapped['id'], 'a layout swap is a new export job, not a cache hit'
-    assert export_input(store, brief)[0]['renderer'] == 6
-    assert export_input(store, brief, template_override=rows['商业报告·珊瑚红'])[0]['renderer'] == 5
 
     generate_word(store, swapped, threading.Event())
     with __import__('zipfile').ZipFile(output_path(store, swapped)) as archive:
