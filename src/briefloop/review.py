@@ -150,10 +150,11 @@ def _packet(store,review):
             raise ValueError('Reviewer 核查包文件已变化，不能接纳本次结果')
         if not path.resolve().is_relative_to(packet.resolve()) or not path.is_file() or sha(path.read_bytes())!=digest:
             raise ValueError('Reviewer 核查包文件已变化，不能接纳本次结果')
-    actual={str(path.relative_to(packet)) for path in packet.rglob('*') if path.is_file() or path.is_symlink()}
+    # Packet manifests use forward slashes on every platform, including Windows.
+    actual={path.relative_to(packet).as_posix() for path in packet.rglob('*') if path.is_file() or path.is_symlink()}
     if actual!=set(files):raise ValueError('Reviewer 核查包文件清单不一致')
-    index=json.loads((packet/'index.json').read_text());bound={k:v for k,v in files.items() if k!='index.json'}
-    target=json.loads((packet/'target.json').read_text())
+    index=json.loads((packet/'index.json').read_text(encoding='utf-8'));bound={k:v for k,v in files.items() if k!='index.json'}
+    target=json.loads((packet/'target.json').read_text(encoding='utf-8'))
     fingerprint=sha(dump({'target':target,'files':bound}).encode())
     if index.get('files')!=bound or index.get('version_id')!=review['version_id'] or target.get('version_id')!=review['version_id'] or index.get('fingerprint')!=fingerprint or fingerprint!=review['fingerprint']:
         raise ValueError('Reviewer 核查包索引与输入指纹不一致')
@@ -184,7 +185,7 @@ def _latest_responses(rows,ancestry):
 
 
 def _response_scope(store,packet,version_id):
-    rows=json.loads((packet/'history/responses.json').read_text())
+    rows=json.loads((packet/'history/responses.json').read_text(encoding='utf-8'))
     # History stays complete, but a later explanation explicitly supersedes the
     # earlier explanation for the same finding. Only its exact id is actionable.
     ancestry=_ancestry(store,version_id)
@@ -425,7 +426,7 @@ def visual_input_files(store,review_id,packet_root):
     review=get_review(store,review_id);packet,target,bound=_packet(store,review)
     if packet.resolve()!=Path(packet_root).resolve():raise ValueError('视觉输入不属于当前 Reviewer 核查包')
     if 'visual-inputs.json' in bound:
-        plan=json.loads((packet/'visual-inputs.json').read_text())
+        plan=json.loads((packet/'visual-inputs.json').read_text(encoding='utf-8'))
         if plan.get('version_id')!=review['version_id']:raise ValueError('视觉输入属于另一正文版本')
         images=plan['images']
     else:
@@ -711,9 +712,9 @@ def run_review(store,runtime,job,version_id,folder):
     folder=Path(folder);folder.mkdir(parents=True,exist_ok=True)
     marker=folder/'review-id.json'
     if marker.exists():
-        identity=json.loads(marker.read_text())['review_id'];review=get_review(store,identity)
+        identity=json.loads(marker.read_text(encoding='utf-8'))['review_id'];review=get_review(store,identity)
         if review['version_id']!=version_id:raise ValueError('保存的审阅任务属于另一正文版本')
-        target=json.loads((folder/'packet'/'target.json').read_text())
+        target=json.loads((folder/'packet'/'target.json').read_text(encoding='utf-8'))
         if target.get('snapshot_version',1)<3:
             return run_review(store,runtime,job,version_id,folder/'scope-v3')
         if review['result']:
@@ -725,7 +726,7 @@ def run_review(store,runtime,job,version_id,folder):
         protocol='clauses_v1' if _clause_items(_snapshot(store,version_id)['requirements']) else 'legacy'
         data={'files':files,'packet_path':str((folder/'packet').relative_to(store.root)),'protocol':protocol}
         with store.tx() as c:c.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)',(identity,version_id,job['id'],fingerprint,'queued',dump(data),None,now(),now()))
-        marker.write_text(dump({'review_id':identity}));review=get_review(store,identity)
+        marker.write_text(dump({'review_id':identity}),encoding='utf-8');review=get_review(store,identity)
     # A transport-complete result can have failed only schema admission. Retry
     # the shared validator first; a compatibility fix must not spend another turn.
     saved_output=folder/'review.json'
@@ -737,10 +738,10 @@ def run_review(store,runtime,job,version_id,folder):
             attempts=folder/'attempts';attempts.mkdir(exist_ok=True)
             archived=attempts/('review-'+sha(raw)+'.json')
             if not archived.exists():archived.write_bytes(raw)
-            (folder/'admission-error.json').write_text(dump({'error':str(exc),'original_output':str(archived.relative_to(folder))}))
+            (folder/'admission-error.json').write_text(dump({'error':str(exc),'original_output':str(archived.relative_to(folder))}),encoding='utf-8')
     schema=folder/'packet'/'output.schema.json'
     validate_applicable_review(store,identity,version_id)
-    target=json.loads((folder/'packet'/'target.json').read_text())
+    target=json.loads((folder/'packet'/'target.json').read_text(encoding='utf-8'))
     from .deliverable_spec import clause_items
     # The persisted protocol decides the prompt, not whether clauses happen to exist;
     # a legacy review restored after upgrade must keep the legacy instruction.
@@ -778,15 +779,15 @@ version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief
     response_ids=[{'response_id':r['id'],'finding_id':r['finding_id']} for r in _response_scope(store,folder/'packet',version_id).values()]
     prompt+='\n本次允许的claim_checks.claim_id：'+dump(allowed)+'\n本版本处理说明索引（response_to必须取response_id）：'+dump(response_ids)
     if (folder/'admission-error.json').exists():
-        error=json.loads((folder/'admission-error.json').read_text()).get('error','')
+        error=json.loads((folder/'admission-error.json').read_text(encoding='utf-8')).get('error','')
         prompt+='\n上次结果未通过接纳：'+error+'。仅修正结构化结果中的ID或字段，不重做已经完成的研究或改稿。response_to使用history/responses.json的id字段，finding_id是其关联的原始发现。'
     stage=stage_job(store,{**job,'payload':dump({**json.loads(job['payload']),'version_id':version_id})},'evaluator',mode='single')
     stage.update(readonly_output='review.json',review_id=identity,input_source_ids=[],allow_web=False)
     with store.tx() as c:c.execute("UPDATE reviews SET status='running',updated=? WHERE id=?",(now(),identity))
     try:
         runtime.execute(stage,prompt,folder,resume_on_complete=(folder/'admission-error.json').exists())
-        return accept_review(store,identity,json.loads((folder/'review.json').read_text()))
+        return accept_review(store,identity,json.loads((folder/'review.json').read_text(encoding='utf-8')))
     except Exception as exc:
         with store.tx() as c:c.execute('UPDATE reviews SET status=?,updated=? WHERE id=? AND result IS NULL',('cancelled' if isinstance(exc,InterruptedError) else 'incomplete',now(),identity))
-        (folder/'admission-error.json').write_text(dump({'error':str(exc)}))
+        (folder/'admission-error.json').write_text(dump({'error':str(exc)}),encoding='utf-8')
         raise

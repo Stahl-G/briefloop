@@ -25,8 +25,9 @@ def test_workspace_open_checks_identity_and_launches_paused_without_touching_old
         return {'workspace_id':store.meta('workspace_id')}
     def launch(command,**kwargs):
         starts.append(command)
-        assert Path(command[1]).is_absolute() and Path(command[1]).name=='_entrypoint.py'
-        assert command[2]=='start'
+        assert command[1:3]==['-X','utf8']
+        assert Path(command[3]).is_absolute() and Path(command[3]).name=='_entrypoint.py'
+        assert command[4]=='start'
         assert command[-3:]==['--port','0','--paused']
         root=Path(command[command.index('--workspace')+1]);opened=Store(root)
         state['http://127.0.0.1:19002']=opened
@@ -72,8 +73,12 @@ def test_stop_workspace_refuses_current_and_verifies_before_killing(tmp_path, mo
         if sig==0:raise ProcessLookupError()
         killed.append((pid,sig))
     monkeypatch.setattr(workspaces.os,'kill',fake_kill)
+    if workspaces.os.name=='nt':
+        monkeypatch.setattr(workspaces,'_request_shutdown',lambda url,pid,wid:killed.append(('api',pid)))
+        monkeypatch.setattr(workspaces,'_alive',lambda pid:False)
     result=workspaces.stop_workspace(store,str(other))
-    assert result['stopped'] is True and killed==[(999999,signal.SIGTERM)]
+    assert result['stopped'] is True
+    assert killed==([('api',999999)] if workspaces.os.name=='nt' else [(999999,signal.SIGTERM)])
     assert not (other/'server.json').exists()
 
 
@@ -91,10 +96,14 @@ def test_stop_workspace_keeps_markers_while_process_survives(tmp_path, monkeypat
     def fake_kill(pid,sig=0):
         killed.append((pid,sig))
     monkeypatch.setattr(workspaces.os,'kill',fake_kill)
+    if workspaces.os.name=='nt':
+        monkeypatch.setattr(workspaces,'_request_shutdown',lambda url,pid,wid:killed.append(('api',pid)))
+        monkeypatch.setattr(workspaces,'_alive',lambda pid:True)
     result=workspaces.stop_workspace(store,str(other))
     assert result['stopped'] is False and result['pid']==999999
     assert (other/'server.json').exists()
-    assert (999999,signal.SIGTERM) in killed and (999999,signal.SIGKILL) in killed
+    if workspaces.os.name=='nt':assert killed==[('api',999999)]
+    else:assert (999999,signal.SIGTERM) in killed and (999999,signal.SIGKILL) in killed
 
 def test_workspace_create_only_creates_siblings(tmp_path):
     current=Store(tmp_path/'nearby'/'current')

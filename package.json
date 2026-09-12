@@ -4,7 +4,7 @@
   "scripts": {
     "build": "node scripts/build_frontend.mjs",
     "build:check": "node scripts/build_frontend.mjs --check",
-    "test": "node --test tests/frontend_*.mjs"
+    "test": "node scripts/test_frontend.mjs"
   },
   "dependencies": {
     "@tiptap/core": "^3.0.0",

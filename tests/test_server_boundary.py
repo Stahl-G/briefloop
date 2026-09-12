@@ -41,6 +41,8 @@ def test_foreign_host_cannot_read_workspace_or_use_session_token(tmp_path):
         assert request('/api/settings', host=f'untrusted.example:{server.server_port}',
                        body={'auto_learn': False}, token=token)[0] == 403
         assert request('/api/settings', body={'auto_learn': False}, token=token)[0] == 200
+        assert request('/api/service-stop',body={'pid':0,'workspace_id':'wrong'},token=token)[0]!=200
+        assert request('/api/state')[0]==200
         assert server.store.settings()['auto_learn'] is False
     finally:
         server.shutdown()

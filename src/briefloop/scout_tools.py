@@ -25,7 +25,7 @@ def join_scouts(store, paths, *, run_id=None, round_id=None, slots=None):
         if not path.is_relative_to(store.root):raise ValueError('Scout output must be inside this workspace')
         if allowed_slots is not None and str(path) not in allowed_slots:
             raise ValueError('Scout 输出文件不在本任务分配的槽位内：'+path.name)
-        result=ScoutResult.model_validate(json.loads(path.read_text()))
+        result=ScoutResult.model_validate(json.loads(path.read_text(encoding='utf-8-sig')))
         allowed=set(store.source_ids(run_id)) if run_id else None
         for item in result.sources:
             store.one('sources',item.source_id)

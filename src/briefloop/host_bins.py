@@ -31,8 +31,9 @@ def find(name, *, extra=()):
     found = shutil.which(name)
     if found:
         return found
-    for directory in (*extra, *EXTRA_DIRS):
-        candidate = Path(directory).expanduser() / name
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return str(candidate)
+    windows_dirs = [str(Path(os.environ['APPDATA']) / 'npm')] if os.name == 'nt' and os.environ.get('APPDATA') else []
+    for directory in (*extra, *windows_dirs, *EXTRA_DIRS):
+        found = shutil.which(name, path=str(Path(directory).expanduser()))
+        if found:
+            return str(Path(found).resolve())
     return None

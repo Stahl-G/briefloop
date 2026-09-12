@@ -2,9 +2,10 @@
 
 
 def test_finds_a_binary_that_is_not_on_path(tmp_path, monkeypatch):
+    import os
     from briefloop import host_bins
     directory = tmp_path/'bin'; directory.mkdir()
-    executable = directory/'demo-host'; executable.write_text('#!/bin/sh\n'); executable.chmod(0o755)
+    executable = directory/('demo-host.exe' if os.name=='nt' else 'demo-host'); executable.write_text('#!/bin/sh\n'); executable.chmod(0o755)
     monkeypatch.setenv('PATH', '/usr/bin:/bin')
     assert host_bins.find('demo-host', extra=(str(directory),)) == str(executable)
     assert host_bins.find('definitely-not-installed-host') is None

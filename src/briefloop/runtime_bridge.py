@@ -7,6 +7,8 @@ import subprocess
 import threading
 import uuid
 import queue
+import sys
+from .platform_support import OwnedProcess, cli_command
 
 
 class RuntimeBridge:
@@ -22,13 +24,16 @@ class RuntimeBridge:
 
     def _start(self):
         if self._process is not None and self._process.poll() is None:return
+        if self._process is not None:self._process.close_tree()
         from .host_bins import SEARCH_HINT, find as _find_host_bin
         node=_find_host_bin(self.node_binary or 'node')
         if not node:
             raise RuntimeError('未找到可执行的 Node.js：'+str(self.node_binary or 'node')+
                 '。Bridge 引擎需要 Node.js 20+；请安装后重启服务，或将 BRIEFLOOP_NODE 设置为 Node 可执行文件路径；'+SEARCH_HINT)
-        self._process=subprocess.Popen([node,str(files('briefloop').joinpath('static/runtime-bridge.mjs'))],
-            stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,bufsize=1)
+        self._process=OwnedProcess([node,str(files('briefloop').joinpath('static/runtime-bridge.mjs'))],
+            stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,bufsize=1,
+            env={**os.environ,'BRIEFLOOP_PYTHON':sys.executable,
+                 'BRIEFLOOP_PROCESS_HELPER':str(files('briefloop').joinpath('process_host.py'))})
         threading.Thread(target=self._read,args=(self._process,),daemon=True).start()
 
     def _read(self,proc):
@@ -86,7 +91,7 @@ class RuntimeBridge:
                 path=find_host_bin(name);version=None;error=None
                 if path:
                     try:
-                        probe=subprocess.run([path,'--version'],capture_output=True,text=True,timeout=5,check=True)
+                        probe=subprocess.run(cli_command([path,'--version']),capture_output=True,text=True,encoding='utf-8',timeout=5,check=True)
                         version=probe.stdout.strip().split('\n')[0][:160]
                     except (OSError,subprocess.SubprocessError):error='Version probe failed'
                 result.append({'id':name,'name':BACKEND_LABELS[name],'path':path,'installed':bool(path),
@@ -108,4 +113,5 @@ class RuntimeBridge:
             if self._process is not None and self._process.poll() is None:
                 self._process.stdin.close()
                 try:self._process.wait(timeout=3)
-                except subprocess.TimeoutExpired:self._process.kill()
+                except subprocess.TimeoutExpired:pass
+            if self._process is not None:self._process.close_tree()

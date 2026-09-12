@@ -557,4 +557,4 @@ class Store:
                 "jobs": jobs,
                 "skills": self.rows("SELECT * FROM skills ORDER BY rowid DESC"),
                 "active_skill": self.meta("active_skill"),
-                "wiki": (self.root/"wiki/index.md").read_text() if (self.root/"wiki/index.md").exists() else ""}
+                "wiki": (self.root/"wiki/index.md").read_text(encoding='utf-8') if (self.root/"wiki/index.md").exists() else ""}

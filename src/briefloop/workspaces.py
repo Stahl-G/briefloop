@@ -18,6 +18,7 @@ import tempfile
 import time
 from urllib.parse import urlsplit
 from .store import Store, dump
+from .platform_support import process_alive
 
 REGISTRY = '.briefloop-workspaces.json'
 # Must exceed the service shutdown budget: Worker.close() joins three threads
@@ -65,16 +66,7 @@ def _validated_info(root, workspace_id):
 
 
 def _alive(pid):
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except (OverflowError, ValueError):
-        return False
-    except OSError:
-        # PermissionError still means the process exists.
-        return True
+    return process_alive(pid)
 
 
 def _running(root, workspace_id):
@@ -185,8 +177,7 @@ def open_workspace(store, path, create=False):
         root.mkdir(parents=True, exist_ok=True)
     if not root.is_dir():
         raise ValueError('工作区必须是目录')
-    target = Store(root)  # Existing empty directories may be initialized explicitly.
-    workspace_id = target.meta('workspace_id')
+    workspace_id = _workspace_id(root)  # Only the locked service initializes SQLite.
     active = _active_server(root, workspace_id)
     if active:
         _remember(store.root, root)
@@ -194,13 +185,14 @@ def open_workspace(store, path, create=False):
     command = entry_command('start', '--workspace', root, '--port', '0', '--paused')
     detail = ''
     try:
-        launched = subprocess.run(command, capture_output=True, text=True, timeout=15)
+        launched = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', timeout=50)
         detail = (launched.stderr or launched.stdout or '')[-600:]
     except subprocess.TimeoutExpired:
         # The detached child may still become ready; do not kill that service.
         detail = '启动入口等待超时'
     deadline = time.monotonic() + 3
     while True:
+        workspace_id = _workspace_id(root)
         active = _active_server(root, workspace_id)
         if active:
             _remember(store.root, root)
@@ -232,7 +224,10 @@ def stop_workspace(store, path):
         return {'stopped': False, 'path': str(root), 'message': '该工作区没有在运行的服务。'}
     pid = active['pid']  # Validated once by _active_server; no second server.json read.
     try:
-        os.kill(pid, signal.SIGTERM)
+        if os.name == 'nt':
+            _request_shutdown(active['url'], pid, workspace_id)
+        else:
+            os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
         pass
     except OSError:
@@ -242,7 +237,7 @@ def stop_workspace(store, path):
     while time.monotonic() < deadline and _alive(pid):
         time.sleep(.1)
     forced = False
-    if _alive(pid):
+    if _alive(pid) and os.name != 'nt':
         forced = True
         try:
             os.kill(pid, signal.SIGKILL)
@@ -265,3 +260,21 @@ def stop_workspace(store, path):
     if forced:
         message = '服务进程未在等待时间内退出，已强制结束；数据、来源和任务记录都保留，可随时重新打开。'
     return {'stopped': True, 'path': str(root), 'message': message}
+
+
+def _request_shutdown(url, pid, workspace_id):
+    """Ask the verified service to release its resources, never kill a saved PID."""
+    token = _read_api(url, '/api/session')['token']
+    parsed = urlsplit(url)
+    connection = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=5)
+    try:
+        body = json.dumps({'pid': pid, 'workspace_id': workspace_id})
+        connection.request('POST', '/api/service-stop', body=body,
+                           headers={'Content-Type': 'application/json',
+                                    'X-BriefLoop-Token': token, 'Origin': url})
+        response = connection.getresponse()
+        response.read()
+        if response.status != 200:
+            raise OSError('工作区服务拒绝停止请求')
+    finally:
+        connection.close()

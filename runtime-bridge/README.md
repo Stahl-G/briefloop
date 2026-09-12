@@ -33,6 +33,6 @@ ACP `agent_thought_chunk`（以及 Claude `thinking` 块、Opencode `reasoning` 
 
 ## 最小验证
 
-`node --test runtime-bridge/bridge.test.mjs`：4 个合成协议行为覆盖宿主模型/会话、权限回答、推理独立事件通道、限制拒绝、取消和失败状态。测试不调用真实模型。每个本机 CLI 的短真实调用由试点验收记录单独说明，不以协议 fixture 宣称实机成功。
+`node --test runtime-bridge/bridge.test.mjs`：7 个合成协议行为覆盖宿主模型/会话、Hermes 两种入口、Reasonix 多模型标识、权限回答、推理独立事件通道、限制拒绝、取消和失败状态。测试不调用真实模型。每个本机 CLI 的短真实调用由试点验收记录单独说明，不以协议 fixture 宣称实机成功。
 
 模型目录直接复用上游 ACP、Codex 和 OpenCode 解析函数及 Claude 本机路由发现。Reasonix 使用原生 doctor 模型配置。内置建议标注来源，不作为选择白名单；用户仍可手填模型。

@@ -112,6 +112,7 @@
     "id": "hermes",
     "name": "Hermes",
     "bins": [
+      "hermes-acp",
       "hermes"
     ]
   },
