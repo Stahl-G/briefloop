@@ -1342,10 +1342,27 @@ function setReportView(view){
  if(grid)grid.hidden=view==='outline';
  if(view==='outline')renderOutline();
 }
+function outlineText(){const md=(current&&current.markdown)||'';const out=[];for(const line of md.split('\n')){const m=/^(#{1,3})\s+(.+?)\s*$/.exec(line);if(m)out.push(m[1]+' '+m[2])}return out.join('\n')}
 function renderOutline(){
- const box=$('report-outline');if(!box)return;const items=reportOutline();
- box.innerHTML=items.length?`<ul class="outline-list">${items.map((h,i)=>`<li class="outline-lv${h.level}"><button type="button" data-outline-index="${i}">${esc(h.text)}</button></li>`).join('')}</ul>`:'<p class="help">这份报告还没有小标题。</p>';
- box.querySelectorAll('[data-outline-index]').forEach(b=>b.onclick=()=>{const text=items[Number(b.dataset.outlineIndex)].text;setReportView('edit');const editor=$('editor');const nodes=editor?[...editor.querySelectorAll('h1,h2,h3')]:[];const hit=nodes.find(n=>n.textContent.trim()===text);if(hit)hit.scrollIntoView({block:'center',behavior:'smooth'})});
+ const box=$('report-outline');if(!box)return;const text=outlineText();
+ box.innerHTML=`<p class="help">每行一个章节，用 # / ## 表示层级（1–3 级）。可增删或调整顺序，然后把它带到「材料与需求」作为下一份简报的章节。</p><textarea id="outline-text" class="outline-text" rows="12" spellcheck="false" placeholder="## 核心摘要&#10;## 需求与竞争">${esc(text)}</textarea><div class="outline-actions"><button type="button" id="outline-apply" class="primary">用它做下一份报告 →</button><button type="button" id="outline-reset" class="outline">从当前稿件还原</button></div>`;
+ const reset=$('outline-reset');if(reset)reset.onclick=()=>{const t=$('outline-text');if(t)t.value=text};
+ const apply=$('outline-apply');if(apply)apply.onclick=()=>applyOutlineToSetup();
+}
+function applyOutlineToSetup(){
+ const value=($('outline-text')?.value||'').trim();
+ const titles=value?value.split('\n').map(l=>l.replace(/^#{1,6}\s*/,'').trim()).filter(Boolean):[];
+ if(!titles.length){notice('大纲为空',true);return}
+ const run=(state.runs||[]).find(r=>r.id===current?.run_id),req=run?parse(run.requirements):{};
+ const form=$('requirements');if(!form)return;
+ const text='请按以下章节结构撰写本期简报：\n'+titles.map((t,i)=>`${i+1}. ${t}`).join('\n');
+ if(form.elements.title&&req.title)form.elements.title.value=req.title;
+ if(form.elements.objective)form.elements.objective.value=[req.objective,text].filter(Boolean).join('\n\n');
+ if(form.elements.manual_sections_text)form.elements.manual_sections_text.value=titles.join('\n');
+ if(form.elements.report_profile&&req.report_profile)form.elements.report_profile.value=req.report_profile;
+ if(form.elements.writing_mode&&req.writing_mode)form.elements.writing_mode.value=req.writing_mode;
+ for(const el of form.querySelectorAll('input,select,textarea'))el.dispatchEvent(new Event('change',{bubbles:true}));
+ page('setup');notice('大纲已带入「材料与需求」；确认要求后生成');
 }
 function expandReportPanel(){const grid=$('report-grid');if(grid)grid.classList.remove('panel-collapsed');try{localStorage.setItem('briefloop-report-panel','open')}catch{}}
 function collapseReportPanel(){const grid=$('report-grid');if(grid)grid.classList.add('panel-collapsed');try{localStorage.setItem('briefloop-report-panel','closed')}catch{}}
