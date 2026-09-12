@@ -1480,6 +1480,12 @@ function openSourceDrawer(id){
  setSourceDrawerTab('overview');
 }
 function closeSourceDrawer(){const d=$('source-drawer'),b=$('source-drawer-backdrop');if(d)d.hidden=true;if(b)b.hidden=true}
+function renderTemplatesPage(){
+ const box=$('templates-page-list');if(!box||!state)return;
+ const list=state.templates||[];
+ const sig=JSON.stringify(list.map(t=>[t.id,t.status,t.revision,t.name]));if(renderTemplatesPage.sig===sig)return;renderTemplatesPage.sig=sig;
+ box.innerHTML=list.length?list.map(t=>`<div class="source-row"><span class="name">${esc(t.name)} · v${t.revision}</span><span class="tag ${t.status!=='ready'?'error':''}">${t.status==='ready'?'可用':esc(t.error||'准备中')}</span></div>`).join(''):'<p class="help">还没有模板。上传一个 Word 作为版式模板。</p>';
+}
 if($('new-report'))$('new-report').onclick=()=>page('setup');
 if($('sources-upload'))$('sources-upload').onchange=e=>action(async()=>{for(const f of e.target.files){const buf=new Uint8Array(await f.arrayBuffer());let b='';for(let i=0;i<buf.length;i+=8192)b+=String.fromCharCode(...buf.subarray(i,i+8192));await api('upload',{name:f.name,data:btoa(b)})}e.target.value=''},'来源已保存');
 if($('sources-add-url'))$('sources-add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('sources-url').value});$('sources-url').value='';const row=$('sources-add-url-row');if(row)row.hidden=true;notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
