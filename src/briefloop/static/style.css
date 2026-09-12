@@ -540,3 +540,13 @@ HEAD
 
 .chat-composer.drag-over{border-color:var(--green);background:#f2f8f0;box-shadow:0 0 0 3px #0068381f}
  60f4579c (Chat: paste and drag-drop images or files into the composer)
+.report-issues{display:grid;gap:8px;margin-bottom:14px}
+.issue-head{font-size:12px;color:var(--muted)}
+.issue-card{border:1px solid var(--line);border-radius:8px;padding:9px 11px;background:var(--surface)}
+.issue-card.danger{border-color:#e4c9bd;background:#fbf0ec}
+.issue-card>summary{cursor:pointer;display:flex;align-items:flex-start;gap:8px;font-size:12px}
+.issue-card>summary strong{font-weight:550;line-height:1.5}
+.issue-label{flex:none;font-family:var(--mono);font-size:10px;color:var(--muted);border:1px solid var(--line);border-radius:5px;padding:1px 5px;white-space:nowrap}
+.issue-card.danger .issue-label{color:var(--danger);border-color:#e4c9bd}
+.issue-card p{font-size:12px;margin:8px 0 0;line-height:1.6}
+.issue-basis{color:var(--muted)}
