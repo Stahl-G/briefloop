@@ -115,3 +115,47 @@ def test_source_time_annotation_invalidates_prewrite_comparison(tmp_path):
         'examined_claim_ids': [claim_a['id'], claim_b['id']], 'unexamined_claim_ids': []})
     register_snapshot(store, first['id'], timing={'published_at': '2026-09-12', 'basis': 'Publication date on supplied original'})
     assert reconciliation.read(store, run['id'], record['id'])['stale'] is True
+
+
+def test_input_fingerprint_tampering_cannot_rebind_a_comparison(tmp_path):
+    store, run, first, span_a, claim_a, claim_b = run_with_statements(tmp_path)
+    record = reconciliation.save(store, run['id'], {'status': 'complete',
+        'examined_claim_ids': [claim_a['id'], claim_b['id']], 'unexamined_claim_ids': []})
+    extra = store.add_source('C', 'New evidence after comparison')
+    store.attach_source(run['id'], extra['id'])
+    assert reconciliation.read(store, run['id'], record['id'])['stale'] is True
+    current = reconciliation.save(store, run['id'], {'status': 'partial',
+        'examined_claim_ids': [], 'unexamined_claim_ids': [claim_a['id'], claim_b['id']]})
+    path = store.root/'research'/run['id']/'reconciliations'/(record['id']+'.json')
+    changed = json.loads(path.read_text())
+    changed['input_fingerprint'] = current['input_fingerprint']
+    path.write_text(json.dumps(changed))
+    with pytest.raises(reconciliation.ReconciliationError, match='校验失败'):
+        reconciliation.read(store, run['id'], record['id'])
+    assert reconciliation.exists(store, run['id'], record['id']) is False
+    with pytest.raises(ValueError, match='对照记录不存在'):
+        store.publish(run['id'], {'title': 'T', 'markdown': 'Body', 'reconciliation_id': record['id']})
+
+
+def test_legacy_comparison_stays_readable_but_unbound_input_never_looks_current(tmp_path):
+    import hashlib
+    from briefloop.store import dump
+    store, run, first, span_a, claim_a, claim_b = run_with_statements(tmp_path)
+    payload = {'status': 'complete', 'examined_claim_ids': [claim_a['id'], claim_b['id']], 'unexamined_claim_ids': []}
+    record = reconciliation.save(store, run['id'], payload)
+    path = store.root/'research'/run['id']/'reconciliations'/(record['id']+'.json')
+    legacy = json.loads(path.read_text());legacy['schema_version'] = 1
+    original_body = {key: value for key, value in legacy.items() if key not in ('id', 'content_hash', 'input_fingerprint', 'created')}
+    legacy['content_hash'] = hashlib.sha256(dump(original_body).encode()).hexdigest()
+    path.write_text(dump(legacy))
+    result = reconciliation.read(store, run['id'], record['id'])
+    assert result['stale'] is True and result['stale_reason']
+    assert result['examined_claim_ids'] == payload['examined_claim_ids']
+    extra = store.add_source('C', 'New evidence after legacy comparison')
+    store.attach_source(run['id'], extra['id'])
+    renewed = reconciliation.save(store, run['id'], payload)
+    legacy['input_fingerprint'] = renewed['input_fingerprint']
+    path.write_text(dump(legacy))
+    assert reconciliation.read(store, run['id'], record['id'])['stale'] is True
+    assert renewed['id'] != record['id'] and renewed['schema_version'] == 2
+    assert reconciliation.read(store, run['id'], renewed['id'])['stale'] is False

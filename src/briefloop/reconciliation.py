@@ -11,7 +11,7 @@ import json
 import re
 from .store import dump, uid, now
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 STATUSES = ('complete', 'partial', 'not_applicable', 'failed')
 RELATIONS = ('compatible', 'different_scope', 'temporal_sequence', 'correction',
              'supersession', 'republication', 'attributed_difference', 'contradiction', 'unknown')
@@ -107,8 +107,12 @@ def _validate_relation(store, run_id, relation, allowed_claims, allowed_sources,
 
 
 def _content_hash(record):
-    body = {key: value for key, value in record.items() if key not in ('id', 'content_hash', 'input_fingerprint', 'created')}
-    return _digest(body)
+    excluded = {'id', 'content_hash', 'created'}
+    if record.get('schema_version') == 1:
+        # Legacy files did not bind their input fingerprint. Keep their content
+        # readable, but read() must never present that fingerprint as current.
+        excluded.add('input_fingerprint')
+    return _digest({key: value for key, value in record.items() if key not in excluded})
 
 
 def _stored(store, run_id):
@@ -187,8 +191,13 @@ def read(store, run_id, reconciliation_id):
     if not path.exists():
         raise ReconciliationError('对照记录不存在：' + str(reconciliation_id))
     record = json.loads(path.read_text(encoding='utf-8'))
+    if record.get('schema_version') not in (1, SCHEMA_VERSION):
+        raise ReconciliationError('不支持的对照记录格式')
     if record.get('id') != reconciliation_id or record.get('run_id') != run_id or record.get('content_hash') != _content_hash(record):
         raise ReconciliationError('对照记录内容或归属校验失败')
     current = _input_fingerprint(candidates(store, run_id))
-    record['stale'] = record.get('input_fingerprint') != current
+    legacy_unbound = record['schema_version'] == 1
+    record['stale'] = legacy_unbound or record.get('input_fingerprint') != current
+    if legacy_unbound:
+        record['stale_reason'] = '旧版对照未校验输入指纹，请基于当前来源重新保存对照'
     return record
