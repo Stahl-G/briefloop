@@ -1,8 +1,4 @@
-"""Conservative, no-inference Codex Fast capability projection.
-
-Model catalog support is not account entitlement. No credential values or full
-host configuration leave this module. API Priority is deliberately not exposed.
-"""
+"""Provider-only Fast eligibility; the Codex service adjudicates requests."""
 import os
 from urllib.parse import urlsplit
 
@@ -22,7 +18,11 @@ def _official_url(value, hosts):
 
 
 def capability(client, runtime, cwd, *, environment=None):
-    """Read host metadata, never start a model turn or refresh credentials."""
+    """Resolve the selected provider from host config, without model/account probes.
+
+    enabled describes provider eligibility, not account authorization or a
+    guarantee that the service accepts Fast for the selected model.
+    """
     result = {'backend': 'codex', 'model': runtime['model'],
               'model_provider': runtime.get('model_provider'),
               'official_connection': False, 'fast_supported': False,
@@ -32,42 +32,21 @@ def capability(client, runtime, cwd, *, environment=None):
     try:
         config = client.request('config/read', {'cwd': str(cwd), 'includeLayers': False})['config']
         provider = runtime.get('model_provider') or config.get('model_provider') or 'openai'
-        account = client.request('account/read', {'refreshToken': False}).get('account') or {}
         providers = config.get('model_providers') or {}
         selected = providers.get(provider) or {}
         # Proxy transport alone is not a provider override. Only effective API
         # endpoint overrides matter; unknown custom providers remain unverified.
         chat_url = config.get('chatgpt_base_url') or 'https://chatgpt.com/backend-api'
         api_url = selected.get('base_url') or env.get('OPENAI_BASE_URL') or config.get('openai_base_url')
-        official = (provider == 'openai' and (config.get('model_provider') or 'openai') == provider and not selected
+        official = (provider == 'openai'
                     and _official_url(chat_url, {'chatgpt.com'})
                     and (not api_url or _official_url(api_url, {'api.openai.com'})))
         result['official_connection'] = official
         if not official:
             result['reason'] = '当前提供商或接口地址尚未确认支持官方 Codex Fast'
             return result
-        if account.get('type') != 'chatgpt':
-            result.update(account_availability='unavailable', reason='此入口仅支持 ChatGPT 登录的 Codex Fast，不启用 API Priority')
-            return result
-        model = runtime['model'] if runtime['model'] != 'default' else config.get('model')
-        cursor = None
-        for _ in range(10):
-            page = client.request('model/list', {'includeHidden': True, 'cursor': cursor})
-            match = next((item for item in page.get('data', [])
-                          if item.get('model') == model or model is None and item.get('isDefault')), None)
-            if match:
-                tiers = match.get('serviceTiers') or []
-                result['fast_supported'] = any(t.get('id') in ('fast', 'priority') for t in tiers)
-                break
-            cursor = page.get('nextCursor')
-            if not cursor:
-                break
-        if not result['fast_supported']:
-            result['reason'] = '宿主未声明该模型支持 Fast'
-        else:
-            # account/read exposes login and plan, not a Fast entitlement. Do not
-            # turn a model capability into an invented organization permission.
-            result['reason'] = '模型支持 Fast，但当前宿主未提供可核验的账户 Fast 授权'
+        result.update(fast_supported=True, enabled=True,
+                      reason='OpenAI 提供商可选择 Fast；实际请求由服务处理')
         return result
     except Exception:
         # Host errors may contain endpoint/auth details; do not send them to UI.
