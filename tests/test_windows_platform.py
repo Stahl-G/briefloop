@@ -115,6 +115,24 @@ def test_word_locked_destination_keeps_old_file_and_saved_revision(tmp_path):
         close_handle(handle)
 
 
+def test_unicode_upload_and_original_survive_workspace_reopen(tmp_path):
+    from briefloop.sources import upload
+    from briefloop.store import Store
+
+    root = tmp_path / '中文 空格 workspace 😀'
+    name = '季度材料 中文 😀.txt'
+    content = '青禾团队 English\n¥1,234.50；μm；㎡；—\n'
+    store = Store(root)
+    source = upload(store, name, content.encode('utf-8'))
+    assert source['status'] == 'ready'
+
+    reopened = Store(root)
+    assert reopened.one('sources', source['id'])['name'] == name
+    assert reopened.source_text(source['id']) == content
+    provenance = json.loads((root / 'sources' / (source['id'] + '.provenance.json')).read_text(encoding='utf-8'))
+    assert (root / provenance['original_path']).read_bytes() == content.encode('utf-8')
+
+
 def test_console_start_reports_actual_service_identity_and_shuts_down(tmp_path):
     from briefloop.workspaces import _request_shutdown, _read_api
     root=tmp_path/'中文 fresh workspace'
@@ -131,6 +149,12 @@ def test_console_start_reports_actual_service_identity_and_shuts_down(tmp_path):
         assert int((root/'server.pid').read_text())==info['pid']
         assert _read_api(info['url'],'/api/runtime')['server_pid']==info['pid']
         assert len(_read_api(info['url'],'/api/state')['templates'])==36
+        # A valid session token alone must not stop a different service identity.
+        for pid, workspace_id in ((0, info['workspace_id']), (info['pid'], 'wrong-workspace')):
+            with pytest.raises(OSError, match='拒绝停止'):
+                _request_shutdown(info['url'], pid, workspace_id)
+            assert process_alive(info['pid'])
+            assert _read_api(info['url'], '/api/runtime')['server_pid'] == info['pid']
     finally:
         if marker.exists():
             info=json.loads(marker.read_text(encoding='utf-8'))

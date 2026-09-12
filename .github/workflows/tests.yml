@@ -30,3 +30,58 @@ jobs:
       - run: briefloop --version
       - run: python -c "from importlib.resources import files; assert files('briefloop').joinpath('skill_assets/tavily/SKILL.md').is_file()"
       - run: python -c "from importlib.resources import files; assert files('briefloop').joinpath('template_assets/general-report-zh-t1.docx').is_file()"
+  windows-native:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: node runtime-bridge/build.mjs
+      - run: npm run build:check
+      - run: npm test
+      - run: python -m pip install build
+      - run: python -m build --wheel
+      - name: Install the wheel into a separate Unicode path
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $installed = Join-Path $env:RUNNER_TEMP 'BriefLoop 安装 smoke'
+          python -m venv $installed
+          $wheelPython = Join-Path $installed 'Scripts/python.exe'
+          $wheel = @(Get-ChildItem -LiteralPath dist -Filter '*.whl')
+          if ($wheel.Count -ne 1) { throw 'Expected exactly one built wheel' }
+          python tests/check_distribution.py $wheel[0].FullName
+          & $wheelPython -m pip install $wheel[0].FullName pytest
+          "WHEEL_PYTHON=$wheelPython" >> $env:GITHUB_ENV
+          $smoke = Join-Path $env:RUNNER_TEMP 'BriefLoop 中文 workspace tests'
+          New-Item -ItemType Directory -Path $smoke | Out-Null
+          Copy-Item tests/test_windows_platform.py, tests/test_windows_distribution.py, tests/test_npm_native_shim.py, tests/test_host_bins.py, tests/test_server_boundary.py, tests/test_agent_commands.py, tests/test_review_packet_paths.py, tests/test_progress.py -Destination $smoke
+          Copy-Item runtime-bridge/bridge.test.mjs -Destination $smoke
+          $bridgeDirectory = Join-Path $smoke 'src/briefloop/static'
+          New-Item -ItemType Directory -Path $bridgeDirectory -Force | Out-Null
+          $package = & $wheelPython -c "import briefloop; from pathlib import Path; print(Path(briefloop.__file__).parent)"
+          Copy-Item (Join-Path $package 'static/runtime-bridge.mjs') -Destination $bridgeDirectory
+          "WHEEL_SMOKE=$smoke" >> $env:GITHUB_ENV
+          "BRIEFLOOP_PROCESS_HELPER=$(Join-Path $package 'process_host.py')" >> $env:GITHUB_ENV
+      - name: Test installed Windows behavior outside the checkout
+        env:
+          BRIEFLOOP_WHEEL_ONLY: '1'
+          PYTHONPATH: ''
+          PYTHONUTF8: '0'
+        run: |
+          Set-Location -LiteralPath $env:WHEEL_SMOKE
+          & $env:WHEEL_PYTHON -m pytest -q --import-mode=importlib
+      - name: Test the packaged runtime bridge without model credentials
+        run: |
+          Set-Location -LiteralPath $env:WHEEL_SMOKE
+          $env:BRIEFLOOP_PYTHON = $env:WHEEL_PYTHON
+          node --test bridge.test.mjs

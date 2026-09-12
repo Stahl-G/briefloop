@@ -45,13 +45,19 @@ def cli_command(arguments):
     args = [str(a) for a in arguments]
     if os.name != 'nt' or Path(args[0]).suffix.lower() not in ('.cmd', '.bat'):
         return args
-    # npm emits a sibling POSIX shim containing the exact node entrypoint.
-    # Accept only that generated node invocation; arbitrary batch files fail closed.
+    # npm emits a sibling POSIX shim containing the exact entrypoint. Newer
+    # native packages (including OpenCode) invoke an exe without Node.
     import re
     shim = Path(args[0])
     sibling = shim.with_suffix('')
     text = sibling.read_text(encoding='utf-8') if sibling.is_file() else ''
-    match = re.search(r'"\$basedir/([^"\r\n]+)" "\$@"', text)
+    native = re.search(r'^exec\s+"\$basedir/([^"\r\n]+\.exe)"\s+"\$@"\s*$', text, re.MULTILINE | re.IGNORECASE)
+    if native:
+        entry = (shim.parent / native.group(1)).resolve()
+        if not entry.is_file():
+            raise FileNotFoundError(entry)
+        return [str(entry), *args[1:]]
+    match = re.search(r'"\$basedir/([^"\r\n]+)"\s+"\$@"', text)
     if not match:
         raise ValueError('无法安全解析 CLI shim，请配置原生 exe 或标准 npm CLI：' + str(shim))
     entry = (shim.parent / match.group(1)).resolve()

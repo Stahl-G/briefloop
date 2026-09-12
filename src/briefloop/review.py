@@ -150,7 +150,8 @@ def _packet(store,review):
             raise ValueError('Reviewer 核查包文件已变化，不能接纳本次结果')
         if not path.resolve().is_relative_to(packet.resolve()) or not path.is_file() or sha(path.read_bytes())!=digest:
             raise ValueError('Reviewer 核查包文件已变化，不能接纳本次结果')
-    actual={str(path.relative_to(packet)) for path in packet.rglob('*') if path.is_file() or path.is_symlink()}
+    # Packet manifests use forward slashes on every platform, including Windows.
+    actual={path.relative_to(packet).as_posix() for path in packet.rglob('*') if path.is_file() or path.is_symlink()}
     if actual!=set(files):raise ValueError('Reviewer 核查包文件清单不一致')
     index=json.loads((packet/'index.json').read_text());bound={k:v for k,v in files.items() if k!='index.json'}
     target=json.loads((packet/'target.json').read_text())

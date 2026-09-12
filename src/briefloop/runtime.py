@@ -5,8 +5,6 @@ transport, cancellation, progress capture and admitting completed artifacts.
 """
 from importlib.resources import files
 import json
-import shlex
-import sys
 import threading
 import time
 from .models import Assessment, BriefDraft, ScoutResult, ROLE_NAMES, Requirements
@@ -14,6 +12,7 @@ from .report_profiles import profile_context
 from .industry_data import prepare_report_data
 from .store import Conflict, dump, now
 from .skills import bind_context
+from .agent_commands import tool_command, quote_path
 
 FILE_JOB_KINDS = ('export_docx', 'release', 'audit_bundle')
 
@@ -164,7 +163,7 @@ def generation_prompt(store, run, folder, backend='codex'):
                             'result_file':str(directory/'result.json'),'schema_path':str(schema_path),
                             'scout_contract_path':str(scout_contract)})
     payload={'deliverable_spec':deliverable,'report_profile':report_profile,'reference_sources':references,'requirements':req,'research_budget_status':research_budget,'research_plan':research_plan,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':max_parallel,'scout_slots':scout_slots,'scout_contract_path':str(scout_contract),'reusable_research':run.get('reusable_research',[])}
-    tool=shlex.join([sys.executable,'-m','briefloop','tool','--workspace',str(store.root)])
+    tool=tool_command(store.root,backend=backend)
     tavily_enabled=req['allow_web'] and provider=='tavily'
     if tavily_enabled:
         template=files('briefloop').joinpath('skill_assets','tavily','SKILL.md').read_text(encoding='utf-8')
@@ -256,7 +255,7 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
    {registration} 返回的新来源不在最初 input.json.sources 中也是正常的：在 Scout result.json 中使用返回的真实 source_id、准确 locator/excerpt 和缺口，后续交接保留所有实际取得的 acquired source IDs。不可编造 ID 或把新来源漏掉。
    已上传材料和公开网页都是要核对的原文，不自动等于真实结论。保留数值、单位、主体、时间口径及计划/预计/已实现等状态；区分发布日期与事件/统计期间，检查表头和脚注。忠实引用原文，发现异常或冲突时标出依据与未确定之处，不静默改写原材料，不混用不可比口径。
    未开启联网时只读上传来源。失败或期外来源的状态已在来源记录中保留，不在子任务回复中倾倒整份清单；gaps 简短说明重要影响及相关来源 ID，不删证据，不把无法读取写成没有变化。需要原文时先用 `{tool} read-source --id SOURCE_ID --start-line 1 --end-line 80 --max-chars 6000` 读取相关部分，再按实际行号定向扩展，不把截断当全文，不反复 dump 全文。
-3. 父会话主要接收 Scout 的短摘要、状态和结果路径；用 `{tool} join-scouts --run {run['id']} --files SCOUT_RESULT_PATHS > {shlex.quote(str(folder/'joined-scouts.json'))}` 做结构与来源 ID 校验和合并。文件列表必须是实际已派发槽位的 result_file 绝对路径；确认工具成功与文件存在即可，不再次逐项机械校验全部 JSON/schema/引用。缺少结果表示该槽未完成，不能复制另一槽或根目录文件冒充补交。只有工具报错才定向查看相关槽；证据判断由后续 Analyst/Evaluator 按需核对原文。
+3. 父会话主要接收 Scout 的短摘要、状态和结果路径；用 `{tool} join-scouts --run {run['id']} --files SCOUT_RESULT_PATHS --output {quote_path(folder/'joined-scouts.json',backend)}` 做结构与来源 ID 校验和合并。文件列表必须是实际已派发槽位的 result_file 绝对路径；确认工具成功与文件存在即可，不再次逐项机械校验全部 JSON/schema/引用。缺少结果表示该槽未完成，不能复制另一槽或根目录文件冒充补交。只有工具报错才定向查看相关槽；证据判断由后续 Analyst/Evaluator 按需核对原文。
    随后调用独立 Analyst，要求其读取 {folder/'analyst-writing.md'} 并使用plan中同一份已通过校验的reader_contract；研究方法约束用于执行，不抄到正文。任务输入包括本轮 plan、joined-scouts.json、全部实际取得来源的 ID 与原文读取入口、只与 analyst 相关的当前技能。用 `{tool} read-source --id SOURCE_ID` 可读取包括 acquired sources 在内的登记正文；不要只给它最初可能为空的 input.json.sources。
     Analyst 引用本轮实际来源 ID；新来源已由 {registration} 绑定本轮，应用随后独立评分时也会把这些 acquired sources 交给 Evaluator。若最终仍未获得可用原文，将具体缺口与无法确认范围写入research_notes/gaps，不用常识或搜索摘要编造市场事实。
     动笔前做一次“写作前证据对照”，不新增角色，使用 `{tool} workspace-action --request REQUEST_JSON`：
@@ -270,8 +269,8 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
    正文目标约 {req['target_words']}，上限 {req['max_words']} 个计数单位；接近目标优先保留关键信息，正文不得超过上限。规则：中文汉字每字计 1，连续英文字母或数字串计 1；排除 Markdown 语法、URL 和 [@source_id] 引用，标题、列表与表格文字计入正文。
    正文只保留 [@source_id] 这种行内引用；准确 locator 和相关 excerpt 仅放进 draft.json.citations 元数据，不把证据原文、定位信息或来源字段括号倾倒到正文。
    新稿以 draft.editor_document 提交 Tiptap 富文档 JSON（根 type=doc）；正文由 paragraph/heading/list/table/image/citation 等节点组成，加粗用 bold mark、颜色用 textStyle.color；图片 src 引用 briefloop-figure:FIGID。引用节点为 citation，attrs.sourceId 为真实来源ID。主章节 heading.attrs.blockId 使用产物约定的 section_id，标题和顺序遵守本轮明确要求。正文文字不要嵌入 Markdown 星号。可使用本地工具 normalize-document 检查结构并导出兼容 Markdown 用于字数检查；不要把 HTML/CSS 当纯文字。
-   保存最终 draft.json 前，先把待提交的 markdown 原样写入 {folder/'draft-body.md'}，调用 `{tool} count-brief --file {shlex.quote(str(folder/'draft-body.md'))} --target-words {req['target_words']} --max-words {req['max_words']}` 检查，或使用完全相同算法计数；超限先压缩临时稿再保存最终 JSON。不要把 citations 元数据当正文计数，也不要在最终稿已经发布后才为长度反复改写它。
-    把 Analyst 结果保存 {folder/'draft.json'}，结构遵循 {folder/'draft.schema.json'}。保存后调用 `{tool} check-draft --file {shlex.quote(str(folder/'draft.json'))}` 自检：status=invalid 要按 errors 指出的字段改正后重存；unknown_fields 里的键不在契约内，发布时会被丢弃并记入任务日志，其中若有必需内容要改放到契约字段。
+   保存最终 draft.json 前，先把待提交的 markdown 原样写入 {folder/'draft-body.md'}，调用 `{tool} count-brief --file {quote_path(folder/'draft-body.md',backend)} --target-words {req['target_words']} --max-words {req['max_words']}` 检查，或使用完全相同算法计数；超限先压缩临时稿再保存最终 JSON。不要把 citations 元数据当正文计数，也不要在最终稿已经发布后才为长度反复改写它。
+    把 Analyst 结果保存 {folder/'draft.json'}，结构遵循 {folder/'draft.schema.json'}。保存后调用 `{tool} check-draft --file {quote_path(folder/'draft.json',backend)}` 自检：status=invalid 要按 errors 指出的字段改正后重存；unknown_fields 里的键不在契约内，发布时会被丢弃并记入任务日志，其中若有必需内容要改放到契约字段。
     重要数字绑定：关键金额、财务指标、产能、订单、成交量、涨跌幅用 number_bindings 记录原始 value/unit、label/entity/period、source_id/locator；另给 source_excerpt（来源中逐字存在、含原始数值与完整单位的摘录）、report_quote（正文中唯一的逐字片段）、number_text（该片段内唯一、完整的带符号数字与单位）。示例：{{"label":"公司订单金额","value":13.6,"unit":"billion USD","period":"本报告期","entity":"示例公司","source_id":"实际来源ID","locator":"line 1","source_excerpt":"从真实来源逐字摘录，不照抄示例","report_quote":"示例公司订单为136亿美元。","number_text":"136亿美元"}}。示例仅说明字段，必须使用实际材料；不要编造绑定。locator 使用可解析的明确范围：line 1（或 line 1-3）、page 1，或序列化为字符串的证据定位 JSON（如带 kind、sheet、cells 的 XLSX 定位）；行号、页码和单元格均须替换为原件真实位置。无法识别的定位会标记未检查，不会退回整份来源寻找相同文字。程序只核对指定位置的数值、币种、单位换算以及摘录存在性，不证明主体、期间或指标含义正确。不能准确绑定或不支持的单位会标记未检查，不能声称全文已核验。
     草稿一保存应用就会展示；不需要 Editor、Auditor 或评分通过。
 对于复用的关键来源，按本轮联网选择和预算调用 workspace-action 的 refresh_source(run_id,source_id,information_cutoff,trigger=next_run) 实际复查；禁网时只记录未刷新。对明确时间信息用source_snapshot(source_id,timing)登记effective_start/effective_end/published_at/available_at/basis；时间未知就保留未知，不用抓取日代替披露日。发现更新用source_change(change)登记旧新source_id、kind/relation/description/scope/relationship_evidence/information_cutoff，并交共用Conflict复核，不自动覆写旧报告或宣称新版胜出。
@@ -320,7 +319,7 @@ def assessment_prompt(store, brief, folder, backend='codex'):
     from .evidence import inspect_bindings
     input_pack['claim_evidence']=inspect_bindings(store,brief['id'])
     (folder/'input.json').write_text(dump(input_pack),encoding='utf-8')
-    tool=shlex.join([sys.executable,'-m','briefloop','tool','--workspace',str(store.root)])
+    tool=tool_command(store.root,backend=backend)
     no_question='本轮没有任何用户在旁可问：不要调用 question 工具；遇到含糊之处自行按任务目标决断，并在结果中记录假设。\n' if backend=='opencode' else ''
     view_pages_word = '使用 view_image 读取页图' if backend == 'codex' else '用 read 工具读取返回的页图'
     figure_view_word = '实际view_image查看其absolute_image_path' if backend == 'codex' else '实际用 read 工具读取其absolute_image_path'
@@ -714,7 +713,7 @@ class Worker:
             from .deliverable_spec import resolve,instructions
             contract=json.loads(brief['detail']).get('reader_contract')
             spec=resolve(json.loads(self.store.one('runs',brief['run_id'])['requirements']),reader_contract=contract)
-            tool=f'{shlex.quote(sys.executable)} -m briefloop tool --workspace {shlex.quote(str(self.store.root))}'
+            tool=tool_command(self.store.root,backend=payload.get('agent_backend','codex'))
             prompt=TASK_CONTEXT+instructions(spec,role='revision')+f'''本次仅针对已有报告进行一次修订。读取 {stage/'input.json'} 的原稿、评价和本轮要求。
 保留原稿已有的有效事实、图表及明确人工占位。核对来源，只修正有依据的错误、遗漏和写作问题；不重新开展无关研究，不改用户模板默认。
 必要来源按 source_id 从工作区 {self.store.root/'sources'} 定向读取，保留引用和 research_notes。按评分纠正问题，内部核查过程留在独立记录，不将免责声明加回正文。

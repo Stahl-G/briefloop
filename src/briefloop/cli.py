@@ -47,6 +47,7 @@ def main():
     figure.add_argument('--data');figure.add_argument('--script')
     join=ts.add_parser('join-scouts');join.add_argument('--files',nargs='+',required=True)
     join.add_argument('--run');join.add_argument('--round');join.add_argument('--slots',nargs='+')
+    join.add_argument('--output',help='保存合并结果为 UTF-8 JSON，避免 shell 重定向改变编码')
     document=ts.add_parser('normalize-document',help='检查富文档 JSON 并生成兼容 Markdown，用于导入与字数检查')
     document.add_argument('--file',required=True);document.add_argument('--output')
     count=ts.add_parser('count-brief',help='按统一中英混合规则统计 Markdown 正文长度')
@@ -157,7 +158,11 @@ def main():
             print(read_source(store,a.id,start_line=a.start_line,end_line=a.end_line,max_chars=a.max_chars))
         elif a.tool=='join-scouts':
             from .scout_tools import join_scouts
-            print(json.dumps(join_scouts(store,a.files,run_id=a.run,round_id=a.round,slots=a.slots),ensure_ascii=False))
+            result=json.dumps(join_scouts(store,a.files,run_id=a.run,round_id=a.round,slots=a.slots),ensure_ascii=False)
+            if a.output:
+                output=Path(a.output).expanduser().resolve();output.parent.mkdir(parents=True,exist_ok=True)
+                temporary=output.with_name(output.name+'.tmp');temporary.write_text(result,encoding='utf-8');temporary.replace(output)
+            print(result)
         elif a.tool=='add-url':
             from .sources import fetch_for_run
             result=fetch_for_run(store,a.run,a.url)

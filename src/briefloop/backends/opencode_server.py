@@ -95,8 +95,12 @@ class OpencodeServerClient:
         self.timeout = timeout
         self.port = port or _free_port()
         self.password = password or secrets.token_urlsafe(24)
-        self._stderr = (root / 'opencode-serve.stderr.log').open('a')
         env = {**os.environ, 'OPENCODE_SERVER_PASSWORD': self.password}
+        from ..agent_commands import opencode_shell
+        self.shell = opencode_shell()
+        if self.shell:
+            env['SHELL'] = self.shell
+        self._stderr = (root / 'opencode-serve.stderr.log').open('a')
         self.process = OwnedProcess(
             [executable, 'serve', '--port', str(self.port), '--hostname', '127.0.0.1'],
             stdout=subprocess.DEVNULL, stderr=self._stderr, env=env, start_new_session=True)
