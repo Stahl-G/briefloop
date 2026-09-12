@@ -220,7 +220,7 @@ class Store:
             raise ValueError("同一材料不能同时作为本期证据和风格参考，请选择用途")
         for sid in source_ids:
             self.one("sources", sid)
-        if not source_ids and not req.allow_web:
+        if not source_ids and not req.allow_web and not options.get('connector_selection_validated', False):
             raise ValueError("请添加来源，或允许联网查找来源")
         rid = uid("run")
         with self.tx() as c:
@@ -476,7 +476,7 @@ class Store:
                 roles[role]=dict(base)
         return roles
 
-    def enqueue(self, kind, payload):
+    def enqueue(self, kind, payload, *, before_commit=None):
         if kind not in ('export_docx','release','audit_bundle','source_refresh'):
             from .backends import validate_backend
             from .models import normalize_search_provider
@@ -496,6 +496,7 @@ class Store:
         jid = uid("job")
         with self.tx() as c:
             c.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)", (jid, kind, "queued", dump(payload), None, None, now(), now()))
+            if before_commit is not None:before_commit(c,jid,payload)
         job = self.one("jobs", jid)
         from .task_notify import notify as _notify_task
         _notify_task(self, job, 'queued')

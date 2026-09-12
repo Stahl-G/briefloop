@@ -2,6 +2,7 @@
 import hashlib
 import importlib.util
 import json
+from pathlib import Path
 import unittest
 import test_connector_materials as fixtures
 from briefloop.connectors import ConnectorError
@@ -89,20 +90,37 @@ class TaskMaterialTests(unittest.TestCase):
         try:
             connector = server.connectors.save(self.config)['id']
             server.connectors.enable(connector)
-            run = server.store.create_run({'title': 'Bound report', 'objective': 'Use selected source', 'allow_web': True}, [])
-            job = server.store.enqueue('generate', {'run_id': run['id']})
             ui = request('/api/session')[1]['token']
             host = {'X-BriefLoop-Token': ui}
-            body = {'job_id': job['id'], 'selections': [{'connector_id': connector, 'resources': ['m0://document']}], 'max_calls': 1, 'max_total_bytes': 65536}
+            selection = {'selections': [{'connector_id': connector, 'resources': ['m0://document']}], 'max_calls': 1, 'max_total_bytes': 65536}
+            generated = request('/api/generate', {'requirements': {'title':'Bound report','objective':'Read selected material','allow_web':False}, 'source_ids':[], 'connector_selection': selection}, host)
+            self.assertEqual(generated[0], 200, generated)
+            job = generated[1]
+            run_id = json.loads(job['payload'])['run_id']
+            self.assertFalse(json.loads(server.store.one('runs',run_id)['requirements'])['allow_web'])
+            self.assertTrue(server.connector_tasks.has_binding(job['id']))
+            body = {'job_id': job['id'], **selection}
             self.assertEqual(request('/api/connectors/task-bind', body)[0], 403)
-            self.assertEqual(request('/api/connectors/task-bind', body, host)[0], 200)
             access = request('/api/connectors/task-access', {'job_id': job['id']}, host)[1]['access_token']
             tool = {'action': 'read', 'connector_id': connector, 'uri': 'm0://document', 'request_id': 'http-1'}
-            result = request('/api/connectors/task-tool', tool, {'Authorization': 'Bearer ' + access})
-            self.assertEqual(result[0], 200)
-            self.assertEqual(result[1]['status'], 'admitted')
+            from briefloop.connectors.runtime_tools import generation_access
+            import subprocess
+            import shlex
+            with generation_access(server.worker, job) as instructions:
+                self.assertNotIn(access, instructions)
+                command = instructions.split('再执行：',1)[1].split('\n',1)[0]
+                request_path = self.root / 'request.json'
+                request_path.write_text(json.dumps(tool))
+                args = shlex.split(command)
+                args[-1] = str(request_path)
+                acquired = subprocess.run(args, capture_output=True, text=True, check=True)
+                self.assertEqual(json.loads(acquired.stdout)['status'], 'admitted')
+                access_path = Path(args[args.index('--access-file')+1])
+                self.assertEqual(access_path.stat().st_mode & 0o777, 0o600)
+            self.assertFalse(access_path.exists())
             self.assertEqual(request('/api/connectors/task-bind', body, {'Authorization': 'Bearer ' + access})[0], 403)
-            self.assertEqual(request('/api/connectors/task-revoke', {'job_id': job['id']}, host)[0], 200)
+            server.worker.stop_job(job['id'])
+            self.assertEqual(server.connector_tasks.status(job['id'])['grant']['status'], 'revoked')
             self.assertNotEqual(request('/api/connectors/task-tool', tool, {'Authorization': 'Bearer ' + access})[0], 200)
         finally:
             server.shutdown()

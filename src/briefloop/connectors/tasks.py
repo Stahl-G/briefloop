@@ -55,6 +55,34 @@ class TaskMaterials:
         self.store.event(job_id, 'connector_task_bound', {'run_id': run_id, 'grant_id': grant['id']})
         return self.status(job_id)
 
+    def enqueue(self, requirements, source_ids, selection, *, session_id=None):
+        """Trusted create route: no runnable job exists until its binding commits."""
+        if not isinstance(selection, dict) or set(selection) != {'selections', 'max_calls', 'max_total_bytes'}:
+            raise ConnectorError('请明确提供连接器选择和两项预算。', code='invalid_grant')
+        if not selection['selections']:
+            raise ConnectorError('连接器选择不能为空。', code='invalid_grant')
+        run = self.store.create_run(requirements, source_ids, research_protocol='quality_v1', connector_selection_validated=True)
+        grant = self.materials.freeze(run['id'], **selection)
+        payload = {'run_id': run['id'], 'connector_materials': True}
+        if session_id: payload['session_id'] = session_id
+        def bind_before_commit(c, job_id, payload):
+            self.materials.grants.get(grant['id'], run['id'], connection=c, active=True)
+            c.execute('INSERT INTO connector_task_bindings VALUES(?,?,?,?)', (job_id, run['id'], grant['id'], now()))
+        try:
+            job = self.store.enqueue('generate', payload, before_commit=bind_before_commit)
+        except Exception:
+            self.materials.revoke(grant['id'], run['id'])
+            raise
+        self.store.event(job['id'], 'connector_task_bound', {'run_id': run['id'], 'grant_id': grant['id']})
+        return job
+
+    def has_binding(self, job_id):
+        return bool(self.store.rows('SELECT job_id FROM connector_task_bindings WHERE job_id=?', (job_id,)))
+
+    def release_access(self, token):
+        with self._lock:
+            self._access.pop(token, None)
+
     def status(self, job_id):
         row = self._binding(job_id)
         return {'job_id': job_id, 'run_id': row['run_id'], **self.materials.status(row['grant_id'], row['run_id'])}

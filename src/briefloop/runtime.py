@@ -393,6 +393,8 @@ class Worker:
                 changed=c.execute("UPDATE jobs SET status='cancelled',error=?,updated=? WHERE id=? AND status IN ('queued','running')",
                                   ('任务已停止，已生成内容保留',now(),jid)).rowcount
             if changed:
+                tasks=getattr(self,'connector_tasks',None)
+                if tasks is not None and tasks.has_binding(jid):tasks.revoke(jid)
                 if self.current==jid:self.runtime.cancel()
                 if self.review_current==jid and self._review_runtime:self._review_runtime.cancel()
                 if self.file_current==jid:self._file_cancelled.set()
@@ -634,7 +636,9 @@ class Worker:
                     if not self.runtime.cancelled.is_set() and not self.stopping.is_set() and self.store.one('jobs',job['id'])['status']!='cancelled':
                         enqueue_review(self.store,record['id'],payload={**payload,'parent_job_id':job['id'],'checkpoint':True})
                         checkpoint[0]=True
-        result=self.runtime.execute(job,generation_prompt(self.store,run,folder,backend),folder,publish)
+        from .connectors.runtime_tools import generation_access
+        with generation_access(self,job) as connector_instructions:
+            result=self.runtime.execute(job,generation_prompt(self.store,run,folder,backend)+connector_instructions,folder,publish)
         publish()
         current=latest[0]
         brief=self.store.one('briefs',current)

@@ -175,15 +175,34 @@ same run. Review/assessment jobs cannot receive access. Tokens do not authorize
 browser configuration routes. Revocation invalidates all issued task tokens and
 revokes the material scope, including late-result admission.
 
-### Remaining host integration
+### Generation and cancellation integration
 
-The routes and scoped tool are executable, but the frontend/Worker must still wire
-creation, bind-before-claim, process token injection and cancel-to-revoke. Binding
-an already enqueued job can safely fail if Worker wins; product integration should
-bind before making that job runnable using the existing creation boundary. No new
-state machine is provided here. Existing source-empty run validation also needs an
-explicit selected-MCP path; do not enable web search merely to bypass that check.
-Tests use allowed-web runs but make only local fixture HTTP requests, no searches.
+POST `/api/generate` accepts optional `connector_selection` with exactly
+`selections`, `max_calls`, and `max_total_bytes`. Omit it when nothing is selected.
+The trusted create route permits an empty initial source list with this explicit
+selection while preserving `allow_web=false`; actual selection validation and grant
+freezing must succeed before any runnable job exists. The job insertion and grant
+binding commit together using Store.enqueue's host-only before_commit callback.
+Its payload records `connector_materials: true`, no credentials. Other creation
+paths retain the existing requirement for sources or allowed web search.
+
+The server attaches TaskMaterials to Worker. Around the main generation execute
+call only, `generation_access` writes a unique 0600 process capability file and
+adds a stdlib tool-client command and frozen selection to generation instructions.
+The token itself is absent from prompts and job payloads. On exit the file is
+removed and access invalidated; assessment/reviewer calls are outside this scope.
+The actual tool still rechecks the generating job and grant on every request.
+Worker cancellation revokes the grant before signalling the running transport,
+therefore in-flight material admission is rejected after cancellation. A cancelled
+MCP grant does not silently regain authority on resume; a new user-selected task
+is needed. Service restart invalidates process-local tokens; an interrupted active
+grant can receive fresh host access when generation resumes.
+
+The frontend selection and user-visible adoption status remain a separate module.
+A real local application HTTP test creates a source-empty/offline task, invokes the
+same scoped CLI client provided to generation, checks source admission, then stops
+the task through Worker and verifies revocation. This proves the HTTP/tool path,
+not that a language model actually chooses the tool or produces a suitable report.
 
 This boundary constrains these application APIs; it is not OS isolation against a
 host process with arbitrary access to the workspace/database or browser session.

@@ -364,10 +364,13 @@ def make_server(workspace, port=8765, *, paused=False):
                     result=create_demo(store)
                 elif path=='/api/generate':
                     req=Requirements.model_validate(body['requirements'])
-                    run=store.create_run(req.model_dump(),body.get('source_ids',[]),research_protocol='quality_v1')
-                    payload={'run_id':run['id']}
-                    if body.get('session_id'):payload['session_id']=body['session_id']
-                    result=store.enqueue('generate',payload)
+                    if 'connector_selection' in body:
+                        result=self.server.connector_tasks.enqueue(req.model_dump(),body.get('source_ids',[]),body['connector_selection'],session_id=body.get('session_id'))
+                    else:
+                        run=store.create_run(req.model_dump(),body.get('source_ids',[]),research_protocol='quality_v1')
+                        payload={'run_id':run['id']}
+                        if body.get('session_id'):payload['session_id']=body['session_id']
+                        result=store.enqueue('generate',payload)
                 elif path=='/api/save':
                     value=SaveRevision.model_validate(body)
                     result=store.revise(value.base_version,value.markdown,value.editor_document)
@@ -427,6 +430,8 @@ def make_server(workspace, port=8765, *, paused=False):
         server.connectors=ConnectorService(store.root)
         from .connectors.tasks import TaskMaterials
         server.connector_tasks=TaskMaterials(store,server.connectors)
+        worker.connector_tasks=server.connector_tasks
+        worker.connector_tool_url=f'http://127.0.0.1:{server.server_port}/api/connectors/task-tool'
     except Exception:
         server.server_close();harness.close();opencode_harness.close();bridge.close();lock.close();raise
     close_socket=server.server_close
