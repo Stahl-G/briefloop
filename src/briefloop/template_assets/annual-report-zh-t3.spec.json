@@ -1,0 +1,62 @@
+{
+ "sections": [
+  {
+   "section_id": "profile",
+   "title": "公司概况",
+   "index": 7,
+   "purpose": "基本情况"
+  },
+  {
+   "section_id": "financials",
+   "title": "主要财务数据",
+   "index": 8,
+   "purpose": "关键数字"
+  },
+  {
+   "section_id": "discussion",
+   "title": "经营层讨论与分析",
+   "index": 9,
+   "purpose": "经营回顾"
+  },
+  {
+   "section_id": "risks",
+   "title": "风险因素",
+   "index": 10,
+   "purpose": "风险与应对"
+  },
+  {
+   "section_id": "appendix",
+   "title": "附录",
+   "index": 11,
+   "purpose": "治理与备查"
+  }
+ ],
+ "keep_blocks": [
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6
+ ],
+ "paragraph_index": 12,
+ "fields": [
+  {
+   "old": "{{title}}",
+   "field": "title"
+  },
+  {
+   "old": "{{organization}}",
+   "field": "organization"
+  },
+  {
+   "old": "{{period}}",
+   "field": "period"
+  },
+  {
+   "old": "{{report_date}}",
+   "field": "report_date"
+  }
+ ]
+}

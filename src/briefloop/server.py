@@ -330,7 +330,7 @@ def make_server(workspace, port=8765, *, paused=False):
                     result=import_template(store,body['name'],base64.b64decode(body['data'],validate=True),body.get('parent_id'))
                 elif path=='/api/export':
                     from .export_jobs import enqueue_export
-                    result=enqueue_export(store,body['version_id'])
+                    result=enqueue_export(store,body['version_id'],body.get('template_id'))
                 elif path=='/api/generate':
                     req=Requirements.model_validate(body['requirements'])
                     run=store.create_run(req.model_dump(),body.get('source_ids',[]),research_protocol='quality_v1')
@@ -398,6 +398,8 @@ def make_server(workspace, port=8765, *, paused=False):
 
 def serve(workspace,port=8765,*,paused=False):
     server=make_server(workspace,port,paused=paused)
+    from .templates import import_builtin
+    import_builtin(server.store)
     server.worker.start()
     url=f'http://127.0.0.1:{server.server_port}'
     (server.store.root/'server.json').write_text(dump({'pid':os.getpid(),'url':url,'workspace_id':server.store.meta('workspace_id')}))

@@ -156,6 +156,45 @@ def check_export(markdown):
             'figure_markers': sorted(set(re.findall(r'briefloop-figure:([A-Za-z0-9_-]+)', markdown or '')))}
 
 
+def _node_text(node):
+    def walk(item):
+        if not isinstance(item, dict):return ''
+        if item.get('type') == 'text':return item.get('text', '')
+        return ''.join(walk(child) for child in item.get('content', []))
+    return ''.join(walk(child) for child in node.get('content', []))
+
+
+def check_layout(document):
+    """Deterministic layout findings from the saved document, report-only.
+
+    Heading hierarchy, empty headings and header-less tables are quality
+    findings, not correctness claims; nothing here blocks delivery.
+    """
+    content = (document or {}).get('content', [])
+    jumps = []; empty = 0; headerless = []
+    previous = None
+    for node in content:
+        kind = node.get('type')
+        if kind == 'heading':
+            level = (node.get('attrs') or {}).get('level')
+            text = _node_text(node).strip()
+            if not text:
+                empty += 1
+            if isinstance(level, int):
+                if previous is not None and level > previous + 1:
+                    jumps.append({'after': previous, 'level': level, 'text': text[:40]})
+                previous = level
+        elif kind == 'table':
+            rows = node.get('content') or []
+            first = rows[0].get('content') if rows else []
+            if first and not all(cell.get('type') == 'tableHeader' for cell in first):
+                headerless.append(_node_text(first[0])[:20] if first else '')
+    issues = bool(jumps or empty or headerless)
+    return {'heading_jumps': jumps, 'empty_headings': empty,
+            'tables_without_header': headerless,
+            'status': 'issues' if issues else 'ok'}
+
+
 def brief_checks(store, version_id):
     brief = store.one('briefs', version_id)
     detail = json.loads(brief.get('detail') or '{}')
@@ -163,6 +202,8 @@ def brief_checks(store, version_id):
     references = set(json.loads(run['requirements']).get('reference_source_ids', []))
     allowed = set(store.source_ids(run['id'])) - references
     numbers = check_numbers(brief['markdown'], detail.get('number_bindings'), store, allowed)
+    from .document_model import brief_document
+    layout = check_layout(brief_document(brief))
     rows = store.rows('SELECT data FROM assessments WHERE version_id=? ORDER BY rowid DESC LIMIT 1', (version_id,))
     checked = sum(r['checked'] for r in numbers)
     export = check_export(brief['markdown'])
@@ -192,4 +233,5 @@ def brief_checks(store, version_id):
                         'unmatched': [r for r in numbers if r['checked'] and not r['found']],
                         'skipped': [r for r in numbers if not r['checked']]},
             'export': export,
+            'layout': layout,
             'assessment_overall': json.loads(rows[0]['data']).get('overall') if rows else None}

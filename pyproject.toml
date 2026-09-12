@@ -20,5 +20,5 @@ briefloop = "briefloop.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-briefloop = ["static/*", "skill_assets/*/*.md"]
+briefloop = ["static/*", "skill_assets/*/*.md", "template_assets/*"]
 wikiskill = ["**/*"]

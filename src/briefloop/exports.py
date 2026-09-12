@@ -28,12 +28,15 @@ def reader_markdown(store,brief):
 def docx_bytes(markdown='', *, report_profile="brief", title="", report_date="", organization="", period="", report_data=None, industry="", figures=None, document=None, source_records=None, language=None):
     from docx import Document
     from .default_fonts import native_default_fonts
-    from .industry_export import append_inline, configure_document, style_heading, style_table, append_data_chart
+    from .industry_export import append_inline, configure_document, style_heading, style_table, append_data_chart, insert_table_of_contents, enable_update_fields
     industry_report = report_profile == 'industry_periodic'
     if document is not None:
         from .document_export import render_document
         doc=Document()
-        if industry_report:configure_document(doc,title=title,report_date=report_date,organization=organization,period=period,industry=industry)
+        if industry_report:
+            configure_document(doc,title=title,report_date=report_date,organization=organization,period=period,industry=industry)
+            insert_table_of_contents(doc)
+            enable_update_fields(doc)
         render_document(doc,document,figures=figures,sources=source_records)
         output=BytesIO();doc.save(output);return native_default_fonts(output.getvalue(),language=language)
     tokens=MarkdownIt('commonmark').enable('table').parse(markdown)
@@ -42,7 +45,10 @@ def docx_bytes(markdown='', *, report_profile="brief", title="", report_date="",
         title=title or tokens[1].content
         tokens=tokens[3:]
     doc=Document()
-    if industry_report: configure_document(doc, title=title, report_date=report_date, organization=organization, period=period, industry=industry)
+    if industry_report:
+        configure_document(doc, title=title, report_date=report_date, organization=organization, period=period, industry=industry)
+        insert_table_of_contents(doc)
+        enable_update_fields(doc)
     from docx.shared import Mm
     section=doc.sections[0]
     figure_width=section.page_width-section.left_margin-section.right_margin

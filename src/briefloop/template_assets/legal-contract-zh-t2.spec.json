@@ -1,0 +1,60 @@
+{
+ "sections": [
+  {
+   "section_id": "clause1",
+   "title": "第一条 合作宗旨",
+   "index": 5,
+   "purpose": "宗旨"
+  },
+  {
+   "section_id": "clause2",
+   "title": "第二条 权利与义务",
+   "index": 6,
+   "purpose": "权利义务"
+  },
+  {
+   "section_id": "clause3",
+   "title": "第三条 费用与支付",
+   "index": 7,
+   "purpose": "费用支付"
+  },
+  {
+   "section_id": "clause4",
+   "title": "第四条 保密条款",
+   "index": 8,
+   "purpose": "保密"
+  },
+  {
+   "section_id": "clause5",
+   "title": "第五条 违约责任",
+   "index": 9,
+   "purpose": "违约责任"
+  }
+ ],
+ "keep_blocks": [
+  0,
+  1,
+  2,
+  3,
+  4
+ ],
+ "paragraph_index": 10,
+ "fields": [
+  {
+   "old": "{{title}}",
+   "field": "title"
+  },
+  {
+   "old": "{{organization}}",
+   "field": "organization"
+  },
+  {
+   "old": "{{period}}",
+   "field": "period"
+  },
+  {
+   "old": "{{report_date}}",
+   "field": "report_date"
+  }
+ ]
+}

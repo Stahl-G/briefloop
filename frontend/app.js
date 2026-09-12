@@ -66,6 +66,13 @@ const fromEditor=md=>mapFigureImages(md.replace(/\[([^\]]+)\]\(#source-(src_[a-z
 // END_FIGURE_EDITOR_MAPPING
 function updateDownloads(brief){
  const query='version='+encodeURIComponent(brief.id);$('download').href='/api/download?'+query;$('download-docx').href='/api/download?format=docx&'+query;
+ const picker=$('export-template');
+ if(picker){
+  const chosen=picker.value;
+  const ready=(state.templates||[]).filter(t=>t.status==='ready');
+  picker.innerHTML='<option value="">跟随报告设置</option>'+ready.map(t=>`<option value="${esc(t.id)}">${esc(t.name)}（换版式）</option>`).join('');
+  picker.value=[...picker.options].some(o=>o.value===chosen)?chosen:'';
+ }
  const bundle=$('download-bundle');if(bundle){bundle.href='/api/download?format=bundle&'+query;bundle.hidden=!/briefloop-figure:[A-Za-z0-9_-]+/.test(brief.markdown)}
 }
 
@@ -271,6 +278,14 @@ async function renderDeliveryChecks(){
  if(c.export.escaped_bold)parts.push('<span class="tag error">存在转义加粗，请检查排版</span>');
  if(c.export.figure_error)parts.push('<span class="tag error">图表资源不可用：'+esc(c.export.figure_error)+'</span>');
  else if(c.export.figure_markers.length)parts.push('<span class="tag">含图表：独立交付请下载 Word 或含图片的 Markdown 包</span>');
+ const l=c.layout;
+ if(l){
+  const findings=[];
+  if(l.heading_jumps.length)findings.push('标题层级中断 '+l.heading_jumps.length+' 处（如 '+l.heading_jumps.slice(0,2).map(j=>'第'+j.after+'级后接第'+j.level+'级').join('、')+'）');
+  if(l.empty_headings)findings.push('空标题 '+l.empty_headings+' 个');
+  if(l.tables_without_header.length)findings.push('缺表头行的表格 '+l.tables_without_header.length+' 张');
+  parts.push(findings.length?`<span class="tag error">版式：${esc(findings.join('；'))}</span>`:'<span class="tag">版式：标题层级、表头与空标题检查通过</span>');
+ }
  if(c.assessment_overall)parts.push(`<span class="tag">模型评分：${esc(c.assessment_overall)}</span>`);
  box.innerHTML='<strong>已保存版本检查</strong> '+parts.join(' ')+'<p class="help">数值检查仅覆盖已提交并成功定位的绑定，不代表正文数字已全部核验；事实含义、研究覆盖与交付质量仍需评价。</p>';
 }
@@ -309,7 +324,11 @@ async function savedVersion(){
 }
 for(const id of ['download','download-docx','download-bundle']){
  const link=$(id);if(!link)continue;
- link.onclick=async e=>{e.preventDefault();try{const version=await savedVersion();if(id==='download-docx'){await api('export',{version_id:version});notice('Word 已排队制作');await refresh();return}const format=id==='download-docx'?'docx':id==='download-bundle'?'bundle':null;window.location.assign('/api/download?version='+encodeURIComponent(version)+(format?'&format='+format:''))}catch(e){notice('下载未开始：'+e.message,true)}};
+ link.onclick=async e=>{e.preventDefault();try{const version=await savedVersion();if(id==='download-docx'){
+   const override=$('export-template')?$('export-template').value:'';
+   await api('export',override?{version_id:version,template_id:override}:{version_id:version});
+   const label=override?(state.templates||[]).find(t=>t.id===override)?.name:'';
+   notice(label?`Word 已排队制作（版式：${label}）`:'Word 已排队制作');await refresh();return}const format=id==='download-docx'?'docx':id==='download-bundle'?'bundle':null;window.location.assign('/api/download?version='+encodeURIComponent(version)+(format?'&format='+format:''))}catch(e){notice('下载未开始：'+e.message,true)}};
 }
 
 function scheduleLearning(){ /* Worker consumes the durable feedback after inactivity. */ }
@@ -1270,7 +1289,15 @@ function renderTemplates(first=false){
  const signature=JSON.stringify([select.value,(state.templates||[]).map(t=>[t.id,t.status,t.revision])]);if(!first&&signature===renderTemplates.signature)return;renderTemplates.signature=signature;
  const chosen=first?(state.requirements?.template_id||state.settings.default_template_id||''):select.value;
  const blocked=unreadyTemplate(chosen);
- select.innerHTML='<option value="">通用模板</option>'+(state.templates||[]).filter(t=>t.status==='ready').map(t=>`<option value="${esc(t.id)}">${esc(t.name)} · v${t.revision}</option>`).join('')
+ const ready=(state.templates||[]).filter(t=>t.status==='ready').sort((a,b)=>(a.origin==='builtin'?0:1)-(b.origin==='builtin'?0:1));
+ const option=t=>`<option value="${esc(t.id)}">${esc(t.name)}${t.origin==='builtin'?'（内置）':''} · v${t.revision}</option>`;
+ const groups={};
+ for(const t of ready.filter(t=>t.origin==='builtin'&&t.name.includes('·'))){
+  const i=t.name.lastIndexOf('·');(groups[t.name.slice(0,i)]=groups[t.name.slice(0,i)]||[]).push(t);
+ }
+ select.innerHTML='<option value="">通用模板</option>'
+  +Object.entries(groups).map(([genre,items])=>`<optgroup label="${esc(genre)}（内置）">${items.map(option).join('')}</optgroup>`).join('')
+  +ready.filter(t=>t.origin!=='builtin').map(option).join('')
   +(blocked?`<option value="${esc(blocked.id)}">${esc(blocked.name)} · 尚未就绪</option>`:'');
  select.value=chosen;
  $('template-status').textContent=[(state.templates||[]).filter(t=>t.status!=='ready').map(t=>t.name+'：'+(t.error||'模板准备中，可在任务列表查看或恢复')).join('；'),
@@ -1761,11 +1788,88 @@ async function openSourceDrawer(id,usage){
  renderSourceText(result);
 }
 function closeSourceDrawer(){const d=$('source-drawer'),b=$('source-drawer-backdrop');if(d)d.hidden=true;if(b)b.hidden=true}
+const GENRE_ORDER=['商业报告','券商研报','学术论文','会议纪要','合同','上市公司年报','政府公文','通用报告'];
+const GENRE_META={
+ '商业报告':{desc:'适用于商业分析、市场研究等。',icon:'briefcase',tile:'#E8F1FD',color:'#1565C0'},
+ '券商研报':{desc:'适用于证券研究、行业分析。',icon:'chart',tile:'#FDECEA',color:'#C62828'},
+ '学术论文':{desc:'适用于学术研究、论文写作。',icon:'book',tile:'#E6F2EC',color:'#006838'},
+ '会议纪要':{desc:'适用于会议记录、讨论要点。',icon:'users',tile:'#EFEAFD',color:'#6741D9'},
+ '合同':{desc:'适用于各类合同、协议。',icon:'file',tile:'#E8F1FD',color:'#1565C0'},
+ '上市公司年报':{desc:'适用于上市公司年度报告。',icon:'bars',tile:'#E8F1FD',color:'#1565C0'},
+ '政府公文':{desc:'适用于政府机关公文、政策文件；红头与字体按 GB/T 9704 固定。',icon:'landmark',tile:'#FDECEA',color:'#C8102E'},
+ '通用报告':{desc:'适用于各类通用型报告。',icon:'layers',tile:'#EEF0EE',color:'#5B6360'},
+};
+const ICONS={
+ briefcase:'<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>',
+ chart:'<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
+ book:'<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
+ users:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
+ file:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
+ bars:'<line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/>',
+ landmark:'<line x1="3" y1="22" x2="21" y2="22"/><line x1="5" y1="22" x2="5" y2="11"/><line x1="9" y1="22" x2="9" y2="11"/><line x1="15" y1="22" x2="15" y2="11"/><line x1="19" y1="22" x2="19" y2="11"/><path d="M2 11L12 3l10 8z"/>',
+ layers:'<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+};
+const THEME_COLORS={'品牌绿':'#006838','极简蓝':'#2563EB','珊瑚红':'#C62828','石墨黑':'#1E2320','典雅灰':'#8A9089'};
+const THEME_ORDER=Object.keys(THEME_COLORS);
+function splitTemplateName(name){const i=name.lastIndexOf('·');return i<0?{genre:name,theme:''}:{genre:name.slice(0,i),theme:name.slice(i+1)}}
+function templatePickState(){
+ const builtins=(state.templates||[]).filter(t=>t.origin==='builtin'&&t.name.includes('·')).map(t=>({id:t.id,...splitTemplateName(t.name),status:t.status}));
+ const genres={};for(const item of builtins)(genres[item.genre]=genres[item.genre]||[]).push(item);
+ for(const genre in genres)genres[genre].sort((a,b)=>THEME_ORDER.indexOf(a.theme)-THEME_ORDER.indexOf(b.theme));
+ return {builtins,genres};
+}
+let templatePick=null;
 function renderTemplatesPage(){
  const box=$('templates-page-list');if(!box||!state)return;
  const list=state.templates||[];
- const sig=JSON.stringify(list.map(t=>[t.id,t.status,t.revision,t.name]));if(renderTemplatesPage.sig===sig)return;renderTemplatesPage.sig=sig;
- box.innerHTML=list.length?list.map(t=>`<div class="source-row"><span class="name">${esc(t.name)} · v${t.revision}</span><span class="tag ${t.status!=='ready'?'error':''}">${t.status==='ready'?'可用':esc(t.error||'准备中')}</span></div>`).join(''):'<p class="help">还没有模板。上传一个 Word 作为版式模板。</p>';
+ const sig=JSON.stringify([state.settings&&state.settings.default_template_id,templatePick,...list.map(t=>[t.id,t.status,t.revision,t.name,t.origin])]);
+ if(renderTemplatesPage.sig===sig)return;renderTemplatesPage.sig=sig;
+ const {builtins,genres}=templatePickState();
+ if(!templatePick||!builtins.some(t=>t.id===templatePick.id)){
+  const saved=builtins.find(t=>t.id===(state.settings||{}).default_template_id);
+  const picked=saved||builtins.find(t=>t.genre==='商业报告'&&t.theme==='品牌绿')||builtins[0];
+  templatePick=picked?{genre:picked.genre,theme:picked.theme,id:picked.id}:null;
+ }
+ const fallback=(state.settings||{}).default_template_id;
+ const cards=GENRE_ORDER.filter(g=>genres[g]).map(genre=>{
+  const meta=GENRE_META[genre]||{desc:'',icon:'file',tile:'#EEF0EE',color:'#5B6360'};
+  const items=genres[genre];
+  const chosen=templatePick&&templatePick.genre===genre?templatePick.theme:items[0].theme;
+  const selected=templatePick&&templatePick.genre===genre;
+  const dots=items.map(it=>`<button type="button" class="color-dot${chosen===it.theme?' selected':''}" style="background:${THEME_COLORS[it.theme]||'#999'};color:${THEME_COLORS[it.theme]||'#999'}" data-genre="${esc(genre)}" data-theme="${esc(it.theme)}" data-id="${esc(it.id)}" title="${esc(genre+' · '+it.theme)}" aria-label="${esc(genre+' '+it.theme)}"></button>`).join('');
+  return `<div class="tpl-card${selected?' selected':''}" data-genre="${esc(genre)}"><span class="tpl-check">✓</span>`
+   +`<span class="tpl-icon" style="background:${meta.tile};color:${meta.color}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[meta.icon]||''}</svg></span>`
+   +`<span class="tpl-name">${esc(genre)}</span><span class="tpl-desc" title="${esc(meta.desc)}">${esc(meta.desc)}</span>`
+   +`<span class="tpl-dots"><span class="label">配色</span>${dots}</span></div>`;
+ }).join('');
+ const pickedLabel=templatePick?`已选：<strong>${esc(templatePick.genre)} · ${esc(templatePick.theme)}</strong>`:'已选：—';
+ const mine=list.filter(t=>t.origin!=='builtin');
+ const mineRows=mine.length?`<p class="help">我的模板</p>`+mine.map(t=>`<div class="source-row"><span class="name">${esc(t.name)} · v${t.revision}</span><span class="tag ${t.status!=='ready'?'error':''}">${t.status==='ready'?'可用':esc(t.error||'准备中')}</span></div>`).join(''):'';
+ box.innerHTML=(cards?`<div class="tpl-grid">${cards}</div><div class="tpl-bar"><span class="picked">${pickedLabel}</span><button type="button" id="template-apply" class="primary" ${templatePick?'':'disabled'}>使用该模板 →</button></div>`:'')
+  +mineRows+(!list.length?'<p class="help">还没有模板。上传一个 Word 作为版式模板。</p>':'');
+ if(!cards)return;
+ box.querySelectorAll('.tpl-card').forEach(card=>card.onclick=event=>{
+  if(event.target.closest('.color-dot'))return;
+  const genre=card.dataset.genre;const items=genres[genre]||[];
+  const keepTheme=templatePick&&templatePick.genre===genre?templatePick.theme:items[0].theme;
+  const target=items.find(i=>i.theme===keepTheme)||items[0];
+  templatePick={genre,theme:target.theme,id:target.id};renderTemplatesPage.sig='';renderTemplatesPage();
+ });
+ box.querySelectorAll('.color-dot').forEach(dot=>dot.onclick=event=>{
+  event.stopPropagation();
+  templatePick={genre:dot.dataset.genre,theme:dot.dataset.theme,id:dot.dataset.id};
+  renderTemplatesPage.sig='';renderTemplatesPage();
+ });
+ const apply=$('template-apply');
+ if(apply)apply.onclick=()=>action(async()=>{
+  if(!templatePick)return;
+  await api('settings',{default_template_id:templatePick.id});
+  state.settings={...(state.settings||{}),default_template_id:templatePick.id};
+  $('template-select').value=templatePick.id;
+  templateSections();
+  notice(`已选用 ${templatePick.genre} · ${templatePick.theme}；新建报告将默认使用`);
+  renderTemplatesPage.sig='';page('setup');
+ });
 }
 if($('new-report'))$('new-report').onclick=()=>page('setup');
 if($('sources-upload'))$('sources-upload').onchange=e=>action(async()=>{for(const f of e.target.files){const buf=new Uint8Array(await f.arrayBuffer());let b='';for(let i=0;i<buf.length;i+=8192)b+=String.fromCharCode(...buf.subarray(i,i+8192));await api('upload',{name:f.name,data:btoa(b)})}e.target.value=''},'来源已保存');

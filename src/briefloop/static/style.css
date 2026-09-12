@@ -548,3 +548,24 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 .issue-card.danger .issue-label{color:var(--danger);border-color:#e4c9bd}
 .issue-card p{font-size:12px;margin:8px 0 0;line-height:1.6}
 .issue-basis{color:var(--muted)}
+/* 内置版式画廊：8 文体卡片 × 配色点，底部确认栏 */
+.tpl-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+.tpl-card{position:relative;display:flex;flex-direction:column;gap:6px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);padding:18px;cursor:pointer}
+.tpl-card:hover{border-color:var(--green)}
+.tpl-card.selected{border-color:var(--green);box-shadow:0 0 0 1px var(--green)}
+.tpl-check{position:absolute;top:12px;right:12px;width:22px;height:22px;border-radius:50%;background:var(--green);color:#fff;display:none;align-items:center;justify-content:center;font-size:12px;line-height:1}
+.tpl-card.selected .tpl-check{display:inline-flex}
+.tpl-icon{width:52px;height:52px;border-radius:12px;display:inline-flex;align-items:center;justify-content:center;margin-bottom:10px}
+.tpl-icon svg{width:24px;height:24px}
+.tpl-name{font-weight:600;font-size:15px;color:var(--ink)}
+.tpl-desc{font-size:12.5px;color:var(--muted);line-height:1.55;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tpl-dots{display:flex;align-items:center;gap:9px;margin-top:auto;padding-top:8px}
+.tpl-dots .label{font-size:12px;color:var(--muted)}
+.color-dot{width:18px;height:18px;border-radius:50%;border:none;cursor:pointer;padding:0;flex:none}
+.color-dot.selected{box-shadow:0 0 0 2px var(--surface),0 0 0 4px var(--green)}
+.tpl-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);padding:12px 16px;margin-top:14px}
+.tpl-bar .picked{font-size:14px;color:var(--ink)}
+.tpl-bar .picked strong{color:var(--green)}
+
+.export-template-row{display:flex;align-items:center;gap:8px;padding:6px 12px;font-size:13px;color:var(--ink)}
+.export-template-row select{max-width:200px}

@@ -37,6 +37,7 @@ def workspace_action(store, request):
             'source_change.change':ChangeInput.model_json_schema(),
             'evidence_span.evidence':EvidenceInput.model_json_schema(),
             'claim_create.claim':ClaimInput.model_json_schema()},
+            'export_word.template_id':'可选；就绪模板ID（内置或自备）。缺省沿用报告设置。同稿换版式：正文与版本不变，仅按所选模板重排生成 Word。',
             'authority':'当前执行此命令的运行时接口；不从其他源码目录推定已安装能力。'}
     if action=='source_impacts':
         from .source_updates import impacts
@@ -151,8 +152,11 @@ def workspace_action(store, request):
         return read(store,request['run_id'],request['reconciliation_id'])
     if action=='export_word':
         from .export_jobs import enqueue_export
-        job=enqueue_export(store,request['version_id'])
-        return {'job_id':job['id'],'status':job['status'],'version_id':request['version_id']}
+        template_id=request.get('template_id') or None
+        job=enqueue_export(store,request['version_id'],template_override=template_id)
+        result={'job_id':job['id'],'status':job['status'],'version_id':request['version_id']}
+        if template_id:result['template_id']=template_id
+        return result
     if action=='inspect':
         briefs=store.rows("SELECT b.id,b.run_id,b.author,b.created,b.detail FROM briefs b JOIN runs r ON r.id=b.run_id WHERE r.mode='normal' ORDER BY b.rowid DESC LIMIT 20")
         for brief in briefs:brief['title']=json.loads(brief.pop('detail')).get('title','简报')
@@ -272,7 +276,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"reconciliation_candidates","run_id":"真实run ID"}}：读取本任务冻结的候选清单（来源与来源陈述），用于写作前对照。
 - {{"action":"reconciliation_save","run_id":"真实run ID","reconciliation":{{"status":"complete|partial|not_applicable|failed","examined_claim_ids":[],"unexamined_claim_ids":[],"relations":[{{"member_claim_ids":["真实claim ID","真实claim ID"],"relation":"compatible|different_scope|temporal_sequence|correction|supersession|republication|attributed_difference|contradiction|unknown","scope":"","basis_span_ids":[],"reason":"","proposed_treatment":"","affected_requirement_ids":[]}}],"open_questions":[],"coverage_notes":""}}}}：保存写作前对照快照。必须用 examined ∪ unexamined 明确覆盖候选清单全部来源陈述；关系必须引用真实来源陈述；不判定真假，只登记依据与建议写法。重复相同内容幂等。
 - {{"action":"reconciliation_read","run_id":"真实run ID","reconciliation_id":"真实对照ID"}}：读取对照快照；输入变化时返回 stale 标记。
-- {{"action":"export_word","version_id":"真实稿件ID"}}：用户要求时生成所选版本 Word，返回文件任务状态；完成后从任务结果取得下载地址。
+- {{"action":"export_word","version_id":"真实稿件ID","template_id":"可选；就绪模板ID"}}：用户要求时生成所选版本 Word，返回文件任务状态；完成后从任务结果取得下载地址。传 template_id 即同稿换版式导出——正文与版本不变，仅按所选模板重排；不传沿用报告设置。
 - {{"action":"templates"}}：读取可选模板。用户要求上传材料用作主模板时用 {{"action":"template_import","source_id":"DOCX来源ID"}} 启动一次准备；准备完成后 generate.requirements.template_id 选择具体版本。需要重新准备已有模板版式时，用 {{"action":"template_rebuild","template_id":"已有模板ID"}} 从保留原件创建新模板版本；原模板和已绑定稿件保持不变，新任务选择返回的新模板ID。
 - {{"action":"read_report","version_id":"稿件ID"}}：读取富文档 JSON 和引用。用户明确要求修改内容/章节/图表时，将修改后的 JSON 保存到工作区文件，再用 {{"action":"revise_document","base_version":"刚读取版本ID","document_file":"工作区内JSON绝对路径"}} 保存新版本，不覆盖用户并发编辑。
 - {{"action":"import_word_revision","base_version":"用户指定基础版本","source_id":"DOCX来源ID"}}：导入用户修改的 Word。返回 needs_alignment 时先核对原件和基础版本，向用户说明对齐问题；仅按用户明确选择提供 accept_unaligned=true。用户希望更新模板时另用 template_import 并提供 parent_id。
