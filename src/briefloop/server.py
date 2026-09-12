@@ -118,6 +118,7 @@ def make_server(workspace, port=8765, *, paused=False):
                 elif u.path=='/api/harness/sessions':self.send(200,{'sessions':harness.list_sessions(q.get('view',['active'])[0])})
                 elif u.path=='/api/harness/session':self.send(200,pick_harness(session_id=q['id'][0]).snapshot(q['id'][0],int(q.get('after',['0'])[0]),reasoning=q.get('reasoning',['0'])[0]=='1'))
                 elif u.path=='/api/session':self.send(200,{'token':token})
+                elif u.path=='/api/connectors':self.send(200,{'connectors':self.server.connectors.list()})
                 elif u.path=='/api/runtime':
                     observed=worker._review_runtime if worker.review_current and not worker.current else worker.runtime
                     proc=observed.process
@@ -279,6 +280,10 @@ def make_server(workspace, port=8765, *, paused=False):
                 if path=='/api/tavily':
                     from .tavily import save_key,delete_key
                     result=delete_key() if body.get('remove') else save_key(body['api_key'])
+                elif path=='/api/connectors/save':
+                    result=self.server.connectors.save(body['config'],connector_id=body.get('connector_id'),secrets=body.get('secrets'))
+                elif path in ('/api/connectors/test','/api/connectors/enable','/api/connectors/disable','/api/connectors/delete'):
+                    result=getattr(self.server.connectors,path.rsplit('/',1)[-1])(body['connector_id'])
                 elif path=='/api/runtime-test':
                     result=test_runtime(body)
                 elif path=='/api/opencode/provider-catalog':
@@ -395,6 +400,16 @@ def make_server(workspace, port=8765, *, paused=False):
     except OSError:
         harness.close();opencode_harness.close();lock.close();raise
     server.daemon_threads=True
+    from .connectors import ConnectorService
+    try:
+        server.connectors=ConnectorService(store.root)
+    except Exception:
+        server.server_close();harness.close();opencode_harness.close();bridge.close();lock.close();raise
+    close_socket=server.server_close
+    def close_server():
+        try:server.connectors.close()
+        finally:close_socket()
+    server.server_close=close_server
     server.workspace_lock=lock;server.runtime_bridge=bridge;server.bridge_harnesses=bridge_harnesses
     server.store=store;server.worker=worker;server.harness=harness;server.opencode_harness=opencode_harness
     return server

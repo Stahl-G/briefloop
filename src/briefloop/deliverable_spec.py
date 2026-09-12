@@ -66,6 +66,8 @@ def resolve(requirements, template=None, *, reader_contract=None):
             'requirement_items': requirement_items(requirements),
             'references': '正文短编号，图表简注，文末精简来源表；详细核查另存',
             'interpretation_rule': 'objective及requirement_items保留用户原始要求；reader_contract是待对照原文核查的执行解释，不得降级或替换明确要求。'}
+    if requirements.get('workflow_snapshot'):
+        spec['workflow_snapshot'] = deepcopy(requirements['workflow_snapshot'])
     if reader_contract is not None:
         spec['reader_contract'] = validate_reader_contract(spec, reader_contract)
     return spec
@@ -160,8 +162,18 @@ def instructions(spec, role='analyst', *, include_spec=True):
     if role in ('evaluator', 'reviewer'):
         reader = '以下是被审报告的交付标准，用来核对产物；其中补查、改稿等动作由主Agent执行。\n' + reader
     parts = [reader, common, role_text]
+    from .document_workflows import workflow_context
+    method = workflow_context(spec.get('workflow_snapshot'), role)
+    if method:
+        parts.append(method)
     if include_spec:
-        parts.append('本轮产物约定：' + json.dumps(spec, ensure_ascii=False))
+        # The full frozen asset set is stored in the input artifact. Role prompts
+        # contain only their relevant instructions, plus the snapshot identity.
+        projection = deepcopy(spec)
+        if projection.get('workflow_snapshot'):
+            projection['workflow_snapshot'] = {k: v for k, v in projection['workflow_snapshot'].items()
+                                               if k not in ('role_instructions', 'methods', 'method_roles')}
+        parts.append('本轮产物约定：' + json.dumps(projection, ensure_ascii=False))
     return '\n'.join(parts)
 
 

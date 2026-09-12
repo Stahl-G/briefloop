@@ -4,6 +4,7 @@ The coordinator chooses and invokes specialist agents. This module owns only
 transport, cancellation, progress capture and admitting completed artifacts.
 """
 from importlib.resources import files
+from ._entrypoint import command as entry_command
 import json
 import shlex
 import sys
@@ -164,7 +165,7 @@ def generation_prompt(store, run, folder, backend='codex'):
                             'result_file':str(directory/'result.json'),'schema_path':str(schema_path),
                             'scout_contract_path':str(scout_contract)})
     payload={'deliverable_spec':deliverable,'report_profile':report_profile,'reference_sources':references,'requirements':req,'research_budget_status':research_budget,'research_plan':research_plan,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':max_parallel,'scout_slots':scout_slots,'scout_contract_path':str(scout_contract),'reusable_research':run.get('reusable_research',[])}
-    tool=shlex.join([sys.executable,'-m','briefloop','tool','--workspace',str(store.root)])
+    tool=shlex.join(entry_command('tool','--workspace',store.root))
     tavily_enabled=req['allow_web'] and provider=='tavily'
     if tavily_enabled:
         template=files('briefloop').joinpath('skill_assets','tavily','SKILL.md').read_text(encoding='utf-8')
@@ -238,7 +239,7 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
 {instructions(deliverable,role='orchestrator')}
 {company}
 企业背景操作使用同一工具 `{tool} workspace-action --request REQUEST_JSON`，支持 company_read、company_config(enabled)、company_update(fact 包含 key/value/source_id/locator/effective_date/origin)、company_resolve(fact_id/accept)。只根据用户明确回答设置是否维护及采用冲突资料。
-行业数据整理入口：`{tool} prepare-report-data --run {run['id']} --file RAW_JSON --output PREPARED_JSON`（仅行业报告需要）。Analyst 接收 input.report_profile 和 reference_sources；参考资料不是当期证据，原始数值 records 写 draft.report_data，不复制 calculations/markdown 到 report_data。
+结构化数据整理入口：`{tool} prepare-report-data --run {run['id']} --file RAW_JSON --output PREPARED_JSON`（报告需要数据比较时使用）。Analyst 接收 input.report_profile 和 reference_sources；参考资料不是当期证据，原始数值 records 写 draft.report_data，不复制 calculations/markdown 到 report_data。
 {search}
 预算与停止条件：{budget_note}
 按 input.json.role_skills 给对应角色分配当前技能及版本；可让角色按路径读取自己对应的字段，没有绑定则使用基础任务说明。父会话不重复抄写已分配的技能。保存实际角色任务和返回句柄。
@@ -320,7 +321,7 @@ def assessment_prompt(store, brief, folder, backend='codex'):
     from .evidence import inspect_bindings
     input_pack['claim_evidence']=inspect_bindings(store,brief['id'])
     (folder/'input.json').write_text(dump(input_pack),encoding='utf-8')
-    tool=shlex.join([sys.executable,'-m','briefloop','tool','--workspace',str(store.root)])
+    tool=shlex.join(entry_command('tool','--workspace',store.root))
     no_question='本轮没有任何用户在旁可问：不要调用 question 工具；遇到含糊之处自行按任务目标决断，并在结果中记录假设。\n' if backend=='opencode' else ''
     view_pages_word = '使用 view_image 读取页图' if backend == 'codex' else '用 read 工具读取返回的页图'
     figure_view_word = '实际view_image查看其absolute_image_path' if backend == 'codex' else '实际用 read 工具读取其absolute_image_path'
@@ -679,24 +680,30 @@ class Worker:
     def auto_revise(self,job,brief,folder):
         """One bounded agent revision; an existing user edit always wins publication."""
         from .store import Conflict
-        grades=self.store.rows('SELECT data FROM assessments WHERE version_id=? ORDER BY rowid DESC LIMIT 1',(brief['id'],))
-        if not grades:return {}
-        assessment=json.loads(grades[0]['data'])
-        from .models import must_fix, overall_inconsistent
+        grades=self.store.rows('SELECT id,data FROM assessments WHERE version_id=? ORDER BY rowid DESC LIMIT 1',(brief['id'],))
+        from .models import overall_inconsistent
         from .review import review_status
+        from .revision_policy import applicable_inputs,revision_reasons
         review_state=review_status(self.store,brief['id'])
-        open_findings=[f for f in review_state['findings'] if f['status'] in ('open','addressed_pending_review')]
-        if assessment.get('status')!='complete':return {}
-        must_revise=(assessment.get('overall') in ('建议修改','存在重大问题')
-                     or any(f['data']['severity']=='major' for f in open_findings)
-                     or must_fix(assessment))
-        if not must_revise:return {}
+        payload=json.loads(job['payload']);revision_id='brief_'+job['id'][4:]+'_r1'
+        existing=self.store.rows('SELECT * FROM briefs WHERE id=?',(revision_id,))
+        # An admitted _r1 must finish its existing metadata/recheck path even if
+        # creating it has since changed the original packet's candidate evidence.
+        if existing:
+            saved=folder/'revision'/'input.json'
+            inputs=json.loads(saved.read_text()) if saved.exists() else {}
+            assessment=inputs.get('assessment') or (json.loads(grades[0]['data']) if grades else {})
+            open_findings=inputs.get('review_findings',[])
+            reasons=inputs.get('revision_reasons',[])
+        else:
+            assessment,open_findings,review=applicable_inputs(self.store,review_state,grades[0] if grades else None)
+            reasons=revision_reasons(assessment,open_findings,review)
+            if not reasons:return {}
+            self.store.event(job['id'],'revision_required',{'version_id':brief['id'],'reasons':reasons})
         if overall_inconsistent(assessment):
             self.store.event(job['id'],'assessment_inconsistent',
                              {'version_id':brief['id'],'expression':assessment.get('expression'),
                               'overall':assessment.get('overall')})
-        payload=json.loads(job['payload']);revision_id='brief_'+job['id'][4:]+'_r1'
-        existing=self.store.rows('SELECT * FROM briefs WHERE id=?',(revision_id,))
         if existing:revised=existing[0]
         else:
             latest=self.store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(brief['run_id'],))[0]['id']
@@ -705,23 +712,33 @@ class Worker:
             from .evidence import inspect_bindings,EvidenceInput,ClaimInput
             from .figures import read_figure
             detail=json.loads(brief['detail'])
-            (stage/'input.json').write_text(dump({'brief':brief,'assessment':assessment,
+            (stage/'input.json').write_text(dump({'brief':brief,'assessment':assessment,'revision_reasons':reasons,
                 'requirements':json.loads(self.store.one('runs',brief['run_id'])['requirements']),'review_findings':open_findings,'conflicts':review_state['conflicts'],
                 'evidence':inspect_bindings(self.store,brief['id']),
                 'evidence_schema':EvidenceInput.model_json_schema(),'claim_schema':ClaimInput.model_json_schema(),
                 'figures':[read_figure(self.store,fid,brief['run_id']) for fid in detail.get('figures',[])]}))
             (stage/'draft.schema.json').write_text(dump(BriefDraft.model_json_schema()))
+            finding_ids=[finding['id'] for finding in open_findings]
+            response_schema={'type':'array','minItems':len(finding_ids),'maxItems':len(finding_ids),
+                'items':{'type':'object','additionalProperties':False,
+                    'required':['finding_id','action','reason'],'properties':{
+                        'finding_id':{'type':'string','enum':finding_ids},
+                        'action':{'type':'string','enum':['corrected','removed','disagree']},
+                        'reason':{'type':'string','minLength':1}}} if finding_ids else False}
+            (stage/'responses.schema.json').write_text(dump(response_schema))
             from .deliverable_spec import resolve,instructions
             contract=json.loads(brief['detail']).get('reader_contract')
             spec=resolve(json.loads(self.store.one('runs',brief['run_id'])['requirements']),reader_contract=contract)
-            tool=f'{shlex.quote(sys.executable)} -m briefloop tool --workspace {shlex.quote(str(self.store.root))}'
+            tool=shlex.join(entry_command('tool','--workspace',self.store.root))
             prompt=TASK_CONTEXT+instructions(spec,role='revision')+f'''本次仅针对已有报告进行一次修订。读取 {stage/'input.json'} 的原稿、评价和本轮要求。
+优先处理 input.revision_reasons 指向的证据、必答内容和明确要求违规；总评达到要求不豁免这些问题。普通可选润色不扩展本轮工作。
 保留原稿已有的有效事实、图表及明确人工占位。核对来源，只修正有依据的错误、遗漏和写作问题；不重新开展无关研究，不改用户模板默认。
 必要来源按 source_id 从工作区 {self.store.root/'sources'} 定向读取，保留引用和 research_notes。按评分纠正问题，内部核查过程留在独立记录，不将免责声明加回正文。
 input.figures提供已登记图表、数据和脚本。图像本身有错误时，在工作区另存修正后的数据/脚本/图片并实际查看，使用 `{tool} register-figure --run {brief['run_id']} --image IMAGE_PATH --title TITLE --caption CAPTION --source SOURCE_ID --data DATA_PATH --script SCRIPT_PATH` 登记新快照；用返回的真实figure_id同步draft.figures与editor_document图片src（briefloop-figure:FIGURE_ID），旧资产保留。图中错误未改时不能仅改正文图注或写入gaps就声称已修正。
 需要新增或修正主张依据时，使用 workspace-action 的 evidence_span/claim_create/evidence_read 接口；修订原有主张时传 previous_id，不删历史。将待绑定到本次新正文的关联保存 {stage/'revision_bindings.json'}，格式为数组，每项 claim_id、block_id、quote。运行器会在新稿入库后绑定，不把关联写到旧稿。
 使用 `{tool} workspace-action --request REQUEST_JSON`：evidence_span请求为action/evidence（按input.evidence_schema），claim_create请求为action/run_id/claim（按input.claim_schema，可传previous_id）。input.evidence包含现有真实ID；新增ID必须取登记接口实际返回值，不能自拟rev_等占位符。
 对input.review_findings逐项处理，并将处理说明保存到 {stage/'responses.json'}，格式为数组，每项包含finding_id、action(corrected/removed/disagree)、reason（具体修改或异议依据）。这不是关闭发现，后续Reviewer独立复核。
+responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 input.review_findings[].id，每个ID恰好一次。assessment.findings 是写作修改依据，不是已登记的 Reviewer finding ID，禁止为它们自拟ID。如果 input.review_findings 为空，responses.json 必须写 []，仍按 assessment 修正正文。
 将完整修订稿写入 {stage/'draft.json'}，遵循 {stage/'draft.schema.json'}，正文使用 editor_document 富文档 JSON。仅做此轮修订，不自行启动下一轮评价或技能学习。
 '''
             self.store.event(job['id'],'revision_progress',{'stage':'writing','base_version':brief['id']})
@@ -777,7 +794,11 @@ input.figures提供已登记图表、数据和脚本。图像本身有错误时�
             for item in data['responses']:
                 if not isinstance(item,dict) or any(not isinstance(item.get(key),str) or not item[key].strip() for key in ('finding_id','action','reason')) or item['action'] not in ('corrected','removed','disagree'):raise ValueError('修订处理说明缺少有效 finding_id/action/reason')
                 response_ids.append(item['finding_id'])
-            if set(response_ids)!=expected or len(response_ids)!=len(set(response_ids)):raise ValueError('修订处理说明须逐项对应本轮发现，不能遗漏、重复或使用其他 finding_id')
+            if set(response_ids)!=expected or len(response_ids)!=len(set(response_ids)):
+                raise ValueError('修订处理说明须逐项对应本轮发现：'+dump({
+                    'missing':sorted(expected-set(response_ids)),
+                    'unexpected':sorted(set(response_ids)-expected),
+                    'duplicate':sorted({rid for rid in response_ids if response_ids.count(rid)>1})}))
             for binding in data['bindings']:
                 if not self.store.rows('SELECT id FROM claim_bindings WHERE version_id=? AND claim_id=? AND block_id=? AND quote=?',(revised['id'],binding['claim_id'],binding['block_id'],binding['quote'])):
                     bind_claim(self.store,revised['id'],binding['claim_id'],binding['block_id'],binding['quote'])

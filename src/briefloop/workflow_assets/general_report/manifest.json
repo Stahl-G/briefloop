@@ -1,0 +1,8 @@
+{
+  "id": "general_report",
+  "label": "通用报告",
+  "version": "1.0.0",
+  "description": "围绕明确问题整理材料、分析并交付报告。",
+  "default_variant": "general",
+  "variants": [{"id": "general", "label": "综合分析", "method_ids": []}]
+}

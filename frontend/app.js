@@ -5,6 +5,7 @@ import StarterKit from '@tiptap/starter-kit';
 import {TableKit} from '@tiptap/extension-table';
 import Image from '@tiptap/extension-image';
 import {Markdown} from '@tiptap/markdown';
+import {connectorSettings} from './connectors.js';
 import {TextStyle,Layout,ReportImage,Citation,editorDocument,savedDocument,readerHighlights} from './rich-document.js';
 // Reader-appropriateness marks are editor decorations: they never enter the saved
 // document, Word export or Markdown. Hover shows the violation and its requirement.
@@ -113,6 +114,7 @@ function applyRequirements(text){
  if(Array.isArray(data.key_questions))set('key_questions_text',data.key_questions.join('\n'));
  if(Array.isArray(data.manual_sections))set('manual_sections_text',data.manual_sections.join('\n'));
  if(data.report_profile)set('report_profile',data.report_profile);
+ initializeWorkflowChoice(data,true);syncWorkflowProfile(false);
  if(data.writing_mode)set('writing_mode',data.writing_mode);
  if(data.target_words)set('target_words',data.target_words);
  if(data.max_words)set('max_words',data.max_words);
@@ -210,7 +212,7 @@ let welcomeIndex=0,welcomePurpose=null;
 function welcomeAvailable(){return (runtimeCatalog||[]).filter(r=>r.available)}
 function chooseWelcomeHost(id){const select=$('agent-backend');if(select&&select.value!==id){select.value=id;select.dispatchEvent(new Event('change'))}if(state&&state.settings){state.settings.model_selection_required=true;state.settings.model=''}renderWelcome()}
 function applyWelcomePurpose(id){const purpose=WELCOME_PURPOSES.find(p=>p.id===id);if(!purpose)return;welcomePurpose=id;$('chat-input').value=purpose.prompt;rememberDraft();if(purpose.fields)sessionStorage.setItem('briefloop-welcome-fields',JSON.stringify(purpose.fields));renderWelcome()}
-function applyPendingSetupFields(){let fields=null;try{fields=JSON.parse(sessionStorage.getItem('briefloop-welcome-fields')||'null')}catch{}if(!fields)return;sessionStorage.removeItem('briefloop-welcome-fields');const form=$('requirements');if(!form)return;for(const [name,value] of Object.entries(fields)){const el=form.elements[name];if(!el)continue;if(el.type==='checkbox')el.checked=!!value;else el.value=value;el.dispatchEvent(new Event('change',{bubbles:true}))}}
+function applyPendingSetupFields(){let fields=null;try{fields=JSON.parse(sessionStorage.getItem('briefloop-welcome-fields')||'null')}catch{}if(!fields)return;sessionStorage.removeItem('briefloop-welcome-fields');const form=$('requirements');if(!form)return;for(const [name,value] of Object.entries(fields)){const el=form.elements[name];if(!el)continue;if(el.type==='checkbox')el.checked=!!value;else el.value=value;el.dispatchEvent(new Event('change',{bubbles:true}))}initializeWorkflowChoice(fields,true);syncWorkflowProfile(false)}
 function renderWelcome(){
  const box=$('welcome-runtimes');if(!box)return;
  const avail=welcomeAvailable(),chosen=state?.settings?.agent_backend||'codex';
@@ -230,8 +232,9 @@ $('welcome-cycle').onclick=()=>{const avail=welcomeAvailable();if(avail.length<2
 $('welcome-start').onclick=()=>{const settings=state?.settings||{};if(!settings.model||settings.model_selection_required){notice('请先选择模型',true);return}$('welcome').hidden=true;page('chat');$('chat-model').value=settings.model;if(settings.model_provider!=null)$('chat-model-provider').value=settings.model_provider||'';if(settings.reasoning_effort)assignEffort('chat-effort',effortValue(settings,'reasoning_effort'));updateComposer();$('chat-input').focus();rememberDraft()};
 function render(first){
  renderTemplates(first);
+ renderWorkflowChoices(first);
  if($('review-open'))$('review-open').textContent='审阅与需处理'+(state.conflicts?.length?' · '+state.conflicts.length+' 项来源分歧':'');
- if(first){$('timeout-minutes').value=state.settings.timeout_minutes;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.settings.auto_learn;$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',effortValue(state.settings,'reasoning_effort'));$('model-provider').value=state.settings.model_provider||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.model_variant||'';updateModelLabel();renderRoleModels();renderBackend();$('search-provider').value=state.settings.search_provider==='tavily'?'tavily':'native';renderSearchProvider();refreshRuntimeDiscovery();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{})}
+ if(first){$('timeout-minutes').value=state.settings.timeout_minutes;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.settings.auto_learn;$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',effortValue(state.settings,'reasoning_effort'));$('model-provider').value=state.settings.model_provider||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.model_variant||'';updateModelLabel();renderRoleModels();renderBackend();$('search-provider').value=state.settings.search_provider==='tavily'?'tavily':'native';renderSearchProvider();refreshRuntimeDiscovery();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});syncWorkflowProfile(false)}
  $('source-count').textContent=state.sources.length+' 份';$('source-list').innerHTML=state.sources.map(s=>`<div class="source-item"><input type="checkbox" data-check="${s.id}" ${selected.has(s.id)?'checked':''} aria-label="选择 ${esc(s.name)}"><button data-source="${s.id}">${esc(s.name)}</button><span class="tag ${s.status==='failed'?'error':''}">${s.status==='failed'?'读取失败':s.needs_visual?'需视觉读取':'可读取'}</span>${s.status==='failed'?`<button data-retry-source="${s.id}">重试</button>`:''}</div>`).join('');
  document.querySelectorAll('[data-retry-source]').forEach(b=>b.onclick=()=>action(async()=>{const s=await api('retry-source',{source_id:b.dataset.retrySource});selected.delete(b.dataset.retrySource);selected.add(s.id);notice(s.status==='ready'?'来源已重新读取':s.error,s.status!=='ready')}));
  document.querySelectorAll('[data-check]').forEach(b=>b.onchange=()=>{if(b.checked){selected.add(b.dataset.check);referenceSelected.delete(b.dataset.check);renderReferenceSources()}else selected.delete(b.dataset.check)});renderReferenceSources();
@@ -376,7 +379,7 @@ function assessment(){if(!current)return;queueMicrotask(()=>{renderDeliveryCheck
 function citations(){const refs=(parse(current.detail).citations||[]).filter(r=>toEditor(current.markdown).includes('#source-'+r.source_id));$('citations').innerHTML=refs.length?'引用来源 '+refs.map(r=>`<button data-source="${esc(r.source_id)}">${esc(state.sources.find(s=>s.id===r.source_id)?.name||r.source_id)} · ${esc(r.locator)}</button>`).join(''):'尚无引用记录';bindSources()}
 function bindSources(){document.querySelectorAll('[data-source]').forEach(b=>b.onclick=()=>action(async()=>{const r=await api('source?id='+b.dataset.source);showSource(r)}))}
 $('close-source').onclick=()=>$('source-dialog').close();
-$('requirements').onsubmit=e=>{e.preventDefault();action(async()=>{const f=new FormData(e.target),req=Object.fromEntries(f.entries());if(req.writing_mode==='internal_report'&&state.settings.company_context_enabled==null){$('company-choice-dialog').showModal();return}req.allow_web=f.has('allow_web');req.target_words=Number(req.target_words);req.max_words=Number(req.max_words);req.research_budget=readResearchBudget();req.reference_source_ids=req.report_profile==='industry_periodic'?[...referenceSelected]:[];req.template_id=req.template_id||null;req.sections=readTemplateSections();req.key_questions=(req.key_questions_text||'').split('\n').map(x=>x.trim()).filter(Boolean);delete req.key_questions_text;req.manual_sections=(req.manual_sections_text||'').split('\n').map(x=>x.trim()).filter(Boolean);for(const title of req.manual_sections){const found=req.sections.find(s=>s.title===title);if(found){found.mode='manual';found.placeholder='待填充'}}delete req.manual_sections_text;req.raw_input=req.objective;delete req.runtime_model;delete req.runtime_effort;await saveModel();if(current)await savedVersion();const job=await api('generate',{requirements:req,session_id:chat.id||undefined,source_ids:[...selected].filter(id=>!req.reference_source_ids.includes(id))});pendingRun=parse(job.payload).run_id;page('report');notice('任务已排队，后台会生成简报')})};
+$('requirements').onsubmit=e=>{e.preventDefault();action(async()=>{const f=new FormData(e.target),req=Object.fromEntries(f.entries());if(req.writing_mode==='internal_report'&&state.settings.company_context_enabled==null){$('company-choice-dialog').showModal();return}req.allow_web=f.has('allow_web');req.target_words=Number(req.target_words);req.max_words=Number(req.max_words);req.research_budget=readResearchBudget();Object.assign(req,readWorkflowChoice());req.reference_source_ids=[...referenceSelected];req.template_id=req.template_id||null;req.sections=readTemplateSections();req.key_questions=(req.key_questions_text||'').split('\n').map(x=>x.trim()).filter(Boolean);delete req.key_questions_text;req.manual_sections=(req.manual_sections_text||'').split('\n').map(x=>x.trim()).filter(Boolean);for(const title of req.manual_sections){const found=req.sections.find(s=>s.title===title);if(found){found.mode='manual';found.placeholder='待填充'}}delete req.manual_sections_text;req.raw_input=req.objective;delete req.runtime_model;delete req.runtime_effort;await saveModel();if(current)await savedVersion();const job=await api('generate',{requirements:req,session_id:chat.id||undefined,source_ids:[...selected].filter(id=>!req.reference_source_ids.includes(id))});pendingRun=parse(job.payload).run_id;page('report');notice('任务已排队，后台会生成简报')})};
 $('upload').onchange=e=>action(async()=>{for(const f of e.target.files){const buf=new Uint8Array(await f.arrayBuffer());let b='';for(let i=0;i<buf.length;i+=8192)b+=String.fromCharCode(...buf.subarray(i,i+8192));const s=await api('upload',{name:f.name,data:btoa(b)});selected.add(s.id)}e.target.value=''},'来源已保存');
 $('add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('source-url').value});selected.add(s.id);$('source-url').value='';notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
 $('rescore').onclick=()=>action(async()=>{await savedVersion();await api('assess',{version_id:current.id,session_id:chat.id||undefined})},'已提交评分');
@@ -1142,6 +1145,46 @@ async function refreshReportBudget(){
  }catch{panel.hidden=false;$('budget-view-title').textContent='研究预算';$('budget-view-body').innerHTML='<p class="help">预算信息暂不可用。</p>'}finally{budgetPolling=false}
 }
 
+// Content methods and Word layout are separate choices. Switching an export
+// template never enters this requirements form or modifies a saved run.
+function readWorkflowChoice(){
+ const [workflow_id,workflow_variant]=($('workflow-choice').value||'').split('/');
+ return {workflow_id:workflow_id||null,workflow_variant:workflow_variant||null};
+}
+function initializeWorkflowChoice(req,partial=false){
+ const has=key=>Object.prototype.hasOwnProperty.call(req,key);
+ if(partial&&!['workflow_id','workflow_variant','report_profile'].some(has))return;
+ const legacy=!req.workflow_id&&req.report_profile==='industry_periodic';
+ const id=req.workflow_id||(legacy?'business_report':partial&&!has('workflow_id')&&!has('report_profile')?readWorkflowChoice().workflow_id:'');
+ const variant=req.workflow_variant||(legacy?'industry_periodic':state?.workflows?.find(w=>w.id===id)?.default_variant||'');
+ $('workflow-choice').value=id?`${id}/${variant}`:'';
+}
+function renderWorkflowChoices(first=false){
+ const el=$('workflow-choice');if(!el||!state)return;
+ const catalog=state.workflows||[];
+ const signature=JSON.stringify(catalog);
+ if(first||el.dataset.catalog!==signature){
+  const chosen=el.value;
+  el.innerHTML='<option value="">使用建议用途</option>'+catalog.map(w=>`<optgroup label="${esc(w.label)}">${w.variants.map(v=>`<option value="${esc(w.id+'/'+v.id)}">${esc(w.label)} · ${esc(v.label)}</option>`).join('')}</optgroup>`).join('');
+  el.dataset.catalog=signature;el.value=chosen;
+  if(first)initializeWorkflowChoice(state.requirements||{});
+ }
+ const choice=readWorkflowChoice();
+ const template=state.templates?.find(t=>t.id===$('template-select').value);
+ const workflow=catalog.find(w=>w.id===(choice.workflow_id||template?.workflow_hint||'general_report'));
+ const variant=workflow?.variants.find(v=>v.id===(choice.workflow_variant||workflow.default_variant));
+ $('workflow-hint').textContent=workflow?`${choice.workflow_id?'已选':'本轮建议'}：${workflow.label} · ${variant?.label||''}。用于规划、写作和评价；Word 版式由报告模板决定。`:'文档方法目录暂不可用，请刷新后再选择。';
+}
+function syncWorkflowProfile(changeLength=true){
+ const choice=readWorkflowChoice();
+ const next=choice.workflow_id==='business_report'&&choice.workflow_variant==='industry_periodic'?'industry_periodic':'brief';
+ const previous=$('report-profile').value;$('report-profile').value=next;
+ if(changeLength&&previous!==next)$('report-profile').dispatchEvent(new Event('change'));
+ else $('industry-profile-options').hidden=next!=='industry_periodic';
+ renderWorkflowChoices();
+}
+$('workflow-choice').onchange=()=>syncWorkflowProfile();
+
 // Reference reports are explicitly separated from this period's evidence.
 const INDUSTRY_TASK_OUTLINE='撰写行业定期报告，围绕核心摘要、行业指标、供需竞争、重点专题与组织启示展开。可根据行业与读者需要调整章节。数据标明日期、单位、口径及比较期，实际与预测分开。分析从事实出发，解释传导机制、适用条件与下一步观察项。正文围绕本期变化、对组织的影响及有依据的行动展开；核查与待补信息单独保存。';
 let briefLengthChoice=null,industryLengthChoice=[5000,5500];
@@ -1153,7 +1196,7 @@ function renderReferenceSources(){
 }
 function initializeReportProfile(requirements){
  referenceSelected=new Set(requirements.reference_source_ids||[]);
- if(industryProfileActive())for(const id of referenceSelected)selected.delete(id);
+ for(const id of referenceSelected)selected.delete(id);
  $('industry-profile-options').hidden=!industryProfileActive();$('length-preset').disabled=industryProfileActive();$('length-preset').closest('label').hidden=industryProfileActive();
  if(industryProfileActive()){
   $('target-words').value=requirements.target_words??5000;$('max-words').value=requirements.max_words??5500;
@@ -1169,8 +1212,7 @@ $('report-profile').onchange=()=>{
  }else{
   industryLengthChoice=[$('target-words').value,$('max-words').value];
   [$('target-words').value,$('max-words').value]=briefLengthChoice||LENGTH_PRESETS[$('length-preset').value]||LENGTH_PRESETS.balanced;
-  // 普通简报没有参考材料这个概念，之前标为参考的材料要回到本期材料里。
-  for(const id of referenceSelected){if((state.sources||[]).some(s=>s.id===id&&s.status!=='failed')){selected.add(id);const evidence=$('source-list').querySelector(`[data-check="${CSS.escape(id)}"]`);if(evidence)evidence.checked=true}}
+
  }
  $('industry-profile-options').hidden=!industryProfileActive();$('length-preset').disabled=industryProfileActive();$('length-preset').closest('label').hidden=industryProfileActive();validateLengthInputs();
 };
@@ -1178,7 +1220,7 @@ $('industry-task-outline').onclick=()=>{const field=$('requirements').elements.o
 
 function renderReportDataButton(){
  const run=current&&state?.runs.find(item=>item.id===current.run_id);
- $('report-data-control').hidden=!run||parse(run.requirements).report_profile!=='industry_periodic';
+ $('report-data-control').hidden=!run;
 }
 function reportDataText(result){
  const data=result.data,records=data?.records||[],calculations=data?.calculations||[],gaps=[...new Set([...(result.gaps||[]),...(data?.gaps||[])])];
@@ -1310,7 +1352,7 @@ function renderTemplates(first=false){
  templateSections();
  applyTemplateSectionEdits();
 }
-$('template-select').onchange=()=>{templateSections();applyTemplateSectionEdits()};
+$('template-select').onchange=()=>{templateSections();applyTemplateSectionEdits();renderWorkflowChoices()};
 $('template-import-button').onclick=()=>$('template-file').click();
 $('template-file').onchange=e=>action(async()=>{const file=e.target.files[0];if(!file)return;const bytes=new Uint8Array(await file.arrayBuffer());let raw='';for(let i=0;i<bytes.length;i+=8192)raw+=String.fromCharCode(...bytes.subarray(i,i+8192));await api('template-import',{name:file.name,data:btoa(raw)});e.target.value='';notice('模板已上传，BriefLoop 将准备章节和版式，完成后可在我的模板中选择')});
 
@@ -1536,10 +1578,15 @@ $('source-refresh-form').onsubmit=event=>{event.preventDefault();action(async()=
 
 function sourceRefreshOutcome(outcome){return {not_authorized:'本轮未允许联网，未执行在线复查',local_source_requires_upload:'本地来源更新需上传独立的新文件',budget_exhausted:'本轮预算已用尽，未获取新快照',fetch_failed:'新快照读取未成功，保留原来源',unchanged_snapshot:'实际取得的快照未变化',changed_needs_review:'取得的快照有变化，待判断影响并独立复核'}[outcome]||''}
 
+let connectorPanel=null;
 function settingsView(name){
- for(const view of ['models','execution','learning','workspaces'])$('settings-view-'+view).hidden=view!==name;
+ for(const view of ['models','execution','learning','workspaces','connectors'])$('settings-view-'+view).hidden=view!==name;
  document.querySelectorAll('[data-settings-view]').forEach(b=>{b.classList.toggle('active',b.dataset.settingsView===name);b.setAttribute('aria-current',b.dataset.settingsView===name?'page':'false')});
  if(name==='workspaces')return renderSettingsWorkspaces();
+ if(name==='connectors'){
+  connectorPanel ||= connectorSettings($('settings-view-connectors'),api);
+  return connectorPanel.refresh();
+ }
 }
 async function renderSettingsWorkspaces(){
  const box=$('settings-workspace-list');if(!box)return;
@@ -1870,7 +1917,7 @@ function renderTemplatesPage(){
   if(!templatePick)return;
   await api('settings',{default_template_id:templatePick.id});
   state.settings={...(state.settings||{}),default_template_id:templatePick.id};
-  $('template-select').value=templatePick.id;
+  $('template-select').value=templatePick.id;renderWorkflowChoices();
   templateSections();
   notice(`已选用 ${templatePick.genre} · ${templatePick.theme}；新建报告将默认使用`);
   renderTemplatesPage.sig='';page('setup');

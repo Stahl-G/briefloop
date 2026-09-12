@@ -7,6 +7,7 @@ service on explicit user request, after verifying the pid over HTTP.
 from contextlib import closing
 from pathlib import Path
 import http.client
+from ._entrypoint import command as entry_command
 import json
 import os
 import signal
@@ -190,7 +191,7 @@ def open_workspace(store, path, create=False):
     if active:
         _remember(store.root, root)
         return active
-    command = [sys.executable, '-m', 'briefloop', 'start', '--workspace', str(root), '--port', '0', '--paused']
+    command = entry_command('start', '--workspace', root, '--port', '0', '--paused')
     detail = ''
     try:
         launched = subprocess.run(command, capture_output=True, text=True, timeout=15)

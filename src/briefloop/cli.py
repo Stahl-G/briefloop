@@ -1,4 +1,5 @@
 import argparse
+from ._entrypoint import command as entry_command
 import json
 from pathlib import Path
 import shutil
@@ -80,7 +81,7 @@ def main():
     elif a.command=='start':
         root=Path(a.workspace).resolve();root.mkdir(parents=True,exist_ok=True)
         with (root/'server.log').open('a') as log:
-            proc=subprocess.Popen([sys.executable,'-m','briefloop','serve','--workspace',str(root),'--port',str(a.port)]+(['--paused'] if a.paused else [])+(['--backend',a.backend] if a.backend else []),stdout=log,stderr=log,start_new_session=True)
+            proc=subprocess.Popen(entry_command('serve','--workspace',root,'--port',a.port)+(['--paused'] if a.paused else [])+(['--backend',a.backend] if a.backend else []),stdout=log,stderr=log,start_new_session=True)
         (root/'server.pid').write_text(str(proc.pid))
         for _ in range(80):
             if proc.poll() is not None:raise RuntimeError('服务未能启动，请查看 '+str(root/'server.log'))

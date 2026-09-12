@@ -7,6 +7,7 @@ include tests/frontend_*.mjs tests/check_distribution.py
 recursive-include src/briefloop/static *
 recursive-include src/briefloop/skill_assets *.md
 recursive-include src/briefloop/template_assets *
+recursive-include src/briefloop/workflow_assets *.json *.md
 prune workspaces
 prune private_planning
 global-exclude __pycache__ *.py[cod] .DS_Store
@@ -15,3 +16,5 @@ recursive-include runtime-bridge *.ts *.mjs *.json *.md
 recursive-include third_party/open-design *
 recursive-include examples *.md *.txt
 prune output
+
+recursive-include probes/mcp_m0 *.py *.md *.txt

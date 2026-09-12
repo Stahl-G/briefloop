@@ -63,7 +63,8 @@ def test_stop_is_persisted_before_transport_finishes_and_settlement_cannot_overw
 
 
 @pytest.mark.parametrize('edit_during_repair',[False,True])
-def test_resume_repairs_metadata_without_regenerating_or_overwriting_body(tmp_path,edit_during_repair):
+@pytest.mark.parametrize('invalid_metadata',['anchor','assessment_response'])
+def test_resume_repairs_metadata_without_regenerating_or_overwriting_body(tmp_path,edit_during_repair,invalid_metadata):
     from briefloop.evidence import create_span,create_claim,blocks
     from briefloop.document_model import brief_document
     store=Store(tmp_path);run,source,brief=report(store)
@@ -77,7 +78,10 @@ def test_resume_repairs_metadata_without_regenerating_or_overwriting_body(tmp_pa
             self.calls.append(job['kind'])
             if job['kind']=='revise':
                 (folder/'draft.json').write_text(dump({'title':'Synthetic revision','markdown':'Revenue was USD 12 million, as reported.'}))
-                (folder/'revision_bindings.json').write_text(dump([{'claim_id':claim['id'],'block_id':'wrong-block','quote':'Revenue was USD 12 million'}]))
+                if invalid_metadata=='anchor':
+                    (folder/'revision_bindings.json').write_text(dump([{'claim_id':claim['id'],'block_id':'wrong-block','quote':'Revenue was USD 12 million'}]))
+                else:
+                    (folder/'responses.json').write_text(dump([{'finding_id':'expression_redundant_explanation','action':'removed','reason':'Removed repeated wording'}]))
             else:
                 assert job['kind']=='repair_revision_metadata'
                 packet=json.loads((folder/'input.json').read_text());revision=store.one('briefs',packet['version_id'])
@@ -86,7 +90,8 @@ def test_resume_repairs_metadata_without_regenerating_or_overwriting_body(tmp_pa
                 (folder/'metadata.json').write_text(dump({'version_id':revision['id'],'brief_hash':revision['hash'],'bindings':[{'claim_id':claim['id'],'block_id':bid,'quote':'Revenue was USD 12 million'}],'responses':[]}))
             return {'synthetic':True}
     runtime=RepairRuntime();worker=Worker(store,runtime);folder=worker.folder(job)
-    with pytest.raises(ValueError,match='锚点'):worker.auto_revise(job,brief,folder)
+    with pytest.raises(ValueError,match='锚点' if invalid_metadata=='anchor' else 'unexpected.*expression_redundant_explanation'):
+        worker.auto_revise(job,brief,folder)
     revision=store.one('briefs','brief_'+job['id'][4:]+'_r1');original_hash=revision['hash']
     worker.assess_version=lambda job,revised,folder,backend:store.assess(revised['id'],{'brief_hash':revised['hash'],**score})
     result=worker.auto_revise(job,brief,folder)
