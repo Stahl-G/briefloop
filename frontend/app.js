@@ -699,6 +699,7 @@ async function saveRoleModels(){
 }
 
 let workspaceInventory=null,workspaceSwitching=false;
+function workspaceStatus(text,error=false){for(const id of ['workspace-switch-status','settings-workspace-status']){const el=$(id);if(!el)continue;el.textContent=text;el.classList.toggle('error',error)}}
 async function refreshWorkspaces(){
  const result=await api('workspaces');workspaceInventory=result;const current=result.current||{};
  $('workspace-name').textContent=current.name||'本地工作区';$('workspace-switch').title=current.path||'选择工作区';$('workspace-current-name').textContent=current.name||'当前工作区';$('workspace-current-path').textContent=current.path||'';
@@ -712,15 +713,15 @@ async function showWorkspacePicker(){
 }
 async function switchWorkspace(path,create){
  if(workspaceSwitching)return;
- if(chat.busy||chat.uploading){$('workspace-switch-status').textContent='请等待消息发送或附件上传完成后再切换。';$('workspace-switch-status').classList.add('error');return}
- workspaceSwitching=true;$('workspace-switch-status').classList.remove('error');$('workspace-switch-status').textContent='正在打开工作区…';
+ if(chat.busy||chat.uploading){workspaceStatus('请等待消息发送或附件上传完成后再切换。',true);return}
+ workspaceSwitching=true;workspaceStatus('正在打开工作区…');
  const controls=[...$('workspace-dialog').querySelectorAll('button,input')];const originalDisabled=new Map(controls.map(c=>[c,c.disabled]));controls.forEach(c=>c.disabled=true);
  try{
   rememberDraft();clearTimeout(saveTimer);const deadline=Date.now()+15000;while(saving&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,60));
-  if(saving)throw Error('当前简报仍在保存，请稍后重试。');if(dirty){$('workspace-switch-status').textContent='正在保存当前简报…';await save();if(dirty)throw Error('当前简报尚未保存，请先完成保存。')}
+  if(saving)throw Error('当前简报仍在保存，请稍后重试。');if(dirty){workspaceStatus('正在保存当前简报…');await save();if(dirty)throw Error('当前简报尚未保存，请先完成保存。')}
   const result=await api('workspaces/open',{path:path.trim(),create});if(!result.url)throw Error('工作区服务尚未准备好，请重试。');
-  $('workspace-switch-status').textContent='已打开，正在切换…';location.assign(result.url);
- }catch(e){$('workspace-switch-status').textContent=e.message;$('workspace-switch-status').classList.add('error')}
+  workspaceStatus('已打开，正在切换…');location.assign(result.url);
+ }catch(e){workspaceStatus(e.message,true)}
  finally{workspaceSwitching=false;controls.forEach(c=>c.disabled=originalDisabled.get(c))}
 }
 $('workspace-switch').onclick=showWorkspacePicker;
@@ -1308,8 +1309,17 @@ $('source-refresh-form').onsubmit=event=>{event.preventDefault();action(async()=
 function sourceRefreshOutcome(outcome){return {not_authorized:'本轮未允许联网，未执行在线复查',local_source_requires_upload:'本地来源更新需上传独立的新文件',budget_exhausted:'本轮预算已用尽，未获取新快照',fetch_failed:'新快照读取未成功，保留原来源',unchanged_snapshot:'实际取得的快照未变化',changed_needs_review:'取得的快照有变化，待判断影响并独立复核'}[outcome]||''}
 
 function settingsView(name){
- for(const view of ['models','execution','learning'])$('settings-view-'+view).hidden=view!==name;
+ for(const view of ['models','execution','learning','workspaces'])$('settings-view-'+view).hidden=view!==name;
  document.querySelectorAll('[data-settings-view]').forEach(b=>{b.classList.toggle('active',b.dataset.settingsView===name);b.setAttribute('aria-current',b.dataset.settingsView===name?'page':'false')});
+ if(name==='workspaces')renderSettingsWorkspaces();
+}
+async function renderSettingsWorkspaces(){
+ const box=$('settings-workspace-list');if(!box)return;
+ box.innerHTML='<p class="help">正在读取工作区…</p>';
+ try{if(!workspaceInventory)await refreshWorkspaces()}catch(e){box.innerHTML='<p class="help">无法读取工作区：'+esc(e.message)+'</p>';return}
+ const result=workspaceInventory||{workspaces:[],current:{}},current=result.current||{};
+ box.innerHTML=(result.workspaces||[]).length?result.workspaces.map((w,i)=>`<button type="button" class="workspace-choice" data-settings-workspace="${i}" ${w.path===current.path?'disabled':''}><span><strong>${esc(w.name||w.path)}</strong><small>${esc(w.path)}</small></span><em>${w.path===current.path?'当前':'打开 ↗'}</em></button>`).join(''):'<p class="help">还没有其他工作区。</p>';
+ box.querySelectorAll('[data-settings-workspace]').forEach(b=>b.onclick=()=>switchWorkspace(result.workspaces[Number(b.dataset.settingsWorkspace)].path,false));
 }
 function settingsModelTab(name){
  $('settings-cli').hidden=name!=='cli';$('settings-api').hidden=name!=='api';
@@ -1319,6 +1329,8 @@ function settingsModelTab(name){
  document.querySelector('main').append($('settings-dialog'));
  $('settings-api').append($('provider-dialog'));
  document.querySelectorAll('[data-settings-view]').forEach(b=>b.onclick=()=>settingsView(b.dataset.settingsView));
+ if($('settings-workspace-open'))$('settings-workspace-open').onclick=()=>switchWorkspace($('settings-workspace-path').value,false);
+ if($('settings-workspace-create'))$('settings-workspace-create').onclick=()=>switchWorkspace($('settings-workspace-new').value,true);
  $('settings-tab-cli').onclick=()=>settingsModelTab('cli');
  $('settings-tab-api').onclick=()=>$('provider-open').click();
  $('agent-backend').closest('label').classList.add('runtime-select-legacy');
