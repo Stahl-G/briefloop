@@ -258,6 +258,14 @@ async function renderDeliveryChecks(){
  if(c.export.escaped_bold)parts.push('<span class="tag error">存在转义加粗，请检查排版</span>');
  if(c.export.figure_error)parts.push('<span class="tag error">图表资源不可用：'+esc(c.export.figure_error)+'</span>');
  else if(c.export.figure_markers.length)parts.push('<span class="tag">含图表：独立交付请下载 Word 或含图片的 Markdown 包</span>');
+ const l=c.layout;
+ if(l){
+  const findings=[];
+  if(l.heading_jumps.length)findings.push('标题层级中断 '+l.heading_jumps.length+' 处（如 '+l.heading_jumps.slice(0,2).map(j=>'第'+j.after+'级后接第'+j.level+'级').join('、')+'）');
+  if(l.empty_headings)findings.push('空标题 '+l.empty_headings+' 个');
+  if(l.tables_without_header.length)findings.push('缺表头行的表格 '+l.tables_without_header.length+' 张');
+  parts.push(findings.length?`<span class="tag error">版式：${esc(findings.join('；'))}</span>`:'<span class="tag">版式：标题层级、表头与空标题检查通过</span>');
+ }
  if(c.assessment_overall)parts.push(`<span class="tag">模型评分：${esc(c.assessment_overall)}</span>`);
  box.innerHTML='<strong>已保存版本检查</strong> '+parts.join(' ')+'<p class="help">数值检查仅覆盖已提交并成功定位的绑定，不代表正文数字已全部核验；事实含义、研究覆盖与交付质量仍需评价。</p>';
 }
