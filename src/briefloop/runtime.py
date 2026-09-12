@@ -211,9 +211,9 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
         budget_note='本轮检索由宿主原生工具执行，BriefLoop 不精确计量原生搜索次数与候选 URL（input.json.research_budget_status 中这两项在原生模式下为空或未知，不是额度，不要当成可用次数去核对）；只有受控 add-url/Extract 的唯一正文 URL（source_pages）按事务计量。出现 budget_exhausted 时保留现有来源并简要交接缺口，不重试消耗上限的操作；派发每批前按剩余 source_pages 留出补缺名额，不把它当成可任意扩张的额度。旧任务 limits=null 表示未设置预算，不追溯限制。'
     native_word = '原生 Codex 搜索不可精确计量' if backend == 'codex' else '原生 Opencode 搜索不可精确计量'
     research_plan_note=('' if not research_plan else
-        '本轮是 quality_v1 分轮研究：计划已冻结，见 input.json.research_plan。structure.breadth/depth 是每轮上限，current_round_id 是当前 active 轮次。'
+        '本轮是 quality_v1 分轮研究：计划已冻结，见 input.json.research_plan。structure.breadth 是每轮查询建议，depth 是最大轮数；current_round_id 是当前 active 轮次。'
         '完成本轮 Scout 并结构合并后，由同一 Analyst/主 Agent 查看本轮候选，再决定补证或收轮：需要下一轮时，先用 workspace-action `finish_research_round`（run_id、gaps：每项含 description，可选 source_ids/related_claim_ids/requirement_ids）拿到程序生成的真实 gap id，再用 `begin_research_round`（run_id、target_gap_ids=上一步返回的 gap id、tasks）开下一轮；不需要下一轮就只调用 finish_research_round 收轮。'
-        '不要只用提示词模拟轮次；每轮受控 Search 合计不超过 structure.breadth，超出会被程序在准入事务中拒绝。')
+        '不要只用提示词模拟轮次；breadth 可按证据需要调整，实际硬上限是本任务已授权共享预算。恢复时先读取 research_status，复用已关闭轮次及真实缺口，不重新消耗已完成研究。')
     view_word = '使用 view_image 直接读图' if backend == 'codex' else '用 read 工具直接读取图像路径'
     view_pages_word = '使用 view_image 读取页图' if backend == 'codex' else '用 read 工具读取返回的页图'
     check_word = 'view_image检查' if backend == 'codex' else '用 read 工具读取检查'

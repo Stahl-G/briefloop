@@ -39,11 +39,13 @@ def test_freeze_is_idempotent_and_refuses_a_different_plan(tmp_path):
 
 def test_freeze_cannot_exceed_the_authorized_budget(tmp_path):
     store, run = quality_run(tmp_path, values={'search_requests': 4, 'candidate_urls': 20, 'source_pages': 6})
-    with pytest.raises(ValueError, match='超过已授权的搜索额度'):
-        research_plan.freeze(store, run['id'], structure={'breadth': 6, 'depth': 2})
-    plan = research_plan.freeze(store, run['id'], structure={'breadth': 2, 'depth': 2})
+    plan = research_plan.freeze(store, run['id'], structure={'breadth': 6, 'depth': 2})
     assert plan['budget']['search_requests'] == 4
-    assert plan['structure'] == {'breadth': 2, 'depth': 2, 'parallel': 2}
+    assert plan['structure'] == {'breadth': 6, 'depth': 2, 'parallel': 2}
+    for _ in range(4):
+        budget.reserve_search(store, run['id'], 1)
+    with pytest.raises(budget.BudgetExhausted):
+        budget.reserve_search(store, run['id'], 1)
 
 
 def test_legacy_run_keeps_unmetered_behavior_without_a_plan(tmp_path):
@@ -131,3 +133,53 @@ def test_join_scouts_enforces_run_scope_and_source_statements(tmp_path):
     path.write_text(json.dumps({'sources': [{'source_id': source['id'], 'coverage_status': 'ok', 'claim_ids': [bad['id']]}]}))
     with pytest.raises(ValueError, match='只能引用来源陈述'):
         join_scouts(store, [str(path)], run_id=run['id'])
+
+
+@pytest.mark.parametrize('search_limit', [0, 4])
+def test_chat_generation_freezes_small_budget_and_resumes_into_bound_review(tmp_path, search_limit):
+    import json
+    import threading
+    from briefloop.chat_tools import workspace_action
+    from briefloop.runtime import Worker
+    from briefloop.review import _snapshot, review_status
+    store = Store(tmp_path)
+    source = store.add_source('Synthetic', 'Revenue was USD 12 million.')
+    result = workspace_action(store, {'action': 'generate', 'requirements': {
+        'title': 'Local report', 'objective': 'Summarize supplied material', 'allow_web': False,
+        'research_budget': {'search_requests': search_limit, 'candidate_urls': 0, 'source_pages': 0}},
+        'source_ids': [source['id']]})
+    run_id = result['run_id']
+    assert research_plan.is_quality(store, run_id)
+    class LocalRuntime:
+        cancelled = threading.Event()
+        attempts = 0
+        def execute(self, job, prompt, folder, on_tick):
+            self.attempts += 1
+            assert job['allow_web'] is False
+            plan = json.loads((folder/'input.json').read_text())['research_plan']
+            assert plan['budget']['search_requests'] == search_limit
+            closed = workspace_action(store, {'action': 'finish_research_round', 'run_id': run_id,
+                'gaps': [{'description': 'Unverified context', 'id': 'spoofed', 'round_id': 'wrong', 'round_index': 99}]})
+            gap = closed['gaps'][0]
+            assert gap['id'].startswith('gap_') and gap['round_index'] == 1
+            if self.attempts == 1:
+                self.gap_id = gap['id']
+                raise RuntimeError('interrupted after round close')
+            assert closed['idempotent'] and gap['id'] == self.gap_id
+            record = workspace_action(store, {'action': 'reconciliation_save', 'run_id': run_id,
+                'reconciliation': {'status': 'partial', 'examined_claim_ids': [], 'unexamined_claim_ids': [],
+                    'open_questions': [{'question': 'No independent context supplied'}]}})
+            (folder/'draft.json').write_text(json.dumps({'title': 'Local report', 'markdown': 'Revenue was USD 12 million.',
+                'reconciliation_id': record['id']}))
+            on_tick()
+            return {}
+    worker = Worker(store, LocalRuntime())
+    job = store.one('jobs', result['job_id'])
+    with pytest.raises(RuntimeError, match='interrupted'):
+        worker.generate(job, score=False)
+    generated = worker.generate(job, score=False)
+    assert len(research_plan.frozen(store, run_id)['rounds']) == 1
+    assert research_plan.pending_requests(store, run_id) == {}
+    target = _snapshot(store, generated['version_id'])
+    assert target['reconciliation']['open_questions'][0]['question'] == 'No independent context supplied'
+    assert review_status(store, generated['version_id'])['reconciliation']['id'] == target['reconciliation']['id']

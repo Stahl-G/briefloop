@@ -168,7 +168,7 @@ def workspace_action(store, request):
         requirements=Requirements.model_validate(request['requirements'])
         source_ids=request.get('source_ids',[])
         if not isinstance(source_ids,list) or not all(isinstance(x,str) for x in source_ids):raise ValueError('source_ids 必须是来源 ID 数组')
-        run=store.create_run(requirements.model_dump(),source_ids)
+        run=store.create_run(requirements.model_dump(),source_ids,research_protocol="quality_v1")
         payload={'run_id':run['id']}
         owner=_notify_owner(request)
         if owner:payload['session_id']=owner

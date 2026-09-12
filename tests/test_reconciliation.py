@@ -86,3 +86,23 @@ def test_publish_requires_a_real_reconciliation(tmp_path):
     record = reconciliation.save(store, run['id'], {'status': 'complete', 'examined_claim_ids': ids, 'unexamined_claim_ids': []})
     brief = store.publish(run['id'], {'title': 'T', 'markdown': 'Body', 'reconciliation_id': record['id']})
     assert brief['id']
+
+
+def test_reconciliation_rejects_cross_run_conflicts_and_modified_snapshots(tmp_path):
+    store, run, first, span_a, claim_a, claim_b = run_with_statements(tmp_path)
+    other = store.create_run({'title': 'Other', 'objective': 'o', 'allow_web': True}, [])
+    foreign = create_conflict(store, source_ids=[first['id']], description='Other report issue', run_id=other['id'])
+    payload = {'status': 'complete', 'examined_claim_ids': [claim_a['id'], claim_b['id']], 'unexamined_claim_ids': []}
+    with pytest.raises(reconciliation.ReconciliationError, match='不属于本轮'):
+        reconciliation.save(store, run['id'], {**payload, 'relations': [{'member_claim_ids': payload['examined_claim_ids'],
+            'relation': 'contradiction', 'conflict_id': foreign['id']}]})
+    record = reconciliation.save(store, run['id'], payload)
+    foreign_reference = '../reconciliations/' + record['id']
+    with pytest.raises(reconciliation.ReconciliationError, match='标识无效'):
+        reconciliation.read(store, run['id'], foreign_reference)
+    path = store.root/'research'/run['id']/'reconciliations'/(record['id']+'.json')
+    changed = json.loads(path.read_text());changed['status'] = 'failed';path.write_text(json.dumps(changed))
+    with pytest.raises(reconciliation.ReconciliationError, match='校验失败'):
+        reconciliation.read(store, run['id'], record['id'])
+    with pytest.raises(ValueError, match='对照记录不存在'):
+        store.publish(run['id'], {'title': 'T', 'markdown': 'Body', 'reconciliation_id': record['id']})

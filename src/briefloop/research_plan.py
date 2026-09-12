@@ -94,8 +94,11 @@ def freeze(store, run_id, *, preset=None, structure=None, owner_job_id=None):
     for field in STRUCTURE_FIELDS:
         if chosen[field] < 1:
             raise ValueError('研究结构必须是正整数：' + field)
-    if chosen['breadth'] * chosen['depth'] > budget['search_requests']:
-        raise ValueError('每轮查询尝试（breadth×depth）超过已授权的搜索额度')
+    # Breadth is guidance; small or zero authorized budgets remain valid.
+    # The managed-tool reservation enforces the unchanged run budget.
+    if not structure and budget['search_requests'] < chosen['breadth'] * chosen['depth']:
+        chosen['depth'] = max(1, min(chosen['depth'], budget['search_requests']))
+        chosen['breadth'] = max(1, min(chosen['breadth'], budget['search_requests'] // chosen['depth']))
     job = _owner_job(store, run_id)
     snapshot = {
         'research_protocol': PROTOCOL,
@@ -261,6 +264,9 @@ def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', job_id=
         raise AdmissionError('本轮尚未冻结研究计划', code='plan_missing')
     rounds = plan.get('rounds') or {}
     round_id = round_id or plan.get('current_round_id')
+    if round_id is None and rounds:
+        # A replay after closing must return the already assigned gap identities.
+        round_id = max(rounds, key=lambda identity: rounds[identity].get('index', 0))
     info = rounds.get(round_id)
     if not info:
         raise ValueError('轮次不存在：' + str(round_id))
@@ -269,7 +275,7 @@ def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', job_id=
     records = []
     for gap in gaps or []:
         _validate_gap(store, run_id, gap)
-        records.append({'id': uid('gap'), 'round_id': round_id, 'round_index': info['index'], 'created': now(), **gap})
+        records.append({**gap, 'id': uid('gap'), 'round_id': round_id, 'round_index': info['index'], 'created': now()})
     info['gaps'] = records
     info['status'] = 'closed'
     info['closed'] = now()

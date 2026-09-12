@@ -8,6 +8,7 @@ to the run, and that the examined/unexamined split covers the frozen set.
 """
 import hashlib
 import json
+import re
 from .store import dump, uid, now
 
 SCHEMA_VERSION = 1
@@ -29,6 +30,8 @@ def _folder(store, run_id):
 
 
 def _path(store, run_id, reconciliation_id):
+    if not isinstance(reconciliation_id, str) or not re.fullmatch(r'recon_[A-Za-z0-9]+', reconciliation_id):
+        raise ReconciliationError('对照记录不存在或标识无效')
     return _folder(store, run_id) / (reconciliation_id + '.json')
 
 
@@ -95,8 +98,9 @@ def _validate_relation(store, run_id, relation, allowed_claims, allowed_sources,
         if requirement_id not in requirement_ids:
             raise ReconciliationError('关系关联了未登记的报告要求：' + str(requirement_id))
     if relation.get('conflict_id'):
-        if not store.rows('SELECT id FROM conflicts WHERE id=?', (relation['conflict_id'],)):
-            raise ReconciliationError('关系引用的冲突不存在：' + str(relation['conflict_id']))
+        from .conflicts import for_run
+        if relation['conflict_id'] not in {item['id'] for item in for_run(store, run_id)}:
+            raise ReconciliationError('关系引用的冲突不存在或不属于本轮：' + str(relation['conflict_id']))
 
 
 def _content_hash(record):
@@ -166,7 +170,13 @@ def save(store, run_id, payload):
 
 
 def exists(store, run_id, reconciliation_id):
-    return bool(reconciliation_id) and _path(store, run_id, reconciliation_id).exists()
+    if not reconciliation_id:
+        return False
+    try:
+        read(store, run_id, reconciliation_id)
+    except (ValueError, OSError):
+        return False
+    return True
 
 
 def read(store, run_id, reconciliation_id):
@@ -174,6 +184,8 @@ def read(store, run_id, reconciliation_id):
     if not path.exists():
         raise ReconciliationError('对照记录不存在：' + str(reconciliation_id))
     record = json.loads(path.read_text(encoding='utf-8'))
+    if record.get('id') != reconciliation_id or record.get('run_id') != run_id or record.get('content_hash') != _content_hash(record):
+        raise ReconciliationError('对照记录内容或归属校验失败')
     current = _input_fingerprint(candidates(store, run_id))
     record['stale'] = record.get('input_fingerprint') != current
     return record
