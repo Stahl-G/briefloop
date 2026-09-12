@@ -14,6 +14,8 @@ Windows 使用同一套 Python 服务、WebUI、SQLite 和报告流程。目前�
 
 支持 npm 的 Node 脚本和原生 exe 两类启动 shim，不经 `cmd.exe` 展开参数。Agent 工具固定到当前服务的 Python 和包入口，不依赖 agent 工作目录。OpenCode 的工具名称 `bash` 不代表实际 shell；自有服务与工具命令使用同一 shell 选择，保持 PowerShell/Git Bash 引用一致。`join-scouts --output` 由 Python 写 UTF-8，避免旧 PowerShell 重定向改变编码。
 
+工作区操作的 JSON 请求文件和 shell 工作目录必须位于当前工作区；系统临时目录不属于“读写工作区”的授权范围。聊天合同提供可直接执行的工作区内 UTF-8 示例，CLI 也兼容旧 PowerShell 写出的 UTF-8 BOM。OpenCode 使用原生 system 字段接收该合同，拒绝合同或权限配置时停止执行；不能把工具失败后写出的聊天正文冒充已保存报告。
+
 模型连接重试在进度面板显示明确状态；停止或切换任务后，旧进度响应不能覆盖新状态。Reviewer 核查包统一使用正斜杠相对路径，仍验证文件清单、哈希、索引和路径边界。
 
 Word 原文件被 Office/WPS 占用而不能替换时，导出保留旧文件并另存已渲染的新文件，不重跑模型。通用默认导出使用 Arial 作为西文字体，中文由阅读器本机字体回退；用户模板保留自身字体，不承诺跨系统字形和分页一致。

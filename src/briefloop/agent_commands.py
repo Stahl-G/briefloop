@@ -1,4 +1,5 @@
 """Commands shown to agent shells, pinned to this server's Python/package tree."""
+import json
 import os
 from pathlib import Path
 import shlex
@@ -67,3 +68,14 @@ def agent_command(module, arguments=(), *, backend='codex'):
 def tool_command(workspace, *, backend='codex'):
     command = agent_command('briefloop', ('tool', '--workspace'), backend=backend)
     return command + ' ' + quote_path(workspace, backend)
+
+
+def workspace_action_example(workspace, *, backend='codex'):
+    """A runnable UTF-8 request inside the same workspace permission boundary."""
+    request = quote_path(Path(workspace) / '.briefloop-capabilities.json', backend)
+    payload = _quote(json.dumps({'action': 'capabilities'}), backend)
+    if _powershell(backend):
+        write = f'[IO.File]::WriteAllText({request}, {payload}, [Text.UTF8Encoding]::new($false))'
+    else:
+        write = f"printf '%s' {payload} > {request}"
+    return write + '\n' + tool_command(workspace, backend=backend) + ' workspace-action --request ' + request

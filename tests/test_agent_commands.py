@@ -59,6 +59,46 @@ def test_agent_tool_uses_server_package_outside_repository(tmp_path, monkeypatch
 
 
 @pytest.mark.parametrize('backend,kind', SHELL_CASES)
+def test_chat_request_example_runs_inside_unicode_workspace(tmp_path, monkeypatch, backend, kind):
+    shell = _shell(kind)
+    monkeypatch.setenv('SHELL', shell[0])
+    workspace = tmp_path / "中文 workspace's $literal"
+    workspace.mkdir()
+    example = agent_commands.workspace_action_example(workspace, backend=backend)
+    output = json.loads(_execute(example, shell, workspace))
+    assert 'profile_update' in output['actions']
+    assert json.loads((workspace / '.briefloop-capabilities.json').read_text(encoding='utf-8')) == {'action': 'capabilities'}
+
+
+@pytest.mark.parametrize('internal', [False, True])
+def test_writable_chat_and_report_share_request_file_boundary(tmp_path, internal):
+    from briefloop.chat_tools import chat_instructions
+    from briefloop.store import Store
+    store = Store(tmp_path / '中文 report')
+    instructions = chat_instructions(store, {'model': 'test/model'}, backend='opencode', internal=internal)
+    assert store.root.as_posix() in instructions
+    assert 'JSON 请求文件、临时文件及最终产物' in instructions
+    assert '工作区内的绝对路径' in instructions
+    assert '给子 agent 派发时同时传递这个写入范围' in instructions
+    assert '不要在那里创建 request.json' in instructions
+
+
+def test_workspace_request_accepts_powershell_utf8_bom(tmp_path):
+    from briefloop._entrypoint import command
+    from briefloop.store import Store
+    from briefloop.chat_tools import workspace_action
+    workspace = tmp_path / '中文 工作区'
+    workspace.mkdir()
+    request = workspace / '请求.json'
+    request.write_text(json.dumps({'action': 'profile_update', 'profile': {
+        'organization': '小米集团', 'role': '手机部门员工'}}, ensure_ascii=False), encoding='utf-8-sig')
+    result = subprocess.run(command('tool', '--workspace', workspace, 'workspace-action', '--request', request),
+                            cwd=workspace, capture_output=True, encoding='utf-8', timeout=30)
+    assert result.returncode == 0, result.stderr
+    assert workspace_action(Store(workspace), {'action': 'profile_read'})['organization'] == '小米集团'
+
+
+@pytest.mark.parametrize('backend,kind', SHELL_CASES)
 def test_wikiskill_agent_entrypoint_outside_repository(tmp_path, monkeypatch, backend, kind):
     shell = _shell(kind)
     monkeypatch.setenv('SHELL', shell[0])

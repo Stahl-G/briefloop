@@ -1,7 +1,32 @@
 import hashlib
 import json
+from pathlib import Path
 from briefloop import sources
 from briefloop.store import Store
+
+
+def test_source_metadata_round_trip_with_cp936_default(tmp_path,monkeypatch):
+    import io
+    from PIL import Image
+    from briefloop.media import source_attachment,source_files
+    # Exercise real CP936 I/O even on UTF-8 CI hosts. Explicit file encodings
+    # still take precedence, exactly as on a Chinese Windows installation.
+    original_open=Path.open
+    def cp936_open(self,mode='r',buffering=-1,encoding=None,errors=None,newline=None):
+        if 'b' not in mode and encoding in (None,'locale'):
+            encoding='cp936'
+        return original_open(self,mode,buffering,encoding,errors,newline)
+    monkeypatch.setattr(Path,'open',cp936_open)
+    store=Store(tmp_path)
+    image=io.BytesIO();Image.new('RGB',(2,2),'white').save(image,format='PNG')
+    uploaded=sources.upload(store,'中文图像.png',image.getvalue())
+    attachment=source_attachment(store,uploaded['id'])
+    assert attachment['image_path'] and attachment['width']==2
+    raw='<html><title>中文材料</title><body>材料正文</body></html>'.encode('utf-8')
+    monkeypatch.setattr(sources,'_fetch_bytes',lambda url:(raw,'text/html; charset=utf-8','utf-8'))
+    fetched=sources.fetch(store,'https://example.test/report')
+    _,metadata,original=source_files(store,fetched['id'])
+    assert metadata['title']=='中文材料' and original.read_bytes()==raw
 
 
 def test_web_snapshot_preserves_response_and_failed_extraction(tmp_path,monkeypatch):
@@ -12,7 +37,7 @@ def test_web_snapshot_preserves_response_and_failed_extraction(tmp_path,monkeypa
     assert record['status']=='ready'
     text=store.source_text(record['id'])
     assert 'A\t120\t45' in text
-    metadata=json.loads((store.root/'sources'/(record['id']+'.provenance.json')).read_text())
+    metadata=json.loads((store.root/'sources'/(record['id']+'.provenance.json')).read_text(encoding='utf-8'))
     assert (store.root/metadata['original_path']).read_bytes()==raw
     assert metadata['raw_sha256']==hashlib.sha256(raw).hexdigest()
     assert metadata['text_sha256']==record['hash']
@@ -22,7 +47,7 @@ def test_web_snapshot_preserves_response_and_failed_extraction(tmp_path,monkeypa
     monkeypatch.setattr(sources,'_fetch_bytes',lambda url:(blank,'text/html','utf-8'))
     failed=sources.fetch(store,'https://example.test/blank')
     assert failed['status']=='failed' and failed['error']
-    failure_meta=json.loads((store.root/'sources'/(failed['id']+'.provenance.json')).read_text())
+    failure_meta=json.loads((store.root/'sources'/(failed['id']+'.provenance.json')).read_text(encoding='utf-8'))
     assert failure_meta['extraction_status']=='failed'
     assert (store.root/failure_meta['original_path']).read_bytes()==blank
     assert store.source_text(failed['id'])==''
@@ -49,11 +74,11 @@ def test_run_url_reuse_and_bounded_source_reader(tmp_path,monkeypatch,capsys):
     req={'title':'test','objective':'research','allow_web':True}
     run=store.create_run(req,[])['id']
     first=sources.fetch_for_run(store,run,'https://example.test/report')
-    metadata=(store.root/'sources'/(first['id']+'.provenance.json')).read_text()
+    metadata=(store.root/'sources'/(first['id']+'.provenance.json')).read_text(encoding='utf-8')
     reused=sources.fetch_for_run(store,run,'https://example.test/report')
     assert reused['id']==first['id'] and reused['reused'] is True
     assert calls.count('https://example.test/report')==1
-    assert (store.root/'sources'/(first['id']+'.provenance.json')).read_text()==metadata
+    assert (store.root/'sources'/(first['id']+'.provenance.json')).read_text(encoding='utf-8')==metadata
     other=store.create_run(req,[])['id']
     assert sources.fetch_for_run(store,other,'https://example.test/report')['id']!=first['id']
     assert calls.count('https://example.test/report')==2
@@ -62,6 +87,9 @@ def test_run_url_reuse_and_bounded_source_reader(tmp_path,monkeypatch,capsys):
     assert failure['status']=='failed' and repaired['status']=='ready'
     assert store.one('sources',failure['id'])['status']=='failed'
     assert read_source(store,first['id'])==store.source_text(first['id'])
+    # This is an in-process command behavior test; Windows console bootstrap
+    # has separate subprocess coverage and must not re-exec the pytest runner.
+    monkeypatch.setattr('briefloop.platform_support.ensure_utf8',lambda:None)
     monkeypatch.setattr('sys.argv',['briefloop','tool','--workspace',str(store.root),'read-source','--id',first['id'],'--start-line','2','--end-line','3','--max-chars','6'])
     main();output=capsys.readouterr().out
     assert '共 4 行' in output and '第 2–2 行' in output

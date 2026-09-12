@@ -185,7 +185,7 @@ def generation_prompt(store, run, folder, backend='codex'):
         scout_binding['retrieval_skill_path']=str(retrieval_path)
         payload['role_skills']['scout']=scout_binding
     (folder/'input.json').write_text(dump(payload))
-    if backend == 'opencode':
+    if backend == 'opencode' and not tavily_enabled:
         search = ('本轮冻结搜索源：Opencode 原生搜索。允许联网时 Scout 使用 host 的原生网络搜索工具设计查询、筛选公开原始发布者；搜索摘要仅用于发现，后续仍须读取并登记正文。'
                   if req['allow_web'] else '本轮未允许联网，只处理已登记的材料，不加载外部检索技能。')
     else:

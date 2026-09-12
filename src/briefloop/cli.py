@@ -110,7 +110,8 @@ def main():
             print(json.dumps({'document':document,'markdown':markdown},ensure_ascii=False))
         elif a.tool=='workspace-action':
             from .chat_tools import workspace_action
-            print(json.dumps(workspace_action(store,json.loads(Path(a.request).read_text())),ensure_ascii=False))
+            # Windows PowerShell 5.1 writes a BOM for Out-File -Encoding utf8.
+            print(json.dumps(workspace_action(store,json.loads(Path(a.request).read_text(encoding='utf-8-sig'))),ensure_ascii=False))
         elif a.tool=='tavily-search':
             from . import tavily
             try:

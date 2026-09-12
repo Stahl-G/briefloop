@@ -230,7 +230,7 @@ def _rendered_page(store, digest, page):
     record=path.with_suffix('.json')
     if not path.exists() or not record.exists():return None
     safe_source_path(store,record)
-    metadata=json.loads(record.read_text())
+    metadata=json.loads(record.read_text(encoding='utf-8'))
     if not isinstance(metadata,dict) or not re.fullmatch(r'[0-9a-f]{64}',str(metadata.get('image_sha256',''))):raise ValueError('PDF 页面缓存元数据无效')
     if metadata.get('source_sha256')!=digest or metadata.get('page')!=page:raise ValueError('PDF 页面缓存绑定不匹配')
     image,width,height=_validated_cached_image(store,path,metadata.get('image_sha256'))

@@ -471,12 +471,11 @@ class OpencodeHarness:
                     model=model_ref(config['model'], config.get('variant')),
                     permission=_permission_rules(config, bool(message['allow_web']), self.store.root),
                     directory=session['cwd'],
-                    **({'require_permissions':True} if config.get('review_root') else {}))
+                    require_permissions=True)
+                if created.pop('_permission_dropped', False):
+                    raise OpencodeError('opencode 未接受本轮权限规则，已停止；不会在降级权限下执行')
                 self.chat.event(sid, 'session/bound',
                                 {'opencode_session': created['id'], 'backend': 'opencode'})
-                if created.pop('_permission_dropped', False):
-                    self.chat.event(sid, 'session/permissionDropped',
-                                    {'message': 'opencode 拒绝了权限规则，会话以降级权限继续；交互提问可能挂起，失败请检查服务端版本'})
                 with self._lock:
                     self.chat.update(sid, thread_id=created['id'])
                 bound = created['id']
@@ -491,14 +490,14 @@ class OpencodeHarness:
             if config.get('review_root'):
                 instructions='你是独立只读 Reviewer。只使用本次 packet 中的索引、原件和已保存执行记录。只允许原生 read 工具；禁止 shell、写入、委派、联网及查宿主数据库。需要更多研究或重算时提交发现给主 Agent。最终输出所要求的 JSON，由运行器保存；不要尝试写文件。'
             prompt_text, prompt_files = self._input(message, session['cwd'])
-            prompt = instructions + '\n\n' + prompt_text
             with self._lock:
                 if sid in self._cancel_requested:
                     self.chat.patch_message(mid, status='cancelled')
                     self.chat.update(sid, status='interrupted')
                     return
-                client.prompt_async(bound, prompt, model=prompt_model(config['model']),
-                                    agent='build', files=prompt_files)
+                client.prompt_async(bound, prompt_text, model=prompt_model(config['model']),
+                                    agent='build', files=prompt_files, system=instructions,
+                                    directory=session['cwd'])
                 admitted_at = int(time.time() * 1000)
                 self.chat.update(sid, turn_id=mid, status='running')
                 self.chat.patch_message(mid, status='delivered', turn_id=mid)
@@ -541,6 +540,7 @@ class OpencodeHarness:
         """
         client = self._client()
         bound = self._bound_session(sid)
+        directory = self.chat.session(sid)['cwd']
         assistant_id = None
         seen_tools = set()
         started_at = time.monotonic()
@@ -554,7 +554,7 @@ class OpencodeHarness:
                 self.chat.event(sid, 'turn/interruptRequested', {'turnId': mid})
                 return
             try:
-                messages = client.messages(bound)
+                messages = client.messages(bound, directory=directory)
             except OpencodeError as exc:
                 self.chat.event(sid, 'error', {'message': str(exc)})
                 time.sleep(2)
@@ -672,14 +672,15 @@ class OpencodeHarness:
 
     def _record_children(self,sid,mid,parent,admitted_at):
         from .execution_records import journal_tool
+        directory = self.chat.session(sid)['cwd']
         pending=[parent];seen={parent}
         while pending and len(seen)<128:
             owner=pending.pop()
-            for child in self._client().children(owner):
+            for child in self._client().children(owner, directory=directory):
                 cid=child.get('id')
                 if not cid or cid in seen:continue
                 seen.add(cid);pending.append(cid)
-                for message in self._client().messages(cid):
+                for message in self._client().messages(cid, directory=directory):
                     info=message.get('info',message)
                     created=(info.get('time') or {}).get('created',0)
                     if info.get('role')!='assistant' or created<admitted_at-1000:continue
@@ -702,7 +703,7 @@ class OpencodeHarness:
                 return
             self._interrupted.add(mid)
         try:
-            self._client().abort(bound)
+            self._client().abort(bound, directory=self.chat.session(sid)['cwd'])
         except OpencodeError as exc:
             self.chat.event(sid, 'error', {'message': str(exc)})
 

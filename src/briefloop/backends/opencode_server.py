@@ -5,7 +5,7 @@ v1 message surface — the same surface the official ``opencode run --attach``
 client uses:
 
 * ``POST /session?directory=...`` with ``{title, agent, model, permission}``
-* ``POST /session/{id}/prompt_async`` with ``{model, agent, parts}``
+* ``POST /session/{id}/prompt_async`` with ``{model, agent, system, parts}``
 * ``GET /session/{id}/message`` for polling completion and tool parts
 * ``POST /session/{id}/abort`` for cancellation
 * ``GET /session/{id}/children`` for subagent sessions
@@ -186,26 +186,37 @@ class OpencodeServerClient:
                 return bare
         return self._request('POST', path, body)
 
-    def prompt_async(self, session_id, text, *, model=None, agent='build', files=None):
+    @staticmethod
+    def _session_path(session_id, operation, directory):
+        path = f'/session/{session_id}/{operation}'
+        if directory is not None:
+            path += '?directory=' + urllib.parse.quote(str(directory), safe='')
+        return path
+
+    def prompt_async(self, session_id, text, *, model=None, agent='build', files=None, system=None, directory=None):
         parts=[{'type':'text','text':text}]
         for item in files or []:
             parts.append({'type':'file','mime':item['mime'],'filename':item.get('filename','image'),
                           'url':item['url']})
         body = {'parts': parts}
+        # Native prompt-level system string, verified against 1.18.30 /doc.
+        # A schema rejection must surface; never retry after dropping the contract.
+        if system is not None:
+            body['system'] = system
         if agent:
             body['agent'] = agent
         if model:
             body['model'] = model if isinstance(model, dict) else prompt_model(model)
-        self._request('POST', f'/session/{session_id}/prompt_async', body)
+        self._request('POST', self._session_path(session_id, 'prompt_async', directory), body)
 
-    def messages(self, session_id):
-        return self._request('GET', f'/session/{session_id}/message')
+    def messages(self, session_id, *, directory=None):
+        return self._request('GET', self._session_path(session_id, 'message', directory))
 
-    def abort(self, session_id):
-        return self._request('POST', f'/session/{session_id}/abort')
+    def abort(self, session_id, *, directory=None):
+        return self._request('POST', self._session_path(session_id, 'abort', directory))
 
-    def children(self, session_id):
-        return self._request('GET', f'/session/{session_id}/children')
+    def children(self, session_id, *, directory=None):
+        return self._request('GET', self._session_path(session_id, 'children', directory))
 
     def paths(self,directory):
         return self._request('GET','/path?directory='+urllib.parse.quote(str(directory),safe=''))
