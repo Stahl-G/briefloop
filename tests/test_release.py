@@ -639,3 +639,24 @@ def test_clause_review_releases_verify_in_full_and_restricted_audit_bundles(tmp_
             if not permissions:
                 assert records['snapshot']['requirements']['reader_contract'] == '[omitted: source export permissions]'
                 assert records['review_clauses'][0]['instruction'] == '[omitted: source export permissions]'
+
+
+def test_number_mismatch_and_broken_reference_block_release():
+    snapshot = {'requirements': {'requirement_items': []}, 'evidence': {'bindings': []}, 'conflicts': [], 'detail': {},
+                'deterministic': {'numbers': {'unmatched': [{'label': 'revenue', 'expected': '1.2 million USD', 'reason': '不一致'}],
+                                               'skipped': [{'label': 'margin', 'reason': '缺少定位'}]},
+                                  'broken_refs': ['source_missing']}}
+    review = {'status': 'complete', 'coverage_scan_complete': True, 'claim_checks': [], 'requirement_checks': [],
+              'conflict_checks': [], 'clause_checks': [], 'unchecked': [], 'unchecked_items': []}
+    result = decision(snapshot, review, [])
+    codes = {item['code'] for item in result['blockers']}
+    assert {'number_mismatch', 'broken_reference'} <= codes
+    assert any(item['code'] == 'number_unchecked' for item in result['notices'])
+    assert result['eligible'] is False
+
+
+def test_eligibility_freezes_deterministic_checks_for_the_audit(tmp_path):
+    store, source, brief, review_id = reviewed_report(tmp_path)
+    checked = eligibility(store, brief['id'])
+    assert checked['eligible']
+    assert 'numbers' in checked['input']['snapshot']['deterministic']

@@ -183,6 +183,19 @@ def decision(snapshot, review_result, findings, protocol='legacy', *, clauses=No
         # gap still blocks through the claim and conflict checks.
         code = 'delivery_gap_unresolved' if record.get('status') == 'unresolved' else 'delivery_gap_open'
         notices.append({'code': code, 'message': str(record.get('impact', '')), 'related': record.get('related', '')})
+    # Deterministic checks computed for this exact version: a body number that does
+    # not match its located original value, or a reference to a source that is not
+    # registered, blocks formal delivery. Unknown/unsupported/missing bindings are
+    # recorded as notices, not as a claim that the number is correct.
+    deterministic = snapshot.get('deterministic') or {}
+    numbers = deterministic.get('numbers') or {}
+    for item in numbers.get('unmatched', []):
+        issue('number_mismatch', '正文数值与原始值不一致：' + str(item.get('label') or item.get('expected') or '未命名数值'),
+              label=item.get('label', ''), expected=item.get('expected', ''), reason=item.get('reason', ''))
+    for item in numbers.get('skipped', []):
+        notices.append({'code': 'number_unchecked', 'message': str(item.get('label') or item.get('expected') or '未命名数值') + '：' + str(item.get('reason', '未检查'))})
+    for source_id in deterministic.get('broken_refs', []):
+        issue('broken_reference', '正文引用了不存在的来源：' + str(source_id), source_id=source_id)
     return {'eligible': not blockers, 'blockers': blockers, 'notices': notices}
 
 
@@ -245,6 +258,10 @@ def eligibility(store, version_id):
     try:
         review = _applicable_review(store, newest['id'], version_id)
         snapshot = _snapshot(store, version_id)
+        from .delivery_checks import brief_checks
+        # The same deterministic result is shown on the page and re-run by the audit
+        # verifier, so the gate and the audit cannot disagree.
+        snapshot['deterministic'] = brief_checks(store, version_id)
         identity, _ = export_input(store, brief)
     except (ValueError, OSError) as exc:
         result['blockers'].append({'code': 'input_unverified', 'message': str(exc)})
