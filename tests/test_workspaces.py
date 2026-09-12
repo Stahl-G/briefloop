@@ -94,3 +94,11 @@ def test_stop_workspace_keeps_markers_while_process_survives(tmp_path, monkeypat
     assert result['stopped'] is False and result['pid']==999999
     assert (other/'server.json').exists()
     assert (999999,signal.SIGTERM) in killed and (999999,signal.SIGKILL) in killed
+
+def test_workspace_create_only_creates_siblings(tmp_path):
+    current=Store(tmp_path/'nearby'/'current')
+    outside=tmp_path/'nearby'/'nested'/'new'
+    with pytest.raises(ValueError,match='同级'):
+        open_workspace(current,str(outside),create=True)
+    assert not outside.exists()
+    assert current.root.parent==(tmp_path/'nearby').resolve()

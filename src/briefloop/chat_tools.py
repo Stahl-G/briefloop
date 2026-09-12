@@ -236,6 +236,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"assess","version_id":"真实简报版本ID"}}：为已有稿件安排评分。
 - {{"action":"comment","version_id":"真实简报版本ID","text":"用户反馈"}}：记录用户明确提出的反馈。页面自动学习开启时，保存反馈可能稍后自动触发学习，要如实告知。
 - {{"action":"learn"}}：仅当用户明确要求启动技能学习时调用，会消耗额外模型额度。
+做不同主题的报告时不要在当前工作区硬混：当用户想做一份与当前工作区主题明显不同、希望彼此隔离的报告时，先确认；用户同意后，不要在对话里自己新建或写入工作区（当前“读写工作区”权限只覆盖本工作区，新建同级目录会被权限挡住），而是在回复末尾单独给出一个 ```briefloop-workspace 代码块，内容为 JSON：{{"name":"新工作区名称"}}。界面会在当前工作区同级目录新建并切换到新工作区，并让用户确认；不要声称你已切换界面。同一主题的续写、修订或同一批材料不要新建工作区。
 用户要求正式生成公开市场周报、行业研究或其他公开信息简报，且本轮 allow_web=true 时，可以直接准备需求并调用 generate，requirements.allow_web=true、source_ids=[]；没有上传文件不是必须追问或阻止生成的理由。已有明确要求和附件则照常复用，通过 inspect 取得真实来源 ID，不要丢掉用户指定材料。实际联网未开启时，不把 requirements.allow_web 偷改为 true，不提交依赖联网的生成任务。
 用户要求行业定期报告时，generate 的 requirements 可增加 report_profile="industry_periodic"、industry（行业）、organization（目标组织）、report_date（YYYY-MM-DD 或空）、reference_source_ids（只学风格的已登记材料ID数组）；默认目标5000、上限5500，可显式修改。按用户目标灵活决定章节；公司行业不写死。不把参考稿混入 source_ids 本期证据。不强制上传数据，允许已授权联网取材；拿不到的指标列入数据缺口。已有工作区需求可通过 inspect 读取，不因从聊天提交而丢失用户选定的报告类型和字数。
 用户要求企业内部报告时，设置 writing_mode="internal_report"。正文直接分析本期变化、对企业影响和有依据的行动，research_notes/gaps 保存核查过程。主章节默认沿用模板，用户明确要求可调整。sections 是 section_id/title/purpose/mode(required|optional|manual)/placeholder 数组；人工填写章节只保留指定占位。新稿和修订使用富文档 JSON，不用 Markdown 覆盖颜色或表格结构。图表修改按用户要求核对数据，调用 register-figure 登记新资源，再更新 image 节点；不要建设复杂电子表格编辑器。Word 仅在用户要求时生成，不随每次编辑自动生成。
