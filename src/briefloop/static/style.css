@@ -322,3 +322,18 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 .report-list.grid{max-width:none}
 .report-card-menu .popover{min-width:210px;z-index:70}
 .report-card-side .ghost{height:34px;padding:0 10px}
+
+.task-banner{display:flex;align-items:center;gap:12px;flex:none;width:100%;max-width:var(--chat-column);align-self:center;margin:14px 0 0;padding:10px 14px;border:1px solid var(--line);border-radius:10px;background:var(--surface)}
+.task-banner.running{background:var(--soft);border-color:#dfe4d5}
+.task-banner.ok{background:#eef6f0;border-color:#bcd6c4}
+.task-banner.error{background:#fbf0ec;border-color:#e4c9bd}
+.task-banner-icon{flex:none;width:20px;height:20px;display:grid;place-items:center;border-radius:50%;font-size:12px;line-height:1;font-weight:700;color:var(--green);background:#dcebdf}
+.task-banner.running .task-banner-icon{color:var(--muted);background:#e7ebe0}
+.task-banner.error .task-banner-icon{color:var(--danger);background:#f5ddd4}
+.task-banner-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.task-banner-main strong{font-size:13px;font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.task-banner-main small{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.task-banner button{flex:none;height:32px;padding:0 12px;font-size:12px}
+.task-banner .task-banner-close{background:transparent;border:0;height:auto;padding:0 6px;font-size:14px;color:var(--muted)}
+.task-banner .task-banner-close:hover{color:var(--ink);background:transparent}
+@media(max-width:560px){.task-banner{gap:8px;padding:9px 11px}.task-banner button{padding:0 9px}.task-banner-main strong{font-size:12px}}
