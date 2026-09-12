@@ -24,7 +24,8 @@ classifiers = [
     "Topic :: Office/Business",
     "Topic :: Text Processing :: Markup :: Markdown",
 ]
-dependencies = ["pydantic>=2,<3", "markdown-it-py>=3,<5", "python-docx>=1", "pypdf>=5", "Pillow>=11", "pypdfium2>=4,<6", "openpyxl>=3.1,<4"]
+dependencies = [
+  "mcp==2.2.0","pydantic>=2,<3", "markdown-it-py>=3,<5", "python-docx>=1", "pypdf>=5", "Pillow>=11", "pypdfium2>=4,<6", "openpyxl>=3.1,<4"]
 
 [project.optional-dependencies]
 docx = ["python-docx>=1"]
@@ -42,5 +43,5 @@ Changelog = "https://github.com/Stahl-G/briefloop/blob/main/CHANGELOG.md"
 where = ["src"]
 
 [tool.setuptools.package-data]
-briefloop = ["static/*", "skill_assets/*/*.md", "template_assets/*", "workflow_assets/*/*.json", "workflow_assets/*/*.md", "workflow_assets/*/methods/*.md"]
+briefloop = ["static/*", "skill_assets/*/*.md", "template_assets/*", "workflow_assets/*/*.json", "workflow_assets/*/*.md", "workflow_assets/*/methods/*.md", "connectors/*.md"]
 wikiskill = ["**/*"]

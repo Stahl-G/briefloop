@@ -569,3 +569,6 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 
 .export-template-row{display:flex;align-items:center;gap:8px;padding:6px 12px;font-size:13px;color:var(--ink)}
 .export-template-row select{max-width:200px}
+
+/* MCP settings share the existing web and desktop settings surface. */
+.connector-list{display:grid;gap:16px;margin:20px 0}.connector-card,.connector-form{border:1px solid var(--line,#dfe3da);border-radius:14px;padding:20px;background:var(--paper,#fff)}.connector-card h3{margin:0}.connector-address{overflow-wrap:anywhere}.connector-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.connector-form{margin-top:20px}.connector-form label{display:block;margin-bottom:14px}.connector-form .check{display:flex}.connector-error{color:#ad472c}.connector-remove{border-top:1px solid var(--line,#dfe3da);margin-top:16px;padding-top:12px}

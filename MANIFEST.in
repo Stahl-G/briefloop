@@ -16,3 +16,5 @@ recursive-include runtime-bridge *.ts *.mjs *.json *.md
 recursive-include third_party/open-design *
 recursive-include examples *.md *.txt
 prune output
+
+recursive-include probes/mcp_m0 *.py *.md *.txt

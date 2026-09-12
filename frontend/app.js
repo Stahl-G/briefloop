@@ -5,6 +5,7 @@ import StarterKit from '@tiptap/starter-kit';
 import {TableKit} from '@tiptap/extension-table';
 import Image from '@tiptap/extension-image';
 import {Markdown} from '@tiptap/markdown';
+import {connectorSettings} from './connectors.js';
 import {TextStyle,Layout,ReportImage,Citation,editorDocument,savedDocument,readerHighlights} from './rich-document.js';
 // Reader-appropriateness marks are editor decorations: they never enter the saved
 // document, Word export or Markdown. Hover shows the violation and its requirement.
@@ -1574,10 +1575,15 @@ $('source-refresh-form').onsubmit=event=>{event.preventDefault();action(async()=
 
 function sourceRefreshOutcome(outcome){return {not_authorized:'本轮未允许联网，未执行在线复查',local_source_requires_upload:'本地来源更新需上传独立的新文件',budget_exhausted:'本轮预算已用尽，未获取新快照',fetch_failed:'新快照读取未成功，保留原来源',unchanged_snapshot:'实际取得的快照未变化',changed_needs_review:'取得的快照有变化，待判断影响并独立复核'}[outcome]||''}
 
+let connectorPanel=null;
 function settingsView(name){
- for(const view of ['models','execution','learning','workspaces'])$('settings-view-'+view).hidden=view!==name;
+ for(const view of ['models','execution','learning','workspaces','connectors'])$('settings-view-'+view).hidden=view!==name;
  document.querySelectorAll('[data-settings-view]').forEach(b=>{b.classList.toggle('active',b.dataset.settingsView===name);b.setAttribute('aria-current',b.dataset.settingsView===name?'page':'false')});
  if(name==='workspaces')return renderSettingsWorkspaces();
+ if(name==='connectors'){
+  connectorPanel ||= connectorSettings($('settings-view-connectors'),api);
+  return connectorPanel.refresh();
+ }
 }
 async function renderSettingsWorkspaces(){
  const box=$('settings-workspace-list');if(!box)return;
