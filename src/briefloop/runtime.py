@@ -139,10 +139,10 @@ def generation_prompt(store, run, folder, backend='codex'):
     report_profile=profile_context(req)
     from .deliverable_spec import resolve,instructions,reader_contract_schema
     deliverable=resolve(req)
-    (folder/'reader_contract.schema.json').write_text(json.dumps(reader_contract_schema(deliverable),ensure_ascii=False,indent=2))
-    (folder/'analyst-writing.md').write_text(instructions(deliverable,role='analyst'))
+    (folder/'reader_contract.schema.json').write_text(json.dumps(reader_contract_schema(deliverable),ensure_ascii=False,indent=2),encoding='utf-8')
+    (folder/'analyst-writing.md').write_text(instructions(deliverable,role='analyst'),encoding='utf-8')
     scout_contract=(folder/'scout-contract.md').resolve()
-    scout_contract.write_text(instructions(deliverable,role='scout'))
+    scout_contract.write_text(instructions(deliverable,role='scout'),encoding='utf-8')
     from .company_context import prompt as company_prompt
     company=company_prompt(store,run['id']) if req.get('writing_mode')=='internal_report' else ''
     max_parallel=run.get('max_parallel',store.settings()['max_parallel'])
@@ -184,7 +184,7 @@ def generation_prompt(store, run, folder, backend='codex'):
         scout_binding['instructions']=scout_binding.get('instructions','')+'\n\n'+content
         scout_binding['retrieval_skill_path']=str(retrieval_path)
         payload['role_skills']['scout']=scout_binding
-    (folder/'input.json').write_text(dump(payload))
+    (folder/'input.json').write_text(dump(payload),encoding='utf-8')
     if backend == 'opencode' and not tavily_enabled:
         search = ('本轮冻结搜索源：Opencode 原生搜索。允许联网时 Scout 使用 host 的原生网络搜索工具设计查询、筛选公开原始发布者；搜索摘要仅用于发现，后续仍须读取并登记正文。'
                   if req['allow_web'] else '本轮未允许联网，只处理已登记的材料，不加载外部检索技能。')
