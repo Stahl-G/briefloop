@@ -1,0 +1,32 @@
+import fs from 'node:fs';
+import vm from 'node:vm';
+import assert from 'node:assert/strict';
+const source=fs.readFileSync('frontend/app.js','utf8');
+const elements=new Map();const $=id=>{if(!elements.has(id))elements.set(id,{value:'',hidden:true,closest:()=>null});return elements.get(id)};
+let labelRefreshes=0;
+const c=vm.createContext({$,updateModelLabel:()=>labelRefreshes++,URLSearchParams,chat:{session:null},state:{settings:{agent_backend:'codex'}},backendValue:()=> 'codex'});
+vm.runInContext(source.slice(source.indexOf('const fastCapabilities='),source.indexOf('function modelLabel(')),c);
+const cfg={backend:'codex',model:'official-model',model_provider:null};
+const cap={...cfg,official_connection:true};
+c.cfg=cfg;c.cap=cap;$('chat-service-tier').value='fast';
+assert.equal(vm.runInContext('fastAvailable(cfg,cap)',c),true);
+for(const denied of [{official_connection:false},{official_connection:undefined}]){c.cap={...cap,...denied};assert.equal(vm.runInContext('fastAvailable(cfg,cap)',c),false)}
+c.cap={...cap,fast_supported:false,account_availability:'unknown',enabled:false};assert.equal(vm.runInContext('fastAvailable(cfg,cap)',c),true,'account and model metadata do not gate the provider switch');
+c.cap=cap;vm.runInContext('fastCapabilities.set(fastChoiceKey(cfg),cap)',c);
+assert.equal(vm.runInContext("selectedServiceTier('chat-service-tier',cfg)",c),'fast');
+$('chat-service-tier').value='default';assert.equal(vm.runInContext("selectedServiceTier('chat-service-tier',cfg)",c),'default');
+$('chat-service-tier').value='';assert.equal(vm.runInContext("selectedServiceTier('chat-service-tier',cfg)",c),null);
+$('chat-service-tier').value='fast';c.cfg={...cfg,model_provider:'gateway'};
+assert.equal(vm.runInContext("selectedServiceTier('chat-service-tier',cfg)",c),null,'official capability cannot follow a provider switch');
+assert.throws(()=>vm.runInContext("selectedServiceTier('chat-service-tier',cfg,true)",c),/正在确认/,'pending provider lookup cannot silently drop Fast');
+assert.equal($('chat-service-tier').value,'fast');
+vm.runInContext('fastCapabilities.set(fastChoiceKey(cfg),{official_connection:false})',c);
+assert.equal(vm.runInContext("selectedServiceTier('chat-service-tier',cfg,true)",c),null);
+c.cfg={...cfg,backend:'claude'};assert.equal(vm.runInContext('fastAvailable(cfg,cap)',c),false);
+// An old lookup result must not reveal Fast on a newly selected provider.
+let resolve;c.api=()=>new Promise(r=>resolve=r);c.cfg=cfg;
+$('model-select').value=cfg.model;$('model-provider').value='gateway';
+const pending=vm.runInContext('loadFastCapability(cfg)',c);resolve(cap);await pending;
+assert.equal($('service-tier').hidden,true);
+assert.equal(labelRefreshes,1,'provider lookup refreshes the displayed runtime summary');
+console.log('PASS: speed requires exact official provider only; explicit standard and inheritance stay distinct');

@@ -172,6 +172,17 @@ def make_server(workspace, port=8765, *, paused=False):
                     self.send(200,{'configurations':opencode_harness._client().provider_settings()})
                 elif u.path=='/api/runtimes':
                     self.send(200,bridge.discover())
+                elif u.path=='/api/runtime/fast-capability':
+                    from .backends import validate_backend
+                    backend=validate_backend(q.get('backend',[store.settings().get('agent_backend','codex')])[0])
+                    runtime={'backend':backend,'model':q.get('model',[''])[0],
+                             'model_provider':q.get('model_provider',[''])[0] or None}
+                    if backend=='codex':
+                        self.send(200,harness.fast_capability(runtime))
+                    else:
+                        self.send(200,{**runtime,'official_connection':False,'fast_supported':False,
+                                       'account_availability':'unknown','enabled':False,
+                                       'reason':'当前执行引擎尚未提供可核验的 Fast 能力'})
                 elif u.path=='/api/models':
                     from .backends import validate_backend
                     backend=validate_backend(q.get('backend',[store.settings().get('agent_backend','codex')])[0])
