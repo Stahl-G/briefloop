@@ -52,6 +52,8 @@ class Support(Model):
 class ClaimInput(Model):
     statement: str = Field(min_length=1,max_length=6000)
     kind: Literal['fact','source_opinion','calculation','inference','recommendation']
+    claim_role: Literal['source_statement','report_statement'] = 'report_statement'
+    attribution: str = ''
     importance: Literal['core','supporting'] = 'core'
     entity: str = ''
     metric: str = ''
@@ -155,8 +157,14 @@ def create_claim(store,run_id,request,previous_id=None):
         evidence=record(store,'evidence_spans',support.span_id)
         if evidence['source_id'] not in allowed-references:raise ValueError('主张证据未登记到本轮报告')
         if support.supports_quote not in value.statement:raise ValueError('支持范围必须明确对应本条主张中的片段')
+    if value.claim_role=='source_statement':
+        if not value.supports:raise ValueError('来源陈述必须引用已登记的证据片段')
+        if value.figure_ids:raise ValueError('来源陈述不能登记图表依据')
     for identity in value.premise_claim_ids:
-        if record(store,'claims',identity)['run_id']!=run_id:raise ValueError('推断前提属于另一报告')
+        premise=record(store,'claims',identity)
+        if premise['run_id']!=run_id:raise ValueError('推断前提属于另一报告')
+        if premise['data'].get('claim_role','report_statement')!='report_statement':
+            raise ValueError('来源陈述不能作为论证前提；请先把要采用的说法登记为报告侧主张')
     if value.kind in ('inference','recommendation','calculation') and not value.reasoning.strip():
         raise ValueError('计算、推断与建议必须记录依据和推理说明')
     from .figures import read_figure
@@ -199,6 +207,8 @@ def bind_claim(store,version_id,claim_id,block_id,quote):
     from .document_model import brief_document
     brief=store.one('briefs',version_id);claim=record(store,'claims',claim_id)
     if claim['run_id']!=brief['run_id']:raise ValueError('主张不属于该报告')
+    if claim['data'].get('claim_role','report_statement')!='report_statement':
+        raise ValueError('来源陈述不能直接绑定正文；请先建立报告侧主张并引用该来源')
     node=blocks(brief_document(brief)).get(block_id)
     if node is None or not isinstance(quote,str) or not quote or node_text(node).count(quote)!=1:
         raise ValueError('正文锚点缺失或不唯一，请指定原文所在块，不能全文模糊匹配')

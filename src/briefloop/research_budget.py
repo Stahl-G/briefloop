@@ -67,8 +67,14 @@ def snapshot(store,run_id):
 
 
 def reserve_search(store,run_id,max_results):
-    """Charge before the HTTP call; failed requests retain this charge."""
+    """Charge before the HTTP call; failed requests retain this charge.
+
+    Admission (frozen plan + active round for quality runs) and the request
+    reservation happen in the same transaction, before any network call.
+    """
+    from .research_plan import admission,record_request
     with store.tx() as connection:
+        round_id=admission(store,connection,run_id,'search')
         key,limits,state=_load(store,connection,run_id)
         if limits is not None:
             for kind in ('search_requests','candidate_urls'):
@@ -77,7 +83,9 @@ def reserve_search(store,run_id,max_results):
             max_results=min(max_results,limits['candidate_urls']-len(state['candidate_urls']))
         state['search_requests']+=1
         _save(connection,key,state)
-    return {'request_id':uid('search'),'max_results':max_results}
+        request_id=uid('search')
+        if round_id:record_request(store,connection,run_id,request_id,'search',round_id)
+    return {'request_id':request_id,'max_results':max_results,'round_id':round_id}
 
 
 def record_candidates(store,run_id,urls):
@@ -97,17 +105,21 @@ def record_candidates(store,run_id,urls):
             'unadmitted_urls':overflow,'budget':view}
 
 
-def reserve_pages(store,run_id,urls):
+def reserve_pages(store,run_id,urls,*,request_id=None):
     """A failed direct fetch and same-URL Extract fallback consume one unique page."""
+    from .research_plan import admission,record_request
     urls=list(dict.fromkeys(canonical_url(url) for url in urls))
     with store.tx() as connection:
+        round_id=admission(store,connection,run_id,'pages')
         key,limits,state=_load(store,connection,run_id)
         new=[url for url in urls if url not in state['source_pages']]
         if limits is not None and len(state['source_pages'])+len(new)>limits['source_pages']:
             raise BudgetExhausted('source_pages',_view(store,run_id,limits,state))
         state['source_pages'].extend(new)
         _save(connection,key,state)
-    return snapshot(store,run_id)
+        request_id=request_id or uid('extract')
+        if round_id:record_request(store,connection,run_id,request_id,'pages',round_id)
+    return {**snapshot(store,run_id),'round_id':round_id,'request_id':request_id}
 
 
 def save_discovery(store,run_id,request_id,raw):

@@ -263,8 +263,12 @@ def fetch_for_run(store,run_id,url):
     previous=existing_for_run(store,run_id,url)
     from . import research_budget as budget
     if previous:return {**previous,'reused':True,'budget':budget.snapshot(store,run_id)}
-    try:budget.reserve_pages(store,run_id,[url])
+    try:reservation=budget.reserve_pages(store,run_id,[url])
     except budget.BudgetExhausted as exc:return {**exc.result,'url':url}
     source=fetch(store,url)
     store.attach_source(run_id,source['id'])
-    return {**source,'reused':False,'budget':budget.snapshot(store,run_id)}
+    if reservation.get('round_id'):
+        from .research_plan import settle_request
+        settle_request(store,run_id,reservation['request_id'],'completed' if source.get('status')=='ready' else 'failed')
+    return {**source,'reused':False,'budget':budget.snapshot(store,run_id),
+            'round_id':reservation.get('round_id'),'local_request_id':reservation.get('request_id')}
