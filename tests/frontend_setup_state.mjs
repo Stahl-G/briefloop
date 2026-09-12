@@ -71,3 +71,33 @@ assert.equal(el('workflow-choice').value,'business_report/work_progress');
 assert.match(el('workflow-hint').textContent,/已选：商业报告 · 工作进展周报/);
 assert.equal(vm.runInContext('readWorkflowChoice().workflow_variant',c),'work_progress');
 console.log('PASS: explicit document purpose survives template changes');
+
+// Applying only a few requirements, including the existing outline button path,
+// preserves the selected purpose. An explicit reset is a different operation.
+c.page=()=>{};c.notice=()=>{};c.Event=class{};
+const manualSections={value:'',dispatchEvent(){}};
+el('requirements').elements={manual_sections_text:manualSections};
+vm.runInContext(source.slice(source.indexOf('function applyRequirements(text)'),source.indexOf('const TASK_LABELS=')),c);
+vm.runInContext(source.slice(source.indexOf('function applyOutlineToSetup()'),source.indexOf('function expandReportPanel()')),c);
+el('workflow-choice').value='business_report/work_progress';
+vm.runInContext('applyRequirements(JSON.stringify({manual_sections:["融资进度"]}))',c);
+assert.equal(el('workflow-choice').value,'business_report/work_progress');
+assert.equal(manualSections.value,'融资进度');
+el('outline-text').value='## 本期进展\n## 下周计划';
+vm.runInContext('applyOutlineToSetup()',c);
+assert.equal(el('workflow-choice').value,'business_report/work_progress');
+assert.equal(manualSections.value,'本期进展\n下周计划');
+vm.runInContext('applyRequirements(JSON.stringify({workflow_id:null,workflow_variant:null}))',c);
+assert.equal(el('workflow-choice').value,'','explicit null resets to the suggested purpose');
+console.log('PASS: partial requirements and the outline action retain purpose; explicit reset clears it');
+
+// UI defaults come from the same catalog used by the backend. Legacy profile
+// migration is separate from an explicitly selected document type.
+vm.runInContext('applyRequirements(JSON.stringify({workflow_id:"business_report"}))',c);
+assert.equal(el('workflow-choice').value,'business_report/'+workflows.default_variant);
+assert.equal(el('report-profile').value,'brief');
+vm.runInContext('initializeWorkflowChoice({report_profile:"industry_periodic"})',c);
+assert.equal(el('workflow-choice').value,'business_report/industry_periodic');
+vm.runInContext('applyRequirements(JSON.stringify({workflow_variant:null}))',c);
+assert.equal(el('workflow-choice').value,'business_report/'+workflows.default_variant,'clearing a variant restores the selected type default');
+console.log('PASS: explicit type uses its catalog default and legacy industry profile still migrates');

@@ -40,6 +40,8 @@ def test_workflow_selection_is_shared_with_chat_and_preserves_legacy(tmp_path):
     catalog = workspace_action(store, {'action': 'workflows'})['workflows']
     assert {x['id'] for x in catalog} == {'general_report', 'business_report'}
     assert store.snapshot()['workflows'] == catalog
+    assert resolve_workflow({'workflow_id': 'business_report'})['variant'] == next(
+        item['default_variant'] for item in catalog if item['id'] == 'business_report') == 'decision_memo'
     assert resolve_workflow({'workflow_id': 'general_report'}, 'business_report')['id'] == 'general_report'
     legacy = resolve_workflow({'report_profile': 'industry_periodic'})
     assert (legacy['id'], legacy['variant']) == ('business_report', 'industry_periodic')

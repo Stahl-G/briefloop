@@ -114,7 +114,7 @@ function applyRequirements(text){
  if(Array.isArray(data.key_questions))set('key_questions_text',data.key_questions.join('\n'));
  if(Array.isArray(data.manual_sections))set('manual_sections_text',data.manual_sections.join('\n'));
  if(data.report_profile)set('report_profile',data.report_profile);
- initializeWorkflowChoice(data);syncWorkflowProfile(false);
+ initializeWorkflowChoice(data,true);syncWorkflowProfile(false);
  if(data.writing_mode)set('writing_mode',data.writing_mode);
  if(data.target_words)set('target_words',data.target_words);
  if(data.max_words)set('max_words',data.max_words);
@@ -212,7 +212,7 @@ let welcomeIndex=0,welcomePurpose=null;
 function welcomeAvailable(){return (runtimeCatalog||[]).filter(r=>r.available)}
 function chooseWelcomeHost(id){const select=$('agent-backend');if(select&&select.value!==id){select.value=id;select.dispatchEvent(new Event('change'))}if(state&&state.settings){state.settings.model_selection_required=true;state.settings.model=''}renderWelcome()}
 function applyWelcomePurpose(id){const purpose=WELCOME_PURPOSES.find(p=>p.id===id);if(!purpose)return;welcomePurpose=id;$('chat-input').value=purpose.prompt;rememberDraft();if(purpose.fields)sessionStorage.setItem('briefloop-welcome-fields',JSON.stringify(purpose.fields));renderWelcome()}
-function applyPendingSetupFields(){let fields=null;try{fields=JSON.parse(sessionStorage.getItem('briefloop-welcome-fields')||'null')}catch{}if(!fields)return;sessionStorage.removeItem('briefloop-welcome-fields');const form=$('requirements');if(!form)return;for(const [name,value] of Object.entries(fields)){const el=form.elements[name];if(!el)continue;if(el.type==='checkbox')el.checked=!!value;else el.value=value;el.dispatchEvent(new Event('change',{bubbles:true}))}initializeWorkflowChoice(fields);syncWorkflowProfile(false)}
+function applyPendingSetupFields(){let fields=null;try{fields=JSON.parse(sessionStorage.getItem('briefloop-welcome-fields')||'null')}catch{}if(!fields)return;sessionStorage.removeItem('briefloop-welcome-fields');const form=$('requirements');if(!form)return;for(const [name,value] of Object.entries(fields)){const el=form.elements[name];if(!el)continue;if(el.type==='checkbox')el.checked=!!value;else el.value=value;el.dispatchEvent(new Event('change',{bubbles:true}))}initializeWorkflowChoice(fields,true);syncWorkflowProfile(false)}
 function renderWelcome(){
  const box=$('welcome-runtimes');if(!box)return;
  const avail=welcomeAvailable(),chosen=state?.settings?.agent_backend||'codex';
@@ -1151,9 +1151,12 @@ function readWorkflowChoice(){
  const [workflow_id,workflow_variant]=($('workflow-choice').value||'').split('/');
  return {workflow_id:workflow_id||null,workflow_variant:workflow_variant||null};
 }
-function initializeWorkflowChoice(req){
- const id=req.workflow_id||(req.report_profile==='industry_periodic'?'business_report':'');
- const variant=req.workflow_variant||(id==='business_report'?'industry_periodic':id==='general_report'?'general':'');
+function initializeWorkflowChoice(req,partial=false){
+ const has=key=>Object.prototype.hasOwnProperty.call(req,key);
+ if(partial&&!['workflow_id','workflow_variant','report_profile'].some(has))return;
+ const legacy=!req.workflow_id&&req.report_profile==='industry_periodic';
+ const id=req.workflow_id||(legacy?'business_report':partial&&!has('workflow_id')&&!has('report_profile')?readWorkflowChoice().workflow_id:'');
+ const variant=req.workflow_variant||(legacy?'industry_periodic':state?.workflows?.find(w=>w.id===id)?.default_variant||'');
  $('workflow-choice').value=id?`${id}/${variant}`:'';
 }
 function renderWorkflowChoices(first=false){
