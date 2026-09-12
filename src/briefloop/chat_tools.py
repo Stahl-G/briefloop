@@ -20,7 +20,8 @@ WORKSPACE_ACTIONS = (
     'revise_document','templates','template_rebuild','template_import','import_word_revision',
     'company_review_complete','company_read','company_config','company_update','company_resolve',
     'profile_read','profile_update',
-    'freeze_research_plan','research_status',
+    'freeze_research_plan','research_status','begin_research_round','finish_research_round',
+    'reconciliation_candidates','reconciliation_save','reconciliation_read',
     'export_word','inspect','generate','assess','comment','learn',
 )
 
@@ -54,7 +55,9 @@ def workspace_action(store, request):
         return save_reader_contract(store,request['run_id'],request['reader_contract'])
     if action=='conflict_create':
         from .conflicts import create
-        return create(store,source_ids=request['source_ids'],description=request['description'],run_id=request.get('run_id'),kind=request.get('kind','contradiction'))
+        return create(store,source_ids=request['source_ids'],description=request['description'],run_id=request.get('run_id'),kind=request.get('kind','contradiction'),
+                      importance=request.get('importance','core'),participants=request.get('participants'),scope=request.get('scope',''),
+                      requirement_ids=request.get('requirement_ids'),reconciliation_id=request.get('reconciliation_id'))
     if action=='conflict_response':
         from .conflicts import respond
         return respond(store,request['conflict_id'],request['response_action'],request['reason'])
@@ -131,6 +134,21 @@ def workspace_action(store, request):
     if action=='freeze_research_plan':
         from .research_plan import freeze
         return freeze(store,request['run_id'],preset=request.get('preset'),structure=request.get('structure'))
+    if action=='begin_research_round':
+        from .research_plan import begin_round
+        return begin_round(store,request['run_id'],target_gap_ids=request.get('target_gap_ids'),tasks=request.get('tasks'),job_id=request.get('job_id'))
+    if action=='finish_research_round':
+        from .research_plan import finish_round
+        return finish_round(store,request['run_id'],round_id=request.get('round_id'),gaps=request.get('gaps'),summary=request.get('summary',''),job_id=request.get('job_id'))
+    if action=='reconciliation_candidates':
+        from .reconciliation import candidates
+        return candidates(store,request['run_id'])
+    if action=='reconciliation_save':
+        from .reconciliation import save
+        return save(store,request['run_id'],request.get('reconciliation') if isinstance(request.get('reconciliation'),dict) else request)
+    if action=='reconciliation_read':
+        from .reconciliation import read
+        return read(store,request['run_id'],request['reconciliation_id'])
     if action=='export_word':
         from .export_jobs import enqueue_export
         job=enqueue_export(store,request['version_id'])
@@ -150,7 +168,7 @@ def workspace_action(store, request):
         requirements=Requirements.model_validate(request['requirements'])
         source_ids=request.get('source_ids',[])
         if not isinstance(source_ids,list) or not all(isinstance(x,str) for x in source_ids):raise ValueError('source_ids 必须是来源 ID 数组')
-        run=store.create_run(requirements.model_dump(),source_ids)
+        run=store.create_run(requirements.model_dump(),source_ids,research_protocol="quality_v1")
         payload={'run_id':run['id']}
         owner=_notify_owner(request)
         if owner:payload['session_id']=owner
@@ -249,6 +267,11 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"profile_update","profile":{{"name":"称呼","organization":"公司/组织","role":"岗位","location":"城市","focus":"主要工作","report_types":"常做报告"}}}}：用户第一次打招呼或交任务时，按上文约定一次问清必要几项并保存；只写用户明确说过的内容，不猜、不编造，也不把这些当作报告证据。
 - {{"action":"research_status","run_id":"真实run ID"}}：读取该任务冻结的研究计划、轮次与用量。
 - {{"action":"freeze_research_plan","run_id":"真实run ID","preset":"quick|standard|deep","structure":{{"breadth":6,"depth":2,"parallel":2}}}}：在第一次受控联网前冻结研究计划。预算只读取任务已授权的额度，不能借冻结扩大额度或替换模型/搜索源；相同内容重复提交幂等，不同内容会被拒绝。
+- {{"action":"begin_research_round","run_id":"真实run ID","target_gap_ids":["真实gap ID"],"tasks":[{{"slot_id":"scout-1"}}]}}：在当前轮已结束、且未超过 depth 上限时开始下一轮；必须引用前轮真实缺口 ID。
+- {{"action":"finish_research_round","run_id":"真实run ID","gaps":[{{"description":"真实缺口","source_ids":[],"related_claim_ids":[],"requirement_ids":[]}}],"summary":"本轮结论"}}：结束当前轮并生成真实 gap ID；之后才能 begin 下一轮。
+- {{"action":"reconciliation_candidates","run_id":"真实run ID"}}：读取本任务冻结的候选清单（来源与来源陈述），用于写作前对照。
+- {{"action":"reconciliation_save","run_id":"真实run ID","reconciliation":{{"status":"complete|partial|not_applicable|failed","examined_claim_ids":[],"unexamined_claim_ids":[],"relations":[{{"member_claim_ids":["真实claim ID","真实claim ID"],"relation":"compatible|different_scope|temporal_sequence|correction|supersession|republication|attributed_difference|contradiction|unknown","scope":"","basis_span_ids":[],"reason":"","proposed_treatment":"","affected_requirement_ids":[]}}],"open_questions":[],"coverage_notes":""}}}}：保存写作前对照快照。必须用 examined ∪ unexamined 明确覆盖候选清单全部来源陈述；关系必须引用真实来源陈述；不判定真假，只登记依据与建议写法。重复相同内容幂等。
+- {{"action":"reconciliation_read","run_id":"真实run ID","reconciliation_id":"真实对照ID"}}：读取对照快照；输入变化时返回 stale 标记。
 - {{"action":"export_word","version_id":"真实稿件ID"}}：用户要求时生成所选版本 Word，返回文件任务状态；完成后从任务结果取得下载地址。
 - {{"action":"templates"}}：读取可选模板。用户要求上传材料用作主模板时用 {{"action":"template_import","source_id":"DOCX来源ID"}} 启动一次准备；准备完成后 generate.requirements.template_id 选择具体版本。需要重新准备已有模板版式时，用 {{"action":"template_rebuild","template_id":"已有模板ID"}} 从保留原件创建新模板版本；原模板和已绑定稿件保持不变，新任务选择返回的新模板ID。
 - {{"action":"read_report","version_id":"稿件ID"}}：读取富文档 JSON 和引用。用户明确要求修改内容/章节/图表时，将修改后的 JSON 保存到工作区文件，再用 {{"action":"revise_document","base_version":"刚读取版本ID","document_file":"工作区内JSON绝对路径"}} 保存新版本，不覆盖用户并发编辑。

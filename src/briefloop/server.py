@@ -333,7 +333,7 @@ def make_server(workspace, port=8765, *, paused=False):
                     result=enqueue_export(store,body['version_id'])
                 elif path=='/api/generate':
                     req=Requirements.model_validate(body['requirements'])
-                    run=store.create_run(req.model_dump(),body.get('source_ids',[]))
+                    run=store.create_run(req.model_dump(),body.get('source_ids',[]),research_protocol='quality_v1')
                     payload={'run_id':run['id']}
                     if body.get('session_id'):payload['session_id']=body['session_id']
                     result=store.enqueue('generate',payload)

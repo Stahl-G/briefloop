@@ -129,6 +129,8 @@ def generation_prompt(store, run, folder, backend='codex'):
     if 'research_budget' not in raw_requirements:req['research_budget']=None
     from .research_budget import snapshot as budget_snapshot
     research_budget=budget_snapshot(store,run['id'])
+    from .research_plan import frozen as frozen_plan,is_quality
+    research_plan=frozen_plan(store,run['id']) if is_quality(store,run['id']) else None
     provider=normalize_search_provider(run.get('search_provider'))
     skill=run.get('skill_override') if 'skill_override' in run else (store.one('skills',run['skill_id']) if run['skill_id'] else None)
     sources=[source_context(store,sid) for sid in store.source_ids(run['id'])]
@@ -156,7 +158,7 @@ def generation_prompt(store, run, folder, backend='codex'):
         scout_slots.append({'slot_id':f'scout-{number}','directory':str(directory),
                             'result_file':str(directory/'result.json'),'schema_path':str(schema_path),
                             'scout_contract_path':str(scout_contract)})
-    payload={'deliverable_spec':deliverable,'report_profile':report_profile,'reference_sources':references,'requirements':req,'research_budget_status':research_budget,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':max_parallel,'scout_slots':scout_slots,'scout_contract_path':str(scout_contract),'reusable_research':run.get('reusable_research',[])}
+    payload={'deliverable_spec':deliverable,'report_profile':report_profile,'reference_sources':references,'requirements':req,'research_budget_status':research_budget,'research_plan':research_plan,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':max_parallel,'scout_slots':scout_slots,'scout_contract_path':str(scout_contract),'reusable_research':run.get('reusable_research',[])}
     tool=shlex.join([sys.executable,'-m','briefloop','tool','--workspace',str(store.root)])
     tavily_enabled=req['allow_web'] and provider=='tavily'
     if tavily_enabled:
@@ -208,10 +210,15 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
     else:
         budget_note='本轮检索由宿主原生工具执行，BriefLoop 不精确计量原生搜索次数与候选 URL（input.json.research_budget_status 中这两项在原生模式下为空或未知，不是额度，不要当成可用次数去核对）；只有受控 add-url/Extract 的唯一正文 URL（source_pages）按事务计量。出现 budget_exhausted 时保留现有来源并简要交接缺口，不重试消耗上限的操作；派发每批前按剩余 source_pages 留出补缺名额，不把它当成可任意扩张的额度。旧任务 limits=null 表示未设置预算，不追溯限制。'
     native_word = '原生 Codex 搜索不可精确计量' if backend == 'codex' else '原生 Opencode 搜索不可精确计量'
+    research_plan_note=('' if not research_plan else
+        '本轮是 quality_v1 分轮研究：计划已冻结，见 input.json.research_plan。structure.breadth 是每轮查询建议，depth 是最大轮数；current_round_id 是当前 active 轮次。'
+        '完成本轮 Scout 并结构合并后，由同一 Analyst/主 Agent 查看本轮候选，再决定补证或收轮：需要下一轮时，先用 workspace-action `finish_research_round`（run_id、gaps：每项含 description，可选 source_ids/related_claim_ids/requirement_ids）拿到程序生成的真实 gap id，再用 `begin_research_round`（run_id、target_gap_ids=上一步返回的 gap id、tasks）开下一轮；不需要下一轮就只调用 finish_research_round 收轮。'
+        '不要只用提示词模拟轮次；breadth 可按证据需要调整，实际硬上限是本任务已授权共享预算。恢复时先读取 research_status，复用已关闭轮次及真实缺口，不重新消耗已完成研究。')
     view_word = '使用 view_image 直接读图' if backend == 'codex' else '用 read 工具直接读取图像路径'
     view_pages_word = '使用 view_image 读取页图' if backend == 'codex' else '用 read 工具读取返回的页图'
     check_word = 'view_image检查' if backend == 'codex' else '用 read 工具读取检查'
     return common+f'''
+{research_plan_note}
 本轮输入：{folder/'input.json'}。你的工作目录：{folder}。先按字段读取 requirements、sources 索引、scout_slots 和能力路径；不要为分工先展开全部技能正文或 schema。
 图表与表格由主 Agent 根据报告目标、参考报告和可用数据决定类型、数量与正文位置，不要求凑图，也不固定成一种预测图。趋势、量价和事件反应用图，精确数值与竞争条件用表；IR任务优先二级市场量能/PR反应，市场细价按需求精简。
 先复用用户Excel/历史报告已有且适用的图表，不默认重绘。对XLSX来源用 `{tool} extract-workbook-figures --id SOURCE_ID` 获取原始内嵌图片与原生图表清单；原生图表需用可用渲染器，或复用经核对来自同版本工作簿的渲染图。重新绘图不能称原图复制，旧参考只提供表达方式，数据日期必须适用本期。
@@ -244,9 +251,15 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
    {registration} 返回的新来源不在最初 input.json.sources 中也是正常的：在 Scout result.json 中使用返回的真实 source_id、准确 locator/excerpt 和缺口，后续交接保留所有实际取得的 acquired source IDs。不可编造 ID 或把新来源漏掉。
    已上传材料和公开网页都是要核对的原文，不自动等于真实结论。保留数值、单位、主体、时间口径及计划/预计/已实现等状态；区分发布日期与事件/统计期间，检查表头和脚注。忠实引用原文，发现异常或冲突时标出依据与未确定之处，不静默改写原材料，不混用不可比口径。
    未开启联网时只读上传来源。失败或期外来源的状态已在来源记录中保留，不在子任务回复中倾倒整份清单；gaps 简短说明重要影响及相关来源 ID，不删证据，不把无法读取写成没有变化。需要原文时先用 `{tool} read-source --id SOURCE_ID --start-line 1 --end-line 80 --max-chars 6000` 读取相关部分，再按实际行号定向扩展，不把截断当全文，不反复 dump 全文。
-3. 父会话主要接收 Scout 的短摘要、状态和结果路径；用 `{tool} join-scouts --files SCOUT_RESULT_PATHS > {shlex.quote(str(folder/'joined-scouts.json'))}` 做结构与来源 ID 校验和合并。文件列表必须是实际已派发槽位的 result_file 绝对路径；确认工具成功与文件存在即可，不再次逐项机械校验全部 JSON/schema/引用。缺少结果表示该槽未完成，不能复制另一槽或根目录文件冒充补交。只有工具报错才定向查看相关槽；证据判断由后续 Analyst/Evaluator 按需核对原文。
+3. 父会话主要接收 Scout 的短摘要、状态和结果路径；用 `{tool} join-scouts --run {run['id']} --files SCOUT_RESULT_PATHS > {shlex.quote(str(folder/'joined-scouts.json'))}` 做结构与来源 ID 校验和合并。文件列表必须是实际已派发槽位的 result_file 绝对路径；确认工具成功与文件存在即可，不再次逐项机械校验全部 JSON/schema/引用。缺少结果表示该槽未完成，不能复制另一槽或根目录文件冒充补交。只有工具报错才定向查看相关槽；证据判断由后续 Analyst/Evaluator 按需核对原文。
    随后调用独立 Analyst，要求其读取 {folder/'analyst-writing.md'} 并使用plan中同一份已通过校验的reader_contract；研究方法约束用于执行，不抄到正文。任务输入包括本轮 plan、joined-scouts.json、全部实际取得来源的 ID 与原文读取入口、只与 analyst 相关的当前技能。用 `{tool} read-source --id SOURCE_ID` 可读取包括 acquired sources 在内的登记正文；不要只给它最初可能为空的 input.json.sources。
-   Analyst 引用本轮实际来源 ID；新来源已由 {registration} 绑定本轮，应用随后独立评分时也会把这些 acquired sources 交给 Evaluator。若最终仍未获得可用原文，将具体缺口与无法确认范围写入research_notes/gaps，不用常识或搜索摘要编造市场事实。
+    Analyst 引用本轮实际来源 ID；新来源已由 {registration} 绑定本轮，应用随后独立评分时也会把这些 acquired sources 交给 Evaluator。若最终仍未获得可用原文，将具体缺口与无法确认范围写入research_notes/gaps，不用常识或搜索摘要编造市场事实。
+    动笔前做一次“写作前证据对照”，不新增角色，使用 `{tool} workspace-action --request REQUEST_JSON`：
+    1. reconciliation_candidates(run_id={run['id']}) 读取本轮冻结候选（已登记来源 + 已登记来源陈述）；未提取候选的来源也应保留在覆盖清单中。
+    2. 对与重要问题相关的来源陈述，先用 evidence_span 登记真实片段，再用 claim_create 以 claim_role="source_statement"（可带 attribution）登记；来源不明的记忆只能记为待查问题，不能伪造来源。
+    3. 回查足以判断关系的原文，按可比较条件（主体/指标/对象范围/单位与分母/期间/条件/归属/actual|plan|forecast|opinion）判断关系，取 compatible/different_scope/temporal_sequence/correction/supersession/republication/attributed_difference/contradiction/unknown；一条关系至少两个不同来源陈述，有方向的显式给方向，不做传递推断。
+    4. reconciliation_save(run_id={run['id']}, reconciliation={{status, examined_claim_ids, unexamined_claim_ids, relations:[{{member_claim_ids, relation, scope, basis_span_ids, reason, proposed_treatment, affected_requirement_ids}}], open_questions, coverage_notes}})：examined 与 unexamined 必须明确划分候选清单全部来源陈述；只有确实需要处理的分歧才用 conflict_create 登记（带 participants 的 claim_id/span_ids、scope、importance，可选 reconciliation_id）。对照只记录关系与依据，不代替正文主张的支持范围核查。
+    5. 把返回的 reconciliation_id 写进 draft.json.reconciliation_id；正文按对照结论组织并执行必要限定，不把来源陈述直接当作报告事实，也不平均或投票选赢家。
    Analyst 直接写可读 Brief：按对读者的重要性取舍，解释变化与有证据支持的意义，区分事实与推断，保留关键条件。
    按本轮产物约定决定分析深度和行动建议，避免逐篇复述材料或用泛泛背景凑篇幅。
    正文目标约 {req['target_words']}，上限 {req['max_words']} 个计数单位；接近目标优先保留关键信息，正文不得超过上限。规则：中文汉字每字计 1，连续英文字母或数字串计 1；排除 Markdown 语法、URL 和 [@source_id] 引用，标题、列表与表格文字计入正文。
@@ -553,9 +566,10 @@ class Worker:
             run['reusable_research']=[str(p) for p in previous.glob('scout*/result.json') if p.is_file()]
         if 'skill_override' in payload:run['skill_override']=payload['skill_override']
         job['allow_web']=json.loads(run['requirements'])['allow_web']
-        from .research_plan import freeze as freeze_research_plan,is_quality
-        if is_quality(self.store,run['id']):
+        from .research_plan import freeze as freeze_research_plan,is_quality,frozen as frozen_plan
+        if is_quality(self.store,run['id']) and not frozen_plan(self.store,run['id']):
             # Freeze from the already-authorized budget before any controlled call.
+            # A plan frozen earlier (for example a custom structure) stays authoritative.
             freeze_research_plan(self.store,run['id'],owner_job_id=job['id'])
         from .company_context import prepare_review
         prepare_review(self.store,self.runtime,job,run,folder,backend)

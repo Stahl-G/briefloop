@@ -8,7 +8,8 @@ CREATE TABLE IF NOT EXISTS conflicts(id TEXT PRIMARY KEY,run_id TEXT REFERENCES 
 '''
 
 
-def create(store,*,source_ids,description,run_id=None,fact_ids=None,kind='contradiction',importance='core'):
+def create(store,*,source_ids,description,run_id=None,fact_ids=None,kind='contradiction',importance='core',
+           participants=None,scope='',requirement_ids=None,reconciliation_id=None):
     if len(set(source_ids))<1 or not description.strip():raise ValueError('冲突需要来源与具体分歧')
     if kind not in ('contradiction','correction','different_scope','forecast_difference','unknown'):raise ValueError('未知冲突类型')
     if importance not in ('core','supporting'):raise ValueError('未知冲突重要性')
@@ -17,7 +18,20 @@ def create(store,*,source_ids,description,run_id=None,fact_ids=None,kind='contra
     for identity in fact_ids or []:
         facts=store.rows('SELECT source_id FROM company_facts WHERE id=?',(identity,))
         if not facts or facts[0]['source_id'] not in source_ids:raise ValueError('冲突中的企业事实未绑定参与来源')
-    data={'source_ids':sorted(set(source_ids)),'description':description,'fact_ids':fact_ids or [],'kind':kind,'importance':importance,'responses':[]}
+    participants=participants or []
+    from .evidence import record
+    for item in participants:
+        if not isinstance(item,dict) or not item.get('claim_id'):raise ValueError('冲突参与陈述需要 claim_id')
+        claim=record(store,'claims',item['claim_id'])
+        if run_id and claim['run_id']!=run_id:raise ValueError('冲突参与主张属于另一报告')
+        for span_id in item.get('span_ids',[]) or []:
+            if record(store,'evidence_spans',span_id)['source_id'] not in source_ids:
+                raise ValueError('冲突参与片段未绑定参与来源')
+    if reconciliation_id:
+        from .reconciliation import exists
+        if not exists(store,run_id,reconciliation_id):raise ValueError('冲突引用的对照记录不存在')
+    data={'source_ids':sorted(set(source_ids)),'description':description,'fact_ids':fact_ids or [],'kind':kind,'importance':importance,'responses':[],
+          'participants':participants,'scope':scope,'requirement_ids':requirement_ids or [],'reconciliation_id':reconciliation_id}
     for row in store.rows("SELECT * FROM conflicts WHERE status IN ('open','addressed_pending_review')"):
         old=json.loads(row['data'])
         if row['run_id']==run_id and old['source_ids']==data['source_ids'] and old['description']==description:return {**row,'data':old}
