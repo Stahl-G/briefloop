@@ -71,7 +71,7 @@ jobs:
           Copy-Item runtime-bridge/bridge.test.mjs -Destination $smoke
           $bridgeDirectory = Join-Path $smoke 'src/briefloop/static'
           New-Item -ItemType Directory -Path $bridgeDirectory -Force | Out-Null
-          $package = & $wheelPython -c "import briefloop; from pathlib import Path; print(Path(briefloop.__file__).parent)"
+          $package = & $wheelPython -X utf8 -c "import briefloop; from pathlib import Path; print(Path(briefloop.__file__).parent)"
           Copy-Item (Join-Path $package 'static/runtime-bridge.mjs') -Destination $bridgeDirectory
           "WHEEL_SMOKE=$smoke" >> $env:GITHUB_ENV
           "BRIEFLOOP_PROCESS_HELPER=$(Join-Path $package 'process_host.py')" >> $env:GITHUB_ENV

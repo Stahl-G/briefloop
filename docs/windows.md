@@ -38,6 +38,8 @@ Windows MCP 已实际验证官方 SDK 的 stdio 与 HTTP 连接、scope 隔离�
 
 Hermes 0.21.2 与 Reasonix 1.38.7 已通过实际 BriefLoop bridge 使用官方 DeepSeek Flash 读取合成文件并完成回复。Hermes 优先使用专用 `hermes-acp` 入口；首次模型目录初始化可能准备额外依赖并超出启动等待时间，本机依赖准备完成后重测通过。Reasonix 新版的模型标识为 `provider/model`，目录保留实际模型部分。上述调用使用隔离测试配置，不代表用户原有模型认证已经配置完成。
 
+同样的真实工具回合也在 Kimi Code 0.42.0、Claude Code 2.1.186、MiMo Code 0.1.0 上完成，使用各宿主支持的临时环境或独立配置连接 DeepSeek 官方 API；模型返回了实际合成文件中的标记，临时凭据随后清理。这些是工具调用通过，不能替代各宿主完整的报告生成、审阅与导出验收。
+
 ## 自动化验证
 
 GitHub Actions 包含独立 `windows-native` job：Python 3.11、Node 20、普通 wheel 安装、非源码目录执行、中文路径、进程/锁/编码/导出/审阅包回归和安装包 bridge 协议测试。合成协议测试不需要模型凭据；CI 通过不等于真实模型闭环通过。
