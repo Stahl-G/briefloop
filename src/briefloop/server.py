@@ -75,6 +75,17 @@ def make_server(workspace, port=8765, *, paused=False):
     asset_bytes={name:assets.joinpath(name).read_bytes() for name in ('index.html','app.js','style.css')}
     class Handler(BaseHTTPRequestHandler):
         def log_message(self,format,*args): pass
+        def parse_request(self):
+            if not super().parse_request():return False
+            # Loopback binding alone does not prevent a foreign DNS name from
+            # reaching this service. Validate authority before any route can
+            # expose workspace data or the browser session token.
+            expected=f'127.0.0.1:{self.server.server_port}'
+            if self.headers.get_all('Host',[]) != [expected]:
+                self.close_connection=True
+                self.send(403,{'error':'请通过 http://'+expected+' 打开本地工作区'})
+                return False
+            return True
         def send(self,status,data,content_type='application/json; charset=utf-8',download_name=None):
             payload=data if isinstance(data,bytes) else dump(data).encode()
             self.send_response(status)
