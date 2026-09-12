@@ -671,7 +671,16 @@ def review_status(store,version_id):
         response=latest.get(finding['id']);decision=decisions.get(response['id']) if response else None
         finding['status']=('open' if decision=='unresolved' or not response else decision or 'addressed_pending_review')
     from .conflicts import for_run
+    detail=json.loads(brief['detail'])
+    reconciliation=None
+    if detail.get('reconciliation_id'):
+        try:
+            from .reconciliation import read as read_reconciliation
+            reconciliation=read_reconciliation(store,brief['run_id'],detail['reconciliation_id'])
+        except (ValueError,OSError) as exc:
+            reconciliation={'id':detail['reconciliation_id'],'error':str(exc)}
     return {'version_id':version_id,'conflicts':for_run(store,brief['run_id']),'reviews':[{**r,'result':json.loads(r['result']) if r['result'] else None} for r in reviews],
+            'reconciliation':reconciliation,
             'findings':[{**f,'data':json.loads(f['data'])} for f in findings]}
 
 

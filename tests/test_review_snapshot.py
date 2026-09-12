@@ -32,3 +32,18 @@ def test_review_snapshot_without_reconciliation_stays_none(tmp_path):
     snapshot = _snapshot(store, brief['id'])
     assert snapshot['reconciliation'] is None
     assert snapshot['source_statements'] == []
+
+
+def test_review_status_exposes_reconciliation_for_the_rail(tmp_path):
+    from briefloop.review import review_status
+    store = Store(tmp_path)
+    run = store.create_run({'title': 'Report', 'objective': 'o', 'allow_web': True}, [])
+    source = store.add_source('A', 'Revenue 12 million USD in H1.')
+    store.attach_source(run['id'], source['id'])
+    span = create_span(store, {'source_id': source['id'], 'locator': {'kind': 'text', 'start_line': 1, 'end_line': 1}})
+    statement = create_claim(store, run['id'], {'statement': 'Revenue 12 million USD in H1.', 'kind': 'fact',
+        'claim_role': 'source_statement', 'supports': [{'span_id': span['id'], 'supports_quote': '12 million USD'}]})
+    record = reconciliation.save(store, run['id'], {'status': 'complete', 'examined_claim_ids': [statement['id']], 'unexamined_claim_ids': []})
+    brief = store.publish(run['id'], {'title': 'T', 'markdown': 'Body', 'reconciliation_id': record['id']})
+    status = review_status(store, brief['id'])
+    assert status['reconciliation']['id'] == record['id'] and status['reconciliation']['stale'] is False
