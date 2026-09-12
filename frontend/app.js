@@ -1531,15 +1531,15 @@ function renderReportStatus(){
  const a=current&&state.assessments.find(x=>x.version_id===current.id);
  if(a){const d=parse(a.data);chips.push(d.status==='complete'?`<span class="chip ok">已评分${d.overall?' · '+esc(d.overall):''}</span>`:'<span class="chip">评分中</span>')}
  else{const pending=!!(current&&state.jobs.some(j=>['generate','revise','assess'].includes(j.kind)&&['queued','running'].includes(j.status)&&(()=>{const p=parse(j.payload);return p.version_id===current.id||p.run_id===current.run_id})()));chips.push(pending?'<span class="chip">评分中</span>':'<span class="chip warn">未评分</span>')}
- const conflicts=(state.conflicts||[]).length;if(conflicts)chips.push(`<span class="chip danger">来源分歧 ${conflicts}</span>`);
+ const conflicts=runConflicts(current.run_id).length;if(conflicts)chips.push(`<span class="chip danger">来源分歧 ${conflicts}</span>`);
  box.innerHTML=chips.join('');
 }
 function renderAssistantSummary(){
  const box=$('assistant-summary');if(!box)return;
  if(!current){box.innerHTML='';return}
  const run=(state.runs||[]).find(r=>r.id===current.run_id),req=run?parse(run.requirements):{};
- const conflicts=(state.conflicts||[]).length;
- const kv=[['时间范围',req.period],['读者',req.audience],['已登记来源',(state.sources||[]).length+' 个']].filter(([,v])=>v);
+ const conflicts=runConflicts(current.run_id).length;
+ const kv=[['时间范围',req.period],['读者',req.audience],['已登记来源',runSourceCount(current.run_id)+' 个']].filter(([,v])=>v);
  const cards=[];
  if(kv.length)cards.push(`<dl class="assistant-card">${kv.map(([k,v])=>`<div class="kv"><dt>${esc(k)}</dt><dd>${esc(String(v))}</dd></div>`).join('')}</dl>`);
  cards.push(`<div class="assistant-card"><h3>需要关注</h3>${conflicts?`<div class="attention"><span class="badge danger">数据冲突</span><span>有 ${conflicts} 项来源分歧待处理</span></div>`:'<p>暂未发现待处理冲突；评分与审阅完成后会显示在这里。</p>'}</div>`);
@@ -1572,6 +1572,15 @@ function reportStatus(b){
  return {key:'draft',label:'草稿',cls:''};
 }
 function runSourceCount(runId){return runSourceIds((state.runs||[]).find(r=>r.id===runId)).length}
+function runConflicts(runId){
+ const run=(state.runs||[]).find(r=>r.id===runId);let ids=[];
+ try{ids=run?(Array.isArray(run.all_source_ids)?run.all_source_ids:JSON.parse(run.source_ids||'[]')):[]}catch{}
+ const scoped=new Set(ids);
+ return (state.conflicts||[]).filter(c=>{
+  if(c.run_id)return c.run_id===runId;
+  try{return (JSON.parse(c.data).source_ids||[]).some(id=>scoped.has(id))}catch{return false}
+ });
+}
 function reportDescription(b){const run=(state.runs||[]).find(r=>r.id===b.run_id);const req=run?parse(run.requirements):{};if(req.objective)return req.objective;const md=(b.markdown||'').replace(/[#>*`\[\]]/g,' ').replace(/\s+/g,' ').trim();return md.slice(0,120)}
 function renderReports(){
  const box=$('reports-list');if(!box||!state)return;

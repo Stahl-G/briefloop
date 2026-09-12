@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import ConfigDict, Field, model_validator
 from .models import Model, Assessment
 from .store import dump, uid, now
-from .evidence import inspect_bindings
+from .evidence import inspect_bindings, record
 
 SCHEMA='''
 CREATE TABLE IF NOT EXISTS reviews(id TEXT PRIMARY KEY,version_id TEXT NOT NULL REFERENCES briefs(id),
@@ -66,6 +66,8 @@ class ConflictCheck(Model):
     decision: Literal['unresolved','confirmed_correction','different_scope','attributed_forecasts','keep_current','adopt_new']
     reason: str = Field(min_length=1)
     chosen_fact_id: str | None = None
+    basis_span_ids: list[str] = Field(default_factory=list)
+    scope: str = ''
 
 
 class RequirementCheck(Model):
@@ -230,7 +232,7 @@ def validate_applicable_review(store,review_id,version_id=None):
     return review
 
 
-def _snapshot(store,version_id,snapshot_version=5):
+def _snapshot(store,version_id,snapshot_version=6):
     from .document_model import brief_document
     from .deliverable_spec import resolve
     from .figure_support import validate_figures
@@ -248,8 +250,25 @@ def _snapshot(store,version_id,snapshot_version=5):
         except (ValueError,OSError) as exc:sources.append({'id':sid,'name':source['name'],'hash':source['hash'],'error':str(exc)})
     from .evidence import claim_closure
     unused=store.rows('SELECT c.id FROM claims c WHERE c.run_id=? AND NOT EXISTS (SELECT 1 FROM claim_bindings b WHERE b.claim_id=c.id) AND NOT EXISTS (SELECT 1 FROM claims n WHERE n.previous_id=c.id)',(run['id'],))
-    candidates=[claim_closure(store,c['id']) for c in unused]
+    # Source statements are comparison input, not candidate report claims.
+    candidates=[closure for closure in (claim_closure(store,c['id']) for c in unused)
+                if closure['claim']['data'].get('claim_role','report_statement')=='report_statement']
+    source_statements=[]
+    for row in store.rows('SELECT * FROM claims WHERE run_id=? ORDER BY rowid',(run['id'],)):
+        data=json.loads(row['data'])
+        if data.get('claim_role')!='source_statement':continue
+        source_statements.append({'claim_id':row['id'],'statement':data['statement'],'kind':data['kind'],
+                                  'entity':data.get('entity',''),'metric':data.get('metric',''),'period':data.get('period',''),
+                                  'scope':data.get('scope',''),'attribution':data.get('attribution',''),
+                                  'supports':[support['span_id'] for support in data.get('supports',[])]})
     detail=json.loads(brief['detail']);requirements=json.loads(run['requirements'])
+    reconciliation=None
+    if detail.get('reconciliation_id'):
+        try:
+            from .reconciliation import read as read_reconciliation
+            reconciliation=read_reconciliation(store,run['id'],detail['reconciliation_id'])
+        except (ValueError,OSError) as exc:
+            reconciliation={'id':detail['reconciliation_id'],'error':str(exc)}
     timing=[];changes=[]
     if snapshot_version>=5:
         from .source_updates import for_run as changes_for_run
@@ -259,6 +278,7 @@ def _snapshot(store,version_id,snapshot_version=5):
             'requirements':resolve(requirements,reader_contract=detail.get('reader_contract')),'detail':detail,
             **({'requirements_input':requirements} if snapshot_version>=4 else {}),
             **({'source_updates':changes,'source_timing':timing} if snapshot_version>=5 else {}),
+            **({'source_statements':source_statements,'reconciliation':reconciliation} if snapshot_version>=6 else {}),
             'sources':sources,'conflicts':conflicts,'evidence':inspect_bindings(store,version_id),
             'figures':validate_figures(store,run['id'],brief['markdown'])}
 
@@ -345,6 +365,19 @@ def _visual_inputs(store,snapshot,packet,source_index,save):
             selected.setdefault(key,{'kind':kind,'span_ids':[]})['span_ids'].append(evidence['id'])
         for premise in node.get('premises',[]):collect(premise)
     for node in snapshot['evidence']['bindings']:collect(node)
+    # Candidate counter-evidence: source statements and comparison basis spans are
+    # visual inputs too, not only the claims the body already adopted.
+    extra_span_ids=set()
+    for statement in snapshot.get('source_statements',[]):extra_span_ids.update(statement.get('supports',[]))
+    for relation in (snapshot.get('reconciliation') or {}).get('relations',[]):extra_span_ids.update(relation.get('basis_span_ids',[]))
+    from .evidence import record as _evidence_record
+    for span_id in sorted(extra_span_ids):
+        try:span=_evidence_record(store,'evidence_spans',span_id)
+        except ValueError:continue
+        locator=span['data']['locator'];kind=locator['kind']
+        if kind not in ('image','pdf'):continue
+        key=(span['source_id'],locator.get('page') if kind=='pdf' else None)
+        selected.setdefault(key,{'kind':kind,'span_ids':[]})['span_ids'].append(span_id)
     sources={item['id']:item for item in source_index}
     for number,((sid,page),choice) in enumerate(selected.items()):
         source=sources[sid];identity='source:'+sid+(':'+str(page) if page else '')
@@ -554,6 +587,10 @@ def accept_review(store,review_id,value):
     allowed_conflicts={x['id'] for x in current['conflicts']}
     conflict_ids=[check.conflict_id for check in result.conflict_checks]
     if len(conflict_ids)!=len(set(conflict_ids)) or not set(conflict_ids).issubset(allowed_conflicts):raise ValueError('冲突复核引用范围外或重复的 conflict_id')
+    for check in result.conflict_checks:
+        for span_id in check.basis_span_ids:
+            try:record(store,'evidence_spans',span_id)
+            except ValueError:raise ValueError('冲突复核引用了不存在的证据片段：'+span_id) from None
     if result.status=='complete' and set(conflict_ids)!=allowed_conflicts:raise ValueError('完整审阅遗漏冲突复核')
     if result.assessment is not None:store.validate_assessment(result.version_id,result.assessment.model_dump())
     with store.tx() as c:
@@ -696,7 +733,8 @@ def run_review(store,runtime,job,version_id,folder):
 检查所有重要事实与判断是否有依据，包括作者未登记的主张；逐项核查已有claim并报告支持范围、反证、证据不足或未知。图像不可读、执行记录缺失和审阅失败不是通过。对每个遗漏、错误给正文片段及依据。
 企业报告的核查详情留本结果，不要求正文堆免责声明；准确日期/单位/计划性质应保留。缺口披露不抵消研究覆盖与读者要求。不要使用“无发现”代替完整性检查。
 核对target.json中的source_updates和source_timing，区分统计/事件有效期、披露/可得时间、抓取时间与本轮截止时间。更正或新期间的分类声明仍需对照旧新原件，不把proposed当已确认。
-核对target.json中的conflicts，按明确更正、不同口径、预测归属或未决分歧分类，逐项给conflict_checks；不要因日期新或官方标签一刀切采用。
+核对target.json中的conflicts，按明确更正、不同口径、预测归属或未决分歧分类，逐项给conflict_checks；不要因日期新或官方标签一刀切采用。冲突复核可带basis_span_ids与scope说明依据范围。
+核对target.json中的source_statements与reconciliation：source_statements是各来源自身提出的陈述；reconciliation是作者写作前的对照记录，relations只表示可比较性与关系，不表示系统已判定真假。独立判断作者选的是否同一问题、关系分类是否正确、是否漏掉已取得的相反材料、正文是否真正执行了限定或修正；需要处理的分歧用finding返回，不写入Conflict，也不因作者标记complete就认为事实通过。
 claim_checks可以使用target.evidence.bindings、premises闭包以及candidate_claims中的真实claim_id。candidate_claims是已登记但未用于正文的候选，不能当成当前正文已使用；若其内容实际出现在正文却未绑定，应记录missing_binding，不编造新claim_id。
 对history/responses.json每条当前版本的作者回应，必须在response_checks单独给response_id、decision(resolved/dismissed_with_evidence/unresolved)、reason。findings只放新发现，不要因已修复问题从findings消失就省略response_checks。作者说已修复不算解决，须对照修订和证据；图像不可读等遗留问题应明确unresolved，不重复创建同一发现。
 {requirement_instruction}
