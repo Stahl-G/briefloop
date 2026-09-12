@@ -238,7 +238,7 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
 {instructions(deliverable,role='orchestrator')}
 {company}
 企业背景操作使用同一工具 `{tool} workspace-action --request REQUEST_JSON`，支持 company_read、company_config(enabled)、company_update(fact 包含 key/value/source_id/locator/effective_date/origin)、company_resolve(fact_id/accept)。只根据用户明确回答设置是否维护及采用冲突资料。
-行业数据整理入口：`{tool} prepare-report-data --run {run['id']} --file RAW_JSON --output PREPARED_JSON`（仅行业报告需要）。Analyst 接收 input.report_profile 和 reference_sources；参考资料不是当期证据，原始数值 records 写 draft.report_data，不复制 calculations/markdown 到 report_data。
+结构化数据整理入口：`{tool} prepare-report-data --run {run['id']} --file RAW_JSON --output PREPARED_JSON`（报告需要数据比较时使用）。Analyst 接收 input.report_profile 和 reference_sources；参考资料不是当期证据，原始数值 records 写 draft.report_data，不复制 calculations/markdown 到 report_data。
 {search}
 预算与停止条件：{budget_note}
 按 input.json.role_skills 给对应角色分配当前技能及版本；可让角色按路径读取自己对应的字段，没有绑定则使用基础任务说明。父会话不重复抄写已分配的技能。保存实际角色任务和返回句柄。

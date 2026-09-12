@@ -42,5 +42,5 @@ Changelog = "https://github.com/Stahl-G/briefloop/blob/main/CHANGELOG.md"
 where = ["src"]
 
 [tool.setuptools.package-data]
-briefloop = ["static/*", "skill_assets/*/*.md", "template_assets/*"]
+briefloop = ["static/*", "skill_assets/*/*.md", "template_assets/*", "workflow_assets/*/*.json", "workflow_assets/*/*.md", "workflow_assets/*/methods/*.md"]
 wikiskill = ["**/*"]

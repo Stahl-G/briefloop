@@ -40,8 +40,8 @@ assert.match(el('template-status').textContent,/尚未就绪/);
 assert.throws(()=>vm.runInContext('readTemplateSections()',templates),/尚未就绪/);
 console.log('PASS: template choice survives refreshes and an unready template blocks the run');
 
-// Reference reports are separated from this period's evidence; switching back to a brief
-// must return those materials instead of dropping them from the run.
+// Reference reports stay references when changing content methods; uploaded old
+// facts must not silently become current evidence.
 const evidenceB={checked:false};
 el('source-list').querySelector=selector=>selector.includes('"b"')?evidenceB:null;
 const profileCode=source.slice(source.indexOf('const INDUSTRY_TASK_OUTLINE='),source.indexOf("$('industry-task-outline').onclick"));
@@ -53,6 +53,21 @@ vm.runInContext(profileCode,c);
 el('report-profile').value='industry_periodic';el('report-profile').onchange();
 assert.equal(c.selected.has('b'),false,'reference material leaves this period');
 el('report-profile').value='brief';el('report-profile').onchange();
-assert.equal(c.selected.has('b'),true,'switching back returns the material to this period');
-assert.equal(evidenceB.checked,true);
-console.log('PASS: switching back to a general brief keeps the uploaded material in scope');
+assert.equal(c.selected.has('b'),false,'switching purpose must not promote old reports to current evidence');
+assert.equal(c.referenceSelected.has('b'),true);
+assert.equal(evidenceB.checked,false);
+console.log('PASS: changing purpose preserves the reference/evidence separation');
+
+// A template suggestion is visible; explicit method selection survives style changes.
+const workflowCode=source.slice(source.indexOf('function readWorkflowChoice()'),source.indexOf('// Reference reports are explicitly'));
+const workflows=JSON.parse(fs.readFileSync(new URL('../src/briefloop/workflow_assets/business_report/manifest.json',import.meta.url)));
+c.esc=String;c.state.workflows=[workflows];c.state.templates=[{id:'business',workflow_hint:'business_report'}];
+vm.runInContext(workflowCode,c);
+el('template-select').value='business';vm.runInContext('renderWorkflowChoices(true)',c);
+assert.match(el('workflow-hint').textContent,/本轮建议：商业报告 · 决策分析/);
+el('workflow-choice').value='business_report/work_progress';vm.runInContext('renderWorkflowChoices()',c);
+el('template-select').value='another-style';vm.runInContext('renderWorkflowChoices()',c);
+assert.equal(el('workflow-choice').value,'business_report/work_progress');
+assert.match(el('workflow-hint').textContent,/已选：商业报告 · 工作进展周报/);
+assert.equal(vm.runInContext('readWorkflowChoice().workflow_variant',c),'work_progress');
+console.log('PASS: explicit document purpose survives template changes');

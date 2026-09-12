@@ -22,6 +22,7 @@ const elements = {'template-select': {value: 'tpl_biz_g'}, 'templates-page-list'
 }}};
 const context = vm.createContext({
   $: id => id === 'template-apply' ? {onclick: null, set onclick(fn) { handlers.push(['apply', null, fn]); }} : elements[id],
+  renderWorkflowChoices: () => {},
   templateSections: () => context.sectionSelections.push(elements['template-select'].value),
   esc: String, action: fn => fn(), notice: message => context.notices.push(message), page: target => context.pages.push(target),
   api: async (path, body) => { context.calls.push([path, body]); return {}; },

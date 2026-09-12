@@ -1,0 +1,17 @@
+{
+  "id": "business_report",
+  "label": "商业报告",
+  "version": "1.0.0",
+  "description": "按行业定期、工作进展或决策分析用途组织研究与写作。",
+  "default_variant": "decision_memo",
+  "variants": [
+    {"id": "industry_periodic", "label": "行业周报／月报", "method_ids": ["industry_periodic"]},
+    {"id": "work_progress", "label": "工作进展周报", "method_ids": ["work_progress"]},
+    {"id": "decision_memo", "label": "决策分析", "method_ids": ["decision_memo"]}
+  ],
+  "method_roles": {
+    "industry_periodic": ["planning", "writing"],
+    "work_progress": ["planning", "writing"],
+    "decision_memo": ["planning", "writing"]
+  }
+}

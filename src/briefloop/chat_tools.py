@@ -17,7 +17,7 @@ WORKSPACE_ACTIONS = (
     'capabilities','source_snapshot','source_change','source_impacts','refresh_source',
     'set_reader_contract','conflict_create','conflict_response','review_response','review_status',
     'evidence_span','claim_create','claim_bind','read_run_report','evidence_read','read_report',
-    'revise_document','templates','template_rebuild','template_import','import_word_revision',
+    'revise_document','templates','workflows','template_rebuild','template_import','import_word_revision',
     'company_review_complete','company_read','company_config','company_update','company_resolve',
     'profile_read','profile_update',
     'freeze_research_plan','research_status','begin_research_round','finish_research_round',
@@ -93,7 +93,12 @@ def workspace_action(store, request):
         path=Path(request['document_file']).resolve()
         if not path.is_relative_to(store.root):raise ValueError('修订内容文件必须位于当前工作区')
         return store.revise(request['base_version'],editor_document=json.loads(path.read_text()),author='agent')
-    if action=='templates':return {'templates':store.rows('SELECT * FROM templates ORDER BY created DESC')}
+    if action=='workflows':
+        from .document_workflows import list_workflows
+        return {'workflows':list_workflows()}
+    if action=='templates':
+        from .document_workflows import template_workflow_hint
+        return {'templates':[{**row,'workflow_hint':template_workflow_hint(row)} for row in store.rows('SELECT * FROM templates ORDER BY created DESC')]}
     if action=='template_rebuild':
         from .templates import rebuild_template_version
         return rebuild_template_version(store,request['template_id'])
@@ -254,7 +259,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 选择搜索源不会自动打开联网；是否联网仍以上面的实际会话状态为准。
 {search_choice}
 {profile_note}
-用户消息以 /discuss 开头时进入需求讨论模式：先逐条确认目的、读者、必答问题、篇幅与格式，不要启动生成；确认清楚后在回复最后给出一个 briefloop-requirements 代码块（JSON 字段：title、objective、audience、period、key_questions、manual_sections、writing_preferences、report_profile、writing_mode、target_words、max_words），界面会给用户「应用到材料与需求」。
+用户消息以 /discuss 开头时进入需求讨论模式：先逐条确认目的、读者、必答问题、篇幅与格式，不要启动生成；确认清楚后在回复最后给出一个 briefloop-requirements 代码块（JSON 字段：title、objective、audience、period、key_questions、manual_sections、writing_preferences、workflow_id、workflow_variant、report_profile、writing_mode、target_words、max_words），界面会给用户「应用到材料与需求」。
 你可以调用本地工作区工具：先写一个 JSON 请求文件，再执行
 {command} REQUEST_FILE
 工具只调用现有工作区接口。action 支持：
@@ -286,6 +291,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"learn"}}：仅当用户明确要求启动技能学习时调用，会消耗额外模型额度。
 做不同主题的报告时不要在当前工作区硬混：当用户想做一份与当前工作区主题明显不同、希望彼此隔离的报告时，先确认；用户同意后，不要在对话里自己新建或写入工作区（当前“读写工作区”权限只覆盖本工作区，新建同级目录会被权限挡住），而是在回复末尾单独给出一个 ```briefloop-workspace 代码块，内容为 JSON：{{"name":"新工作区名称"}}。界面会在当前工作区同级目录新建并切换到新工作区，并让用户确认；不要声称你已切换界面。同一主题的续写、修订或同一批材料不要新建工作区。
 用户要求正式生成公开市场周报、行业研究或其他公开信息简报，且本轮 allow_web=true 时，可以直接准备需求并调用 generate，requirements.allow_web=true、source_ids=[]；没有上传文件不是必须追问或阻止生成的理由。已有明确要求和附件则照常复用，通过 inspect 取得真实来源 ID，不要丢掉用户指定材料。实际联网未开启时，不把 requirements.allow_web 偷改为 true，不提交依赖联网的生成任务。
+创建报告前可调用 workflows 读取已接通的文档方法目录。按用户明确用途选择 workflow_id 与 workflow_variant，说明本轮选择；沿用已保存要求时保留其用途。模板负责 Word 版式，不把八类版式当作八套内容生产方法。仅提供目录内的方法，用户指令优先，不改变模型或联网权限。generate 会重新保存实际方法快照，勿手工提供 workflow_snapshot。
 用户要求行业定期报告时，generate 的 requirements 可增加 report_profile="industry_periodic"、industry（行业）、organization（目标组织）、report_date（YYYY-MM-DD 或空）、reference_source_ids（只学风格的已登记材料ID数组）；默认目标5000、上限5500，可显式修改。按用户目标灵活决定章节；公司行业不写死。不把参考稿混入 source_ids 本期证据。不强制上传数据，允许已授权联网取材；拿不到的指标列入数据缺口。已有工作区需求可通过 inspect 读取，不因从聊天提交而丢失用户选定的报告类型和字数。
 用户要求企业内部报告时，设置 writing_mode="internal_report"。正文直接分析本期变化、对企业影响和有依据的行动，research_notes/gaps 保存核查过程。主章节默认沿用模板，用户明确要求可调整。sections 是 section_id/title/purpose/mode(required|optional|manual)/placeholder 数组；人工填写章节只保留指定占位。新稿和修订使用富文档 JSON，不用 Markdown 覆盖颜色或表格结构。图表修改按用户要求核对数据，调用 register-figure 登记新资源，再更新 image 节点；不要建设复杂电子表格编辑器。Word 仅在用户要求时生成，不随每次编辑自动生成。
 读取原材料时保留原始数值、单位、主体、时间口径与预计/实际等限定；材料说法与已核实事实有别。指出冲突或不确定性，不静默修正原文，不把摘要、来源链接或已排队状态当作完成核实。

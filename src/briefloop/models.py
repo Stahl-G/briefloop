@@ -40,6 +40,11 @@ class Requirements(Model):
     title: str = Field(min_length=1, max_length=200)
     objective: str = Field(min_length=1, max_length=10000)
     report_profile: Literal["brief", "industry_periodic"] = "brief"
+    workflow_id: str | None = Field(default=None, max_length=80)
+    workflow_variant: str | None = Field(default=None, max_length=80)
+    # Store replaces caller-provided snapshots when creating a run. Consumers of
+    # saved runs keep the actual method content even after an application update.
+    workflow_snapshot: dict | None = None
     report_date: str = ""
     organization: str = ""
     industry: str = ""
@@ -61,6 +66,20 @@ class Requirements(Model):
     research_budget: ResearchBudget = Field(default_factory=ResearchBudget)
     target_words: int | None = Field(default=None, ge=1)
     max_words: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode='before')
+    @classmethod
+    def workflow_profile_compatibility(cls, value):
+        if not isinstance(value, dict):
+            return value
+        value = dict(value)
+        for key in ('workflow_id', 'workflow_variant'):
+            if value.get(key) == '':
+                value[key] = None
+        if value.get('workflow_id'):
+            value['report_profile'] = ('industry_periodic' if value['workflow_id'] == 'business_report'
+                                       and value.get('workflow_variant') == 'industry_periodic' else 'brief')
+        return value
 
     @field_validator('report_date')
     @classmethod
