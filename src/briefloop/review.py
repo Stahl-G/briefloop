@@ -4,7 +4,7 @@ import hashlib
 import json
 import shutil
 from typing import Literal
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field, ValidationError, model_validator
 from .models import Model, Assessment
 from .store import dump, uid, now
 from .evidence import inspect_bindings, record
@@ -785,6 +785,21 @@ version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief
     with store.tx() as c:c.execute("UPDATE reviews SET status='running',updated=? WHERE id=?",(now(),identity))
     try:
         runtime.execute(stage,prompt,folder,resume_on_complete=(folder/'admission-error.json').exists())
+        # Correct one malformed structured reply in the same read-only session.
+        # Do not retry transport errors or evidence/version admission failures.
+        try:
+            ReviewOutput.model_validate_json(saved_output.read_bytes())
+        except ValidationError as exc:
+            correction=folder/'schema-correction.json'
+            if correction.exists():raise
+            raw=saved_output.read_bytes()
+            attempts=folder/'attempts';attempts.mkdir(exist_ok=True)
+            archived=attempts/('review-'+sha(raw)+'.json')
+            if not archived.exists():archived.write_bytes(raw)
+            correction.write_text(dump({'error':str(exc),'original_output':str(archived.relative_to(folder))}))
+            validate_applicable_review(store,identity,version_id)
+            repair=prompt+'\n上次回复的 JSON 结构未通过校验：'+str(exc)+'。仅修正字段结构，保留已完成核查的判断和依据，不重新研究或改稿。assessment.checks 是对象数组，可省略或使用 []，不能填写字符串数组。仍只回复完整 JSON。'
+            runtime.execute(stage,repair,folder,resume_on_complete=True)
         return accept_review(store,identity,json.loads((folder/'review.json').read_text()))
     except Exception as exc:
         with store.tx() as c:c.execute('UPDATE reviews SET status=?,updated=? WHERE id=? AND result IS NULL',('cancelled' if isinstance(exc,InterruptedError) else 'incomplete',now(),identity))

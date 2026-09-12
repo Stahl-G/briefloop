@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
+import {withoutSupersededRetries} from '../frontend/review-status.js';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const saveCode=source.slice(source.indexOf('let savePromise='),source.indexOf('\nfunction scheduleLearning'));
 const commentCode=source.split('\n').find(l=>l.startsWith("$('comment-submit').onclick="));
@@ -9,7 +10,7 @@ const progressCode=source.slice(source.indexOf('function effectiveReportJobs'),s
 const elements=new Map();
 const el=id=>{if(!elements.has(id))elements.set(id,{value:'',href:'',textContent:''});return elements.get(id)};
 let pending=[],calls=[],downloads=[],timers=[];
-const c=vm.createContext({console,Promise,setTimeout:fn=>{timers.push(fn);return timers.length},clearTimeout:()=>{},$:el,
+const c=vm.createContext({console,Promise,withoutSupersededRetries,renderReportStatus:()=>{},renderAssistantSummary:()=>{},setTimeout:fn=>{timers.push(fn);return timers.length},clearTimeout:()=>{},$:el,
  dirty:true,saving:false,current:{id:'old',run_id:'r'},markdownMode:true,saveTimer:null,
  updateDownloads:()=>{},refresh:async()=>{},scheduleLearning:()=>{},notice:()=>{},setReportView:()=>{},
  window:{location:{assign:url=>downloads.push(url)}},
@@ -58,7 +59,7 @@ assert.ok(vm.runInContext('effectiveReportJobs().some(j=>j.id==="learn")',c));
  const oldReview=job('review_old','review','failed',{run_id:'report',version_id:original.id});
  const oldGeneration=job('job_original','generate','failed',{run_id:'report'});
  const history=[review,producer,oldReview,oldGeneration];
- const view=vm.createContext({$:node,parse:s=>JSON.parse(s||'{}'),esc:String,modelLabel:()=> 'Selected model',page:()=>{},showSettings:()=>{},
+ const view=vm.createContext({withoutSupersededRetries,$:node,parse:s=>JSON.parse(s||'{}'),esc:String,modelLabel:()=> 'Selected model',page:()=>{},showSettings:()=>{},
   current:revised,pendingRun:null,state:{jobs:history,briefs:[revised,original],runs:[],sources:[],settings:{timeout_minutes:30}},
   api:async(route,payload)=>{requests.push({route,payload});return route.startsWith('events?')?[]:{}},action:async fn=>fn()});
  vm.runInContext(progressCode+source.slice(source.indexOf('let progressRequest='),source.indexOf('function friendlyModel')),view);

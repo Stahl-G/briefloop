@@ -409,7 +409,7 @@ def make_server(workspace, port=8765, *, paused=False):
                     from .learning import enqueue_feedback
                     result=enqueue_feedback(store)
                 elif path=='/api/stop':worker.stop_job(body['job_id']);result={'ok':True}
-                elif path=='/api/resume':result=worker.resume(body['job_id'])
+                elif path=='/api/resume':result=worker.retry_with_current_model(body['job_id']) if body.get('use_current_model') is True else worker.resume(body['job_id'])
                 elif path=='/api/task-dismiss':
                     job=store.one('jobs',body['job_id'])
                     if job['status'] not in ('failed','interrupted','cancelled'):raise ValueError('只有已结束且未完成的任务可以清除')
