@@ -516,6 +516,7 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 #tooltip{position:fixed;z-index:200;max-width:260px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface);box-shadow:0 8px 26px #1422181f;font:400 11px/1.7 var(--font);color:var(--ink);text-align:left;pointer-events:none}
 .learning-control .hint{margin-right:auto}
 
+HEAD
 /* Sub-agent workflow: stage rail + lanes */
 .report-task-graph{margin-top:12px;border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--surface)}
 .task-graph-head{font-size:12px;color:var(--muted);margin-bottom:10px}
@@ -536,3 +537,6 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 .agent-chip.running i{background:#2f8f4e;animation:pulse 1.2s infinite}
 .agent-chip.done i{background:var(--green)}
 .agent-chip.failed i{background:#c0392b}
+
+.chat-composer.drag-over{border-color:var(--green);background:#f2f8f0;box-shadow:0 0 0 3px #0068381f}
+ 60f4579c (Chat: paste and drag-drop images or files into the composer)
