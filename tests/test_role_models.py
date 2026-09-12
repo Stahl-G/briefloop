@@ -102,7 +102,12 @@ def test_evaluator_migration_preserves_settings_and_frozen_legacy_modes(tmp_path
     store.set_meta('settings',{**store.settings(),'role_models':{'scorer':astra,'assessor':other}})
     assert store.settings()['role_models']=={'evaluator':astra}
     assert store.meta('settings')['role_models']=={'scorer':astra,'assessor':other}
-    job=store.enqueue('learn',{})
+    from briefloop.learning import enqueue_feedback
+    source=store.add_source('Synthetic source','Saved fact')
+    run=store.create_run({'title':'Report','objective':'Explain'},[source['id']])
+    brief=store.publish(run['id'],{'title':'Report','markdown':'Saved fact'})
+    store.comment(brief['id'],'Keep the source attribution')
+    job=enqueue_feedback(store)
     assert set(json.loads(job['payload'])['role_models'])=={'evaluator','maintainer','proposer'}
     payload=json.loads(job['payload'])
     payload['role_models']={'scorer':astra,'assessor':other,'maintainer':payload['runtime'],'proposer':payload['runtime']}
