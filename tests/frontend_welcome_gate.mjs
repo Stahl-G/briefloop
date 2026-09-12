@@ -39,3 +39,11 @@ assert.ok(notices.length>=1,'leaving the first-run page explains why it stays');
 vm.runInContext("page('settings-dialog')",p);
 assert.equal(el('settings-dialog').hidden,false,'settings is still reachable during first run');
 console.log('PASS: the sidebar cannot bypass the first-run page, but settings stays reachable');
+
+// An empty workspace has no current brief while the welcome page is rendered.
+const statusCode=source.slice(source.indexOf('function renderReportStatus(){'),source.indexOf('function renderAssistantSummary(){'));
+const empty=vm.createContext({$:el,current:undefined,state:{assessments:[],jobs:[]}});
+vm.runInContext(statusCode,empty);
+vm.runInContext('renderReportStatus()',empty);
+assert.equal(el('report-status').innerHTML,'');
+console.log('PASS: cold-start status rendering tolerates an empty workspace');

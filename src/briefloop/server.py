@@ -103,6 +103,7 @@ def make_server(workspace, port=8765, *, paused=False):
                 u=urlsplit(self.path);q=parse_qs(u.query)
                 if u.path=='/api/state':
                     snapshot=store.snapshot()
+                    snapshot['demo']=store.meta('demo')
                     for source in snapshot['sources']:
                         sidecar=store.root/'sources'/(source['id']+'.provenance.json')
                         if sidecar.is_file():
@@ -331,6 +332,9 @@ def make_server(workspace, port=8765, *, paused=False):
                 elif path=='/api/export':
                     from .export_jobs import enqueue_export
                     result=enqueue_export(store,body['version_id'],body.get('template_id'))
+                elif path=='/api/demo':
+                    from .demo import create_demo
+                    result=create_demo(store)
                 elif path=='/api/generate':
                     req=Requirements.model_validate(body['requirements'])
                     run=store.create_run(req.model_dump(),body.get('source_ids',[]),research_protocol='quality_v1')

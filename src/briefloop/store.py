@@ -233,7 +233,8 @@ class Store:
         acquired=self.rows('SELECT source_id FROM run_sources WHERE run_id=? ORDER BY rowid',(run_id,))
         return list(dict.fromkeys(json.loads(run['source_ids'])+[r['source_id'] for r in acquired]))
 
-    def publish(self, run_id, draft, *, version_id=None, parent_id=None):
+    def publish(self, run_id, draft, *, version_id=None, parent_id=None, author='agent'):
+        if author not in ('agent', 'example'):raise ValueError('无效稿件作者')
         draft = BriefDraft.model_validate(draft)
         from .document_model import document_hash, source_ids
         if draft.editor_document is not None:
@@ -298,7 +299,7 @@ class Store:
                 old_detail.setdefault('reconciliation_id',None)
                 if old_detail!=detail:raise Conflict('Completed draft metadata differs; save a new version')
             else:
-                c.execute("INSERT INTO briefs VALUES(?,?,?,?,?,?,?,?,?)", (vid, run_id, parent_id, "agent", draft.markdown, sha, dump(detail), dump(draft.editor_document) if draft.editor_document is not None else None, now()))
+                c.execute("INSERT INTO briefs VALUES(?,?,?,?,?,?,?,?,?)", (vid, run_id, parent_id, author, draft.markdown, sha, dump(detail), dump(draft.editor_document) if draft.editor_document is not None else None, now()))
             for ref in draft.citations:
                 c.execute("INSERT OR IGNORE INTO run_sources VALUES(?,?)",(run_id,ref.source_id))
         return self.one("briefs", vid)
@@ -463,13 +464,15 @@ class Store:
             from .backends import validate_backend
             from .models import normalize_search_provider
             backend=validate_backend(payload.get('agent_backend',self.settings().get('agent_backend','codex')))
-            runtime=runtime_fields(payload.get('runtime',self.runtime_config()),backend)
+            runtime=runtime_fields(payload['runtime'] if 'runtime' in payload else self.runtime_config(),backend)
             # Freeze inherited defaults too; later settings never mutate queued jobs.
             overrides=normalize_role_models(payload.get('role_models',self.role_model_config(runtime,backend)))
             provider=normalize_search_provider(payload.get('search_provider',self.settings()['search_provider']))
             payload={**payload,'agent_backend':backend,'runtime':runtime,'search_provider':provider,
                      'role_models':{role:runtime_fields(overrides.get(role,runtime),backend) for role in ROLE_NAMES}}
-            if kind=='generate':payload.setdefault('auto_revision',self.settings()['auto_revision'])
+            if kind=='generate':
+                payload.setdefault('auto_revision',self.settings()['auto_revision'])
+                payload.setdefault('max_parallel',self.settings()['max_parallel'])
             if kind=='generate' and payload.get('run_id'):
                 runs=self.rows('SELECT requirements FROM runs WHERE id=?',(payload['run_id'],))
                 if runs and json.loads(runs[0]['requirements']).get('writing_mode')=='internal_report':payload.setdefault('reader_contract_required',True)

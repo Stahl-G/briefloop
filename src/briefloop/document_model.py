@@ -110,7 +110,7 @@ def normalize_document(value):
             if not isinstance(mark, dict) or set(mark) - {'type', 'attrs'} or mark.get('type') not in MARKS:
                 raise ValueError('不支持的文字格式')
             mt = mark['type']; ma = mark.get('attrs') or {}
-            if not isinstance(ma, dict) or set(ma) - MARKS[mt]: raise ValueError('不支持的文字格式属性')
+            if not isinstance(ma, dict) or {k for k,v in ma.items() if v is not None} - MARKS[mt]: raise ValueError('不支持的文字格式属性')
             ma = {k: v for k, v in ma.items() if v is not None}
             if mt == 'textStyle':
                 color = ma.get('color')

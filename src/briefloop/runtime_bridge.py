@@ -2,7 +2,7 @@
 from concurrent.futures import Future
 from importlib.resources import files
 import json
-import shutil
+import os
 import subprocess
 import threading
 import uuid
@@ -10,7 +10,8 @@ import queue
 
 
 class RuntimeBridge:
-    def __init__(self):
+    def __init__(self, *, node_binary=None):
+        self.node_binary=node_binary if node_binary is not None else os.environ.get('BRIEFLOOP_NODE')
         self._lock=threading.RLock()
         self._pending={}
         self._events={}
@@ -22,8 +23,10 @@ class RuntimeBridge:
     def _start(self):
         if self._process is not None and self._process.poll() is None:return
         from .host_bins import SEARCH_HINT, find as _find_host_bin
-        node=_find_host_bin('node')
-        if not node:raise RuntimeError('需要本机 Node.js 20+ 来运行多 Runtime bridge；'+SEARCH_HINT)
+        node=_find_host_bin(self.node_binary or 'node')
+        if not node:
+            raise RuntimeError('未找到可执行的 Node.js：'+str(self.node_binary or 'node')+
+                '。Bridge 引擎需要 Node.js 20+；请安装后重启服务，或将 BRIEFLOOP_NODE 设置为 Node 可执行文件路径；'+SEARCH_HINT)
         self._process=subprocess.Popen([node,str(files('briefloop').joinpath('static/runtime-bridge.mjs'))],
             stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,bufsize=1)
         threading.Thread(target=self._read,args=(self._process,),daemon=True).start()
@@ -72,7 +75,25 @@ class RuntimeBridge:
         with self._lock:self._events.pop(execution_id,None)
 
     def discover(self):
-        result=self.call('discover',timeout=15)
+        try:result=self.call('discover',timeout=15)
+        except (RuntimeError,OSError,TimeoutError) as exc:
+            # Codex and Opencode have independent Python transports. A missing
+            # or failed bridge must not hide either native installation.
+            from .host_bins import find as find_host_bin
+            from .backends import BACKEND_LABELS
+            result=[]
+            for name in ('codex','opencode'):
+                path=find_host_bin(name);version=None;error=None
+                if path:
+                    try:
+                        probe=subprocess.run([path,'--version'],capture_output=True,text=True,timeout=5,check=True)
+                        version=probe.stdout.strip().split('\n')[0][:160]
+                    except (OSError,subprocess.SubprocessError):error='Version probe failed'
+                result.append({'id':name,'name':BACKEND_LABELS[name],'path':path,'installed':bool(path),
+                    'version':version,'status':'detected' if path else 'not_installed',
+                    'protocol':'native-manager','error':error})
+            diagnostic=str(exc)
+        else:diagnostic=None
         from .backends import BACKENDS
         for item in result:
             item['available']=bool(item['installed'] and item['id'] in BACKENDS)
@@ -80,7 +101,7 @@ class RuntimeBridge:
                 item['capabilities']={'chat':True,'cancel':True,'images':'unknown','resume':'unknown','restricted_reviewer':'unknown',
                     'permission_modes':['workspace-write','read-only'],'steer':item['id']=='codex'}
             item['diagnostic']=('本机 CLI 已找到；执行协议尚未接入' if item['installed'] and not item['available'] else item.get('error'))
-        return {'runtimes':result}
+        return {'runtimes':result,**({'diagnostic':diagnostic} if diagnostic else {})}
 
     def close(self):
         with self._lock:
