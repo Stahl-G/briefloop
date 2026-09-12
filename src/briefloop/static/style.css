@@ -503,3 +503,7 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 .chat-page.is-empty .chat-home-bottom{order:5}
 .home-greeting{font-size:clamp(28px,3vw,38px);font-weight:600;letter-spacing:-.03em}
 .home-suggestion-arrow{align-self:flex-end}
+
+/* Feedback and Wiki learning folded into the research assistant pane */
+.assistant-feedback{border-top:1px solid var(--line);margin-top:14px;padding-top:14px;display:grid;gap:10px}
+.assistant-feedback textarea{width:100%}

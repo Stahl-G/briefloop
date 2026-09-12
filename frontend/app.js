@@ -1452,7 +1452,7 @@ function settingsModelTab(name){
  document.querySelector('.model-settings legend').textContent='当前模型与角色';
 }
 /* ===== Report workspace redesign (see DESIGN.md) ===== */
-const REPORT_TABS=['assistant','sources','checks','discuss'];
+const REPORT_TABS=['assistant','sources','checks'];
 function setReportTab(name){
  const panel=$('report-panel');if(!panel)return;
  if(!REPORT_TABS.includes(name))name='assistant';
