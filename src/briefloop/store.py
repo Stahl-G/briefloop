@@ -505,6 +505,13 @@ class Store:
             j['progress']=json.loads(events[0]['data']) if events else None
         from .length import length_stats
         runs=self.rows("SELECT * FROM runs ORDER BY created DESC")
+        acquired={}
+        for row in self.rows("SELECT run_id,source_id FROM run_sources ORDER BY rowid"):
+            acquired.setdefault(row['run_id'],[]).append(row['source_id'])
+        for run in runs:
+            ids=list(dict.fromkeys(json.loads(run['source_ids'])+acquired.get(run['id'],[])))
+            run['all_source_ids']=ids
+            run['source_count']=len(ids)
         requirements={r['id']:json.loads(r['requirements']) for r in runs}
         briefs=self.rows("SELECT b.* FROM briefs b JOIN runs r ON r.id=b.run_id WHERE r.mode='normal' ORDER BY b.rowid DESC")
         for brief in briefs:
