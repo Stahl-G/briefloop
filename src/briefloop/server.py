@@ -278,6 +278,9 @@ def make_server(workspace, port=8765, *, paused=False):
                 elif path=='/api/workspaces/open':
                     from .workspaces import open_workspace
                     result=open_workspace(store,body['path'],create=bool(body.get('create',False)))
+                elif path=='/api/workspaces/stop':
+                    from .workspaces import stop_workspace
+                    result=stop_workspace(store,body['path'])
                 elif path=='/api/harness/session':
                     choose_runtime(store,body.get('runtime'))
                     result=pick_harness(body.get('runtime')).create_session(body.get('title','新对话'),body.get('runtime'))

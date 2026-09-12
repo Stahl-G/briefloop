@@ -322,3 +322,7 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 .report-list.grid{max-width:none}
 .report-card-menu .popover{min-width:210px;z-index:70}
 .report-card-side .ghost{height:34px;padding:0 10px}
+.workspace-row{display:flex;align-items:center;gap:6px}
+.workspace-row .workspace-choice{flex:1;min-width:0}
+.workspace-stop{flex:none;font-size:11px;padding:6px 10px;border:1px solid var(--line);border-radius:7px;color:var(--muted);background:var(--surface)}
+.workspace-stop:hover{color:var(--danger);border-color:#e4c9bd}

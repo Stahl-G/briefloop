@@ -1,13 +1,15 @@
 """Bounded local workspace discovery and verified service reuse.
 
 Opening a workspace starts its existing local service lifecycle; this module
-never enqueues a job, sends an agent message, or stops another workspace.
+never enqueues a job or sends an agent message. It may stop a workspace's own
+service on explicit user request, after verifying the pid over HTTP.
 """
 from contextlib import closing
 from pathlib import Path
 import http.client
 import json
 import os
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -38,9 +40,25 @@ def _workspace_id(root):
         return None
 
 
+def _running(root, workspace_id):
+    """Lightweight liveness check for listing; the stop path re-verifies over HTTP."""
+    try:
+        info = json.loads((root / 'server.json').read_text())
+        pid = info['pid']
+        if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+            return False
+        if info.get('workspace_id') not in (None, workspace_id):
+            return False
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
+
+
 def _entry(root, current):
-    return {'name': root.name, 'path': str(root), 'workspace_id': _workspace_id(root),
-            'current': root == current}
+    workspace_id = _workspace_id(root)
+    return {'name': root.name, 'path': str(root), 'workspace_id': workspace_id,
+            'current': root == current, 'running': _running(root, workspace_id)}
 
 
 def list_workspaces(store):
@@ -161,3 +179,45 @@ def open_workspace(store, path, create=False):
         time.sleep(.1)
     raise RuntimeError('工作区服务尚未就绪，已保留原服务与任务。日志：' + str(root / 'server.log')
                        + ('；' + detail if detail else ''))
+
+
+def stop_workspace(store, path):
+    """Stop one workspace's own local service after verifying it over HTTP.
+
+    The current workspace is refused: stopping the service that serves this
+    request would drop the page. Switch away first, then stop it.
+    """
+    if not isinstance(path, str) or not path.strip():
+        raise ValueError('请输入工作区目录')
+    root = Path(path.strip()).expanduser()
+    if not root.is_absolute():
+        root = store.root.parent / root
+    root = root.resolve()
+    if root == store.root.resolve():
+        raise ValueError('不能停止当前正在使用的工作区；请先切换到其他工作区')
+    workspace_id = _workspace_id(root)
+    active = _active_server(root, workspace_id)
+    if not active:
+        return {'stopped': False, 'path': str(root), 'message': '该工作区没有在运行的服务。'}
+    try:
+        pid = json.loads((root / 'server.json').read_text())['pid']
+    except (OSError, ValueError, KeyError, TypeError):
+        return {'stopped': False, 'path': str(root), 'message': '无法确认服务进程，未执行停止。'}
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(.1)
+    for name in ('server.json', 'server.pid'):
+        try:
+            (root / name).unlink()
+        except OSError:
+            pass
+    return {'stopped': True, 'path': str(root),
+            'message': '已停止该工作区服务；数据、来源和任务记录都保留，可随时重新打开。'}
