@@ -129,6 +129,8 @@ def generation_prompt(store, run, folder, backend='codex'):
     if 'research_budget' not in raw_requirements:req['research_budget']=None
     from .research_budget import snapshot as budget_snapshot
     research_budget=budget_snapshot(store,run['id'])
+    from .research_plan import frozen as frozen_plan,is_quality
+    research_plan=frozen_plan(store,run['id']) if is_quality(store,run['id']) else None
     provider=normalize_search_provider(run.get('search_provider'))
     skill=run.get('skill_override') if 'skill_override' in run else (store.one('skills',run['skill_id']) if run['skill_id'] else None)
     sources=[source_context(store,sid) for sid in store.source_ids(run['id'])]
@@ -156,7 +158,7 @@ def generation_prompt(store, run, folder, backend='codex'):
         scout_slots.append({'slot_id':f'scout-{number}','directory':str(directory),
                             'result_file':str(directory/'result.json'),'schema_path':str(schema_path),
                             'scout_contract_path':str(scout_contract)})
-    payload={'deliverable_spec':deliverable,'report_profile':report_profile,'reference_sources':references,'requirements':req,'research_budget_status':research_budget,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':max_parallel,'scout_slots':scout_slots,'scout_contract_path':str(scout_contract),'reusable_research':run.get('reusable_research',[])}
+    payload={'deliverable_spec':deliverable,'report_profile':report_profile,'reference_sources':references,'requirements':req,'research_budget_status':research_budget,'research_plan':research_plan,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':max_parallel,'scout_slots':scout_slots,'scout_contract_path':str(scout_contract),'reusable_research':run.get('reusable_research',[])}
     tool=shlex.join([sys.executable,'-m','briefloop','tool','--workspace',str(store.root)])
     tavily_enabled=req['allow_web'] and provider=='tavily'
     if tavily_enabled:
@@ -208,10 +210,15 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
     else:
         budget_note='本轮检索由宿主原生工具执行，BriefLoop 不精确计量原生搜索次数与候选 URL（input.json.research_budget_status 中这两项在原生模式下为空或未知，不是额度，不要当成可用次数去核对）；只有受控 add-url/Extract 的唯一正文 URL（source_pages）按事务计量。出现 budget_exhausted 时保留现有来源并简要交接缺口，不重试消耗上限的操作；派发每批前按剩余 source_pages 留出补缺名额，不把它当成可任意扩张的额度。旧任务 limits=null 表示未设置预算，不追溯限制。'
     native_word = '原生 Codex 搜索不可精确计量' if backend == 'codex' else '原生 Opencode 搜索不可精确计量'
+    research_plan_note=('' if not research_plan else
+        '本轮是 quality_v1 分轮研究：计划已冻结，见 input.json.research_plan。structure.breadth/depth 是每轮上限，current_round_id 是当前 active 轮次。'
+        '完成本轮 Scout 并结构合并后，由同一 Analyst/主 Agent 查看本轮候选，再决定补证或收轮：需要下一轮时，先用 workspace-action `finish_research_round`（run_id、gaps：每项含 description，可选 source_ids/related_claim_ids/requirement_ids）拿到程序生成的真实 gap id，再用 `begin_research_round`（run_id、target_gap_ids=上一步返回的 gap id、tasks）开下一轮；不需要下一轮就只调用 finish_research_round 收轮。'
+        '不要只用提示词模拟轮次；每轮受控 Search 合计不超过 structure.breadth，超出会被程序在准入事务中拒绝。')
     view_word = '使用 view_image 直接读图' if backend == 'codex' else '用 read 工具直接读取图像路径'
     view_pages_word = '使用 view_image 读取页图' if backend == 'codex' else '用 read 工具读取返回的页图'
     check_word = 'view_image检查' if backend == 'codex' else '用 read 工具读取检查'
     return common+f'''
+{research_plan_note}
 本轮输入：{folder/'input.json'}。你的工作目录：{folder}。先按字段读取 requirements、sources 索引、scout_slots 和能力路径；不要为分工先展开全部技能正文或 schema。
 图表与表格由主 Agent 根据报告目标、参考报告和可用数据决定类型、数量与正文位置，不要求凑图，也不固定成一种预测图。趋势、量价和事件反应用图，精确数值与竞争条件用表；IR任务优先二级市场量能/PR反应，市场细价按需求精简。
 先复用用户Excel/历史报告已有且适用的图表，不默认重绘。对XLSX来源用 `{tool} extract-workbook-figures --id SOURCE_ID` 获取原始内嵌图片与原生图表清单；原生图表需用可用渲染器，或复用经核对来自同版本工作簿的渲染图。重新绘图不能称原图复制，旧参考只提供表达方式，数据日期必须适用本期。
@@ -553,9 +560,10 @@ class Worker:
             run['reusable_research']=[str(p) for p in previous.glob('scout*/result.json') if p.is_file()]
         if 'skill_override' in payload:run['skill_override']=payload['skill_override']
         job['allow_web']=json.loads(run['requirements'])['allow_web']
-        from .research_plan import freeze as freeze_research_plan,is_quality
-        if is_quality(self.store,run['id']):
+        from .research_plan import freeze as freeze_research_plan,is_quality,frozen as frozen_plan
+        if is_quality(self.store,run['id']) and not frozen_plan(self.store,run['id']):
             # Freeze from the already-authorized budget before any controlled call.
+            # A plan frozen earlier (for example a custom structure) stays authoritative.
             freeze_research_plan(self.store,run['id'],owner_job_id=job['id'])
         from .company_context import prepare_review
         prepare_review(self.store,self.runtime,job,run,folder,backend)

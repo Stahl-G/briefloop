@@ -255,6 +255,8 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"profile_update","profile":{{"name":"称呼","organization":"公司/组织","role":"岗位","location":"城市","focus":"主要工作","report_types":"常做报告"}}}}：用户第一次打招呼或交任务时，按上文约定一次问清必要几项并保存；只写用户明确说过的内容，不猜、不编造，也不把这些当作报告证据。
 - {{"action":"research_status","run_id":"真实run ID"}}：读取该任务冻结的研究计划、轮次与用量。
 - {{"action":"freeze_research_plan","run_id":"真实run ID","preset":"quick|standard|deep","structure":{{"breadth":6,"depth":2,"parallel":2}}}}：在第一次受控联网前冻结研究计划。预算只读取任务已授权的额度，不能借冻结扩大额度或替换模型/搜索源；相同内容重复提交幂等，不同内容会被拒绝。
+- {{"action":"begin_research_round","run_id":"真实run ID","target_gap_ids":["真实gap ID"],"tasks":[{{"slot_id":"scout-1"}}]}}：在当前轮已结束、且未超过 depth 上限时开始下一轮；必须引用前轮真实缺口 ID。
+- {{"action":"finish_research_round","run_id":"真实run ID","gaps":[{{"description":"真实缺口","source_ids":[],"related_claim_ids":[],"requirement_ids":[]}}],"summary":"本轮结论"}}：结束当前轮并生成真实 gap ID；之后才能 begin 下一轮。
 - {{"action":"export_word","version_id":"真实稿件ID"}}：用户要求时生成所选版本 Word，返回文件任务状态；完成后从任务结果取得下载地址。
 - {{"action":"templates"}}：读取可选模板。用户要求上传材料用作主模板时用 {{"action":"template_import","source_id":"DOCX来源ID"}} 启动一次准备；准备完成后 generate.requirements.template_id 选择具体版本。需要重新准备已有模板版式时，用 {{"action":"template_rebuild","template_id":"已有模板ID"}} 从保留原件创建新模板版本；原模板和已绑定稿件保持不变，新任务选择返回的新模板ID。
 - {{"action":"read_report","version_id":"稿件ID"}}：读取富文档 JSON 和引用。用户明确要求修改内容/章节/图表时，将修改后的 JSON 保存到工作区文件，再用 {{"action":"revise_document","base_version":"刚读取版本ID","document_file":"工作区内JSON绝对路径"}} 保存新版本，不覆盖用户并发编辑。
