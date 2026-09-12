@@ -555,17 +555,21 @@ function reasoningHTML(message){
  const peek=running?(lines.at(-1)||''):(lines[0]||'');
  return `<details class="message-reasoning" data-running="${running?'1':'0'}"><summary><span class="reasoning-icon" aria-hidden="true">✻</span><strong>${running?'思考中':'思考过程'}</strong>${peek?`<span class="reasoning-peek">${esc(peek)}</span>`:''}</summary><div class="reasoning-body">${esc(message.reasoning)}</div></details>`;
 }
+function latestActivityEntry(){let best=null;for(const event of chat.events.values()){const e=publicActivity(event);if(e&&(!best||e.seq>best.seq))best=e}return best}
+function liveStatusText(){const e=latestActivityEntry();if(!e)return '正在回复…';return ['running','inProgress','started','pending'].includes(e.status)?`正在${e.label}…`:'正在回复…'}
+function typingHTML(){return `<span class="typing-status"><span class="typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>${esc(liveStatusText())}</span>`}
 function renderMessages(){
  const scroll=$('chat-scroll'),nearEnd=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<140;
- const signature=JSON.stringify(chat.messages);if(signature!==renderMessages.signature){renderMessages.signature=signature;
+ let liveSeq=0;for(const key of chat.events.keys())if(key>liveSeq)liveSeq=key;
+ const signature=JSON.stringify(chat.messages)+'|'+liveSeq;if(signature!==renderMessages.signature){renderMessages.signature=signature;
  const nodes=new Map([...$('chat-messages').children].map(n=>[n.dataset.messageId,n]));
  for(const message of chat.messages){
   let node=nodes.get(message.id);if(!node){node=document.createElement('article');node.dataset.messageId=message.id;$('chat-messages').append(node)}nodes.delete(message.id);
-  const messageSignature=JSON.stringify(message);if(node.dataset.signature===messageSignature)continue;node.dataset.signature=messageSignature;node.className=`chat-message ${message.role==='user'?'from-user':'from-assistant'} ${message.mode==='notice'?'task-notice':''} ${['failed','interrupted','cancelled'].includes(message.status)?'message-error':''}`;
+  const streaming=['streaming','sending'].includes(message.status);const messageSignature=JSON.stringify(message)+(streaming?('|'+liveSeq):'');if(node.dataset.signature===messageSignature)continue;node.dataset.signature=messageSignature;node.className=`chat-message ${message.role==='user'?'from-user':'from-assistant'} ${message.mode==='notice'?'task-notice':''} ${['failed','interrupted','cancelled'].includes(message.status)?'message-error':''}`;
   const reasoningOpen=!!node.querySelector('.message-reasoning')?.open;
   const files=(message.source_ids||[]).map(id=>({id,name:state?.sources.find(s=>s.id===id)?.name||id}));
   const label=message.role==='user'?'你':(message.mode==='notice'?'任务状态':'BriefLoop');
-  node.innerHTML=`<div class="message-heading"><strong>${label}</strong><span>${messageTime(message.created)}</span><span class="message-state">${esc(chatStates[message.status]||message.status)}${message.mode==='steer'&&message.role==='user'?' · 中途补充':''}</span></div>${reasoningHTML(message)}<div class="message-body">${esc(message.text||(['streaming','sending'].includes(message.status)?'…':''))}</div>${files.length?`<div class="message-files">${files.map(file=>`<button type="button" data-message-source="${esc(file.id)}">▤ ${esc(file.name)}</button>`).join('')}</div>`:''}${messageActionsHTML()}`;
+  node.innerHTML=`<div class="message-heading"><strong>${label}</strong><span>${messageTime(message.created)}</span><span class="message-state">${esc(chatStates[message.status]||message.status)}${message.mode==='steer'&&message.role==='user'?' · 中途补充':''}</span></div>${reasoningHTML(message)}<div class="message-body">${message.text?esc(message.text):(streaming?typingHTML():'')}</div>${files.length?`<div class="message-files">${files.map(file=>`<button type="button" data-message-source="${esc(file.id)}">▤ ${esc(file.name)}</button>`).join('')}</div>`:''}${messageActionsHTML()}`;
   const reasoning=node.querySelector('.message-reasoning');if(reasoning&&reasoningOpen)reasoning.open=true;
   const reqBlock=/```briefloop-requirements\s*([\s\S]*?)```/.exec(message.text||'');if(reqBlock){const apply=document.createElement('button');apply.type='button';apply.className='outline apply-requirements';apply.textContent='应用到材料与需求';apply.onclick=()=>applyRequirements(reqBlock[1].trim());node.append(apply)}
   bindMessageActions(node,message);
@@ -580,7 +584,7 @@ function renderChat(){
  $('chat').classList.toggle('is-empty',chat.messages.length===0&&!chatActive());
  $('chat-title').textContent=chat.session?.title||'新对话';const runtime=chat.session?.runtime;const pending=chat.messages.filter(m=>m.role==='user'&&m.status==='queued').length;
  $('chat-status').textContent=`${chatStates[chat.session?.status]||'准备就绪'}${runtime?' · '+modelLabel({model:runtime.model,reasoning_effort:runtime.effort,model_provider:runtime.model_provider}):''}${pending?' · '+pending+' 条消息排队中':''}`;
- renderMessages();renderActivities();renderRequests();renderContext();renderSessions();renderSessionLifecycle();updateComposer();
+ renderMessages();renderActivities();{const anyStreaming=chat.messages.some(m=>['streaming','sending'].includes(m.status));const activity=$('chat-activity');if(activity&&anyStreaming&&!activity.hidden&&!activity.open)activity.open=true}renderRequests();renderContext();renderSessions();renderSessionLifecycle();updateComposer();
 }
 async function selectChat(id){
  if(chat.busy||chat.uploading)return;if(id===chat.id){page('chat');return}rememberDraft();chat.id=id;chat.session=chat.sessions.find(s=>s.id===id)||null;chat.tokenUsage=null;chat.messages=[];chat.requests=[];chat.events=new Map();chat.after=0;chat.request=null;renderMessages.signature='';localStorage.setItem('briefloop-chat-session',id);chatError();restoreDraft();renderChat();page('chat');await pollChat(true);if(!chat.drafts.has(id))restoreDraft();
