@@ -38,6 +38,9 @@ class RevisionRuntime:
         self.calls.append(folder.name)
         if folder.name=='revision':
             pack=json.loads((folder/'input.json').read_text());brief=pack['brief']
+            schema=json.loads((folder/'responses.schema.json').read_text())
+            assert schema['maxItems']==0 and schema['items'] is False
+            assert 'assessment.findings' in prompt and '[]' in prompt
             if self.user_edit:self.store.revise(brief['id'],'USER CORRECTION')
             (folder/'draft.json').write_text(json.dumps({'title':'Report','editor_document':{'type':'doc','content':[{'type':'paragraph','content':[{'type':'text','text':'Corrected report'}]}]}}))
         elif job.get('readonly_output'):

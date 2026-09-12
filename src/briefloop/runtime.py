@@ -711,6 +711,14 @@ class Worker:
                 'evidence_schema':EvidenceInput.model_json_schema(),'claim_schema':ClaimInput.model_json_schema(),
                 'figures':[read_figure(self.store,fid,brief['run_id']) for fid in detail.get('figures',[])]}))
             (stage/'draft.schema.json').write_text(dump(BriefDraft.model_json_schema()))
+            finding_ids=[finding['id'] for finding in open_findings]
+            response_schema={'type':'array','minItems':len(finding_ids),'maxItems':len(finding_ids),
+                'items':{'type':'object','additionalProperties':False,
+                    'required':['finding_id','action','reason'],'properties':{
+                        'finding_id':{'type':'string','enum':finding_ids},
+                        'action':{'type':'string','enum':['corrected','removed','disagree']},
+                        'reason':{'type':'string','minLength':1}}} if finding_ids else False}
+            (stage/'responses.schema.json').write_text(dump(response_schema))
             from .deliverable_spec import resolve,instructions
             contract=json.loads(brief['detail']).get('reader_contract')
             spec=resolve(json.loads(self.store.one('runs',brief['run_id'])['requirements']),reader_contract=contract)
@@ -722,6 +730,7 @@ input.figures提供已登记图表、数据和脚本。图像本身有错误时�
 需要新增或修正主张依据时，使用 workspace-action 的 evidence_span/claim_create/evidence_read 接口；修订原有主张时传 previous_id，不删历史。将待绑定到本次新正文的关联保存 {stage/'revision_bindings.json'}，格式为数组，每项 claim_id、block_id、quote。运行器会在新稿入库后绑定，不把关联写到旧稿。
 使用 `{tool} workspace-action --request REQUEST_JSON`：evidence_span请求为action/evidence（按input.evidence_schema），claim_create请求为action/run_id/claim（按input.claim_schema，可传previous_id）。input.evidence包含现有真实ID；新增ID必须取登记接口实际返回值，不能自拟rev_等占位符。
 对input.review_findings逐项处理，并将处理说明保存到 {stage/'responses.json'}，格式为数组，每项包含finding_id、action(corrected/removed/disagree)、reason（具体修改或异议依据）。这不是关闭发现，后续Reviewer独立复核。
+responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 input.review_findings[].id，每个ID恰好一次。assessment.findings 是写作修改依据，不是已登记的 Reviewer finding ID，禁止为它们自拟ID。如果 input.review_findings 为空，responses.json 必须写 []，仍按 assessment 修正正文。
 将完整修订稿写入 {stage/'draft.json'}，遵循 {stage/'draft.schema.json'}，正文使用 editor_document 富文档 JSON。仅做此轮修订，不自行启动下一轮评价或技能学习。
 '''
             self.store.event(job['id'],'revision_progress',{'stage':'writing','base_version':brief['id']})
@@ -777,7 +786,11 @@ input.figures提供已登记图表、数据和脚本。图像本身有错误时�
             for item in data['responses']:
                 if not isinstance(item,dict) or any(not isinstance(item.get(key),str) or not item[key].strip() for key in ('finding_id','action','reason')) or item['action'] not in ('corrected','removed','disagree'):raise ValueError('修订处理说明缺少有效 finding_id/action/reason')
                 response_ids.append(item['finding_id'])
-            if set(response_ids)!=expected or len(response_ids)!=len(set(response_ids)):raise ValueError('修订处理说明须逐项对应本轮发现，不能遗漏、重复或使用其他 finding_id')
+            if set(response_ids)!=expected or len(response_ids)!=len(set(response_ids)):
+                raise ValueError('修订处理说明须逐项对应本轮发现：'+dump({
+                    'missing':sorted(expected-set(response_ids)),
+                    'unexpected':sorted(set(response_ids)-expected),
+                    'duplicate':sorted({rid for rid in response_ids if response_ids.count(rid)>1})}))
             for binding in data['bindings']:
                 if not self.store.rows('SELECT id FROM claim_bindings WHERE version_id=? AND claim_id=? AND block_id=? AND quote=?',(revised['id'],binding['claim_id'],binding['block_id'],binding['quote'])):
                     bind_claim(self.store,revised['id'],binding['claim_id'],binding['block_id'],binding['quote'])

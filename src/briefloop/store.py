@@ -248,6 +248,12 @@ class Store:
             from .deliverable_spec import resolve,validate_reader_contract
             draft.reader_contract=validate_reader_contract(resolve(json.loads(run['requirements'])),draft.reader_contract)
         references=set(json.loads(run['requirements']).get('reference_source_ids',[]))
+        if parent_id and not draft.reconciliation_id:
+            parent=self.one('briefs',parent_id)
+            if parent['run_id']!=run_id:raise Conflict('修订基础版本不属于本报告')
+            # The comparison describes the source snapshot, not author approval.
+            # Preserve it across rewrites; read() still reports stale inputs.
+            draft.reconciliation_id=json.loads(parent['detail']).get('reconciliation_id')
         if draft.reconciliation_id:
             from .reconciliation import exists
             if not exists(self,run_id,draft.reconciliation_id):
