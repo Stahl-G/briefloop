@@ -28,7 +28,7 @@ Word 原文件被 Office/WPS 占用而不能替换时，导出保留旧文件并
 - OpenCode + Muse Spark 1.3 Free 真实网页生成合成周报，实际 Scout/Analyst 执行；编辑自动保存并保留原稿，两次 Word 导出绑定各自版本。
 - OpenCode + DeepSeek 官方 `deepseek-flash` 的 CLI 最小请求及网页工具读取均完成；Windows 工具命令首次成功，回复正确区分交付件数与订单单数。服务运行后从外部 CLI 新增凭据，本机测量需重启服务才能刷新提供商目录；首次超时不计为通过。
 - DOCX 内部检查确认中英文字、金额、特殊符号、表格与加粗保留；Windows 文件占用句柄下另存原件不变。
-- Codex 实际模型请求遇到连接重试；不计为生成通过。其他宿主完整闭环、学习收益、WPS 实际字体显示：**NOT MEASURED**。
+- Codex + Luna 的报告请求遇到连接重试，不计为生成通过；随后 Codex 原生 app-server + DeepSeek Flash 的只读合成文件工具回合通过。其他宿主完整报告闭环、学习收益、WPS 实际字体显示：**NOT MEASURED**。
 
 独立审阅发现的 Windows 文件清单分隔符缺陷已通过真实失败包的完整哈希复验与防篡改回归；修复后同一真实审阅任务重跑完成，结果绑定原稿，未错误归入后来编辑的版本。
 
