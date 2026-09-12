@@ -329,3 +329,4 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 .typing-dots i:nth-child(2){animation-delay:.15s}
 .typing-dots i:nth-child(3){animation-delay:.3s}
 @keyframes typing-bounce{0%,60%,100%{opacity:.3;transform:translateY(0)}30%{opacity:1;transform:translateY(-2px)}}
+@media(prefers-reduced-motion:reduce){.typing-dots i{animation:none}}

@@ -542,11 +542,18 @@ function publicActivity(event){
  if(event.kind==='error')return {key:`error:${event.seq}`,label:'运行提示',detail:data.message||'请求未完成',status:'failed',seq:event.seq,created:event.created};
  return null;
 }
-function renderActivities(){
+const LIVE_ACTIVITY_STATUSES=['running','inProgress','started','pending'];
+function activityEntries(){
+ let maxSeq=0;for(const key of chat.events.keys())if(key>maxSeq)maxSeq=key;
+ const signature=chat.events.size+':'+maxSeq;if(activityEntries.signature===signature&&activityEntries.map===chat.events)return activityEntries.entries;
  const byItem=new Map();for(const event of chat.events.values()){const entry=publicActivity(event);if(entry)byItem.set(entry.key,entry)}
- const entries=[...byItem.values()].sort((a,b)=>a.seq-b.seq);const signature=JSON.stringify(entries);if(renderActivities.signature===signature)return;renderActivities.signature=signature;const opened=new Set([...$('activity-list').querySelectorAll('details[open]')].map(e=>e.dataset.activityKey));$('chat-activity').hidden=!entries.length;$('activity-count').textContent=entries.length?String(entries.length):'';
- const active=entries.filter(e=>['running','inProgress','started','pending'].includes(e.status));$('activity-title').textContent=active.length?`正在进行 · ${active.at(-1).label}`:'工具与子 Agent 活动';
- $('activity-list').innerHTML=entries.map(e=>`<details class="activity-item" data-activity-key="${esc(e.key)}" ${opened.has(e.key)?'open':''}><summary><span class="activity-indicator ${['failed','declined','error'].includes(e.status)?'failed':(['running','inProgress','started','pending'].includes(e.status)?'running':'done')}"></span><strong>${esc(e.label)}</strong><span>${esc(chatStates[e.status]||({inProgress:'正在执行',started:'正在执行',done:'已完成',success:'已完成',declined:'未执行',error:'未完成'}[e.status])||e.status)}</span><time>${messageTime(e.created)}</time></summary>${e.detail?`<pre>${esc(e.detail)}</pre>`:''}</details>`).join('');
+ const entries=[...byItem.values()].sort((a,b)=>a.seq-b.seq);activityEntries.signature=signature;activityEntries.map=chat.events;activityEntries.entries=entries;return entries;
+}
+function activeActivityEntries(entries){return entries.filter(e=>LIVE_ACTIVITY_STATUSES.includes(e.status))}
+function renderActivities(){
+ const entries=activityEntries();const signature=JSON.stringify(entries);if(renderActivities.signature===signature)return;renderActivities.signature=signature;const opened=new Set([...$('activity-list').querySelectorAll('details[open]')].map(e=>e.dataset.activityKey));$('chat-activity').hidden=!entries.length;$('activity-count').textContent=entries.length?String(entries.length):'';
+ const active=activeActivityEntries(entries);$('activity-title').textContent=active.length?`正在进行 · ${active.at(-1).label}`:'工具与子 Agent 活动';
+ $('activity-list').innerHTML=entries.map(e=>`<details class="activity-item" data-activity-key="${esc(e.key)}" ${opened.has(e.key)?'open':''}><summary><span class="activity-indicator ${['failed','declined','error'].includes(e.status)?'failed':(LIVE_ACTIVITY_STATUSES.includes(e.status)?'running':'done')}"></span><strong>${esc(e.label)}</strong><span>${esc(chatStates[e.status]||({inProgress:'正在执行',started:'正在执行',done:'已完成',success:'已完成',declined:'未执行',error:'未完成'}[e.status])||e.status)}</span><time>${messageTime(e.created)}</time></summary>${e.detail?`<pre>${esc(e.detail)}</pre>`:''}</details>`).join('');
 }
 function reasoningHTML(message){
  if(message.role!=='assistant'||!message.reasoning)return '';
@@ -555,8 +562,7 @@ function reasoningHTML(message){
  const peek=running?(lines.at(-1)||''):(lines[0]||'');
  return `<details class="message-reasoning" data-running="${running?'1':'0'}"><summary><span class="reasoning-icon" aria-hidden="true">✻</span><strong>${running?'思考中':'思考过程'}</strong>${peek?`<span class="reasoning-peek">${esc(peek)}</span>`:''}</summary><div class="reasoning-body">${esc(message.reasoning)}</div></details>`;
 }
-function latestActivityEntry(){let best=null;for(const event of chat.events.values()){const e=publicActivity(event);if(e&&(!best||e.seq>best.seq))best=e}return best}
-function liveStatusText(){const e=latestActivityEntry();if(!e)return '正在回复…';return ['running','inProgress','started','pending'].includes(e.status)?`正在${e.label}…`:'正在回复…'}
+function liveStatusText(){const active=activeActivityEntries(activityEntries());const e=active.at(-1);return e?`正在${e.label}…`:'正在回复…'}
 function typingHTML(){return `<span class="typing-status"><span class="typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>${esc(liveStatusText())}</span>`}
 function renderMessages(){
  const scroll=$('chat-scroll'),nearEnd=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<140;
@@ -580,11 +586,18 @@ function renderMessages(){
  }
  $('chat-empty').hidden=chat.messages.length>0;
 }
+let autoOpenedActivityTurn=null;
+function autoOpenActivity(){
+ const activity=$('chat-activity');if(!activity||activity.hidden)return;
+ const streaming=chat.messages.find(m=>['streaming','sending'].includes(m.status));if(!streaming)return;
+ const turn=streaming.turn_id||streaming.id;if(autoOpenedActivityTurn===turn)return;
+ autoOpenedActivityTurn=turn;if(!activity.open)activity.open=true;
+}
 function renderChat(){
  $('chat').classList.toggle('is-empty',chat.messages.length===0&&!chatActive());
  $('chat-title').textContent=chat.session?.title||'新对话';const runtime=chat.session?.runtime;const pending=chat.messages.filter(m=>m.role==='user'&&m.status==='queued').length;
  $('chat-status').textContent=`${chatStates[chat.session?.status]||'准备就绪'}${runtime?' · '+modelLabel({model:runtime.model,reasoning_effort:runtime.effort,model_provider:runtime.model_provider}):''}${pending?' · '+pending+' 条消息排队中':''}`;
- renderMessages();renderActivities();{const anyStreaming=chat.messages.some(m=>['streaming','sending'].includes(m.status));const activity=$('chat-activity');if(activity&&anyStreaming&&!activity.hidden&&!activity.open)activity.open=true}renderRequests();renderContext();renderSessions();renderSessionLifecycle();updateComposer();
+ renderMessages();renderActivities();autoOpenActivity();renderRequests();renderContext();renderSessions();renderSessionLifecycle();updateComposer();
 }
 async function selectChat(id){
  if(chat.busy||chat.uploading)return;if(id===chat.id){page('chat');return}rememberDraft();chat.id=id;chat.session=chat.sessions.find(s=>s.id===id)||null;chat.tokenUsage=null;chat.messages=[];chat.requests=[];chat.events=new Map();chat.after=0;chat.request=null;renderMessages.signature='';localStorage.setItem('briefloop-chat-session',id);chatError();restoreDraft();renderChat();page('chat');await pollChat(true);if(!chat.drafts.has(id))restoreDraft();
