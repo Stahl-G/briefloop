@@ -224,6 +224,7 @@ function renderWelcome(){
  pbox.innerHTML='<span class="help">这次想做什么？可选。</span>'+WELCOME_PURPOSES.map(p=>`<button type="button" class="welcome-purpose ${welcomePurpose===p.id?'selected':''}" data-welcome-purpose="${p.id}">${esc(p.label)}</button>`).join('');
  pbox.querySelectorAll('[data-welcome-purpose]').forEach(b=>b.onclick=()=>applyWelcomePurpose(b.dataset.welcomePurpose));
 }
+$('welcome-demo').onclick=()=>action(async()=>{const result=await api('demo',{});await refresh();$('welcome').hidden=true;openBrief(state.briefs.find(b=>b.id===result.version_id));page('report');notice(result.notice)});
 $('welcome-model').onclick=()=>openModelPicker('model-select');
 $('welcome-cycle').onclick=()=>{const avail=welcomeAvailable();if(avail.length<2)return;welcomeIndex=(welcomeIndex+1)%avail.length;chooseWelcomeHost(avail[welcomeIndex].id)};
 $('welcome-start').onclick=()=>{const settings=state?.settings||{};if(!settings.model||settings.model_selection_required){notice('请先选择模型',true);return}$('welcome').hidden=true;page('chat');$('chat-model').value=settings.model;if(settings.model_provider!=null)$('chat-model-provider').value=settings.model_provider||'';if(settings.reasoning_effort)assignEffort('chat-effort',effortValue(settings,'reasoning_effort'));updateComposer();$('chat-input').focus();rememberDraft()};
@@ -236,9 +237,9 @@ function render(first){
  document.querySelectorAll('[data-check]').forEach(b=>b.onchange=()=>{if(b.checked){selected.add(b.dataset.check);referenceSelected.delete(b.dataset.check);renderReferenceSources()}else selected.delete(b.dataset.check)});renderReferenceSources();
  const visible=[];
  for(const runId of [...new Set(state.briefs.map(b=>b.run_id))]){
-  const versions=state.briefs.filter(b=>b.run_id===runId),latest=versions[0],original=[...versions].reverse().find(b=>b.author==='agent');
-  if(latest)visible.push({brief:latest,label:latest.author==='user'?'当前编辑稿':latest.parent_id?'图表修订稿':'生成原稿'});
-  if(original&&original.id!==latest?.id)visible.push({brief:original,label:'生成原稿'});
+  const versions=state.briefs.filter(b=>b.run_id===runId),latest=versions[0],original=[...versions].reverse().find(b=>['agent','example'].includes(b.author));
+  if(latest)visible.push({brief:latest,label:latest.author==='example'?'合成示例':latest.author==='user'?'当前编辑稿':latest.parent_id?'图表修订稿':'生成原稿'});
+  if(original&&original.id!==latest?.id)visible.push({brief:original,label:original.author==='example'?'合成示例':'生成原稿'});
  }
  if(current&&!visible.some(v=>v.brief.id===current.id))visible.push({brief:current,label:'正在查看历史快照'});
  $('version-select').innerHTML=visible.map(({brief:b,label})=>`<option value="${b.id}">${esc(parse(b.detail).title||'简报')} · ${label}</option>`).join('');
@@ -258,7 +259,7 @@ function tryOpenPending(){
  if(incoming&&openBrief(incoming,{follow:true})){pendingRun=null;return true}
  return false;
 }
-function openBrief(b,{follow=false}={}){if(dirty||saving){notice('请先保存当前修改，再切换版本',true);return false}followUpdates=follow;current=b;$('report-title').textContent=parse(b.detail).title||'简报';updateDownloads(b);if(editor)editor.destroy();highlightQuotes=[];editor=new Editor({element:$('editor'),editable:state.briefs.find(x=>x.run_id===b.run_id)?.id===b.id,extensions:[StarterKit.configure({link:{openOnClick:false}}),TableKit,ReportImage.configure({HTMLAttributes:{class:'briefloop-figure'},allowBase64:false}),TextStyle,Layout,Citation,Markdown,MustFixHighlight],content:b.editor_document?editorDocument(parse(b.editor_document),b.id):toEditor(b.markdown),...(b.editor_document?{}:{contentType:'markdown'}),onUpdate:changed,onSelectionUpdate:updateFormattingTools});$('markdown-source').value=b.markdown;const historical=state.briefs.find(x=>x.run_id===b.run_id)?.id!==b.id;$('markdown-source').readOnly=historical;$('toolbar').querySelectorAll('button,input,select').forEach(x=>x.disabled=historical);$('save-state').textContent=historical?'历史记录（只读）':b.author==='user'?'当前编辑稿已自动保存':'原稿已保存';$('version-select').value=b.id;assessment();citations();renderBriefLength();setReportView('edit');return true}
+function openBrief(b,{follow=false}={}){if(dirty||saving){notice('请先保存当前修改，再切换版本',true);return false}followUpdates=follow;current=b;$('report-title').textContent=parse(b.detail).title||'简报';updateDownloads(b);if(editor)editor.destroy();highlightQuotes=[];editor=new Editor({element:$('editor'),editable:state.briefs.find(x=>x.run_id===b.run_id)?.id===b.id,extensions:[StarterKit.configure({link:{openOnClick:false}}),TableKit,ReportImage.configure({HTMLAttributes:{class:'briefloop-figure'},allowBase64:false}),TextStyle,Layout,Citation,Markdown,MustFixHighlight],content:b.editor_document?editorDocument(parse(b.editor_document),b.id):toEditor(b.markdown),...(b.editor_document?{}:{contentType:'markdown'}),onUpdate:changed,onSelectionUpdate:updateFormattingTools});$('markdown-source').value=b.markdown;const historical=state.briefs.find(x=>x.run_id===b.run_id)?.id!==b.id;$('markdown-source').readOnly=historical;$('toolbar').querySelectorAll('button,input,select').forEach(x=>x.disabled=historical);$('save-state').textContent=historical?'历史记录（只读）':b.author==='example'?'合成示例已保存':b.author==='user'?'当前编辑稿已自动保存':'原稿已保存';$('version-select').value=b.id;assessment();citations();renderBriefLength();setReportView('edit');return true}
 async function renderDeliveryChecks(){
  const ticket=(renderDeliveryChecks.ticket||0)+1;renderDeliveryChecks.ticket=ticket;
  if(!current||!$('assessment'))return;const vid=current.id;
@@ -506,7 +507,7 @@ async function refreshRuntimeDiscovery(force=false){
  const select=$('agent-backend');if(!select.value){const backend=state.settings.agent_backend||'codex';if(!Array.from(select.options).some(o=>o.value===backend))select.add(new Option(backend,backend));select.value=backend;}
  if(!$('runtime-discovery-status')){const box=document.createElement('section');box.className='runtime-discovery';box.innerHTML='<div class="section-title"><strong>本机 Runtime</strong><button type="button" id="runtime-discovery-refresh" class="outline">重新检测</button></div><p id="runtime-discovery-status" class="help" role="status"></p><div id="runtime-discovery-details" class="help"></div><p id="runtime-model-status" class="help" role="status"></p>';$('settings-runtime-list').append(box);$('runtime-discovery-refresh').onclick=()=>refreshRuntimeDiscovery(true)}
  $('runtime-discovery-status').textContent='正在检测本机 CLI…';$('runtime-discovery-refresh').disabled=true;
- try{const data=await api('runtimes'+(force?'?refresh=1':''));runtimeCatalog=data.runtimes||[];renderRuntimeDiscovery();$('runtime-discovery-status').textContent=`已接入 ${runtimeCatalog.filter(r=>r.available).length} 个本机 CLI；账号与模型可通过短测试验证。`;await refreshModelSuggestions(force)}catch(e){$('runtime-discovery-status').textContent='检测失败：'+e.message}finally{$('runtime-discovery-refresh').disabled=false;runtimeScanned=true;if($('welcome')&&!$('welcome').hidden)renderWelcome()}
+ try{const data=await api('runtimes'+(force?'?refresh=1':''));runtimeCatalog=data.runtimes||[];renderRuntimeDiscovery();$('runtime-discovery-status').textContent=`已接入 ${runtimeCatalog.filter(r=>r.available).length} 个本机 CLI；账号与模型可通过短测试验证。`+(data.diagnostic?` ${data.diagnostic}`:'');await refreshModelSuggestions(force)}catch(e){$('runtime-discovery-status').textContent='检测失败：'+e.message}finally{$('runtime-discovery-refresh').disabled=false;runtimeScanned=true;if($('welcome')&&!$('welcome').hidden)renderWelcome()}
 }
 $('agent-backend').onchange=()=>action(async()=>{const backend=backendValue(),dropped=Object.keys(state.settings.role_models||{}).length;await api('settings',{agent_backend:backend,model_selection_required:true,role_models:{}});state.settings.agent_backend=backend;state.settings.model_selection_required=true;state.settings.role_models={};$('model-select').value='';$('chat-model').value='';modelCatalog={backend:null,at:0,models:[]};renderRuntimeDiscovery();renderRoleModels();renderBackend();updateComposer();await refreshModelSuggestions();notice(dropped?'宿主已切换；原宿主的角色模型已清空，留空即继承主链模型':'Runtime 已保存；请选择或输入模型')});$('model-variant').onchange=()=>action(saveModel,'Variant 已保存；下一次启动生效');
 let modelCatalog={backend:null,at:0,models:[]};
@@ -823,7 +824,9 @@ async function initChat(){
  const fresh=chat.sessions.length===0&&!((state&&state.runs)||[]).length&&!((state&&state.briefs)||[]).length;
  const needsModel=!!(settings&&settings.model_selection_required);
  const running=!!((state&&state.jobs)||[]).some(j=>['queued','running'].includes(j.status));
- if(!recoverable&&!running&&(fresh||needsModel)){
+ if(state?.demo&&needsModel&&!running){
+  $('welcome').hidden=true;openBrief(state.briefs.find(b=>b.run_id===state.demo.run_id));page('report');
+ }else if(!recoverable&&!running&&(fresh||needsModel)){
   // Cold start: no conversation to recover, no host/model chosen, nothing running.
   chat.id=null;localStorage.removeItem('briefloop-chat-session');page('welcome');renderWelcome();
  }else{
@@ -1062,7 +1065,7 @@ $('chat-model').oninput=updateComposer;
 $('chat-model-provider').oninput=()=>{rememberDraft();updateComposer()};
 for(const id of ['chat-model','chat-model-provider','model-select','model-provider'])$(id).addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();event.stopPropagation();$(id).blur()}});
 
-const LENGTH_PRESETS={compact:[800,1000],balanced:[1500,2000],detailed:[2000,2500]};
+const LENGTH_PRESETS={quick:[350,500],compact:[800,1000],balanced:[1500,2000],detailed:[2000,2500]};
 function initializeLengthInputs(requirements){
  const preset=LENGTH_PRESETS[$('length-preset').value]||LENGTH_PRESETS.balanced;
  $('target-words').value=requirements.target_words??preset[0];$('max-words').value=requirements.max_words??preset[1];validateLengthInputs();
@@ -1626,7 +1629,7 @@ function openReportChat(sessionId){
 function closeReportChat(){setReportChatOpen(false)}
 function expandReportChat(sessionId){openReportChat(sessionId)}
 function renderReportStatus(){
- const box=$('report-status');if(!box)return;
+ const box=$('report-status');if(!box)return;if(!current){box.innerHTML='';return}
  const chips=[];
  const a=current&&state.assessments.find(x=>x.version_id===current.id);
  if(a){const d=parse(a.data);chips.push(d.status==='complete'?`<span class="chip ok">已评分${d.overall?' · '+esc(d.overall):''}</span>`:'<span class="chip">评分中</span>')}

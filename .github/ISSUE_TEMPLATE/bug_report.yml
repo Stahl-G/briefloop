@@ -1,0 +1,31 @@
+name: Bug report
+description: 报告可复现的问题（请使用合成材料）
+body:
+  - type: markdown
+    attributes:
+      value: 请勿上传凭据、真实内部材料、完整工作区或未经检查的日志。安全问题请先阅读 SECURITY.md。
+  - type: input
+    id: environment
+    attributes:
+      label: 版本与环境
+      description: BriefLoop 版本、操作系统、宿主与 CLI 版本；不要填写账号或 Key。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤
+      description: 从空工作区开始，用合成材料描述步骤。
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: 预期与实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 已检查的错误片段或截图（可选）
+      description: 只贴必要片段，去除凭据、个人路径、私有网址与内部材料。

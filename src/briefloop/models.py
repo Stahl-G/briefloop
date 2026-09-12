@@ -13,7 +13,7 @@ class Model(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-LENGTH_PRESETS = {'compact':(800,1000),'balanced':(1500,2000),'detailed':(2000,2500)}
+LENGTH_PRESETS = {'quick':(350,500),'compact':(800,1000),'balanced':(1500,2000),'detailed':(2000,2500)}
 
 
 RESEARCH_BUDGET_PRESETS = {
@@ -54,7 +54,7 @@ class Requirements(Model):
     company_context_required: bool = False
     audience: str = "自己"
     language: str = "中文"
-    extent: Literal["compact", "balanced", "detailed"] = "balanced"
+    extent: Literal["quick", "compact", "balanced", "detailed"] = "balanced"
     allow_web: bool = False
     period: str = ""
     raw_input: str = ""

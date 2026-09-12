@@ -73,7 +73,7 @@ def _runtime_snapshot(store, job):
         'search_provider': payload.get('search_provider') or settings.get('search_provider', 'native'),
         'role_models': payload.get('role_models') or {},
         'model': runtime.get('model') or settings.get('model'),
-        'max_parallel': int(settings.get('max_parallel', 4)),
+        'max_parallel': int(payload.get('max_parallel', settings.get('max_parallel', 4))),
     }
 
 

@@ -149,7 +149,7 @@ class InteractiveRuntime:
         from .backends import validate_backend
         backend = validate_backend(payload.get('agent_backend', 'codex'))
         harness = self._harness_for(backend)
-        configured = payload.get('runtime', self.store.runtime_config())
+        configured = payload['runtime'] if 'runtime' in payload else self.store.runtime_config()
         runtime = {'model': configured['model'],
                    'effort': configured.get('reasoning_effort', configured.get('effort'))}
         if job.get('readonly_output'):

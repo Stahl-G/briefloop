@@ -2,7 +2,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "esbuild frontend/app.js --bundle --format=esm --minify --outfile=src/briefloop/static/app.js"
+    "build": "node scripts/build_frontend.mjs",
+    "build:check": "node scripts/build_frontend.mjs --check",
+    "test": "node --test tests/frontend_*.mjs"
   },
   "dependencies": {
     "@tiptap/core": "^3.0.0",

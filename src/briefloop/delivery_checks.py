@@ -98,6 +98,32 @@ def check_refs(store, markdown):
     return broken
 
 
+def _number_locator(value):
+    """Resolve explicit locations; never infer a location from an excerpt.
+
+    NumberBinding keeps its legacy string field. JSON uses the shared evidence
+    locator schema (including workbook cells); simple line/page forms remain
+    convenient for text and PDF sources. Unrecognized prose stays unchecked.
+    """
+    from .evidence import Locator
+    if not isinstance(value, str):
+        raise ValueError('数值来源定位必须是明确的行、页或 JSON 定位')
+    value = value.strip()
+    if value.startswith('{'):
+        return Locator.model_validate(json.loads(value))
+    lines = re.fullmatch(r'(?:lines?\s*|L)(\d+)(?:\s*[-–]\s*(?:L)?(\d+))?', value, re.I)
+    if not lines:
+        lines = re.fullmatch(r'第?\s*(\d+)(?:\s*[-–至]\s*(\d+))?\s*行', value)
+    if lines:
+        return Locator(kind='text', start_line=int(lines[1]), end_line=int(lines[2] or lines[1]))
+    page = re.fullmatch(r'(?:page\s*|p\.?\s*)(\d+)', value, re.I)
+    if not page:
+        page = re.fullmatch(r'第?\s*(\d+)\s*页', value)
+    if page:
+        return Locator(kind='pdf', page=int(page[1]))
+    raise ValueError('数值来源定位无法解析；请使用 line 1、page 1 或证据定位 JSON')
+
+
 def check_numbers(markdown, bindings, store=None, allowed_sources=None):
     """Compare one exact body token to its original value and source excerpt.
 
@@ -129,13 +155,18 @@ def check_numbers(markdown, bindings, store=None, allowed_sources=None):
             source = store.one('sources', sid)
             if source['status'] != 'ready':
                 raise ValueError('source not ready')
-            source_text = store.source_text(sid)
+            from .evidence import EvidenceInput, _read_location
+            _, location = _read_location(store, EvidenceInput(
+                source_id=sid, locator=_number_locator(item['locator']), excerpt=item['source_excerpt']))
         except (ValueError, OSError):
-            row['reason'] = '绑定来源不存在或无法读取'
+            row['reason'] = '来源定位无法读取，或摘录不在指定位置，未检查'
+            continue
+        if location['location_status'] != 'located':
+            row['reason'] = '来源指定位置需视觉核对或缺少计算缓存，未检查'
             continue
         excerpt = item['source_excerpt']
-        if excerpt not in source_text or expected not in [q[2] for q in quantities(excerpt)]:
-            row['reason'] = '原文摘录或原始数值未在来源中定位'
+        if expected not in [q[2] for q in quantities(excerpt)]:
+            row['reason'] = '原始数值未在指定位置的摘录中定位'
             continue
         # Require the selected token to be the complete number+unit, not a
         # substring of a larger number, and compare only this occurrence.

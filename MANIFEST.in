@@ -1,6 +1,9 @@
 recursive-include docs *.md
+include KNOWN_ISSUES.md SECURITY.md CONTRIBUTING.md
 include VERSION README.md THIRD_PARTY_NOTICES.md CHANGELOG.md bootstrap.py start.sh package.json package-lock.json
 recursive-include frontend *.js
+include scripts/build_frontend.mjs scripts/build_frontend_licenses.mjs
+include tests/frontend_*.mjs tests/check_distribution.py
 recursive-include src/briefloop/static *
 recursive-include src/briefloop/skill_assets *.md
 recursive-include src/briefloop/template_assets *

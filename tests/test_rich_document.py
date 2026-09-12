@@ -127,6 +127,7 @@ const extensions=[StarterKit,TableKit,ReportImage,TextStyle,Layout,Citation,Mark
 const d={type:'doc',content:[{type:'paragraph',attrs:{textAlign:'center'},content:[{type:'text',text:'Color',marks:[{type:'textStyle',attrs:{color:'#c00000'}},{type:'bold'}]},{type:'citation',attrs:{sourceId:'src_test'}}]}]};
 getSchema(extensions).nodeFromJSON(d).check();
 d.content.push({type:'table',content:[{type:'tableRow',content:[{type:'tableHeader',content:[{type:'paragraph',content:[{type:'text',text:'Value'}]}]}]}]});
+d.content[0].content.push({type:'text',text:'Source',marks:[{type:'link',attrs:{href:'#source-src_test'}}]});
 console.log(JSON.stringify(getSchema(extensions).nodeFromJSON(d).toJSON()));
 const markdown=new MarkdownManager({extensions}).serialize(d);
 if(!markdown.includes('Color')||!markdown.includes('[@src_test]'))throw Error(markdown);

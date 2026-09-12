@@ -1,12 +1,29 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "briefloop"
-version = "0.18.0"
+version = "0.19.0"
 description = "Local multi-runtime agent workbench for sourced briefings, independent review and skill learning"
+readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+authors = [{ name = "Stahl-G" }]
+keywords = ["agent", "research", "reporting", "provenance", "traceability", "briefing"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "Natural Language :: Chinese (Simplified)",
+    "Operating System :: MacOS",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business",
+    "Topic :: Text Processing :: Markup :: Markdown",
+]
 dependencies = ["pydantic>=2,<3", "markdown-it-py>=3,<5", "python-docx>=1", "pypdf>=5", "Pillow>=11", "pypdfium2>=4,<6", "openpyxl>=3.1,<4"]
 
 [project.optional-dependencies]
@@ -15,6 +32,11 @@ dev = ["pytest>=8"]
 
 [project.scripts]
 briefloop = "briefloop.cli:main"
+
+[project.urls]
+Homepage = "https://briefloop.ai"
+Repository = "https://github.com/Stahl-G/briefloop"
+Changelog = "https://github.com/Stahl-G/briefloop/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["src"]

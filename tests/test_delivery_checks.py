@@ -54,6 +54,52 @@ def test_binding_cannot_borrow_other_fact_or_unread_source(tmp_path):
     assert not check_numbers(body, [item], store, set())[0]['checked']
 
 
+def test_number_source_excerpt_is_checked_only_at_its_locator(tmp_path):
+    store = Store(tmp_path)
+    source = store.add_source('Two periods', 'Revenue $1.2 million.\nRevenue $12 million.\nRevenue $12 million.')
+    quote = 'Revenue $12 million.'
+    item = dict(label='Revenue', value=12, unit='million USD', source_id=source['id'],
+                locator='line 1', source_excerpt=quote, report_quote=quote, number_text='$12 million')
+    run = store.create_run({'title': 'Report', 'objective': 'Explain'}, [source['id']])
+    brief = store.publish(run['id'], {'title': 'Report', 'markdown': quote, 'number_bindings': [item]})
+    checked = brief_checks(store, brief['id'])['numbers']
+    assert checked['status'] == 'not_checked' and checked['matched'] == 0
+    assert len(checked['skipped']) == 1 and checked['unmatched'] == []
+    # An excerpt repeated elsewhere is valid when the explicit location contains it.
+    for locator in ('line 2', 'L3', 'lines 2-3', '第2行', '{"kind":"text","start_line":2,"end_line":2}'):
+        result = check_numbers(quote, [{**item, 'locator': locator}], store)[0]
+        assert result['checked'] and result['found'], (locator, result)
+    for locator in ('line 99', 'revenue section', '{invalid json}'):
+        result = check_numbers(quote, [{**item, 'locator': locator}], store)[0]
+        assert not result['checked'] and not result['found'], (locator, result)
+
+
+def test_located_magnitude_mismatch_blocks_even_when_reviewer_supports_claim(tmp_path):
+    from briefloop.evidence import bind_claim, blocks, create_claim, create_span
+    from briefloop.document_model import brief_document
+    from briefloop.review import _snapshot
+    from briefloop.release import decision
+
+    store = Store(tmp_path)
+    quote = 'Revenue $12 million.'
+    item = bound(store, quote, '$12 million', 1.2, 'million USD', 'Revenue $1.2 million.')
+    run = store.create_run({'title': 'Report', 'objective': 'Explain'}, [item['source_id']])
+    brief = store.publish(run['id'], {'title': 'Report', 'markdown': quote, 'number_bindings': [item]})
+    span = create_span(store, {'source_id': item['source_id'],
+                             'locator': {'kind': 'text', 'start_line': 1, 'end_line': 1}})
+    claim = create_claim(store, run['id'], {'statement': quote, 'kind': 'fact',
+        'supports': [{'span_id': span['id'], 'supports_quote': quote}]})
+    bind_claim(store, brief['id'], claim['id'], next(iter(blocks(brief_document(brief)))), quote)
+    snapshot = _snapshot(store, brief['id'])
+    snapshot['deterministic'] = brief_checks(store, brief['id'])
+    result = decision(snapshot, {'status': 'complete', 'coverage_scan_complete': True,
+        'claim_checks': [{'claim_id': claim['id'], 'status': 'supported_for_scope'}],
+        'requirement_checks': [{'requirement_id': item['requirement_id'], 'status': 'covered'}
+                               for item in snapshot['requirements']['requirement_items']]}, [])
+    assert not result['eligible']
+    assert [item['code'] for item in result['blockers']] == ['number_mismatch']
+
+
 def test_version_checks_distinguish_absent_partial_conflict_and_stale(tmp_path):
     store = Store(tmp_path)
     quote = '订单136亿美元。'
