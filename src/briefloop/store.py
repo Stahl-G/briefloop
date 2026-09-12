@@ -1,5 +1,5 @@
 """Workspace SQLite store. No model calls or long waits inside transactions."""
-from contextlib import contextmanager, closing
+from contextlib import contextmanager, closing, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 import hashlib
@@ -166,17 +166,23 @@ class Store:
         result['role_models']=shaped
         return result
 
-    def add_source(self, name, text, *, url=None, error=None, source_id=None):
+    def add_source(self, name, text, *, url=None, error=None, source_id=None, connection=None):
+        """Persist a source; an optional transaction remains owned by its caller.
+
+        Text files precede DB admission. On rollback a composing caller may remove
+        only new, unreferenced files that it owns; existing snapshots stay intact.
+        """
         sid = source_id or uid("src")
         path = self.root/"sources"/(sid+".txt")
         sha = content_hash(text)
         if path.exists() and path.read_bytes().decode("utf-8") != text:
             raise Conflict("Source snapshot cannot be overwritten")
         path.write_bytes(text.encode("utf-8"))
-        with self.tx() as c:
+        with (self.tx() if connection is None else nullcontext(connection)) as c:
             c.execute("INSERT OR IGNORE INTO sources VALUES(?,?,?,?,?,?,?,?)",
                       (sid, name, str(path.relative_to(self.root)), url, "failed" if error else "ready", error, sha, now()))
-        return self.one("sources", sid)
+            source = dict(c.execute('SELECT * FROM sources WHERE id=?', (sid,)).fetchone())
+        return source
 
     def source_text(self, sid):
         r = self.one("sources", sid)
