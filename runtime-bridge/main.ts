@@ -14,7 +14,12 @@ import {loadMmdRouteModels,loadMmdRouteLaunchEnv} from '../third_party/open-desi
 import {parseCodexDebugModels} from '../third_party/open-design/runtime-models/codex-models.js';
 import {parseOpenCodeModels} from '../third_party/open-design/runtime-models/opencode-models.js';
 import fallbackModels from '../third_party/open-design/runtime-models/fallbacks.json';
-const exec = promisify(execFile);
+const rawExec = promisify(execFile);
+function exec(bin:string,args:string[],options:any):any {
+ if(process.platform!=='win32')return rawExec(bin,args,options);
+ if(!env.BRIEFLOOP_PYTHON||!env.BRIEFLOOP_PROCESS_HELPER)throw Error('Windows process owner is unavailable');
+ return rawExec(env.BRIEFLOOP_PYTHON,['-X','utf8',env.BRIEFLOOP_PROCESS_HELPER,bin,...args],{...options,windowsHide:true});
+}
 const acpArgs = {kimi:['acp'],hermes:['acp'],reasonix:['acp'],kilo:['acp'],kiro:['acp'],vibe:[]};
 const active = new Map<string, any>();
 const defaults = [{id:'default',label:'宿主默认模型'}];
@@ -40,16 +45,24 @@ function hostDefaultLabel(id:string){
 }
 function hostDefaults(id:string){return [{id:'default',label:hostDefaultLabel(id)}]}
 const env = {...process.env}; delete env.CLAUDECODE;
+if(process.platform==='win32'){env.PATH=process.env.PATH||process.env.Path||'';delete env.Path;}
 const dirs = [...(env.PATH||'').split(path.delimiter), path.join(homedir(),'.local/bin'),path.join(homedir(),'.kimi-code/bin'),path.join(homedir(),'.opencode/bin'),path.join(homedir(),'.npm-global/bin'),path.join(homedir(),'.bun/bin'),path.join(homedir(),'.cargo/bin'),path.join(homedir(),'.dsh/bin'),'/opt/homebrew/bin','/usr/local/bin'];
+if(process.platform==='win32'&&env.APPDATA)dirs.push(path.join(env.APPDATA,'npm'));
 env.PATH=[...new Set(dirs)].join(path.delimiter);
-function findBin(def:any, custom?:string) {for(const f of custom?[path.resolve(custom)]:def.bins.flatMap((b:string)=>dirs.map(d=>path.join(d,b)))) {try {accessSync(f,constants.X_OK);return f;} catch {}}return null;}
+function findBin(def:any, custom?:string) {const extensions=process.platform==='win32'?['.exe','.cmd','.bat','']:[''];for(const f of custom?[path.resolve(custom)]:def.bins.flatMap((b:string)=>dirs.flatMap(d=>extensions.map(e=>path.join(d,b+e))))) {try {accessSync(f,constants.X_OK);return f;} catch {}}return null;}
 function defFor(id:string) {const d=catalog.find(d=>d.id===id); if(!d)throw Error('Unknown runtime: '+id);return d;}
 function wire(value:any){process.stdout.write(JSON.stringify(value)+'\n');}
 function emit(id:string,kind:string,data:any={}){const state=active.get(id);if(state&&((kind==='text'&&data.text?.trim())||kind==='tool'))state.publicActivity=true;wire({method:'event',params:{execution_id:id,kind,...data}});}
 function protocol(id:string){return id in acpArgs?'acp':id==='claude'?'claude-stream-json':id==='mimo'?'opencode-json':id==='codex'||id==='opencode'?'native-manager':null;}
 function capabilities(id:string){const p=protocol(id);return {chat:!!p,cancel:!!p,resume:p==='acp'?'negotiated':p==='claude-stream-json'||p==='opencode-json',images:p==='acp'?'negotiated':p==='claude-stream-json',questions:p==='acp',steer:false,read_only:false,network_control:false,permission_modes:['runtime-native']};}
-function terminate(child:any){if(!child?.pid)return;try{process.kill(-child.pid,'SIGTERM');}catch{try{child.kill('SIGTERM');}catch{}}setTimeout(()=>{try{process.kill(-child.pid,'SIGKILL');}catch{}},1200).unref();}
-function launch(bin:string,args:string[],cwd:string,childEnv:any=env){return spawn(bin,args,{cwd,env:childEnv,stdio:['pipe','pipe','pipe'],detached:process.platform!=='win32'});}
+function terminate(child:any){if(!child?.pid)return;if(process.platform==='win32'){child.kill();return;}try{process.kill(-child.pid,'SIGTERM');}catch{try{child.kill('SIGTERM');}catch{}}setTimeout(()=>{try{process.kill(-child.pid,'SIGKILL');}catch{}},1200).unref();}
+function launch(bin:string,args:string[],cwd:string,childEnv:any=env){
+ if(process.platform==='win32'){
+  if(!env.BRIEFLOOP_PYTHON||!env.BRIEFLOOP_PROCESS_HELPER)throw Error('Windows process owner is unavailable');
+  return spawn(env.BRIEFLOOP_PYTHON,['-X','utf8',env.BRIEFLOOP_PROCESS_HELPER,bin,...args],{cwd,env:childEnv,stdio:['pipe','pipe','pipe'],windowsHide:true});
+ }
+ return spawn(bin,args,{cwd,env:childEnv,stdio:['pipe','pipe','pipe'],detached:true});
+}
 function connect(bin:string,args:string[],cwd:string,onUpdate:(v:any)=>void,onRequest:(v:any,reply:(r:any)=>void)=>void){
  const child=launch(bin,args,cwd);let seq=0;const pending=new Map();
  const send=(v:any)=>child.stdin.write(JSON.stringify(v)+'\n');
@@ -60,6 +73,11 @@ function connect(bin:string,args:string[],cwd:string,onUpdate:(v:any)=>void,onRe
  return {child,notify:(method:string,params:any)=>send({jsonrpc:'2.0',method,params}),call:(method:string,params:any,timeout=20000)=>new Promise<any>((resolve,reject)=>{const id=++seq;const timer=timeout>0?setTimeout(()=>{pending.delete(id);reject(Error(method+' timed out'));},timeout):null;pending.set(id,{resolve,reject,timer});send({jsonrpc:'2.0',id,method,params});})};
 }
 async function handshake(conn:any,p:any){const init=await conn.call('initialize',{protocolVersion:1,clientCapabilities:{fs:{readTextFile:false,writeTextFile:false},terminal:false},clientInfo:{name:'briefloop',version:'1'}});if(p.session_id&&!init.agentCapabilities?.loadSession)throw Error('Host does not advertise session/load');const session=await conn.call(p.session_id?'session/load':'session/new',{...buildAcpSessionNewParams(p.cwd),...(p.session_id?{sessionId:p.session_id}:{})});return {init,session};}
+async function windowsAcpModels(bin:string,args:string[],cwd:string){
+ const conn=connect(bin,args,cwd,()=>{},(_m,reply)=>reply({outcome:{outcome:'cancelled'}}));
+ try{const {session}=await handshake(conn,{cwd});return normalizeModels(session.models,defaults[0],session.configOptions);}
+ finally{terminate(conn.child);}
+}
 async function discover(p:any){return await Promise.all(catalog.filter(d=>d.id!=='byok-opencode').map(async d=>{const bin=findBin(d,p.paths?.[d.id]);if(!bin)return {...d,path:null,installed:false,status:'not_installed',capabilities:capabilities(d.id)};let version=null,error=null;try{const r=await exec(bin,['--version'],{env,timeout:5000,maxBuffer:16384});version=r.stdout.trim().split('\n')[0].slice(0,160);}catch{error='Version probe failed';}const impl=protocol(d.id);return {...d,path:bin,installed:true,version,status:impl?'detected':'not_integrated',protocol:impl,implemented:!!impl,error,capabilities:capabilities(d.id)};}));}
 async function listModels(p:any){const d=defFor(p.runtime_id),bin=findBin(d,p.path);if(!bin)throw Error('Runtime not installed');if(p.runtime_id==='reasonix'){
  const r=await exec(bin,['doctor','--json'],{env,cwd:p.cwd||process.cwd(),timeout:10000,maxBuffer:1024*1024});const d=JSON.parse(r.stdout);
@@ -70,7 +88,7 @@ async function listModels(p:any){const d=defFor(p.runtime_id),bin=findBin(d,p.pa
  try{
   if(p.runtime_id==='codex'){const r=await exec(bin,['debug','models'],{env,timeout:5000,maxBuffer:4*1024*1024});const models=parseCodexDebugModels(r.stdout);return {models:models||fallback,source:models?'host':'builtin_hints'};}
   if(['mimo','opencode'].includes(p.runtime_id)){const r=await exec(bin,['models','--verbose'],{env,timeout:20000,maxBuffer:8*1024*1024});const models=parseOpenCodeModels(r.stdout);return {models:models||fallback,source:models?'host':'builtin_hints'};}
-  if(p.runtime_id in acpArgs){const models=await detectAcpModels({bin,args:acpArgs[p.runtime_id],cwd:p.cwd||process.cwd(),env,timeoutMs:15000,defaultModelOption:defaults[0],clientName:'briefloop-models'});const live=models.some(m=>m.id!=='default');return {models:live?models:fallback,source:live?'host':'builtin_hints'};}
+  if(p.runtime_id in acpArgs){const models=process.platform==='win32'?await windowsAcpModels(bin,acpArgs[p.runtime_id],p.cwd||process.cwd()):await detectAcpModels({bin,args:acpArgs[p.runtime_id],cwd:p.cwd||process.cwd(),env,timeoutMs:15000,defaultModelOption:defaults[0],clientName:'briefloop-models'});const live=models.some(m=>m.id!=='default');return {models:live?models:fallback,source:live?'host':'builtin_hints'};}
  }catch{return {models:fallback,source:'builtin_hints',diagnostic:'宿主目录读取失败，已显示内置建议；也可直接输入模型 ID。'};}
  return {models:fallback,source:'builtin_hints'};
 }

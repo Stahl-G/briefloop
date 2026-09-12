@@ -5,6 +5,8 @@ import shutil
 import subprocess
 import sys
 import time
+import os
+import secrets
 from .store import Store
 from . import __version__
 
@@ -19,6 +21,8 @@ def _tavily_failure(operation,exc):
 
 
 def main():
+    from .platform_support import ensure_utf8
+    ensure_utf8()
     p=argparse.ArgumentParser(prog='briefloop',description='本地简报、改稿与持续学习')
     p.add_argument('--version',action='version',version=f'BriefLoop {__version__}')
     sub=p.add_subparsers(dest='command',required=True)
@@ -71,23 +75,21 @@ def main():
     a=p.parse_args()
     if a.command=='serve':
         from .server import serve
-        if a.backend is not None:
-            from .models import Settings
-            store=Store(a.workspace)
-            settings=Settings.model_validate({**store.settings(),'agent_backend':a.backend})
-            store.set_meta('settings',settings.model_dump())
-        serve(a.workspace,a.port,paused=a.paused)
+        serve(a.workspace,a.port,paused=a.paused,backend=a.backend)
     elif a.command=='start':
         root=Path(a.workspace).resolve();root.mkdir(parents=True,exist_ok=True)
+        launch_id=secrets.token_hex(16)
         with (root/'server.log').open('a') as log:
-            proc=subprocess.Popen([sys.executable,'-m','briefloop','serve','--workspace',str(root),'--port',str(a.port)]+(['--paused'] if a.paused else [])+(['--backend',a.backend] if a.backend else []),stdout=log,stderr=log,start_new_session=True)
-        (root/'server.pid').write_text(str(proc.pid))
-        for _ in range(80):
+            proc=subprocess.Popen([sys.executable,'-X','utf8','-m','briefloop','serve','--workspace',str(root),'--port',str(a.port)]+(['--paused'] if a.paused else [])+(['--backend',a.backend] if a.backend else []),stdout=log,stderr=log,start_new_session=True,env={**os.environ,'BRIEFLOOP_LAUNCH_ID':launch_id},**({'creationflags':subprocess.CREATE_NO_WINDOW} if sys.platform=='win32' else {}))
+        # A clean Windows workspace imports bundled templates before readiness.
+        for _ in range(450):
             if proc.poll() is not None:raise RuntimeError('服务未能启动，请查看 '+str(root/'server.log'))
             info=root/'server.json'
             if info.exists():
                 value=json.loads(info.read_text())
-                if value['pid']==proc.pid:
+                # Windows venv redirectors can launch a different Python PID.
+                if value.get('launch_id')==launch_id:
+                    (root/'server.pid').write_text(str(value['pid']))
                     print(f"BriefLoop 已启动：{value['url']}，日志：{root/'server.log'}");break
             time.sleep(.1)
         else:raise RuntimeError('服务尚未报告就绪，请查看 '+str(root/'server.log'))

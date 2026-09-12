@@ -39,6 +39,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from ..platform_support import OwnedProcess
 
 
 EXPECTED_MAJOR = 1
@@ -96,7 +97,7 @@ class OpencodeServerClient:
         self.password = password or secrets.token_urlsafe(24)
         self._stderr = (root / 'opencode-serve.stderr.log').open('a')
         env = {**os.environ, 'OPENCODE_SERVER_PASSWORD': self.password}
-        self.process = subprocess.Popen(
+        self.process = OwnedProcess(
             [executable, 'serve', '--port', str(self.port), '--hostname', '127.0.0.1'],
             stdout=subprocess.DEVNULL, stderr=self._stderr, env=env, start_new_session=True)
         self._lock = threading.Lock()
@@ -305,13 +306,7 @@ class OpencodeServerClient:
                 'protocol':protocol,'runtime':'opencode','context_limit':context_limit,'output_limit':output_limit}
 
     def close(self):
-        if self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=8)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait(timeout=8)
+        self.process.close_tree(timeout=8)
         try:
             self._stderr.close()
         except (OSError, ValueError):
