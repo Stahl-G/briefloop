@@ -29,7 +29,8 @@ def check(archive: Path) -> None:
             contents = {member.name.split('/', 1)[1]: package.extractfile(member).read()
                         for member in package.getmembers() if member.isfile() and '/' in member.name}
         names = ['LICENSE', 'THIRD_PARTY_NOTICES.md', 'KNOWN_ISSUES.md', 'SECURITY.md', 'CONTRIBUTING.md', 'package.json', 'package-lock.json',
-                 'scripts/build_frontend.mjs', 'scripts/build_frontend_licenses.mjs',
+                 'start.ps1', '.gitattributes',
+                 'scripts/build_frontend.mjs', 'scripts/build_frontend_licenses.mjs', 'scripts/test_frontend.mjs',
                  'src/briefloop/static/frontend-licenses.txt', 'src/briefloop/static/app.js',
                  'src/briefloop/static/runtime-bridge.LICENSE.txt', 'src/briefloop/static/runtime-bridge.NOTICE.txt',
                  'src/wikiskill/_licenses/LICENSE', 'src/wikiskill/_licenses/NOTICE.md']

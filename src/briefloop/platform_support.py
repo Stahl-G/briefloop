@@ -4,6 +4,7 @@ import os
 import signal
 import subprocess
 import sys
+import time
 
 
 class WorkspaceLock:
@@ -120,13 +121,26 @@ class OwnedProcess(subprocess.Popen):
             self._job.close()
             self.wait(timeout=timeout)
         else:
+            deadline = time.monotonic() + timeout
             try:
                 os.killpg(self.pid, signal.SIGTERM)
             except ProcessLookupError:
                 pass
-            try:
-                self.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                os.killpg(self.pid, signal.SIGKILL)
-                self.wait(timeout=timeout)
+            # The leader may exit before a descendant that ignores SIGTERM.
+            # Reap the leader, but give the entire owned group the grace period.
+            while True:
+                self.poll()
+                try:
+                    os.killpg(self.pid, 0)
+                except ProcessLookupError:
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    try:
+                        os.killpg(self.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass  # The last member exited between probe and signal.
+                    break
+                time.sleep(min(.05, remaining))
+            self.wait(timeout=timeout)
         self._tree_closed = True
