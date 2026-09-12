@@ -78,7 +78,8 @@ CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT, job_id 
 CREATE TABLE IF NOT EXISTS skills(id TEXT PRIMARY KEY, parent_id TEXT, content TEXT NOT NULL,
  targets TEXT NOT NULL, reason TEXT NOT NULL, created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS templates(id TEXT PRIMARY KEY,name TEXT NOT NULL,revision INTEGER NOT NULL,
- parent_id TEXT,source_hash TEXT NOT NULL,status TEXT NOT NULL,spec TEXT NOT NULL,created TEXT NOT NULL,error TEXT);
+ parent_id TEXT,source_hash TEXT NOT NULL,status TEXT NOT NULL,spec TEXT NOT NULL,created TEXT NOT NULL,error TEXT,
+ origin TEXT NOT NULL DEFAULT 'upload');
 CREATE TABLE IF NOT EXISTS company_facts(id TEXT PRIMARY KEY,fact_key TEXT NOT NULL,value TEXT NOT NULL,
  source_id TEXT NOT NULL REFERENCES sources(id),locator TEXT NOT NULL,effective_date TEXT NOT NULL,
  origin TEXT NOT NULL,status TEXT NOT NULL,previous_id TEXT,created TEXT NOT NULL,resolved_at TEXT);
@@ -106,6 +107,8 @@ class Store:
             c.executescript(SOURCE_UPDATE_SCHEMA)
             if 'mode' not in {r['name'] for r in c.execute('PRAGMA table_info(runs)')}:
                 c.execute("ALTER TABLE runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'normal'")
+            if 'origin' not in {r['name'] for r in c.execute('PRAGMA table_info(templates)')}:
+                c.execute("ALTER TABLE templates ADD COLUMN origin TEXT NOT NULL DEFAULT 'upload'")
             c.execute("INSERT OR IGNORE INTO meta VALUES('settings', ?)", (dump(Settings().model_dump()),))
             c.execute("INSERT OR IGNORE INTO meta VALUES('schema', '1')")
             c.execute("INSERT OR IGNORE INTO meta VALUES('workspace_id', ?)",(dump(uid("workspace")),))

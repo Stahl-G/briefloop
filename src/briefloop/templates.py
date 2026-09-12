@@ -25,7 +25,7 @@ def _path(store, row, name):
     return path
 
 
-def import_template(store,name,data,parent_id=None,*,prepare_job=True):
+def import_template(store,name,data,parent_id=None,*,prepare_job=True,origin='upload'):
     if Path(name).suffix.lower()!='.docx':raise ValueError('主模板请上传 DOCX')
     doc=Document(BytesIO(data))
     if len(doc.sections)!=1:raise ValueError('首版模板支持单节报告；请将多节版式另存为单节主模板，原文件不变')
@@ -47,8 +47,8 @@ def import_template(store,name,data,parent_id=None,*,prepare_job=True):
     (folder/'inventory.json').write_text(dump({'blocks':inventory,'headers':[[p.text for p in s.header.paragraphs] for s in doc.sections],
                                             'footers':[[p.text for p in s.footer.paragraphs] for s in doc.sections]}))
     with store.tx() as c:
-        c.execute('INSERT INTO templates VALUES(?,?,?,?,?,?,?,?,?)',(tid,Path(name).stem,(parent['revision']+1) if parent else 1,parent_id,
-                  hashlib.sha256(data).hexdigest(),'preparing',dump({}),now(),None))
+        c.execute('INSERT INTO templates VALUES(?,?,?,?,?,?,?,?,?,?)',(tid,Path(name).stem,(parent['revision']+1) if parent else 1,parent_id,
+                  hashlib.sha256(data).hexdigest(),'preparing',dump({}),now(),None,origin))
     job=store.enqueue('prepare_template',{'template_id':tid}) if prepare_job else None
     return {**template(store,tid),**({'job_id':job['id']} if job else {})}
 
@@ -182,6 +182,32 @@ def rebuild_template_version(store,template_id):
         raise
 
 
+BUILTIN_TEMPLATES = (('research-report-zh.docx', 'research-report-zh.spec.json', '研报版式'),)
+
+
+def import_builtin(store):
+    """Register bundled templates through the normal import+prepare pipeline.
+
+    Idempotent per asset content hash: an existing ready row with the same
+    source_hash short-circuits; a failed row is re-prepared from the bundled
+    spec. No agent invocation — the preparation spec ships beside the docx.
+    """
+    from importlib.resources import files
+    assets = files('briefloop').joinpath('template_assets')
+    for document_name, spec_name, label in BUILTIN_TEMPLATES:
+        data = assets.joinpath(document_name).read_bytes()
+        spec = json.loads(assets.joinpath(spec_name).read_text(encoding='utf-8'))
+        digest = hashlib.sha256(data).hexdigest()
+        rows = store.rows("SELECT id,status FROM templates WHERE origin='builtin' AND source_hash=?", (digest,))
+        if rows and rows[0]['status'] == 'ready':
+            continue
+        if rows:
+            prepare(store, rows[0]['id'], spec)
+            continue
+        row = import_template(store, label + '.docx', data, prepare_job=False, origin='builtin')
+        prepare(store, row['id'], spec)
+
+
 def prepare(store,template_id,spec):
     row=template(store,template_id)
     if row['status']=='ready':return row
@@ -279,8 +305,14 @@ def export_template(store,brief,document,figures):
     if row['spec'].get('layout_version',1)>=2 and row['spec'].get('cover_title_present'):
         document=without_duplicate_cover_heading(document,fields['title'])
     by_title={s['title']:s['section_id'] for s in row['spec']['sections']}
+    known={s['section_id'] for s in row['spec']['sections']}
+    # Published documents always carry auto block anchors, so a title match must
+    # also win over a non-section anchor — otherwise template styles only apply
+    # to headings that were hand-tagged with a section blockId.
     for node in document.get('content',[]):
-        if node['type']=='heading' and not node.get('attrs',{}).get('blockId'):
+        if node['type']=='heading':
+            current=node.get('attrs',{}).get('blockId')
+            if current in known:continue
             text=''.join(c.get('text','') for c in node.get('content',[]))
             if text in by_title:node.setdefault('attrs',{})['blockId']=by_title[text]
     styles=row['spec']['styles']

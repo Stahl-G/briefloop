@@ -31,3 +31,4 @@ jobs:
       - run: node tests/frontend_setup_state.mjs
       - run: briefloop --version
       - run: python -c "from importlib.resources import files; assert files('briefloop').joinpath('skill_assets/tavily/SKILL.md').is_file()"
+      - run: python -c "from importlib.resources import files; assert files('briefloop').joinpath('template_assets/research-report-zh.docx').is_file()"

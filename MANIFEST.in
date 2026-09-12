@@ -3,6 +3,7 @@ include VERSION README.md THIRD_PARTY_NOTICES.md CHANGELOG.md bootstrap.py start
 recursive-include frontend *.js
 recursive-include src/briefloop/static *
 recursive-include src/briefloop/skill_assets *.md
+recursive-include src/briefloop/template_assets *
 prune workspaces
 prune private_planning
 global-exclude __pycache__ *.py[cod] .DS_Store

@@ -1199,7 +1199,8 @@ function renderTemplates(first=false){
  const signature=JSON.stringify([select.value,(state.templates||[]).map(t=>[t.id,t.status,t.revision])]);if(!first&&signature===renderTemplates.signature)return;renderTemplates.signature=signature;
  const chosen=first?(state.requirements?.template_id||state.settings.default_template_id||''):select.value;
  const blocked=unreadyTemplate(chosen);
- select.innerHTML='<option value="">通用模板</option>'+(state.templates||[]).filter(t=>t.status==='ready').map(t=>`<option value="${esc(t.id)}">${esc(t.name)} · v${t.revision}</option>`).join('')
+ const ready=(state.templates||[]).filter(t=>t.status==='ready').sort((a,b)=>(a.origin==='builtin'?0:1)-(b.origin==='builtin'?0:1));
+ select.innerHTML='<option value="">通用模板</option>'+ready.map(t=>`<option value="${esc(t.id)}">${esc(t.name)}${t.origin==='builtin'?'（内置）':''} · v${t.revision}</option>`).join('')
   +(blocked?`<option value="${esc(blocked.id)}">${esc(blocked.name)} · 尚未就绪</option>`:'');
  select.value=chosen;
  $('template-status').textContent=[(state.templates||[]).filter(t=>t.status!=='ready').map(t=>t.name+'：'+(t.error||'模板准备中，可在任务列表查看或恢复')).join('；'),
@@ -1684,8 +1685,12 @@ function closeSourceDrawer(){const d=$('source-drawer'),b=$('source-drawer-backd
 function renderTemplatesPage(){
  const box=$('templates-page-list');if(!box||!state)return;
  const list=state.templates||[];
- const sig=JSON.stringify(list.map(t=>[t.id,t.status,t.revision,t.name]));if(renderTemplatesPage.sig===sig)return;renderTemplatesPage.sig=sig;
- box.innerHTML=list.length?list.map(t=>`<div class="source-row"><span class="name">${esc(t.name)} · v${t.revision}</span><span class="tag ${t.status!=='ready'?'error':''}">${t.status==='ready'?'可用':esc(t.error||'准备中')}</span></div>`).join(''):'<p class="help">还没有模板。上传一个 Word 作为版式模板。</p>';
+ const sig=JSON.stringify(list.map(t=>[t.id,t.status,t.revision,t.name,t.origin]));if(renderTemplatesPage.sig===sig)return;renderTemplatesPage.sig=sig;
+ const row=t=>`<div class="source-row"><span class="name">${esc(t.name)} · v${t.revision}</span><span class="tag ${t.status!=='ready'?'error':''}">${t.status==='ready'?'可用':esc(t.error||'准备中')}</span></div>`;
+ const builtins=list.filter(t=>t.origin==='builtin'),mine=list.filter(t=>t.origin!=='builtin');
+ box.innerHTML=(builtins.length?`<p class="help">内置版式，生成报告时可直接选用</p>${builtins.map(row).join('')}`:'')
+  +(mine.length?`<p class="help">我的模板</p>${mine.map(row).join('')}`:'')
+  +(!list.length?'<p class="help">还没有模板。上传一个 Word 作为版式模板。</p>':'');
 }
 if($('new-report'))$('new-report').onclick=()=>page('setup');
 if($('sources-upload'))$('sources-upload').onchange=e=>action(async()=>{for(const f of e.target.files){const buf=new Uint8Array(await f.arrayBuffer());let b='';for(let i=0;i<buf.length;i+=8192)b+=String.fromCharCode(...buf.subarray(i,i+8192));await api('upload',{name:f.name,data:btoa(b)})}e.target.value=''},'来源已保存');

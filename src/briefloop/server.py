@@ -387,6 +387,8 @@ def make_server(workspace, port=8765, *, paused=False):
 
 def serve(workspace,port=8765,*,paused=False):
     server=make_server(workspace,port,paused=paused)
+    from .templates import import_builtin
+    import_builtin(server.store)
     server.worker.start()
     url=f'http://127.0.0.1:{server.server_port}'
     (server.store.root/'server.json').write_text(dump({'pid':os.getpid(),'url':url,'workspace_id':server.store.meta('workspace_id')}))

@@ -1,0 +1,65 @@
+{
+ "sections": [
+  {
+   "section_id": "summary",
+   "title": "摘要",
+   "index": 4,
+   "purpose": "本期核心结论"
+  },
+  {
+   "section_id": "dynamics",
+   "title": "行业动态",
+   "index": 5,
+   "purpose": "事件与政策回顾"
+  },
+  {
+   "section_id": "data",
+   "title": "数据追踪",
+   "index": 6,
+   "purpose": "关键指标与前值"
+  },
+  {
+   "section_id": "analysis",
+   "title": "分析研判",
+   "index": 7,
+   "purpose": "影响推演与观点"
+  },
+  {
+   "section_id": "risks",
+   "title": "风险提示",
+   "index": 8,
+   "purpose": "需要关注的不确定性"
+  },
+  {
+   "section_id": "appendix",
+   "title": "附录",
+   "index": 9,
+   "purpose": "方法、缺口与来源说明"
+  }
+ ],
+ "keep_blocks": [
+  0,
+  1,
+  2,
+  3
+ ],
+ "paragraph_index": 10,
+ "fields": [
+  {
+   "old": "{{title}}",
+   "field": "title"
+  },
+  {
+   "old": "{{organization}}",
+   "field": "organization"
+  },
+  {
+   "old": "{{period}}",
+   "field": "period"
+  },
+  {
+   "old": "{{report_date}}",
+   "field": "report_date"
+  }
+ ]
+}
