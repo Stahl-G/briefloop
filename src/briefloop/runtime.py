@@ -158,7 +158,7 @@ def generation_prompt(store, run, folder, backend='codex'):
         directory=(folder/f'scout-{number}').resolve()
         directory.mkdir(parents=True,exist_ok=True)
         schema_path=directory/'scout.schema.json'
-        schema_path.write_text(dump(ScoutResult.model_json_schema()),encoding='utf-8')
+        schema_path.write_text(json.dumps(ScoutResult.model_json_schema(),ensure_ascii=False,indent=2),encoding='utf-8')
         scout_slots.append({'slot_id':f'scout-{number}','directory':str(directory),
                             'result_file':str(directory/'result.json'),'schema_path':str(schema_path),
                             'scout_contract_path':str(scout_contract)})
@@ -184,7 +184,7 @@ def generation_prompt(store, run, folder, backend='codex'):
         scout_binding['instructions']=scout_binding.get('instructions','')+'\n\n'+content
         scout_binding['retrieval_skill_path']=str(retrieval_path)
         payload['role_skills']['scout']=scout_binding
-    (folder/'input.json').write_text(dump(payload),encoding='utf-8')
+    (folder/'input.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8')
     if backend == 'opencode' and not tavily_enabled:
         search = ('本轮冻结搜索源：Opencode 原生搜索。允许联网时 Scout 使用 host 的原生网络搜索工具设计查询、筛选公开原始发布者；搜索摘要仅用于发现，后续仍须读取并登记正文。'
                   if req['allow_web'] else '本轮未允许联网，只处理已登记的材料，不加载外部检索技能。')
@@ -300,7 +300,7 @@ def assessment_prompt(store, brief, folder, backend='codex'):
     index=[{key:row.get(key) for key in ('id','source_id','name','url','status','error','absolute_path','original_path','media_type','image_path','pages','needs_visual','rendered_pages')} for row in records.values()]
     gaps=[str(value) for value in detail.get('gaps',[])]
     index_path=(folder/'source-index.json').resolve()
-    index_path.write_text(dump({'sources':index,'gaps':gaps}),encoding='utf-8')
+    index_path.write_text(json.dumps({'sources':index,'gaps':gaps},ensure_ascii=False,indent=2),encoding='utf-8')
     brief_context={key:brief[key] for key in ('id','run_id','markdown','hash') if key in brief}
     brief_context.update({'title':detail.get('title',''),'citations':citations})
     from .deliverable_spec import clause_items, instructions, resolve
@@ -318,7 +318,7 @@ def assessment_prompt(store, brief, folder, backend='codex'):
     input_pack['clause_index']=clause_items(deliverable)
     from .evidence import inspect_bindings
     input_pack['claim_evidence']=inspect_bindings(store,brief['id'])
-    (folder/'input.json').write_text(dump(input_pack),encoding='utf-8')
+    (folder/'input.json').write_text(json.dumps(input_pack,ensure_ascii=False,indent=2),encoding='utf-8')
     tool=tool_command(store.root,backend=backend)
     no_question='本轮没有任何用户在旁可问：不要调用 question 工具；遇到含糊之处自行按任务目标决断，并在结果中记录假设。\n' if backend=='opencode' else ''
     view_pages_word = '使用 view_image 读取页图' if backend == 'codex' else '用 read 工具读取返回的页图'
@@ -477,7 +477,7 @@ class Worker:
                     if row['status']!='ready':
                         folder=self.folder(job)
                         self.runtime.execute(job,TASK_CONTEXT+preparation_prompt(self.store,row,folder),folder,resume_on_complete=True)
-                        row=prepare(self.store,row['id'],json.loads((folder/'template.json').read_text()))
+                        row=prepare(self.store,row['id'],json.loads((folder/'template.json').read_text(encoding='utf-8-sig')))
                     result={'template_id':row['id'],'revision':row['revision'],'status':row['status']}
                 elif job['kind']=='source_refresh':
                     from .source_updates import refresh
@@ -536,26 +536,26 @@ class Worker:
 
     def folder(self,job):
         folder=self.store.root/'jobs'/job['id'];folder.mkdir(exist_ok=True)
-        (folder/'draft.schema.json').write_text(dump(BriefDraft.model_json_schema()))
-        (folder/'scout.schema.json').write_text(dump(ScoutResult.model_json_schema()))
-        (folder/'assessment.schema.json').write_text(dump(Assessment.model_json_schema()))
+        (folder/'draft.schema.json').write_text(json.dumps(BriefDraft.model_json_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
+        (folder/'scout.schema.json').write_text(json.dumps(ScoutResult.model_json_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
+        (folder/'assessment.schema.json').write_text(json.dumps(Assessment.model_json_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
         return folder
 
     def _remember_generated_sources(self,folder,brief):
         """Called only for a version newly admitted by this execution."""
         from .review_learning import source_snapshot
         path=folder/'generated-source-snapshots.json'
-        saved=json.loads(path.read_text()) if path.exists() else {}
+        saved=json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
         if brief['id'] in saved:return
         value={'brief_hash':brief['hash'],'captured_at':now()}
         try:value['sources']=source_snapshot(self.store,brief['run_id'])
         except (ValueError,OSError) as exc:value.update(sources=None,error=str(exc))
         saved[brief['id']]=value
-        temporary=path.with_suffix('.tmp');temporary.write_text(dump(saved));temporary.replace(path)
+        temporary=path.with_suffix('.tmp');temporary.write_text(dump(saved), encoding='utf-8');temporary.replace(path)
 
     def _generated_sources(self,folder,version_id):
         path=folder/'generated-source-snapshots.json'
-        saved=json.loads(path.read_text()).get(version_id) if path.exists() else None
+        saved=json.loads(path.read_text(encoding='utf-8')).get(version_id) if path.exists() else None
         if not saved or saved['brief_hash']!=self.store.one('briefs',version_id)['hash'] or saved.get('sources') is None:return {}
         return {'source_snapshot':saved['sources']}
 
@@ -620,10 +620,10 @@ class Worker:
                     latest[0]=record['id'];return
                 newest=self.store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(run['id'],))[0]['id']
                 if newest!=latest[0]:
-                    (folder/'draft-refinement-suggestion.json').write_text(dump(data));return
+                    (folder/'draft-refinement-suggestion.json').write_text(dump(data), encoding='utf-8');return
                 try:record=self.store.publish(run['id'],data,parent_id=latest[0])
                 except Conflict:
-                    (folder/'draft-refinement-suggestion.json').write_text(dump(data));return
+                    (folder/'draft-refinement-suggestion.json').write_text(dump(data), encoding='utf-8');return
             latest[0]=record['id']
             if record['id'] not in known:self._remember_generated_sources(folder,record)
             if self.thread.is_alive() and not checkpoint[0] and time.monotonic()-started>=180 and json.loads(run['requirements']).get('writing_mode')=='internal_report':
@@ -645,7 +645,7 @@ class Worker:
             legacy=folder/'assessment.json'
             if 'role_models' not in payload and legacy.exists():
                 # Preserve results of old jobs that scored inside the writing turn.
-                self.store.assess(current,json.loads(legacy.read_text()))
+                self.store.assess(current,json.loads(legacy.read_text(encoding='utf-8-sig')))
             else:
                 score_folder=folder/'evaluation'
                 if not score_folder.exists() and (folder/'scorer').exists():
@@ -653,7 +653,7 @@ class Worker:
                 if 'role_models' not in payload and (folder/'score-recovery').exists():
                     score_folder=folder/'score-recovery'
                 score_folder.mkdir(exist_ok=True)
-                (score_folder/'assessment.schema.json').write_text(dump(Assessment.model_json_schema()))
+                (score_folder/'assessment.schema.json').write_text(json.dumps(Assessment.model_json_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
                 evaluator=stage_job(self.store,{**job,'payload':dump({**payload,'version_id':current})},'evaluator',mode='single')
                 try:
                     scoring=self.assess_version(evaluator,brief,score_folder,backend)
@@ -689,7 +689,7 @@ class Worker:
         # creating it has since changed the original packet's candidate evidence.
         if existing:
             saved=folder/'revision'/'input.json'
-            inputs=json.loads(saved.read_text()) if saved.exists() else {}
+            inputs=json.loads(saved.read_text(encoding='utf-8')) if saved.exists() else {}
             assessment=inputs.get('assessment') or (json.loads(grades[0]['data']) if grades else {})
             open_findings=inputs.get('review_findings',[])
             reasons=inputs.get('revision_reasons',[])
@@ -710,12 +710,12 @@ class Worker:
             from .evidence import inspect_bindings,EvidenceInput,ClaimInput
             from .figures import read_figure
             detail=json.loads(brief['detail'])
-            (stage/'input.json').write_text(dump({'brief':brief,'assessment':assessment,'revision_reasons':reasons,
+            (stage/'input.json').write_text(json.dumps({'brief':brief,'assessment':assessment,'revision_reasons':reasons,
                 'requirements':json.loads(self.store.one('runs',brief['run_id'])['requirements']),'review_findings':open_findings,'conflicts':review_state['conflicts'],
                 'evidence':inspect_bindings(self.store,brief['id']),
                 'evidence_schema':EvidenceInput.model_json_schema(),'claim_schema':ClaimInput.model_json_schema(),
-                'figures':[read_figure(self.store,fid,brief['run_id']) for fid in detail.get('figures',[])]}))
-            (stage/'draft.schema.json').write_text(dump(BriefDraft.model_json_schema()))
+                'figures':[read_figure(self.store,fid,brief['run_id']) for fid in detail.get('figures',[])]},ensure_ascii=False,indent=2), encoding='utf-8')
+            (stage/'draft.schema.json').write_text(json.dumps(BriefDraft.model_json_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
             finding_ids=[finding['id'] for finding in open_findings]
             response_schema={'type':'array','minItems':len(finding_ids),'maxItems':len(finding_ids),
                 'items':{'type':'object','additionalProperties':False,
@@ -723,7 +723,7 @@ class Worker:
                         'finding_id':{'type':'string','enum':finding_ids},
                         'action':{'type':'string','enum':['corrected','removed','disagree']},
                         'reason':{'type':'string','minLength':1}}} if finding_ids else False}
-            (stage/'responses.schema.json').write_text(dump(response_schema))
+            (stage/'responses.schema.json').write_text(json.dumps(response_schema,ensure_ascii=False,indent=2), encoding='utf-8')
             from .deliverable_spec import resolve,instructions
             contract=json.loads(brief['detail']).get('reader_contract')
             spec=resolve(json.loads(self.store.one('runs',brief['run_id'])['requirements']),reader_contract=contract)
@@ -753,9 +753,9 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
                 latest=self.store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(brief['run_id'],))[0]['id']
                 if latest not in (brief['id'],revision_id):
                     return {'revision_status':'suggestion','revision_message':str(exc),'revision_file':str((stage/'draft.json').relative_to(self.store.root)),'base_version':brief['id']}
-                (stage/'admission-error.json').write_text(dump({'error':str(exc)}));raise
+                (stage/'admission-error.json').write_text(dump({'error':str(exc)}), encoding='utf-8');raise
             except ValueError as exc:
-                (stage/'admission-error.json').write_text(dump({'error':str(exc)}));raise
+                (stage/'admission-error.json').write_text(dump({'error':str(exc)}), encoding='utf-8');raise
         latest=self.store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(brief['run_id'],))[0]['id']
         if latest!=revision_id:
             return {'version_id':latest,'revision_status':'user_edit','revision_message':'用户已修改，保留当前人工稿；原修订的待处理记录仍保留','original_version_id':brief['id']}
@@ -764,7 +764,7 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
             return {'version_id':latest,'revision_status':'user_edit','revision_message':'元数据修复期间用户已修改；修复工件保留，未替换人工稿','original_version_id':brief['id']}
         if not self.store.rows('SELECT id FROM assessments WHERE version_id=?',(revision_id,)):
             evaluation=folder/'revision-evaluation';evaluation.mkdir(exist_ok=True)
-            (evaluation/'assessment.schema.json').write_text(dump(Assessment.model_json_schema()))
+            (evaluation/'assessment.schema.json').write_text(json.dumps(Assessment.model_json_schema(),ensure_ascii=False,indent=2), encoding='utf-8')
             evaluator=stage_job(self.store,{**job,'kind':'assess','payload':dump({**payload,'version_id':revision_id})},'evaluator',mode='single')
             self.store.event(job['id'],'revision_progress',{'stage':'checking','version_id':revision_id})
             self.assess_version(evaluator,revised,evaluation,payload.get('agent_backend','codex'))
@@ -781,7 +781,7 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
         expected={item['id'] for item in findings}
         nodes=blocks(brief_document(revised))
         def load():
-            return {key:json.loads((stage/name).read_text()) if (stage/name).exists() else [] for key,name in names.items()}
+            return {key:json.loads((stage/name).read_text(encoding='utf-8-sig')) if (stage/name).exists() else [] for key,name in names.items()}
         def admit(data):
             if not isinstance(data,dict) or any(not isinstance(data.get(key),list) for key in names):raise ValueError('修订绑定及处理说明必须为数组')
             for binding in data['bindings']:
@@ -806,12 +806,12 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
                     respond(self.store,item['finding_id'],revised['id'],item['action'],item['reason'])
         def remember(exc):
             import hashlib
-            captured={name:(stage/name).read_text() for name in names.values() if (stage/name).exists()}
+            captured={name:(stage/name).read_text(encoding='utf-8-sig') for name in names.values() if (stage/name).exists()}
             value={'version_id':revised['id'],'brief_hash':revised['hash'],'error':str(exc),'files':captured}
             attempts=stage/'metadata-attempts';attempts.mkdir(exist_ok=True)
             path=attempts/(hashlib.sha256(dump(value).encode()).hexdigest()+'.json')
-            if not path.exists():path.write_text(dump(value))
-            error_file.write_text(dump({**value,'record':str(path.relative_to(folder))}))
+            if not path.exists():path.write_text(dump(value), encoding='utf-8')
+            error_file.write_text(dump({**value,'record':str(path.relative_to(folder))}), encoding='utf-8')
         retry=error_file.exists()
         try:
             admit(load())
@@ -820,8 +820,8 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
             remember(exc)
             if not retry:raise
         repair=stage/'metadata-repair';repair.mkdir(exist_ok=True)
-        (repair/'input.json').write_text(dump({'version_id':revised['id'],'brief_hash':revised['hash'],'document':brief_document(revised),
-            'findings':findings,'error':json.loads(error_file.read_text()),'candidate_claims':self.store.rows('SELECT id,data FROM claims WHERE run_id=?',(revised['run_id'],))}))
+        (repair/'input.json').write_text(json.dumps({'version_id':revised['id'],'brief_hash':revised['hash'],'document':brief_document(revised),
+            'findings':findings,'error':json.loads(error_file.read_text(encoding='utf-8')),'candidate_claims':self.store.rows('SELECT id,data FROM claims WHERE run_id=?',(revised['run_id'],))},ensure_ascii=False,indent=2), encoding='utf-8')
         prompt=TASK_CONTEXT+f'''恢复这次已发布修订的绑定与处理说明。只读取 {repair/'input.json'}，正文版本 {revised['id']} 已固定，hash={revised['hash']}。
 只修正本次失败的 revision_bindings/responses 元数据，禁止重新生成正文、修改 draft.json、调用 revise_document 或发布另一版本，也不新增研究或改写来源。
 对照已保存 document 的真实 blockId 和唯一原句选绑定；使用现有真实 claim_id；每个 input.findings 的 finding_id 必须有 corrected/removed/disagree 与具体 reason。
@@ -832,13 +832,13 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
         latest=self.store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(revised['run_id'],))[0]['id']
         if latest!=revised['id']:return False
         try:
-            value=json.loads((repair/'metadata.json').read_text())
+            value=json.loads((repair/'metadata.json').read_text(encoding='utf-8-sig'))
             if not isinstance(value,dict) or value.get('version_id')!=revised['id'] or value.get('brief_hash')!=revised['hash']:raise ValueError('修复元数据未绑定已保存修订版本')
             admit(value)
         except (ValueError,KeyError,TypeError) as exc:
-            (repair/'admission-error.json').write_text(dump({'error':str(exc)}));remember(exc);raise
+            (repair/'admission-error.json').write_text(dump({'error':str(exc)}), encoding='utf-8');remember(exc);raise
         for key,name in names.items():
-            path=stage/name;temporary=path.with_suffix('.tmp');temporary.write_text(dump(value[key]));temporary.replace(path)
+            path=stage/name;temporary=path.with_suffix('.tmp');temporary.write_text(dump(value[key]), encoding='utf-8');temporary.replace(path)
         self.store.event(job['id'],'revision_progress',{'stage':'metadata_repaired','version_id':revised['id']})
         return True
 
@@ -856,7 +856,7 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
                     self.stop_job(pending['id']);raise InterruptedError('报告已停止，关联审阅也已停止')
                 time.sleep(.5)
         result=self.runtime.execute(job,assessment_prompt(self.store,brief,folder,backend),folder)
-        self.store.assess(brief['id'],json.loads((folder/'assessment.json').read_text()))
+        self.store.assess(brief['id'],json.loads((folder/'assessment.json').read_text(encoding='utf-8-sig')))
         return result
 
     def _review_child(self,parent,brief):
@@ -870,7 +870,7 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
             if actual!=selected or previous.get('agent_backend','codex')!=payload.get('agent_backend','codex'):continue
             marker=self.store.root/'jobs'/child['id']/'review-id.json'
             try:
-                if marker.exists():validate_applicable_review(self.store,json.loads(marker.read_text())['review_id'],brief['id'])
+                if marker.exists():validate_applicable_review(self.store,json.loads(marker.read_text(encoding='utf-8'))['review_id'],brief['id'])
                 else:
                     expected=sha(dump({'snapshot':_snapshot(self.store,brief['id']),'runtime':previous['runtime']}).encode())
                     if previous.get('review_input')!=expected:continue
