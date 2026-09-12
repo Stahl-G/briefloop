@@ -45,7 +45,7 @@ def test_builtin_template_export_keeps_toc_and_bookmarks_content(tmp_path):
     store = Store(tmp_path)
     import_builtin(store)
     from briefloop.templates import template
-    record = template(store, next(r['id'] for r in store.rows('SELECT id,name FROM templates') if r['name'] == '通用报告'))
+    record = template(store, next(r['id'] for r in store.rows('SELECT id,name FROM templates') if r['name'] == '通用报告·极简蓝'))
     document = {'type': 'doc', 'content': [
         {'type': 'heading', 'attrs': {'level': 2}, 'content': [{'type': 'text', 'text': '一、摘要'}]},
         {'type': 'paragraph', 'content': [{'type': 'text', 'text': '结论。'}]},

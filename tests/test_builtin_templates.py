@@ -12,17 +12,25 @@ def test_builtin_ships_prepares_is_idempotent_and_exports(tmp_path):
     store = Store(tmp_path)
     import_builtin(store)
     rows = store.rows('SELECT id,name,status,origin FROM templates')
-    assert len(rows) == 13 and {r['origin'] for r in rows} == {'builtin'}
+    assert len(rows) == 36 and {r['origin'] for r in rows} == {'builtin'}
     assert all(r['status'] == 'ready' for r in rows)
-    labels = {r['name'] for r in rows}
-    assert {'通用报告', '商务报告', '学术论文', '政府公文', '上市公司年报', '合同', '会议纪要', '券商研报'} <= labels
-    assert len({name for name in labels if name.startswith('商务报告·')}) == 5
-    record = template(store, next(r['id'] for r in rows if r['name'] == '通用报告'))
+    genres = {'通用报告', '商务报告', '学术论文', '政府公文', '上市公司年报', '合同', '会议纪要', '券商研报'}
+    themes = {'极简蓝', '商务蓝', '学术黑', '政务蓝红', '创意橙'}
+    matrix = {}
+    for r in rows:
+        genre, theme = r['name'].split('·')
+        matrix.setdefault(genre, set()).add(theme)
+    assert set(matrix) == genres
+    # 公文按 GB/T 9704 主题固定：红头、仿宋、黑体不随主题变化，只出正典一格。
+    assert matrix['政府公文'] == {'政务蓝红'}
+    for genre, per in matrix.items():
+        if genre != '政府公文':assert per == themes, (genre, per)
+    record = template(store, next(r['id'] for r in rows if r['name'] == '通用报告·极简蓝'))
     assert [s['section_id'] for s in record['spec']['sections']] == ['summary', 'background', 'analysis', 'conclusion', 'risks']
-    research = template(store, next(r['id'] for r in rows if r['name'] == '券商研报'))
+    research = template(store, next(r['id'] for r in rows if r['name'] == '券商研报·创意橙'))
     assert [s['section_id'] for s in research['spec']['sections']] == ['views', 'events', 'forecast', 'risks', 'disclaimer']
     import_builtin(store)
-    assert len(store.rows('SELECT id FROM templates')) == 13
+    assert len(store.rows('SELECT id FROM templates')) == 36
 
     source = store.add_source('Synthetic material', 'Synthetic evidence for the report.')
     run = store.create_run({'title': 'AI 行业周报', 'objective': 'Explain', 'period': '2026 年第 37 周',
@@ -51,7 +59,7 @@ def test_builtin_ships_prepares_is_idempotent_and_exports(tmp_path):
         assert '{{' not in document_xml and '{{' not in headers
         assert 'AI 行业周报' in document_xml and '示例机构' in document_xml and '2026 年第 37 周' in document_xml
         assert 'w:instr=" PAGE "' in footers or ' PAGE ' in footers
-        assert 'w:eastAsia="黑体"' in styles_xml and 'w:eastAsia="宋体"' in styles_xml
+        assert 'w:eastAsia="PingFang SC"' in styles_xml, 'the chosen theme body/heading font must ship in styles'
         assert 'w:tblBorders' in document_xml and 'w:insideV' in document_xml
         from lxml import etree
         tree = etree.fromstring(archive.read('word/document.xml'))

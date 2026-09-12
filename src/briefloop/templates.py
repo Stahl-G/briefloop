@@ -182,23 +182,43 @@ def rebuild_template_version(store,template_id):
         raise
 
 
-BUILTIN_TEMPLATES = tuple(
-    (f'{stem}.docx', f'{stem}.spec.json', label)
-    for stem, label in (
-        ('general-report-zh', '通用报告'),
-        ('business-report-zh', '商务报告'),
-        ('academic-paper-zh', '学术论文'),
-        ('government-doc-zh', '政府公文'),
-        ('annual-report-zh', '上市公司年报'),
-        ('legal-contract-zh', '合同'),
-        ('meeting-minutes-zh', '会议纪要'),
-        ('stock-research-zh', '券商研报'),
-        ('business-report-t1', '商务报告·极简蓝'),
-        ('business-report-t2', '商务报告·商务蓝'),
-        ('business-report-t3', '商务报告·学术黑'),
-        ('business-report-t4', '商务报告·政务蓝红'),
-        ('business-report-t5', '商务报告·创意橙'),
-    )
+BUILTIN_TEMPLATES = (
+        ('general-report-zh-t1.docx', 'general-report-zh-t1.spec.json', '通用报告·极简蓝'),
+        ('general-report-zh-t2.docx', 'general-report-zh-t2.spec.json', '通用报告·商务蓝'),
+        ('general-report-zh-t3.docx', 'general-report-zh-t3.spec.json', '通用报告·学术黑'),
+        ('general-report-zh-t4.docx', 'general-report-zh-t4.spec.json', '通用报告·政务蓝红'),
+        ('general-report-zh-t5.docx', 'general-report-zh-t5.spec.json', '通用报告·创意橙'),
+        ('business-report-zh-t1.docx', 'business-report-zh-t1.spec.json', '商务报告·极简蓝'),
+        ('business-report-zh-t2.docx', 'business-report-zh-t2.spec.json', '商务报告·商务蓝'),
+        ('business-report-zh-t3.docx', 'business-report-zh-t3.spec.json', '商务报告·学术黑'),
+        ('business-report-zh-t4.docx', 'business-report-zh-t4.spec.json', '商务报告·政务蓝红'),
+        ('business-report-zh-t5.docx', 'business-report-zh-t5.spec.json', '商务报告·创意橙'),
+        ('academic-paper-zh-t1.docx', 'academic-paper-zh-t1.spec.json', '学术论文·极简蓝'),
+        ('academic-paper-zh-t2.docx', 'academic-paper-zh-t2.spec.json', '学术论文·商务蓝'),
+        ('academic-paper-zh-t3.docx', 'academic-paper-zh-t3.spec.json', '学术论文·学术黑'),
+        ('academic-paper-zh-t4.docx', 'academic-paper-zh-t4.spec.json', '学术论文·政务蓝红'),
+        ('academic-paper-zh-t5.docx', 'academic-paper-zh-t5.spec.json', '学术论文·创意橙'),
+        ('government-doc-zh-t4.docx', 'government-doc-zh-t4.spec.json', '政府公文·政务蓝红'),
+        ('annual-report-zh-t1.docx', 'annual-report-zh-t1.spec.json', '上市公司年报·极简蓝'),
+        ('annual-report-zh-t2.docx', 'annual-report-zh-t2.spec.json', '上市公司年报·商务蓝'),
+        ('annual-report-zh-t3.docx', 'annual-report-zh-t3.spec.json', '上市公司年报·学术黑'),
+        ('annual-report-zh-t4.docx', 'annual-report-zh-t4.spec.json', '上市公司年报·政务蓝红'),
+        ('annual-report-zh-t5.docx', 'annual-report-zh-t5.spec.json', '上市公司年报·创意橙'),
+        ('legal-contract-zh-t1.docx', 'legal-contract-zh-t1.spec.json', '合同·极简蓝'),
+        ('legal-contract-zh-t2.docx', 'legal-contract-zh-t2.spec.json', '合同·商务蓝'),
+        ('legal-contract-zh-t3.docx', 'legal-contract-zh-t3.spec.json', '合同·学术黑'),
+        ('legal-contract-zh-t4.docx', 'legal-contract-zh-t4.spec.json', '合同·政务蓝红'),
+        ('legal-contract-zh-t5.docx', 'legal-contract-zh-t5.spec.json', '合同·创意橙'),
+        ('meeting-minutes-zh-t1.docx', 'meeting-minutes-zh-t1.spec.json', '会议纪要·极简蓝'),
+        ('meeting-minutes-zh-t2.docx', 'meeting-minutes-zh-t2.spec.json', '会议纪要·商务蓝'),
+        ('meeting-minutes-zh-t3.docx', 'meeting-minutes-zh-t3.spec.json', '会议纪要·学术黑'),
+        ('meeting-minutes-zh-t4.docx', 'meeting-minutes-zh-t4.spec.json', '会议纪要·政务蓝红'),
+        ('meeting-minutes-zh-t5.docx', 'meeting-minutes-zh-t5.spec.json', '会议纪要·创意橙'),
+        ('stock-research-zh-t1.docx', 'stock-research-zh-t1.spec.json', '券商研报·极简蓝'),
+        ('stock-research-zh-t2.docx', 'stock-research-zh-t2.spec.json', '券商研报·商务蓝'),
+        ('stock-research-zh-t3.docx', 'stock-research-zh-t3.spec.json', '券商研报·学术黑'),
+        ('stock-research-zh-t4.docx', 'stock-research-zh-t4.spec.json', '券商研报·政务蓝红'),
+        ('stock-research-zh-t5.docx', 'stock-research-zh-t5.spec.json', '券商研报·创意橙'),
 )
 
 

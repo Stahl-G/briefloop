@@ -1208,7 +1208,14 @@ function renderTemplates(first=false){
  const chosen=first?(state.requirements?.template_id||state.settings.default_template_id||''):select.value;
  const blocked=unreadyTemplate(chosen);
  const ready=(state.templates||[]).filter(t=>t.status==='ready').sort((a,b)=>(a.origin==='builtin'?0:1)-(b.origin==='builtin'?0:1));
- select.innerHTML='<option value="">通用模板</option>'+ready.map(t=>`<option value="${esc(t.id)}">${esc(t.name)}${t.origin==='builtin'?'（内置）':''} · v${t.revision}</option>`).join('')
+ const option=t=>`<option value="${esc(t.id)}">${esc(t.name)}${t.origin==='builtin'?'（内置）':''} · v${t.revision}</option>`;
+ const groups={};
+ for(const t of ready.filter(t=>t.origin==='builtin'&&t.name.includes('·'))){
+  const i=t.name.lastIndexOf('·');(groups[t.name.slice(0,i)]=groups[t.name.slice(0,i)]||[]).push(t);
+ }
+ select.innerHTML='<option value="">通用模板</option>'
+  +Object.entries(groups).map(([genre,items])=>`<optgroup label="${esc(genre)}（内置）">${items.map(option).join('')}</optgroup>`).join('')
+  +ready.filter(t=>t.origin!=='builtin').map(option).join('')
   +(blocked?`<option value="${esc(blocked.id)}">${esc(blocked.name)} · 尚未就绪</option>`:'');
  select.value=chosen;
  $('template-status').textContent=[(state.templates||[]).filter(t=>t.status!=='ready').map(t=>t.name+'：'+(t.error||'模板准备中，可在任务列表查看或恢复')).join('；'),
@@ -1690,15 +1697,38 @@ async function openSourceDrawer(id,usage){
  renderSourceText(result);
 }
 function closeSourceDrawer(){const d=$('source-drawer'),b=$('source-drawer-backdrop');if(d)d.hidden=true;if(b)b.hidden=true}
+const THEME_COLORS={'极简蓝':'#2563EB','商务蓝':'#1565C0','学术黑':'#1E2320','政务蓝红':'#003087','创意橙':'#FF6B35'};
+const THEME_ORDER=Object.keys(THEME_COLORS);
 function renderTemplatesPage(){
  const box=$('templates-page-list');if(!box||!state)return;
  const list=state.templates||[];
- const sig=JSON.stringify(list.map(t=>[t.id,t.status,t.revision,t.name,t.origin]));if(renderTemplatesPage.sig===sig)return;renderTemplatesPage.sig=sig;
- const row=t=>`<div class="source-row"><span class="name">${esc(t.name)} · v${t.revision}</span><span class="tag ${t.status!=='ready'?'error':''}">${t.status==='ready'?'可用':esc(t.error||'准备中')}</span></div>`;
- const builtins=list.filter(t=>t.origin==='builtin'),mine=list.filter(t=>t.origin!=='builtin');
- box.innerHTML=(builtins.length?`<p class="help">内置版式，生成报告时可直接选用</p>${builtins.map(row).join('')}`:'')
-  +(mine.length?`<p class="help">我的模板</p>${mine.map(row).join('')}`:'')
+ const sig=JSON.stringify([state.settings&&state.settings.default_template_id,...list.map(t=>[t.id,t.status,t.revision,t.name,t.origin])]);if(renderTemplatesPage.sig===sig)return;renderTemplatesPage.sig=sig;
+ const mine=list.filter(t=>t.origin!=='builtin');
+ const genres={};
+ for(const t of list.filter(t=>t.origin==='builtin'&&t.name.includes('·'))){
+  const i=t.name.lastIndexOf('·'),genre=t.name.slice(0,i),theme=t.name.slice(i+1);
+  (genres[genre]=genres[genre]||[]).push({id:t.id,theme,status:t.status});
+ }
+ const fallback=(state.settings||{}).default_template_id;
+ const cards=Object.entries(genres).sort((a,b)=>a[0].localeCompare(b[0],'zh')).map(([genre,items])=>{
+  items.sort((a,b)=>THEME_ORDER.indexOf(a.theme)-THEME_ORDER.indexOf(b.theme));
+  const chips=items.map(it=>{
+   const dot=THEME_COLORS[it.theme]?`<span class="dot" style="background:${THEME_COLORS[it.theme]}"></span>`:'';
+   const active=fallback===it.id;
+   const title=it.theme==='政务蓝红'&&genre==='政府公文'?'公文版式按 GB/T 9704 固定红头与字体':`新建报告默认使用${genre}·${it.theme}`;
+   return `<button class="theme-chip${active?' active':''}" data-template="${esc(it.id)}" title="${esc(title)}" ${it.status!=='ready'?'disabled':''}>${dot}${esc(it.theme)}</button>`;
+  }).join('');
+  return `<div class="builtin-card"><span class="name">${esc(genre)}</span><span class="chips">${chips}</span></div>`;
+ }).join('');
+ box.innerHTML=(cards?`<p class="help">内置版式：点颜色选择主题，选中的主题将成为新建报告的默认版式</p>${cards}`:'')
+  +(mine.length?`<p class="help">我的模板</p>${mine.map(t=>`<div class="source-row"><span class="name">${esc(t.name)} · v${t.revision}</span><span class="tag ${t.status!=='ready'?'error':''}">${t.status==='ready'?'可用':esc(t.error||'准备中')}</span></div>`).join('')}`:'')
   +(!list.length?'<p class="help">还没有模板。上传一个 Word 作为版式模板。</p>':'');
+ box.querySelectorAll('.theme-chip:not([disabled])').forEach(b=>b.onclick=()=>action(async()=>{
+  await api('settings',{default_template_id:b.dataset.template});
+  state.settings={...(state.settings||{}),default_template_id:b.dataset.template};
+  notice('已设为新建报告的默认版式');
+  renderTemplatesPage.sig='';renderTemplatesPage();
+ }));
 }
 if($('new-report'))$('new-report').onclick=()=>page('setup');
 if($('sources-upload'))$('sources-upload').onchange=e=>action(async()=>{for(const f of e.target.files){const buf=new Uint8Array(await f.arrayBuffer());let b='';for(let i=0;i<buf.length;i+=8192)b+=String.fromCharCode(...buf.subarray(i,i+8192));await api('upload',{name:f.name,data:btoa(b)})}e.target.value=''},'来源已保存');

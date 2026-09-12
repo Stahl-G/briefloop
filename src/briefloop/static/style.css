@@ -515,3 +515,13 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 .hint:hover{border-color:var(--green);color:var(--green)}
 #tooltip{position:fixed;z-index:200;max-width:260px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface);box-shadow:0 8px 26px #1422181f;font:400 11px/1.7 var(--font);color:var(--ink);text-align:left;pointer-events:none}
 .learning-control .hint{margin-right:auto}
+
+/* 内置版式矩阵卡片：8 文体 × 主题色点 */
+.builtin-card{display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid var(--line);flex-wrap:wrap}
+.builtin-card .name{font-weight:600;min-width:110px;color:var(--ink)}
+.builtin-card .chips{display:flex;gap:8px;flex-wrap:wrap}
+.theme-chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:var(--radius-pill);background:var(--surface);padding:3px 11px;cursor:pointer;font-size:12px;color:var(--ink)}
+.theme-chip:hover{border-color:var(--green)}
+.theme-chip.active{border-color:var(--green);color:var(--green);font-weight:600;background:var(--soft)}
+.theme-chip:disabled{opacity:.45;cursor:default}
+.theme-chip .dot{width:9px;height:9px;border-radius:50%;flex:none}
