@@ -74,3 +74,13 @@ def test_html_title_is_used_as_a_readable_source_label():
     assert html_title(b'<html><head><title>  Hello   World </title></head>', 'text/html; charset=utf-8') == 'Hello World'
     assert html_title(b'<html><head></head></html>', 'text/html') == ''
     assert html_title(b'<title>x</title>', 'application/pdf') == ''
+
+
+def test_snapshot_run_includes_attached_sources_in_count(tmp_path):
+    from briefloop.store import Store
+    store=Store(tmp_path/'ws')
+    run=store.create_run({'title':'r','objective':'o','allow_web':True},[])
+    a=store.add_source('a','text');b=store.add_source('b','text')
+    store.attach_source(run['id'],a['id']);store.attach_source(run['id'],b['id'])
+    row=next(r for r in store.snapshot()['runs'] if r['id']==run['id'])
+    assert row['source_count']==2 and set(row['all_source_ids'])=={a['id'],b['id']}

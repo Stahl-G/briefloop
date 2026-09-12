@@ -1383,7 +1383,7 @@ function reportStatus(b){
  if((state.jobs||[]).some(j=>['generate','revise','assess','review'].includes(j.kind)&&['queued','running'].includes(j.status)&&(()=>{const p=parse(j.payload);return p.run_id===b.run_id||p.version_id===b.id})()))return {key:'running',label:'处理中',cls:''};
  return {key:'draft',label:'草稿',cls:''};
 }
-function runSourceCount(runId){const run=(state.runs||[]).find(r=>r.id===runId);if(!run)return 0;try{const ids=parse(run.source_ids);return Array.isArray(ids)?ids.length:0}catch{return 0}}
+function runSourceCount(runId){const run=(state.runs||[]).find(r=>r.id===runId);if(!run)return 0;if(Array.isArray(run.all_source_ids))return run.all_source_ids.length;try{const ids=parse(run.source_ids);return Array.isArray(ids)?ids.length:0}catch{return 0}}
 function reportDescription(b){const run=(state.runs||[]).find(r=>r.id===b.run_id);const req=run?parse(run.requirements):{};if(req.objective)return req.objective;const md=(b.markdown||'').replace(/[#>*`\[\]]/g,' ').replace(/\s+/g,' ').trim();return md.slice(0,120)}
 function renderReports(){
  const box=$('reports-list');if(!box||!state)return;
@@ -1414,7 +1414,7 @@ function sourceIsWeb(s){return !!(s&&s.url)}
 function sourceHost(s){try{return new URL(s.url||s.name).hostname.replace(/^www\./,'')}catch{return ''}}
 function sourceTitle(s){const n=(s&&s.name)||'';if(n&&!/^https?:\/\//i.test(n))return n;const u=(s&&s.url)||n;try{const p=new URL(u);let seg=decodeURIComponent((p.pathname.split('/').filter(Boolean).pop()||''));seg=seg.replace(/\.[a-z0-9]{1,5}$/i,'').replace(/[-_]+/g,' ').trim();return seg||p.hostname.replace(/^www\./,'')}catch{return n||(s&&s.id)||'来源'}}
 function prettifyUrl(url){if(!url)return '';let out=url;try{const p=new URL(url);out=p.hostname.replace(/^www\./,'')+decodeURI(p.pathname)+(p.search||'')}catch{}return out.length>110?out.slice(0,107)+'…':out}
-function sourceUsage(){const map=new Map();for(const run of (state.runs||[])){let ids=[];try{ids=parse(run.source_ids)||[]}catch{}const brief=(state.briefs||[]).find(b=>b.run_id===run.id);const title=brief?(parse(brief.detail).title||'简报'):'报告';for(const id of ids){if(!map.has(id))map.set(id,[]);map.get(id).push({run_id:run.id,title})}}return map}
+function sourceUsage(){const map=new Map();for(const run of (state.runs||[])){let ids=[];try{ids=Array.isArray(run.all_source_ids)?run.all_source_ids:(parse(run.source_ids)||[])}catch{}const brief=(state.briefs||[]).find(b=>b.run_id===run.id);const title=brief?(parse(brief.detail).title||'简报'):'报告';for(const id of ids){if(!map.has(id))map.set(id,[]);map.get(id).push({run_id:run.id,title})}}return map}
 function usageHTML(id){const u=(sourceUsage().get(id))||[];return u.length?`<ul class="source-usage">${u.map(x=>`<li><button type="button" data-open-report="${esc(x.run_id)}">${esc(x.title)}<span aria-hidden="true">→</span></button></li>`).join('')}</ul>`:'<p class="help">还没有报告使用这个来源。</p>'}
 function wireUsage(pane){if(!pane)return;pane.querySelectorAll('[data-open-report]').forEach(b=>b.onclick=()=>{const brief=(state.briefs||[]).find(x=>x.run_id===b.dataset.openReport);if(brief&&openBrief(brief,{follow:false})){closeSourceDrawer();page('report')}})}
 function renderSourcesPage(){
