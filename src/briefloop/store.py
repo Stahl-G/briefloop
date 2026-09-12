@@ -213,6 +213,8 @@ class Store:
             c.execute("INSERT INTO runs(id,requirements,source_ids,skill_id,created,mode) VALUES(?,?,?,?,?,?)", (rid, dump(req.model_dump()), dump(source_ids), options.get("skill_id",self.meta("active_skill")), now(), options.get("mode","normal")))
             if options.get("mode","normal")=="normal":
                 c.execute("INSERT OR REPLACE INTO meta VALUES('requirements',?)", (dump(req.model_dump()),))
+            if options.get("research_protocol"):
+                c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ('research_protocol:'+rid, dump(options['research_protocol'])))
         return self.one("runs", rid)
 
     def attach_source(self, run_id, source_id):
