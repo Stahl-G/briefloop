@@ -88,6 +88,28 @@ def test_publish_requires_a_real_reconciliation(tmp_path):
     assert brief['id']
 
 
+def test_revision_inherits_comparison_and_keeps_staleness_visible(tmp_path):
+    store, run, first, span_a, claim_a, claim_b = run_with_statements(tmp_path)
+    record = reconciliation.save(store, run['id'], {'status': 'complete',
+        'examined_claim_ids': [claim_a['id'], claim_b['id']], 'unexamined_claim_ids': []})
+    brief = store.publish(run['id'], {'title': 'T', 'markdown': 'Original', 'reconciliation_id': record['id']})
+    extra = store.add_source('Later', 'New evidence')
+    store.attach_source(run['id'], extra['id'])
+    revised = store.publish(run['id'], {'title': 'T', 'markdown': 'Revised'}, parent_id=brief['id'])
+    inherited = json.loads(revised['detail'])['reconciliation_id']
+    assert inherited == record['id']
+    assert reconciliation.read(store, run['id'], inherited)['stale'] is True
+    from briefloop.review import _snapshot
+    packet = _snapshot(store, revised['id'])
+    assert packet['reconciliation']['id'] == record['id']
+    assert packet['reconciliation']['stale'] is True
+    replacement = reconciliation.save(store, run['id'], {'status': 'partial',
+        'examined_claim_ids': [], 'unexamined_claim_ids': [claim_a['id'], claim_b['id']]})
+    final = store.publish(run['id'], {'title': 'T', 'markdown': 'Updated',
+        'reconciliation_id': replacement['id']}, parent_id=revised['id'])
+    assert json.loads(final['detail'])['reconciliation_id'] == replacement['id']
+
+
 def test_reconciliation_rejects_cross_run_conflicts_and_modified_snapshots(tmp_path):
     store, run, first, span_a, claim_a, claim_b = run_with_statements(tmp_path)
     other = store.create_run({'title': 'Other', 'objective': 'o', 'allow_web': True}, [])

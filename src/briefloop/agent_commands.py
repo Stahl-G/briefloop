@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 import shlex
 import shutil
-import sys
+from ._entrypoint import command as entry_command
 
 
 def opencode_shell():
@@ -60,11 +60,7 @@ def _quote(value, backend):
 
 
 def agent_command(module, arguments=(), *, backend='codex'):
-    if module not in ('briefloop', 'wikiskill'):
-        raise ValueError('Unsupported agent tool module: ' + str(module))
-    parts = [quote_path(sys.executable, backend), '-X', 'utf8',
-             quote_path(Path(__file__).with_name('_entrypoint.py').resolve(), backend), module]
-    parts.extend(_quote(value, backend) for value in arguments)
+    parts = [_quote(value, backend) for value in entry_command(*arguments, module=module)]
     return ('& ' if _powershell(backend) else '') + ' '.join(parts)
 
 

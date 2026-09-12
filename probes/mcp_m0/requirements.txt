@@ -1,0 +1,2 @@
+# Protocol experiment only; this does not add an application dependency.
+mcp==2.2.0

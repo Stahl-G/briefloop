@@ -8,6 +8,13 @@ INDUSTRY_SECTIONS = ['核心摘要', '价格成本与供应链', '需求规模�
 
 
 def profile_context(requirements):
+    if requirements.get('workflow_snapshot'):
+        # New runs consume their frozen methods via deliverable_spec. Keep this
+        # metadata for existing data-tool consumers without injecting a duplicate
+        # or newer installed industry prompt into the same run.
+        method = requirements['workflow_snapshot']
+        return {'id': method['variant'], 'organization': requirements.get('organization', ''),
+                'industry': requirements.get('industry', ''), 'workflow_hash': method['content_hash']}
     if requirements.get('report_profile') != 'industry_periodic':
         return {}
     organization = requirements.get('organization') or '目标读者'

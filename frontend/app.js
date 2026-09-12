@@ -5,6 +5,7 @@ import StarterKit from '@tiptap/starter-kit';
 import {TableKit} from '@tiptap/extension-table';
 import Image from '@tiptap/extension-image';
 import {Markdown} from '@tiptap/markdown';
+import {connectorSettings} from './connectors.js';
 import {TextStyle,Layout,ReportImage,Citation,editorDocument,savedDocument,readerHighlights} from './rich-document.js';
 // Reader-appropriateness marks are editor decorations: they never enter the saved
 // document, Word export or Markdown. Hover shows the violation and its requirement.
@@ -113,6 +114,7 @@ function applyRequirements(text){
  if(Array.isArray(data.key_questions))set('key_questions_text',data.key_questions.join('\n'));
  if(Array.isArray(data.manual_sections))set('manual_sections_text',data.manual_sections.join('\n'));
  if(data.report_profile)set('report_profile',data.report_profile);
+ initializeWorkflowChoice(data,true);syncWorkflowProfile(false);
  if(data.writing_mode)set('writing_mode',data.writing_mode);
  if(data.target_words)set('target_words',data.target_words);
  if(data.max_words)set('max_words',data.max_words);
@@ -210,7 +212,7 @@ let welcomeIndex=0,welcomePurpose=null;
 function welcomeAvailable(){return (runtimeCatalog||[]).filter(r=>r.available)}
 function chooseWelcomeHost(id){const select=$('agent-backend');if(select&&select.value!==id){select.value=id;select.dispatchEvent(new Event('change'))}if(state&&state.settings){state.settings.model_selection_required=true;state.settings.model=''}renderWelcome()}
 function applyWelcomePurpose(id){const purpose=WELCOME_PURPOSES.find(p=>p.id===id);if(!purpose)return;welcomePurpose=id;$('chat-input').value=purpose.prompt;rememberDraft();if(purpose.fields)sessionStorage.setItem('briefloop-welcome-fields',JSON.stringify(purpose.fields));renderWelcome()}
-function applyPendingSetupFields(){let fields=null;try{fields=JSON.parse(sessionStorage.getItem('briefloop-welcome-fields')||'null')}catch{}if(!fields)return;sessionStorage.removeItem('briefloop-welcome-fields');const form=$('requirements');if(!form)return;for(const [name,value] of Object.entries(fields)){const el=form.elements[name];if(!el)continue;if(el.type==='checkbox')el.checked=!!value;else el.value=value;el.dispatchEvent(new Event('change',{bubbles:true}))}}
+function applyPendingSetupFields(){let fields=null;try{fields=JSON.parse(sessionStorage.getItem('briefloop-welcome-fields')||'null')}catch{}if(!fields)return;sessionStorage.removeItem('briefloop-welcome-fields');const form=$('requirements');if(!form)return;for(const [name,value] of Object.entries(fields)){const el=form.elements[name];if(!el)continue;if(el.type==='checkbox')el.checked=!!value;else el.value=value;el.dispatchEvent(new Event('change',{bubbles:true}))}initializeWorkflowChoice(fields,true);syncWorkflowProfile(false)}
 function renderWelcome(){
  const box=$('welcome-runtimes');if(!box)return;
  const avail=welcomeAvailable(),chosen=state?.settings?.agent_backend||'codex';
@@ -230,8 +232,9 @@ $('welcome-cycle').onclick=()=>{const avail=welcomeAvailable();if(avail.length<2
 $('welcome-start').onclick=()=>{const settings=state?.settings||{};if(!settings.model||settings.model_selection_required){notice('请先选择模型',true);return}$('welcome').hidden=true;page('chat');$('chat-model').value=settings.model;if(settings.model_provider!=null)$('chat-model-provider').value=settings.model_provider||'';if(settings.reasoning_effort)assignEffort('chat-effort',effortValue(settings,'reasoning_effort'));updateComposer();$('chat-input').focus();rememberDraft()};
 function render(first){
  renderTemplates(first);
+ renderWorkflowChoices(first);
  if($('review-open'))$('review-open').textContent='审阅与需处理'+(state.conflicts?.length?' · '+state.conflicts.length+' 项来源分歧':'');
- if(first){$('timeout-minutes').value=state.settings.timeout_minutes;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.settings.auto_learn;$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',effortValue(state.settings,'reasoning_effort'));$('model-provider').value=state.settings.model_provider||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.model_variant||'';updateModelLabel();renderRoleModels();renderBackend();$('search-provider').value=state.settings.search_provider==='tavily'?'tavily':'native';renderSearchProvider();refreshRuntimeDiscovery();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{})}
+ if(first){$('timeout-minutes').value=state.settings.timeout_minutes;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.settings.auto_learn;$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',effortValue(state.settings,'reasoning_effort'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.model_variant||'';updateModelLabel();renderRoleModels();renderBackend();$('search-provider').value=state.settings.search_provider==='tavily'?'tavily':'native';renderSearchProvider();refreshRuntimeDiscovery();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});syncWorkflowProfile(false)}
  $('source-count').textContent=state.sources.length+' 份';$('source-list').innerHTML=state.sources.map(s=>`<div class="source-item"><input type="checkbox" data-check="${s.id}" ${selected.has(s.id)?'checked':''} aria-label="选择 ${esc(s.name)}"><button data-source="${s.id}">${esc(s.name)}</button><span class="tag ${s.status==='failed'?'error':''}">${s.status==='failed'?'读取失败':s.needs_visual?'需视觉读取':'可读取'}</span>${s.status==='failed'?`<button data-retry-source="${s.id}">重试</button>`:''}</div>`).join('');
  document.querySelectorAll('[data-retry-source]').forEach(b=>b.onclick=()=>action(async()=>{const s=await api('retry-source',{source_id:b.dataset.retrySource});selected.delete(b.dataset.retrySource);selected.add(s.id);notice(s.status==='ready'?'来源已重新读取':s.error,s.status!=='ready')}));
  document.querySelectorAll('[data-check]').forEach(b=>b.onchange=()=>{if(b.checked){selected.add(b.dataset.check);referenceSelected.delete(b.dataset.check);renderReferenceSources()}else selected.delete(b.dataset.check)});renderReferenceSources();
@@ -376,7 +379,7 @@ function assessment(){if(!current)return;queueMicrotask(()=>{renderDeliveryCheck
 function citations(){const refs=(parse(current.detail).citations||[]).filter(r=>toEditor(current.markdown).includes('#source-'+r.source_id));$('citations').innerHTML=refs.length?'引用来源 '+refs.map(r=>`<button data-source="${esc(r.source_id)}">${esc(state.sources.find(s=>s.id===r.source_id)?.name||r.source_id)} · ${esc(r.locator)}</button>`).join(''):'尚无引用记录';bindSources()}
 function bindSources(){document.querySelectorAll('[data-source]').forEach(b=>b.onclick=()=>action(async()=>{const r=await api('source?id='+b.dataset.source);showSource(r)}))}
 $('close-source').onclick=()=>$('source-dialog').close();
-$('requirements').onsubmit=e=>{e.preventDefault();action(async()=>{const f=new FormData(e.target),req=Object.fromEntries(f.entries());if(req.writing_mode==='internal_report'&&state.settings.company_context_enabled==null){$('company-choice-dialog').showModal();return}req.allow_web=f.has('allow_web');req.target_words=Number(req.target_words);req.max_words=Number(req.max_words);req.research_budget=readResearchBudget();req.reference_source_ids=req.report_profile==='industry_periodic'?[...referenceSelected]:[];req.template_id=req.template_id||null;req.sections=readTemplateSections();req.key_questions=(req.key_questions_text||'').split('\n').map(x=>x.trim()).filter(Boolean);delete req.key_questions_text;req.manual_sections=(req.manual_sections_text||'').split('\n').map(x=>x.trim()).filter(Boolean);for(const title of req.manual_sections){const found=req.sections.find(s=>s.title===title);if(found){found.mode='manual';found.placeholder='待填充'}}delete req.manual_sections_text;req.raw_input=req.objective;delete req.runtime_model;delete req.runtime_effort;await saveModel();if(current)await savedVersion();const job=await api('generate',{requirements:req,session_id:chat.id||undefined,source_ids:[...selected].filter(id=>!req.reference_source_ids.includes(id))});pendingRun=parse(job.payload).run_id;page('report');notice('任务已排队，后台会生成简报')})};
+$('requirements').onsubmit=e=>{e.preventDefault();action(async()=>{const f=new FormData(e.target),req=Object.fromEntries(f.entries());if(req.writing_mode==='internal_report'&&state.settings.company_context_enabled==null){$('company-choice-dialog').showModal();return}req.allow_web=f.has('allow_web');req.target_words=Number(req.target_words);req.max_words=Number(req.max_words);req.research_budget=readResearchBudget();Object.assign(req,readWorkflowChoice());req.reference_source_ids=[...referenceSelected];req.template_id=req.template_id||null;req.sections=readTemplateSections();req.key_questions=(req.key_questions_text||'').split('\n').map(x=>x.trim()).filter(Boolean);delete req.key_questions_text;req.manual_sections=(req.manual_sections_text||'').split('\n').map(x=>x.trim()).filter(Boolean);for(const title of req.manual_sections){const found=req.sections.find(s=>s.title===title);if(found){found.mode='manual';found.placeholder='待填充'}}delete req.manual_sections_text;req.raw_input=req.objective;delete req.runtime_model;delete req.runtime_effort;await saveModel();if(current)await savedVersion();const job=await api('generate',{requirements:req,session_id:chat.id||undefined,source_ids:[...selected].filter(id=>!req.reference_source_ids.includes(id))});pendingRun=parse(job.payload).run_id;page('report');notice('任务已排队，后台会生成简报')})};
 $('upload').onchange=e=>action(async()=>{for(const f of e.target.files){const buf=new Uint8Array(await f.arrayBuffer());let b='';for(let i=0;i<buf.length;i+=8192)b+=String.fromCharCode(...buf.subarray(i,i+8192));const s=await api('upload',{name:f.name,data:btoa(b)});selected.add(s.id)}e.target.value=''},'来源已保存');
 $('add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('source-url').value});selected.add(s.id);$('source-url').value='';notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
 $('rescore').onclick=()=>action(async()=>{await savedVersion();await api('assess',{version_id:current.id,session_id:chat.id||undefined})},'已提交评分');
@@ -473,11 +476,19 @@ function friendlyModel(model){return ({'default':'宿主默认模型','gpt-5.6-l
 function effortValue(runtime,key){return Object.prototype.hasOwnProperty.call(runtime,key)?(runtime[key]||'none'):'high'}
 function assignEffort(id,value){const input=$(id);if(![...input.options].some(o=>o.value===value))input.add(new Option(value,value));input.value=value}
 function activeChatRuntime(){return chat.messages.find(m=>m.role==='user'&&m.turn_id===chat.session?.turn_id&&m.runtime)?.runtime||chat.session?.runtime||{}}
-function modelLabel(cfg){if(!cfg?.model)return '未指定模型';const backend=cfg.agent_backend||cfg.backend;const prefix=backend?runtimeName(backend)+' · ':'';if(backend&&!['codex','opencode'].includes(backend))return prefix+friendlyModel(cfg.model);if(cfg.model_variant!=null||backend==='opencode'){const variant=cfg.model_variant||'模型默认';return prefix+friendlyModel(cfg.model)+' / '+variant}const effort=cfg.reasoning_effort,effortLabel=Object.prototype.hasOwnProperty.call(cfg,'reasoning_effort')?(!effort||effort==='none'?'模型默认':effort):'未记录';return prefix+friendlyModel(cfg.model)+' / '+effortLabel+(cfg.model_provider?' · '+cfg.model_provider:'')}
+const fastCapabilities=new Map();
+function fastChoiceKey(cfg){return JSON.stringify([cfg.backend||cfg.agent_backend||'codex',cfg.model||'',cfg.model_provider||''])}
+function fastAvailable(cfg,capability){return (cfg.backend||cfg.agent_backend)==='codex'&&capability?.official_connection===true}
+function selectedServiceTier(id,cfg,requireResolved=false){const tier=['default','fast'].includes($(id).value)?$(id).value:null,capability=fastCapabilities.get(fastChoiceKey(cfg));if(requireResolved&&tier&&(cfg.backend||cfg.agent_backend)==='codex'&&typeof capability?.official_connection!=='boolean')throw Error('正在确认 Codex Provider，请稍后重试；速度选择已保留。');return fastAvailable(cfg,capability)?tier:null}
+function fastControlConfig(target){const isChat=target==='chat',role=target.startsWith('role-')?target.slice(5):null;return {backend:isChat?(chat.session?.runtime?.backend||state.settings.agent_backend||'codex'):backendValue(),model:$(role?`role-${role}-model`:isChat?'chat-model':'model-select').value.trim(),model_provider:$(role?`role-${role}-provider`:isChat?'chat-model-provider':'model-provider').value.trim()||null}}
+const fastCapabilityRequests=new Map();
+async function loadFastCapability(cfg){const key=fastChoiceKey(cfg);if(fastCapabilityRequests.has(key))return fastCapabilityRequests.get(key);const request=(async()=>{try{const query=new URLSearchParams({backend:cfg.backend,model:cfg.model,model_provider:cfg.model_provider||''});const result=await api('runtime/fast-capability?'+query);if(fastChoiceKey(result)===key)fastCapabilities.set(key,result);else fastCapabilities.set(key,{enabled:false});}catch{fastCapabilities.set(key,{enabled:false})}finally{fastCapabilityRequests.delete(key);renderFastControls(false);updateModelLabel()}})();fastCapabilityRequests.set(key,request);return request}
+function renderFastControls(fetchMissing=true){for(const target of ['main','chat','role-evaluator','role-maintainer','role-proposer']){const id=target==='main'?'service-tier':target==='chat'?'chat-service-tier':target+'-service-tier',control=$(id);if(!control)continue;const cfg=fastControlConfig(target),key=fastChoiceKey(cfg),capability=fastCapabilities.get(key),supported=fastAvailable(cfg,capability);control.hidden=!supported;const wrapper=control.closest('[data-fast-control]');if(wrapper)wrapper.hidden=!supported;if(fetchMissing&&cfg.backend==='codex'&&cfg.model&&!capability)loadFastCapability(cfg);}}
+function modelLabel(cfg){if(!cfg?.model)return '未指定模型';const backend=cfg.agent_backend||cfg.backend;const prefix=backend?runtimeName(backend)+' · ':'';if(backend&&!['codex','opencode'].includes(backend))return prefix+friendlyModel(cfg.model);if(cfg.model_variant!=null||backend==='opencode'){const variant=cfg.model_variant||'模型默认';return prefix+friendlyModel(cfg.model)+' / '+variant}const effort=cfg.reasoning_effort,effortLabel=Object.prototype.hasOwnProperty.call(cfg,'reasoning_effort')?(!effort||effort==='none'?'模型默认':effort):'未记录';return prefix+friendlyModel(cfg.model)+' / '+effortLabel+(cfg.model_provider?' · '+cfg.model_provider:'')+(cfg.service_tier==='fast'?' · Fast（请求）':cfg.service_tier==='default'?' · 标准':'')}
 function backendValue(){return ($('agent-backend')&&$('agent-backend').value)||state.settings.agent_backend||'codex'}
-function renderBackend(){const op=backendValue()==='opencode',codex=backendValue()==='codex';$('variant-field').hidden=!op;document.querySelector('.main-provider-field').style.display=codex?'':'none';$('effort-select').hidden=!codex;$('effort-select').closest('label').hidden=!codex;$('model-select').placeholder=op?'如 opencode-go/gpt-5.6-luna':'输入任意模型 ID';document.querySelectorAll('.role-variant-field').forEach(e=>e.hidden=!op);document.querySelectorAll('.role-provider-field').forEach(e=>e.style.display=codex?'':'none');document.querySelectorAll('.role-effort-select').forEach(e=>e.style.display=codex?'':'none');renderSearchProvider();updateModelLabel()}
-function updateModelLabel(){const op=backendValue()==='opencode';const cfg=op?{model:$('model-select').value.trim(),model_variant:$('model-variant').value.trim()||null,agent_backend:'opencode'}:{model:$('model-select').value.trim(),reasoning_effort:$('effort-select').value,model_provider:$('model-provider').value.trim(),agent_backend:backendValue()};$('execution-choice').textContent='即将使用：'+modelLabel(cfg);if($('setup-model-summary'))$('setup-model-summary').textContent=modelLabel(cfg);$('generate-button').textContent='使用 '+modelLabel(cfg)+' 生成简报 →';$('model-select').title=cfg.model?friendlyModel(cfg.model)+' · '+cfg.model:'输入模型 ID'}
-async function saveModel(){const model=$('model-select').value.trim();if(!model)throw Error('请输入模型 ID');const op=backendValue()==='opencode';if(op){if(!model.includes('/'))throw Error('Opencode 模型必须是 provider/model 形式');await api('settings',{agent_backend:'opencode',model_selection_required:false,model,model_variant:$('model-variant').value.trim()||null})}else if(backendValue()!=='codex')await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,model_provider:null,model_variant:null});else await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,reasoning_effort:$('effort-select').value,model_provider:$('model-provider').value.trim()||null});updateModelLabel();if($('welcome')&&!$('welcome').hidden)renderWelcome()}
+function renderBackend(){const op=backendValue()==='opencode',codex=backendValue()==='codex';$('variant-field').hidden=!op;document.querySelector('.main-provider-field').style.display=codex?'':'none';$('effort-select').hidden=!codex;$('effort-select').closest('label').hidden=!codex;$('model-select').placeholder=op?'如 opencode-go/gpt-5.6-luna':'输入任意模型 ID';document.querySelectorAll('.role-variant-field').forEach(e=>e.hidden=!op);document.querySelectorAll('.role-provider-field').forEach(e=>e.style.display=codex?'':'none');document.querySelectorAll('.role-effort-select').forEach(e=>e.style.display=codex?'':'none');renderSearchProvider();updateModelLabel();renderFastControls()}
+function updateModelLabel(){const op=backendValue()==='opencode';const cfg=op?{model:$('model-select').value.trim(),model_variant:$('model-variant').value.trim()||null,agent_backend:'opencode'}:{model:$('model-select').value.trim(),reasoning_effort:$('effort-select').value,model_provider:$('model-provider').value.trim(),service_tier:selectedServiceTier('service-tier',fastControlConfig('main')),agent_backend:backendValue()};$('execution-choice').textContent='即将使用：'+modelLabel(cfg);if($('setup-model-summary'))$('setup-model-summary').textContent=modelLabel(cfg);$('generate-button').textContent='使用 '+modelLabel(cfg)+' 生成简报 →';$('model-select').title=cfg.model?friendlyModel(cfg.model)+' · '+cfg.model:'输入模型 ID'}
+async function saveModel(){if(backendValue()==='codex')await loadFastCapability(fastControlConfig('main'));const model=$('model-select').value.trim();if(!model)throw Error('请输入模型 ID');const op=backendValue()==='opencode';if(op){if(!model.includes('/'))throw Error('Opencode 模型必须是 provider/model 形式');await api('settings',{agent_backend:'opencode',model_selection_required:false,model,model_variant:$('model-variant').value.trim()||null})}else if(backendValue()!=='codex')await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,model_provider:null,model_variant:null});else await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,reasoning_effort:$('effort-select').value,model_provider:$('model-provider').value.trim()||null,service_tier:selectedServiceTier('service-tier',fastControlConfig('main'),true)});updateModelLabel();if($('welcome')&&!$('welcome').hidden)renderWelcome()}
 let runtimeCatalog=[],runtimeScanned=false;
 function runtimeName(id){return runtimeCatalog.find(r=>r.id===id)?.name||id}
 function renderSettingsSessionNote(){
@@ -529,6 +540,7 @@ async function fetchModelCatalog(force=false,backend=backendValue()){
  const catalog={backend,at:now,models:(data.models||[]).map(m=>typeof m==='string'?{id:m,name:friendlyModel(m)}:{...m,name:m.name||m.label||friendlyModel(m.id),provider:m.provider||runtimeName(backend)}),diagnostic:data.diagnostic||data.error||'',source:data.source||''};modelCatalogs.set(backend,catalog);if(backend===backendValue())modelCatalog=catalog;return catalog.models;
 }
 async function refreshModelSuggestions(force=false){
+ if(force)fastCapabilities.clear();renderFastControls();
  const backend=backendValue();$('model-suggestions').innerHTML='';refreshInlineModelPickers();
  try{const models=await fetchModelCatalog(force);if(backend!==backendValue())return;
  $('model-suggestions').innerHTML=models.map(m=>`<option value="${esc(m.id)}" label="${esc(m.name||m.id)}"></option>`).join('');refreshInlineModelPickers();
@@ -568,14 +580,14 @@ function pickModel(id){
 $('model-picker-close').onclick=()=>$('model-picker').close();
 $('model-picker-search').oninput=()=>renderModelPicker();
 $('model-picker-refresh').onclick=()=>action(async()=>{await refreshModelSuggestions(true);await renderModelPicker()},'模型目录已刷新');
-$('model-select').onchange=()=>action(saveModel,'模型已保存；下一次启动生效');$('effort-select').onchange=()=>action(saveModel,'推理档位已保存；下一次启动生效');$('model-provider').onchange=()=>action(saveModel,'Provider 已保存；下一次启动生效');$('model-browse').onclick=()=>openModelPicker('model-select');
+$('model-select').onchange=()=>action(saveModel,'模型已保存；下一次启动生效');$('service-tier').onchange=()=>action(saveModel,'速度已保存；下一次启动生效');$('effort-select').onchange=()=>action(saveModel,'推理档位已保存；下一次启动生效');$('model-provider').onchange=()=>action(saveModel,'Provider 已保存；下一次启动生效');$('model-browse').onclick=()=>openModelPicker('model-select');
 $('model-apply-session').onclick=()=>{
  const session=chat.session;
  if(!session){notice('当前没有打开的会话，请先新建或选择对话',true);return}
  if(chatActive()){notice('会话正在运行，请等待或停止后再应用',true);return}
  if(session.runtime?.backend!==backendValue()){notice('执行引擎不同，不能应用到当前会话；请用「用以上设置开新会话」',true);return}
  const model=$('model-select').value.trim();if(!model){notice('请先选择或输入模型 ID',true);return}
- $('chat-model').value=model;updateComposer();renderSettingsSessionNote();notice('已应用到当前会话，下一条消息生效（执行引擎按会话固定）');
+ $('chat-model').value=model;$('chat-model-provider').value=$('model-provider').value;assignEffort('chat-effort',$('effort-select').value);$('chat-service-tier').value=$('service-tier').value;rememberDraft();updateComposer();renderSettingsSessionNote();notice('已应用到当前会话，下一条消息生效（执行引擎按会话固定）');
 };
 
 $('version-history').onclick=()=>action(async()=>{
@@ -591,17 +603,17 @@ $('close-history').onclick=()=>$('history-dialog').close();
 const chat = {view:'active',home:true,sessions:[],id:null,session:null,messages:[],requests:[],events:new Map(),after:0,busy:false,uploading:0,polling:false,drafts:new Map(),attachments:new Set(),request:null};
 const chatStates={idle:'准备就绪',starting:'正在启动',running:'正在处理',complete:'已完成',completed:'已完成',failed:'运行失败',interrupted:'已中断',cancelled:'已停止',queued:'已排队',sending:'发送中',delivered:'已发送',streaming:'正在回复'};
 const chatActive=()=>['running','starting'].includes(chat.session?.status);
-function rememberDraft(){chat.drafts.set(chat.id||'new',{text:$('chat-input').value,sources:[...chat.attachments],backend:chat.session?.runtime?.backend||state.settings.agent_backend||'codex',model:$('chat-model').value,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,allow_web:$('chat-allow-web').checked,permission:$('chat-permission').value});try{sessionStorage.setItem('briefloop-chat-drafts',JSON.stringify([...chat.drafts].slice(-30)))}catch{}}
+function rememberDraft(){chat.drafts.set(chat.id||'new',{text:$('chat-input').value,sources:[...chat.attachments],backend:chat.session?.runtime?.backend||state.settings.agent_backend||'codex',model:$('chat-model').value,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,service_tier:(chat.session?.runtime?.backend||state.settings.agent_backend||'codex')==='codex'?($('chat-service-tier').value||null):null,allow_web:$('chat-allow-web').checked,permission:$('chat-permission').value});try{sessionStorage.setItem('briefloop-chat-drafts',JSON.stringify([...chat.drafts].slice(-30)))}catch{}}
 function restoreDraft(){
  const d=chat.drafts.get(chat.id||'new'),sessionRuntime=chat.session?.runtime;
  const backend=sessionRuntime?.backend||state.settings.agent_backend||'codex';
  const saved=d&&(d.backend===backend||(!d.backend&&sessionRuntime))?d:null;
- const fallback={model:state.settings.model_selection_required?'':state.settings.model,backend,effort:state.settings.reasoning_effort};
+ const fallback={model:state.settings.model_selection_required?'':state.settings.model,backend,effort:state.settings.reasoning_effort,model_provider:state.settings.model_provider,service_tier:state.settings.service_tier};
  const runtime=saved||sessionRuntime||fallback;
  // Searching is the expected default for a fresh chat; a saved draft keeps the user's own choice.
  $('chat-input').value=d?.text||'';chat.attachments=new Set(d?.sources||[]);$('chat-allow-web').checked=d&&('allow_web' in d)?!!d.allow_web:true;
  $('chat-model').value=runtime.model||'';assignEffort('chat-effort',effortValue(runtime,'effort'));
- $('chat-model-provider').value=runtime.model_provider||'';$('chat-permission').value=runtime.permission||'workspace-write';
+ $('chat-model-provider').value=runtime.model_provider||'';$('chat-service-tier').value=runtime.service_tier||'';$('chat-permission').value=runtime.permission||'workspace-write';
  renderAttachments();updateComposer();autoSizeChatInput();refreshInlineModelPickers();
 }
 const PERMISSION_MODES={
@@ -633,11 +645,11 @@ function renderChatRuntimePermissions(){
  if(!canSteer&&$('chat-mode').value==='steer')$('chat-mode').value='queue';
  $('chat-effort').hidden=backend!=='codex';document.querySelector('.chat-provider-row').hidden=backend!=='codex';
 }
-function runtimeChoice(){const model=$('chat-model').value.trim();if(!model)throw Error('请输入模型 ID');const backend=chat.session?.runtime?.backend||state.settings.agent_backend||'codex';if(!['codex','opencode'].includes(backend)){return {model,backend,permission:'runtime-native'}}if(backend==='opencode'){if(!model.includes('/'))throw Error('Opencode 模型必须是 provider/model 形式，例如 opencode-go/gpt-5.6-luna');return {model,backend,variant:state.settings.model_variant||null,permission:$('chat-permission').value}}return {model,backend,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,permission:$('chat-permission').value}}
+function runtimeChoice(){const model=$('chat-model').value.trim();if(!model)throw Error('请输入模型 ID');const backend=chat.session?.runtime?.backend||state.settings.agent_backend||'codex';if(!['codex','opencode'].includes(backend)){return {model,backend,permission:'runtime-native'}}if(backend==='opencode'){if(!model.includes('/'))throw Error('Opencode 模型必须是 provider/model 形式，例如 opencode-go/gpt-5.6-luna');return {model,backend,variant:state.settings.model_variant||null,permission:$('chat-permission').value}}return {model,backend,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,service_tier:selectedServiceTier('chat-service-tier',fastControlConfig('chat'),true),permission:$('chat-permission').value}}
 function messageTime(value){const date=new Date(value);return Number.isNaN(date.getTime())?'':date.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false})}
 function chatError(text=''){$('chat-error').textContent=text;$('chat-error').hidden=!text}
 function sessionMissing(error){return /会话或消息不存在|会话不存在/.test(String(error&&error.message||error||''))}
-function updateComposer(){renderChatRuntimePermissions();const readonly=chat.session&&chat.session.lifecycle&&chat.session.lifecycle!=='active';const active=chatActive(),steering=active&&$('chat-mode').value==='steer';if(steering){const runtime=activeChatRuntime();$('chat-permission').value=runtime.permission||'workspace-write';$('chat-model').value=runtime.model||'';assignEffort('chat-effort',effortValue(runtime,'effort'));$('chat-model-provider').value=runtime.model_provider||'';const activeMessage=chat.messages.find(m=>m.role==='user'&&m.turn_id===chat.session?.turn_id);$('chat-allow-web').checked=!!activeMessage?.allow_web} $('chat-allow-web').disabled=readonly||steering||chat.busy;for(const id of ['chat-model','chat-effort','chat-model-provider'])$(id).disabled=readonly||steering||chat.busy;$('chat-permission').disabled=readonly||steering||chat.busy;$('new-session').disabled=chat.busy||chat.uploading>0;$('chat-input').readOnly=chat.busy||readonly;document.querySelectorAll('[data-chat-session]').forEach(b=>b.disabled=chat.busy||chat.uploading>0);$('chat-send').disabled=readonly||chat.busy||chat.uploading>0||(!$('chat-input').value.trim()&&!chat.attachments.size)||!$('chat-model').value.trim();const sendLabel=chat.busy?'发送中…':active?($('chat-mode').value==='steer'?'立即补充':'排队发送'):'发送消息';$('chat-send').textContent=chat.busy?'…':'↑';$('chat-send').setAttribute('aria-label',sendLabel);$('chat-send').title=sendLabel;$('chat-stop').hidden=!active;$('chat-stop').disabled=chat.busy;$('chat-mode').disabled=!active||chat.busy;$('chat-attach').disabled=readonly||chat.busy||chat.uploading>0;$('attach-existing').disabled=readonly||chat.busy;$('chat-attach').querySelector('span').textContent=chat.uploading?'上传中…':'文件';const model=$('chat-model').value.trim(),label=friendlyModel(model)||'输入模型 ID';$('chat-model').title=model?friendlyModel(model)+' · '+model:'输入模型 ID';if(!model)$('chat-send').title='请先选择模型';const chatBackend=chat.session?.runtime?.backend||state.settings.agent_backend||'codex';$('chat-runtime-label')&&($('chat-runtime-label').textContent=runtimeName(chatBackend));const effort=chatBackend==='opencode'?(chat.session?.runtime?.variant||state.settings.model_variant||'模型默认'):($('chat-effort').value==='none'?'模型默认':$('chat-effort').value);$('composer-help').textContent=`Enter 发送 · Shift + Enter 换行 · ${label}${['codex','opencode'].includes(state.settings.agent_backend||'codex')?' / '+effort:''}${active?' · 立即补充沿用当前联网与模型设置；更改设置请排队到下一回合':''}${model?'':' · 请先从模型列表选择或输入模型 ID'}`}
+function updateComposer(){renderChatRuntimePermissions();const readonly=chat.session&&chat.session.lifecycle&&chat.session.lifecycle!=='active';const active=chatActive(),steering=active&&$('chat-mode').value==='steer';if(steering){const runtime=activeChatRuntime();$('chat-permission').value=runtime.permission||'workspace-write';$('chat-model').value=runtime.model||'';assignEffort('chat-effort',effortValue(runtime,'effort'));$('chat-model-provider').value=runtime.model_provider||'';$('chat-service-tier').value=runtime.service_tier||'';const activeMessage=chat.messages.find(m=>m.role==='user'&&m.turn_id===chat.session?.turn_id);$('chat-allow-web').checked=!!activeMessage?.allow_web} renderFastControls();$('chat-allow-web').disabled=readonly||steering||chat.busy;for(const id of ['chat-model','chat-effort','chat-model-provider','chat-service-tier'])$(id).disabled=readonly||steering||chat.busy;$('chat-permission').disabled=readonly||steering||chat.busy;$('new-session').disabled=chat.busy||chat.uploading>0;$('chat-input').readOnly=chat.busy||readonly;document.querySelectorAll('[data-chat-session]').forEach(b=>b.disabled=chat.busy||chat.uploading>0);$('chat-send').disabled=readonly||chat.busy||chat.uploading>0||(!$('chat-input').value.trim()&&!chat.attachments.size)||!$('chat-model').value.trim();const sendLabel=chat.busy?'发送中…':active?($('chat-mode').value==='steer'?'立即补充':'排队发送'):'发送消息';$('chat-send').textContent=chat.busy?'…':'↑';$('chat-send').setAttribute('aria-label',sendLabel);$('chat-send').title=sendLabel;$('chat-stop').hidden=!active;$('chat-stop').disabled=chat.busy;$('chat-mode').disabled=!active||chat.busy;$('chat-attach').disabled=readonly||chat.busy||chat.uploading>0;$('attach-existing').disabled=readonly||chat.busy;$('chat-attach').querySelector('span').textContent=chat.uploading?'上传中…':'文件';const model=$('chat-model').value.trim(),label=friendlyModel(model)||'输入模型 ID';$('chat-model').title=model?friendlyModel(model)+' · '+model:'输入模型 ID';if(!model)$('chat-send').title='请先选择模型';const chatBackend=chat.session?.runtime?.backend||state.settings.agent_backend||'codex';$('chat-runtime-label')&&($('chat-runtime-label').textContent=runtimeName(chatBackend));const speed=$('chat-service-tier').hidden?'':($('chat-service-tier').value==='fast'?' · Fast（请求）':$('chat-service-tier').value==='default'?' · 标准':'');const effort=chatBackend==='opencode'?(chat.session?.runtime?.variant||state.settings.model_variant||'模型默认'):($('chat-effort').value==='none'?'模型默认':$('chat-effort').value);$('composer-help').textContent=`Enter 发送 · Shift + Enter 换行 · ${label}${['codex','opencode'].includes(state.settings.agent_backend||'codex')?' / '+effort:''}${speed}${active?' · 立即补充沿用当前联网与模型设置；更改设置请排队到下一回合':''}${model?'':' · 请先从模型列表选择或输入模型 ID'}`}
 function sessionBusy(session){if(!session)return false;if(typeof session.busy==='boolean')return session.busy;return ['starting','running','stopping'].includes(session.status)||!!session.turn_id||(session.id===chat.id&&(chat.messages.some(m=>['queued','sending','delivered','streaming'].includes(m.status))||chat.requests.some(r=>r.status==='pending')))}
 function renderSessions(){
  const signature=JSON.stringify([chat.view,chat.id,chat.sessions]);if(renderSessions.signature===signature)return;renderSessions.signature=signature;$('session-view').value=chat.view;
@@ -794,7 +806,7 @@ $('chat-input').onkeydown=e=>{
  if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();if(!$('chat-send').disabled)$('chat-form').requestSubmit()}
 };
 $('chat-mode').onchange=updateComposer;
-for(const id of ['chat-model','chat-effort','chat-model-provider'])$(id).onchange=()=>{rememberDraft();chatError();updateComposer()};
+for(const id of ['chat-model','chat-effort','chat-model-provider','chat-service-tier'])$(id).onchange=()=>{rememberDraft();chatError();updateComposer()};
 $('chat-stop').onclick=async()=>{if(!chat.id||chat.busy)return;chat.busy=true;updateComposer();try{await api('harness/cancel',{session_id:chat.id});await pollChat(true)}catch(e){chatError(e.message)}finally{chat.busy=false;updateComposer()}};
 $('chat-attach').onclick=()=>$('chat-upload').click();
 $('attach-existing').onclick=()=>{const show=$('existing-sources').hidden;$('existing-sources').hidden=!show;$('attach-existing').setAttribute('aria-expanded',String(show));renderAttachments()};
@@ -860,16 +872,18 @@ function renderRequests(){
  });
 }
 
+function serviceTierOptions(value){return [['','速度：沿用本机'],['default','速度：标准'],['fast','速度：Fast']].map(([id,label])=>`<option value="${id}" ${id===(value||'')?'selected':''}>${label}</option>`).join('')}
 function renderRoleModels(){
  const roles=[['evaluator','Evaluator','给产物评分；比较候选产物，判断是否改善'],['maintainer','Wiki Maintainer','将反馈和执行经验整理成 Wiki'],['proposer','Skill Proposer','根据 Wiki 提出或改进 Skill']];
-  $('role-model-options').innerHTML=roles.map(([role,name,label])=>{const configured=state.settings.role_models||{},value=(role==='evaluator'?(configured.evaluator||configured.scorer||configured.assessor):configured[role])||{},inherits=!value.model,effort=effortValue(inherits?state.settings:value,'reasoning_effort');return `<div class="role-model-row"><span><b>${name}</b><small>${label}</small></span><div class="role-runtime-fields"><div class="role-model-pair"><input id="role-${role}-model" aria-label="${name} 模型 ID" data-role-model="${role}" list="model-suggestions" autocomplete="off" spellcheck="false" value="${esc(value.model||'')}" placeholder="留空继承主链模型" title="${esc(value.model?friendlyModel(value.model):'继承主链模型')}"><select id="role-${role}-effort" class="role-effort-select" aria-label="${name} 推理档位" data-role-effort="${role}" ${inherits?'disabled':''}>${[...new Set(['none','low','medium','high','xhigh','max',effort])].map(e=>`<option value="${e}" ${e===effort?'selected':''}>${e==='none'?'模型默认':e}</option>`).join('')}</select></div><label class="role-provider-field"><span>Provider</span><input id="role-${role}-provider" aria-label="${name} Codex provider" value="${esc(value.model_provider||'')}" placeholder="${inherits?'继承主链全部配置':'留空沿用本机 Codex 配置'}" autocomplete="off" spellcheck="false" ${inherits?'disabled':''}></label><label class="role-variant-field" hidden><span>Variant</span><input id="role-${role}-variant" aria-label="${name} Opencode variant" data-role-variant="${role}" value="${esc(value.model_variant||'')}" placeholder="如 high / max，留空默认" autocomplete="off" spellcheck="false" ${inherits?'disabled':''}></label></div></div>`}).join('');
+  $('role-model-options').innerHTML=roles.map(([role,name,label])=>{const configured=state.settings.role_models||{},value=(role==='evaluator'?(configured.evaluator||configured.scorer||configured.assessor):configured[role])||{},inherits=!value.model,effort=effortValue(inherits?state.settings:value,'reasoning_effort');return `<div class="role-model-row"><span><b>${name}</b><small>${label}</small></span><div class="role-runtime-fields"><div class="role-model-pair"><input id="role-${role}-model" aria-label="${name} 模型 ID" data-role-model="${role}" list="model-suggestions" autocomplete="off" spellcheck="false" value="${esc(value.model||'')}" placeholder="留空继承主链模型" title="${esc(value.model?friendlyModel(value.model):'继承主链模型')}"><select id="role-${role}-effort" class="role-effort-select" aria-label="${name} 推理档位" data-role-effort="${role}" ${inherits?'disabled':''}>${[...new Set(['none','low','medium','high','xhigh','max',effort])].map(e=>`<option value="${e}" ${e===effort?'selected':''}>${e==='none'?'模型默认':e}</option>`).join('')}</select><select id="role-${role}-service-tier" aria-label="${name} 速度" hidden ${inherits?'disabled':''}>${serviceTierOptions(value.service_tier)}</select></div><label class="role-provider-field"><span>Provider</span><input id="role-${role}-provider" aria-label="${name} Codex provider" value="${esc(value.model_provider||'')}" placeholder="${inherits?'继承主链全部配置':'留空沿用本机 Codex 配置'}" autocomplete="off" spellcheck="false" ${inherits?'disabled':''}></label><label class="role-variant-field" hidden><span>Variant</span><input id="role-${role}-variant" aria-label="${name} Opencode variant" data-role-variant="${role}" value="${esc(value.model_variant||'')}" placeholder="如 high / max，留空默认" autocomplete="off" spellcheck="false" ${inherits?'disabled':''}></label></div></div>`}).join('');
   $('role-model-options').querySelectorAll('input,select').forEach(input=>input.onchange=saveRoleModels);renderBackend();
  setupModelPickers($('role-model-options'));
 }
 async function saveRoleModels(){
-  const op=backendValue()==='opencode';const role_models={};for(const input of $('role-model-options').querySelectorAll('[data-role-model]')){const role=input.dataset.roleModel,model=input.value.trim(),effort=$(`role-${role}-effort`),provider=$(`role-${role}-provider`),variant=$(`role-${role}-variant`);effort.disabled=!model;provider.disabled=!model;variant.disabled=!model;if(model)role_models[role]=op?{model,model_variant:variant.value.trim()||null}:{model,reasoning_effort:effort.value,model_provider:provider.value.trim()||null}}
+  await Promise.all(['evaluator','maintainer','proposer'].map(role=>{const cfg=fastControlConfig('role-'+role);return cfg.backend==='codex'&&cfg.model?loadFastCapability(cfg):null}));
+  const op=backendValue()==='opencode';const role_models={};for(const input of $('role-model-options').querySelectorAll('[data-role-model]')){const role=input.dataset.roleModel,model=input.value.trim(),effort=$(`role-${role}-effort`),provider=$(`role-${role}-provider`),variant=$(`role-${role}-variant`);effort.disabled=!model;provider.disabled=!model;variant.disabled=!model;if(model)role_models[role]=op?{model,model_variant:variant.value.trim()||null}:{model,reasoning_effort:effort.value,model_provider:provider.value.trim()||null,service_tier:selectedServiceTier(`role-${role}-service-tier`,fastControlConfig('role-'+role),true)}}
   const controls=[...$('role-model-options').querySelectorAll('input,select')];controls.forEach(input=>input.disabled=true);$('role-model-status').textContent='保存中…';
-  try{await api('settings',{role_models});state.settings.role_models=role_models;$('role-model-status').textContent='已保存，下一次启动时生效。'}catch(e){$('role-model-status').textContent='未保存：'+e.message;renderRoleModels()}finally{for(const input of $('role-model-options').querySelectorAll('[data-role-model]')){input.disabled=false;const inherits=!input.value.trim();$(`role-${input.dataset.roleModel}-effort`).disabled=inherits;$(`role-${input.dataset.roleModel}-provider`).disabled=inherits;$(`role-${input.dataset.roleModel}-variant`).disabled=inherits}}
+  try{await api('settings',{role_models});state.settings.role_models=role_models;$('role-model-status').textContent='已保存，下一次启动时生效。'}catch(e){$('role-model-status').textContent='未保存：'+e.message;renderRoleModels()}finally{for(const input of $('role-model-options').querySelectorAll('[data-role-model]')){input.disabled=false;const inherits=!input.value.trim();$(`role-${input.dataset.roleModel}-effort`).disabled=inherits;$(`role-${input.dataset.roleModel}-provider`).disabled=inherits;$(`role-${input.dataset.roleModel}-variant`).disabled=inherits;$(`role-${input.dataset.roleModel}-service-tier`).disabled=inherits}}
 }
 
 function workspaceProposal(node,text){
@@ -962,7 +976,7 @@ $('settings-open').onclick=showSettings;$('settings-close').onclick=()=>page('ch
 // One width axis for reading and composing; existing controls remain mounted.
 {
  const options=document.querySelector('.composer-options'),trailing=document.querySelector('.send-controls');
- trailing.prepend($('chat-model'),$('chat-effort'));
+ trailing.prepend($('chat-model'),$('chat-effort'),$('chat-service-tier'));
  const help=$('composer-help');$('chat-form').after(help);
  const settingsButton=$('settings-open');settingsButton.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1 1-3Z"/><circle cx="12" cy="12" r="3"/></svg><span>设置</span>';
 }
@@ -1071,6 +1085,7 @@ $('setup-search-config').onclick=()=>{
 };
 
 $('chat-model').oninput=updateComposer;
+for(const id of ['model-select','model-provider'])$(id).addEventListener('input',()=>renderFastControls());
 $('chat-model-provider').oninput=()=>{rememberDraft();updateComposer()};
 for(const id of ['chat-model','chat-model-provider','model-select','model-provider'])$(id).addEventListener('keydown',event=>{if(event.key==='Enter'){event.preventDefault();event.stopPropagation();$(id).blur()}});
 
@@ -1151,6 +1166,46 @@ async function refreshReportBudget(){
  }catch{panel.hidden=false;$('budget-view-title').textContent='研究预算';$('budget-view-body').innerHTML='<p class="help">预算信息暂不可用。</p>'}finally{budgetPolling=false}
 }
 
+// Content methods and Word layout are separate choices. Switching an export
+// template never enters this requirements form or modifies a saved run.
+function readWorkflowChoice(){
+ const [workflow_id,workflow_variant]=($('workflow-choice').value||'').split('/');
+ return {workflow_id:workflow_id||null,workflow_variant:workflow_variant||null};
+}
+function initializeWorkflowChoice(req,partial=false){
+ const has=key=>Object.prototype.hasOwnProperty.call(req,key);
+ if(partial&&!['workflow_id','workflow_variant','report_profile'].some(has))return;
+ const legacy=!req.workflow_id&&req.report_profile==='industry_periodic';
+ const id=req.workflow_id||(legacy?'business_report':partial&&!has('workflow_id')&&!has('report_profile')?readWorkflowChoice().workflow_id:'');
+ const variant=req.workflow_variant||(legacy?'industry_periodic':state?.workflows?.find(w=>w.id===id)?.default_variant||'');
+ $('workflow-choice').value=id?`${id}/${variant}`:'';
+}
+function renderWorkflowChoices(first=false){
+ const el=$('workflow-choice');if(!el||!state)return;
+ const catalog=state.workflows||[];
+ const signature=JSON.stringify(catalog);
+ if(first||el.dataset.catalog!==signature){
+  const chosen=el.value;
+  el.innerHTML='<option value="">使用建议用途</option>'+catalog.map(w=>`<optgroup label="${esc(w.label)}">${w.variants.map(v=>`<option value="${esc(w.id+'/'+v.id)}">${esc(w.label)} · ${esc(v.label)}</option>`).join('')}</optgroup>`).join('');
+  el.dataset.catalog=signature;el.value=chosen;
+  if(first)initializeWorkflowChoice(state.requirements||{});
+ }
+ const choice=readWorkflowChoice();
+ const template=state.templates?.find(t=>t.id===$('template-select').value);
+ const workflow=catalog.find(w=>w.id===(choice.workflow_id||template?.workflow_hint||'general_report'));
+ const variant=workflow?.variants.find(v=>v.id===(choice.workflow_variant||workflow.default_variant));
+ $('workflow-hint').textContent=workflow?`${choice.workflow_id?'已选':'本轮建议'}：${workflow.label} · ${variant?.label||''}。用于规划、写作和评价；Word 版式由报告模板决定。`:'文档方法目录暂不可用，请刷新后再选择。';
+}
+function syncWorkflowProfile(changeLength=true){
+ const choice=readWorkflowChoice();
+ const next=choice.workflow_id==='business_report'&&choice.workflow_variant==='industry_periodic'?'industry_periodic':'brief';
+ const previous=$('report-profile').value;$('report-profile').value=next;
+ if(changeLength&&previous!==next)$('report-profile').dispatchEvent(new Event('change'));
+ else $('industry-profile-options').hidden=next!=='industry_periodic';
+ renderWorkflowChoices();
+}
+$('workflow-choice').onchange=()=>syncWorkflowProfile();
+
 // Reference reports are explicitly separated from this period's evidence.
 const INDUSTRY_TASK_OUTLINE='撰写行业定期报告，围绕核心摘要、行业指标、供需竞争、重点专题与组织启示展开。可根据行业与读者需要调整章节。数据标明日期、单位、口径及比较期，实际与预测分开。分析从事实出发，解释传导机制、适用条件与下一步观察项。正文围绕本期变化、对组织的影响及有依据的行动展开；核查与待补信息单独保存。';
 let briefLengthChoice=null,industryLengthChoice=[5000,5500];
@@ -1162,7 +1217,7 @@ function renderReferenceSources(){
 }
 function initializeReportProfile(requirements){
  referenceSelected=new Set(requirements.reference_source_ids||[]);
- if(industryProfileActive())for(const id of referenceSelected)selected.delete(id);
+ for(const id of referenceSelected)selected.delete(id);
  $('industry-profile-options').hidden=!industryProfileActive();$('length-preset').disabled=industryProfileActive();$('length-preset').closest('label').hidden=industryProfileActive();
  if(industryProfileActive()){
   $('target-words').value=requirements.target_words??5000;$('max-words').value=requirements.max_words??5500;
@@ -1178,8 +1233,7 @@ $('report-profile').onchange=()=>{
  }else{
   industryLengthChoice=[$('target-words').value,$('max-words').value];
   [$('target-words').value,$('max-words').value]=briefLengthChoice||LENGTH_PRESETS[$('length-preset').value]||LENGTH_PRESETS.balanced;
-  // 普通简报没有参考材料这个概念，之前标为参考的材料要回到本期材料里。
-  for(const id of referenceSelected){if((state.sources||[]).some(s=>s.id===id&&s.status!=='failed')){selected.add(id);const evidence=$('source-list').querySelector(`[data-check="${CSS.escape(id)}"]`);if(evidence)evidence.checked=true}}
+
  }
  $('industry-profile-options').hidden=!industryProfileActive();$('length-preset').disabled=industryProfileActive();$('length-preset').closest('label').hidden=industryProfileActive();validateLengthInputs();
 };
@@ -1187,7 +1241,7 @@ $('industry-task-outline').onclick=()=>{const field=$('requirements').elements.o
 
 function renderReportDataButton(){
  const run=current&&state?.runs.find(item=>item.id===current.run_id);
- $('report-data-control').hidden=!run||parse(run.requirements).report_profile!=='industry_periodic';
+ $('report-data-control').hidden=!run;
 }
 function reportDataText(result){
  const data=result.data,records=data?.records||[],calculations=data?.calculations||[],gaps=[...new Set([...(result.gaps||[]),...(data?.gaps||[])])];
@@ -1319,7 +1373,7 @@ function renderTemplates(first=false){
  templateSections();
  applyTemplateSectionEdits();
 }
-$('template-select').onchange=()=>{templateSections();applyTemplateSectionEdits()};
+$('template-select').onchange=()=>{templateSections();applyTemplateSectionEdits();renderWorkflowChoices()};
 $('template-import-button').onclick=()=>$('template-file').click();
 $('template-file').onchange=e=>action(async()=>{const file=e.target.files[0];if(!file)return;const bytes=new Uint8Array(await file.arrayBuffer());let raw='';for(let i=0;i<bytes.length;i+=8192)raw+=String.fromCharCode(...bytes.subarray(i,i+8192));await api('template-import',{name:file.name,data:btoa(raw)});e.target.value='';notice('模板已上传，BriefLoop 将准备章节和版式，完成后可在我的模板中选择')});
 
@@ -1545,10 +1599,15 @@ $('source-refresh-form').onsubmit=event=>{event.preventDefault();action(async()=
 
 function sourceRefreshOutcome(outcome){return {not_authorized:'本轮未允许联网，未执行在线复查',local_source_requires_upload:'本地来源更新需上传独立的新文件',budget_exhausted:'本轮预算已用尽，未获取新快照',fetch_failed:'新快照读取未成功，保留原来源',unchanged_snapshot:'实际取得的快照未变化',changed_needs_review:'取得的快照有变化，待判断影响并独立复核'}[outcome]||''}
 
+let connectorPanel=null;
 function settingsView(name){
- for(const view of ['models','execution','learning','workspaces'])$('settings-view-'+view).hidden=view!==name;
+ for(const view of ['models','execution','learning','workspaces','connectors'])$('settings-view-'+view).hidden=view!==name;
  document.querySelectorAll('[data-settings-view]').forEach(b=>{b.classList.toggle('active',b.dataset.settingsView===name);b.setAttribute('aria-current',b.dataset.settingsView===name?'page':'false')});
  if(name==='workspaces')return renderSettingsWorkspaces();
+ if(name==='connectors'){
+  connectorPanel ||= connectorSettings($('settings-view-connectors'),api);
+  return connectorPanel.refresh();
+ }
 }
 async function renderSettingsWorkspaces(){
  const box=$('settings-workspace-list');if(!box)return;
@@ -1879,7 +1938,7 @@ function renderTemplatesPage(){
   if(!templatePick)return;
   await api('settings',{default_template_id:templatePick.id});
   state.settings={...(state.settings||{}),default_template_id:templatePick.id};
-  $('template-select').value=templatePick.id;
+  $('template-select').value=templatePick.id;renderWorkflowChoices();
   templateSections();
   notice(`已选用 ${templatePick.genre} · ${templatePick.theme}；新建报告将默认使用`);
   renderTemplatesPage.sig='';page('setup');

@@ -126,6 +126,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/harness/sessions':self.send(200,{'sessions':harness.list_sessions(q.get('view',['active'])[0])})
                 elif u.path=='/api/harness/session':self.send(200,pick_harness(session_id=q['id'][0]).snapshot(q['id'][0],int(q.get('after',['0'])[0]),reasoning=q.get('reasoning',['0'])[0]=='1'))
                 elif u.path=='/api/session':self.send(200,{'token':token})
+                elif u.path=='/api/connectors':self.send(200,{'connectors':self.server.connectors.list()})
                 elif u.path=='/api/runtime':
                     observed=worker._review_runtime if worker.review_current and not worker.current else worker.runtime
                     proc=observed.process
@@ -179,6 +180,17 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     self.send(200,{'configurations':opencode_harness._client().provider_settings()})
                 elif u.path=='/api/runtimes':
                     self.send(200,bridge.discover())
+                elif u.path=='/api/runtime/fast-capability':
+                    from .backends import validate_backend
+                    backend=validate_backend(q.get('backend',[store.settings().get('agent_backend','codex')])[0])
+                    runtime={'backend':backend,'model':q.get('model',[''])[0],
+                             'model_provider':q.get('model_provider',[''])[0] or None}
+                    if backend=='codex':
+                        self.send(200,harness.fast_capability(runtime))
+                    else:
+                        self.send(200,{**runtime,'official_connection':False,'fast_supported':False,
+                                       'account_availability':'unknown','enabled':False,
+                                       'reason':'当前执行引擎尚未提供可核验的 Fast 能力'})
                 elif u.path=='/api/models':
                     from .backends import validate_backend
                     backend=validate_backend(q.get('backend',[store.settings().get('agent_backend','codex')])[0])
@@ -294,6 +306,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/tavily':
                     from .tavily import save_key,delete_key
                     result=delete_key() if body.get('remove') else save_key(body['api_key'])
+                elif path=='/api/connectors/save':
+                    result=self.server.connectors.save(body['config'],connector_id=body.get('connector_id'),secrets=body.get('secrets'))
+                elif path in ('/api/connectors/test','/api/connectors/enable','/api/connectors/disable','/api/connectors/delete'):
+                    result=getattr(self.server.connectors,path.rsplit('/',1)[-1])(body['connector_id'])
                 elif path=='/api/runtime-test':
                     result=test_runtime(body)
                 elif path=='/api/opencode/provider-catalog':
@@ -410,6 +426,16 @@ def _make_server(workspace, port, *, paused, backend, lock):
     except OSError:
         harness.close();opencode_harness.close();lock.close();raise
     server.daemon_threads=True
+    from .connectors import ConnectorService
+    try:
+        server.connectors=ConnectorService(store.root)
+    except Exception:
+        server.server_close();harness.close();opencode_harness.close();bridge.close();lock.close();raise
+    close_socket=server.server_close
+    def close_server():
+        try:server.connectors.close()
+        finally:close_socket()
+    server.server_close=close_server
     server.workspace_lock=lock;server.runtime_bridge=bridge;server.bridge_harnesses=bridge_harnesses
     server.store=store;server.worker=worker;server.harness=harness;server.opencode_harness=opencode_harness
     return server

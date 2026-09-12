@@ -156,6 +156,8 @@ class InteractiveRuntime:
             if backend!='opencode':raise ValueError('此后端的受限 Reviewer 工具策略尚未验证；审阅未完成，不能退回普通写权限')
             runtime.update(permission='read-only',review_root=str((folder/'packet').resolve()))
             if job.get('review_id'):runtime['review_id']=job['review_id']
+        if backend == 'codex' and 'service_tier' in configured:
+            runtime['service_tier'] = configured['service_tier']
         if configured.get('model_provider'):
             runtime['model_provider'] = configured['model_provider']
         if configured.get('model_variant'):

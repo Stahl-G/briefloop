@@ -25,7 +25,9 @@ def test_workspace_open_checks_identity_and_launches_paused_without_touching_old
         return {'workspace_id':store.meta('workspace_id')}
     def launch(command,**kwargs):
         starts.append(command)
-        assert command[1:4]==['-m','briefloop','start']
+        assert command[1:3]==['-X','utf8']
+        assert Path(command[3]).is_absolute() and Path(command[3]).name=='_entrypoint.py'
+        assert command[4]=='start'
         assert command[-3:]==['--port','0','--paused']
         root=Path(command[command.index('--workspace')+1]);opened=Store(root)
         state['http://127.0.0.1:19002']=opened

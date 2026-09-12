@@ -190,6 +190,7 @@ class Store:
 
     def create_run(self, requirements, source_ids, **options):
         req = Requirements.model_validate(requirements)
+        selected = None
         if req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is None:
             raise ValueError('请先选择是否维护企业背景知识库；可选择不维护并继续报告')
         req.company_context_required=req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is True
@@ -203,6 +204,10 @@ class Store:
             if not req.sections:
                 from .models import ReportSection
                 req.sections=[ReportSection.model_validate(s) for s in selected['spec']['sections']]
+        from .document_workflows import resolve_workflow, freeze_workflow, template_workflow_hint
+        selection = resolve_workflow(req.model_dump(), template_workflow_hint(selected))
+        req.workflow_id, req.workflow_variant = selection['id'], selection['variant']
+        req.workflow_snapshot = freeze_workflow(selection)
         for sid in req.reference_source_ids:
             self.one("sources", sid)
         if set(source_ids) & set(req.reference_source_ids):
@@ -248,6 +253,12 @@ class Store:
             from .deliverable_spec import resolve,validate_reader_contract
             draft.reader_contract=validate_reader_contract(resolve(json.loads(run['requirements'])),draft.reader_contract)
         references=set(json.loads(run['requirements']).get('reference_source_ids',[]))
+        if parent_id and not draft.reconciliation_id:
+            parent=self.one('briefs',parent_id)
+            if parent['run_id']!=run_id:raise Conflict('修订基础版本不属于本报告')
+            # The comparison describes the source snapshot, not author approval.
+            # Preserve it across rewrites; read() still reports stale inputs.
+            draft.reconciliation_id=json.loads(parent['detail']).get('reconciliation_id')
         if draft.reconciliation_id:
             from .reconciliation import exists
             if not exists(self,run_id,draft.reconciliation_id):
@@ -512,6 +523,7 @@ class Store:
         self.event(None, "skill_binding", {"skill_id": skill_id})
 
     def snapshot(self):
+        from .document_workflows import list_workflows, template_workflow_hint
         jobs=self.rows("SELECT * FROM jobs ORDER BY rowid DESC LIMIT 30")
         for j in jobs:
             events=self.rows("SELECT data FROM events WHERE job_id=? AND kind='learning_progress' ORDER BY seq DESC LIMIT 1",(j['id'],))
@@ -533,7 +545,8 @@ class Store:
             brief['length_stats']=length_stats(brief['markdown'],target_words=req.get('target_words'),max_words=req.get('max_words'))
         return {"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "requirements": self.meta("requirements"), "settings": self.settings(),
                 "profile": self.meta("workspace_profile") or {},
-                "templates":self.rows('SELECT * FROM templates ORDER BY created DESC'),
+                "workflows":list_workflows(),
+                "templates":[{**row, 'workflow_hint':template_workflow_hint(row)} for row in self.rows('SELECT * FROM templates ORDER BY created DESC')],
                 "conflicts":self.rows("SELECT id,status,data,run_id FROM conflicts WHERE status!='resolved' ORDER BY rowid DESC LIMIT 100"),
                 "company_context_pending":self.rows("SELECT * FROM company_facts WHERE status='pending' ORDER BY rowid DESC"),
                 "sources": self.rows("SELECT * FROM sources ORDER BY created"),
