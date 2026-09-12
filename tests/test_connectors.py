@@ -44,7 +44,11 @@ class ConnectorTests(unittest.TestCase):
         self.assertFalse((self.root / 'server/server.jsonl').exists())
         for path in (self.root / '.connectors').rglob('*'):
             if path.is_file():
-                self.assertEqual(path.stat().st_mode & 0o077, 0)
+                if os.name == 'nt':
+                    from briefloop.connectors.windows_acl import verify_private
+                    verify_private(path)
+                else:
+                    self.assertEqual(path.stat().st_mode & 0o077, 0)
 
     @unittest.skipUnless(importlib.util.find_spec('mcp'), 'MCP SDK not installed')
     def test_real_stdio_preview_enable_scope_isolation_and_disable(self):
@@ -84,8 +88,11 @@ class ConnectorTests(unittest.TestCase):
         self.service.disable(identifier)
         result = future.result(timeout=3)
         self.assertIn(result['delivery'], ('cancelled', 'unknown'))
-        with self.assertRaises(ProcessLookupError):
-            os.kill(child['pid'], 0)
+        from briefloop.platform_support import process_alive
+        deadline = time.monotonic() + 5
+        while process_alive(child['pid']) and time.monotonic() < deadline:
+            time.sleep(.02)
+        self.assertFalse(process_alive(child['pid']))
 
     def http_config(self):
         self.stdio_config()

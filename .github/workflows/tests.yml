@@ -64,7 +64,10 @@ jobs:
           "WHEEL_PYTHON=$wheelPython" >> $env:GITHUB_ENV
           $smoke = Join-Path $env:RUNNER_TEMP 'BriefLoop 中文 workspace tests'
           New-Item -ItemType Directory -Path $smoke | Out-Null
-          Copy-Item tests/test_windows_platform.py, tests/test_windows_distribution.py, tests/test_npm_native_shim.py, tests/test_host_bins.py, tests/test_server_boundary.py, tests/test_agent_commands.py, tests/test_review_packet_paths.py, tests/test_progress.py -Destination $smoke
+          Copy-Item tests/test_windows_platform.py, tests/test_windows_distribution.py, tests/test_windows_connector_acl.py, tests/test_windows_mcp_supervisor.py, tests/test_npm_native_shim.py, tests/test_host_bins.py, tests/test_server_boundary.py, tests/test_agent_commands.py, tests/test_review_packet_paths.py, tests/test_progress.py -Destination $smoke
+          New-Item -ItemType Directory -Path (Join-Path $smoke 'tests'), (Join-Path $smoke 'probes/mcp_m0') -Force | Out-Null
+          Copy-Item tests/test_connectors.py -Destination (Join-Path $smoke 'tests')
+          Copy-Item probes/mcp_m0/server.py -Destination (Join-Path $smoke 'probes/mcp_m0')
           Copy-Item runtime-bridge/bridge.test.mjs -Destination $smoke
           $bridgeDirectory = Join-Path $smoke 'src/briefloop/static'
           New-Item -ItemType Directory -Path $bridgeDirectory -Force | Out-Null

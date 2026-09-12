@@ -60,14 +60,14 @@ async def connection_transport(config: dict, secrets: dict, diagnostics: dict):
             async with streamable_http_client(config['url'], http_client=http_client) as streams:
                 yield streams
         return
-    if os.name != 'posix':
-        raise ConnectorError('此版本尚未验证 Windows stdio 进程清理。', code='unsupported_transport')
+    if os.name not in ('posix', 'nt'):
+        raise ConnectorError('此平台不支持 stdio 进程清理。', code='unsupported_transport')
     with tempfile.TemporaryDirectory(prefix='briefloop-mcp-') as directory:
         marker = Path(directory) / 'process.json'
         diagnostics['marker_path'] = str(marker)
         supervisor = Path(__file__).with_name('stdio_supervisor.py')
         params = StdioServerParameters(command=sys.executable,
-                                       args=['-I', str(supervisor), '--marker', str(marker),
+                                       args=['-I', '-X', 'utf8', str(supervisor), '--marker', str(marker),
                                              '--limit', str(config['max_response_bytes']), '--',
                                              config['command'], *config['args']],
                                        cwd=config.get('cwd'), env=secrets.get('env', {}))
@@ -78,18 +78,24 @@ async def connection_transport(config: dict, secrets: dict, diagnostics: dict):
                     with anyio.fail_after(5):
                         while not marker.exists():
                             await anyio.sleep(.01)
-                    candidate = json.loads(marker.read_text())
+                    candidate = json.loads(marker.read_text(encoding='utf-8'))
                     pid = candidate['pid']
-                    parent = subprocess.run(['ps', '-o', 'ppid=', '-p', str(pid)], capture_output=True, text=True).stdout.strip()
-                    if (not isinstance(pid, int) or candidate['pgid'] != pid or os.getpgid(pid) != pid
-                            or parent != str(os.getpid())):
-                        raise ConnectorError('无法确认连接器进程所有权。', code='cleanup_failed')
-                    ownership = {'pid': pid, 'pgid': pid}
-                    diagnostics.update(ownership)
+                    if os.name == 'nt':
+                        # The SDK owns its supervisor handle. That supervisor owns the
+                        # command Job, which closes on normal exit and forced termination.
+                        # Marker PIDs are diagnostic only; never used to stop a process.
+                        diagnostics.update(pid=pid, child_pid=candidate['child_pid'], cleanup='windows-job')
+                    else:
+                        parent = subprocess.run(['ps', '-o', 'ppid=', '-p', str(pid)], capture_output=True, text=True).stdout.strip()
+                        if (not isinstance(pid, int) or candidate['pgid'] != pid or os.getpgid(pid) != pid
+                                or parent != str(os.getpid())):
+                            raise ConnectorError('无法确认连接器进程所有权。', code='cleanup_failed')
+                        ownership = {'pid': pid, 'pgid': pid}
+                        diagnostics.update(ownership)
                     yield streams
             finally:
                 if marker.exists():
-                    observed = json.loads(marker.read_text())
+                    observed = json.loads(marker.read_text(encoding='utf-8'))
                     if observed.get('error') == 'response_too_large':
                         diagnostics['error'] = 'response_too_large'
                 if ownership is not None:

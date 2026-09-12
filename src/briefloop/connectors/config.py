@@ -16,10 +16,24 @@ class ConnectorError(ValueError):
         self.code = code
 
 
+def private_path(path: Path) -> None:
+    if path.is_symlink():
+        raise ConnectorError('连接器配置路径不能是符号链接。')
+    try:
+        if os.name == 'nt':
+            from .windows_acl import protect_private
+            protect_private(path)
+        else:
+            path.chmod(0o700 if path.is_dir() else 0o600)
+    except OSError as exc:
+        raise ConnectorError('无法保护连接器本地文件的访问权限，未保存或读取凭据。', code='private_storage_unavailable') from exc
+
+
 def atomic_json(path: Path, value: object) -> None:
     descriptor, name = tempfile.mkstemp(prefix='.save-', dir=path.parent)
     try:
         with os.fdopen(descriptor, 'w', encoding='utf-8') as stream:
+            private_path(Path(name))
             json.dump(value, stream, ensure_ascii=False)
             stream.flush()
             os.fsync(stream.fileno())
@@ -108,21 +122,28 @@ class LocalConfig:
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         if self.directory.is_symlink():
             raise ConnectorError('连接器配置目录不能是符号链接。')
-        self.directory.chmod(0o700)
+        private_path(self.directory)
         ignore = self.directory / '.gitignore'
         if not ignore.exists():
             descriptor = os.open(ignore, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             with os.fdopen(descriptor, 'w') as stream:
+                private_path(ignore)
                 stream.write('*\n')
+        private_path(ignore)
         self.credentials = self.directory / 'credentials'
         self.credentials.mkdir(mode=0o700, exist_ok=True)
         if self.credentials.is_symlink():
             raise ConnectorError('凭据目录不能是符号链接。')
-        self.credentials.chmod(0o700)
+        private_path(self.credentials)
+        # Migrate existing files too: removing inheritance does not remove explicit grants.
+        for credential in self.credentials.iterdir():
+            private_path(credential)
         self.path = self.directory / 'connections.json'
         if self.path.is_symlink():
             raise ConnectorError('连接器配置文件不能是符号链接。')
-        self.records = json.loads(self.path.read_text()) if self.path.exists() else {}
+        if self.path.exists():
+            private_path(self.path)
+        self.records = json.loads(self.path.read_text(encoding='utf-8')) if self.path.exists() else {}
         if not isinstance(self.records, dict):
             raise ConnectorError('连接器配置格式无效。')
 
@@ -138,7 +159,8 @@ class LocalConfig:
         path = self.credential_path(record['credential_binding'])
         if path.is_symlink():
             raise ConnectorError('凭据文件不能是符号链接。')
-        return validate_secrets(json.loads(path.read_text()))
+        private_path(path)
+        return validate_secrets(json.loads(path.read_text(encoding='utf-8')))
 
     def new_binding(self, secrets: dict) -> str:
         binding = str(uuid.uuid4())

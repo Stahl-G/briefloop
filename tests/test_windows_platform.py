@@ -131,6 +131,10 @@ def test_unicode_upload_and_original_survive_workspace_reopen(tmp_path):
     assert reopened.source_text(source['id']) == content
     provenance = json.loads((root / 'sources' / (source['id'] + '.provenance.json')).read_text(encoding='utf-8'))
     assert (root / provenance['original_path']).read_bytes() == content.encode('utf-8')
+    index = root / 'wiki' / 'index.md'
+    index.parent.mkdir(parents=True, exist_ok=True)
+    index.write_text('中文 Wiki；μm；😀', encoding='utf-8')
+    assert reopened.snapshot()['wiki'] == '中文 Wiki；μm；😀'
 
 
 def test_console_start_reports_actual_service_identity_and_shuts_down(tmp_path):

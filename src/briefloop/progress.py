@@ -99,7 +99,7 @@ class ProgressTracker:
                         if value:row['status']=value
         if paths[1].exists():
             try:
-                for agent in json.loads(paths[1].read_text()).get('agents',[]):
+                for agent in json.loads(paths[1].read_text(encoding='utf-8')).get('agents',[]):
                     identity=agent.get('agent_id') or agent.get('id')
                     if not identity:continue
                     row=self.workers.setdefault(identity,{'id':identity})

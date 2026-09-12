@@ -22,7 +22,7 @@ def check(archive: Path) -> None:
         metadata_path = next(name for name in contents if name.endswith('.dist-info/METADATA'))
         metadata = contents[metadata_path].decode()
         for name in ('LICENSE', 'THIRD_PARTY_NOTICES.md'):
-            assert f'License-File: {name}\n' in metadata, (archive, name, 'missing license metadata')
+            assert f'License-File: {name}' in metadata.splitlines(), (archive, name, 'missing license metadata')
             expected[metadata_path.removesuffix('METADATA') + 'licenses/' + name] = name
     else:
         with tarfile.open(archive) as package:

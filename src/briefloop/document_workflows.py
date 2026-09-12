@@ -16,7 +16,7 @@ ROLE_KEYS = {'orchestrator': 'planning', 'scout': 'planning', 'analyst': 'writin
 
 
 def list_workflows():
-    return [json.loads((ASSETS / identity / 'manifest.json').read_text()) for identity in WORKFLOW_IDS]
+    return [json.loads((ASSETS / identity / 'manifest.json').read_text(encoding='utf-8')) for identity in WORKFLOW_IDS]
 
 
 def resolve_workflow(requirements, template_hint=None):
@@ -46,8 +46,8 @@ def freeze_workflow(selection):
     manifest = next(item for item in list_workflows() if item['id'] == selection['id'])
     root = ASSETS / manifest['id']
     variant = next(item for item in manifest['variants'] if item['id'] == selection['variant'])
-    roles = {key: (root / (key + '.md')).read_text().strip() for key in ('planning', 'writing', 'evaluation')}
-    methods = {identity: (root / 'methods' / (identity + '.md')).read_text().strip()
+    roles = {key: (root / (key + '.md')).read_text(encoding='utf-8').strip() for key in ('planning', 'writing', 'evaluation')}
+    methods = {identity: (root / 'methods' / (identity + '.md')).read_text(encoding='utf-8').strip()
                for identity in variant.get('method_ids', [])}
     snapshot = {'schema_version': 1, **selection, 'label': manifest['label'],
                 'variant_label': variant['label'], 'version': manifest['version'],
