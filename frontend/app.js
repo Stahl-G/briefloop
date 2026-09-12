@@ -128,6 +128,19 @@ function openTask(job){
  if(brief)openBrief(brief,{follow:true});
  page('report');
 }
+async function renderTaskGraph(){
+ const box=$('report-task-graph');if(!box)return;
+ const job=(state.jobs||[]).filter(j=>TASK_LABELS[j.kind]&&['queued','running'].includes(j.status)).sort((a,b)=>new Date(b.updated||b.created)-new Date(a.updated||a.created))[0];
+ if(!job){box.hidden=true;box.innerHTML='';return}
+ if(renderTaskGraph.busy&&renderTaskGraph.job===job.id)return;
+ renderTaskGraph.busy=true;renderTaskGraph.job=job.id;
+ try{
+  const events=await api('events?job='+job.id);const last=[...events].reverse().find(e=>e.kind==='runtime_progress');const p=last?parse(last.data):null;
+  if(!p||!p.stages){box.hidden=true;box.innerHTML='';return}
+  box.hidden=false;box.innerHTML=`<div class="task-graph-head"><span>正在进行：${esc(TASK_LABELS[job.kind])}</span></div>${stageRailHTML(p.stages)}`;
+ }catch(e){box.hidden=true;box.innerHTML=''}
+ finally{renderTaskGraph.busy=false}
+}
 function renderTasks(){
  const box=$('report-task-cards');if(!box)return;
  const openStatus=['queued','running','failed','interrupted','cancelled'];
@@ -227,7 +240,7 @@ function render(first){
  tryOpenPending();if(!current&&state.briefs.length)openBrief(state.briefs[0],{follow:true});if(current&&followUpdates&&!dirty&&!saving){const latest=state.briefs.find(b=>b.run_id===current.run_id);if(latest?.parent_id===current.id&&latest.author==='agent')openBrief(latest,{follow:true})}if(current){$('version-select').value=current.id;assessment();citations();renderBriefLength()}
  $('empty').hidden=!!current||state.jobs.length>0;$('document-area').hidden=!current;
  $('jobs').innerHTML=state.jobs.filter(j=>j.status!=='dismissed').map(j=>`<div class="job"><span class="tag ${j.status==='failed'?'error':''}">${statuses[j.status]}</span><div class="job-main">${{generate:'生成简报',assess:'重新评分',review:'独立审阅',revise:'按审阅修订',learn:'WikiSkill 学习',export_docx:'生成工作稿 Word',release:'制作正式 Word',audit_bundle:'制作审计包',source_refresh:'复查来源',prepare_template:'准备模板'}[j.kind]}<small>${['export_docx','release','audit_bundle'].includes(j.kind)?'本地脚本':j.kind==='source_refresh'?'来源工具':parse(j.payload).runtime?esc(modelLabel(parse(j.payload).runtime)):'旧任务：沿用当时本机配置'} · ${j.progress?`第 ${j.progress.round}/${j.progress.k} 轮 · ${{maintainer:'整理经验',proposer:'提出候选',validation:'验证候选'}[j.progress.phase]||j.progress.phase} · `:''}${esc(j.error||(j.kind==='source_refresh'?sourceRefreshOutcome(parse(j.result).outcome):'')||new Date(j.created).toLocaleString())}</small></div>${j.kind==='learn'?`<button data-details="${j.id}">查看比较</button>`:''}${['queued','running'].includes(j.status)?`<button data-stop="${j.id}">停止</button>`:''}${['failed','interrupted','cancelled'].includes(j.status)?`<button data-resume="${j.id}">恢复</button>`:''}</div>`).join('');
- document.querySelectorAll('[data-stop]').forEach(b=>b.onclick=()=>action(()=>api('stop',{job_id:b.dataset.stop})));document.querySelectorAll('[data-resume]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.resume})));renderTasks();renderTaskBanner();renderAssistantSummary();renderReportStatus();renderReports();renderSourcesPage();renderTemplatesPage();if($('welcome')&&!$('welcome').hidden)renderWelcome();
+ document.querySelectorAll('[data-stop]').forEach(b=>b.onclick=()=>action(()=>api('stop',{job_id:b.dataset.stop})));document.querySelectorAll('[data-resume]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.resume})));renderTasks();renderTaskGraph();renderTaskBanner();renderAssistantSummary();renderReportStatus();renderReports();renderSourcesPage();renderTemplatesPage();if($('welcome')&&!$('welcome').hidden)renderWelcome();
  document.querySelectorAll('[data-details]').forEach(b=>b.onclick=()=>action(async()=>{const d=await api('learning-details?job='+b.dataset.details);$('source-title').textContent='技能比较与依据';$('source-original').hidden=true;$('source-provenance').hidden=true;$('source-link').textContent='';$('source-body').textContent=d.rounds.length?d.rounds.map((r,i)=>`第 ${i+1} 轮\n${r.result?.reason||'比较尚未完成'}\n${(r.result?.pairs||[]).map(p=>({better:'候选更好',tie:'差不多，保留原技能',worse:'原稿更好'}[p.verdict])+': '+p.reason).join('\n')}\n\n`+r.cases.map(c=>`任务：${c.requirements.title}\n\n旧版\n${gradeSummary(c.baseline.assessment)}\n${c.baseline.reader_markdown||c.baseline.markdown}\n\n候选\n${gradeSummary(c.candidate.assessment)}\n${c.candidate.reader_markdown||c.candidate.markdown}`).join('\n\n')).join('\n\n'):d.job.error||'比较尚未开始；先整理 Wiki 和提出候选。';$('source-dialog').showModal()}));
  $('skills').innerHTML=`<div class="skill">${state.active_skill?'当前启用 '+esc(state.active_skill):'当前使用基础任务提示词'}${state.active_skill?'<button data-rollback="">回到基础版本</button>':''}</div>`+state.skills.map(s=>`<div class="skill"><strong>${esc(s.id)}</strong><p>${esc(s.reason)}</p>${s.id===state.active_skill?'<span class="tag">正在使用</span>':`<button data-rollback="${s.id}" class="outline">使用这个版本</button>`}</div>`).join('');document.querySelectorAll('[data-rollback]').forEach(b=>b.onclick=()=>action(()=>api('rollback',{skill_id:b.dataset.rollback||null}),'下一轮将使用所选技能'));
  if(state.wiki!==render.wiki){render.wiki=state.wiki;if(state.wiki)api('render',{markdown:state.wiki}).then(r=>$('wiki').innerHTML=r.html);else $('wiki').innerHTML='<h2>还没有学习经验</h2><p class="muted">生成简报后直接改稿，或留下评论。Maintainer 会在这里整理观察、方法与适用条件。</p>'}bindSources();
@@ -346,6 +359,12 @@ function effectiveReportJobs(){
   return true;
  });
 }
+function stageRailHTML(stages){
+ if(!Array.isArray(stages)||!stages.length)return '';
+ const lanes=stages.filter(s=>s.agents&&s.agents.length);
+ return `<div class="stage-rail">${stages.map(s=>`<div class="stage ${esc(s.status||'pending')}"><span class="stage-dot"></span><span class="stage-name">${esc(s.label)}</span></div>`).join('')}</div>`+
+  (lanes.length?`<div class="stage-lanes">${lanes.map(s=>`<div class="stage-lane"><span class="stage-lane-name">${esc(s.label)}</span><div class="stage-agents">${s.agents.map(a=>{const status=a.status||'running';const cls=['completed','done','closed'].includes(status)?'done':['failed','errored'].includes(status)?'failed':'running';return `<span class="agent-chip ${cls}" title="${esc(a.task||'')}"><i></i>${esc(a.role||'子任务')}</span>`}).join('')}</div></div>`).join('')}</div>`:'');
+}
 let progressRequest=false;
 async function refreshProgress(){
  if(progressRequest||!state)return;
@@ -375,7 +394,7 @@ async function refreshProgress(){
   const running=live.worker_alive&&live.pid&&live.returncode===null;
   const labels={running:'进行中',pending_init:'启动中',completed:'已完成',done:'已完成',closed:'已结束',failed:'失败',errored:'失败'};
   $('run-progress').hidden=false;
-  $('run-progress').innerHTML=`<div class="section-title"><div><p class="eyebrow">${job.kind==='learn'?'技能学习':'简报生成'} · ${running?'后台正在运行':'等待后台执行'}</p><h2>${esc(p.stage||(job.status==='queued'?'任务已排队':'正在启动 BriefLoop'))}</h2></div><button class="outline" id="progress-stop">停止任务</button></div><p><strong>${esc(modelLabel(parse(job.payload).runtime||start.runtime))}</strong> · 模型进程 PID ${live.pid||'—'}${live.server_pid?' · 本地服务 PID '+live.server_pid:''}</p><p class="help">已用 ${mins} 分 ${secs} 秒 · 单次执行上限 ${state.settings.timeout_minutes} 分钟 <button id="progress-timeout" class="subtle-button">调整时限</button>${run?` · ${JSON.parse(run.source_ids).length} 份初始来源 · ${req.allow_web?'允许联网':'仅本地来源'}`:''}</p>${p.message?`<p class="progress-message">${esc(p.message)}</p>`:''}<div class="agent-progress">${agents.map(a=>`<div><strong>${esc(a.role)}</strong><span>${labels[a.status]||esc(a.status)}</span>${a.task?`<p>${esc(a.task)}</p>`:''}</div>`).join('')}</div><p class="help">${p.draft_ready?'正文已可查看，评分独立完成。':'正文保存后会自动显示；等待子 agent 时可能暂时没有新消息。'}${p.last_activity?' 最近活动：'+new Date(p.last_activity).toLocaleTimeString():''}</p>`;
+  $('run-progress').innerHTML=`<div class="section-title"><div><p class="eyebrow">${job.kind==='learn'?'技能学习':'简报生成'} · ${running?'后台正在运行':'等待后台执行'}</p><h2>${esc(p.stage||(job.status==='queued'?'任务已排队':'正在启动 BriefLoop'))}</h2></div><button class="outline" id="progress-stop">停止任务</button></div><p><strong>${esc(modelLabel(parse(job.payload).runtime||start.runtime))}</strong> · 模型进程 PID ${live.pid||'—'}${live.server_pid?' · 本地服务 PID '+live.server_pid:''}</p><p class="help">已用 ${mins} 分 ${secs} 秒 · 单次执行上限 ${state.settings.timeout_minutes} 分钟 <button id="progress-timeout" class="subtle-button">调整时限</button>${run?` · ${JSON.parse(run.source_ids).length} 份初始来源 · ${req.allow_web?'允许联网':'仅本地来源'}`:''}</p>${p.message?`<p class="progress-message">${esc(p.message)}</p>`:''}${stageRailHTML(p.stages)||`<div class="agent-progress">${agents.map(a=>`<div><strong>${esc(a.role)}</strong><span>${labels[a.status]||esc(a.status)}</span>${a.task?`<p>${esc(a.task)}</p>`:''}</div>`).join('')}</div>`}<p class="help">${p.draft_ready?'正文已可查看，评分独立完成。':'正文保存后会自动显示；等待子 agent 时可能暂时没有新消息。'}${p.last_activity?' 最近活动：'+new Date(p.last_activity).toLocaleTimeString():''}</p>`;
   $('progress-timeout').onclick=showSettings;
   $('progress-stop').onclick=()=>action(()=>api('stop',{job_id:job.id}));
  }catch(e){$('run-progress').hidden=false;$('run-progress').textContent='进度连接暂时中断，任务没有重新提交。'+e.message}

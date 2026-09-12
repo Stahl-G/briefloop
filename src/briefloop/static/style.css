@@ -515,3 +515,24 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 .hint:hover{border-color:var(--green);color:var(--green)}
 #tooltip{position:fixed;z-index:200;max-width:260px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface);box-shadow:0 8px 26px #1422181f;font:400 11px/1.7 var(--font);color:var(--ink);text-align:left;pointer-events:none}
 .learning-control .hint{margin-right:auto}
+
+/* Sub-agent workflow: stage rail + lanes */
+.report-task-graph{margin-top:12px;border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--surface)}
+.task-graph-head{font-size:12px;color:var(--muted);margin-bottom:10px}
+.stage-rail{display:flex;align-items:center;flex-wrap:wrap;gap:2px}
+.stage{display:flex;align-items:center;gap:6px;flex:1;min-width:118px;font-size:12px;color:var(--muted);position:relative}
+.stage+.stage::before{content:'';position:absolute;left:-6px;top:8px;width:12px;height:1px;background:var(--line)}
+.stage-dot{width:8px;height:8px;border-radius:50%;background:var(--line);flex:none}
+.stage.done .stage-dot{background:var(--green)}
+.stage.active .stage-dot{background:#2f8f4e;animation:pulse 1.2s infinite}
+.stage.active .stage-name{color:var(--ink)}
+.stage-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stage-lanes{display:flex;flex-direction:column;gap:6px;margin-top:10px;border-top:1px solid var(--line);padding-top:10px}
+.stage-lane{display:flex;gap:10px;align-items:flex-start;font-size:11px;color:var(--muted)}
+.stage-lane-name{flex:none;width:80px;padding-top:2px}
+.stage-agents{display:flex;gap:6px;flex-wrap:wrap}
+.agent-chip{display:inline-flex;align-items:center;gap:5px;font-size:11px;border:1px solid var(--line);border-radius:20px;padding:3px 9px;background:var(--surface);color:var(--ink)}
+.agent-chip i{width:6px;height:6px;border-radius:50%;background:#aab0a7}
+.agent-chip.running i{background:#2f8f4e;animation:pulse 1.2s infinite}
+.agent-chip.done i{background:var(--green)}
+.agent-chip.failed i{background:#c0392b}
