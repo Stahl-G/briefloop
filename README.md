@@ -35,6 +35,18 @@ briefloop start --workspace /path/to/workspace
 ./start.sh --workspace /path/to/workspace --port 8765 --no-open --backend opencode
 ```
 
+## Windows 原生预览
+
+Windows 可使用同一套 Python 服务与网页，尚未提供 Electron 安装包。已验证范围为独立安装、中文工作区、合成稿编辑与保存、Word 导出、工作区互斥锁和退出重开；真实模型生成及独立核查仍需按宿主验证，不能沿用 macOS 的验证结论。
+
+安装 Python 3.11+ 后，在 PowerShell 中运行：
+
+```powershell
+.\start.ps1 -Python 'C:\path\to\python.exe' --no-open
+```
+
+也可直接运行 `python -X utf8 bootstrap.py --no-open`。启动器打印本机网页地址；模型认证仍由所选宿主提供。详情见 [Windows 验证边界](docs/windows.md)。
+
 ## 数据会去哪里
 
 BriefLoop 在本机运行，但它不是离线工具。开始用之前请先分清三件事：
