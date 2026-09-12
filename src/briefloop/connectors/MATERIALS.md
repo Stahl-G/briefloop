@@ -138,3 +138,55 @@ quota, configuration changes, timeout/error receipts and composable source rollb
 The deterministic brief used for the packet is a fixture, not a newly generated or
 reviewed model report. No enterprise account, new fee or Windows process work is
 part of this backend slice.
+
+## Trusted task binding
+
+`TaskMaterials` in `tasks.py` wraps acquisition with a frozen `jobs.id` binding.
+Only `generate` jobs that are still queued may bind. After catalog capture it
+rechecks job status and run identity and inserts the binding in one SQLite write
+transaction, serialized against Worker claiming that job. If the job started in
+between, the newly created grant is revoked; a running job never gains authority.
+A second bind cannot overwrite or enlarge the first. Host revocation remains
+available after task completion.
+
+Trusted browser routes (normal page session header required):
+
+- POST `/api/connectors/task-bind`: `job_id`, `selections`, `max_calls`, `max_total_bytes`.
+- POST `/api/connectors/task-status`: `job_id`.
+- POST `/api/connectors/task-access`: `job_id`; returns `access_token`, `tool_path`.
+- POST `/api/connectors/task-revoke`: `job_id`.
+
+Host access issuance never changes the grant. Tokens exist only in process memory;
+restart invalidates them and resume requires fresh trusted issuance. Give the token
+only to the generating process. Do not place it in requirements, prompts preserved
+for review, source metadata, events, or review packets.
+
+Agent POST `/api/connectors/task-tool` requires `Authorization: Bearer <access_token>`.
+The accepted bodies are exactly:
+
+- `{"action":"status"}`
+- `{"action":"receipt","receipt_id":"..."}`
+- `{"action":"read","connector_id":"...","uri":"...","request_id":"stable-id"}`
+- `{"action":"call","connector_id":"...","name":"...","arguments":{},"request_id":"stable-id"}`
+
+No run/job/grant IDs, authorization commands, or budget overrides are accepted.
+Every request verifies the bound job is still queued/running and still targets the
+same run. Review/assessment jobs cannot receive access. Tokens do not authorize
+browser configuration routes. Revocation invalidates all issued task tokens and
+revokes the material scope, including late-result admission.
+
+### Remaining host integration
+
+The routes and scoped tool are executable, but the frontend/Worker must still wire
+creation, bind-before-claim, process token injection and cancel-to-revoke. Binding
+an already enqueued job can safely fail if Worker wins; product integration should
+bind before making that job runnable using the existing creation boundary. No new
+state machine is provided here. Existing source-empty run validation also needs an
+explicit selected-MCP path; do not enable web search merely to bypass that check.
+Tests use allowed-web runs but make only local fixture HTTP requests, no searches.
+
+This boundary constrains these application APIs; it is not OS isolation against a
+host process with arbitrary access to the workspace/database or browser session.
+Reviewer must retain its actual existing read-only snapshot sandbox and receive
+neither live tool capabilities nor credentials. The offline packet test uses a
+deterministic citation-bearing draft, not a model-generated or model-reviewed report.

@@ -281,6 +281,13 @@ def make_server(workspace, port=8765, *, paused=False):
             except (ValueError,KeyError,OSError,RuntimeError) as exc:self.error(exc)
         def do_POST(self):
             try:
+                if urlsplit(self.path).path == '/api/connectors/task-tool':
+                    n=int(self.headers.get('Content-Length','0'))
+                    if not 0<n<1024*1024:raise ValueError('请求为空或过大')
+                    authorization=self.headers.get('Authorization','')
+                    access=authorization[7:] if authorization.startswith('Bearer ') else ''
+                    self.send(200,self.server.connector_tasks.dispatch(access,json.loads(self.rfile.read(n))))
+                    return
                 origin=self.headers.get('Origin')
                 expected=f'http://127.0.0.1:{self.server.server_port}'
                 if self.headers.get('X-BriefLoop-Token')!=token or origin and origin!=expected:
@@ -291,6 +298,10 @@ def make_server(workspace, port=8765, *, paused=False):
                 if path=='/api/tavily':
                     from .tavily import save_key,delete_key
                     result=delete_key() if body.get('remove') else save_key(body['api_key'])
+                elif path=='/api/connectors/task-bind':
+                    result=self.server.connector_tasks.bind(body['job_id'],body['selections'],max_calls=body['max_calls'],max_total_bytes=body['max_total_bytes'])
+                elif path in ('/api/connectors/task-status','/api/connectors/task-access','/api/connectors/task-revoke'):
+                    result=getattr(self.server.connector_tasks,path.rsplit('-',1)[-1])(body['job_id'])
                 elif path=='/api/connectors/save':
                     result=self.server.connectors.save(body['config'],connector_id=body.get('connector_id'),secrets=body.get('secrets'))
                 elif path in ('/api/connectors/test','/api/connectors/enable','/api/connectors/disable','/api/connectors/delete'):
@@ -414,6 +425,8 @@ def make_server(workspace, port=8765, *, paused=False):
     from .connectors import ConnectorService
     try:
         server.connectors=ConnectorService(store.root)
+        from .connectors.tasks import TaskMaterials
+        server.connector_tasks=TaskMaterials(store,server.connectors)
     except Exception:
         server.server_close();harness.close();opencode_harness.close();bridge.close();lock.close();raise
     close_socket=server.server_close
