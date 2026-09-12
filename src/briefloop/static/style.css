@@ -507,3 +507,11 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 /* Feedback and Wiki learning folded into the research assistant pane */
 .assistant-feedback{border-top:1px solid var(--line);margin-top:14px;padding-top:14px;display:grid;gap:10px}
 .assistant-feedback textarea{width:100%}
+
+/* Rail block headings and hover explanations */
+.rail-block-head{display:flex;align-items:center;gap:8px}
+.rail-block-head h3{font:600 13px/1.4 var(--font);margin:0;letter-spacing:-.01em}
+.hint{display:inline-grid;place-items:center;width:16px;height:16px;flex:none;border:1px solid var(--line);border-radius:50%;background:var(--surface);color:var(--muted);font:600 10px/1 var(--mono);cursor:help}
+.hint:hover{border-color:var(--green);color:var(--green)}
+#tooltip{position:fixed;z-index:200;max-width:260px;padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--surface);box-shadow:0 8px 26px #1422181f;font:400 11px/1.7 var(--font);color:var(--ink);text-align:left;pointer-events:none}
+.learning-control .hint{margin-right:auto}
