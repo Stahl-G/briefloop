@@ -1410,27 +1410,75 @@ function renderReports(){
  box.querySelectorAll('.report-card-menu').forEach(wrap=>{const toggle=wrap.querySelector('[data-report-menu]'),pop=wrap.querySelector('.popover');if(!toggle||!pop)return;toggle.onclick=e=>{e.stopPropagation();const open=pop.hidden;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'));pop.hidden=!open;toggle.setAttribute('aria-expanded',String(open))}});
  box.querySelectorAll('[data-report-release]').forEach(el=>el.onclick=()=>{const b=state.briefs.find(x=>x.id===el.dataset.reportRelease);if(b&&openBrief(b,{follow:false})){page('report');const btn=$('release-open');if(btn)btn.click()}});
 }
-function sourceState(s){return s.status==='failed'?'failed':s.needs_visual?'visual':'ready'}
-function sourceHost(s){try{return new URL(s.name).hostname.replace(/^www\./,'')}catch{return ''}}
-function sourceLabel(s){const n=s.name||s.id||'';try{const u=new URL(n);return (u.pathname&&u.pathname!=='/')?u.pathname:n}catch{return n}}
+function sourceIsWeb(s){return !!(s&&s.url)}
+function sourceHost(s){try{return new URL(s.url||s.name).hostname.replace(/^www\./,'')}catch{return ''}}
+function sourceUsage(){const map=new Map();for(const run of (state.runs||[])){let ids=[];try{ids=parse(run.source_ids)||[]}catch{}const brief=(state.briefs||[]).find(b=>b.run_id===run.id);const title=brief?(parse(brief.detail).title||'简报'):'报告';for(const id of ids){if(!map.has(id))map.set(id,[]);map.get(id).push({run_id:run.id,title})}}return map}
 function renderSourcesPage(){
  const box=$('sources-page-list');if(!box||!state)return;
- const all=state.sources||[];
+ const all=state.sources||[],usage=sourceUsage();
  const q=($('sources-search')?.value||'').trim().toLowerCase();
- const filter=$('sources-filter')?.value||'all';
- const failed=all.filter(s=>sourceState(s)==='failed');
- if($('sources-page-count'))$('sources-page-count').textContent=all.length+' 份'+(failed.length?` · ${failed.length} 失败`:'');
- if($('sources-retry-all'))$('sources-retry-all').disabled=!failed.length;
+ const type=$('sources-type-filter')?.value||'';
+ const status=renderSourcesPage.status||'';
+ const issues=all.filter(s=>s.status!=='ready');
  const rows=all.filter(s=>{
-  if(filter!=='all'&&sourceState(s)!==filter)return false;
-  if(!q)return true;
-  return (s.name||'').toLowerCase().includes(q)||sourceHost(s).toLowerCase().includes(q)||(s.id||'').toLowerCase().includes(q);
+  if(type&&(type==='web'?!sourceIsWeb(s):sourceIsWeb(s)))return false;
+  if(status==='ready'&&s.status!=='ready')return false;
+  if(status==='issue'&&s.status==='ready')return false;
+  if(q){const hay=((s.name||'')+' '+(s.url||'')+' '+sourceHost(s)).toLowerCase();if(!hay.includes(q))return false}
+  return true;
  });
- const sig=JSON.stringify([q,filter,rows.map(s=>[s.id,s.status,s.needs_visual,s.name])]);if(renderSourcesPage.sig===sig)return;renderSourcesPage.sig=sig;
- box.innerHTML=rows.length?rows.map(s=>{const host=sourceHost(s);return `<div class="source-row" title="${esc(s.name)}"><span class="name">${host?`<span class="host-badge">${esc(host)}</span>`:''}${esc(sourceLabel(s))}</span><span class="tag ${s.status==='failed'?'error':''}">${s.status==='failed'?'读取失败':s.needs_visual?'需视觉读取':'可读取'}</span><span class="row-actions"><button type="button" data-sources-open="${esc(s.id)}">打开</button>${s.status==='failed'?`<button type="button" data-sources-retry="${esc(s.id)}">重试</button>`:''}</span></div>`}).join(''):'<p class="help">没有匹配的来源。</p>';
- box.querySelectorAll('[data-sources-open]').forEach(b=>b.onclick=()=>action(async()=>showSource(await api('source?id='+encodeURIComponent(b.dataset.sourcesOpen)))));
- box.querySelectorAll('[data-sources-retry]').forEach(b=>b.onclick=()=>action(async()=>{const s=await api('retry-source',{source_id:b.dataset.sourcesRetry});notice(s.status==='ready'?'来源已重新读取':s.error,s.status!=='ready')}));
+ if($('sources-page-count'))$('sources-page-count').textContent=`共 ${all.length} 个来源`+(issues.length?` · ${issues.length} 个需处理`:'');
+ const retry=$('sources-retry-all');if(retry){retry.hidden=!issues.length;retry.disabled=!issues.length}
+ const sig=JSON.stringify([q,type,status,rows.map(s=>{const u=usage.get(s.id)||[];return [s.id,s.status,s.name,s.url,s.created,u.length]})]);if(renderSourcesPage.sig===sig)return;renderSourcesPage.sig=sig;
+ box.innerHTML=rows.length?rows.map(s=>{const host=sourceHost(s),web=sourceIsWeb(s),u=usage.get(s.id)||[];const when=new Date(s.created).toLocaleDateString('zh-CN',{month:'numeric',day:'numeric'});const ok=s.status==='ready';return `<div class="sources-row"><div class="src-name"><button type="button" class="src-title" data-sources-open="${esc(s.id)}">${esc(s.name||s.id)}</button><small>${esc(host||'本地文件')} · ${esc(when)} 更新</small></div><div class="src-type">${web?'网站':'文件'}</div><div class="src-status"><span class="chip ${ok?'ok':'danger'}">${ok?'可用':'获取失败'}</span></div><div class="src-usage">${u.length?esc(u.length+' 份报告'):'—'}</div><div class="src-actions"><button type="button" class="outline" data-sources-open="${esc(s.id)}">${web?'打开':'查看'}</button><div class="menu-wrap"><button type="button" class="ghost" data-src-menu aria-haspopup="menu" aria-expanded="false" aria-label="更多">⋯</button><div class="popover" role="menu" hidden>${!ok?'<button type="button" role="menuitem" data-sources-retry="'+esc(s.id)+'">重试读取</button>':''}${web?'<button type="button" role="menuitem" data-sources-copy="'+esc(s.url||'')+'">复制链接</button>':''}<a role="menuitem" href="/api/source-original?id=${encodeURIComponent(s.id)}">打开原件</a></div></div></div></div>`}).join(''):'<p class="help">没有匹配的来源。</p>';
+ box.querySelectorAll('[data-sources-open]').forEach(b=>b.onclick=()=>openSourceDrawer(b.dataset.sourcesOpen));
+ box.querySelectorAll('[data-sources-retry]').forEach(b=>b.onclick=()=>action(async()=>{const src=await api('retry-source',{source_id:b.dataset.sourcesRetry});notice(src.status==='ready'?'来源已重新读取':src.error,src.status!=='ready')}));
+ box.querySelectorAll('[data-sources-copy]').forEach(b=>b.onclick=()=>{try{navigator.clipboard.writeText(b.dataset.sourcesCopy);notice('链接已复制')}catch{notice('复制失败',true)}});
+ box.querySelectorAll('.menu-wrap').forEach(wrap=>{const t=wrap.querySelector('[data-src-menu]'),pop=wrap.querySelector('.popover');if(!t||!pop)return;t.onclick=e=>{e.stopPropagation();const open=pop.hidden;document.querySelectorAll('.popover').forEach(x=>x.hidden=true);pop.hidden=!open;t.setAttribute('aria-expanded',String(open))}});
 }
+function sourceUsageFor(id){return sourceUsage().get(id)||[]}
+function renderUsageList(pane,id){
+ if(!pane)return;const u=sourceUsageFor(id);
+ pane.innerHTML=u.length?`<ul class="source-related-list">${u.map(x=>`<li><button type="button" data-open-report="${esc(x.run_id)}">${esc(x.title)}</button></li>`).join('')}</ul>`:'<p class="help">还没有报告使用这个来源。</p>';
+ pane.querySelectorAll('[data-open-report]').forEach(b=>b.onclick=()=>{const brief=(state.briefs||[]).find(x=>x.run_id===b.dataset.openReport);if(brief&&openBrief(brief,{follow:false})){closeSourceDrawer();page('report')}});
+}
+function renderSourceOverview(s){
+ const pane=document.querySelector('[data-source-pane="overview"]');if(!pane)return;const u=sourceUsageFor(s.id);
+ const rows=[['类型',sourceIsWeb(s)?'网站':'文件'],['地址',s.url||s.name||'—'],['状态',s.status==='ready'?'可用':'获取失败'],['登记时间',new Date(s.created).toLocaleString('zh-CN')]];
+ if(s.error)rows.push(['错误',s.error]);
+ pane.innerHTML=`<dl class="source-kv">${rows.map(([k,v])=>`<div><dt>${esc(k)}</dt><dd>${esc(String(v))}</dd></div>`).join('')}</dl><h3 class="source-sub">报告使用关系</h3>${u.length?`<ul class="source-related-list">${u.map(x=>`<li><button type="button" data-open-report="${esc(x.run_id)}">${esc(x.title)}</button></li>`).join('')}</ul>`:'<p class="help">还没有报告使用这个来源。</p>'}`;
+ pane.querySelectorAll('[data-open-report]').forEach(b=>b.onclick=()=>{const brief=(state.briefs||[]).find(x=>x.run_id===b.dataset.openReport);if(brief&&openBrief(brief,{follow:false})){closeSourceDrawer();page('report')}});
+}
+async function renderSourceText(s){
+ const pane=document.querySelector('[data-source-pane="text"]');if(!pane)return;pane.innerHTML='<p class="help">正在读取…</p>';
+ try{const r=await api('source?id='+encodeURIComponent(s.id));
+  if($('source-drawer')?.dataset.sourceId!==s.id)return;
+  pane.innerHTML=r.text?`<pre class="source-text">${esc(r.text)}</pre>`:`<p class="help">${esc(s.error||'没有可读正文。')}</p>`;
+ }catch(e){if($('source-drawer')?.dataset.sourceId===s.id)pane.innerHTML='<p class="help">读取失败：'+esc(e.message)+'</p>'}
+}
+function renderSourceRelated(s){
+ const pane=document.querySelector('[data-source-pane="related"]');if(!pane)return;const host=sourceHost(s);
+ const other=host?(state.sources||[]).filter(x=>x.id!==s.id&&sourceHost(x)===host).slice(0,12):[];
+ pane.innerHTML=other.length?`<ul class="source-related-list">${other.map(x=>`<li><button type="button" data-related="${esc(x.id)}">${esc(x.name||x.id)}</button></li>`).join('')}</ul>`:'<p class="help">没有同一域名下的其他来源。</p>';
+ pane.querySelectorAll('[data-related]').forEach(b=>b.onclick=()=>openSourceDrawer(b.dataset.related));
+}
+function setSourceDrawerTab(name){
+ const drawer=$('source-drawer');if(!drawer)return;
+ if(!['overview','text','usage','related'].includes(name))name='overview';
+ drawer.querySelectorAll('[data-source-pane]').forEach(p=>p.hidden=p.dataset.sourcePane!==name);
+ drawer.querySelectorAll('[data-source-tab]').forEach(b=>b.classList.toggle('active',b.dataset.sourceTab===name));
+}
+function openSourceDrawer(id){
+ const s=(state.sources||[]).find(x=>x.id===id);if(!s)return;
+ const drawer=$('source-drawer'),backdrop=$('source-drawer-backdrop');if(!drawer)return;
+ drawer.dataset.sourceId=id;
+ const title=$('source-drawer-title');if(title)title.textContent=s.name||id;
+ const sub=$('source-drawer-sub');if(sub)sub.textContent=(sourceIsWeb(s)?sourceHost(s):'本地文件')+' · '+(s.status==='ready'?'可用':'获取失败');
+ drawer.hidden=false;if(backdrop)backdrop.hidden=false;
+ renderSourceOverview(s);renderUsageList(document.querySelector('[data-source-pane="usage"]'),s.id);renderSourceText(s);renderSourceRelated(s);
+ setSourceDrawerTab('overview');
+}
+function closeSourceDrawer(){const d=$('source-drawer'),b=$('source-drawer-backdrop');if(d)d.hidden=true;if(b)b.hidden=true}
 function renderTemplatesPage(){
  const box=$('templates-page-list');if(!box||!state)return;
  const list=state.templates||[];
@@ -1439,11 +1487,18 @@ function renderTemplatesPage(){
 }
 if($('new-report'))$('new-report').onclick=()=>page('setup');
 if($('sources-upload'))$('sources-upload').onchange=e=>action(async()=>{for(const f of e.target.files){const buf=new Uint8Array(await f.arrayBuffer());let b='';for(let i=0;i<buf.length;i+=8192)b+=String.fromCharCode(...buf.subarray(i,i+8192));await api('upload',{name:f.name,data:btoa(b)})}e.target.value=''},'来源已保存');
-if($('sources-add-url'))$('sources-add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('sources-url').value});$('sources-url').value='';notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
+if($('sources-add-url'))$('sources-add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('sources-url').value});$('sources-url').value='';const row=$('sources-add-url-row');if(row)row.hidden=true;notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
 if($('templates-upload'))$('templates-upload').onchange=e=>action(async()=>{const file=e.target.files[0];if(!file)return;const bytes=new Uint8Array(await file.arrayBuffer());let raw='';for(let i=0;i<bytes.length;i+=8192)raw+=String.fromCharCode(...bytes.subarray(i,i+8192));await api('template-import',{name:file.name,data:btoa(raw)});e.target.value='';notice('模板已上传，BriefLoop 将准备章节和版式')});
 if($('sources-search'))$('sources-search').oninput=()=>{renderSourcesPage.sig='';renderSourcesPage()};
-if($('sources-filter'))$('sources-filter').onchange=()=>{renderSourcesPage.sig='';renderSourcesPage()};
-if($('sources-retry-all'))$('sources-retry-all').onclick=()=>action(async()=>{const list=(state.sources||[]).filter(s=>s.status==='failed');if(!list.length)return;for(const s of list){try{await api('retry-source',{source_id:s.id})}catch(e){}}notice(`已重试 ${list.length} 个失败来源`)});
+if($('sources-type-filter'))$('sources-type-filter').onchange=()=>{renderSourcesPage.sig='';renderSourcesPage()};
+document.querySelectorAll('[data-sources-status]').forEach(b=>b.onclick=()=>{renderSourcesPage.status=b.dataset.sourcesStatus;document.querySelectorAll('[data-sources-status]').forEach(x=>x.classList.toggle('active',x===b));renderSourcesPage.sig='';renderSourcesPage()});
+if($('sources-retry-all'))$('sources-retry-all').onclick=()=>action(async()=>{const list=(state.sources||[]).filter(s=>s.status!=='ready');if(!list.length)return;for(const s of list){try{await api('retry-source',{source_id:s.id})}catch(e){}}notice(`已重试 ${list.length} 个来源`)});
+if($('sources-add-file'))$('sources-add-file').onclick=()=>$('sources-upload').click();
+if($('sources-add-url-open'))$('sources-add-url-open').onclick=()=>{const row=$('sources-add-url-row');if(row){row.hidden=false;const u=$('sources-url');if(u)u.focus()}};
+if($('sources-add-url-cancel'))$('sources-add-url-cancel').onclick=()=>{const row=$('sources-add-url-row');if(row)row.hidden=true};
+if($('source-drawer-close'))$('source-drawer-close').onclick=()=>closeSourceDrawer();
+if($('source-drawer-backdrop'))$('source-drawer-backdrop').onclick=()=>closeSourceDrawer();
+document.querySelectorAll('[data-source-tab]').forEach(b=>b.onclick=()=>setSourceDrawerTab(b.dataset.sourceTab));
 if($('reports-search'))$('reports-search').oninput=()=>{renderReports.sig='';renderReports()};
 ['reports-filter-status','reports-filter-time','reports-filter-source'].forEach(id=>{const el=$(id);if(el)el.onchange=()=>{renderReports.sig='';renderReports()}});
 document.querySelectorAll('[data-reports-view]').forEach(b=>b.onclick=()=>{renderReports.view=b.dataset.reportsView;document.querySelectorAll('[data-reports-view]').forEach(x=>x.classList.toggle('active',x===b));renderReports.sig='';renderReports()});
