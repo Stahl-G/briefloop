@@ -37,3 +37,25 @@ def test_layout_swap_exports_same_content_under_different_templates(tmp_path):
     with __import__('zipfile').ZipFile(output_path(store, default_job)) as archive:
         plain_styles = archive.read('word/styles.xml').decode()
     assert 'w:eastAsia="微软雅黑"' not in plain_styles, 'without an override the generic renderer stays in charge'
+
+
+def test_workspace_action_export_word_accepts_template_override(tmp_path):
+    import json
+    from briefloop.chat_tools import workspace_action
+    store = Store(tmp_path)
+    import_builtin(store)
+    rows = {r['name']: r['id'] for r in store.rows('SELECT id,name FROM templates')}
+    document = {'type': 'doc', 'content': [
+        {'type': 'heading', 'attrs': {'level': 2}, 'content': [{'type': 'text', 'text': '一、摘要'}]},
+        {'type': 'paragraph', 'content': [{'type': 'text', 'text': '正文。'}]}]}
+    source = store.add_source('S', 'evidence')
+    run = store.create_run({'title': 'x', 'objective': 'y'}, [source['id']])
+    brief = store.publish(run['id'], {'title': 'x', 'editor_document': document})
+    result = workspace_action(store, {'action': 'export_word', 'version_id': brief['id'],
+                                      'template_id': rows['商业报告·珊瑚红']})
+    payload = json.loads(store.one('jobs', result['job_id'])['payload'])
+    assert payload['template_id'] == rows['商业报告·珊瑚红'] and result['template_id'] == rows['商业报告·珊瑚红']
+    result = workspace_action(store, {'action': 'export_word', 'version_id': brief['id']})
+    assert 'template_id' not in json.loads(store.one('jobs', result['job_id'])['payload'])
+    capabilities = workspace_action(store, {'action': 'capabilities'})
+    assert '同稿换版式' in capabilities['export_word.template_id']
