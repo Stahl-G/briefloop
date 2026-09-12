@@ -27,10 +27,10 @@ def _usable_output(job, folder, store=None):
     """A completed model turn is not evidence that its required artifact exists."""
     from .models import BriefDraft
     if job.get('readonly_output'):
-        try:return isinstance(json.loads((folder/job['readonly_output']).read_text()),dict)
+        try:return isinstance(json.loads((folder/job['readonly_output']).read_text(encoding='utf-8-sig')),dict)
         except (OSError,ValueError):return False
     if job.get('kind')=='repair_revision_metadata':
-        try:return isinstance(json.loads((folder/'metadata.json').read_text()),dict)
+        try:return isinstance(json.loads((folder/'metadata.json').read_text(encoding='utf-8-sig')),dict)
         except (OSError,ValueError):return False
     role=job.get('runtime_role')
     if role in ('evaluator','scorer','assessor'):
@@ -39,7 +39,7 @@ def _usable_output(job, folder, store=None):
     elif job['kind']=='assess':name='assessment.json'
     else:return True  # WikiSkill handoffs already request resume_on_complete.
     try:
-        data=json.loads((folder/name).read_text())
+        data=json.loads((folder/name).read_text(encoding='utf-8-sig'))
         if name=='draft.json':BriefDraft.model_validate(data)
         elif name=='assessment.json':
             if store is None:return False
@@ -99,7 +99,7 @@ class InteractiveRuntime:
         if job.get('runtime_role')!='evaluator':return []
         path=folder/'input.json'
         if not path.exists():return []
-        packet=json.loads(path.read_text())
+        packet=json.loads(path.read_text(encoding='utf-8'))
         ids=[]
         if isinstance(packet,dict):
             ids=[row.get('source_id') or row.get('id') for row in packet.get('sources',[])]
@@ -164,7 +164,7 @@ class InteractiveRuntime:
             runtime['variant'] = configured['model_variant']
         saved = folder / 'execution.json'
         if saved.exists():
-            previous = json.loads(saved.read_text())
+            previous = json.loads(saved.read_text(encoding='utf-8'))
             if previous.get('runtime') and previous['runtime'] != configured:
                 raise ValueError('已保存执行的模型配置与本阶段不一致')
             if previous.get('backend', 'codex') != backend:
@@ -177,7 +177,7 @@ class InteractiveRuntime:
             raise InterruptedError('任务已停止，已生成内容保留')
 
         marker = folder / 'conversation.json'
-        binding = json.loads(marker.read_text()) if marker.exists() else None
+        binding = json.loads(marker.read_text(encoding='utf-8')) if marker.exists() else None
         snapshot = None
         if binding:
             if binding['job_id'] != job['id'] or binding.get('backend', 'codex') != backend:
@@ -249,7 +249,7 @@ class InteractiveRuntime:
         seen_messages = set()
         log_path = folder / 'events.jsonl'
         if log_path.exists():
-            for line in log_path.read_text().splitlines():
+            for line in log_path.read_text(encoding='utf-8').splitlines():
                 try:
                     event = json.loads(line)
                 except ValueError:
@@ -266,7 +266,7 @@ class InteractiveRuntime:
                          'learn': '请继续整理反馈、更新经验并完成当前技能改进步骤。'}.get(job['kind'], '请完成当前简报任务。')
                 evaluation_label='请使用 Evaluator 成对比较模式，依据任务与来源比较新旧稿件。' if job.get('evaluation_mode')=='pairwise' else '请使用 Evaluator 单稿评分模式，核对简报要求、内容与来源。'
                 label = {'evaluator': evaluation_label, 'scorer': '请使用 Evaluator 单稿评分模式核对简报。', 'assessor': '请使用 Evaluator 成对比较模式核对新旧稿件。', 'maintainer': '请从反馈中整理可复用经验。', 'proposer': '请依据经验提出技能改进。'}.get(job.get('runtime_role'), label)
-                harness.start_internal((folder / 'prompt.md').read_text(), session_id=sid,
+                harness.start_internal((folder / 'prompt.md').read_text(encoding='utf-8'), session_id=sid,
                     runtime=runtime, cwd=folder, job_id=job['id'], display_text=label,
                     allow_web=bool(job.get('allow_web', False)), message_id=binding['message_id'],
                     search_provider=payload.get('search_provider','codex'),
@@ -374,7 +374,7 @@ class InteractiveRuntime:
     @staticmethod
     def _usage(path):
         values = []
-        for line in path.read_text().splitlines():
+        for line in path.read_text(encoding='utf-8').splitlines():
             try:
                 event = json.loads(line)
             except ValueError:

@@ -3,8 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import difflib
 import json
-import shlex
-import sys
+from .agent_commands import agent_command, quote_path
 from wikiskill import feedback_loop, native_agents
 from .store import dump, uid, now, content_hash
 from .runtime import COMMON, COMMON_OPENCODE, EVALUATOR_CONTEXT, Worker, stage_job
@@ -85,17 +84,17 @@ def _role(store,runtime,job,study,round_number,phase):
     if not handoffs:raise RuntimeError('没有可执行的学习任务，请查看 WikiSkill 状态')
     stage=store.root/'jobs'/job['id']/f"{round_number}-{phase}-{handoffs[0]['request_id']}";stage.mkdir(parents=True,exist_ok=True)
     (stage/'handoffs.json').write_text(dump(dispatch))
-    command=shlex.join([sys.executable,'-m','wikiskill'])
     from .backends import validate_backend
     backend=validate_backend(json.loads(job['payload']).get('agent_backend','codex'))
+    command=agent_command('wikiskill',backend=backend)
     common=COMMON if backend=='codex' else COMMON_OPENCODE
     # WikiSkill's runtime tag is bookkeeping only (its RUNTIMES has no opencode
     # entry); real child ids still land in agents.json from actual handles.
     prompt=common+f'''
 这是 WikiSkill 的 {phase} 学习步骤。本轮可演化角色为 {json.loads(job['payload'])['targets']}；把这些目标及本轮实际反馈一起传给对应子 agent，技能应明确适用角色和方法，不改评分规则。读取 {stage/'handoffs.json'}，为每个 handoff 调用实际原生子 agent。
 子 agent 读取指定 role.md 和 payload.json，不继承你的协调上下文。Maintainer 应保留观察与推断区别、适用条件、原文依据；参考反馈中的 source.path 时相对 {store.root}。
-先用真实返回的句柄登记：`{command} bind-agent {study} --request REQUEST_ID --agent-id ACTUAL_ID --runtime codex --context fresh`。
-等待子 agent 完成后调用 `{command} collect {study} --request REQUEST_ID`。
+先用真实返回的句柄登记：`{command} bind-agent {quote_path(study,backend)} --request REQUEST_ID --agent-id ACTUAL_ID --runtime codex --context fresh`。
+等待子 agent 完成后调用 `{command} collect {quote_path(study,backend)} --request REQUEST_ID`。
 如果 handoff 已经有 delegation，先核对那个真实句柄和已有结果，不重新创建。
 把实际 id、role、status 写到 agents.json。仅完成这一个 handoff 步骤，不启动下一轮、不擅自做比较或启用。
 '''

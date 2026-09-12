@@ -20,6 +20,23 @@ def test_split_model_requires_provider_prefix():
     assert prompt_model('opencode-go/gpt-5.6-luna') == {'providerID': 'opencode-go', 'modelID': 'gpt-5.6-luna'}
 
 
+def test_all_session_http_operations_bind_encoded_directory():
+    from urllib.parse import urlsplit, parse_qs
+    client=OpencodeServerClient.__new__(OpencodeServerClient)
+    requests=[]
+    client._request=lambda method,path,body=None:requests.append((method,path,body)) or {'id':'ses_test'}
+    directory='C:/项目/工作区 with spaces & +/subfolder'
+    client.create_session('test',directory=directory)
+    client.prompt_async('ses_test','request',system='contract',directory=directory)
+    client.messages('ses_test',directory=directory)
+    client.children('ses_test',directory=directory)
+    client.abort('ses_test',directory=directory)
+    assert [urlsplit(path).path for _,path,_ in requests]==[
+        '/session','/session/ses_test/prompt_async','/session/ses_test/message',
+        '/session/ses_test/children','/session/ses_test/abort']
+    assert all(parse_qs(urlsplit(path).query)=={'directory':[directory]} for _,path,_ in requests)
+
+
 class FakeOpencodeAPI(BaseHTTPRequestHandler):
     log_message = lambda *args: None
 
@@ -95,13 +112,16 @@ def test_server_client_maps_v1_shapes():
                                     permission=[{'permission': 'question', 'action': 'deny', 'pattern': '*'}],
                                     directory='/tmp/ws')
     assert created == {'id': 'ses_fake'}
-    client.prompt_async('ses_fake', 'hi', model='opencode-go/gpt-5.6-luna')
+    client.prompt_async('ses_fake', 'hi', model='opencode-go/gpt-5.6-luna', system='BriefLoop 系统约定')
     assert server.prompts[0]['agent'] == 'build'
+    assert server.prompts[0]['system'] == 'BriefLoop 系统约定'
+    assert server.prompts[0]['parts'] == [{'type': 'text', 'text': 'hi'}]
     client.prompt_async('ses_fake', 'see', files=[{'type': 'file', 'mime': 'image/png',
                                                   'filename': 'c.png', 'url': 'data:image/png;base64,AA=='}])
     file_parts = [p for p in server.prompts[1]['parts'] if p['type'] == 'file']
     assert len(file_parts) == 1 and file_parts[0]['mime'] == 'image/png'
     assert server.prompts[1]['parts'][0] == {'type': 'text', 'text': 'see'}
+    assert 'system' not in server.prompts[1]
     assert client.messages('ses_fake')[1]['info']['id'] == 'msg_a1'
     assert client.children('ses_fake') == []
     assert client.abort('ses_fake') is True
@@ -110,10 +130,12 @@ def test_server_client_maps_v1_shapes():
 
 
 class FakeClient:
+    _session_path = staticmethod(OpencodeServerClient._session_path)
     def __init__(self, *args, **kwargs):
         self.prompts = []
         self.aborts = []
         self.created = []
+        self.contexts = []
         self.mode = 'complete'
         process = type('Proc', (), {'poll': lambda self: None, 'pid': 4242})()
         self.process = process
@@ -125,8 +147,10 @@ class FakeClient:
 
     def prompt_async(self, session_id, text, **kwargs):
         self.prompts.append((session_id, text, kwargs))
+        self.contexts.append(('prompt',session_id,kwargs.get('directory')))
 
-    def messages(self, session_id):
+    def messages(self, session_id, *, directory=None):
+        self.contexts.append(('messages',session_id,directory))
         import time as _time
         now = int(_time.time() * 1000)
         if self.mode == 'error':
@@ -146,11 +170,13 @@ class FakeClient:
                            {'type': 'tool', 'tool': 'bash', 'id': 'call_1',
                             'state': {'status': 'completed', 'input': {'command': 'pwd'}}}]}]
 
-    def abort(self, session_id):
+    def abort(self, session_id, *, directory=None):
         self.aborts.append(session_id)
+        self.contexts.append(('abort',session_id,directory))
         return True
 
-    def children(self, session_id):
+    def children(self, session_id, *, directory=None):
+        self.contexts.append(('children',session_id,directory))
         return []
 
     def providers(self, directory=None):
@@ -206,6 +232,103 @@ def test_harness_drives_turn_and_projects_events(tmp_path):
     with pytest.raises(ValueError, match='提问'):
         manager.answer(sid, 'q', {})
     manager.close()
+
+
+@pytest.mark.parametrize('internal', [False, True])
+@pytest.mark.parametrize('permission', ['workspace-write', 'read-only'])
+def test_harness_sends_contract_as_native_system(tmp_path, monkeypatch, internal, permission):
+    from briefloop import chat_tools
+    seen=[]
+    def instructions(store, config, **kwargs):
+        seen.append(kwargs)
+        return 'BRIEFLOOP_NATIVE_SYSTEM 合同'
+    monkeypatch.setattr(chat_tools, 'chat_instructions', instructions)
+    manager = OpencodeHarness(Store(tmp_path), FakeClient)
+    runtime={'permission':permission}
+    if internal:
+        run=manager.start_internal('Actual internal task',runtime=runtime,display_text='Visible task label')
+        sid=run.session_id
+        expected='Actual internal task'
+    else:
+        sid=manager.create_session(runtime=runtime)['id']
+        manager.send(sid,'Actual user prompt')
+        expected='Actual user prompt'
+    try:
+        until(lambda:any(m['role']=='assistant' and m['status']=='completed'
+                         for m in manager.snapshot(sid)['messages']))
+        _,text,kwargs=manager.client.prompts[0]
+        assert text==expected
+        assert kwargs['system'].startswith('BRIEFLOOP_NATIVE_SYSTEM 合同')
+        assert ('本轮权限：仅阅读' in kwargs['system']) == (permission=='read-only')
+        assert seen==[{'internal':internal,'allow_web':False,'backend':'opencode'}]
+    finally:
+        manager.close()
+
+
+@pytest.mark.parametrize('status', [400, 422])
+def test_system_rejection_fails_turn_without_dropping_contract(tmp_path, status):
+    from briefloop.backends.opencode_server import OpencodeError
+    requests=[]
+    class RejectSystemClient(FakeClient):
+        prompt_async=OpencodeServerClient.prompt_async
+        def _request(self, method, path, body):
+            requests.append(body)
+            raise OpencodeError('System field rejected',status=status)
+    manager=OpencodeHarness(Store(tmp_path),RejectSystemClient)
+    sid=manager.create_session()['id']
+    try:
+        manager.send(sid,'Actual user prompt')
+        until(lambda:manager.snapshot(sid)['session']['status']=='failed')
+        assert len(requests)==1
+        assert requests[0]['system']
+        assert requests[0]['parts']==[{'type':'text','text':'Actual user prompt'}]
+        assert not any(e['kind']=='message/delivered' for e in manager.snapshot(sid)['events'])
+    finally:
+        manager.close()
+
+
+def test_reopened_session_uses_persisted_cwd_for_all_operations(tmp_path):
+    store=Store(tmp_path)
+    cwd=tmp_path/'子目录 with spaces';cwd.mkdir()
+    previous=OpencodeHarness(store,FakeClient)
+    session=previous.create_session(cwd=cwd)
+    previous.chat.update(session['id'],thread_id='ses_restored')
+    previous.close()
+    manager=OpencodeHarness(store,FakeClient)
+    sid=session['id']
+    try:
+        manager.send(sid,'Continue existing session')
+        until(lambda:any(m['role']=='assistant' and m['status']=='completed'
+                         for m in manager.snapshot(sid)['messages']))
+        manager._interrupt_once(sid,'ses_restored','cancel-test')
+        client=manager.client
+        assert client.created==[]
+        assert {operation for operation,_,_ in client.contexts}=={'prompt','messages','children','abort'}
+        assert all(native=='ses_restored' and directory==str(cwd) for _,native,directory in client.contexts)
+    finally:
+        manager.close()
+
+
+@pytest.mark.parametrize('permission', ['workspace-write','read-only'])
+def test_harness_never_retries_without_required_permissions(tmp_path,permission):
+    from briefloop.backends.opencode_server import OpencodeError
+    requests=[]
+    class RejectPermissions(FakeClient):
+        create_session=OpencodeServerClient.create_session
+        def _request(self,method,path,body):
+            requests.append(body)
+            if 'permission' in body:raise OpencodeError('Permissions rejected',status=422)
+            return {'id':'unsafe_session'}
+    manager=OpencodeHarness(Store(tmp_path),RejectPermissions)
+    sid=manager.create_session(runtime={'permission':permission})['id']
+    try:
+        manager.send(sid,'Must not execute without permissions')
+        until(lambda:manager.snapshot(sid)['session']['status']=='failed')
+        assert len(requests)==1 and requests[0]['permission']
+        assert manager.client.prompts==[]
+        assert not any(e['kind']=='message/delivered' for e in manager.snapshot(sid)['events'])
+    finally:
+        manager.close()
 
 
 def test_settings_side_model_variant_reaches_session(tmp_path):
@@ -410,8 +533,11 @@ def test_child_history_keeps_only_current_turn_messages(tmp_path):
     manager=OpencodeHarness(Store(tmp_path),FakeClient)
     session=manager.create_session('History',{'model':'opencode-go/gpt-5.6-luna'})
     class Children:
-        def children(self,owner):return [{'id':'child'}] if owner=='parent' else []
-        def messages(self,owner):
+        def children(self,owner,*,directory=None):
+            assert directory==session['cwd']
+            return [{'id':'child'}] if owner=='parent' else []
+        def messages(self,owner,*,directory=None):
+            assert directory==session['cwd']
             return [{'info':{'id':identity,'role':'assistant','time':{'created':created}},'parts':[{'type':'tool','id':identity+'-tool','tool':'read','state':{'status':'completed','input':{'filePath':'source'},'output':identity}}]} for identity,created in [('old',1000),('current',10000)]]
     manager._client=lambda:Children()
     manager._record_children(session['id'],'turn','parent',10000)
@@ -436,10 +562,10 @@ def test_live_child_activity_reaches_parent_progress_without_repeated_heartbeats
         revision = 0
         finished = False
         hidden = 'SECRET REASONING'
-        def children(self, owner):
+        def children(self, owner, *, directory=None):
             return [{'id': 'child', 'title': 'Analyst draft', 'time': {'created': 10000}},
                     {'id': 'old', 'title': 'Old task', 'time': {'created': 1000}}] if owner == 'parent' else []
-        def messages(self, owner):
+        def messages(self, owner, *, directory=None):
             created = 1000 if owner == 'old' else 10000
             return [{'info': {'id': owner+'-assistant', 'role': 'assistant',
                 'time': {'created': created, **({'completed': 12000} if self.finished else {})},
@@ -492,9 +618,9 @@ def test_parent_follow_observes_child_before_parent_task_finishes(tmp_path, monk
     monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: clock[0], sleep=advance))
     class ActiveChild:
         polls = 0
-        def children(self, owner):
+        def children(self, owner, *, directory=None):
             return [{'id': 'child', 'title': 'Analyst', 'time': {'created': 10000}}] if owner == 'parent' else []
-        def messages(self, owner):
+        def messages(self, owner, *, directory=None):
             if owner == 'parent':
                 self.polls += 1
                 assert self.polls <= 6, 'Parent never observed its running child'
@@ -532,10 +658,10 @@ def test_plain_chat_child_wait_has_absolute_deadline(tmp_path, monkeypatch, read
         sleep=lambda seconds: clock.__setitem__(0, clock[0] + 5)))
     class Stuck:
         aborts = []
-        def abort(self, owner):self.aborts.append(owner)
-        def children(self, owner):
+        def abort(self, owner, *, directory=None):self.aborts.append(owner)
+        def children(self, owner, *, directory=None):
             return [{'id': 'child', 'time': {'created': 10000}}] if owner == 'parent' else []
-        def messages(self, owner):
+        def messages(self, owner, *, directory=None):
             if read_failure and clock[0] >= 10:
                 raise OpencodeError('host unavailable')
             return [{'info': {'id': owner, 'role': 'assistant', 'time': {'created': 10000,
@@ -555,10 +681,10 @@ def test_child_cache_and_queries_remain_bounded_across_disjoint_discoveries(tmp_
     class Changing:
         generation = 0
         queried = []
-        def children(self, owner):
+        def children(self, owner, *, directory=None):
             return [{'id': f'{self.generation}-{i}', 'time': {'created': 10000}}
                     for i in range(150)] if owner == 'parent' else []
-        def messages(self, owner):
+        def messages(self, owner, *, directory=None):
             self.queried.append(owner)
             return [{'info': {'id': owner, 'role': 'assistant', 'time': {'created': 10000}}, 'parts': []}]
     client = Changing(); manager._client = lambda: client
@@ -582,9 +708,9 @@ def test_child_read_failure_removes_running_exemption_without_heartbeat(tmp_path
     sid = manager.create_session()['id']
     class Child:
         unavailable = False
-        def children(self, owner):
+        def children(self, owner, *, directory=None):
             return [{'id': 'child', 'time': {'created': 10000}}] if owner == 'parent' else []
-        def messages(self, owner):
+        def messages(self, owner, *, directory=None):
             if self.unavailable:raise OpencodeError('unavailable')
             return [{'info': {'id': owner, 'role': 'assistant', 'time': {'created': 10000}}, 'parts': []}]
     client = Child(); manager._client = lambda: client
@@ -615,10 +741,10 @@ def test_empty_assistant_fails_startup_only_without_real_parts(tmp_path, monkeyp
         sleep=lambda seconds: clock.__setitem__(0, clock[0] + 30)))
     class EmptyShell:
         def __init__(self):self.aborts = []
-        def abort(self, owner):self.aborts.append(owner)
-        def children(self, owner):
+        def abort(self, owner, *, directory=None):self.aborts.append(owner)
+        def children(self, owner, *, directory=None):
             return [{'id': 'child', 'time': {'created': 10000}}] if activity == 'child' and owner == 'parent' else []
-        def messages(self, owner):
+        def messages(self, owner, *, directory=None):
             assert clock[0] <= 120, 'Empty assistant shell did not stop'
             active = activity == 'reasoning' or (activity == 'child' and owner == 'child')
             done = clock[0] == 120
@@ -653,9 +779,9 @@ def test_native_error_without_completed_time_fails_immediately(tmp_path, monkeyp
     monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: 0, sleep=no_sleep))
     class Failed:
         def __init__(self):self.aborts = []
-        def abort(self, owner):self.aborts.append(owner)
-        def children(self, owner):raise AssertionError('Native failure must precede child discovery')
-        def messages(self, owner):
+        def abort(self, owner, *, directory=None):self.aborts.append(owner)
+        def children(self, owner, *, directory=None):raise AssertionError('Native failure must precede child discovery')
+        def messages(self, owner, *, directory=None):
             return [{'info': {'id': 'empty', 'role': 'assistant', 'time': {'created': 10000}, **native_error}, 'parts': []}]
     client = Failed(); manager._client = lambda: client
     with pytest.raises(RuntimeError, match='执行失败'):
@@ -679,8 +805,8 @@ def test_nested_native_error_exposes_only_sanitized_message(tmp_path, monkeypatc
         'responseHeaders': {'Authorization': 'Bearer HEADER_SECRET', 'x-private': 'PRIVATE_HEADER'},
         'responseBody': 'PRIVATE RESPONSE BODY'}}
     class Failed:
-        def abort(self, owner):pass
-        def messages(self, owner):
+        def abort(self, owner, *, directory=None):pass
+        def messages(self, owner, *, directory=None):
             return [{'info': {'id': 'native', 'role': 'assistant', 'time': {'created': 10000}, 'error': error}, 'parts': []}]
     manager._client = lambda: Failed()
     with pytest.raises(RuntimeError, match='执行失败'):

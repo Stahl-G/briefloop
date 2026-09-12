@@ -48,6 +48,12 @@ def output_path(store, job):
     if job['kind'] != 'export_docx': raise ValueError('不是 Word 文件任务')
     path = store.root / 'exports' / job['id'] / 'report.docx'
     if not path.resolve().is_relative_to((store.root / 'exports').resolve()): raise ValueError('无效导出路径')
+    result = json.loads(job.get('result') or '{}')
+    if result.get('path'):
+        saved = (store.root / result['path']).resolve()
+        if saved.parent != path.parent.resolve() or saved.suffix.lower() != '.docx':
+            raise ValueError('无效导出结果路径')
+        path = saved
     return path
 
 
@@ -78,7 +84,17 @@ def generate_word(store, job, cancelled):
     destination = output_path(store, job); destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_suffix('.tmp'); temporary.write_bytes(blob)
     if cancelled.is_set(): temporary.unlink(); raise InterruptedError('Word 制作已停止')
-    os.replace(temporary, destination)
+    try:
+        os.replace(temporary, destination)
+    except PermissionError:
+        if os.name!='nt' or not destination.exists():raise
+        # Office/WPS may hold a deny-delete handle. Keep both the old file and
+        # this already-rendered version; no generation/model work is repeated.
+        from uuid import uuid4
+        destination = destination.with_name('report-'+uuid4().hex+'.docx')
+        os.replace(temporary, destination)
+        store.event(job['id'],'export_saved_as',{'path':str(destination.relative_to(store.root)),
+                                               'reason':'原文件被占用或不可替换，已另存本次 Word'})
     stage(4, 'Word 已生成，可以下载')
     return {'version_id': brief['id'], 'fingerprint': payload['fingerprint'],
             'path': str(destination.relative_to(store.root)), 'sha256': hashlib.sha256(blob).hexdigest(),

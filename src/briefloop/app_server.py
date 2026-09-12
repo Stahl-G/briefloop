@@ -11,6 +11,7 @@ from queue import Queue
 import shutil
 import subprocess
 import threading
+from .platform_support import OwnedProcess
 
 
 class AppServerClient:
@@ -22,7 +23,7 @@ class AppServerClient:
         self.notifications=Queue();self.server_requests=Queue()
         self._pending={};self._lock=threading.Lock();self._sequence=0
         self._stderr=(root/'app-server.stderr.log').open('a')
-        self.process=subprocess.Popen([executable,'--enable','multi_agent','app-server','--listen','stdio://'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self._stderr,text=True,bufsize=1,start_new_session=True)
+        self.process=OwnedProcess([executable,'--enable','multi_agent','app-server','--listen','stdio://'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self._stderr,text=True,bufsize=1)
         self._reader=threading.Thread(target=self._read,daemon=True);self._reader.start()
         try:
             self.identity=self.request('initialize',{'clientInfo':{'name':'briefloop','version':__version__},'capabilities':{'experimentalApi':True}})
@@ -75,5 +76,6 @@ class AppServerClient:
         if self.process.poll() is None:
             self.process.stdin.close()
             try:self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:self.process.terminate();self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:pass
+        self.process.close_tree()
         self._reader.join(timeout=2);self._stderr.close()

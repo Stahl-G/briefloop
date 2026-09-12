@@ -74,7 +74,7 @@ flowchart TB
 
 1. **界面层**：界面源码在 `frontend/`（app.js、rich-document.js），由 esbuild 打包（`npm run build`，`package.json`）输出到 `src/briefloop/static/app.js`，Python 服务只发布 `static/`（原生无框架运行时 + 打包后的 bundle，含 tiptap 富文档依赖）。浏览器用带 `X-BriefLoop-Token` 的 JSON 请求访问 `/api/*`，token 过期时自动重新握手（`frontend/app.js:40` 的 `api()`）。
 
-2. **服务层**：`cli.py` 的 `serve/start` 进入 `server.py:make_server()`。服务以工作区为单位单实例运行（`fcntl` 锁，`server.py:28`），启动时组装 Store、各 Harness 管理器和 `Worker`，并一次性恢复中断的会话状态（`harness.chat.recover_stale()`）。`GET /api/state` 返回整个工作区快照，写操作走 `POST /api/<命令>`。
+2. **服务层**：`cli.py` 的 `serve/start` 进入 `server.py:make_server()`。服务先取得 `platform_support.WorkspaceLock`，再初始化 Store；POSIX 使用 `flock`，Windows 使用排他字节锁。启动时组装各 Harness 管理器和 `Worker`，并一次性恢复中断的会话状态（`harness.chat.recover_stale()`）。`GET /api/state` 返回整个工作区快照，写操作走 `POST /api/<命令>`。
 
 3. **执行层**：`Worker`（`runtime.py:334`）负责把任务分阶段（`stage_job`）、按角色生成提示词并调度；`InteractiveRuntime` 把每个会话请求路由到 `pick_harness()` 选择的引擎，且同一会话锁定原宿主（切换引擎须新建会话，`server.py:45`）。引擎有三种宿主方式：codex CLI（`HarnessManager`）、opencode server（`OpencodeHarness`）、以及通过 Node 桥的 ACP 宿主（claude/kimi/hermes 等，`BridgeHarness` → `RuntimeBridge` spawn `static/runtime-bridge.mjs`，源码在 `runtime-bridge/main.ts`，复用 `third_party/open-design` 的 Apache 协议辅助代码）。
 
@@ -87,6 +87,6 @@ flowchart TB
 ## 边界事实
 
 - Python 只负责工具、进程、存储、确定计算与既定选择规则；规划/研究/写作/评分都由 CLI 宿主里的实际 agent 完成（AGENTS.md 约定）。
-- 一个工作区同时只允许一个服务实例（`server.py:28` 的 `fcntl` 锁）。
+- 一个工作区同时只允许一个服务实例（`platform_support.WorkspaceLock` 的操作系统锁）。Windows 所属宿主进程树由 Job Object 回收；它不提供文件或网络隔离。
 - runtime-bridge 需要本机 Node 20+，构建产物为 `src/briefloop/static/runtime-bridge.mjs`（`runtime-bridge/build.mjs`）。
 - 后端可选：`codex/opencode/claude/kimi/hermes/reasonix/mimo`（`cli.py:21`），ACP 类宿主经 Node 桥。

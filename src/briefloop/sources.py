@@ -159,7 +159,7 @@ def upload(store, name, data):
     except (ValueError,OSError,subprocess.SubprocessError,zipfile.BadZipFile) as exc:error=str(exc);text=''
     metadata.update({'extractor':extractor,'text_sha256':content_hash(text),'extraction_status':'failed' if error else 'ready'})
     if error:metadata['error']=error
-    safe_source_path(store,'sources/'+sid+'.provenance.json',must_exist=False).write_text(dump(metadata))
+    safe_source_path(store,'sources/'+sid+'.provenance.json',must_exist=False).write_text(dump(metadata),encoding='utf-8')
     return store.add_source(name,text,error=error,source_id=sid)
 
 
@@ -223,7 +223,7 @@ def _fetch(store, url):
     except (ValueError,LookupError,OSError,subprocess.SubprocessError) as exc:text='';error=str(exc)
     provenance.update({'extractor':extractor,'text_sha256':content_hash(text),'extraction_status':'failed' if error else 'ready'})
     if error:provenance['error']=error
-    safe_source_path(store,'sources/'+sid+'.provenance.json',must_exist=False).write_text(dump(provenance))
+    safe_source_path(store,'sources/'+sid+'.provenance.json',must_exist=False).write_text(dump(provenance),encoding='utf-8')
     return store.add_source(name,text,url=url,error=error,source_id=sid)
 
 

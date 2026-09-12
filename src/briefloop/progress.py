@@ -55,6 +55,7 @@ class ProgressTracker:
     def __init__(self,store,job_id,folder,*,context=None):
         self.store=store;self.job_id=job_id;self.folder=Path(folder)
         self.signature=None;self.offset=0;self.tail=b'';self.message='';self.workers={}
+        self.runtime_issue=None
         rows=store.rows("SELECT data FROM events WHERE job_id=? AND kind='runtime_progress' ORDER BY seq DESC LIMIT 1",(job_id,))
         self.last=rows[0]['data'] if rows else None
         context = context or {}
@@ -78,7 +79,7 @@ class ProgressTracker:
             version = payload.get('version_id')
             if not version:
                 try:
-                    value = json.loads((self.folder / 'input.json').read_text())
+                    value = json.loads((self.folder / 'input.json').read_text(encoding='utf-8-sig'))
                     version = value.get('brief', {}).get('id') if isinstance(value, dict) else None
                 except (ValueError, OSError):pass
             self.has_saved_draft = bool(version and store.rows('SELECT id FROM briefs WHERE id=?', (version,)))
@@ -97,7 +98,23 @@ class ProgressTracker:
             for line in lines:
                 try:event=json.loads(line)
                 except (ValueError,UnicodeError):continue
+                if not isinstance(event,dict):continue
                 item=event.get('item',{})
+                if not isinstance(item,dict):item={}
+                kind=event.get('type')
+                if kind=='error':
+                    # Provider errors may contain request URLs, credentials, or
+                    # raw tool output. Classify locally; only fixed text is public.
+                    detail=event.get('data') or event.get('error') or event
+                    message=detail.get('message','') if isinstance(detail,dict) else ''
+                    reconnect=bool(re.search(r'reconnect|waiting for network|retrying|重连',str(message),re.I))
+                    self.runtime_issue=(
+                        ('模型连接中断，正在重试','正在等待模型连接恢复；已有来源和产物保留。') if reconnect else
+                        ('模型执行遇到错误','模型返回错误，正在等待运行状态更新；已有来源和产物保留。'))
+                elif kind in ('item.started','item.completed') and item.get('type') in (
+                        'agent_message','agentMessage','command_execution','commandExecution','collab_tool_call',
+                        'mcpToolCall','dynamicToolCall','fileChange','webSearch'):
+                    self.runtime_issue=None
                 if event.get('type')=='item.completed' and item.get('type')=='agent_message':
                     self.message=item.get('text','')[:700]
                 if item.get('type')=='collab_tool_call':
@@ -113,7 +130,7 @@ class ProgressTracker:
                                 self.message=row['role']+'：'+str(status['activity'])[:240]
         if paths[1].exists():
             try:
-                for agent in json.loads(paths[1].read_text()).get('agents',[]):
+                for agent in json.loads(paths[1].read_text(encoding='utf-8')).get('agents',[]):
                     identity=agent.get('agent_id') or agent.get('id')
                     if not identity:continue
                     row=self.workers.setdefault(identity,{'id':identity})
@@ -138,7 +155,9 @@ class ProgressTracker:
         if self.phase:
             identity, label, stage = self.phase
             stages = [{'id': identity, 'label': label, 'status': 'active', 'agents': workers}]
-        value={'stage':stage,'message':self.message,'agents':workers,'stages':stages,'last_activity':datetime.fromtimestamp(log.stat().st_mtime if log.exists() else time.time(),timezone.utc).isoformat(),'draft_ready':paths[3].exists() or self.has_saved_draft}
+        message=self.message
+        if self.runtime_issue:stage,message=self.runtime_issue
+        value={'stage':stage,'message':message,'agents':workers,'stages':stages,'last_activity':datetime.fromtimestamp(log.stat().st_mtime if log.exists() else time.time(),timezone.utc).isoformat(),'draft_ready':paths[3].exists() or self.has_saved_draft}
         encoded=dump(value)
         if encoded!=self.last:
             self.store.event(self.job_id,'runtime_progress',value);self.last=encoded

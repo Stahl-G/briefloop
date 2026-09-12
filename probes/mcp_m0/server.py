@@ -36,7 +36,7 @@ def main() -> None:
         data = (directory / 'document.txt').read_bytes()
         event('inspect_document')
         return {'text': data.decode('utf-8'), 'sha256': hashlib.sha256(data).hexdigest(),
-                'pid': os.getpid(), 'pgid': os.getpgrp(),
+                'pid': os.getpid(), 'pgid': os.getpgrp() if os.name == 'posix' else None,
                 'unexpected_environment': 'BRIEFLOOP_M0_DO_NOT_INHERIT' in os.environ}
 
     @server.resource('m0://document', mime_type='text/plain')
@@ -76,13 +76,14 @@ def main() -> None:
             raise
 
     @server.tool()
-    def spawn_owned_child() -> dict[str, int]:
-        """Create a short-lived disposable descendant for the POSIX cleanup probe."""
+    def spawn_owned_child() -> dict[str, int | None]:
+        """Create a short-lived disposable descendant for the cleanup probe."""
         child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(90)'],
                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                  stderr=subprocess.DEVNULL)
-        event('owned_child', child_pid=child.pid, child_pgid=os.getpgid(child.pid))
-        return {'pid': child.pid, 'pgid': os.getpgid(child.pid)}
+        group = os.getpgid(child.pid) if os.name == 'posix' else None
+        event('owned_child', child_pid=child.pid, child_pgid=group)
+        return {'pid': child.pid, 'pgid': group}
 
     @server.tool()
     def exit_during_call() -> str:

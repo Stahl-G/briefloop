@@ -7,7 +7,7 @@ import json
 import secrets
 import os
 import signal
-import fcntl
+from .platform_support import WorkspaceLock
 from markdown_it import MarkdownIt
 from pydantic import ValidationError
 from .models import Requirements, Settings, SaveRevision, Comment
@@ -18,14 +18,22 @@ from .store import Store, Conflict, dump
 from . import sources
 
 
-def make_server(workspace, port=8765, *, paused=False):
+def make_server(workspace, port=8765, *, paused=False, backend=None):
+    lock=WorkspaceLock(workspace)
+    try:return _make_server(workspace,port,paused=paused,backend=backend,lock=lock)
+    except BaseException:
+        lock.close();raise
+
+
+def _make_server(workspace, port, *, paused, backend, lock):
     from .runtime_bridge import RuntimeBridge
     bridge=RuntimeBridge()
-    store=Store(workspace)
-    lock=(store.root/'.server.lock').open('a+')
-    try:fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
-    except BlockingIOError:
-        lock.close();raise RuntimeError('这个工作区已有本地服务在运行')
+    try:
+        store=Store(workspace)
+        if backend is not None:
+            store.set_meta('settings',Settings.model_validate({**store.settings(),'agent_backend':backend}).model_dump())
+    except BaseException:
+        lock.close();raise
     harness=HarnessManager(store)
     # Recover stale chat state once, at service start. Notifications and normal
     # writes must never run this global recovery.
@@ -295,7 +303,14 @@ def make_server(workspace, port=8765, *, paused=False):
                 n=int(self.headers.get('Content-Length','0'))
                 if not 0<n<25*1024*1024:raise ValueError('请求为空或过大')
                 body=json.loads(self.rfile.read(n));path=urlsplit(self.path).path
-                if path=='/api/tavily':
+                if path=='/api/service-stop':
+                    if body.get('pid')!=os.getpid() or body.get('workspace_id')!=store.meta('workspace_id'):
+                        raise ValueError('服务身份已变化，未执行停止')
+                    import threading
+                    self.send(200,{'stopping':True})
+                    threading.Thread(target=self.server.shutdown,daemon=True).start()
+                    return
+                elif path=='/api/tavily':
                     from .tavily import save_key,delete_key
                     result=delete_key() if body.get('remove') else save_key(body['api_key'])
                 elif path=='/api/connectors/task-bind':
@@ -444,13 +459,17 @@ def make_server(workspace, port=8765, *, paused=False):
     return server
 
 
-def serve(workspace,port=8765,*,paused=False):
-    server=make_server(workspace,port,paused=paused)
+def serve(workspace,port=8765,*,paused=False,backend=None):
+    launch_id=os.environ.pop('BRIEFLOOP_LAUNCH_ID',None)
+    server=make_server(workspace,port,paused=paused,backend=backend)
     from .templates import import_builtin
     import_builtin(server.store)
     server.worker.start()
     url=f'http://127.0.0.1:{server.server_port}'
-    (server.store.root/'server.json').write_text(dump({'pid':os.getpid(),'url':url,'workspace_id':server.store.meta('workspace_id')}))
+    marker=server.store.root/'server.json'
+    temporary=marker.with_suffix('.tmp')
+    temporary.write_text(dump({'pid':os.getpid(),'url':url,'workspace_id':server.store.meta('workspace_id'),'launch_id':launch_id}),encoding='utf-8')
+    temporary.replace(marker)
     print(f'BriefLoop: {url}',flush=True)
     def stop(signum,frame):raise KeyboardInterrupt
     signal.signal(signal.SIGTERM,stop)

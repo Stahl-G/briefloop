@@ -634,6 +634,7 @@ var catalog_default = [
     id: "hermes",
     name: "Hermes",
     bins: [
+      "hermes-acp",
       "hermes"
     ]
   },
@@ -1120,8 +1121,16 @@ var fallbacks_default = {
 };
 
 // runtime-bridge/main.ts
-var exec = promisify(execFile);
+var rawExec = promisify(execFile);
+function exec(bin, args, options) {
+  if (process.platform !== "win32") return rawExec(bin, args, options);
+  if (!env.BRIEFLOOP_PYTHON || !env.BRIEFLOOP_PROCESS_HELPER) throw Error("Windows process owner is unavailable");
+  return rawExec(env.BRIEFLOOP_PYTHON, ["-X", "utf8", env.BRIEFLOOP_PROCESS_HELPER, bin, ...args], { ...options, windowsHide: true });
+}
 var acpArgs = { kimi: ["acp"], hermes: ["acp"], reasonix: ["acp"], kilo: ["acp"], kiro: ["acp"], vibe: [] };
+function acpArguments(id, bin) {
+  return id === "hermes" && /^hermes-acp(?:\.(?:exe|cmd|bat))?$/i.test(path2.basename(bin)) ? [] : [...acpArgs[id]];
+}
 var active = /* @__PURE__ */ new Map();
 var defaults = [{ id: "default", label: "\u5BBF\u4E3B\u9ED8\u8BA4\u6A21\u578B" }];
 function claudeConfiguredModel() {
@@ -1149,10 +1158,16 @@ function hostDefaults(id) {
 }
 var env = { ...process.env };
 delete env.CLAUDECODE;
+if (process.platform === "win32") {
+  env.PATH = process.env.PATH || process.env.Path || "";
+  delete env.Path;
+}
 var dirs = [...(env.PATH || "").split(path2.delimiter), path2.join(homedir2(), ".local/bin"), path2.join(homedir2(), ".kimi-code/bin"), path2.join(homedir2(), ".opencode/bin"), path2.join(homedir2(), ".npm-global/bin"), path2.join(homedir2(), ".bun/bin"), path2.join(homedir2(), ".cargo/bin"), path2.join(homedir2(), ".dsh/bin"), "/opt/homebrew/bin", "/usr/local/bin"];
+if (process.platform === "win32" && env.APPDATA) dirs.push(path2.join(env.APPDATA, "npm"));
 env.PATH = [...new Set(dirs)].join(path2.delimiter);
 function findBin(def, custom) {
-  for (const f of custom ? [path2.resolve(custom)] : def.bins.flatMap((b) => dirs.map((d) => path2.join(d, b)))) {
+  const extensions = process.platform === "win32" ? [".exe", ".cmd", ".bat", ""] : [""];
+  for (const f of custom ? [path2.resolve(custom)] : def.bins.flatMap((b) => dirs.flatMap((d) => extensions.map((e) => path2.join(d, b + e))))) {
     try {
       accessSync(f, constants.X_OK);
       return f;
@@ -1183,6 +1198,10 @@ function capabilities(id) {
 }
 function terminate(child) {
   if (!child?.pid) return;
+  if (process.platform === "win32") {
+    child.kill();
+    return;
+  }
   try {
     process.kill(-child.pid, "SIGTERM");
   } catch {
@@ -1199,7 +1218,11 @@ function terminate(child) {
   }, 1200).unref();
 }
 function launch(bin, args, cwd, childEnv = env) {
-  return spawn2(bin, args, { cwd, env: childEnv, stdio: ["pipe", "pipe", "pipe"], detached: process.platform !== "win32" });
+  if (process.platform === "win32") {
+    if (!env.BRIEFLOOP_PYTHON || !env.BRIEFLOOP_PROCESS_HELPER) throw Error("Windows process owner is unavailable");
+    return spawn2(env.BRIEFLOOP_PYTHON, ["-X", "utf8", env.BRIEFLOOP_PROCESS_HELPER, bin, ...args], { cwd, env: childEnv, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+  }
+  return spawn2(bin, args, { cwd, env: childEnv, stdio: ["pipe", "pipe", "pipe"], detached: true });
 }
 function connect(bin, args, cwd, onUpdate, onRequest) {
   const child = launch(bin, args, cwd);
@@ -1249,6 +1272,16 @@ async function handshake(conn, p) {
   const session = await conn.call(p.session_id ? "session/load" : "session/new", { ...buildAcpSessionNewParams(p.cwd), ...p.session_id ? { sessionId: p.session_id } : {} });
   return { init, session };
 }
+async function windowsAcpModels(bin, args, cwd) {
+  const conn = connect(bin, args, cwd, () => {
+  }, (_m, reply) => reply({ outcome: { outcome: "cancelled" } }));
+  try {
+    const { session } = await handshake(conn, { cwd });
+    return normalizeModels(session.models, defaults[0], session.configOptions);
+  } finally {
+    terminate(conn.child);
+  }
+}
 async function discover(p) {
   return await Promise.all(catalog_default.filter((d) => d.id !== "byok-opencode").map(async (d) => {
     const bin = findBin(d, p.paths?.[d.id]);
@@ -1270,7 +1303,10 @@ async function listModels(p) {
   if (p.runtime_id === "reasonix") {
     const r = await exec(bin, ["doctor", "--json"], { env, cwd: p.cwd || process.cwd(), timeout: 1e4, maxBuffer: 1024 * 1024 });
     const d2 = JSON.parse(r.stdout);
-    return { models: [...defaults, ...(d2.providers || []).filter((x) => typeof x.name === "string").map((x) => ({ id: x.name, label: x.name + (x.model ? " \xB7 " + x.model : ""), provider: x.kind || "configured", model_id: x.model }))], source: "native_config", note: "Models declared by the host; account availability is checked by a model call." };
+    return { models: [...defaults, ...(d2.providers || []).filter((x) => typeof x.name === "string").flatMap((x) => {
+      const models = Array.isArray(x.models) ? [...new Set(x.models.filter((m) => typeof m === "string" && m.trim()))] : [];
+      return models.length ? models.map((model) => ({ id: x.name + "/" + model, label: x.name + " \xB7 " + model, provider: x.kind || "configured", model_id: model })) : [{ id: x.name, label: x.name + (x.model ? " \xB7 " + x.model : ""), provider: x.kind || "configured", model_id: x.model }];
+    })], source: "native_config", note: "Models declared by the host; account availability is checked by a model call." };
   }
   const fallback = [...hostDefaults(p.runtime_id), ...fallbacks_default[p.runtime_id] || []];
   if (p.runtime_id === "claude") {
@@ -1289,7 +1325,8 @@ async function listModels(p) {
       return { models: models || fallback, source: models ? "host" : "builtin_hints" };
     }
     if (p.runtime_id in acpArgs) {
-      const models = await detectAcpModels({ bin, args: acpArgs[p.runtime_id], cwd: p.cwd || process.cwd(), env, timeoutMs: 15e3, defaultModelOption: defaults[0], clientName: "briefloop-models" });
+      const args = acpArguments(p.runtime_id, bin);
+      const models = process.platform === "win32" ? await windowsAcpModels(bin, args, p.cwd || process.cwd()) : await detectAcpModels({ bin, args, cwd: p.cwd || process.cwd(), env, timeoutMs: 15e3, defaultModelOption: defaults[0], clientName: "briefloop-models" });
       const live = models.some((m) => m.id !== "default");
       return { models: live ? models : fallback, source: live ? "host" : "builtin_hints" };
     }
@@ -1311,7 +1348,7 @@ function validate(p) {
 }
 async function runAcp(p, state) {
   let sessionId;
-  const args = [...acpArgs[p.runtime_id]];
+  const args = acpArguments(p.runtime_id, state.bin);
   if (p.runtime_id === "reasonix" && p.model && p.model !== "default") args.push("-model", p.model);
   const conn = connect(state.bin, args, p.cwd, (m) => {
     if (m.method !== "session/update" || !state.promptStarted) return;

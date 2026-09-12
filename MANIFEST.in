@@ -1,8 +1,8 @@
 recursive-include docs *.md
 include KNOWN_ISSUES.md SECURITY.md CONTRIBUTING.md
-include VERSION README.md THIRD_PARTY_NOTICES.md CHANGELOG.md bootstrap.py start.sh package.json package-lock.json
+include VERSION README.md THIRD_PARTY_NOTICES.md CHANGELOG.md bootstrap.py start.sh start.ps1 package.json package-lock.json .gitattributes
 recursive-include frontend *.js
-include scripts/build_frontend.mjs scripts/build_frontend_licenses.mjs
+include scripts/build_frontend.mjs scripts/build_frontend_licenses.mjs scripts/test_frontend.mjs
 include tests/frontend_*.mjs tests/check_distribution.py
 recursive-include src/briefloop/static *
 recursive-include src/briefloop/skill_assets *.md

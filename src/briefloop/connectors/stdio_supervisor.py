@@ -1,4 +1,4 @@
-"""Bounded byte forwarding for an explicitly approved stdio command (POSIX).
+"""Bounded byte forwarding for an explicitly approved stdio command.
 
 This is a transport supervisor, not a JSON-RPC implementation. The official MCP
 SDK still performs parsing, negotiation and all protocol operations.
@@ -13,9 +13,73 @@ from pathlib import Path
 import sys
 
 
+def write_marker(marker, **extra):
+    identity = {'pid': os.getpid()}
+    if os.name == 'posix':
+        identity['pgid'] = os.getpgrp()
+    temporary = marker.with_suffix('.tmp')
+    temporary.write_text(json.dumps({**identity, **extra}), encoding='utf-8')
+    temporary.replace(marker)
+
+
+def supervise_windows(args):
+    # This absolute entrypoint runs under -I, independently of the connector cwd.
+    import subprocess
+    import threading
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from briefloop.platform_support import OwnedProcess
+
+    marker = Path(args.marker)
+    process = OwnedProcess(args.command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    write_marker(marker, child_pid=process.pid)
+    closing = threading.Lock()
+
+    def close_tree():
+        with closing:
+            process.close_tree()
+
+    def send_input():
+        try:
+            while chunk := os.read(sys.stdin.fileno(), 65536):
+                view = memoryview(chunk)
+                while view:
+                    view = view[os.write(process.stdin.fileno(), view):]
+        except OSError:
+            pass
+        finally:
+            process.stdin.close()
+
+    def drain_errors():
+        remaining = 65536
+        try:
+            while chunk := os.read(process.stderr.fileno(), 4096):
+                if remaining:
+                    visible = chunk[:remaining]
+                    os.write(sys.stderr.fileno(), visible)
+                    remaining -= len(visible)
+        except OSError:
+            pass
+
+    def reap_after_exit():
+        process.wait()
+        close_tree()  # A server can exit while a descendant keeps its pipes open.
+
+    for target in (send_input, drain_errors, reap_after_exit):
+        threading.Thread(target=target, daemon=True).start()
+    try:
+        while line := process.stdout.readline(args.limit + 1):
+            if len(line) > args.limit:
+                write_marker(marker, child_pid=process.pid, error='response_too_large')
+                raise ValueError('response_too_large')
+            sys.stdout.buffer.write(line)
+            sys.stdout.buffer.flush()
+    finally:
+        close_tree()
+
+
 async def supervise(args) -> None:
     marker = Path(args.marker)
-    marker.write_text(json.dumps({'pid': os.getpid(), 'pgid': os.getpgrp()}))
+    write_marker(marker)
     process = await asyncio.create_subprocess_exec(*args.command, stdin=asyncio.subprocess.PIPE,
                                                    stdout=asyncio.subprocess.PIPE,
                                                    stderr=asyncio.subprocess.PIPE,
@@ -69,7 +133,7 @@ async def supervise(args) -> None:
                 pass
     except ValueError as exc:
         if str(exc) == 'response_too_large':
-            marker.write_text(json.dumps({'pid': os.getpid(), 'pgid': os.getpgrp(), 'error': 'response_too_large'}))
+            write_marker(marker, error='response_too_large')
         raise
     finally:
         if process.returncode is None:
@@ -93,7 +157,10 @@ if __name__ == '__main__':
     if options.command[:1] == ['--']:
         options.command = options.command[1:]
     try:
-        asyncio.run(supervise(options))
+        if os.name == 'nt':
+            supervise_windows(options)
+        else:
+            asyncio.run(supervise(options))
     except Exception:
         # Never print command/environment values or upstream error text.
         print('MCP stdio transport ended.', file=sys.stderr)

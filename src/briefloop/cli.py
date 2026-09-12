@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import sys
 import time
+import os
+import secrets
 from .store import Store
 from . import __version__
 
@@ -20,6 +22,8 @@ def _tavily_failure(operation,exc):
 
 
 def main():
+    from .platform_support import ensure_utf8
+    ensure_utf8()
     p=argparse.ArgumentParser(prog='briefloop',description='本地简报、改稿与持续学习')
     p.add_argument('--version',action='version',version=f'BriefLoop {__version__}')
     sub=p.add_subparsers(dest='command',required=True)
@@ -44,6 +48,7 @@ def main():
     figure.add_argument('--data');figure.add_argument('--script')
     join=ts.add_parser('join-scouts');join.add_argument('--files',nargs='+',required=True)
     join.add_argument('--run');join.add_argument('--round');join.add_argument('--slots',nargs='+')
+    join.add_argument('--output',help='保存合并结果为 UTF-8 JSON，避免 shell 重定向改变编码')
     document=ts.add_parser('normalize-document',help='检查富文档 JSON 并生成兼容 Markdown，用于导入与字数检查')
     document.add_argument('--file',required=True);document.add_argument('--output')
     count=ts.add_parser('count-brief',help='按统一中英混合规则统计 Markdown 正文长度')
@@ -72,23 +77,21 @@ def main():
     a=p.parse_args()
     if a.command=='serve':
         from .server import serve
-        if a.backend is not None:
-            from .models import Settings
-            store=Store(a.workspace)
-            settings=Settings.model_validate({**store.settings(),'agent_backend':a.backend})
-            store.set_meta('settings',settings.model_dump())
-        serve(a.workspace,a.port,paused=a.paused)
+        serve(a.workspace,a.port,paused=a.paused,backend=a.backend)
     elif a.command=='start':
         root=Path(a.workspace).resolve();root.mkdir(parents=True,exist_ok=True)
+        launch_id=secrets.token_hex(16)
         with (root/'server.log').open('a') as log:
-            proc=subprocess.Popen(entry_command('serve','--workspace',root,'--port',a.port)+(['--paused'] if a.paused else [])+(['--backend',a.backend] if a.backend else []),stdout=log,stderr=log,start_new_session=True)
-        (root/'server.pid').write_text(str(proc.pid))
-        for _ in range(80):
+            proc=subprocess.Popen(entry_command('serve','--workspace',root,'--port',a.port)+(['--paused'] if a.paused else [])+(['--backend',a.backend] if a.backend else []),stdout=log,stderr=log,start_new_session=True,env={**os.environ,'BRIEFLOOP_LAUNCH_ID':launch_id},**({'creationflags':subprocess.CREATE_NO_WINDOW} if sys.platform=='win32' else {}))
+        # A clean Windows workspace imports bundled templates before readiness.
+        for _ in range(450):
             if proc.poll() is not None:raise RuntimeError('服务未能启动，请查看 '+str(root/'server.log'))
             info=root/'server.json'
             if info.exists():
                 value=json.loads(info.read_text())
-                if value['pid']==proc.pid:
+                # Windows venv redirectors can launch a different Python PID.
+                if value.get('launch_id')==launch_id:
+                    (root/'server.pid').write_text(str(value['pid']))
                     print(f"BriefLoop 已启动：{value['url']}，日志：{root/'server.log'}");break
             time.sleep(.1)
         else:raise RuntimeError('服务尚未报告就绪，请查看 '+str(root/'server.log'))
@@ -101,13 +104,14 @@ def main():
         store=Store(a.workspace)
         if a.tool=='normalize-document':
             from .document_model import normalize_document,document_markdown
-            document=normalize_document(json.loads(Path(a.file).read_text()))
+            document=normalize_document(json.loads(Path(a.file).read_text(encoding='utf-8-sig')))
             markdown=document_markdown(document)
-            if a.output:Path(a.output).write_text(markdown)
+            if a.output:Path(a.output).write_text(markdown,encoding='utf-8')
             print(json.dumps({'document':document,'markdown':markdown},ensure_ascii=False))
         elif a.tool=='workspace-action':
             from .chat_tools import workspace_action
-            print(json.dumps(workspace_action(store,json.loads(Path(a.request).read_text())),ensure_ascii=False))
+            # Windows PowerShell 5.1 writes a BOM for Out-File -Encoding utf8.
+            print(json.dumps(workspace_action(store,json.loads(Path(a.request).read_text(encoding='utf-8-sig'))),ensure_ascii=False))
         elif a.tool=='tavily-search':
             from . import tavily
             try:
@@ -128,7 +132,7 @@ def main():
         elif a.tool=='prepare-report-data':
             from .report_tools import prepare_for_run
             from .store import dump
-            result=prepare_for_run(store,a.run,json.loads(Path(a.file).read_text(encoding='utf-8')))
+            result=prepare_for_run(store,a.run,json.loads(Path(a.file).read_text(encoding='utf-8-sig')))
             if a.output:
                 output=Path(a.output).expanduser().resolve();output.parent.mkdir(parents=True,exist_ok=True)
                 temporary=output.with_name(output.name+'.tmp');temporary.write_text(dump(result),encoding='utf-8');temporary.replace(output)
@@ -138,7 +142,7 @@ def main():
             print(json.dumps(extract_workbook_figures(store,a.id),ensure_ascii=False))
         elif a.tool=='check-draft':
             from .models import BriefDraft, check_artifact
-            report=check_artifact(json.loads(Path(a.file).expanduser().read_text(encoding='utf-8')),BriefDraft)
+            report=check_artifact(json.loads(Path(a.file).expanduser().read_text(encoding='utf-8-sig')),BriefDraft)
             print(json.dumps(report,ensure_ascii=False))
             if report['status']!='ok':raise SystemExit(1)
         elif a.tool=='count-brief':
@@ -156,7 +160,11 @@ def main():
             print(read_source(store,a.id,start_line=a.start_line,end_line=a.end_line,max_chars=a.max_chars))
         elif a.tool=='join-scouts':
             from .scout_tools import join_scouts
-            print(json.dumps(join_scouts(store,a.files,run_id=a.run,round_id=a.round,slots=a.slots),ensure_ascii=False))
+            result=json.dumps(join_scouts(store,a.files,run_id=a.run,round_id=a.round,slots=a.slots),ensure_ascii=False)
+            if a.output:
+                output=Path(a.output).expanduser().resolve();output.parent.mkdir(parents=True,exist_ok=True)
+                temporary=output.with_name(output.name+'.tmp');temporary.write_text(result,encoding='utf-8');temporary.replace(output)
+            print(result)
         elif a.tool=='add-url':
             from .sources import fetch_for_run
             result=fetch_for_run(store,a.run,a.url)
