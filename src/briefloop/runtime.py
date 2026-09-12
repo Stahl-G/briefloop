@@ -680,24 +680,30 @@ class Worker:
     def auto_revise(self,job,brief,folder):
         """One bounded agent revision; an existing user edit always wins publication."""
         from .store import Conflict
-        grades=self.store.rows('SELECT data FROM assessments WHERE version_id=? ORDER BY rowid DESC LIMIT 1',(brief['id'],))
-        if not grades:return {}
-        assessment=json.loads(grades[0]['data'])
-        from .models import must_fix, overall_inconsistent
+        grades=self.store.rows('SELECT id,data FROM assessments WHERE version_id=? ORDER BY rowid DESC LIMIT 1',(brief['id'],))
+        from .models import overall_inconsistent
         from .review import review_status
+        from .revision_policy import applicable_inputs,revision_reasons
         review_state=review_status(self.store,brief['id'])
-        open_findings=[f for f in review_state['findings'] if f['status'] in ('open','addressed_pending_review')]
-        if assessment.get('status')!='complete':return {}
-        must_revise=(assessment.get('overall') in ('建议修改','存在重大问题')
-                     or any(f['data']['severity']=='major' for f in open_findings)
-                     or must_fix(assessment))
-        if not must_revise:return {}
+        payload=json.loads(job['payload']);revision_id='brief_'+job['id'][4:]+'_r1'
+        existing=self.store.rows('SELECT * FROM briefs WHERE id=?',(revision_id,))
+        # An admitted _r1 must finish its existing metadata/recheck path even if
+        # creating it has since changed the original packet's candidate evidence.
+        if existing:
+            saved=folder/'revision'/'input.json'
+            inputs=json.loads(saved.read_text()) if saved.exists() else {}
+            assessment=inputs.get('assessment') or (json.loads(grades[0]['data']) if grades else {})
+            open_findings=inputs.get('review_findings',[])
+            reasons=inputs.get('revision_reasons',[])
+        else:
+            assessment,open_findings,review=applicable_inputs(self.store,review_state,grades[0] if grades else None)
+            reasons=revision_reasons(assessment,open_findings,review)
+            if not reasons:return {}
+            self.store.event(job['id'],'revision_required',{'version_id':brief['id'],'reasons':reasons})
         if overall_inconsistent(assessment):
             self.store.event(job['id'],'assessment_inconsistent',
                              {'version_id':brief['id'],'expression':assessment.get('expression'),
                               'overall':assessment.get('overall')})
-        payload=json.loads(job['payload']);revision_id='brief_'+job['id'][4:]+'_r1'
-        existing=self.store.rows('SELECT * FROM briefs WHERE id=?',(revision_id,))
         if existing:revised=existing[0]
         else:
             latest=self.store.rows('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(brief['run_id'],))[0]['id']
@@ -706,7 +712,7 @@ class Worker:
             from .evidence import inspect_bindings,EvidenceInput,ClaimInput
             from .figures import read_figure
             detail=json.loads(brief['detail'])
-            (stage/'input.json').write_text(dump({'brief':brief,'assessment':assessment,
+            (stage/'input.json').write_text(dump({'brief':brief,'assessment':assessment,'revision_reasons':reasons,
                 'requirements':json.loads(self.store.one('runs',brief['run_id'])['requirements']),'review_findings':open_findings,'conflicts':review_state['conflicts'],
                 'evidence':inspect_bindings(self.store,brief['id']),
                 'evidence_schema':EvidenceInput.model_json_schema(),'claim_schema':ClaimInput.model_json_schema(),
@@ -725,6 +731,7 @@ class Worker:
             spec=resolve(json.loads(self.store.one('runs',brief['run_id'])['requirements']),reader_contract=contract)
             tool=shlex.join(entry_command('tool','--workspace',self.store.root))
             prompt=TASK_CONTEXT+instructions(spec,role='revision')+f'''本次仅针对已有报告进行一次修订。读取 {stage/'input.json'} 的原稿、评价和本轮要求。
+优先处理 input.revision_reasons 指向的证据、必答内容和明确要求违规；总评达到要求不豁免这些问题。普通可选润色不扩展本轮工作。
 保留原稿已有的有效事实、图表及明确人工占位。核对来源，只修正有依据的错误、遗漏和写作问题；不重新开展无关研究，不改用户模板默认。
 必要来源按 source_id 从工作区 {self.store.root/'sources'} 定向读取，保留引用和 research_notes。按评分纠正问题，内部核查过程留在独立记录，不将免责声明加回正文。
 input.figures提供已登记图表、数据和脚本。图像本身有错误时，在工作区另存修正后的数据/脚本/图片并实际查看，使用 `{tool} register-figure --run {brief['run_id']} --image IMAGE_PATH --title TITLE --caption CAPTION --source SOURCE_ID --data DATA_PATH --script SCRIPT_PATH` 登记新快照；用返回的真实figure_id同步draft.figures与editor_document图片src（briefloop-figure:FIGURE_ID），旧资产保留。图中错误未改时不能仅改正文图注或写入gaps就声称已修正。
