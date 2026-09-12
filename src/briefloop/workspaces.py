@@ -130,6 +130,8 @@ def open_workspace(store, path, create=False):
     if not root.is_absolute():
         root = store.root.parent / root
     root = root.resolve()
+    if create and root.parent != store.root.parent:
+        raise ValueError('新建工作区只能创建在当前工作区的同级目录：' + str(store.root.parent))
     if not root.exists():
         if not create:
             raise ValueError('工作区目录不存在；创建新工作区时请启用创建')

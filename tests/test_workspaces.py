@@ -54,3 +54,11 @@ def test_workspace_open_checks_identity_and_launches_paused_without_touching_old
     assert created['path']==str(current.root.parent/'relative-created')
     assert (Path(created['path'])/'briefloop.db').is_file()
 
+
+def test_workspace_create_only_creates_siblings(tmp_path):
+    current=Store(tmp_path/'nearby'/'current')
+    outside=tmp_path/'nearby'/'nested'/'new'
+    with pytest.raises(ValueError,match='同级'):
+        open_workspace(current,str(outside),create=True)
+    assert not outside.exists()
+    assert current.root.parent==(tmp_path/'nearby').resolve()
