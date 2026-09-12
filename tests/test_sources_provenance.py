@@ -67,3 +67,10 @@ def test_run_url_reuse_and_bounded_source_reader(tmp_path,monkeypatch,capsys):
     assert '共 4 行' in output and '第 2–2 行' in output
     assert '2: second' in output and '末行仅显示部分字符' in output
     assert 'third' not in output
+
+
+def test_html_title_is_used_as_a_readable_source_label():
+    from briefloop.sources import html_title
+    assert html_title(b'<html><head><title>  Hello   World </title></head>', 'text/html; charset=utf-8') == 'Hello World'
+    assert html_title(b'<html><head></head></html>', 'text/html') == ''
+    assert html_title(b'<title>x</title>', 'application/pdf') == ''

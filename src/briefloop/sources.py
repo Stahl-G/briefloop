@@ -32,6 +32,18 @@ def html_text(data):
     return '\n'.join(line.strip() for line in ''.join(p.parts).splitlines() if line.strip())
 
 
+def html_title(data, content_type='', encoding=''):
+    """Best-effort page <title>, used as a human-readable source label."""
+    if 'html' not in (content_type or '').lower():return ''
+    try:text=data.decode(encoding or 'utf-8','ignore')
+    except (LookupError,UnicodeDecodeError):text=data.decode('utf-8','ignore')
+    import re
+    from html import unescape
+    match=re.search(r'<title[^>]*>(.*?)</title>',text,re.I|re.S)
+    if not match:return ''
+    return re.sub(r'\s+',' ',unescape(match.group(1))).strip()[:200]
+
+
 def extract(name, data, *, with_extractor=False):
     extractor="text decode utf-8-sig/gb18030"
     ext=Path(name).suffix.lower()
@@ -183,17 +195,19 @@ def _fetch(store, url):
     from .media import detect_media_type,safe_source_path
     from urllib.parse import urlsplit,unquote
     data,content_type,encoding=_fetch_bytes(url)
-    sid=uid('src');name=Path(unquote(urlsplit(url).path)).name or '网页'
-    suffix=_fetch_suffix(name,data,content_type)
+    sid=uid('src');raw_name=Path(unquote(urlsplit(url).path)).name or '网页'
+    title=html_title(data,content_type,encoding)
+    name=title or raw_name
+    suffix=_fetch_suffix(raw_name,data,content_type)
     original=safe_source_path(store,'sources/'+sid+'.original'+suffix,must_exist=False)
     original.write_bytes(data)
-    provenance={'url':url,'content_type':content_type,'fetched_at':now(),
+    provenance={'url':url,'title':title or None,'content_type':content_type,'fetched_at':now(),
                 'raw_sha256':hashlib.sha256(data).hexdigest(),'original_kind':'http_response',
                 'original_path':str(original.relative_to(store.root)),
-                'media_type':detect_media_type(name,data,content_type),'needs_visual':False,'pages':None}
+                'media_type':detect_media_type(raw_name,data,content_type),'needs_visual':False,'pages':None}
     text='';error=None;extractor='source extraction'
     try:
-        text,extractor,details=_source_content(store,name,data,content_type=content_type,encoding=encoding)
+        text,extractor,details=_source_content(store,raw_name,data,content_type=content_type,encoding=encoding)
         provenance.update(details)
         if not text.strip():raise ValueError('网页没有可读取正文')
     except (ValueError,LookupError,OSError,subprocess.SubprocessError) as exc:text='';error=str(exc)
