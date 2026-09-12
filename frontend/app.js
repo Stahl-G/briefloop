@@ -699,11 +699,24 @@ async function saveRoleModels(){
 }
 
 let workspaceInventory=null,workspaceSwitching=false;
+function workspaceListHTML(result,current,attr){
+ const list=result.workspaces||[];
+ return list.length?list.map((w,i)=>`<div class="workspace-row"><button type="button" class="workspace-choice" ${attr}="${i}" ${w.path===current.path?'disabled':''}><span><strong>${esc(w.name||w.path)}</strong><small>${esc(w.path)}</small></span><em>${w.path===current.path?'当前':(w.running?'运行中 · 打开 ↗':'打开 ↗')}</em></button>${w.path!==current.path&&w.running?`<button type="button" class="workspace-stop" data-stop-workspace="${esc(w.path)}" title="停止该工作区服务">停止</button>`:''}</div>`).join(''):'<p class="help">还没有其他工作区。</p>';
+}
+function wireWorkspaceList(box,result,attr){
+ if(!box)return;
+ box.querySelectorAll('['+attr+']').forEach(b=>b.onclick=()=>switchWorkspace(result.workspaces[Number(b.getAttribute(attr))].path,false));
+ box.querySelectorAll('[data-stop-workspace]').forEach(b=>b.onclick=e=>{e.stopPropagation();stopWorkspace(b.dataset.stopWorkspace)});
+}
+async function stopWorkspace(path){
+ if(!window.confirm('停止该工作区服务？未完成的任务会中断；数据、来源和任务记录都会保留。'))return;
+ try{const result=await api('workspaces/stop',{path});notice(result.message||'已处理');await refreshWorkspaces();if(typeof renderSettingsWorkspaces==='function'&&$('settings-view-workspaces')&&!$('settings-view-workspaces').hidden)await renderSettingsWorkspaces()}catch(e){notice(e.message,true)}
+}
 async function refreshWorkspaces(){
  const result=await api('workspaces');workspaceInventory=result;const current=result.current||{};
  $('workspace-name').textContent=current.name||'本地工作区';$('workspace-switch').title=current.path||'选择工作区';$('workspace-current-name').textContent=current.name||'当前工作区';$('workspace-current-path').textContent=current.path||'';
- $('workspace-list').innerHTML=(result.workspaces||[]).length?result.workspaces.map((workspace,i)=>`<button type="button" class="workspace-choice" data-workspace-index="${i}" ${workspace.path===current.path?'disabled':''}><span><strong>${esc(workspace.name||workspace.path)}</strong><small>${esc(workspace.path)}</small></span><em>${workspace.path===current.path?'当前':'打开 ↗'}</em></button>`).join(''):'<p class="help">还没有其他工作区。</p>';
- $('workspace-list').querySelectorAll('[data-workspace-index]').forEach(button=>button.onclick=()=>switchWorkspace(result.workspaces[Number(button.dataset.workspaceIndex)].path,false));
+ $('workspace-list').innerHTML=workspaceListHTML(result,current,'data-workspace-index');
+ wireWorkspaceList($('workspace-list'),result,'data-workspace-index');
 }
 async function showWorkspacePicker(){
  $('workspace-switch-status').textContent='';$('workspace-switch-status').classList.remove('error');$('workspace-dialog').showModal();
