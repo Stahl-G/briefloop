@@ -286,6 +286,7 @@ class Store:
                 old_detail=json.loads(existing['detail'])
                 old_detail.setdefault('research_notes',[])
                 old_detail.setdefault('reader_contract',None)
+                old_detail.setdefault('reconciliation_id',None)
                 if old_detail!=detail:raise Conflict('Completed draft metadata differs; save a new version')
             else:
                 c.execute("INSERT INTO briefs VALUES(?,?,?,?,?,?,?,?,?)", (vid, run_id, parent_id, "agent", draft.markdown, sha, dump(detail), dump(draft.editor_document) if draft.editor_document is not None else None, now()))

@@ -93,3 +93,60 @@ def test_claim_replacement_only_supersedes_same_block(tmp_path):
     bind_claim(store,base['id'],revised['id'],first,'12 million USD')
     current=inspect_bindings(store,base['id'])['bindings']
     assert {(x['claim_id'],x['block_id']) for x in current}=={(revised['id'],first),(fact['id'],'other-block')}
+
+
+def _span(store,source):
+    return create_span(store,{'source_id':source['id'],'locator':{'kind':'text','start_line':1,'end_line':1}})
+
+
+def test_source_statement_needs_span_and_cannot_be_adopted_implicitly(tmp_path):
+    store,source,run,brief=case(tmp_path)
+    span=_span(store,source)
+    source_claim=create_claim(store,run['id'],{'statement':'Revenue 12 million USD in H1.','kind':'fact',
+        'claim_role':'source_statement','attribution':'Company disclosure',
+        'supports':[{'span_id':span['id'],'supports_quote':'12 million USD'}]})
+    assert source_claim['data']['claim_role']=='source_statement'
+    assert source_claim['data']['attribution']=='Company disclosure'
+    with pytest.raises(ValueError,match='来源陈述必须引用'):
+        create_claim(store,run['id'],{'statement':'Something unbacked.','kind':'fact','claim_role':'source_statement'})
+    with pytest.raises(ValueError,match='不能作为论证前提'):
+        create_claim(store,run['id'],{'statement':'Growth may increase working capital.','kind':'inference',
+            'premise_claim_ids':[source_claim['id']],'reasoning':'Higher activity may require inventory.'})
+    doc=json.loads(brief['editor_document']);bid=doc['content'][0]['attrs']['blockId']
+    with pytest.raises(ValueError,match='不能直接绑定正文'):
+        bind_claim(store,brief['id'],source_claim['id'],bid,'12 million USD')
+    report=create_claim(store,run['id'],{'statement':'Revenue was 12 million USD in H1.','kind':'fact',
+        'supports':[{'span_id':span['id'],'supports_quote':'12 million USD'}]})
+    assert report['data']['claim_role']=='report_statement'
+    bind_claim(store,brief['id'],report['id'],bid,'12 million USD')
+
+
+def test_old_claim_without_role_keeps_old_binding_semantics(tmp_path):
+    store,source,run,brief=case(tmp_path)
+    span=_span(store,source)
+    data={'statement':'Revenue was 12 million USD in H1.','kind':'fact','importance':'core','entity':'Company','metric':'revenue',
+          'period':'H1','scope':'','requirement_ids':[],'supports':[{'span_id':span['id'],'supports_quote':'12 million USD','rationale':''}],
+          'premise_claim_ids':[],'reasoning':'','assumptions':[],'figure_ids':[],'figures':[],'review_status':'unreviewed'}
+    from briefloop.store import dump
+    with store.tx() as c:c.execute('INSERT INTO claims VALUES(?,?,?,?,?)',('claim_legacy_1',run['id'],None,dump(data),'2026-01-01T00:00:00Z'))
+    doc=json.loads(brief['editor_document']);bid=doc['content'][0]['attrs']['blockId']
+    bind_claim(store,brief['id'],'claim_legacy_1',bid,'12 million USD')
+    assert inspect_bindings(store,brief['id'])['bindings'][-1]['status']=='unreviewed'
+
+
+def test_scout_and_draft_fields_survive_artifact_check(tmp_path):
+    from briefloop.models import ScoutResult, BriefDraft, check_artifact
+    scout={'sources':[{'source_id':'s1','locator':'','excerpt':'','facts':[],'conflicts':[],'coverage_status':'ok','claim_ids':['claim_1']}],
+           'gaps':['missing'],'search_summary':'7 sources','retrieval_notes':[{'query':'q','outcome':'kept'}]}
+    report=check_artifact(scout,ScoutResult)
+    assert report['status']=='ok' and report['unknown_fields']==[]
+    draft=check_artifact({'title':'T','markdown':'Body','reconciliation_id':'recon_1'},BriefDraft)
+    assert draft['status']=='ok' and draft['unknown_fields']==[]
+
+
+def test_old_saved_draft_republishes_after_new_field(tmp_path):
+    store,source,run,brief=case(tmp_path)
+    old=json.loads(store.one('briefs',brief['id'])['detail']);old.pop('reconciliation_id',None)
+    with store.tx() as c:c.execute('UPDATE briefs SET detail=? WHERE id=?',(json.dumps(old),brief['id']))
+    again=store.publish(run['id'],{'title':'Report','editor_document':json.loads(brief['editor_document'])},version_id=brief['id'])
+    assert again['id']==brief['id']
