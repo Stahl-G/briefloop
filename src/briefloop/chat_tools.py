@@ -20,7 +20,7 @@ WORKSPACE_ACTIONS = (
     'revise_document','templates','template_rebuild','template_import','import_word_revision',
     'company_review_complete','company_read','company_config','company_update','company_resolve',
     'profile_read','profile_update',
-    'freeze_research_plan','research_status',
+    'freeze_research_plan','research_status','begin_research_round','finish_research_round',
     'export_word','inspect','generate','assess','comment','learn',
 )
 
@@ -131,6 +131,12 @@ def workspace_action(store, request):
     if action=='freeze_research_plan':
         from .research_plan import freeze
         return freeze(store,request['run_id'],preset=request.get('preset'),structure=request.get('structure'))
+    if action=='begin_research_round':
+        from .research_plan import begin_round
+        return begin_round(store,request['run_id'],target_gap_ids=request.get('target_gap_ids'),tasks=request.get('tasks'),job_id=request.get('job_id'))
+    if action=='finish_research_round':
+        from .research_plan import finish_round
+        return finish_round(store,request['run_id'],round_id=request.get('round_id'),gaps=request.get('gaps'),summary=request.get('summary',''),job_id=request.get('job_id'))
     if action=='export_word':
         from .export_jobs import enqueue_export
         job=enqueue_export(store,request['version_id'])

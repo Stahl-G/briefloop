@@ -72,9 +72,14 @@ def reserve_search(store,run_id,max_results):
     Admission (frozen plan + active round for quality runs) and the request
     reservation happen in the same transaction, before any network call.
     """
-    from .research_plan import admission,record_request
+    from .research_plan import admission,record_request,search_slots_left
+    from .research_plan import AdmissionError
     with store.tx() as connection:
         round_id=admission(store,connection,run_id,'search')
+        if round_id:
+            left=search_slots_left(store,connection,run_id,round_id)
+            if left is not None and left<=0:
+                raise AdmissionError('本轮查询尝试已达上限；请收轮或开始下一轮',code='round_breadth')
         key,limits,state=_load(store,connection,run_id)
         if limits is not None:
             for kind in ('search_requests','candidate_urls'):

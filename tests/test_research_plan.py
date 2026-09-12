@@ -64,3 +64,67 @@ def test_closed_round_blocks_new_requests(tmp_path):
     store.set_meta('research_plan:' + run['id'], stored)
     with pytest.raises(research_plan.AdmissionError, match='没有可用的联网轮次'):
         budget.reserve_search(store, run['id'], 5)
+
+
+def test_per_round_breadth_limits_search_attempts(tmp_path):
+    store, run = quality_run(tmp_path)
+    research_plan.freeze(store, run['id'])  # standard: breadth 6
+    for _ in range(6):
+        budget.reserve_search(store, run['id'], 1)
+    with pytest.raises(research_plan.AdmissionError, match='本轮查询尝试已达上限'):
+        budget.reserve_search(store, run['id'], 1)
+
+
+def test_round_lifecycle_creates_real_gaps_and_files(tmp_path):
+    store, run = quality_run(tmp_path)
+    source = store.add_source('Disclosure', 'Revenue 12 million USD.')
+    store.attach_source(run['id'], source['id'])
+    plan = research_plan.freeze(store, run['id'])
+    first = plan['current_round_id']
+    again = research_plan.begin_round(store, run['id'])
+    assert again == {'round_id': first, 'index': 1, 'tasks': [], 'idempotent': True}
+    closed = research_plan.finish_round(store, run['id'], summary='first pass',
+                                        gaps=[{'description': '需要核对第二季度口径', 'source_ids': [source['id']]}])
+    gap_id = closed['gaps'][0]['id']
+    assert gap_id.startswith('gap_') and closed['gaps'][0]['round_index'] == 1
+    assert (store.root / 'research' / run['id'] / 'rounds' / '1' / 'outcome.json').exists()
+    second = research_plan.begin_round(store, run['id'], target_gap_ids=[gap_id])
+    assert second['index'] == 2
+    assert research_plan.round_usage(store, run['id'], second['round_id'])['breadth'] == 6
+    research_plan.finish_round(store, run['id'])
+    with pytest.raises(research_plan.AdmissionError, match='最大联网轮次'):
+        research_plan.begin_round(store, run['id'])
+
+
+def test_begin_round_rejects_unknown_gap_and_open_round(tmp_path):
+    store, run = quality_run(tmp_path)
+    research_plan.freeze(store, run['id'])
+    with pytest.raises(research_plan.AdmissionError, match='上一轮尚未结束'):
+        research_plan.begin_round(store, run['id'], target_gap_ids=['gap_missing'])
+    research_plan.finish_round(store, run['id'], gaps=[{'description': 'g'}])
+    with pytest.raises(ValueError, match='不存在的缺口'):
+        research_plan.begin_round(store, run['id'], target_gap_ids=['gap_missing'])
+
+
+def test_join_scouts_enforces_run_scope_and_source_statements(tmp_path):
+    import json
+    from briefloop.evidence import create_span, create_claim
+    from briefloop.scout_tools import join_scouts
+    store, run = quality_run(tmp_path)
+    source = store.add_source('Disclosure', 'Revenue 12 million USD in H1.')
+    store.attach_source(run['id'], source['id'])
+    span = create_span(store, {'source_id': source['id'], 'locator': {'kind': 'text', 'start_line': 1, 'end_line': 1}})
+    statement = create_claim(store, run['id'], {'statement': 'Revenue 12 million USD in H1.', 'kind': 'fact',
+        'claim_role': 'source_statement', 'attribution': 'Company', 'supports': [{'span_id': span['id'], 'supports_quote': '12 million USD'}]})
+    path = store.root / 'scout-1.json'
+    path.write_text(json.dumps({'sources': [{'source_id': source['id'], 'coverage_status': 'ok', 'claim_ids': [statement['id']]}],
+                                'gaps': ['g1'], 'search_summary': 'found one', 'retrieval_notes': [{'query': 'q'}]}))
+    merged = join_scouts(store, [str(path)], run_id=run['id'], slots=[str(path)])
+    assert merged['search_summary'] == 'found one' and merged['retrieval_notes'] == [{'query': 'q'}]
+    with pytest.raises(ValueError, match='槽位'):
+        join_scouts(store, [str(path)], run_id=run['id'], slots=[str(store.root / 'other.json')])
+    bad = create_claim(store, run['id'], {'statement': 'Revenue 12 million USD in H1.', 'kind': 'fact',
+        'supports': [{'span_id': span['id'], 'supports_quote': '12 million USD'}]})
+    path.write_text(json.dumps({'sources': [{'source_id': source['id'], 'coverage_status': 'ok', 'claim_ids': [bad['id']]}]}))
+    with pytest.raises(ValueError, match='只能引用来源陈述'):
+        join_scouts(store, [str(path)], run_id=run['id'])
