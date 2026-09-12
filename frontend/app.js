@@ -1330,9 +1330,22 @@ function setReportTab(name){
  const panel=$('report-panel');if(!panel)return;
  if(!REPORT_TABS.includes(name))name='assistant';
  panel.querySelectorAll('[data-pane]').forEach(p=>{p.hidden=p.dataset.pane!==name});
- document.querySelectorAll('#report-panel [data-report-tab],#report-tabs [data-report-tab]').forEach(b=>b.classList.toggle('active',b.dataset.reportTab===name));
- document.querySelectorAll('#report-tabs [data-report-view]').forEach(b=>b.classList.toggle('active',b.dataset.reportView==='edit'));
+ document.querySelectorAll('#report-panel [data-report-tab]').forEach(b=>b.classList.toggle('active',b.dataset.reportTab===name));
  expandReportPanel();
+}
+function reportOutline(){const md=(current&&current.markdown)||'';const out=[];for(const line of md.split('\n')){const m=/^(#{1,3})\s+(.+?)\s*$/.exec(line);if(m)out.push({level:m[1].length,text:m[2]})}return out}
+function setReportView(view){
+ if(!['edit','outline'].includes(view))view='edit';
+ const grid=$('report-grid'),outline=$('report-outline');
+ document.querySelectorAll('#report-tabs [data-report-view]').forEach(b=>b.classList.toggle('active',b.dataset.reportView===view));
+ if(outline)outline.hidden=view!=='outline';
+ if(grid)grid.hidden=view==='outline';
+ if(view==='outline')renderOutline();
+}
+function renderOutline(){
+ const box=$('report-outline');if(!box)return;const items=reportOutline();
+ box.innerHTML=items.length?`<ul class="outline-list">${items.map((h,i)=>`<li class="outline-lv${h.level}"><button type="button" data-outline-index="${i}">${esc(h.text)}</button></li>`).join('')}</ul>`:'<p class="help">这份报告还没有小标题。</p>';
+ box.querySelectorAll('[data-outline-index]').forEach(b=>b.onclick=()=>{const text=items[Number(b.dataset.outlineIndex)].text;setReportView('edit');const editor=$('editor');const nodes=editor?[...editor.querySelectorAll('h1,h2,h3')]:[];const hit=nodes.find(n=>n.textContent.trim()===text);if(hit)hit.scrollIntoView({block:'center',behavior:'smooth'})});
 }
 function expandReportPanel(){const grid=$('report-grid');if(grid)grid.classList.remove('panel-collapsed');try{localStorage.setItem('briefloop-report-panel','open')}catch{}}
 function collapseReportPanel(){const grid=$('report-grid');if(grid)grid.classList.add('panel-collapsed');try{localStorage.setItem('briefloop-report-panel','closed')}catch{}}
@@ -1366,8 +1379,9 @@ function sendReportQuestion(text){
  page('chat');
  const form=$('chat-form');if(form)form.requestSubmit();
 }
-document.querySelectorAll('#report-panel [data-report-tab],#report-tabs [data-report-tab]').forEach(b=>b.onclick=()=>setReportTab(b.dataset.reportTab));
-document.querySelectorAll('#report-tabs [data-report-view]').forEach(b=>b.onclick=()=>{document.querySelectorAll('#report-tabs [data-report-view]').forEach(x=>x.classList.toggle('active',x===b))});
+document.querySelectorAll('#report-panel [data-report-tab]').forEach(b=>b.onclick=()=>setReportTab(b.dataset.reportTab));
+document.querySelectorAll('#report-tabs [data-report-tab]').forEach(b=>b.onclick=()=>{setReportView('edit');setReportTab(b.dataset.reportTab)});
+document.querySelectorAll('#report-tabs [data-report-view]').forEach(b=>b.onclick=()=>setReportView(b.dataset.reportView));
 if($('report-panel-toggle'))$('report-panel-toggle').onclick=toggleReportPanel;
 document.querySelectorAll('.menu-wrap').forEach(wrap=>{const toggle=wrap.querySelector('button[aria-haspopup="menu"]'),pop=wrap.querySelector('.popover');if(!toggle||!pop)return;toggle.onclick=e=>{e.stopPropagation();const open=pop.hidden;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'));pop.hidden=!open;toggle.setAttribute('aria-expanded',String(open))}});
 document.addEventListener('click',()=>{document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'))});
