@@ -712,34 +712,48 @@ async function stopWorkspace(path){
  if(!window.confirm('停止该工作区服务？未完成的任务会中断；数据、来源和任务记录都会保留。'))return;
  try{const result=await api('workspaces/stop',{path});notice(result.message||'已处理');await refreshWorkspaces();if(typeof renderSettingsWorkspaces==='function'&&$('settings-view-workspaces')&&!$('settings-view-workspaces').hidden)await renderSettingsWorkspaces()}catch(e){notice(e.message,true)}
 }
+function workspaceStatus(text,error=false){for(const id of ['workspace-switch-status','settings-workspace-status']){const el=$(id);if(!el)continue;el.textContent=text;el.classList.toggle('error',error)}}
+function workspaceChoices(box,result,attr){
+ if(!box)return;
+ const workspaces=result.workspaces||[],current=result.current||{},key=attr.replace(/-([a-z])/g,(m,c)=>c.toUpperCase());
+ box.innerHTML=(workspaces.some(w=>w.path!==current.path))?workspaces.map((w,i)=>`<button type="button" class="workspace-choice" data-${attr}="${i}" ${w.path===current.path?'disabled':''}><span><strong>${esc(w.name||w.path)}</strong><small>${esc(w.path)}</small></span><em>${w.path===current.path?'当前':'打开 ↗'}</em></button>`).join(''):'<p class="help">还没有其他工作区。</p>';
+ box.querySelectorAll(`[data-${attr}]`).forEach(button=>button.onclick=()=>switchWorkspace(workspaces[Number(button.dataset[key])].path,false));
+}
 async function refreshWorkspaces(){
  const result=await api('workspaces');workspaceInventory=result;const current=result.current||{};
  $('workspace-name').textContent=current.name||'本地工作区';$('workspace-switch').title=current.path||'选择工作区';$('workspace-current-name').textContent=current.name||'当前工作区';$('workspace-current-path').textContent=current.path||'';
  $('workspace-list').innerHTML=workspaceListHTML(result,current,'data-workspace-index');
  wireWorkspaceList($('workspace-list'),result,'data-workspace-index');
+ return result;
 }
 async function showWorkspacePicker(){
  $('workspace-switch-status').textContent='';$('workspace-switch-status').classList.remove('error');$('workspace-dialog').showModal();
  if(!workspaceInventory)$('workspace-list').innerHTML='<p class="help">正在读取工作区…</p>';
  try{await refreshWorkspaces()}catch(e){$('workspace-switch-status').textContent='无法读取工作区：'+e.message;$('workspace-switch-status').classList.add('error')}
 }
+function workspaceControls(){
+ const controls=[...$('workspace-dialog').querySelectorAll('button,input')];
+ for(const id of ['workspace-switch','settings-workspace-path','settings-workspace-open','settings-workspace-new','settings-workspace-create']){const control=$(id);if(control)controls.push(control)}
+ return controls;
+}
+function openWorkspaceFrom(inputId,create){switchWorkspace($(inputId).value,create)}
 async function switchWorkspace(path,create){
- if(workspaceSwitching)return;
- if(chat.busy||chat.uploading){$('workspace-switch-status').textContent='请等待消息发送或附件上传完成后再切换。';$('workspace-switch-status').classList.add('error');return}
- workspaceSwitching=true;$('workspace-switch-status').classList.remove('error');$('workspace-switch-status').textContent='正在打开工作区…';
- const controls=[...$('workspace-dialog').querySelectorAll('button,input')];const originalDisabled=new Map(controls.map(c=>[c,c.disabled]));controls.forEach(c=>c.disabled=true);
+ if(workspaceSwitching){workspaceStatus('正在切换工作区，请稍候…');return}
+ if(chat.busy||chat.uploading){workspaceStatus('请等待消息发送或附件上传完成后再切换。',true);return}
+ workspaceSwitching=true;workspaceStatus('正在打开工作区…');
+ const controls=workspaceControls();const originalDisabled=new Map(controls.map(c=>[c,c.disabled]));controls.forEach(c=>c.disabled=true);
  try{
   rememberDraft();clearTimeout(saveTimer);const deadline=Date.now()+15000;while(saving&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,60));
-  if(saving)throw Error('当前简报仍在保存，请稍后重试。');if(dirty){$('workspace-switch-status').textContent='正在保存当前简报…';await save();if(dirty)throw Error('当前简报尚未保存，请先完成保存。')}
+  if(saving)throw Error('当前简报仍在保存，请稍后重试。');if(dirty){workspaceStatus('正在保存当前简报…');await save();if(dirty)throw Error('当前简报尚未保存，请先完成保存。')}
   const result=await api('workspaces/open',{path:path.trim(),create});if(!result.url)throw Error('工作区服务尚未准备好，请重试。');
-  $('workspace-switch-status').textContent='已打开，正在切换…';location.assign(result.url);
- }catch(e){$('workspace-switch-status').textContent=e.message;$('workspace-switch-status').classList.add('error')}
+  workspaceStatus('已打开，正在切换…');location.assign(result.url);
+ }catch(e){workspaceStatus(e.message,true)}
  finally{workspaceSwitching=false;controls.forEach(c=>c.disabled=originalDisabled.get(c))}
 }
 $('workspace-switch').onclick=showWorkspacePicker;
 $('close-workspace').onclick=()=>$('workspace-dialog').close();
-$('workspace-open-form').onsubmit=event=>{event.preventDefault();switchWorkspace($('workspace-path').value,false)};
-$('workspace-create-form').onsubmit=event=>{event.preventDefault();switchWorkspace($('workspace-new-name').value,true)};
+$('workspace-open-form').onsubmit=event=>{event.preventDefault();openWorkspaceFrom('workspace-path',false)};
+$('workspace-create-form').onsubmit=event=>{event.preventDefault();openWorkspaceFrom('workspace-new-name',true)};
 
 function renderContext(){
  const events=[...chat.events.values()].reverse(),usageEvent=events.find(e=>e.kind==='thread/tokenUsage/updated'),providerChange=events.find(e=>e.kind==='thread/providerChanged');
@@ -1321,8 +1335,15 @@ $('source-refresh-form').onsubmit=event=>{event.preventDefault();action(async()=
 function sourceRefreshOutcome(outcome){return {not_authorized:'本轮未允许联网，未执行在线复查',local_source_requires_upload:'本地来源更新需上传独立的新文件',budget_exhausted:'本轮预算已用尽，未获取新快照',fetch_failed:'新快照读取未成功，保留原来源',unchanged_snapshot:'实际取得的快照未变化',changed_needs_review:'取得的快照有变化，待判断影响并独立复核'}[outcome]||''}
 
 function settingsView(name){
- for(const view of ['models','execution','learning'])$('settings-view-'+view).hidden=view!==name;
+ for(const view of ['models','execution','learning','workspaces'])$('settings-view-'+view).hidden=view!==name;
  document.querySelectorAll('[data-settings-view]').forEach(b=>{b.classList.toggle('active',b.dataset.settingsView===name);b.setAttribute('aria-current',b.dataset.settingsView===name?'page':'false')});
+ if(name==='workspaces')return renderSettingsWorkspaces();
+}
+async function renderSettingsWorkspaces(){
+ const box=$('settings-workspace-list');if(!box)return;
+ box.innerHTML='<p class="help">正在读取工作区…</p>';
+ try{await refreshWorkspaces()}catch(e){box.innerHTML='<p class="help">无法读取工作区：'+esc(e.message)+'</p>';return}
+ workspaceChoices(box,workspaceInventory||{workspaces:[],current:{}},'settings-workspace');
 }
 function settingsModelTab(name){
  $('settings-cli').hidden=name!=='cli';$('settings-api').hidden=name!=='api';
@@ -1332,6 +1353,8 @@ function settingsModelTab(name){
  document.querySelector('main').append($('settings-dialog'));
  $('settings-api').append($('provider-dialog'));
  document.querySelectorAll('[data-settings-view]').forEach(b=>b.onclick=()=>settingsView(b.dataset.settingsView));
+ if($('settings-workspace-open'))$('settings-workspace-open').onclick=()=>openWorkspaceFrom('settings-workspace-path',false);
+ if($('settings-workspace-create'))$('settings-workspace-create').onclick=()=>openWorkspaceFrom('settings-workspace-new',true);
  $('settings-tab-cli').onclick=()=>settingsModelTab('cli');
  $('settings-tab-api').onclick=()=>$('provider-open').click();
  $('agent-backend').closest('label').classList.add('runtime-select-legacy');
