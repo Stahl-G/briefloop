@@ -50,6 +50,8 @@ class HarnessManager:
     @staticmethod
     def _config(runtime):
         value={**DEFAULT_RUNTIME,**(runtime or {})}
+        from .fast_mode import validate_tier
+        validate_tier(value.get('service_tier'))
         if not isinstance(value['model'],str) or not value['model'].strip():raise ValueError('请选择模型')
         if value.get('effort') in (None,'','none'):value['effort']=None
         elif not isinstance(value['effort'],str) or not value['effort'].strip():raise ValueError('无效推理档位')
@@ -58,6 +60,10 @@ class HarnessManager:
         value['model_provider']=provider.strip() or None if isinstance(provider,str) else None
         if value['permission'] not in ('read-only','workspace-write'):raise ValueError('权限必须为仅阅读或工作区读写')
         return value
+    def fast_capability(self, runtime):
+        from .fast_mode import capability
+        return capability(self._client(), self._config(runtime), self.store.root)
+
     def _client(self):
         with self._lock:
             if self.client is not None:
@@ -85,7 +91,7 @@ class HarnessManager:
         if mode=='steer' and session.get('turn_id'):
             active=[m for m in self.snapshot(session_id)['messages'] if m.get('turn_id')==session['turn_id'] and m['role']=='user']
             actual=self._config(active[0]['runtime'] if active else session['runtime'])
-            if any(config.get(k)!=actual.get(k) for k in ('permission','model','model_provider','effort')):raise ValueError('运行中追加指令不能改变模型、服务或权限；请选择排队，在下一轮应用设置')
+            if any(config.get(k)!=actual.get(k) for k in ('permission','model','model_provider','effort','service_tier')):raise ValueError('运行中追加指令不能改变模型、服务或权限；请选择排队，在下一轮应用设置')
             if active and bool(active[0].get('allow_web'))!=bool(allow_web):
                 raise ValueError('运行中追加指令不能改变联网设置；请选择排队，在下一回合应用')
         mid=message_id or uid('msg')
@@ -161,6 +167,15 @@ class HarnessManager:
             input_blocks=self._input(message)
             client=self._client();thread_id=session['thread_id']
             config=self._config(message.get('runtime') or session['runtime'])
+            from .fast_mode import capability, inherited_tier
+            tier = config.get('service_tier')
+            if tier == 'fast':
+                support = capability(client, config, session['cwd'])
+                if not support['enabled']:
+                    raise ValueError(support['reason'])
+                tier = 'priority'
+            elif 'service_tier' in config and tier is None:
+                tier = inherited_tier(client, session['cwd'])
             from .chat_tools import chat_instructions
             internal=bool(self.store.rows("SELECT seq FROM chat_events WHERE session_id=? AND kind='session/internal' LIMIT 1",(sid,)))
             instructions=chat_instructions(self.store,config,internal=internal,allow_web=bool(message["allow_web"]))
@@ -175,6 +190,7 @@ class HarnessManager:
                     self.chat.event(sid,'thread/providerChanged',{'previousThreadId':old_thread_id,'model_provider':config.get('model_provider'),'message':'已切换模型服务，新一轮使用新的 Codex 对话；旧消息保留查看，不自动发送到新服务。'})
             native_web=bool(message['allow_web']) and not (internal and config.get('search_provider')=='tavily')
             thread_params={'cwd':session['cwd'],'model':config['model'],'approvalPolicy':'never','sandbox':config['permission'],'config':{'web_search':'live' if native_web else 'disabled'},'developerInstructions':instructions}
+            if tier is not None:thread_params['serviceTier']=tier
             if config['model']=='default':thread_params.pop('model',None)
             if config.get('model_provider'):thread_params['modelProvider']=config['model_provider']
             if thread_id:
@@ -192,6 +208,7 @@ class HarnessManager:
                 if config['model']=='default':
                     if actual_model:turn_params['model']=actual_model
                     else:turn_params.pop('model',None)
+                if tier is not None:turn_params['serviceTier']=tier
                 if config.get('effort'):turn_params['effort']=config['effort']
                 result=client.request('turn/start',turn_params)
                 turn_id=result['turn']['id']
@@ -216,7 +233,7 @@ class HarnessManager:
                 active=[m for m in self.snapshot(sid)['messages'] if m.get('turn_id')==session['turn_id'] and m['role']=='user']
                 if active:
                     actual=self._config(active[0]['runtime']);requested=self._config(message['runtime'])
-                    if any(actual.get(k)!=requested.get(k) for k in ('permission','model','model_provider','effort')) or bool(active[0].get('allow_web'))!=bool(message.get('allow_web')):
+                    if any(actual.get(k)!=requested.get(k) for k in ('permission','model','model_provider','effort','service_tier')) or bool(active[0].get('allow_web'))!=bool(message.get('allow_web')):
                         self.chat.patch_message(mid,status='queued',mode='queue')
                         self.chat.event(sid,'message/queued',{'messageId':mid,'mode':'queue','reason':'设置与当前回合不同，改为下一回合执行'})
                         return

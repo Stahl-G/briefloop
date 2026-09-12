@@ -126,6 +126,7 @@ def normalize_role_models(roles):
 
 
 class RoleModel(Model):
+    service_tier: Literal['fast', 'default'] | None = None
     model: str = Field(min_length=1, max_length=100)
     model_provider: str | None = Field(default=None, max_length=100)
     reasoning_effort: str | None = Field(default=None, min_length=1, max_length=100)
@@ -157,10 +158,12 @@ def runtime_fields(value, backend='codex'):
         return selected
     # Provider names/model IDs are opaque Codex configuration, not a model catalog.
     selected = RoleModel.model_validate(
-        {key: value[key] for key in ('model', 'reasoning_effort', 'model_provider') if key in value}).model_dump()
+        {key: value[key] for key in ('model', 'reasoning_effort', 'model_provider', 'service_tier') if key in value}).model_dump()
     if selected['model_provider'] is None:
         selected.pop('model_provider')
     selected.pop('model_variant', None)
+    if selected.get('service_tier') is None:
+        selected.pop('service_tier', None)
     return selected
 
 
