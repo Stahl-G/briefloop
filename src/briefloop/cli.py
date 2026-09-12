@@ -104,9 +104,9 @@ def main():
         store=Store(a.workspace)
         if a.tool=='normalize-document':
             from .document_model import normalize_document,document_markdown
-            document=normalize_document(json.loads(Path(a.file).read_text()))
+            document=normalize_document(json.loads(Path(a.file).read_text(encoding='utf-8-sig')))
             markdown=document_markdown(document)
-            if a.output:Path(a.output).write_text(markdown)
+            if a.output:Path(a.output).write_text(markdown,encoding='utf-8')
             print(json.dumps({'document':document,'markdown':markdown},ensure_ascii=False))
         elif a.tool=='workspace-action':
             from .chat_tools import workspace_action
@@ -132,7 +132,7 @@ def main():
         elif a.tool=='prepare-report-data':
             from .report_tools import prepare_for_run
             from .store import dump
-            result=prepare_for_run(store,a.run,json.loads(Path(a.file).read_text(encoding='utf-8')))
+            result=prepare_for_run(store,a.run,json.loads(Path(a.file).read_text(encoding='utf-8-sig')))
             if a.output:
                 output=Path(a.output).expanduser().resolve();output.parent.mkdir(parents=True,exist_ok=True)
                 temporary=output.with_name(output.name+'.tmp');temporary.write_text(dump(result),encoding='utf-8');temporary.replace(output)
@@ -142,7 +142,7 @@ def main():
             print(json.dumps(extract_workbook_figures(store,a.id),ensure_ascii=False))
         elif a.tool=='check-draft':
             from .models import BriefDraft, check_artifact
-            report=check_artifact(json.loads(Path(a.file).expanduser().read_text(encoding='utf-8')),BriefDraft)
+            report=check_artifact(json.loads(Path(a.file).expanduser().read_text(encoding='utf-8-sig')),BriefDraft)
             print(json.dumps(report,ensure_ascii=False))
             if report['status']!='ok':raise SystemExit(1)
         elif a.tool=='count-brief':

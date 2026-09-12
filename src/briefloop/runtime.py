@@ -585,7 +585,7 @@ class Worker:
             from .document_model import markdown_document,document_hash
             p=folder/'draft.json'
             if not p.exists():return
-            try:data=json.loads(p.read_text())
+            try:data=json.loads(p.read_text(encoding='utf-8-sig'))
             except (json.JSONDecodeError,UnicodeDecodeError):return
             from .models import prune_unknown,describe_invalid
             data,dropped=prune_unknown(data,BriefDraft)
@@ -598,7 +598,7 @@ class Worker:
                 from .deliverable_spec import save_reader_contract
                 contract=self.store.meta('reader_contract:'+run['id'])
                 if contract is None:
-                    plan=json.loads((folder/'plan.json').read_text())
+                    plan=json.loads((folder/'plan.json').read_text(encoding='utf-8-sig'))
                     contract=save_reader_contract(self.store,run['id'],plan.get('reader_contract'))
                 data['reader_contract']=contract
             from pydantic import ValidationError
@@ -606,7 +606,7 @@ class Worker:
             except ValidationError as exc:
                 # The agent's work is the expensive part: keep the rejected draft and
                 # say which field was wrong, rather than losing it to a raw dump.
-                (folder/'draft-invalid.json').write_text(dump(data))
+                (folder/'draft-invalid.json').write_text(dump(data),encoding='utf-8')
                 raise ValueError('draft.json 不符合稿件契约（'+describe_invalid(exc)
                                  +'）；原稿保留在 draft-invalid.json') from None
             sha=document_hash(normalized.editor_document)
@@ -741,7 +741,7 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
 '''
             self.store.event(job['id'],'revision_progress',{'stage':'writing','base_version':brief['id']})
             self.runtime.execute(job,prompt,stage,resume_on_complete=(stage/'admission-error.json').exists())
-            value=json.loads((stage/'draft.json').read_text())
+            value=json.loads((stage/'draft.json').read_text(encoding='utf-8-sig'))
             if contract is not None:value['reader_contract']=contract
             if not value.get('editor_document') and value.get('markdown'):
                 from .document_model import markdown_document

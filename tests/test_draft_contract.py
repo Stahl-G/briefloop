@@ -24,7 +24,7 @@ class FakeRuntime:
         self.draft = draft
 
     def execute(self, job, prompt, folder, on_tick=lambda: None, **kwargs):
-        (folder / 'draft.json').write_text(json.dumps(self.draft, ensure_ascii=False))
+        (folder / 'draft.json').write_text(json.dumps(self.draft, ensure_ascii=False),encoding='utf-8')
         on_tick()
         return {}
 
@@ -55,7 +55,7 @@ def test_a_rejected_draft_names_the_field_and_keeps_the_agent_file(tmp_path):
     with pytest.raises(ValueError, match='report_data.records.0.current'):
         worker.generate(job, score=False)
     saved = store.root / 'jobs' / job['id'] / 'draft-invalid.json'
-    assert json.loads(saved.read_text())['title'] == '周报'
+    assert json.loads(saved.read_text(encoding='utf-8'))['title'] == '周报'
     assert not store.rows('SELECT id FROM briefs WHERE run_id=?', (run['id'],))
 
 
@@ -73,9 +73,9 @@ def test_an_unfinished_draft_file_cannot_cancel_the_live_turn(tmp_path, monkeypa
         # What the real callback does: the agent has written a skeleton it still
         # intends to fill in, so the contract does not hold yet.
         ticks.append(len(ticks))
-        BriefDraft.model_validate(json.loads((folder / 'draft.json').read_text()))
+        BriefDraft.model_validate(json.loads((folder / 'draft.json').read_text(encoding='utf-8')))
 
-    (folder / 'draft.json').write_text('{"title":"周报","markdown":""}')
+    (folder / 'draft.json').write_text('{"title":"周报","markdown":""}',encoding='utf-8')
 
     def tick():
         if runtime.session_id and len(ticks) >= 2:
@@ -92,14 +92,14 @@ def test_an_unfinished_draft_file_cannot_cancel_the_live_turn(tmp_path, monkeypa
 
 def test_check_draft_reports_drift_in_band_before_the_host_reads_it(tmp_path):
     draft = tmp_path / 'draft.json'
-    draft.write_text(json.dumps({'title': '周报', 'markdown': '正文。', 'summary': '自创键'}, ensure_ascii=False))
-    done = subprocess.run([sys.executable, '-m', 'briefloop', 'tool', '--workspace', str(tmp_path / 'workspace'),
-                           'check-draft', '--file', str(draft)], capture_output=True, text=True, check=True)
+    draft.write_text(json.dumps({'title': '周报', 'markdown': '正文。', 'summary': '自创键'}, ensure_ascii=False),encoding='utf-8')
+    done = subprocess.run([sys.executable, '-X', 'utf8', '-m', 'briefloop', 'tool', '--workspace', str(tmp_path / 'workspace'),
+                           'check-draft', '--file', str(draft)], capture_output=True, encoding='utf-8', check=True)
     report = json.loads(done.stdout)
     assert report['status'] == 'ok' and report['unknown_fields'] == ['summary']
-    draft.write_text(json.dumps({'markdown': '正文。'}, ensure_ascii=False))
-    failed = subprocess.run([sys.executable, '-m', 'briefloop', 'tool', '--workspace', str(tmp_path / 'workspace'),
-                             'check-draft', '--file', str(draft)], capture_output=True, text=True)
+    draft.write_text(json.dumps({'markdown': '正文。'}, ensure_ascii=False),encoding='utf-8')
+    failed = subprocess.run([sys.executable, '-X', 'utf8', '-m', 'briefloop', 'tool', '--workspace', str(tmp_path / 'workspace'),
+                             'check-draft', '--file', str(draft)], capture_output=True, encoding='utf-8')
     assert failed.returncode == 1 and json.loads(failed.stdout)['errors'][0]['field'] == 'title'
 
 
