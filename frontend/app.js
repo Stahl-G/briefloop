@@ -618,7 +618,23 @@ function renderMessages(){
  }
  for(const node of nodes.values())node.remove();if(nearEnd)scroll.scrollTop=scroll.scrollHeight;
  }
- $('chat-empty').hidden=chat.messages.length>0;
+}
+function homeGreeting(){
+ const name=state?.profile?.name,h=new Date().getHours();
+ const part=h<6?'凌晨好':h<12?'早上好':h<14?'中午好':h<18?'下午好':'晚上好';
+ return name?`${part}，${name}`:part;
+}
+function homeRecentReports(){
+ const seen=new Set(),rows=[];
+ for(const b of (state?.briefs||[])){if(seen.has(b.run_id))continue;seen.add(b.run_id);rows.push(b);if(rows.length>=3)break}
+ return rows;
+}
+function renderHome(){
+ const box=$('home-recent-list');if(!box||!state)return;
+ if($('home-greeting'))$('home-greeting').textContent=homeGreeting();
+ const rows=homeRecentReports();
+ box.innerHTML=rows.length?rows.map(b=>{const st=reportStatus(b),desc=reportDescription(b);const when=new Date(b.updated||b.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});return `<button type="button" class="home-report" data-home-report="${esc(b.id)}"><span class="home-report-icon" aria-hidden="true">▤</span><span class="home-report-body"><strong>${esc(parse(b.detail).title||'简报')}</strong>${desc?`<small>${esc(desc)}</small>`:''}</span><span class="home-report-meta"><time>${esc(when)}</time><span class="chip ${st.cls}">${esc(st.label)}</span></span></button>`}).join(''):'<p class="help">还没有报告。生成后会显示在这里。</p>';
+ box.querySelectorAll('[data-home-report]').forEach(el=>el.onclick=()=>{const b=state.briefs.find(x=>x.id===el.dataset.homeReport);if(b&&openBrief(b,{follow:false}))page('report')});
 }
 let autoOpenedActivityTurn=null;
 function autoOpenActivity(){
@@ -628,7 +644,11 @@ function autoOpenActivity(){
  autoOpenedActivityTurn=turn;if(!activity.open)activity.open=true;
 }
 function renderChat(){
- $('chat').classList.toggle('is-empty',chat.messages.length===0&&!chatActive());
+ const empty=chat.messages.length===0&&!chatActive();
+ $('chat').classList.toggle('is-empty',empty);
+ if($('chat-home-top'))$('chat-home-top').hidden=!empty;
+ if($('chat-home-bottom'))$('chat-home-bottom').hidden=!empty;
+ if(empty)renderHome();
  $('chat-title').textContent=chat.session?.title||'新对话';const runtime=chat.session?.runtime;const pending=chat.messages.filter(m=>m.role==='user'&&m.status==='queued').length;
  $('chat-status').textContent=`${chatStates[chat.session?.status]||'准备就绪'}${runtime?' · '+modelLabel({model:runtime.model,reasoning_effort:runtime.effort,model_provider:runtime.model_provider}):''}${pending?' · '+pending+' 条消息排队中':''}`;
  renderMessages();renderActivities();autoOpenActivity();renderRequests();renderContext();renderSessions();renderSessionLifecycle();updateComposer();
@@ -838,7 +858,6 @@ $('settings-open').onclick=showSettings;$('settings-close').onclick=()=>page('ch
 
 // One width axis for reading and composing; existing controls remain mounted.
 {
- const starters=document.querySelector('.starter-prompts');starters.classList.add('composer-starters');$('chat-form').after(starters);
  const options=document.querySelector('.composer-options'),trailing=document.querySelector('.send-controls');
  trailing.prepend($('chat-model'),$('chat-effort'));
  const help=$('composer-help');$('chat-form').after(help);
