@@ -11,7 +11,7 @@ const el=id=>{if(!elements.has(id))elements.set(id,{value:'',href:'',textContent
 let pending=[],calls=[],downloads=[],timers=[];
 const c=vm.createContext({console,Promise,setTimeout:fn=>{timers.push(fn);return timers.length},clearTimeout:()=>{},$:el,
  dirty:true,saving:false,current:{id:'old',run_id:'r'},markdownMode:true,saveTimer:null,
- updateDownloads:()=>{},refresh:async()=>{},scheduleLearning:()=>{},notice:()=>{},
+ updateDownloads:()=>{},refresh:async()=>{},scheduleLearning:()=>{},notice:()=>{},setReportView:()=>{},
  window:{location:{assign:url=>downloads.push(url)}},
  api:(route,payload)=>{calls.push({route,payload});if(route==='save')return new Promise((resolve,reject)=>pending.push({resolve,reject}));return Promise.resolve({})},
  action:async fn=>fn(),parse:s=>JSON.parse(s||'{}'),pendingRun:null,tryOpenPending:()=>{}});
