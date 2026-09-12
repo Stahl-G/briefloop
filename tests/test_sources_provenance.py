@@ -74,6 +74,8 @@ def test_html_title_is_used_as_a_readable_source_label():
     assert html_title(b'<html><head><title>  Hello   World </title></head>', 'text/html; charset=utf-8') == 'Hello World'
     assert html_title(b'<html><head></head></html>', 'text/html') == ''
     assert html_title(b'<title>x</title>', 'application/pdf') == ''
+    assert html_title(b'<title>Just a moment...</title>', 'text/html') == ''
+    assert html_title(('<title>'+'长'*300+'</title>').encode(), 'text/html') == '长'*200
 
 
 def test_snapshot_run_includes_attached_sources_in_count(tmp_path):

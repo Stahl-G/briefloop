@@ -1,10 +1,12 @@
 """Small source readers. Preserve originals; extraction failures stay visible."""
 from html.parser import HTMLParser
+from html import unescape
 from . import __version__
 from .host_bins import find as find_host_bin
 from io import BytesIO
 from pathlib import Path
 import hashlib
+import re
 import subprocess
 import os
 import tempfile
@@ -12,6 +14,10 @@ import urllib.request
 import urllib.error
 import zipfile
 import xml.etree.ElementTree as ET
+
+TITLE_MAX_CHARS=200
+# Interstitial/anti-bot/error titles are not source labels.
+_GENERIC_TITLE_RE=re.compile(r'^(?:just a moment|attention required|access denied|access to this page has been denied|are you a robot|verify you are human|checking your browser|enable javascript|403 forbidden|404 not found|429 too many requests|too many requests|service unavailable|bad gateway)\b',re.I)
 
 
 class TextHTML(HTMLParser):
@@ -33,15 +39,19 @@ def html_text(data):
 
 
 def html_title(data, content_type='', encoding=''):
-    """Best-effort page <title>, used as a human-readable source label."""
+    """Best-effort page <title>, used as a human-readable source label.
+
+    Anti-bot and error page titles are ignored so an interstitial cannot
+    rename a source; the result is length-capped for the source library.
+    """
     if 'html' not in (content_type or '').lower():return ''
     try:text=data.decode(encoding or 'utf-8','ignore')
     except (LookupError,UnicodeDecodeError):text=data.decode('utf-8','ignore')
-    import re
-    from html import unescape
     match=re.search(r'<title[^>]*>(.*?)</title>',text,re.I|re.S)
     if not match:return ''
-    return re.sub(r'\s+',' ',unescape(match.group(1))).strip()[:200]
+    title=re.sub(r'\s+',' ',unescape(match.group(1))).strip()
+    if not title or _GENERIC_TITLE_RE.match(title):return ''
+    return title[:TITLE_MAX_CHARS]
 
 
 def extract(name, data, *, with_extractor=False):
