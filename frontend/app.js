@@ -317,7 +317,7 @@ async function renderReportIssues(){
  const ticket=(renderReportIssues.ticket||0)+1;renderReportIssues.ticket=ticket;
  const box=$('report-issues');if(!box||!current)return;
  const vid=current.id;box.innerHTML='<p class="help">正在读取问题…</p>';
- let data;try{data=await api('review-status?version='+encodeURIComponent(vid))}catch(e){if(box.isConnected)box.innerHTML='<p class="help">问题清单暂不可用，请稍后重试。</p>';return}
+ let data;try{data=await api('review-status?version='+encodeURIComponent(vid))}catch(e){if(box.isConnected&&current?.id===vid&&ticket===renderReportIssues.ticket)box.innerHTML='<p class="help">问题清单暂不可用，请稍后重试。</p>';return}
  if(!current||current.id!==vid||ticket!==renderReportIssues.ticket)return;
  const kinds={contradiction:'实质矛盾',insufficient_evidence:'证据不足',missing_requirement:'要求缺口',missing_binding:'未绑定正文',execution_gap:'执行缺口',expression:'表达问题'};
  const cards=[];

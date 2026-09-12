@@ -183,3 +183,23 @@ def test_chat_generation_freezes_small_budget_and_resumes_into_bound_review(tmp_
     target = _snapshot(store, generated['version_id'])
     assert target['reconciliation']['open_questions'][0]['question'] == 'No independent context supplied'
     assert review_status(store, generated['version_id'])['reconciliation']['id'] == target['reconciliation']['id']
+
+
+def test_join_scouts_cli_checks_run_and_round_scope(tmp_path, monkeypatch, capsys):
+    import json
+    import sys
+    from briefloop.cli import main
+    store, run = quality_run(tmp_path)
+    foreign = store.add_source('Other report', 'Other evidence')
+    path = store.root/'scout.json'
+    path.write_text(json.dumps({'sources': [{'source_id': foreign['id'], 'coverage_status': 'ok'}]}))
+    argv = ['briefloop', 'tool', '--workspace', str(store.root), 'join-scouts', '--run', run['id'], '--files', str(path)]
+    monkeypatch.setattr(sys, 'argv', argv)
+    with pytest.raises(ValueError, match='未登记到本轮'):
+        main()
+    store.attach_source(run['id'], foreign['id'])
+    main()
+    assert json.loads(capsys.readouterr().out)['sources'][0]['source_id'] == foreign['id']
+    monkeypatch.setattr(sys, 'argv', [*argv, '--round', 'round_missing'])
+    with pytest.raises(ValueError, match='轮次不属于本任务'):
+        main()

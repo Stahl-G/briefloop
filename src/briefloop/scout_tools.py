@@ -10,6 +10,14 @@ def join_scouts(store, paths, *, run_id=None, round_id=None, slots=None):
     With a run/round/slot contract it also checks that each result belongs to an
     allocated slot and that every referenced source/claim is allowed for the run.
     """
+    if round_id:
+        from .research_plan import frozen
+        plan = frozen(store, run_id) if run_id else None
+        info = (plan or {}).get('rounds', {}).get(round_id)
+        if not info:
+            raise ValueError('Scout 轮次不属于本任务')
+        if slots is None and info.get('tasks'):
+            slots = [str(Path(task['directory']) / 'result.json') for task in info['tasks']]
     allowed_slots={str(Path(slot).resolve()) for slot in slots} if slots is not None else None
     results=[];seen=set();gaps=[];summaries=[];notes=[]
     for value in paths:

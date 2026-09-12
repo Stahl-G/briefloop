@@ -251,7 +251,7 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
    {registration} 返回的新来源不在最初 input.json.sources 中也是正常的：在 Scout result.json 中使用返回的真实 source_id、准确 locator/excerpt 和缺口，后续交接保留所有实际取得的 acquired source IDs。不可编造 ID 或把新来源漏掉。
    已上传材料和公开网页都是要核对的原文，不自动等于真实结论。保留数值、单位、主体、时间口径及计划/预计/已实现等状态；区分发布日期与事件/统计期间，检查表头和脚注。忠实引用原文，发现异常或冲突时标出依据与未确定之处，不静默改写原材料，不混用不可比口径。
    未开启联网时只读上传来源。失败或期外来源的状态已在来源记录中保留，不在子任务回复中倾倒整份清单；gaps 简短说明重要影响及相关来源 ID，不删证据，不把无法读取写成没有变化。需要原文时先用 `{tool} read-source --id SOURCE_ID --start-line 1 --end-line 80 --max-chars 6000` 读取相关部分，再按实际行号定向扩展，不把截断当全文，不反复 dump 全文。
-3. 父会话主要接收 Scout 的短摘要、状态和结果路径；用 `{tool} join-scouts --files SCOUT_RESULT_PATHS > {shlex.quote(str(folder/'joined-scouts.json'))}` 做结构与来源 ID 校验和合并。文件列表必须是实际已派发槽位的 result_file 绝对路径；确认工具成功与文件存在即可，不再次逐项机械校验全部 JSON/schema/引用。缺少结果表示该槽未完成，不能复制另一槽或根目录文件冒充补交。只有工具报错才定向查看相关槽；证据判断由后续 Analyst/Evaluator 按需核对原文。
+3. 父会话主要接收 Scout 的短摘要、状态和结果路径；用 `{tool} join-scouts --run {run['id']} --files SCOUT_RESULT_PATHS > {shlex.quote(str(folder/'joined-scouts.json'))}` 做结构与来源 ID 校验和合并。文件列表必须是实际已派发槽位的 result_file 绝对路径；确认工具成功与文件存在即可，不再次逐项机械校验全部 JSON/schema/引用。缺少结果表示该槽未完成，不能复制另一槽或根目录文件冒充补交。只有工具报错才定向查看相关槽；证据判断由后续 Analyst/Evaluator 按需核对原文。
    随后调用独立 Analyst，要求其读取 {folder/'analyst-writing.md'} 并使用plan中同一份已通过校验的reader_contract；研究方法约束用于执行，不抄到正文。任务输入包括本轮 plan、joined-scouts.json、全部实际取得来源的 ID 与原文读取入口、只与 analyst 相关的当前技能。用 `{tool} read-source --id SOURCE_ID` 可读取包括 acquired sources 在内的登记正文；不要只给它最初可能为空的 input.json.sources。
     Analyst 引用本轮实际来源 ID；新来源已由 {registration} 绑定本轮，应用随后独立评分时也会把这些 acquired sources 交给 Evaluator。若最终仍未获得可用原文，将具体缺口与无法确认范围写入research_notes/gaps，不用常识或搜索摘要编造市场事实。
     动笔前做一次“写作前证据对照”，不新增角色，使用 `{tool} workspace-action --request REQUEST_JSON`：

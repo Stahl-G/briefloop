@@ -23,6 +23,9 @@ def test_review_snapshot_separates_source_statements_and_reconciliation(tmp_path
     assert [item['claim_id'] for item in snapshot['source_statements']] == [statement['id']]
     assert snapshot['reconciliation']['id'] == record['id']
     assert snapshot['reconciliation']['stale'] is False
+    legacy = _snapshot(store, brief['id'], snapshot_version=5)
+    assert statement['id'] in [item['claim_id'] for item in legacy['candidate_claims']]
+    assert 'reconciliation' not in legacy
 
 
 def test_review_snapshot_without_reconciliation_stays_none(tmp_path):

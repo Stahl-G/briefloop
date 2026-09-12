@@ -37,7 +37,8 @@ def _path(store, run_id, reconciliation_id):
 
 def _requirements_fingerprint(requirements):
     keys = ('title', 'objective', 'audience', 'language', 'period', 'writing_mode',
-            'report_profile', 'target_words', 'max_words', 'key_questions', 'manual_sections', 'allow_web')
+            'report_profile', 'target_words', 'max_words', 'key_questions', 'manual_sections', 'allow_web',
+            'sections', 'raw_input', 'reference_source_ids')
     return _digest({key: requirements.get(key) for key in keys})
 
 
@@ -55,7 +56,9 @@ def candidates(store, run_id):
         if source_id in references:
             continue
         source = store.one('sources', source_id)
-        sources.append({'source_id': source_id, 'name': source['name'], 'status': source['status'], 'hash': source['hash']})
+        timing = store.rows('SELECT id,data FROM source_snapshot_metadata WHERE source_id=? ORDER BY rowid DESC LIMIT 1', (source_id,))
+        sources.append({'source_id': source_id, 'name': source['name'], 'status': source['status'], 'hash': source['hash'],
+                        'timing': {'id': timing[0]['id'], 'data': json.loads(timing[0]['data'])} if timing else None})
     statements = []
     for row in store.rows('SELECT * FROM claims WHERE run_id=? ORDER BY rowid', (run_id,)):
         data = json.loads(row['data'])
@@ -73,7 +76,7 @@ def candidates(store, run_id):
 
 def _input_fingerprint(index):
     return _digest({'requirements': index['requirements_fingerprint'],
-                    'sources': [(source['source_id'], source['hash']) for source in index['sources']],
+                    'sources': [(source['source_id'], source['hash'], source['status'], source.get('timing')) for source in index['sources']],
                     'statements': [(statement['claim_id'], statement['statement'], statement['supports']) for statement in index['statements']]})
 
 

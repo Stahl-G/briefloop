@@ -264,7 +264,7 @@ def _snapshot(store,version_id,snapshot_version=6):
     unused=store.rows('SELECT c.id FROM claims c WHERE c.run_id=? AND NOT EXISTS (SELECT 1 FROM claim_bindings b WHERE b.claim_id=c.id) AND NOT EXISTS (SELECT 1 FROM claims n WHERE n.previous_id=c.id)',(run['id'],))
     # Source statements are comparison input, not candidate report claims.
     candidates=[closure for closure in (claim_closure(store,c['id']) for c in unused)
-                if closure['claim']['data'].get('claim_role','report_statement')=='report_statement']
+                if snapshot_version < 6 or closure['claim']['data'].get('claim_role','report_statement')=='report_statement']
     source_statements=[]
     for row in store.rows('SELECT * FROM claims WHERE run_id=? ORDER BY rowid',(run['id'],)):
         data=json.loads(row['data'])

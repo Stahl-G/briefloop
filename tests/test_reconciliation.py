@@ -106,3 +106,12 @@ def test_reconciliation_rejects_cross_run_conflicts_and_modified_snapshots(tmp_p
         reconciliation.read(store, run['id'], record['id'])
     with pytest.raises(ValueError, match='对照记录不存在'):
         store.publish(run['id'], {'title': 'T', 'markdown': 'Body', 'reconciliation_id': record['id']})
+
+
+def test_source_time_annotation_invalidates_prewrite_comparison(tmp_path):
+    from briefloop.source_updates import register_snapshot
+    store, run, first, span_a, claim_a, claim_b = run_with_statements(tmp_path)
+    record = reconciliation.save(store, run['id'], {'status': 'complete',
+        'examined_claim_ids': [claim_a['id'], claim_b['id']], 'unexamined_claim_ids': []})
+    register_snapshot(store, first['id'], timing={'published_at': '2026-09-12', 'basis': 'Publication date on supplied original'})
+    assert reconciliation.read(store, run['id'], record['id'])['stale'] is True
