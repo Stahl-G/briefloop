@@ -634,6 +634,7 @@ var catalog_default = [
     id: "hermes",
     name: "Hermes",
     bins: [
+      "hermes-acp",
       "hermes"
     ]
   },
@@ -1127,6 +1128,9 @@ function exec(bin, args, options) {
   return rawExec(env.BRIEFLOOP_PYTHON, ["-X", "utf8", env.BRIEFLOOP_PROCESS_HELPER, bin, ...args], { ...options, windowsHide: true });
 }
 var acpArgs = { kimi: ["acp"], hermes: ["acp"], reasonix: ["acp"], kilo: ["acp"], kiro: ["acp"], vibe: [] };
+function acpArguments(id, bin) {
+  return id === "hermes" && /^hermes-acp(?:\.(?:exe|cmd|bat))?$/i.test(path2.basename(bin)) ? [] : [...acpArgs[id]];
+}
 var active = /* @__PURE__ */ new Map();
 var defaults = [{ id: "default", label: "\u5BBF\u4E3B\u9ED8\u8BA4\u6A21\u578B" }];
 function claudeConfiguredModel() {
@@ -1299,7 +1303,10 @@ async function listModels(p) {
   if (p.runtime_id === "reasonix") {
     const r = await exec(bin, ["doctor", "--json"], { env, cwd: p.cwd || process.cwd(), timeout: 1e4, maxBuffer: 1024 * 1024 });
     const d2 = JSON.parse(r.stdout);
-    return { models: [...defaults, ...(d2.providers || []).filter((x) => typeof x.name === "string").map((x) => ({ id: x.name, label: x.name + (x.model ? " \xB7 " + x.model : ""), provider: x.kind || "configured", model_id: x.model }))], source: "native_config", note: "Models declared by the host; account availability is checked by a model call." };
+    return { models: [...defaults, ...(d2.providers || []).filter((x) => typeof x.name === "string").flatMap((x) => {
+      const models = Array.isArray(x.models) ? [...new Set(x.models.filter((m) => typeof m === "string" && m.trim()))] : [];
+      return models.length ? models.map((model) => ({ id: x.name + "/" + model, label: x.name + " \xB7 " + model, provider: x.kind || "configured", model_id: model })) : [{ id: x.name, label: x.name + (x.model ? " \xB7 " + x.model : ""), provider: x.kind || "configured", model_id: x.model }];
+    })], source: "native_config", note: "Models declared by the host; account availability is checked by a model call." };
   }
   const fallback = [...hostDefaults(p.runtime_id), ...fallbacks_default[p.runtime_id] || []];
   if (p.runtime_id === "claude") {
@@ -1318,7 +1325,8 @@ async function listModels(p) {
       return { models: models || fallback, source: models ? "host" : "builtin_hints" };
     }
     if (p.runtime_id in acpArgs) {
-      const models = process.platform === "win32" ? await windowsAcpModels(bin, acpArgs[p.runtime_id], p.cwd || process.cwd()) : await detectAcpModels({ bin, args: acpArgs[p.runtime_id], cwd: p.cwd || process.cwd(), env, timeoutMs: 15e3, defaultModelOption: defaults[0], clientName: "briefloop-models" });
+      const args = acpArguments(p.runtime_id, bin);
+      const models = process.platform === "win32" ? await windowsAcpModels(bin, args, p.cwd || process.cwd()) : await detectAcpModels({ bin, args, cwd: p.cwd || process.cwd(), env, timeoutMs: 15e3, defaultModelOption: defaults[0], clientName: "briefloop-models" });
       const live = models.some((m) => m.id !== "default");
       return { models: live ? models : fallback, source: live ? "host" : "builtin_hints" };
     }
@@ -1340,7 +1348,7 @@ function validate(p) {
 }
 async function runAcp(p, state) {
   let sessionId;
-  const args = [...acpArgs[p.runtime_id]];
+  const args = acpArguments(p.runtime_id, state.bin);
   if (p.runtime_id === "reasonix" && p.model && p.model !== "default") args.push("-model", p.model);
   const conn = connect(state.bin, args, p.cwd, (m) => {
     if (m.method !== "session/update" || !state.promptStarted) return;
