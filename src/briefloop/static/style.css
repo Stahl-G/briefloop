@@ -318,3 +318,5 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 .reports-end::before,.reports-end::after{content:'';position:absolute;top:50%;width:32%;height:1px;background:var(--line)}
 .reports-end::before{left:6%}.reports-end::after{right:6%}
 @media(max-width:780px){.report-card{flex-wrap:wrap}.report-card-side{width:100%;justify-content:flex-end}.reports-toolbar select{flex:1;min-width:0}}
+.report-list{max-width:none}
+.report-list.grid{max-width:none}
