@@ -4,19 +4,48 @@ import json
 from .models import ScoutResult
 
 
-def join_scouts(store, paths):
-    results=[];seen=set();gaps=[]
+def join_scouts(store, paths, *, run_id=None, round_id=None, slots=None):
+    """Structural merge only; no semantic adjudication.
+
+    With a run/round/slot contract it also checks that each result belongs to an
+    allocated slot and that every referenced source/claim is allowed for the run.
+    """
+    if round_id:
+        from .research_plan import frozen
+        plan = frozen(store, run_id) if run_id else None
+        info = (plan or {}).get('rounds', {}).get(round_id)
+        if not info:
+            raise ValueError('Scout 轮次不属于本任务')
+        if slots is None and info.get('tasks'):
+            slots = [str(Path(task['directory']) / 'result.json') for task in info['tasks']]
+    allowed_slots={str(Path(slot).resolve()) for slot in slots} if slots is not None else None
+    results=[];seen=set();gaps=[];summaries=[];notes=[]
     for value in paths:
         path=Path(value).resolve()
         if not path.is_relative_to(store.root):raise ValueError('Scout output must be inside this workspace')
+        if allowed_slots is not None and str(path) not in allowed_slots:
+            raise ValueError('Scout 输出文件不在本任务分配的槽位内：'+path.name)
         result=ScoutResult.model_validate(json.loads(path.read_text()))
+        allowed=set(store.source_ids(run_id)) if run_id else None
         for item in result.sources:
             store.one('sources',item.source_id)
+            if allowed is not None and item.source_id not in allowed:
+                raise ValueError('Scout 来源未登记到本轮报告：'+item.source_id)
+            for claim_id in item.claim_ids:
+                from .evidence import record
+                claim=record(store,'claims',claim_id)
+                if run_id and claim['run_id']!=run_id:raise ValueError('Scout 引用了不属于本轮的主张')
+                if claim['data'].get('claim_role','report_statement')!='source_statement':
+                    raise ValueError('Scout 的 claim_ids 只能引用来源陈述')
             data=item.model_dump();key=json.dumps(data,sort_keys=True,ensure_ascii=False)
             if key not in seen:results.append(data);seen.add(key)
         for gap in result.gaps:
             if gap not in gaps:gaps.append(gap)
-    return ScoutResult(sources=sorted(results,key=lambda r:(r['source_id'],r['locator'],r['excerpt'])),gaps=gaps).model_dump()
+        if result.search_summary:summaries.append(result.search_summary)
+        notes.extend(result.retrieval_notes)
+    merged=ScoutResult(sources=sorted(results,key=lambda r:(r['source_id'],r['locator'],r['excerpt'])),gaps=gaps,
+                       search_summary='\n'.join(summaries),retrieval_notes=notes)
+    return merged.model_dump()
 
 
 def read_source(store,source_id,*,start_line=None,end_line=None,max_chars=None):

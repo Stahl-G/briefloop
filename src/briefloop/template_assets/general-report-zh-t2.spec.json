@@ -1,0 +1,62 @@
+{
+ "sections": [
+  {
+   "section_id": "summary",
+   "title": "摘要",
+   "index": 7,
+   "purpose": "本期核心结论"
+  },
+  {
+   "section_id": "background",
+   "title": "背景",
+   "index": 8,
+   "purpose": "事件与背景"
+  },
+  {
+   "section_id": "analysis",
+   "title": "分析",
+   "index": 9,
+   "purpose": "影响推演"
+  },
+  {
+   "section_id": "conclusion",
+   "title": "结论",
+   "index": 10,
+   "purpose": "判断与建议"
+  },
+  {
+   "section_id": "risks",
+   "title": "风险提示",
+   "index": 11,
+   "purpose": "不确定性"
+  }
+ ],
+ "keep_blocks": [
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6
+ ],
+ "paragraph_index": 12,
+ "fields": [
+  {
+   "old": "{{title}}",
+   "field": "title"
+  },
+  {
+   "old": "{{organization}}",
+   "field": "organization"
+  },
+  {
+   "old": "{{period}}",
+   "field": "period"
+  },
+  {
+   "old": "{{report_date}}",
+   "field": "report_date"
+  }
+ ]
+}

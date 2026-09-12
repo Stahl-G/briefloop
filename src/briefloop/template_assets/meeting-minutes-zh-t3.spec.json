@@ -1,0 +1,53 @@
+{
+ "sections": [
+  {
+   "section_id": "topics",
+   "title": "会议议题",
+   "index": 4,
+   "purpose": "讨论议题"
+  },
+  {
+   "section_id": "decisions",
+   "title": "决议事项",
+   "index": 5,
+   "purpose": "形成的决议"
+  },
+  {
+   "section_id": "actions",
+   "title": "待办事项",
+   "index": 6,
+   "purpose": "责任与时限"
+  },
+  {
+   "section_id": "others",
+   "title": "其他事项",
+   "index": 7,
+   "purpose": "补充记录"
+  }
+ ],
+ "keep_blocks": [
+  0,
+  1,
+  2,
+  3
+ ],
+ "paragraph_index": 8,
+ "fields": [
+  {
+   "old": "{{title}}",
+   "field": "title"
+  },
+  {
+   "old": "{{organization}}",
+   "field": "organization"
+  },
+  {
+   "old": "{{period}}",
+   "field": "period"
+  },
+  {
+   "old": "{{report_date}}",
+   "field": "report_date"
+  }
+ ]
+}

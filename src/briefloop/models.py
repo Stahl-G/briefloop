@@ -17,15 +17,15 @@ LENGTH_PRESETS = {'compact':(800,1000),'balanced':(1500,2000),'detailed':(2000,2
 
 
 RESEARCH_BUDGET_PRESETS = {
-    'weekly':{'search_requests':12,'candidate_urls':60,'source_pages':18},
-    'monthly':{'search_requests':30,'candidate_urls':200,'source_pages':45},
+    'weekly':{'search_requests':30,'candidate_urls':150,'source_pages':60},
+    'monthly':{'search_requests':80,'candidate_urls':400,'source_pages':150},
 }
 
 
 class ResearchBudget(Model):
-    search_requests: int = Field(default=12, ge=0)
-    candidate_urls: int = Field(default=60, ge=0)
-    source_pages: int = Field(default=18, ge=0)
+    search_requests: int = Field(default=30, ge=0)
+    candidate_urls: int = Field(default=150, ge=0)
+    source_pages: int = Field(default=60, ge=0)
 
 
 class ReportSection(Model):

@@ -75,6 +75,17 @@ def make_server(workspace, port=8765, *, paused=False):
     asset_bytes={name:assets.joinpath(name).read_bytes() for name in ('index.html','app.js','style.css')}
     class Handler(BaseHTTPRequestHandler):
         def log_message(self,format,*args): pass
+        def parse_request(self):
+            if not super().parse_request():return False
+            # Loopback binding alone does not prevent a foreign DNS name from
+            # reaching this service. Validate authority before any route can
+            # expose workspace data or the browser session token.
+            expected=f'127.0.0.1:{self.server.server_port}'
+            if self.headers.get_all('Host',[]) != [expected]:
+                self.close_connection=True
+                self.send(403,{'error':'请通过 http://'+expected+' 打开本地工作区'})
+                return False
+            return True
         def send(self,status,data,content_type='application/json; charset=utf-8',download_name=None):
             payload=data if isinstance(data,bytes) else dump(data).encode()
             self.send_response(status)
@@ -319,10 +330,10 @@ def make_server(workspace, port=8765, *, paused=False):
                     result=import_template(store,body['name'],base64.b64decode(body['data'],validate=True),body.get('parent_id'))
                 elif path=='/api/export':
                     from .export_jobs import enqueue_export
-                    result=enqueue_export(store,body['version_id'])
+                    result=enqueue_export(store,body['version_id'],body.get('template_id'))
                 elif path=='/api/generate':
                     req=Requirements.model_validate(body['requirements'])
-                    run=store.create_run(req.model_dump(),body.get('source_ids',[]))
+                    run=store.create_run(req.model_dump(),body.get('source_ids',[]),research_protocol='quality_v1')
                     payload={'run_id':run['id']}
                     if body.get('session_id'):payload['session_id']=body['session_id']
                     result=store.enqueue('generate',payload)
@@ -387,6 +398,8 @@ def make_server(workspace, port=8765, *, paused=False):
 
 def serve(workspace,port=8765,*,paused=False):
     server=make_server(workspace,port,paused=paused)
+    from .templates import import_builtin
+    import_builtin(server.store)
     server.worker.start()
     url=f'http://127.0.0.1:{server.server_port}'
     (server.store.root/'server.json').write_text(dump({'pid':os.getpid(),'url':url,'workspace_id':server.store.meta('workspace_id')}))

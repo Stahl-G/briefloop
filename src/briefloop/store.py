@@ -78,7 +78,8 @@ CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT, job_id 
 CREATE TABLE IF NOT EXISTS skills(id TEXT PRIMARY KEY, parent_id TEXT, content TEXT NOT NULL,
  targets TEXT NOT NULL, reason TEXT NOT NULL, created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS templates(id TEXT PRIMARY KEY,name TEXT NOT NULL,revision INTEGER NOT NULL,
- parent_id TEXT,source_hash TEXT NOT NULL,status TEXT NOT NULL,spec TEXT NOT NULL,created TEXT NOT NULL,error TEXT);
+ parent_id TEXT,source_hash TEXT NOT NULL,status TEXT NOT NULL,spec TEXT NOT NULL,created TEXT NOT NULL,error TEXT,
+ origin TEXT NOT NULL DEFAULT 'upload');
 CREATE TABLE IF NOT EXISTS company_facts(id TEXT PRIMARY KEY,fact_key TEXT NOT NULL,value TEXT NOT NULL,
  source_id TEXT NOT NULL REFERENCES sources(id),locator TEXT NOT NULL,effective_date TEXT NOT NULL,
  origin TEXT NOT NULL,status TEXT NOT NULL,previous_id TEXT,created TEXT NOT NULL,resolved_at TEXT);
@@ -106,6 +107,8 @@ class Store:
             c.executescript(SOURCE_UPDATE_SCHEMA)
             if 'mode' not in {r['name'] for r in c.execute('PRAGMA table_info(runs)')}:
                 c.execute("ALTER TABLE runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'normal'")
+            if 'origin' not in {r['name'] for r in c.execute('PRAGMA table_info(templates)')}:
+                c.execute("ALTER TABLE templates ADD COLUMN origin TEXT NOT NULL DEFAULT 'upload'")
             c.execute("INSERT OR IGNORE INTO meta VALUES('settings', ?)", (dump(Settings().model_dump()),))
             c.execute("INSERT OR IGNORE INTO meta VALUES('schema', '1')")
             c.execute("INSERT OR IGNORE INTO meta VALUES('workspace_id', ?)",(dump(uid("workspace")),))
@@ -244,6 +247,10 @@ class Store:
             from .deliverable_spec import resolve,validate_reader_contract
             draft.reader_contract=validate_reader_contract(resolve(json.loads(run['requirements'])),draft.reader_contract)
         references=set(json.loads(run['requirements']).get('reference_source_ids',[]))
+        if draft.reconciliation_id:
+            from .reconciliation import exists
+            if not exists(self,run_id,draft.reconciliation_id):
+                raise ValueError('稿件引用的对照记录不存在或不属于本报告：'+draft.reconciliation_id)
         for ref in draft.citations:
             try:self.one("sources", ref.source_id)
             except ValueError:
@@ -524,7 +531,7 @@ class Store:
         return {"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "requirements": self.meta("requirements"), "settings": self.settings(),
                 "profile": self.meta("workspace_profile") or {},
                 "templates":self.rows('SELECT * FROM templates ORDER BY created DESC'),
-                "conflicts":self.rows("SELECT id,status,data FROM conflicts WHERE status!='resolved' ORDER BY rowid DESC LIMIT 100"),
+                "conflicts":self.rows("SELECT id,status,data,run_id FROM conflicts WHERE status!='resolved' ORDER BY rowid DESC LIMIT 100"),
                 "company_context_pending":self.rows("SELECT * FROM company_facts WHERE status='pending' ORDER BY rowid DESC"),
                 "sources": self.rows("SELECT * FROM sources ORDER BY created"),
                 "runs": runs,

@@ -17,7 +17,7 @@ from briefloop.release import (SCHEMA, eligibility, decision, enqueue_release, g
 from briefloop.audit_bundle import enqueue_bundle, generate_bundle, verify_bundle, bundle_file
 
 
-def reviewed_report(tmp_path, figure=False, visual_sources=False, review_free_text=False):
+def reviewed_report(tmp_path, figure=False, visual_sources=False, review_free_text=False, clause_protocol=False):
     store = Store(tmp_path)
     with store.tx() as c:
         c.executescript(SCHEMA)
@@ -38,6 +38,9 @@ def reviewed_report(tmp_path, figure=False, visual_sources=False, review_free_te
         visual_sources_to_bind = [(image_source, {'kind': 'image'}, 'The image appendix is available.'),
                                   (pdf_source, {'kind': 'pdf', 'page': 1}, 'The PDF appendix is available.')]
     requirements = {'title': 'Revenue report', 'objective': 'Explain revenue', 'manual_sections': ['Financing']}
+    if clause_protocol:
+        store.set_meta('settings', {**store.settings(), 'company_context_enabled': False})
+        requirements = {'title': 'Internal report', 'objective': 'Explain revenue', 'writing_mode': 'internal_report'}
     run = store.create_run(requirements, [source['id'], *[item[0]['id'] for item in visual_sources_to_bind]])
     markdown = 'Revenue was USD 12 million.\n\nFinancing: pending.'
     markdown += ''.join('\n\n' + item[2] for item in visual_sources_to_bind)
@@ -64,7 +67,16 @@ def reviewed_report(tmp_path, figure=False, visual_sources=False, review_free_te
         journal_tool(chat, session['id'], 'synthetic', 'tool-1', 'bash',
                      {'command': 'python calculate.py', 'api_key': 'DO-NOT-INCLUDE-THIS'},
                      '12000000', status='completed', exit_code=0)
-    brief = store.publish(run['id'], {'title': 'Revenue report', 'markdown': markdown})
+    extra = {}
+    if clause_protocol:
+        spec = resolve(json.loads(run['requirements']))
+        contract = validate_reader_contract(spec, {
+            'source_fingerprint': reader_contract_schema(spec)['properties']['source_fingerprint']['const'],
+            'clauses': [{'requirement_id': spec['requirement_items'][0]['requirement_id'],
+                         'kind': 'reader_content', 'source_quote': 'Explain revenue', 'instruction': 'Explain revenue'}]})
+        compiled = resolve(json.loads(run['requirements']), reader_contract=contract)
+        extra['reader_contract'] = contract
+    brief = store.publish(run['id'], {'title': 'Revenue report', 'markdown': markdown, **extra})
     span = create_span(store, {'source_id': source['id'], 'locator': {'kind': 'text', 'start_line': 1, 'end_line': 1}})
     claim = create_claim(store, run['id'], {'statement': 'Revenue was USD 12 million.', 'kind': 'fact',
         'supports': [{'span_id': span['id'], 'supports_quote': 'Revenue was USD 12 million.'}]})
@@ -85,7 +97,8 @@ def reviewed_report(tmp_path, figure=False, visual_sources=False, review_free_te
     review_job = store.enqueue('review', {'version_id': brief['id']})
     with store.tx() as c:
         c.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)', (review_id, brief['id'], review_job['id'], fingerprint, 'running',
-                  dump({'packet_path': 'review_fixture/packet', 'files': files}), None, now(), now()))
+                  dump({'packet_path': 'review_fixture/packet', 'files': files,
+                        'protocol': 'clauses_v1' if clause_protocol else 'legacy'}), None, now(), now()))
     # Synthetic transport events exercise export identity; they are not real
     # model evidence and are deliberately labelled synthetic in the fixture.
     from briefloop.chat_store import ChatStore
@@ -104,6 +117,9 @@ def reviewed_report(tmp_path, figure=False, visual_sources=False, review_free_te
                                 'reason': 'Actual body checked'} for item in requirement_items(requirements)],
         'assessment': {'brief_hash': brief['hash'], 'status': 'complete', 'summary': 'Synthetic', 'overall': '达到要求',
                        'evidence': 4, 'coverage': 4, 'analysis': 4, 'expression': 4}}
+    if clause_protocol:
+        result.update(_clause_review(compiled, {'reader_content': 'covered'}))
+        result['requirement_checks'] = []
     result['claim_checks'].extend({'claim_id': item['id'], 'status': 'supported_for_scope', 'reason': 'Synthetic saved visual source fixture'} for item in visual_claims)
     if review_free_text:
         private_excerpt=store.source_text(source['id']).splitlines()[1]
@@ -607,3 +623,40 @@ def test_same_result_follows_the_persisted_protocol():
     assert decision(base, review, [], protocol='clauses_v1')['eligible']
     legacy = decision(base, review, [], protocol='legacy')
     assert not legacy['eligible'] and legacy['blockers'][0]['code'] == 'requirement_unfinished'
+
+
+def test_clause_review_releases_verify_in_full_and_restricted_audit_bundles(tmp_path):
+    store, source, brief, review_id = reviewed_report(tmp_path, clause_protocol=True)
+    release, _ = complete_release(store, brief)
+    for permissions in ({source['id']: 'original'}, {source['id']: 'excerpt'}, {}):
+        job = enqueue_bundle(store, release['id'], permissions)
+        result = generate_bundle(store, job, threading.Event())
+        checked = verify_bundle(store.root / result['path'])
+        assert checked['valid'], checked
+        with ZipFile(store.root / result['path']) as archive:
+            records = json.loads(archive.read('records.json'))
+            assert records['review_protocol'] == 'clauses_v1'
+            if not permissions:
+                assert records['snapshot']['requirements']['reader_contract'] == '[omitted: source export permissions]'
+                assert records['review_clauses'][0]['instruction'] == '[omitted: source export permissions]'
+
+
+def test_number_mismatch_and_broken_reference_block_release():
+    snapshot = {'requirements': {'requirement_items': []}, 'evidence': {'bindings': []}, 'conflicts': [], 'detail': {},
+                'deterministic': {'numbers': {'unmatched': [{'label': 'revenue', 'expected': '1.2 million USD', 'reason': '不一致'}],
+                                               'skipped': [{'label': 'margin', 'reason': '缺少定位'}]},
+                                  'broken_refs': ['source_missing']}}
+    review = {'status': 'complete', 'coverage_scan_complete': True, 'claim_checks': [], 'requirement_checks': [],
+              'conflict_checks': [], 'clause_checks': [], 'unchecked': [], 'unchecked_items': []}
+    result = decision(snapshot, review, [])
+    codes = {item['code'] for item in result['blockers']}
+    assert {'number_mismatch', 'broken_reference'} <= codes
+    assert any(item['code'] == 'number_unchecked' for item in result['notices'])
+    assert result['eligible'] is False
+
+
+def test_eligibility_freezes_deterministic_checks_for_the_audit(tmp_path):
+    store, source, brief, review_id = reviewed_report(tmp_path)
+    checked = eligibility(store, brief['id'])
+    assert checked['eligible']
+    assert 'numbers' in checked['input']['snapshot']['deterministic']

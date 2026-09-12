@@ -100,3 +100,36 @@ def test_legacy_free_text_gaps_stay_visible(tmp_path):
     checked = brief_checks(store, brief['id'])['gaps']
     assert checked['legacy'] and checked['open'] == 1
     assert checked['open_records'][0]['impact'] == '单位成本未取得'
+
+
+def test_layout_findings_are_reported_but_never_blocking(tmp_path):
+    from briefloop.delivery_checks import check_layout
+    headings = lambda pairs: {'type': 'doc', 'content': [
+        {'type': 'heading', 'attrs': {'level': level}, 'content': [{'type': 'text', 'text': text}]}
+        for level, text in pairs]}
+    broken = headings([(1, '一、概览'), (3, '1.1.1 跳级'), (2, '')])
+    result = check_layout(broken)
+    assert result['status'] == 'issues'
+    assert result['heading_jumps'] == [{'after': 1, 'level': 3, 'text': '1.1.1 跳级'}]
+    assert result['empty_headings'] == 1
+    clean = headings([(1, '一、概览'), (2, '1.1 明细')])
+    assert check_layout(clean)['status'] == 'ok'
+
+    store = Store(tmp_path)
+    source = store.add_source('local', '正文')
+    run = store.create_run({'title': 'Report', 'objective': 'Explain'}, [source['id']])
+    table = {'type': 'table', 'content': [
+        {'type': 'tableRow', 'content': [
+            {'type': 'tableCell', 'content': [{'type': 'paragraph', 'content': [{'type': 'text', 'text': '数值'}]}]},
+            {'type': 'tableCell', 'content': [{'type': 'paragraph', 'content': [{'type': 'text', 'text': '12 GW'}]}]}]},
+        {'type': 'tableRow', 'content': [
+            {'type': 'tableCell', 'content': [{'type': 'paragraph', 'content': [{'type': 'text', 'text': '容量'}]}]},
+            {'type': 'tableCell', 'content': [{'type': 'paragraph', 'content': [{'type': 'text', 'text': '45 GW'}]}]}]}]}
+    brief = store.publish(run['id'], {'title': 'Report', 'editor_document': {
+        'type': 'doc', 'content': [
+            {'type': 'heading', 'attrs': {'level': 1}, 'content': [{'type': 'text', 'text': '一、数据'}]},
+            {'type': 'heading', 'attrs': {'level': 3}, 'content': [{'type': 'text', 'text': '1.1.1 明细'}]},
+            table]}})
+    layout = brief_checks(store, brief['id'])['layout']
+    assert layout['status'] == 'issues' and len(layout['heading_jumps']) == 1 and layout['tables_without_header'] == ['数值']
+    assert layout['empty_headings'] == 0

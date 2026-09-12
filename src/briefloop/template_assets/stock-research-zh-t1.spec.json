@@ -1,0 +1,61 @@
+{
+ "sections": [
+  {
+   "section_id": "views",
+   "title": "核心观点",
+   "index": 6,
+   "purpose": "核心判断"
+  },
+  {
+   "section_id": "events",
+   "title": "事件回顾",
+   "index": 7,
+   "purpose": "触发事件"
+  },
+  {
+   "section_id": "forecast",
+   "title": "盈利预测与估值",
+   "index": 8,
+   "purpose": "预测与估值"
+  },
+  {
+   "section_id": "risks",
+   "title": "风险提示",
+   "index": 9,
+   "purpose": "风险因素"
+  },
+  {
+   "section_id": "disclaimer",
+   "title": "免责声明",
+   "index": 10,
+   "purpose": "五项免责"
+  }
+ ],
+ "keep_blocks": [
+  0,
+  1,
+  2,
+  3,
+  4,
+  5
+ ],
+ "paragraph_index": 11,
+ "fields": [
+  {
+   "old": "{{title}}",
+   "field": "title"
+  },
+  {
+   "old": "{{organization}}",
+   "field": "organization"
+  },
+  {
+   "old": "{{period}}",
+   "field": "period"
+  },
+  {
+   "old": "{{report_date}}",
+   "field": "report_date"
+  }
+ ]
+}

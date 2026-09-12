@@ -23,6 +23,34 @@ def role_label(role):
     return text[:60]
 
 
+def _pipeline(folder, workers):
+    """Deterministic stage rail with each stage's sub-agents.
+
+    Statuses come only from actual files and reported worker states, never from a
+    model's self-report of progress percentage.
+    """
+    folder = Path(folder)
+    plan = (folder / 'plan.json').exists()
+    draft = (folder / 'draft.json').exists()
+    scored = any((folder / name).exists() for name in ('assessment.json', 'evaluation/assessment.json', 'scorer/assessment.json'))
+    def group(*keys):
+        return [w for w in workers if any(key in (w.get('role') or '') for key in keys)]
+    scouts = group('Scout')
+    analysts = group('Analyst')
+    evaluators = group('Evaluator', 'Scorer', 'Assessor')
+    assigned = {id(w) for w in scouts + analysts + evaluators}
+    def running(items):
+        return any(w.get('status') not in ('completed', 'done', 'closed', 'failed', 'errored') for w in items)
+    return [
+        {'id': 'intake', 'label': '确认任务与来源', 'status': 'done' if plan else 'active',
+         'agents': [w for w in workers if id(w) not in assigned]},
+        {'id': 'research', 'label': '研究检索', 'status': 'done' if draft or (scouts and not running(scouts)) else 'active' if plan else 'pending',
+         'agents': scouts},
+        {'id': 'analysis', 'label': '撰写成稿', 'status': 'done' if draft else 'active' if analysts else 'pending', 'agents': analysts},
+        {'id': 'evaluate', 'label': '独立评分', 'status': 'done' if scored else 'active' if evaluators or draft else 'pending', 'agents': evaluators},
+    ]
+
+
 class ProgressTracker:
     def __init__(self,store,job_id,folder):
         self.store=store;self.job_id=job_id;self.folder=Path(folder)
@@ -73,7 +101,7 @@ class ProgressTracker:
         labels=' '.join(w.get('role','') for w in active)
         for key,label in [('Scout','Scout 正在读取与核对来源'),('Analyst','Analyst 正在撰写简报'),('Evaluator · 比较','Evaluator 正在比较新旧稿件'),('Evaluator · 评分','Evaluator 正在独立评分'),('Evaluator','Evaluator 正在核对任务与来源'),('Maintainer','Maintainer 正在整理经验'),('Proposer','Proposer 正在提出技能')]:
             if key in labels:stage=label
-        value={'stage':stage,'message':self.message,'agents':workers,'last_activity':datetime.fromtimestamp(log.stat().st_mtime if log.exists() else time.time(),timezone.utc).isoformat(),'draft_ready':paths[3].exists()}
+        value={'stage':stage,'message':self.message,'agents':workers,'stages':_pipeline(self.folder,workers),'last_activity':datetime.fromtimestamp(log.stat().st_mtime if log.exists() else time.time(),timezone.utc).isoformat(),'draft_ready':paths[3].exists()}
         encoded=dump(value)
         if encoded!=self.last:
             self.store.event(self.job_id,'runtime_progress',value);self.last=encoded

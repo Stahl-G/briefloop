@@ -1,0 +1,71 @@
+{
+ "sections": [
+  {
+   "section_id": "abstract",
+   "title": "摘要",
+   "index": 4,
+   "purpose": "研究概述"
+  },
+  {
+   "section_id": "intro",
+   "title": "引言",
+   "index": 5,
+   "purpose": "问题与贡献"
+  },
+  {
+   "section_id": "method",
+   "title": "研究方法",
+   "index": 6,
+   "purpose": "设计与数据"
+  },
+  {
+   "section_id": "results",
+   "title": "结果",
+   "index": 7,
+   "purpose": "发现"
+  },
+  {
+   "section_id": "discussion",
+   "title": "讨论",
+   "index": 8,
+   "purpose": "解释与局限"
+  },
+  {
+   "section_id": "conclusion",
+   "title": "结论",
+   "index": 9,
+   "purpose": "结论与展望"
+  },
+  {
+   "section_id": "references",
+   "title": "参考文献",
+   "index": 10,
+   "purpose": "引用列表"
+  }
+ ],
+ "keep_blocks": [
+  0,
+  1,
+  2,
+  3
+ ],
+ "paragraph_index": 11,
+ "fields": [
+  {
+   "old": "{{title}}",
+   "field": "title"
+  },
+  {
+   "old": "{{organization}}",
+   "field": "organization"
+  },
+  {
+   "old": "{{period}}",
+   "field": "period"
+  },
+  {
+   "old": "{{report_date}}",
+   "field": "report_date"
+  }
+ ]
+}

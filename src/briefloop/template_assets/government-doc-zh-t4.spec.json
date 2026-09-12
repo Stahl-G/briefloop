@@ -1,0 +1,50 @@
+{
+ "sections": [
+  {
+   "section_id": "first",
+   "title": "一、总体要求",
+   "index": 7,
+   "purpose": "总体要求"
+  },
+  {
+   "section_id": "second",
+   "title": "二、重点任务",
+   "index": 8,
+   "purpose": "重点任务"
+  },
+  {
+   "section_id": "third",
+   "title": "三、保障措施",
+   "index": 9,
+   "purpose": "保障措施"
+  }
+ ],
+ "keep_blocks": [
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6
+ ],
+ "paragraph_index": 10,
+ "fields": [
+  {
+   "old": "{{title}}",
+   "field": "title"
+  },
+  {
+   "old": "{{organization}}",
+   "field": "organization"
+  },
+  {
+   "old": "{{period}}",
+   "field": "period"
+  },
+  {
+   "old": "{{report_date}}",
+   "field": "report_date"
+  }
+ ]
+}
