@@ -790,6 +790,8 @@ $('chat-attach').onclick=()=>$('chat-upload').click();
 $('attach-existing').onclick=()=>{const show=$('existing-sources').hidden;$('existing-sources').hidden=!show;$('attach-existing').setAttribute('aria-expanded',String(show));renderAttachments()};
 async function uploadChatFiles(files){
  const incoming=[...(files||[])].filter(Boolean);if(!incoming.length)return;
+ if(chat.busy){chatError('消息正在发送，请发送完成后重新添加附件。');return}
+ if(chat.session?.lifecycle&&chat.session.lifecycle!=='active'){chatError('请先恢复这条对话，再添加附件。');return}
  chat.uploading++;chatError();updateComposer();
  const chatBackend=chat.session?.runtime?.backend||state.settings.agent_backend||'codex';
  const canImages=((runtimeCatalog||[]).find(r=>r.id===chatBackend)||{}).capabilities?.images!==false;
