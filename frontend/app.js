@@ -122,10 +122,13 @@ function openTask(job){
 }
 function renderTasks(){
  const box=$('report-task-cards');if(!box)return;
- const open=['queued','running','failed','interrupted','cancelled'];
- const tasks=state.jobs.filter(j=>TASK_LABELS[j.kind]&&open.includes(j.status)).slice(0,15);
- const panel=$('report-tasks');
- if(panel){panel.hidden=!tasks.length;const count=$('report-tasks-count');if(count)count.textContent=tasks.length?`${tasks.length} 个任务进行中`:''}
+ const openStatus=['queued','running','failed','interrupted','cancelled'];
+ const all=(state.jobs||[]).filter(j=>TASK_LABELS[j.kind]).sort((a,b)=>new Date(b.created)-new Date(a.created));
+ const unfinished=all.filter(j=>openStatus.includes(j.status));
+ const tasks=renderTasks.showAll?all:unfinished.slice(0,15);
+ const panel=$('report-tasks');if(panel)panel.hidden=!tasks.length;
+ const count=$('report-tasks-count');if(count)count.textContent=renderTasks.showAll?`${all.length} 个任务`:(unfinished.length?`${unfinished.length} 个任务进行中`:'');
+ const allBtn=$('report-tasks-all');if(allBtn){allBtn.hidden=!unfinished.length&&!renderTasks.showAll;allBtn.textContent=renderTasks.showAll?'收起':'查看全部 →'}
  box.innerHTML=tasks.length?tasks.map(j=>{
   const running=['queued','running'].includes(j.status),paused=['failed','interrupted','cancelled'].includes(j.status);
   const dot=paused?'error':running?'running':'';
@@ -1401,9 +1404,11 @@ function renderReports(){
  box.className='report-list'+(view==='grid'?' grid':'');
  const sig=JSON.stringify([view,q,fStatus,fTime,fSource,rows.map(b=>{const st=reportStatus(b);return [b.id,b.status,b.updated,st.label,runSourceCount(b.run_id)]})]);if(renderReports.sig===sig)return;renderReports.sig=sig;
  const end=$('reports-end');if(end)end.hidden=!rows.length;
- box.innerHTML=rows.length?rows.map(b=>{const st=reportStatus(b),sources=runSourceCount(b.run_id),desc=reportDescription(b);const when=new Date(b.updated||b.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});return `<article class="report-card"><span class="report-card-icon" aria-hidden="true">▤</span><div class="report-card-body"><h3 class="report-card-title">${esc(parse(b.detail).title||'简报')}</h3>${desc?`<p class="report-card-desc">${esc(desc)}</p>`:''}<div class="report-card-meta"><span>${sources} 个来源</span><span>${esc(when)} 最后编辑</span></div></div><div class="report-card-side"><span class="chip ${st.cls}">${esc(st.label)}</span><button type="button" class="primary" data-report-open="${esc(b.id)}">${st.key==='draft'?'继续编辑':'打开'}</button></div></article>`}).join(''):'<div class="empty-inline"><p class="help">还没有报告。生成后会显示在这里。</p><button type="button" class="primary" data-page="setup">＋ 新建报告</button></div>';
+ box.innerHTML=rows.length?rows.map(b=>{const st=reportStatus(b),sources=runSourceCount(b.run_id),desc=reportDescription(b);const when=new Date(b.updated||b.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});return `<article class="report-card"><span class="report-card-icon" aria-hidden="true">▤</span><div class="report-card-body"><h3 class="report-card-title">${esc(parse(b.detail).title||'简报')}</h3>${desc?`<p class="report-card-desc">${esc(desc)}</p>`:''}<div class="report-card-meta"><span>${sources} 个来源</span><span>${esc(when)} 最后编辑</span></div></div><div class="report-card-side"><span class="chip ${st.cls}">${esc(st.label)}</span><button type="button" class="primary" data-report-open="${esc(b.id)}">${st.key==='draft'?'继续编辑':'打开'}</button><div class="menu-wrap report-card-menu"><button type="button" class="ghost" data-report-menu aria-haspopup="menu" aria-expanded="false" aria-label="更多操作">⋯</button><div class="popover" role="menu" hidden><button type="button" role="menuitem" data-report-open="${esc(b.id)}">打开</button><a role="menuitem" href="/api/download?version=${encodeURIComponent(b.id)}">下载 Markdown</a><button type="button" role="menuitem" data-report-release="${esc(b.id)}">正式交付与审计包</button></div></div></div></article>`}).join(''):'<div class="empty-inline"><p class="help">还没有报告。生成后会显示在这里。</p><button type="button" class="primary" data-page="setup">＋ 新建报告</button></div>';
  box.querySelectorAll('[data-report-open]').forEach(el=>el.onclick=()=>{const b=state.briefs.find(x=>x.id===el.dataset.reportOpen);if(b&&openBrief(b,{follow:false}))page('report')});
  box.querySelectorAll('[data-page="setup"]').forEach(el=>el.onclick=()=>page('setup'));
+ box.querySelectorAll('.report-card-menu').forEach(wrap=>{const toggle=wrap.querySelector('[data-report-menu]'),pop=wrap.querySelector('.popover');if(!toggle||!pop)return;toggle.onclick=e=>{e.stopPropagation();const open=pop.hidden;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'));pop.hidden=!open;toggle.setAttribute('aria-expanded',String(open))}});
+ box.querySelectorAll('[data-report-release]').forEach(el=>el.onclick=()=>{const b=state.briefs.find(x=>x.id===el.dataset.reportRelease);if(b&&openBrief(b,{follow:false})){page('report');const btn=$('release-open');if(btn)btn.click()}});
 }
 function sourceState(s){return s.status==='failed'?'failed':s.needs_visual?'visual':'ready'}
 function sourceHost(s){try{return new URL(s.name).hostname.replace(/^www\./,'')}catch{return ''}}
@@ -1442,3 +1447,4 @@ if($('sources-retry-all'))$('sources-retry-all').onclick=()=>action(async()=>{co
 if($('reports-search'))$('reports-search').oninput=()=>{renderReports.sig='';renderReports()};
 ['reports-filter-status','reports-filter-time','reports-filter-source'].forEach(id=>{const el=$(id);if(el)el.onchange=()=>{renderReports.sig='';renderReports()}});
 document.querySelectorAll('[data-reports-view]').forEach(b=>b.onclick=()=>{renderReports.view=b.dataset.reportsView;document.querySelectorAll('[data-reports-view]').forEach(x=>x.classList.toggle('active',x===b));renderReports.sig='';renderReports()});
+if($('report-tasks-all'))$('report-tasks-all').onclick=()=>{renderTasks.showAll=!renderTasks.showAll;renderTasks()};

@@ -320,3 +320,5 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 @media(max-width:780px){.report-card{flex-wrap:wrap}.report-card-side{width:100%;justify-content:flex-end}.reports-toolbar select{flex:1;min-width:0}}
 .report-list{max-width:none}
 .report-list.grid{max-width:none}
+.report-card-menu .popover{min-width:210px;z-index:70}
+.report-card-side .ghost{height:34px;padding:0 10px}
