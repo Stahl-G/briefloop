@@ -493,3 +493,13 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 .home-report-meta{flex:none;display:flex;align-items:center;gap:10px;font-size:11px;color:var(--muted)}
 @media(max-width:900px){.home-suggestions{grid-template-columns:repeat(2,1fr)}}
 @media(max-width:560px){.home-suggestions{grid-template-columns:1fr}.home-greeting{font-size:22px}.home-report-meta time{display:none}}
+
+/* Home landing order: greeting, result banner, composer, suggestions, recent reports */
+.chat-page.is-empty .chat-heading{display:none}
+.chat-page.is-empty .chat-home-top{order:1;padding-top:clamp(30px,9vh,86px)}
+.chat-page.is-empty #task-banner{order:2;margin-top:16px}
+.chat-page.is-empty #chat-form{order:3;margin-top:18px}
+.chat-page.is-empty .composer-help{order:4}
+.chat-page.is-empty .chat-home-bottom{order:5}
+.home-greeting{font-size:clamp(28px,3vw,38px);font-weight:600;letter-spacing:-.03em}
+.home-suggestion-arrow{align-self:flex-end}
