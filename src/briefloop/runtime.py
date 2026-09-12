@@ -4,6 +4,7 @@ The coordinator chooses and invokes specialist agents. This module owns only
 transport, cancellation, progress capture and admitting completed artifacts.
 """
 from importlib.resources import files
+from ._entrypoint import command as entry_command
 import json
 import shlex
 import sys
@@ -164,7 +165,7 @@ def generation_prompt(store, run, folder, backend='codex'):
                             'result_file':str(directory/'result.json'),'schema_path':str(schema_path),
                             'scout_contract_path':str(scout_contract)})
     payload={'deliverable_spec':deliverable,'report_profile':report_profile,'reference_sources':references,'requirements':req,'research_budget_status':research_budget,'research_plan':research_plan,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':max_parallel,'scout_slots':scout_slots,'scout_contract_path':str(scout_contract),'reusable_research':run.get('reusable_research',[])}
-    tool=shlex.join([sys.executable,'-m','briefloop','tool','--workspace',str(store.root)])
+    tool=shlex.join(entry_command('tool','--workspace',store.root))
     tavily_enabled=req['allow_web'] and provider=='tavily'
     if tavily_enabled:
         template=files('briefloop').joinpath('skill_assets','tavily','SKILL.md').read_text(encoding='utf-8')
@@ -320,7 +321,7 @@ def assessment_prompt(store, brief, folder, backend='codex'):
     from .evidence import inspect_bindings
     input_pack['claim_evidence']=inspect_bindings(store,brief['id'])
     (folder/'input.json').write_text(dump(input_pack),encoding='utf-8')
-    tool=shlex.join([sys.executable,'-m','briefloop','tool','--workspace',str(store.root)])
+    tool=shlex.join(entry_command('tool','--workspace',store.root))
     no_question='本轮没有任何用户在旁可问：不要调用 question 工具；遇到含糊之处自行按任务目标决断，并在结果中记录假设。\n' if backend=='opencode' else ''
     view_pages_word = '使用 view_image 读取页图' if backend == 'codex' else '用 read 工具读取返回的页图'
     figure_view_word = '实际view_image查看其absolute_image_path' if backend == 'codex' else '实际用 read 工具读取其absolute_image_path'
@@ -722,7 +723,7 @@ class Worker:
             from .deliverable_spec import resolve,instructions
             contract=json.loads(brief['detail']).get('reader_contract')
             spec=resolve(json.loads(self.store.one('runs',brief['run_id'])['requirements']),reader_contract=contract)
-            tool=f'{shlex.quote(sys.executable)} -m briefloop tool --workspace {shlex.quote(str(self.store.root))}'
+            tool=shlex.join(entry_command('tool','--workspace',self.store.root))
             prompt=TASK_CONTEXT+instructions(spec,role='revision')+f'''本次仅针对已有报告进行一次修订。读取 {stage/'input.json'} 的原稿、评价和本轮要求。
 保留原稿已有的有效事实、图表及明确人工占位。核对来源，只修正有依据的错误、遗漏和写作问题；不重新开展无关研究，不改用户模板默认。
 必要来源按 source_id 从工作区 {self.store.root/'sources'} 定向读取，保留引用和 research_notes。按评分纠正问题，内部核查过程留在独立记录，不将免责声明加回正文。
