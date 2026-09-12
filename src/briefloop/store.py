@@ -512,6 +512,7 @@ class Store:
             # Historical requirements are not retroactively assigned a new budget.
             brief['length_stats']=length_stats(brief['markdown'],target_words=req.get('target_words'),max_words=req.get('max_words'))
         return {"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "requirements": self.meta("requirements"), "settings": self.settings(),
+                "profile": self.meta("workspace_profile") or {},
                 "templates":self.rows('SELECT * FROM templates ORDER BY created DESC'),
                 "conflicts":self.rows("SELECT id,status,data FROM conflicts WHERE status!='resolved' ORDER BY rowid DESC LIMIT 100"),
                 "company_context_pending":self.rows("SELECT * FROM company_facts WHERE status='pending' ORDER BY rowid DESC"),
