@@ -57,6 +57,8 @@ def make_server(workspace, port=8765, *, paused=False, backend=None):
 
 def _make_server(workspace, port, *, paused, backend, lock):
     from .runtime_bridge import RuntimeBridge
+    from .software_version import runtime_info
+    software_identity=runtime_info()
     bridge=RuntimeBridge()
     try:
         store=Store(workspace)
@@ -142,6 +144,8 @@ def _make_server(workspace, port, *, paused, backend, lock):
                                 source['media_type']=meta.get('media_type');source['needs_visual']=bool(meta.get('needs_visual',False))
                             except (ValueError,OSError):pass
                     self.send(200,snapshot)
+                elif u.path=='/api/software-version':
+                    self.send(200,software_identity)
                 elif u.path=='/api/workspaces':
                     from .workspaces import list_workspaces
                     self.send(200,list_workspaces(store))
@@ -351,7 +355,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 n=int(self.headers.get('Content-Length','0'))
                 if not 0<n<25*1024*1024:raise ValueError('请求为空或过大')
                 body=json.loads(self.rfile.read(n));path=urlsplit(self.path).path
-                if path=='/api/service-stop':
+                if path=='/api/software-update-check':
+                    from .software_version import check_update
+                    result=check_update(software_identity)
+                elif path=='/api/service-stop':
                     if body.get('pid')!=os.getpid() or body.get('workspace_id')!=store.meta('workspace_id'):
                         raise ValueError('服务身份已变化，未执行停止')
                     with self.server._admission:

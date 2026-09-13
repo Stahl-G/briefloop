@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- 统一 App、网页版与 CLI 的实际后端版本、安装来源和 PyPI 更新检查；桌面更新限流显示恢复时间并避免重复请求。
+
 - 接通证券研究内容方法及券商模板建议，支持事件点评、公司研究和行业跟踪；核对指标口径、预测类别与估值输入。默认模板移除泛化免责声明和固定评级占位，保留具体风险分析。
 - Word 表格继承模板单元格段落样式，列数与模板样例不同时按内容分配宽度，并保持单行完整，避免长指标挤窄或跨页断行。
 - 修复列表结尾报告首次聚焦时自动产生空段落并误保存用户修订的问题。
@@ -2245,3 +2247,4 @@ First public release. The following entries document the development iterations 
 - Markdown / JSON / DOCX output.
 - Claude Code / Codex agent configurations.
 - Open-source release safety scanning tools.
+

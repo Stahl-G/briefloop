@@ -10,21 +10,25 @@ assert.match(html,/data-settings-view="updates"/);
 function fixture(desktop){
  const elements=new Map(),notices=[];
  const el=id=>{if(!elements.has(id))elements.set(id,{hidden:false,disabled:false,textContent:'',dataset:{webVersion:version}});return elements.get(id)};
- const ctx=vm.createContext({$:el,window:{briefloopDesktop:desktop},notice:(...args)=>notices.push(args)});
+ const info={version,installation:'source',build:'abc123',guidance:'当前运行开发源码',update_command:null};
+ const ctx=vm.createContext({$:el,window:{briefloopDesktop:desktop},api:async(name)=>name==='software-version'?info:{...info,state:'ahead',releaseVersion:'0.18.0'},notice:(...args)=>notices.push(args)});
  vm.runInContext(code,ctx);
  return {el,ctx,notices,run:expression=>vm.runInContext(expression,ctx)};
 }
 const browser=fixture();await browser.run('refreshAppUpdates()');
-assert.equal(browser.el('app-update-controls').hidden,true);
-assert.equal(browser.el('app-update-version').textContent,`网页客户端 v${version}`);
-assert.match(browser.el('app-update-guidance').textContent,/浏览器不能安装/);
+assert.equal(browser.el('app-update-controls').hidden,false);
+assert.match(browser.el('app-update-version').textContent,new RegExp(`BriefLoop v${version}`));
+assert.match(browser.el('app-update-guidance').textContent,/开发源码/);
+await browser.el('app-update-check').onclick();
+assert.match(browser.el('app-update-status').textContent,/高于 PyPI/);
+assert.equal(browser.el('app-update-download').hidden,true);
 let changed,calls=[];
 let dto={currentAppVersion:'0.17.0',source:'local-test',state:'available',releaseVersion:'0.20.0',installMode:'dmg',notes:'<img src=x onerror=alert(1)>',progress:null,error:null};
 const desktop=fixture({updateStatus:async()=>dto,onUpdateStatus:fn=>{changed=fn},
  checkForUpdates:async()=>{calls.push('check');return dto},downloadUpdate:async()=>{calls.push('download');return dto},
  installUpdate:async()=>{calls.push('install');return {cancelled:true}}});
 await desktop.run('refreshAppUpdates()');
-assert.equal(desktop.el('app-update-version').textContent,'当前 App v0.17.0');
+assert.match(desktop.el('app-update-version').textContent,/BriefLoop v0.20.0.*桌面 App v0.17.0/);
 assert.match(desktop.el('app-update-source').textContent,/本地测试/);
 assert.equal(desktop.el('app-update-notes').textContent,dto.notes);
 assert.equal(desktop.el('app-update-download').hidden,false);

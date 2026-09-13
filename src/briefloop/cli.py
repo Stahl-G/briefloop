@@ -28,6 +28,8 @@ def main():
     p=argparse.ArgumentParser(prog='briefloop',description='本地简报、改稿与持续学习')
     p.add_argument('--version',action='version',version=f'BriefLoop {__version__}')
     sub=p.add_subparsers(dest='command',required=True)
+    version=sub.add_parser('version',help='查看实际后端版本、安装来源和更新方式')
+    version.add_argument('--check',action='store_true',help='检查 PyPI 稳定版本，不安装或重启')
     for name in ('serve','start','status','doctor'):
         parser=sub.add_parser(name)
         parser.add_argument('--workspace',default='./workspaces/default')
@@ -85,7 +87,10 @@ def main():
     tavily_extract.add_argument('--run',required=True);tavily_extract.add_argument('--url',action='append',required=True)
     tavily_extract.add_argument('--extract-depth',choices=['basic','advanced'],default='basic')
     a=p.parse_args()
-    if a.command=='external':
+    if a.command=='version':
+        from .software_version import runtime_info,check_update
+        print(json.dumps(check_update() if a.check else runtime_info(),ensure_ascii=False,indent=2))
+    elif a.command=='external':
         import http.client
         from .external_client import discover, Client
         from .execution_records import sanitize

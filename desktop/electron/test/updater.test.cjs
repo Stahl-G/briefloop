@@ -220,3 +220,26 @@ test('equal-version local reinstall keeps filename and exact tag binding', async
   assert.equal((await f.updater.check()).error.code, 'asset_version_mismatch');
   assert.equal(f.updater.status().reinstall, false); assert.equal(f.assetRequests(), 0);
 });
+
+
+test('GitHub primary rate limit explains reset and avoids repeat metadata requests', async () => {
+  let requests = 0;
+  const reset = Math.floor(Date.now() / 1000) + 120;
+  const updater = createUpdater({app: {getVersion: () => '0.19.0'}, shell: {}, platform: 'darwin',
+    fetch: async () => {requests++; return new Response('', {status: 403,
+      headers: {'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset)}});}});
+  const first = await updater.check();
+  assert.equal(first.error.code, 'github_rate_limited');
+  assert.match(first.error.message, /本机时间/);
+  assert.match(first.error.message, /查看官方发布与安装包/);
+  await updater.check();
+  assert.equal(requests, 1);
+});
+
+test('429 uses retry-after, while other 403 errors are not mislabeled as quota', async () => {
+  for (const [status, headers, expected] of [[429, {'retry-after': '120'}, 'github_rate_limited'], [403, {}, 'http_403']]) {
+    const updater = createUpdater({app: {getVersion: () => '0.19.0'}, shell: {}, platform: 'darwin',
+      fetch: async () => new Response('', {status, headers})});
+    assert.equal((await updater.check()).error.code, expected);
+  }
+});
