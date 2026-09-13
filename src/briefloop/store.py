@@ -253,10 +253,6 @@ class Store:
         if author not in ('agent', 'example'):raise ValueError('无效稿件作者')
         draft = BriefDraft.model_validate(draft)
         from .document_model import document_hash, source_ids
-        if draft.editor_document is not None:
-            from .models import Citation
-            present={ref.source_id for ref in draft.citations}
-            draft.citations.extend(Citation(source_id=sid) for sid in source_ids(draft.editor_document) if sid not in present)
         run=self.one("runs", run_id)
         from .company_context import require_review
         company_review=require_review(self,run)
@@ -294,15 +290,11 @@ class Store:
         from .figure_support import validate_figures
         assets=validate_figures(self,run_id,draft.markdown)
         draft.figures=[f['figure_id'] for f in assets]
-        from .models import Citation
-        cited={ref.source_id for ref in draft.citations}
-        for figure in assets:
-            for source_id in figure['source_ids']:
-                if source_id not in cited:
-                    draft.citations.append(Citation(source_id=source_id,locator=figure['caption']));cited.add(source_id)
         vid = version_id or uid("brief")
         sha = document_hash(draft.editor_document) if draft.editor_document is not None else content_hash(draft.markdown)
         detail=draft.model_dump(mode='json',exclude={'markdown','editor_document'})
+        from .figure_support import sync_content_citations
+        sync_content_citations(self,run_id,detail,draft.editor_document,assets)
         if draft.editor_document is not None:detail['document_schema']=1
         if company_review:detail['company_context']={'revision':company_review['revision'],'review':company_review}
         with self.tx() as c:
@@ -322,8 +314,8 @@ class Store:
                 if old_detail!=detail:raise Conflict('Completed draft metadata differs; save a new version')
             else:
                 c.execute("INSERT INTO briefs VALUES(?,?,?,?,?,?,?,?,?)", (vid, run_id, parent_id, author, draft.markdown, sha, dump(detail), dump(draft.editor_document) if draft.editor_document is not None else None, now()))
-            for ref in draft.citations:
-                c.execute("INSERT OR IGNORE INTO run_sources VALUES(?,?)",(run_id,ref.source_id))
+            for ref in detail['citations']:
+                c.execute("INSERT OR IGNORE INTO run_sources VALUES(?,?)",(run_id,ref['source_id']))
         return self.one("briefs", vid)
 
     def revise(self, base_version, markdown='', editor_document=None, *, author='user'):
@@ -349,16 +341,13 @@ class Store:
             detail=json.loads(base['detail'])
             if editor_document is not None:
                 detail['document_schema']=1
-                references=set(json.loads(self.one('runs',base['run_id'])['requirements']).get('reference_source_ids',[]))
-                for sid in source_ids(editor_document):
-                    self.one('sources',sid)
-                    if sid in references:raise ValueError('风格参考不能作为报告事实引用')
-                    if sid not in [x['source_id'] for x in detail.get('citations',[])]:
-                        detail.setdefault('citations',[]).append({'source_id':sid,'locator':'','excerpt':''})
-                    c.execute('INSERT OR IGNORE INTO run_sources VALUES(?,?)',(base['run_id'],sid))
             else:detail.pop('document_schema',None)
-            from .figure_support import validate_figures
-            detail['figures']=[f['figure_id'] for f in validate_figures(self,base['run_id'],markdown)]
+            from .figure_support import validate_figures,sync_content_citations
+            figures=validate_figures(self,base['run_id'],markdown)
+            detail['figures']=[f['figure_id'] for f in figures]
+            sync_content_citations(self,base['run_id'],detail,editor_document,figures)
+            for ref in detail['citations']:
+                c.execute('INSERT OR IGNORE INTO run_sources VALUES(?,?)',(base['run_id'],ref['source_id']))
             if detail.get('report_data'):
                 import re
                 # Saved input numbers do not change when a user edits the prose/table.
@@ -394,6 +383,8 @@ class Store:
                 key=document_markdown({'type':'doc','content':[block]})
                 if existing[key]:document['content'][index]=existing[key].popleft()
             markdown=document_markdown(document)
+        from .figure_support import sync_content_citations
+        sync_content_citations(self,base['run_id'],detail,document,figures)
         vid=uid('brief')
         with self.tx() as c:
             latest=c.execute('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(base['run_id'],)).fetchone()

@@ -16,6 +16,31 @@ def validate_figures(store,run_id,markdown):
     return figures
 
 
+def sync_content_citations(store, run_id, detail, document, figures):
+    """Rebuild only citations derived from current rich blocks/figures.
+
+    Explicit bibliography and report-data references stay intact. Tracking the
+    exact added entries lets later revisions remove a deleted figure's implicit
+    citation without guessing whether a user also cited the source directly.
+    """
+    from .document_model import source_ids
+    citations=list(detail.get('citations', []))
+    for ref in detail.get('content_citations', []):
+        if ref in citations:citations.remove(ref)
+    references=set(json.loads(store.one('runs',run_id)['requirements']).get('reference_source_ids',[]))
+    derived=[];present={ref['source_id'] for ref in citations}
+    pairs=[(sid,'') for sid in source_ids(document)] if document is not None else []
+    pairs.extend((sid,figure['caption']) for figure in figures for sid in figure['source_ids'])
+    for sid,locator in pairs:
+        store.one('sources',sid)
+        if sid in references:raise ValueError('风格参考不能作为报告事实引用')
+        if sid not in present:
+            ref={'source_id':sid,'locator':locator,'excerpt':''}
+            citations.append(ref);derived.append(ref);present.add(sid)
+    detail['citations']=citations
+    detail['content_citations']=derived
+
+
 def export_figures(store,brief):
     result={}
     for figure in validate_figures(store,brief['run_id'],brief['markdown']):

@@ -156,7 +156,7 @@ def impacts(store, source_id):
     spans = {row['id'] for row in store.rows('SELECT id FROM evidence_spans WHERE source_id=?', (source_id,))}
     claims = [_decode(row) for row in store.rows('SELECT * FROM claims ORDER BY rowid')]
     direct = {row['id'] for row in claims if any(item['span_id'] in spans for item in row['data'].get('supports', []))}
-    from .figures import read_figure
+    from .figures import read_figure, figure_ids
     for row in claims:
         for figure_id in row['data'].get('figure_ids', []):
             if source_id in read_figure(store, figure_id)['source_ids']:
@@ -178,7 +178,8 @@ def impacts(store, source_id):
         bound = [row for row in bound if row['status'] != 'anchor_missing']
         detail = json.loads(brief['detail'])
         citations = {item['source_id'] for item in detail.get('citations', [])}
-        cited = source_id in citations or source_id in source_ids(brief_document(brief))
+        figure_sources={sid for fid in figure_ids(brief['markdown']) for sid in read_figure(store,fid)['source_ids']}
+        cited = source_id in citations or source_id in source_ids(brief_document(brief)) or source_id in figure_sources
         if bound or cited:
             versions.append({'version_id': brief['id'], 'run_id': brief['run_id'], 'brief_hash': brief['hash'],
                              'claim_ids': sorted({row['claim_id'] for row in bound}), 'cited': cited})
