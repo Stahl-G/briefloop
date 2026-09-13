@@ -209,7 +209,17 @@ Word 按按钮制作，完成后下载；不实时更新 Word，不提供网页�
 
 ## 升级、边界与文档
 
-0.20.1 新增本地外部任务入口：WorkBuddy 等可执行本机命令的 Agent 可连接已有工作区，提交报告、查询进度、保存指定版本的修订和下载 Word。使用说明见 [WorkBuddy 外部入口](docs/WorkBuddy外部入口.md)；可使用 `pip install --upgrade briefloop==0.20.2` 安装；既有 0.20.0 桌面安装包不包含此入口。
+外部 Agent 可通过 `briefloop external` 连接本机已运行的工作区，提交报告、查询进度、读取来源与稿件、保存指定版本修订并下载 Word。当前公开发行包含此入口；安装 CLI 使用 `python -m pip install --upgrade briefloop`。
+
+```sh
+briefloop external --workspace "/absolute/workspace" discover
+briefloop external --workspace "/absolute/workspace" skill
+briefloop external --workspace "/absolute/workspace" request --file request.json
+```
+
+先确认 `discover` 返回 `ready=true`，再按随包 Skill 构造请求；不会自动创建工作区或启动服务。生成使用工作区配置的模型，外部 Agent 的 `revise` 只保存其已完成的修改。写操作保留同一 `request_id` 与原内容以安全重试。
+
+详见 [外部 Agent 调用文档](docs/WorkBuddy外部入口.md)、[随包 Skill 与请求示例](src/briefloop/skill_assets/briefloop-external/SKILL.md)；官网提供 [调用指南](https://briefloop.ai/docs/external-agent.html)。
 
 会议纪要内容方法也在后续源码中接入：选择内置纪要模板即可建议相应用途，输入本次会议转写或笔记，整理决议、待办和未定事项。见 [会议纪要说明与合成材料](docs/会议纪要.md)。
 
