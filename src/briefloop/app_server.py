@@ -25,7 +25,7 @@ class AppServerClient:
         self.notifications=Queue();self.server_requests=Queue()
         self._pending={};self._lock=threading.Lock();self._sequence=0;self._closed=False
         self._stderr=(root/'app-server.stderr.log').open('a')
-        self.process=OwnedProcess([executable,'--enable','multi_agent','app-server','--listen','stdio://'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self._stderr,text=True,bufsize=1)
+        self.process=OwnedProcess([executable,'--enable','multi_agent','app-server','--listen','stdio://'],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=self._stderr,text=True,bufsize=1,parent_death=True)
         self._writer=PipeWriter(self.process.stdin,self._abort)
         self._reader=threading.Thread(target=self._read,daemon=True);self._reader.start()
         try:
