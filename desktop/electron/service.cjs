@@ -7,8 +7,9 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 function runtimeLaunch(runtime, inherited = process.env, platform = process.platform) {
   const windows = platform === 'win32';
   const paths = windows ? path.win32 : path.posix;
-  const {python, node, nodeIsElectron} = runtime;
+  const {python, node, nodeIsElectron, basePython} = runtime;
   if (!paths.isAbsolute(python || '') || !paths.isAbsolute(node || '')) throw Error('请先准备应用运行环境。');
+  if (windows && !paths.isAbsolute(basePython || '')) throw Error('请重新验证应用 Python 运行环境。');
   const env = {...inherited};
   let hostPath = '';
   // Windows environment names are case-insensitive; duplicate Path/PATH keys
@@ -16,7 +17,7 @@ function runtimeLaunch(runtime, inherited = process.env, platform = process.plat
   for (const key of Object.keys(env)) {
     const name = windows ? key.toUpperCase() : key;
     if (name === 'PATH') { hostPath ||= env[key]; delete env[key]; }
-    if (['PYTHONHOME', 'PYTHONPATH', 'NODE_PATH', 'ELECTRON_RUN_AS_NODE'].includes(name)) delete env[key];
+    if (['PYTHONHOME', 'PYTHONPATH', 'NODE_PATH', 'ELECTRON_RUN_AS_NODE', '__PYVENV_LAUNCHER__'].includes(name)) delete env[key];
   }
   env.PATH = [paths.dirname(python), ...hostPath.split(paths.delimiter).filter(entry => paths.isAbsolute(entry))].join(paths.delimiter);
   env.BRIEFLOOP_NODE = node;
@@ -24,7 +25,11 @@ function runtimeLaunch(runtime, inherited = process.env, platform = process.plat
   env.PYTHONSAFEPATH = '1';
   env.PYTHONUNBUFFERED = '1';
   if (nodeIsElectron) env.BRIEFLOOP_NODE_IS_ELECTRON = '1'; else delete env.BRIEFLOOP_NODE_IS_ELECTRON;
-  return {python, node, env, args: ['-I', '-X', 'utf8', '-u']};
+  // CPython's Windows venv redirector launches the base interpreter this way.
+  // Start it directly so the owned child PID is the actual service PID, while
+  // retaining the verified venv prefix and packages without weakening identity.
+  if (windows) env.__PYVENV_LAUNCHER__ = python;
+  return {python, executable: windows ? basePython : python, node, env, args: ['-I', '-X', 'utf8', '-u']};
 }
 function finishesWithin(promise, ms) {
   let timer;
@@ -52,11 +57,11 @@ class WorkspaceService {
     if (!(await fs.stat(directory)).isDirectory()) throw Error('工作区必须是文件夹。');
     if (!create) await fs.access(path.join(directory, 'briefloop.db')).catch(() => { throw Error('这个文件夹还不是 BriefLoop 工作区，请使用“新建工作区”。'); });
     const launch = runtimeLaunch(this.runtime);
-    await Promise.all([fs.access(launch.python), fs.access(launch.node)]);
+    await Promise.all([fs.access(launch.python), fs.access(launch.executable), fs.access(launch.node)]);
     const launchId = randomUUID();
     const log = await fs.open(path.join(directory, 'desktop-server.log'), 'a', 0o600);
     const env = {...launch.env, BRIEFLOOP_LAUNCH_ID: launchId};
-    const child = spawn(launch.python, [...launch.args, '-m', 'briefloop', 'serve', '--workspace', directory, '--port', String(port), '--paused'],
+    const child = spawn(launch.executable, [...launch.args, '-m', 'briefloop', 'serve', '--workspace', directory, '--port', String(port), '--paused'],
       {cwd: directory, env, stdio: ['ignore', log.fd, log.fd], windowsHide: true});
     this.child = child; this.directory = directory;
     this.exited = new Promise(resolve => child.once('close', (code, signal) => { const lastInfo = this.info; this.child = null; this.info = null; resolve({code, signal}); this.onExit({code, signal, lastInfo}); }));

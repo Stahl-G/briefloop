@@ -3,8 +3,10 @@ const assert = require('node:assert/strict');
 const {validateMarker, runtimeLaunch} = require('../service.cjs');
 
 test('Windows launch uses the owned venv and Electron Node while preserving native CLI PATH', () => {
-  const launch = runtimeLaunch({python: 'C:\\中文 应用\\venv\\Scripts\\python.exe', node: 'C:\\应用\\BriefLoop.exe', nodeIsElectron: true}, {Path: 'C:\\User CLI;C:\\Windows;relative', PYTHONPATH: 'old-checkout', PythonHome: 'old-python', NODE_PATH: 'old-node', ELECTRON_RUN_AS_NODE: '1', APPDATA: 'C:\\UserData'}, 'win32');
+  const launch = runtimeLaunch({python: 'C:\\中文 应用\\venv\\Scripts\\python.exe', basePython: 'C:\\Python\\python.exe', node: 'C:\\应用\\BriefLoop.exe', nodeIsElectron: true}, {Path: 'C:\\User CLI;C:\\Windows;relative', PYTHONPATH: 'old-checkout', PythonHome: 'old-python', NODE_PATH: 'old-node', ELECTRON_RUN_AS_NODE: '1', __PYVENV_LAUNCHER__: 'C:\\old-venv\\python.exe', APPDATA: 'C:\\UserData'}, 'win32');
   assert.equal(launch.python, 'C:\\中文 应用\\venv\\Scripts\\python.exe');
+  assert.equal(launch.executable, 'C:\\Python\\python.exe');
+  assert.equal(launch.env.__PYVENV_LAUNCHER__, launch.python);
   assert.equal(launch.node, 'C:\\应用\\BriefLoop.exe');
   assert.equal(launch.env.PATH, 'C:\\中文 应用\\venv\\Scripts;C:\\User CLI;C:\\Windows');
   assert.equal(launch.env.BRIEFLOOP_NODE_IS_ELECTRON, '1');
