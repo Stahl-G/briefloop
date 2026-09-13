@@ -193,6 +193,7 @@ class OpencodeHarness:
         runtime={'backend':'opencode','model':provider+'/'+model,'permission':'read-only',
                  'review_root':str(root),'review_worktree':str(root)}
         session=self.create_session(provider+' · 工具测试',runtime,root)
+        self.chat.event(session['id'],'runtime/test',{'backend':'opencode','model':provider+'/'+model,'kind':'model_tool_call'})
         message=self.send(session['id'],'使用 read 工具读取 sample.txt，并只回复该文件内容。',
                           runtime=runtime,allow_web=False)
         return {'session_id':session['id'],'message_id':message['id'],'kind':'model_tool_call',

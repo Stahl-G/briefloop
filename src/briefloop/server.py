@@ -144,8 +144,8 @@ def _make_server(workspace, port, *, paused, backend, lock):
         root=store.root/'runtime-tests'/secrets.token_hex(8);root.mkdir(parents=True)
         runtime={'backend':backend,'model':model,'permission':'read-only' if backend in ('codex','opencode') else 'runtime-native'}
         session=manager.create_session(backend+' · 连接测试',runtime,root)
-        message=manager.send(session['id'],'Reply with OK only. Do not use tools.',runtime=runtime,allow_web=False)
         manager.chat.event(session['id'],'runtime/test',{'backend':backend,'model':model,'kind':'short_model_call'})
+        message=manager.send(session['id'],'Reply with OK only. Do not use tools.',runtime=runtime,allow_web=False)
         return {'session_id':session['id'],'message_id':message['id'],'status':'submitted'}
 
     token=secrets.token_urlsafe(24)
