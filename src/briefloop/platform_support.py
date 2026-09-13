@@ -45,7 +45,21 @@ def ensure_utf8():
 def cli_command(arguments):
     """Resolve npm shims without cmd.exe or shell interpolation."""
     args = [str(a) for a in arguments]
-    if os.name != 'nt' or Path(args[0]).suffix.lower() not in ('.cmd', '.bat'):
+    if os.name != 'nt':
+        # Desktop launch environments may locate a CLI via host_bins while
+        # /usr/bin/env in its npm shebang still cannot find Node on PATH.
+        entry = Path(args[0])
+        if entry.is_file():
+            with entry.open('rb') as source:
+                shebang = source.readline(128).strip()
+            if shebang == b'#!/usr/bin/env node':
+                from .host_bins import find
+                node = find('node')
+                if not node:
+                    raise FileNotFoundError('npm CLI 需要 Node.js')
+                return [node, str(entry.resolve()), *args[1:]]
+        return args
+    if Path(args[0]).suffix.lower() not in ('.cmd', '.bat'):
         return args
     # npm emits a sibling POSIX shim containing the exact entrypoint. Newer
     # native packages (including OpenCode) invoke an exe without Node.

@@ -150,3 +150,15 @@ test('stdin EOF reaps an in-flight metadata probe, not only active turns',async 
  for(let i=0;i<150&&alive();i++)await new Promise(r=>setTimeout(r,20));
  assert.equal(alive(),false,'owned metadata process must exit after bridge EOF');
 });
+
+test('Codex catalog preserves new host models and excludes both hidden spellings',async t=>{
+ const b=bridge(t),f=fixture(t,`console.log(JSON.stringify({models:[
+  {slug:'new-host-model',display_name:'New host model',visibility:'list'},
+  {slug:'internal-reserve',visibility:'hide'},
+  {slug:'internal-review',visibility:'hidden'},
+  {slug:'legacy-visible'}]}));`);
+ b.send(1,'list_models',{runtime_id:'codex',...f});
+ const {result}=await b.wait(x=>x.id===1);
+ assert.equal(result.source,'host');
+ assert.deepEqual(result.models.map(x=>x.id),['default','new-host-model','legacy-visible']);
+});
