@@ -7,6 +7,7 @@ import json
 import secrets
 import os
 import signal
+import sys
 import threading
 from .platform_support import WorkspaceLock
 from markdown_it import MarkdownIt
@@ -46,6 +47,44 @@ def _close_service(server):
         except BaseException as exc:
             errors.append({'component':name,'error_type':type(exc).__name__})
     return errors
+
+
+def _begin_service_shutdown(server, *, cancel):
+    """Stop admission, finish local writes, then cancel external work before drain."""
+    with server._admission:
+        if server.draining:return
+        server.draining=True
+        server.worker.opened_paused=True
+        server.worker.stopping.set()
+    def drain():
+        with server._admission:
+            while server._active_posts > server._active_connector_posts:
+                server._admission.wait()
+        if cancel:
+            with server.worker._claim_lock:
+                pending=_service_status(server)
+                for job in pending['jobs']:
+                    try:server.worker.stop_job(job['id'])
+                    except Exception as exc:
+                        server.shutdown_errors.append({'component':'job_cancel','error_type':type(exc).__name__})
+            for session in pending['sessions']:
+                try:server.select_harness(session_id=session['id']).cancel(session['id'])
+                except Exception as exc:
+                    server.shutdown_errors.append({'component':'session_cancel','error_type':type(exc).__name__})
+        with server._admission:
+            while server._active_posts:server._admission.wait()
+        server.shutdown()
+    threading.Thread(target=drain,name='briefloop-shutdown',daemon=True).start()
+
+
+def _watch_desktop_owner(server, stream):
+    """Only explicitly desktop-owned services stop on their private stdin EOF."""
+    def watch():
+        try:
+            while stream.read(1):pass
+        except (OSError, ValueError):pass
+        _begin_service_shutdown(server,cancel=True)
+    threading.Thread(target=watch,name='briefloop-desktop-owner',daemon=True).start()
 
 
 def make_server(workspace, port=8765, *, paused=False, backend=None):
@@ -335,12 +374,15 @@ def _make_server(workspace, port, *, paused, backend, lock):
             with self.server._admission:
                 if self.server.draining and not control:
                     self.send(503,{'error':'服务正在退出，不能接受新操作。','code':'service_draining'});return
-                if not control:self.server._active_posts+=1
+                if not control:
+                    self.server._active_posts+=1
+                    if path=='/api/connectors/task-tool':self.server._active_connector_posts+=1
             try:self._post_admitted()
             finally:
                 if not control:
                     with self.server._admission:
                         self.server._active_posts-=1
+                        if path=='/api/connectors/task-tool':self.server._active_connector_posts-=1
                         self.server._admission.notify_all()
 
         def _post_admitted(self):
@@ -381,30 +423,8 @@ def _make_server(workspace, port, *, paused, backend, lock):
                         if state['busy'] and body.get('busy_action')!='cancel':
                             self.send(409,{'error':'服务仍有任务或对话，请等待完成或明确停止后退出。',
                                            'code':'service_busy',**state});return
-                        self.server.draining=True
-                        # Stop queue admission and automatic learning before the
-                        # cancellation sweep; already-admitted HTTP writes finish.
-                        worker.opened_paused=True
-                        worker.stopping.set()
-                    def drain_and_shutdown():
-                        with self.server._admission:
-                            while self.server._active_posts:self.server._admission.wait()
-                        if body.get('busy_action')=='cancel':
-                            with worker._claim_lock:
-                                pending=_service_status(self.server)
-                                for job in pending['jobs']:
-                                    try:worker.stop_job(job['id'])
-                                    except Exception as exc:
-                                        self.server.shutdown_errors.append({'component':'job_cancel',
-                                                                            'error_type':type(exc).__name__})
-                            for session in pending['sessions']:
-                                try:pick_harness(session_id=session['id']).cancel(session['id'])
-                                except Exception as exc:
-                                    self.server.shutdown_errors.append({'component':'session_cancel',
-                                                                        'error_type':type(exc).__name__})
-                        self.server.shutdown()
+                        _begin_service_shutdown(self.server,cancel=body.get('busy_action')=='cancel')
                     self.send(200,{'stopping':True})
-                    threading.Thread(target=drain_and_shutdown,daemon=True).start()
                     return
                 elif path=='/api/tavily':
                     from .tavily import save_key,delete_key
@@ -541,6 +561,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
     server.daemon_threads=True
     server._admission=threading.Condition(threading.RLock())
     server._active_posts=0
+    server._active_connector_posts=0
     server.draining=False
     server.shutdown_errors=[]
     from .connectors import ConnectorService
@@ -559,11 +580,13 @@ def _make_server(workspace, port, *, paused, backend, lock):
     server.server_close=close_server
     server.workspace_lock=lock;server.runtime_bridge=bridge;server.bridge_harnesses=bridge_harnesses
     server.store=store;server.worker=worker;server.harness=harness;server.opencode_harness=opencode_harness
+    server.select_harness=pick_harness
     return server
 
 
 def serve(workspace,port=8765,*,paused=False,backend=None):
     launch_id=os.environ.pop('BRIEFLOOP_LAUNCH_ID',None)
+    desktop_owner=os.environ.pop('BRIEFLOOP_DESKTOP_OWNER_PIPE','')=='1'
     server=make_server(workspace,port,paused=paused,backend=backend)
     from .templates import import_builtin
     import_builtin(server.store)
@@ -576,6 +599,7 @@ def serve(workspace,port=8765,*,paused=False,backend=None):
     print(f'BriefLoop: {url}',flush=True)
     def stop(signum,frame):raise KeyboardInterrupt
     signal.signal(signal.SIGTERM,stop)
+    if desktop_owner:_watch_desktop_owner(server,sys.stdin.buffer)
     try:server.serve_forever()
     except KeyboardInterrupt:pass
     finally:

@@ -121,3 +121,111 @@ def test_cancel_failure_is_recorded_and_running_job_remains_recoverable(service,
     server.worker.close()
     assert store.one('jobs',job['id'])['status']=='interrupted'
     assert store.one('jobs',job['id'])['result'] is None
+
+
+def test_service_stop_cancels_inflight_mcp_before_natural_response(service, tmp_path, monkeypatch):
+    import sys
+    import time
+    from pathlib import Path
+    from concurrent.futures import ThreadPoolExecutor
+    server, request = service
+    directory = tmp_path/'mcp'; directory.mkdir()
+    (directory/'document.txt').write_text('Synthetic source')
+    connector = server.connectors.save({'name':'Delayed source','transport':'stdio',
+        'command':sys.executable,'args':[str(Path(__file__).resolve().parents[1]/'probes/mcp_m0/server.py'),
+        '--transport','stdio','--directory',str(directory)],'timeout_seconds':120,'max_response_bytes':65536})['id']
+    assert server.connectors.enable(connector)['state']=='connected'
+    run = server.store.create_run({'title':'Synthetic','objective':'Read selected data'}, [],
+                                  connector_selection_validated=True)
+    job = server.store.enqueue('generate', {'run_id':run['id']})
+    server.connector_tasks.bind(job['id'], [{'connector_id':connector,'tools':['slow_read']}],
+                                max_calls=1,max_total_bytes=65536)
+    token = server.connector_tasks.access(job['id'])['access_token']
+    def call():
+        connection = http.client.HTTPConnection('127.0.0.1',server.server_port,timeout=10)
+        try:
+            connection.request('POST','/api/connectors/task-tool',json.dumps({'action':'call',
+                'connector_id':connector,'name':'slow_read','arguments':{'token':'cancel-probe'},
+                'request_id':'stop-probe'}),{'Authorization':'Bearer '+token})
+            response=connection.getresponse()
+            return json.loads(response.read())
+        finally:connection.close()
+    shutdown=threading.Event()
+    with monkeypatch.context() as patch, ThreadPoolExecutor(1) as pool:
+        patch.setattr(server,'shutdown',shutdown.set)
+        future=pool.submit(call)
+        log=directory/'server.jsonl'; deadline=time.monotonic()+8
+        while not log.exists() or 'slow_started' not in log.read_text():
+            assert time.monotonic()<deadline, 'MCP fixture did not start'
+            time.sleep(.02)
+        assert request('/api/service-stop',{'pid':os.getpid(),'workspace_id':server.store.meta('workspace_id'),
+                                            'busy_action':'cancel'})[0]==200
+        assert shutdown.wait(5), 'Stop waited for the 20-second natural MCP response'
+        result=future.result(timeout=2)
+    assert result.get('status')!='admitted'
+    assert server.store.one('jobs',job['id'])['status']=='cancelled'
+    assert 'slow_completed' not in log.read_text()
+    assert not server.store.source_ids(run['id'])
+
+
+def test_owned_service_stops_on_stdin_eof_but_standalone_does_not(tmp_path):
+    import subprocess
+    import sys
+    import time
+    from briefloop.platform_support import WorkspaceLock
+    root=tmp_path/'owned'
+    env={**os.environ,'BRIEFLOOP_DESKTOP_OWNER_PIPE':'1','BRIEFLOOP_LAUNCH_ID':'synthetic-owner'}
+    def launch(owned):
+        child_env=dict(env)
+        if not owned:child_env.pop('BRIEFLOOP_DESKTOP_OWNER_PIPE')
+        return subprocess.Popen([sys.executable,'-m','briefloop','serve','--workspace',str(root),
+                                 '--port','0','--paused'],env=child_env,stdin=subprocess.PIPE,
+                                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    def ready(process):
+        deadline=time.monotonic()+10
+        marker=root/'server.json'
+        while not marker.exists() or json.loads(marker.read_text()).get('pid')!=process.pid:
+            assert process.poll() is None and time.monotonic()<deadline
+            time.sleep(.03)
+    owned=launch(True)
+    try:
+        ready(owned);owned.stdin.close();assert owned.wait(timeout=8)==0
+        lock=WorkspaceLock(root);lock.close()
+        standalone=launch(False)
+        try:
+            ready(standalone);standalone.stdin.close()
+            with pytest.raises(subprocess.TimeoutExpired):standalone.wait(timeout=.3)
+        finally:
+            standalone.terminate();standalone.wait(timeout=8)
+    finally:
+        if owned.poll() is None:owned.kill();owned.wait(timeout=5)
+
+
+def test_shutdown_finishes_admitted_save_before_cancelling_jobs(service, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    server,request=service;store=server.store
+    source=store.add_source('Synthetic','Original')
+    run=store.create_run({'title':'Save','objective':'Synthetic'},[source['id']])
+    brief=store.publish(run['id'],{'title':'Save','markdown':'Original'})
+    job=store.enqueue('review',{'version_id':brief['id']})
+    entered=threading.Event();release=threading.Event();shutdown=threading.Event()
+    original=store.revise
+    def delayed_save(*args,**kwargs):
+        entered.set()
+        assert release.wait(5)
+        return original(*args,**kwargs)
+    with monkeypatch.context() as patch, ThreadPoolExecutor(1) as pool:
+        patch.setattr(store,'revise',delayed_save)
+        patch.setattr(server,'shutdown',shutdown.set)
+        future=pool.submit(request,'/api/save',{'base_version':brief['id'],'markdown':'Saved before exit'})
+        try:
+            assert entered.wait(2)
+            assert request('/api/service-stop',{'pid':os.getpid(),'workspace_id':store.meta('workspace_id'),
+                                                'busy_action':'cancel'})[0]==200
+            assert not shutdown.is_set() and store.one('jobs',job['id'])['status']=='queued'
+        finally:release.set()
+        code,saved=future.result(timeout=3)
+        assert code==200 and saved['markdown']=='Saved before exit'
+        assert shutdown.wait(3)
+    assert store.one('briefs',saved['id'])['markdown']=='Saved before exit'
+    assert store.one('jobs',job['id'])['status']=='cancelled'
