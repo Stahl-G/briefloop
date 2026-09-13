@@ -35,6 +35,15 @@ def main():
             parser.add_argument('--port',type=int,default=8765)
             parser.add_argument('--paused',action='store_true',help='打开工作区但不自动重跑旧队列或反馈学习')
             parser.add_argument('--backend',choices=BACKENDS,default=None,help='新任务默认走哪个 CLI 后端；不传则沿用工作区设置')
+    external=sub.add_parser('external',help='连接已授权的本地工作区；不自动创建或启动服务')
+    external.add_argument('--workspace',required=True)
+    es=external.add_subparsers(dest='external_action',required=True)
+    es.add_parser('discover',help='只读检查现有工作区和服务')
+    es.add_parser('skill',help='输出随包提供的 WorkBuddy/本地 Agent 使用说明，不连接工作区')
+    er=es.add_parser('request',help='提交一个外部请求；任务异步执行，写请求须保留request_id')
+    er.add_argument('--file',required=True,help='UTF-8 JSON 请求文件')
+    ed=es.add_parser('download',help='下载指定已完成导出任务的Word，不覆盖不同内容的文件')
+    ed.add_argument('--job',required=True);ed.add_argument('--output',required=True)
     tool=sub.add_parser('tool',help='agent 使用的来源工具')
     tool.add_argument('--workspace',required=True)
     ts=tool.add_subparsers(dest='tool',required=True)
@@ -76,7 +85,22 @@ def main():
     tavily_extract.add_argument('--run',required=True);tavily_extract.add_argument('--url',action='append',required=True)
     tavily_extract.add_argument('--extract-depth',choices=['basic','advanced'],default='basic')
     a=p.parse_args()
-    if a.command=='serve':
+    if a.command=='external':
+        import http.client
+        from .external_client import discover, Client
+        from .execution_records import sanitize
+        try:
+            if a.external_action=='skill':
+                from importlib.resources import files
+                print(files('briefloop').joinpath('skill_assets','briefloop-external','SKILL.md').read_text(encoding='utf-8'))
+                return
+            if a.external_action=='discover':result=discover(a.workspace)
+            elif a.external_action=='request':result=Client(a.workspace).request(json.loads(Path(a.file).read_text(encoding='utf-8-sig')))
+            else:result=Client(a.workspace).download(a.job,a.output)
+            print(json.dumps(result,ensure_ascii=False))
+        except (OSError,ValueError,KeyError,http.client.HTTPException) as exc:
+            p.exit(2,json.dumps({'status':'error','message':sanitize(str(exc))},ensure_ascii=False)+'\n')
+    elif a.command=='serve':
         from .server import serve
         serve(a.workspace,a.port,paused=a.paused,backend=a.backend)
     elif a.command=='start':

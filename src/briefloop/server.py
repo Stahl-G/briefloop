@@ -153,6 +153,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                         pending=store.rows("SELECT id,session_id,data,status,created FROM chat_requests WHERE session_id=? AND status='pending' ORDER BY created,rowid",(q['id'][0],))
                         self.send(200,{'requests':[selected.chat.decode(r) for r in pending]})
                     else:self.send(200,selected.snapshot(q['id'][0],int(q.get('after',['0'])[0]),reasoning=q.get('reasoning',['0'])[0]=='1'))
+                elif u.path=='/api/external/capabilities':
+                    from .external_requests import capabilities
+                    self.send(200,capabilities())
                 elif u.path=='/api/session':self.send(200,{'token':token})
                 elif u.path=='/api/service-status':self.send(200,_service_status(self.server))
                 elif u.path=='/api/connectors':self.send(200,{'connectors':self.server.connectors.list()})
@@ -255,6 +258,8 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     from .deliverable_spec import research_record
                     self.send(200,research_record(store,store.one('briefs',q['version'][0])),download_name='research-notes.json' if q.get('download') else None)
                 elif u.path=='/api/export-file':
+                    if q.get('workspace_id',[store.meta('workspace_id')])[0]!=store.meta('workspace_id'):
+                        raise Conflict('工作区身份已变化，未下载文件')
                     from .export_jobs import output_path
                     job=store.one('jobs',q['job'][0])
                     if job['status']!='complete':raise ValueError('Word 尚未制作完成')
@@ -409,6 +414,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/harness/session':
                     choose_runtime(store,body.get('runtime'))
                     result=pick_harness(body.get('runtime')).create_session(body.get('title','新对话'),body.get('runtime'))
+                elif path=='/api/external/action':
+                    from .external_requests import dispatch
+                    result=dispatch(store,body)
                 elif path=='/api/harness/message':
                     choose_runtime(store,body.get('runtime'))
                     result=pick_harness(body.get('runtime'),body['session_id'],sending=True).send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),display_text=body.get('display_text'),allow_web=bool(body.get('allow_web',False)))
