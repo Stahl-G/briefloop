@@ -229,6 +229,7 @@ briefloop external --workspace "/absolute/workspace" request --file request.json
 
 检索预算用于控制成本：达到额度后使用已有证据并列出重要缺口，不自动加额。评分与事实核验是两条独立的检查，页面分别显示各自结果。
 
+- [0.21.0 工程技术报告](docs/technical-report-0.21.0/technical-report.md) · [证据索引](docs/technical-report-0.21.0/evidence-index.md)
 - [产品定位与验证边界](docs/产品定位与验证.md)
 - [合成周报示例](examples/internal-weekly-report/README.md)
 - [已知边界与问题反馈](KNOWN_ISSUES.md)

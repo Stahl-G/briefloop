@@ -1,0 +1,219 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "BriefLoop 0.21.0 · 报告工作区",
+    "subtitle": "正式 main / v0.21.0 · 程序保存状态，Agent 负责研究与判断",
+    "output": "architecture.html",
+    "viewBox": [
+      1260,
+      650
+    ]
+  },
+  "components": [
+    {
+      "id": "entry",
+      "type": "frontend",
+      "label": "用户与外部 Agent",
+      "sublabel": "Web / Electron / external",
+      "pos": [
+        30,
+        240
+      ],
+      "size": [
+        190,
+        76
+      ]
+    },
+    {
+      "id": "control",
+      "type": "backend",
+      "label": "本地服务与 Worker",
+      "sublabel": "接纳 / 定时 / jobs / events",
+      "pos": [
+        310,
+        240
+      ],
+      "size": [
+        190,
+        76
+      ]
+    },
+    {
+      "id": "store",
+      "type": "database",
+      "label": "版本与证据存储",
+      "sublabel": "SQLite + workspace files",
+      "pos": [
+        620,
+        240
+      ],
+      "size": [
+        190,
+        76
+      ]
+    },
+    {
+      "id": "document",
+      "type": "frontend",
+      "label": "可编辑富文档",
+      "sublabel": "正文 / 表格 / 图表 / 引用",
+      "pos": [
+        970,
+        240
+      ],
+      "size": [
+        190,
+        76
+      ]
+    },
+    {
+      "id": "research",
+      "type": "backend",
+      "label": "主 Agent 与研究任务",
+      "sublabel": "计划 / 分轮 / 交接 / 写作",
+      "pos": [
+        310,
+        70
+      ],
+      "size": [
+        190,
+        76
+      ]
+    },
+    {
+      "id": "review",
+      "type": "security",
+      "label": "独立 Reviewer",
+      "sublabel": "指定稿件 + 离线审阅包",
+      "pos": [
+        620,
+        70
+      ],
+      "size": [
+        190,
+        76
+      ]
+    },
+    {
+      "id": "learning",
+      "type": "backend",
+      "label": "WikiSkill 学习",
+      "sublabel": "反馈 / 候选 / 成对比较",
+      "pos": [
+        620,
+        415
+      ],
+      "size": [
+        190,
+        76
+      ]
+    },
+    {
+      "id": "word",
+      "type": "backend",
+      "label": "Word 制作与交付",
+      "sublabel": "模板 + renderer + 输入哈希",
+      "pos": [
+        970,
+        415
+      ],
+      "size": [
+        190,
+        76
+      ]
+    },
+    {
+      "id": "fact",
+      "type": "backend",
+      "label": "可选 Fact Checker",
+      "sublabel": "公开主张 / 补查 / 四态候选",
+      "pos": [
+        970,
+        70
+      ],
+      "size": [
+        190,
+        76
+      ]
+    }
+  ],
+  "boundaries": [],
+  "connections": [
+    {
+      "from": "entry",
+      "to": "control",
+      "variant": "emphasis"
+    },
+    {
+      "from": "control",
+      "to": "store",
+      "label": "保存与查询",
+      "variant": "emphasis"
+    },
+    {
+      "from": "store",
+      "to": "document",
+      "label": "指定版本",
+      "variant": "emphasis"
+    },
+    {
+      "from": "research",
+      "to": "control",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "from": "store",
+      "to": "review",
+      "fromSide": "top",
+      "toSide": "bottom"
+    },
+    {
+      "from": "store",
+      "to": "learning",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "from": "document",
+      "to": "word",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "from": "fact",
+      "to": "review",
+      "fromSide": "left",
+      "toSide": "right",
+      "label": "候选与原文",
+      "variant": "security"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "研究",
+      "items": [
+        "研究与核查使用冻结预算",
+        "核查候选不直接决定交付"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "版本",
+      "items": [
+        "正文修改形成新版本",
+        "核查与导出绑定准确输入"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "部署与边界",
+      "items": [
+        "宿主可调用外部模型与搜索",
+        "本地图不表示本地推理或强隔离"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,265 @@
+{
+  "document": "BriefLoop 0.21.0 technical report v3",
+  "status": "released source",
+  "release_commit": "847452bfb39e4185e5d91cc537e030c8e4d7da69",
+  "main_commit": "ddc6583890bf9ddc09c71bd8e078dbc08c2a0dc0",
+  "git_tree": "11eb5713bcb36f4b8c4fc8b6ba259795edade511",
+  "captured_at": "2026-09-13T22:34:43.879244+00:00",
+  "cited_files": {
+    "src/briefloop/store.py": {
+      "sha256": "7d46ad0271e10109860a23de0d24a8b70c25430cfd5147c2304624ba86abff16",
+      "bytes": 37245,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/store.py"
+    },
+    "src/briefloop/runtime.py": {
+      "sha256": "f91a116fb56f7f1cc67b9139201199a79645a3e23ba82479c9cd25667b8e5cb8",
+      "bytes": 110613,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/runtime.py"
+    },
+    "src/briefloop/research_plan.py": {
+      "sha256": "93948a361587a0648a0e6516c9eec92cae413a72fe7be33931b32ff3c1fbc9f4",
+      "bytes": 30921,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/research_plan.py"
+    },
+    "src/briefloop/deliverable_spec.py": {
+      "sha256": "f6434cd60bee07b842e0f6add013cd9cc1f90af7416dca98973bdcc7ae057549",
+      "bytes": 18301,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/deliverable_spec.py"
+    },
+    "src/briefloop/workflow_assets/business_report/writing.md": {
+      "sha256": "b89785632d24c418abe44f283951f5dbd9a1306e0ac8c83eaed7445dc8109086",
+      "bytes": 574,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/workflow_assets/business_report/writing.md"
+    },
+    "src/briefloop/document_workflows.py": {
+      "sha256": "f966c7b999a0a6fc1e740aca877dd94ab27f86b21a44638b9dd08ca5717148fa",
+      "bytes": 4436,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/document_workflows.py"
+    },
+    "src/briefloop/templates.py": {
+      "sha256": "0347bd59f3121037e5571b6f44f94716996e3e15dd780f00b5d487f22e552097",
+      "bytes": 25457,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/templates.py"
+    },
+    "src/briefloop/progress.py": {
+      "sha256": "3bebf51ebd1db9221961ca23ae266bf7188073a6f754618daa82f46343af730e",
+      "bytes": 12196,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/progress.py"
+    },
+    "src/briefloop/research_budget.py": {
+      "sha256": "f2d6f3ef89b3895fb61e82dbb4887a989bba4f30bae11461b31f0eb9b0d602dd",
+      "bytes": 9785,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/research_budget.py"
+    },
+    "src/briefloop/scout_tools.py": {
+      "sha256": "3e0c6804696f4a796209541c133f2743bd1279d931a9d4351c981ef712ab3481",
+      "bytes": 9700,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/scout_tools.py"
+    },
+    "src/briefloop/websearch.py": {
+      "sha256": "51c1b2d1e9cbe3968d1f869ad40f3bdcf8a00f7530037fffbf7fc1f21fb11576",
+      "bytes": 8831,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/websearch.py"
+    },
+    "src/briefloop/duckduckgo.py": {
+      "sha256": "fde1dda9b78ffb9170d4ca873d127d97078c671b4ff41c8f96f6794cf1ede93d",
+      "bytes": 9977,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/duckduckgo.py"
+    },
+    "src/briefloop/connectors/materials.py": {
+      "sha256": "3646433ce102940f7454d8e27849211f6b73743233d51d48c000fa99f63778a5",
+      "bytes": 13231,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/connectors/materials.py"
+    },
+    "src/briefloop/reconciliation.py": {
+      "sha256": "f673aa1507dd75d25f6c11a63cc424a99a6da5ed0887e205e45e911f5c540607",
+      "bytes": 10229,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/reconciliation.py"
+    },
+    "src/briefloop/review.py": {
+      "sha256": "50761eb270e8a078c437e201361c6ca627ae4d47001c2ceb86845798594429bc",
+      "bytes": 61504,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/review.py"
+    },
+    "src/briefloop/release.py": {
+      "sha256": "6d77185132fee14cbe3c7ccc7447cd2dbe46f3b08f96444b68f0c85bb039335f",
+      "bytes": 26121,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/release.py"
+    },
+    "src/briefloop/document_model.py": {
+      "sha256": "6f5974cdfa30b7b7d5a65050f38cf6395ee119c329b1293b4809f2609005909d",
+      "bytes": 16589,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/document_model.py"
+    },
+    "src/briefloop/export_jobs.py": {
+      "sha256": "ff14921bd9b16496ca82cc7735741070640c6a54fb487ebeb03e698d685c5c20",
+      "bytes": 6677,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/export_jobs.py"
+    },
+    "src/briefloop/learning.py": {
+      "sha256": "80dda58131b12adfc2a7909d75b1ffcb8c180171a80d5438e087763cfb56c43a",
+      "bytes": 29815,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/learning.py"
+    },
+    "src/briefloop/external_requests.py": {
+      "sha256": "a954e0009ce6a4916102e65d4f48d14b892822714995f79d3318883dc9cbd711",
+      "bytes": 8845,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/external_requests.py"
+    },
+    "tests/test_research_plan.py": {
+      "sha256": "f5333fc5ea70986980a8257742c1a66f859971e5b80ae803e011ec3c4a70bf91",
+      "bytes": 22194,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/tests/test_research_plan.py"
+    },
+    "tests/test_research_handoff.py": {
+      "sha256": "feb3d0cce77d88932e962bebfb13852167fbee040adb8d305cba885bac03b912",
+      "bytes": 11165,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/tests/test_research_handoff.py"
+    },
+    "tests/test_websearch.py": {
+      "sha256": "626c4877b66b9d16842f2abc6f6d06785f78ae9e641af381fe036850183c05f3",
+      "bytes": 8098,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/tests/test_websearch.py"
+    },
+    "tests/test_fact_check_contract.py": {
+      "sha256": "48901bb04c18b14c5cf753a27b0d16c2fe7cf3ce04b3107194cd55e2600c02b8",
+      "bytes": 16990,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/tests/test_fact_check_contract.py"
+    },
+    "tests/test_fact_check_phase.py": {
+      "sha256": "6e9a56fba9caf0ceba8f3952a11b843a30dfee2aaebd02b50e819b5763d8c070",
+      "bytes": 10250,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/tests/test_fact_check_phase.py"
+    },
+    "tests/test_fact_check_review.py": {
+      "sha256": "e01563b462df300c6ae6854bfd28d49446f16653d8183a0d7d9efbbbef06db51",
+      "bytes": 6445,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/tests/test_fact_check_review.py"
+    },
+    "tests/test_fact_check_orchestration.py": {
+      "sha256": "c28566451322bd04700ddd5fd6811c6625311911c7f1c93045fe8bfcb54908d1",
+      "bytes": 20617,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/tests/test_fact_check_orchestration.py"
+    },
+    "tests/test_schedules.py": {
+      "sha256": "71fcef9d01b33ffb807e5d34a900030ecb7f1265a81a51f8e35367516430dac6",
+      "bytes": 6350,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/tests/test_schedules.py"
+    },
+    "tests/test_learning_integrity.py": {
+      "sha256": "3aabe18bdbd210e4ca31c69be16274fd177a661a5c5c085b75baa8c7432e30ec",
+      "bytes": 7697,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/tests/test_learning_integrity.py"
+    },
+    "tests/test_release.py": {
+      "sha256": "68485e4381620669b0448e4b0731a46504d01d02d66162e680fd45afac630ab0",
+      "bytes": 44888,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/tests/test_release.py"
+    },
+    "desktop/electron/service.cjs": {
+      "sha256": "bd31aee4fe42b9257fd78a2d6e549c87bdcb5d9499bff406a7a32cd893ae88dd",
+      "bytes": 8905,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/desktop/electron/service.cjs"
+    },
+    "src/briefloop/server.py": {
+      "sha256": "43f15fee852c9d80f457e1e818bbd563ef138f3d67dd25e9d0e87a8c39097507",
+      "bytes": 44634,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/server.py"
+    },
+    "src/briefloop/harness.py": {
+      "sha256": "05453e14cbba21d0ec89c9c8aa9a57b80c8297f6968c45f846dc1d26ff64b1ff",
+      "bytes": 35028,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/harness.py"
+    },
+    "src/briefloop/opencode_harness.py": {
+      "sha256": "adf2134abc938e845c75b57872b64e94c1cdc05de0c86af19f279d25793f7f4c",
+      "bytes": 61591,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/opencode_harness.py"
+    },
+    "runtime-bridge/main.ts": {
+      "sha256": "be3774a1878a47ca339743ca4b0ab94e759f03b19218f2a61176e20f5f1af31a",
+      "bytes": 28531,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/runtime-bridge/main.ts"
+    },
+    "runtime-bridge/catalog.json": {
+      "sha256": "3e73801d77fd3d0a1a49b392588d7c782a29a1dfd7323851da78ac02406cee5d",
+      "bytes": 2584,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/runtime-bridge/catalog.json"
+    },
+    "src/briefloop/conflicts.py": {
+      "sha256": "5f2b42b454eba062aa6385ae29247d0c7ea2dd59447f97d410563781a3990bdc",
+      "bytes": 6701,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/conflicts.py"
+    },
+    "src/briefloop/source_updates.py": {
+      "sha256": "7fcd2c59358fb0074d464f075a2c1d7c60e1fc8e772b24db3129a9d9be3af3ef",
+      "bytes": 17663,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/source_updates.py"
+    },
+    "src/briefloop/audit_bundle.py": {
+      "sha256": "ca539bd7313eee85580d4c0de827192a7a4e197d4ad5a570590ae7dc633c850c",
+      "bytes": 39777,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/audit_bundle.py"
+    },
+    "src/briefloop/word_import.py": {
+      "sha256": "384391de3f4ea0328e7658ea1af1da7399dbe2c615e4caaaf7b5337503131181",
+      "bytes": 10746,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/word_import.py"
+    },
+    "src/wikiskill/resources/product/entry-skill/SKILL.md": {
+      "sha256": "9e18ac596b9621dcbf000bdffb754f6b95f597e1dc13155bfa888c5151e2bfae",
+      "bytes": 10603,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/wikiskill/resources/product/entry-skill/SKILL.md"
+    },
+    "src/wikiskill/product.py": {
+      "sha256": "e98c05d137e5fb2696a999be4faa70fd8d9713fcf42c644cf3e56e59878ba44e",
+      "bytes": 32636,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/wikiskill/product.py"
+    },
+    "src/wikiskill/scorer_trust.py": {
+      "sha256": "4b46062eba1cf8c57e3a549dc89800ecb6a047eb8c2f057f8f613d347546394d",
+      "bytes": 3738,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/wikiskill/scorer_trust.py"
+    },
+    "src/wikiskill/feedback_loop.py": {
+      "sha256": "0ccb62a8dd1c88de74700109eaef7ff124288ea03b6a978892ed8282a24c8999",
+      "bytes": 8030,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/wikiskill/feedback_loop.py"
+    },
+    "desktop/electron/windows-process.cs": {
+      "sha256": "cf5122ca837120bd2f71dc48246a339586d08b91e08423cf4897410ffff5fc06",
+      "bytes": 9753,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/desktop/electron/windows-process.cs"
+    },
+    "desktop/electron/environment.cjs": {
+      "sha256": "5e0300be3a5bbc39b09601952ab40616a990e02087f59ca4a96c379145b5b001",
+      "bytes": 23576,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/desktop/electron/environment.cjs"
+    },
+    "src/briefloop/fact_check.py": {
+      "sha256": "f1cb188c8ce830d893e71b138b81fbb6980f92dba7793faec0acc25046fbc6b1",
+      "bytes": 32531,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/fact_check.py"
+    },
+    "src/briefloop/schedules.py": {
+      "sha256": "dfd19b45317bc73a05eca7578ce234b2abee4902b512ab986c9cb95bbb93f0cc",
+      "bytes": 11026,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/schedules.py"
+    },
+    "desktop/electron/updater.cjs": {
+      "sha256": "cf6544ccfcc07c5eec9d1ad685049d54343763a6ac601f7e086af4c88d9d0cdf",
+      "bytes": 18975,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/desktop/electron/updater.cjs"
+    },
+    "docs/定时报告.md": {
+      "sha256": "f51d6418a91d6a1f60b11998189f10d0cabea0cf67d631dc784285ea7bd1672e",
+      "bytes": 3168,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/docs/定时报告.md"
+    },
+    "docs/桌面安装与更新.md": {
+      "sha256": "b03106f28e9900017821c9db718c0a97f3e193143a05d604712f5b4020614566",
+      "bytes": 5131,
+      "source_url": "https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/docs/桌面安装与更新.md"
+    }
+  }
+}
