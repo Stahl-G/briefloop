@@ -118,7 +118,8 @@ class BridgeHarness(OpencodeHarness):
             output='';reasoning='';tools={};started=time.monotonic()
             while True:
                 if sid in self._cancel_requested:self.bridge.call('cancel',{'execution_id':execution})
-                if time.monotonic()-started>self.store.settings()['timeout_minutes']*60:
+                minutes=self.store.settings()['timeout_minutes']
+                if minutes>0 and time.monotonic()-started>minutes*60:
                     self.bridge.call('cancel',{'execution_id':execution});raise TimeoutError('运行超过本轮时间上限')
                 try:event=sink.get(timeout=.5)
                 except queue.Empty:continue

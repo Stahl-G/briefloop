@@ -561,11 +561,13 @@ class OpencodeHarness:
         assistant_id = None
         seen_tools = set()
         started_at = time.monotonic()
-        deadline = started_at + self.store.settings()['timeout_minutes'] * 60
-        child_poll = {'deadline': deadline}
+        child_poll = {}
         last_activity = started_at
         execution_started = False
         while True:
+            minutes = self.store.settings()['timeout_minutes']
+            deadline = started_at + minutes * 60 if minutes > 0 else float('inf')
+            child_poll['deadline'] = deadline
             if self._epoch.get(sid) != epoch:
                 return
             if sid in self._cancel_requested:

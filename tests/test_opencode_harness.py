@@ -820,3 +820,36 @@ def test_nested_native_error_exposes_only_sanitized_message(tmp_path, monkeypatc
     error['data']['message'] = {'private': 'PRIVATE NONSTRING MESSAGE'}
     assert module._public_native_error(error) == 'APIError'
     assert module._public_native_error({'name': 'Authorization: Basic NAME_SECRET', 'data': error['data']}) == '执行失败'
+
+@pytest.mark.parametrize('cancel', [False, True])
+def test_unlimited_turn_can_finish_or_be_cancelled_after_long_wait(tmp_path, monkeypatch, cancel):
+    import briefloop.opencode_harness as module
+    from types import SimpleNamespace
+    from briefloop.models import Settings
+    store = Store(tmp_path)
+    store.set_meta('settings', Settings(timeout_minutes=0).model_dump())
+    manager = OpencodeHarness(store, FakeClient)
+    sid = manager.create_session()['id']
+    manager.chat.message(sid, 'Work', mid='turn', status='delivered', turn_id='turn')
+    manager._epoch[sid] = 1
+    manager._bound_session = lambda _: 'parent'
+    clock = [0]
+    def sleep(_):
+        clock[0] = 20000
+        if cancel: manager._cancel_requested.add(sid)
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: clock[0], sleep=sleep))
+    class LongTurn:
+        aborts = []
+        def abort(self, owner, *, directory=None): self.aborts.append(owner)
+        def children(self, owner, *, directory=None): return []
+        def permissions(self, *, directory=None): return []
+        def questions(self, *, directory=None): return []
+        def messages(self, owner, *, directory=None):
+            return [{'info': {'id': 'reply', 'role': 'assistant', 'time': {'created': 10000,
+                **({'completed': 10001} if clock[0] else {})}, 'finish': 'stop' if clock[0] else None},
+                'parts': [{'type':'text','text':'working'}]}]
+    client = LongTurn(); manager._client = lambda: client
+    manager._follow(sid, 1, 'turn', 10000)
+    message = next(m for m in manager.snapshot(sid)['messages'] if m['id'] == 'turn')
+    assert message['status'] == ('cancelled' if cancel else 'completed')
+    assert client.aborts == (['parent'] if cancel else [])
