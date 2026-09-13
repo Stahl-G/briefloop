@@ -48,9 +48,7 @@ function validateMarker(marker, child, launchId) {
 
 class WorkspaceService {
   constructor(runtime, onExit = () => {}) { this.runtime = runtime; this.onExit = onExit; this.child = null; this.info = null; }
-  async start(directory, {create = false, port = 0} = {}) {
-    if (this.child) throw Error('请先关闭当前工作区。');
-    if (!Number.isInteger(port) || port < 0 || port > 65535) throw Error('无效的工作区端口。');
+  async preflight(directory, {create = false} = {}) {
     if (!path.isAbsolute(directory)) throw Error('请选择完整的本地工作区路径。');
     if (create) await fs.mkdir(directory, {recursive: true});
     directory = await fs.realpath(directory);
@@ -58,13 +56,38 @@ class WorkspaceService {
     if (!create) await fs.access(path.join(directory, 'briefloop.db')).catch(() => { throw Error('这个文件夹还不是 BriefLoop 工作区，请使用“新建工作区”。'); });
     const launch = runtimeLaunch(this.runtime);
     await Promise.all([fs.access(launch.python), fs.access(launch.executable), fs.access(launch.node)]);
+    // Check actual directory writes before closing another workspace. This does
+    // not acquire the target's service lock; startup still validates ownership.
+    const probe = path.join(directory, `.desktop-preflight-${randomUUID()}`);
+    const handle = await fs.open(probe, 'wx', 0o600);
+    try { await handle.close(); } finally { await fs.unlink(probe); }
+    return directory;
+  }
+  async start(directory, {create = false, port = 0} = {}) {
+    if (this.child) throw Error('请先关闭当前工作区。');
+    if (!Number.isInteger(port) || port < 0 || port > 65535) throw Error('无效的工作区端口。');
+    directory = await this.preflight(directory, {create});
+    const launch = runtimeLaunch(this.runtime);
     const launchId = randomUUID();
     const log = await fs.open(path.join(directory, 'desktop-server.log'), 'a', 0o600);
-    const env = {...launch.env, BRIEFLOOP_LAUNCH_ID: launchId};
+    const env = {...launch.env, BRIEFLOOP_LAUNCH_ID: launchId, BRIEFLOOP_DESKTOP_OWNER_PIPE: '1'};
     const child = spawn(launch.executable, [...launch.args, '-m', 'briefloop', 'serve', '--workspace', directory, '--port', String(port), '--paused'],
-      {cwd: directory, env, stdio: ['ignore', log.fd, log.fd], windowsHide: true});
+      {cwd: directory, env, stdio: ['pipe', log.fd, log.fd], windowsHide: true,
+        // libuv puts non-detached Windows children in its kill-on-parent-exit
+        // job. Let EOF drive Python cleanup instead of that immediate hard kill.
+        // Keep both the child reference and stdin writer; this is still owned.
+        detached: process.platform === 'win32'});
+    // Node owns the only writer. Descendants receive the read end as stdin,
+    // never this parent handle; owner death therefore produces EOF in Python.
+    // No heartbeat or payload is needed, and an early child exit is harmless.
+    child.stdin.on('error', () => {});
     this.child = child; this.directory = directory;
-    this.exited = new Promise(resolve => child.once('close', (code, signal) => { const lastInfo = this.info; this.child = null; this.info = null; resolve({code, signal}); this.onExit({code, signal, lastInfo}); }));
+    this.exited = new Promise(resolve => child.once('close', (code, signal) => {
+      child.stdin.destroy();
+      const lastInfo = this.info;
+      if (this.child === child) { this.child = null; this.info = null; this.token = null; }
+      resolve({code, signal}); this.onExit({code, signal, lastInfo});
+    }));
     let spawnError; child.once('error', error => { spawnError = error; });
     await log.close();
     try {
@@ -86,7 +109,12 @@ class WorkspaceService {
       }
       throw Error('工作区启动超时，请查看 desktop-server.log。');
     } catch (error) {
-      if (this.child === child && child.pid) { child.kill('SIGTERM'); await finishesWithin(this.exited, 10000); }
+      if (this.child === child) {
+        // EOF asks Python to drain/cancel its owned descendants. Killing only
+        // the service PID would bypass that cleanup, especially on Windows.
+        child.stdin.destroy();
+        if (!(await finishesWithin(this.exited, 90000))) error.message += ' 目标服务仍在退出，暂不能启动另一个工作区。';
+      }
       throw error;
     }
   }
