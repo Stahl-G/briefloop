@@ -37,6 +37,13 @@ def backend_versions(resources, expected_hash=None):
     return {'backend_manifest': manifest['version'], 'backend_wheel': wheel_version(wheel)}
 
 
+def normalize_windows_version(raw):
+    """A zero PE revision is equivalent to the three-part product version."""
+    if re.fullmatch(r'\d+\.\d+\.\d+\.0', raw):
+        return raw.rsplit('.', 1)[0]
+    return raw
+
+
 def source_versions(root):
     tree = ast.parse((root / 'src/briefloop/__init__.py').read_text(encoding='utf-8'))
     python_version = next(ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign)
@@ -83,7 +90,9 @@ def check(args):
         capture('mac', mac)
         if results['mac']['status']=='match' and release_hash:results['mac']['release_wheel_sha256']=release_hash
     if args.windows_app:
+        raw_windows_version = None
         def windows():
+            nonlocal raw_windows_version
             if os.name != 'nt':
                 raise ValueError('Windows EXE version must be inspected on Windows')
             exe = args.windows_app.resolve()
@@ -91,8 +100,10 @@ def check(args):
             literal = str(exe).replace("'", "''")
             command = f"[Console]::OutputEncoding=[Text.Encoding]::UTF8; (Get-Item -LiteralPath '{literal}').VersionInfo.ProductVersion"
             version = subprocess.check_output(['powershell.exe', '-NoProfile', '-Command', command], text=True, encoding='utf-8').strip()
-            return {'app': version, **backend_versions(exe.parent / 'resources', release_hash)}
+            raw_windows_version = version
+            return {'app': normalize_windows_version(version), **backend_versions(exe.parent / 'resources', release_hash)}
         capture('windows', windows)
+        if raw_windows_version is not None:results['windows']['raw_product_version']=raw_windows_version
         if results['windows']['status']=='match' and release_hash:results['windows']['release_wheel_sha256']=release_hash
     if args.wheel:
         capture('wheel', lambda: {'metadata': wheel_version(args.wheel)})
