@@ -112,8 +112,10 @@ class Store:
             c.executescript(CONFLICT_SCHEMA)
             from .release import SCHEMA as RELEASE_SCHEMA
             from .source_updates import SCHEMA as SOURCE_UPDATE_SCHEMA
+            from .fact_check import SCHEMA as FACT_CHECK_SCHEMA
             c.executescript(RELEASE_SCHEMA)
             c.executescript(SOURCE_UPDATE_SCHEMA)
+            c.executescript(FACT_CHECK_SCHEMA)
             if 'mode' not in {r['name'] for r in c.execute('PRAGMA table_info(runs)')}:
                 c.execute("ALTER TABLE runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'normal'")
             if 'origin' not in {r['name'] for r in c.execute('PRAGMA table_info(templates)')}:
