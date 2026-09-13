@@ -245,7 +245,7 @@ def validate_applicable_review(store,review_id,version_id=None):
     return review
 
 
-def _snapshot(store,version_id,snapshot_version=6):
+def _snapshot(store,version_id,snapshot_version=7):
     from .document_model import brief_document
     from .deliverable_spec import resolve
     from .figure_support import validate_figures
@@ -287,11 +287,25 @@ def _snapshot(store,version_id,snapshot_version=6):
         from .source_updates import for_run as changes_for_run
         changes=[{k:v for k,v in c.items() if k not in ('review','review_status','current_impacts')} for c in changes_for_run(store,run['id'])]
         timing=[{**row,'data':json.loads(row['data'])} for row in store.rows('SELECT * FROM source_snapshot_metadata ORDER BY rowid') if row['source_id'] in source_ids]
+    fact_checks=[]
+    if snapshot_version>=7:
+        # Observation-mode candidates from the optional independent fact checker:
+        # 查了什么（candidates 含查询与证据 span）、没查什么（unselected/unchecked）
+        # 与执行状态原样进包，接纳与否留给本 Reviewer，不构成任何硬门。
+        from .fact_check import covers as fact_check_covers,records_for as fact_check_records
+        for row in fact_check_records(store,run['id']):
+            data=row['data']
+            fact_checks.append({'id':row['id'],'stage_id':data['stage_id'],'version_id':data['version_id'],
+                                'as_of':data['as_of'],'snapshot':data['snapshot'],'execution':data['execution'],
+                                'covers_this_version':fact_check_covers(store,row,version_id),
+                                'selection':data['selection'],'candidates':data['candidates'],
+                                'unchecked':data['unchecked'],'created':data['created']})
     return {'snapshot_version':snapshot_version,'candidate_claims':candidates,'version_id':version_id,'brief_hash':brief['hash'],'document':brief_document(brief),
             'requirements':resolve(requirements,reader_contract=detail.get('reader_contract')),'detail':detail,
             **({'requirements_input':requirements} if snapshot_version>=4 else {}),
             **({'source_updates':changes,'source_timing':timing} if snapshot_version>=5 else {}),
             **({'source_statements':source_statements,'reconciliation':reconciliation} if snapshot_version>=6 else {}),
+            **({'fact_checks':fact_checks} if snapshot_version>=7 else {}),
             'sources':sources,'conflicts':conflicts,'evidence':inspect_bindings(store,version_id),
             'figures':validate_figures(store,run['id'],brief['markdown'])}
 
@@ -773,6 +787,10 @@ version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief
 四维评分使用既有标准，不用高分抵消重大错误。review.status表示是否完成审阅，claim_checks.status表示依据结论。coverage_scan_complete仅在确实检查了正文重要主张遗漏后设true；未核验项写unchecked。
 字段边界（不要混用两套 finding）：顶层 overall/四维分数只属于 assessment；assessment 必须给出，不能省略。assessment.findings 用 dimension/severity/description/report_quote/requirement/source_id/locator/evidence/suggestion。顶层 findings 是核查发现，用 kind/severity/description/evidence，可带 claim_ids/block_ids/requirement_ids（条款可用 requirement_ids 关联，不要写 requirement 或 source_id）。
 '''
+    if target.get('fact_checks'):
+        prompt+=('\n本次含可选独立事实核查（观察模式）留下的候选记录：fact_checks[].candidates 是查了什么（主张锚点、查询id、证据span、四态候选与一句依据），selection.unselected 与 unchecked 是没查什么及原因，execution 说明本次执行为何收束。'
+                 '候选不是结论：包括 contradicted 在内无权直接创建核心冲突或阻断交付，须由你对照核查包登记原件逐条独立复核——接纳的问题写入 findings 并引用证据 span；你对这些主张本身的判断写入 claim_checks，可与候选不同，并在 reason 说明差异。'
+                 'execution.status 为 cancelled/failed/budget_exhausted 只说明执行收束原因，不代表主张真假，其未覆盖主张按未核查处理；covers_this_version 为 false 的记录属于旧稿，不能当作本稿已核查。')
     from .deliverable_spec import instructions
     prompt+='\n'+instructions(target['requirements'],role='reviewer',include_spec=False)
     if clauses:

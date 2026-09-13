@@ -357,6 +357,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/review-status':
                     from .review import review_status
                     self.send(200,review_status(store,q['version'][0]))
+                elif u.path=='/api/fact-checks':
+                    from .fact_check import view as fact_check_view
+                    self.send(200,fact_check_view(store,q['version'][0]))
                 elif u.path=='/api/evidence':
                     from .evidence import inspect_bindings
                     self.send(200,inspect_bindings(store,q['version'][0]))

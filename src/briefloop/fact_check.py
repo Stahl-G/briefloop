@@ -263,3 +263,46 @@ def covers(store,record,version_id):
     """旧核查是否仍覆盖该版本：改稿后的版本不算已核查，重查生成新身份。"""
     data=record['data'] if isinstance(record.get('data'),dict) else record
     return data['version_id']==version_id and data['version_fingerprint']==version_fingerprint(store,version_id)
+
+
+def view(store,version_id):
+    """检查面板只读视图：候选、Reviewer 判断与执行状态分别可查，互不改写。
+
+    候选来自 fact_checks 记录本身；Reviewer 判断取该版本最近一次已接纳审阅的
+    claim_checks（按 claim_id 对齐，可与候选不同）；执行状态只说明收束原因。
+    原文链接解析成 span 的来源与定位，供面板逐条展示。
+    """
+    brief=store.one('briefs',version_id)
+    reviewer={}
+    for row in store.rows('SELECT result FROM reviews WHERE version_id=? AND result IS NOT NULL ORDER BY rowid DESC',(version_id,)):
+        for check in json.loads(row['result']).get('claim_checks',[]):
+            reviewer.setdefault(check['claim_id'],{'status':check['status'],'reason':check['reason']})
+        break
+    def statement(claim_id):
+        try:return evidence_record(store,'claims',claim_id)['data'].get('statement','')
+        except ValueError:return ''
+    def display(candidate):
+        spans=[]
+        for span_id in candidate.get('span_ids',[]):
+            try:span=evidence_record(store,'evidence_spans',span_id)
+            except ValueError:continue
+            spans.append({'span_id':span_id,'source_id':span['source_id'],
+                          'source_name':store.one('sources',span['source_id'])['name'],
+                          'locator':span['data'].get('locator')})
+        return {'claim_id':candidate['claim_id'],'statement':statement(candidate['claim_id']),
+                'status':candidate.get('status'),'reason':candidate.get('reason',''),
+                'spans':spans,'query_ids':candidate.get('query_ids',[]),
+                'anchors':candidate.get('anchors',[]),'reviewer':reviewer.get(candidate['claim_id'])}
+    records=[]
+    for row in records_for(store,brief['run_id']):
+        data=row['data']
+        records.append({'id':row['id'],'version_id':data['version_id'],'stage_id':data['stage_id'],
+                        'as_of':data['as_of'],'snapshot':data['snapshot'],'execution':data['execution'],
+                        'covers_version':covers(store,row,version_id),
+                        'candidates':[display(item) for item in data['candidates']],
+                        'unchecked':[{'claim_id':claim_id,'statement':statement(claim_id),
+                                      'reviewer':reviewer.get(claim_id)} for claim_id in data['unchecked']],
+                        'unselected':[{'claim_id':item['claim_id'],'statement':statement(item['claim_id']),
+                                       'reason':item['reason']} for item in data['selection'].get('unselected',[])],
+                        'created':data['created']})
+    return {'version_id':version_id,'records':records}
