@@ -517,7 +517,8 @@ async function refreshProgress(){
   const stageLabel=typeof p.stage==='string'?p.stage:(p.stages||[]).find(item=>item.status==='active')?.label;
   const elapsed=Math.max(0,Math.floor((Date.now()-new Date(job.created))/1000));
   const mins=Math.floor(elapsed/60),secs=elapsed%60;
-  const running=live.worker_alive&&live.pid&&live.returncode===null;
+  // Independent review/check jobs need not own the main runtime's PID.
+  const running=job.status==='running';
   const labels={running:'进行中',pending_init:'启动中',completed:'已完成',done:'已完成',closed:'已结束',failed:'失败',errored:'失败'};
   $('run-progress').hidden=false;
   $('run-progress').innerHTML=`<div class="section-title"><div><p class="eyebrow">${({learn:'技能学习',review:'独立审阅',assess:'独立评分',revise:'稿件修订',fact_check:'独立事实核查'})[job.kind]||'简报生成'} · ${running?'后台正在运行':'等待后台执行'}</p><h2>${esc(pendingRequests.length?'等待你的确认':stageLabel||(job.status==='queued'?'任务已排队':'正在启动 BriefLoop'))}</h2></div><button class="outline" id="progress-stop">停止任务</button></div><p><strong>${esc(jobModelLabel(job,start))}</strong> · 模型进程 PID ${live.pid||'—'}${live.server_pid?' · 本地服务 PID '+live.server_pid:''}</p><p class="help">本任务已用 ${mins} 分 ${secs} 秒 · ${state.settings.timeout_minutes===0?'不限时':'单次执行上限 '+state.settings.timeout_minutes+' 分钟'} <button id="progress-timeout" class="subtle-button">调整时限</button>${run?` · ${JSON.parse(run.source_ids).length} 份初始来源 · ${req.allow_web?'允许联网':'仅本地来源'}`:''}</p>${p.message?`<p class="progress-message">${esc(p.message)}</p>`:''}${stageRailHTML(p.stages)||`<div class="agent-progress">${agents.map(a=>`<div><strong>${esc(a.role)}</strong><span>${labels[a.status]||esc(a.status)}</span>${a.task?`<p>${esc(a.task)}</p>`:''}</div>`).join('')}</div>`}<p class="help">${p.draft_ready?'正文已可查看，评分独立完成。':'正文保存后会自动显示；等待子 agent 时可能暂时没有新消息。'}${p.last_activity?' 最近活动：'+new Date(p.last_activity).toLocaleTimeString():''}</p>`;
