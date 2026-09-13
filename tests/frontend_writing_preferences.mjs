@@ -1,0 +1,17 @@
+import fs from 'node:fs';
+import vm from 'node:vm';
+import assert from 'node:assert/strict';
+const source=fs.readFileSync('frontend/app.js','utf8');
+const c=vm.createContext({});
+vm.runInContext(source.slice(source.indexOf('function preserveWritingPreferences('),source.indexOf('function applyRequirements(')),c);
+c.previous={writing_preferences:['直接写变化','保留来源'],company_context_revision:'old',workflow_snapshot:{stale:true}};
+c.req={objective:'edited'};
+vm.runInContext('preserveWritingPreferences(req,previous)',c);
+assert.deepEqual(Array.from(c.req.writing_preferences),c.previous.writing_preferences);
+assert.equal(c.req.company_context_revision,undefined);assert.equal(c.req.workflow_snapshot,undefined);
+c.req={writing_preferences:[]};vm.runInContext('preserveWritingPreferences(req,previous)',c);assert.equal(c.req.writing_preferences.length,0);
+c.req={};vm.runInContext('preserveWritingPreferences(req,previous,[])',c);assert.equal(c.req.writing_preferences.length,0,'explicit reset wins over saved preferences');
+c.req={};c.override=['新偏好'];vm.runInContext('preserveWritingPreferences(req,previous,override)',c);assert.deepEqual(Array.from(c.req.writing_preferences),['新偏好']);
+assert.match(source,/preserveWritingPreferences\(req,state.requirements,writingPreferencesOverride\)/);
+assert.match(source,/addEventListener\('reset',\(\)=>\{writingPreferencesOverride=\[\]\}/);
+console.log('PASS: form preserves unedited writing preferences, respects explicit replacement/reset, and never carries frozen metadata');

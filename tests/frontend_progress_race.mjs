@@ -2,13 +2,14 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
+import {withoutSupersededRetries} from '../frontend/review-status.js';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const code=source.slice(source.indexOf('function effectiveReportJobs'),source.indexOf('function friendlyModel'));
 function fixture(status='running'){
  const nodes=new Map(),pending=[];
  const node=id=>{if(!nodes.has(id))nodes.set(id,{hidden:false,innerHTML:'',textContent:''});return nodes.get(id)};
  const job={id:'job',kind:'generate',status,payload:'{"run_id":"report"}',created:new Date().toISOString()};
- const context=vm.createContext({$:node,parse:s=>JSON.parse(s||'{}'),esc:String,modelLabel:()=> 'test/model',
+ const context=vm.createContext({withoutSupersededRetries,$:node,parse:s=>JSON.parse(s||'{}'),esc:String,modelLabel:()=> 'test/model',
   current:null,pendingRun:'report',
   state:{jobs:[job],briefs:[],runs:[],sources:[],settings:{timeout_minutes:30}},
   showSettings:()=>{},page:()=>{},action:async fn=>fn(),

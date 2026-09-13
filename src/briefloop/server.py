@@ -289,6 +289,13 @@ def _make_server(workspace, port, *, paused, backend, lock):
             except (ValueError,KeyError,OSError,RuntimeError) as exc:self.error(exc)
         def do_POST(self):
             try:
+                if urlsplit(self.path).path == '/api/connectors/task-tool':
+                    n=int(self.headers.get('Content-Length','0'))
+                    if not 0<n<1024*1024:raise ValueError('请求为空或过大')
+                    authorization=self.headers.get('Authorization','')
+                    access=authorization[7:] if authorization.startswith('Bearer ') else ''
+                    self.send(200,self.server.connector_tasks.dispatch(access,json.loads(self.rfile.read(n))))
+                    return
                 origin=self.headers.get('Origin')
                 expected=f'http://127.0.0.1:{self.server.server_port}'
                 if self.headers.get('X-BriefLoop-Token')!=token or origin and origin!=expected:
@@ -306,6 +313,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/tavily':
                     from .tavily import save_key,delete_key
                     result=delete_key() if body.get('remove') else save_key(body['api_key'])
+                elif path=='/api/connectors/task-bind':
+                    result=self.server.connector_tasks.bind(body['job_id'],body['selections'],max_calls=body['max_calls'],max_total_bytes=body['max_total_bytes'])
+                elif path in ('/api/connectors/task-status','/api/connectors/task-access','/api/connectors/task-revoke'):
+                    result=getattr(self.server.connector_tasks,path.rsplit('-',1)[-1])(body['job_id'])
                 elif path=='/api/connectors/save':
                     result=self.server.connectors.save(body['config'],connector_id=body.get('connector_id'),secrets=body.get('secrets'))
                 elif path in ('/api/connectors/test','/api/connectors/enable','/api/connectors/disable','/api/connectors/delete'):
@@ -368,10 +379,13 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     result=create_demo(store)
                 elif path=='/api/generate':
                     req=Requirements.model_validate(body['requirements'])
-                    run=store.create_run(req.model_dump(),body.get('source_ids',[]),research_protocol='quality_v1')
-                    payload={'run_id':run['id']}
-                    if body.get('session_id'):payload['session_id']=body['session_id']
-                    result=store.enqueue('generate',payload)
+                    if 'connector_selection' in body:
+                        result=self.server.connector_tasks.enqueue(req.model_dump(),body.get('source_ids',[]),body['connector_selection'],session_id=body.get('session_id'))
+                    else:
+                        run=store.create_run(req.model_dump(),body.get('source_ids',[]),research_protocol='quality_v1')
+                        payload={'run_id':run['id']}
+                        if body.get('session_id'):payload['session_id']=body['session_id']
+                        result=store.enqueue('generate',payload)
                 elif path=='/api/save':
                     value=SaveRevision.model_validate(body)
                     result=store.revise(value.base_version,value.markdown,value.editor_document)
@@ -410,7 +424,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     from .learning import enqueue_feedback
                     result=enqueue_feedback(store)
                 elif path=='/api/stop':worker.stop_job(body['job_id']);result={'ok':True}
-                elif path=='/api/resume':result=worker.resume(body['job_id'])
+                elif path=='/api/resume':result=worker.retry_with_current_model(body['job_id']) if body.get('use_current_model') is True else worker.resume(body['job_id'])
                 elif path=='/api/task-dismiss':
                     job=store.one('jobs',body['job_id'])
                     if job['status'] not in ('failed','interrupted','cancelled'):raise ValueError('只有已结束且未完成的任务可以清除')
@@ -429,6 +443,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
     from .connectors import ConnectorService
     try:
         server.connectors=ConnectorService(store.root)
+        from .connectors.tasks import TaskMaterials
+        server.connector_tasks=TaskMaterials(store,server.connectors)
+        worker.connector_tasks=server.connector_tasks
+        worker.connector_tool_url=f'http://127.0.0.1:{server.server_port}/api/connectors/task-tool'
     except Exception:
         server.server_close();harness.close();opencode_harness.close();bridge.close();lock.close();raise
     close_socket=server.server_close

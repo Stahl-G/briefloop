@@ -2,9 +2,10 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
+import {withoutSupersededRetries} from '../frontend/review-status.js';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const code=['friendlyModel','runtimeName','modelLabel','jobModelLabel'].map(name=>source.split('\n').find(line=>line.startsWith('function '+name+'('))).join('\n');
-const view=vm.createContext({parse:s=>JSON.parse(s||'{}'),runtimeCatalog:[{id:'opencode',name:'OpenCode'},{id:'codex',name:'Codex'},{id:'other',name:'Other'}]});
+const view=vm.createContext({withoutSupersededRetries,parse:s=>JSON.parse(s||'{}'),runtimeCatalog:[{id:'opencode',name:'OpenCode'},{id:'codex',name:'Codex'},{id:'other',name:'Other'}]});
 vm.runInContext(code,view);
 const model='opencode/muse-spark-1.3-contributor-free';
 for(const variant of [undefined,null,'','high']){

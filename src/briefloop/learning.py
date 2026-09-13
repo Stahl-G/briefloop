@@ -233,7 +233,15 @@ def learn(store,runtime,job):
     previous=store.meta('last_study')
     if study.exists() and previous and previous!=str(study):
         raise ValueError('已有后续学习记录，不能直接恢复旧学习任务；请基于当前 Wiki 发起新的反馈学习。旧进度保留。')
-    feedback_loop.begin(study,feedback=ctx['feedback'],skill=skill_path,rounds=payload['k'],previous=store.meta('last_study'))
+    feedback=ctx['feedback']
+    retry_of=payload.get('retry_of_job_id')
+    if retry_of and previous==str(store.root/'jobs'/retry_of/'study'):
+        # A model-switch retry inherits the failed study's Wiki, including its
+        # already imported feedback. Do not append that same Store batch twice.
+        inherited={item.get('source') for item in feedback_loop.work(previous)['feedback']}
+        batch=set(payload['feedback_ids'])
+        feedback=[item for item in feedback if item.get('source') not in inherited.intersection(batch)]
+    feedback_loop.begin(study,feedback=feedback,skill=skill_path,rounds=payload['k'],previous=previous)
     # Only this worker writes the workspace's Wiki; one study at a time.
     store.set_meta('last_study',str(study))
     state=feedback_loop.work(study)

@@ -124,7 +124,7 @@ class InteractiveRuntime:
         folder = Path(folder)
         folder.mkdir(parents=True, exist_ok=True)
         resume_on_complete = resume_on_complete or not _usable_output(job, folder, self.store)
-        tracker = ProgressTracker(self.store, job['id'], folder)
+        tracker = ProgressTracker(self.store, job['id'], folder, context=job)
         deferred = [None]
         def tick():
             try:
@@ -354,7 +354,7 @@ class InteractiveRuntime:
                 cursor = event['seq']
                 kind, data = event['kind'], event['data']
                 value = {'type': kind.replace('/', '.'), 'harness_seq': cursor, 'data': data}
-                if kind in ('item/started', 'item/completed'):
+                if kind.removeprefix('child/') in ('item/started', 'item/updated', 'item/completed'):
                     item = dict(data.get('item', {}))
                     aliases = {'collabAgentToolCall': 'collab_tool_call', 'commandExecution': 'command_execution'}
                     item['type'] = aliases.get(item.get('type'), item.get('type'))

@@ -6,6 +6,7 @@ to Agents until they bind trusted run authorization, budgets and durable receipt
 from __future__ import annotations
 
 import copy
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -26,6 +27,8 @@ class ConnectorService:
         self._closed = False
         self._errors = {}
         self._generation = {}
+        self._instance_id = str(uuid.uuid4())
+        self._revoked_scopes = set()
 
     def _get(self, identifier):
         if self._closed:
@@ -98,6 +101,8 @@ class ConnectorService:
     def _start(self, record, scope, generation):
         with self._lock:
             current = self._get(record['id'])
+            if scope in self._revoked_scopes:
+                raise ConnectorError('本轮连接授权已撤销。', code='revoked')
             if current['revision'] != record['revision'] or self._generation.get(record['id'], 0) != generation:
                 raise ConnectorError('连接配置或启用状态已改变。', code='cancelled')
             self._ensure_portal()
@@ -189,11 +194,12 @@ class ConnectorService:
             self._errors.pop(connector_id, None)
             return {'id': connector_id, 'deleted': True}
 
-    def _operation(self, connector_id, method, args, scope_id):
+    def _operation(self, connector_id, method, args, scope_id, expected_revision=None):
         if not isinstance(scope_id, str) or not scope_id.strip() or len(scope_id) > 200 or scope_id.startswith(('settings', 'preview:')):
             raise ConnectorError('调用需要独立的可信作用域。', code='invalid_scope')
         with self._lock:
             record = copy.deepcopy(self._get(connector_id))
+            self._check_material_scope(connector_id, scope_id, expected_revision)
             generation = self._generation.get(connector_id, 0)
             if not record['enabled']:
                 raise ConnectorError('连接器尚未启用。', code='disabled')
@@ -201,21 +207,47 @@ class ConnectorService:
                 raise ConnectorError('请求参数过大。', code='request_limit')
         owner = self._start(record, scope_id, generation)
         with self._lock:
+            self._check_material_scope(connector_id, scope_id, expected_revision)
             if self._generation.get(connector_id, 0) != generation or not self._get(connector_id)['enabled']:
                 raise ConnectorError('连接器已停用。', code='disabled')
             future = self._portal.call(owner.submit, method, args)
         # Never hold the config lock while waiting for network I/O: disable must win.
-        return future.result(timeout=record['config']['timeout_seconds'] + 10)
+        result = future.result(timeout=record['config']['timeout_seconds'] + 10)
+        return {**result, 'connection_epoch': f'{self._instance_id}:{generation}',
+                'connector_revision': record['revision']}
 
-    def call(self, connector_id, name, arguments, *, scope_id):
+    def call(self, connector_id, name, arguments, *, scope_id, expected_revision=None):
         if not isinstance(name, str) or not isinstance(arguments, dict):
             raise ConnectorError('工具调用需要名称及参数对象。')
-        return self._operation(connector_id, 'call', (name, arguments), scope_id)
+        return self._operation(connector_id, 'call', (name, arguments), scope_id, expected_revision)
 
-    def read(self, connector_id, uri, *, scope_id):
+    def read(self, connector_id, uri, *, scope_id, expected_revision=None):
         if not isinstance(uri, str) or not uri or len(uri) > 8192:
             raise ConnectorError('资源 URI 无效。')
-        return self._operation(connector_id, 'read', (uri,), scope_id)
+        return self._operation(connector_id, 'read', (uri,), scope_id, expected_revision)
+
+    def _check_material_scope(self, connector_id, scope_id, expected_revision):
+        record = self._get(connector_id)
+        if scope_id in self._revoked_scopes:
+            raise ConnectorError('本轮连接授权已撤销。', code='revoked')
+        if expected_revision is not None and record['revision'] != expected_revision:
+            raise ConnectorError('连接配置已改变，请重新选择本轮授权。', code='revision_changed')
+        if not record['enabled']:
+            raise ConnectorError('连接器尚未启用。', code='disabled')
+
+    @contextmanager
+    def material_admission(self, connector_id, *, scope_id, expected_revision, connection_epoch):
+        """Serialize local source admission against disable/config changes; no network."""
+        with self._lock:
+            self._check_material_scope(connector_id, scope_id, expected_revision)
+            if (scope_id != 'freeze' or connection_epoch is not None) and connection_epoch != f'{self._instance_id}:{self._generation.get(connector_id, 0)}':
+                raise ConnectorError('该回执所属连接已停止，不能接纳迟到材料。', code='stale_receipt')
+            yield
+
+    def revoke_scope(self, scope_id):
+        with self._lock:
+            self._revoked_scopes.add(scope_id)
+            self._stop_owners(scope=scope_id)
 
     def close_scope(self, scope_id):
         with self._lock:

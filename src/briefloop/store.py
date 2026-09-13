@@ -1,5 +1,5 @@
 """Workspace SQLite store. No model calls or long waits inside transactions."""
-from contextlib import contextmanager, closing
+from contextlib import contextmanager, closing, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 import hashlib
@@ -166,17 +166,23 @@ class Store:
         result['role_models']=shaped
         return result
 
-    def add_source(self, name, text, *, url=None, error=None, source_id=None):
+    def add_source(self, name, text, *, url=None, error=None, source_id=None, connection=None):
+        """Persist a source; an optional transaction remains owned by its caller.
+
+        Text files precede DB admission. On rollback a composing caller may remove
+        only new, unreferenced files that it owns; existing snapshots stay intact.
+        """
         sid = source_id or uid("src")
         path = self.root/"sources"/(sid+".txt")
         sha = content_hash(text)
         if path.exists() and path.read_bytes().decode("utf-8") != text:
             raise Conflict("Source snapshot cannot be overwritten")
         path.write_bytes(text.encode("utf-8"))
-        with self.tx() as c:
+        with (self.tx() if connection is None else nullcontext(connection)) as c:
             c.execute("INSERT OR IGNORE INTO sources VALUES(?,?,?,?,?,?,?,?)",
                       (sid, name, str(path.relative_to(self.root)), url, "failed" if error else "ready", error, sha, now()))
-        return self.one("sources", sid)
+            source = dict(c.execute('SELECT * FROM sources WHERE id=?', (sid,)).fetchone())
+        return source
 
     def source_text(self, sid):
         r = self.one("sources", sid)
@@ -214,7 +220,7 @@ class Store:
             raise ValueError("同一材料不能同时作为本期证据和风格参考，请选择用途")
         for sid in source_ids:
             self.one("sources", sid)
-        if not source_ids and not req.allow_web:
+        if not source_ids and not req.allow_web and not options.get('connector_selection_validated', False):
             raise ValueError("请添加来源，或允许联网查找来源")
         rid = uid("run")
         with self.tx() as c:
@@ -470,7 +476,7 @@ class Store:
                 roles[role]=dict(base)
         return roles
 
-    def enqueue(self, kind, payload):
+    def enqueue(self, kind, payload, *, before_commit=None):
         if kind not in ('export_docx','release','audit_bundle','source_refresh'):
             from .backends import validate_backend
             from .models import normalize_search_provider
@@ -490,6 +496,7 @@ class Store:
         jid = uid("job")
         with self.tx() as c:
             c.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)", (jid, kind, "queued", dump(payload), None, None, now(), now()))
+            if before_commit is not None:before_commit(c,jid,payload)
         job = self.one("jobs", jid)
         from .task_notify import notify as _notify_task
         _notify_task(self, job, 'queued')

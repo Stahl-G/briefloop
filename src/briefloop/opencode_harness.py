@@ -17,7 +17,7 @@ from .backends.opencode_server import (OpencodeServerClient, OpencodeError, mode
                                        prompt_model)
 from .chat_store import ChatStore
 from .harness import InternalRun
-from .store import uid
+from .store import uid, now, dump, content_hash
 
 DEFAULT_RUNTIME = {'model': 'opencode/big-pickle', 'variant': None,
                    'permission': 'workspace-write', 'backend': 'opencode'}
@@ -26,6 +26,23 @@ DEFAULT_RUNTIME = {'model': 'opencode/big-pickle', 'variant': None,
 ATTACH_IMAGE_MAX_BYTES = 10 * 1024 * 1024
 
 _TASK_CHILD = re.compile(r'<task id="(ses_[^"]+)"')
+
+
+def _public_native_error(error):
+    """Project a native error message without copying response diagnostics."""
+    from .execution_records import sanitize
+    error = error if isinstance(error, dict) else {}
+    data = error.get('data')
+    data = data if isinstance(data, dict) else {}
+    message = next((value for value in (error.get('message'), data.get('message'))
+                    if isinstance(value, str) and value.strip()), None)
+    if message is None:
+        name = error.get('name')
+        message = name if isinstance(name, str) and re.fullmatch(
+            r'(?:[A-Z][A-Za-z0-9]{0,60})?(?:Error|Exception)', name) else '执行失败'
+    message = sanitize(message)
+    message = re.sub(r'''(?i)\bhttps?://[^\s<>"']+''', '[URL omitted]', message)
+    return message.strip()[:300]
 
 
 def _permission_rules(config, allow_web, root):
@@ -544,7 +561,10 @@ class OpencodeHarness:
         assistant_id = None
         seen_tools = set()
         started_at = time.monotonic()
+        deadline = started_at + self.store.settings()['timeout_minutes'] * 60
+        child_poll = {'deadline': deadline}
         last_activity = started_at
+        execution_started = False
         while True:
             if self._epoch.get(sid) != epoch:
                 return
@@ -553,13 +573,37 @@ class OpencodeHarness:
                 self._finish(sid, mid, 'cancelled')
                 self.chat.event(sid, 'turn/interruptRequested', {'turnId': mid})
                 return
+            if time.monotonic() >= deadline:
+                self._interrupt_once(sid, bound, mid)
+                self.chat.event(sid, 'error', {'message': 'Opencode 已达到本轮执行时限，已请求停止'})
+                self._finish(sid, mid, 'failed')
+                raise TimeoutError('Opencode 已达到本轮执行时限')
             try:
                 messages = client.messages(bound, directory=directory)
             except OpencodeError as exc:
                 self.chat.event(sid, 'error', {'message': str(exc)})
                 time.sleep(2)
                 continue
+            if sid in self._cancel_requested or time.monotonic() >= deadline:
+                continue
             assistant = self._turn_message(messages, admitted_at)
+            info = assistant.get('info', {}) if assistant else {}
+            if info.get('error') or info.get('finish') == 'error':
+                self._interrupt_once(sid, bound, mid)
+                self.chat.event(sid, 'error', {'message': 'Opencode 执行失败：' + _public_native_error(info.get('error'))})
+                self._finish(sid, mid, 'failed')
+                raise RuntimeError('Opencode 执行失败；详情保存在会话与任务日志')
+            if self._poll_children(sid, mid, bound, admitted_at, child_poll):
+                last_activity = time.monotonic()
+            # Native quota/provider failures can leave an empty assistant shell.
+            # Any real part, including reasoning, proves execution began; only
+            # its existence is used here, never exported as public progress.
+            execution_started = execution_started or child_poll.get('execution_started', False) or any(
+                message.get('parts') for message in messages
+                if message.get('info', message).get('role') == 'assistant'
+                and (message.get('info', message).get('time') or {}).get('created', 0) >= admitted_at - 1000)
+            if sid in self._cancel_requested or time.monotonic() >= deadline:
+                continue
             if assistant is not None:
                 # One chat message mirrors the whole turn; opencode rotates the
                 # underlying assistant message every tool round.
@@ -599,30 +643,28 @@ class OpencodeHarness:
                 if len(seen_tools) != tools_before:
                     last_activity = time.monotonic()
                 if (info.get('time') or {}).get('completed'):
-                    # A completed shell is not a success: finish=error (or an
-                    # error payload) means the provider turn failed, and
-                    # finish=tool-calls means another assistant message follows.
-                    # Never admit an empty error completion as a finished turn.
-                    failure = info.get('error') or (info.get('finish') == 'error')
-                    if failure:
-                        detail = info.get('error') or {}
-                        message_text = 'Opencode 执行失败：' + str(detail.get('message', detail))[:300]
-                        self.chat.event(sid, 'error', {'message': message_text})
-                        self._finish(sid, mid, 'failed')
-                        raise RuntimeError('Opencode 执行失败；详情保存在会话与任务日志')
+                    # finish=tool-calls is an intermediate assistant message.
                     if info.get('finish') == 'stop':
+                        self._poll_children(sid, mid, bound, admitted_at, child_poll, force=True)
                         self._record_children(sid,mid,bound,admitted_at)
                         self._record_usage(sid, info)
                         self._finish(sid, mid, 'completed')
                         return
-                    if time.monotonic() - last_activity > 120:
+                    # A delegated tool may legitimately run without new output.
+                    # Successful recent reads may extend this stall check, but
+                    # never the absolute deadline (also required for plain chat).
+                    child_running = any(row.get('status') == 'running' and
+                                        time.monotonic() - row.get('observed_running_at', float('-inf')) <= 10
+                                        for row in child_poll.get('children', {}).values())
+                    if time.monotonic() - last_activity > 120 and not child_running:
                         self.chat.event(sid, 'error', {'message': 'Opencode 子步骤完成后 120 秒无后续，已停止等待'})
                         self._finish(sid, mid, 'failed')
                         raise RuntimeError('Opencode 执行停滞；详情保存在会话与任务日志')
-            elif time.monotonic() - started_at > 90:
+            if not execution_started and time.monotonic() - started_at >= 90:
                 # Unresolvable models stall without any step event; fail fast
                 # with an actionable message instead of burning the job budget.
-                self.chat.event(sid, 'error', {'message': 'Opencode 90 秒内未开始执行；请检查模型 ID 是否存在、provider 是否已登录'})
+                self._interrupt_once(sid, bound, mid)
+                self.chat.event(sid, 'error', {'message': 'Opencode 90 秒内未开始执行；请检查模型 ID、provider 登录与可用额度'})
                 self._finish(sid, mid, 'failed')
                 raise RuntimeError('Opencode 长时间未开始执行；详情保存在会话与任务日志')
             time.sleep(1)
@@ -669,6 +711,132 @@ class OpencodeHarness:
             for text in _task_children(part):
                 self._children[text] = sid
                 self.chat.event(sid, 'child/task', {'threadId': text, 'status': state['status']})
+
+    def _poll_children(self, sid, mid, parent, admitted_at, poll, *, force=False):
+        """Observe real descendant changes while the parent is waiting on task.
+
+        Only ids, titles, tool names and states leave this observer. Public
+        content is hashed for change detection; reasoning is not inspected.
+        At most 127 descendants are cached and queried per poll. The native
+        message endpoint returns full history; response bytes are not bounded
+        here. Completed histories are skipped until session metadata changes.
+        """
+        tick = time.monotonic()
+        if not force and tick < poll.get('next_poll', 0):
+            return False
+        poll['next_poll'] = tick + 2
+        children = poll.setdefault('children', {})
+        changed = False
+        limited = False
+        if force or tick >= poll.get('next_discovery', 0):
+            poll['next_discovery'] = tick + 5
+            pending = [parent]; seen = {parent}
+            while pending and len(seen) < 128:
+                if sid in self._cancel_requested or time.monotonic() >= poll.get('deadline', float('inf')):
+                    break
+                owner = pending.pop()
+                try:
+                    discovered = self._client().children(owner, directory=self.chat.session(sid)['cwd'])
+                except OpencodeError:
+                    continue  # An observation failure is not child completion.
+                # A successful listing can remove a vanished branch. Preserve
+                # its last public state as unknown, never inferred completion.
+                present = {child.get('id') for child in discovered}
+                missing = {cid for cid, row in children.items()
+                           if row['parent'] == owner and cid not in present}
+                while True:
+                    descendants = {cid for cid, row in children.items() if row['parent'] in missing}
+                    if descendants <= missing:
+                        break
+                    missing.update(descendants)
+                for cid in missing:
+                    row = children.pop(cid)
+                    if row.get('status') == 'running':
+                        self._child_activity(sid, mid, cid, row, 'unknown', '子任务已不在宿主列表中，当前状态未知')
+                        changed = True
+                for child in discovered:
+                    cid = child.get('id')
+                    if not cid or cid in seen:
+                        continue
+                    if len(seen) >= 128 or (cid not in children and len(children) >= 127):
+                        limited = True
+                        continue
+                    seen.add(cid)
+                    row = children.setdefault(cid, {})
+                    metadata = content_hash(dump(child))
+                    if row.get('metadata') != metadata:
+                        row.update(metadata=metadata, settled=False)
+                    row.update(parent=owner, title=str(child.get('title') or '子任务')[:240],
+                               created=(child.get('time') or {}).get('created', 0))
+                    if not row.get('settled') or force:
+                        pending.append(cid)
+            limited = limited or bool(pending and len(seen) >= 128)
+            if limited != poll.get('limited', False):
+                poll['limited'] = limited
+                self.chat.event(sid, 'child/observation', {
+                    'turnId': mid, 'status': 'limited' if limited else 'available',
+                    'message': '子任务观测达到 127 个上限，后续子任务状态可能不可见' if limited else '子任务观测已恢复到数量上限内'})
+        for cid, row in children.items():
+            if sid in self._cancel_requested or time.monotonic() >= poll.get('deadline', float('inf')):
+                break
+            if row.get('settled') and not force:
+                continue
+            try:
+                messages = self._client().messages(cid, directory=self.chat.session(sid)['cwd'])
+            except OpencodeError:
+                row.pop('observed_running_at', None)
+                if row.get('status') != 'unknown':
+                    self._child_activity(sid, mid, cid, row, 'unknown', '无法读取子任务，当前状态未知')
+                    changed = True
+                continue
+            current = [m for m in messages if (m.get('info', m).get('time') or {}).get('created', 0) >= admitted_at - 1000]
+            assistant = self._turn_message(current, admitted_at)
+            if any(m.get('parts') for m in current if m.get('info', m).get('role') == 'assistant'):
+                poll['execution_started'] = True
+            if not current and row['created'] < admitted_at - 1000:
+                row['settled'] = True
+                continue  # Do not revive children from an earlier parent turn.
+            public = []
+            for message in current:
+                info = message.get('info', message)
+                if info.get('role') != 'assistant':
+                    continue
+                parts = [p for p in message.get('parts', []) if p.get('type') in ('text', 'tool')]
+                public.append({'id': info.get('id'), 'time': info.get('time'),
+                               'finish': info.get('finish'), 'failed': bool(info.get('error')), 'parts': parts})
+            fingerprint = content_hash(dump(public))
+            info = assistant.get('info', {}) if assistant else {}
+            completed = bool((info.get('time') or {}).get('completed'))
+            status = 'unknown' if not assistant else 'failed' if info.get('error') or info.get('finish') == 'error' else (
+                'completed' if completed and info.get('finish') == 'stop' else 'running')
+            if status == 'running':
+                row['observed_running_at'] = time.monotonic()
+            else:
+                row.pop('observed_running_at', None)
+            if fingerprint == row.get('fingerprint') and status == row.get('status'):
+                continue
+            row['fingerprint'] = fingerprint
+            row['settled'] = status in ('completed', 'failed')
+            parts = assistant.get('parts', []) if assistant else []
+            tools = [p for p in parts if p.get('type') == 'tool']
+            tool = tools[-1] if tools else None
+            activity = {'completed': '子任务已完成', 'failed': '子任务失败',
+                        'unknown': '尚未读取到子任务执行状态', 'running': '子任务正在执行'}[status]
+            if status == 'running' and tool:
+                activity = '工具 ' + str(tool.get('tool', ''))[:60] + ' · ' + str((tool.get('state') or {}).get('status', 'running'))[:30]
+            self._child_activity(sid, mid, cid, row, status, activity)
+            changed = True
+        return changed
+
+    def _child_activity(self, sid, mid, cid, row, status, activity):
+        row['status'] = status
+        state = {'status': status, 'role': row['title'], 'task': row['title'],
+                 'activity': activity, 'last_activity': now()}
+        item = {'id': 'child-' + cid, 'type': 'collabAgentToolCall', 'status': status,
+                'tool': activity, 'senderThreadId': row['parent'], 'receiverThreadIds': [cid],
+                'agentsStates': {cid: state}}
+        self._children[cid] = sid
+        self.chat.event(sid, 'child/item/updated', {'item': item, 'turnId': mid, 'threadId': cid})
 
     def _record_children(self,sid,mid,parent,admitted_at):
         from .execution_records import journal_tool

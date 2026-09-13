@@ -262,3 +262,35 @@ def test_tool_history_tracks_actual_job_turn_and_delegated_children(tmp_path):
     build_packet(store,brief['id'],store.root/'unbound');packet=store.root/'unbound/packet'
     assert json.loads((packet/'history/tools.json').read_text())==[]
     assert json.loads((packet/'history/executions.json').read_text())[0]['tool_history_gaps']
+
+
+@pytest.mark.parametrize("repair_succeeds", [True, False])
+def test_review_corrects_schema_once_without_changing_binding(tmp_path, repair_succeeds):
+    from briefloop.review import run_review
+    store, source, brief, value = fixture(tmp_path)
+    job = store.one('jobs', store.rows('SELECT job_id FROM reviews')[0]['job_id'])
+    folder = store.root/'jobs'/job['id']
+    (folder/'review-id.json').write_text(json.dumps({'review_id':'review_test'}))
+    malformed = json.loads(json.dumps(value))
+    malformed['assessment']['checks'] = ['Checked the source']
+    class Runtime:
+        calls = []
+        def execute(self, stage, prompt, target, **kwargs):
+            self.calls.append(kwargs.get('resume_on_complete'))
+            assert stage['readonly_output'] == 'review.json'
+            output = value if repair_succeeds and len(self.calls) == 2 else malformed
+            (target/'review.json').write_text(json.dumps(output))
+    runtime = Runtime()
+    if repair_succeeds:
+        result = run_review(store, runtime, job, brief['id'], folder)
+        assert result['status'] == 'complete'
+        assert result['version_id'] == brief['id']
+    else:
+        with pytest.raises(ValueError):
+            run_review(store, runtime, job, brief['id'], folder)
+        assert store.rows('SELECT status FROM reviews')[0]['status'] == 'incomplete'
+        assert not store.rows('SELECT * FROM assessments')
+    assert runtime.calls == [False, True]
+    archive = list((folder/'attempts').glob('review-*.json'))
+    assert len(archive) == 1
+    assert json.loads(archive[0].read_text()) == malformed

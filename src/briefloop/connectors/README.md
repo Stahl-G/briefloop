@@ -124,3 +124,7 @@ The checks need the official SDK installed for actual protocol cases. They cover
 save without execution, secret isolation, real HTTP and stdio, separate scopes,
 stop during startup/call, descendant cleanup, HTTP auth-error fallback, and bounded
 large resource responses. No report, paid connector, or model invocation is used.
+
+Run-scoped acquisition and durable source admission are provided separately by
+`ConnectorMaterials`; see [MATERIALS.md](MATERIALS.md). Raw service `call/read`
+remain internal and must not bypass that facade.

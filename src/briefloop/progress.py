@@ -52,12 +52,37 @@ def _pipeline(folder, workers):
 
 
 class ProgressTracker:
-    def __init__(self,store,job_id,folder):
+    def __init__(self,store,job_id,folder,*,context=None):
         self.store=store;self.job_id=job_id;self.folder=Path(folder)
         self.signature=None;self.offset=0;self.tail=b'';self.message='';self.workers={}
         self.runtime_issue=None
         rows=store.rows("SELECT data FROM events WHERE job_id=? AND kind='runtime_progress' ORDER BY seq DESC LIMIT 1",(job_id,))
         self.last=rows[0]['data'] if rows else None
+        context = context or {}
+        role = context.get('runtime_role')
+        self.phase = None
+        if context.get('readonly_output') == 'review.json' or context.get('kind') == 'review':
+            self.phase = ('review', '独立复核', '正在独立复核稿件与原件')
+        elif role in ('evaluator', 'scorer', 'assessor'):
+            self.phase = (('comparison', '比较候选稿', 'Evaluator 正在比较新旧稿件')
+                          if context.get('evaluation_mode') == 'pairwise' else
+                          ('evaluation', '独立评分', 'Evaluator 正在独立评分'))
+        elif role in ('maintainer', 'proposer'):
+            self.phase = (('maintainer', '整理反馈经验', 'Maintainer 正在整理反馈经验')
+                          if role == 'maintainer' else
+                          ('proposer', '提出技能改进', 'Proposer 正在提出技能改进'))
+        elif self.folder.name == 'revision' or context.get('kind') == 'revise':
+            self.phase = ('revision', '修订稿件', '正在按审阅意见修订稿件')
+        self.has_saved_draft = False
+        if self.phase:
+            payload = json.loads(context.get('payload') or '{}')
+            version = payload.get('version_id')
+            if not version:
+                try:
+                    value = json.loads((self.folder / 'input.json').read_text(encoding='utf-8-sig'))
+                    version = value.get('brief', {}).get('id') if isinstance(value, dict) else None
+                except (ValueError, OSError):pass
+            self.has_saved_draft = bool(version and store.rows('SELECT id FROM briefs WHERE id=?', (version,)))
 
     def update(self):
         paths=[self.folder/n for n in ('events.jsonl','agents.json','plan.json','draft.json','assessment.json')]+[
@@ -97,6 +122,12 @@ class ProgressTracker:
                         row=self.workers.setdefault(identity,{'id':identity,'role':'子任务','status':'running'})
                         value=status.get('status') if isinstance(status,dict) else str(status)
                         if value:row['status']=value
+                        if isinstance(status, dict):
+                            if status.get('role'):row['role']=role_label(status['role'])
+                            for field in ('task', 'activity', 'last_activity'):
+                                if status.get(field):row[field]=str(status[field])[:240]
+                            if status.get('activity'):
+                                self.message=row['role']+'：'+str(status['activity'])[:240]
         if paths[1].exists():
             try:
                 for agent in json.loads(paths[1].read_text(encoding='utf-8')).get('agents',[]):
@@ -109,19 +140,24 @@ class ProgressTracker:
                     row['task']=str(agent.get('responsibility',''))[:240]
             except (ValueError,OSError):pass
         workers=list(self.workers.values())
-        active=[w for w in workers if w.get('status') not in ('completed','done','closed','failed','errored')]
+        active=[w for w in workers if w.get('status') not in ('completed','done','closed','failed','errored','unknown')]
         stage='正在检查并维护企业背景' if self.folder.name=='company-review' else '正在整理任务要求'
         if paths[2].exists():stage='正在分配研究任务'
-        if workers and not active:stage='子任务结果已返回，正在整理与交接'
+        if active:stage='子任务正在执行'
+        elif any(w.get('status') == 'unknown' for w in workers):stage='子任务状态暂不可确认'
+        elif workers and not active:stage='子任务结果已返回，正在整理与交接'
         if paths[3].exists():stage='正文已保存，正在准备评分'
         if any(path.exists() for path in paths[4:]):stage='评分已返回，正在保存结果'
         labels=' '.join(w.get('role','') for w in active)
         for key,label in [('Scout','Scout 正在读取与核对来源'),('Analyst','Analyst 正在撰写简报'),('Evaluator · 比较','Evaluator 正在比较新旧稿件'),('Evaluator · 评分','Evaluator 正在独立评分'),('Evaluator','Evaluator 正在核对任务与来源'),('Maintainer','Maintainer 正在整理经验'),('Proposer','Proposer 正在提出技能')]:
             if key in labels:stage=label
+        stages = _pipeline(self.folder,workers)
+        if self.phase:
+            identity, label, stage = self.phase
+            stages = [{'id': identity, 'label': label, 'status': 'active', 'agents': workers}]
         message=self.message
         if self.runtime_issue:stage,message=self.runtime_issue
-        value={'stage':stage,'message':message,'agents':workers,'stages':_pipeline(self.folder,workers),'last_activity':datetime.fromtimestamp(log.stat().st_mtime if log.exists() else time.time(),timezone.utc).isoformat(),'draft_ready':paths[3].exists()}
+        value={'stage':stage,'message':message,'agents':workers,'stages':stages,'last_activity':datetime.fromtimestamp(log.stat().st_mtime if log.exists() else time.time(),timezone.utc).isoformat(),'draft_ready':paths[3].exists() or self.has_saved_draft}
         encoded=dump(value)
         if encoded!=self.last:
             self.store.event(self.job_id,'runtime_progress',value);self.last=encoded
-

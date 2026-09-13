@@ -391,6 +391,8 @@ class Worker:
                 changed=c.execute("UPDATE jobs SET status='cancelled',error=?,updated=? WHERE id=? AND status IN ('queued','running')",
                                   ('任务已停止，已生成内容保留',now(),jid)).rowcount
             if changed:
+                tasks=getattr(self,'connector_tasks',None)
+                if tasks is not None and tasks.has_binding(jid):tasks.revoke(jid)
                 if self.current==jid:self.runtime.cancel()
                 if self.review_current==jid and self._review_runtime:self._review_runtime.cancel()
                 if self.file_current==jid:self._file_cancelled.set()
@@ -417,16 +419,82 @@ class Worker:
 
 
     def resume(self,jid):
-        job=self.store.one('jobs',jid)
-        if job['status'] not in ('failed','interrupted','cancelled'):raise ValueError('这个任务不需要恢复')
-        # Resume continues the same task with its frozen model and backend, as a new
-        # attempt. The attempt number lets a second failure notify again, while a
-        # replayed settle of one attempt stays deduplicated.
-        payload=json.loads(job['payload']);payload['attempt']=int(payload.get('attempt',1))+1
-        with self.store.tx() as c:
-            c.execute('UPDATE jobs SET payload=? WHERE id=?',(dump(payload),jid))
-        self.store.update_job(jid,'queued')
+        with self._claim_lock:
+            with self.store.tx() as c:
+                row=c.execute('SELECT * FROM jobs WHERE id=?',(jid,)).fetchone()
+                if row is None:raise ValueError('任务不存在')
+                job=dict(row)
+                if job['status'] not in ('failed','interrupted','cancelled'):raise ValueError('这个任务不需要恢复')
+                payload=json.loads(job['payload'])
+                if job['kind']=='learn':
+                    self._check_feedback_owner(c,jid,payload)
+                # Resume keeps the frozen configuration and original task identity.
+                payload['attempt']=int(payload.get('attempt',1))+1
+                c.execute("UPDATE jobs SET payload=?,status='queued',error=NULL,updated=? WHERE id=?",(dump(payload),now(),jid))
         return self.store.one('jobs',jid)
+
+    @staticmethod
+    def _check_feedback_owner(connection,jid,payload):
+        ids=payload.get('feedback_ids')
+        if not isinstance(ids,list) or not ids or any(not isinstance(fid,str) for fid in ids) or len(set(ids))!=len(ids):
+            raise ValueError('学习任务的反馈批次不完整')
+        for fid in ids:
+            row=connection.execute('SELECT batch_id FROM feedback WHERE id=?',(fid,)).fetchone()
+            if row is None or row['batch_id']!=jid:
+                raise ValueError('反馈已移交其他批次或不存在，不能重复学习')
+
+    def retry_with_current_model(self,jid):
+        """Start a linked review/learning attempt without rewriting its history."""
+        class ExistingRetry(Exception):
+            pass
+
+        with self._claim_lock:
+            job=self.store.one('jobs',jid)
+            if job['kind'] not in ('review','learn'):
+                raise ValueError('目前仅支持审阅和学习任务使用当前模型重试')
+            if job['status'] not in ('failed','interrupted','cancelled'):
+                raise ValueError('只有失败、中断或已取消的任务可以新建重试')
+            for row in self.store.rows("SELECT * FROM jobs WHERE kind=? AND status IN ('queued','running') ORDER BY rowid",(job['kind'],)):
+                if json.loads(row['payload']).get('retry_of_job_id')==jid:return row
+            if jid in (self.current,self.review_current):
+                raise ValueError('原任务仍在停止，请稍后重试')
+            original=json.loads(job['payload'])
+            fields=('version_id',) if job['kind']=='review' else ('feedback_ids','k','targets','skill_id')
+            payload={key:original[key] for key in fields}
+            if job['kind']=='review':self.store.one('briefs',payload['version_id'])
+            payload['retry_of_job_id']=jid
+            # Store.enqueue freezes the current settings (including role models and
+            # backend). Do not copy old attempts, parent cancellation links or packets.
+            def transfer(connection,new_id,frozen):
+                old=connection.execute('SELECT rowid,* FROM jobs WHERE id=?',(jid,)).fetchone()
+                if old['status'] not in ('failed','interrupted','cancelled') or old['payload']!=job['payload']:
+                    raise ValueError('原任务已变化，请刷新后重试')
+                for row in connection.execute("SELECT id,payload FROM jobs WHERE kind=? AND status IN ('queued','running') AND id<>? ORDER BY rowid",(job['kind'],new_id)):
+                    if json.loads(row['payload']).get('retry_of_job_id')==jid:
+                        raise ExistingRetry(row['id'])
+                if job['kind']!='learn':return
+                self._check_feedback_owner(connection,jid,original)
+                if connection.execute("SELECT 1 FROM events WHERE job_id=? AND kind='adoption_processed'",(jid,)).fetchone():
+                    raise ValueError('这批反馈已完成技能采纳处理，不能重复学习')
+                if connection.execute("SELECT 1 FROM jobs WHERE kind='learn' AND id<>? AND (rowid>? OR status IN ('queued','running'))",(new_id,old['rowid'])).fetchone():
+                    raise ValueError('已有其他学习批次，请使用最新任务')
+                study=self.store.root/'jobs'/jid/'study'
+                if (study/'config.json').exists():
+                    from wikiskill import feedback_loop
+                    if feedback_loop.work(study)['phase']=='complete':
+                        raise ValueError('这批反馈的学习已经完成，请恢复原任务以完成保存')
+                    row=connection.execute("SELECT value FROM meta WHERE key='last_study'").fetchone()
+                    if row and json.loads(row['value']) not in (None,str(study)):
+                        raise ValueError('已有更新的学习记录，请使用最新任务')
+                for fid in original['feedback_ids']:
+                    changed=connection.execute('UPDATE feedback SET batch_id=? WHERE id=? AND batch_id=?',(new_id,fid,jid)).rowcount
+                    if changed!=1:raise ValueError('反馈归属已变化，请刷新后重试')
+            try:
+                # review_loop/run_review build a fresh packet in this new job's
+                # folder. A reused enqueue_review match could lose the retry link.
+                return self.store.enqueue(job['kind'],payload,before_commit=transfer)
+            except ExistingRetry as existing:
+                return self.store.one('jobs',existing.args[0])
 
     def review_loop(self):
         from .interactive_runtime import InteractiveRuntime
@@ -632,7 +700,9 @@ class Worker:
                     if not self.runtime.cancelled.is_set() and not self.stopping.is_set() and self.store.one('jobs',job['id'])['status']!='cancelled':
                         enqueue_review(self.store,record['id'],payload={**payload,'parent_job_id':job['id'],'checkpoint':True})
                         checkpoint[0]=True
-        result=self.runtime.execute(job,generation_prompt(self.store,run,folder,backend),folder,publish)
+        from .connectors.runtime_tools import generation_access
+        with generation_access(self,job) as connector_instructions:
+            result=self.runtime.execute(job,generation_prompt(self.store,run,folder,backend)+connector_instructions,folder,publish)
         publish()
         current=latest[0]
         brief=self.store.one('briefs',current)
