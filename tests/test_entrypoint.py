@@ -16,4 +16,7 @@ def test_tool_keeps_its_installation_after_agent_changes_directory(tmp_path):
                                     'workspace-action', '--request', request),
                             cwd=tmp_path, env={**os.environ, 'PYTHONPATH': str(tmp_path)},
                             capture_output=True, text=True, check=True)
-    assert {row['id'] for row in json.loads(result.stdout)['workflows']} == {'general_report', 'business_report'}
+    # This checks installation isolation, not the extensible workflow catalogue.
+    assert {'general_report', 'business_report'} <= {
+        row['id'] for row in json.loads(result.stdout)['workflows']
+    }
