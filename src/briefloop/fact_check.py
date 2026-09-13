@@ -347,18 +347,31 @@ def submit_result(store,run_id,result,*,job_id=None):
             snapshot={'model':payload.get('runtime',{}).get('model') or settings.get('model'),
                       'search_provider':payload.get('search_provider') or store.search_provider_for_run(run_id),
                       'source':'fact_check_job'}
-    record=check_fact_result(store,run_id,result,snapshot=snapshot)
+    from .research_plan import _read_plan, _save_plan, _requests_key, _finish_fact_check_plan
+    # Serialize validation, acceptance and stage closure with cancellation and
+    # evidence edits. No result may survive without its matching terminal stage.
     with store.tx() as c:
+        plan=_read_plan(c,run_id) or {}
+        current=plan.get('fact_check') or {}
+        if current.get('status')!='active' or current.get('stage_id')!=stage['stage_id']:
+            raise AdmissionError('核查阶段已收束或变化，迟到结果不接纳',code='fact_check_closed')
+        record=check_fact_result(store,run_id,result,snapshot=snapshot)
         c.execute('INSERT INTO fact_checks VALUES(?,?,?,?,?,?,?)',
                   (record['id'],run_id,record['version_id'],record['stage_id'],
                    record['version_fingerprint'],dump(record),record['created']))
-    if job_id:
-        store.event(job_id,'fact_check',{'action':'result','record_id':record['id'],'version_id':record['version_id'],
-                                         'execution_status':record['execution']['status'],
-                                         'candidates':len(record['candidates']),'unchecked':len(record['unchecked'])})
-    from .research_plan import finish_fact_check
-    closed=finish_fact_check(store,run_id,status=record['execution']['status'],
-                             summary=record['execution']['summary'],job_id=job_id)
+        row=c.execute('SELECT value FROM meta WHERE key=?',(_requests_key(run_id),)).fetchone()
+        _,closed=_finish_fact_check_plan(plan,json.loads(row['value']) if row else {},
+                                        record['execution']['status'],record['execution']['summary'])
+        _save_plan(c,run_id,plan)
+        if job_id:
+            for event in (
+                {'action':'result','record_id':record['id'],'version_id':record['version_id'],
+                 'execution_status':record['execution']['status'],
+                 'candidates':len(record['candidates']),'unchecked':len(record['unchecked'])},
+                {'action':'finish','stage_id':closed['stage_id'],'status':closed['status']},
+            ):
+                c.execute('INSERT INTO events(job_id,kind,data,created) VALUES(?,?,?,?)',
+                          (job_id,'fact_check',dump(event),now()))
     return {'record':record,'stage':closed}
 
 

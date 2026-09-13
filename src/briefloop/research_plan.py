@@ -452,6 +452,25 @@ def admit_fact_check(store, run_id, budget_source, *, job_id=None):
     return result
 
 
+def _finish_fact_check_plan(plan, requests, status, summary):
+    stage = plan.get('fact_check')
+    if not stage:
+        raise AdmissionError('尚未接纳核查阶段', code='fact_check_missing')
+    if stage['status'] != 'active':
+        return False, {'stage_id': stage['stage_id'], 'status': stage['status'],
+                       'outcome': stage['outcome'], 'idempotent': True}
+    usage = {'search': 0, 'pages': 0}
+    for entry in requests.values():
+        if entry.get('round_id') == stage['stage_id']:
+            operation = entry.get('operation')
+            usage[operation] = usage.get(operation, 0) + 1
+    stage['status'] = status
+    stage['closed'] = now()
+    stage['outcome'] = {'status': status, 'summary': summary, 'usage': usage, 'closed_at': stage['closed']}
+    return True, {'stage_id': stage['stage_id'], 'status': status,
+                  'outcome': stage['outcome'], 'idempotent': False}
+
+
 def finish_fact_check(store, run_id, *, status, summary='', job_id=None):
     """Close the fact-check stage with an execution status, never a factual verdict.
 
@@ -462,22 +481,7 @@ def finish_fact_check(store, run_id, *, status, summary='', job_id=None):
         raise ValueError('核查阶段结束状态必须是 ' + '/'.join(FACT_CHECK_STATUSES))
 
     def mutate(plan):
-        stage = plan.get('fact_check')
-        if not stage:
-            raise AdmissionError('尚未接纳核查阶段', code='fact_check_missing')
-        if stage['status'] != 'active':
-            return False, {'stage_id': stage['stage_id'], 'status': stage['status'],
-                           'outcome': stage['outcome'], 'idempotent': True}
-        usage = {'search': 0, 'pages': 0}
-        for entry in pending_requests(store, run_id).values():
-            if entry.get('round_id') == stage['stage_id']:
-                operation = entry.get('operation')
-                usage[operation] = usage.get(operation, 0) + 1
-        stage['status'] = status
-        stage['closed'] = now()
-        stage['outcome'] = {'status': status, 'summary': summary, 'usage': usage, 'closed_at': stage['closed']}
-        return True, {'stage_id': stage['stage_id'], 'status': status,
-                      'outcome': stage['outcome'], 'idempotent': False}
+        return _finish_fact_check_plan(plan, pending_requests(store, run_id), status, summary)
 
     result = _mutate_plan(store, run_id, mutate, missing='本轮尚未冻结研究计划')
     if not result['idempotent'] and job_id:

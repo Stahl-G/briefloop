@@ -223,3 +223,37 @@ def test_completed_zero_selection_without_bound_claims_needs_a_summary(tmp_path)
     result['execution']['summary']='本版本没有已绑定主张，无可核查对象'
     record=fact_check.check_fact_result(store,world['run']['id'],result)
     assert record['candidates']==[] and record['selection']['claim_ids']==[]
+
+
+def test_cancel_after_initial_stage_read_rejects_submission(tmp_path, monkeypatch):
+    world=checked(tmp_path);store=world['store'];run_id=world['run']['id']
+    payload=good_result(world)
+    read=fact_check.frozen_plan
+
+    def cancel_after_read(store, identity):
+        previous=read(store,identity)
+        research_plan.finish_fact_check(store,identity,status='cancelled')
+        return previous
+
+    monkeypatch.setattr(fact_check,'frozen_plan',cancel_after_read)
+    with pytest.raises(research_plan.AdmissionError) as rejected:
+        fact_check.submit_result(store,run_id,payload)
+    assert rejected.value.code=='fact_check_closed'
+    assert not fact_check.records_for(store,run_id)
+    assert research_plan.frozen(store,run_id)['fact_check']['status']=='cancelled'
+
+
+def test_stage_save_failure_rolls_back_result_and_events(tmp_path, monkeypatch):
+    world=checked(tmp_path);store=world['store'];run_id=world['run']['id']
+    payload=good_result(world)
+
+    def fail_save(*args):
+        raise RuntimeError('simulated plan write failure')
+
+    monkeypatch.setattr(research_plan,'_save_plan',fail_save)
+    with pytest.raises(RuntimeError,match='plan write failure'):
+        fact_check.submit_result(store,run_id,payload,job_id=world['job']['id'])
+    assert not fact_check.records_for(store,run_id)
+    assert research_plan.frozen(store,run_id)['fact_check']['status']=='active'
+    assert not store.rows("SELECT * FROM events WHERE job_id=? AND kind='fact_check'",
+                          (world['job']['id'],))
