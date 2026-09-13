@@ -50,3 +50,25 @@ def test_new_packet_redacts_legacy_record_without_rewriting_journal(tmp_path):
     assert saved['record']['record_hash']!='synthetic-old-hash'
     original=json.loads(store.rows("SELECT data FROM chat_events WHERE kind='tool/record'")[0]['data'])
     assert original['record']==legacy
+
+
+def test_token_fields_and_provider_credentials_are_not_persisted(tmp_path):
+    store = Store(tmp_path); chat = ChatStore(store)
+    session = chat.create('Synthetic credentials', {}, store.root)
+    secrets = ['ghp_' + 'a' * 36, 'github_pat_' + 'b' * 48, 'pypi-' + 'c' * 32,
+               'glpat-' + 'd' * 24, 'xoxb-' + 'e' * 24]
+    journal_tool(chat, session['id'], 'turn', 'credentials', 'bash',
+                 {'token': 'synthetic_token', 'nested': [{'idToken': 'synthetic_id_token',
+                   'GITHUB_TOKEN': 'synthetic_github_token'}], 'session_id': 'session-visible',
+                  'input_tokens': 42, 'token_count': 9},
+                 ' '.join(secrets) + '\nTOKEN=synthetic_assigned_token\nAWS_SESSION_TOKEN=synthetic_aws_token\nRevenue: 12',
+                 status='completed', native_session='native-visible')
+    record = json.loads(store.rows("SELECT data FROM chat_events WHERE kind='tool/record'")[0]['data'])['record']
+    encoded = json.dumps(record)
+    for secret in secrets + ['synthetic_token', 'synthetic_id_token', 'synthetic_github_token',
+                              'synthetic_assigned_token', 'synthetic_aws_token']:
+        assert secret not in encoded
+    assert record['input']['input_tokens'] == 42 and record['input']['token_count'] == 9
+    assert record['input']['session_id'] == 'session-visible'
+    assert record['native_session'] == 'native-visible' and 'Revenue: 12' in record['output']
+    assert sanitize(record) == record
