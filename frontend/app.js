@@ -313,8 +313,11 @@ let savePromise=null,lastSaveError=null;
 function save(){
  if(savePromise)return savePromise;
  if(!dirty||!current)return Promise.resolve();
- saving=true;lastSaveError=null;$('save-state').textContent='保存中…';
- const text=markdownMode?$('markdown-source').value:JSON.stringify(savedDocument(editor.getJSON()));
+ lastSaveError=null;
+ let text;
+ try{text=markdownMode?$('markdown-source').value:JSON.stringify(savedDocument(editor.getJSON()))}
+ catch(e){lastSaveError=e;$('save-state').textContent='未保存，请保留编辑';notice(e.message,true);return Promise.resolve()}
+ saving=true;$('save-state').textContent='保存中…';
  const base=current.id;
  savePromise=(async()=>{try{
   current=await api('save',{base_version:base,markdown:markdownMode?text:'',editor_document:markdownMode?null:JSON.parse(text)});
