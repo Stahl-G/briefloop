@@ -33,6 +33,7 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
   let data = {currentAppVersion, state: 'idle', releaseVersion: null, notes: '', url: null,
               progress: null, installMode, error: null, retryable: false, reinstall: false, source: local ? 'local-test' : 'github'};
   let pending = null, asset = null, ready = null, native = null, available = false;
+  let metadataRateLimit = null;
   const status = () => structuredClone(data);
   const publish = patch => {data = {...data, ...patch}; changed(status()); return status();};
   const fail = error => {
@@ -68,6 +69,7 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
   }
   async function response(value, kind) {
     let url = trusted(value, kind);
+    if (kind === 'metadata' && metadataRateLimit?.until > Date.now()) throw metadataRateLimit.error;
     const signal = AbortSignal.timeout(kind === 'metadata' ? 30000 : 10 * 60 * 1000);
     for (let n = 0; n < 6; n++) {
       const res = await fetchImpl(url, {redirect: 'manual', signal,
@@ -80,6 +82,22 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
         url = trusted(new URL(location, url).href, kind, true); continue;
       }
       if (!res.ok) {
+        const rateLimited = !local && kind === 'metadata' && (res.status === 429 ||
+          (res.status === 403 && res.headers.get('x-ratelimit-remaining') === '0'));
+        if (rateLimited) {
+          const now = Date.now();
+          const retry = res.headers.get('retry-after');
+          const reset = Number(res.headers.get('x-ratelimit-reset')) * 1000;
+          const retryAt = retry ? (/^\d+$/.test(retry) ? now + Number(retry) * 1000 : Date.parse(retry)) : NaN;
+          const reported = Number.isFinite(retryAt) && retryAt > now ? retryAt : reset;
+          const hasReset = Number.isFinite(reported) && reported > now && reported <= now + 24 * 60 * 60 * 1000;
+          const until = hasReset ? reported : now + 60000;
+          const timing = hasReset ? `请在本机时间 ${new Date(until).toLocaleString('zh-CN', {hour12: false})} 后重试。` : '请稍后重试。';
+          const error = new UpdateError('github_rate_limited', `GitHub 更新检查已达到请求频率限制。${timing}也可点击“查看官方发布与安装包”手动下载；已下载的安装包仍可使用。`);
+          metadataRateLimit = {until, error};
+          await res.body?.cancel();
+          throw error;
+        }
         await res.body?.cancel();
         throw new UpdateError(`http_${res.status}`, `更新服务返回 HTTP ${res.status}，请稍后重试。`);
       }
