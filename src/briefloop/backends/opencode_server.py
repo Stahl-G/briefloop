@@ -212,6 +212,12 @@ class OpencodeServerClient:
     def messages(self, session_id, *, directory=None):
         return self._request('GET', self._session_path(session_id, 'message', directory))
 
+    def session_status(self, session_id, *, directory=None):
+        path = '/session/status'
+        if directory is not None:
+            path += '?directory=' + urllib.parse.quote(str(directory), safe='')
+        return (self._request('GET', path) or {}).get(session_id, {})
+
     def abort(self, session_id, *, directory=None):
         return self._request('POST', self._session_path(session_id, 'abort', directory))
 
