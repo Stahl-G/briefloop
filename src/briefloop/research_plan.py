@@ -111,18 +111,18 @@ def freeze(store, run_id, *, preset=None, structure=None, owner_job_id=None):
         'frozen_runtime': _runtime_snapshot(store, job),
     }
     fingerprint = _fingerprint(snapshot)
-    existing = frozen(store, run_id)
-    if existing:
-        if existing.get('plan_fingerprint') == fingerprint:
-            return existing
-        raise ValueError('该任务已冻结了不同的研究计划，不能改写')
-    round_id = uid('round')
-    snapshot['plan_fingerprint'] = fingerprint
-    snapshot['current_round_id'] = round_id
-    snapshot['rounds'] = {round_id: {'status': 'active', 'index': 1, 'created': now(),
-                                     'target_gap_ids': [], 'tasks': [], 'gaps': [], 'outcome': None}}
-    snapshot['created'] = now()
     with store.tx() as connection:
+        existing = _read_plan(connection, run_id)
+        if existing:
+            if existing.get('plan_fingerprint') == fingerprint:
+                return existing
+            raise ValueError('该任务已冻结了不同的研究计划，不能改写')
+        round_id = uid('round')
+        snapshot['plan_fingerprint'] = fingerprint
+        snapshot['current_round_id'] = round_id
+        snapshot['rounds'] = {round_id: {'status': 'active', 'index': 1, 'created': now(),
+                                         'target_gap_ids': [], 'tasks': [], 'gaps': [], 'outcome': None}}
+        snapshot['created'] = now()
         connection.execute('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)', (_plan_key(run_id), dump(snapshot)))
         connection.execute('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)', (_protocol_key(run_id), dump(PROTOCOL)))
     return snapshot
@@ -185,9 +185,13 @@ def pending_requests(store, run_id):
     return store.meta(_requests_key(run_id)) or {}
 
 
-def _save_plan(store, run_id, plan):
-    with store.tx() as connection:
-        connection.execute('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)', (_plan_key(run_id), dump(plan)))
+def _read_plan(connection, run_id):
+    row = connection.execute('SELECT value FROM meta WHERE key=?', (_plan_key(run_id),)).fetchone()
+    return json.loads(row['value']) if row else None
+
+
+def _save_plan(connection, run_id, plan):
+    connection.execute('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)', (_plan_key(run_id), dump(plan)))
 
 
 def _round_dir(store, run_id, index):
@@ -207,35 +211,37 @@ def begin_round(store, run_id, *, target_gap_ids=None, tasks=None, job_id=None):
     Refuses to open a round while another is active, beyond the depth limit, or
     when the referenced gaps do not exist in an earlier round.
     """
-    plan = frozen(store, run_id)
-    if plan is None:
-        raise AdmissionError('本轮尚未冻结研究计划；不能开始研究轮次', code='plan_missing')
-    rounds = plan.get('rounds') or {}
-    target = list(target_gap_ids or [])
-    active = plan.get('current_round_id')
-    if active and (rounds.get(active) or {}).get('status') == 'active':
-        current = rounds[active]
-        if list(current.get('target_gap_ids') or []) == target:
-            return {'round_id': active, 'index': current['index'], 'tasks': current.get('tasks', []), 'idempotent': True}
-        raise AdmissionError('上一轮尚未结束，不能开始新一轮', code='round_open')
-    index = max([int(r.get('index', 0)) for r in rounds.values()] or [0]) + 1
-    if index > int(plan['structure']['depth']):
-        raise AdmissionError('已达到本任务的最大联网轮次', code='depth_reached')
-    known = {gap['id'] for round_info in rounds.values() for gap in round_info.get('gaps', [])}
-    unknown = [gap for gap in target if gap not in known]
-    if unknown:
-        raise ValueError('下一轮引用了不存在的缺口：' + ', '.join(unknown))
-    round_id = uid('round')
-    directories = [(t or {}).get('slot_id') for t in (tasks or [])]
-    allocated = []
-    for position, directory in enumerate(directories):
-        path = _round_dir(store, run_id, index) / ('scout-' + str(position + 1))
-        allocated.append({'task_id': uid('task'), 'slot_id': directory, 'directory': str(path)})
-    rounds[round_id] = {'status': 'active', 'index': index, 'created': now(),
-                        'target_gap_ids': target, 'tasks': allocated, 'gaps': [], 'outcome': None}
-    plan['rounds'] = rounds
-    plan['current_round_id'] = round_id
-    _save_plan(store, run_id, plan)
+    # Admission and mutation share the same write transaction as network reservations.
+    with store.tx() as connection:
+        plan = _read_plan(connection, run_id)
+        if plan is None:
+            raise AdmissionError('本轮尚未冻结研究计划；不能开始研究轮次', code='plan_missing')
+        rounds = plan.get('rounds') or {}
+        target = list(target_gap_ids or [])
+        active = plan.get('current_round_id')
+        if active and (rounds.get(active) or {}).get('status') == 'active':
+            current = rounds[active]
+            if list(current.get('target_gap_ids') or []) == target:
+                return {'round_id': active, 'index': current['index'], 'tasks': current.get('tasks', []), 'idempotent': True}
+            raise AdmissionError('上一轮尚未结束，不能开始新一轮', code='round_open')
+        index = max([int(r.get('index', 0)) for r in rounds.values()] or [0]) + 1
+        if index > int(plan['structure']['depth']):
+            raise AdmissionError('已达到本任务的最大联网轮次', code='depth_reached')
+        known = {gap['id'] for round_info in rounds.values() for gap in round_info.get('gaps', [])}
+        unknown = [gap for gap in target if gap not in known]
+        if unknown:
+            raise ValueError('下一轮引用了不存在的缺口：' + ', '.join(unknown))
+        round_id = uid('round')
+        directories = [(t or {}).get('slot_id') for t in (tasks or [])]
+        allocated = []
+        for position, directory in enumerate(directories):
+            path = _round_dir(store, run_id, index) / ('scout-' + str(position + 1))
+            allocated.append({'task_id': uid('task'), 'slot_id': directory, 'directory': str(path)})
+        rounds[round_id] = {'status': 'active', 'index': index, 'created': now(),
+                            'target_gap_ids': target, 'tasks': allocated, 'gaps': [], 'outcome': None}
+        plan['rounds'] = rounds
+        plan['current_round_id'] = round_id
+        _save_plan(connection, run_id, plan)
     _write_json(_round_dir(store, run_id, index) / 'manifest.json',
                 {'round_id': round_id, 'index': index, 'status': 'active',
                  'target_gap_ids': target, 'tasks': allocated, 'created': now()})
@@ -259,29 +265,31 @@ def _validate_gap(store, run_id, gap):
 
 def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', job_id=None):
     """Close a round, assign real gap ids and freeze its outcome. Idempotent per round."""
-    plan = frozen(store, run_id)
-    if plan is None:
-        raise AdmissionError('本轮尚未冻结研究计划', code='plan_missing')
-    rounds = plan.get('rounds') or {}
-    round_id = round_id or plan.get('current_round_id')
-    if round_id is None and rounds:
-        # A replay after closing must return the already assigned gap identities.
-        round_id = max(rounds, key=lambda identity: rounds[identity].get('index', 0))
-    info = rounds.get(round_id)
-    if not info:
-        raise ValueError('轮次不存在：' + str(round_id))
-    if info.get('status') != 'active':
-        return {'round_id': round_id, 'index': info['index'], 'gaps': info.get('gaps', []), 'idempotent': True}
-    records = []
-    for gap in gaps or []:
-        _validate_gap(store, run_id, gap)
-        records.append({**gap, 'id': uid('gap'), 'round_id': round_id, 'round_index': info['index'], 'created': now()})
-    info['gaps'] = records
-    info['status'] = 'closed'
-    info['closed'] = now()
-    info['outcome'] = {'summary': summary, 'gap_ids': [record['id'] for record in records], 'closed_at': now()}
-    plan['current_round_id'] = None
-    _save_plan(store, run_id, plan)
+    # Admission and mutation share the same write transaction as network reservations.
+    with store.tx() as connection:
+        plan = _read_plan(connection, run_id)
+        if plan is None:
+            raise AdmissionError('本轮尚未冻结研究计划', code='plan_missing')
+        rounds = plan.get('rounds') or {}
+        round_id = round_id or plan.get('current_round_id')
+        if round_id is None and rounds:
+            # A replay after closing must return the already assigned gap identities.
+            round_id = max(rounds, key=lambda identity: rounds[identity].get('index', 0))
+        info = rounds.get(round_id)
+        if not info:
+            raise ValueError('轮次不存在：' + str(round_id))
+        if info.get('status') != 'active':
+            return {'round_id': round_id, 'index': info['index'], 'gaps': info.get('gaps', []), 'idempotent': True}
+        records = []
+        for gap in gaps or []:
+            _validate_gap(store, run_id, gap)
+            records.append({**gap, 'id': uid('gap'), 'round_id': round_id, 'round_index': info['index'], 'created': now()})
+        info['gaps'] = records
+        info['status'] = 'closed'
+        info['closed'] = now()
+        info['outcome'] = {'summary': summary, 'gap_ids': [record['id'] for record in records], 'closed_at': now()}
+        plan['current_round_id'] = None
+        _save_plan(connection, run_id, plan)
     _write_json(_round_dir(store, run_id, info['index']) / 'outcome.json',
                 {'round_id': round_id, 'index': info['index'], 'summary': summary, 'gaps': records, 'closed_at': now()})
     if job_id:
