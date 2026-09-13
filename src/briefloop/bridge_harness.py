@@ -1,3 +1,4 @@
+from .execution_records import sanitize
 """Native CLI transports projected into the existing ChatStore, not another agent loop."""
 import base64
 import hashlib
@@ -220,7 +221,8 @@ class BridgeHarness(OpencodeHarness):
                 elif kind=='tool':
                     key=event.get('id') or uid('tool');tools[key]={**tools.get(key,{}),**event}
                     tool=tools[key];complete=tool.get('status') in ('completed','failed','error')
-                    item={'id':key,'type':'runtime_tool','tool':tool.get('name','工具'),'status':tool.get('status','running')}
+                    item={'id':key,'type':'runtime_tool','tool':tool.get('name','工具'),'status':tool.get('status','running'),
+                          'input':sanitize(tool.get('input')), 'output':sanitize(tool.get('output'))}
                     self.chat.event(sid,'item/completed' if complete else 'item/started',{'item':item,'turnId':mid})
                     if complete:
                         from .execution_records import journal_tool
@@ -235,13 +237,13 @@ class BridgeHarness(OpencodeHarness):
                 elif kind=='usage':
                     usage=event.get('usage') or {}
                     self.chat.event(sid,'thread/tokenUsage/updated',{'tokenUsage':normalize_bridge_usage(usage,self.backend)})
-                elif kind=='error':self.chat.event(sid,'error',{'message':event.get('message','CLI 执行失败')})
+                elif kind=='error':self.chat.event(sid,'error',{'message':sanitize(event.get('message','CLI 执行失败'))})
                 elif kind=='end':
                     status=event.get('status','failed')
-                    if event.get('error'):self.chat.event(sid,'error',{'message':event['error']})
+                    if event.get('error'):self.chat.event(sid,'error',{'message':sanitize(event['error'])})
                     break
         except Exception as exc:
-            if mid:self.chat.event(sid,'error',{'message':str(exc)})
+            if mid:self.chat.event(sid,'error',{'message':sanitize(str(exc))})
         finally:
             with self._lock:
                 self._active_executions.pop(sid,None);self._busy.discard(sid)

@@ -72,7 +72,7 @@ function defFor(id:string) {const d=catalog.find(d=>d.id===id); if(!d)throw Erro
 function wire(value:any){process.stdout.write(JSON.stringify(value)+'\n');}
 function emit(id:string,kind:string,data:any={}){const state=active.get(id);if(state&&((kind==='text'&&data.text?.trim())||kind==='tool'))state.publicActivity=true;wire({method:'event',params:{execution_id:id,kind,...data}});}
 function protocol(id:string){return id in acpArgs?'acp':id==='pi'?'pi-rpc':id==='antigravity'?'antigravity-stream-json':id==='claude'?'claude-stream-json':id==='mimo'?'opencode-json':id==='codex'||id==='opencode'?'native-manager':null;}
-function capabilities(id:string){const p=protocol(id);return {chat:!!p,cancel:!!p,resume:p==='acp'?'negotiated':p==='claude-stream-json'||p==='opencode-json'||p==='antigravity-stream-json'||p==='pi-rpc',images:p==='acp'?'negotiated':p==='claude-stream-json',questions:p==='acp'||p==='pi-rpc'||p==='claude-stream-json',steer:false,read_only:false,network_control:false,permission_modes:['runtime-native']};}
+function capabilities(id:string){const p=protocol(id);return {chat:!!p,cancel:!!p,resume:p==='acp'?'negotiated':p==='claude-stream-json'||p==='opencode-json'||p==='antigravity-stream-json'||p==='pi-rpc',images:p==='acp'?'negotiated':p==='claude-stream-json'||p==='antigravity-stream-json',questions:p==='acp'||p==='pi-rpc'||p==='claude-stream-json',steer:false,read_only:false,network_control:false,permission_modes:['runtime-native']};}
 function terminate(child:any){if(!child?.pid||terminating.has(child))return;terminating.add(child);if(process.platform==='win32'){child.kill();return;}try{process.kill(-child.pid,'SIGTERM');}catch{try{child.kill('SIGTERM');}catch{}}setTimeout(()=>{try{process.kill(-child.pid,'SIGKILL');}catch{}},1200).unref();}
 function launch(bin:string,args:string[],cwd:string,childEnv:any=env){
  if(stopping)throw Error('Runtime bridge is shutting down');
@@ -159,14 +159,22 @@ async function runAcp(p:any,state:any){let sessionId;const args=acpArguments(p.r
  state.promptStarted=true;const result=await conn.call('session/prompt',{sessionId,prompt:blocks},p.timeout_ms||0);if(result?.usage)emit(p.execution_id,'usage',{usage:result.usage});if(result?.stopReason==='cancelled')state.cancelled=true;
  }finally{terminate(conn.child);}}
 async function runAntigravity(p:any,state:any){
- if(p.images?.length)throw Error('Antigravity stream input supports text only');
+ // Headless input accepts text only; the native view_file tool reads images.
+ // Keep native permissions in force rather than granting filesystem access.
+ const imagePaths=(p.images||[]).map((image:any)=>{
+  const f=path.resolve(typeof image==='string'?image:image.path);
+  if(!['.png','.jpg','.jpeg','.webp'].includes(path.extname(f).toLowerCase()))throw Error('不支持的图片格式');
+  if(readFileSync(f).length>20*1024*1024)throw Error('图片超过 20 MiB');
+  return f;
+ });
+ const prompt=imagePaths.length?p.prompt+'\n\n用户附加的图片（请调用 view_file 实际读取后回答，不要根据文件名猜测）：\n'+imagePaths.map((f:string)=>JSON.stringify(f)).join('\n'):p.prompt;
  const args=['--input-format','stream-json','--output-format','stream-json','--disable-slash-commands'];
  if(p.model&&p.model!=='default')args.push('--model',p.model);
  if(p.session_id)args.push('--conversation',p.session_id);
  // The owned timeout must expire before the host can return partial timeout output.
  if(p.timeout_ms)args.push('--print-timeout',Math.ceil(p.timeout_ms/1000+30)+'s');
  const child=launch(state.bin,args,p.cwd);state.child=child;state.cancel=()=>terminate(child);
- let result:any=null,lastSession:string|null=null,textSeen=false,toolFailed=false;
+ let result:any=null,lastSession:string|null=null,textSeen=false,toolFailed=false,lastToolError='';
  await new Promise<void>((resolve,reject)=>{
   const timer=p.timeout_ms?setTimeout(()=>{terminate(child);reject(Error('Antigravity turn timed out'));},p.timeout_ms):null;
   const parser=createJsonLineStream((m:any)=>{
@@ -178,7 +186,7 @@ async function runAntigravity(p:any,state:any){
      if(typeof step.text_delta==='string'&&step.text_delta){textSeen=true;emit(p.execution_id,'text',{text:step.text_delta,delta:true});}
      if(step.state==='DONE'&&step.usage)emit(p.execution_id,'usage',{usage:step.usage});
     }
-    if(step.step_type==='tool'){const tool=step.tool_info||{};if(tool.error)toolFailed=true;emit(p.execution_id,'tool',{id:String(step.step_index),name:tool.name||step.tool_name||'工具操作',status:tool.error?'failed':step.state==='DONE'?'completed':'running',input:tool.parameters,output:tool.output||tool.error?.message||tool.error?.type});}
+    if(step.step_type==='tool'){const tool=step.tool_info||{};if(tool.error){toolFailed=true;lastToolError=String(tool.error.message||tool.error.type||'工具未完成').slice(0,2000);}emit(p.execution_id,'tool',{id:String(step.step_index),name:tool.name||step.tool_name||'工具操作',status:tool.error?'failed':step.state==='DONE'?'completed':'running',input:tool.parameters,output:tool.output||tool.error?.message||tool.error?.type});}
    }
    if(m.event==='result'){
     result=m.result||{};
@@ -188,8 +196,8 @@ async function runAntigravity(p:any,state:any){
   });
   child.stdout.setEncoding('utf8');child.stdout.on('data',c=>parser.feed(c));child.stderr.resume();child.stdin.on('error',()=>{});
   child.on('error',e=>{clearTimeout(timer);reject(e);});
-  child.on('close',code=>{clearTimeout(timer);parser.flush();if(state.cancelled)return resolve();if(code===0&&result?.status==='SUCCESS'&&lastSession){if(toolFailed&&!textSeen)return reject(Error('Antigravity 工具执行失败且未返回答复；请查看工具详情。若权限被拒绝，请在 Antigravity 中配置对应文件或工具的权限后重试。'));return resolve();}const status=typeof result?.status==='string'&&/^[A-Z_]+$/.test(result.status)?result.status:'NO_RESULT';reject(Error('Antigravity '+status+' (exit '+code+')'));});
-  child.stdin.end(JSON.stringify({event:'user',message:{content:p.prompt}})+'\n');
+  child.on('close',code=>{clearTimeout(timer);parser.flush();if(state.cancelled)return resolve();if(code===0&&result?.status==='SUCCESS'&&lastSession){if(toolFailed&&!textSeen)return reject(Error('Antigravity 未完成操作：'+lastToolError+'。请打开对话框中的权限按钮，核对被拒绝的操作并授权后重新发送。'));return resolve();}const status=typeof result?.status==='string'&&/^[A-Z_]+$/.test(result.status)?result.status:'NO_RESULT';reject(Error('Antigravity '+status+' (exit '+code+')'));});
+  child.stdin.end(JSON.stringify({event:'user',message:{content:prompt}})+'\n');
  });
 }
 async function runStream(p:any,state:any){const claude=p.runtime_id==='claude';let args=claude?['-p','--input-format','stream-json','--output-format','stream-json','--verbose','--permission-prompt-tool','stdio']:['run','--format','json'];if(claude&&p.host_options?.mode&&p.host_options.mode!=='native'){if(!['manual','acceptEdits','dontAsk','plan'].includes(p.host_options.mode))throw Error('Invalid Claude permission mode');args.push('--permission-mode',p.host_options.mode);}

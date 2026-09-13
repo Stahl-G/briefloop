@@ -1224,7 +1224,7 @@ function protocol(id) {
 }
 function capabilities(id) {
   const p = protocol(id);
-  return { chat: !!p, cancel: !!p, resume: p === "acp" ? "negotiated" : p === "claude-stream-json" || p === "opencode-json" || p === "antigravity-stream-json" || p === "pi-rpc", images: p === "acp" ? "negotiated" : p === "claude-stream-json", questions: p === "acp" || p === "pi-rpc" || p === "claude-stream-json", steer: false, read_only: false, network_control: false, permission_modes: ["runtime-native"] };
+  return { chat: !!p, cancel: !!p, resume: p === "acp" ? "negotiated" : p === "claude-stream-json" || p === "opencode-json" || p === "antigravity-stream-json" || p === "pi-rpc", images: p === "acp" ? "negotiated" : p === "claude-stream-json" || p === "antigravity-stream-json", questions: p === "acp" || p === "pi-rpc" || p === "claude-stream-json", steer: false, read_only: false, network_control: false, permission_modes: ["runtime-native"] };
 }
 function terminate(child) {
   if (!child?.pid || terminating.has(child)) return;
@@ -1484,7 +1484,13 @@ async function runAcp(p, state) {
   }
 }
 async function runAntigravity(p, state) {
-  if (p.images?.length) throw Error("Antigravity stream input supports text only");
+  const imagePaths = (p.images || []).map((image) => {
+    const f = path3.resolve(typeof image === "string" ? image : image.path);
+    if (![".png", ".jpg", ".jpeg", ".webp"].includes(path3.extname(f).toLowerCase())) throw Error("\u4E0D\u652F\u6301\u7684\u56FE\u7247\u683C\u5F0F");
+    if (readFileSync(f).length > 20 * 1024 * 1024) throw Error("\u56FE\u7247\u8D85\u8FC7 20 MiB");
+    return f;
+  });
+  const prompt = imagePaths.length ? p.prompt + "\n\n\u7528\u6237\u9644\u52A0\u7684\u56FE\u7247\uFF08\u8BF7\u8C03\u7528 view_file \u5B9E\u9645\u8BFB\u53D6\u540E\u56DE\u7B54\uFF0C\u4E0D\u8981\u6839\u636E\u6587\u4EF6\u540D\u731C\u6D4B\uFF09\uFF1A\n" + imagePaths.map((f) => JSON.stringify(f)).join("\n") : p.prompt;
   const args = ["--input-format", "stream-json", "--output-format", "stream-json", "--disable-slash-commands"];
   if (p.model && p.model !== "default") args.push("--model", p.model);
   if (p.session_id) args.push("--conversation", p.session_id);
@@ -1492,7 +1498,7 @@ async function runAntigravity(p, state) {
   const child = launch(state.bin, args, p.cwd);
   state.child = child;
   state.cancel = () => terminate(child);
-  let result = null, lastSession = null, textSeen = false, toolFailed = false;
+  let result = null, lastSession = null, textSeen = false, toolFailed = false, lastToolError = "";
   await new Promise((resolve, reject) => {
     const timer = p.timeout_ms ? setTimeout(() => {
       terminate(child);
@@ -1515,7 +1521,10 @@ async function runAntigravity(p, state) {
         }
         if (step.step_type === "tool") {
           const tool = step.tool_info || {};
-          if (tool.error) toolFailed = true;
+          if (tool.error) {
+            toolFailed = true;
+            lastToolError = String(tool.error.message || tool.error.type || "\u5DE5\u5177\u672A\u5B8C\u6210").slice(0, 2e3);
+          }
           emit(p.execution_id, "tool", { id: String(step.step_index), name: tool.name || step.tool_name || "\u5DE5\u5177\u64CD\u4F5C", status: tool.error ? "failed" : step.state === "DONE" ? "completed" : "running", input: tool.parameters, output: tool.output || tool.error?.message || tool.error?.type });
         }
       }
@@ -1541,13 +1550,13 @@ async function runAntigravity(p, state) {
       parser.flush();
       if (state.cancelled) return resolve();
       if (code === 0 && result?.status === "SUCCESS" && lastSession) {
-        if (toolFailed && !textSeen) return reject(Error("Antigravity \u5DE5\u5177\u6267\u884C\u5931\u8D25\u4E14\u672A\u8FD4\u56DE\u7B54\u590D\uFF1B\u8BF7\u67E5\u770B\u5DE5\u5177\u8BE6\u60C5\u3002\u82E5\u6743\u9650\u88AB\u62D2\u7EDD\uFF0C\u8BF7\u5728 Antigravity \u4E2D\u914D\u7F6E\u5BF9\u5E94\u6587\u4EF6\u6216\u5DE5\u5177\u7684\u6743\u9650\u540E\u91CD\u8BD5\u3002"));
+        if (toolFailed && !textSeen) return reject(Error("Antigravity \u672A\u5B8C\u6210\u64CD\u4F5C\uFF1A" + lastToolError + "\u3002\u8BF7\u6253\u5F00\u5BF9\u8BDD\u6846\u4E2D\u7684\u6743\u9650\u6309\u94AE\uFF0C\u6838\u5BF9\u88AB\u62D2\u7EDD\u7684\u64CD\u4F5C\u5E76\u6388\u6743\u540E\u91CD\u65B0\u53D1\u9001\u3002"));
         return resolve();
       }
       const status = typeof result?.status === "string" && /^[A-Z_]+$/.test(result.status) ? result.status : "NO_RESULT";
       reject(Error("Antigravity " + status + " (exit " + code + ")"));
     });
-    child.stdin.end(JSON.stringify({ event: "user", message: { content: p.prompt } }) + "\n");
+    child.stdin.end(JSON.stringify({ event: "user", message: { content: prompt } }) + "\n");
   });
 }
 async function runStream(p, state) {

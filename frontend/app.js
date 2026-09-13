@@ -1,3 +1,4 @@
+import {copyText} from './clipboard.js';
 import {scheduleUI} from './schedules.js';
 import {adaptivePoll} from './polling.js';
 import {preflightUploads,uploadPayload} from './uploads.js';
@@ -146,7 +147,7 @@ const TASK_LABELS={generate:'生成简报',assess:'重新评分',review:'独立�
 const MESSAGE_ACTIONS=[
  {id:'copy',label:'复制回复',run:copyMessage,icon:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>'},
 ];
-async function copyMessage(message){try{await navigator.clipboard.writeText(message.text||'')}catch(e){notice('复制失败：'+e.message,true);return}notice('已复制消息文本')}
+async function copyMessage(message){try{await copyText(message.text||'')}catch(e){notice('复制失败：'+e.message,true);return}notice('已复制消息文本')}
 function messageActionsHTML(){return '<div class="message-actions-row">'+MESSAGE_ACTIONS.map(a=>`<button type="button" class="message-action" data-action="${a.id}" data-tip="${esc(a.label)}" aria-label="${esc(a.label)}">${a.icon}</button>`).join('')+'</div>'}
 function bindMessageActions(node,message){node.querySelectorAll('.message-action').forEach(b=>{const action=MESSAGE_ACTIONS.find(a=>a.id===b.dataset.action);if(action)b.onclick=()=>Promise.resolve(action.run(message)).catch(e=>notice(e.message,true))})}
 function taskFor(id){return state.jobs.find(j=>j.id===id)}
@@ -755,8 +756,8 @@ function publicActivity(event){
   const types={runtime_tool:'调用工具',opencode_tool:'调用工具',commandExecution:'运行命令',fileChange:'更新文件',mcpToolCall:'调用工具',webSearch:'搜索网页',collabAgentToolCall:'子 Agent',imageView:'查看图片',dynamicToolCall:'调用工具'};
   if(!types[item.type])return null;
   const agents=item.agentsStates?Object.entries(item.agentsStates).map(([id,v])=>`${id}: ${typeof v==='string'?v:v.status||''}`).join('\n'):'';
-  const detail=[item.command,item.query,item.server&&item.tool?`${item.server} / ${item.tool}`:item.tool,agents,item.model?`${item.model}${item.reasoningEffort?' / '+item.reasoningEffort:''}`:''].filter(Boolean).map(v=>typeof v==='string'?v:JSON.stringify(v)).join('\n');
-  return {key:`${event.kind.startsWith('child/')?'child:':''}${data.threadId||''}:${item.id||event.seq}`,label:types[item.type],detail,status:item.status||(event.kind.endsWith('completed')?'completed':'running'),seq:event.seq,created:event.created};
+  const detail=[item.command,item.query,item.input,item.output,item.server&&item.tool?`${item.server} / ${item.tool}`:item.tool,agents,item.model?`${item.model}${item.reasoningEffort?' / '+item.reasoningEffort:''}`:''].filter(Boolean).map(v=>typeof v==='string'?v:JSON.stringify(v)).join('\n');
+  return {key:`${event.kind.startsWith('child/')?'child:':''}${data.threadId||''}:${item.id||event.seq}`,label:item.type==='runtime_tool'?({view_file:'读取文件或图片',list_dir:'查看文件夹',find_by_name:'查找文件',grep_search:'搜索文件内容',run_command:'运行命令',write_to_file:'写入文件',replace_file_content:'修改文件',search_web:'搜索网页',read_url_content:'读取网页',call_mcp_tool:'调用数据连接器',ask_permission:'请求权限'}[item.tool]||item.tool||types[item.type]):types[item.type],detail,status:item.status||(event.kind.endsWith('completed')?'completed':'running'),seq:event.seq,created:event.created};
  }
  if(event.kind==='runtime/switch')return {key:`runtime:${event.seq}`,label:'已准备切换到 '+runtimeName(data.backend),detail:'此前可见历史已准备，将交给下一回合的新原生会话。',status:'completed',seq:event.seq,created:event.created};
  if(event.kind==='thread/providerChanged')return {key:`provider:${event.seq}`,label:'模型服务已切换',detail:data.message||'下一轮使用新的执行上下文。',status:'completed',seq:event.seq,created:event.created};
@@ -992,7 +993,7 @@ function renderPermissionRequests(){
  if(!$('chat-permissions-dialog').open)return;
  const box=$('chat-permissions-pending'),signature=JSON.stringify([chat.id,pending]);
  if(box.dataset.signature===signature)return;box.dataset.signature=signature;
- box.innerHTML=pending.length?'<h3>等待你确认的操作</h3>':'<p class="help">当前没有待确认的操作。宿主发起授权请求后会显示在这里。</p>';
+ box.innerHTML=pending.length?'<h3>等待你确认的操作</h3>':chatBackendChoice()==='antigravity'?'<p class="help">Antigravity 当前接口不能弹出逐次授权。被拒绝的操作需先在这里明确授权，再重新发送任务。</p>':'<p class="help">当前没有待确认的操作。宿主发起授权请求后会显示在这里。</p>';
  for(const request of pending){
   const section=document.createElement('section');section.className='permission-request';
   const title=document.createElement('p');title.textContent=request.data.questions?.[0]?.question||'宿主请求授权';section.append(title);
@@ -1022,6 +1023,14 @@ async function loadPermissionPanel(){
    select.onchange=()=>{chat.hostOptions={mode:select.value};rememberDraft();$('chat-permissions-error').textContent='已选择，下一回合生效。'};
    box.append(label,select);return;
   }
+  const presets=document.createElement('select'),presetLabel=document.createElement('label'),presetHelp=document.createElement('p'),applyPreset=document.createElement('button');
+  presets.id='antigravity-preset';presetLabel.htmlFor=presets.id;presetLabel.textContent='权限模式';
+  for(const [id,name] of [['default','默认'],['full-machine','全机访问'],['turbo','Turbo'],['custom','自定义']])presets.add(new Option(name,id));
+  presets.value=p.preset||'custom';presetHelp.className='help';applyPreset.type='button';applyPreset.textContent='应用权限模式';
+  const custom=document.createElement('div');
+  const describe=()=>{presetHelp.textContent=({default:'工作区内读写；命令与工作区外访问若需授权，会停止并提示你授权后重发。','full-machine':'允许访问全机文件；命令若需授权，会停止并提示你授权后重发。',turbo:'自动执行文件、命令等操作；已有拒绝、询问规则及沙箱限制继续有效。',custom:'按具体文件、命令或网址管理规则。'})[presets.value];custom.hidden=presets.value!=='custom';applyPreset.hidden=presets.value==='custom';};
+  presets.onchange=describe;applyPreset.onclick=()=>saveNativeRule({operation:'preset',preset:presets.value});
+  box.append(presetLabel,presets,presetHelp,applyPreset,custom);describe();
   const list=document.createElement('div');list.className='permission-rule-list';
   for(const row of p.rules){
    const line=document.createElement('div'),text=document.createElement('code'),remove=document.createElement('button');
@@ -1029,9 +1038,18 @@ async function loadPermissionPanel(){
    remove.type='button';remove.textContent='移除';remove.setAttribute('aria-label','移除 '+text.textContent);
    remove.onclick=()=>saveNativeRule({operation:'remove',decision:row.decision,rule:row.rule});line.append(text,remove);list.append(line);
   }
-  box.append(list);
-  const form=document.createElement('form');form.id='permission-rule-form';form.innerHTML='<h3>添加本机规则</h3><label for="permission-rule-decision">处理方式</label><select id="permission-rule-decision"><option value="ask">询问</option><option value="allow">允许</option><option value="deny">拒绝</option></select><label for="permission-rule-tool">操作</label><select id="permission-rule-tool"><option value="read_file">读取文件</option><option value="write_file">写入文件</option><option value="command">执行命令</option><option value="read_url">读取网址</option><option value="execute_url">执行网址操作</option><option value="mcp">MCP 工具</option></select><label for="permission-rule-scope">范围</label><input id="permission-rule-scope" required autocomplete="off" placeholder="完整文件路径、网址或宿主支持的规则范围"><p class="help">保存会修改此 Mac 上 Antigravity 的持久规则；范围越宽，允许的操作越多。可随时移除。</p><button type="submit">保存规则</button>';
-  form.onsubmit=event=>{event.preventDefault();saveNativeRule({operation:'add',decision:$('permission-rule-decision').value,rule:$('permission-rule-tool').value+'('+$('permission-rule-scope').value.trim()+')'})};box.append(form);
+  custom.append(list);
+  const denied=[...chat.events.values()].reverse().map(e=>e.data?.item).find(item=>item?.type==='runtime_tool'&&item.status==='failed'&&typeof item.output==='string'&&item.output.includes('user denied permission for '));
+  const match=denied?.output.match(/user denied permission for ((?:read_file|write_file|command|read_url|execute_url|mcp)\([^\r\n()]+\))/);
+  if(match){
+   const recovery=document.createElement('section'),description=document.createElement('p'),approve=document.createElement('button');
+   description.textContent='上次未完成的操作：'+denied.tool+'。授权范围：'+match[1];
+   approve.type='button';approve.textContent='允许此操作并保存授权';
+   approve.onclick=()=>saveNativeRule({operation:'add',decision:'allow',rule:match[1]});
+   recovery.append(description,approve);custom.append(recovery);
+  }
+  const form=document.createElement('form');form.id='permission-rule-form';form.innerHTML='<h3>授权具体操作</h3><label for="permission-rule-decision">处理方式</label><select id="permission-rule-decision"><option value="allow">允许所选操作</option><option value="deny">拒绝</option></select><label for="permission-rule-tool">操作</label><select id="permission-rule-tool"><option value="read_file">读取文件</option><option value="write_file">写入文件</option><option value="command">执行命令</option><option value="read_url">读取网址</option><option value="execute_url">执行网址操作</option><option value="mcp">MCP 工具</option></select><label for="permission-rule-scope">范围</label><input id="permission-rule-scope" required autocomplete="off" placeholder="填写要访问的完整文件路径或网址"><p class="help">此授权会保存到本机 Antigravity，也会影响其他会话。只填写你愿意授权的具体路径；可在上方撤销。</p><button type="submit">保存规则</button>';
+  form.onsubmit=event=>{event.preventDefault();saveNativeRule({operation:'add',decision:$('permission-rule-decision').value,rule:$('permission-rule-tool').value+'('+$('permission-rule-scope').value.trim()+')'})};custom.append(form);
  }catch(e){if(token===permissionLoad){$('chat-permissions-options').textContent='';$('chat-permissions-error').textContent=e.message}}
 }
 async function saveNativeRule(change){
@@ -1998,7 +2016,7 @@ function renderSourcesPage(){
  box.innerHTML=rows.length?rows.map(s=>{const host=sourceHost(s),web=sourceIsWeb(s),u=usage.get(s.id)||[],st=sourceState(s);const when=new Date(s.created).toLocaleDateString('zh-CN',{month:'numeric',day:'numeric'});return `<div class="sources-row" data-src-row="${esc(s.id)}"><div class="src-name"><span class="src-title">${esc(sourceTitle(s))}</span><small>${esc(host||'本地文件')} · ${esc(when)} 更新</small></div><div class="src-type">${web?'网站':'文件'}</div><div class="src-status">${sourceStatusChip(st)}</div><div class="src-usage">${u.length?esc(u.length+' 份报告'):'—'}</div><div class="src-actions"><div class="menu-wrap"><button type="button" class="ghost" data-src-menu aria-haspopup="menu" aria-expanded="false" aria-label="更多">⋯</button><div class="popover" role="menu" hidden>${st!=='ready'?'<button type="button" role="menuitem" data-sources-retry="'+esc(s.id)+'">重新读取</button>':''}${web?'<button type="button" role="menuitem" data-sources-copy="'+esc(s.url||'')+'">复制链接</button><a role="menuitem" href="'+esc(s.url)+'" target="_blank" rel="noreferrer">打开原文</a>':''}</div></div></div></div>`}).join(''):'<p class="help">没有匹配的来源。</p>';
  box.querySelectorAll('[data-src-row]').forEach(row=>row.onclick=e=>{if(e.target.closest('.menu-wrap'))return;openSourceDrawer(row.dataset.srcRow,usage).catch(err=>notice(err.message,true))});
  box.querySelectorAll('[data-sources-retry]').forEach(b=>b.onclick=e=>{e.stopPropagation();action(async()=>{const src=await api('retry-source',{source_id:b.dataset.sourcesRetry});notice(src.status==='ready'?'来源已重新读取':src.error,src.status!=='ready')})});
- box.querySelectorAll('[data-sources-copy]').forEach(b=>b.onclick=e=>{e.stopPropagation();try{navigator.clipboard.writeText(b.dataset.sourcesCopy);notice('链接已复制')}catch{notice('复制失败',true)}});
+ box.querySelectorAll('[data-sources-copy]').forEach(b=>b.onclick=async e=>{e.stopPropagation();try{await copyText(b.dataset.sourcesCopy);notice('链接已复制')}catch{notice('复制失败',true)}});
  box.querySelectorAll('.menu-wrap').forEach(wrap=>{const t=wrap.querySelector('[data-src-menu]'),pop=wrap.querySelector('.popover');if(!t||!pop)return;t.onclick=e=>{e.stopPropagation();const open=pop.hidden;document.querySelectorAll('.popover').forEach(x=>x.hidden=true);pop.hidden=!open;t.setAttribute('aria-expanded',String(open))}});
 }
 function renderSourceOverview(s,result,usage){

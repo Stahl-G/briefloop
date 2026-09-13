@@ -45,7 +45,9 @@ def test_bridge_turn_is_durable_and_same_message_is_not_redispatched(tmp_path, b
     assert bridge.starts[0]['allow_web'] is None
     h.send(s['id'],'read the fixture',message_id='fixed-admission')
     assert len(bridge.starts)==1
-    assert any(e['kind']=='item/completed' and e['data']['item']['id']=='native-item' for e in snap['events'])
+    item=next(e['data']['item'] for e in snap['events'] if e['kind']=='item/completed' and e['data']['item']['id']=='native-item')
+    assert item['input']=={'path':'sample.txt'}
+    assert item['output']=='data'
 
 
 def test_bridge_internal_managed_run_does_not_get_native_web_tools(tmp_path):
@@ -191,3 +193,26 @@ def test_codebuddy_sparse_usage_never_inherits_other_or_unknown_request(tmp_path
     else:meta.pop('codebuddy.ai/messageId')
     h.chat.event(sid,'thread/tokenUsage/updated',{'tokenUsage':normalize_bridge_usage({'_meta':meta},'codebuddy')})
     assert all(v is None for v in h.snapshot(sid)['token_usage']['last'].values())
+
+
+@pytest.mark.parametrize('failure',['error','end','exception'])
+def test_bridge_public_failures_redact_credentials(tmp_path,failure):
+    secret='token=acceptance-secret-value'
+    class FailingBridge(BridgeFixture):
+        def call(self,method,params,timeout=None):
+            if method!='start':return {}
+            if failure=='exception':raise RuntimeError(secret)
+            if failure=='error':self.sinks[params['execution_id']].put({'kind':'error','message':secret})
+            self.sinks[params['execution_id']].put({'kind':'end','status':'failed','error':secret})
+            return {}
+    h=BridgeHarness(Store(tmp_path),FailingBridge(),'claude');s=h.create_session('failure',{'model':'host-model'})
+    h.send(s['id'],'fixture')
+    deadline=time.monotonic()+3
+    while time.monotonic()<deadline:
+        snap=h.snapshot(s['id'])
+        if snap['messages'][0]['status']=='failed':break
+        time.sleep(.01)
+    assert snap['messages'][0]['status']=='failed'
+    errors=[e for e in snap['events'] if e['kind']=='error']
+    assert errors and 'acceptance-secret-value' not in json.dumps(errors)
+    assert '[credential omitted]' in json.dumps(errors)
