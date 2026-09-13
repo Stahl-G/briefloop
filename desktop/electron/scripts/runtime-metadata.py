@@ -12,7 +12,7 @@ import sys
 root = Path(sys.argv[1]).resolve()
 python = root/'python'
 licenses = root/'licenses/python-packages'
-licenses.mkdir(parents=True)
+licenses.mkdir(parents=True, exist_ok=True)
 records = []
 record_files = []
 for dist in sorted(metadata.distributions(), key=lambda d: d.metadata['Name'].lower()):
@@ -22,6 +22,8 @@ for dist in sorted(metadata.distributions(), key=lambda d: d.metadata['Name'].lo
         direct.unlink()
     record_files.append(Path(dist._path)/'RECORD')
     destination = licenses/(name+'-'+dist.version)
+    if destination.exists():
+        shutil.rmtree(destination)
     files = []
     for item in dist.files or []:
         path = dist.locate_file(item).resolve()
