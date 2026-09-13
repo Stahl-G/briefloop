@@ -12,6 +12,7 @@ const prepared = new Map();
 let menuSave = null, workspaceOrigin = null, environment;
 let updates, nativeInstall = null, nativeQuitPending = false;
 const welcomeURL = pathToFileURL(path.join(__dirname, 'welcome.html')).href;
+if (process.platform === 'win32') app.setAppUserModelId('ai.briefloop.desktop');
 const payloadPath = app.isPackaged ? path.join(process.resourcesPath, 'backend') : path.join(__dirname, 'backend');
 if (process.env.BRIEFLOOP_DESKTOP_DATA) app.setPath('userData', path.resolve(process.env.BRIEFLOOP_DESKTOP_DATA));
 const preferencesPath = () => path.join(app.getPath('userData'), 'desktop.json');
@@ -212,6 +213,7 @@ else {
       testFeed: !app.isPackaged ? process.env.BRIEFLOOP_UPDATE_TEST_FEED || null : null,
       changed: updateChanged});
     window = new BrowserWindow({width: 1320, height: 900, minWidth: 900, minHeight: 640, title: 'BriefLoop', backgroundColor: '#faf9f6',
+      ...(process.platform === 'win32' ? {icon: path.join(__dirname, 'assets', 'Win.ico')} : {}),
       webPreferences: {preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false}});
     window.on('close', event => { if (!quitting) { event.preventDefault(); requestQuit(); } });
     window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));

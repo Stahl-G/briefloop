@@ -8,21 +8,22 @@ const phases = {'verify-payload': '正在校验 App 运行组件…', 'detect-py
 function renderEnvironment(value) {
   environment = value;
   const busy = ['checking', 'installing'].includes(value.state);
+  const cleanupBlocked = value.error?.code === 'cleanup_failed' && value.retryable === false;
   const detail = value.phase === 'install-dependencies' ? `使用已有 Python ${value.pythonVersion}，正在下载并安装 BriefLoop 依赖…` : phases[value.phase];
   document.getElementById('setup').hidden = value.state === 'ready';
   document.getElementById('environment-status').textContent = value.error?.message || detail
     || (value.state === 'needs-setup' ? `将使用已有 Python ${value.pythonVersion}，仅下载 BriefLoop 依赖。` : '正在检测运行环境…');
   document.getElementById('environment-progress').hidden = !busy;
-  document.getElementById('prepare').hidden = !['needs-setup', 'error'].includes(value.state);
+  document.getElementById('prepare').hidden = cleanupBlocked || !['needs-setup', 'error'].includes(value.state);
   document.getElementById('prepare').textContent = value.state === 'error' ? '重新准备' : '下载依赖并准备';
   document.getElementById('python-help').hidden = !['missing-python', 'error'].includes(value.state);
-  document.getElementById('inspect').hidden = busy;
+  document.getElementById('inspect').hidden = busy || cleanupBlocked;
   document.getElementById('cancel-setup').hidden = value.state !== 'installing';
   document.querySelectorAll('#workspace-actions button').forEach(button => {button.disabled = opening || value.state !== 'ready';});
 }
 async function setupAction(callback) {
   try { renderEnvironment(await callback()); }
-  catch (error) { renderEnvironment({state: 'error', error: {message: error.message}}); }
+  catch (error) { renderEnvironment({...environment, state: 'error', error: {...environment.error, message: error.message}}); }
 }
 async function action(callback) {
   if (opening || environment.state !== 'ready') return;

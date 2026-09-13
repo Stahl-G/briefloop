@@ -208,6 +208,11 @@ def markdown_document(markdown):
     return normalize_document(root)
 
 
+def citation_label_text(text):
+    """Only a bare generated citation label may be replaced by its reference."""
+    return '' if re.fullmatch(r'(?:\d+|\[\d+\]|\?)', text) else text
+
+
 def document_markdown(document):
     """Readable compatibility export. Rich styles remain in the document itself."""
     def render(node):
@@ -220,7 +225,7 @@ def document_markdown(document):
                 elif mark['type'] == 'code': text = '`' + node['text'].replace('`', '\\`') + '`'
                 elif mark['type'] == 'link':
                     href = mark['attrs']['href']
-                    text = '[@' + href[8:] + ']' if href.startswith('#source-') else '[' + text + '](' + href + ')'
+                    text = ((text if citation_label_text(node['text']) else '') + '[@' + href[8:] + ']') if href.startswith('#source-') else '[' + text + '](' + href + ')'
             return text
         if kind == 'citation': return '[@' + attrs['sourceId'] + ']'
         if kind == 'hardBreak': return '\n'

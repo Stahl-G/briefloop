@@ -65,7 +65,7 @@ function mapFigureImages(markdown,toApi,version){
  return markdown.replace(figureImagePattern,(whole,prefix,src,title='',suffix)=>{const id=figureIdFromUrl(src);if(!id)return whole;const target=toApi?'/api/figure?id='+encodeURIComponent(id)+'&version='+encodeURIComponent(version||''):'briefloop-figure:'+id;return prefix+target+title+suffix});
 }
 const toEditor=(md,version=current?.id)=>mapFigureImages(md.replace(/\\?\[@(src\\?_[a-zA-Z0-9]+)\\?\]/g,(_,raw)=>{const id=raw.replaceAll('\\','');return `[${(state.sources.findIndex(s=>s.id===id)+1)||'?'}](#source-${id})`}),true,version);
-const fromEditor=md=>mapFigureImages(md.replace(/\[([^\]]+)\]\(#source-(src_[a-zA-Z0-9]+)\)/g,(_,label,id)=>`[@${id}]`),false);
+const fromEditor=md=>mapFigureImages(md.replace(/\[([^\]]+)\]\(#source-(src_[a-zA-Z0-9]+)\)/g,(_,label,id)=>`${/^(?:\d+|\?)$/.test(label)?'':label}[@${id}]`),false);
 // END_FIGURE_EDITOR_MAPPING
 function updateDownloads(brief){
  const query='version='+encodeURIComponent(brief.id);$('download').href='/api/download?'+query;$('download-docx').href='/api/download?format=docx&'+query;
