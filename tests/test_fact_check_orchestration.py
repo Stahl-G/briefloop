@@ -354,3 +354,17 @@ def test_generation_waits_for_check_before_review_and_revision(tmp_path, monkeyp
         assert order == ['draft', 'check', 'review', 'revision']
     finally:
         worker.close()
+
+
+def test_check_uses_remaining_pages_after_research(tmp_path):
+    store, run, source = _world(tmp_path, budget={'search_requests': 10, 'candidate_urls': 40, 'source_pages': 10})
+    reservation = budget.reserve_pages(store, run['id'], ['https://example.com/'+str(i) for i in range(4)])
+    research_plan.settle_request(store, run['id'], reservation['request_id'], status='completed')
+    research_plan.finish_round(store, run['id'])
+    brief, _, _ = _claim_version(store, run)
+    parent = store.enqueue('generate', {'run_id': run['id']})
+    Worker(store, _Quiet())._admit_fact_check(parent, brief)
+    stage = research_plan.frozen(store, run['id'])['fact_check']
+    assert stage['status'] == 'active'
+    assert stage['budget_source']['limits']['source_pages'] == 6
+    assert len(store.rows("SELECT id FROM jobs WHERE kind='fact_check' AND status='queued'")) == 1

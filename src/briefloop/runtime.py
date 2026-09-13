@@ -748,8 +748,9 @@ class Worker:
         if grant:
             source={'kind':'user_grant','limits':grant['limits']}
         else:
-            limits=(frozen_plan(self.store,run_id) or {}).get('budget') or {}
-            share={field:min(FACT_CHECK_RESERVE[field],int(limits.get(field,0))) for field in FACT_CHECK_RESERVE}
+            from .research_budget import snapshot as budget_snapshot
+            remaining=budget_snapshot(self.store,run_id).get('remaining') or {}
+            share={field:min(FACT_CHECK_RESERVE[field],int(remaining.get(field) or 0)) for field in FACT_CHECK_RESERVE}
             source={'kind':'task_reserve','limits':share}
         try:
             admitted=admit_fact_check(self.store,run_id,source,job_id=job['id'])
