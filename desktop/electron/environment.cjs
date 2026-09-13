@@ -137,8 +137,8 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
   const phase = (state, value) => publish({state, phase: value, error: null, retryable: false});
   function failure(error) {
     if (error.code === 'cleanup_failed') cleanupFailure = error;
-    const code = error instanceof EnvironmentError ? error.code : 'environment_failed';
-    let message = error instanceof EnvironmentError ? error.message : '无法准备运行环境，请检查磁盘权限后重试。';
+    const code = error.code === 'cleanup_failed' ? 'cleanup_failed' : error instanceof EnvironmentError ? error.code : 'environment_failed';
+    let message = code === 'cleanup_failed' ? '无法确认环境准备子进程已全部退出，请保留 App 并重试取消。' : error instanceof EnvironmentError ? error.message : '无法准备运行环境，请检查磁盘权限后重试。';
     if (code === 'process_failed') message = data.phase === 'install-dependencies'
       ? '依赖安装失败，请检查网络或该 Python 版本的预编译包支持后重试。'
       : 'Python 或依赖验证失败，请重新准备运行环境。';
@@ -181,7 +181,7 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
       if (!Array.isArray(result.version) || result.version.length !== 3 || !result.version.every(value => Number.isInteger(value) && value >= 0) || result.version[0] !== 3 || result.version[1] < 11 || !path.isAbsolute(result.executable || '')) return null;
       await fs.access(result.executable, platform === 'win32' ? constants.F_OK : constants.X_OK);
       return {executable: result.executable, version: result.version.join('.')};
-    } catch (error) { checkAbort(signal); return null; }
+    } catch (error) { if (error.code === 'cleanup_failed') throw error; checkAbort(signal); return null; }
   }
   async function host(active, signal) {
     phase('checking', 'detect-python');
@@ -219,7 +219,7 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
         const executable = await validate(active.environmentId, manifest, signal);
         verified = {python: executable, node: process.execPath, nodeIsElectron: true};
         publish({state: 'ready', phase: 'ready', error: null, retryable: false}); return {manifest, python};
-      } catch { checkAbort(signal); }
+      } catch (error) { if (error.code === 'cleanup_failed') throw error; checkAbort(signal); }
     }
     publish({state: 'needs-setup', phase: 'needs-setup', error: null, retryable: true});
     return {manifest, python};

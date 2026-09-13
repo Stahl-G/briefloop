@@ -124,3 +124,33 @@ test('cancel waits for an owned descendant that ignores TERM after its leader an
   controller.abort();await assert.rejects(running,error=>error.code==='cancelled');
   for(const pid of [leader.pid,descendant])assert.throws(()=>process.kill(pid,0),error=>error.code==='ESRCH');
 });
+
+test('incomplete cleanup during host probe or existing-environment validation blocks fallback and new setup even on cancellation',async t=>{
+  for(const stage of ['probe','validate']){
+    const f=await fixture(t);
+    if(stage==='validate')await f.environment.prepare();
+    const second=path.join(f.root,'second-python');await fs.writeFile(second,'Synthetic second host',{mode:0o700});
+    const calls=[];let entered,cleaned=false;
+    const reached=new Promise(resolve=>{entered=resolve});
+    const error=Object.assign(Error('private cleanup diagnostic'),{code:'cleanup_failed',confirmCleanup:()=>cleaned});
+    const environment=createEnvironment({...f.config,candidates:[f.host,second],runProcess:async(executable,args,options)=>{
+      calls.push({executable,args});
+      const probe=args.some(value=>value.includes('sys.version_info'));
+      if(stage==='probe'?probe:args.some(value=>value.includes('importlib.import_module'))){
+        entered();await new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(error),{once:true}));
+      }
+      return f.config.runProcess(executable,args,options);
+    }});
+    const preparing=environment.prepare();await reached;
+    await assert.rejects(environment.cancel(),/尚未确认退出/);
+    assert.equal((await preparing).error.code,'cleanup_failed');
+    assert.equal(environment.status().state,'error');assert.throws(()=>environment.runtime(),/尚未验证/);
+    assert.ok(!calls.some(call=>call.executable===second||call.args[2]==='venv'));
+    const count=calls.length;
+    assert.equal((await environment.prepare()).error.code,'cleanup_failed');
+    assert.equal((await environment.inspect()).error.code,'cleanup_failed');assert.equal(calls.length,count);
+    assert.doesNotMatch(JSON.stringify(environment.status()),/private cleanup diagnostic/);
+    await assert.rejects(environment.cancel(),/尚未确认退出/);
+    cleaned=true;assert.equal((await environment.cancel()).error.code,'cancelled');
+  }
+});
