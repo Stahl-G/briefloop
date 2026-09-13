@@ -1,5 +1,10 @@
 # Windows x64 runtime
 
+This document describes the earlier full-runtime packaging experiment. The current
+NSIS build does not use this payload or script. Follow [Windows desktop build](../WINDOWS.md)
+for the active backend-wheel, Electron Node and first-run host-Python environment.
+The instructions below are retained only for reproducing the earlier validation.
+
 Run from a Windows x64 checkout with Python 3.11 or newer:
 
 ```powershell
