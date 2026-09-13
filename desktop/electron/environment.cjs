@@ -3,6 +3,7 @@ const fs = require('node:fs/promises');
 const {constants, createReadStream} = require('node:fs');
 const path = require('node:path');
 const {spawn} = require('node:child_process');
+const {StringDecoder} = require('node:string_decoder');
 const {createHash, randomUUID} = require('node:crypto');
 
 class EnvironmentError extends Error {
@@ -17,15 +18,85 @@ function cleanupMessage(error) {
 function checkAbort(signal) { if (signal?.aborted) throw stopped(); }
 function cleanEnvironment(input, platform) {
   const env = {...input};
-  for (const name of Object.keys(env)) if (/^(PYTHON|PIP_)/i.test(name) || /^(VIRTUAL_ENV|ELECTRON_RUN_AS_NODE|PYLAUNCHER_ALLOW_INSTALL|PYLAUNCHER_ALWAYS_INSTALL)$/i.test(name)) delete env[name];
+  for (const name of Object.keys(env)) if (/^(PYTHON|PIP_)/i.test(name) || /^(VIRTUAL_ENV|__PYVENV_LAUNCHER__|ELECTRON_RUN_AS_NODE|PYLAUNCHER_ALLOW_INSTALL|PYLAUNCHER_ALWAYS_INSTALL)$/i.test(name)) delete env[name];
   return {...env, PYTHONNOUSERSITE: '1', PYTHONUNBUFFERED: '1', PYTHON_MANAGER_AUTOMATIC_INSTALL: 'false', PIP_CONFIG_FILE: platform === 'win32' ? 'nul' : '/dev/null'};
 }
 
-// Every child is owned by this operation. POSIX children get their own process
-// group; Windows taskkill targets only the recorded child PID and its descendants.
+async function runWindowsOwnedProcess(executable, args, {signal, timeoutMs, env, onChild, spawnProcess}) {
+  // Only an actual archive file needs the unpacked sibling; an ordinary folder
+  // coincidentally named app.asar must keep its original path.
+  let script = path.join(__dirname, 'windows-process.ps1');
+  const archive = script.match(/([\\/])app\.asar([\\/])/);
+  if (archive) {
+    const archivePath = script.slice(0, archive.index + 1) + 'app.asar';
+    if ((await fs.stat(archivePath)).isFile()) script = script.replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
+  }
+  return new Promise((resolve, reject) => {
+    const systemRoot = env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows';
+    const powershell = path.win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    let child, failure = null, result = null, timer, cleanupTimer, protocol = '', stdout = '', stderr = '';
+    const decoders = {stdout: new StringDecoder('utf8'), stderr: new StringDecoder('utf8')};
+    const stop = error => {
+      if (failure) return;
+      failure = error;
+      child.stdin.end('cancel\n');
+      // A broken supervisor must not leave the UI waiting indefinitely. Closing
+      // its Job handle kills descendants, but absent proof the guard stays closed.
+      cleanupTimer = setTimeout(() => child.kill(), 15000);
+    };
+    const abort = () => stop(stopped());
+    try {
+      child = spawnProcess(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script],
+        {env: cleanEnvironment(env, 'win32'), shell: false, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe']});
+    } catch { reject(new EnvironmentError('supervisor_unavailable', '无法启动 Windows PowerShell 环境监督程序，请检查系统 PowerShell 是否可用。')); return; }
+    onChild(child);
+    child.stdin.on('error', () => {}); // A child startup failure can close stdin first.
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', chunk => {
+      protocol += chunk;
+      if (protocol.length > 1024 * 1024) { stop(new EnvironmentError('cleanup_failed', cleanupMessage({}))); return; }
+      let newline;
+      while ((newline = protocol.indexOf('\n')) >= 0) {
+        const line = protocol.slice(0, newline).trim(); protocol = protocol.slice(newline + 1);
+        if (!line) continue;
+        let value;
+        try { value = JSON.parse(line); } catch { stop(new EnvironmentError('cleanup_failed', cleanupMessage({}))); continue; }
+        if (value.type === 'stdout' || value.type === 'stderr') {
+          const text = decoders[value.type].write(Buffer.from(value.data, 'base64'));
+          if (value.type === 'stdout') stdout = (stdout + text).slice(-65536);
+          else stderr = (stderr + text).slice(-65536);
+        } else if (value.type === 'exit' || value.type === 'error') result = value;
+      }
+    });
+    child.stderr.resume(); // Never expose PowerShell diagnostics or inherited secrets in UI errors.
+    child.once('error', () => { failure = new EnvironmentError('supervisor_unavailable', '无法启动 Windows PowerShell 环境监督程序，请检查系统 PowerShell 是否可用。'); });
+    child.once('close', () => {
+      clearTimeout(timer); clearTimeout(cleanupTimer); signal?.removeEventListener('abort', abort);
+      if (failure?.code === 'supervisor_unavailable') { reject(failure); return; }
+      if (!result?.cleanupConfirmed) { reject(new EnvironmentError('cleanup_failed', cleanupMessage({}))); return; }
+      if (failure) { reject(failure); return; }
+      if (result.type === 'error') {
+        const message = result.code === 'supervisor_unavailable'
+          ? 'Windows PowerShell 无法加载环境监督程序，请检查系统策略是否允许 PowerShell Add-Type。'
+          : '无法启动 Python 检查或环境准备进程。';
+        reject(new EnvironmentError(result.code, message)); return;
+      }
+      if (result.exitCode !== 0) { reject(new EnvironmentError('process_failed', 'Python 检查或依赖安装进程未成功完成。')); return; }
+      resolve({stdout: stdout + decoders.stdout.end(), stderr: stderr + decoders.stderr.end()});
+    });
+    child.stdin.write(JSON.stringify({executable, args}) + '\n');
+    timer = setTimeout(() => stop(new EnvironmentError('timeout', '环境操作超时，请检查网络和本机 Python 后重试。')), timeoutMs);
+    signal?.addEventListener('abort', abort, {once: true});
+    if (signal?.aborted) abort();
+  });
+}
+
+// POSIX uses an owned process group; Windows uses a suspended launch assigned to
+// a Job Object before any target code runs. Cleanup never signals a stale PID.
 function runOwnedProcess(executable, args, {signal, timeoutMs = 30000, env = process.env,
                         platform = process.platform, onChild = () => {}, spawnProcess = spawn} = {}) {
   checkAbort(signal);
+  if (platform === 'win32') return runWindowsOwnedProcess(executable, args, {signal, timeoutMs, env, onChild, spawnProcess});
   return new Promise((resolve, reject) => {
     let child, timer, failure = null, closed = false, stdout = '', stderr = '', cleaning = false, cleanupDone = Promise.resolve();
     const groupExists = pid => {
@@ -46,21 +117,7 @@ function runOwnedProcess(executable, args, {signal, timeoutMs = 30000, env = pro
     const terminate = () => {
       if (!child?.pid || cleaning) return;
       cleaning = true;
-      if (platform === 'win32') {
-        const systemRoot = env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows';
-        const killer = spawnProcess(path.win32.join(systemRoot, 'System32', 'taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'],
-          {windowsHide: true, shell: false, stdio: 'ignore'});
-        cleanupDone = new Promise(done => {
-          killer.once('error', () => { if (!closed) child.kill('SIGKILL'); });
-          killer.once('close', code => {
-            if (code !== 0) {
-              if (!closed) child.kill('SIGKILL');
-              failure = new EnvironmentError('cleanup_failed', cleanupMessage({}));
-            }
-            done();
-          });
-        });
-      } else {
+      {
         // Leader close does not imply an empty group: pip/venv descendants may
         // redirect stdio or ignore SIGTERM. Await group cleanup independently.
         cleanupDone = stopGroup(child.pid).catch(() => {
@@ -186,7 +243,7 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
       if (!Array.isArray(result.version) || result.version.length !== 3 || !result.version.every(value => Number.isInteger(value) && value >= 0) || result.version[0] !== 3 || result.version[1] < 11 || !path.isAbsolute(result.executable || '')) return null;
       await fs.access(result.executable, platform === 'win32' ? constants.F_OK : constants.X_OK);
       return {executable: result.executable, version: result.version.join('.')};
-    } catch (error) { if (error.code === 'cleanup_failed') throw error; checkAbort(signal); return null; }
+    } catch (error) { if (['cleanup_failed', 'supervisor_unavailable'].includes(error.code)) throw error; checkAbort(signal); return null; }
   }
   async function host(active, signal) {
     phase('checking', 'detect-python');
@@ -222,9 +279,9 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
       try {
         if (!await probe(active.hostPython, signal)) throw Error('Missing base Python');
         const executable = await validate(active.environmentId, manifest, signal);
-        verified = {python: executable, node: process.execPath, nodeIsElectron: true};
+        verified = {python: executable, basePython: active.hostPython, node: process.execPath, nodeIsElectron: true};
         publish({state: 'ready', phase: 'ready', error: null, retryable: false}); return {manifest, python};
-      } catch (error) { if (error.code === 'cleanup_failed') throw error; checkAbort(signal); }
+      } catch (error) { if (['cleanup_failed', 'supervisor_unavailable'].includes(error.code)) throw error; checkAbort(signal); }
     }
     publish({state: 'needs-setup', phase: 'needs-setup', error: null, retryable: true});
     return {manifest, python};
@@ -257,7 +314,7 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
         await fs.rename(temporary, activeFile);
         committed = true;
       } finally { await fs.rm(temporary, {force: true}); }
-      verified = {python: executable, node: process.execPath, nodeIsElectron: true};
+      verified = {python: executable, basePython: python.executable, node: process.execPath, nodeIsElectron: true};
       return publish({state: 'ready', phase: 'ready', error: null, retryable: false});
     } catch (error) {
       if (error.code === 'cleanup_failed') { safeToRemove = false; error.partialDirectory = id && created ? path.join(directory, id) : null; }
