@@ -14,11 +14,11 @@ class TaskMaterialTests(unittest.TestCase):
     setUp = fixtures.MaterialTests.setUp
     stop_server = fixtures.MaterialTests.stop_server
 
-    def prepare(self):
+    def prepare(self, calls=1):
         self.tasks = TaskMaterials(self.store, self.service)
         self.job = self.store.enqueue('generate', {'run_id': self.run['id']})
         self.tasks.bind(self.job['id'], [{'connector_id': self.connector, 'resources': ['m0://document']}],
-                        max_calls=1, max_total_bytes=65536)
+                        max_calls=calls, max_total_bytes=calls * 65536)
         self.token = self.tasks.access(self.job['id'])['access_token']
         self.request = {'action': 'read', 'connector_id': self.connector, 'uri': 'm0://document', 'request_id': 'first'}
 
@@ -44,6 +44,68 @@ class TaskMaterialTests(unittest.TestCase):
         with self.store.tx() as c:
             c.execute("UPDATE jobs SET status='complete' WHERE id=?", (self.job['id'],))
         with self.assertRaises(ConnectorError): self.tasks.dispatch(self.token, self.request)
+
+    def test_generation_scope_closes_after_success_and_failure_without_losing_receipts(self):
+        from types import SimpleNamespace
+        from briefloop.connectors.runtime_tools import generation_access
+        self.prepare()
+        self.tasks.release_access(self.token)
+        initial = len(self.service._owners)
+        worker = SimpleNamespace(store=self.store, connector_tasks=self.tasks, connector_tool_url='http://127.0.0.1/tool')
+        for index in range(34):
+            job = self.tasks.enqueue({'title': 'Scoped report', 'objective': 'Read material'}, [],
+                {'selections': [{'connector_id': self.connector, 'resources': ['m0://document']}],
+                 'max_calls': 1, 'max_total_bytes': 65536})
+            try:
+                with generation_access(worker, job):
+                    token = next(iter(self.tasks._access))
+                    result = self.tasks.dispatch(token, self.request)
+                    self.assertEqual(result['status'], 'admitted')
+                    if index % 2: raise RuntimeError('synthetic generation failure')
+            except RuntimeError: pass
+            self.assertEqual(len(self.service._owners), initial)
+            self.assertFalse(self.tasks._access)
+            self.assertIn('eight of ten', self.store.source_text(result['source_id']))
+            self.assertEqual(self.tasks.status(job['id'])['grant']['status'], 'active')
+
+    def test_terminal_cleanup_rejects_late_material_and_keeps_resumed_access(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event
+        from briefloop.runtime import Worker
+        self.prepare(calls=2)
+        worker = Worker(self.store)
+        worker.connector_tasks = self.tasks
+        self.store.update_job(self.job['id'], 'running')
+        received, release = Event(), Event()
+        read = self.service.read
+        def delayed(*args, **kwargs):
+            result = read(*args, **kwargs)
+            received.set()
+            if not release.wait(5): raise RuntimeError('fixture release missing')
+            return result
+        self.service.read = delayed
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(self.tasks.dispatch, self.token, self.request)
+            try:
+                self.assertTrue(received.wait(5))
+                worker._settle_job(self.job['id'], 'failed', error='synthetic failure')
+                self.assertFalse(self.tasks._access)
+                worker.resume(self.job['id'])
+                fresh = self.tasks.access(self.job['id'])['access_token']
+                self.tasks.finish(self.job['id'], 1)  # Delayed old cleanup must not close attempt 2.
+                self.assertIn(fresh, self.tasks._access)
+                with self.assertRaises(ConnectorError): self.tasks.dispatch(self.token, self.request)
+            finally:
+                release.set()
+            old = pending.result(timeout=5)
+        self.assertNotEqual(old['status'], 'admitted')
+        self.assertFalse(old.get('source_id'))
+        self.service.read = read
+        new = self.tasks.dispatch(fresh, {**self.request, 'request_id': 'resumed'})
+        self.assertEqual(new['status'], 'admitted')
+        self.assertEqual(self.tasks.status(self.job['id'])['usage']['calls'], 2)
+        self.tasks.release_access(fresh)
+        self.assertFalse(self.tasks._access)
 
     def test_no_identity_override_reauthorization_or_reviewer_access(self):
         self.prepare()

@@ -418,6 +418,9 @@ class Worker:
             job=self.store.one('jobs',jid)
         from .task_notify import TERMINAL, notify as _notify_task
         if job['status'] in TERMINAL:
+            tasks=getattr(self,'connector_tasks',None)
+            if tasks is not None and tasks.has_binding(jid):
+                tasks.finish(jid,int(json.loads(job['payload']).get('attempt',1)))
             _notify_task(self.store,job,job['status'])
         return job
 
