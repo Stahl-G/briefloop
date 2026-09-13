@@ -113,7 +113,9 @@ def check(args):
             raise ValueError('Platform report belongs to another release: ' + str(report_path))
         for name in CHANNELS:
             value = report.get('checks', {}).get(name, {})
-            if results[name]['status'] == 'unverified' and value.get('versions'):
+            if results[name]['status'] == 'unverified' and value.get('status') in ('error','mismatch'):
+                results[name] = {**value, 'evidence': str(report_path)}
+            elif results[name]['status'] == 'unverified' and value.get('versions'):
                 if value.get('status') != 'match':
                     results[name] = {**value, 'evidence': str(report_path)}
                 elif release_hash and name in ('mac', 'windows') and value.get('release_wheel_sha256') != release_hash:

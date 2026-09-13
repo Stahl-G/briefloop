@@ -55,3 +55,11 @@ def test_desktop_must_use_shared_wheel_and_failed_remote_evidence_stays_failed(t
     report.write_text(json.dumps({'expected':expected,'checks':{'windows':{'status':'match','versions':{'app':expected},'release_wheel_sha256':digest}}}))
     result,status=checker.check(a)
     assert status==0 and result['checks']['windows']['release_wheel_sha256']==digest
+
+    report.write_text(json.dumps({'expected':expected,'checks':{'windows':{'status':'error','reason':'Desktop backend differs from shared release wheel'}}}))
+    later=tmp_path/'later.json'
+    later.write_text(json.dumps({'expected':expected,'checks':{'windows':{'status':'match','versions':{'app':expected},'release_wheel_sha256':digest}}}))
+    a.platform_report=[report,later]
+    result,status=checker.check(a)
+    assert status==1 and result['checks']['windows']['status']=='error'
+    assert result['checks']['windows']['evidence']==str(report)
