@@ -41,6 +41,10 @@ npm run dist
 
 ## 窗口保存与退出协议
 
+桌面一次只管理一个工作区；切换不是同时打开第二个后台。切换前先检查目标目录、工作区标记、运行环境和目录写入，再保存并停止当前工作区。目标服务启动或页面加载失败时，先确认目标后台已退出，再尝试在原端口恢复原工作区；恢复以暂停模式启动，不自动重提中断任务。目标尚未退出或原工作区恢复失败时明确报错，不宣称切换成功。独立 WebUI/CLI 服务不属于这个桌面窗口的管理范围。
+
+桌面服务启动时带有随机 `BRIEFLOOP_LAUNCH_ID` 和 `BRIEFLOOP_DESKTOP_OWNER_PIPE=1`，stdin 管道唯一写端由 Electron main 持有，不传给后代。桌面异常退出导致 EOF 后，由配套 Python 服务执行受控取消和关闭；正常退出仍走保存和服务身份校验。恢复只能保证已经保存的内容，强制结束窗口不能保存尚未落盘的编辑。该合约需要同版 Python 后端支持，不能仅替换旧安装的桌面壳后宣称已具备异常退出清理。
+
 preload 提供 `briefloopDesktop.onPrepareClose(callback)`。main 为每次准备关闭生成随机请求 ID；renderer 通过现有 `savedVersion()`／保存队列完成保存后，只回传 `{status:'saved', version_id:string|null}`，失败则回传 `{status:'failed', error:string}`。失败或 30 秒内未收到确认时保留窗口，不把关闭窗口当保存成功。
 
 保存确认后，main 才调用现有 `service-status` 盘点全部忙碌任务。用户选择继续工作时取消退出；选择停止并退出时使用 `service-stop` 的 `busy_action: 'cancel'`，随后等待自己启动的后台子进程实际退出。窗口和后台的完成状态分别确认。

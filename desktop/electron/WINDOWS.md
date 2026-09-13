@@ -47,6 +47,17 @@ and cross-version upgrade compatibility are outside this pre-release scope.
 - With a model task running, close the window and test both continue and stop
   choices. Verify actual owned process exit and workspace lock release.
 - Reopen the same-version workspace and verify the saved report and exports.
+- In a separate synthetic lifecycle test app, force-stop only its recorded main
+  PID. Verify the matching service and its recorded descendants exit, an
+  unrelated CLI remains alive, and the same workspace can reopen paused without
+  automatically resubmitting interrupted work. The backend must implement the
+  `BRIEFLOOP_DESKTOP_OWNER_PIPE=1` stdin-EOF contract; shell-only tests cannot
+  establish backend cleanup. Do not terminate the user's working app.
+- Try an invalid target folder while a workspace is active: the current service
+  and editor must remain available. Then exercise a valid target whose service
+  fails to start; verify the original workspace recovers paused and the error
+  remains visible. A target that has not exited must remain owned, not be hidden
+  behind a second managed service.
 - Verify Desktop, Start menu and taskbar icons. Uninstall without deleting the
   workspace, then verify installed app removal and preservation of report data.
 
