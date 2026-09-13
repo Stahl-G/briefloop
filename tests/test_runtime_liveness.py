@@ -92,8 +92,11 @@ def test_opencode_owned_process_exit_is_terminal_even_without_timeout(tmp_path):
     manager=OpencodeHarness(store,DeadClient)
     sid=manager.create_session()['id'];manager.send(sid,'work',message_id='dead')
     try:
-        until(lambda:manager.chat.session(sid)['status']=='failed')
+        # The session status is persisted before the terminal event. Wait for
+        # that event before asserting no subsequent activity is produced.
+        until(lambda:any(e['kind']=='turn/failed' for e in manager.snapshot(sid)['events']))
         snapshot=manager.snapshot(sid)
+        assert snapshot['session']['status']=='failed'
         assert any(m['role']=='assistant' and 'hello done' in m['text'] for m in snapshot['messages'])
         assert len(manager.client.prompts)==1
         count=len(snapshot['events']);time.sleep(.3)
