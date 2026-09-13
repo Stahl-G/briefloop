@@ -20,7 +20,7 @@ function exec(bin:string,args:string[],options:any):any {
  if(!env.BRIEFLOOP_PYTHON||!env.BRIEFLOOP_PROCESS_HELPER)throw Error('Windows process owner is unavailable');
  return rawExec(env.BRIEFLOOP_PYTHON,['-X','utf8',env.BRIEFLOOP_PROCESS_HELPER,bin,...args],{...options,windowsHide:true});
 }
-const acpArgs = {kimi:['acp'],hermes:['acp'],reasonix:['acp'],kilo:['acp'],kiro:['acp'],vibe:[]};
+const acpArgs = {codebuddy:['--acp'],kimi:['acp'],hermes:['acp'],reasonix:['acp'],kilo:['acp'],kiro:['acp'],vibe:[]};
 function acpArguments(id:string,bin:string):string[]{
  // The dedicated Hermes entry point starts ACP directly and avoids CLI/plugin startup.
  return id==='hermes'&&/^hermes-acp(?:\.(?:exe|cmd|bat))?$/i.test(path.basename(bin))?[]:[...acpArgs[id]];

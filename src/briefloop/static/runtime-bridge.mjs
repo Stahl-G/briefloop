@@ -1127,7 +1127,7 @@ function exec(bin, args, options) {
   if (!env.BRIEFLOOP_PYTHON || !env.BRIEFLOOP_PROCESS_HELPER) throw Error("Windows process owner is unavailable");
   return rawExec(env.BRIEFLOOP_PYTHON, ["-X", "utf8", env.BRIEFLOOP_PROCESS_HELPER, bin, ...args], { ...options, windowsHide: true });
 }
-var acpArgs = { kimi: ["acp"], hermes: ["acp"], reasonix: ["acp"], kilo: ["acp"], kiro: ["acp"], vibe: [] };
+var acpArgs = { codebuddy: ["--acp"], kimi: ["acp"], hermes: ["acp"], reasonix: ["acp"], kilo: ["acp"], kiro: ["acp"], vibe: [] };
 function acpArguments(id, bin) {
   return id === "hermes" && /^hermes-acp(?:\.(?:exe|cmd|bat))?$/i.test(path2.basename(bin)) ? [] : [...acpArgs[id]];
 }
