@@ -29,7 +29,10 @@ async function runWindowsOwnedProcess(executable, args, {signal, timeoutMs, env,
   const archive = script.match(/([\\/])app\.asar([\\/])/);
   if (archive) {
     const archivePath = script.slice(0, archive.index + 1) + 'app.asar';
-    if ((await fs.stat(archivePath)).isFile()) script = script.replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
+    // Electron's patched fs presents ASAR files as directories. Inspect the
+    // physical archive without disabling ASAR support for other app operations.
+    const physicalFs = process.versions.electron ? require('original-fs').promises : fs;
+    if ((await physicalFs.stat(archivePath)).isFile()) script = script.replace(/([\\/])app\.asar([\\/])/, '$1app.asar.unpacked$2');
   }
   return new Promise((resolve, reject) => {
     const systemRoot = env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows';
