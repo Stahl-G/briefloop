@@ -9,6 +9,16 @@ import threading
 
 from .backends import validate_backend
 
+PRESETS = {
+    'default': {'toolPermission':'request-review','allowNonWorkspaceAccess':False},
+    'full-machine': {'toolPermission':'request-review','allowNonWorkspaceAccess':True},
+    'turbo': {'toolPermission':'always-proceed','allowNonWorkspaceAccess':True},
+}
+
+def preset_for(data):
+    defaults=PRESETS['default']
+    return next((name for name,values in PRESETS.items() if all(data.get(k,defaults[k])==v for k,v in values.items())), 'custom')
+
 _lock = threading.RLock()
 ACP = {'kimi','hermes','reasonix','codebuddy','kilo','kiro','vibe','deepseek-harness','mimo'}
 
@@ -34,8 +44,9 @@ def _read():
 
 def permission_digest():
     with _lock:
-        _,_,_,permissions=_read()
-        return hashlib.sha256(json.dumps(permissions,sort_keys=True).encode()).hexdigest()
+        _,_,data,permissions=_read()
+        policy={'permissions':permissions,'enableTerminalSandbox':data.get('enableTerminalSandbox',False),**{k:data.get(k,v) for k,v in PRESETS['default'].items()}}
+        return hashlib.sha256(json.dumps(policy,sort_keys=True).encode()).hexdigest()
 
 
 def catalog(backend,workspace,bridge):
@@ -49,9 +60,9 @@ def catalog(backend,workspace,bridge):
         result.update(kind='host',modes=[{'id':'native','name':'沿用宿主设置，接收授权请求'},{'id':'manual','name':'需要时询问'},{'id':'acceptEdits','name':'自动允许文件编辑'},{'id':'dontAsk','name':'拒绝需要询问的操作'},{'id':'plan','name':'规划模式'}],note='使用 Claude 的原生权限模式。已有拒绝规则继续有效；规划模式不是操作系统级只读隔离。')
     elif backend=='antigravity':
         with _lock:
-            path,raw,_,permissions=_read()
+            path,raw,data,permissions=_read()
             rows=[{'decision':decision,'rule':rule} for decision in ('allow','ask','deny') for rule in permissions.get(decision,[]) if isinstance(rule,str)]
-            result.update(kind='rules',rules=rows,revision=hashlib.sha256(raw).hexdigest(),config_path=str(path),note='管理本机 Antigravity 的持久规则，可能影响其他 Antigravity 会话。只添加你明确选择的范围；拒绝和询问规则优先于允许。修改后重新发送任务，已排队任务若检测到权限变化会停止并提示。')
+            result.update(kind='rules',preset=preset_for(data),rules=rows,revision=hashlib.sha256(raw).hexdigest(),config_path=str(path),note='应用后对新任务生效，也会影响本机其他 Antigravity 会话。已有自定义规则保留。')
     else:
         result.update(kind='host',modes=[{'id':'native','name':'沿用宿主设置，逐项确认'}],note='宿主通过 ACP 发来的授权请求可在 BriefLoop 中批准或拒绝；模式名称和行为由宿主定义。')
         if backend=='mimo':result['note']='MiMo 使用宿主提供的运行模式，应用于下一回合。规划模式的文件权限由 MiMo 执行；当前 JSON 运行接口不能在 BriefLoop 逐项回答授权。需要交互批准时请在 MiMo 中配置，或选择可交互授权的宿主。'
@@ -68,15 +79,20 @@ def change_antigravity(body):
     with _lock:
         path,raw,data,permissions=_read()
         if body.get('revision')!=hashlib.sha256(raw).hexdigest():raise ValueError('宿主配置已变化，请刷新权限面板后重试')
-        decision=body.get('decision');rule=body.get('rule');operation=body.get('operation')
-        if decision not in ('allow','ask','deny') or operation not in ('add','remove'):raise ValueError('无效权限操作')
-        if not isinstance(rule,str) or not rule:raise ValueError('请输入有效的原生权限规则')
-        if operation=='add' and not re.fullmatch(r'(read_file|write_file|command|read_url|execute_url|mcp)\([^\r\n()\x00]{1,1000}\)',rule):raise ValueError('请输入有效的原生权限规则')
-        values=permissions.get(decision,[])
-        if not isinstance(values,list) or not all(isinstance(v,str) for v in values):raise ValueError('原生权限列表格式不正确')
-        if operation=='add':values=[*values,*([] if rule in values else [rule])]
-        else:values=[v for v in values if v!=rule]
-        permissions={**permissions,decision:values};data={**data,'permissions':permissions}
+        if body.get('operation')=='preset':
+            preset=body.get('preset')
+            if preset not in PRESETS:raise ValueError('无效权限预设')
+            data={**data,**PRESETS[preset]}
+        else:
+            decision=body.get('decision');rule=body.get('rule');operation=body.get('operation')
+            if decision not in ('allow','ask','deny') or operation not in ('add','remove'):raise ValueError('无效权限操作')
+            if not isinstance(rule,str) or not rule:raise ValueError('请输入有效的原生权限规则')
+            if operation=='add' and not re.fullmatch(r'(read_file|write_file|command|read_url|execute_url|mcp)\([^\r\n()\x00]{1,1000}\)',rule):raise ValueError('请输入有效的原生权限规则')
+            values=permissions.get(decision,[])
+            if not isinstance(values,list) or not all(isinstance(v,str) for v in values):raise ValueError('原生权限列表格式不正确')
+            if operation=='add':values=[*values,*([] if rule in values else [rule])]
+            else:values=[v for v in values if v!=rule]
+            permissions={**permissions,decision:values};data={**data,'permissions':permissions}
         path.parent.mkdir(parents=True,exist_ok=True)
         fd,name=tempfile.mkstemp(prefix='.briefloop-permissions-',dir=path.parent)
         try:

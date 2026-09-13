@@ -1,0 +1,847 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BriefLoop 0.21.0 · 证据索引</title><style>*{box-sizing:border-box}html{scroll-behavior:auto}body{margin:0;background:#f5f5f1;color:#263329;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.85;font-size:16px}header{background:#fff;border-bottom:1px solid #dce1d8;padding:20px max(24px,calc((100vw - 1240px)/2));display:flex;gap:22px;align-items:center}header b{color:#006838}header a{color:#516455;text-decoration:none;font-size:14px}.layout{max-width:1240px;margin:38px auto;display:grid;grid-template-columns:235px minmax(0,900px);gap:40px;padding:0 24px}aside{position:sticky;top:24px;align-self:start;max-height:90vh;overflow:auto;font-size:13px}aside a{display:block;color:#5e6f60;text-decoration:none;border-left:2px solid #dce1d8;padding:5px 12px}aside a:hover{border-color:#006838;color:#006838}article{background:white;padding:48px 56px;border:1px solid #e0e4dc;border-radius:12px;min-width:0}h1{font-size:32px;line-height:1.35;margin:0 0 24px;letter-spacing:-.5px}h2{font-size:23px;line-height:1.5;margin:44px 0 20px;padding-top:10px;border-top:1px solid #e3e8df;color:#005a31;scroll-margin-top:20px}h3{font-size:18px;margin:28px 0 12px}p{margin:0 0 18px}a{color:#006838;text-underline-offset:3px}table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.6;margin:24px 0;display:block;overflow:auto}th,td{padding:11px 12px;border:1px solid #dde3d9;vertical-align:top;text-align:left;min-width:95px}th{background:#eef4ec}code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.86em;overflow-wrap:anywhere;background:#f1f4ef;padding:2px 4px;border-radius:3px}pre{padding:18px;background:#f1f4ef;overflow:auto;line-height:1.6}pre code{padding:0;background:transparent}li{margin-bottom:10px}blockquote{margin:20px 0;border-left:3px solid #006838;padding:8px 20px;background:#f6f8f4}hr{border:0;border-top:1px solid #dce1d8;margin:30px 0}.diagram{border:1px solid #dce1d8;border-radius:10px;overflow:hidden;margin:24px 0}.diagram iframe{border:0;width:100%;height:750px;display:block}.caption{padding:10px 16px;color:#60705f;font-size:13px;background:#f5f7f2}footer{max-width:1240px;margin:32px auto;padding:0 24px;color:#697667;font-size:13px}@media(max-width:900px){.layout{display:block;margin:18px auto;padding:0 14px}aside{position:static;max-height:220px;margin-bottom:24px}article{padding:28px 22px}h1{font-size:26px}header{flex-wrap:wrap;padding:16px}.diagram iframe{height:700px}}@media print{body{background:white;font-size:10.5pt;line-height:1.7}header,aside,footer{display:none}.layout{display:block;margin:0;padding:0;max-width:none}article{padding:0;border:0}h1{font-size:23pt}h2{font-size:16pt;break-after:avoid}h3{break-after:avoid}table{font-size:9pt;display:table}tr{break-inside:avoid}a{color:inherit;text-decoration:none}.diagram{display:none}@page{size:A4;margin:18mm 17mm}}</style></head><body><header><b>BriefLoop / 技术报告</b><a href="technical-report.html">全文</a><a href="evidence-index.html">证据索引</a><a href="architecture.html">架构图</a><span>0.21.0 · 正式技术报告</span></header><div class="layout"><aside aria-label="目录"><a href="#e01">E01 · 任务与企业背景入口</a><a href="#e02">E02 · 程序与 Agent 的职责</a><a href="#e03">E03 · 读者约定和企业内部写作</a><a href="#e04">E04 · 内容方法快照</a><a href="#e05">E05 · DOCX 模板准备与导出</a><a href="#e06">E06 · 研究档位和轮次状态</a><a href="#e07">E07 · 共享预算</a><a href="#e08">E08 · Scout 结果与轮间摘要</a><a href="#e09">E09 · 搜索接口与 DDG</a><a href="#e10">E10 · MCP 报告授权与来源接纳</a><a href="#e11">E11 · 写前证据对照</a><a href="#e12">E12 · 版本化审阅包</a><a href="#e13">E13 · 正式交付规则</a><a href="#e14">E14 · 富文档模型</a><a href="#e15">E15 · 版本绑定的 Word 作业</a><a href="#e16">E16 · 学习比较的条件</a><a href="#e17">E17 · 外部 Agent 操作</a><a href="#e18">E18 · 已集成的可靠性修复</a><a href="#e19">E19 · W5 同条件学习单例</a><a href="#e20">E20 · J2 历史实验与勘误</a><a href="#e21">E21 · 本文作者的正式源码离线复查</a><a href="#e22">E22 · 桌面 owner-pipe 与停止顺序</a><a href="#e23">E23 · 运行时协议与目录</a><a href="#e24">E24 · 冲突处理与复核接纳</a><a href="#e25">E25 · OpenCode Reviewer 工具权限</a><a href="#e26">E26 · 审计包投射与离线校验</a><a href="#e27">E27 · Word 修订导入</a><a href="#e28">E28 · 反馈来源与本地 scorer 授权</a><a href="#e29">E29 · 明确人类要求与普通优化</a><a href="#e30">E30 · Windows 环境准备进程归属</a><a href="#e31">E31 · 对照路径的官方资料</a><a href="#e32">E32 · 可选事实核查与审阅编排</a><a href="#e33">E33 · 定时计划与配置冻结</a><a href="#e34">E34 · 桌面差分更新</a><a href="#e35">E35 · 正式发行、同版工件与真实验收</a><a href="#section-36">公开范围</a></aside><article><h1>BriefLoop 0.21.0 技术报告：证据索引</h1>
+<p>文档版本：正式 v3，2026-09-14。实现证据以 main <code>ddc6583890bf9ddc09c71bd8e078dbc08c2a0dc0</code> 为准，源码链接固定到与其 tree 一致的发行提交 <code>847452bfb39e4185e5d91cc537e030c8e4d7da69</code>，不随 main 后续移动。</p>
+<p><a href="source-manifest.json">源码哈希</a> · <a href="release-verification.json">发行核对摘要</a> · <a href="technical-report.html">报告正文</a></p>
+<h2 id="e01">E01 · 任务与企业背景入口</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>任务约束、冻结内容方法和稿件接纳路径；不据此判断模型实际完成质量。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/store.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/store.py#L216"><code>def create_run</code> · 216</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/runtime.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/runtime.py#L852"><code>def generate(</code> · 852</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e02">E02 · 程序与 Agent 的职责</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>生成输入与受控操作接纳；宿主原生能力不等于统一受控接口。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/runtime.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/runtime.py#L156"><code>def generation_prompt</code> · 156</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/research_plan.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/research_plan.py#L147"><code>def admission</code> · 147</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e03">E03 · 读者约定和企业内部写作</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>本轮约定及写作指令；指令存在不等于产物已遵守。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/deliverable_spec.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/deliverable_spec.py#L55"><code>def resolve</code> · 55</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/deliverable_spec.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/deliverable_spec.py#L146"><code>def instructions</code> · 146</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/workflow_assets/business_report/writing.md</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/workflow_assets/business_report/writing.md#L1"><code>先完成</code> · 1</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e04">E04 · 内容方法快照</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>四种方法家族、角色投射与快照哈希；学习 trial 的一致性另见 E16。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/document_workflows.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/document_workflows.py#L23"><code>def resolve_workflow</code> · 23</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/document_workflows.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/document_workflows.py#L46"><code>def freeze_workflow</code> · 46</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/document_workflows.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/document_workflows.py#L62"><code>def workflow_context</code> · 62</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e05">E05 · DOCX 模板准备与导出</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>从准备底稿加载、校验原件、按章节和样式渲染。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/templates.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/templates.py#L28"><code>def import_template</code> · 28</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/templates.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/templates.py#L249"><code>def prepare(</code> · 249</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/templates.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/templates.py#L333"><code>def export_template</code> · 333</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e06">E06 · 研究档位和轮次状态</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>正式预设和事务内计划变更；轮次槽位不等于已完成工作。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/research_plan.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/research_plan.py#L22"><code>PRESETS =</code> · 22</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/research_plan.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/research_plan.py#L88"><code>def freeze(</code> · 88</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/research_plan.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/research_plan.py#L226"><code>def _save_plan</code> · 226</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/research_plan.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/research_plan.py#L266"><code>def begin_round</code> · 266</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/progress.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/progress.py#L12"><code>def </code> · 12</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e07">E07 · 共享预算</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>受控搜索和正文页的预算；不度量整任务模型 Token 或全部原生网络。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/research_budget.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/research_budget.py#L118"><code>def reserve_search</code> · 118</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/research_budget.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/research_budget.py#L158"><code>def reserve_pages</code> · 158</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e08">E08 · Scout 结果与轮间摘要</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>来源归属、定位语法、轮间交接和部分读取；语法通过不证明原文支持结论。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/scout_tools.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/scout_tools.py#L29"><code>def join_scouts</code> · 29</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/scout_tools.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/scout_tools.py#L89"><code>def check_handoff</code> · 89</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/scout_tools.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/scout_tools.py#L132"><code>def read_source</code> · 132</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/runtime.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/runtime.py#L129"><code>def _research_handoff</code> · 129</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e09">E09 · 搜索接口与 DDG</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>冻结提供方、统一预算、失败分类与 DDG HTML 搜索适配；发行联网遇 TLS 失败。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/websearch.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/websearch.py#L74"><code>def provider_for_run</code> · 74</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/websearch.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/websearch.py#L90"><code>def search(</code> · 90</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/websearch.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/websearch.py#L152"><code>def extract(</code> · 152</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/duckduckgo.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/duckduckgo.py#L91"><code>def validate_search</code> · 91</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/duckduckgo.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/duckduckgo.py#L109"><code>def call_search</code> · 109</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e10">E10 · MCP 报告授权与来源接纳</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>资源/工具选择与结果存储；存在接口不代表某供应商已通过真实业务测试。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/connectors/materials.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/connectors/materials.py#L69"><code>def freeze(</code> · 69</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/connectors/materials.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/connectors/materials.py#L113"><code>def revoke(</code> · 113</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/connectors/materials.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/connectors/materials.py#L139"><code>def _acquire</code> · 139</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/connectors/materials.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/connectors/materials.py#L171"><code>def _admit</code> · 171</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e11">E11 · 写前证据对照</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>九种关系、examined/unexamined 划分和输入身份；语义关系由 Agent 判断。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/reconciliation.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/reconciliation.py#L16"><code>RELATIONS =</code> · 16</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/reconciliation.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/reconciliation.py#L45"><code>def candidates</code> · 45</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/reconciliation.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/reconciliation.py#L131"><code>def save(</code> · 131</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/reconciliation.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/reconciliation.py#L189"><code>def read(</code> · 189</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e12">E12 · 版本化审阅包</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>snapshot_version=7 包含来源陈述、对照和 Fact Checker 候选，保存对目标版本的适用身份。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/review.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/review.py#L248"><code>def _snapshot</code> · 248</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/review.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/review.py#L464"><code>def build_packet</code> · 464</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/review.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/review.py#L206"><code>def validate_applicable_review</code> · 206</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/review.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/review.py#L730"><code>def run_review</code> · 730</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e13">E13 · 正式交付规则</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>父要求及条款 ID 分别映射；核心主张核查与内容条款 unverified 提示是不同规则。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/release.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/release.py#L60"><code>def decision</code> · 60</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/deliverable_spec.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/deliverable_spec.py#L20"><code>def requirement_severity</code> · 20</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/release.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/release.py#L247"><code>def eligibility</code> · 247</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e14">E14 · 富文档模型</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>受限 Tiptap JSON、Markdown 投影及显式转换；不承诺任意富文档结构无损。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/document_model.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/document_model.py#L9"><code>BLOCKS =</code> · 9</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/document_model.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/document_model.py#L60"><code>def normalize_document</code> · 60</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/document_model.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/document_model.py#L269"><code>def brief_document</code> · 269</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e15">E15 · 版本绑定的 Word 作业</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>相同输入查询与入队在同一事务；已完成文件校验存在性和哈希，损坏可重建。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/export_jobs.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/export_jobs.py#L11"><code>def export_input</code> · 11</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/export_jobs.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/export_jobs.py#L31"><code>def enqueue_export</code> · 31</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/export_jobs.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/export_jobs.py#L76"><code>def generate_word</code> · 76</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e16">E16 · 学习比较的条件</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>方法内容哈希、内部学习克隆、共同执行条件及实际生成版本核对；不是质量收益保证。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/learning.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/learning.py#L185"><code>def _generate_trial</code> · 185</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/learning.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/learning.py#L292"><code>def _baseline_for_attempt</code> · 292</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/learning.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/learning.py#L324"><code>def learn(</code> · 324</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/store.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/store.py#L216"><code>def create_run</code> · 216</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e17">E17 · 外部 Agent 操作</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>request_id、事务回执、base_version 与工作稿导出；不是远程 MCP 服务端。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/external_requests.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/external_requests.py#L53"><code>def capabilities</code> · 53</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/external_requests.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/external_requests.py#L58"><code>def _operation</code> · 58</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/external_requests.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/external_requests.py#L131"><code>def dispatch</code> · 131</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e18">E18 · 已集成的可靠性修复</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>这些路径已进入 v0.21.0；历史维护记录不再被当作发行树外的待合并实现。具体运行范围见 E21、E35。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/release.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/release.py#L90"><code>severity.update</code> · 90</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/export_jobs.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/export_jobs.py#L31"><code>def enqueue_export</code> · 31</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/learning.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/learning.py#L120"><code>def validated_workflow</code> · 120</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/document_model.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/document_model.py#L60"><code>def normalize_document</code> · 60</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e19">E19 · W5 同条件学习单例</h2>
+<p><strong>证据类型：</strong> 开发任务已保存的真实模型记录；本文作者核对 verification.json，未重跑模型。</p>
+<ul>
+<li>原记录源码身份：<code>b84ef3ad</code>。</li>
+<li>模型回执：<code>deepseek/deepseek-flash</code>；原生会话数 12。</li>
+<li>基线正文 SHA256：<code>0f1d5b43ea126892af5540a03aaf5345e7bbe724bca01957d3c60acd6931c14a</code>。</li>
+<li>候选正文 SHA256：<code>612323165f4c5a6f8995732a82e479800900d1c5280a79a2abfa1d17ebc92941</code>。</li>
+<li>比较条件 SHA256：<code>18fda1cb9a95d77a09a4153cd2f3acd5d26dd0c62230241c5802199fc4ea0263</code>。</li>
+<li>内容方法 SHA256：<code>d7f503e9df1cb48c51edd10f033fb37a755f726e420ae71642b5a534e538fd81</code>。</li>
+<li>判定：better，accepted=true；一个合成案例，无统计效果结论。</li>
+<li>OpenCode 自报成本 0.153116226；不是提供方账单，正文不据此推算成本优势。</li>
+</ul>
+<h2 id="e20">E20 · J2 历史实验与勘误</h2>
+<p><strong>证据类型：</strong> 原运行后的辅助审计及单包 pilot 归档；本次读取，未重跑。</p>
+<p>旧四包 A/C 原标题包含实验类别线索，辅助判读者已见条件和预期，不能称盲评。ind-08 初稿有 compatible 对照，自动修订丢失绑定，旧汇总已被新增审计勘误；不覆写原记录。</p>
+<p>2026-09-13 CodeBuddy pilot 固定单包材料 SHA256 <code>bf3e5bd1a2de0aa35fe2c2f800c0dc19b0d2facf614f9d35c4c6ce8bdaeabd7f</code>，CodeBuddy 2.150.0，deepseek-v4.1-flash，effort 未指定，学习关闭。A=<code>d7995ebe2526fe405b324e3ce841fbb3e9282423</code>；B=<code>93d471dbdd7a949cc7456973d2fbcf53bc49ca23</code>；C=<code>b74c2365b48de8765026e2e62fdd86f17427b079</code>。</p>
+<p>A/B 取消且无稿；C 超时失败，但保存草稿及 different_scope 对照。A/B/C 均未进入评价、修订或独立 Reviewer。C 墙钟 1803.23 秒，记录授权等待 1512.20 秒；不是模型速度数据。子任务用量未完整分账，整任务 Token 未知；不把 parent 可见输入量作为完整计费量。无法形成有效净收益结论。</p>
+<h2 id="e21">E21 · 本文作者的正式源码离线复查</h2>
+<p><strong>证据类型：</strong> 2026-09-14 在与发行内容一致的 main 工作树执行；未调用真实模型或搜索服务。</p>
+<pre><code class="language-sh">PYTHONPATH=src python -m pytest tests/test_research_plan.py tests/test_research_handoff.py tests/test_websearch.py tests/test_fact_check_contract.py tests/test_fact_check_phase.py tests/test_fact_check_review.py tests/test_fact_check_orchestration.py tests/test_schedules.py tests/test_learning_integrity.py tests/test_release.py -q
+</code></pre>
+<p>结果：<code>96 passed in 9.04s</code>，见 <a href="offline-tests.txt">offline-tests.txt</a>。测试使用夹具与受控模拟；这是本文作者实际执行，区别于 E35 引用的发行团队 CI。原预发布稿 24 项检查保留在私有历史副本，不与本次数量累计。</p>
+<h2 id="e22">E22 · 桌面 owner-pipe 与停止顺序</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>桌面专用管道 EOF 触发所属服务停止；先等待本地修改，再取消外部请求。独立 CLI/Web 服务不采用桌面 owner 语义。本次文稿更新未重跑原生强杀。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>desktop/electron/service.cjs</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/desktop/electron/service.cjs#L66"><code>async start</code> · 66</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/server.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/server.py#L88"><code>def _watch_desktop_owner</code> · 88</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/server.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/server.py#L69"><code>_active_posts &gt; server._active_connector_posts</code> · 69</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e23">E23 · 运行时协议与目录</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>目录不是兼容性证明；各宿主的完整执行、取消和受限审阅能力分别判断。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/harness.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/harness.py#L14"><code>class </code> · 14</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/opencode_harness.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/opencode_harness.py#L93"><code>class OpencodeHarness</code> · 93</a></td>
+</tr>
+<tr>
+<td><code>runtime-bridge/main.ts</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/runtime-bridge/main.ts#L75"><code>network_control</code> · 75</a></td>
+</tr>
+<tr>
+<td><code>runtime-bridge/catalog.json</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/runtime-bridge/catalog.json#L3"><code>&quot;id&quot;</code> · 3</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e24">E24 · 冲突处理与复核接纳</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>人工响应保留处理意图；独立检查按预期版本接纳，未知或未决问题不自动消失。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/conflicts.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/conflicts.py#L11"><code>def create</code> · 11</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/conflicts.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/conflicts.py#L55"><code>def respond</code> · 55</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/conflicts.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/conflicts.py#L78"><code>def accept_check</code> · 78</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/source_updates.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/source_updates.py#L106"><code>def register_snapshot</code> · 106</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e25">E25 · OpenCode Reviewer 工具权限</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>全工具 deny、逐文件 read allow、拒绝符号链接；由宿主执行，不等于 OS 级网络隔离。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/opencode_harness.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/opencode_harness.py#L52"><code>def _permission_rules</code> · 52</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e26">E26 · 审计包投射与离线校验</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>检查 ZIP、哈希、版本与引用关系，不执行包内代码、不证明世界事实或发布者身份。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/audit_bundle.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/audit_bundle.py#L43"><code>def _project_records</code> · 43</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/audit_bundle.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/audit_bundle.py#L173"><code>def generate_bundle</code> · 173</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/audit_bundle.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/audit_bundle.py#L354"><code>def verify_bundle</code> · 354</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e27">E27 · Word 修订导入</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>基准版本、原件保存和对齐接纳；不承诺任意 Word 原生对象及修订标记都可恢复。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/word_import.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/word_import.py#L16"><code>def import_revision</code> · 16</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/word_import.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/word_import.py#L147"><code>needs_alignment</code> · 147</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e28">E28 · 反馈来源与本地 scorer 授权</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>人类反馈可直接记录；机器 pattern 需合法来源。scorer trust 是执行授权，指纹不覆盖全部递归依赖，不是 OS 沙箱。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/wikiskill/resources/product/entry-skill/SKILL.md</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/wikiskill/resources/product/entry-skill/SKILL.md#L68"><code>Human suggestions</code> · 68</a></td>
+</tr>
+<tr>
+<td><code>src/wikiskill/product.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/wikiskill/product.py#L411"><code>def feedback</code> · 411</a></td>
+</tr>
+<tr>
+<td><code>src/wikiskill/scorer_trust.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/wikiskill/scorer_trust.py#L16"><code>def describe</code> · 16</a></td>
+</tr>
+<tr>
+<td><code>src/wikiskill/scorer_trust.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/wikiskill/scorer_trust.py#L73"><code>def require</code> · 73</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e29">E29 · 明确人类要求与普通优化</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>正式代码已包含 explicit_human_requirement。全部人类要求满足、无 worse 且无 regressions 时可采用 tie；未满足保留 requirements_pending，在既定轮次内处理。该功能来自 50c0ead0 / PR #700；本文能力依据统一绑定正式提交。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/wikiskill/feedback_loop.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/wikiskill/feedback_loop.py#L83"><code>def finish</code> · 83</a></td>
+</tr>
+<tr>
+<td><code>src/wikiskill/product.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/wikiskill/product.py#L140"><code>requirements_pending</code> · 140</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/learning.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/learning.py#L72"><code>explicit_requirement</code> · 72</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e30">E30 · Windows 环境准备进程归属</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>环境准备 Job Object 与工作区服务 owner-pipe 是不同路径。本次未在 Windows 重跑崩溃注入。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>desktop/electron/windows-process.cs</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/desktop/electron/windows-process.cs#L80"><code>KILL_ON_JOB_CLOSE</code> · 80</a></td>
+</tr>
+<tr>
+<td><code>desktop/electron/environment.cjs</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/desktop/electron/environment.cjs#L25"><code>async function runWindowsOwnedProcess</code> · 25</a></td>
+</tr>
+<tr>
+<td><code>desktop/electron/service.cjs</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/desktop/electron/service.cjs#L66"><code>async start</code> · 66</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e31">E31 · 对照路径的官方资料</h2>
+<p><strong>证据类型：</strong> 2026-09-14 读取的官方项目与产品文档；非第三方测评，未运行这些工具的完整比较试验。</p>
+<ul>
+<li><a href="https://github.com/stanford-oval/storm">STORM／Co-STORM 官方 README</a>：多视角提问、人机协作知识探索及用户材料检索。不能概括为只拼装一次性长文。</li>
+<li><a href="https://github.com/assafelovic/gpt-researcher">GPT‑Researcher 官方 README</a>：本地材料、多个 Agent 的研究路径、PDF／Word／Markdown 导出。不能声称只输出不可编辑 Markdown。</li>
+<li><a href="https://help.openai.com/en/articles/10500283-deep-research-faq">OpenAI Deep Research 官方说明</a>：研究计划调整、过程引导、后续迭代及 Word 下载。</li>
+</ul>
+<p>本文据此说明功能交集；没有逐项审计上述产品的 blockId、原件哈希、审阅隔离、冲突与交付机制，未核实能力不写作“没有”。第 1.1 节表格是工程职责比较，不是功能缺失矩阵或性能排名。本次正式稿升级再次读取上述官方页面；文档将持续更新，比较范围固定为本节列出的信息。</p>
+<h2 id="e32">E32 · 可选事实核查与审阅编排</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>SAFE 式方法重实现，候选与最终判断分离；同一事务保存结果与阶段收束，取消后不接纳迟到结果；snapshot v7 消费候选。实际模型链与 TLS 限制见 E35。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/fact_check.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/fact_check.py#L47"><code>def fact_check_prompt</code> · 47</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/fact_check.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/fact_check.py#L157"><code>def check_fact_result</code> · 157</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/fact_check.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/fact_check.py#L328"><code>def submit_result</code> · 328</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/fact_check.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/fact_check.py#L139"><code>def version_fingerprint</code> · 139</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/research_plan.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/research_plan.py#L407"><code>def admit_fact_check</code> · 407</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/runtime.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/runtime.py#L774"><code>def _wait_fact_check</code> · 774</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/review.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/review.py#L291"><code>if snapshot_version&gt;=7:</code> · 291</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e33">E33 · 定时计划与配置冻结</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>计划保存时确定核查开关，每次触发独立任务；服务离线不执行、不批量补跑，计划不重叠。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>src/briefloop/schedules.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/schedules.py#L66"><code>def validate</code> · 66</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/schedules.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/schedules.py#L142"><code>def fire</code> · 142</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/schedules.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/schedules.py#L136"><code>def skip_offline</code> · 136</a></td>
+</tr>
+<tr>
+<td><code>src/briefloop/schedules.py</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/src/briefloop/schedules.py#L186"><code>def tick</code> · 186</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e34">E34 · 桌面差分更新</h2>
+<p><strong>证据类型：</strong> 本文作者核对正式发行源码；不单独构成运行成功证明。</p>
+<p>Mac 缓存按块复用及 Windows NSIS 差分；校验失败或无法有效复用转全量。本次 Mac 实际走全量回退，不给出未经实测的节省比例。</p>
+<table>
+<thead>
+<tr>
+<th>文件</th>
+<th>符号与固定提交链接</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>desktop/electron/updater.cjs</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/desktop/electron/updater.cjs#L7"><code>differential</code> · 7</a></td>
+</tr>
+<tr>
+<td><code>docs/定时报告.md</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/docs/%E5%AE%9A%E6%97%B6%E6%8A%A5%E5%91%8A.md#L1"><code>定时</code> · 1</a></td>
+</tr>
+<tr>
+<td><code>docs/桌面安装与更新.md</code></td>
+<td><a href="https://github.com/Stahl-G/briefloop/blob/847452bfb39e4185e5d91cc537e030c8e4d7da69/docs/%E6%A1%8C%E9%9D%A2%E5%AE%89%E8%A3%85%E4%B8%8E%E6%9B%B4%E6%96%B0.md#L1"><code>更新</code> · 1</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="e35">E35 · 正式发行、同版工件与真实验收</h2>
+<p><strong>证据类型：</strong> 本文读取公开发行记录；亲自下载小型证据及 wheel 并核对摘要/PyPI 元数据。未重新执行这些原生与模型场景。</p>
+<ul>
+<li><a href="https://github.com/Stahl-G/briefloop/releases/tag/v0.21.0">正式 Release</a>：publishedAt=2026-09-13T22:07:03Z，非 draft。</li>
+<li><a href="https://github.com/Stahl-G/briefloop/releases/download/v0.21.0/freeze.json">freeze.json</a> 与 <a href="https://github.com/Stahl-G/briefloop/releases/download/v0.21.0/manifest.json">manifest.json</a>：冻结提交及共享 wheel。</li>
+<li><a href="https://github.com/Stahl-G/briefloop/releases/download/v0.21.0/published-channel-versions-final.json">渠道检查记录</a>：公开渠道版本与工件身份。</li>
+<li><a href="https://github.com/Stahl-G/briefloop/releases/download/v0.21.0/mac-0210-native-acceptance.md">Mac 原生验收</a>：DMG 提取后的首次准备、另存、WPS 与退出重开；未覆盖更新器原地安装。</li>
+<li><a href="https://github.com/Stahl-G/briefloop/releases/download/v0.21.0/windows-0210-acceptance-scope.md">Windows 验收范围</a>：隔离身份升级；正式产品安装、原生窗口及 WPS 未验证。</li>
+<li><a href="https://github.com/Stahl-G/briefloop/releases/download/v0.21.0/mac-differential-acceptance.json">Mac 差分记录</a>：实际全量回退和文件哈希。</li>
+<li><a href="https://pypi.org/pypi/briefloop/0.21.0/json">PyPI 同版本元数据</a>：wheel 摘要与 GitHub 下载字节一致。</li>
+</ul>
+<p>Release 记录真实报告完成初稿、核查、审阅、一次修订与复核，修订 364 字、4 claim_checks、0 findings。Mac 和 Windows 搜索存在 TLS 失败，使用已存原文不能作为成功联网取证证明。发行 CI 为 Python 611 passed/19 skipped、Windows 安装后123、Mac进程树5、前端34 passed/1 skipped；这些是团队记录，不是本文作者重新执行数。</p>
+<p>源码 tree 一致性和小型资产校验摘要见 <a href="release-verification.json">release-verification.json</a>。下载原始材料与私有历史定位不纳入公开报告包。</p>
+<h2 id="section-36">公开范围</h2>
+<p>本目录只发布技术报告、证据索引、架构图、所引源码哈希、离线检查日志和脱敏后的发行校验摘要。没有复制工作区原件、凭据、私有计划、原始运行会话或本机绝对路径。</p>
+</article></div><footer>2026-09-14 · 正式版 v3 · main ddc65838 / v0.21.0 847452bf</footer></body></html>
