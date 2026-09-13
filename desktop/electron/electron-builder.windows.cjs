@@ -8,7 +8,8 @@ module.exports = {
   extends: null,
   forceCodeSigning: false,
   extraResources: [{from: 'backend', to: 'backend'}],
-  files: [...shared.files, '!electron-builder.windows.cjs'],
+  files: [...shared.files, 'windows-process.ps1', 'windows-process.cs', '!electron-builder.windows.cjs'],
+  asarUnpack: ['windows-process.ps1', 'windows-process.cs'],
   win: {
     ...shared.win,
     target: [{target: 'nsis', arch: ['x64']}],
