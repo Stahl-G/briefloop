@@ -4,7 +4,9 @@ Location validation proves what was saved/read, never semantic support or truth.
 """
 import hashlib
 import json
+import re
 from copy import deepcopy
+from contextlib import contextmanager, ExitStack
 from typing import Literal
 from pydantic import Field
 from .models import Model
@@ -77,6 +79,37 @@ def record(store,table,identity):
     return {**rows[0],'data':json.loads(rows[0]['data'])}
 
 
+class DocumentParseError(ValueError):
+    """A known document decoder failure, distinct from unexpected code errors."""
+    def __init__(self,kind,cause):
+        self.kind=kind;self.parser_error=type(cause).__name__
+        super().__init__(f'{kind.upper()} 原件无法解析（{self.parser_error}），请检查或重新上传原件')
+
+
+@contextmanager
+def _document_parsing(kind):
+    if kind=='pdf':
+        from pypdf.errors import PdfReadError, ParseError
+        errors=(PdfReadError,ParseError)
+    else:
+        from zipfile import BadZipFile
+        from xml.etree.ElementTree import ParseError
+        from openpyxl.utils.exceptions import InvalidFileException
+        errors=(BadZipFile,ParseError,InvalidFileException)
+        try:
+            from lxml.etree import XMLSyntaxError
+        except ImportError:pass  # openpyxl also supports the stdlib XML parser.
+        else:errors+= (XMLSyntaxError,)
+    try:yield
+    except errors as exc:raise DocumentParseError(kind,exc) from exc
+    except KeyError as exc:
+        # zipfile.getinfo has no dedicated missing-member exception. Recognize
+        # only its missing-member diagnostic; unrelated KeyErrors remain bugs.
+        if kind=='xlsx' and len(exc.args)==1 and isinstance(exc.args[0],str) and re.fullmatch(r"There is no item named '.+' in the archive",exc.args[0]):
+            raise DocumentParseError(kind,exc) from exc
+        raise
+
+
 def _read_location(store,value):
     from .media import source_files
     loc=value.locator
@@ -92,10 +125,11 @@ def _read_location(store,value):
     elif loc.kind=='pdf':
         if not original or original.suffix.lower()!='.pdf' or loc.page is None:raise ValueError('PDF 证据需要原件及页码')
         from pypdf import PdfReader
-        pdf=PdfReader(original)
-        if loc.page>len(pdf.pages):raise ValueError('PDF 页码超出原件')
-        located=pdf.pages[loc.page-1].extract_text() or '';method='pdf_page_text'
-        if not located.strip():status='visual_review_needed';method='pdf_page_visual'
+        with _document_parsing('pdf'),original.open('rb') as stream:
+            pdf=PdfReader(stream)
+            if loc.page>len(pdf.pages):raise ValueError('PDF 页码超出原件')
+            located=pdf.pages[loc.page-1].extract_text() or '';method='pdf_page_text'
+            if not located.strip():status='visual_review_needed';method='pdf_page_visual'
     elif loc.kind=='xlsx':
         if not original or original.suffix.lower() not in ('.xlsx','.xlsm') or not loc.sheet or not loc.cells:
             raise ValueError('表格证据需要 XLSX 原件、工作表和单元格范围')
@@ -104,8 +138,13 @@ def _read_location(store,value):
         left,top,right,bottom=range_boundaries(loc.cells)
         if not all((left,top,right,bottom)) or left>right or top>bottom or (right-left+1)*(bottom-top+1)>200:
             raise ValueError('请将证据范围限定在 200 个单元格内')
-        formula=load_workbook(original,data_only=False,read_only=True);cached=load_workbook(original,data_only=True,read_only=True)
-        try:
+        # Own both input streams even when loading the second workbook or
+        # lazily decoding a worksheet fails before a Workbook is returned.
+        with _document_parsing('xlsx'),ExitStack() as resources:
+            formula=load_workbook(resources.enter_context(original.open('rb')),data_only=False,read_only=True)
+            resources.callback(formula.close)
+            cached=load_workbook(resources.enter_context(original.open('rb')),data_only=True,read_only=True)
+            resources.callback(cached.close)
             if loc.sheet not in formula.sheetnames:raise ValueError('工作表不存在')
             cells=[]
             formula_rows=formula[loc.sheet].iter_rows(min_row=top,max_row=bottom,min_col=left,max_col=right)
@@ -119,7 +158,6 @@ def _read_location(store,value):
             payload['cells']=cells;located='\n'.join(f"{x['cell']}: {x['value']}" for x in cells)
             method='saved_workbook_cells'
             if any(x['formula'] and x['value'] is None for x in cells):status='missing_formula_cache'
-        finally:formula.close();cached.close()
     else:
         if not original:raise ValueError('图像证据需要已保留原件')
         from PIL import Image
@@ -222,14 +260,19 @@ def claim_closure(store,claim_id,trail=()):
     if claim_id in trail:return {'claim_id':claim_id,'status':'premise_cycle','evidence':[],'premises':[]}
     claim=record(store,'claims',claim_id);evidence=[];state='unreviewed'
     for support in claim['data']['supports']:
-        span=record(store,'evidence_spans',support['span_id'])
+        span=record(store,'evidence_spans',support['span_id']);location_error=None
         try:
             current,location=_read_location(store,EvidenceInput(source_id=span['source_id'],locator=span['data']['locator'],excerpt=span['data']['excerpt']))
             intact=current['hash']==span['source_hash'] and location['raw_hash']==span['data']['raw_hash']
+        except DocumentParseError as exc:
+            intact=False
+            location_error={'code':exc.kind+'_parse_error','source_id':span['source_id'],
+                            'parser_error':exc.parser_error,'message':str(exc)}
         except (ValueError,OSError):intact=False
         if not intact:state='source_changed'
         evidence.append({**span,'source_name':store.one('sources',span['source_id'])['name'],'intact':intact,
-                         'supports_quote':support['supports_quote'],'rationale':support['rationale']})
+                         'supports_quote':support['supports_quote'],'rationale':support['rationale'],
+                         **({'location_error':location_error} if location_error else {})})
     premises=[claim_closure(store,identity,(*trail,claim_id)) for identity in claim['data'].get('premise_claim_ids',[])]
     if any(p['status']!='unreviewed' for p in premises):state='premise_changed'
     return {'claim_id':claim_id,'claim':claim,'status':state,'evidence':evidence,'premises':premises}
