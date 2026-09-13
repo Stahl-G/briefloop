@@ -1,4 +1,4 @@
-# BriefLoop 0.19.0
+# BriefLoop 0.20.0
 
 面向行业研究、战略与 IR 使用者的本地报告工作台：把分散材料整理成可编辑简报，逐项查看重要结论的依据、处理审阅问题，并保留原稿与修订版本。适合需要定期写报告、核数字和核口径的单人工作。
 
@@ -6,7 +6,15 @@
 
 新建报告可选择通用报告，或商业报告下的行业周报／月报、工作进展周报与决策分析。内容方法贯穿规划、写作、修订与评价，并随报告保存实际版本；Word 模板单独控制版式。八类内置版式可继续使用，其余文档类型的专门内容流程将分批接入。
 
-## 快速开始（macOS，Python 3.11+）
+## 桌面 App
+
+从 [GitHub Releases](https://github.com/Stahl-G/briefloop/releases) 选择与系统匹配的安装包。macOS Apple Silicon 使用 DMG；Windows x64 使用 EXE。桌面版与 WebUI 共用报告、材料和设置。
+
+首次启动检测本机 Python 3.11+；已有兼容版本即可准备 App 专属依赖环境，缺少时页面提供安装入口。桌面版复用 Electron 内置 Node，无需为 BriefLoop 桥接单独安装 Node。模型 CLI 与账号仍由你选择并配置。
+
+桌面版提供原生工作区选择、Word 另存、保存后退出，以及“设置 → 版本更新”。依赖准备需要网络；更新由用户发起，保存与任务停止完成后才开始安装。安装与更新步骤见 [桌面使用指南](docs/桌面安装与更新.md)。
+
+## WebUI 快速开始（Python 3.11+）
 
 ```sh
 git clone https://github.com/Stahl-G/briefloop.git
@@ -27,8 +35,8 @@ briefloop start --workspace /path/to/workspace
 
 实际生成前需要：
 
-- macOS，以及 Python 3.11 或更新版本。
-- 至少一个已安装并完成认证的执行宿主：Codex CLI、Opencode CLI、Claude Code、Kimi、Hermes、DeepSeek Reasonix、MiMo Code 或 CodeBuddy Code。Codex 与 Opencode 走原生通道，其余 CLI 通过本地 bridge 接入，需要 Node.js 20+。
+- macOS 或 Windows，以及 Python 3.11 或更新版本。
+- 至少一个已安装并完成认证的执行宿主：Codex CLI、Opencode CLI、Claude Code、Kimi、Hermes、DeepSeek Reasonix、MiMo Code 或 CodeBuddy Code。Codex 与 Opencode 走原生通道，其余 CLI 通过本地 bridge 接入；WebUI 安装需要 Node.js 20+，桌面 App 使用 Electron 内置 Node。
 - 首次安装依赖需要网络。使用 Tavily 时另行配置自己的 Tavily Key。
 
 也可指定目录、端口和后端：
@@ -37,9 +45,9 @@ briefloop start --workspace /path/to/workspace
 ./start.sh --workspace /path/to/workspace --port 8765 --no-open --backend opencode
 ```
 
-## Windows 原生预览
+## Windows WebUI
 
-Windows 可使用同一套 Python 服务与网页，尚未提供 Electron 安装包。已验证独立安装、中文工作区、编辑保存、Word 导出、互斥锁和退出重开，并使用 OpenCode + Muse Spark 1.3 Free 完成真实合成稿生成。独立审阅与其他宿主仍须按实际结果核对，不能沿用 macOS 的验证结论。
+Windows 也可不安装桌面 App，直接启动同一套 Python 服务与网页。支持中文工作区、编辑保存、Word 导出、互斥锁和退出重开。各宿主的实际验证范围见 [Windows 说明](docs/windows.md)。
 
 安装 Python 3.11+ 后，在 PowerShell 中运行：
 
@@ -84,7 +92,13 @@ BriefLoop 在本机运行，但它不是离线工具。开始用之前请先分�
 - 限制（以诚实为准）：Codex 之外的宿主没有每轮网络硬开关，关闭联网时靠指令与权限执行，宿主自带的 shell 仍可能联网；只有 Codex 支持运行中追加（Opencode 与 bridge CLI 会明确拒绝）；图片附件只在宿主支持读图时可用。
 - 排查：任务失败先看任务日志；"模型 ID"类错误检查 `provider/model` 拼写与宿主登录状态；bridge 相关报错先确认 Node.js 20+ 与本机 CLI 已认证。可通过 `BRIEFLOOP_NODE=/absolute/path/to/node` 指定 Node；缺少 Node 不阻断 Codex / Opencode 的原生发现。
 
-服务只监听本机。关闭网页不会停止正在执行的任务；从网页“停止”或关闭服务进程结束执行。
+设置中的执行时限可选“不限时”（0 分钟），仍可手动停止。提供商返回的 429、503、额度不足等错误，以及宿主实际重试状态，会显示在对话中；不会用空白回复替代失败。报告等待权限时可直接打开绑定的任务对话处理。
+
+Codex 使用官方 OpenAI provider 且配置支持时，输入区与角色配置显示 Fast 选项。Fast 是发送给宿主的服务档位请求，可用性与费用由宿主决定；它不是所有 CLI 共用的加速开关。
+
+服务只监听本机。WebUI 关闭网页后任务继续；桌面 App 退出前先保存，有运行任务时提供继续工作或停止退出的选择。
+
+当前同一对话仍固定执行宿主；切换宿主请新建对话。已排队报告继续使用冻结配置。
 
 ## 现在可以做什么
 
