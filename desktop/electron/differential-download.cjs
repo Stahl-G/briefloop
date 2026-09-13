@@ -36,7 +36,7 @@ async function readCache(directory) {
     const stat = await fs.lstat(index);
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_MAP) return null;
     const cache = JSON.parse(await fs.readFile(index, 'utf8'));
-    if (!/^download-[A-Za-z0-9]+\/BriefLoop-\d+\.\d+\.\d+-arm64\.dmg$/.test(cache.file) ||
+    if (!/^download-[A-Za-z0-9]+\/BriefLoop-\d+\.\d+\.\d+-arm64(?:\.dmg|-mac\.zip)$/.test(cache.file) ||
         !/^[a-f0-9]{64}$/.test(cache.sha256) || !Number.isSafeInteger(cache.size)) return null;
     const file = path.join(directory, cache.file);
     const parent = await fs.lstat(path.dirname(file));
@@ -56,6 +56,8 @@ async function saveCache(directory, file, size, sha256, map, previous = null) {
     await fs.rename(temporary, path.join(directory, 'differential-cache.json'));
     if (previous && previous.file !== file) {
       // Remove only the verified previous baseline, never scan unrelated downloads.
+      // Only our prepared application folder is disposable; leave unrelated files alone.
+      await fs.rm(path.join(path.dirname(previous.file), 'prepared'), {recursive: true, force: true}).catch(() => {});
       await fs.unlink(previous.file).catch(() => {});
       await fs.rmdir(path.dirname(previous.file)).catch(() => {});
     }

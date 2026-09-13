@@ -25,11 +25,11 @@ function loopback(value) {
 }
 
 function createUpdater({app, shell, changed = () => {}, platform = process.platform, arch = process.arch,
-                        installMode = platform === 'darwin' ? 'dmg' : 'native', nativeUpdater,
+                        installMode = platform === 'darwin' ? 'zip' : 'native', nativeUpdater,
                         testFeed = null, fetch: fetchImpl = globalThis.fetch} = {}) {
-  if (!app || !shell || !['native', 'dmg'].includes(installMode)) throw new Error('Invalid updater configuration');
+  if (!app || !shell || !['native', 'dmg', 'zip'].includes(installMode)) throw new Error('Invalid updater configuration');
   const local = testFeed ? loopback(testFeed) : null;
-  if (local && installMode !== 'dmg') throw new Error('Local test feed only supports the DMG test path');
+  if (local && installMode === 'native') throw new Error('Local test feed only supports the manual Mac update path');
   const currentAppVersion = app.getVersion();
   let data = {currentAppVersion, state: 'idle', releaseVersion: null, notes: '', url: null,
               progress: null, installMode, error: null, retryable: false, reinstall: false, source: local ? 'local-test' : 'github'};
@@ -161,7 +161,7 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
         releaseVersion: version, notes: typeof result.updateInfo.releaseNotes === 'string' ? result.updateInfo.releaseNotes.slice(0, 20000) : '',
         url: `${RELEASES}tag/v${version}`});
     }
-    if (arch !== 'arm64') throw new UpdateError('unsupported_arch', '当前手动更新仅支持 macOS Apple Silicon DMG。', false);
+    if (arch !== 'arm64') throw new UpdateError('unsupported_arch', '当前手动更新仅支持 macOS Apple Silicon。', false);
     const release = await metadata();
     if (release.draft || release.prerelease) throw new UpdateError('unstable_release', '仅接受已公开的稳定版本。', false);
     const version = releaseVersion(release.tag_name), url = releaseURL(release.html_url);
@@ -169,12 +169,12 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
     const reinstall = !!local && version === semver.valid(currentAppVersion);
     if (!semver.gt(version, currentAppVersion) && !reinstall) return publish({state: 'current'});
     const candidates = (Array.isArray(release.assets) ? release.assets : []).filter(item =>
-      typeof item.name === 'string' && /(?:^|[-_.])arm64(?:[-_.]|$)/i.test(item.name) && /\.dmg$/i.test(item.name));
-    if (candidates.length !== 1) throw new UpdateError('asset_unavailable', '该版本尚无唯一可用的 Apple Silicon DMG，请稍后重试。');
+      typeof item.name === 'string' && /(?:^|[-_.])arm64(?:[-_.]|$)/i.test(item.name) && (installMode === 'zip' ? /-mac\.zip$/i : /\.dmg$/i).test(item.name));
+    if (candidates.length !== 1) throw new UpdateError('asset_unavailable', '该版本尚无唯一可用的 Apple Silicon 更新包，请稍后重试或从发行页下载 DMG。');
     const selected = candidates[0];
     // A same-repository asset can still belong to an older release. Bind the
     // expected installer name and exact release tag before trusting its digest.
-    const expectedName = `BriefLoop-${version}-arm64.dmg`;
+    const expectedName = `BriefLoop-${version}-arm64${installMode === 'zip' ? '-mac.zip' : '.dmg'}`;
     if (selected.name !== expectedName) throw new UpdateError('asset_version_mismatch', '更新文件名与发布版本不一致。', false);
     const selectedURL = new URL(trusted(selected.browser_download_url, 'asset'));
     if (decodeURIComponent(selectedURL.pathname) !== `/${REPOSITORY}/releases/download/${release.tag_name}/${expectedName}` || selectedURL.search) {
@@ -191,7 +191,8 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
       }
       digest = {algorithm: match[1].toLowerCase(), value: match[2].toLowerCase()};
     }
-    asset = {url: trusted(selected.browser_download_url, 'asset'), size: selected.size, digest};
+    if (installMode === 'zip' && !digest) throw new UpdateError('missing_digest', '发布尚未提供 ZIP 更新包校验信息，请稍后重试。');
+    asset = {name: expectedName, url: trusted(selected.browser_download_url, 'asset'), size: selected.size, digest};
     const maps = (release.assets || []).filter(item => item.name === expectedName + '.blockmap');
     if (maps.length === 1 && Number.isSafeInteger(maps[0].size) && maps[0].size > 0 && maps[0].size <= 16 * 1024 ** 2) {
       // Optional optimisation: malformed/missing maps must not prevent full updates.
@@ -227,7 +228,9 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
       if (asset.blockmap && asset.digest) {
         try {map = await delta.readMap(await response(asset.blockmap, 'asset'), asset.size);} catch {fallback = 'blockmap_unavailable';}
       } else fallback = 'blockmap_unavailable';
-      const cache = map && await delta.readCache(directory);
+      const previousCache = map && await delta.readCache(directory);
+      // A DMG cannot serve as the byte baseline for a ZIP (or vice versa).
+      const cache = previousCache && path.extname(previousCache.file) === path.extname(asset.name) ? previousCache : null;
       if (cache) {
         try {
           const deadline = AbortSignal.timeout(10 * 60 * 1000);
@@ -238,15 +241,15 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
               if (Date.now() - lastProgress > 100 || value.percent === 100) {publish({progress: value}); lastProgress = Date.now();}
             }});
           if (await delta.hashFile(temporary, asset.digest.algorithm) !== asset.digest.value) throw new Error('delta_hash');
-          const file = path.join(staging, `BriefLoop-${data.releaseVersion}-arm64.dmg`);
+          const file = path.join(staging, asset.name);
           const sha256 = await delta.hashFile(temporary);
           await fs.rename(temporary, file);
           ready = {file, sha256};
-          await delta.saveCache(directory, file, asset.size, sha256, map, cache).catch(() => {});
+          await delta.saveCache(directory, file, asset.size, sha256, map, previousCache).catch(() => {});
           return publish({state: 'downloaded', progress});
-        } catch {
+        } catch (error) {
           await fs.rm(temporary, {force: true});
-          fallback = 'differential_unavailable';
+          fallback = ['little_reuse', 'range_unavailable', 'range_size', 'delta_hash'].includes(error.message) ? error.message : 'differential_unavailable';
         }
       }
       publish({progress: {percent: 0, transferred: 0, total: asset.size, mode: 'full', fallback}});
@@ -267,10 +270,10 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
       if (transferred !== asset.size) throw new UpdateError('size_mismatch', '下载文件不完整，请重试。');
       if (advertised && advertised.digest('hex') !== asset.digest.value) throw new UpdateError('hash_mismatch', '下载校验失败，请重试。');
       await handle.sync(); await handle.close(); handle = null;
-      const file = path.join(staging, `BriefLoop-${data.releaseVersion}-arm64.dmg`);
+      const file = path.join(staging, asset.name);
       await fs.rename(temporary, file);
       ready = {file, sha256: checksum.digest('hex')};
-      if (map) await delta.saveCache(directory, file, asset.size, ready.sha256, map, cache).catch(() => {});
+      if (map) await delta.saveCache(directory, file, asset.size, ready.sha256, map, previousCache).catch(() => {});
       return publish({state: 'downloaded', progress: {percent: 100, transferred, total: asset.size, mode: 'full', fallback}});
     } catch (error) {
       await handle?.close(); await fs.rm(staging, {recursive: true, force: true}); throw error;
@@ -288,14 +291,23 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
         if (data.state === 'error') throw new UpdateError(data.error.code, data.error.message, data.retryable);
         return {mode: 'native', requested: true};
       }
+      for (const directory of [path.dirname(ready.file), path.dirname(path.dirname(ready.file))]) {
+        const stat = await fs.lstat(directory);
+        if (!stat.isDirectory() || stat.isSymbolicLink()) throw new UpdateError('unsafe_path', '更新下载目录发生变化，请重新下载。', false);
+      }
       const stat = await fs.lstat(ready.file);
       if (!stat.isFile() || stat.isSymbolicLink()) throw new UpdateError('unsafe_path', '已下载文件不可用，请重新下载。');
       const hash = crypto.createHash('sha256');
       for await (const chunk of require('node:fs').createReadStream(ready.file)) hash.update(chunk);
       if (hash.digest('hex') !== ready.sha256) throw new UpdateError('hash_mismatch', '已下载文件发生变化，请重新下载。');
-      const error = await shell.openPath(ready.file);
-      if (error) throw new UpdateError('open_failed', '无法打开已下载 DMG，请重试。');
-      return {mode: 'dmg', opened: true, manualInstall: true};
+      let target = ready.file;
+      if (installMode === 'zip') {
+        try {target = await require('./mac-update-handoff.cjs').prepare(ready.file, data.releaseVersion);}
+        catch {throw new UpdateError('open_failed', '更新包解压或应用校验失败，请重试；当前应用未被替换。');}
+      }
+      const error = await shell.openPath(target);
+      if (error) throw new UpdateError('open_failed', '无法打开已下载更新包，请重试。');
+      return {mode: installMode, opened: true, manualInstall: true};
     } catch (error) {fail(error); throw new UpdateError(data.error.code, data.error.message, data.retryable);}
   }
   return {status, check: () => once(checkImpl, 'check'), download: () => once(downloadImpl, 'download'), installReady};

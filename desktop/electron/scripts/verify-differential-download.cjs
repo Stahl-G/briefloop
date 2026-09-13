@@ -1,5 +1,5 @@
 'use strict';
-// Offline acceptance with two real DMGs. Serves only the explicitly supplied files
+// Offline acceptance with two real Mac payloads. Serves only the explicitly supplied files
 // on loopback; never opens an installer or changes an installed application.
 const fs = require('node:fs/promises');
 const {createReadStream} = require('node:fs');
@@ -11,7 +11,9 @@ const {hashFile} = require('../differential-download.cjs');
 const {createUpdater} = require('../updater.cjs');
 async function main() {
   const [oldFile, newFile] = process.argv.slice(2).map(f => path.resolve(f));
-  if (!oldFile || !newFile) throw Error('Supply old.dmg and new.dmg');
+  if (!oldFile || !newFile) throw Error('Supply old and new Mac ZIPs or DMGs');
+  const zip = oldFile.endsWith('-mac.zip') && newFile.endsWith('-mac.zip');
+  if (!zip && !(oldFile.endsWith('.dmg') && newFile.endsWith('.dmg'))) throw Error('Payload formats must match');
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), 'briefloop-real-delta-'));
   let server;
   try {
@@ -25,7 +27,7 @@ async function main() {
     server = http.createServer(async (req,res) => {
       try {
         const record = records[selected], version = selected ? '1.0.1' : '1.0.0';
-        const name = `BriefLoop-${version}-arm64.dmg`;
+        const name = `BriefLoop-${version}-arm64${zip?'-mac.zip':'.dmg'}`;
         const url = `${origin}/Stahl-G/briefloop/releases/download/v${version}/${name}`;
         if (req.url === '/release') return res.end(JSON.stringify({tag_name:'v'+version,html_url:origin+'/notes',assets:[
           {name,size:record.size,digest:'sha256:'+record.sha256,browser_download_url:url},
@@ -41,7 +43,7 @@ async function main() {
     });
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
     const origin = `http://127.0.0.1:${server.address().port}`;
-    const config = {app:{getVersion:()=> '0.9.0',getPath:()=>temporary},shell:{},platform:'darwin',arch:'arm64',testFeed:origin+'/release'};
+    const config = {app:{getVersion:()=> '0.9.0',getPath:()=>temporary},shell:{},platform:'darwin',arch:'arm64',installMode:zip?'zip':'dmg',testFeed:origin+'/release'};
     const first = createUpdater(config); await first.check();
     const firstResult = await first.download();
     if (firstResult.state !== 'downloaded') throw Error(JSON.stringify(firstResult));

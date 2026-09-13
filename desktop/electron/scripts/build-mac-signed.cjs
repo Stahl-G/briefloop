@@ -54,7 +54,11 @@ async function main(args = process.argv.slice(2)) {
     await require('./prepare-update-blockmaps.cjs').prepare(file);
     records.push({file:path.basename(file),sha256:hash(file),submission_id:submission.id,status:submission.status});
   }
-  if (!records.length) throw Error('No DMG produced; release verification incomplete.');
+  for (const file of artifacts.filter(f=>f.endsWith('-mac.zip'))) {
+    await require('./prepare-update-blockmaps.cjs').prepare(file);
+    records.push({file:path.basename(file),sha256:hash(file),status:'signed-app-zip'});
+  }
+  if (!records.some(r=>r.file.endsWith('.dmg'))) throw Error('No DMG produced; release verification incomplete.');
   const record = {version:pkg.version,source_commit:run('git',['rev-parse','HEAD']).trim(),wheel_sha256:manifest.sha256,artifacts:records};
   fs.writeFileSync(path.join(desktop,'dist/mac-signing.json'),JSON.stringify(record,null,2)+'\n');
   console.log('Signed and notarized artifacts verified. Publication and native install acceptance remain separate.');
