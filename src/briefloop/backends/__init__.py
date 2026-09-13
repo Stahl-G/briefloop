@@ -7,7 +7,7 @@ backends mid-flight; a backend change starts a new attempt instead of resuming
 old child handles.
 """
 
-BRIDGE_BACKENDS = ('claude','kimi','hermes','reasonix','mimo')
+BRIDGE_BACKENDS = ('claude','kimi','hermes','reasonix','mimo','codebuddy')
 BACKENDS = ('codex', 'opencode', *BRIDGE_BACKENDS)
 
 DEFAULT_BACKEND = 'codex'
@@ -21,6 +21,7 @@ BACKEND_LABELS = {
     'hermes': 'Hermes',
     'reasonix': 'DeepSeek Reasonix',
     'mimo': 'MiMo Code',
+    'codebuddy': 'CodeBuddy Code',
 }
 
 # Verified against opencode 1.18.20 (v1 message surface, same as the official

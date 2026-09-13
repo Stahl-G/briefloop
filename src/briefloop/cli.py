@@ -9,6 +9,7 @@ import time
 import os
 import secrets
 from .store import Store
+from .backends import BACKENDS
 from . import __version__
 
 
@@ -33,7 +34,7 @@ def main():
         if name in ('serve','start'):
             parser.add_argument('--port',type=int,default=8765)
             parser.add_argument('--paused',action='store_true',help='打开工作区但不自动重跑旧队列或反馈学习')
-            parser.add_argument('--backend',choices=('codex','opencode','claude','kimi','hermes','reasonix','mimo'),default=None,help='新任务默认走哪个 CLI 后端；不传则沿用工作区设置')
+            parser.add_argument('--backend',choices=BACKENDS,default=None,help='新任务默认走哪个 CLI 后端；不传则沿用工作区设置')
     tool=sub.add_parser('tool',help='agent 使用的来源工具')
     tool.add_argument('--workspace',required=True)
     ts=tool.add_subparsers(dest='tool',required=True)

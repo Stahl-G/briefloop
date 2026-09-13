@@ -21,8 +21,9 @@ class BridgeFixture:
         return {}
 
 
-def test_bridge_turn_is_durable_and_same_message_is_not_redispatched(tmp_path):
-    bridge=BridgeFixture();h=BridgeHarness(Store(tmp_path),bridge,'claude')
+@pytest.mark.parametrize('backend', ['claude', 'codebuddy'])
+def test_bridge_turn_is_durable_and_same_message_is_not_redispatched(tmp_path, backend):
+    bridge=BridgeFixture();h=BridgeHarness(Store(tmp_path),bridge,backend)
     s=h.create_session('test',{'model':'host-model'})
     message=h.send(s['id'],'read the fixture',message_id='fixed-admission')
     deadline=time.monotonic()+3
@@ -42,8 +43,9 @@ def test_bridge_turn_is_durable_and_same_message_is_not_redispatched(tmp_path):
     assert any(e['kind']=='item/completed' and e['data']['item']['id']=='native-item' for e in snap['events'])
 
 
-def test_restricted_reviewer_cannot_enter_unverified_bridge(tmp_path):
-    bridge=BridgeFixture();h=BridgeHarness(Store(tmp_path),bridge,'kimi')
+@pytest.mark.parametrize('backend', ['kimi', 'codebuddy'])
+def test_restricted_reviewer_cannot_enter_unverified_bridge(tmp_path, backend):
+    bridge=BridgeFixture();h=BridgeHarness(Store(tmp_path),bridge,backend)
     with pytest.raises(ValueError,match='隔离'):
         h.create_session('review',{'model':'default','permission':'read-only','review_root':str(tmp_path)})
     assert not bridge.starts
