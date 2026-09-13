@@ -69,10 +69,10 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
     }
     return url.href;
   }
-  async function response(value, kind, headers = {}) {
+  async function response(value, kind, headers = {}, deadlineSignal = null) {
     let url = trusted(value, kind);
     if (kind === 'metadata' && metadataRateLimit?.until > Date.now()) throw metadataRateLimit.error;
-    const signal = AbortSignal.timeout(kind === 'metadata' ? 30000 : 10 * 60 * 1000);
+    const signal = deadlineSignal || AbortSignal.timeout(kind === 'metadata' ? 30000 : 10 * 60 * 1000);
     for (let n = 0; n < 6; n++) {
       const res = await fetchImpl(url, {redirect: 'manual', signal,
         headers: {'Accept': kind === 'metadata' ? 'application/vnd.github+json' : 'application/octet-stream',
@@ -230,9 +230,13 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
       const cache = map && await delta.readCache(directory);
       if (cache) {
         try {
+          const deadline = AbortSignal.timeout(10 * 60 * 1000);
+          let lastProgress = 0;
           const progress = await delta.reconstruct({cache, map, size: asset.size, destination: temporary,
-            request: (start, end) => response(asset.url, 'asset', {'Range': `bytes=${start}-${end}`, 'Accept-Encoding': 'identity'}),
-            progress: value => publish({progress: value})});
+            request: (start, end) => response(asset.url, 'asset', {'Range': `bytes=${start}-${end}`, 'Accept-Encoding': 'identity'}, deadline),
+            progress: value => {
+              if (Date.now() - lastProgress > 100 || value.percent === 100) {publish({progress: value}); lastProgress = Date.now();}
+            }});
           if (await delta.hashFile(temporary, asset.digest.algorithm) !== asset.digest.value) throw new Error('delta_hash');
           const file = path.join(staging, `BriefLoop-${data.releaseVersion}-arm64.dmg`);
           const sha256 = await delta.hashFile(temporary);
