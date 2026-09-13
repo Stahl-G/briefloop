@@ -28,7 +28,7 @@ test('opening another version immediately refreshes scored and unscored headers 
   source.slice(source.indexOf('function renderWordExports(){'),source.indexOf('function renderWordExports(){')+source.slice(source.indexOf('function renderWordExports(){')).indexOf('\n}')+2),
   functionBefore('renderReportStatus','renderAssistantSummary'),
   functionBefore('renderAssistantSummary','sendReportQuestion'),
-  oneLine('openBrief'),oneLine('refresh')
+  oneLine('openBrief'),oneLine('refresh'),oneLine('refreshState')
  ].join('\n'),context);
  vm.runInContext('refresh.signature=JSON.stringify(state);renderReportStatus()',context);
  const signature=JSON.stringify(state);

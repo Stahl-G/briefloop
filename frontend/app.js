@@ -1,3 +1,4 @@
+import {adaptivePoll} from './polling.js';
 import {preflightUploads,uploadPayload} from './uploads.js';
 import {runtimeCard,runtimeModelSummary} from './runtime-cards.js';
 import {activityCenter} from './notifications.js';
@@ -57,7 +58,9 @@ document.addEventListener('mouseout',e=>{const el=e.target.closest('[data-tip]')
 document.addEventListener('focusin',e=>{const el=e.target.closest('[data-tip]');if(el)showTip(el)});
 document.addEventListener('focusout',e=>{if(e.target.closest('[data-tip]'))hideTip()});
 document.addEventListener('scroll',()=>{if(tooltipTarget)hideTip()},true);
-async function refresh(first=false){try{const next=await api('state');$('connection').textContent='本地已连接';const signature=JSON.stringify(next);state=next;activity?.render();renderWordExports();if($('release-dialog')?.open)refreshReleaseState().catch(e=>notice(e.message,true));if(first||signature!==refresh.signature){refresh.signature=signature;render(first)}await refreshProgress();if(first||!$('learning').hidden)await refreshCandidates();if(first||!$('report').hidden)await refreshReportBudget()}catch(e){$('connection').textContent='连接中断';if(first)notice(e.message,true)}}
+function refresh(first=false){if(refresh.pending)return refresh.pending;refresh.pending=refreshState(first).finally(()=>{refresh.pending=null});return refresh.pending}
+function backgroundActive(){return !!state?.jobs?.some(j=>['queued','running'].includes(j.status))||chat.busy||chat.sessions.some(sessionBusy)}
+async function refreshState(first=false){try{const next=await api('state');$('connection').textContent='本地已连接';const signature=JSON.stringify(next);state=next;activity?.render();renderWordExports();if($('release-dialog')?.open)refreshReleaseState().catch(e=>notice(e.message,true));if(first||signature!==refresh.signature){refresh.signature=signature;render(first)}await refreshProgress();if(first||!$('learning').hidden)await refreshCandidates();if(first||!$('report').hidden)await refreshReportBudget()}catch(e){$('connection').textContent='连接中断';if(first)notice(e.message,true)}}
 // BEGIN_FIGURE_EDITOR_MAPPING: also exercised against the real MarkdownManager.
 const figureImagePattern=/(!\[(?:\\.|[^\]\\])*\]\()\s*(<?[^)\s]+>?)(\s+(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'))?\s*(\))/g;
 function figureIdFromUrl(value){
@@ -415,7 +418,7 @@ $('markdown-import-cancel').onclick=cancelMarkdownImport;
 $('markdown-import-dialog').addEventListener('cancel',()=>{pendingMarkdownImport=null;$('markdown-import').value=''});
 $('markdown-import-confirm').onclick=()=>action(async()=>{const pending=pendingMarkdownImport;if(!pending)return;const text=await pending.file.text();const base=await savedVersion();if(base!==pending.base)throw Error('报告已有修改，请取消后重新选择 Markdown 文件');editor.commands.setContent(toEditor(text),{contentType:'markdown',emitUpdate:true});await savedVersion();cancelMarkdownImport();notice('已导入为新的富文档版本')});
 $('markdown-source').oninput=changed;window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue=''}});
-(async()=>{try{token=(await api('session')).token;await refresh(true);await initChat();refreshWorkspaces().catch(()=>{});setInterval(()=>refresh(),3000)}catch(e){notice(e.message,true)}})();
+(async()=>{try{token=(await api('session')).token;await refresh(true);await initChat();refreshWorkspaces().catch(()=>{});adaptivePoll(()=>refresh(),{active:backgroundActive,fast:3000})}catch(e){notice(e.message,true)}})();
 
 $('editor').addEventListener('click',e=>{const a=e.target.closest('a[href^="#source-"]');if(a){e.preventDefault();const id=a.getAttribute('href').slice(8);action(async()=>{const r=await api('source?id='+id);showSource(r)})}});
 
@@ -945,7 +948,7 @@ async function initChat(){
   page('chat');restoreDraft();renderChat();
   try{await pollChat(true)}catch(e){chatError(e.message)}
  }
- setInterval(()=>pollChat(),1300);
+ adaptivePoll(()=>pollChat(),{active:backgroundActive,fast:1300});
 }
 
 $('chat-allow-web').onchange=rememberDraft;
