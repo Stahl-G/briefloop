@@ -1,6 +1,7 @@
 import {Extension, Mark, Node, mergeAttributes} from '@tiptap/core';
 import Image from '@tiptap/extension-image';
 import {Plugin} from '@tiptap/pm/state';
+import {Fragment, Slice} from '@tiptap/pm/model';
 
 function color(value){
  if(/^#[a-f\d]{6}$/i.test(value||''))return value.toLowerCase();
@@ -40,11 +41,25 @@ export const ReportImage=Image.extend({
  renderHTML({node,HTMLAttributes}){return ['figure',{class:'report-image'},['img',mergeAttributes(this.options.HTMLAttributes,HTMLAttributes)],...(node.attrs.caption?[['figcaption',{},node.attrs.caption]]:[])]},
  renderMarkdown(node){const a=node.attrs;return '!['+(a.alt||'').replaceAll(']','\\]')+']('+a.src+')'+(a.caption?'\n\n'+a.caption:'')},
 });
-export function citationBoundaryPlugin(){return new Plugin({appendTransaction(transactions,oldState,state){
+function boundaryCitation(state){
  if(!state.selection.empty)return null;
- const {$from}=state.selection,marks=state.storedMarks||$from.marks();
- const citation=marks.find(mark=>mark.type.name==='link'&&/^#source-src_[A-Za-z0-9_-]+$/.test(mark.attrs.href||''));
+ const {$from}=state.selection;
+ const citation=$from.marks().find(mark=>mark.type.name==='link'&&/^#source-src_[A-Za-z0-9_-]+$/.test(mark.attrs.href||''));
  if(!citation||$from.nodeAfter?.marks.some(mark=>mark.eq(citation)))return null;
+ return citation;
+}
+export function citationBoundaryPlugin(){return new Plugin({
+ props:{transformPasted(slice,view,plain){
+  const citation=plain&&boundaryCitation(view.state);
+  if(!citation)return slice;
+  // ProseMirror's plain-text parser inherits $context.marks(), even when
+  // storedMarks was cleared. Rich clipboard links are intentionally untouched.
+  const clean=node=>node.isText?node.mark(node.marks.filter(mark=>!mark.eq(citation))):node.copy(Fragment.fromArray(node.content.content.map(clean)));
+  return new Slice(Fragment.fromArray(slice.content.content.map(clean)),slice.openStart,slice.openEnd);
+ }},
+ appendTransaction(transactions,oldState,state){
+ const citation=boundaryCitation(state),marks=state.storedMarks||state.selection.$from.marks();
+ if(!citation||!marks.some(mark=>mark.eq(citation)))return null;
  // A cursor at the end of a legacy citation link must type ordinary prose;
  // generic links and edits inside the citation retain their normal marks.
  return state.tr.setStoredMarks(marks.filter(mark=>!mark.eq(citation))).setMeta('addToHistory',false);
