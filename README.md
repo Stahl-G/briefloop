@@ -28,7 +28,7 @@ briefloop start --workspace /path/to/workspace
 实际生成前需要：
 
 - macOS，以及 Python 3.11 或更新版本。
-- 至少一个已安装并完成认证的执行宿主：Codex CLI、Opencode CLI、Claude Code、Kimi、Hermes、DeepSeek Reasonix 或 MiMo Code。Codex 与 Opencode 走原生通道，其余 CLI 通过本地 bridge 接入，需要 Node.js 20+。
+- 至少一个已安装并完成认证的执行宿主：Codex CLI、Opencode CLI、Claude Code、Kimi、Hermes、DeepSeek Reasonix、MiMo Code 或 CodeBuddy Code。Codex 与 Opencode 走原生通道，其余 CLI 通过本地 bridge 接入，需要 Node.js 20+。
 - 首次安装依赖需要网络。使用 Tavily 时另行配置自己的 Tavily Key。
 
 也可指定目录、端口和后端：
@@ -73,6 +73,7 @@ BriefLoop 在本机运行，但它不是离线工具。开始用之前请先分�
 | Kimi、Hermes | bridge（ACP） | ACP 模型目录；读取失败给内置建议 |
 | Reasonix | bridge（ACP） | 原生 `doctor --json` |
 | MiMo | bridge（JSON 事件流） | 原生 `models --verbose` |
+| CodeBuddy Code | bridge（原生 `--acp`） | ACP 原生模型目录；支持手输模型 ID |
 
 模型下拉只提供建议，任何宿主都接受手填模型 ID。`默认` 表示"用宿主自己配置的模型"：能读到宿主配置时（例如 Claude Code 的 `~/.claude/settings.json`）会显示解析出的真实模型名，读不到时保持通用标签。角色模型（Evaluator、Wiki Maintainer、Skill Proposer）可以分别指定，留空继承主链。
 
