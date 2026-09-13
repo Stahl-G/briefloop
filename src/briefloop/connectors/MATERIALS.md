@@ -4,8 +4,9 @@
 Store, source originals/provenance, run_sources and Reviewer packet builder. It
 creates two small SQLite tables in the same ControlStore, not another report
 pipeline. It does not choose models, create jobs, raise budgets, generate reports,
-or run a Reviewer. The trusted host must bind these interfaces to its existing
-run/job and local user authorization boundary before exposing material operations.
+or run a Reviewer. The application binds these interfaces to its existing run/job
+and local user authorization boundary through `TaskMaterials`, the generation
+route and the Worker integration described below.
 
 ```python
 from briefloop.connectors.materials import ConnectorMaterials
@@ -57,10 +58,10 @@ never automatically resent. An admitted duplicate returns its saved source even
 when the connector is now offline or its grant revoked. This is local reuse, not
 a new permission or live verification.
 
-Run, job and Agent integration remains owned by the host: freeze and save the
-grant ID before acquiring material, preserve stable request IDs through recovery,
-route only permitted material operations to the acquisition facade, expose revoke,
-and do not expose configuration or grant mutation to an Agent. Reviewer hosts
+Run, job and Agent integration is owned by the host: it freezes and saves the
+grant ID before acquiring material, preserves stable request IDs through recovery,
+routes permitted material operations to the acquisition facade and exposes revoke.
+Configuration and grant mutation are not Agent tools. Reviewer hosts
 must retain their existing read-only isolation and receive only saved source
 snapshots; they must not receive ConnectorService or material call APIs.
 
@@ -198,7 +199,14 @@ MCP grant does not silently regain authority on resume; a new user-selected task
 is needed. Service restart invalidates process-local tokens; an interrupted active
 grant can receive fresh host access when generation resumes.
 
-The frontend selection and user-visible adoption status remain a separate module.
+`frontend/connectors.js` supplies settings, and `frontend/mcp-selection.js` supplies
+the report's explicit resource/tool selection and budgets. `frontend/app.js` sends
+that selection through `/api/generate`. Selected entries describe permission;
+`admitted` receipts and saved sources describe acquisition; saved report citations
+describe use. These states must not be conflated with fact verification. Source
+and citation views use the existing report UI; enabling a connector alone does
+not select or admit its materials.
+
 A real local application HTTP test creates a source-empty/offline task, invokes the
 same scoped CLI client provided to generation, checks source admission, then stops
 the task through Worker and verifies revocation. This proves the HTTP/tool path,
