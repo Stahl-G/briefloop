@@ -9,6 +9,7 @@ sessions are created with a deny ruleset (same shape as the CLI's own
 non-interactive mode), so ``answer()`` is unsupported by design.
 """
 import json
+import functools
 from pathlib import Path
 import re
 import threading
@@ -97,7 +98,11 @@ class OpencodeHarness:
         self.client_factory = client_factory
         self.client = None
         self._lock = threading.RLock()
-        self._client_lock = threading.Lock()
+        self._client_lock = threading.RLock()
+        self._client_calls = 0
+        self._idle_timer = None
+        self._idle_epoch = 0
+        self._client_used_at = time.monotonic()
         self._closed = False
         self._configuring = False
         self._busy = set()
@@ -109,6 +114,7 @@ class OpencodeHarness:
         self._models_at = 0.0
 
     MODELS_CACHE_TTL = 3600.0
+    CLIENT_IDLE_SECONDS = 30.0
 
     def list_models(self, refresh=False):
         """Flattened provider/model catalog for the picker.
@@ -177,6 +183,7 @@ class OpencodeHarness:
         finally:
             with self._lock:
                 self._configuring=False
+                self._touch_client_locked()
                 for row in self.store.rows("SELECT DISTINCT session_id FROM chat_messages WHERE status='queued'"):
                     self._schedule(row['session_id'])
 
@@ -270,16 +277,87 @@ class OpencodeHarness:
                 if self._closed:raise OpencodeError('Opencode 已关闭')
                 client=self.client
                 process=getattr(client,'process',None)
-                if client is not None and (process is None or process.poll() is None):return client
+                if client is not None and (process is None or process.poll() is None):
+                    self._touch_client_locked()
+                    return client
             if client is not None:client.close()
             created=self.client_factory(self.store.root / 'opencode-runtime')
+            self._lease_client_methods(created)
             with self._lock:
                 closed=self._closed
-                if not closed:self.client=created
+                if not closed:
+                    self.client=created
+                    self._touch_client_locked()
             if closed:
                 created.close()
                 raise OpencodeError('Opencode 已关闭')
             return created
+
+    def _touch_client_locked(self):
+        """Arm one per-workspace timer; cached model reads do not keep a host alive."""
+        self._client_used_at = time.monotonic()
+        self._arm_idle_locked()
+
+    def _arm_idle_locked(self):
+        if self._idle_timer is not None:
+            self._idle_timer.cancel()
+        self._idle_epoch += 1
+        if self._closed or self.client is None or self._busy or self._configuring or self._client_calls:
+            self._idle_timer = None
+            return
+        timer = threading.Timer(self.CLIENT_IDLE_SECONDS, self._reap_idle_client,
+                                args=(self._idle_epoch,))
+        timer.daemon = True
+        self._idle_timer = timer
+        timer.start()
+
+    def _lease_client_methods(self, client):
+        # Also covers server routes that call _client().provider_settings() or
+        # probe_provider_catalog() directly. Keep client identity/attributes and
+        # persisted native session IDs intact; only wrap its public operations.
+        for name in dir(client):
+            if name.startswith('_') or name == 'close':
+                continue
+            method = getattr(client, name)
+            if not callable(method):
+                continue
+            @functools.wraps(method)
+            def leased(*args, _method=method, _name=name, **kwargs):
+                replacement = None
+                with self._client_lock:
+                    with self._lock:
+                        if self._closed:
+                            raise OpencodeError('Opencode 已关闭')
+                        current = self.client is client
+                        if current:
+                            self._client_calls += 1
+                    if not current:
+                        replacement = getattr(self._client(), _name)
+                if replacement is not None:
+                    return replacement(*args, **kwargs)
+                try:
+                    return _method(*args, **kwargs)
+                finally:
+                    with self._lock:
+                        self._client_calls -= 1
+                        self._touch_client_locked()
+            setattr(client, name, leased)
+
+    def _reap_idle_client(self, epoch):
+        with self._client_lock:
+            with self._lock:
+                if epoch != self._idle_epoch or self._closed or self.client is None:
+                    return
+                # _busy spans the whole parent turn, including discovery,
+                # polling and settlement of Scout/Reviewer/native child tasks.
+                # _children is historical, so it must not block reclamation forever.
+                if (self._busy or self._configuring or self._client_calls or
+                        time.monotonic() - self._client_used_at < self.CLIENT_IDLE_SECONDS):
+                    self._arm_idle_locked()
+                    return
+                client, self.client = self.client, None
+                self._idle_timer = None
+            client.close()
 
     def send(self, session_id, text, mode='queue', source_ids=None, runtime=None,
              message_id=None, display_text=None, allow_web=False):
@@ -571,6 +649,7 @@ class OpencodeHarness:
             with self._lock:
                 if self._epoch.get(sid) == epoch:
                     self._busy.discard(sid)
+                    self._touch_client_locked()
                 coordinator = getattr(self, 'coordinator', None)
                 if coordinator:
                     coordinator.settle(sid)
@@ -1002,6 +1081,10 @@ class OpencodeHarness:
     def close(self):
         with self._lock:
             self._closed=True
+            self._idle_epoch += 1
+            if self._idle_timer is not None:
+                self._idle_timer.cancel()
+                self._idle_timer = None
             client, self.client = self.client, None
         if client is not None:
             client.close()
