@@ -29,5 +29,6 @@ module.exports = {
     uninstallerIcon: 'assets/Win.ico',
     uninstallDisplayName: 'BriefLoop',
   },
-  publish: null,
+  // Emit updater metadata locally; build-windows.cjs always passes --publish never.
+  publish: {provider: 'github', owner: 'Stahl-G', repo: 'briefloop', channel: 'latest', releaseType: 'release'},
 };

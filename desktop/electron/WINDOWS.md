@@ -56,5 +56,6 @@ The shared Electron updater owns version checks, download progress and the
 save/running-task gate before install and restart. Windows supplies NSIS update
 artifacts. Controlled local two-version acceptance must use a separate test feed;
 it must not upload to the official GitHub Releases feed. Packaging always uses
-`--publish never`. The baseline configuration does not yet emit `latest.yml`;
-update integration and native upgrade acceptance remain pending.
+`--publish never`. The GitHub provider configuration generates `latest.yml` and
+the installer blockmap locally; it does not create a GitHub release. Shared
+updater integration and native upgrade acceptance remain pending.
