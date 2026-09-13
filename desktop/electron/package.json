@@ -11,7 +11,9 @@
     "test": "node --test test/*.test.cjs",
     "pack": "electron-builder --mac dir --arm64 --publish never",
     "dist": "electron-builder --mac dmg zip --arm64 --publish never",
-    "postinstall": "node node_modules/electron/install.js"
+    "postinstall": "node node_modules/electron/install.js",
+    "dist:signed": "node scripts/build-mac-signed.cjs",
+    "signing:check": "node scripts/build-mac-signed.cjs --check"
   },
   "devDependencies": {
     "electron": "44.3.0",

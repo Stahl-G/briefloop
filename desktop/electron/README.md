@@ -12,6 +12,8 @@ Electron 薄壳使用 App 自带的 Node 运行桥；Python 来自用户本机�
 
 ## 构建
 
+正式签名与 Apple 公证使用 [SIGNING.md](SIGNING.md) 的 `signing:check` / `dist:signed` 入口。它要求有效 Developer ID 证书与公证凭据；现有未签名资产不会因此自动成为已签名发行。
+
 构建机准备 Python 3.11+、Node/npm。发布构建前先确认 `pyproject.toml`、本目录 `package.json` / `package-lock.json` 以及待打包 wheel 清单的版本均为 `0.20.0`。从仓库根目录执行：
 
 ```sh
