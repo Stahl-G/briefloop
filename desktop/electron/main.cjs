@@ -5,9 +5,11 @@ const path = require('node:path');
 const {pathToFileURL} = require('node:url');
 const {randomUUID} = require('node:crypto');
 const {WorkspaceService} = require('./service.cjs');
+const {createUpdater} = require('./updater.cjs');
 let window, service, switching = false, quitting = false, closePending = false, expectedExit = false;
 const prepared = new Map();
 let menuSave = null, workspaceOrigin = null;
+let updates;
 const welcomeURL = pathToFileURL(path.join(__dirname, 'welcome.html')).href;
 const runtime = app.isPackaged ? path.join(process.resourcesPath, 'runtime') : path.join(__dirname, 'runtime', 'macos-arm64');
 if (process.env.BRIEFLOOP_DESKTOP_DATA) app.setPath('userData', path.resolve(process.env.BRIEFLOOP_DESKTOP_DATA));
@@ -116,11 +118,40 @@ async function requestQuit() {
   } catch (error) { await reportError(error); }
   finally { closePending = false; if (!quitting) resumeEditing(); }
 }
+async function installAppUpdate() {
+  if (quitting || closePending || switching) throw Error('正在保存或退出，请稍候。');
+  const update = updates.status();
+  if (update.state !== 'downloaded' && !(update.state === 'error' && update.error?.code === 'open_failed')) throw Error('请先完成更新下载。');
+  closePending = true;
+  const previous = service?.info;
+  try {
+    if (menuSave) await menuSave;
+    if (!(await stopCurrent())) return {cancelled: true};
+    // electron-updater closes windows before before-quit. The save/busy/owned
+    // stop gate has already finished; do not recursively enter it a second time.
+    quitting = true;
+    const result = await updates.installReady();
+    if (result.mode === 'dmg') { window.destroy(); app.quit(); }
+    return result;
+  } catch (error) {
+    quitting = false;
+    // A failed DMG open must leave a usable editor after its service was stopped.
+    if (previous && !service.child) {
+      try { await service.start(service.directory, {port: Number(new URL(previous.url).port)}); }
+      catch { error.message += ' 工作区尚未重新连接，请保留窗口并重新打开工作区。'; }
+    }
+    throw error;
+  } finally { closePending = false; if (!quitting) resumeEditing(); }
+}
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); } });
   app.on('before-quit', event => { if (!quitting) { event.preventDefault(); requestQuit(); } });
   app.whenReady().then(async () => {
+    updates = createUpdater({app, shell,
+      // A packaged application always uses the fixed official source.
+      testFeed: !app.isPackaged ? process.env.BRIEFLOOP_UPDATE_TEST_FEED || null : null,
+      changed: value => { if (window && !window.isDestroyed()) window.webContents.send('updates:changed', value); }});
     window = new BrowserWindow({width: 1320, height: 900, minWidth: 900, minHeight: 640, title: 'BriefLoop', backgroundColor: '#faf9f6',
       webPreferences: {preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false}});
     window.on('close', event => { if (!quitting) { event.preventDefault(); requestQuit(); } });
@@ -141,6 +172,10 @@ else {
     ipcMain.handle('workspace:recent', event => { trusted(event); return recentWorkspace(); });
     ipcMain.handle('workspace:choose', (event, create) => { trusted(event); if (typeof create !== 'boolean') throw Error('无效选择'); return chooseWorkspace(create); });
     ipcMain.handle('workspace:open', (event, request) => { trusted(event); return openWorkspace(request); });
+    ipcMain.handle('updates:status', event => { trusted(event); return updates.status(); });
+    ipcMain.handle('updates:check', event => { trusted(event); return updates.check(); });
+    ipcMain.handle('updates:download', event => { trusted(event); return updates.download(); });
+    ipcMain.handle('updates:install', event => { trusted(event); return installAppUpdate(); });
     ipcMain.on('workspace:prepared', (event, requestId, result) => { try { trusted(event); prepared.get(requestId)?.(result); } catch {} });
     Menu.setApplicationMenu(Menu.buildFromTemplate([
       {label: 'BriefLoop', submenu: [{role: 'about'}, {type: 'separator'}, {label: '退出 BriefLoop', accelerator: 'CmdOrCtrl+Q', click: requestQuit}]},
