@@ -358,6 +358,15 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 if path=='/api/software-update-check':
                     from .software_version import check_update
                     result=check_update(software_identity)
+                    if result.get('state')=='available':
+                        from .notifications import version_available
+                        version_available(store,software_identity['version'],result['releaseVersion'])
+                elif path=='/api/notifications/read':
+                    from .notifications import mark_read
+                    result=mark_read(store,body.get('through'),body.get('category'),body.get('seq'))
+                elif path=='/api/notifications/version':
+                    from .notifications import version_available,snapshot
+                    version_available(store,body.get('current'),body.get('latest'));result=snapshot(store)
                 elif path=='/api/service-stop':
                     if body.get('pid')!=os.getpid() or body.get('workspace_id')!=store.meta('workspace_id'):
                         raise ValueError('服务身份已变化，未执行停止')

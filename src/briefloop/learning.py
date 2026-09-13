@@ -70,6 +70,8 @@ def _sync_wiki(store,study):
     for name,p in state['patterns'].items():text+='\n## '+name+'\n\n'+p['content']+'\n\n依据：'+', '.join(p['sources'])+'\n'
     destination=store.root/'wiki/index.md'
     temporary=destination.with_suffix('.tmp');temporary.write_text(text);temporary.replace(destination)
+    from .notifications import wiki_changed
+    wiki_changed(store,text)
 
 
 def _role(store,runtime,job,study,round_number,phase):

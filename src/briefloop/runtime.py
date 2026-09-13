@@ -543,6 +543,8 @@ class Worker:
                 self.current=job['id'];self.runtime.cancelled.clear()
             job=self.store.one('jobs',job['id'])
             try:
+                from .notifications import job_status
+                job_status(self.store,job,'running')
                 if job['kind']=='prepare_template':
                     from .templates import template,preparation_prompt,prepare
                     row=template(self.store,json.loads(job['payload'])['template_id'])
@@ -591,6 +593,8 @@ class Worker:
                 self.file_current=job['id'];self._file_cancelled.clear()
             job=self.store.one('jobs',job['id'])
             try:
+                from .notifications import job_status
+                job_status(self.store,job,'running')
                 if job['kind']=='export_docx':
                     from .export_jobs import generate_word
                     result=generate_word(self.store,job,self._file_cancelled)

@@ -51,6 +51,8 @@ def status_text(kind, status, error=None):
 
 def notify(store, job, status, *, text=None):
     """Post one status note per (job, attempt, status) into the task's conversation."""
+    from .notifications import job_status
+    job_status(store,job,status)
     body = text or status_text(job.get('kind'), status, job.get('error'))
     if not body:
         return None

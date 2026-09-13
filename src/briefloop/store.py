@@ -59,6 +59,9 @@ class Conflict(ValueError):
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS notifications(seq INTEGER PRIMARY KEY AUTOINCREMENT,event_key TEXT NOT NULL UNIQUE,
+ category TEXT NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,target TEXT NOT NULL,severity TEXT NOT NULL,
+ created TEXT NOT NULL,read_at TEXT);
 CREATE TABLE IF NOT EXISTS sources(id TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL,
  url TEXT, status TEXT NOT NULL, error TEXT, hash TEXT NOT NULL, created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY, requirements TEXT NOT NULL,
@@ -532,6 +535,7 @@ class Store:
         self.event(None, "skill_binding", {"skill_id": skill_id})
 
     def snapshot(self):
+        from .notifications import snapshot as notification_snapshot
         from .document_workflows import list_workflows, template_workflow_hint
         jobs=self.rows("SELECT * FROM jobs ORDER BY rowid DESC LIMIT 30")
         for j in jobs:
@@ -552,7 +556,7 @@ class Store:
             req=requirements[brief['run_id']]
             # Historical requirements are not retroactively assigned a new budget.
             brief['length_stats']=length_stats(brief['markdown'],target_words=req.get('target_words'),max_words=req.get('max_words'))
-        return {"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "requirements": self.meta("requirements"), "settings": self.settings(),
+        return {"notifications":notification_snapshot(self),"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "requirements": self.meta("requirements"), "settings": self.settings(),
                 "profile": self.meta("workspace_profile") or {},
                 "workflows":list_workflows(),
                 "templates":[{**row, 'workflow_hint':template_workflow_hint(row)} for row in self.rows('SELECT * FROM templates ORDER BY created DESC')],
