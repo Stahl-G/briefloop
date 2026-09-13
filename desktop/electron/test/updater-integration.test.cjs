@@ -165,3 +165,10 @@ test('quit during Python detection waits for cancellation and rejects new enviro
   assert.deepEqual(calls,['cancel','cancelled','save-and-stop','destroy','quit']);
   assert.equal(context.quitting,true);
 });
+
+test('ZIP handoff quits only after saved work and successful Finder opening; failure restores service',async()=>{
+  const success=gate({mode:'zip'});await success.run();
+  assert.deepEqual(success.calls,['save','status',['stop',false],['install',true],'destroy','quit']);
+  const failure=gate({mode:'zip',installError:true});await assert.rejects(failure.run(),/open failed/);
+  assert.deepEqual(failure.calls,['save','status',['stop',false],['install',true],['restart',12345],'resume']);
+});

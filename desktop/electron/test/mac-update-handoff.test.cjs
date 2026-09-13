@@ -1,0 +1,26 @@
+'use strict';
+const {test} = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const os = require('node:os');
+const {promisify} = require('node:util');
+const execFile = promisify(require('node:child_process').execFile);
+const {prepare} = require('../mac-update-handoff.cjs');
+test('Mac ZIP handoff preserves bundle symlinks, checks version, and never installs it', {skip:process.platform !== 'darwin'}, async t => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(),'briefloop-zip-handoff-'));
+  t.after(()=>fs.rm(directory,{recursive:true,force:true}));
+  const source = path.join(directory,'source/BriefLoop.app/Contents');
+  await fs.mkdir(source,{recursive:true});
+  await fs.writeFile(path.join(source,'Info.plist'),`<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>ai.briefloop.desktop</string><key>CFBundleShortVersionString</key><string>1.2.3</string></dict></plist>`);
+  await fs.mkdir(path.join(source,'Versions/A'),{recursive:true});
+  await fs.symlink('A',path.join(source,'Versions/Current'));
+  const zip=path.join(directory,'BriefLoop-1.2.3-arm64-mac.zip');
+  await execFile('/usr/bin/ditto',['-c','-k','--keepParent',path.dirname(source),zip]);
+  const result=await prepare(zip,'1.2.3');
+  assert.equal(await fs.readlink(path.join(result,'Applications')),'/Applications');
+  assert.equal(await fs.readlink(path.join(result,'BriefLoop.app/Contents/Versions/Current')),'A');
+  assert.equal((await fs.stat(zip)).isFile(),true);
+  await assert.rejects(prepare(zip,'1.2.4'),/identity mismatch/);
+  await assert.rejects(fs.stat(result),{code:'ENOENT'});
+});

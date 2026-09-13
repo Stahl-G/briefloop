@@ -27,7 +27,7 @@ async function fixture(t, options = {}) {
       browser_download_url: `${origin}/Stahl-G/briefloop/releases/download/v0.20.0/BriefLoop-0.20.0-arm64.dmg`, digest: 'sha256:' + crypto.createHash('sha256').update(bytes).digest('hex')}]};
   const changes = [], opened = [];
   const config = {app: {getVersion: () => '0.19.0', getPath: () => directory},
-    shell: {openPath: async file => {opened.push(file); return '';}}, platform: 'darwin', arch: 'arm64',
+    shell: {openPath: async file => {opened.push(file); return '';}}, platform: 'darwin', arch: 'arm64', installMode: 'dmg',
     changed: value => changes.push(value), testFeed: `${origin}/release`};
   const updater = createUpdater(config);
   t.after(async () => {await new Promise(resolve => server.close(resolve)); await fs.rm(directory, {recursive: true, force: true});});
@@ -244,4 +244,20 @@ test('429 uses retry-after, while other 403 errors are not mislabeled as quota',
       fetch: async () => new Response('', {status, headers})});
     assert.equal((await updater.check()).error.code, expected);
   }
+});
+
+test('Mac default selects version-bound ZIP alongside DMG, requires its digest, and rejects cross-tag assets', async t => {
+  const f=await fixture(t);
+  const zip={...f.release.assets[0],name:'BriefLoop-0.20.0-arm64-mac.zip',browser_download_url:f.release.assets[0].browser_download_url.replace('-arm64.dmg','-arm64-mac.zip')};
+  f.release.assets.push(zip);
+  const updater=createUpdater({...f.config,installMode:undefined});
+  assert.equal((await updater.check()).installMode,'zip');
+  assert.equal((await updater.download()).state,'downloaded');
+  assert.ok((await fs.readdir(path.join(f.directory,'updates', (await fs.readdir(path.join(f.directory,'updates')))[0]))).includes(zip.name));
+  delete zip.digest;
+  const missing=createUpdater({...f.config,installMode:undefined});
+  assert.equal((await missing.check()).error.code,'missing_digest');
+  zip.digest=f.release.assets[0].digest;
+  zip.browser_download_url=zip.browser_download_url.replace('/v0.20.0/','/v0.19.0/');
+  assert.equal((await missing.check()).error.code,'asset_version_mismatch');
 });

@@ -213,12 +213,12 @@ async function installAppUpdate() {
       await transaction.recovery;
       throw Error(updates.status().error?.message || '原生更新安装未完成，请重试。');
     }
-    if (result.mode === 'dmg') { window.destroy(); app.quit(); }
+    if (['dmg', 'zip'].includes(result.mode)) { window.destroy(); app.quit(); }
     return result;
   } catch (error) {
     if (transaction) { await recoverNativeInstall(transaction); throw error; }
     quitting = false;
-    // A failed DMG open must leave a usable editor after its service was stopped.
+    // A failed manual update handoff must leave a usable editor after its service was stopped.
     if (previous && !service.child) {
       try { await service.start(service.directory, {port: Number(new URL(previous.url).port)}); }
       catch { error.message += ' 工作区尚未重新连接，请保留窗口并重新打开工作区。'; }
