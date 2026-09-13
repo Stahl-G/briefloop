@@ -9,7 +9,8 @@ let window, service, switching = false, quitting = false, closePending = false, 
 const prepared = new Map();
 let menuSave = null, workspaceOrigin = null;
 const welcomeURL = pathToFileURL(path.join(__dirname, 'welcome.html')).href;
-const runtime = app.isPackaged ? path.join(process.resourcesPath, 'runtime') : path.join(__dirname, 'runtime', 'macos-arm64');
+const runtime = app.isPackaged ? path.join(process.resourcesPath, 'runtime') : path.join(__dirname, 'runtime', process.platform === 'win32' ? 'windows-x64' : 'macos-arm64');
+if (process.platform === 'win32') app.setAppUserModelId('ai.briefloop.desktop');
 if (process.env.BRIEFLOOP_DESKTOP_DATA) app.setPath('userData', path.resolve(process.env.BRIEFLOOP_DESKTOP_DATA));
 const preferencesPath = () => path.join(app.getPath('userData'), 'desktop.json');
 async function recentWorkspace() { try { return JSON.parse(await fs.readFile(preferencesPath(), 'utf8')).workspace || null; } catch { return null; } }
@@ -122,6 +123,7 @@ else {
   app.on('before-quit', event => { if (!quitting) { event.preventDefault(); requestQuit(); } });
   app.whenReady().then(async () => {
     window = new BrowserWindow({width: 1320, height: 900, minWidth: 900, minHeight: 640, title: 'BriefLoop', backgroundColor: '#faf9f6',
+      ...(process.platform === 'win32' ? {icon: path.join(__dirname, 'assets', 'Win.ico')} : {}),
       webPreferences: {preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false}});
     window.on('close', event => { if (!quitting) { event.preventDefault(); requestQuit(); } });
     window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
