@@ -345,9 +345,8 @@ def cover_contract(doc, cfg):
 def cover_minutes(doc, cfg):
     centered(doc, '{{title}}', size=18, bold=True, color=cfg['theme']['primary'],
              east=cfg['headings'][1]['east'], space_before=16)
-    doc.add_paragraph()
-    key_value_table(doc, [('会议时间：', '{{report_date}}'), ('会议地点：', '＿＿＿＿＿＿'), ('主持人：', '＿＿＿＿＿＿'),
-                          ('记录人：', '＿＿＿＿＿＿'), ('出席人员：', '＿＿＿＿＿＿'), ('{{organization}}', '＿')])
+    # Known meeting details are authored from the actual record in the body.
+    # A fixed empty form duplicates that content and suggests missing work.
 
 
 def cover_research(doc, cfg):
@@ -377,7 +376,8 @@ def build_one(genre, theme):
     if cfg.get('toc'):
         page_break(doc)
         add_toc_block(doc, cfg['accent'])
-    page_break(doc)
+    if cfg['cover'] != 'minutes':
+        page_break(doc)
     for _, title, _ in cfg['sections']:
         chapter(doc, title, {**cfg['headings'][1], 'level': 1})
     body_sample(doc)
