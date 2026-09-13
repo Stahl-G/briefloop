@@ -34,7 +34,7 @@ await environment.cancel();   // 等待本模块自己的准备进程退出并�
 `payloadPath` 是主进程固定的绝对目录，包含 `manifest.json` 和指定 wheel：
 
 ```json
-{"version":"0.19.0","wheel":"briefloop-0.19.0-py3-none-any.whl","sha256":"wheel 文件的 64 位 SHA-256"}
+{"version":"0.20.0","wheel":"briefloop-0.20.0-py3-none-any.whl","sha256":"wheel 文件的 64 位 SHA-256"}
 ```
 
 每次 `inspect()` 都复核 wheel 哈希、记录的基础 Python 仍可执行，以及 venv 的真实导入与依赖一致性。清单不接受路径穿越或 wheel 符号链接。已有环境损坏、版本/哈希不匹配时返回 `needs-setup`；缺基础 Python 时显示 `missing-python`。损坏的清单或 wheel 属于 App 安装问题，显示错误并提示重新安装 App。

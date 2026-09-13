@@ -39,7 +39,9 @@ DTO 字段：
 
 ## 当前 macOS 路径
 
-当前 App 未签名/公证，且尚未建立公开的桌面更新 feed，因此默认 `installMode: 'dmg'`。Electron 官方要求 macOS App 签名后才能自动更新；此路径只查询发布、下载并打开安装镜像，不声称原地升级。[Electron autoUpdater](https://www.electronjs.org/docs/latest/api/auto-updater)
+当前 macOS 构建未签名/公证，因此默认 `installMode: 'dmg'`。Electron 官方要求 macOS App 签名后才能自动更新；此路径只查询发布、下载并打开安装镜像，不声称原地升级。[Electron autoUpdater](https://www.electronjs.org/docs/latest/api/auto-updater)
+
+0.20 发行须上传与版本一致的真实 DMG，文件名为 `BriefLoop-0.20.0-arm64.dmg`；公开发行是否完成以实际 Release 及其资产为准。本地测试源不代表公开发行。
 
 通过 GitHub `releases/latest` 查询稳定版本，仍显式拒绝 draft、prerelease 和非稳定 SemVer。必须有唯一 Apple Silicon DMG，正式文件名为 `BriefLoop-{稳定版本}-arm64.dmg`；下载 URL 必须属于返回的精确 release tag，且末段文件名一致。缺资产或版本不匹配时明确拒绝下载。GitHub 资产字段包括下载 URL、size 和可选 digest。[GitHub Releases API](https://docs.github.com/en/rest/releases/releases#get-the-latest-release)
 
