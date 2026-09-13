@@ -614,6 +614,29 @@ def test_factual_finding_under_soft_requirement_still_blocks():
     assert decision(base, review, soft, protocol='clauses_v1')['eligible']
 
 
+def test_clause_finding_uses_own_kind_and_preserves_frozen_identity():
+    from briefloop.deliverable_spec import clause_items
+    spec = _clause_contract('说明交付变化。核对计划与实际。', [
+        {'kind': 'reader_content', 'source_quote': '说明交付变化。', 'instruction': '说明变化'},
+        {'kind': 'research_method', 'source_quote': '核对计划与实际。', 'instruction': '核对状态'}])
+    clauses = clause_items(spec)
+    content, method = clauses
+    review = _clause_review(spec, {'reader_content': 'covered', 'research_method': 'covered'})
+    base = {'requirements': spec, 'evidence': {'bindings': []}, 'conflicts': []}
+    def check(identity, kind='execution_gap', frozen=None):
+        finding = [{'id': 'f', 'status': 'open', 'data': {
+            'kind': kind, 'severity': 'major', 'description': '未完成核对',
+            'requirement_ids': [identity]}}]
+        return decision(base, review, finding, protocol='clauses_v1', clauses=frozen)
+    assert check(method['clause_id'])['eligible']
+    assert not check(content['clause_id'])['eligible']
+    assert not check(method['requirement_id'])['eligible']  # Mixed parent stays hard.
+    assert not check(method['clause_id'], 'contradiction')['eligible']
+    assert not check('clause_unknown')['eligible']
+    redacted = [{**c, 'source_quote': '[omitted]', 'instruction': '[omitted]'} for c in clauses]
+    assert check(method['clause_id'], frozen=redacted)['eligible']
+
+
 def test_same_result_follows_the_persisted_protocol():
     # The stored protocol, not the presence of clause_checks, decides the gate.
     spec = _clause_contract('说明交付变化。', [
