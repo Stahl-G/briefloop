@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "briefloop"
-version = "0.20.3"
+version = "0.20.4"
 description = "Local multi-runtime agent workbench for sourced briefings, independent review and skill learning"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -25,7 +25,7 @@ classifiers = [
     "Topic :: Text Processing :: Markup :: Markdown",
 ]
 dependencies = [
-  "mcp==2.2.0","pydantic>=2,<3", "markdown-it-py>=3,<5", "python-docx>=1", "pypdf>=5", "Pillow>=11", "pypdfium2>=4,<6", "openpyxl>=3.1,<4"]
+  "tzdata>=2025.2", "mcp==2.2.0","pydantic>=2,<3", "markdown-it-py>=3,<5", "python-docx>=1", "pypdf>=5", "Pillow>=11", "pypdfium2>=4,<6", "openpyxl>=3.1,<4"]
 
 [project.optional-dependencies]
 docx = ["python-docx>=1"]
