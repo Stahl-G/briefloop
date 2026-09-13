@@ -105,6 +105,8 @@ def _make_server(workspace, port, *, paused, backend, lock):
     assets=files('briefloop').joinpath('static')
     # Serve one UI/backend version for this process; builds must not replace a live UI halfway.
     asset_bytes={name:assets.joinpath(name).read_bytes() for name in ('index.html','app.js','style.css')}
+    icon_names={p.name for p in assets.iterdir() if p.name.startswith('runtime-') and p.name.endswith(('.svg','.png'))}
+    asset_bytes.update({name:assets.joinpath(name).read_bytes() for name in icon_names})
     class Handler(BaseHTTPRequestHandler):
         def log_message(self,format,*args): pass
         def parse_request(self):
@@ -321,6 +323,8 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     else:self.send(200,md.encode(),'text/markdown; charset=utf-8')
                 elif u.path in ('/','/index.html'):
                     self.send(200,asset_bytes['index.html'],'text/html; charset=utf-8')
+                elif u.path[1:] in icon_names:
+                    self.send(200,asset_bytes[u.path[1:]],'image/png' if u.path.endswith('.png') else 'image/svg+xml')
                 elif u.path in ('/app.js','/style.css'):
                     self.send(200,asset_bytes[u.path[1:]],'text/javascript' if u.path.endswith('.js') else 'text/css')
                 else:self.send(404,{'error':'未找到页面'})

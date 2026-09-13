@@ -63,3 +63,17 @@ def test_custom_node_binary_is_used_for_bridge_requests(tmp_path, monkeypatch, s
         assert os.environ['ELECTRON_RUN_AS_NODE']=='parent-sentinel'
     finally:
         bridge.close()
+
+
+def test_acp_adapters_are_selectable_after_installation(monkeypatch):
+    from briefloop.backends import validate_backend
+    from briefloop.models import Settings
+    bridge=RuntimeBridge()
+    rows=[{'id':name,'installed':True,'capabilities':{'chat':True},'protocol':'acp'} for name in ('kilo','kiro','vibe')]
+    monkeypatch.setattr(bridge,'call',lambda *args,**kwargs:rows)
+    for row in bridge.discover()['runtimes']:
+        assert row['integrated'] and row['available']
+        assert validate_backend(row['id'])==row['id']
+        assert Settings(agent_backend=row['id']).agent_backend==row['id']
+    rows[0]['installed']=False
+    assert not bridge.discover()['runtimes'][0]['available']
