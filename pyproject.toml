@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "briefloop"
-version = "0.20.0"
+version = "0.20.1"
 description = "Local multi-runtime agent workbench for sourced briefings, independent review and skill learning"
 readme = "README.md"
 requires-python = ">=3.11"
