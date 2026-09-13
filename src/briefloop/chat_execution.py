@@ -85,8 +85,26 @@ class ChatExecution:
             prior = c.execute('SELECT * FROM chat_execution_segments WHERE session_id=? ORDER BY rowid DESC LIMIT 1', (sid,)).fetchone()
             changed = (prior['backend'] if prior else session['runtime'].get('backend', 'codex')) != backend
             identity = dump({'backend': backend, 'model': config.get('model'),
-                             'model_provider': config.get('model_provider'), 'cwd': session['cwd']})
-            reseed = changed or (prior is not None and prior['resume_identity'] != identity)
+                             'model_provider': config.get('model_provider'), 'cwd': session['cwd'],
+                             'variant': config.get('variant'), 'permission': config.get('permission'),
+                             'allow_web': bool(message['allow_web'])})
+            # Resume only a native session that actually captured a completed
+            # turn. Permission/web changes also require reseeding because some
+            # hosts freeze these capabilities when creating their session.
+            resume_current = True
+            if prior is not None:
+                last_input = c.execute('''SELECT m.status FROM chat_messages m
+                    JOIN chat_execution_messages x ON x.message_id=m.id
+                    WHERE x.segment_id=? ORDER BY x.rowid DESC LIMIT 1''', (prior['id'],)).fetchone()
+                last_answer = c.execute("SELECT turn_id FROM chat_messages WHERE session_id=? AND role='assistant' ORDER BY created DESC,rowid DESC LIMIT 1", (sid,)).fetchone()
+                answer_owned = last_answer is None or c.execute('''SELECT 1 FROM chat_messages m
+                    JOIN chat_execution_messages x ON x.message_id=m.id
+                    WHERE x.segment_id=? AND m.turn_id=? LIMIT 1''',
+                    (prior['id'], last_answer['turn_id'])).fetchone() is not None
+                resume_current = bool(prior['native_session_id'] and last_input
+                                      and last_input['status'] == 'completed' and answer_owned)
+            reseed = changed or (prior is not None and (
+                prior['resume_identity'] != identity or not resume_current))
             if prior is None or reseed:
                 handoff = None
                 if reseed:
@@ -114,7 +132,7 @@ class ChatExecution:
                               (sid, 'runtime/switch', dump({'segment_id': segment_id,
                                'from_backend': prior['backend'] if prior else session['runtime'].get('backend', 'codex'),
                                'backend': backend, 'messageId': mid, 'handoff_hash': digest,
-                               'reason': 'backend_changed' if changed else 'resume_identity_changed',
+                               'reason': 'backend_changed' if changed else ('resume_identity_changed' if resume_current else 'native_history_stale'),
                                'status': 'prepared'}), now()))
             else:
                 segment_id, native = prior['id'], prior['native_session_id']

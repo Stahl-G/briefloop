@@ -19,7 +19,7 @@ def queue(chat, sid, mid, backend, text, model='a'):
 
 
 def finish(chat, sid, mid, text):
-    chat.patch_message(mid, status='completed')
+    chat.patch_message(mid, status='completed', turn_id=mid)
     response = chat.message(sid, text, role='assistant', status='completed', turn_id=mid)
     chat.update(sid, status='idle', turn_id=None)
     return response
@@ -99,3 +99,26 @@ def test_same_host_resume_and_model_change_reseed_without_credentials(tmp_path):
     assert '[credential omitted]' in third['handoff']
     payload = json.loads(third['handoff'].split('\n', 1)[1])
     assert [m['role'] for m in payload['conversation_history']] == ['user', 'assistant', 'user', 'assistant']
+
+
+def test_resume_requires_native_history_and_matching_capabilities(tmp_path):
+    chat, execution, sid = setup_chat(tmp_path)
+    queue(chat, sid, 'one', 'opencode', 'No native ID was returned')
+    first = execution.admit(sid, 'one')
+    finish(chat, sid, 'one', 'Visible answer without a native handle')
+    queue(chat, sid, 'two', 'opencode', 'Keep that answer')
+    second = execution.admit(sid, 'two')
+    assert second['id'] != first['id'] and 'Visible answer' in second['handoff']
+    execution.bind(sid, 'two', 'native-two')
+    finish(chat, sid, 'two', 'Completed native answer')
+    # Output attached from elsewhere advances the visible history beyond the
+    # native session. It must be handed off even without a host/model change.
+    chat.message(sid, 'New external answer', role='assistant', status='completed', turn_id='external')
+    queue(chat, sid, 'three', 'opencode', 'Use new visible history')
+    third = execution.admit(sid, 'three')
+    assert third['id'] != second['id'] and 'New external answer' in third['handoff']
+    execution.bind(sid, 'three', 'native-three')
+    finish(chat, sid, 'three', 'Answer three')
+    chat.message(sid, 'Read only now', mid='four', runtime={'backend': 'opencode', 'model': 'a', 'permission': 'read-only'})
+    fourth = execution.admit(sid, 'four')
+    assert fourth['id'] != third['id'] and fourth['native_session_id'] is None

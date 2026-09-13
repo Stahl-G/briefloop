@@ -271,7 +271,8 @@ class OpencodeHarness:
         session = self.chat.session(session_id)
         for sid in source_ids or []:
             self.store.one('sources', sid)
-        config = self._config({**session['runtime'], **(runtime or {})})
+        coordinator = getattr(self, 'coordinator', None)
+        config = coordinator.config(self, session, runtime) if coordinator else self._config({**session['runtime'], **(runtime or {})})
         if config.get('backend', 'opencode') != 'opencode':
             raise ValueError('opencode 会话不能切换到其他后端；请新建会话')
         if mode == 'steer' and session.get('turn_id'):
@@ -321,6 +322,12 @@ class OpencodeHarness:
         raise ValueError('opencode 会话创建时已拒绝交互提问；任务要求 agent 自行决断并记录依据')
 
     def _schedule(self, sid):
+        coordinator = getattr(self, 'coordinator', None)
+        if coordinator:
+            return coordinator.schedule(self, sid)
+        return self._schedule_native(sid)
+
+    def _schedule_native(self, sid):
         if self.chat.session(sid)['lifecycle'] != 'active':
             return
         if sid in self._busy or self.chat.session(sid).get('turn_id'):
@@ -496,7 +503,12 @@ class OpencodeHarness:
                 self.chat.event(sid, 'session/bound',
                                 {'opencode_session': created['id'], 'backend': 'opencode'})
                 with self._lock:
-                    self.chat.update(sid, thread_id=created['id'])
+                    coordinator = getattr(self, 'coordinator', None)
+                    if coordinator:
+                        if not coordinator.bind(sid, mid, created['id']):
+                            return
+                    else:
+                        self.chat.update(sid, thread_id=created['id'])
                 bound = created['id']
             from .chat_tools import chat_instructions
             internal = bool(self.store.rows(
@@ -508,7 +520,8 @@ class OpencodeHarness:
                 instructions += '\n本轮权限：仅阅读。只能读取与解释现有资料，不修改文件，不启动生成、评分、反馈或学习任务。不要执行 workspace-action（其初始化也可能写入数据库）。需要索引时可通过 SQLite mode=ro 读取现有记录。用户需要写入时请说明切换为工作区读写后发起新一轮。'
             if config.get('review_root'):
                 instructions='你是独立只读 Reviewer。只使用本次 packet 中的索引、原件和已保存执行记录。只允许原生 read 工具；禁止 shell、写入、委派、联网及查宿主数据库。需要更多研究或重算时提交发现给主 Agent。最终输出所要求的 JSON，由运行器保存；不要尝试写文件。'
-            prompt_text, prompt_files = self._input(message, session['cwd'])
+            coordinator = getattr(self, 'coordinator', None)
+            prompt_text, prompt_files = self._input(coordinator.input(sid, message) if coordinator else message, session['cwd'])
             with self._lock:
                 if sid in self._cancel_requested:
                     self.chat.patch_message(mid, status='cancelled')
@@ -535,6 +548,9 @@ class OpencodeHarness:
             with self._lock:
                 if self._epoch.get(sid) == epoch:
                     self._busy.discard(sid)
+                coordinator = getattr(self, 'coordinator', None)
+                if coordinator:
+                    coordinator.settle(sid)
                 try:
                     if self.chat.session(sid)['status'] == 'idle':
                         self._schedule(sid)
@@ -542,6 +558,9 @@ class OpencodeHarness:
                     pass
 
     def _bound_session(self, sid):
+        coordinator = getattr(self, 'coordinator', None)
+        if coordinator and not coordinator.internal(sid):
+            return self.chat.session(sid).get('thread_id') or None
         rows = self.store.rows(
             "SELECT data FROM chat_events WHERE session_id=? AND kind='session/bound' ORDER BY seq DESC LIMIT 1",
             (sid,))

@@ -5,6 +5,7 @@ const source=fs.readFileSync('frontend/app.js','utf8');
 const elements=new Map();const $=id=>{if(!elements.has(id))elements.set(id,{value:'',hidden:true,closest:()=>null});return elements.get(id)};
 let labelRefreshes=0;
 const c=vm.createContext({$,updateModelLabel:()=>labelRefreshes++,URLSearchParams,chat:{session:null},state:{settings:{agent_backend:'codex'}},backendValue:()=> 'codex'});
+vm.runInContext(source.slice(source.indexOf('function chatBackendChoice(){'),source.indexOf('function renderChatBackendChoice(){')),c);
 vm.runInContext(source.slice(source.indexOf('const fastCapabilities='),source.indexOf('function modelLabel(')),c);
 const cfg={backend:'codex',model:'official-model',model_provider:null};
 const cap={...cfg,official_connection:true};
