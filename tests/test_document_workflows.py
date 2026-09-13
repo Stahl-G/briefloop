@@ -59,6 +59,13 @@ def test_meeting_template_selects_method_but_requires_actual_material(tmp_path):
     templates = store.rows("SELECT id FROM templates WHERE name='会议纪要·品牌绿'")
     selected = template(store, templates[0]['id'])
     assert template_workflow_hint(selected) == 'meeting_minutes'
+    # The built-in minutes cover is just its styled title. Meeting details are
+    # sourced in the body, not repeated in a blank fixed form or separate page.
+    from docx import Document
+    from briefloop.templates import _path
+    prepared = Document(_path(store, selected, 'prepared.docx'))
+    assert not prepared.tables
+    assert not prepared.element.xpath('.//w:br[@w:type="page"]')
     req = {'title': '纪要', 'objective': '保留更正与未定事项', 'template_id': selected['id'], 'allow_web': True}
     with pytest.raises(ValueError, match='转写或笔记'):
         store.create_run(req, [])
