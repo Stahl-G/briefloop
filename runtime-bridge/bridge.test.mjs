@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
-import {mkdtempSync,writeFileSync,readFileSync} from 'node:fs';
+import {mkdtempSync,writeFileSync} from 'node:fs';
 import {rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -60,16 +60,13 @@ test('ACP resume retains supplied ID and does not replay history as new output',
  assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');
  assert.equal(b.frames.filter(x=>x.params?.kind==='text').map(x=>x.params.text).join(''),'NEW REPLY');
 });
-test('Electron Node mode does not escape into host discovery or ACP subprocesses',async t=>{
+test('Electron Node mode does not escape into host metadata probes or ACP subprocesses',async t=>{
  const b=bridge(t,{ELECTRON_RUN_AS_NODE:'1'});
- const f=fixture(t,`if(process.env.ELECTRON_RUN_AS_NODE!==undefined)process.exit(2);if(process.argv[2]==='--version'){console.log('host-env-clean');process.exit(0);}`+rpcFake);
- const catalog=JSON.parse(readFileSync('runtime-bridge/catalog.json','utf8'));
- const paths=Object.fromEntries(catalog.map(d=>[d.id,path.join(f.cwd,'missing-host')]));
- paths.codebuddy=f.path;
- b.send(1,'discover',{paths});
- const found=(await b.wait(x=>x.id===1)).result.filter(x=>x.installed);
- assert.equal(found.length,1);
- assert.equal(found[0].version,'host-env-clean');
+ const f=fixture(t,`if(process.env.ELECTRON_RUN_AS_NODE!==undefined)process.exit(2);if(process.argv[2]==='doctor'){console.log(JSON.stringify({providers:[{name:'fixture',models:['host-env-clean']}]}));process.exit(0);}`+rpcFake);
+ // Wheel smoke has only the built bridge, not source catalog.json. Reasonix's
+ // metadata probe exercises the same execFile path using an explicit fixture.
+ b.send(1,'list_models',{runtime_id:'reasonix',...f});
+ assert.deepEqual((await b.wait(x=>x.id===1)).result.models.map(x=>x.id),['default','fixture/host-env-clean']);
  b.send(2,'list_models',{runtime_id:'codebuddy',...f});
  const result=(await b.wait(x=>x.id===2)).result;
  assert.equal(result.source,'host');
