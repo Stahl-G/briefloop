@@ -5,6 +5,8 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const {createHash} = require('node:crypto');
+const {spawn} = require('node:child_process');
+const vm = require('node:vm');
 const {createEnvironment, runOwnedProcess, pythonCandidates} = require('../environment.cjs');
 
 async function fixture(t) {
@@ -55,7 +57,7 @@ test('inspection never installs, detects missing Python, and refuses a tampered 
 
 test('prepare verifies declared modules and pip check before atomically selecting a stable-path venv; failed upgrade keeps the previous environment',async t=>{
   const f=await fixture(t);assert.equal((await f.environment.prepare()).state,'ready');
-  const runtime=f.environment.runtime();assert.equal(runtime.node,process.execPath);assert.equal(runtime.nodeIsElectron,true);
+  const runtime=f.environment.runtime();assert.equal(runtime.node,process.execPath);assert.equal(runtime.nodeIsElectron,true);assert.equal(runtime.basePython,f.host);
   const activeFile=path.join(f.root,'environments','active.json'),before=await fs.readFile(activeFile,'utf8');
   const record=JSON.parse(before),target=path.join(f.root,'environments',record.environmentId);
   assert.equal(runtime.python,path.join(target,'bin','python3'));
@@ -94,16 +96,16 @@ test('owned subprocess cancellation reaps the child and ignores inherited Python
   assert.ok(child.signalCode !== null || child.exitCode !== null);
   assert.throws(()=>process.kill(child.pid,0),error=>error.code==='ESRCH');
   const result=await runOwnedProcess(process.execPath,['-e','console.log(JSON.stringify(process.env))'],{
-    env:{...process.env,PYTHONPATH:'/private-source',PIP_EXTRA_INDEX_URL:'https://private.invalid',PIP_CONFIG_FILE:'/private-pip.conf',ELECTRON_RUN_AS_NODE:'1'}});
+    env:{...process.env,PYTHONPATH:'/private-source',PIP_EXTRA_INDEX_URL:'https://private.invalid',PIP_CONFIG_FILE:'/private-pip.conf',ELECTRON_RUN_AS_NODE:'1',__PYVENV_LAUNCHER__:'/untrusted-venv'}});
   const env=JSON.parse(result.stdout);assert.equal(env.PYTHONPATH,undefined);assert.equal(env.PIP_EXTRA_INDEX_URL,undefined);
-  assert.equal(env.ELECTRON_RUN_AS_NODE,undefined);assert.equal(env.PYTHON_MANAGER_AUTOMATIC_INSTALL,'false');assert.equal(env.PYLAUNCHER_ALLOW_INSTALL,undefined);assert.equal(env.PIP_CONFIG_FILE,process.platform==='win32'?'nul':'/dev/null');
+  assert.equal(env.ELECTRON_RUN_AS_NODE,undefined);assert.equal(env.__PYVENV_LAUNCHER__,undefined);assert.equal(env.PYTHON_MANAGER_AUTOMATIC_INSTALL,'false');assert.equal(env.PYLAUNCHER_ALLOW_INSTALL,undefined);assert.equal(env.PIP_CONFIG_FILE,process.platform==='win32'?'nul':'/dev/null');
 });
 
 test('host candidates omit relative PATH entries and include standard macOS and Windows launcher locations',()=>{
   const mac=pythonCandidates('darwin',{PATH:'.:relative:/custom/bin'});
   assert.ok(mac.some(item=>item.executable==='/custom/bin/python3'));
   assert.ok(mac.some(item=>item.executable==='/Library/Frameworks/Python.framework/Versions/3.12/bin/python3'));
-  assert.ok(mac.every(item=>path.isAbsolute(item.executable)));
+  assert.ok(mac.every(item=>path.posix.isAbsolute(item.executable)));
   const win=pythonCandidates('win32',{PATH:'.;C:\\Tools',SystemRoot:'C:\\Windows',LOCALAPPDATA:'C:\\Users\\Test\\AppData\\Local'});
   assert.deepEqual(win.find(item=>item.executable==='C:\\Windows\\py.exe').args,['-0p']);
   assert.ok(win.every(item=>path.win32.isAbsolute(item.executable)));
@@ -153,4 +155,75 @@ test('incomplete cleanup during host probe or existing-environment validation bl
     await assert.rejects(environment.cancel(),/尚未确认退出/);
     cleaned=true;assert.equal((await environment.cancel()).error.code,'cancelled');
   }
+});
+
+test('Windows failed Python candidate safely falls through to a real installation and preserves Unicode argv', {skip:process.platform!=='win32',timeout:20000}, async t=>{
+  const f=await fixture(t),calls=[];
+  let python;
+  for(const candidate of pythonCandidates('win32')){
+    if(path.basename(candidate.executable).toLowerCase()!=='python.exe')continue;
+    try{await fs.access(candidate.executable);python=candidate.executable;break}catch{}
+  }
+  assert.ok(python,'Native test requires an installed Python 3.11+');
+  const environment=createEnvironment({...f.config,platform:'win32',arch:'x64',candidates:[process.execPath,python],runProcess:async(executable,args,options)=>{
+    try{const result=await runOwnedProcess(executable,args,options);calls.push({executable,success:true});return result}
+    catch(error){calls.push({executable,code:error.code});throw error}
+  }});
+  assert.equal((await environment.inspect()).state,'needs-setup');
+  assert.equal(calls[0].code,'process_failed');assert.equal(calls.at(-1).success,true);
+  const args=['中文 空格','"quoted"',String.raw`C:\中文 空格\trailing`+'\\'];
+  const result=await runOwnedProcess(process.execPath,['-e','console.log(JSON.stringify(process.argv.slice(1)))',...args]);
+  assert.deepEqual(JSON.parse(result.stdout),args);
+  const unavailable=createEnvironment({...f.config,platform:'win32',candidates:[python],runProcess:runOwnedProcess,
+    env:{...process.env,SystemRoot:f.root,SYSTEMROOT:f.root}});
+  assert.equal((await unavailable.inspect()).error.code,'supervisor_unavailable');
+});
+
+test('Windows Job cleanup owns detached grandchildren through cancellation, leader failure, and supervisor loss', {skip:process.platform!=='win32',timeout:25000}, async t=>{
+  const f=await fixture(t);
+  const alive=pid=>{try{process.kill(pid,0);return true}catch(error){if(error.code==='ESRCH')return false;throw error}};
+  const unrelated=spawn(process.execPath,['-e','setTimeout(()=>{},20000)'],{stdio:'ignore',windowsHide:true});
+  t.after(async()=>{if(unrelated.exitCode===null&&unrelated.signalCode===null){const closed=new Promise(resolve=>unrelated.once('close',resolve));unrelated.kill();await closed}});
+  for(const mode of ['cancel','nonzero','stdin-eof','supervisor-kill']){
+    const marker=path.join(f.root,mode+' 中文 ready.json');
+    const grandchild=`require('node:fs').writeFileSync(${JSON.stringify(marker)},JSON.stringify([Number(process.argv[1]),Number(process.argv[2]),process.pid]));setTimeout(()=>{},20000);`;
+    const middle=`require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(grandchild)},process.argv[1],String(process.pid)],{stdio:'ignore',detached:true,windowsHide:true}).unref();setTimeout(()=>{},20000);`;
+    const leader=`require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(middle)},String(process.pid)],{stdio:'ignore',detached:true,windowsHide:true}).unref();${mode==='nonzero'?`const timer=setInterval(()=>{if(require('node:fs').existsSync(${JSON.stringify(marker)})){clearInterval(timer);process.exit(7)}},10);`:''}setTimeout(()=>{},20000);`;
+    const controller=new AbortController();let supervisor;
+    const running=runOwnedProcess(process.execPath,['-e',leader],{signal:controller.signal,onChild:child=>{supervisor=child}});
+    const settled=running.then(()=>null,error=>error);
+    let pids;const deadline=Date.now()+10000;
+    while(Date.now()<deadline){try{pids=JSON.parse(await fs.readFile(marker,'utf8'));break}catch{await new Promise(resolve=>setTimeout(resolve,25))}}
+    assert.equal(pids?.length,3,'Owned tree must actually start');
+    if(mode==='cancel'){assert.ok(pids.every(alive));controller.abort()}
+    if(mode==='stdin-eof')supervisor.stdin.end();
+    if(mode==='supervisor-kill')supervisor.kill();
+    const error=await settled;
+    assert.equal(error?.code,mode==='cancel'?'cancelled':mode==='supervisor-kill'?'cleanup_failed':'process_failed');
+    const exitDeadline=Date.now()+3000;
+    while(pids.some(alive)&&Date.now()<exitDeadline)await new Promise(resolve=>setTimeout(resolve,20));
+    assert.ok(pids.every(pid=>!alive(pid)));assert.equal(alive(unrelated.pid),true);
+    if(mode==='supervisor-kill'){
+      const environment=createEnvironment({...f.config,runProcess:async()=>{throw error}});
+      assert.equal((await environment.inspect()).retryable,false);
+      await assert.rejects(environment.cancel(),/重启 Windows/);
+    }
+    t.diagnostic(JSON.stringify({mode,ownedProcessCount:pids.length,allExited:true,unrelatedAlive:true}));
+  }
+});
+
+test('welcome hides unavailable retries and preserves the cleanup guard after cancel IPC rejects',async()=>{
+  const elements=new Map(),buttons=[{}];let changed;
+  const getElementById=id=>{if(!elements.has(id))elements.set(id,{});return elements.get(id)};
+  const state={state:'error',phase:'install-dependencies',retryable:false,error:{code:'cleanup_failed',message:'请重启 Windows 后重新打开 App。'}};
+  const api={environment:{status:async()=>state,onChanged:callback=>{changed=callback},cancel:async()=>{throw Error(state.error.message)}},recentWorkspace:async()=>null};
+  const context=vm.createContext({document:{getElementById,querySelectorAll:()=>buttons},window:{briefloopDesktop:api}});
+  vm.runInContext(await fs.readFile(path.join(__dirname,'..','welcome.js'),'utf8'),context);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(getElementById('prepare').hidden,true);assert.equal(getElementById('inspect').hidden,true);
+  assert.equal(buttons[0].disabled,true);assert.match(getElementById('environment-status').textContent,/重启 Windows/);
+  await getElementById('cancel-setup').onclick();
+  assert.equal(getElementById('prepare').hidden,true);assert.equal(getElementById('inspect').hidden,true);
+  changed({state:'error',retryable:true,error:{code:'process_failed',message:'普通安装失败，可以重试。'}});
+  assert.equal(getElementById('prepare').hidden,false);assert.equal(getElementById('inspect').hidden,false);
 });
