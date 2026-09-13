@@ -1,4 +1,4 @@
-"""Native-friendly fonts for new generic documents, never for user templates.
+"""Native-friendly fonts for generic documents and shipped template metadata.
 
 Arial supplies Western text. Chinese has no fixed cross-platform family name
 here and is left to the reader's installed-font fallback. This does not promise
@@ -15,6 +15,36 @@ A = 'http://schemas.openxmlformats.org/drawingml/2006/main'
 M = 'http://schemas.openxmlformats.org/officeDocument/2006/math'
 NS = {'w': W, 'a': A, 'm': M}
 WESTERN_FONT = 'Arial'
+
+
+def builtin_macro_fonts(payload):
+    """Replace legacy macro fonts that trigger WPS warnings in built-in exports.
+
+    Keep body, heading, theme and CJK declarations intact. Uploaded templates
+    must bypass this cleanup because their font choices belong to the user.
+    """
+    result = BytesIO()
+    with ZipFile(BytesIO(payload)) as source, ZipFile(result, 'w') as output:
+        for member in source.infolist():
+            blob = source.read(member.filename)
+            if member.filename in ('word/styles.xml', 'word/stylesWithEffects.xml'):
+                root = etree.fromstring(blob)
+                for style in root.findall('w:style', NS):
+                    if style.get('{'+W+'}styleId') not in ('MacroText', 'MacroTextChar'):
+                        continue
+                    for fonts in style.findall('.//w:rFonts', NS):
+                        for key, value in list(fonts.attrib.items()):
+                            if value == 'Courier':
+                                fonts.set(key, 'Courier New')
+                blob = etree.tostring(root, xml_declaration=True, encoding='UTF-8', standalone=True)
+            elif member.filename == 'word/fontTable.xml':
+                root = etree.fromstring(blob)
+                for font in root.findall('w:font', NS):
+                    if font.get('{'+W+'}name') == 'Courier':
+                        font.set('{'+W+'}name', 'Courier New')
+                blob = etree.tostring(root, xml_declaration=True, encoding='UTF-8', standalone=True)
+            output.writestr(member, blob)
+    return result.getvalue()
 
 
 def native_default_fonts(payload,*,language=None):
