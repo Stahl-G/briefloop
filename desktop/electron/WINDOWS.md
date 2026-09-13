@@ -4,13 +4,13 @@ This installer packages the same Electron window, WebUI, Python service and Stor
 as the macOS build. It runs on native Windows x64; WSL and development-mode launch
 are not installation acceptance.
 
-From the repository root, build the shared frontend and prepare the locked Windows
-runtime, then build the installer:
+From native Windows PowerShell, build the shared frontend and backend wheel,
+then build the installer. Use an installed Python 3.11+ for the build:
 
 ```powershell
 npm.cmd ci
 npm.cmd run build
-python -X utf8 desktop/electron/scripts/prepare-runtime-windows.py
+py -3 -X utf8 desktop/electron/scripts/prepare-backend.py
 Set-Location desktop/electron
 npm.cmd ci
 node scripts/build-windows.cjs
@@ -25,10 +25,14 @@ installer SHA-256 and size; a dirty artifact is not a reproducible release claim
 
 The approved shared `assets/Win.ico` is used for application, installer and
 uninstaller icons. Do not replace it with a generated or fallback icon. The app
-payload contains `resources/runtime/python/python.exe` and
-`resources/runtime/node/node.exe`, the installed BriefLoop wheel, dependencies and
-licenses. No Python, Node, npm, pip installation or runtime download is required
-at application first launch. Model CLIs and credentials remain user-managed.
+payload contains `resources/backend/manifest.json` and the verified BriefLoop
+wheel. It reuses Electron's internal Node instead of shipping another Node or
+Python interpreter. First launch detects an existing Python 3.11+, offers the
+official Python download page when missing, and installs dependencies into an
+App-owned venv under user data. First-time dependency preparation requires a
+network connection; it does not install packages into the host Python. Model
+CLIs and credentials remain user-managed. The NSIS installer and service launch
+do not require changing PowerShell execution policy.
 
 ## Native acceptance
 

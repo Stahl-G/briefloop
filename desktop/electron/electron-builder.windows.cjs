@@ -7,7 +7,7 @@ module.exports = {
   ...shared,
   extends: null,
   forceCodeSigning: false,
-  extraResources: [{from: 'runtime/windows-x64', to: 'runtime'}],
+  extraResources: [{from: 'backend', to: 'backend'}],
   files: [...shared.files, '!electron-builder.windows.cjs'],
   win: {
     ...shared.win,

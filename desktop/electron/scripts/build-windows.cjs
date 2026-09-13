@@ -1,5 +1,5 @@
 'use strict';
-// Build-time entry point. The installed app never invokes npm or downloads a runtime.
+// Build-time entry point. The App reuses Electron Node and prepares its own Python venv.
 const fs = require('node:fs');
 const path = require('node:path');
 const {spawnSync} = require('node:child_process');
@@ -9,13 +9,11 @@ const repo = path.resolve(desktop, '..', '..');
 const args = process.argv.slice(2);
 if (process.platform !== 'win32' || process.arch !== 'x64') throw Error('Build on native Windows x64.');
 if (args.some(arg => arg !== '--dir')) throw Error('Usage: node scripts/build-windows.cjs [--dir]');
-const runtime = path.join(desktop, 'runtime', 'windows-x64');
-for (const name of ['python/python.exe', 'node/node.exe', 'manifest.json', 'relocation-proof.json']) {
-  if (!fs.statSync(path.join(runtime, name)).isFile()) throw Error(`Missing bundled runtime file: ${name}`);
-}
-if (JSON.parse(fs.readFileSync(path.join(runtime, 'relocation-proof.json'), 'utf8')).status !== 'passed') {
-  throw Error('Run prepare-runtime-windows.py and its relocation verification before packaging.');
-}
+const backend = path.join(desktop, 'backend');
+const manifest = JSON.parse(fs.readFileSync(path.join(backend, 'manifest.json'), 'utf8'));
+if (!/^briefloop-[a-zA-Z0-9_.-]+\.whl$/.test(manifest.wheel || '') || manifest.version !== require('../package.json').version) throw Error('Prepare the matching backend wheel before packaging.');
+const wheel = fs.readFileSync(path.join(backend, manifest.wheel));
+if (createHash('sha256').update(wheel).digest('hex') !== manifest.sha256) throw Error('Backend wheel hash mismatch.');
 if (!fs.existsSync(path.join(desktop, 'assets', 'Win.ico'))) {
   throw Error('The approved shared assets/Win.ico must be present before building.');
 }
