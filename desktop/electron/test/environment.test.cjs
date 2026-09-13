@@ -5,6 +5,8 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const {createHash} = require('node:crypto');
+const {spawn} = require('node:child_process');
+const vm = require('node:vm');
 const {createEnvironment, runOwnedProcess, pythonCandidates} = require('../environment.cjs');
 
 async function fixture(t) {
@@ -103,7 +105,7 @@ test('host candidates omit relative PATH entries and include standard macOS and 
   const mac=pythonCandidates('darwin',{PATH:'.:relative:/custom/bin'});
   assert.ok(mac.some(item=>item.executable==='/custom/bin/python3'));
   assert.ok(mac.some(item=>item.executable==='/Library/Frameworks/Python.framework/Versions/3.12/bin/python3'));
-  assert.ok(mac.every(item=>path.isAbsolute(item.executable)));
+  assert.ok(mac.every(item=>path.posix.isAbsolute(item.executable)));
   const win=pythonCandidates('win32',{PATH:'.;C:\\Tools',SystemRoot:'C:\\Windows',LOCALAPPDATA:'C:\\Users\\Test\\AppData\\Local'});
   assert.deepEqual(win.find(item=>item.executable==='C:\\Windows\\py.exe').args,['-0p']);
   assert.ok(win.every(item=>path.win32.isAbsolute(item.executable)));
@@ -153,4 +155,65 @@ test('incomplete cleanup during host probe or existing-environment validation bl
     await assert.rejects(environment.cancel(),/尚未确认退出/);
     cleaned=true;assert.equal((await environment.cancel()).error.code,'cancelled');
   }
+});
+
+test('Windows taskkill failure never treats a surviving descendant as cleaned up', {skip:process.platform!=='win32',timeout:15000}, async t=>{
+  const f=await fixture(t),marker=path.join(f.root,'descendant-ready');
+  let descendant,leader;
+  const alive=pid=>{try{process.kill(pid,0);return true}catch(error){if(error.code==='ESRCH')return false;throw error}};
+  const stopDescendant=async()=>{
+    if(descendant&&alive(descendant))process.kill(descendant,'SIGKILL');
+    const deadline=Date.now()+3000;
+    while(descendant&&alive(descendant)&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,20));
+    if(descendant)assert.equal(alive(descendant),false);
+  };
+  t.after(stopDescendant);
+  const descendantCode=`require('node:fs').writeFileSync(${JSON.stringify(marker)},String(process.pid));setInterval(()=>{},1000);setTimeout(()=>process.exit(0),10000);`;
+  // Exit the leader before cleanup starts; the child's redirected stdio permits
+  // close. Inject a native taskkill argument error without targeting other PIDs.
+  const parentCode=`const fs=require('node:fs');const child=require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(descendantCode)}],{stdio:'ignore',detached:true,windowsHide:true});child.unref();const timer=setInterval(()=>{if(fs.existsSync(${JSON.stringify(marker)})){clearInterval(timer);process.exit(1)}},10);`;
+  let cleanupError,killerCode;
+  await assert.rejects(runOwnedProcess(process.execPath,['-e',parentCode],{onChild:child=>{leader=child},spawnProcess:(command,args,options)=>{
+    if(path.basename(command).toLowerCase()==='taskkill.exe'){
+      assert.deepEqual(args,['/PID',String(leader.pid),'/T','/F']);
+      const killer=spawn(command,['/briefloop-invalid-test-option'],options);
+      killer.once('close',code=>{killerCode=code});return killer;
+    }
+    return spawn(command,args,options);
+  }}),error=>{
+    cleanupError=error;return error.code==='cleanup_failed';
+  });
+  descendant=Number(await fs.readFile(marker,'utf8'));
+  assert.equal(typeof killerCode,'number');assert.notEqual(killerCode,0);
+  assert.equal(alive(leader.pid),false);assert.equal(alive(descendant),true);
+  assert.equal(cleanupError.confirmCleanup,undefined);
+  let calls=0;
+  const environment=createEnvironment({...f.config,platform:'win32',arch:'x64',runProcess:async()=>{calls++;throw cleanupError}});
+  const state=await environment.prepare();
+  assert.equal(state.error.code,'cleanup_failed');assert.equal(state.retryable,false);
+  assert.match(state.error.message,/重启 Windows/);assert.doesNotMatch(state.error.message,/可重试取消/);
+  await assert.rejects(environment.cancel(),/重启 Windows/);
+  await stopDescendant();
+  // Even disappearance of these known PIDs is not proof of the entire tree.
+  await assert.rejects(environment.cancel(),/重启 Windows/);
+  assert.equal((await environment.inspect()).retryable,false);
+  assert.equal((await environment.prepare()).retryable,false);assert.equal(calls,1);
+  assert.throws(()=>environment.runtime(),/尚未验证/);
+  t.diagnostic(JSON.stringify({taskkillExitCode:killerCode,leaderExited:true,descendantSurvived:true,fixtureDescendantCleaned:true,retryable:environment.status().retryable}));
+});
+
+test('welcome hides unavailable retries and preserves the cleanup guard after cancel IPC rejects',async()=>{
+  const elements=new Map(),buttons=[{}];let changed;
+  const getElementById=id=>{if(!elements.has(id))elements.set(id,{});return elements.get(id)};
+  const state={state:'error',phase:'install-dependencies',retryable:false,error:{code:'cleanup_failed',message:'请重启 Windows 后重新打开 App。'}};
+  const api={environment:{status:async()=>state,onChanged:callback=>{changed=callback},cancel:async()=>{throw Error(state.error.message)}},recentWorkspace:async()=>null};
+  const context=vm.createContext({document:{getElementById,querySelectorAll:()=>buttons},window:{briefloopDesktop:api}});
+  vm.runInContext(await fs.readFile(path.join(__dirname,'..','welcome.js'),'utf8'),context);
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(getElementById('prepare').hidden,true);assert.equal(getElementById('inspect').hidden,true);
+  assert.equal(buttons[0].disabled,true);assert.match(getElementById('environment-status').textContent,/重启 Windows/);
+  await getElementById('cancel-setup').onclick();
+  assert.equal(getElementById('prepare').hidden,true);assert.equal(getElementById('inspect').hidden,true);
+  changed({state:'error',retryable:true,error:{code:'process_failed',message:'普通安装失败，可以重试。'}});
+  assert.equal(getElementById('prepare').hidden,false);assert.equal(getElementById('inspect').hidden,false);
 });

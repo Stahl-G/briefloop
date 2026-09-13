@@ -9,6 +9,11 @@ class EnvironmentError extends Error {
   constructor(code, message) { super(message); this.code = code; }
 }
 const stopped = () => new EnvironmentError('cancelled', '环境准备已取消，可以重试。');
+function cleanupMessage(error) {
+  return typeof error.confirmCleanup === 'function'
+    ? '环境准备进程尚未确认退出，请保留 App；进程退出后可重试取消。'
+    : '无法验证所有环境准备子进程是否已退出，本次无法继续重试。请确认这些进程全部退出后重新打开 App；无法确认时，请重启 Windows 后重新打开 App。';
+}
 function checkAbort(signal) { if (signal?.aborted) throw stopped(); }
 function cleanEnvironment(input, platform) {
   const env = {...input};
@@ -19,7 +24,7 @@ function cleanEnvironment(input, platform) {
 // Every child is owned by this operation. POSIX children get their own process
 // group; Windows taskkill targets only the recorded child PID and its descendants.
 function runOwnedProcess(executable, args, {signal, timeoutMs = 30000, env = process.env,
-                        platform = process.platform, onChild = () => {}} = {}) {
+                        platform = process.platform, onChild = () => {}, spawnProcess = spawn} = {}) {
   checkAbort(signal);
   return new Promise((resolve, reject) => {
     let child, timer, failure = null, closed = false, stdout = '', stderr = '', cleaning = false, cleanupDone = Promise.resolve();
@@ -43,14 +48,14 @@ function runOwnedProcess(executable, args, {signal, timeoutMs = 30000, env = pro
       cleaning = true;
       if (platform === 'win32') {
         const systemRoot = env.SystemRoot || env.SYSTEMROOT || 'C:\\Windows';
-        const killer = spawn(path.win32.join(systemRoot, 'System32', 'taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'],
+        const killer = spawnProcess(path.win32.join(systemRoot, 'System32', 'taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'],
           {windowsHide: true, shell: false, stdio: 'ignore'});
         cleanupDone = new Promise(done => {
           killer.once('error', () => { if (!closed) child.kill('SIGKILL'); });
           killer.once('close', code => {
             if (code !== 0) {
               if (!closed) child.kill('SIGKILL');
-              failure = new EnvironmentError('cleanup_failed', '无法确认环境准备子进程已全部退出，请保留 App 并重试取消。');
+              failure = new EnvironmentError('cleanup_failed', cleanupMessage({}));
             }
             done();
           });
@@ -69,7 +74,7 @@ function runOwnedProcess(executable, args, {signal, timeoutMs = 30000, env = pro
     const interrupt = error => { if (!failure) { failure = error; terminate(); } };
     const abort = () => interrupt(stopped());
     try {
-      child = spawn(executable, args, {env: cleanEnvironment(env, platform), shell: false, windowsHide: true,
+      child = spawnProcess(executable, args, {env: cleanEnvironment(env, platform), shell: false, windowsHide: true,
         detached: platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe']});
     } catch { reject(new EnvironmentError('spawn_failed', '无法启动 Python 检查或环境准备进程。')); return; }
     onChild(child);
@@ -95,7 +100,7 @@ function runOwnedProcess(executable, args, {signal, timeoutMs = 30000, env = pro
 }
 
 function pythonCandidates(platform = process.platform, env = process.env) {
-  const p = platform === 'win32' ? path.win32 : path;
+  const p = platform === 'win32' ? path.win32 : path.posix;
   const dirs = (env.PATH || env.Path || '').split(platform === 'win32' ? ';' : ':').filter(item => p.isAbsolute(item));
   const versions = ['3.15', '3.14', '3.13', '3.12', '3.11'];
   const candidates = [];
@@ -138,11 +143,11 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
   function failure(error) {
     if (error.code === 'cleanup_failed') cleanupFailure = error;
     const code = error.code === 'cleanup_failed' ? 'cleanup_failed' : error instanceof EnvironmentError ? error.code : 'environment_failed';
-    let message = code === 'cleanup_failed' ? '无法确认环境准备子进程已全部退出，请保留 App 并重试取消。' : error instanceof EnvironmentError ? error.message : '无法准备运行环境，请检查磁盘权限后重试。';
+    let message = code === 'cleanup_failed' ? cleanupMessage(error) : error instanceof EnvironmentError ? error.message : '无法准备运行环境，请检查磁盘权限后重试。';
     if (code === 'process_failed') message = data.phase === 'install-dependencies'
       ? '依赖安装失败，请检查网络或该 Python 版本的预编译包支持后重试。'
       : 'Python 或依赖验证失败，请重新准备运行环境。';
-    return publish({state: 'error', error: {code, message}, retryable: true});
+    return publish({state: 'error', error: {code, message}, retryable: code !== 'cleanup_failed' || typeof error.confirmCleanup === 'function'});
   }
   async function run(executable, args, signal, timeoutMs = 30000) {
     checkAbort(signal);
@@ -274,7 +279,7 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
     cancel: async () => {
       if (pending) {controller.abort(); await pending;}
       if (cleanupFailure) {
-        if (!cleanupFailure.confirmCleanup?.()) throw Error('环境准备进程尚未确认退出，请保留 App；进程退出后可重试取消。');
+        if (!cleanupFailure.confirmCleanup?.()) throw Error(cleanupMessage(cleanupFailure));
         if (cleanupFailure.partialDirectory) await fs.rm(cleanupFailure.partialDirectory, {recursive: true, force: true});
         cleanupFailure = null; failure(stopped());
       }
