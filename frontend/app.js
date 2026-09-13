@@ -2030,7 +2030,7 @@ function renderAppUpdates(value=appUpdateState){
  const progress=value?.progress;
  $('app-update-progress-box').hidden=!progress;
  $('app-update-progress').value=progress?.percent||0;
- $('app-update-progress-text').textContent=progress?`${Math.round(progress.percent||0)}% · ${(Math.max(0,progress.transferred||0)/1048576).toFixed(1)} / ${(Math.max(0,progress.total||0)/1048576).toFixed(1)} MB`:'';
+ $('app-update-progress-text').textContent=progress?`${Math.round(progress.percent||0)}% · ${(Math.max(0,progress.transferred||0)/1048576).toFixed(1)} / ${(Math.max(0,progress.total||0)/1048576).toFixed(1)} MiB`:'';
  $('app-update-notes-box').hidden=!value?.notes;$('app-update-notes').textContent=value?.notes||'';
 }
 async function refreshAppUpdates(){
