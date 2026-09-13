@@ -96,18 +96,32 @@ class ChatStore:
     def event(self,sid,kind,data):
         with self.store.tx() as c:c.execute('INSERT INTO chat_events(session_id,kind,data,created) VALUES(?,?,?,?)',(sid,kind,dump(data),now()))
 
-    def snapshot(self,sid,after=0,private=False,reasoning=False):
+    def snapshot(self,sid,after=0,private=False,reasoning=False,usage_projector=None):
         # The session row belongs to the same read transaction as the journal. Read
         # separately, a poll can pair a stale session (still running) with messages
         # that already finished, which is what the chat UI polls several times a second.
         with self.store.tx() as c:
+            def project_usage(seq,data):
+                usage=data.get('tokenUsage')
+                if usage_projector is None:return usage
+                def previous():
+                    # Lazily stop at the request boundary chosen by the projector;
+                    # incremental polling must not lose the preceding sparse fields.
+                    for row in c.execute("SELECT kind,data FROM chat_events WHERE session_id=? AND seq<? AND kind IN ('thread/tokenUsage/updated','thread/providerChanged') ORDER BY seq DESC",(sid,seq)):
+                        if row['kind']=='thread/providerChanged':break
+                        yield json.loads(row['data']).get('tokenUsage')
+                return usage_projector(usage,previous())
             session=self.decode(c.execute('SELECT s.*, ('+BUSY_SQL+') AS busy FROM chat_sessions s WHERE id=?',(sid,)).fetchone())
             messages=[self.decode(r) for r in c.execute('SELECT * FROM chat_messages WHERE session_id=? ORDER BY created,rowid',(sid,))]
             usage_row=c.execute("SELECT seq,data FROM chat_events WHERE session_id=? AND kind='thread/tokenUsage/updated' ORDER BY seq DESC LIMIT 1",(sid,)).fetchone()
             changed=c.execute("SELECT seq FROM chat_events WHERE session_id=? AND kind='thread/providerChanged' ORDER BY seq DESC LIMIT 1",(sid,)).fetchone()
-            token_usage=json.loads(usage_row['data']).get('tokenUsage') if usage_row and (not changed or usage_row['seq']>changed['seq']) else None
+            token_usage=project_usage(usage_row['seq'],json.loads(usage_row['data'])) if usage_row and (not changed or usage_row['seq']>changed['seq']) else None
             requests=[self.decode(r) for r in c.execute('SELECT id,session_id,data,status,created FROM chat_requests WHERE session_id=? ORDER BY created',(sid,))]
             events=[self.decode(r) for r in c.execute('SELECT * FROM chat_events WHERE session_id=? AND seq>? ORDER BY seq LIMIT 1000',(sid,after))]
+            if usage_projector is not None:
+                for event in events:
+                    if event['kind']=='thread/tokenUsage/updated':
+                        event['data']['tokenUsage']=project_usage(event['seq'],event['data'])
         if not private:
             for message in messages:message.pop('prompt',None)
         if not reasoning:
