@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const semver = require('semver');
+const delta = require('./differential-download.cjs');
 
 const REPOSITORY = 'Stahl-G/briefloop';
 const API = `https://api.github.com/repos/${REPOSITORY}/releases/latest`;
@@ -68,14 +69,14 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
     }
     return url.href;
   }
-  async function response(value, kind) {
+  async function response(value, kind, headers = {}, deadlineSignal = null) {
     let url = trusted(value, kind);
     if (kind === 'metadata' && metadataRateLimit?.until > Date.now()) throw metadataRateLimit.error;
-    const signal = AbortSignal.timeout(kind === 'metadata' ? 30000 : 10 * 60 * 1000);
+    const signal = deadlineSignal || AbortSignal.timeout(kind === 'metadata' ? 30000 : 10 * 60 * 1000);
     for (let n = 0; n < 6; n++) {
       const res = await fetchImpl(url, {redirect: 'manual', signal,
         headers: {'Accept': kind === 'metadata' ? 'application/vnd.github+json' : 'application/octet-stream',
-                  'User-Agent': 'BriefLoop-Desktop-Updater'}});
+                  'User-Agent': 'BriefLoop-Desktop-Updater', ...headers}});
       if ([301, 302, 303, 307, 308].includes(res.status)) {
         const location = res.headers.get('location');
         await res.body?.cancel();
@@ -136,6 +137,7 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
     if (platform !== 'win32' && platform !== 'darwin') throw new UpdateError('unsupported_platform', '此平台尚未配置原生更新。', false);
     native = nativeUpdater || require('electron-updater').autoUpdater;
     native.autoDownload = false;
+    native.disableDifferentialDownload = false;
     native.autoInstallOnAppQuit = false;
     native.allowPrerelease = false;
     native.allowDowngrade = false;
@@ -190,6 +192,14 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
       digest = {algorithm: match[1].toLowerCase(), value: match[2].toLowerCase()};
     }
     asset = {url: trusted(selected.browser_download_url, 'asset'), size: selected.size, digest};
+    const maps = (release.assets || []).filter(item => item.name === expectedName + '.blockmap');
+    if (maps.length === 1 && Number.isSafeInteger(maps[0].size) && maps[0].size > 0 && maps[0].size <= 16 * 1024 ** 2) {
+      // Optional optimisation: malformed/missing maps must not prevent full updates.
+      try {
+        const mapURL = new URL(trusted(maps[0].browser_download_url, 'asset'));
+        if (mapURL.href === selectedURL.href + '.blockmap') asset.blockmap = mapURL.href;
+      } catch {}
+    }
     available = true;
     return publish({state: 'available', reinstall});
   }
@@ -212,8 +222,34 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
     if ((await fs.lstat(directory)).isSymbolicLink()) throw new UpdateError('unsafe_path', '更新下载目录不可用。', false);
     const staging = await fs.mkdtemp(path.join(directory, 'download-'));
     const temporary = path.join(staging, 'update.part');
-    let handle;
+    let handle, map = null, fallback = 'no_baseline';
     try {
+      if (asset.blockmap && asset.digest) {
+        try {map = await delta.readMap(await response(asset.blockmap, 'asset'), asset.size);} catch {fallback = 'blockmap_unavailable';}
+      } else fallback = 'blockmap_unavailable';
+      const cache = map && await delta.readCache(directory);
+      if (cache) {
+        try {
+          const deadline = AbortSignal.timeout(10 * 60 * 1000);
+          let lastProgress = 0;
+          const progress = await delta.reconstruct({cache, map, size: asset.size, destination: temporary,
+            request: (start, end) => response(asset.url, 'asset', {'Range': `bytes=${start}-${end}`, 'Accept-Encoding': 'identity'}, deadline),
+            progress: value => {
+              if (Date.now() - lastProgress > 100 || value.percent === 100) {publish({progress: value}); lastProgress = Date.now();}
+            }});
+          if (await delta.hashFile(temporary, asset.digest.algorithm) !== asset.digest.value) throw new Error('delta_hash');
+          const file = path.join(staging, `BriefLoop-${data.releaseVersion}-arm64.dmg`);
+          const sha256 = await delta.hashFile(temporary);
+          await fs.rename(temporary, file);
+          ready = {file, sha256};
+          await delta.saveCache(directory, file, asset.size, sha256, map, cache).catch(() => {});
+          return publish({state: 'downloaded', progress});
+        } catch {
+          await fs.rm(temporary, {force: true});
+          fallback = 'differential_unavailable';
+        }
+      }
+      publish({progress: {percent: 0, transferred: 0, total: asset.size, mode: 'full', fallback}});
       const res = await response(asset.url, 'asset');
       handle = await fs.open(temporary, 'wx', 0o600);
       const checksum = crypto.createHash('sha256');
@@ -224,7 +260,7 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
         if (transferred > asset.size) throw new UpdateError('size_mismatch', '下载文件大小与发布记录不一致。');
         checksum.update(chunk); advertised?.update(chunk); await handle.writeFile(chunk);
         if (Date.now() - lastProgress > 100 || transferred === asset.size) {
-          publish({progress: {percent: transferred / asset.size * 100, transferred, total: asset.size}});
+          publish({progress: {percent: transferred / asset.size * 100, transferred, total: asset.size, mode: 'full', fallback}});
           lastProgress = Date.now();
         }
       }
@@ -234,7 +270,8 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
       const file = path.join(staging, `BriefLoop-${data.releaseVersion}-arm64.dmg`);
       await fs.rename(temporary, file);
       ready = {file, sha256: checksum.digest('hex')};
-      return publish({state: 'downloaded', progress: {percent: 100, transferred, total: asset.size}});
+      if (map) await delta.saveCache(directory, file, asset.size, ready.sha256, map, cache).catch(() => {});
+      return publish({state: 'downloaded', progress: {percent: 100, transferred, total: asset.size, mode: 'full', fallback}});
     } catch (error) {
       await handle?.close(); await fs.rm(staging, {recursive: true, force: true}); throw error;
     }
