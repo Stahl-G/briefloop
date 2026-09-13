@@ -139,3 +139,29 @@ test('an error racing the native request return keeps the gate pending until own
   assert.equal(f.context.closePending,false);assert.ok(f.context.service.child);
   assert.equal(f.calls.filter(value=>value==='restart-pending').length,1);
 });
+
+test('quit during Python detection waits for cancellation and rejects new environment operations', async () => {
+  const calls=[],handlers=new Map();
+  let finishCancellation;
+  const context=vm.createContext({quitting:false,closePending:false,switching:false,nativeInstall:null,menuSave:null,service:null,
+    environment:{status:()=>({state:'checking',phase:'detect-python'}),
+      cancel:()=>{calls.push('cancel');return new Promise(resolve=>{finishCancellation=()=>{calls.push('cancelled');resolve()}})},
+      inspect:()=>calls.push('inspect'),prepare:()=>calls.push('prepare')},
+    ipcMain:{handle:(name,callback)=>handlers.set(name,callback)},trusted:()=>{},
+    stopCurrent:async()=>{calls.push('save-and-stop');return true},
+    window:{destroy:()=>calls.push('destroy')},app:{quit:()=>calls.push('quit')},
+    resumeEditing:()=>calls.push('resume'),reportError:error=>{throw error},
+    dialog:{showMessageBox:()=>{throw Error('Python detection should not require installation confirmation')}}});
+  const quit=main.slice(main.indexOf('async function requestQuit()'),main.indexOf('function beforeAppQuit('));
+  const operation=main.slice(main.indexOf('function environmentOperation('),main.indexOf('function resumeEditing('));
+  const ipc=main.split('\n').filter(line=>/ipcMain.handle\('environment:(inspect|prepare)'/.test(line)).join('\n');
+  vm.runInContext(operation+quit+ipc,context);
+  const quitting=vm.runInContext('requestQuit()',context);
+  assert.equal(context.closePending,true);assert.deepEqual(calls,['cancel']);
+  assert.equal(handlers.size,2);
+  for(const handler of handlers.values())assert.throws(()=>handler({}),/等待当前操作完成/);
+  assert.deepEqual(calls,['cancel']);
+  finishCancellation();await quitting;
+  assert.deepEqual(calls,['cancel','cancelled','save-and-stop','destroy','quit']);
+  assert.equal(context.quitting,true);
+});

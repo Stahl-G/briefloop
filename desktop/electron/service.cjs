@@ -29,14 +29,15 @@ class WorkspaceService {
     directory = await fs.realpath(directory);
     if (!(await fs.stat(directory)).isDirectory()) throw Error('工作区必须是文件夹。');
     if (!create) await fs.access(path.join(directory, 'briefloop.db')).catch(() => { throw Error('这个文件夹还不是 BriefLoop 工作区，请使用“新建工作区”。'); });
-    const python = path.join(this.runtime, 'python', 'bin', 'python3');
-    const node = path.join(this.runtime, 'node', 'bin', 'node');
+    const {python, node, nodeIsElectron} = this.runtime;
+    if (!path.isAbsolute(python || '') || !path.isAbsolute(node || '')) throw Error('请先准备应用运行环境。');
     await Promise.all([fs.access(python, 1), fs.access(node, 1)]);
     const launchId = randomUUID();
     const log = await fs.open(path.join(directory, 'desktop-server.log'), 'a', 0o600);
     const env = {...process.env, BRIEFLOOP_LAUNCH_ID: launchId, BRIEFLOOP_NODE: node,
-      PATH: `${path.dirname(node)}:${process.env.PATH || '/usr/bin:/bin'}`, PYTHONNOUSERSITE: '1', PYTHONSAFEPATH: '1', PYTHONUNBUFFERED: '1'};
+      PATH: [path.dirname(python), ...(process.env.PATH || '').split(path.delimiter).filter(entry => path.isAbsolute(entry))].join(path.delimiter), PYTHONNOUSERSITE: '1', PYTHONSAFEPATH: '1', PYTHONUNBUFFERED: '1'};
     delete env.PYTHONHOME; delete env.PYTHONPATH; delete env.ELECTRON_RUN_AS_NODE;
+    if (nodeIsElectron) env.BRIEFLOOP_NODE_IS_ELECTRON = '1'; else delete env.BRIEFLOOP_NODE_IS_ELECTRON;
     const child = spawn(python, ['-I', '-m', 'briefloop', 'serve', '--workspace', directory, '--port', String(port), '--paused'],
       {cwd: directory, env, stdio: ['ignore', log.fd, log.fd], windowsHide: true});
     this.child = child; this.directory = directory;

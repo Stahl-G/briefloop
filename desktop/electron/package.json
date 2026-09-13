@@ -32,8 +32,8 @@
     ],
     "extraResources": [
       {
-        "from": "runtime/macos-arm64",
-        "to": "runtime"
+        "from": "backend",
+        "to": "backend"
       }
     ],
     "mac": {
