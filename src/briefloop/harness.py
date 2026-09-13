@@ -212,8 +212,10 @@ class HarnessManager:
                 if config.get('effort'):turn_params['effort']=config['effort']
                 result=client.request('turn/start',turn_params)
                 turn_id=result['turn']['id']
-                self.chat.update(sid,turn_id=turn_id,status='running')
+                # Publish the active turn only after its frozen message is bound.
+                # Concurrent steer validation must see the turn's network settings.
                 self.chat.patch_message(mid,status='delivered',turn_id=turn_id)
+                self.chat.update(sid,turn_id=turn_id,status='running')
                 self.chat.event(sid,'message/delivered',{'messageId':mid,'turnId':turn_id,'runtime':config})
         except Exception as exc:
             # Terminal data first, status last: waiters poll on status and must
