@@ -54,3 +54,14 @@ changed({...dto,state:'downloaded'});
 assert.match(desktop.el('app-update-status').textContent,/重新安装当前 App v0.19.0/);
 assert.match(desktop.el('app-update-source').textContent,/本地测试/);
 console.log('PASS: local same-version reinstall stays explicit across update states');
+
+// Persisted operation takes precedence over the last click in this renderer.
+for(const [operation,label] of [['check','更新检查失败（当前安装不受影响）'],['download','更新包下载未完成'],['install','更新安装未完成']]){
+ changed({...dto,source:'github',state:'error',reinstall:false,releaseVersion:'0.20.0',retryable:true,error:{operation,code:'http_403',message:'HTTP 403 · 请在本机时间 20:52 后重试'}});
+ assert.ok(desktop.el('app-update-status').textContent.startsWith(label));
+ assert.match(desktop.el('app-update-error').textContent,/HTTP 403.*20:52/);
+ if(operation==='check')assert.equal(desktop.el('app-update-status').textContent,label);
+ const before=calls.length;await desktop.el('app-update-retry').onclick();
+ assert.equal(calls.length,before+1);assert.equal(calls.at(-1),operation==='install'?'download':operation);
+}
+console.log('PASS: checking errors do not imply installation failure or repeat an old release target');

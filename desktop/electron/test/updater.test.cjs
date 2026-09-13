@@ -42,7 +42,7 @@ test('local-test download failure retries, verifies bytes, and opens only after 
   assert.equal(checked.installMode, 'dmg'); assert.equal(checked.releaseVersion, '0.20.0');
   assert.equal(f.assetRequests(), 0); assert.equal(f.opened.length, 0);
   const failed = await f.updater.download();
-  assert.equal(failed.state, 'error'); assert.equal(failed.retryable, true); assert.equal(failed.error.code, 'http_503');
+  assert.equal(failed.state, 'error'); assert.equal(failed.retryable, true); assert.equal(failed.error.code, 'http_503'); assert.equal(failed.error.operation, 'download');
   assert.deepEqual(await fs.readdir(path.join(f.directory, 'updates')), []);
   assert.equal((await f.updater.download()).state, 'downloaded');
   assert.equal(f.updater.status().progress.percent, 100); assert.equal(f.opened.length, 0);
@@ -133,10 +133,10 @@ test('Windows missing update files have a specific safe message and checking can
     nativeUpdater: native, changed: value => changes.push(value)});
   const missing = await updater.check();
   assert.equal(missing.state, 'error'); assert.equal(missing.retryable, true);
-  assert.deepEqual(missing.error, {code: 'windows_update_unavailable', message: '官方发布尚未提供 Windows 更新文件，请稍后重试。'});
+  assert.deepEqual(missing.error, {operation: 'check', code: 'windows_update_unavailable', message: '官方发布尚未提供 Windows 更新文件，请稍后重试。'});
   const unknown = await updater.check();
   assert.equal(unknown.state, 'error'); assert.equal(unknown.retryable, true);
-  assert.deepEqual(unknown.error, {code: 'update_failed', message: '更新请求失败，请检查网络后重试。'});
+  assert.deepEqual(unknown.error, {operation: 'check', code: 'update_failed', message: '更新请求失败，请检查网络后重试。'});
   const recovered = await updater.check();
   assert.equal(recovered.state, 'available'); assert.equal(recovered.error, null);
   assert.equal(native.checks, 3);
@@ -151,7 +151,7 @@ test('temporary DMG open failure retries the verified existing bytes', async t =
   await updater.check(); await updater.download();
   await assert.rejects(updater.installReady(), /无法打开/);
   assert.equal(updater.status().error.code, 'open_failed');
-  assert.equal(updater.status().retryable, true);
+  assert.equal(updater.status().retryable, true); assert.equal(updater.status().error.operation, 'install');
   assert.deepEqual(await updater.installReady(), {mode: 'dmg', opened: true, manualInstall: true});
   assert.equal(attempts, 2); assert.equal(f.assetRequests(), 1);
 });
@@ -229,7 +229,7 @@ test('GitHub primary rate limit explains reset and avoids repeat metadata reques
     fetch: async () => {requests++; return new Response('', {status: 403,
       headers: {'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset)}});}});
   const first = await updater.check();
-  assert.equal(first.error.code, 'github_rate_limited');
+  assert.equal(first.error.code, 'github_rate_limited'); assert.equal(first.error.operation, 'check');
   assert.match(first.error.message, /本机时间/);
   assert.match(first.error.message, /查看官方发布与安装包/);
   await updater.check();
