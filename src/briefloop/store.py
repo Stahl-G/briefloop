@@ -318,8 +318,9 @@ class Store:
                 c.execute("INSERT OR IGNORE INTO run_sources VALUES(?,?)",(run_id,ref['source_id']))
         return self.one("briefs", vid)
 
-    def revise(self, base_version, markdown='', editor_document=None, *, author='user'):
+    def revise(self, base_version, markdown='', editor_document=None, *, author='user', allow_markdown_conversion=False):
         if author not in ('user','agent'):raise ValueError('无效修订作者')
+        if type(allow_markdown_conversion) is not bool:raise ValueError('明确转换标记必须是布尔值')
         from .document_model import normalize_document, document_markdown, document_hash, source_ids
         if editor_document is not None:
             editor_document=normalize_document(editor_document)
@@ -333,12 +334,24 @@ class Store:
             latest = c.execute("SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1", (base["run_id"],)).fetchone()
             if latest["id"] != base_version:
                 raise Conflict("稿件已有更新，请先保留本地编辑并重新加载最新版本")
+            converted=False
+            if base['editor_document'] is not None and editor_document is None:
+                if markdown==base['markdown']:
+                    return dict(base)  # A projection-only no-op must keep its rich original.
+                if not allow_markdown_conversion:
+                    raise ValueError('当前稿件是富文档；请提交完整 editor_document，或明确转换 Markdown（allow_markdown_conversion=true）。原版本保留。')
+                from .document_model import markdown_document
+                editor_document=normalize_document(markdown_document(markdown))
+                markdown=document_markdown(editor_document)
+                converted=True
             same_document=(editor_document is None and base['editor_document'] is None or
                            editor_document is not None and base['editor_document'] is not None and
                            normalize_document(json.loads(base['editor_document']))==editor_document)
             if markdown == base["markdown"] and same_document:
                 return dict(base)
             detail=json.loads(base['detail'])
+            if converted:detail['content_conversion']={'input_format':'markdown','base_version':base_version,'explicit':True}
+            else:detail.pop('content_conversion',None)
             if editor_document is not None:
                 detail['document_schema']=1
             else:detail.pop('document_schema',None)

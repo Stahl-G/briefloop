@@ -507,7 +507,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                         result=store.enqueue('generate',payload)
                 elif path=='/api/save':
                     value=SaveRevision.model_validate(body)
-                    result=store.revise(value.base_version,value.markdown,value.editor_document)
+                    result=store.revise(value.base_version,value.markdown,value.editor_document,allow_markdown_conversion=value.allow_markdown_conversion)
                 elif path=='/api/comment':
                     value=Comment.model_validate(body);result=store.comment(value.version_id,value.text)
                 elif path=='/api/settings':

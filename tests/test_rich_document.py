@@ -227,3 +227,19 @@ def test_template_table_uses_cell_style_and_keeps_rows_together():
     assert all(p.paragraph_format.keep_with_next is True for cell in table.rows[0].cells for p in cell.paragraphs)
     assert all(p.paragraph_format.keep_with_next is not True for cell in table.rows[1].cells for p in cell.paragraphs)
     assert table.cell(1, 2).text == '48'
+
+
+def test_markdown_save_requires_explicit_rich_replacement(tmp_path):
+    store=Store(tmp_path)
+    source=store.add_source('Synthetic source','Reported value 12')
+    run=store.create_run({'title':'Report','objective':'Preserve formatting'},[source['id']])
+    original=store.publish(run['id'],{'title':'Report','editor_document':{'type':'doc','content':[
+        {'type':'paragraph','content':[{'type':'text','text':'Formatted report','marks':[{'type':'textStyle','attrs':{'color':'#006838'}}]}]}]}})
+    assert store.revise(original['id'],original['markdown'])['id']==original['id']
+    with pytest.raises(ValueError,match='明确转换'):
+        store.revise(original['id'],'Replacement from Markdown')
+    assert len(store.rows('SELECT * FROM briefs'))==1
+    converted=store.revise(original['id'],'# New title\n\nReplacement from Markdown',allow_markdown_conversion=True)
+    assert converted['parent_id']==original['id'] and converted['editor_document']
+    assert json.loads(converted['detail'])['content_conversion']['base_version']==original['id']
+    assert store.one('briefs',original['id'])==original

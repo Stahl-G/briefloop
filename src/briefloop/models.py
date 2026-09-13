@@ -319,6 +319,7 @@ class SaveRevision(Model):
     base_version: str
     markdown: str = ''
     editor_document: dict | None = None
+    allow_markdown_conversion: bool = Field(default=False, strict=True)
 
 
 class Comment(Model):
