@@ -13,6 +13,7 @@ from mcp import Client
 from mcp.shared.exceptions import MCPError
 from mcp_types import CONNECTION_CLOSED, REQUEST_TIMEOUT
 from pathlib import Path
+from pydantic import ValidationError
 
 from .config import ConnectorError
 from .transport import connection_transport, ResponseLimitError
@@ -72,6 +73,7 @@ class Owner:
         self.error = None
         self.protocol = None
         self.capabilities = {'tools': [], 'resources': [], 'resource_templates': []}
+        self.warnings = []
         self.pending = {}
         self.diagnostics = {}
         self.stopping = False
@@ -125,7 +127,24 @@ class Owner:
             seen = set()
             total = 0
             for _ in range(10):
-                result = await method(cursor=cursor)
+                try:
+                    result = await method(cursor=cursor)
+                except ValidationError as exc:
+                    optional = {'resources': ('ListResourcesResult', 'resources'),
+                                'resource_templates': ('ListResourceTemplatesResult', 'resourceTemplates')}
+                    expected = optional.get(field)
+                    errors = exc.errors(include_url=False)
+                    if (expected is None or exc.title != expected[0] or len(errors) != 1
+                            or errors[0]['type'] != 'list_type' or errors[0]['loc'] != (expected[1],)
+                            or type(errors[0].get('input')) is not dict or errors[0]['input'] != {}):
+                        raise
+                    # The SDK validated this response after receiving it; the
+                    # session remains usable. Never retry a request or relax tools.
+                    # ValidationError does not retain nextCursor, so stop this
+                    # optional listing and disclose its incomplete validation.
+                    self.warnings.append({'code': 'empty_object_catalog', 'catalog': field,
+                                          'message': '服务将可选资源目录返回为 {}，已按空页兼容；该目录后续分页未核实。'})
+                    return items
                 batch = getattr(result, field)
                 total += len(result.model_dump_json())
                 if total > self.config['max_response_bytes']:

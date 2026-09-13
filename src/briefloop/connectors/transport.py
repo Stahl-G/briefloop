@@ -15,7 +15,7 @@ import httpx2
 from mcp import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import streamable_http_client
 
-from .config import ConnectorError
+from .config import ConnectorError, validate_secrets
 
 
 class ResponseLimitError(Exception):
@@ -40,6 +40,7 @@ class BoundedStream(httpx2.AsyncByteStream):
 
 @asynccontextmanager
 async def connection_transport(config: dict, secrets: dict, diagnostics: dict):
+    secrets = validate_secrets(secrets)
     if config['transport'] == 'http':
         async def inspect_response(response):
             if response.status_code in (401, 403, 429) or response.status_code >= 500:
@@ -52,7 +53,9 @@ async def connection_transport(config: dict, secrets: dict, diagnostics: dict):
             response.stream = BoundedStream(response.stream, config['max_response_bytes'])
 
         headers = {'Accept-Encoding': 'identity'}
-        if secrets.get('bearer_token'):
+        if secrets['authorization_header']:
+            headers['Authorization'] = secrets['authorization_header']
+        elif secrets.get('bearer_token'):
             headers['Authorization'] = 'Bearer ' + secrets['bearer_token']
         async with httpx2.AsyncClient(headers=headers, trust_env=False,
                                      timeout=httpx2.Timeout(config['timeout_seconds']),

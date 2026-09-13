@@ -48,7 +48,7 @@ Public connection objects are flat:
 
 ```text
 id, name, transport, url? / command?+args?+cwd?, timeout_seconds,
-max_response_bytes, revision, enabled, has_credentials, env_names,
+max_response_bytes, revision, enabled, has_credentials, credential_type, env_names,
 state, protocol, last_test, error, capabilities
 ```
 
@@ -69,9 +69,14 @@ Stdio requires an absolute installed executable, argument array, and optional
 absolute existing cwd. The service never inserts package installation commands;
 the explicitly configured executable remains ordinary local code, not a sandbox.
 
-Secrets are separate `{bearer_token: string, env: {NAME: value}}`. Tokens apply to
-HTTP, env to stdio. Their values are stored under workspace `.connectors/` in
+Secrets are separate `{bearer_token: string, authorization_header: string,
+env: {NAME: value}}`. HTTP accepts either a Bearer token or an exact Authorization
+header value; the two are mutually exclusive. No arbitrary header map is accepted.
+Stdio uses env values. Public `credential_type` reports bearer/authorization/env/none,
+never the saved value. Their values are stored under workspace `.connectors/` in
 separate credential files (POSIX mode 0600, directory 0700), not public DTOs.
+On Windows, protected DACLs restrict these files to the current user and reparse
+points are rejected; POSIX mode bits are not treated as Windows access control.
 An internal `.gitignore` excludes this runtime directory from normal Git staging.
 This is local file protection, not encryption or a Keychain integration. Stdio
 inherits the SDK's small default environment plus explicit env values; Python and
@@ -91,7 +96,10 @@ On POSIX, stdio goes through a small byte-forwarding supervisor. It bounds a lin
 before forwarding it to the SDK, bounds forwarded stderr, and uses argument lists
 without a shell. The service verifies the SDK-created subprocess group at startup
 and clears that owned group even when the main subprocess already exited. Windows
-stdio is explicitly unsupported here until its separate lifecycle acceptance.
+uses a supervisor-owned Job Object to clear only its command and descendants,
+including on forced supervisor exit. Native HTTP/stdio and owned-process cleanup
+have been checked on Windows; see [platform validation](../../../docs/windows.md).
+These lifecycle controls are not a file/network sandbox or Reviewer isolation.
 
 Caller stop/disable cancels startup and active operations. Unknown post-send
 results are never replayed. Both normal RPC failures and SDK context teardown
@@ -108,10 +116,11 @@ unassessed material, and SDK-decoded payload/hash. These are **not raw wire
 receipts and are not yet persisted source evidence**. Resource URIs are sent to
 the selected server, including file URIs; the client never opens them locally.
 
-Do not expose these methods as report tools until the host binds trusted run
-grants, atomic durable budgets, receipt persistence and source adoption. Merely
-passing a scope string is not authorization. Config management should use the
-existing app's local settings authentication boundary. One service owns one
+Report generation uses `TaskMaterials` and `ConnectorMaterials`, which bind trusted
+run grants, atomic durable budgets, receipt persistence and source admission.
+Raw service methods remain internal: merely passing a scope string is not
+authorization. Config management uses the existing app's local settings
+authentication boundary. One service owns one
 workspace; multiple writers to the same workspace require the existing host lock.
 
 Behavior checks:

@@ -99,12 +99,21 @@ def validate_config(value: dict) -> dict:
 
 def validate_secrets(value: dict | None) -> dict:
     value = {} if value is None else value
-    if not isinstance(value, dict) or set(value) - {'bearer_token', 'env'}:
-        raise ConnectorError('凭据仅支持 bearer_token 和 env。')
+    if not isinstance(value, dict) or set(value) - {'bearer_token', 'authorization_header', 'env'}:
+        raise ConnectorError('凭据仅支持 bearer_token、authorization_header 和 env。')
     token = value.get('bearer_token', '')
+    authorization = value.get('authorization_header', '')
     env = value.get('env', {})
     if not isinstance(token, str) or len(token) > 16384 or '\n' in token or '\r' in token:
         raise ConnectorError('令牌格式无效。')
+    # One fixed header, never an arbitrary header map. Keep its value exact;
+    # reject characters that cannot safely be sent as an HTTP field value.
+    if (not isinstance(authorization, str) or len(authorization) > 16384
+            or any(ord(c) < 32 or ord(c) > 126 for c in authorization)
+            or authorization != authorization.strip()):
+        raise ConnectorError('Authorization 凭据格式无效。')
+    if token and authorization:
+        raise ConnectorError('bearer_token 与 authorization_header 只能选择一项。')
     if (not isinstance(env, dict) or len(env) > 100
             or any(not isinstance(k, str) or not k or '=' in k or '\0' in k
                    or not isinstance(v, str) or '\0' in v for k, v in env.items())
@@ -113,7 +122,7 @@ def validate_secrets(value: dict | None) -> dict:
     # Do not allow environment injection into the Python transport supervisor.
     if any(k.startswith('PYTHON') or k in ('LD_PRELOAD', 'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH') for k in env):
         raise ConnectorError('不允许覆盖解释器或动态库加载环境。')
-    return {'bearer_token': token, 'env': env}
+    return {'bearer_token': token, 'authorization_header': authorization, 'env': env}
 
 
 class LocalConfig:

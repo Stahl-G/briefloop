@@ -39,6 +39,9 @@ class ConnectorService:
             raise ConnectorError('未找到该连接器。', code='not_found') from None
 
     def _view(self, record):
+        credential_type = record.get('credential_type')
+        if credential_type is None:
+            credential_type = self._credential_type(self._config.get_secrets(record))
         owners = [owner for (identifier, _, _), owner in self._owners.items() if identifier == record['id']]
         live = next((owner for owner in owners if owner.state == 'connected'), None)
         failed = next((owner for owner in owners if owner.state == 'error'), None)
@@ -46,9 +49,11 @@ class ConnectorService:
         connecting = any(owner.state == 'connecting' for owner in owners)
         state = 'error' if error else 'connected' if live else 'connecting' if connecting else 'disconnected' if record['enabled'] else 'disabled'
         return copy.deepcopy({**record['config'], 'id': record['id'], 'revision': record['revision'],
-                              'enabled': record['enabled'], 'has_credentials': record['has_credentials'],
+                              'enabled': record['enabled'], 'has_credentials': credential_type != 'none',
+                              'credential_type': credential_type,
                               'env_names': record['env_names'], 'state': state, 'protocol': live.protocol if live else None,
                               'last_test': record.get('last_test'), 'error': error,
+                              'warnings': live.warnings if live else (record.get('last_test') or {}).get('warnings', []),
                               'capabilities': live.capabilities if live else {'tools': [], 'resources': [], 'resource_templates': []}})
 
     def list(self):
@@ -58,6 +63,12 @@ class ConnectorService:
     def status(self, connector_id):
         with self._lock:
             return self._view(self._get(connector_id))
+
+    @staticmethod
+    def _credential_type(values):
+        if values['authorization_header']:return 'authorization'
+        if values['bearer_token']:return 'bearer'
+        return 'env' if values['env'] else 'none'
 
     def save(self, config, *, connector_id=None, secrets=None):
         validated = validate_config(config)
@@ -71,7 +82,7 @@ class ConnectorService:
             values = secrets if secrets is not None else self._config.get_secrets(existing) if existing else validate_secrets(None)
             if validated['transport'] == 'http' and values['env']:
                 raise ConnectorError('HTTP 连接器请使用令牌凭据；env 仅适用于 stdio。')
-            if validated['transport'] == 'stdio' and values['bearer_token']:
+            if validated['transport'] == 'stdio' and (values['bearer_token'] or values['authorization_header']):
                 raise ConnectorError('stdio 连接器请通过 env 提供凭据。')
             if existing:
                 self._generation[connector_id] = self._generation.get(connector_id, 0) + 1
@@ -79,7 +90,8 @@ class ConnectorService:
             binding = self._config.new_binding(values)
             record = {'id': identifier, 'config': validated, 'revision': existing['revision'] + 1 if existing else 1,
                       'enabled': False, 'credential_binding': binding,
-                      'has_credentials': bool(values['bearer_token'] or values['env']), 'env_names': sorted(values['env']),
+                      'credential_type': self._credential_type(values),
+                      'has_credentials': bool(values['bearer_token'] or values['authorization_header'] or values['env']), 'env_names': sorted(values['env']),
                       'last_test': None}
             self._config.records[identifier] = record
             self._config.persist()
@@ -132,10 +144,11 @@ class ConnectorService:
         started = time.monotonic()
         preview = 'preview:' + str(uuid.uuid4())
         result = {'id': connector_id, 'ok': False, 'checked_at': datetime.now(timezone.utc).isoformat(),
-                  'protocol': None, 'capabilities': {'tools': [], 'resources': [], 'resource_templates': []}, 'error': None}
+                  'protocol': None, 'capabilities': {'tools': [], 'resources': [], 'resource_templates': []}, 'error': None, 'warnings': []}
         try:
             owner = self._start(record, preview, generation)
-            result.update(ok=True, protocol=owner.protocol, capabilities=copy.deepcopy(owner.capabilities))
+            result.update(ok=True, protocol=owner.protocol, capabilities=copy.deepcopy(owner.capabilities),
+                          warnings=copy.deepcopy(owner.warnings))
         except ConnectorError as exc:
             result['error'] = {'code': exc.code, 'message': str(exc)}
         finally:

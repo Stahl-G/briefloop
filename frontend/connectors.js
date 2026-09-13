@@ -12,7 +12,8 @@ export function connectorSettings(root, api) {
  <label>名称<input name="name" maxlength="160" required placeholder="例如：团队资料库"></label>
  <label>连接方式<select name="transport"><option value="http">HTTP 服务</option><option value="stdio">本机程序（stdio）</option></select></label>
  <div data-http><label>MCP 服务地址<input name="url" type="url" placeholder="https://example.com/mcp"></label>
- <label>访问令牌（可选）<input name="bearer_token" type="password" autocomplete="new-password" placeholder="留空保留已保存令牌"></label></div>
+ <label>认证方式<select name="credential_type"><option value="bearer">Bearer 令牌</option><option value="authorization">原样 Authorization（如 iFind）</option></select></label>
+ <label>访问凭据（可选）<input name="credential_value" type="password" autocomplete="new-password" placeholder="留空保留已保存凭据"></label><p class="help">按服务商配置选择认证方式；原样模式会完整发送所填的 Authorization 值。</p></div>
  <div data-stdio hidden><label>程序路径<input name="command" placeholder="已安装程序的绝对路径"></label>
  <label>参数（每行一个）<textarea name="args" rows="3" placeholder="每行作为一个参数，不需要加引号"></textarea></label>
  <label>工作目录（可选）<input name="cwd" placeholder="目录的绝对路径"></label>
@@ -29,6 +30,7 @@ export function connectorSettings(root, api) {
   find('[data-form-title]').textContent=record?'修改连接器':'添加连接器';
   for(const name of ['name','transport','url','command','cwd','timeout_seconds'])if(record?.[name]!=null)field(name).value=record[name];
   field('args').value=(record?.args||[]).join('\n');
+  field('credential_type').value=record?.credential_type==='authorization'?'authorization':'bearer';
   if(record)field('max_response_mb').value=record.max_response_bytes/1048576;
   find('[data-credential-note]').textContent=record?.has_credentials?'本机已保存凭据。留空保留；填写时替换该连接的凭据。'+(record.env_names?.length?' 环境变量：'+record.env_names.join('、'):''):'凭据只保存在本机，不回显已保存的值。';
   transport();field('name').focus();
@@ -41,6 +43,7 @@ export function connectorSettings(root, api) {
     ${r.protocol?`<p class="help">协议 ${esc(r.protocol)} · ${caps.tools?.length||0} 个工具 · ${caps.resources?.length||0} 个资源</p>`:''}
     ${test?`<p class="help">最近测试${test.ok?'通过':'未通过'} · ${esc(new Date(test.checked_at).toLocaleString())}${test.duration_seconds!=null?' · '+Number(test.duration_seconds).toFixed(1)+' 秒':''}</p>`:''}
     ${r.error||test?.error?`<p class="connector-error">${esc((r.error||test.error).message)}</p>`:''}
+    ${(r.warnings?.length?r.warnings:test?.warnings||[]).map(w=>`<p class="help">${esc(w.message)}</p>`).join('')}
     <div class="connector-actions"><button type="button" data-op="test" data-id="${esc(r.id)}">测试连接</button>
     ${r.enabled&&r.state!=='connected'?`<button type="button" data-op="enable" data-id="${esc(r.id)}">重新连接</button>`:''}
     <button type="button" data-op="${r.enabled?'disable':'enable'}" data-id="${esc(r.id)}">${r.enabled?'停用':'启用连接'}</button>
@@ -74,7 +77,7 @@ export function connectorSettings(root, api) {
   else Object.assign(config,{command:field('command').value.trim(),args:field('args').value.split('\n').filter(s=>s!==''),cwd:field('cwd').value.trim()||null});
   const body={config,connector_id:editing};
   if(field('clear_credentials').checked)body.secrets={};
-  else if(http&&field('bearer_token').value)body.secrets={bearer_token:field('bearer_token').value};
+  else if(http&&field('credential_value').value)body.secrets={[field('credential_type').value==='authorization'?'authorization_header':'bearer_token']:field('credential_value').value};
   else if(!http&&field('env').value.trim()){
    const env={};for(const line of field('env').value.split('\n').filter(s=>s.trim())){const i=line.indexOf('=');if(i<1)throw Error('每行环境变量请使用 NAME=VALUE 格式。');env[line.slice(0,i).trim()]=line.slice(i+1)}body.secrets={env};
   }

@@ -36,7 +36,7 @@ Word 原文件被 Office/WPS 占用而不能替换时，导出保留旧文件并
 
 Windows MCP 已实际验证官方 SDK 的 stdio 与 HTTP 连接、scope 隔离、取消、连接中断和响应大小限制。stdio supervisor 使用 Job 管理所属子孙进程；强制结束 supervisor 后子孙退出，无关进程保留。凭据文件使用受保护的 Windows DACL，仅授权当前用户，并拒绝 reparse point；不以 POSIX 权限位推断 Windows 文件私密性。
 
-网页端的合成 MCP 配置保存、连接测试、启用（6 个工具、2 个资源）和停用通过。当前连接器模块尚未开放 Agent API，不能把连接成功当作对话或报告已经可以读取 MCP 资源；这项能力缺口同时存在于其它平台。
+网页端的合成 MCP 配置保存、连接测试、启用（6 个工具、2 个资源）和停用通过。应用已接入逐报告选材、冻结任务授权与 Agent 受控材料接口；Windows 上从网页选材到实际 Agent 读取、引用和审阅仍按具体运行记录核对，连接成功本身不代表这条报告链已通过。
 
 Hermes 0.21.2 与 Reasonix 1.38.7 已通过实际 BriefLoop bridge 使用官方 DeepSeek Flash 读取合成文件并完成回复。Hermes 优先使用专用 `hermes-acp` 入口；首次模型目录初始化可能准备额外依赖并超出启动等待时间，本机依赖准备完成后重测通过。Reasonix 新版的模型标识为 `provider/model`，目录保留实际模型部分。上述调用使用隔离测试配置，不代表用户原有模型认证已经配置完成。
 
