@@ -83,8 +83,7 @@ GENRES = (
      'cover': 'minutes', 'table': {'kind': 'full'}, 'footer': 'page', 'header': False, 'toc': False},
     {'stem': 'stock-research-zh', 'label': '券商研报',
      'sections': (('views', '核心观点', '核心判断'), ('events', '事件回顾', '触发事件'),
-                  ('forecast', '盈利预测与估值', '预测与估值'), ('risks', '风险提示', '风险因素'),
-                  ('disclaimer', '免责声明', '五项免责')),
+                  ('forecast', '盈利预测与估值', '预测与估值'), ('risks', '风险提示', '会改变判断的具体风险与观察指标')),
      'cover': 'research', 'table': {'kind': 'horizontal', 'header_fill': 'EEF2F9'}, 'footer': 'page',
      'header': True, 'toc': False, 'title_size': 20},
 )
@@ -357,7 +356,8 @@ def cover_research(doc, cfg):
     title.paragraph_format.space_before = Pt(12)
     centered(doc, '{{period}} · {{report_date}}', size=11, color=MUTED, space_before=12)
     doc.add_paragraph()
-    key_value_table(doc, [('投资评级：', '待定（首次覆盖时更新）'), ('目标价：', '＿＿＿＿'), ('现价：', '＿＿＿＿'), ('报告日期：', '{{report_date}}')])
+    # Ratings and target prices belong to supported report content, not fixed
+    # cover placeholders. The cover already includes the report date.
 
 
 COVERS = {'standard': cover_standard, 'gov': cover_gov, 'contract': cover_contract,
