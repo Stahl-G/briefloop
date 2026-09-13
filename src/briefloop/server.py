@@ -174,6 +174,16 @@ def _make_server(workspace, port, *, paused, backend, lock):
         def do_GET(self):
             try:
                 u=urlsplit(self.path);q=parse_qs(u.query)
+                public=u.path in ('/','/index.html','/app.js','/style.css') or u.path[1:] in icon_names
+                if not public:
+                    # Browser origin protection, not authentication of local
+                    # processes. Native clients and address-bar downloads omit
+                    # Origin/Fetch Metadata; same-origin links need no token URL.
+                    origins=self.headers.get_all('Origin',[])
+                    sites=self.headers.get_all('Sec-Fetch-Site',[])
+                    expected=f'http://127.0.0.1:{self.server.server_port}'
+                    if (origins and origins!=[expected]) or (sites and sites not in (['same-origin'],['none'])):
+                        self.send(403,{'error':'请从本地工作区页面查看或下载文件','code':'cross_origin_read_denied'});return
                 if u.path=='/api/state':
                     snapshot=store.snapshot()
                     snapshot['demo']=store.meta('demo')
