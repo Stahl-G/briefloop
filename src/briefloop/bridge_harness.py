@@ -220,7 +220,9 @@ class BridgeHarness(OpencodeHarness):
                 elif kind=='tool':
                     key=event.get('id') or uid('tool');tools[key]={**tools.get(key,{}),**event}
                     tool=tools[key];complete=tool.get('status') in ('completed','failed','error')
-                    item={'id':key,'type':'runtime_tool','tool':tool.get('name','工具'),'status':tool.get('status','running')}
+                    from .execution_records import sanitize
+                    item={'id':key,'type':'runtime_tool','tool':tool.get('name','工具'),'status':tool.get('status','running'),
+                          'input':sanitize(tool.get('input')), 'output':sanitize(tool.get('output'))}
                     self.chat.event(sid,'item/completed' if complete else 'item/started',{'item':item,'turnId':mid})
                     if complete:
                         from .execution_records import journal_tool

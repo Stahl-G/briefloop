@@ -45,7 +45,9 @@ def test_bridge_turn_is_durable_and_same_message_is_not_redispatched(tmp_path, b
     assert bridge.starts[0]['allow_web'] is None
     h.send(s['id'],'read the fixture',message_id='fixed-admission')
     assert len(bridge.starts)==1
-    assert any(e['kind']=='item/completed' and e['data']['item']['id']=='native-item' for e in snap['events'])
+    item=next(e['data']['item'] for e in snap['events'] if e['kind']=='item/completed' and e['data']['item']['id']=='native-item')
+    assert item['input']=={'path':'sample.txt'}
+    assert item['output']=='data'
 
 
 def test_bridge_internal_managed_run_does_not_get_native_web_tools(tmp_path):
