@@ -93,7 +93,7 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
           const hasReset = Number.isFinite(reported) && reported > now && reported <= now + 24 * 60 * 60 * 1000;
           const until = hasReset ? reported : now + 60000;
           const timing = hasReset ? `请在本机时间 ${new Date(until).toLocaleString('zh-CN', {hour12: false})} 后重试。` : '请稍后重试。';
-          const error = new UpdateError('github_rate_limited', `GitHub 更新检查已达到请求频率限制。${timing}也可点击“查看官方发布与安装包”手动下载；已下载的安装包仍可使用。`);
+          const error = new UpdateError('github_rate_limited', `GitHub 更新检查已达到请求频率限制（HTTP ${res.status}）。${timing}也可点击“查看官方发布与安装包”手动下载；已下载的安装包仍可使用。`);
           metadataRateLimit = {until, error};
           await res.body?.cancel();
           throw error;
