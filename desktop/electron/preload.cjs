@@ -3,6 +3,14 @@ const {contextBridge, ipcRenderer} = require('electron');
 // Fixed operations only: never expose ipcRenderer, filesystem, commands or URLs.
 contextBridge.exposeInMainWorld('briefloopDesktop', {
   platform: process.platform,
+  environment: {
+    status: () => ipcRenderer.invoke('environment:status'),
+    inspect: () => ipcRenderer.invoke('environment:inspect'),
+    prepare: () => ipcRenderer.invoke('environment:prepare'),
+    cancel: () => ipcRenderer.invoke('environment:cancel'),
+    pythonHelp: () => ipcRenderer.invoke('environment:python-help'),
+    onChanged: callback => { ipcRenderer.on('environment:changed', (_event, value) => callback(value)); },
+  },
   openWorkspace: request => ipcRenderer.invoke('workspace:open', request),
   chooseWorkspace: create => ipcRenderer.invoke('workspace:choose', !!create),
   recentWorkspace: () => ipcRenderer.invoke('workspace:recent'),

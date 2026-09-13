@@ -48,6 +48,8 @@ function hostDefaultLabel(id:string){
   return defaults[0].label;
 }
 function hostDefaults(id:string){return [{id:'default',label:hostDefaultLabel(id)}]}
+// Electron has already selected Node mode; host CLIs must not inherit that switch.
+delete process.env.ELECTRON_RUN_AS_NODE;
 const env = {...process.env}; delete env.CLAUDECODE;
 if(process.platform==='win32'){env.PATH=process.env.PATH||process.env.Path||'';delete env.Path;}
 const dirs = [...(env.PATH||'').split(path.delimiter), path.join(homedir(),'.local/bin'),path.join(homedir(),'.kimi-code/bin'),path.join(homedir(),'.opencode/bin'),path.join(homedir(),'.npm-global/bin'),path.join(homedir(),'.bun/bin'),path.join(homedir(),'.cargo/bin'),path.join(homedir(),'.dsh/bin'),'/opt/homebrew/bin','/usr/local/bin'];

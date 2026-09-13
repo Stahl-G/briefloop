@@ -5,14 +5,15 @@ const path = require('node:path');
 const {pathToFileURL} = require('node:url');
 const {randomUUID} = require('node:crypto');
 const {WorkspaceService} = require('./service.cjs');
+const {createEnvironment} = require('./environment.cjs');
 const {createUpdater} = require('./updater.cjs');
 let window, service, switching = false, quitting = false, closePending = false, expectedExit = false;
 const prepared = new Map();
-let menuSave = null, workspaceOrigin = null;
+let menuSave = null, workspaceOrigin = null, environment;
 let updates, nativeInstall = null, nativeQuitPending = false;
 const welcomeURL = pathToFileURL(path.join(__dirname, 'welcome.html')).href;
-const runtime = app.isPackaged ? path.join(process.resourcesPath, 'runtime') : path.join(__dirname, 'runtime', process.platform === 'win32' ? 'windows-x64' : 'macos-arm64');
 if (process.platform === 'win32') app.setAppUserModelId('ai.briefloop.desktop');
+const payloadPath = app.isPackaged ? path.join(process.resourcesPath, 'backend') : path.join(__dirname, 'backend');
 if (process.env.BRIEFLOOP_DESKTOP_DATA) app.setPath('userData', path.resolve(process.env.BRIEFLOOP_DESKTOP_DATA));
 const preferencesPath = () => path.join(app.getPath('userData'), 'desktop.json');
 async function recentWorkspace() { try { return JSON.parse(await fs.readFile(preferencesPath(), 'utf8')).workspace || null; } catch { return null; } }
@@ -21,6 +22,10 @@ function trusted(event) {
   if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) throw Error('窗口身份不匹配。');
   const url = event.senderFrame.url;
   if (url !== welcomeURL && (!workspaceOrigin || new URL(url).origin !== workspaceOrigin)) throw Error('页面来源不匹配。');
+}
+function environmentOperation(callback) {
+  if (quitting || closePending || switching || service?.child) throw Error('请返回欢迎页并等待当前操作完成。');
+  return callback();
 }
 function resumeEditing() { if (window && !window.isDestroyed()) window.webContents.send('workspace:resume'); }
 function prepareClose() {
@@ -59,6 +64,7 @@ async function openWorkspace(request) {
   const target = path.isAbsolute(request.path) ? path.resolve(request.path) : path.resolve(path.dirname(service.directory), request.path);
   // Relative names from the existing Web UI resolve beside the current workspace.
   if (service?.info && target === service.directory) return {path: target, url: service.info.url};
+  const runtime = await environment.runtime();
   switching = true;
   try {
     if (menuSave) await menuSave;
@@ -112,6 +118,11 @@ async function requestQuit() {
   nativeInstall = null;
   closePending = true;
   try {
+    if (environment?.status().state === 'installing') {
+      const choice = await dialog.showMessageBox(window, {type: 'question', message: '运行环境仍在准备', detail: '退出会停止本次安装，已存在的环境和工作区会保留。下次可重新准备。', buttons: ['继续准备', '取消准备并退出'], defaultId: 0, cancelId: 0});
+      if (choice.response !== 1) return;
+    }
+    await environment?.cancel();
     if (menuSave) await menuSave;
     if (!(await stopCurrent())) return;
     quitting = true;
@@ -196,6 +207,7 @@ else {
       const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon-macos-1024.png'));
       if (!icon.isEmpty()) app.dock.setIcon(icon);
     }
+    environment = createEnvironment({app, payloadPath, changed: value => { if (window && !window.isDestroyed()) window.webContents.send('environment:changed', value); }});
     updates = createUpdater({app, shell,
       // A packaged application always uses the fixed official source.
       testFeed: !app.isPackaged ? process.env.BRIEFLOOP_UPDATE_TEST_FEED || null : null,
@@ -218,6 +230,11 @@ else {
       item.setSaveDialogOptions({title: '报告另存为', defaultPath: path.join(app.getPath('downloads'), path.basename(item.getFilename())), properties: ['showOverwriteConfirmation', 'createDirectory']});
       item.once('done', (_event, state) => { if (state === 'interrupted') reportError(Error('文件下载中断，请重新另存。')); });
     });
+    ipcMain.handle('environment:status', event => { trusted(event); return environment.status(); });
+    ipcMain.handle('environment:inspect', event => { trusted(event); return environmentOperation(() => environment.inspect()); });
+    ipcMain.handle('environment:prepare', event => { trusted(event); return environmentOperation(() => environment.prepare()); });
+    ipcMain.handle('environment:cancel', event => { trusted(event); return environment.cancel(); });
+    ipcMain.handle('environment:python-help', event => { trusted(event); return shell.openExternal('https://www.python.org/downloads/'); });
     ipcMain.handle('workspace:recent', event => { trusted(event); return recentWorkspace(); });
     ipcMain.handle('workspace:choose', (event, create) => { trusted(event); if (typeof create !== 'boolean') throw Error('无效选择'); return chooseWorkspace(create); });
     ipcMain.handle('workspace:open', (event, request) => { trusted(event); return openWorkspace(request); });
@@ -236,5 +253,6 @@ else {
       {label: '窗口', submenu: [{role: 'minimize'}, {role: 'front'}]},
     ]));
     await window.loadURL(welcomeURL);
+    await environment.inspect();
   }).catch(error => { dialog.showErrorBox('BriefLoop 启动失败', String(error.message || error)); quitting = true; app.quit(); });
 }

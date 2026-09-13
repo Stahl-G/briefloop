@@ -7,8 +7,8 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 function runtimeLaunch(runtime, inherited = process.env, platform = process.platform) {
   const windows = platform === 'win32';
   const paths = windows ? path.win32 : path.posix;
-  const python = paths.join(runtime, 'python', ...(windows ? ['python.exe'] : ['bin', 'python3']));
-  const node = paths.join(runtime, 'node', ...(windows ? ['node.exe'] : ['bin', 'node']));
+  const {python, node, nodeIsElectron} = runtime;
+  if (!paths.isAbsolute(python || '') || !paths.isAbsolute(node || '')) throw Error('请先准备应用运行环境。');
   const env = {...inherited};
   let hostPath = '';
   // Windows environment names are case-insensitive; duplicate Path/PATH keys
@@ -18,8 +18,12 @@ function runtimeLaunch(runtime, inherited = process.env, platform = process.plat
     if (name === 'PATH') { hostPath ||= env[key]; delete env[key]; }
     if (['PYTHONHOME', 'PYTHONPATH', 'NODE_PATH', 'ELECTRON_RUN_AS_NODE'].includes(name)) delete env[key];
   }
-  env.PATH = [paths.dirname(node), hostPath].filter(Boolean).join(paths.delimiter);
+  env.PATH = [paths.dirname(python), ...hostPath.split(paths.delimiter).filter(entry => paths.isAbsolute(entry))].join(paths.delimiter);
   env.BRIEFLOOP_NODE = node;
+  env.PYTHONNOUSERSITE = '1';
+  env.PYTHONSAFEPATH = '1';
+  env.PYTHONUNBUFFERED = '1';
+  if (nodeIsElectron) env.BRIEFLOOP_NODE_IS_ELECTRON = '1'; else delete env.BRIEFLOOP_NODE_IS_ELECTRON;
   return {python, node, env, args: ['-I', '-X', 'utf8', '-u']};
 }
 function finishesWithin(promise, ms) {

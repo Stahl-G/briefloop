@@ -816,10 +816,10 @@ def test_nested_native_error_exposes_only_sanitized_message(tmp_path, monkeypatc
     assert 'Quota exceeded' in public and 'Try again after reset.' in public
     assert all(secret not in public for secret in ('URL_SECRET', 'QUERY_SECRET', 'MESSAGE_SECRET',
         'HEADER_SECRET', 'PRIVATE_HEADER', 'PRIVATE RESPONSE BODY', 'responseHeaders', 'responseBody'))
-    assert module._public_native_error({**error, 'message': 'Top-level message'}) == 'Top-level message'
+    assert module._public_native_error({**error, 'message': 'Top-level message'}) == 'HTTP 429 · Top-level message'
     error['data']['message'] = {'private': 'PRIVATE NONSTRING MESSAGE'}
-    assert module._public_native_error(error) == 'APIError'
-    assert module._public_native_error({'name': 'Authorization: Basic NAME_SECRET', 'data': error['data']}) == '执行失败'
+    assert module._public_native_error(error) == 'HTTP 429 · APIError'
+    assert module._public_native_error({'name': 'Authorization: Basic NAME_SECRET', 'data': error['data']}) == 'HTTP 429 · 执行失败'
 
 @pytest.mark.parametrize('cancel', [False, True])
 @pytest.mark.parametrize('phase', ['silent', 'tool-calls'])
@@ -855,3 +855,29 @@ def test_unlimited_turn_can_finish_or_be_cancelled_after_long_wait(tmp_path, mon
     message = next(m for m in manager.snapshot(sid)['messages'] if m['id'] == 'turn')
     assert message['status'] == ('cancelled' if cancel else 'completed')
     assert client.aborts == (['parent'] if cancel else [])
+
+
+def test_native_retry_status_is_visible_deduplicated_and_recovers(tmp_path, monkeypatch):
+    import briefloop.opencode_harness as module
+    from types import SimpleNamespace
+    manager = OpencodeHarness(Store(tmp_path), FakeClient)
+    sid = manager.create_session()['id']
+    clock = [0]
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
+    class RetryClient:
+        value = {'type': 'retry', 'attempt': 1, 'message': 'HTTP 503 Service unavailable; sk-testcredential123456', 'next': 20000}
+        def session_status(self, bound, *, directory):
+            assert bound == 'ses_bound' and directory == '/workspace'
+            return self.value
+    client = RetryClient(); cache = {}
+    for instant in (0, 3, 6):
+        clock[0] = instant
+        manager._poll_runtime_status(client, sid, 'turn1', 'ses_bound', '/workspace', cache)
+    client.value = {'type': 'busy'}; clock[0] = 9
+    manager._poll_runtime_status(client, sid, 'turn1', 'ses_bound', '/workspace', cache)
+    rows = [r for r in manager.snapshot(sid)['events'] if r['kind'] == 'runtime/status']
+    assert len(rows) == 2
+    assert rows[0]['data']['turnId'] == 'turn1'
+    assert rows[0]['data']['attempt'] == 1 and 'HTTP 503' in rows[0]['data']['message']
+    assert 'sk-testcredential' not in json.dumps(rows)
+    assert rows[1]['data']['status'] == 'resumed'

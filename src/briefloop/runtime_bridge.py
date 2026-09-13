@@ -30,10 +30,14 @@ class RuntimeBridge:
         if not node:
             raise RuntimeError('未找到可执行的 Node.js：'+str(self.node_binary or 'node')+
                 '。Bridge 引擎需要 Node.js 20+；请安装后重启服务，或将 BRIEFLOOP_NODE 设置为 Node 可执行文件路径；'+SEARCH_HINT)
+        env={**os.environ,'BRIEFLOOP_PYTHON':sys.executable,
+             'BRIEFLOOP_PROCESS_HELPER':str(files('briefloop').joinpath('process_host.py'))}
+        # Electron's Node mode belongs only to this bridge child, never the service.
+        env.pop('ELECTRON_RUN_AS_NODE',None)
+        if env.get('BRIEFLOOP_NODE_IS_ELECTRON')=='1':env['ELECTRON_RUN_AS_NODE']='1'
         self._process=OwnedProcess([node,str(files('briefloop').joinpath('static/runtime-bridge.mjs'))],
             stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,bufsize=1,
-            env={**os.environ,'BRIEFLOOP_PYTHON':sys.executable,
-                 'BRIEFLOOP_PROCESS_HELPER':str(files('briefloop').joinpath('process_host.py'))})
+            env=env)
         threading.Thread(target=self._read,args=(self._process,),daemon=True).start()
 
     def _read(self,proc):

@@ -1156,6 +1156,7 @@ function hostDefaultLabel(id) {
 function hostDefaults(id) {
   return [{ id: "default", label: hostDefaultLabel(id) }];
 }
+delete process.env.ELECTRON_RUN_AS_NODE;
 var env = { ...process.env };
 delete env.CLAUDECODE;
 if (process.platform === "win32") {

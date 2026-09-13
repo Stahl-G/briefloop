@@ -50,16 +50,30 @@ class BridgeHarness(OpencodeHarness):
         self._active_executions={}
 
     def snapshot(self,session_id,after=0,reasoning=False):
-        snapshot=super().snapshot(session_id,after,reasoning=reasoning)
-        def project(usage):
-            if isinstance(usage,dict) and isinstance(usage.get('raw'),dict):
-                return {**usage,**normalize_bridge_usage(usage['raw'],self.backend)}
-            return usage
-        snapshot['token_usage']=project(snapshot['token_usage'])
-        for event in snapshot['events']:
-            if event['kind']=='thread/tokenUsage/updated':
-                event['data']['tokenUsage']=project(event['data'].get('tokenUsage'))
-        return snapshot
+        return self.chat.snapshot(session_id,after,reasoning=reasoning,usage_projector=self._project_usage)
+
+    def _project_usage(self,usage,previous):
+        if not isinstance(usage,dict) or not isinstance(usage.get('raw'),dict):return usage
+        projected={**usage,**normalize_bridge_usage(usage['raw'],self.backend)}
+        def identity(value):
+            raw=value.get('raw') if isinstance(value,dict) else None
+            meta=raw.get('_meta') if isinstance(raw,dict) else None
+            if not isinstance(meta,dict):return None
+            pair=tuple(meta.get(key) for key in ('codebuddy.ai/requestId','codebuddy.ai/messageId'))
+            return pair if all(isinstance(part,str) and part.strip() for part in pair) else None
+        key=identity(usage)
+        if self.backend!='codebuddy' or key is None:return projected
+        # CodeBuddy may finish with a category-only update for the same model
+        # request. Fill omitted counts without borrowing another request's usage.
+        for prior in previous:
+            if all(value is not None for value in projected['last'].values()) and all(projected[field] is not None for field in ('contextUsedTokens','modelContextWindow')):break
+            if identity(prior)!=key:break
+            older=normalize_bridge_usage(prior['raw'],self.backend)
+            for field in projected['last']:
+                if projected['last'][field] is None:projected['last'][field]=older['last'][field]
+            for field in ('contextUsedTokens','modelContextWindow'):
+                if projected[field] is None:projected[field]=older[field]
+        return projected
 
     def _config(self,runtime):
         value={'permission':'runtime-native','model':'default','backend':self.backend,**(runtime or {})}
