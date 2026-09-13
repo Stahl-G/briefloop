@@ -611,3 +611,16 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 #chat-form .composer-tools .chat-web{display:flex;align-items:center;}
 #chat-form .composer-options>button:not(.attach-button){white-space:nowrap;flex-shrink:0;}
 #chat-permissions-dialog{width:min(640px,calc(100vw - 32px));max-height:85vh;overflow:auto}#chat-permissions-dialog label{display:block;margin-top:12px}#chat-permissions-dialog select,#permission-rule-scope{width:100%;margin:6px 0 12px}.permission-rule-list>div{display:flex;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border,#ddd)}.permission-rule-list code{flex:1;overflow-wrap:anywhere}.permission-request{padding:12px 0;border-top:1px solid #ddd}.permission-request button{margin:4px}.permission-request p{white-space:pre-wrap;overflow-wrap:anywhere}.settings-network{margin-bottom:24px}.settings-network label{display:flex;gap:10px;align-items:center;margin:12px 0}.settings-network input[type=checkbox]{width:auto}
+
+/* Scheduled reports share the homepage's existing design tokens. */
+.schedule-card{padding:var(--space-4);margin-bottom:var(--space-3)}
+.schedule-card>.chip{margin-left:var(--space-3)}
+.schedule-actions,.schedule-fields{display:flex;flex-wrap:wrap;gap:var(--space-3)}
+.schedule-fields>label{flex:1;min-width:150px}
+#schedule-dialog{width:min(700px,calc(100vw - 32px));max-height:85vh;overflow:auto;border:1px solid var(--line);border-radius:var(--radius);padding:var(--space-5);color:var(--ink);background:var(--surface)}
+#schedule-form>label,#schedule-form>fieldset,#schedule-form>.schedule-fields{display:block;margin-bottom:var(--space-3)}
+#schedule-form>.schedule-fields:not([hidden]){display:flex}
+#schedule-form input:not([type=checkbox]),#schedule-form textarea,#schedule-form select{display:block;width:100%;box-sizing:border-box;font:inherit}
+#schedule-sources{max-height:150px;overflow:auto}#schedule-sources label{display:block}
+#schedule-error{color:var(--danger)}
+#schedule-form input:not([type=checkbox]),#schedule-form textarea,#schedule-form select{font-weight:400}

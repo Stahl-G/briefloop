@@ -409,6 +409,7 @@ class Worker:
         self.store=store;self._runtime=runtime;self.stopping=threading.Event();self.current=None
         self._queue_wakes=[threading.Event() for _ in range(3)]
         self.store._job_wakeup=self.wake
+        self.schedule_thread=threading.Thread(target=self.schedule_loop,name='briefloop-schedules',daemon=True)
         self.thread=threading.Thread(target=self.loop,name='briefloop-worker',daemon=True)
         self.review_current=None;self._review_runtime=None
         self.review_thread=threading.Thread(target=self.review_loop,name='briefloop-review-worker',daemon=True)
@@ -435,15 +436,27 @@ class Worker:
         if self.opened_paused:
             for job in self.store.rows("SELECT * FROM jobs WHERE status='queued'"):
                 self.store.update_job(job['id'],'interrupted',error='打开工作区时保留旧任务，尚未执行；点击恢复可继续')
-        self.thread.start();self.review_thread.start();self.file_thread.start()
+        from .schedules import skip_offline
+        skip_offline(self.store)
+        self.thread.start();self.review_thread.start();self.file_thread.start();self.schedule_thread.start()
 
     def close(self):
         self.stopping.set();self.wake();self._file_cancelled.set();self.runtime.cancel()
         if self._review_runtime:self._review_runtime.cancel()
+        if self.schedule_thread.is_alive():self.schedule_thread.join(timeout=12)
         self.thread.join(timeout=12)
         if self.review_thread.is_alive():self.review_thread.join(timeout=12)
         if self.file_thread.is_alive():self.file_thread.join(timeout=12)
         if self.store._job_wakeup==self.wake:self.store._job_wakeup=None
+
+    def schedule_loop(self):
+        from .schedules import tick
+        while not self.stopping.wait(15):
+            try:
+                with self._claim_lock:
+                    if not self.stopping.is_set():tick(self.store)
+            except Exception as exc:
+                self.store.event(None,'schedule_failed',{'error_type':type(exc).__name__})
 
     def wake(self):
         for event in self._queue_wakes:event.set()

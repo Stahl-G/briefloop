@@ -25,7 +25,7 @@ classifiers = [
     "Topic :: Text Processing :: Markup :: Markdown",
 ]
 dependencies = [
-  "mcp==2.2.0","pydantic>=2,<3", "markdown-it-py>=3,<5", "python-docx>=1", "pypdf>=5", "Pillow>=11", "pypdfium2>=4,<6", "openpyxl>=3.1,<4"]
+  "tzdata>=2025.2", "mcp==2.2.0","pydantic>=2,<3", "markdown-it-py>=3,<5", "python-docx>=1", "pypdf>=5", "Pillow>=11", "pypdfium2>=4,<6", "openpyxl>=3.1,<4"]
 
 [project.optional-dependencies]
 docx = ["python-docx>=1"]

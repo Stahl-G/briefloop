@@ -104,6 +104,8 @@ class Store:
         self.db = self.root/"briefloop.db"
         with self.tx() as c:
             c.executescript(SCHEMA)
+            from .schedules import SCHEMA as SCHEDULE_SCHEMA
+            c.executescript(SCHEDULE_SCHEMA)
             from .evidence import SCHEMA as EVIDENCE_SCHEMA
             c.executescript(EVIDENCE_SCHEMA)
             from .review import SCHEMA as REVIEW_SCHEMA
@@ -596,7 +598,8 @@ class Store:
             req=requirements[brief['run_id']]
             # Historical requirements are not retroactively assigned a new budget.
             brief['length_stats']=length_stats(brief['markdown'],target_words=req.get('target_words'),max_words=req.get('max_words'))
-        return {"notifications":notification_snapshot(self),"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "requirements": self.meta("requirements"), "settings": self.settings(),
+        from .schedules import listing as schedule_listing
+        return {"schedules":schedule_listing(self),"notifications":notification_snapshot(self),"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "requirements": self.meta("requirements"), "settings": self.settings(),
                 "profile": self.meta("workspace_profile") or {},
                 "workflows":list_workflows(),
                 "templates":[{**row, 'workflow_hint':template_workflow_hint(row)} for row in self.rows('SELECT * FROM templates ORDER BY created DESC')],
