@@ -5,7 +5,7 @@ export function preflightUploads(files, limits, extra={}) {
  for(const file of list){
   const bytes=new TextEncoder().encode(JSON.stringify({...extra,name:file.name,data:''})).length+4*Math.ceil(file.size/3);
   if(file.size>limits.max_file_bytes || bytes>=limits.max_request_bytes)
-   throw Error(`${file.name}（${(file.size/1048576).toFixed(1)} MiB）超过单文件 ${limits.max_file_bytes/1048576} MiB 或编码后请求限制。本次 ${list.length} 个文件合计 ${(total/1048576).toFixed(1)} MiB，尚未上传；请压缩、拆分文件或缩短文件名后重试。`);
+   throw Error(`${file.name}（${(file.size/1048576).toFixed(1)} MiB，${file.size.toLocaleString()} 字节）超过单文件 ${limits.max_file_bytes/1048576} MiB 或编码后请求限制。本次 ${list.length} 个文件合计 ${(total/1048576).toFixed(1)} MiB，尚未上传；请压缩、拆分文件或缩短文件名后重试。`);
  }
 }
 export async function uploadPayload(file, limits, extra={}) {
