@@ -30,6 +30,7 @@ const pageCode=source.slice(source.indexOf('function page(name){'),source.indexO
 const notices=[];
 const p=vm.createContext({
  chat:{id:null},
+ state:{settings:{model:'gpt-5.6-luna',model_selection_required:true}},activity:null,
  $:el,notice:(s)=>notices.push(s),document:{querySelectorAll:()=>[],body:{classList:{contains:()=>false,remove:()=>{}}}},
  refreshCandidates:()=>{},moveSearchSettings:()=>{},applyPendingSearchInline:()=>{},applyPendingSetupFields:()=>{},
 });
@@ -44,6 +45,14 @@ el('welcome').hidden=false;
 vm.runInContext("chat.id='existing-test';page('chat')",p);
 assert.equal(el('chat').hidden,false,'existing test errors remain readable before configuring a new model');
 assert.equal(el('welcome').hidden,true);
+
+el('welcome').hidden=false;
+vm.runInContext("chat.id=null;page('reports')",p);
+assert.equal(el('reports').hidden,false,'saved reports stay accessible without choosing a model');
+vm.runInContext("page('report')",p);
+assert.equal(el('report').hidden,false,'a saved report can be read, edited and exported locally');
+vm.runInContext("page('setup')",p);
+assert.equal(el('welcome').hidden,false,'browsing saved reports does not bypass model selection for a new task');
 
 // An empty workspace has no current brief while the welcome page is rendered.
 const statusCode=source.slice(source.indexOf('function renderReportStatus(){'),source.indexOf('function renderAssistantSummary(){'));

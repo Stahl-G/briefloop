@@ -15,6 +15,7 @@ const drawerCode=source.slice(source.indexOf('function setReportChatOpen'),sourc
 const pageCode=source.slice(source.indexOf('function page(name){'),source.indexOf('async function action(fn'));
 const c=vm.createContext({
  $:el,chat:{sessions:[],id:null},selectChat:()=>Promise.resolve(),setTimeout:()=>0,
+ state:{settings:{model:'chosen-model',model_selection_required:false}},
  notice:()=>{},document:documentMock,refreshCandidates:()=>{},moveSearchSettings:()=>{},applyPendingSetupFields:()=>{},
 });
 vm.runInContext(drawerCode+'\n'+pageCode,c);
