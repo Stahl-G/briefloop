@@ -57,6 +57,11 @@ class Conflict(ValueError):
     pass
 
 
+class OfflineFactCheck(ValueError):
+    """Offline runs cannot enable web fact checks; code reaches API callers."""
+    code = 'fact_check_requires_web'
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS notifications(seq INTEGER PRIMARY KEY AUTOINCREMENT,event_key TEXT NOT NULL UNIQUE,
@@ -109,8 +114,10 @@ class Store:
             c.executescript(CONFLICT_SCHEMA)
             from .release import SCHEMA as RELEASE_SCHEMA
             from .source_updates import SCHEMA as SOURCE_UPDATE_SCHEMA
+            from .fact_check import SCHEMA as FACT_CHECK_SCHEMA
             c.executescript(RELEASE_SCHEMA)
             c.executescript(SOURCE_UPDATE_SCHEMA)
+            c.executescript(FACT_CHECK_SCHEMA)
             if 'mode' not in {r['name'] for r in c.execute('PRAGMA table_info(runs)')}:
                 c.execute("ALTER TABLE runs ADD COLUMN mode TEXT NOT NULL DEFAULT 'normal'")
             if 'origin' not in {r['name'] for r in c.execute('PRAGMA table_info(templates)')}:
@@ -220,6 +227,12 @@ class Store:
         if clone is None and self.settings().get('company_context_enabled') and not req.company_context_revision:
             from .company_context import snapshot
             req.company_context_revision=snapshot(self)['revision']
+        # The task choice overrides the workspace default; the resolved bool is what
+        # the run stores, so resume and later phases never re-read settings for it.
+        if req.fact_check is None:
+            req.fact_check = self.settings().get('fact_checker') is True
+        if req.fact_check and not req.allow_web:
+            raise OfflineFactCheck('离线任务不能开启联网事实核查；请允许联网检索，或关闭该开关')
         if clone is None and req.template_id:
             from .templates import template
             selected=template(self,req.template_id)

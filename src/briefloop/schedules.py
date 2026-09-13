@@ -74,6 +74,12 @@ def validate(store, body):
         if type(config.get('every')) is not int or not 1<=config['every']<=10000 or config.get('unit') not in UNITS:
             raise ValueError('自定义频率须为 1–10000 分钟/小时/天/周')
     req = Requirements.model_validate(config.get('requirements',{})).model_dump()
+    # Freeze the optional paid check when the schedule is saved. A later change
+    # of workspace defaults must not silently enable it on recurring reports.
+    if req['fact_check'] is None:
+        req['fact_check']=store.settings().get('fact_checker') is True
+    if req['fact_check'] and not req['allow_web']:
+        raise ValueError('离线任务不能开启联网事实核查；请允许联网检索，或关闭该开关')
     ids = config.get('source_ids',[])
     if not isinstance(ids,list) or not all(isinstance(s,str) for s in ids):raise ValueError('请选择材料')
     for sid in ids:store.one('sources',sid)

@@ -8,8 +8,9 @@ import json
 
 KIND_LABELS = {
     'generate': '生成简报', 'assess': '重新评分', 'review': '独立审阅', 'revise': '按审阅修订',
-    'learn': 'WikiSkill 学习', 'export_docx': '生成工作稿 Word', 'release': '制作正式 Word',
-    'audit_bundle': '制作审计包', 'source_refresh': '复查来源', 'prepare_template': '准备模板',
+    'fact_check': '独立事实核查', 'learn': 'WikiSkill 学习', 'export_docx': '生成工作稿 Word',
+    'release': '制作正式 Word', 'audit_bundle': '制作审计包', 'source_refresh': '复查来源',
+    'prepare_template': '准备模板',
 }
 TERMINAL = ('complete', 'failed', 'interrupted', 'cancelled')
 

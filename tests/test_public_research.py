@@ -115,6 +115,40 @@ def test_builtin_tavily_skill_only_enters_enabled_scout_context(tmp_path, monkey
                 assert '必须能从开放搜索进入' not in prompt,'a no-web task must not promise open search'
 
 
+def test_duckduckgo_run_is_fully_managed_at_the_prompt_layer(tmp_path):
+    """No Tavily key: DDG still gets an injected metered skill, a frozen-source
+    prompt that never points at native search, and a metered budget note."""
+    from pathlib import Path
+    from importlib.resources import files
+    asset=files('briefloop').joinpath('skill_assets','duckduckgo','SKILL.md')
+    assert asset.is_file() and 'name: duckduckgo' in asset.read_text()
+    store=Store(tmp_path/'workspace')
+    store.set_meta('settings',{**store.settings(),'search_provider':'duckduckgo'})
+    run=store.create_run({'title':'公开研究','objective':'核对公开披露','allow_web':True},[])
+    folder=store.root/'jobs'/'ddg-check';folder.mkdir()
+    prompt=generation_prompt(store,{**run,'search_provider':'duckduckgo'},folder)
+    payload=json.loads((folder/'input.json').read_text())
+    binding=payload['retrieval_skill']
+    assert binding['target_roles']==['scout']
+    assert binding['path']==str((folder/'capabilities'/'duckduckgo'/'SKILL.md').resolve())
+    content=Path(binding['path']).read_text()
+    assert 'web-search --run '+run['id'] in content
+    assert 'add-url --run '+run['id'] in content
+    assert '没有提供方提取服务' in content and 'SYNTHETIC_SECRET' not in content
+    assert content in payload['role_skills']['scout']['instructions']
+    assert 'retrieval_skill_path' not in payload['role_skills'].get('analyst',{})
+    assert payload['search_provider']=='duckduckgo'
+    assert '本轮冻结搜索源：DuckDuckGo' in prompt and '公开确认已读' in prompt
+    # The DDG branch must not instruct Scouts to use host-native web search:
+    # internal generation sessions have it disabled for managed providers.
+    assert '当前执行引擎' not in prompt and 'Opencode 原生搜索' not in prompt
+    assert '原生网络搜索工具' not in prompt
+    # Budget note follows the managed-provider branch: DDG IS metered.
+    assert '受控 DuckDuckGo web-search' in prompt and '三类 remaining' in prompt
+    assert '不精确计量原生搜索次数' not in prompt
+    assert '见本轮 Scout 技能' in prompt and 'add-url 或明确的 Tavily extract' not in prompt
+
+
 def test_evaluator_initial_sources_follow_citations_and_keep_full_index(tmp_path):
     store=Store(tmp_path/'workspace')
     sources=[store.add_source('source-'+str(i),'body-'+str(i),error='fetch failed' if i==5 else None) for i in range(6)]

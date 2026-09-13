@@ -25,7 +25,8 @@ def test_quality_run_requires_freeze_before_any_controlled_request(tmp_path):
     reserved = budget.reserve_search(store, run['id'], 5)
     assert reserved['round_id'] == plan['current_round_id']
     entry = research_plan.pending_requests(store, run['id'])[reserved['request_id']]
-    assert entry == {'operation': 'search', 'round_id': plan['current_round_id'], 'status': 'reserved', 'created': entry['created']}
+    assert entry == {'operation': 'search', 'round_id': plan['current_round_id'], 'stage': 'research',
+                     'status': 'reserved', 'created': entry['created']}
 
 
 def test_freeze_is_idempotent_and_refuses_a_different_plan(tmp_path):
@@ -46,6 +47,40 @@ def test_freeze_cannot_exceed_the_authorized_budget(tmp_path):
         budget.reserve_search(store, run['id'], 1)
     with pytest.raises(budget.BudgetExhausted):
         budget.reserve_search(store, run['id'], 1)
+
+
+def test_deep_preset_freeze_expands_depth_rounds_and_breadth_slots(tmp_path):
+    preset = research_plan.PRESETS['deep']
+    store, run = quality_run(tmp_path, values={field: preset[field] for field in research_plan.BUDGET_FIELDS})
+    plan = research_plan.freeze(store, run['id'], preset='deep')
+    rounds = sorted(plan['rounds'].values(), key=lambda info: info['index'])
+    assert [info['index'] for info in rounds] == list(range(1, preset['depth'] + 1))
+    assert plan['rounds'][plan['current_round_id']]['index'] == 1
+    assert rounds[0]['status'] == 'active'
+    assert all(info['status'] == 'pending' for info in rounds[1:])
+    for info in rounds:
+        assert [task['slot_id'] for task in info['tasks']] == [f'scout-{n}' for n in range(1, preset['breadth'] + 1)]
+        assert all(task['directory'] == str(store.root / 'research' / run['id'] / 'rounds' / str(info['index']) / task['slot_id'])
+                   for task in info['tasks'])
+    # Rounds advance by activating the pre-created plan, never by appending beyond it.
+    research_plan.finish_round(store, run['id'], gaps=[{'description': '需补充对手口径'}])
+    second = research_plan.begin_round(store, run['id'])
+    assert second['index'] == 2 and not second['idempotent']
+    assert len(second['tasks']) == preset['breadth']
+    assert (store.root / 'research' / run['id'] / 'rounds' / '2' / 'manifest.json').exists()
+    current = second
+    while current['index'] < preset['depth']:
+        research_plan.finish_round(store, run['id'])
+        current = research_plan.begin_round(store, run['id'])
+        assert len(research_plan.frozen(store, run['id'])['rounds']) == preset['depth']
+    research_plan.finish_round(store, run['id'])
+    with pytest.raises(research_plan.AdmissionError, match='最大联网轮次'):
+        research_plan.begin_round(store, run['id'])
+    final = research_plan.frozen(store, run['id'])
+    assert len(final['rounds']) == preset['depth']
+    # finish_round replay after closing picks the closed round, not a pending sibling.
+    replay = research_plan.finish_round(store, run['id'])
+    assert replay['idempotent'] and replay['index'] == preset['depth']
 
 
 def test_legacy_run_keeps_unmetered_behavior_without_a_plan(tmp_path):
@@ -109,6 +144,51 @@ def test_begin_round_rejects_unknown_gap_and_open_round(tmp_path):
     research_plan.finish_round(store, run['id'], gaps=[{'description': 'g'}])
     with pytest.raises(ValueError, match='不存在的缺口'):
         research_plan.begin_round(store, run['id'], target_gap_ids=['gap_missing'])
+
+
+def test_concurrent_begin_round_replays_instead_of_losing_a_round(tmp_path, monkeypatch):
+    import threading
+    store, run = quality_run(tmp_path)
+    research_plan.freeze(store, run['id'])
+    research_plan.finish_round(store, run['id'], summary='first')
+    original = research_plan.frozen
+    reads = {}
+    both_read = threading.Barrier(2)
+
+    def synchronized_read(target_store, run_id):
+        plan = original(target_store, run_id)
+        ident = threading.get_ident()
+        reads[ident] = reads.get(ident, 0) + 1
+        if reads[ident] == 1:  # _save_plan's base read: hold it until both writers saw the same plan
+            both_read.wait(timeout=10)
+        return plan
+
+    monkeypatch.setattr(research_plan, 'frozen', synchronized_read)
+    results, errors = [], []
+
+    def starter():
+        try:
+            results.append(research_plan.begin_round(store, run['id']))
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=starter) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert errors == []
+    # Both writers read round 1 closed before either committed. One commits its
+    # round; the other must replay on the fresh plan and converge on the same
+    # round instead of blind-overwriting it with a second, orphaned round.
+    assert len(results) == 2
+    assert results[0]['round_id'] == results[1]['round_id']
+    assert sorted(result['idempotent'] for result in results) == [False, True]
+    plan = original(store, run['id'])
+    assert len(plan['rounds']) == 2
+    assert plan['current_round_id'] == results[0]['round_id']
+    # Serialization now comes from the store's BEGIN IMMEDIATE write transaction
+    # (no plan-level rev counter); the convergence assertions above carry the guarantee.
 
 
 def test_join_scouts_enforces_run_scope_and_source_statements(tmp_path):
@@ -183,6 +263,77 @@ def test_chat_generation_freezes_small_budget_and_resumes_into_bound_review(tmp_
     target = _snapshot(store, generated['version_id'])
     assert target['reconciliation']['open_questions'][0]['question'] == 'No independent context supplied'
     assert review_status(store, generated['version_id'])['reconciliation']['id'] == target['reconciliation']['id']
+
+
+def test_deep_tier_from_task_creation_persists_through_resume_and_shows_rounds(tmp_path):
+    """The tier chosen at task creation reaches the frozen plan and survives an interrupted run."""
+    import json
+    import threading
+    from briefloop.chat_tools import workspace_action
+    from briefloop.progress import ProgressTracker
+    from briefloop.runtime import Worker
+    store = Store(tmp_path)
+    source = store.add_source('Synthetic', 'Revenue was USD 12 million.')
+    result = workspace_action(store, {'action': 'generate', 'requirements': {
+        'title': 'Deep report', 'objective': 'Summarize supplied material', 'allow_web': False,
+        'research_tier': 'deep',
+        'research_budget': {field: research_plan.PRESETS['deep'][field] for field in research_plan.BUDGET_FIELDS}},
+        'source_ids': [source['id']]})
+    run_id = result['run_id']
+    assert json.loads(store.one('runs', run_id)['requirements'])['research_tier'] == 'deep'
+    frozen_fingerprints = []
+
+    class LocalRuntime:
+        cancelled = threading.Event()
+        attempts = 0
+
+        def execute(self, job, prompt, folder, on_tick):
+            self.attempts += 1
+            plan = json.loads((folder / 'input.json').read_text(encoding='utf-8-sig'))['research_plan']
+            assert plan['preset_id'] == 'deep' and plan['structure']['depth'] == 4
+            assert len(plan['rounds']) == 4
+            if self.attempts == 1:
+                frozen_fingerprints.append(plan['plan_fingerprint'])
+                raise RuntimeError('interrupted before drafting')
+            (folder / 'draft.json').write_text(json.dumps({'title': 'Deep report',
+                                                           'markdown': 'Revenue was USD 12 million.'}))
+            return {}
+
+    worker = Worker(store, LocalRuntime())
+    job = store.one('jobs', result['job_id'])
+    with pytest.raises(RuntimeError, match='interrupted'):
+        worker.generate(job, score=False)
+    worker.generate(job, score=False)
+    plan = research_plan.frozen(store, run_id)
+    assert frozen_fingerprints and plan['plan_fingerprint'] == frozen_fingerprints[0]
+    assert json.loads(store.one('runs', run_id)['requirements'])['research_tier'] == 'deep'
+    research_plan.finish_round(store, run_id)
+    research_plan.begin_round(store, run_id)
+    tracker = ProgressTracker(store, job['id'], store.root / 'jobs' / job['id'],
+                              context={'payload': json.dumps({'run_id': run_id})})
+    tracker.update()
+    rows = store.rows("SELECT data FROM events WHERE job_id=? AND kind='runtime_progress'", (job['id'],))
+    stages = json.loads(rows[-1]['data'])['stages']
+    assert [stage['label'] for stage in stages if stage['id'] == 'research'] == ['深度研究 第 2/4 轮']
+
+
+def test_external_submit_exposes_research_tier_with_standard_default(tmp_path):
+    from briefloop.external_requests import dispatch
+    store = Store(tmp_path)
+    source = store.add_source('Synthetic', 'Order count 17.')
+    workspace_id = store.meta('workspace_id')
+    submitted = dispatch(store, {'workspace_id': workspace_id, 'action': 'submit', 'request_id': 'tier-deep',
+                                 'requirements': {'title': 'Deep', 'objective': 'o', 'allow_web': True,
+                                                  'research_tier': 'deep',
+                                                  'research_budget': {field: research_plan.PRESETS['deep'][field]
+                                                                      for field in research_plan.BUDGET_FIELDS}},
+                                 'source_ids': [source['id']]})
+    plan = research_plan.freeze(store, submitted['run_id'])  # what generate does before any controlled call
+    assert plan['preset_id'] == 'deep' and len(plan['rounds']) == research_plan.PRESETS['deep']['depth']
+    plain = dispatch(store, {'workspace_id': workspace_id, 'action': 'submit', 'request_id': 'tier-default',
+                             'requirements': {'title': 'Plain', 'objective': 'o', 'allow_web': True},
+                             'source_ids': [source['id']]})
+    assert research_plan.freeze(store, plain['run_id'])['preset_id'] == 'standard'
 
 
 def test_join_scouts_cli_checks_run_and_round_scope(tmp_path, monkeypatch, capsys):

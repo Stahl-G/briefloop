@@ -178,7 +178,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
             self.send_header('Referrer-Policy','same-origin')
             self.end_headers();self.wfile.write(payload)
         def error(self,exc):
-            self.send(409 if isinstance(exc,Conflict) else 400,{'error':str(exc)})
+            # Structured rejections carry a stable code (e.g. fact-check needs the
+            # web grant) so clients beyond our own frontend can branch on it.
+            code=getattr(exc,'code',None)
+            self.send(409 if isinstance(exc,Conflict) else 400,{'error':str(exc),**({'code':code} if isinstance(code,str) and code else {})})
         def do_GET(self):
             try:
                 u=urlsplit(self.path);q=parse_qs(u.query)
@@ -354,6 +357,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/review-status':
                     from .review import review_status
                     self.send(200,review_status(store,q['version'][0]))
+                elif u.path=='/api/fact-checks':
+                    from .fact_check import view as fact_check_view
+                    self.send(200,fact_check_view(store,q['version'][0]))
                 elif u.path=='/api/evidence':
                     from .evidence import inspect_bindings
                     self.send(200,inspect_bindings(store,q['version'][0]))
@@ -526,6 +532,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/company-resolve':
                     from .company_context import resolve_conflict
                     result=resolve_conflict(store,body['fact_id'],body['accept'])
+                elif path=='/api/fact-check-grant':
+                    # 用户明确追加核查预算：并入阶段计量限额；阶段以预算耗尽收束后追加重开并继续核查。
+                    from .fact_check import grant as grant_fact_check
+                    result=grant_fact_check(store,body['version_id'],body.get('limits'))
                 elif path=='/api/template-import':
                     from .templates import import_template
                     result=import_template(store,body['name'],_upload_data(body),body.get('parent_id'))

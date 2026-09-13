@@ -13,13 +13,18 @@ from .backends import BACKENDS
 from . import __version__
 
 
-def _tavily_failure(operation,exc):
+def _search_failure(operation,exc,provider='tavily'):
     """A structured, redacted failure so the Scout's path-switching can act on it."""
-    return {'provider':'tavily','operation':operation,'status':'failed',
+    return {'provider':getattr(exc,'provider',None) or provider,'operation':operation,'status':'failed',
             'failure_kind':getattr(exc,'failure_kind','provider_error'),
             'http_status':getattr(exc,'status',None),
             'error':str(exc),
             'request_record_path':getattr(exc,'request_record_path',None)}
+
+
+def _tavily_failure(operation,exc):
+    # Compat name for the Tavily-only commands and their tests.
+    return _search_failure(operation,exc)
 
 
 def main():
@@ -58,6 +63,10 @@ def main():
     figure.add_argument('--run',required=True);figure.add_argument('--image',required=True);figure.add_argument('--title',required=True)
     figure.add_argument('--caption',default='');figure.add_argument('--source',action='append',default=[])
     figure.add_argument('--data');figure.add_argument('--script')
+    fact=ts.add_parser('fact-status',help='登记事实核查结果：逐条候选状态、一句依据与证据 span，只做确定性校验落库')
+    fact.add_argument('--run',required=True)
+    fact.add_argument('--file',required=True,help='UTF-8 JSON 结果文件（version_id/selection/candidates/execution）')
+    fact.add_argument('--job',help='本次核查任务 job id，用于记录事件')
     join=ts.add_parser('join-scouts');join.add_argument('--files',nargs='+',required=True)
     join.add_argument('--run');join.add_argument('--round');join.add_argument('--slots',nargs='+')
     join.add_argument('--output',help='保存合并结果为 UTF-8 JSON，避免 shell 重定向改变编码')
@@ -86,6 +95,15 @@ def main():
     tavily_extract=ts.add_parser('tavily-extract',help='保存 Tavily 提取的正文与提供方响应')
     tavily_extract.add_argument('--run',required=True);tavily_extract.add_argument('--url',action='append',required=True)
     tavily_extract.add_argument('--extract-depth',choices=['basic','advanced'],default='basic')
+    web=ts.add_parser('web-search',help='联网搜索摘要，按本轮冻结的搜索源自动选择 provider，只发现来源')
+    web.add_argument('--run',required=True);web.add_argument('--query',required=True)
+    web.add_argument('--topic',choices=['general','news'],default='general')
+    web.add_argument('--time-range',choices=['day','week','month','year'])
+    web.add_argument('--start-date');web.add_argument('--end-date')
+    web.add_argument('--include-domain',action='append',default=[])
+    web.add_argument('--exclude-domain',action='append',default=[])
+    web.add_argument('--max-results',type=int,default=5)
+    web.add_argument('--search-depth',choices=['basic','advanced'],default='basic')
     a=p.parse_args()
     if a.command=='version':
         from .software_version import runtime_info,check_update
@@ -156,13 +174,23 @@ def main():
                 p.exit(2, json.dumps({'status': 'invalid', 'error': 'validation_error',
                     'errors': errors}, ensure_ascii=False) + '\n')
             print(json.dumps(result, ensure_ascii=False))
+        elif a.tool=='web-search':
+            from . import websearch
+            try:
+                result=websearch.search(a.query,topic=a.topic,time_range=a.time_range,start_date=a.start_date,end_date=a.end_date,
+                                        include_domains=a.include_domain,exclude_domains=a.exclude_domain,
+                                        max_results=a.max_results,search_depth=a.search_depth,store=store,run_id=a.run)
+            except websearch.SearchError as exc:
+                print(json.dumps(_search_failure('search',exc),ensure_ascii=False))
+            else:
+                print(json.dumps(result,ensure_ascii=False))
         elif a.tool=='tavily-search':
             from . import tavily
             try:
                 tavily.check_run(store,a.run)
                 result=tavily.search(a.query,topic=a.topic,time_range=a.time_range,start_date=a.start_date,end_date=a.end_date,include_domains=a.include_domain,exclude_domains=a.exclude_domain,max_results=a.max_results,search_depth=a.search_depth,store=store,run_id=a.run)
             except tavily.TavilyError as exc:
-                print(json.dumps(_tavily_failure('search',exc),ensure_ascii=False))
+                print(json.dumps(_search_failure('search',exc),ensure_ascii=False))
             else:
                 print(json.dumps(result,ensure_ascii=False))
         elif a.tool=='tavily-extract':
@@ -170,7 +198,7 @@ def main():
             try:
                 result=tavily.extract(store,a.url,run_id=a.run,extract_depth=a.extract_depth)
             except tavily.TavilyError as exc:
-                print(json.dumps(_tavily_failure('extract',exc),ensure_ascii=False))
+                print(json.dumps(_search_failure('extract',exc),ensure_ascii=False))
             else:
                 print(json.dumps(result,ensure_ascii=False))
         elif a.tool=='prepare-report-data':
@@ -199,6 +227,23 @@ def main():
         elif a.tool=='register-figure':
             from .figures import register_figure
             print(json.dumps(register_figure(store,a.run,a.image,a.title,caption=a.caption,source_ids=a.source,data_path=a.data,script_path=a.script),ensure_ascii=False))
+        elif a.tool=='fact-status':
+            from .fact_check import submit_result,FactCheckError
+            from .research_plan import AdmissionError
+            try:payload=json.loads(Path(a.file).read_text(encoding='utf-8-sig'))
+            except (OSError,ValueError) as exc:
+                p.exit(2,json.dumps({'status':'error','error':'result_file_invalid','message':'--file 需要 UTF-8 JSON 结果文件：'+str(exc)},ensure_ascii=False)+'\n')
+            try:admitted=submit_result(store,a.run,payload,job_id=a.job)
+            except FactCheckError as exc:
+                # 契约违规整体结构化退回，供 agent 按逐条错误自修后重交。
+                print(json.dumps({'status':'invalid','error':'fact_check_contract','errors':exc.errors},ensure_ascii=False));raise SystemExit(1)
+            except AdmissionError as exc:
+                print(json.dumps({'status':'error','error':exc.code,'message':str(exc)},ensure_ascii=False));raise SystemExit(1)
+            record=admitted['record']
+            print(json.dumps({'status':'ok','record_id':record['id'],'version_id':record['version_id'],
+                              'stage_id':record['stage_id'],'execution':record['execution'],
+                              'checked':len(record['candidates']),'unchecked':record['unchecked'],
+                              'stage':admitted['stage']['status']},ensure_ascii=False))
         elif a.tool=='read-source':
             from .scout_tools import read_source
             print(read_source(store,a.id,start_line=a.start_line,end_line=a.end_line,max_chars=a.max_chars))

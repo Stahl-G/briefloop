@@ -16,6 +16,11 @@ from .agent_commands import tool_command, quote_path
 
 FILE_JOB_KINDS = ('export_docx', 'release', 'audit_bundle')
 
+# Product starting value, not a tuned split. The share the Worker reserves from
+# the task budget when admitting the fact-check stage; real runs decide the
+# actual sizing (feasibility report §6, third stage).
+FACT_CHECK_RESERVE = {'search_requests': 6, 'candidate_urls': 30, 'source_pages': 12}
+
 
 COMMON = '''你在运行 BriefLoop 本地应用。用户已授权本轮研究、写作、评分。
 你是 Orchestrator，负责语义规划和调用真实原生子 agent。不要模拟多个角色自问自答。
@@ -121,6 +126,33 @@ def source_context(store,sid):
     return {**source,**attachment,'absolute_path':attachment.get('text_path') or str(store.root/source['path'])}
 
 
+def _research_handoff(store, run_id, plan):
+    """Latest closed round's validated handoff for a multi-round plan, or None.
+
+    Prompt building never crashes on a bad agent file: an invalid handoff is
+    returned with its structured errors so the next round repairs instead of
+    silently inheriting unverified learnings.
+    """
+    from .scout_tools import check_handoff, HandoffError
+    if int((plan.get('structure') or {}).get('depth') or 1) < 2:
+        return None
+    closed = [info for info in (plan.get('rounds') or {}).values() if info.get('status') == 'closed']
+    for info in sorted(closed, key=lambda item: int(item.get('index') or 0), reverse=True):
+        path = store.root / 'research' / run_id / 'rounds' / str(info.get('index')) / 'handoff.json'
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding='utf-8-sig'))
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+            data = None
+        try:
+            validated = check_handoff(store, run_id, data)
+        except HandoffError as exc:
+            return {'round_index': info.get('index'), 'invalid': True, 'errors': exc.errors}
+        return {'round_index': info.get('index'), **validated}
+    return None
+
+
 def generation_prompt(store, run, folder, backend='codex'):
     from .models import normalize_search_provider
     raw_requirements=json.loads(run['requirements'])
@@ -130,6 +162,7 @@ def generation_prompt(store, run, folder, backend='codex'):
     research_budget=budget_snapshot(store,run['id'])
     from .research_plan import frozen as frozen_plan,is_quality
     research_plan=frozen_plan(store,run['id']) if is_quality(store,run['id']) else None
+    research_handoff=_research_handoff(store,run['id'],research_plan) if research_plan else None
     provider=normalize_search_provider(run.get('search_provider'))
     skill=run.get('skill_override') if 'skill_override' in run else (store.one('skills',run['skill_id']) if run['skill_id'] else None)
     sources=[source_context(store,sid) for sid in store.source_ids(run['id'])]
@@ -163,11 +196,17 @@ def generation_prompt(store, run, folder, backend='codex'):
                             'result_file':str(directory/'result.json'),'schema_path':str(schema_path),
                             'scout_contract_path':str(scout_contract)})
     payload={'deliverable_spec':deliverable,'report_profile':report_profile,'reference_sources':references,'requirements':req,'research_budget_status':research_budget,'research_plan':research_plan,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':max_parallel,'scout_slots':scout_slots,'scout_contract_path':str(scout_contract),'reusable_research':run.get('reusable_research',[])}
+    if research_handoff is not None:payload['research_handoff']=research_handoff
     tool=tool_command(store.root,backend=backend)
-    tavily_enabled=req['allow_web'] and provider=='tavily'
-    if tavily_enabled:
-        template=files('briefloop').joinpath('skill_assets','tavily','SKILL.md').read_text(encoding='utf-8')
-        retrieval_path=(folder/'capabilities'/'tavily'/'SKILL.md').resolve()
+    # Every managed provider (tavily, duckduckgo) gets the same treatment: a
+    # generated Scout-only skill, metered CLI retrieval and a managed budget
+    # note. Internal generation sessions have host-native web search disabled
+    # for managed providers, so a DDG run must never be told to use it.
+    from .websearch import MANAGED_PROVIDERS, PROVIDER_LABELS
+    managed=req['allow_web'] and provider in MANAGED_PROVIDERS
+    if managed:
+        template=files('briefloop').joinpath('skill_assets',provider,'SKILL.md').read_text(encoding='utf-8')
+        retrieval_path=(folder/'capabilities'/provider/'SKILL.md').resolve()
         retrieval_path.parent.mkdir(parents=True,exist_ok=True)
         content=template.replace('{tool}',tool).replace('{run_id}',run['id'])
         retrieval_path.write_text(content,encoding='utf-8')
@@ -175,6 +214,7 @@ def generation_prompt(store, run, folder, backend='codex'):
         dispatch_path.write_text('你是本轮负责找资料的 Scout。按分配主题和槽位绝对路径执行。'
             +'开始时完整读取一次 '+str(retrieval_path)+'，并简短确认已读；后续无需重复加载。'
             +'任务消息只需具体分工、槽位/输出/schema 路径及技能路径，不复制两份技能正文。'
+            +('深度研究时任务消息还需附上一轮交接摘要（input.json.research_handoff）与剩余预算视图。' if research_handoff is not None else '')
             +'终态回复约 200 字以内，给出状态、核心发现/缺口和结果文件路径。\n',encoding='utf-8')
         payload['retrieval_skill']={'path':str(retrieval_path),'target_roles':['scout'],
                                     'dispatch_prompt_path':str(dispatch_path)}
@@ -185,20 +225,19 @@ def generation_prompt(store, run, folder, backend='codex'):
         scout_binding['retrieval_skill_path']=str(retrieval_path)
         payload['role_skills']['scout']=scout_binding
     (folder/'input.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8')
-    if backend == 'opencode' and not tavily_enabled:
+    if not managed:
         search = ('本轮冻结搜索源：Opencode 原生搜索。允许联网时 Scout 使用 host 的原生网络搜索工具设计查询、筛选公开原始发布者；搜索摘要仅用于发现，后续仍须读取并登记正文。'
-                  if req['allow_web'] else '本轮未允许联网，只处理已登记的材料，不加载外部检索技能。')
+                  if backend == 'opencode' and req['allow_web'] else
+                  ('本轮冻结搜索源：当前执行引擎。允许联网时 Scout 使用 host 的原生网络搜索工具设计查询、筛选公开原始发布者；搜索摘要仅用于发现，后续仍须读取并登记正文。'
+                   if req['allow_web'] else '本轮未允许联网，只处理已登记的材料，不加载外部检索技能。'))
     else:
-        search = (f'''本轮冻结搜索源：Tavily。已生成仅供检索 Scout 的技能：{retrieval_path}。
+        search = f'''本轮冻结搜索源：{PROVIDER_LABELS[provider]}。已生成仅供检索 Scout 的技能：{retrieval_path}。
 每个检索 Scout 的实际 spawn/delegate 消息优先使用精简任务：具体分工、槽位/结果/schema 的绝对路径和技能绝对路径 {retrieval_path}，要求 Scout 完整读取一次并公开确认已读。{dispatch_path} 提供精简派发说明。
 父会话不必先读取技能全文再复制两份；input.role_skills 中的正文仍可按需使用，但不要重复展开已通过技能路径分配的内容。保存实际 dispatch prompt、子 agent 句柄及真实读取确认，不伪造。
 retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generation input.json 注入 Analyst、Evaluator、Maintainer 或 Proposer。他们只接收相应任务、来源及检索结果。'''
-                if tavily_enabled else
-                ('本轮冻结搜索源：当前执行引擎。允许联网时 Scout 使用 host 的原生网络搜索工具设计查询、筛选公开原始发布者；搜索摘要仅用于发现，后续仍须读取并登记正文。'
-                 if req['allow_web'] else '本轮未允许联网，只处理已登记的材料，不加载外部检索技能。'))
-    if backend == 'opencode' and tavily_enabled:
+    if backend == 'opencode' and managed:
         search = search.replace('实际 spawn/delegate 消息优先使用精简任务', '实际 task 工具消息优先使用精简任务')
-    registration = 'add-url 或明确的 Tavily extract' if tavily_enabled else 'add-url'
+    registration = 'add-url 或明确的 Tavily extract' if managed and provider=='tavily' else 'add-url'
     discovery=('初始来源为 0，这是正常的公开信息研究任务，不要求用户先上传材料。按目标、时间窗口与主题设计来源发现分工，至少安排一个 Scout；不要因为初始文件为 0 就安排 0 个 Scout。'
                if not sources and req['allow_web'] else
                '已有初始材料：先忠实读取，再按研究目标识别证据缺口；只有允许联网时才补充公开来源。')
@@ -210,23 +249,39 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
     if not req['allow_web']:
         retrieval_strategy='本轮未开启联网：只读取上传材料与已有来源，不安排公开检索，也不承诺开放搜索或分轮搜索；按已有材料识别证据缺口并如实交接。'
     else:
-        retrieval_strategy=('分三轮推进检索，而不是让每个支线先一次深挖到底。第一轮侦察：整批 Scout 合计 1–2 条互补查询（不是每个 Scout 各 1–2 条），找出本期重要事件、候选主体、候选标题、URL 与可能日期；`AI news`、`AI weekly`、`artificial intelligence news` 这类同义改写不算不同方向。第二轮聚焦：按首轮线索选择互不重复的信息需求，可用意图包括 event discovery（范围内还有哪些重要变化）、entity check（某关键主体是否漏检或只有零散线索）、primary verification（定位一手正文与关键限定）、gap repair（补齐日期、指标、发布状态、冲突）；可用实体别名、原语言产品名、首轮出现的完整发布标题或明确指标词。第三轮补缺：仅当仍有高价值具体缺口时，用同一 Scout 多轮或再派少量同类任务；优先补"重要事件没有可用正文"，其次补"改变结论的指标/日期/条件"，不要给材料已充分的支线再堆重复来源。轮数是执行安排，不替代硬预算，满足任务可提前停止，不要求花完搜索次数；每条查询都要能回答"相对已有材料，这次想多知道什么"，不重复已经失败或已充分覆盖的相近查询。发现阶段可用综述、媒体、索引页发现事件及原始链接，取证阶段再优先一手来源'+('；具体搜索参数、获取失败后的换路与停止条件见本轮 Scout 技能。' if tavily_enabled else '。'))
+        retrieval_strategy=('分三轮推进检索，而不是让每个支线先一次深挖到底。第一轮侦察：整批 Scout 合计 1–2 条互补查询（不是每个 Scout 各 1–2 条），找出本期重要事件、候选主体、候选标题、URL 与可能日期；`AI news`、`AI weekly`、`artificial intelligence news` 这类同义改写不算不同方向。第二轮聚焦：按首轮线索选择互不重复的信息需求，可用意图包括 event discovery（范围内还有哪些重要变化）、entity check（某关键主体是否漏检或只有零散线索）、primary verification（定位一手正文与关键限定）、gap repair（补齐日期、指标、发布状态、冲突）；可用实体别名、原语言产品名、首轮出现的完整发布标题或明确指标词。第三轮补缺：仅当仍有高价值具体缺口时，用同一 Scout 多轮或再派少量同类任务；优先补"重要事件没有可用正文"，其次补"改变结论的指标/日期/条件"，不要给材料已充分的支线再堆重复来源。轮数是执行安排，不替代硬预算，满足任务可提前停止，不要求花完搜索次数；每条查询都要能回答"相对已有材料，这次想多知道什么"，不重复已经失败或已充分覆盖的相近查询。发现阶段可用综述、媒体、索引页发现事件及原始链接，取证阶段再优先一手来源'+('；具体搜索参数、获取失败后的换路与停止条件见本轮 Scout 技能。' if managed else '。'))
     dispatch_word = {'codex':'spawn/delegate', 'opencode':'task 工具'}.get(backend, '宿主原生子任务接口')
     id_word = '真实子 agent 会话 ID（task 结果中的 ses_ ID）' if backend == 'opencode' else '宿主实际返回的 agent ID'
-    if tavily_enabled:
-        budget_note='本轮共享硬预算见 input.json.research_budget_status：所有 Scout 共用，不是每人一份。受控 Tavily Search/Extract 在每次调用时事务检查并返回 remaining；search_requests/candidate_urls 只硬计受控 Tavily Search，source_pages 硬计所有受控 add-url/Extract 的唯一 URL，同 URL 回退与缓存不重复算页。出现 budget_exhausted 时保留现有来源，把简短缺口写入研究交接记录，停止新增检索并交接，不重试消耗上限的操作。派发每个批次前先对照三类 remaining（搜索请求、候选 URL、唯一正文 URL）：前轮不要一次占满全部预算，给补缺同时留出搜索、候选和正文名额；三类是各自独立的硬上限，剩下搜索次数但候选或正文名额不足时不要绕过。旧任务 limits=null 表示未设置预算，不追溯限制。'
+    if managed:
+        # The note follows whether the provider is metered, not which one it is:
+        # DDG search requests and candidate URLs are reserved in the same
+        # transaction as Tavily's, so a DDG run must budget against all three.
+        metered_calls=('受控 Tavily Search/Extract 在每次调用时事务检查并返回 remaining' if provider=='tavily'
+                       else '受控 DuckDuckGo web-search 与 add-url 在每次调用时事务检查并返回 remaining')
+        metered_search='受控 Tavily Search' if provider=='tavily' else '受控 DuckDuckGo web-search 调用'
+        metered_pages='受控 add-url/Extract' if provider=='tavily' else '受控 add-url'
+        budget_note=('本轮共享硬预算见 input.json.research_budget_status：所有 Scout 共用，不是每人一份。'+metered_calls
+                     +'；search_requests/candidate_urls 只硬计'+metered_search+'，source_pages 硬计所有'+metered_pages+'的唯一 URL，同 URL 回退与缓存不重复算页。出现 budget_exhausted 时保留现有来源，把简短缺口写入研究交接记录，停止新增检索并交接，不重试消耗上限的操作。派发每个批次前先对照三类 remaining（搜索请求、候选 URL、唯一正文 URL）：前轮不要一次占满全部预算，给补缺同时留出搜索、候选和正文名额；三类是各自独立的硬上限，剩下搜索次数但候选或正文名额不足时不要绕过。旧任务 limits=null 表示未设置预算，不追溯限制。')
     else:
         budget_note='本轮检索由宿主原生工具执行，BriefLoop 不精确计量原生搜索次数与候选 URL（input.json.research_budget_status 中这两项在原生模式下为空或未知，不是额度，不要当成可用次数去核对）；只有受控 add-url/Extract 的唯一正文 URL（source_pages）按事务计量。出现 budget_exhausted 时保留现有来源并简要交接缺口，不重试消耗上限的操作；派发每批前按剩余 source_pages 留出补缺名额，不把它当成可任意扩张的额度。旧任务 limits=null 表示未设置预算，不追溯限制。'
-    native_word = '原生 Codex 搜索不可精确计量' if backend == 'codex' else '原生 Opencode 搜索不可精确计量'
     research_plan_note=('' if not research_plan else
         '本轮是 quality_v1 分轮研究：计划已冻结，见 input.json.research_plan。structure.breadth 是每轮查询建议，depth 是最大轮数；current_round_id 是当前 active 轮次。'
         '完成本轮 Scout 并结构合并后，由同一 Analyst/主 Agent 查看本轮候选，再决定补证或收轮：需要下一轮时，先用 workspace-action `finish_research_round`（run_id、gaps：每项含 description，可选 source_ids/related_claim_ids/requirement_ids）拿到程序生成的真实 gap id，再用 `begin_research_round`（run_id、target_gap_ids=上一步返回的 gap id、tasks）开下一轮；不需要下一轮就只调用 finish_research_round 收轮。'
         '不要只用提示词模拟轮次；breadth 可按证据需要调整，实际硬上限是本任务已授权共享预算。恢复时先读取 research_status，复用已关闭轮次及真实缺口，不重新消耗已完成研究。')
+    handoff_note=''
+    if research_handoff is not None:
+        detail=('不符合交接契约（'+'；'.join(error['message'] for error in research_handoff.get('errors',[])[:3])
+                +'），不采信其中 learnings，按已登记缺口重新取证' if research_handoff.get('invalid')
+                else '无引用的 learning 已标待证，追问与覆盖情况照常使用')
+        handoff_note=('深度研究轮间交接：input.json.research_handoff 是第 '+str(research_handoff['round_index'])+' 轮的交接，'+detail
+                     +'；剩余预算视图为 input.json.research_budget_status.remaining（'+json.dumps(research_budget['remaining'],ensure_ascii=False)+'）。'
+                     '派发本轮每个 Scout 时把上一轮交接摘要与剩余预算一并写进任务消息：子查询从上一轮 learnings 与追问出发，不重复已覆盖问题，待证 learning 要么补证要么丢弃；预算耗尽不是失败，保留证据并交接。\n')
     view_word = '使用 view_image 直接读图' if backend == 'codex' else '用 read 工具直接读取图像路径'
     view_pages_word = '使用 view_image 读取页图' if backend == 'codex' else '用 read 工具读取返回的页图'
     check_word = 'view_image检查' if backend == 'codex' else '用 read 工具读取检查'
     return common+f'''
 {research_plan_note}
+{handoff_note}
 本轮输入：{folder/'input.json'}。你的工作目录：{folder}。先按字段读取 requirements、sources 索引、scout_slots 和能力路径；不要为分工先展开全部技能正文或 schema。
 图表与表格由主 Agent 根据报告目标、参考报告和可用数据决定类型、数量与正文位置，不要求凑图，也不固定成一种预测图。趋势、量价和事件反应用图，精确数值与竞争条件用表；IR任务优先二级市场量能/PR反应，市场细价按需求精简。
 先复用用户Excel/历史报告已有且适用的图表，不默认重绘。对XLSX来源用 `{tool} extract-workbook-figures --id SOURCE_ID` 获取原始内嵌图片与原生图表清单；原生图表需用可用渲染器，或复用经核对来自同版本工作簿的渲染图。重新绘图不能称原图复制，旧参考只提供表达方式，数据日期必须适用本期。
@@ -542,7 +597,7 @@ class Worker:
     def review_loop(self):
         from .interactive_runtime import InteractiveRuntime
         from .review import run_review
-        for jobs in self._queued(1,"SELECT * FROM jobs WHERE kind='review' AND status='queued' ORDER BY rowid LIMIT 1"):
+        for jobs in self._queued(1,"SELECT * FROM jobs WHERE kind IN ('review','fact_check') AND status='queued' ORDER BY rowid LIMIT 1"):
             if not jobs:continue
             job=jobs[0]
             with self._claim_lock:
@@ -553,7 +608,8 @@ class Worker:
                 if self._review_runtime is None:self._review_runtime=InteractiveRuntime(self.store,backends=self.runtime.backends)
                 self._review_runtime.cancelled.clear()
             try:
-                result=run_review(self.store,self._review_runtime,job,json.loads(job['payload'])['version_id'],self.folder(job))
+                result=(self.run_fact_check(job,runtime=self._review_runtime) if job['kind']=='fact_check' else
+                        run_review(self.store,self._review_runtime,job,json.loads(job['payload'])['version_id'],self.folder(job)))
                 self._settle_job(job['id'],'complete',result=result,runtime=self._review_runtime)
             except InterruptedError as exc:self._settle_job(job['id'],'cancelled',error=str(exc))
             except Exception as exc:self._settle_job(job['id'],'failed',error=str(exc))
@@ -561,7 +617,7 @@ class Worker:
                 with self._claim_lock:self.review_current=None
 
     def loop(self):
-        for jobs in self._queued(0,"SELECT * FROM jobs WHERE status='queued' AND kind!='review' AND kind NOT IN (?,?,?) ORDER BY rowid LIMIT 1",FILE_JOB_KINDS):
+        for jobs in self._queued(0,"SELECT * FROM jobs WHERE status='queued' AND kind NOT IN ('review','fact_check') AND kind NOT IN (?,?,?) ORDER BY rowid LIMIT 1",FILE_JOB_KINDS):
             if not jobs:
                 if self.store.settings()['auto_learn'] and not self.opened_paused:
                     try:
@@ -671,6 +727,128 @@ class Worker:
         if not saved or saved['brief_hash']!=self.store.one('briefs',version_id)['hash'] or saved.get('sources') is None:return {}
         return {'source_snapshot':saved['sources']}
 
+    def _admit_fact_check(self,job,brief):
+        """Admit the fact-check stage before delivery checks, then schedule its run.
+
+        Trigger (plan §4 Phase B): before delivery checks, when the switch is on
+        and candidate claims exist — orchestrated by the Worker, never during the
+        writing turn. Admission records the budget source (a pending user grant
+        wins over the task reserve share) and the fact-checker's own job is
+        queued with the same frozen model/provider chain as this writing job.
+        A stage that cannot be admitted (offline, no budget, rounds still open)
+        is a structured event, never a run failure.
+        """
+        from .research_plan import (admit_fact_check,AdmissionError,consume_pending_fact_check_grant,
+                                    frozen as frozen_plan,pending_fact_check_grant)
+        run_id=brief['run_id']
+        requirements=json.loads(self.store.one('runs',run_id)['requirements'])
+        if not requirements.get('fact_check'):return None
+        if not self.store.rows('SELECT id FROM claims WHERE run_id=? LIMIT 1',(run_id,)):return None
+        grant=pending_fact_check_grant(self.store,run_id)
+        if grant:
+            source={'kind':'user_grant','limits':grant['limits']}
+        else:
+            from .research_budget import snapshot as budget_snapshot
+            remaining=budget_snapshot(self.store,run_id).get('remaining') or {}
+            share={field:min(FACT_CHECK_RESERVE[field],int(remaining.get(field) or 0)) for field in FACT_CHECK_RESERVE}
+            source={'kind':'task_reserve','limits':share}
+        try:
+            admitted=admit_fact_check(self.store,run_id,source,job_id=job['id'])
+        except AdmissionError as exc:
+            self.store.event(job['id'],'fact_check',{'action':'admit_refused','code':exc.code,'error':str(exc)})
+            return None
+        if grant:
+            consume_pending_fact_check_grant(self.store,run_id,admitted['stage_id'])
+        if admitted.get('status')!='active':return admitted  # already closed; nothing to run
+        pending=self.store.rows("SELECT id FROM jobs WHERE kind='fact_check' AND status IN ('queued','running') AND json_extract(payload,'$.run_id')=?",(run_id,))
+        if pending:return admitted
+        payload=json.loads(job['payload'])
+        check={'run_id':run_id,'version_id':brief['id'],'parent_job_id':job['id']}
+        # Same frozen model/provider chain as the writing job, and the same
+        # conversation for status notes when the task started from a chat.
+        check.update({key:payload[key] for key in ('runtime','agent_backend','search_provider','role_models','session_id') if key in payload})
+        queued=self.store.enqueue('fact_check',check)
+        self.store.event(job['id'],'fact_check',{'action':'dispatch','stage_id':admitted['stage_id'],'job_id':queued['id']})
+        return admitted
+
+    def _wait_fact_check(self,parent,brief):
+        """Final review consumes the check result; its independent lane stays cancellable."""
+        pending=self.store.rows("SELECT * FROM jobs WHERE kind='fact_check' AND json_extract(payload,'$.parent_job_id')=? AND json_extract(payload,'$.version_id')=? ORDER BY rowid DESC LIMIT 1",(parent['id'],brief['id']))
+        if not pending:return
+        child=pending[0]
+        while True:
+            if self.runtime.cancelled.is_set() or self.stopping.is_set():
+                self.stop_job(child['id']);raise InterruptedError('报告已停止，关联核查也已停止')
+            record=self.store.one('jobs',child['id'])
+            if record['status']=='complete':return
+            if record['status'] in ('failed','cancelled','interrupted'):
+                self.store.event(parent['id'],'fact_check',{'action':'incomplete','job_id':child['id'],
+                                 'error':record['error'] or '事实核查未完成；保留草稿并继续独立审阅'})
+                return
+            # Direct Worker.generate callers have no queue threads. Claim and
+            # settle the same persisted child, rather than leave it queued forever.
+            if not self.review_thread.is_alive():
+                with self.store.tx() as c:
+                    claimed=c.execute("UPDATE jobs SET status='running',updated=? WHERE id=? AND status='queued'",(now(),child['id'])).rowcount
+                if claimed:
+                    try:self._settle_job(child['id'],'complete',result=self.run_fact_check(self.store.one('jobs',child['id'])),runtime=self.runtime)
+                    except InterruptedError:
+                        self._settle_job(child['id'],'cancelled',error='任务已停止');raise
+                    except Exception as exc:self._settle_job(child['id'],'failed',error=str(exc))
+                    continue
+            self.stopping.wait(.2)
+
+    def run_fact_check(self,job,*,runtime=None):
+        """Run the orchestrated fact-check turn: task pack, native session, stage close.
+
+        The fact-checker is an independent CLI-host session (its own job folder
+        conversation): it selects claims, runs metered neutral plus counter-
+        evidence queries and submits through the ``fact-status`` tool, which
+        validates and closes the stage (D4: reasoning in the agent, deterministic
+        checks in Python). This method owns transport only: a user stop closes
+        the stage as cancelled; any other failure fails the job while the stage
+        stays active for a resume. A turn that ends without any submission is
+        reported as failed, never as a completed check.
+        """
+        from .fact_check import fact_check_prompt,records_for
+        from .research_plan import finish_fact_check,frozen as frozen_plan
+        payload=json.loads(job['payload'])
+        brief=self.store.one('briefs',payload['version_id'])
+        folder=self.folder(job)
+        from .backends import validate_backend
+        backend=validate_backend(payload.get('agent_backend','codex'))
+        run_id=brief['run_id']
+        stage=(frozen_plan(self.store,run_id) or {}).get('fact_check') or {}
+        if stage.get('status')!='active':
+            # A resumed job after the stage already closed (late result refused,
+            # user grant reopened another stage) must not execute a second turn.
+            return {'version_id':brief['id'],'stage_id':stage.get('stage_id'),
+                    'execution':{'status':stage.get('status'),'summary':'阶段已收束，本次不执行'}}
+        job={**job,'allow_web':True}
+        self.store.event(job['id'],'fact_check',{'action':'run','stage_id':stage['stage_id'],'version_id':brief['id']})
+        try:
+            (runtime or self.runtime).execute(job,fact_check_prompt(self.store,job,brief,folder,backend),folder)
+        except InterruptedError:
+            finish_fact_check(self.store,run_id,status='cancelled',summary='核查任务已停止',job_id=job['id'])
+            raise
+        except Exception:
+            # A transport failure is a job failure, not a check outcome: the
+            # stage stays active so the resumed job can retry the same turn.
+            raise
+        stage=(frozen_plan(self.store,run_id) or {}).get('fact_check') or {}
+        if stage.get('status')=='active':
+            # The turn ended without an admitted result: fail the job honestly;
+            # the stage stays active for a resume instead of pretending an
+            # empty check ran.
+            raise ValueError('核查会话结束但未提交结果；可恢复该任务重试')
+        rows=records_for(self.store,run_id)
+        record=rows[0] if rows else None
+        return {'version_id':brief['id'],'stage_id':stage.get('stage_id'),
+                'execution':stage.get('outcome',{}).get('status'),
+                'record_id':record['id'] if record else None,
+                'candidates':len(record['data']['candidates']) if record else 0,
+                'unchecked':len(record['data']['unchecked']) if record else 0}
+
     def generate(self,job,*,score=True):
         payload=json.loads(job['payload']);run=self.store.one('runs',payload['run_id']);folder=self.folder(job)
         from .backends import validate_backend
@@ -752,10 +930,25 @@ class Worker:
         brief=self.store.one('briefs',current)
         from .task_notify import notify as _notify_task
         _notify_task(self.store, job, 'draft_ready', text='简报草稿已保存，可以查看和编辑。')
+        # Delivery checks run inside scoring below (refcheck in the evaluation
+        # pack); the fact-check stage is admitted before them and never during
+        # the writing turn itself.
+        self._admit_fact_check(job,brief)
         if not score or payload.get('single_evaluation') is False:
             return {**result,'version_id':brief['id'],**self._generated_sources(folder,brief['id'])}
+        self._wait_fact_check(job,brief)
         scoring=None
-        if not self.store.rows('SELECT id FROM assessments WHERE version_id=?',(current,)):
+        assessed=bool(self.store.rows('SELECT id FROM assessments WHERE version_id=?',(current,)))
+        if json.loads(run['requirements']).get('fact_check'):
+            # A checkpoint made before the check cannot skip final review. Reuse
+            # only a completed review whose actual packet still covers this input.
+            from .review import validate_applicable_review
+            assessed=False
+            for reviewed in self.store.rows("SELECT id FROM reviews WHERE version_id=? AND status='complete' ORDER BY rowid DESC",(current,)):
+                try:validate_applicable_review(self.store,reviewed['id'],current)
+                except (ValueError,OSError,KeyError):continue
+                assessed=True;break
+        if not assessed:
             legacy=folder/'assessment.json'
             if 'role_models' not in payload and legacy.exists():
                 # Preserve results of old jobs that scored inside the writing turn.
@@ -958,7 +1151,7 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
 
     def assess_version(self,job,brief,folder,backend):
         req=json.loads(self.store.one('runs',brief['run_id'])['requirements'])
-        if req.get('writing_mode')=='internal_report':
+        if req.get('writing_mode')=='internal_report' or req.get('fact_check'):
             from .review import run_review
             if (folder/'review'/'review-id.json').exists() or not self.thread.is_alive():return run_review(self.store,self.runtime,job,brief['id'],folder/'review')
             pending=self._review_child(job,brief)

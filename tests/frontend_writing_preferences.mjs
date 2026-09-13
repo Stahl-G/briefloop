@@ -13,5 +13,5 @@ c.req={writing_preferences:[]};vm.runInContext('preserveWritingPreferences(req,p
 c.req={};vm.runInContext('preserveWritingPreferences(req,previous,[])',c);assert.equal(c.req.writing_preferences.length,0,'explicit reset wins over saved preferences');
 c.req={};c.override=['新偏好'];vm.runInContext('preserveWritingPreferences(req,previous,override)',c);assert.deepEqual(Array.from(c.req.writing_preferences),['新偏好']);
 assert.match(source,/preserveWritingPreferences\(req,state.requirements,writingPreferencesOverride\)/);
-assert.match(source,/addEventListener\('reset',\(\)=>\{writingPreferencesOverride=\[\]\}/);
+assert.match(source,/addEventListener\('reset',\(\)=>\{writingPreferencesOverride=\[\];syncFactCheckControl\(\)\}/);
 console.log('PASS: form preserves unedited writing preferences, respects explicit replacement/reset, and never carries frozen metadata');

@@ -48,6 +48,35 @@ def test_bridge_turn_is_durable_and_same_message_is_not_redispatched(tmp_path, b
     assert any(e['kind']=='item/completed' and e['data']['item']['id']=='native-item' for e in snap['events'])
 
 
+def test_bridge_internal_managed_run_does_not_get_native_web_tools(tmp_path):
+    """Internal research runs frozen to tavily/duckduckgo must use the metered
+    CLI; granting host-native search here would bypass search budget accounting."""
+    def finished(h,mid):
+        deadline=time.monotonic()+3
+        while time.monotonic()<deadline:
+            if any(m['id']==mid and m['status']=='completed' for m in h.snapshot(sessions[mid])['messages']):return True
+            time.sleep(.01)
+        raise AssertionError('turn did not finish')
+    bridge=BridgeFixture();h=BridgeHarness(Store(tmp_path),bridge,'claude')
+    sessions={}
+    original_send=h.send
+    def tracked_send(session_id,*args,message_id=None,**kwargs):
+        sessions[message_id]=session_id
+        return original_send(session_id,*args,message_id=message_id,**kwargs)
+    h.send=tracked_send
+    managed=h.start_internal('研究任务正文',display_text='研究',allow_web=True,search_provider='duckduckgo',message_id='ddg-run')
+    finished(h,'ddg-run')
+    assert bridge.starts[0]['web_tools'] is False
+    internal_native=h.start_internal('原生研究',allow_web=True,search_provider='native',message_id='native-run')
+    finished(h,'native-run')
+    assert bridge.starts[1]['web_tools'] is True
+    chat=h.create_session('chat',{'model':'host-model'})
+    sessions['chat-turn']=chat['id']
+    h.send(chat['id'],'联网查一下',allow_web=True,message_id='chat-turn')
+    finished(h,'chat-turn')
+    assert bridge.starts[2]['web_tools'] is True
+
+
 @pytest.mark.parametrize('backend', ['kimi', 'codebuddy'])
 def test_restricted_reviewer_cannot_enter_unverified_bridge(tmp_path, backend):
     bridge=BridgeFixture();h=BridgeHarness(Store(tmp_path),bridge,backend)
