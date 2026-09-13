@@ -576,14 +576,17 @@ def accept_review(store,review_id,value):
         if check.requirement_id not in allowed_requirements or check.requirement_id in seen_requirements:raise ValueError('要求核查引用范围外或重复的 requirement_id')
         seen_requirements.add(check.requirement_id)
         if check.status=='manual' and requirements[check.requirement_id]['mode']!='manual':raise ValueError('Reviewer 不能把必答要求改为人工待填')
+    allowed_finding_requirements = set(allowed_requirements)
     if review['data'].get('protocol','legacy')=='clauses_v1':
         validate_clause_checks(current['requirements'],result.clause_checks,result.status)
+        from .deliverable_spec import clause_items
+        allowed_finding_requirements.update(c['clause_id'] for c in clause_items(current['requirements']))
     for finding in result.findings:
         if finding.resolution and not finding.response_to:raise ValueError('关闭发现必须指向准确的 response_id')
         if not finding.response_to:
             if not set(finding.claim_ids).issubset(allowed_claims):raise ValueError('发现引用了本次范围外的主张ID')
             if not set(finding.block_ids).issubset(allowed_blocks):raise ValueError('发现引用了本次正文不存在的块ID')
-        if not set(finding.requirement_ids).issubset(allowed_requirements):raise ValueError('发现引用了未登记的要求ID')
+        if not set(finding.requirement_ids).issubset(allowed_finding_requirements):raise ValueError('发现引用了未登记的要求ID')
     expected_responses=set(_response_scope(store,packet,result.version_id))
     checks={}
     for check in result.response_checks:

@@ -294,3 +294,35 @@ def test_review_corrects_schema_once_without_changing_binding(tmp_path, repair_s
     archive = list((folder/'attempts').glob('review-*.json'))
     assert len(archive) == 1
     assert json.loads(archive[0].read_text()) == malformed
+
+@pytest.mark.parametrize('foreign', [False, True])
+def test_finding_can_reference_frozen_clause_but_not_foreign_clause(tmp_path, foreign):
+    from briefloop.deliverable_spec import resolve, reader_contract_schema, clause_items
+    store = Store(tmp_path)
+    src = store.add_source('Input', 'Delivery is planned for January.')
+    req = {'title':'Report','objective':'Explain delivery.'}
+    run = store.create_run(req, [src['id']])
+    spec = resolve(json.loads(run['requirements']))
+    rid = spec['requirement_items'][0]['requirement_id']
+    contract = {'source_fingerprint':reader_contract_schema(spec)['properties']['source_fingerprint']['const'],
+        'clauses':[{'requirement_id':rid,'source_quote':'Explain delivery.','kind':'reader_content','instruction':'Explain delivery.'}]}
+    brief = store.publish(run['id'], {'title':'Report','markdown':'Delivery is planned for January.','reader_contract':contract})
+    job = store.enqueue('review', {'version_id':brief['id']})
+    folder = store.root/'jobs'/job['id']
+    fp, files = build_packet(store, brief['id'], folder)
+    target = json.loads((folder/'packet/target.json').read_text())
+    cid = clause_items(target['requirements'])[0]['clause_id']
+    with store.tx() as c:
+        c.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)', ('review_clause',brief['id'],job['id'],fp,'running',
+            json.dumps({'protocol':'clauses_v1','packet_path':str((folder/'packet').relative_to(store.root)),'files':files}),None,'2026','2026'))
+    result = {'fingerprint':fp,'version_id':brief['id'],'status':'complete','summary':'Checked','coverage_scan_complete':True,
+        'assessment':{'brief_hash':brief['hash'],'status':'complete','summary':'Checked','overall':'建议修改','evidence':3,'coverage':3,'analysis':3,'expression':3},
+        'clause_checks':[{'clause_id':cid,'status':'covered','reason':'Checked against input','basis':['Input']}],
+        'findings':[{'kind':'expression','severity':'minor','description':'Make timing clearer','evidence':'Delivery line',
+                     'requirement_ids':[rid, 'clause_outside_packet' if foreign else cid]}]}
+    if foreign:
+        with pytest.raises(ValueError, match='未登记的要求ID'): accept_review(store,'review_clause',result)
+    else:
+        accept_review(store,'review_clause',result)
+        saved = review_status(store,brief['id'])['findings'][0]['data']
+        assert saved['requirement_ids'] == [rid,cid]
