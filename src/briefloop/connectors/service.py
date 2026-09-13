@@ -85,6 +85,8 @@ class ConnectorService:
         with self._lock:
             if self._closed:
                 raise ConnectorError('连接器服务已关闭。', code='closed')
+            # Fail before writing any new credential when the registry is damaged.
+            self._config.records
             existing = self._get(connector_id) if connector_id is not None else None
             identifier = existing['id'] if existing else str(uuid.uuid4())
             values = secrets if secrets is not None else self._config.get_secrets(existing) if existing else validate_secrets(None)

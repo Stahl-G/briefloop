@@ -229,3 +229,31 @@ def test_shutdown_finishes_admitted_save_before_cancelling_jobs(service, monkeyp
         assert shutdown.wait(3)
     assert store.one('briefs',saved['id'])['markdown']=='Saved before exit'
     assert store.one('jobs',job['id'])['status']=='cancelled'
+
+
+def test_corrupt_connector_config_preserves_workspace_and_recovers_after_repair(tmp_path):
+    from briefloop.store import Store
+    from briefloop.connectors import ConnectorService, ConnectorError
+    from briefloop.connectors.config import atomic_json
+    root=tmp_path/'damaged'; store=Store(root)
+    source=store.add_source('Keep','Original evidence')
+    run=store.create_run({'title':'Keep','objective':'Read'},[source['id']])
+    brief=store.publish(run['id'],{'title':'Keep','markdown':'Saved report'})
+    original=ConnectorService(root)
+    original.save({'name':'Saved connection','transport':'http','url':'http://127.0.0.1:9/mcp'})
+    original.close()
+    path=root/'.connectors/connections.json';valid=path.read_bytes()
+    path.write_bytes(b'{"broken":')
+    server=make_server(root,port=0,paused=True)
+    try:
+        assert server.store.one('briefs',brief['id'])['markdown']=='Saved report'
+        with pytest.raises(ConnectorError,match='原文件已保留'):
+            server.connectors.list()
+        with pytest.raises(ConnectorError):
+            server.connectors.save({'name':'Must not overwrite','transport':'http','url':'http://127.0.0.1:9/mcp'})
+        assert path.read_bytes()==b'{"broken":'
+        atomic_json(path,json.loads(valid))
+        assert server.connectors.list()[0]['name']=='Saved connection'
+    finally:
+        server.harness.close();server.opencode_harness.close();server.runtime_bridge.close()
+        server.server_close();server.workspace_lock.close()
