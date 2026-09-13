@@ -120,7 +120,10 @@ def validate_secrets(value: dict | None) -> dict:
             or sum(len(k) + len(v) for k, v in env.items()) > 65536):
         raise ConnectorError('环境凭据必须是长度受限的字符串映射。')
     # Do not allow environment injection into the Python transport supervisor.
-    if any(k.startswith('PYTHON') or k in ('LD_PRELOAD', 'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH') for k in env):
+    # Normalize on every platform so a saved config cannot become unsafe when
+    # used on Windows, whose environment names are case-insensitive. This only
+    # protects the supervisor environment; it is not a sandbox for stdio commands.
+    if any(k.upper().startswith(('PYTHON', 'LD_', 'DYLD_')) or k.upper() == '__PYVENV_LAUNCHER__' for k in env):
         raise ConnectorError('不允许覆盖解释器或动态库加载环境。')
     # Preserve the legacy credential shape when raw Authorization is unused.
     result = {'bearer_token': token, 'env': env}
