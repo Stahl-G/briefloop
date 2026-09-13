@@ -43,18 +43,23 @@ def test_missing_node_keeps_native_discovery_available(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize('setting', ['constructor', 'environment'])
-def test_custom_node_binary_is_used_for_bridge_requests(tmp_path, monkeypatch, setting):
+@pytest.mark.parametrize('electron', [None, '0', '1'])
+def test_custom_node_binary_is_used_for_bridge_requests(tmp_path, monkeypatch, setting, electron):
     binary = tmp_path/'custom-node'
-    binary.write_text('#!'+sys.executable+'\nimport json,sys\nfor line in sys.stdin:\n request=json.loads(line)\n print(json.dumps({"id":request["id"],"result":{"custom_node":True}}),flush=True)\n')
+    binary.write_text('#!'+sys.executable+'\nimport json,sys,os\nfor line in sys.stdin:\n request=json.loads(line)\n print(json.dumps({"id":request["id"],"result":{"custom_node":True,"electron_flag":os.environ.get("ELECTRON_RUN_AS_NODE")}}),flush=True)\n')
     binary.chmod(0o755)
     if os.name=='nt':
         if not shutil.which('node'):pytest.skip('Node required for native Windows bridge fixture')
         binary.write_text('exec node "$basedir/entry.cjs" "$@"',encoding='utf-8')
-        (tmp_path/'entry.cjs').write_text('require("node:readline").createInterface({input:process.stdin}).on("line",line=>console.log(JSON.stringify({id:JSON.parse(line).id,result:{custom_node:true}})));',encoding='utf-8')
+        (tmp_path/'entry.cjs').write_text('require("node:readline").createInterface({input:process.stdin}).on("line",line=>console.log(JSON.stringify({id:JSON.parse(line).id,result:{custom_node:true,electron_flag:process.env.ELECTRON_RUN_AS_NODE??null}})));',encoding='utf-8')
         binary=tmp_path/'custom-node.cmd';binary.write_text('@echo off',encoding='utf-8')
     monkeypatch.setenv('BRIEFLOOP_NODE', str(binary) if setting == 'environment' else str(tmp_path/'missing-node'))
+    monkeypatch.setenv('ELECTRON_RUN_AS_NODE', 'parent-sentinel')
+    if electron is None:monkeypatch.delenv('BRIEFLOOP_NODE_IS_ELECTRON', raising=False)
+    else:monkeypatch.setenv('BRIEFLOOP_NODE_IS_ELECTRON', electron)
     bridge = RuntimeBridge(node_binary=str(binary)) if setting == 'constructor' else RuntimeBridge()
     try:
-        assert bridge.call('ping') == {'custom_node': True}
+        assert bridge.call('ping') == {'custom_node': True, 'electron_flag': '1' if electron=='1' else None}
+        assert os.environ['ELECTRON_RUN_AS_NODE']=='parent-sentinel'
     finally:
         bridge.close()
