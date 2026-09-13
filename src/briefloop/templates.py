@@ -384,4 +384,8 @@ def export_template(store,brief,document,figures,template_id=None):
     if ' TOC ' in doc.element.xml:
         from .industry_export import enable_update_fields
         enable_update_fields(doc)
-    out=BytesIO();doc.save(out);return out.getvalue()
+    out=BytesIO();doc.save(out)
+    if row.get('origin') == 'builtin':
+        from .default_fonts import builtin_macro_fonts
+        return builtin_macro_fonts(out.getvalue())
+    return out.getvalue()

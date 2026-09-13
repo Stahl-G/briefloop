@@ -60,6 +60,11 @@ def test_builtin_ships_prepares_is_idempotent_and_exports(tmp_path):
         assert 'AI 行业周报' in document_xml and '示例机构' in document_xml and '2026 年第 37 周' in document_xml
         assert 'w:instr=" PAGE "' in footers or ' PAGE ' in footers
         assert 'w:eastAsia="黑体"' in styles_xml and 'w:eastAsia="宋体"' in styles_xml, 'the chosen theme body/heading font must ship in styles'
+        for part in ('word/styles.xml', 'word/stylesWithEffects.xml'):
+            fonts_xml = archive.read(part).decode()
+            assert 'w:ascii="Courier"' not in fonts_xml
+            assert 'w:ascii="Courier New"' in fonts_xml
+        assert 'w:name="Courier"' not in archive.read('word/fontTable.xml').decode()
         assert 'w:tblBorders' in document_xml and 'w:insideV' in document_xml
         from lxml import etree
         tree = etree.fromstring(archive.read('word/document.xml'))
@@ -79,8 +84,27 @@ def test_uploaded_templates_keep_upload_origin(tmp_path):
     original = NewDocument()
     original.add_paragraph('Monthly Report')
     original.add_paragraph('1. Summary')
+    original.add_paragraph('Original body text.')
+    original.styles['Normal'].font.name = 'Courier'
     stream = BytesIO()
     original.save(stream)
     from briefloop.templates import import_template
     record = import_template(store, 'Monthly.docx', stream.getvalue(), prepare_job=False)
     assert record['origin'] == 'upload'
+    from briefloop.templates import prepare, export_template
+    prepare(store, record['id'], {'keep_blocks': [0], 'paragraph_index': 2,
+        'sections': [{'section_id': 'summary', 'title': '1. Summary', 'index': 1}],
+        'fields': [{'old': 'Monthly Report', 'field': 'title'}]})
+    source = store.add_source('Synthetic material', 'Current evidence.')
+    run = store.create_run({'title': 'Current Report', 'objective': 'Explain',
+                            'template_id': record['id']}, [source['id']])
+    document = {'type': 'doc', 'content': [{'type': 'paragraph',
+        'content': [{'type': 'text', 'text': 'Current body text.'}]}]}
+    brief = store.publish(run['id'], {'title': 'Current Report', 'editor_document': document})
+    payload = export_template(store, brief, document, {})
+    with ZipFile(BytesIO(payload)) as archive:
+        for part in ('word/styles.xml', 'word/stylesWithEffects.xml'):
+            assert 'w:ascii="Courier"' in archive.read(part).decode()
+        assert 'w:name="Courier"' in archive.read('word/fontTable.xml').decode()
+    rendered = Document(BytesIO(payload))
+    assert rendered.styles['Normal'].font.name == 'Courier'

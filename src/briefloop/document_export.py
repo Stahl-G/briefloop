@@ -175,6 +175,12 @@ def render_document(doc, document, *, figures=None, sources=None, append_sources
                         for run in p.runs: run.bold = True
             if all(cell['type'] == 'tableHeader' for cell in children[0]['content']):
                 table.rows[0]._tr.get_or_add_trPr().append(OxmlElement('w:tblHeader'))
+                # Repeating a header does not stop WPS leaving its first copy
+                # alone at a page bottom. Keep it with the first data row.
+                if len(table.rows) > 1:
+                    for cell in table.rows[0].cells:
+                        for p in cell.paragraphs:
+                            p.paragraph_format.keep_with_next = True
             for row in table.rows:
                 row._tr.get_or_add_trPr().append(OxmlElement('w:cantSplit'))
         else: raise ValueError('不支持的导出内容：' + kind)
