@@ -35,6 +35,12 @@ class _RequestStore(Store):
     """
     def __init__(self, store, connection):
         self.root, self.db, self.connection = store.root, store.db, connection
+        self.jobs_admitted = False
+
+    def wake_jobs(self):
+        # Inner Store methods share an outer transaction. Wake only after its
+        # receipt and admitted jobs commit together, never from this view.
+        self.jobs_admitted = True
 
     @contextmanager
     def tx(self):
@@ -153,6 +159,9 @@ def dispatch(store, request):
             if previous['request_hash'] != digest:
                 raise Conflict('该 request_id 已用于不同内容；请核对原请求')
             return {**json.loads(previous['result']), 'replayed': True}
-        result = _operation(_RequestStore(store, connection), action, request)
+        view = _RequestStore(store, connection)
+        result = _operation(view, action, request)
         connection.execute('INSERT INTO external_requests VALUES(?,?,?,?,?)', (rid, digest, action, dump(result), now()))
-        return {**result, 'replayed': False}
+    if view.jobs_admitted:
+        store.wake_jobs()
+    return {**result, 'replayed': False}
