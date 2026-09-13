@@ -1346,6 +1346,13 @@ function validate(p) {
   if (!protocol(d.id) || protocol(d.id) === "native-manager") throw Error("Runtime execution belongs to native manager or is not integrated");
   return bin;
 }
+function acpToolTitle(tool) {
+  if (tool?.title) return tool.title;
+  const input2 = tool?.rawInput;
+  const file = input2?.file_path || input2?.filePath || input2?.path;
+  if (typeof file === "string" && file) return `\u6587\u4EF6\u64CD\u4F5C \xB7 ${file}`;
+  return tool?.kind || "\u5DE5\u5177\u64CD\u4F5C";
+}
 async function runAcp(p, state) {
   let sessionId;
   const args = acpArguments(p.runtime_id, state.bin);
@@ -1355,13 +1362,13 @@ async function runAcp(p, state) {
     const u = m.params?.update || {};
     if (u.sessionUpdate === "agent_message_chunk" && u.content?.type === "text") emit(p.execution_id, "text", { text: u.content.text, delta: true });
     else if (u.sessionUpdate === "agent_thought_chunk" && u.content?.type === "text") emit(p.execution_id, "reasoning", { text: u.content.text, delta: true });
-    else if (["tool_call", "tool_call_update"].includes(u.sessionUpdate) && !["think", "thinking", "reasoning"].includes(u.kind)) emit(p.execution_id, "tool", { id: u.toolCallId, name: u.title || u.kind || "Tool", status: u.status, input: u.rawInput, output: u.rawOutput });
+    else if (["tool_call", "tool_call_update"].includes(u.sessionUpdate) && !["think", "thinking", "reasoning"].includes(u.kind)) emit(p.execution_id, "tool", { id: u.toolCallId, name: acpToolTitle(u), status: u.status, input: u.rawInput, output: u.rawOutput });
     else if (u.sessionUpdate === "usage_update") emit(p.execution_id, "usage", { usage: u.usage || u });
   }, (m, reply) => {
     if (m.method === "session/request_permission") {
       const id = String(m.id);
       state.questions.set(id, { reply, options: m.params?.options || [] });
-      emit(p.execution_id, "question", { request_id: id, type: "permission", title: m.params?.toolCall?.title || "Runtime permission", options: m.params?.options || [] });
+      emit(p.execution_id, "question", { request_id: id, type: "permission", title: acpToolTitle(m.params?.toolCall), options: m.params?.options || [] });
     } else {
       reply({ error: "Client method unsupported" });
     }
