@@ -86,3 +86,85 @@ test('failed startup closes the owner pipe and waits for EOF cleanup, without ki
   assert.equal((JSON.parse(await fs.readFile(path.join(root, 'owner-eof.json'), 'utf8'))).flag, '1');
   assert.equal(child.exitCode, 0); assert.equal(service.child, null); assert.equal(killCalls, 0);
 });
+
+test('Windows owner hard termination lets the owned service receive EOF and finish cleanup',
+  {skip: process.platform !== 'win32', timeout: 30000}, async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'briefloop-owner-killed-'));
+  let owner, childPid;
+  const alive = pid => {
+    try { process.kill(pid, 0); return true; }
+    catch (error) { if (error.code === 'ESRCH') return false; throw error; }
+  };
+  const waitFor = async (check, label) => {
+    const deadline = Date.now() + 10000;
+    while (Date.now() < deadline) {
+      if (await check()) return;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    throw Error('Timed out waiting for ' + label);
+  };
+  t.after(async () => {
+    if (owner && owner.exitCode === null && owner.signalCode === null) owner.kill('SIGKILL');
+    // The failure path must not leave an orphan when the regression is restored.
+    if (childPid && alive(childPid)) process.kill(childPid, 'SIGKILL');
+    if (childPid) await waitFor(() => !alive(childPid), 'fixture service cleanup');
+    if (owner) await waitFor(() => owner.exitCode !== null || owner.signalCode !== null, 'fixture owner cleanup');
+    await fs.rm(root, {recursive: true, force: true, maxRetries: 20, retryDelay: 100});
+  });
+  const protocol = `
+    const fs = require('node:fs'), http = require('node:http');
+    fs.writeFileSync('child-pid.json', JSON.stringify({pid:process.pid}));
+    const server = http.createServer((req,res) => {
+      res.setHeader('Content-Type','application/json');
+      res.end(JSON.stringify(req.url === '/api/runtime' ? {server_pid:process.pid} : {token:'synthetic'}));
+    });
+    server.listen(0,'127.0.0.1',() => fs.writeFileSync('server.json',JSON.stringify({
+      pid:process.pid, launch_id:process.env.BRIEFLOOP_LAUNCH_ID, workspace_id:'synthetic',
+      url:'http://127.0.0.1:'+server.address().port
+    })));
+    process.stdin.resume();
+    process.stdin.once('end',() => {
+      fs.writeFileSync('eof-started.json',JSON.stringify({pid:process.pid,flag:process.env.BRIEFLOOP_DESKTOP_OWNER_PIPE}));
+      server.close(() => setTimeout(() => {
+        fs.writeFileSync('eof-finished.json',JSON.stringify({pid:process.pid,cleaned:true}));
+        process.exit(0);
+      },150));
+      server.closeAllConnections();
+    });`;
+  // Run the real WorkspaceService in a separate owner process. Substitute only
+  // the Python executable/protocol; preserve actual spawn options and stdin.
+  const ownerSource = `
+    const fs=require('node:fs'), vm=require('node:vm'), {spawn}=require('node:child_process');
+    const serviceModule={exports:{}};
+    vm.runInNewContext(fs.readFileSync(${JSON.stringify(require.resolve('../service.cjs'))},'utf8'),{
+      module:serviceModule,process,URL,fetch,AbortSignal,setTimeout,clearTimeout,
+      require:name=>name==='node:child_process'?{spawn:(_executable,_args,options)=>
+        spawn(process.execPath,['-e',${JSON.stringify(protocol)}],options)}:require(name)
+    });
+    const runtime={python:process.execPath,basePython:process.execPath,node:process.execPath};
+    const service=new serviceModule.exports.WorkspaceService(runtime);
+    service.start(${JSON.stringify(root)},{create:true}).then(() => {
+      fs.writeFileSync('owner-ready.json',JSON.stringify({owner:process.pid,child:service.child.pid}));
+    }).catch(error=>{console.error(error);process.exitCode=1});`;
+  const ownerPath = path.join(root, 'owner.cjs');
+  await fs.writeFile(ownerPath, ownerSource);
+  owner = spawn(process.execPath, [ownerPath], {cwd: root, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true});
+  let diagnostic = '';
+  owner.stderr.on('data', chunk => { diagnostic += chunk; });
+  const exists = async name => fs.access(path.join(root, name)).then(() => true, () => false);
+  await waitFor(async () => {
+    if (await exists('child-pid.json')) childPid = JSON.parse(await fs.readFile(path.join(root, 'child-pid.json'), 'utf8')).pid;
+    if (owner.exitCode !== null || owner.signalCode !== null) throw Error('Owner exited before readiness: ' + diagnostic);
+    return exists('owner-ready.json');
+  }, 'owned service readiness');
+  const ready = JSON.parse(await fs.readFile(path.join(root, 'owner-ready.json'), 'utf8'));
+  assert.equal(ready.owner, owner.pid); assert.equal(ready.child, childPid);
+  assert.ok(alive(childPid)); assert.equal(await exists('eof-started.json'), false);
+  // Kill only the owner PID: no tree kill, service.stop(), or stdin.end().
+  assert.equal(owner.kill('SIGKILL'), true);
+  await waitFor(() => owner.exitCode !== null || owner.signalCode !== null, 'owner termination');
+  await waitFor(() => exists('eof-finished.json'), 'service EOF cleanup after owner termination');
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(root, 'eof-started.json'), 'utf8')), {pid: childPid, flag: '1'});
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(root, 'eof-finished.json'), 'utf8')), {pid: childPid, cleaned: true});
+  await waitFor(() => !alive(childPid), 'service exit after cleanup');
+});

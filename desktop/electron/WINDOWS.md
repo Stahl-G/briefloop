@@ -74,3 +74,27 @@ it must not upload to the official GitHub Releases feed. Packaging always uses
 `--publish never`. The GitHub provider configuration generates `latest.yml` and
 the installer blockmap locally; it does not create a GitHub release. Shared
 updater integration and native upgrade acceptance remain pending.
+
+## Release handoff and completion evidence
+
+The release coordinator freezes one source commit and builds one backend wheel
+for both desktop platforms. Windows packaging consumes that exact wheel and its
+manifest; it must not rebuild or install a different backend under the same
+version. Record the source commit, application version, backend version and
+wheel SHA256, installer SHA256, and installed executable version separately.
+Run `scripts/check_versions.py` with the available native artifacts and report
+missing platform evidence explicitly.
+
+After that freeze, Windows acceptance must cover the installed NSIS application
+outside the checkout: startup in a Chinese/space workspace path, authorized
+runtime discovery and one short actual generation, edit/save/reopen, Word export
+and font inspection in WPS, normal cancellation and exit, and failed workspace
+switch recovery. Preserve the synthetic owner-crash acceptance evidence alongside
+these checks; it does not replace installed application or model execution tests.
+
+Before publication, exercise download/install/restart from an available older
+version using an isolated feed. Verify save/cancel gates, preserved workspace
+data, and the installed version after restart. The coordinator then publishes
+the already-verified installer, blockmap and `latest.yml`. Recheck the actual
+GitHub release and stable update entry point after publication. Source version
+changes and successful packaging alone do not make a Windows update available.

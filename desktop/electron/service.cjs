@@ -72,7 +72,11 @@ class WorkspaceService {
     const log = await fs.open(path.join(directory, 'desktop-server.log'), 'a', 0o600);
     const env = {...launch.env, BRIEFLOOP_LAUNCH_ID: launchId, BRIEFLOOP_DESKTOP_OWNER_PIPE: '1'};
     const child = spawn(launch.executable, [...launch.args, '-m', 'briefloop', 'serve', '--workspace', directory, '--port', String(port), '--paused'],
-      {cwd: directory, env, stdio: ['pipe', log.fd, log.fd], windowsHide: true});
+      {cwd: directory, env, stdio: ['pipe', log.fd, log.fd], windowsHide: true,
+        // libuv puts non-detached Windows children in its kill-on-parent-exit
+        // job. Let EOF drive Python cleanup instead of that immediate hard kill.
+        // Keep both the child reference and stdin writer; this is still owned.
+        detached: process.platform === 'win32'});
     // Node owns the only writer. Descendants receive the read end as stdin,
     // never this parent handle; owner death therefore produces EOF in Python.
     // No heartbeat or payload is needed, and an early child exit is harmless.
