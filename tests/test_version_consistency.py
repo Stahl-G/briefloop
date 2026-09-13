@@ -63,3 +63,11 @@ def test_desktop_must_use_shared_wheel_and_failed_remote_evidence_stays_failed(t
     result,status=checker.check(a)
     assert status==1 and result['checks']['windows']['status']=='error'
     assert result['checks']['windows']['evidence']==str(report)
+
+
+def test_windows_zero_revision_only_is_normalized():
+    assert checker.normalize_windows_version('0.20.3.0')=='0.20.3'
+    assert checker.normalize_windows_version('0.20.3')=='0.20.3'
+    assert checker.normalize_windows_version('0.20.3.1')=='0.20.3.1'
+    assert checker.normalize_windows_version('0.20.4.0')=='0.20.4'
+    assert checker.normalize_windows_version('0.20.3.0-preview')=='0.20.3.0-preview'
