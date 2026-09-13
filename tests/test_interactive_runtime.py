@@ -220,3 +220,25 @@ def test_legacy_review_binding_rejects_changed_execution_or_packet(tmp_path,chan
     runtime=InteractiveRuntime(store,backends={'opencode':harness})
     with pytest.raises(ValueError):runtime.execute(stage,'Resume original review',folder)
     assert len(harness.starts)==1 and marker.read_bytes()==original
+
+@pytest.mark.parametrize('cancel', [False, True])
+def test_unlimited_report_preserves_completion_and_manual_stop(tmp_path, monkeypatch, cancel):
+    import briefloop.interactive_runtime as module
+    store, job, harness, runtime, folder = setup(tmp_path)
+    store.set_meta('settings', {**store.settings(), 'timeout_minutes': 0})
+    clock = [0]
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda _: None))
+    ticks = []
+    def tick():
+        if not runtime.session_id: return
+        ticks.append(1)
+        clock[0] = 20000
+        if len(ticks) >= 2:
+            if cancel: runtime.cancel()
+            else: harness.finish(runtime.session_id)
+    if cancel:
+        with pytest.raises(InterruptedError): runtime.execute(job, 'work', folder, tick)
+        assert harness.cancelled
+    else:
+        assert runtime.execute(job, 'work', folder, tick)['returncode'] == 0
+        assert not harness.cancelled

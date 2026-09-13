@@ -320,7 +320,8 @@ class InteractiveRuntime:
                     if status != 'completed':
                         raise RuntimeError('Agent 执行失败；详情保存在会话与任务日志')
                     return result
-                if time.monotonic() - started > self.store.settings()['timeout_minutes'] * 60:
+                minutes = self.store.settings()['timeout_minutes']
+                if minutes > 0 and time.monotonic() - started > minutes * 60:
                     harness.cancel(sid)
                     raise TimeoutError('运行超过本轮时间上限，已保留稿件和执行记录')
                 time.sleep(.5)

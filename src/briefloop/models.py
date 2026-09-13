@@ -177,7 +177,7 @@ class Settings(RoleModel):
     k: int = Field(default=1, ge=1, le=20)
     auto_learn: bool = True
     max_parallel: int = Field(default=4, ge=1, le=16)
-    timeout_minutes: int = Field(default=30, ge=1, le=240)
+    timeout_minutes: int = Field(default=30, ge=0, le=240)  # 0 disables the run deadline.
     skill_targets: list[str] = Field(default_factory=lambda: ["scout", "analyst"])
     auto_revision: bool = True
     default_template_id: str | None = None
