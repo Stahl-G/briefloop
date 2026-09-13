@@ -112,3 +112,16 @@ def test_retry_reason_is_bound_to_own_running_job(tmp_path):
     assert 'OTHER' not in s.listing(store)[0]['history'][0]['runtime_message']
     chat.event(session['id'],'runtime/status',{'status':'resumed'})
     assert s.listing(store)[0]['history'][0]['runtime_message'] is None
+
+
+@pytest.mark.parametrize('explicit', [None, False])
+def test_schedule_freezes_check_choice_and_deep_tier(tmp_path, explicit):
+    requirements={'title':'周报','objective':'总结材料','allow_web':True,
+                  'research_tier':'deep','fact_check':explicit}
+    store,sid,_=setup(tmp_path,requirements=requirements)
+    store.set_meta('settings',{**store.settings(),'fact_checker':True})
+    s.tick(store,at('2026-09-14T10:00:01'))
+    run=store.rows('SELECT * FROM runs')[0]
+    frozen=json.loads(run['requirements'])
+    assert frozen['fact_check'] is False
+    assert frozen['research_tier']=='deep'
