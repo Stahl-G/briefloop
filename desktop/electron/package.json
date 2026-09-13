@@ -27,7 +27,8 @@
       "*.cjs",
       "welcome.html",
       "welcome.js",
-      "package.json"
+      "package.json",
+      "assets/**"
     ],
     "extraResources": [
       {
@@ -41,11 +42,15 @@
       "target": [
         "dmg",
         "zip"
-      ]
+      ],
+      "icon": "assets/Mac.icns"
     },
     "dmg": {
       "sign": false
     },
-    "publish": null
+    "publish": null,
+    "win": {
+      "icon": "assets/Win.ico"
+    }
   }
 }
