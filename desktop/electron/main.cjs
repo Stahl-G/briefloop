@@ -1,5 +1,5 @@
 'use strict';
-const {app, BrowserWindow, Menu, dialog, ipcMain, shell} = require('electron');
+const {app, BrowserWindow, Menu, dialog, ipcMain, shell, nativeImage} = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const {pathToFileURL} = require('node:url');
@@ -148,6 +148,11 @@ else {
   app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); } });
   app.on('before-quit', event => { if (!quitting) { event.preventDefault(); requestQuit(); } });
   app.whenReady().then(async () => {
+    // Refresh this running app's Dock icon after same-path reinstalls.
+    if (process.platform === 'darwin' && app.dock) {
+      const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', 'icon-macos-1024.png'));
+      if (!icon.isEmpty()) app.dock.setIcon(icon);
+    }
     updates = createUpdater({app, shell,
       // A packaged application always uses the fixed official source.
       testFeed: !app.isPackaged ? process.env.BRIEFLOOP_UPDATE_TEST_FEED || null : null,
