@@ -73,3 +73,5 @@ preload 提供 `briefloopDesktop.onPrepareClose(callback)`。main 为每次准�
 `openWorkspace({path, create})` 是受限 IPC：main 校验调用窗口、当前 mainFrame 来源和本地路径，不接受命令、URL 或 PID。文件导入沿用同一 Web UI 的原生 file input；`will-download` 弹出系统另存对话框。可安装 `.app`／DMG 的最终位置和窗口操作结果以桌面验收记录为准。
 
 保存握手开始时 renderer 暂设 `body.inert`，防止保存确认与关闭之间继续输入。preload 的固定 `onResume` 回调响应 `workspace:resume`；main 在取消关闭、保存失败或仅完成 Cmd+S 保存时发送它恢复编辑，失败路径也解除 inert。
+
+原生运行时刚验证通过、仅业务源码变化时，可使用 `python3 desktop/electron/scripts/refresh-app.py`。它复用已锁定的 Python／Node，在临时副本中重建并强制重装当前 wheel，保留既有原生搬迁证明；从含同名 `briefloop.py` 的临时工作区运行 `-I -m briefloop --version`，再执行 `pip check`，成功后才替换产物。`app-refresh-proof.json` 记录新 wheel 哈希、Git HEAD 和时间，不把它写成重新执行了全部原生搬迁检查。锁文件或项目依赖变化时应使用完整准备流程。
