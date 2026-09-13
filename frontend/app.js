@@ -2060,23 +2060,27 @@ if(window.briefloopDesktop?.onPrepareClose){
 }
 
 // App updates: fixed desktop capabilities, with a read-only browser fallback.
-let appUpdateState=null,appUpdatePending=false,appUpdateLastAction='check';
+let appUpdateState=null,softwareInfo=null,appUpdatePending=false,appUpdateLastAction='check';
 function renderAppUpdates(value=appUpdateState){
  const box=$('settings-view-updates');if(!box)return;
  const desktop=typeof window.briefloopDesktop?.updateStatus==='function';
- $('app-update-controls').hidden=!desktop;
- $('app-update-version').textContent=desktop?`当前 App v${value?.currentAppVersion||'读取中'}`:`网页客户端 v${box.dataset.webVersion}`;
- $('app-update-source').textContent=value?.source==='local-test'?'本地测试更新源 · 仅验证流程，不代表官方发布':'官方稳定来源：Stahl-G/briefloop · GitHub Releases';
+ $('app-update-controls').hidden=false;
+ $('app-update-version').textContent=softwareInfo?`BriefLoop v${softwareInfo.version}${softwareInfo.build?` · 构建 ${softwareInfo.build}`:''}${desktop?` · 桌面 App v${value?.currentAppVersion||'读取中'}`:''}`:'正在读取实际运行版本…';
+ const installations={desktop:'桌面管理的后端 · App 与 CLI 共用',source:'开发源码',pip:'Python 包安装',pipx:'pipx 安装',uv:'uv 工具安装'};
+ $('app-update-installation').textContent=softwareInfo?installations[softwareInfo.installation]||'独立安装':'';
+ $('app-update-command').hidden=!softwareInfo?.update_command;
+ $('app-update-command').textContent=softwareInfo?.update_command||'';
+ $('app-update-source').textContent=value?.source==='local-test'?'本地测试更新源 · 仅验证流程，不代表官方发布':desktop?'官方稳定来源：Stahl-G/briefloop · GitHub Releases':'Python 包稳定来源：PyPI · briefloop';
  const reinstall=value?.source==='local-test'&&value?.reinstall===true;
- $('app-update-guidance').textContent=!desktop?'浏览器不能安装 App 更新。请在桌面 App 检查更新，或从官方下载页安装。':value?.installMode==='dmg'?`下载后会先保存编辑并处理忙任务，再退出 App、打开 DMG；请在 Finder 中${reinstall?'重新安装当前版本':'手动安装新版本'}。`:'下载后会先保存编辑并处理忙任务，再退出 App 并交给原生安装器更新。';
+ $('app-update-guidance').textContent=!desktop?(softwareInfo?.guidance||'正在读取安装来源…'):value?.installMode==='dmg'?`下载后会先保存编辑并处理忙任务，再退出 App、打开 DMG；请在 Finder 中${reinstall?'重新安装当前版本':'手动安装新版本'}。`:'下载后会先保存编辑并处理忙任务，再退出 App 并交给原生安装器更新。';
  const labels={idle:'尚未检查更新',checking:'正在检查更新…',available:'发现可用更新',current:'当前 App 无需更新',downloading:'正在下载更新…',downloaded:'下载完成，等待安装',error:'更新未完成'};
  const reinstallLabel=`重新安装当前 App v${value?.currentAppVersion||''}`;
- $('app-update-status').textContent=desktop?(reinstall&&value?.state==='available'?reinstallLabel:(labels[value?.state]||'正在读取 App 版本…')+(reinstall?` · ${reinstallLabel}`:value?.releaseVersion?` · v${value.releaseVersion}`:'')):'请从官方发布页查看最新版本。';
+ $('app-update-status').textContent=desktop?(reinstall&&value?.state==='available'?reinstallLabel:(labels[value?.state]||'正在读取 App 版本…')+(reinstall?` · ${reinstallLabel}`:value?.releaseVersion?` · v${value.releaseVersion}`:'')):({idle:'尚未检查更新',checking:'正在检查更新…',available:`发现可用后端版本 v${value?.releaseVersion||''}`,current:'当前后端已是 PyPI 最新稳定版',ahead:`当前后端高于 PyPI 已发布版本 v${value?.releaseVersion||''}`,error:'版本检查未完成'}[value?.state||'idle']||'尚未检查更新');
  $('app-update-download').textContent=reinstall?'下载当前版本安装包':'下载更新';
  const busy=appUpdatePending||['checking','downloading'].includes(value?.state);
  $('app-update-check').disabled=busy;
- $('app-update-download').hidden=value?.state!=='available';$('app-update-download').disabled=busy;
- $('app-update-install').hidden=value?.state!=='downloaded';$('app-update-install').disabled=busy;
+ $('app-update-download').hidden=!desktop||value?.state!=='available';$('app-update-download').disabled=busy;
+ $('app-update-install').hidden=!desktop||value?.state!=='downloaded';$('app-update-install').disabled=busy;
  $('app-update-install').textContent=value?.installMode==='dmg'?'保存并打开 DMG':'保存并安装更新';
  $('app-update-retry').hidden=value?.state!=='error'||!value?.retryable;$('app-update-retry').disabled=busy;
  $('app-update-error').hidden=!value?.error;$('app-update-error').textContent=value?.error?.message||'';
@@ -2088,13 +2092,22 @@ function renderAppUpdates(value=appUpdateState){
 }
 async function refreshAppUpdates(){
  renderAppUpdates();
- if(typeof window.briefloopDesktop?.updateStatus!=='function')return;
- try{appUpdateState=await window.briefloopDesktop.updateStatus();renderAppUpdates()}
+ try{softwareInfo=await api('software-version');
+ if(typeof window.briefloopDesktop?.updateStatus==='function')appUpdateState=await window.briefloopDesktop.updateStatus();
+ renderAppUpdates()}
  catch{notice('无法读取 App 更新状态，请重新打开设置。',true)}
 }
 async function runAppUpdate(command){
  if(appUpdatePending)return;
- const desktop=window.briefloopDesktop;if(!desktop)return;
+ const desktop=window.briefloopDesktop;
+ if(typeof desktop?.updateStatus!=='function'){
+  if(command!=='check')return;
+  appUpdatePending=true;appUpdateState={state:'checking'};renderAppUpdates();
+  try{appUpdateState=await api('software-update-check',{});softwareInfo=appUpdateState}
+  catch(error){appUpdateState={state:'error',retryable:true,error:{message:error.message||'版本检查未完成'}}}
+  finally{appUpdatePending=false;renderAppUpdates()}
+  return;
+ }
  appUpdatePending=true;appUpdateLastAction=command;renderAppUpdates();
  try{
   if(command==='install'){

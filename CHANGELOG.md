@@ -2245,3 +2245,8 @@ First public release. The following entries document the development iterations 
 - Markdown / JSON / DOCX output.
 - Claude Code / Codex agent configurations.
 - Open-source release safety scanning tools.
+
+
+## Unreleased
+
+- 统一后端版本信息及网页和 CLI 的 PyPI 更新检查。
