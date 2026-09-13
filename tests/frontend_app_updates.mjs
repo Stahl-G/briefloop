@@ -28,7 +28,7 @@ const desktop=fixture({updateStatus:async()=>dto,onUpdateStatus:fn=>{changed=fn}
  checkForUpdates:async()=>{calls.push('check');return dto},downloadUpdate:async()=>{calls.push('download');return dto},
  installUpdate:async()=>{calls.push('install');return {cancelled:true}}});
 await desktop.run('refreshAppUpdates()');
-assert.match(desktop.el('app-update-version').textContent,/BriefLoop v0.20.0.*桌面 App v0.17.0/);
+assert.equal(desktop.el('app-update-version').textContent,`BriefLoop v${version} · 构建 abc123 · 桌面 App v0.17.0`);
 assert.match(desktop.el('app-update-source').textContent,/本地测试/);
 assert.equal(desktop.el('app-update-notes').textContent,dto.notes);
 assert.equal(desktop.el('app-update-download').hidden,false);
