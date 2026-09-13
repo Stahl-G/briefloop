@@ -24,7 +24,7 @@ def wheel_version(path):
         return email.message_from_bytes(archive.read(metadata))['Version']
 
 
-def backend_versions(resources):
+def backend_versions(resources, expected_hash=None):
     base = resources / 'backend'
     manifest = json.loads((base / 'manifest.json').read_text(encoding='utf-8'))
     wheel = (base / manifest['wheel']).resolve()
@@ -32,6 +32,8 @@ def backend_versions(resources):
         raise ValueError('Invalid backend wheel path')
     if hashlib.sha256(wheel.read_bytes()).hexdigest() != manifest['sha256']:
         raise ValueError('Backend wheel hash differs from manifest')
+    if expected_hash and manifest['sha256'] != expected_hash:
+        raise ValueError('Desktop backend differs from shared release wheel')
     return {'backend_manifest': manifest['version'], 'backend_wheel': wheel_version(wheel)}
 
 
@@ -54,6 +56,7 @@ def compare(expected, values):
 def check(args):
     root = args.root.resolve()
     expected = tomllib.loads((root / 'pyproject.toml').read_text(encoding='utf-8'))['project']['version']
+    release_hash = hashlib.sha256(args.wheel.read_bytes()).hexdigest() if args.wheel else None
     results = {'source': compare(expected, source_versions(root))}
     results.update({name: {'status': 'unverified', 'reason': 'No artifact or channel requested'} for name in CHANNELS})
 
@@ -76,8 +79,9 @@ def check(args):
             contents = args.mac_app / 'Contents'
             with (contents / 'Info.plist').open('rb') as stream:
                 version = plistlib.load(stream)['CFBundleShortVersionString']
-            return {'app': version, **backend_versions(contents / 'Resources')}
+            return {'app': version, **backend_versions(contents / 'Resources', release_hash)}
         capture('mac', mac)
+        if results['mac']['status']=='match' and release_hash:results['mac']['release_wheel_sha256']=release_hash
     if args.windows_app:
         def windows():
             if os.name != 'nt':
@@ -87,8 +91,9 @@ def check(args):
             literal = str(exe).replace("'", "''")
             command = f"[Console]::OutputEncoding=[Text.Encoding]::UTF8; (Get-Item -LiteralPath '{literal}').VersionInfo.ProductVersion"
             version = subprocess.check_output(['powershell.exe', '-NoProfile', '-Command', command], text=True, encoding='utf-8').strip()
-            return {'app': version, **backend_versions(exe.parent / 'resources')}
+            return {'app': version, **backend_versions(exe.parent / 'resources', release_hash)}
         capture('windows', windows)
+        if results['windows']['status']=='match' and release_hash:results['windows']['release_wheel_sha256']=release_hash
     if args.wheel:
         capture('wheel', lambda: {'metadata': wheel_version(args.wheel)})
     if args.pypi:
@@ -108,13 +113,23 @@ def check(args):
             raise ValueError('Platform report belongs to another release: ' + str(report_path))
         for name in CHANNELS:
             value = report.get('checks', {}).get(name, {})
-            if results[name]['status'] == 'unverified' and value.get('versions'):
-                results[name] = {**compare(expected, value['versions']), 'evidence': str(report_path)}
-    consistent = all(results[name]['status'] == 'match' for name in CHANNELS) and results['source']['status'] == 'match'
+            if results[name]['status'] == 'unverified' and value.get('status') in ('error','mismatch'):
+                results[name] = {**value, 'evidence': str(report_path)}
+            elif results[name]['status'] == 'unverified' and value.get('versions'):
+                if value.get('status') != 'match':
+                    results[name] = {**value, 'evidence': str(report_path)}
+                elif release_hash and name in ('mac', 'windows') and value.get('release_wheel_sha256') != release_hash:
+                    results[name] = {'status':'error', 'reason':'Platform evidence does not verify the shared release wheel', 'evidence':str(report_path)}
+                else:
+                    results[name] = {**value, **compare(expected, value['versions']), 'evidence': str(report_path)}
+    consistent = bool(release_hash) and all(results[name]['status'] == 'match' for name in CHANNELS) and results['source']['status'] == 'match'
     failed = any(value['status'] in ('mismatch', 'error') for value in results.values())
     if args.require_all and not consistent:
         failed = True
-    return {'expected': expected, 'expected_from': 'pyproject.toml', 'all_platforms_consistent': consistent,
+    if args.require_all and not release_hash:
+        consistent=False;failed=True
+        results['wheel']={'status':'unverified','reason':'A shared release wheel is required for all-platform verification'}
+    return {'release_wheel_sha256':release_hash, 'expected': expected, 'expected_from': 'pyproject.toml', 'all_platforms_consistent': consistent,
             'checks': results}, int(failed)
 
 

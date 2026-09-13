@@ -166,3 +166,26 @@ assert.equal(vm.runInContext('readTemplateSections()[0].purpose',templateContext
 el('template-select').value='template-a';chapterFields['[data-purpose]']={value:'Explicit form edit'};
 assert.equal(vm.runInContext('readTemplateSections()[0].purpose',templateContext),'Explicit form edit');
 console.log('PASS: intake preserves same-template saved purpose and isolates purpose after a template switch');
+
+// A malformed pasted image must not strand the entire application in saving.
+const richSource=fs.readFileSync(new URL('../frontend/rich-document.js',import.meta.url),'utf8');
+const imageTransforms=richSource.slice(richSource.indexOf('function mapImages('),richSource.indexOf('// Which findings'))
+ .replaceAll('export function ','function ');
+c.URL=URL;c.structuredClone=structuredClone;c.window.location.origin='http://127.0.0.1:8765';
+vm.runInContext(imageTransforms,c);
+let imageSrc='http://[';
+c.editor={getJSON:()=>({type:'doc',content:[{type:'image',attrs:{src:imageSrc}}]})};
+c.markdownMode=false;c.current={id:'image-base',run_id:'r'};c.dirty=true;
+const beforeCalls=calls.length;
+await c.save();
+assert.equal(c.saving,false);
+assert.equal(c.dirty,true);
+assert.equal(calls.length,beforeCalls,'Invalid input must not be sent');
+assert.match(el('save-state').textContent,/未保存/);
+await assert.rejects(c.savedVersion(),/图片/);
+// User repairs the URL in the retained editor and the normal save can run again.
+imageSrc='https://example.invalid/image.png';
+const repaired=c.save();
+pending.shift().resolve({id:'image-fixed',run_id:'r'});await repaired;
+assert.equal(c.current.id,'image-fixed');assert.equal(c.saving,false);assert.equal(c.dirty,false);
+console.log('PASS: invalid image retains edits, clears save state, and can be repaired');

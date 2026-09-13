@@ -47,6 +47,17 @@ and cross-version upgrade compatibility are outside this pre-release scope.
 - With a model task running, close the window and test both continue and stop
   choices. Verify actual owned process exit and workspace lock release.
 - Reopen the same-version workspace and verify the saved report and exports.
+- In a separate synthetic lifecycle test app, force-stop only its recorded main
+  PID. Verify the matching service and its recorded descendants exit, an
+  unrelated CLI remains alive, and the same workspace can reopen paused without
+  automatically resubmitting interrupted work. The backend must implement the
+  `BRIEFLOOP_DESKTOP_OWNER_PIPE=1` stdin-EOF contract; shell-only tests cannot
+  establish backend cleanup. Do not terminate the user's working app.
+- Try an invalid target folder while a workspace is active: the current service
+  and editor must remain available. Then exercise a valid target whose service
+  fails to start; verify the original workspace recovers paused and the error
+  remains visible. A target that has not exited must remain owned, not be hidden
+  behind a second managed service.
 - Verify Desktop, Start menu and taskbar icons. Uninstall without deleting the
   workspace, then verify installed app removal and preservation of report data.
 
@@ -63,3 +74,27 @@ it must not upload to the official GitHub Releases feed. Packaging always uses
 `--publish never`. The GitHub provider configuration generates `latest.yml` and
 the installer blockmap locally; it does not create a GitHub release. Shared
 updater integration and native upgrade acceptance remain pending.
+
+## Release handoff and completion evidence
+
+The release coordinator freezes one source commit and builds one backend wheel
+for both desktop platforms. Windows packaging consumes that exact wheel and its
+manifest; it must not rebuild or install a different backend under the same
+version. Record the source commit, application version, backend version and
+wheel SHA256, installer SHA256, and installed executable version separately.
+Run `scripts/check_versions.py` with the available native artifacts and report
+missing platform evidence explicitly.
+
+After that freeze, Windows acceptance must cover the installed NSIS application
+outside the checkout: startup in a Chinese/space workspace path, authorized
+runtime discovery and one short actual generation, edit/save/reopen, Word export
+and font inspection in WPS, normal cancellation and exit, and failed workspace
+switch recovery. Preserve the synthetic owner-crash acceptance evidence alongside
+these checks; it does not replace installed application or model execution tests.
+
+Before publication, exercise download/install/restart from an available older
+version using an isolated feed. Verify save/cancel gates, preserved workspace
+data, and the installed version after restart. The coordinator then publishes
+the already-verified installer, blockmap and `latest.yml`. Recheck the actual
+GitHub release and stable update entry point after publication. Source version
+changes and successful packaging alone do not make a Windows update available.

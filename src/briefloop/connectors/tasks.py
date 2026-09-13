@@ -6,6 +6,7 @@ Capabilities are process-local; resume must ask the trusted host for fresh acces
 import json
 import secrets
 import threading
+import uuid
 from .config import ConnectorError
 from .materials import ConnectorMaterials
 from ..store import now
@@ -81,7 +82,18 @@ class TaskMaterials:
 
     def release_access(self, token):
         with self._lock:
-            self._access.pop(token, None)
+            access = self._access.pop(token, None)
+        if access:
+            # Invalidate in-flight calls as well as closing their owned session.
+            # This scope is never reused, even when the same frozen job resumes.
+            self.materials.service.revoke_scope(access['scope'])
+
+    def finish(self, job_id, attempt):
+        with self._lock:
+            tokens = [token for token, access in self._access.items()
+                      if access['job_id'] == job_id and access['attempt'] == attempt]
+        for token in tokens:
+            self.release_access(token)
 
     def status(self, job_id):
         row = self._binding(job_id)
@@ -89,29 +101,37 @@ class TaskMaterials:
 
     def access(self, job_id):
         """Host-only: hand this capability to the generating process, never Reviewer."""
-        run_id = self._job(job_id)
-        row = self._binding(job_id)
-        if row['run_id'] != run_id:
-            raise ConnectorError('任务报告绑定发生变化。', code='invalid_task')
-        self.materials.grants.get(row['grant_id'], run_id, active=True)
-        token = secrets.token_urlsafe(32)
         with self._lock:
-            self._access[token] = job_id
+            run_id = self._job(job_id)
+            row = self._binding(job_id)
+            if row['run_id'] != run_id:
+                raise ConnectorError('任务报告绑定发生变化。', code='invalid_task')
+            self.materials.grants.get(row['grant_id'], run_id, active=True)
+            attempt = int(json.loads(self.store.one('jobs', job_id)['payload']).get('attempt', 1))
+            token = secrets.token_urlsafe(32)
+            scope = 'material-access:' + uuid.uuid4().hex
+            self._access[token] = {'job_id': job_id, 'attempt': attempt, 'scope': scope,
+                'materials': ConnectorMaterials(self.store, self.materials.service, access_scope=scope)}
         return {'access_token': token, 'tool_path': '/api/connectors/task-tool'}
 
     def revoke(self, job_id):
         row = self._binding(job_id)
         result = self.materials.revoke(row['grant_id'], row['run_id'])
         with self._lock:
-            self._access = {token: task for token, task in self._access.items() if task != job_id}
+            tokens = [token for token, access in self._access.items() if access['job_id'] == job_id]
+        for token in tokens:
+            self.release_access(token)
         return result
 
     def dispatch(self, token, request):
         with self._lock:
-            job_id = self._access.get(token)
-        if not job_id:
+            access = self._access.get(token)
+        if not access:
             raise ConnectorError('任务连接器访问凭据无效。', code='invalid_access')
+        job_id = access['job_id']
         run_id = self._job(job_id)
+        if int(json.loads(self.store.one('jobs', job_id)['payload']).get('attempt', 1)) != access['attempt']:
+            raise ConnectorError('任务已恢复，请使用本次执行的连接器访问凭据。', code='invalid_access')
         row = self._binding(job_id)
         if run_id != row['run_id']:
             raise ConnectorError('任务报告绑定发生变化。', code='invalid_task')
@@ -123,4 +143,4 @@ class TaskMaterials:
         action = request['action']
         self.materials.grants.get(row['grant_id'], run_id, active=True)
         args = {key: value for key, value in request.items() if key != 'action'}
-        return getattr(self.materials, action)(row['grant_id'], run_id, **args)
+        return getattr(access['materials'], action)(row['grant_id'], run_id, **args)

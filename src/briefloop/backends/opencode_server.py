@@ -103,7 +103,7 @@ class OpencodeServerClient:
         self._stderr = (root / 'opencode-serve.stderr.log').open('a')
         self.process = OwnedProcess(
             [executable, 'serve', '--port', str(self.port), '--hostname', '127.0.0.1'],
-            stdout=subprocess.DEVNULL, stderr=self._stderr, env=env, start_new_session=True)
+            stdout=subprocess.DEVNULL, stderr=self._stderr, env=env, parent_death=True)
         self._lock = threading.Lock()
         try:
             self.version = self._wait_ready()

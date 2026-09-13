@@ -6,7 +6,6 @@ from pathlib import Path
 from datetime import datetime, timezone
 import json
 import re
-import time
 from .store import dump
 
 
@@ -124,7 +123,7 @@ class ProgressTracker:
                         if value:row['status']=value
                         if isinstance(status, dict):
                             if status.get('role'):row['role']=role_label(status['role'])
-                            for field in ('task', 'activity', 'last_activity'):
+                            for field in ('task', 'activity', 'activity_id', 'last_activity'):
                                 if status.get(field):row[field]=str(status[field])[:240]
                             if status.get('activity'):
                                 self.message=row['role']+'：'+str(status['activity'])[:240]
@@ -157,7 +156,13 @@ class ProgressTracker:
             stages = [{'id': identity, 'label': label, 'status': 'active', 'agents': workers}]
         message=self.message
         if self.runtime_issue:stage,message=self.runtime_issue
-        value={'stage':stage,'message':message,'agents':workers,'stages':stages,'last_activity':datetime.fromtimestamp(log.stat().st_mtime if log.exists() else time.time(),timezone.utc).isoformat(),'draft_ready':paths[3].exists() or self.has_saved_draft}
-        encoded=dump(value)
-        if encoded!=self.last:
-            self.store.event(self.job_id,'runtime_progress',value);self.last=encoded
+        value={'stage':stage,'message':message,'agents':workers,'stages':stages,'draft_ready':paths[3].exists() or self.has_saved_draft}
+        def semantic(item):
+            if isinstance(item,dict):return {key:semantic(part) for key,part in item.items() if key!='last_activity'}
+            if isinstance(item,list):return [semantic(part) for part in item]
+            return item
+        previous=json.loads(self.last) if self.last else None
+        if semantic(value)!=semantic(previous):
+            timestamps=[entry[0]/1_000_000_000 for entry in signature if entry is not None]
+            value['last_activity']=datetime.fromtimestamp(max(timestamps),timezone.utc).isoformat() if timestamps else None
+            self.store.event(self.job_id,'runtime_progress',value);self.last=dump(value)

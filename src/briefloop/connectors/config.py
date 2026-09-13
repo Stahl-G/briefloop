@@ -120,7 +120,10 @@ def validate_secrets(value: dict | None) -> dict:
             or sum(len(k) + len(v) for k, v in env.items()) > 65536):
         raise ConnectorError('环境凭据必须是长度受限的字符串映射。')
     # Do not allow environment injection into the Python transport supervisor.
-    if any(k.startswith('PYTHON') or k in ('LD_PRELOAD', 'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH') for k in env):
+    # Normalize on every platform so a saved config cannot become unsafe when
+    # used on Windows, whose environment names are case-insensitive. This only
+    # protects the supervisor environment; it is not a sandbox for stdio commands.
+    if any(k.upper().startswith(('PYTHON', 'LD_', 'DYLD_')) or k.upper() == '__PYVENV_LAUNCHER__' for k in env):
         raise ConnectorError('不允许覆盖解释器或动态库加载环境。')
     # Preserve the legacy credential shape when raw Authorization is unused.
     result = {'bearer_token': token, 'env': env}
@@ -156,9 +159,29 @@ class LocalConfig:
             raise ConnectorError('连接器配置文件不能是符号链接。')
         if self.path.exists():
             private_path(self.path)
-        self.records = json.loads(self.path.read_text(encoding='utf-8')) if self.path.exists() else {}
-        if not isinstance(self.records, dict):
-            raise ConnectorError('连接器配置格式无效。')
+        self._records = None
+        self._load_records()
+
+    def _load_records(self):
+        try:
+            if self.path.is_symlink():raise OSError('symlink')
+            records = json.loads(self.path.read_text(encoding='utf-8')) if self.path.exists() else {}
+            if not isinstance(records, dict):raise ValueError('invalid records')
+            if any(not isinstance(record, dict) or not {'id','config','revision','enabled','credential_binding','env_names'} <= record.keys()
+                   for record in records.values()):raise ValueError('invalid record')
+            self._records = records
+        except (OSError, ValueError):
+            # Keep corrupt bytes untouched and let the rest of the workspace open.
+            # A later connector request retries after the user repairs the file.
+            self._records = None
+
+    @property
+    def records(self):
+        if self._records is None:self._load_records()
+        if self._records is None:
+            raise ConnectorError('连接器配置无法读取，原文件已保留。请修复工作区 .connectors/connections.json 后重试；报告和历史仍可使用。',
+                                 code='config_unreadable')
+        return self._records
 
     def persist(self):
         atomic_json(self.path, self.records)

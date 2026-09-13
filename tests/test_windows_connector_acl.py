@@ -21,7 +21,9 @@ def test_connector_credentials_remove_inherited_and_explicit_broad_grants(tmp_pa
     config = LocalConfig(root)
     secret = {'bearer_token': 'synthetic-only-令牌', 'env': {}}
     binding = config.new_binding(secret)
-    config.records = {'synthetic': {'credential_binding': binding}}
+    config.records['synthetic'] = {'id':'synthetic',
+        'config':{'name':'Synthetic ACL fixture','transport':'http','url':'https://example.invalid/mcp'},
+        'revision':1,'enabled':False,'credential_binding':binding,'env_names':[]}
     config.persist()
     credential = config.credential_path(binding)
     # Simulate a legacy file with an explicit grant; directory hardening alone is insufficient.

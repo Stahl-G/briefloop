@@ -56,11 +56,16 @@ class ChatStore:
         with self.store.tx() as c:return self.decode(c.execute('SELECT s.*, ('+BUSY_SQL+') AS busy FROM chat_sessions s WHERE id=?',(sid,)).fetchone())
 
     def sessions(self,view='active'):
-        if view not in ('active','archived','deleted'):raise ValueError('无效会话分类')
+        if view not in ('active','archived','deleted','tests'):raise ValueError('无效会话分类')
+        lifecycle='active' if view=='tests' else view
+        test_filter=''
+        if view in ('active','tests'):
+            predicate='EXISTS' if view=='tests' else 'NOT EXISTS'
+            test_filter=f"AND {predicate}(SELECT 1 FROM chat_events t WHERE t.session_id=s.id AND t.kind='runtime/test') "
         with self.store.tx() as c:return [self.decode(r) for r in c.execute(
             'SELECT s.*, ('+BUSY_SQL+') AS busy FROM chat_sessions s WHERE lifecycle=? '
-            "AND NOT EXISTS(SELECT 1 FROM chat_events e WHERE e.session_id=s.id AND e.kind='session/internal') "
-            'ORDER BY updated DESC',(view,))]
+            "AND NOT EXISTS(SELECT 1 FROM chat_events e WHERE e.session_id=s.id AND e.kind='session/internal') "+test_filter+
+            'ORDER BY updated DESC',(lifecycle,))]
 
     def set_lifecycle(self,sid,lifecycle):
         if lifecycle not in ('active','archived','deleted'):raise ValueError('无效会话分类')

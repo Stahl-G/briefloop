@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS company_facts(id TEXT PRIMARY KEY,fact_key TEXT NOT N
 
 class Store:
     def __init__(self, workspace):
+        self._job_wakeup = None
         self.root = Path(workspace).expanduser().resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         for d in ("sources", "jobs", "wiki", "exports"):
@@ -197,16 +198,27 @@ class Store:
             raise Conflict("Source changed outside the application")
         return text
 
+    def _create_learning_run(self, origin_id, source_ids, *, skill_id=None):
+        origin=self.one('runs',origin_id)
+        requirements={**json.loads(origin['requirements']),'allow_web':False}
+        return self.create_run(requirements,source_ids,mode='trial',skill_id=skill_id,
+                               _learning_clone=(_LEARNING_CLONE,origin_id))
+
     def create_run(self, requirements, source_ids, **options):
+        clone=options.get('_learning_clone')
+        if clone is not None:
+            if not isinstance(clone,tuple) or len(clone)!=2 or clone[0] is not _LEARNING_CLONE:
+                raise ValueError('Invalid internal learning clone')
+            requirements={**json.loads(self.one('runs',clone[1])['requirements']),'allow_web':False}
         req = Requirements.model_validate(requirements)
         selected = None
-        if req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is None:
+        if clone is None and req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is None:
             raise ValueError('请先选择是否维护企业背景知识库；可选择不维护并继续报告')
-        req.company_context_required=req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is True
-        if self.settings().get('company_context_enabled') and not req.company_context_revision:
+        if clone is None:req.company_context_required=req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is True
+        if clone is None and self.settings().get('company_context_enabled') and not req.company_context_revision:
             from .company_context import snapshot
             req.company_context_revision=snapshot(self)['revision']
-        if req.template_id:
+        if clone is None and req.template_id:
             from .templates import template
             selected=template(self,req.template_id)
             if selected['status']!='ready':raise ValueError('所选模板尚未准备完成')
@@ -214,11 +226,15 @@ class Store:
                 from .models import ReportSection
                 req.sections=[ReportSection.model_validate(s) for s in selected['spec']['sections']]
         from .document_workflows import resolve_workflow, freeze_workflow, template_workflow_hint
-        selection = resolve_workflow(req.model_dump(), template_workflow_hint(selected))
+        selection = ({'id':req.workflow_snapshot['id'],'variant':req.workflow_snapshot['variant']}
+                     if clone is not None and req.workflow_snapshot else resolve_workflow(req.model_dump(), template_workflow_hint(selected)))
         req.workflow_id, req.workflow_variant = selection['id'], selection['variant']
         if req.workflow_id == 'meeting_minutes' and not source_ids:
             raise ValueError('会议纪要需要本次会议的转写或笔记；请先添加并选择材料，公开检索不能替代会议记录')
-        req.workflow_snapshot = freeze_workflow(selection)
+        if clone is not None and req.workflow_snapshot:
+            from .learning import validated_workflow
+            req.workflow_snapshot=validated_workflow(req.workflow_snapshot)
+        else:req.workflow_snapshot = freeze_workflow(selection)
         for sid in req.reference_source_ids:
             self.one("sources", sid)
         if set(source_ids) & set(req.reference_source_ids):
@@ -253,10 +269,6 @@ class Store:
         if author not in ('agent', 'example'):raise ValueError('无效稿件作者')
         draft = BriefDraft.model_validate(draft)
         from .document_model import document_hash, source_ids
-        if draft.editor_document is not None:
-            from .models import Citation
-            present={ref.source_id for ref in draft.citations}
-            draft.citations.extend(Citation(source_id=sid) for sid in source_ids(draft.editor_document) if sid not in present)
         run=self.one("runs", run_id)
         from .company_context import require_review
         company_review=require_review(self,run)
@@ -294,15 +306,11 @@ class Store:
         from .figure_support import validate_figures
         assets=validate_figures(self,run_id,draft.markdown)
         draft.figures=[f['figure_id'] for f in assets]
-        from .models import Citation
-        cited={ref.source_id for ref in draft.citations}
-        for figure in assets:
-            for source_id in figure['source_ids']:
-                if source_id not in cited:
-                    draft.citations.append(Citation(source_id=source_id,locator=figure['caption']));cited.add(source_id)
         vid = version_id or uid("brief")
         sha = document_hash(draft.editor_document) if draft.editor_document is not None else content_hash(draft.markdown)
         detail=draft.model_dump(mode='json',exclude={'markdown','editor_document'})
+        from .figure_support import sync_content_citations
+        sync_content_citations(self,run_id,detail,draft.editor_document,assets)
         if draft.editor_document is not None:detail['document_schema']=1
         if company_review:detail['company_context']={'revision':company_review['revision'],'review':company_review}
         with self.tx() as c:
@@ -322,12 +330,13 @@ class Store:
                 if old_detail!=detail:raise Conflict('Completed draft metadata differs; save a new version')
             else:
                 c.execute("INSERT INTO briefs VALUES(?,?,?,?,?,?,?,?,?)", (vid, run_id, parent_id, author, draft.markdown, sha, dump(detail), dump(draft.editor_document) if draft.editor_document is not None else None, now()))
-            for ref in draft.citations:
-                c.execute("INSERT OR IGNORE INTO run_sources VALUES(?,?)",(run_id,ref.source_id))
+            for ref in detail['citations']:
+                c.execute("INSERT OR IGNORE INTO run_sources VALUES(?,?)",(run_id,ref['source_id']))
         return self.one("briefs", vid)
 
-    def revise(self, base_version, markdown='', editor_document=None, *, author='user'):
+    def revise(self, base_version, markdown='', editor_document=None, *, author='user', allow_markdown_conversion=False):
         if author not in ('user','agent'):raise ValueError('无效修订作者')
+        if type(allow_markdown_conversion) is not bool:raise ValueError('明确转换标记必须是布尔值')
         from .document_model import normalize_document, document_markdown, document_hash, source_ids
         if editor_document is not None:
             editor_document=normalize_document(editor_document)
@@ -341,24 +350,33 @@ class Store:
             latest = c.execute("SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1", (base["run_id"],)).fetchone()
             if latest["id"] != base_version:
                 raise Conflict("稿件已有更新，请先保留本地编辑并重新加载最新版本")
+            converted=False
+            if base['editor_document'] is not None and editor_document is None:
+                if markdown==base['markdown']:
+                    return dict(base)  # A projection-only no-op must keep its rich original.
+                if not allow_markdown_conversion:
+                    raise ValueError('当前稿件是富文档；请提交完整 editor_document，或明确转换 Markdown（allow_markdown_conversion=true）。原版本保留。')
+                from .document_model import markdown_document
+                editor_document=normalize_document(markdown_document(markdown))
+                markdown=document_markdown(editor_document)
+                converted=True
             same_document=(editor_document is None and base['editor_document'] is None or
                            editor_document is not None and base['editor_document'] is not None and
                            normalize_document(json.loads(base['editor_document']))==editor_document)
             if markdown == base["markdown"] and same_document:
                 return dict(base)
             detail=json.loads(base['detail'])
+            if converted:detail['content_conversion']={'input_format':'markdown','base_version':base_version,'explicit':True}
+            else:detail.pop('content_conversion',None)
             if editor_document is not None:
                 detail['document_schema']=1
-                references=set(json.loads(self.one('runs',base['run_id'])['requirements']).get('reference_source_ids',[]))
-                for sid in source_ids(editor_document):
-                    self.one('sources',sid)
-                    if sid in references:raise ValueError('风格参考不能作为报告事实引用')
-                    if sid not in [x['source_id'] for x in detail.get('citations',[])]:
-                        detail.setdefault('citations',[]).append({'source_id':sid,'locator':'','excerpt':''})
-                    c.execute('INSERT OR IGNORE INTO run_sources VALUES(?,?)',(base['run_id'],sid))
             else:detail.pop('document_schema',None)
-            from .figure_support import validate_figures
-            detail['figures']=[f['figure_id'] for f in validate_figures(self,base['run_id'],markdown)]
+            from .figure_support import validate_figures,sync_content_citations
+            figures=validate_figures(self,base['run_id'],markdown)
+            detail['figures']=[f['figure_id'] for f in figures]
+            sync_content_citations(self,base['run_id'],detail,editor_document,figures)
+            for ref in detail['citations']:
+                c.execute('INSERT OR IGNORE INTO run_sources VALUES(?,?)',(base['run_id'],ref['source_id']))
             if detail.get('report_data'):
                 import re
                 # Saved input numbers do not change when a user edits the prose/table.
@@ -394,6 +412,8 @@ class Store:
                 key=document_markdown({'type':'doc','content':[block]})
                 if existing[key]:document['content'][index]=existing[key].popleft()
             markdown=document_markdown(document)
+        from .figure_support import sync_content_citations
+        sync_content_citations(self,base['run_id'],detail,document,figures)
         vid=uid('brief')
         with self.tx() as c:
             latest=c.execute('SELECT id FROM briefs WHERE run_id=? ORDER BY rowid DESC LIMIT 1',(base['run_id'],)).fetchone()
@@ -431,11 +451,12 @@ class Store:
             version_id=brief['parent_id']
         return False
 
-    def comment(self, version_id, text):
+    def comment(self, version_id, text, *, learning_intent='feedback'):
+        if learning_intent not in ('feedback','explicit_requirement'):raise ValueError('Unknown learning intent')
         self.one("briefs", version_id)
         fid = uid("feedback")
         with self.tx() as c:
-            c.execute("INSERT INTO feedback VALUES(?,?,?,?,?,?)", (fid, version_id, "comment", dump({"text": text}), None, now()))
+            c.execute("INSERT INTO feedback VALUES(?,?,?,?,?,?)", (fid, version_id, "comment", dump({"text": text,"learning_intent":learning_intent}), None, now()))
         return {"id": fid}
 
     def runtime_config(self):
@@ -481,6 +502,10 @@ class Store:
                 roles[role]=dict(base)
         return roles
 
+    def wake_jobs(self):
+        """Notify this service after admission commits; other processes poll."""
+        if self._job_wakeup is not None:self._job_wakeup()
+
     def enqueue(self, kind, payload, *, before_commit=None):
         if kind not in ('export_docx','release','audit_bundle','source_refresh'):
             from .backends import validate_backend
@@ -505,6 +530,7 @@ class Store:
         job = self.one("jobs", jid)
         from .task_notify import notify as _notify_task
         _notify_task(self, job, 'queued')
+        self.wake_jobs()
         return job
 
     def search_provider_for_run(self, run_id):
@@ -523,6 +549,7 @@ class Store:
         # (_settle_job / stop_job), which is where production jobs actually finish.
         with self.tx() as c:
             c.execute("UPDATE jobs SET status=?,result=COALESCE(?,result),error=?,updated=? WHERE id=?", (status, dump(result) if result is not None else None, error, now(), jid))
+        if status=='queued':self.wake_jobs()
 
     def event(self, job_id, kind, data):
         with self.tx() as c:
@@ -571,3 +598,6 @@ class Store:
                 "skills": self.rows("SELECT * FROM skills ORDER BY rowid DESC"),
                 "active_skill": self.meta("active_skill"),
                 "wiki": (self.root/"wiki/index.md").read_text(encoding='utf-8') if (self.root/"wiki/index.md").exists() else ""}
+
+
+_LEARNING_CLONE = object()

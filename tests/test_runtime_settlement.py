@@ -1,3 +1,4 @@
+from briefloop.document_model import markdown_document
 import json
 import threading
 import time
@@ -85,7 +86,7 @@ def test_resume_repairs_metadata_without_regenerating_or_overwriting_body(tmp_pa
             else:
                 assert job['kind']=='repair_revision_metadata'
                 packet=json.loads((folder/'input.json').read_text());revision=store.one('briefs',packet['version_id'])
-                if edit_during_repair:store.revise(revision['id'],'USER EDIT')
+                if edit_during_repair:store.revise(revision['id'],editor_document=markdown_document('USER EDIT'))
                 bid=next(iter(blocks(brief_document(revision))))
                 (folder/'metadata.json').write_text(dump({'version_id':revision['id'],'brief_hash':revision['hash'],'bindings':[{'claim_id':claim['id'],'block_id':bid,'quote':'Revenue was USD 12 million'}],'responses':[]}))
             return {'synthetic':True}
@@ -165,7 +166,7 @@ def test_word_file_completes_while_generation_and_review_still_run(tmp_path):
         review=enqueue_review(store,brief['id'])
         assert review_runtime.entered.wait(5)
         export=enqueue_export(store,brief['id'])
-        store.revise(brief['id'],'Revenue was USD 99 million in the user revision.')
+        store.revise(brief['id'],editor_document=markdown_document('Revenue was USD 99 million in the user revision.'))
         wait_for(lambda:store.one('jobs',export['id'])['status'] in ('complete','failed'))
         finished=store.one('jobs',export['id'])
         assert finished['status']=='complete',finished['error']

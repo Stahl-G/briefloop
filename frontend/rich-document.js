@@ -88,7 +88,9 @@ export function editorDocument(document,version){
 }
 export function savedDocument(document){
  const output=mapImages(document,src=>{
-  const url=new URL(src,window.location.origin);
+  let url;
+  try{if(typeof src!=='string'||!src.trim())throw Error();url=new URL(src,window.location.origin)}
+  catch{throw Error('图片地址无效，请修正或移除该图片后重新保存；编辑内容仍保留。')}
   return url.origin===window.location.origin&&url.pathname==='/api/figure'?'briefloop-figure:'+url.searchParams.get('id'):src;
  });
  function clear(node){if(node.type==='citation')delete node.attrs.label;for(const child of node.content||[])clear(child)}clear(output);return output;

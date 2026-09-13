@@ -81,3 +81,29 @@ def test_register_figure_cli_returns_insertable_marker(tmp_path,monkeypatch,caps
     main();result=json.loads(capsys.readouterr().out)
     assert figure_ids(result['markdown'])==[result['figure_id']]
     assert read_figure(store,result['figure_id'])['source_ids']==[source['id']]
+
+
+@pytest.mark.parametrize('save_path', ['publish', 'revise', 'attach'])
+def test_current_figure_citations_follow_revisions_without_polluting_descendants(tmp_path, save_path):
+    from briefloop.source_updates import impacts
+    store=Store(tmp_path);source,run,image=inputs(store)
+    figure=register_figure(store,run['id'],image,'Comparison',caption='Synthetic values',source_ids=[source['id']])
+    plain='Summary.'
+    markdown=plain+'\n\n'+figure['markdown']
+    if save_path=='publish':
+        illustrated=store.publish(run['id'],{'title':'Report','markdown':markdown})
+    else:
+        base=store.publish(run['id'],{'title':'Report','markdown':plain})
+        illustrated=(store.revise(base['id'],markdown) if save_path=='revise' else store.attach_figures(base['id'],markdown))
+    assert source['id'] in {ref['source_id'] for ref in json.loads(illustrated['detail'])['citations']}
+    assert illustrated['id'] in {row['version_id'] for row in impacts(store,source['id'])['versions']}
+    removed=store.revise(illustrated['id'],plain)
+    affected={row['version_id'] for row in impacts(store,source['id'])['versions']}
+    assert illustrated['id'] in affected and removed['id'] not in affected
+    assert not json.loads(removed['detail'])['citations']
+    # An explicit bibliography entry remains when removing its accompanying figure.
+    other=store.create_run({'title':'Explicit report','objective':'Compare'},[source['id']])
+    explicit=store.publish(other['id'],{'title':'Explicit report','markdown':markdown,
+                                      'citations':[{'source_id':source['id'],'locator':'Directly cited in text'}]})
+    kept=store.revise(explicit['id'],plain)
+    assert kept['id'] in {row['version_id'] for row in impacts(store,source['id'])['versions']}

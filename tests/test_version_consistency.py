@@ -30,3 +30,36 @@ def test_source_follows_current_metadata_and_missing_platforms_never_pass(tmp_pa
     target.write_text(json.dumps(data))
     result,status=checker.check(args(tmp_path))
     assert status==1 and result['checks']['source']['status']=='mismatch'
+
+
+def test_desktop_must_use_shared_wheel_and_failed_remote_evidence_stays_failed(tmp_path):
+    import hashlib
+    import zipfile
+    import pytest
+    expected=tomllib.loads((ROOT/'pyproject.toml').read_text())['project']['version']
+    base=tmp_path/'backend';base.mkdir()
+    wheel=base/'briefloop-test.whl'
+    with zipfile.ZipFile(wheel,'w') as z:
+        z.writestr('briefloop-test.dist-info/METADATA',f'Name: briefloop\nVersion: {expected}\n')
+    digest=hashlib.sha256(wheel.read_bytes()).hexdigest()
+    (base/'manifest.json').write_text(json.dumps({'version':expected,'wheel':wheel.name,'sha256':digest}))
+    assert checker.backend_versions(tmp_path,digest)['backend_wheel']==expected
+    with pytest.raises(ValueError,match='shared release wheel'):
+        checker.backend_versions(tmp_path,'0'*64)
+    report=tmp_path/'windows.json'
+    a=args(ROOT);a.wheel=wheel;a.platform_report=[report]
+    for state,hash_value in [('error',digest),('match','0'*64),('match',None)]:
+        report.write_text(json.dumps({'expected':expected,'checks':{'windows':{'status':state,'versions':{'app':expected},'release_wheel_sha256':hash_value}}}))
+        result,status=checker.check(a)
+        assert status==1 and result['checks']['windows']['status']=='error'
+    report.write_text(json.dumps({'expected':expected,'checks':{'windows':{'status':'match','versions':{'app':expected},'release_wheel_sha256':digest}}}))
+    result,status=checker.check(a)
+    assert status==0 and result['checks']['windows']['release_wheel_sha256']==digest
+
+    report.write_text(json.dumps({'expected':expected,'checks':{'windows':{'status':'error','reason':'Desktop backend differs from shared release wheel'}}}))
+    later=tmp_path/'later.json'
+    later.write_text(json.dumps({'expected':expected,'checks':{'windows':{'status':'match','versions':{'app':expected},'release_wheel_sha256':digest}}}))
+    a.platform_report=[report,later]
+    result,status=checker.check(a)
+    assert status==1 and result['checks']['windows']['status']=='error'
+    assert result['checks']['windows']['evidence']==str(report)

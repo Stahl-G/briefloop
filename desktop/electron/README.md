@@ -12,6 +12,8 @@ Electron 薄壳使用 App 自带的 Node 运行桥；Python 来自用户本机�
 
 ## 构建
 
+正式签名与 Apple 公证使用 [SIGNING.md](SIGNING.md) 的 `signing:check` / `dist:signed` 入口。它要求有效 Developer ID 证书与公证凭据；现有未签名资产不会因此自动成为已签名发行。
+
 构建机准备 Python 3.11+、Node/npm。发布构建前先确认 `pyproject.toml`、本目录 `package.json` / `package-lock.json` 以及待打包 wheel 清单的版本均为 `0.20.0`。从仓库根目录执行：
 
 ```sh
@@ -40,6 +42,10 @@ npm run dist
 历史 `prepare-runtime.py`、`refresh-app.py` 及 runtime lock 仅用于复查旧全量包证据，不属于当前发行构建流程。当前构建未签名／公证；本地安装验证不代表正式发布或 Windows 原生验收。
 
 ## 窗口保存与退出协议
+
+桌面一次只管理一个工作区；切换不是同时打开第二个后台。切换前先检查目标目录、工作区标记、运行环境和目录写入，再保存并停止当前工作区。目标服务启动或页面加载失败时，先确认目标后台已退出，再尝试在原端口恢复原工作区；恢复以暂停模式启动，不自动重提中断任务。目标尚未退出或原工作区恢复失败时明确报错，不宣称切换成功。独立 WebUI/CLI 服务不属于这个桌面窗口的管理范围。
+
+桌面服务启动时带有随机 `BRIEFLOOP_LAUNCH_ID` 和 `BRIEFLOOP_DESKTOP_OWNER_PIPE=1`，stdin 管道唯一写端由 Electron main 持有，不传给后代。桌面异常退出导致 EOF 后，由配套 Python 服务执行受控取消和关闭；正常退出仍走保存和服务身份校验。恢复只能保证已经保存的内容，强制结束窗口不能保存尚未落盘的编辑。该合约需要同版 Python 后端支持，不能仅替换旧安装的桌面壳后宣称已具备异常退出清理。
 
 preload 提供 `briefloopDesktop.onPrepareClose(callback)`。main 为每次准备关闭生成随机请求 ID；renderer 通过现有 `savedVersion()`／保存队列完成保存后，只回传 `{status:'saved', version_id:string|null}`，失败则回传 `{status:'failed', error:string}`。失败或 30 秒内未收到确认时保留窗口，不把关闭窗口当保存成功。
 

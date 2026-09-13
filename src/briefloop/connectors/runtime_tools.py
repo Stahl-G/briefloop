@@ -17,9 +17,9 @@ def generation_access(worker, job):
     access = tasks.access(job['id'])
     token = access['access_token']
     directory = worker.store.root / '.connector-access'
-    directory.mkdir(mode=0o700, exist_ok=True)
     path = directory / (job['id'] + '-' + uuid.uuid4().hex + '.json')
     try:
+        directory.mkdir(mode=0o700, exist_ok=True)
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, 'w') as stream:
             json.dump({'access_token': token, 'url': worker.connector_tool_url}, stream)
@@ -34,5 +34,7 @@ def generation_access(worker, job):
             '按已选目录和冻结预算执行；不要读取、复制或输出 access-file 内容。返回 admitted 后用 source_id 读取、引用和核查正文；'
             '未接纳的回执不能当事实。不要自行授权、提额、改宿主连接配置或把凭据传给审阅者。\n')
     finally:
-        path.unlink(missing_ok=True)
-        tasks.release_access(token)
+        try:
+            path.unlink(missing_ok=True)
+        finally:
+            tasks.release_access(token)

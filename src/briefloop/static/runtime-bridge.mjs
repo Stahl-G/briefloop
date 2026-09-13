@@ -1,12 +1,7 @@
 // Includes Apache-2.0 Open Design helpers; see runtime-bridge.LICENSE.txt and runtime-bridge.NOTICE.txt.
 
-// runtime-bridge/main.ts
-import { spawn as spawn2, execFile } from "node:child_process";
-import { accessSync, constants, readFileSync } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import path2 from "node:path";
-import { promisify } from "node:util";
-import { createInterface } from "node:readline";
+// runtime-bridge/pi.ts
+import path from "node:path";
 
 // third_party/open-design/core/json-line-stream.ts
 function createJsonLineStream(onMessage) {
@@ -251,13 +246,162 @@ function classifyJsonCandidate(value) {
   return rootComplete && stack.length === 0 ? "complete" : "incomplete";
 }
 
+// runtime-bridge/pi.ts
+function piConnection(bin, p, launch2, terminate2, onEvent = () => {
+}) {
+  const args = ["--mode", "rpc", "--no-approve"];
+  if (p.metadata) args.push("--no-session");
+  const mode = p.host_options?.mode || "native";
+  if (!["native", "read", "none"].includes(mode)) throw Error("Invalid Pi tool mode");
+  if (mode !== "native") args.push("--no-extensions", ...mode === "none" ? ["--no-tools"] : ["--tools", "read,grep,find,ls"]);
+  if (p.session_id) args.push("--session", p.session_id);
+  const child = launch2(bin, args, p.cwd), pending = /* @__PURE__ */ new Map();
+  let seq = 0;
+  const send = (value) => child.stdin.write(JSON.stringify(value) + "\n");
+  const rejectPending = (error) => {
+    for (const q of pending.values()) {
+      clearTimeout(q.timer);
+      q.reject(error);
+    }
+    pending.clear();
+  };
+  const parser = createJsonLineStream((m) => {
+    if (m.type === "response" && pending.has(m.id)) {
+      const q = pending.get(m.id);
+      pending.delete(m.id);
+      clearTimeout(q.timer);
+      m.success ? q.resolve(m.data) : q.reject(Error(m.error || "Pi rejected " + m.command));
+    } else onEvent(m);
+  });
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (c) => parser.feed(c));
+  child.stderr.resume();
+  child.stdin.on("error", () => {
+  });
+  child.on("error", rejectPending);
+  child.on("close", () => {
+    parser.flush();
+    rejectPending(Error("Pi process exited"));
+  });
+  return { child, send, close: () => terminate2(child), call: (type, data = {}, timeout = 2e4) => new Promise((resolve, reject) => {
+    const id = String(++seq);
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(Error("Pi " + type + " timed out"));
+    }, timeout);
+    pending.set(id, { resolve, reject, timer });
+    send({ id, type, ...data });
+  }) };
+}
+async function piModels(bin, p, launch2, terminate2) {
+  const c = piConnection(bin, { ...p, metadata: true }, launch2, terminate2);
+  try {
+    const result = await c.call("get_available_models");
+    return { source: "host", models: [{ id: "default", label: "\u5BBF\u4E3B\u9ED8\u8BA4\u6A21\u578B" }, ...(result.models || []).map((m) => ({ id: m.provider + "/" + m.id, label: m.name || m.id }))] };
+  } finally {
+    c.close();
+  }
+}
+async function runPi(p, state, launch2, terminate2, emit2) {
+  if (p.images?.length) throw Error("Pi image input is not enabled in this adapter");
+  let finish, fail, lastMessage = null, textSeen = false, started = false, contextWindow;
+  const settled = new Promise((resolve, reject) => {
+    finish = resolve;
+    fail = reject;
+  });
+  settled.catch(() => {
+  });
+  const c = piConnection(state.bin, p, launch2, terminate2, (m) => {
+    if (!started) return;
+    if (m.type === "message_start" && m.message?.role === "assistant") textSeen = false;
+    if (m.type === "message_update") {
+      const e = m.assistantMessageEvent || {};
+      if (e.type === "text_delta") {
+        textSeen = true;
+        emit2(p.execution_id, "text", { text: e.delta, delta: true });
+      } else if (e.type === "thinking_delta") emit2(p.execution_id, "reasoning", { text: e.delta, delta: true });
+    }
+    if (m.type === "message_end" && m.message?.role === "assistant") {
+      lastMessage = m.message;
+      if (!textSeen) {
+        for (const b of lastMessage.content || []) if (b.type === "text") emit2(p.execution_id, "text", { text: b.text, delta: true });
+      }
+      if (lastMessage.usage) emit2(p.execution_id, "usage", { usage: { ...lastMessage.usage, model_context_window: contextWindow } });
+    }
+    if (typeof m.type === "string" && m.type.startsWith("tool_execution_")) emit2(p.execution_id, "tool", { id: m.toolCallId, name: m.toolName, status: m.type === "tool_execution_end" ? m.isError ? "failed" : "completed" : "running", input: m.args, output: m.result || m.partialResult });
+    if (m.type === "extension_ui_request") {
+      if (!["select", "confirm", "input", "editor"].includes(m.method)) return;
+      const options = m.method === "confirm" ? [{ optionId: "yes", kind: "allow_once", name: "\u5141\u8BB8\u672C\u6B21" }, { optionId: "no", kind: "reject_once", name: "\u62D2\u7EDD" }] : m.method === "select" ? (m.options || []).map((name, i) => ({ optionId: String(i), name, kind: "choice" })) : [];
+      if (!options.length) {
+        c.send({ type: "extension_ui_response", id: m.id, cancelled: true });
+        fail(Error("Pi extension requested unsupported text input"));
+        return;
+      }
+      state.questions.set(String(m.id), { options, reply: (r) => {
+        const id = r.outcome?.optionId;
+        const value = options.find((o) => o.optionId === id);
+        c.send({ type: "extension_ui_response", id: m.id, ...!value ? { cancelled: true } : m.method === "confirm" ? { confirmed: id === "yes" } : { value: value.name } });
+      } });
+      emit2(p.execution_id, "question", { request_id: String(m.id), type: "permission", title: m.title || m.message || "Pi \u8BF7\u6C42\u786E\u8BA4", options });
+    }
+    if (m.type === "agent_settled") {
+      if (state.cancelled) return finish();
+      if (!lastMessage || ["error", "aborted", "toolUse"].includes(lastMessage.stopReason)) fail(Error(lastMessage?.errorMessage || "Pi ended without a successful final reply"));
+      else finish();
+    }
+  });
+  state.child = c.child;
+  state.cancel = () => {
+    c.send({ type: "clear_queue" });
+    c.send({ type: "abort" });
+    c.close();
+    finish();
+  };
+  c.child.on("error", fail);
+  c.child.on("close", () => {
+    if (!state.cancelled) fail(Error("Pi exited before the turn settled"));
+  });
+  let timer;
+  try {
+    const info = await c.call("get_state");
+    if (!info.sessionFile) throw Error("Pi did not provide a persistent session");
+    if (p.session_id && path.resolve(info.sessionFile) !== path.resolve(p.session_id)) throw Error("Pi resumed a different session");
+    let selectedModel = info.model;
+    if (p.model && p.model !== "default") {
+      const split = p.model.indexOf("/");
+      if (split < 1) throw Error("Pi model must be provider/model");
+      selectedModel = await c.call("set_model", { provider: p.model.slice(0, split), modelId: p.model.slice(split + 1) });
+    }
+    contextWindow = selectedModel?.contextWindow;
+    emit2(p.execution_id, "session", { session_id: info.sessionFile });
+    started = true;
+    if (p.timeout_ms) timer = setTimeout(() => {
+      c.close();
+      fail(Error("Pi turn timed out"));
+    }, p.timeout_ms);
+    await c.call("prompt", { message: p.prompt });
+    await settled;
+  } finally {
+    clearTimeout(timer);
+    c.close();
+  }
+}
+
+// runtime-bridge/main.ts
+import { spawn, execFile } from "node:child_process";
+import { accessSync, constants, readFileSync } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import path3 from "node:path";
+import { promisify } from "node:util";
+import { createInterface } from "node:readline";
+
 // third_party/open-design/acp/session-params.ts
-import path from "node:path";
+import path2 from "node:path";
 function buildAcpSessionNewParams(cwd, { mcpServers, envFormat = "array" } = {}) {
   const servers = Array.isArray(mcpServers) ? mcpServers : [];
   const wantsMap = envFormat === "map";
   return {
-    cwd: path.resolve(cwd),
+    cwd: path2.resolve(cwd),
     // MCP is an optional compatibility layer. Default to no MCP servers so ACP
     // agents can run through the skill + CLI path without MCP support. Do not
     // auto-install or mutate user/global MCP config; callers must pass an
@@ -297,12 +441,7 @@ function buildPromptBlocks(prompt, resourcePaths) {
   return blocks;
 }
 
-// third_party/open-design/acp/models.ts
-import { spawn } from "node:child_process";
-
 // third_party/open-design/acp/constants.ts
-var ACP_PROTOCOL_VERSION = 1;
-var DEFAULT_TIMEOUT_MS = 15e3;
 var MAX_TIMEOUT_MS = 24 * 60 * 60 * 1e3;
 var DEFAULT_STAGE_TIMEOUT_MS = 10 * 60 * 1e3;
 var ACP_ARTIFACT_OPEN_PATTERN = String.raw`<\s*(?:\|?\s*DSML[\s,]+artifact\b|artifact\b)`;
@@ -314,39 +453,8 @@ var ACP_ARTIFACT_ECHO_START_RE = new RegExp(
 var MODEL_CONFIG_OPTION_IDS = /* @__PURE__ */ new Set(["model", "models", "modelid", "modelids"]);
 
 // third_party/open-design/acp/json.ts
-function errorMessage(err) {
-  return err instanceof Error ? err.message : String(err);
-}
-function resolveAcpTimeoutMs(env2, fallbackMs) {
-  const raw = Number(env2.OD_ACP_TIMEOUT_MS);
-  if (!Number.isFinite(raw)) return fallbackMs;
-  return Math.min(MAX_TIMEOUT_MS, Math.max(0, Math.floor(raw)));
-}
 function asObject(value) {
   return value && typeof value === "object" ? value : null;
-}
-
-// third_party/open-design/acp/rpc.ts
-function sendRpc(writable, id, method, params, observeSerializedFrame) {
-  const frame = `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}
-`;
-  writable.write(frame);
-  try {
-    observeSerializedFrame?.({
-      method,
-      frameBytes: Buffer.byteLength(frame, "utf8")
-    });
-  } catch {
-  }
-}
-function rpcErrorMessage(raw) {
-  const obj = asObject(raw);
-  const error = asObject(obj?.error);
-  if (!obj || !error) {
-    return "";
-  }
-  const message = typeof error.message === "string" ? error.message : typeof error.code === "number" ? String(error.code) : "json-rpc error";
-  return typeof obj.id === "number" ? `json-rpc id ${obj.id}: ${message}` : message;
 }
 
 // third_party/open-design/acp/models.ts
@@ -419,104 +527,6 @@ function normalizeModels(models, defaultModelOption, configOptions) {
     out.push({ id, label: isCurrent ? `${labelBase} \u2022 current` : labelBase });
   }
   return out.length > 1 || !configModels ? out : configModels.models;
-}
-async function detectAcpModels({
-  bin,
-  args,
-  cwd = process.cwd(),
-  env: env2 = process.env,
-  timeoutMs = DEFAULT_TIMEOUT_MS,
-  clientName = "open-design-detect",
-  clientVersion = "runtime-adapter",
-  defaultModelOption = { id: "default", label: "Default (CLI config)" }
-}) {
-  const effectiveTimeoutMs = resolveAcpTimeoutMs(env2, timeoutMs);
-  return await new Promise((resolve, reject) => {
-    const child = spawn(bin, args, {
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...env2 }
-    });
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    let settled = false;
-    let stderrBuf = "";
-    let expectedId = 1;
-    let nextId = 2;
-    let timer = null;
-    const finish = (fn, value) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      try {
-        child.stdin.end();
-      } catch {
-      }
-      fn(value);
-    };
-    const fail = (message) => {
-      finish(reject, new Error(message));
-      if (!child.killed) child.kill("SIGTERM");
-    };
-    const writeRpc = (id, method, params) => {
-      try {
-        sendRpc(child.stdin, id, method, params);
-      } catch (err) {
-        fail(`stdin write failed: ${errorMessage(err)}`);
-      }
-    };
-    const sendSessionNew = () => {
-      expectedId = nextId;
-      writeRpc(nextId, "session/new", buildAcpSessionNewParams(cwd));
-      nextId += 1;
-    };
-    const parser = createJsonLineStream((raw) => {
-      const obj = asObject(raw);
-      const error = asObject(obj?.error);
-      const result = asObject(obj?.result);
-      const rpcErr = rpcErrorMessage(raw);
-      if (rpcErr) {
-        if (error?.code === -32603 && obj?.id !== expectedId) return;
-        fail(rpcErr);
-        return;
-      }
-      if (obj?.id !== expectedId || !result) return;
-      if (expectedId === 1) {
-        sendSessionNew();
-        return;
-      }
-      if (expectedId === 2) {
-        const models = normalizeModels(result.models, defaultModelOption, result.configOptions);
-        finish(resolve, models);
-        if (!child.killed) child.kill("SIGTERM");
-      }
-    });
-    child.stdout.on("data", (chunk) => parser.feed(chunk));
-    child.stdout.on("close", () => parser.flush());
-    child.stdin.on("error", (err) => fail(`stdin error: ${err.message}`));
-    child.stderr.on("data", (chunk) => {
-      stderrBuf = `${stderrBuf}${chunk}`.slice(-16e3);
-    });
-    child.on("error", (err) => fail(`spawn failed: ${err.message}`));
-    child.on("close", (code, signal) => {
-      parser.flush();
-      if (!settled) {
-        const errTail = stderrBuf.trim();
-        const suffix = errTail ? ` stderr=${errTail}` : "";
-        fail(`ACP model detection exited code=${code} signal=${signal ?? "none"}${suffix}`);
-      }
-    });
-    if (effectiveTimeoutMs > 0) {
-      timer = setTimeout(() => {
-        fail(`ACP model detection timed out after ${effectiveTimeoutMs}ms`);
-      }, effectiveTimeoutMs);
-    }
-    writeRpc(1, "initialize", {
-      protocolVersion: ACP_PROTOCOL_VERSION,
-      clientCapabilities: { terminal: false },
-      clientInfo: { name: clientName, version: clientVersion }
-    });
-  });
 }
 
 // runtime-bridge/catalog.json
@@ -1122,20 +1132,39 @@ var fallbacks_default = {
 
 // runtime-bridge/main.ts
 var rawExec = promisify(execFile);
-function exec(bin, args, options) {
-  if (process.platform !== "win32") return rawExec(bin, args, options);
-  if (!env.BRIEFLOOP_PYTHON || !env.BRIEFLOOP_PROCESS_HELPER) throw Error("Windows process owner is unavailable");
-  return rawExec(env.BRIEFLOOP_PYTHON, ["-X", "utf8", env.BRIEFLOOP_PROCESS_HELPER, bin, ...args], { ...options, windowsHide: true });
+var ownedChildren = /* @__PURE__ */ new Set();
+var stopping = false;
+var terminating = /* @__PURE__ */ new WeakSet();
+function own(child) {
+  ownedChildren.add(child);
+  child.once("close", () => {
+    ownedChildren.delete(child);
+    terminate(child);
+  });
+  if (stopping) terminate(child);
+  return child;
 }
-var acpArgs = { codebuddy: ["--acp"], kimi: ["acp"], hermes: ["acp"], reasonix: ["acp"], kilo: ["acp"], kiro: ["acp"], vibe: [] };
+function exec(bin, args, options) {
+  if (stopping) throw Error("Runtime bridge is shutting down");
+  if (process.platform !== "win32") {
+    const result2 = rawExec(bin, args, { ...options, detached: true });
+    own(result2.child);
+    return result2;
+  }
+  if (!env.BRIEFLOOP_PYTHON || !env.BRIEFLOOP_PROCESS_HELPER) throw Error("Windows process owner is unavailable");
+  const result = rawExec(env.BRIEFLOOP_PYTHON, ["-X", "utf8", env.BRIEFLOOP_PROCESS_HELPER, bin, ...args], { ...options, windowsHide: true });
+  own(result.child);
+  return result;
+}
+var acpArgs = { codebuddy: ["--acp"], kimi: ["acp"], hermes: ["acp"], reasonix: ["acp"], kilo: ["acp"], kiro: ["acp"], vibe: [], "deepseek-harness": ["--profile", "acp"] };
 function acpArguments(id, bin) {
-  return id === "hermes" && /^hermes-acp(?:\.(?:exe|cmd|bat))?$/i.test(path2.basename(bin)) ? [] : [...acpArgs[id]];
+  return id === "hermes" && /^hermes-acp(?:\.(?:exe|cmd|bat))?$/i.test(path3.basename(bin)) ? [] : [...acpArgs[id]];
 }
 var active = /* @__PURE__ */ new Map();
 var defaults = [{ id: "default", label: "\u5BBF\u4E3B\u9ED8\u8BA4\u6A21\u578B" }];
 function claudeConfiguredModel() {
   try {
-    const file = JSON.parse(readFileSync(path2.join(homedir2(), ".claude", "settings.json"), "utf8"));
+    const file = JSON.parse(readFileSync(path3.join(homedir2(), ".claude", "settings.json"), "utf8"));
     const alias = typeof file?.model === "string" ? file.model.trim() : "";
     const configured = file?.env && typeof file.env === "object" ? file.env : {};
     const merged = { ...configured, ...env };
@@ -1163,12 +1192,12 @@ if (process.platform === "win32") {
   env.PATH = process.env.PATH || process.env.Path || "";
   delete env.Path;
 }
-var dirs = [...(env.PATH || "").split(path2.delimiter), path2.join(homedir2(), ".local/bin"), path2.join(homedir2(), ".kimi-code/bin"), path2.join(homedir2(), ".opencode/bin"), path2.join(homedir2(), ".npm-global/bin"), path2.join(homedir2(), ".bun/bin"), path2.join(homedir2(), ".cargo/bin"), path2.join(homedir2(), ".dsh/bin"), "/opt/homebrew/bin", "/usr/local/bin"];
-if (process.platform === "win32" && env.APPDATA) dirs.push(path2.join(env.APPDATA, "npm"));
-env.PATH = [...new Set(dirs)].join(path2.delimiter);
+var dirs = [...(env.PATH || "").split(path3.delimiter), path3.join(homedir2(), ".local/bin"), path3.join(homedir2(), ".kimi-code/bin"), path3.join(homedir2(), ".opencode/bin"), path3.join(homedir2(), ".npm-global/bin"), path3.join(homedir2(), ".bun/bin"), path3.join(homedir2(), ".cargo/bin"), path3.join(homedir2(), ".dsh/bin"), "/opt/homebrew/bin", "/usr/local/bin"];
+if (process.platform === "win32" && env.APPDATA) dirs.push(path3.join(env.APPDATA, "npm"));
+env.PATH = [...new Set(dirs)].join(path3.delimiter);
 function findBin(def, custom) {
   const extensions = process.platform === "win32" ? [".exe", ".cmd", ".bat", ""] : [""];
-  for (const f of custom ? [path2.resolve(custom)] : def.bins.flatMap((b) => dirs.flatMap((d) => extensions.map((e) => path2.join(d, b + e))))) {
+  for (const f of custom ? [path3.resolve(custom)] : def.bins.flatMap((b) => dirs.flatMap((d) => extensions.map((e) => path3.join(d, b + e))))) {
     try {
       accessSync(f, constants.X_OK);
       return f;
@@ -1191,14 +1220,15 @@ function emit(id, kind, data = {}) {
   wire({ method: "event", params: { execution_id: id, kind, ...data } });
 }
 function protocol(id) {
-  return id in acpArgs ? "acp" : id === "claude" ? "claude-stream-json" : id === "mimo" ? "opencode-json" : id === "codex" || id === "opencode" ? "native-manager" : null;
+  return id in acpArgs ? "acp" : id === "pi" ? "pi-rpc" : id === "antigravity" ? "antigravity-stream-json" : id === "claude" ? "claude-stream-json" : id === "mimo" ? "opencode-json" : id === "codex" || id === "opencode" ? "native-manager" : null;
 }
 function capabilities(id) {
   const p = protocol(id);
-  return { chat: !!p, cancel: !!p, resume: p === "acp" ? "negotiated" : p === "claude-stream-json" || p === "opencode-json", images: p === "acp" ? "negotiated" : p === "claude-stream-json", questions: p === "acp", steer: false, read_only: false, network_control: false, permission_modes: ["runtime-native"] };
+  return { chat: !!p, cancel: !!p, resume: p === "acp" ? "negotiated" : p === "claude-stream-json" || p === "opencode-json" || p === "antigravity-stream-json" || p === "pi-rpc", images: p === "acp" ? "negotiated" : p === "claude-stream-json", questions: p === "acp" || p === "pi-rpc" || p === "claude-stream-json", steer: false, read_only: false, network_control: false, permission_modes: ["runtime-native"] };
 }
 function terminate(child) {
-  if (!child?.pid) return;
+  if (!child?.pid || terminating.has(child)) return;
+  terminating.add(child);
   if (process.platform === "win32") {
     child.kill();
     return;
@@ -1219,11 +1249,12 @@ function terminate(child) {
   }, 1200).unref();
 }
 function launch(bin, args, cwd, childEnv = env) {
+  if (stopping) throw Error("Runtime bridge is shutting down");
   if (process.platform === "win32") {
     if (!env.BRIEFLOOP_PYTHON || !env.BRIEFLOOP_PROCESS_HELPER) throw Error("Windows process owner is unavailable");
-    return spawn2(env.BRIEFLOOP_PYTHON, ["-X", "utf8", env.BRIEFLOOP_PROCESS_HELPER, bin, ...args], { cwd, env: childEnv, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    return own(spawn(env.BRIEFLOOP_PYTHON, ["-X", "utf8", env.BRIEFLOOP_PROCESS_HELPER, bin, ...args], { cwd, env: childEnv, stdio: ["pipe", "pipe", "pipe"], windowsHide: true }));
   }
-  return spawn2(bin, args, { cwd, env: childEnv, stdio: ["pipe", "pipe", "pipe"], detached: true });
+  return own(spawn(bin, args, { cwd, env: childEnv, stdio: ["pipe", "pipe", "pipe"], detached: true }));
 }
 function connect(bin, args, cwd, onUpdate, onRequest) {
   const child = launch(bin, args, cwd);
@@ -1269,16 +1300,36 @@ function connect(bin, args, cwd, onUpdate, onRequest) {
 }
 async function handshake(conn, p) {
   const init = await conn.call("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "briefloop", version: "1" } });
-  if (p.session_id && !init.agentCapabilities?.loadSession) throw Error("Host does not advertise session/load");
-  const session = await conn.call(p.session_id ? "session/load" : "session/new", { ...buildAcpSessionNewParams(p.cwd), ...p.session_id ? { sessionId: p.session_id } : {} });
+  const resumeMethod = init.agentCapabilities?.loadSession ? "session/load" : init.agentCapabilities?.sessionCapabilities?.resume ? "session/resume" : null;
+  if (p.session_id && !resumeMethod) throw Error("Host does not advertise session/load or session/resume");
+  const session = await conn.call(p.session_id ? resumeMethod : "session/new", { ...buildAcpSessionNewParams(p.cwd), ...p.session_id ? { sessionId: p.session_id } : {} });
   return { init, session };
 }
-async function windowsAcpModels(bin, args, cwd) {
+function acpModelOptions(runtime, options) {
+  if (!Array.isArray(options)) return options;
+  const flatten = (values) => values.flatMap((v) => Array.isArray(v?.options) ? flatten(v.options) : [v]);
+  return options.map((o) => ({ ...o, options: Array.isArray(o.options) ? flatten(o.options).map((v) => {
+    if (runtime !== "deepseek-harness") return v;
+    try {
+      const pair = JSON.parse(v.value);
+      if (Array.isArray(pair) && pair.length === 2 && pair.every((x) => typeof x === "string" && sanitizeCustomModel(x) && !x.includes("/"))) return { ...v, value: pair.join("/") };
+    } catch {
+    }
+    return v;
+  }) : o.options }));
+}
+function acpSelectedModel(runtime, model, options) {
+  if (runtime !== "deepseek-harness") return model;
+  const advertised = findModelConfigOption(acpModelOptions(runtime, options));
+  if (!advertised?.values.some((v) => v.value === model)) throw Error("Selected model is not advertised by DeepSeek Harness");
+  return JSON.stringify(model.split("/"));
+}
+async function acpSessionModels(bin, args, cwd, runtime) {
   const conn = connect(bin, args, cwd, () => {
   }, (_m, reply) => reply({ outcome: { outcome: "cancelled" } }));
   try {
     const { session } = await handshake(conn, { cwd });
-    return normalizeModels(session.models, defaults[0], session.configOptions);
+    return normalizeModels(session.models, defaults[0], acpModelOptions(runtime, session.configOptions));
   } finally {
     terminate(conn.child);
   }
@@ -1310,6 +1361,12 @@ async function listModels(p) {
     })], source: "native_config", note: "Models declared by the host; account availability is checked by a model call." };
   }
   const fallback = [...hostDefaults(p.runtime_id), ...fallbacks_default[p.runtime_id] || []];
+  if (p.runtime_id === "pi") return piModels(bin, p, launch, terminate);
+  if (p.runtime_id === "antigravity") {
+    const r = await exec(bin, ["models"], { env, cwd: p.cwd || process.cwd(), timeout: 2e4, maxBuffer: 1024 * 1024 });
+    const models = r.stdout.split(/\r?\n/).map((line) => line.trim().split(/\t+/)).filter(([id, label]) => label && sanitizeCustomModel(id)).map(([id, label]) => ({ id, label }));
+    return { models: [...defaults, ...models], source: models.length ? "host" : "host_default_only" };
+  }
   if (p.runtime_id === "claude") {
     const routed = await loadMmdRouteModels(env, fallback);
     return { models: routed || fallback, source: routed ? "local_routes" : "builtin_hints", note: "\u5185\u7F6E\u9009\u9879\u4E0E\u5DF2\u914D\u7F6E\u8DEF\u7531\uFF1B\u53EF\u624B\u52A8\u8F93\u5165\u5176\u4ED6\u6A21\u578B ID\u3002" };
@@ -1327,7 +1384,7 @@ async function listModels(p) {
     }
     if (p.runtime_id in acpArgs) {
       const args = acpArguments(p.runtime_id, bin);
-      const models = process.platform === "win32" ? await windowsAcpModels(bin, args, p.cwd || process.cwd()) : await detectAcpModels({ bin, args, cwd: p.cwd || process.cwd(), env, timeoutMs: 15e3, defaultModelOption: defaults[0], clientName: "briefloop-models" });
+      const models = await acpSessionModels(bin, args, p.cwd || process.cwd(), p.runtime_id);
       const live = models.some((m) => m.id !== "default");
       return { models: live ? models : fallback, source: live ? "host" : "builtin_hints" };
     }
@@ -1354,6 +1411,22 @@ function acpToolTitle(tool) {
   if (typeof file === "string" && file) return `\u6587\u4EF6\u64CD\u4F5C \xB7 ${file}`;
   return tool?.kind || "\u5DE5\u5177\u64CD\u4F5C";
 }
+function acpPermissionModes(session) {
+  const modes = session.modes?.availableModes || [];
+  return modes.filter((m) => typeof m.id === "string" && typeof m.name === "string").map((m) => ({ id: m.id, name: m.name }));
+}
+async function permissionOptions(p) {
+  const bin = findBin(defFor(p.runtime_id), p.path);
+  if (!bin) throw Error("Runtime not installed");
+  const conn = connect(bin, p.runtime_id === "mimo" ? ["acp"] : acpArguments(p.runtime_id, bin), p.cwd, () => {
+  }, (_m, reply) => reply({ error: "Metadata probe cannot grant permissions" }));
+  try {
+    const { session } = await handshake(conn, p);
+    return { modes: acpPermissionModes(session) };
+  } finally {
+    terminate(conn.child);
+  }
+}
 async function runAcp(p, state) {
   let sessionId;
   const args = acpArguments(p.runtime_id, state.bin);
@@ -1369,7 +1442,7 @@ async function runAcp(p, state) {
     if (m.method === "session/request_permission") {
       const id = String(m.id);
       state.questions.set(id, { reply, options: m.params?.options || [] });
-      emit(p.execution_id, "question", { request_id: id, type: "permission", title: acpToolTitle(m.params?.toolCall), options: m.params?.options || [] });
+      emit(p.execution_id, "question", { request_id: id, type: "permission", title: acpToolTitle(m.params?.toolCall) + (m.params?.toolCall?.rawInput ? "\n" + JSON.stringify(m.params.toolCall.rawInput) : ""), options: m.params?.options || [] });
     } else {
       reply({ error: "Client method unsupported" });
     }
@@ -1384,15 +1457,19 @@ async function runAcp(p, state) {
     sessionId = p.session_id || session.sessionId;
     if (!sessionId) throw Error("No session ID returned");
     emit(p.execution_id, "session", { session_id: sessionId, capabilities: init.agentCapabilities || {} });
+    if (p.host_options?.mode && p.host_options.mode !== "native") {
+      if (!acpPermissionModes(session).some((m) => m.id === p.host_options.mode)) throw Error("Host does not advertise this permission mode");
+      await conn.call("session/set_mode", { sessionId, modeId: p.host_options.mode });
+    }
     if (p.model && p.model !== "default" && p.runtime_id !== "reasonix") {
       const cfg = findModelConfigOption(session.configOptions);
-      await conn.call(cfg ? "session/set_config_option" : "session/set_model", cfg ? { sessionId, configId: cfg.configId, value: p.model } : { sessionId, modelId: p.model });
+      await conn.call(cfg ? "session/set_config_option" : "session/set_model", cfg ? { sessionId, configId: cfg.configId, value: acpSelectedModel(p.runtime_id, p.model, session.configOptions) } : { sessionId, modelId: p.model });
     }
     const blocks = buildPromptBlocks(p.prompt, []);
     if (p.images?.length && !init.agentCapabilities?.promptCapabilities?.image) throw Error("Host does not advertise image input");
     for (const image of p.images || []) {
       const f = typeof image === "string" ? image : image.path;
-      const mime = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" }[path2.extname(f).toLowerCase()];
+      const mime = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" }[path3.extname(f).toLowerCase()];
       if (!mime) throw Error("Unsupported image format");
       const data = readFileSync(f);
       if (data.length > 20 * 1024 * 1024) throw Error("Image exceeds 20 MiB");
@@ -1406,9 +1483,85 @@ async function runAcp(p, state) {
     terminate(conn.child);
   }
 }
+async function runAntigravity(p, state) {
+  if (p.images?.length) throw Error("Antigravity stream input supports text only");
+  const args = ["--input-format", "stream-json", "--output-format", "stream-json", "--disable-slash-commands"];
+  if (p.model && p.model !== "default") args.push("--model", p.model);
+  if (p.session_id) args.push("--conversation", p.session_id);
+  if (p.timeout_ms) args.push("--print-timeout", Math.ceil(p.timeout_ms / 1e3 + 30) + "s");
+  const child = launch(state.bin, args, p.cwd);
+  state.child = child;
+  state.cancel = () => terminate(child);
+  let result = null, lastSession = null, textSeen = false, toolFailed = false;
+  await new Promise((resolve, reject) => {
+    const timer = p.timeout_ms ? setTimeout(() => {
+      terminate(child);
+      reject(Error("Antigravity turn timed out"));
+    }, p.timeout_ms) : null;
+    const parser = createJsonLineStream((m) => {
+      const sid = m.conversation_id || m.step_update?.conversation_id || m.result?.conversation_id;
+      if (sid && sid !== lastSession) {
+        lastSession = sid;
+        emit(p.execution_id, "session", { session_id: sid });
+      }
+      if (m.event === "step_update") {
+        const step = m.step_update || {};
+        if (step.step_type === "agent_response") {
+          if (typeof step.text_delta === "string" && step.text_delta) {
+            textSeen = true;
+            emit(p.execution_id, "text", { text: step.text_delta, delta: true });
+          }
+          if (step.state === "DONE" && step.usage) emit(p.execution_id, "usage", { usage: step.usage });
+        }
+        if (step.step_type === "tool") {
+          const tool = step.tool_info || {};
+          if (tool.error) toolFailed = true;
+          emit(p.execution_id, "tool", { id: String(step.step_index), name: tool.name || step.tool_name || "\u5DE5\u5177\u64CD\u4F5C", status: tool.error ? "failed" : step.state === "DONE" ? "completed" : "running", input: tool.parameters, output: tool.output || tool.error?.message || tool.error?.type });
+        }
+      }
+      if (m.event === "result") {
+        result = m.result || {};
+        if (!textSeen && typeof result.response === "string" && result.response.trim()) {
+          textSeen = true;
+          emit(p.execution_id, "text", { text: result.response, delta: true });
+        }
+      }
+    });
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (c) => parser.feed(c));
+    child.stderr.resume();
+    child.stdin.on("error", () => {
+    });
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      parser.flush();
+      if (state.cancelled) return resolve();
+      if (code === 0 && result?.status === "SUCCESS" && lastSession) {
+        if (toolFailed && !textSeen) return reject(Error("Antigravity \u5DE5\u5177\u6267\u884C\u5931\u8D25\u4E14\u672A\u8FD4\u56DE\u7B54\u590D\uFF1B\u8BF7\u67E5\u770B\u5DE5\u5177\u8BE6\u60C5\u3002\u82E5\u6743\u9650\u88AB\u62D2\u7EDD\uFF0C\u8BF7\u5728 Antigravity \u4E2D\u914D\u7F6E\u5BF9\u5E94\u6587\u4EF6\u6216\u5DE5\u5177\u7684\u6743\u9650\u540E\u91CD\u8BD5\u3002"));
+        return resolve();
+      }
+      const status = typeof result?.status === "string" && /^[A-Z_]+$/.test(result.status) ? result.status : "NO_RESULT";
+      reject(Error("Antigravity " + status + " (exit " + code + ")"));
+    });
+    child.stdin.end(JSON.stringify({ event: "user", message: { content: p.prompt } }) + "\n");
+  });
+}
 async function runStream(p, state) {
   const claude = p.runtime_id === "claude";
-  let args = claude ? ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"] : ["run", "--format", "json"];
+  let args = claude ? ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio"] : ["run", "--format", "json"];
+  if (claude && p.host_options?.mode && p.host_options.mode !== "native") {
+    if (!["manual", "acceptEdits", "dontAsk", "plan"].includes(p.host_options.mode)) throw Error("Invalid Claude permission mode");
+    args.push("--permission-mode", p.host_options.mode);
+  }
+  if (!claude && p.host_options?.mode && p.host_options.mode !== "native") {
+    const options = await permissionOptions({ ...p, path: state.bin });
+    if (!options.modes.some((m) => m.id === p.host_options.mode)) throw Error("Host does not advertise this mode");
+    args.push("--agent", p.host_options.mode);
+  }
   if (p.model && p.model !== "default") args.push("--model", p.model);
   if (p.session_id) args.push(claude ? "--resume" : "--session", p.session_id);
   if (claude && p.web_tools === true) args.push("--allowedTools", "WebSearch", "WebFetch");
@@ -1430,6 +1583,17 @@ async function runStream(p, state) {
         emit(p.execution_id, "session", { session_id: sid });
       }
       if (claude) {
+        if (m.type === "control_request") {
+          const request = m.request || {}, id = String(m.request_id), send = (response) => child.stdin.write(JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: id, response } }) + "\n");
+          if (request.subtype !== "can_use_tool") {
+            child.stdin.write(JSON.stringify({ type: "control_response", response: { subtype: "error", request_id: id, error: "Unsupported control request" } }) + "\n");
+            return;
+          }
+          const options = [{ optionId: "allow", name: "\u5141\u8BB8\u672C\u6B21", kind: "allow_once" }, { optionId: "deny", name: "\u62D2\u7EDD", kind: "reject_once" }];
+          state.questions.set(id, { options, reply: (r) => send(r.outcome?.optionId === "allow" ? { behavior: "allow", updatedInput: request.input } : { behavior: "deny", message: "\u7528\u6237\u62D2\u7EDD\u4E86\u672C\u6B21\u64CD\u4F5C" }) });
+          emit(p.execution_id, "question", { request_id: id, type: "permission", title: (request.title || request.tool_name || "Claude \u8BF7\u6C42\u6743\u9650") + " \xB7 " + JSON.stringify(request.input || {}), options });
+          return;
+        }
         if (m.type === "assistant") {
           for (const b of m.message?.content || []) {
             if (b.type === "text") emit(p.execution_id, "text", { text: b.text, delta: true });
@@ -1442,6 +1606,7 @@ async function runStream(p, state) {
         }
         if (m.type === "result") {
           resultSeen = true;
+          child.stdin.end();
           if (m.usage) emit(p.execution_id, "usage", { usage: m.usage });
           if (m.is_error) {
             reject(Error("Host reported unsuccessful result"));
@@ -1483,7 +1648,7 @@ async function runStream(p, state) {
       const content = [{ type: "text", text: p.prompt }];
       for (const img of p.images || []) {
         const f = typeof img === "string" ? img : img.path;
-        const mime = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" }[path2.extname(f).toLowerCase()];
+        const mime = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" }[path3.extname(f).toLowerCase()];
         if (!mime) {
           terminate(child);
           reject(Error("Unsupported image"));
@@ -1497,7 +1662,7 @@ async function runStream(p, state) {
         }
         content.push({ type: "image", source: { type: "base64", media_type: mime, data: data.toString("base64") } });
       }
-      child.stdin.end(JSON.stringify({ type: "user", message: { role: "user", content } }) + "\n");
+      child.stdin.write(JSON.stringify({ type: "user", message: { role: "user", content } }) + "\n");
     } else child.stdin.end(p.prompt);
   });
 }
@@ -1505,6 +1670,8 @@ async function execute(p, state) {
   try {
     if (state.cancelled) return;
     if (p.runtime_id in acpArgs) await runAcp(p, state);
+    else if (p.runtime_id === "pi") await runPi(p, state, launch, terminate, emit);
+    else if (p.runtime_id === "antigravity") await runAntigravity(p, state);
     else await runStream(p, state);
     if (!state.cancelled && !state.publicActivity) throw Error("Host ended without visible output or tool activity; verify host configuration");
     emit(p.execution_id, "end", { status: state.cancelled ? "cancelled" : "completed" });
@@ -1519,6 +1686,7 @@ async function execute(p, state) {
 async function handle(method, p) {
   if (method === "discover") return discover(p);
   if (method === "list_models") return listModels(p);
+  if (method === "permission_options") return permissionOptions(p);
   if (method === "start") {
     const bin = validate(p);
     const state = { bin, cancelled: false, questions: /* @__PURE__ */ new Map() };
@@ -1554,10 +1722,13 @@ input.on("line", async (line) => {
   }
 });
 function shutdown() {
+  if (stopping) return;
+  stopping = true;
   for (const s of active.values()) {
     s.cancelled = true;
     s.cancel?.();
   }
+  for (const child of ownedChildren) terminate(child);
   setTimeout(() => process.exit(0), 1500).unref();
 }
 input.on("close", shutdown);

@@ -5,8 +5,8 @@ import re
 from .store import dump
 
 _SECRET_KEY=re.compile(r'(?:api.?key|password|authorization|cookie|secret|private.?key|access.?token|refresh.?token)',re.I)
-_SECRET_TEXT=re.compile(r'(?i)(Bearer\s+)[A-Za-z0-9._~+/=-]+|\bsk-[A-Za-z0-9_-]{12,}')
-_SECRET_ASSIGNMENT=re.compile(r'''(?ix)(["']?\b(?:[a-z0-9]+_)*(?:api_?key|password|access_?token|refresh_?token|client_?secret)["']?\s*[:=]\s*)(?:\[credential[ ]omitted\]|"[^"\n]*"|'[^'\n]*'|[^\s,;&}\]]+)''')
+_SECRET_TEXT=re.compile(r'(?i)(Bearer\s+)[A-Za-z0-9._~+/=-]+|\b(?:sk-|gh[pousr]_|github_pat_|glpat-|pypi-|xox[baprs]-|AIza)[A-Za-z0-9_-]{12,}')
+_SECRET_ASSIGNMENT=re.compile(r'''(?ix)(["']?\b(?:[a-z0-9]+_)*(?:api_?key|password|token|access_?token|refresh_?token|id_?token|session_?token|client_?secret)["']?\s*[:=]\s*)(?:\[credential[ ]omitted\]|"[^"\n]*"|'[^'\n]*'|[^\s,;&}\]]+)''')
 # Header values can contain spaces, semicolons and quoted cookie values. Mask
 # the whole physical header line, not just a token or a particular auth scheme.
 # This also covers curl -H/--header strings and verbose HTTP output. Removing a
@@ -16,8 +16,15 @@ _SECRET_ENV=re.compile(r'''(?ix)(["']?\b(?:[a-z0-9]+_)*(?:authorization|cookie)[
 _PRIVATE_KEY=re.compile(r'-----BEGIN (?:[A-Z ]+)?PRIVATE KEY-----.*?-----END (?:[A-Z ]+)?PRIVATE KEY-----',re.S)
 
 
+def _secret_field(key, value):
+    name = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', str(key)).lower()
+    # Credential tokens differ from token counts and native session identities.
+    return bool(_SECRET_KEY.search(name) or
+                (isinstance(value, str) and (name == 'token' or name.endswith(('_token', '-token')))))
+
+
 def sanitize(value):
-    if isinstance(value,dict):return {k:('[credential omitted]' if _SECRET_KEY.search(k) else sanitize(v)) for k,v in value.items()}
+    if isinstance(value,dict):return {k:('[credential omitted]' if _secret_field(k,v) else sanitize(v)) for k,v in value.items()}
     if isinstance(value,list):return [sanitize(v) for v in value]
     if isinstance(value,str):
         value=_PRIVATE_KEY.sub('[credential omitted]',value)

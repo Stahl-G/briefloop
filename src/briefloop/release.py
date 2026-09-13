@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 
-from .deliverable_spec import clause_items, requirement_severity
+from .deliverable_spec import SOFT_CONTRACT_KINDS, clause_items, requirement_severity
 from .store import dump, now, uid
 
 SCHEMA = '''
@@ -85,6 +85,10 @@ def decision(snapshot, review_result, findings, protocol='legacy', *, clauses=No
     if clauses is None:
         clauses = clause_items(snapshot['requirements'])
     severity = requirement_severity({'reader_contract': {'clauses': clauses}})
+    # A finding can cite a parent or a clause. A mixed parent remains hard, while
+    # each clause follows its own kind. Use frozen IDs, including redacted audits.
+    severity.update({clause['clause_id']: ('soft' if clause['kind'] in SOFT_CONTRACT_KINDS else 'hard')
+                     for clause in clauses})
     if protocol == 'clauses_v1':
         # The clause results are the only authority for requirement fulfilment; the
         # parent requirement rollup is not consulted, so a soft clause can never make

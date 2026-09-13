@@ -203,3 +203,58 @@ def test_join_scouts_cli_checks_run_and_round_scope(tmp_path, monkeypatch, capsy
     monkeypatch.setattr(sys, 'argv', [*argv, '--round', 'round_missing'])
     with pytest.raises(ValueError, match='轮次不属于本任务'):
         main()
+
+
+@pytest.mark.parametrize('operation', ['freeze', 'finish', 'begin'])
+def test_concurrent_round_mutations_share_committed_identities(tmp_path, monkeypatch, operation):
+    """Two tool calls reaching admission together cannot overwrite each other's IDs."""
+    from concurrent.futures import ThreadPoolExecutor
+    from contextlib import contextmanager
+    from threading import Barrier
+    import json
+
+    store, run = quality_run(tmp_path)
+    run_id = run['id']
+    target = []
+    if operation != 'freeze':
+        research_plan.freeze(store, run_id)
+    if operation == 'begin':
+        closed = research_plan.finish_round(store, run_id, gaps=[{'description': 'Check reporting period'}])
+        target = [closed['gaps'][0]['id']]
+    barrier = Barrier(2)
+    original_tx = store.tx
+
+    @contextmanager
+    def concurrent_tx():
+        # Exercise contention at the database boundary, including stale reads
+        # made before it. Never wait while holding the SQLite write lock.
+        barrier.wait(timeout=10)
+        with original_tx() as connection:
+            yield connection
+
+    monkeypatch.setattr(store, 'tx', concurrent_tx)
+    def call():
+        if operation == 'freeze':
+            return research_plan.freeze(store, run_id)
+        if operation == 'finish':
+            return research_plan.finish_round(store, run_id, gaps=[{'description': 'Check reporting period'}])
+        return research_plan.begin_round(store, run_id, target_gap_ids=target, tasks=[{'slot_id': 'company'}])
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(call) for _ in range(2)]
+        results = [future.result(timeout=15) for future in futures]
+    monkeypatch.setattr(store, 'tx', original_tx)
+    saved = research_plan.frozen(store, run_id)
+    if operation == 'freeze':
+        assert results[0] == results[1] == saved
+    else:
+        assert results[0]['round_id'] == results[1]['round_id']
+        assert sorted(result['idempotent'] for result in results) == [False, True]
+        info = saved['rounds'][results[0]['round_id']]
+        field = 'gaps' if operation == 'finish' else 'tasks'
+        assert results[0][field] == results[1][field] == info[field]
+        filename = 'outcome.json' if operation == 'finish' else 'manifest.json'
+        recorded = json.loads((store.root/'research'/run_id/'rounds'/str(info['index'])/filename).read_text())
+        assert recorded['round_id'] == results[0]['round_id']
+        assert recorded[field] == info[field]
+        assert len(saved['rounds']) == (2 if operation == 'begin' else 1)

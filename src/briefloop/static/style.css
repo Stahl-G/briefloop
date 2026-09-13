@@ -598,3 +598,10 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 @media(max-width:780px){.runtime-missing-grid{grid-template-columns:1fr}}
 
 .runtime-missing-grid .runtime-card-head p{margin:2px 0;line-height:1.6}
+
+/* Shared composer typography applies to new text controls as well as selects. */
+#chat-form .composer-tools :is(button:not(.attach-button):not(.primary):not(.stop-button),select,input.model-id-input,.chat-web){font-family:var(--font);font-size:12px;font-weight:400;line-height:1.6;letter-spacing:normal;color:var(--muted);height:28px;}
+#chat-form .composer-tools :is(button:not(.attach-button):not(.primary):not(.stop-button),select,input.model-id-input){padding:4px 6px;}
+#chat-form .composer-tools .chat-web{display:flex;align-items:center;}
+#chat-form .composer-options>button:not(.attach-button){white-space:nowrap;flex-shrink:0;}
+#chat-permissions-dialog{width:min(640px,calc(100vw - 32px));max-height:85vh;overflow:auto}#chat-permissions-dialog label{display:block;margin-top:12px}#chat-permissions-dialog select,#permission-rule-scope{width:100%;margin:6px 0 12px}.permission-rule-list>div{display:flex;gap:12px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border,#ddd)}.permission-rule-list code{flex:1;overflow-wrap:anywhere}.permission-request{padding:12px 0;border-top:1px solid #ddd}.permission-request button{margin:4px}.permission-request p{white-space:pre-wrap;overflow-wrap:anywhere}.settings-network{margin-bottom:24px}.settings-network label{display:flex;gap:10px;align-items:center;margin:12px 0}.settings-network input[type=checkbox]{width:auto}

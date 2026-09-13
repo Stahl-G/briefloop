@@ -19,10 +19,13 @@ def workspace(tmp_path):
 
 def test_atomic_submit_parallel_replay_conflict_and_rollback(tmp_path, monkeypatch):
     store, request = workspace(tmp_path)
+    wakeups=[]
+    store._job_wakeup=lambda:wakeups.append((len(store.rows('SELECT id FROM jobs')),len(store.rows('SELECT request_id FROM external_requests'))))
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda _: dispatch(store, request), range(2)))
     assert results[0]['job_id'] == results[1]['job_id']
     assert sorted(r['replayed'] for r in results) == [False, True]
+    assert wakeups == [(1,1)]
     assert len(store.rows('SELECT id FROM runs')) == len(store.rows('SELECT id FROM jobs')) == 1
     with pytest.raises(Conflict, match='不同内容'):
         dispatch(store, {**request, 'source_ids': []})
@@ -39,6 +42,7 @@ def test_atomic_submit_parallel_replay_conflict_and_rollback(tmp_path, monkeypat
     assert store.meta('requirements') == before
     assert len(store.rows('SELECT id FROM runs')) == len(store.rows('SELECT id FROM jobs')) == 1
     assert len(store.rows('SELECT request_id FROM external_requests')) == 1
+    assert wakeups == [(1,1)]  # Rollback must not wake against uncommitted jobs.
     # A lost response can be replayed without consulting today's model config.
     store.set_meta('settings', {**store.settings(), 'model': 'changed-after-submit'})
     assert dispatch(store, request)['job_id'] == results[0]['job_id']

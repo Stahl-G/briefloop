@@ -7,6 +7,7 @@ import json
 import secrets
 import os
 import signal
+import sys
 import threading
 from .platform_support import WorkspaceLock
 from markdown_it import MarkdownIt
@@ -17,6 +18,14 @@ from .harness import HarnessManager
 from .interactive_runtime import InteractiveRuntime
 from .store import Store, Conflict, dump
 from . import sources
+
+MAX_REQUEST_BYTES=25*1024*1024
+MAX_UPLOAD_BYTES=18*1024*1024
+
+def _upload_data(body):
+    data=base64.b64decode(body['data'],validate=True)
+    if len(data)>MAX_UPLOAD_BYTES:raise ValueError(f"{body.get('name','文件')} 超过单文件 18 MiB 限制，请压缩或拆分后重试")
+    return data
 
 
 def _service_status(server):
@@ -46,6 +55,44 @@ def _close_service(server):
         except BaseException as exc:
             errors.append({'component':name,'error_type':type(exc).__name__})
     return errors
+
+
+def _begin_service_shutdown(server, *, cancel):
+    """Stop admission, finish local writes, then cancel external work before drain."""
+    with server._admission:
+        if server.draining:return
+        server.draining=True
+        server.worker.opened_paused=True
+        server.worker.stopping.set()
+    def drain():
+        with server._admission:
+            while server._active_posts > server._active_connector_posts:
+                server._admission.wait()
+        if cancel:
+            with server.worker._claim_lock:
+                pending=_service_status(server)
+                for job in pending['jobs']:
+                    try:server.worker.stop_job(job['id'])
+                    except Exception as exc:
+                        server.shutdown_errors.append({'component':'job_cancel','error_type':type(exc).__name__})
+            for session in pending['sessions']:
+                try:server.select_harness(session_id=session['id']).cancel(session['id'])
+                except Exception as exc:
+                    server.shutdown_errors.append({'component':'session_cancel','error_type':type(exc).__name__})
+        with server._admission:
+            while server._active_posts:server._admission.wait()
+        server.shutdown()
+    threading.Thread(target=drain,name='briefloop-shutdown',daemon=True).start()
+
+
+def _watch_desktop_owner(server, stream):
+    """Only explicitly desktop-owned services stop on their private stdin EOF."""
+    def watch():
+        try:
+            while stream.read(1):pass
+        except (OSError, ValueError):pass
+        _begin_service_shutdown(server,cancel=True)
+    threading.Thread(target=watch,name='briefloop-desktop-owner',daemon=True).start()
 
 
 def make_server(workspace, port=8765, *, paused=False, backend=None):
@@ -97,8 +144,8 @@ def _make_server(workspace, port, *, paused, backend, lock):
         root=store.root/'runtime-tests'/secrets.token_hex(8);root.mkdir(parents=True)
         runtime={'backend':backend,'model':model,'permission':'read-only' if backend in ('codex','opencode') else 'runtime-native'}
         session=manager.create_session(backend+' · 连接测试',runtime,root)
-        message=manager.send(session['id'],'Reply with OK only. Do not use tools.',runtime=runtime,allow_web=False)
         manager.chat.event(session['id'],'runtime/test',{'backend':backend,'model':model,'kind':'short_model_call'})
+        message=manager.send(session['id'],'Reply with OK only. Do not use tools.',runtime=runtime,allow_web=False)
         return {'session_id':session['id'],'message_id':message['id'],'status':'submitted'}
 
     token=secrets.token_urlsafe(24)
@@ -135,6 +182,16 @@ def _make_server(workspace, port, *, paused, backend, lock):
         def do_GET(self):
             try:
                 u=urlsplit(self.path);q=parse_qs(u.query)
+                public=u.path in ('/','/index.html','/app.js','/style.css') or u.path[1:] in icon_names
+                if not public:
+                    # Browser origin protection, not authentication of local
+                    # processes. Native clients and address-bar downloads omit
+                    # Origin/Fetch Metadata; same-origin links need no token URL.
+                    origins=self.headers.get_all('Origin',[])
+                    sites=self.headers.get_all('Sec-Fetch-Site',[])
+                    expected=f'http://127.0.0.1:{self.server.server_port}'
+                    if (origins and origins!=[expected]) or (sites and sites not in (['same-origin'],['none'])):
+                        self.send(403,{'error':'请从本地工作区页面查看或下载文件','code':'cross_origin_read_denied'});return
                 if u.path=='/api/state':
                     snapshot=store.snapshot()
                     snapshot['demo']=store.meta('demo')
@@ -162,7 +219,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/external/capabilities':
                     from .external_requests import capabilities
                     self.send(200,capabilities())
-                elif u.path=='/api/session':self.send(200,{'token':token})
+                elif u.path=='/api/session':self.send(200,{'token':token,'upload_limits':{'max_file_bytes':MAX_UPLOAD_BYTES,'max_request_bytes':MAX_REQUEST_BYTES}})
                 elif u.path=='/api/service-status':self.send(200,_service_status(self.server))
                 elif u.path=='/api/connectors':self.send(200,{'connectors':self.server.connectors.list()})
                 elif u.path=='/api/runtime':
@@ -216,6 +273,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     self.send(200,key_status())
                 elif u.path=='/api/opencode/providers':
                     self.send(200,{'configurations':opencode_harness._client().provider_settings()})
+                elif u.path=='/api/runtime/permissions':
+                    from .runtime_permissions import catalog
+                    self.send(200,catalog(q.get('backend',['codex'])[0],store.root,bridge))
                 elif u.path=='/api/runtimes':
                     self.send(200,bridge.discover())
                 elif u.path=='/api/runtime/fast-capability':
@@ -335,12 +395,15 @@ def _make_server(workspace, port, *, paused, backend, lock):
             with self.server._admission:
                 if self.server.draining and not control:
                     self.send(503,{'error':'服务正在退出，不能接受新操作。','code':'service_draining'});return
-                if not control:self.server._active_posts+=1
+                if not control:
+                    self.server._active_posts+=1
+                    if path=='/api/connectors/task-tool':self.server._active_connector_posts+=1
             try:self._post_admitted()
             finally:
                 if not control:
                     with self.server._admission:
                         self.server._active_posts-=1
+                        if path=='/api/connectors/task-tool':self.server._active_connector_posts-=1
                         self.server._admission.notify_all()
 
         def _post_admitted(self):
@@ -357,7 +420,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 if self.headers.get('X-BriefLoop-Token')!=token or origin and origin!=expected:
                     self.send(403,{'error':'页面会话已过期，请刷新后重试'});return
                 n=int(self.headers.get('Content-Length','0'))
-                if not 0<n<25*1024*1024:raise ValueError('请求为空或过大')
+                if not 0<n<MAX_REQUEST_BYTES:
+                    self.close_connection=True
+                    self.send(413,{'error':'请求为空或超过 25 MiB（含 Base64 与 JSON）；单文件上限 18 MiB，请压缩、拆分文件后重试','code':'request_too_large'});return
                 body=json.loads(self.rfile.read(n));path=urlsplit(self.path).path
                 if path=='/api/software-update-check':
                     from .software_version import check_update
@@ -381,30 +446,8 @@ def _make_server(workspace, port, *, paused, backend, lock):
                         if state['busy'] and body.get('busy_action')!='cancel':
                             self.send(409,{'error':'服务仍有任务或对话，请等待完成或明确停止后退出。',
                                            'code':'service_busy',**state});return
-                        self.server.draining=True
-                        # Stop queue admission and automatic learning before the
-                        # cancellation sweep; already-admitted HTTP writes finish.
-                        worker.opened_paused=True
-                        worker.stopping.set()
-                    def drain_and_shutdown():
-                        with self.server._admission:
-                            while self.server._active_posts:self.server._admission.wait()
-                        if body.get('busy_action')=='cancel':
-                            with worker._claim_lock:
-                                pending=_service_status(self.server)
-                                for job in pending['jobs']:
-                                    try:worker.stop_job(job['id'])
-                                    except Exception as exc:
-                                        self.server.shutdown_errors.append({'component':'job_cancel',
-                                                                            'error_type':type(exc).__name__})
-                            for session in pending['sessions']:
-                                try:pick_harness(session_id=session['id']).cancel(session['id'])
-                                except Exception as exc:
-                                    self.server.shutdown_errors.append({'component':'session_cancel',
-                                                                        'error_type':type(exc).__name__})
-                        self.server.shutdown()
+                        _begin_service_shutdown(self.server,cancel=body.get('busy_action')=='cancel')
                     self.send(200,{'stopping':True})
-                    threading.Thread(target=drain_and_shutdown,daemon=True).start()
                     return
                 elif path=='/api/tavily':
                     from .tavily import save_key,delete_key
@@ -417,6 +460,12 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     result=self.server.connectors.save(body['config'],connector_id=body.get('connector_id'),secrets=body.get('secrets'))
                 elif path in ('/api/connectors/test','/api/connectors/enable','/api/connectors/disable','/api/connectors/delete'):
                     result=getattr(self.server.connectors,path.rsplit('/',1)[-1])(body['connector_id'])
+                elif path=='/api/runtime/permissions':
+                    if body.get('backend')!='antigravity':raise ValueError('此宿主不使用文件规则管理')
+                    if store.rows("SELECT id FROM chat_messages WHERE status IN ('queued','sending','delivered','streaming') LIMIT 1") or store.rows("SELECT id FROM jobs WHERE status IN ('queued','running') LIMIT 1"):
+                        raise ValueError('请等待本工作区任务结束后再修改原生规则')
+                    from .runtime_permissions import change_antigravity
+                    result=change_antigravity(body)
                 elif path=='/api/runtime-test':
                     result=test_runtime(body)
                 elif path=='/api/opencode/provider-catalog':
@@ -439,7 +488,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     result=dispatch(store,body)
                 elif path=='/api/harness/message':
                     choose_runtime(store,body.get('runtime'))
-                    result=pick_harness(body.get('runtime'),body['session_id'],sending=True).send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),display_text=body.get('display_text'),allow_web=bool(body.get('allow_web',False)))
+                    result=pick_harness(body.get('runtime'),body['session_id'],sending=True).send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),display_text=body.get('display_text'),allow_web=bool(body.get('allow_web',store.settings().get('chat_allow_web',True))))
                 elif path=='/api/harness/answer':result=pick_harness(session_id=body['session_id']).answer(body['session_id'],body['request_id'],body['answers'])
                 elif path=='/api/harness/archive':result=pick_harness(session_id=body['session_id']).archive(body['session_id'])
                 elif path=='/api/harness/delete':result=pick_harness(session_id=body['session_id']).delete(body['session_id'])
@@ -447,7 +496,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/harness/archive-completed':result={'count':sum(manager.archive_completed(name)['count'] for name,manager in managers.items())}
                 elif path=='/api/harness/cancel':result=pick_harness(session_id=body['session_id']).cancel(body['session_id'])
                 elif path=='/api/upload':
-                    data=base64.b64decode(body['data'],validate=True)
+                    data=_upload_data(body)
                     result=sources.upload(store,body['name'],data)
                 elif path=='/api/source-url':result=sources.fetch(store,body['url'])
                 elif path=='/api/retry-source':result=sources.retry_source(store,body['source_id'])
@@ -462,14 +511,14 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/import-revision':
                     from .word_import import import_revision
                     result=import_revision(store,body['base_version'],body.get('name','revision.docx'),
-                        base64.b64decode(body['data'],validate=True) if body.get('data') else b'',
+                        _upload_data(body) if body.get('data') else b'',
                         accept_unaligned=bool(body.get('accept_unaligned',False)),source_id=body.get('source_id'))
                 elif path=='/api/company-resolve':
                     from .company_context import resolve_conflict
                     result=resolve_conflict(store,body['fact_id'],body['accept'])
                 elif path=='/api/template-import':
                     from .templates import import_template
-                    result=import_template(store,body['name'],base64.b64decode(body['data'],validate=True),body.get('parent_id'))
+                    result=import_template(store,body['name'],_upload_data(body),body.get('parent_id'))
                 elif path=='/api/export':
                     from .export_jobs import enqueue_export
                     result=enqueue_export(store,body['version_id'],body.get('template_id'))
@@ -487,9 +536,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                         result=store.enqueue('generate',payload)
                 elif path=='/api/save':
                     value=SaveRevision.model_validate(body)
-                    result=store.revise(value.base_version,value.markdown,value.editor_document)
+                    result=store.revise(value.base_version,value.markdown,value.editor_document,allow_markdown_conversion=value.allow_markdown_conversion)
                 elif path=='/api/comment':
-                    value=Comment.model_validate(body);result=store.comment(value.version_id,value.text)
+                    value=Comment.model_validate(body);result=store.comment(value.version_id,value.text,learning_intent=value.learning_intent)
                 elif path=='/api/settings':
                     merged={**store.settings(),**body}
                     # Saving a model is the explicit choice the pending flag waits for.
@@ -541,6 +590,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
     server.daemon_threads=True
     server._admission=threading.Condition(threading.RLock())
     server._active_posts=0
+    server._active_connector_posts=0
     server.draining=False
     server.shutdown_errors=[]
     from .connectors import ConnectorService
@@ -559,11 +609,13 @@ def _make_server(workspace, port, *, paused, backend, lock):
     server.server_close=close_server
     server.workspace_lock=lock;server.runtime_bridge=bridge;server.bridge_harnesses=bridge_harnesses
     server.store=store;server.worker=worker;server.harness=harness;server.opencode_harness=opencode_harness
+    server.select_harness=pick_harness
     return server
 
 
 def serve(workspace,port=8765,*,paused=False,backend=None):
     launch_id=os.environ.pop('BRIEFLOOP_LAUNCH_ID',None)
+    desktop_owner=os.environ.pop('BRIEFLOOP_DESKTOP_OWNER_PIPE','')=='1'
     server=make_server(workspace,port,paused=paused,backend=backend)
     from .templates import import_builtin
     import_builtin(server.store)
@@ -576,6 +628,7 @@ def serve(workspace,port=8765,*,paused=False,backend=None):
     print(f'BriefLoop: {url}',flush=True)
     def stop(signum,frame):raise KeyboardInterrupt
     signal.signal(signal.SIGTERM,stop)
+    if desktop_owner:_watch_desktop_owner(server,sys.stdin.buffer)
     try:server.serve_forever()
     except KeyboardInterrupt:pass
     finally:

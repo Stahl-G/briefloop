@@ -3,7 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from .store import dump
+from .store import dump, now, uid
 from .document_model import brief_document
 from .figure_support import export_figures
 
@@ -15,7 +15,7 @@ def export_input(store, brief, template_override=None):
         # rendering template and must change the export fingerprint.
         requirements = {**requirements, 'template_id': template_override}
     figures = export_figures(store, brief)
-    identity = {'renderer': 15 if requirements.get('template_id') else 16, 'version_id': brief['id'], 'brief_hash': brief['hash'],
+    identity = {'renderer': 15 if requirements.get('template_id') else 17, 'version_id': brief['id'], 'brief_hash': brief['hash'],
                 'document': brief_document(brief), 'detail': json.loads(brief['detail']),
                 'requirements': requirements,
                 'figures': {fid: {**{k: v for k, v in f.items() if k != 'image_bytes'},
@@ -32,16 +32,32 @@ def enqueue_export(store, version_id, template_override=None):
     brief = store.one('briefs', version_id)
     identity, _ = export_input(store, brief, template_override)
     digest = hashlib.sha256(dump(identity).encode()).hexdigest()
-    # Repeated clicks share only an identical immutable input, never another draft.
-    for job in store.rows("SELECT * FROM jobs WHERE kind='export_docx' ORDER BY rowid DESC LIMIT 50"):
-        payload = json.loads(job['payload'])
-        if payload.get('fingerprint') == digest and job['status'] in ('queued', 'running', 'complete'):
-            if job['status'] != 'complete':return job
-            path=output_path(store,job)
-            if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest()==json.loads(job['result'] or '{}').get('sha256'):return job
     payload = {'version_id': version_id, 'run_id': brief['run_id'], 'fingerprint': digest}
     if template_override:payload['template_id'] = template_override
-    return store.enqueue('export_docx', payload)
+    # Admission is serialized by SQLite across request handlers and processes.
+    # Keep lookup and insert together; Store.enqueue opens a separate transaction.
+    with store.tx() as c:
+        rows = c.execute("SELECT * FROM jobs WHERE kind='export_docx' "
+                         "AND json_extract(payload,'$.fingerprint')=? "
+                         "AND status IN ('queued','running','complete') ORDER BY rowid DESC", (digest,))
+        for row in rows:
+            job = dict(row)
+            if job['status'] != 'complete':return job
+            try:
+                path = output_path(store, job)
+                if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == json.loads(job['result'] or '{}').get('sha256'):
+                    return job
+            except (OSError, ValueError):
+                # A missing, unreadable or invalid cached artifact can be rebuilt.
+                continue
+        jid = uid('job')
+        c.execute("INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)",
+                  (jid, 'export_docx', 'queued', dump(payload), None, None, now(), now()))
+    job = store.one('jobs', jid)
+    from .task_notify import notify
+    notify(store, job, 'queued')
+    store.wake_jobs()
+    return job
 
 
 def output_path(store, job):

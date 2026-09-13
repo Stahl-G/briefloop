@@ -2,6 +2,8 @@
 import json
 from pathlib import Path
 import threading
+import time
+from contextlib import contextmanager
 from queue import Empty
 from .app_server import AppServerClient
 from .chat_store import ChatStore
@@ -15,11 +17,13 @@ class InternalRun:
 
 class HarnessManager:
     backend = 'codex'
+    IDLE_SECONDS = 30.0
 
     def __init__(self,store,client_factory=AppServerClient):
         self.store=store;self.chat=ChatStore(store);self.client_factory=client_factory
-        self.client=None;self._lock=threading.RLock();self._closed=threading.Event()
+        self.client=None;self._lock=threading.RLock();self._closed=threading.Event();self._client_lock=threading.Lock();self._starting_turns={}
         self._threads={};self._children={};self._busy=set();self._items={};self._runtime={};self._cancel_requested=set();self._reasoning={};self._reasoning_target={}
+        self._client_users=0;self._idle_since=None;self._active_children=set()
     def list_sessions(self,view='active'):return self.chat.sessions(view)
     def _set_lifecycle(self,sid,lifecycle):
         with self._lock:
@@ -62,18 +66,56 @@ class HarnessManager:
         return value
     def fast_capability(self, runtime):
         from .fast_mode import capability
-        return capability(self._client(), self._config(runtime), self.store.root)
+        with self.client_use() as client:
+            return capability(client, self._config(runtime), self.store.root)
+
+    @contextmanager
+    def client_use(self):
+        """Keep short config requests alive as well as dispatched turns."""
+        with self._lock:
+            self._client_users+=1;self._idle_since=None
+        try:
+            yield self._client()
+        finally:
+            with self._lock:
+                self._client_users-=1;self._idle_since=None
+
+    def _reclaim_idle(self, client):
+        with self._client_lock:
+            with self._lock:
+                if client is not self.client or self._closed.is_set():return
+                active=(self._client_users or self._busy or self._starting_turns or self._active_children
+                        or any(self.chat.session(sid).get('turn_id') for sid in set(self._threads.values())))
+                if active:
+                    self._idle_since=None;return
+                now=time.monotonic()
+                if self._idle_since is None:self._idle_since=now
+                if now-self._idle_since<self.IDLE_SECONDS:return
+                # Persisted native thread IDs stay in ChatStore for resume.
+                # This is deliberate idle release, not a failed connection.
+                self.client=None;self._threads.clear();self._children.clear()
+                self._idle_since=None
+            client.close()
 
     def _client(self):
-        with self._lock:
-            if self.client is not None:
-                process=getattr(self.client,'process',None)
-                if process is not None and process.poll() is not None:
-                    self._disconnect();self.client=None;self._threads.clear();self._children.clear()
-            if self.client is None:
-                self.client=self.client_factory(self.store.root/'chat-runtime')
-                threading.Thread(target=self._consume,args=(self.client,),daemon=True).start()
-            return self.client
+        # Startup can perform protocol I/O; serialize only client creation, never
+        # the dispatcher state shared by unrelated sessions and hosts.
+        with self._client_lock:
+            with self._lock:
+                if self._closed.is_set():raise RuntimeError('会话管理器已关闭')
+                old=self.client
+                if old is not None:
+                    process=getattr(old,'process',None)
+                    if process is None or process.poll() is None:return old
+                    self._disconnect();self.client=None;self._threads.clear();self._children.clear();self._active_children.clear()
+            if old is not None:old.close()
+            client=self.client_factory(self.store.root/'chat-runtime')
+            with self._lock:
+                closed=self._closed.is_set()
+                if not closed:self.client=client;self._idle_since=None
+            if closed:client.close();raise RuntimeError('会话管理器已关闭')
+            threading.Thread(target=self._consume,args=(client,),daemon=True).start()
+            return client
     def send(self,session_id,text,mode='queue',source_ids=None,runtime=None,message_id=None,display_text=None,allow_web=False):
         if mode not in ('queue','steer'):raise ValueError('mode must be queue or steer')
         if text is None:text=''
@@ -103,7 +145,6 @@ class HarnessManager:
             prior=next((m for m in self.snapshot(session_id)['messages'] if m['id']==mid),None)
             if prior:return prior
             message=self.chat.message(session_id,display_text if display_text is not None else text,source_ids=source_ids,mode=mode,mid=mid,runtime=config,prompt=text if display_text is not None else None,allow_web=allow_web)
-            self._cancel_requested.discard(session_id)
             self._runtime[mid]=config
             if not coordinator or coordinator.internal(session_id):self.chat.update(session_id,runtime=config)
             self.chat.event(session_id,'message/queued',{'messageId':mid,'mode':mode})
@@ -130,6 +171,7 @@ class HarnessManager:
         if self.chat.session(sid)['lifecycle']!='active':return
         if sid in self._busy or self.chat.session(sid).get('turn_id'):return
         if not any(m['status']=='queued' for m in self.snapshot(sid)['messages']):return
+        self._cancel_requested.discard(sid)
         self._busy.add(sid)
         threading.Thread(target=self._dispatch,args=(sid,),daemon=True).start()
     def _attachments(self,source_ids):
@@ -221,13 +263,24 @@ class HarnessManager:
                     else:turn_params.pop('model',None)
                 if tier is not None:turn_params['serviceTier']=tier
                 if config.get('effort'):turn_params['effort']=config['effort']
-                result=client.request('turn/start',turn_params)
-                turn_id=result['turn']['id']
-                # Publish the active turn only after its frozen message is bound.
-                # Concurrent steer validation must see the turn's network settings.
+                self._starting_turns[sid]=[]
+            # Native I/O is outside the shared state lock. Notifications that
+            # beat the response are buffered until the frozen turn is bound.
+            result=client.request('turn/start',turn_params)
+            turn_id=result['turn']['id']
+            with self._lock:
+                if self._closed.is_set() or client is not self.client:
+                    raise RuntimeError('会话连接已关闭，未自动重发')
                 self.chat.patch_message(mid,status='delivered',turn_id=turn_id)
                 self.chat.update(sid,turn_id=turn_id,status='running')
                 self.chat.event(sid,'message/delivered',{'messageId':mid,'turnId':turn_id,'runtime':config})
+                buffered=self._starting_turns.pop(sid,[])
+                for notification in buffered:self.handle_notification(notification)
+                interrupt=sid in self._cancel_requested and self.chat.session(sid).get('turn_id')==turn_id
+                if interrupt:self.chat.update(sid,status='stopping')
+            if interrupt:
+                client.interrupt(thread_id,turn_id)
+                self.chat.event(sid,'turn/interruptRequested',{'turnId':turn_id})
         except Exception as exc:
             # Terminal data first, status last: waiters poll on status and must
             # never observe 'failed' before its error event exists.
@@ -236,7 +289,9 @@ class HarnessManager:
             self.chat.update(sid,status='failed',turn_id=None)
         finally:
             with self._lock:
+                self._starting_turns.pop(sid,None)
                 self._busy.discard(sid)
+                self._idle_since=None
                 coordinator=getattr(self,'coordinator',None)
                 if coordinator:coordinator.settle(sid)
                 if self.chat.session(sid)['status']=='idle':self._schedule(sid)
@@ -252,22 +307,26 @@ class HarnessManager:
                         self.chat.patch_message(mid,status='queued',mode='queue')
                         self.chat.event(sid,'message/queued',{'messageId':mid,'mode':'queue','reason':'设置与当前回合不同，改为下一回合执行'})
                         return
-                self.chat.patch_message(mid,status='sending')
-                self._client().request('turn/steer',{'threadId':session['thread_id'],'expectedTurnId':session['turn_id'],'clientUserMessageId':mid,'input':self._input(message)})
-                self.chat.patch_message(mid,status='delivered',turn_id=session['turn_id'])
+                client=self.client
+                if client is None:raise RuntimeError('会话连接已失效')
+                self.chat.patch_message(mid,status='sending',turn_id=session['turn_id'])
+            client.request('turn/steer',{'threadId':session['thread_id'],'expectedTurnId':session['turn_id'],'clientUserMessageId':mid,'input':self._input(message)})
+            with self._lock:
+                current=self.chat.session(sid)
+                status='delivered' if current['turn_id']==session['turn_id'] else 'completed' if current['status']=='idle' else 'interrupted'
+                self.chat.patch_message(mid,status=status,turn_id=session['turn_id'])
                 self.chat.event(sid,'message/delivered',{'messageId':mid,'turnId':session['turn_id'],'mode':'steer'})
         except Exception as exc:
             self.chat.event(sid,'error',{'message':str(exc),'messageId':mid});self.chat.patch_message(mid,status='failed')
     def cancel(self,session_id):
         with self._lock:
-            session=self.chat.session(session_id)
-            self._cancel_requested.add(session_id)
+            session=self.chat.session(session_id);self._cancel_requested.add(session_id)
             for message in self.snapshot(session_id)['messages']:
                 if message['status']=='queued':self.chat.patch_message(message['id'],status='cancelled')
-            if session['turn_id']:
-                self._client().interrupt(session['thread_id'],session['turn_id'])
-                self.chat.update(session_id,status='stopping')
-                self.chat.event(session_id,'turn/interruptRequested',{'turnId':session['turn_id']})
+            turn_id=session.get('turn_id');client=self.client
+            if turn_id or session_id in self._busy:self.chat.update(session_id,status='stopping')
+            if turn_id:self.chat.event(session_id,'turn/interruptRequested',{'turnId':turn_id})
+        if turn_id and client is not None:client.interrupt(session['thread_id'],turn_id)
         return self.snapshot(session_id)
     def _consume(self,client):
         while not self._closed.is_set() and self.client is client:
@@ -279,11 +338,13 @@ class HarnessManager:
                     with self._lock:
                         if self.client is client:self._disconnect()
                     return
+                self._reclaim_idle(client)
                 continue
             try:self.handle_notification(notification)
             except Exception as exc:
                 # Keep the reader alive; never expose raw protocol content.
                 for sid in set(self._threads.values()):self.chat.event(sid,'error',{'message':'会话事件读取失败：'+str(exc)})
+            self._reclaim_idle(client)
     def _drain_requests(self):
         requests=getattr(self.client,'server_requests',None)
         if requests is None:return
@@ -327,22 +388,31 @@ class HarnessManager:
                 if not isinstance(values,list) or not all(isinstance(v,str) for v in values):raise ValueError('回答必须为文字')
                 normalized[key]={'answers':values}
             if self.client is None:raise ValueError('会话连接已失效')
-            self.client.answer(request['rpc_id'],{'answers':normalized})
-            self.chat.request_status(request_id,'answered')
-            self.chat.event(session_id,'input/answered',{'requestId':request_id,'answers':normalized})
+            client=self.client
+            self.chat.request_status(request_id,'answering')
+        try:
+            client.answer(request['rpc_id'],{'answers':normalized})
+        except Exception:
+            with self._lock:self.chat.request_status(request_id,'expired')
+            raise
+        with self._lock:
+            if self.chat.request(request_id)['status']=='answering':
+                self.chat.request_status(request_id,'answered')
+                self.chat.event(session_id,'input/answered',{'requestId':request_id,'answers':normalized})
         return self.snapshot(session_id)
     def _disconnect(self):
         with self._lock:
             for sid in set(self._threads.values()):
                 session=self.chat.session(sid)
                 for request in self.snapshot(sid)['requests']:
-                    if request['status']=='pending':self.chat.request_status(request['id'],'expired')
+                    if request['status'] in ('pending','answering'):self.chat.request_status(request['id'],'expired')
                 if session['turn_id']:
                     self._finish(sid,session['turn_id'],'interrupted')
                     self.chat.event(sid,'error',{'message':'Codex 连接已断开，未自动重发消息'})
     def _finish(self,sid,turn_id,status):
+        self._idle_since=None
         for request in self.snapshot(sid)['requests']:
-            if request['status']=='pending' and request['data'].get('turnId')==turn_id:self.chat.request_status(request['id'],'expired')
+            if request['status'] in ('pending','answering') and request['data'].get('turnId')==turn_id:self.chat.request_status(request['id'],'expired')
         for message in self.snapshot(sid)['messages']:
             if message['turn_id']==turn_id and message['status'] in ('delivered','streaming'):
                 self.chat.patch_message(message['id'],status=status)
@@ -358,6 +428,8 @@ class HarnessManager:
             if not sid:
                 sid=self._children.get(thread_id);child=True
             if not sid:return
+            if sid in self._starting_turns:
+                self._starting_turns[sid].append(notification);return
             if not child and 'reasoning' in method.lower():
                 if 'delta' not in method.lower():return
                 turn_id=params.get('turnId') or self.chat.session(sid)['turn_id']
@@ -375,6 +447,9 @@ class HarnessManager:
                                  {'command':recorded.get('command')},recorded.get('aggregatedOutput',''),
                                  status=recorded.get('status','completed'),exit_code=recorded.get('exitCode'),native_session=thread_id)
             if child and method in ('turn/started','turn/completed'):
+                if method=='turn/started':self._active_children.add(thread_id)
+                else:self._active_children.discard(thread_id)
+                self._idle_since=None
                 if method=='turn/completed':
                     child_turn=params.get('turn',{}).get('id') or params.get('turnId')
                     for request in self.snapshot(sid)['requests']:
@@ -414,7 +489,14 @@ class HarnessManager:
                     fields=('id','type','status','command','cwd','tool','server','receiverThreadIds','senderThreadId','agentsStates','query','model','reasoningEffort')
                     public={k:item[k] for k in fields if k in item}
                     if kind=='collabAgentToolCall':
-                        for receiver in item.get('receiverThreadIds',[]):self._children[receiver]=sid
+                        states=item.get('agentsStates') or {}
+                        for receiver in item.get('receiverThreadIds',[]):
+                            self._children[receiver]=sid
+                            state=(states.get(receiver) or {}).get('status')
+                            if state in ('completed','errored','interrupted','shutdown','notFound'):
+                                self._active_children.discard(receiver)
+                            elif state in ('running','pendingInit') or item.get('tool') in ('spawnAgent','resumeAgent'):
+                                self._active_children.add(receiver)
                     self.chat.event(sid,('child/' if child else '')+method,{'item':public,'turnId':turn_id,'threadId':thread_id})
             elif method=='turn/completed':
                 turn=params.get('turn',{});turn_id=turn.get('id',turn_id)
@@ -430,6 +512,8 @@ class HarnessManager:
                 else:data={'turnId':params.get('turn',{}).get('id')}
                 self.chat.event(sid,('child/' if child else '')+method,data)
     def close(self):
-        self._disconnect()
-        self._closed.set()
-        if self.client is not None:self.client.close()
+        with self._lock:
+            self._closed.set()
+            self._disconnect()
+            client=self.client
+        if client is not None:client.close()

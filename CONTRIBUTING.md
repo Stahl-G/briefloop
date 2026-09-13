@@ -21,7 +21,7 @@ node runtime-bridge/build.mjs
 npm run build
 npm test
 node --test runtime-bridge/bridge.test.mjs
-.venv/bin/python -m pytest -q
+.venv/bin/python -m pytest tests -q
 .venv/bin/python -m build
 .venv/bin/python tests/check_distribution.py dist/*.whl dist/*.tar.gz
 ```

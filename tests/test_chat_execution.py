@@ -122,3 +122,16 @@ def test_resume_requires_native_history_and_matching_capabilities(tmp_path):
     chat.message(sid, 'Read only now', mid='four', runtime={'backend': 'opencode', 'model': 'a', 'permission': 'read-only'})
     fourth = execution.admit(sid, 'four')
     assert fourth['id'] != third['id'] and fourth['native_session_id'] is None
+
+
+def test_native_tool_mode_change_reseeds_without_mutating_queued_choices(tmp_path):
+    chat, execution, sid=setup_chat(tmp_path)
+    config={'backend':'pi','model':'test/flash','permission':'runtime-native','host_options':{'mode':'native'}}
+    chat.message(sid,'first',mid='mode-one',runtime=config,allow_web=False)
+    first=execution.admit(sid,'mode-one');execution.bind(sid,'mode-one','native-one');finish(chat,sid,'mode-one','done')
+    chat.message(sid,'restricted',mid='mode-two',runtime={**config,'host_options':{'mode':'none'}},allow_web=True)
+    second=execution.admit(sid,'mode-two')
+    assert second['id']!=first['id'] and second['native_session_id'] is None
+    rows=chat.store.rows('SELECT id,runtime,allow_web FROM chat_messages WHERE role=\'user\' ORDER BY created')
+    assert json.loads(rows[0]['runtime'])['host_options']['mode']=='native' and rows[0]['allow_web']==0
+    assert json.loads(rows[1]['runtime'])['host_options']['mode']=='none' and rows[1]['allow_web']==1

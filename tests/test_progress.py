@@ -112,3 +112,39 @@ def test_progress_projects_unknown_errors_as_fixed_text(tmp_path):
     row=store.rows("SELECT data FROM events WHERE job_id=? AND kind='runtime_progress' ORDER BY seq DESC LIMIT 1",(job['id'],))[0]
     assert json.loads(row['data'])['stage']=='模型执行遇到错误'
     assert 'secret-test-key' not in row['data']
+
+
+def test_metadata_and_private_events_do_not_fabricate_progress(tmp_path):
+    store=Store(tmp_path/'workspace');job=store.enqueue('generate',{})
+    folder=store.root/'jobs'/job['id'];folder.mkdir(parents=True)
+    tracker=ProgressTracker(store,job['id'],folder)
+    def rows():return store.rows("SELECT data FROM events WHERE job_id=? AND kind='runtime_progress' ORDER BY seq",(job['id'],))
+    tracker.update()
+    assert json.loads(rows()[-1]['data'])['last_activity'] is None
+    log=folder/'events.jsonl'
+    private={'type':'item.completed','item':{'type':'reasoning','text':'private'}}
+    log.write_text(json.dumps(private)+'\n');tracker.update()
+    (folder/'agents.json').write_text('{"agents":[]}');tracker.update()
+    assert len(rows())==1
+    public={'type':'item.completed','item':{'type':'agent_message','text':'正在核对来源'}}
+    with log.open('a') as f:f.write(json.dumps(public)+'\n')
+    tracker.update();assert len(rows())==2
+    timestamp=json.loads(rows()[-1]['data'])['last_activity'];assert timestamp
+    with log.open('a') as f:f.write(json.dumps(public)+'\n')
+    tracker.update();assert len(rows())==2
+    ProgressTracker(store,job['id'],folder).update();assert len(rows())==2
+    (folder/'draft.json').write_text('{}');tracker.update()
+    assert len(rows())==3 and json.loads(rows()[-1]['data'])['draft_ready']
+
+
+def test_worker_timestamp_alone_does_not_repeat_full_snapshot(tmp_path):
+    store=Store(tmp_path/'workspace');job=store.enqueue('generate',{})
+    folder=store.root/'jobs'/job['id'];folder.mkdir(parents=True)
+    log=folder/'events.jsonl';tracker=ProgressTracker(store,job['id'],folder)
+    def emit(activity,stamp):
+        with log.open('a') as f:f.write(json.dumps({'type':'item.updated','item':{'type':'collab_tool_call','agents_states':{'child':{'status':'running','role':'Analyst','activity':activity,'last_activity':stamp}}}})+'\n')
+        tracker.update()
+    def count():return len(store.rows("SELECT seq FROM events WHERE job_id=? AND kind='runtime_progress'",(job['id'],)))
+    emit('核对来源','2026-09-13T10:00:00Z');assert count()==1
+    emit('核对来源','2026-09-13T10:00:01Z');assert count()==1
+    emit('保存稿件','2026-09-13T10:00:02Z');assert count()==2

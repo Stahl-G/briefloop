@@ -12,6 +12,16 @@ import unittest
 
 
 class ConnectorTests(unittest.TestCase):
+    def test_loader_environment_cannot_override_transport_supervisor(self):
+        from briefloop.connectors.config import validate_secrets
+        from briefloop.connectors import ConnectorError
+        for key in ('LD_LIBRARY_PATH', 'LD_AUDIT', 'DYLD_FRAMEWORK_PATH',
+                    'DYLD_FALLBACK_LIBRARY_PATH', 'pythonpath', 'ld_preload', '__PYVENV_LAUNCHER__'):
+            with self.subTest(key=key), self.assertRaises(ConnectorError):
+                validate_secrets({'env': {key: '/synthetic/injection'}})
+        self.assertEqual(validate_secrets({'env': {'VENDOR_API_KEY': 'synthetic'}})['env'],
+                         {'VENDOR_API_KEY': 'synthetic'})
+
     def setUp(self):
         self.assertIsNotNone(importlib.util.find_spec('briefloop.connectors'), 'Connector backend is missing')
         from briefloop.connectors import ConnectorService

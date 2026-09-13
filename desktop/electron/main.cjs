@@ -57,51 +57,81 @@ async function stopCurrent() {
   try { await service.stop({cancelBusy}); } finally { expectedExit = false; }
   return true;
 }
+function workspaceService(runtime) {
+  const owned = new WorkspaceService(runtime, async ({lastInfo}) => {
+    if (service !== owned || expectedExit || switching || quitting || !window || window.isDestroyed()) return;
+    const result = await dialog.showMessageBox(window, {type: 'error', message: '工作区服务已退出',
+      detail: '窗口中的编辑已保留。重新连接后可以继续保存；失败时请保留窗口和正文。',
+      buttons: ['重新连接', '保留窗口'], defaultId: 0, cancelId: 1});
+    if (result.response !== 0 || !lastInfo || service !== owned || owned.child || switching || closePending || quitting) return;
+    switching = true;
+    try {
+      await owned.start(owned.directory, {port: Number(new URL(lastInfo.url).port)});
+      // Keep the same document and origin: its unsaved editor stays intact.
+      resumeEditing();
+    } catch (error) { await reportError(error); }
+    finally { switching = false; }
+  });
+  return owned;
+}
 async function openWorkspace(request) {
-  if (switching || closePending) throw Error('正在保存或切换工作区，请稍候。');
+  if (switching || closePending || quitting) throw Error('正在保存或切换工作区，请稍候。');
   if (!request || typeof request.path !== 'string' || request.path.length > 4096 || typeof request.create !== 'boolean') throw Error('请选择完整的本地工作区路径。');
   if (!path.isAbsolute(request.path) && !service?.directory) throw Error('请选择完整的本地工作区路径。');
   const target = path.isAbsolute(request.path) ? path.resolve(request.path) : path.resolve(path.dirname(service.directory), request.path);
   // Relative names from the existing Web UI resolve beside the current workspace.
   if (service?.info && target === service.directory) return {path: target, url: service.info.url};
-  const runtime = await environment.runtime();
   switching = true;
+  const previous = service, previousInfo = previous?.info;
+  let candidate, stopped = false, navigating = false;
   try {
+    const runtime = await environment.runtime();
+    candidate = workspaceService(runtime);
+    const directory = await candidate.preflight(target, {create: request.create});
+    // realpath also recognizes symlinks/junctions to the currently open folder.
+    if (previous?.info && directory === previous.directory) return {path: directory, url: previous.info.url};
     if (menuSave) await menuSave;
-    if (service?.child && !(await stopCurrent())) return {cancelled: true};
-    service = new WorkspaceService(runtime, async ({lastInfo}) => {
-      if (expectedExit || switching || quitting || !window || window.isDestroyed()) return;
-      const result = await dialog.showMessageBox(window, {type: 'error', message: '工作区服务已退出',
-        detail: '窗口中的编辑已保留。重新连接后可以继续保存；失败时请保留窗口和正文。',
-        buttons: ['重新连接', '保留窗口'], defaultId: 0, cancelId: 1});
-      if (result.response !== 0 || !lastInfo || service.child) return;
-      switching = true;
-      try {
-        await service.start(service.directory, {port: Number(new URL(lastInfo.url).port)});
-        // Keep the same document and origin: its unsaved editor stays intact.
-        resumeEditing();
-      } catch (error) { await reportError(error); }
-      finally { switching = false; }
-    });
-    const opened = await service.start(target, {create: request.create});
-    workspaceOrigin = opened.url;
-    try { await window.loadURL(opened.url); }
-    catch (error) {
-      expectedExit = true;
-      try { await service.stop(); }
-      catch { error.message += ' 后台仍受此窗口管理，请再次打开或退出以处理。'; }
-      finally { expectedExit = false; }
-      workspaceOrigin = null;
-      await window.loadURL(welcomeURL);
-      throw error;
+    if (previous?.child) {
+      if (!(await stopCurrent())) return {cancelled: true};
+      stopped = true;
     }
+    service = candidate;
+    const opened = await candidate.start(directory, {create: request.create});
+    workspaceOrigin = opened.url;
+    navigating = true;
+    await window.loadURL(opened.url);
     window.setTitle(`BriefLoop · ${path.basename(opened.path)}`);
     // A preferences disk error must not strand a live service behind the old page.
     try { await rememberWorkspace(opened.path); }
     catch { await dialog.showMessageBox(window, {type: 'warning', message: '工作区已打开', detail: '无法记住最近使用的目录；下次可通过“打开工作区”重新选择。报告仍保存在工作区。'}); }
     return opened;
   } catch (error) {
-    if (!service?.info) await window.loadURL(welcomeURL);
+    if (candidate && service === candidate) {
+      if (candidate.child && candidate.info) {
+        try { await candidate.stop({cancelBusy: true}); }
+        catch { error.message += ' 目标后台尚未停止，窗口仍管理该服务。'; }
+      }
+      // Never lose the handle to a target that has not finished shutting down,
+      // or run two managed services while claiming the previous one recovered.
+      if (!candidate.child) {
+        service = previous;
+        if (stopped && previousInfo) {
+          try {
+            const restored = await previous.start(previous.directory, {port: Number(new URL(previousInfo.url).port)});
+            workspaceOrigin = restored.url;
+            if (navigating) await window.loadURL(restored.url);
+            window.setTitle(`BriefLoop · ${path.basename(restored.path)}`);
+            error.message += ' 已恢复原工作区，旧任务保持暂停，不会自动重跑。';
+          } catch {
+            error.message += ' 原工作区尚未重新连接；已保存内容保留，请重新打开工作区。';
+          }
+        }
+      }
+    }
+    if (!service?.info && (!previousInfo || navigating)) {
+      workspaceOrigin = null;
+      await window.loadURL(welcomeURL);
+    }
     throw error;
   } finally { switching = false; resumeEditing(); }
 }

@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS conflicts(id TEXT PRIMARY KEY,run_id TEXT REFERENCES 
 '''
 
 
-def create(store,*,source_ids,description,run_id=None,fact_ids=None,kind='contradiction',importance='core',
+def create_in_transaction(store,connection,*,source_ids,description,run_id=None,fact_ids=None,kind='contradiction',importance='core',
            participants=None,scope='',requirement_ids=None,reconciliation_id=None):
     if len(set(source_ids))<1 or not description.strip():raise ValueError('冲突需要来源与具体分歧')
     if kind not in ('contradiction','correction','different_scope','forecast_difference','unknown'):raise ValueError('未知冲突类型')
@@ -16,7 +16,7 @@ def create(store,*,source_ids,description,run_id=None,fact_ids=None,kind='contra
     for sid in source_ids:store.one('sources',sid)
     if run_id:store.one('runs',run_id)
     for identity in fact_ids or []:
-        facts=store.rows('SELECT source_id FROM company_facts WHERE id=?',(identity,))
+        facts=connection.execute('SELECT source_id FROM company_facts WHERE id=?',(identity,)).fetchall()
         if not facts or facts[0]['source_id'] not in source_ids:raise ValueError('冲突中的企业事实未绑定参与来源')
     participants=participants or []
     from .evidence import record
@@ -32,13 +32,24 @@ def create(store,*,source_ids,description,run_id=None,fact_ids=None,kind='contra
         if not exists(store,run_id,reconciliation_id):raise ValueError('冲突引用的对照记录不存在')
     data={'source_ids':sorted(set(source_ids)),'description':description,'fact_ids':fact_ids or [],'kind':kind,'importance':importance,'responses':[],
           'participants':participants,'scope':scope,'requirement_ids':requirement_ids or [],'reconciliation_id':reconciliation_id}
-    for row in store.rows("SELECT * FROM conflicts WHERE status IN ('open','addressed_pending_review')"):
+    for row in connection.execute("SELECT * FROM conflicts WHERE status IN ('open','addressed_pending_review')"):
         old=json.loads(row['data'])
-        if row['run_id']==run_id and old['source_ids']==data['source_ids'] and old['description']==description:return {**row,'data':old}
+        if row['run_id']==run_id and old['source_ids']==data['source_ids'] and old['description']==description and set(old.get('fact_ids',[]))==set(data['fact_ids']):return ({**row,'data':old},False)
     identity=uid('conflict')
-    with store.tx() as c:c.execute('INSERT INTO conflicts VALUES(?,?,?,?,?,?)',(identity,run_id,'open',dump(data),now(),now()))
-    store.event(None,'conflict_warning',{'conflict_id':identity,'description':description,'source_ids':source_ids})
-    return {'id':identity,'run_id':run_id,'status':'open','data':data}
+    connection.execute('INSERT INTO conflicts VALUES(?,?,?,?,?,?)',(identity,run_id,'open',dump(data),now(),now()))
+    return ({'id':identity,'run_id':run_id,'status':'open','data':data},True)
+
+
+def notify_created(store, conflict):
+    data=conflict['data']
+    store.event(None,'conflict_warning',{'conflict_id':conflict['id'],'description':data['description'],'source_ids':data['source_ids']})
+
+
+def create(store, **kwargs):
+    with store.tx() as connection:
+        conflict,created=create_in_transaction(store,connection,**kwargs)
+    if created:notify_created(store,conflict)
+    return conflict
 
 
 def respond(store,identity,action,reason):

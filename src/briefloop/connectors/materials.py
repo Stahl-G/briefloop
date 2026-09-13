@@ -58,13 +58,13 @@ def _text(result, method, target):
 
 
 class ConnectorMaterials:
-    def __init__(self, store, service):
+    def __init__(self, store, service, *, access_scope=None):
         self.store, self.service = store, service
+        self._access_scope = access_scope
         self.grants = Grants(store)
 
-    @staticmethod
-    def scope(grant_id):
-        return 'material:' + grant_id
+    def scope(self, grant_id):
+        return self._access_scope or 'material:' + grant_id
 
     def freeze(self, run_id, selections, *, max_calls, max_total_bytes, grant_id=None):
         if not isinstance(selections, list) or not 1 <= len(selections) <= 32:

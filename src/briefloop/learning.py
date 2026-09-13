@@ -24,6 +24,7 @@ def enqueue_feedback(store, *, automatic=False):
                  'role_models':store.role_model_config(),'agent_backend':settings.get('agent_backend','codex')}
         c.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',(jid,'learn','queued',dump(payload),None,None,now(),now()))
         c.executemany('UPDATE feedback SET batch_id=? WHERE id=?',[(jid,r['id']) for r in rows])
+    store.wake_jobs()
     return store.one('jobs',jid)
 
 
@@ -51,7 +52,8 @@ def _experience(store, job):
         if 'execution_records' not in text:
             text['execution_records']=[{'job_id':j['id'],'status':j['status'],'result':json.loads(j['result']) if j['result'] else None,'trace_file':str(store.root/'jobs'/j['id']/'events.jsonl')} for j in store.rows("SELECT * FROM jobs WHERE kind='generate'") if json.loads(j['payload']).get('run_id')==run['id']]
         text['context_note']='用户改稿与评论是反馈；review_correction仅表示独立复核过的处理，不把来源正常更新当原稿事实错误。评分仍是可争议的模型判断；执行记录用于追溯，不作为来源事实。'
-        items.append({'text':dump(text),'source':fid})
+        items.append({'text':dump(text),'source':fid,'origin':'automatic' if f['kind']=='review_correction' else 'human',
+                      'learning_intent':data.get('learning_intent','feedback') if f['kind']=='comment' else 'feedback'})
     # Only a few existing tasks. Their source snapshots, not user rewrites, go to generation.
     run_ids=run_ids[-3:]
     others=store.rows("SELECT * FROM runs WHERE mode='normal' ORDER BY created DESC")
@@ -67,6 +69,15 @@ def _sync_wiki(store,study):
         raise ValueError('已有更新的学习记录；旧任务不能覆盖当前 Wiki')
     state=feedback_loop.work(study)
     text='# 工作区 Wiki\n\n以下是从修订与执行中整理的经验，不是本期事实来源。\n'
+    explicit=[x for x in state['feedback'] if x.get('learning_intent')=='explicit_requirement' and x.get('origin')=='human']
+    if explicit:
+        text+='\n## 人类明确要求（持续保留）\n'
+        for item in explicit:
+            value=json.loads(item['text'])
+            text+='\n- '+value.get('comment',item['text'])+'（来源：'+str(item.get('source'))+'）\n'
+        if state['history'] and state['history'][-1].get('requirements_pending'):
+            text+='\n技能待完善：人类要求保留，候选需要修改后继续验证；本轮未采纳。\n'
+    text+='\n反馈来源：'+', '.join(str(x.get('source'))+' ['+('人类明确要求' if x.get('learning_intent')=='explicit_requirement' else '自动发现' if x.get('origin')=='automatic' else '人类反馈')+']' for x in state['feedback'])+'\n'
     for name,p in state['patterns'].items():text+='\n## '+name+'\n\n'+p['content']+'\n\n依据：'+', '.join(p['sources'])+'\n'
     destination=store.root/'wiki/index.md'
     temporary=destination.with_suffix('.tmp');temporary.write_text(text);temporary.replace(destination)
@@ -106,35 +117,114 @@ def _role(store,runtime,job,study,round_number,phase):
     _sync_wiki(store,study)
 
 
+def validated_workflow(value):
+    """Verify the stored content, not just its advertised identity."""
+    import hashlib
+    if not isinstance(value,dict):raise ValueError('学习方法快照无效')
+    body={key:part for key,part in value.items() if key!='content_hash'}
+    digest=hashlib.sha256(json.dumps(body,ensure_ascii=False,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+    if value.get('content_hash')!=digest:raise ValueError('学习方法快照内容与哈希不一致')
+    if not all(isinstance(value.get('role_instructions',{}).get(role),str) for role in ('planning','writing','evaluation')):
+        raise ValueError('学习方法快照缺少角色方法')
+    return value
+
+
+def _conditions(store,case,payload):
+    import hashlib
+    requirements={**json.loads(case['requirements']),'allow_web':False}
+    validated_workflow(requirements['workflow_snapshot'])
+    root=Path(__file__).parent
+    names=('store.py','runtime.py','deliverable_spec.py','models.py','learning.py','chat_tools.py',
+           'document_workflows.py','agent_commands.py','harness.py','opencode_harness.py','bridge_harness.py',
+           'static/runtime-bridge.mjs')
+    return {'schema':1,'requirements':requirements,
+            'runtime':payload.get('runtime',store.runtime_config()),'role_models':payload.get('role_models',{}),
+            'agent_backend':payload.get('agent_backend',store.settings().get('agent_backend','codex')),
+            'common_code':{name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in names},
+            'max_parallel':store.settings()['max_parallel'],'additional_roles':store.meta('additional_roles',{}),
+            'comparison_policy':'lightweight_pairwise_v1','allow_web':False}
+
+
+def _prepare_case(store,case,payload,folder):
+    from wikiskill.product import write
+    folder=Path(folder);folder.mkdir(parents=True,exist_ok=True);record=folder/'conditions.json'
+    if record.exists():
+        saved=json.loads(record.read_text());origin=store.one('runs',saved['origin_run_id'])
+    else:
+        origin=store.one('runs',case.get('learning_origin_id',case['id']))
+        if not json.loads(origin['requirements']).get('workflow_snapshot'):
+            # A legacy case gets one trusted anchor for BOTH arms, never a new
+            # installed snapshot independently frozen by each trial.
+            origin=store._create_learning_run(case['id'],case['learning_source_ids'],skill_id=case.get('skill_id'))
+        saved={'origin_run_id':origin['id'],'conditions':_conditions(store,origin,payload)}
+        write(record,saved,immutable=True)
+    conditions=_conditions(store,origin,payload)
+    if saved['conditions']!=conditions or (case.get('learning_conditions') is not None and case['learning_conditions']!=conditions):raise ValueError('学习比较条件已变化，旧尝试保留；请创建新的学习任务')
+    original=json.loads(case['requirements']).get('workflow_snapshot')
+    if original and validated_workflow(original)!=conditions['requirements']['workflow_snapshot']:
+        raise ValueError('学习方法快照已变化，不能续跑旧比较')
+    return {**case,'requirements':dump(conditions['requirements']),'learning_origin_id':origin['id'],'learning_conditions':conditions}
+
+
+def _eligible_cases(store,ids):
+    cases=[];skipped=[]
+    for case_id in ids:
+        case=store.one('runs',case_id);evidence=[]
+        for sid in store.source_ids(case_id):
+            provenance=store.root/'sources'/(sid+'.provenance.json')
+            metadata=json.loads(provenance.read_text()) if provenance.is_file() else {}
+            if case_id in metadata.get('revision_for_runs',[]) or metadata.get('usage')=='revision_feedback':continue
+            evidence.append(sid)
+        if not evidence:
+            skipped.append({'case_id':case_id,'reason':'过滤修订答案后没有有效来源，本案例不可比较'})
+            continue
+        cases.append({**case,'source_ids':dump(evidence),'learning_source_ids':evidence})
+    return cases,skipped
+
+
 def _generate_trial(store,job,case,skill,folder,tag):
     from .review_learning import source_snapshot
     selected=case.get('learning_source_ids',store.source_ids(case['id']))
     expected=source_snapshot(store,case['id'],source_ids=selected)
+    if not selected:raise ValueError('过滤修订答案后没有有效来源，本案例不可比较')
+    parent=json.loads(job['payload'])
+    case=_prepare_case(store,{**case,'learning_source_ids':selected},parent,folder.parent)
+    conditions=case['learning_conditions']
     folder.mkdir(parents=True,exist_ok=True)
     marker=folder/'trial.json'
     if marker.exists():
         info=json.loads(marker.read_text())
-        if info.get('source_snapshot',expected)!=expected:
+        if info.get('source_snapshot')!=expected:
             raise ValueError('学习验证的来源快照已变化，旧阶段保留；请基于新材料创建新学习任务')
+        if info.get('conditions')!=conditions or info.get('skill')!=skill:
+            raise ValueError('学习比较条件或技能已变化，不能复用旧阶段')
     else:
-        requirements={**json.loads(case['requirements']),'allow_web':False}
-        run=store.create_run(requirements,selected,mode='trial',skill_id=skill['id'] if skill else None)
+        run=store._create_learning_run(case['learning_origin_id'],selected,skill_id=skill['id'] if skill else None)
         parent=json.loads(job['payload'])
         trial=store.enqueue('generate',{'run_id':run['id'],'skill_override':skill,'single_evaluation':False,'runtime':parent.get('runtime',store.runtime_config()),'role_models':parent.get('role_models',{}),'agent_backend':parent.get('agent_backend',store.settings().get('agent_backend','codex'))})
         # This is a child operation of the current learning worker, not a second queued worker.
-        store.update_job(trial['id'],'running');info={'run_id':run['id'],'job_id':trial['id'],'source_snapshot':expected};marker.write_text(dump(info))
+        store.update_job(trial['id'],'running');info={'run_id':run['id'],'job_id':trial['id'],'source_snapshot':expected,'conditions':conditions,'skill':skill}
+        from wikiskill.product import write
+        write(marker,info,immutable=True)
     trial=store.one('jobs',info['job_id'])
     if source_snapshot(store,info['run_id'])!=expected:
         raise ValueError('保存的学习验证来源与本次案例不同，不能复用或续跑')
+    actual=store.one('runs',info['run_id'])
+    if _conditions(store,actual,parent)!=conditions:raise ValueError('保存的学习方法或执行条件不一致')
+    trial_payload=json.loads(trial['payload'])
+    for key in ('runtime','role_models','agent_backend','max_parallel'):
+        if trial_payload.get(key)!=conditions[key]:raise ValueError('保存的学习宿主或模型条件不一致')
     worker=Worker(store)
     # Shared runtime ensures Stop cancels the current trial rather than an unrelated child.
     worker.runtime=job['_runtime']
     if trial['status']!='complete':
         try:
-            value=worker.generate(trial,score=False);store.update_job(trial['id'],'complete',result=value)
+            value=worker.generate(trial,score=False);value['learning_conditions']=conditions
+            store.update_job(trial['id'],'complete',result=value)
         except Exception as exc:
             store.update_job(trial['id'],'failed',error=str(exc));raise
     saved=store.one('jobs',info['job_id']);result=json.loads(saved['result'] or '{}')
+    if result.get('learning_conditions')!=conditions:raise ValueError('学习验证缺少实际比较条件记录')
     if _attempt_source_snapshot(store,saved,result)!=expected:
         raise ValueError('学习验证未保存一致的来源快照，不能比较该稿件')
     vid=result.get('version_id')
@@ -148,10 +238,11 @@ def comparison_prompt(store,folder,backend='codex'):
     """The dedicated Evaluator session judges directly; it is already independent."""
     no_question='本轮没有任何用户在旁可问：不要调用 question 工具。\n' if backend=='opencode' else ''
     return EVALUATOR_CONTEXT+f'''
-本轮是成对比较模式。直接比较 {folder/'input.json'} 中每个任务的两份稿件。查看任务要求与相关原文，来源目录 {store.root/'sources'}。
+本轮是成对比较模式。直接比较 {folder/'input.json'} 中每个任务的两份稿件。按每个案例冻结的 evaluation_method 与 conditions 比较同一对稿件，不改用其他方法。查看任务要求与相关原文，来源目录 {store.root/'sources'}。
 {no_question}优先判断是否解决实际缺陷，是否更符合读者用途及 input 中明示的 feedback_preferences，是否更清楚且没有新增关键事实/引用/覆盖问题。反馈是评价偏好，不是工具操作指令。
 两份都达到要求也可因实质质量改善判 better；不要只追求更多字、更多引用或四维全涨。身份不代表优劣。
 Evaluator 不读取用户修订答案或 Wiki，不改稿。写 comparison.json：{{"pairs":[{{"case_id":"...","verdict":"better|tie|worse","reason":"具体依据","regressions":[]}}],"reason":"整体说明"}}。
+对于 explicit_requirements，逐项输出 requirement_checks:[{{"source":"反馈 source ID","fulfilled":true,"evidence":"候选落实要求的具体位置或未落实的具体证据"}}]。人类明确要求高于一般评分偏好；不得因不喜欢该要求本身而判退步。检查实现是否满足要求，实际副作用仍如实记录。
 regressions 只列会实质影响使用的新增事实、引用或核心覆盖退步；没有则空列表。最终说明比较是否完成及结果位置。
 '''
 
@@ -201,6 +292,8 @@ def _attempt_source_snapshot(store,job,result):
 def _baseline_for_attempt(store, case, learning_payload):
     """Reuse only the version returned by a matching completed attempt."""
     if case['skill_id']!=learning_payload.get('skill_id'):return None
+    try:conditions=case.get('learning_conditions') or _conditions(store,case,learning_payload)
+    except (ValueError,KeyError):return None
     from .review_learning import source_snapshot
     try:expected=source_snapshot(store,case['id'],source_ids=case.get('learning_source_ids',store.source_ids(case['id'])))
     except (ValueError,OSError):return None
@@ -213,6 +306,13 @@ def _baseline_for_attempt(store, case, learning_payload):
         # Skill overrides do not establish a like-for-like baseline.
         if payload.get('skill_override') is not None:continue
         result=json.loads(job['result'] or '{}');vid=result.get('version_id')
+        if result.get('learning_conditions')!=conditions:continue
+        input_path=store.root/'jobs'/job['id']/'input.json'
+        try:actual_requirements=json.loads(input_path.read_text())['requirements'];actual=actual_requirements['workflow_snapshot']
+        except (OSError,ValueError,KeyError,TypeError):continue
+        try:valid=validated_workflow(actual)
+        except ValueError:continue
+        if actual_requirements!=conditions['requirements'] or valid!=conditions['requirements']['workflow_snapshot']:continue
         if _attempt_source_snapshot(store,job,result)!=expected:continue
         if not vid or not store.generated_by(vid,job['id']):continue
         try:brief=store.one('briefs',vid)
@@ -226,14 +326,15 @@ def learn(store,runtime,job):
     study=root/'study';context=root/'context.json'
     if not context.exists():
         feedback,cases=_experience(store,job)
-        context.write_text(dump({'feedback':feedback,'cases':cases}))
+        from wikiskill.product import write
+        write(context,{'feedback':feedback,'cases':cases,'previous_study':store.meta('last_study')},immutable=True)
     ctx=json.loads(context.read_text())
     current=store.one('skills',payload['skill_id']) if payload['skill_id'] else None
     skill_path=None
     if current:
         skill_path=root/'initial-skill.md';skill_path.write_text(current['content'])
     previous=store.meta('last_study')
-    if study.exists() and previous and previous!=str(study):
+    if study.exists() and previous and previous not in (str(study),ctx.get('previous_study')):
         raise ValueError('已有后续学习记录，不能直接恢复旧学习任务；请基于当前 Wiki 发起新的反馈学习。旧进度保留。')
     feedback=ctx['feedback']
     retry_of=payload.get('retry_of_job_id')
@@ -243,13 +344,24 @@ def learn(store,runtime,job):
         inherited={item.get('source') for item in feedback_loop.work(previous)['feedback']}
         batch=set(payload['feedback_ids'])
         feedback=[item for item in feedback if item.get('source') not in inherited.intersection(batch)]
-    feedback_loop.begin(study,feedback=feedback,skill=skill_path,rounds=payload['k'],previous=previous)
+    # One initial proposal plus one repair opportunity for explicit requirements.
+    requirement_sources=[x['source'] for x in ctx['feedback'] if x.get('learning_intent')=='explicit_requirement' and x.get('origin')=='human']
+    rounds=max(payload['k'],2) if requirement_sources else payload['k']
+    feedback_loop.begin(study,feedback=feedback,skill=skill_path,rounds=rounds,previous=previous,**({'requirement_sources':requirement_sources} if requirement_sources else {}))
     # Only this worker writes the workspace's Wiki; one study at a time.
     store.set_meta('last_study',str(study))
     state=feedback_loop.work(study)
+    cases,skipped=_eligible_cases(store,ctx['cases'])
+    from wikiskill.product import write
+    write(root/'eligibility.json',{'eligible':[case['id'] for case in cases],'skipped':skipped},immutable=True)
+    if skipped and not store.rows("SELECT seq FROM events WHERE job_id=? AND kind='learning_cases_skipped'",(job['id'],)):
+        store.event(job['id'],'learning_cases_skipped',{'cases':skipped})
+    if not cases:
+        state=feedback_loop.skip(study,reason='过滤后无有效来源，本轮不可比较；未调用模型、未启用候选',cases=skipped)
+    cases=[_prepare_case(store,case,payload,root/'cases'/case['id']) for case in cases]
     while state['phase']!='complete':
         if runtime.cancelled.is_set():raise InterruptedError('学习已停止，进度保留')
-        n=state['round'];store.event(job['id'],'learning_progress',{'round':n,'k':payload['k'],'phase':state['phase']})
+        n=state['round'];store.event(job['id'],'learning_progress',{'round':n,'k':state['rounds'],'phase':state['phase']})
         if state['phase'] in ('maintainer','proposer'):
             _role(store,runtime,job,study,n,state['phase']);state=feedback_loop.work(study);continue
         if state['phase']!='validation':raise RuntimeError('未识别的学习步骤：'+state['phase'])
@@ -259,23 +371,14 @@ def learn(store,runtime,job):
         text=(study/candidate['skill']['file']).read_text()
         candidate_skill={'id':'candidate_'+content_hash(text)[:16],'content':text,'targets':dump(payload['targets'])}
         comparisons=[]
-        for case_id in ctx['cases']:
-            case=store.one('runs',case_id)
-            # Imported user answers are feedback, never material for the candidate trial.
-            evidence_ids=[]
-            for sid in store.source_ids(case_id):
-                provenance=store.root/'sources'/(sid+'.provenance.json')
-                if provenance.is_file():
-                    metadata=json.loads(provenance.read_text())
-                    if case_id in metadata.get('revision_for_runs',[]) or metadata.get('usage')=='revision_feedback':continue
-                evidence_ids.append(sid)
-            case['source_ids']=dump(evidence_ids);case['learning_source_ids']=evidence_ids;case_dir=root/f'round-{n}'/case_id
+        for case in cases:
+            case_id=case['id'];case_dir=root/f'round-{n}'/case_id
             baseline=_baseline_for_attempt(store,case,payload)
             if baseline is None:
                 baseline=_generate_trial(store,{**job,'_runtime':runtime},case,current,case_dir/'baseline','baseline')
             proposed=_generate_trial(store,{**job,'_runtime':runtime},case,candidate_skill,case_dir/'candidate','candidate')
             comparisons.append({'case_id':case_id,'requirements':json.loads(case['requirements']),
-                'source_ids':json.loads(case['source_ids']),'comparison_scope':'固定来源的阅读与写作，不评估本轮新的联网检索收益','feedback_preferences':[json.loads(x['text']).get('comment') for x in ctx['feedback'] if json.loads(x['text']).get('kind')=='user_comment'],'baseline':baseline,'candidate':proposed})
+                'conditions':case['learning_conditions'],'evaluation_method':__import__('briefloop.document_workflows',fromlist=['workflow_context']).workflow_context(json.loads(case['requirements'])['workflow_snapshot'],'evaluator'),'source_ids':json.loads(case['source_ids']),'comparison_scope':'固定来源的阅读与写作，不评估本轮新的联网检索收益','feedback_preferences':[json.loads(x['text']).get('comment') for x in ctx['feedback'] if json.loads(x['text']).get('kind')=='user_comment'],'explicit_requirements':[{'source':x['source'],'text':json.loads(x['text']).get('comment','')} for x in state['feedback'] if x.get('source') in state['explicit_requirement_sources'] and x.get('learning_intent')=='explicit_requirement' and x.get('origin')=='human'],'baseline':baseline,'candidate':proposed})
         folder=root/f'round-{n}'/'comparison';folder.mkdir(parents=True,exist_ok=True)
         (folder/'input.json').write_text(dump(comparisons))
         from .backends import validate_backend as _validate
@@ -288,7 +391,7 @@ def learn(store,runtime,job):
         state=feedback_loop.finish(study,pairs=result['pairs'],reason=result.get('reason',''),evidence_file=folder/'comparison.json')
     apply_accepted(store,job,study,state)
     _sync_wiki(store,study)
-    return {'study':str(study),'rounds':len(state['history']),'history':state['history'],'active_skill':store.meta('active_skill')}
+    return {'study':str(study),'rounds':len(state['history']),'history':state['history'],'active_skill':store.meta('active_skill'),'skipped_cases':skipped,'comparison_skipped':state.get('comparison_skipped')}
 
 
 def apply_accepted(store,job,study,state):

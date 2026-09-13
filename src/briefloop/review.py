@@ -567,6 +567,9 @@ def accept_review(store,review_id,value):
     if len(supplied)!=len(set(supplied)) or not set(supplied).issubset(allowed_claims):
         raise ValueError('主张核查记录不属于本次范围或重复；范围外ID='+','.join(sorted(set(supplied)-allowed_claims)))
     if result.status=='complete' and not expected.issubset(supplied):raise ValueError('完整审阅遗漏正文已使用主张，必须标为未完成')
+    # Findings may identify problems in the frozen comparison inputs without
+    # treating source statements as supported claims used by the report.
+    allowed_finding_claims=allowed_claims|{x['claim_id'] for x in current.get('source_statements',[])}
     from .evidence import blocks
     allowed_blocks=set(blocks(current['document']))
     requirements={x['requirement_id']:x for x in current['requirements']['requirement_items']}
@@ -584,7 +587,7 @@ def accept_review(store,review_id,value):
     for finding in result.findings:
         if finding.resolution and not finding.response_to:raise ValueError('关闭发现必须指向准确的 response_id')
         if not finding.response_to:
-            if not set(finding.claim_ids).issubset(allowed_claims):raise ValueError('发现引用了本次范围外的主张ID')
+            if not set(finding.claim_ids).issubset(allowed_finding_claims):raise ValueError('发现引用了本次范围外的主张ID')
             if not set(finding.block_ids).issubset(allowed_blocks):raise ValueError('发现引用了本次正文不存在的块ID')
         if not set(finding.requirement_ids).issubset(allowed_finding_requirements):raise ValueError('发现引用了未登记的要求ID')
     expected_responses=set(_response_scope(store,packet,result.version_id))
@@ -761,6 +764,7 @@ def run_review(store,runtime,job,version_id,folder):
 核对target.json中的conflicts，按明确更正、不同口径、预测归属或未决分歧分类，逐项给conflict_checks；不要因日期新或官方标签一刀切采用。冲突复核可带basis_span_ids与scope说明依据范围。
 核对target.json中的source_statements与reconciliation：source_statements是各来源自身提出的陈述；reconciliation是作者写作前的对照记录，relations只表示可比较性与关系，不表示系统已判定真假。独立判断作者选的是否同一问题、关系分类是否正确、是否漏掉已取得的相反材料、正文是否真正执行了限定或修正；需要处理的分歧用finding返回，不写入Conflict，也不因作者标记complete就认为事实通过。
 claim_checks可以使用target.evidence.bindings、premises闭包以及candidate_claims中的真实claim_id。candidate_claims是已登记但未用于正文的候选，不能当成当前正文已使用；若其内容实际出现在正文却未绑定，应记录missing_binding，不编造新claim_id。
+顶层findings.claim_ids还可以引用本次target.source_statements内的claim_id，指出来源对照或正文漏绑定问题；这不把来源陈述变成正文主张，也不允许仅因来源这样写就给它添加claim_checks通过标记。两类ID清单以本次固定包为准，不使用其他报告的ID。
 对history/responses.json每条当前版本的作者回应，必须在response_checks单独给response_id、decision(resolved/dismissed_with_evidence/unresolved)、reason。findings只放新发现，不要因已修复问题从findings消失就省略response_checks。作者说已修复不算解决，须对照修订和证据；图像不可读等遗留问题应明确unresolved，不重复创建同一发现。
 {requirement_instruction}
 未核验事项用unchecked_items记录description及importance(core/supporting)；普通表达建议使用minor finding，不冒充核心未核验。
@@ -781,6 +785,7 @@ version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief
     allowed=sorted(ids)
     response_ids=[{'response_id':r['id'],'finding_id':r['finding_id']} for r in _response_scope(store,folder/'packet',version_id).values()]
     prompt+='\n本次允许的claim_checks.claim_id：'+dump(allowed)+'\n本版本处理说明索引（response_to必须取response_id）：'+dump(response_ids)
+    prompt+='\n本次允许的findings.claim_ids：'+dump(sorted(ids|{x['claim_id'] for x in target.get('source_statements',[])}))
     if (folder/'admission-error.json').exists():
         error=json.loads((folder/'admission-error.json').read_text(encoding='utf-8')).get('error','')
         prompt+='\n上次结果未通过接纳：'+error+'。仅修正结构化结果中的ID或字段，不重做已经完成的研究或改稿。response_to使用history/responses.json的id字段，finding_id是其关联的原始发现。'

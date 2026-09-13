@@ -29,6 +29,8 @@ console.log('PASS: the welcome gate requires an explicit model choice, not the f
 const pageCode=source.slice(source.indexOf('function page(name){'),source.indexOf("document.querySelectorAll('[data-page]')"));
 const notices=[];
 const p=vm.createContext({
+ chat:{id:null},
+ state:{settings:{model:'gpt-5.6-luna',model_selection_required:true}},activity:null,
  $:el,notice:(s)=>notices.push(s),document:{querySelectorAll:()=>[],body:{classList:{contains:()=>false,remove:()=>{}}}},
  refreshCandidates:()=>{},moveSearchSettings:()=>{},applyPendingSearchInline:()=>{},applyPendingSetupFields:()=>{},
 });
@@ -39,6 +41,18 @@ assert.ok(notices.length>=1,'leaving the first-run page explains why it stays');
 vm.runInContext("page('settings-dialog')",p);
 assert.equal(el('settings-dialog').hidden,false,'settings is still reachable during first run');
 console.log('PASS: the sidebar cannot bypass the first-run page, but settings stays reachable');
+el('welcome').hidden=false;
+vm.runInContext("chat.id='existing-test';page('chat')",p);
+assert.equal(el('chat').hidden,false,'existing test errors remain readable before configuring a new model');
+assert.equal(el('welcome').hidden,true);
+
+el('welcome').hidden=false;
+vm.runInContext("chat.id=null;page('reports')",p);
+assert.equal(el('reports').hidden,false,'saved reports stay accessible without choosing a model');
+vm.runInContext("page('report')",p);
+assert.equal(el('report').hidden,false,'a saved report can be read, edited and exported locally');
+vm.runInContext("page('setup')",p);
+assert.equal(el('welcome').hidden,false,'browsing saved reports does not bypass model selection for a new task');
 
 // An empty workspace has no current brief while the welcome page is rendered.
 const statusCode=source.slice(source.indexOf('function renderReportStatus(){'),source.indexOf('function renderAssistantSummary(){'));
