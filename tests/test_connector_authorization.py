@@ -12,6 +12,41 @@ from briefloop.connectors.config import ConnectorError, validate_secrets
 CONFIG = {'name': 'Synthetic MCP', 'transport': 'http', 'url': 'https://example.invalid/mcp'}
 
 
+@pytest.mark.parametrize('damage', ['missing', 'malformed'])
+def test_legacy_unreadable_credentials_preserve_healthy_records_and_allow_repair(tmp_path, damage):
+    service = ConnectorService(tmp_path)
+    try:
+        healthy = service.save({**CONFIG, 'name': 'Healthy'}, secrets={'bearer_token': 'healthy-synthetic'})
+        damaged = service.save({**CONFIG, 'name': 'Damaged'}, secrets={'authorization_header': 'old-synthetic'})
+        record = service._config.records[damaged['id']]
+        record.pop('credential_type')
+        service._config.persist()
+        credential_path = service._config.credential_path(record['credential_binding'])
+        if damage == 'missing':
+            credential_path.unlink()
+        else:
+            credential_path.write_text('{"private": "DO_NOT_DISCLOSE"')
+        before = service._config.path.read_bytes()
+        views = {row['id']: row for row in service.list()}
+        assert len(views) == 2 and views[healthy['id']] == healthy
+        failed = views[damaged['id']]
+        assert failed['credential_type'] == 'unknown' and failed['state'] == 'error'
+        assert failed['error']['code'] == 'credentials_unreadable'
+        assert service.status(damaged['id']) == failed
+        assert 'DO_NOT_DISCLOSE' not in json.dumps(views)
+        assert str(credential_path) not in json.dumps(views)
+        assert service._config.path.read_bytes() == before
+        assert credential_path.exists() == (damage == 'malformed')
+        repaired = service.save({**CONFIG, 'name': 'Damaged'}, connector_id=damaged['id'],
+                                secrets={'authorization_header': 'replacement-synthetic'})
+        assert repaired['id'] == damaged['id'] and repaired['revision'] == damaged['revision'] + 1
+        assert repaired['credential_type'] == 'authorization'
+        assert repaired['has_credentials'] and repaired['state'] == 'disabled' and repaired['error'] is None
+        assert service.status(healthy['id']) == healthy and len(service.list()) == 2
+    finally:
+        service.close()
+
+
 def test_raw_authorization_stays_private_and_survives_config_edit(tmp_path):
     service = ConnectorService(tmp_path)
     try:

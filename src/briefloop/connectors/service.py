@@ -40,12 +40,20 @@ class ConnectorService:
 
     def _view(self, record):
         credential_type = record.get('credential_type')
+        credential_error = None
         if credential_type is None:
-            credential_type = self._credential_type(self._config.get_secrets(record))
+            try:
+                credential_type = self._credential_type(self._config.get_secrets(record))
+            except (OSError, ValueError):
+                # A broken legacy binding must not hide other connections. Keep
+                # the record repairable without exposing file contents or paths.
+                credential_type = 'unknown'
+                credential_error = {'code': 'credentials_unreadable',
+                                    'message': '本地连接凭据无法读取，请重新选择认证方式并填写凭据。'}
         owners = [owner for (identifier, _, _), owner in self._owners.items() if identifier == record['id']]
         live = next((owner for owner in owners if owner.state == 'connected'), None)
         failed = next((owner for owner in owners if owner.state == 'error'), None)
-        error = self._errors.get(record['id']) or (failed.error if failed else None)
+        error = credential_error or self._errors.get(record['id']) or (failed.error if failed else None)
         connecting = any(owner.state == 'connecting' for owner in owners)
         state = 'error' if error else 'connected' if live else 'connecting' if connecting else 'disconnected' if record['enabled'] else 'disabled'
         return copy.deepcopy({**record['config'], 'id': record['id'], 'revision': record['revision'],
