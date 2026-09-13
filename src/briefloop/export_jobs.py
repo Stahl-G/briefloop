@@ -56,6 +56,7 @@ def enqueue_export(store, version_id, template_override=None):
     job = store.one('jobs', jid)
     from .task_notify import notify
     notify(store, job, 'queued')
+    store.wake_jobs()
     return job
 
 

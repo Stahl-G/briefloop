@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS company_facts(id TEXT PRIMARY KEY,fact_key TEXT NOT N
 
 class Store:
     def __init__(self, workspace):
+        self._job_wakeup = None
         self.root = Path(workspace).expanduser().resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         for d in ("sources", "jobs", "wiki", "exports"):
@@ -501,6 +502,10 @@ class Store:
                 roles[role]=dict(base)
         return roles
 
+    def wake_jobs(self):
+        """Notify this service after admission commits; other processes poll."""
+        if self._job_wakeup is not None:self._job_wakeup()
+
     def enqueue(self, kind, payload, *, before_commit=None):
         if kind not in ('export_docx','release','audit_bundle','source_refresh'):
             from .backends import validate_backend
@@ -525,6 +530,7 @@ class Store:
         job = self.one("jobs", jid)
         from .task_notify import notify as _notify_task
         _notify_task(self, job, 'queued')
+        self.wake_jobs()
         return job
 
     def search_provider_for_run(self, run_id):
@@ -543,6 +549,7 @@ class Store:
         # (_settle_job / stop_job), which is where production jobs actually finish.
         with self.tx() as c:
             c.execute("UPDATE jobs SET status=?,result=COALESCE(?,result),error=?,updated=? WHERE id=?", (status, dump(result) if result is not None else None, error, now(), jid))
+        if status=='queued':self.wake_jobs()
 
     def event(self, job_id, kind, data):
         with self.tx() as c:

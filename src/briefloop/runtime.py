@@ -346,10 +346,14 @@ input.refcheck 是程序对本稿的确定性检查：broken_refs 必须逐条�
 
 
 class Worker:
+    IDLE_POLL_SECONDS = 5.0
+
     def __init__(self,store,runtime=None):
         self._claim_lock=threading.RLock()
         self.opened_paused=False
         self.store=store;self._runtime=runtime;self.stopping=threading.Event();self.current=None
+        self._queue_wakes=[threading.Event() for _ in range(3)]
+        self.store._job_wakeup=self.wake
         self.thread=threading.Thread(target=self.loop,name='briefloop-worker',daemon=True)
         self.review_current=None;self._review_runtime=None
         self.review_thread=threading.Thread(target=self.review_loop,name='briefloop-review-worker',daemon=True)
@@ -379,11 +383,29 @@ class Worker:
         self.thread.start();self.review_thread.start();self.file_thread.start()
 
     def close(self):
-        self.stopping.set();self._file_cancelled.set();self.runtime.cancel()
+        self.stopping.set();self.wake();self._file_cancelled.set();self.runtime.cancel()
         if self._review_runtime:self._review_runtime.cancel()
         self.thread.join(timeout=12)
         if self.review_thread.is_alive():self.review_thread.join(timeout=12)
         if self.file_thread.is_alive():self.file_thread.join(timeout=12)
+        if self.store._job_wakeup==self.wake:self.store._job_wakeup=None
+
+    def wake(self):
+        for event in self._queue_wakes:event.set()
+
+    def _queued(self, queue, query, args=()):
+        """Back off empty queues; same-process commits wake all three readers.
+
+        The low-frequency fallback also observes CLI writes from other Store
+        instances/processes. This never limits the execution time of a job.
+        """
+        delay=0.0;event=self._queue_wakes[queue]
+        while not self.stopping.is_set():
+            event.wait(delay);event.clear()
+            if self.stopping.is_set():return
+            jobs=self.store.rows(query,args)
+            delay=.5 if jobs else min(self.IDLE_POLL_SECONDS,max(.5,delay*2))
+            yield jobs
 
     def stop_job(self,jid):
         with self._claim_lock:
@@ -438,6 +460,7 @@ class Worker:
                 # Resume keeps the frozen configuration and original task identity.
                 payload['attempt']=int(payload.get('attempt',1))+1
                 c.execute("UPDATE jobs SET payload=?,status='queued',error=NULL,updated=? WHERE id=?",(dump(payload),now(),jid))
+        self.wake()
         return self.store.one('jobs',jid)
 
     @staticmethod
@@ -506,8 +529,7 @@ class Worker:
     def review_loop(self):
         from .interactive_runtime import InteractiveRuntime
         from .review import run_review
-        while not self.stopping.wait(.5):
-            jobs=self.store.rows("SELECT * FROM jobs WHERE kind='review' AND status='queued' ORDER BY rowid LIMIT 1")
+        for jobs in self._queued(1,"SELECT * FROM jobs WHERE kind='review' AND status='queued' ORDER BY rowid LIMIT 1"):
             if not jobs:continue
             job=jobs[0]
             with self._claim_lock:
@@ -526,8 +548,7 @@ class Worker:
                 with self._claim_lock:self.review_current=None
 
     def loop(self):
-        while not self.stopping.wait(.5):
-            jobs=self.store.rows("SELECT * FROM jobs WHERE status='queued' AND kind!='review' AND kind NOT IN (?,?,?) ORDER BY rowid LIMIT 1",FILE_JOB_KINDS)
+        for jobs in self._queued(0,"SELECT * FROM jobs WHERE status='queued' AND kind!='review' AND kind NOT IN (?,?,?) ORDER BY rowid LIMIT 1",FILE_JOB_KINDS):
             if not jobs:
                 if self.store.settings()['auto_learn'] and not self.opened_paused:
                     try:
@@ -583,8 +604,7 @@ class Worker:
 
     def file_loop(self):
         """Produce requested files even while generation or Review is running."""
-        while not self.stopping.wait(.5):
-            jobs=self.store.rows("SELECT * FROM jobs WHERE status='queued' AND kind IN (?,?,?) ORDER BY rowid LIMIT 1",FILE_JOB_KINDS)
+        for jobs in self._queued(2,"SELECT * FROM jobs WHERE status='queued' AND kind IN (?,?,?) ORDER BY rowid LIMIT 1",FILE_JOB_KINDS):
             if not jobs:continue
             job=jobs[0]
             with self._claim_lock:
@@ -960,6 +980,7 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
                 if self.runtime.cancelled.is_set() or self.stopping.is_set():raise InterruptedError('报告已停止')
                 with self.store.tx() as c:
                     c.execute("UPDATE jobs SET status='queued',error=NULL,updated=? WHERE id=? AND status IN ('failed','interrupted','cancelled')",(now(),child['id']))
+                self.wake()
                 return self.store.one('jobs',child['id'])
         with self._claim_lock:
             if self.runtime.cancelled.is_set() or self.stopping.is_set():raise InterruptedError('报告已停止')

@@ -24,6 +24,7 @@ def enqueue_feedback(store, *, automatic=False):
                  'role_models':store.role_model_config(),'agent_backend':settings.get('agent_backend','codex')}
         c.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',(jid,'learn','queued',dump(payload),None,None,now(),now()))
         c.executemany('UPDATE feedback SET batch_id=? WHERE id=?',[(jid,r['id']) for r in rows])
+    store.wake_jobs()
     return store.one('jobs',jid)
 
 
