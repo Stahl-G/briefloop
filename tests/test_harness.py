@@ -1,4 +1,5 @@
 from queue import Queue
+import threading
 import time
 from briefloop.store import Store
 from briefloop.harness import HarnessManager
@@ -176,3 +177,94 @@ def test_host_default_model_is_not_sent_as_a_literal_api_model(tmp_path):
         starts=[params for method,params in manager.client.calls if method in ('thread/start','turn/start')]
         assert all('model' not in params for params in starts)
     finally:manager.close()
+
+
+def test_turn_start_reply_stall_does_not_freeze_other_sessions(tmp_path):
+    """Phase 0 mitigation: the turn/start wait must not hold the manager lock."""
+    class StalledStart(RPC):
+        def __init__(self,*args,**kwargs):
+            super().__init__(*args,**kwargs)
+            self.pending=threading.Event();self.release=threading.Event()
+        def request(self,method,params):
+            if method=='turn/start':
+                self.pending.set();assert self.release.wait(5)
+            return super().request(method,params)
+    manager=HarnessManager(Store(tmp_path),StalledStart)
+    try:
+        deep=manager.create_session()['id']
+        manager.send(deep,'round 1')
+        until(lambda:manager.client is not None and manager.client.pending.is_set())
+        sent=threading.Event()
+        def unrelated_session_send():
+            manager.send(manager.create_session()['id'],'unrelated session');sent.set()
+        worker=threading.Thread(target=unrelated_session_send);worker.start()
+        # With the lock held during the stall this send would block ~5s and fail.
+        assert sent.wait(2)
+        worker.join(5)
+    finally:
+        if manager.client is not None:manager.client.release.set()
+        manager.close()
+
+
+def test_cancel_during_turn_start_gap_is_compensated_after_reply(tmp_path):
+    """A cancel landing while turn/start is in flight still interrupts the turn."""
+    class StalledStart(RPC):
+        def __init__(self,*args,**kwargs):
+            super().__init__(*args,**kwargs)
+            self.pending=threading.Event();self.release=threading.Event()
+        def request(self,method,params):
+            if method=='turn/start':
+                self.pending.set();assert self.release.wait(5)
+            return super().request(method,params)
+    manager=HarnessManager(Store(tmp_path),StalledStart)
+    try:
+        sid=manager.create_session()['id']
+        manager.send(sid,'long research round',message_id='r1')
+        until(lambda:manager.client is not None and manager.client.pending.is_set())
+        # cancel() sees no published turn yet: it only records the request.
+        cancelled=threading.Event()
+        def cancel_while_reply_outstanding():
+            manager.cancel(sid);cancelled.set()
+        worker=threading.Thread(target=cancel_while_reply_outstanding);worker.start()
+        assert cancelled.wait(2)
+        worker.join(5)
+        manager.client.release.set()
+        # After the reply the turn is published and the recorded cancel is
+        # compensated with a real interrupt instead of leaving it running.
+        until(lambda:manager.chat.session(sid)['turn_id']=='turn1')
+        until(lambda:('turn/interrupt',{'threadId':'t1','turnId':'turn1'}) in manager.client.calls)
+        assert manager.chat.session(sid)['status']=='stopping'
+        manager.handle_notification({'method':'turn/completed','params':{'threadId':'t1','turn':{'id':'turn1','status':'interrupted'}}})
+        until(lambda:next(m for m in manager.snapshot(sid)['messages'] if m['id']=='r1')['status']=='interrupted')
+        assert manager.chat.session(sid)['turn_id'] is None
+    finally:
+        if manager.client is not None:manager.client.release.set()
+        manager.close()
+
+
+def test_turn_completing_before_publish_does_not_stick_in_running(tmp_path):
+    """A turn that finishes inside the in-flight window adopts its terminal
+    state instead of being published as a running turn nobody completes."""
+    class StalledStart(RPC):
+        def __init__(self,*args,**kwargs):
+            super().__init__(*args,**kwargs)
+            self.pending=threading.Event();self.release=threading.Event()
+        def request(self,method,params):
+            if method=='turn/start':
+                self.pending.set();assert self.release.wait(5)
+            return super().request(method,params)
+    manager=HarnessManager(Store(tmp_path),StalledStart)
+    try:
+        sid=manager.create_session()['id']
+        manager.send(sid,'instantly failing turn',message_id='f1')
+        until(lambda:manager.client is not None and manager.client.pending.is_set())
+        # The host completes the turn before the dispatcher's reply is processed.
+        manager.handle_notification({'method':'turn/completed','params':{'threadId':'t1','turn':{'id':'turn1','status':'failed'}}})
+        manager.client.release.set()
+        until(lambda:next(m for m in manager.snapshot(sid)['messages'] if m['id']=='f1')['status']=='failed')
+        assert manager.chat.session(sid)['turn_id'] is None
+        assert manager.chat.session(sid)['status']=='failed'
+        assert (sid,'turn1') not in manager._late_completion
+    finally:
+        if manager.client is not None:manager.client.release.set()
+        manager.close()

@@ -178,11 +178,18 @@ class BridgeHarness(OpencodeHarness):
             if sid in self._cancel_requested:status='cancelled';return
             instructions=self._host_instructions(sid,session,config,bool(message['allow_web']))
             if instructions:instructions+='\n\n（以上工作区约定是执行环境说明，不要原文复述给用户。）\n\n---\n\n'
+            from .websearch import MANAGED_PROVIDERS
+            internal=bool(self.store.rows("SELECT seq FROM chat_events WHERE session_id=? AND kind='session/internal' LIMIT 1",(sid,)))
             params={'execution_id':execution,'runtime_id':self.backend,'cwd':session['cwd'],'prompt':text,
                     'model':config['model'],'permission':'runtime-native','allow_web':None,'host_options':config.get('host_options',{}),
                     'images':images,
-                    # The host owns its search tools; grant them only when this turn asked for web access.
-                    'web_tools':bool(message['allow_web'])}
+                    # The host owns its search tools; grant them only when this turn
+                    # asked for web access AND the run is not frozen to a managed
+                    # provider. Internal research runs on tavily/duckduckgo must go
+                    # through the metered web-search/add-url CLI — native search
+                    # here would bypass search_requests/candidate_urls accounting
+                    # (same rule the codex manager applies via web_search config).
+                    'web_tools':bool(message['allow_web']) and not (internal and config.get('search_provider') in MANAGED_PROVIDERS)}
             if instructions:params['prompt']=instructions+text
             if session.get('thread_id'):params['session_id']=session['thread_id']
             try:self.bridge.call('start',params,timeout=15)

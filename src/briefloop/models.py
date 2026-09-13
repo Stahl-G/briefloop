@@ -63,6 +63,9 @@ class Requirements(Model):
     allow_web: bool = False
     period: str = ""
     raw_input: str = ""
+    # Research tier chosen at task creation; stored on the run so pause/resume and
+    # a later plan freeze read the same choice. research_plan.PRESETS is the value.
+    research_tier: Literal["quick", "standard", "deep"] = "standard"
     research_budget: ResearchBudget = Field(default_factory=ResearchBudget)
     target_words: int | None = Field(default=None, ge=1)
     max_words: int | None = Field(default=None, ge=1)
@@ -105,7 +108,7 @@ def normalize_search_provider(value):
     # 'codex' was the original name for backend-native search; it now reads 'native'.
     if value in (None, '', 'codex'):
         return 'native'
-    if value not in ('native', 'tavily'):
+    if value not in ('native', 'tavily', 'duckduckgo'):
         raise ValueError('无效搜索来源')
     return value
 
@@ -174,7 +177,7 @@ class Settings(RoleModel):
     model_selection_required: bool = True
     role_models: dict[Literal['evaluator','maintainer','proposer'], RoleModel] = Field(default_factory=dict)
     chat_allow_web: bool = True
-    search_provider: Literal['native','tavily'] = 'native'
+    search_provider: Literal['native','tavily','duckduckgo'] = 'native'
     k: int = Field(default=1, ge=1, le=20)
     auto_learn: bool = True
     max_parallel: int = Field(default=4, ge=1, le=16)
@@ -197,7 +200,7 @@ class Settings(RoleModel):
             value=dict(value)
             if 'role_models' in value:
                 value['role_models']=normalize_role_models(value['role_models'])
-            if value.get('search_provider','native') not in ('native','tavily'):
+            if value.get('search_provider','native') not in ('native','tavily','duckduckgo'):
                 value['search_provider']=normalize_search_provider(value.get('search_provider'))
         return value
 

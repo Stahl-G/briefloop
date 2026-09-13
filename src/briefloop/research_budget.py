@@ -42,16 +42,17 @@ def _save(connection,key,state):
 
 
 def _view(store,run_id,limits,state):
+    from .websearch import MANAGED_PROVIDERS
     provider=store.search_provider_for_run(run_id)
     used={'search_requests':state['search_requests'],'candidate_urls':len(state['candidate_urls']),
           'source_pages':len(state['source_pages'])}
     remaining={kind:max(0,limits[kind]-used[kind]) if limits is not None else None for kind in KINDS}
-    if provider!='tavily':
+    if provider not in MANAGED_PROVIDERS:
         for kind in KINDS[:2]:used[kind]=None;remaining[kind]=None
     exhausted=[kind for kind,value in remaining.items() if value==0]
     return {'limits':limits,'used':used,'remaining':remaining,'exhausted':bool(exhausted),
             'exhausted_resources':exhausted,'scope':{'search_provider':provider,
-            'search_requests':'managed_tavily_only','candidate_urls':'managed_tavily_only',
+            'search_requests':'managed_provider_only','candidate_urls':'managed_provider_only',
             'source_pages':'managed_unique_urls','native_codex_search_metered':False,
             'legacy_unlimited':limits is None}}
 

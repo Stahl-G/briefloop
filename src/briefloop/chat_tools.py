@@ -232,13 +232,17 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
                  else f'{BACKEND_LABELS[backend]} 自带的联网工具')
     search_note=('当前正式研究搜索源：Tavily。正式生成任务会固定这个选择，后台 Scout 使用工作区的 tavily-search / tavily-extract CLI，并绑定实际 run ID；你通过 generate 提交任务，不自行调用另一套研究流水线。Scout 决定查询与筛选，Python 工具调用 API。search content 只是检索线索；候选 URL 先直接抓取，失败可显式 Tavily extract；提取正文不等于原网站字节。不会使用 Tavily Research 的模型报告作为来源。'
                  if provider=='tavily' else
-                 f'当前正式研究搜索源：{native_name}；是否可用取决于宿主账号、权限与本轮设置，BriefLoop 不额外提供搜索。生成任务会固定这个选择，Scout 搜索后仍需保存并核对公开正文。')
+                 ('当前正式研究搜索源：DuckDuckGo（免密钥）。正式生成任务会固定这个选择，后台 Scout 使用工作区的 web-search CLI，并绑定实际 run ID；你通过 generate 提交任务，不自行调用另一套研究流水线。Scout 决定查询与筛选，Python 工具调用 API。search content 只是检索线索；候选 URL 用 add-url 直接抓取登记正文，DuckDuckGo 没有提供方提取服务。'
+                  if provider=='duckduckgo' else
+                  f'当前正式研究搜索源：{native_name}；是否可用取决于宿主账号、权限与本轮设置，BriefLoop 不额外提供搜索。生成任务会固定这个选择，Scout 搜索后仍需保存并核对公开正文。'))
     from .tavily import key_status as _tavily_key_status
     tavily_ready=bool(_tavily_key_status().get('configured'))
     if provider=='tavily' and tavily_ready:
         search_choice='当前搜索源：Tavily（已配置）。'
     elif provider=='tavily':
         search_choice='当前已选择 Tavily 但尚未配置 API Key。用户要公开研究时，先提示在“设置”或“材料与需求”页填入 Tavily API Key，配置后再生成本轮；不要用原生搜索冒充 Tavily。'
+    elif provider=='duckduckgo':
+        search_choice='当前搜索源：DuckDuckGo（免密钥，无需配置即可用）。覆盖与稳定性通常不如 Tavily，摘要不提供相关性分数，也未提取发布日期；需要更强检索时可在“设置”或“材料与需求”页配置 Tavily API Key 并选择 Tavily。'
     else:
         search_choice='当前搜索源是宿主原生搜索，Tavily 未启用。用户要开展公开研究时，先用一两句说明将使用原生搜索、覆盖通常不如 Tavily，并建议在“设置”或“材料与需求”页配置 Tavily API Key 并选择 Tavily；用户确认后再生成本轮。用户明确选择原生或拒绝配置时再继续，不要静默使用原生。'
     if backend=='opencode':
@@ -265,7 +269,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 选择搜索源不会自动打开联网；是否联网仍以上面的实际会话状态为准。
 {search_choice}
 {profile_note}
-用户消息以 /discuss 开头时进入需求讨论模式：先逐条确认目的、读者、必答问题、篇幅与格式，不要启动生成；确认清楚后在回复最后给出一个 briefloop-requirements 代码块（JSON 字段：title、objective、audience、period、key_questions、manual_sections、writing_preferences、workflow_id、workflow_variant、report_profile、writing_mode、target_words、max_words），界面会给用户「应用到材料与需求」。
+用户消息以 /discuss 开头时进入需求讨论模式：先逐条确认目的、读者、必答问题、篇幅与格式，不要启动生成；确认清楚后在回复最后给出一个 briefloop-requirements 代码块（JSON 字段：title、objective、audience、period、key_questions、manual_sections、writing_preferences、workflow_id、workflow_variant、report_profile、writing_mode、research_tier、target_words、max_words），界面会给用户「应用到材料与需求」。
 你可以调用本地工作区工具：先写一个 JSON 请求文件，再执行
 {command} REQUEST_FILE
 本次授权的工作区绝对路径：{store.root.as_posix()}。shell 工具的 workdir/cwd 必须设为此目录；请求文件也必须放在此目录内，不能使用宿主临时目录、系统 Temp 或工作区的同级目录。每次请求使用独立文件名，不覆盖其他任务的文件。以下是可直接执行的 UTF-8 capabilities 示例（后续更换 action 和文件名）：
@@ -294,7 +298,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"templates"}}：读取可选模板。用户要求上传材料用作主模板时用 {{"action":"template_import","source_id":"DOCX来源ID"}} 启动一次准备；准备完成后 generate.requirements.template_id 选择具体版本。需要重新准备已有模板版式时，用 {{"action":"template_rebuild","template_id":"已有模板ID"}} 从保留原件创建新模板版本；原模板和已绑定稿件保持不变，新任务选择返回的新模板ID。
 - {{"action":"read_report","version_id":"稿件ID"}}：读取富文档 JSON 和引用。用户明确要求修改内容/章节/图表时，将修改后的 JSON 保存到工作区文件，再用 {{"action":"revise_document","base_version":"刚读取版本ID","document_file":"工作区内JSON绝对路径"}} 保存新版本，不覆盖用户并发编辑。
 - {{"action":"import_word_revision","base_version":"用户指定基础版本","source_id":"DOCX来源ID"}}：导入用户修改的 Word。返回 needs_alignment 时先核对原件和基础版本，向用户说明对齐问题；仅按用户明确选择提供 accept_unaligned=true。用户希望更新模板时另用 template_import 并提供 parent_id。
-- {{"action":"generate","requirements":{{"title":"标题","objective":"用户目的","audience":"读者","language":"中文","extent":"compact|balanced|detailed","allow_web":{str(bool(allow_web)).lower()},"period":"时间范围"}},"source_ids":["真实来源ID"],"runtime":{runtime_json}}}：正式生成可在页面编辑的简报。
+- {{"action":"generate","requirements":{{"title":"标题","objective":"用户目的","audience":"读者","language":"中文","extent":"compact|balanced|detailed","research_tier":"quick|standard|deep","allow_web":{str(bool(allow_web)).lower()},"period":"时间范围"}},"source_ids":["真实来源ID"],"runtime":{runtime_json}}}：正式生成可在页面编辑的简报。research_tier 是研究深度档位（默认 standard）：quick 单轮检索，deep 预排 4 轮迭代研究；按用户明确要求选，用户未提就不写该字段。
 - {{"action":"assess","version_id":"真实简报版本ID"}}：为已有稿件安排评分。
 - {{"action":"comment","version_id":"真实简报版本ID","text":"用户反馈"}}：记录用户明确提出的反馈。页面自动学习开启时，保存反馈可能稍后自动触发学习，要如实告知。
 - {{"action":"learn"}}：仅当用户明确要求启动技能学习时调用，会消耗额外模型额度。

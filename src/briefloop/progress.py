@@ -22,6 +22,26 @@ def role_label(role):
     return text[:60]
 
 
+def deep_round_note(store, run_id):
+    """Deep-research round position for the stage rail, or None.
+
+    Round-level by construction: the note only moves when a round opens or closes
+    in the frozen plan, never per poll tick, so progress events stay bounded by
+    round transitions instead of heartbeats.
+    """
+    if not run_id:
+        return None
+    from .research_plan import frozen
+    plan=frozen(store,run_id)
+    if not plan or plan.get('preset_id')!='deep':
+        return None
+    rounds=plan.get('rounds') or {}
+    opened=[int(info.get('index') or 0) for info in rounds.values() if info.get('status')!='pending']
+    index=int((rounds.get(plan.get('current_round_id')) or {}).get('index') or 0) or (max(opened) if opened else 1)
+    total=max(len(rounds),int((plan.get('structure') or {}).get('depth') or 1),index)
+    return index,total
+
+
 def _pipeline(folder, workers):
     """Deterministic stage rail with each stage's sub-agents.
 
@@ -58,6 +78,10 @@ class ProgressTracker:
         rows=store.rows("SELECT data FROM events WHERE job_id=? AND kind='runtime_progress' ORDER BY seq DESC LIMIT 1",(job_id,))
         self.last=rows[0]['data'] if rows else None
         context = context or {}
+        payload = json.loads(context.get('payload') or '{}')
+        if not isinstance(payload, dict):
+            payload = {}
+        self.run_id = payload.get('run_id')
         role = context.get('runtime_role')
         self.phase = None
         if context.get('readonly_output') == 'review.json' or context.get('kind') == 'review':
@@ -74,7 +98,6 @@ class ProgressTracker:
             self.phase = ('revision', '修订稿件', '正在按审阅意见修订稿件')
         self.has_saved_draft = False
         if self.phase:
-            payload = json.loads(context.get('payload') or '{}')
             version = payload.get('version_id')
             if not version:
                 try:
@@ -151,6 +174,11 @@ class ProgressTracker:
         for key,label in [('Scout','Scout 正在读取与核对来源'),('Analyst','Analyst 正在撰写简报'),('Evaluator · 比较','Evaluator 正在比较新旧稿件'),('Evaluator · 评分','Evaluator 正在独立评分'),('Evaluator','Evaluator 正在核对任务与来源'),('Maintainer','Maintainer 正在整理经验'),('Proposer','Proposer 正在提出技能')]:
             if key in labels:stage=label
         stages = _pipeline(self.folder,workers)
+        note = deep_round_note(self.store,self.run_id)
+        if note:
+            # One plan-meta read per recompute; the label changes only between rounds.
+            for stage in stages:
+                if stage['id']=='research':stage['label']='深度研究 第 {}/{} 轮'.format(note[0],note[1])
         if self.phase:
             identity, label, stage = self.phase
             stages = [{'id': identity, 'label': label, 'status': 'active', 'agents': workers}]

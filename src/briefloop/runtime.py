@@ -121,6 +121,33 @@ def source_context(store,sid):
     return {**source,**attachment,'absolute_path':attachment.get('text_path') or str(store.root/source['path'])}
 
 
+def _research_handoff(store, run_id, plan):
+    """Latest closed round's validated handoff for a multi-round plan, or None.
+
+    Prompt building never crashes on a bad agent file: an invalid handoff is
+    returned with its structured errors so the next round repairs instead of
+    silently inheriting unverified learnings.
+    """
+    from .scout_tools import check_handoff, HandoffError
+    if int((plan.get('structure') or {}).get('depth') or 1) < 2:
+        return None
+    closed = [info for info in (plan.get('rounds') or {}).values() if info.get('status') == 'closed']
+    for info in sorted(closed, key=lambda item: int(item.get('index') or 0), reverse=True):
+        path = store.root / 'research' / run_id / 'rounds' / str(info.get('index')) / 'handoff.json'
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding='utf-8-sig'))
+        except (json.JSONDecodeError, UnicodeDecodeError, OSError):
+            data = None
+        try:
+            validated = check_handoff(store, run_id, data)
+        except HandoffError as exc:
+            return {'round_index': info.get('index'), 'invalid': True, 'errors': exc.errors}
+        return {'round_index': info.get('index'), **validated}
+    return None
+
+
 def generation_prompt(store, run, folder, backend='codex'):
     from .models import normalize_search_provider
     raw_requirements=json.loads(run['requirements'])
@@ -130,6 +157,7 @@ def generation_prompt(store, run, folder, backend='codex'):
     research_budget=budget_snapshot(store,run['id'])
     from .research_plan import frozen as frozen_plan,is_quality
     research_plan=frozen_plan(store,run['id']) if is_quality(store,run['id']) else None
+    research_handoff=_research_handoff(store,run['id'],research_plan) if research_plan else None
     provider=normalize_search_provider(run.get('search_provider'))
     skill=run.get('skill_override') if 'skill_override' in run else (store.one('skills',run['skill_id']) if run['skill_id'] else None)
     sources=[source_context(store,sid) for sid in store.source_ids(run['id'])]
@@ -163,11 +191,17 @@ def generation_prompt(store, run, folder, backend='codex'):
                             'result_file':str(directory/'result.json'),'schema_path':str(schema_path),
                             'scout_contract_path':str(scout_contract)})
     payload={'deliverable_spec':deliverable,'report_profile':report_profile,'reference_sources':references,'requirements':req,'research_budget_status':research_budget,'research_plan':research_plan,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':max_parallel,'scout_slots':scout_slots,'scout_contract_path':str(scout_contract),'reusable_research':run.get('reusable_research',[])}
+    if research_handoff is not None:payload['research_handoff']=research_handoff
     tool=tool_command(store.root,backend=backend)
-    tavily_enabled=req['allow_web'] and provider=='tavily'
-    if tavily_enabled:
-        template=files('briefloop').joinpath('skill_assets','tavily','SKILL.md').read_text(encoding='utf-8')
-        retrieval_path=(folder/'capabilities'/'tavily'/'SKILL.md').resolve()
+    # Every managed provider (tavily, duckduckgo) gets the same treatment: a
+    # generated Scout-only skill, metered CLI retrieval and a managed budget
+    # note. Internal generation sessions have host-native web search disabled
+    # for managed providers, so a DDG run must never be told to use it.
+    from .websearch import MANAGED_PROVIDERS, PROVIDER_LABELS
+    managed=req['allow_web'] and provider in MANAGED_PROVIDERS
+    if managed:
+        template=files('briefloop').joinpath('skill_assets',provider,'SKILL.md').read_text(encoding='utf-8')
+        retrieval_path=(folder/'capabilities'/provider/'SKILL.md').resolve()
         retrieval_path.parent.mkdir(parents=True,exist_ok=True)
         content=template.replace('{tool}',tool).replace('{run_id}',run['id'])
         retrieval_path.write_text(content,encoding='utf-8')
@@ -175,6 +209,7 @@ def generation_prompt(store, run, folder, backend='codex'):
         dispatch_path.write_text('你是本轮负责找资料的 Scout。按分配主题和槽位绝对路径执行。'
             +'开始时完整读取一次 '+str(retrieval_path)+'，并简短确认已读；后续无需重复加载。'
             +'任务消息只需具体分工、槽位/输出/schema 路径及技能路径，不复制两份技能正文。'
+            +('深度研究时任务消息还需附上一轮交接摘要（input.json.research_handoff）与剩余预算视图。' if research_handoff is not None else '')
             +'终态回复约 200 字以内，给出状态、核心发现/缺口和结果文件路径。\n',encoding='utf-8')
         payload['retrieval_skill']={'path':str(retrieval_path),'target_roles':['scout'],
                                     'dispatch_prompt_path':str(dispatch_path)}
@@ -185,20 +220,19 @@ def generation_prompt(store, run, folder, backend='codex'):
         scout_binding['retrieval_skill_path']=str(retrieval_path)
         payload['role_skills']['scout']=scout_binding
     (folder/'input.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8')
-    if backend == 'opencode' and not tavily_enabled:
+    if not managed:
         search = ('本轮冻结搜索源：Opencode 原生搜索。允许联网时 Scout 使用 host 的原生网络搜索工具设计查询、筛选公开原始发布者；搜索摘要仅用于发现，后续仍须读取并登记正文。'
-                  if req['allow_web'] else '本轮未允许联网，只处理已登记的材料，不加载外部检索技能。')
+                  if backend == 'opencode' and req['allow_web'] else
+                  ('本轮冻结搜索源：当前执行引擎。允许联网时 Scout 使用 host 的原生网络搜索工具设计查询、筛选公开原始发布者；搜索摘要仅用于发现，后续仍须读取并登记正文。'
+                   if req['allow_web'] else '本轮未允许联网，只处理已登记的材料，不加载外部检索技能。'))
     else:
-        search = (f'''本轮冻结搜索源：Tavily。已生成仅供检索 Scout 的技能：{retrieval_path}。
+        search = f'''本轮冻结搜索源：{PROVIDER_LABELS[provider]}。已生成仅供检索 Scout 的技能：{retrieval_path}。
 每个检索 Scout 的实际 spawn/delegate 消息优先使用精简任务：具体分工、槽位/结果/schema 的绝对路径和技能绝对路径 {retrieval_path}，要求 Scout 完整读取一次并公开确认已读。{dispatch_path} 提供精简派发说明。
 父会话不必先读取技能全文再复制两份；input.role_skills 中的正文仍可按需使用，但不要重复展开已通过技能路径分配的内容。保存实际 dispatch prompt、子 agent 句柄及真实读取确认，不伪造。
 retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generation input.json 注入 Analyst、Evaluator、Maintainer 或 Proposer。他们只接收相应任务、来源及检索结果。'''
-                if tavily_enabled else
-                ('本轮冻结搜索源：当前执行引擎。允许联网时 Scout 使用 host 的原生网络搜索工具设计查询、筛选公开原始发布者；搜索摘要仅用于发现，后续仍须读取并登记正文。'
-                 if req['allow_web'] else '本轮未允许联网，只处理已登记的材料，不加载外部检索技能。'))
-    if backend == 'opencode' and tavily_enabled:
+    if backend == 'opencode' and managed:
         search = search.replace('实际 spawn/delegate 消息优先使用精简任务', '实际 task 工具消息优先使用精简任务')
-    registration = 'add-url 或明确的 Tavily extract' if tavily_enabled else 'add-url'
+    registration = 'add-url 或明确的 Tavily extract' if managed and provider=='tavily' else 'add-url'
     discovery=('初始来源为 0，这是正常的公开信息研究任务，不要求用户先上传材料。按目标、时间窗口与主题设计来源发现分工，至少安排一个 Scout；不要因为初始文件为 0 就安排 0 个 Scout。'
                if not sources and req['allow_web'] else
                '已有初始材料：先忠实读取，再按研究目标识别证据缺口；只有允许联网时才补充公开来源。')
@@ -210,23 +244,39 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
     if not req['allow_web']:
         retrieval_strategy='本轮未开启联网：只读取上传材料与已有来源，不安排公开检索，也不承诺开放搜索或分轮搜索；按已有材料识别证据缺口并如实交接。'
     else:
-        retrieval_strategy=('分三轮推进检索，而不是让每个支线先一次深挖到底。第一轮侦察：整批 Scout 合计 1–2 条互补查询（不是每个 Scout 各 1–2 条），找出本期重要事件、候选主体、候选标题、URL 与可能日期；`AI news`、`AI weekly`、`artificial intelligence news` 这类同义改写不算不同方向。第二轮聚焦：按首轮线索选择互不重复的信息需求，可用意图包括 event discovery（范围内还有哪些重要变化）、entity check（某关键主体是否漏检或只有零散线索）、primary verification（定位一手正文与关键限定）、gap repair（补齐日期、指标、发布状态、冲突）；可用实体别名、原语言产品名、首轮出现的完整发布标题或明确指标词。第三轮补缺：仅当仍有高价值具体缺口时，用同一 Scout 多轮或再派少量同类任务；优先补"重要事件没有可用正文"，其次补"改变结论的指标/日期/条件"，不要给材料已充分的支线再堆重复来源。轮数是执行安排，不替代硬预算，满足任务可提前停止，不要求花完搜索次数；每条查询都要能回答"相对已有材料，这次想多知道什么"，不重复已经失败或已充分覆盖的相近查询。发现阶段可用综述、媒体、索引页发现事件及原始链接，取证阶段再优先一手来源'+('；具体搜索参数、获取失败后的换路与停止条件见本轮 Scout 技能。' if tavily_enabled else '。'))
+        retrieval_strategy=('分三轮推进检索，而不是让每个支线先一次深挖到底。第一轮侦察：整批 Scout 合计 1–2 条互补查询（不是每个 Scout 各 1–2 条），找出本期重要事件、候选主体、候选标题、URL 与可能日期；`AI news`、`AI weekly`、`artificial intelligence news` 这类同义改写不算不同方向。第二轮聚焦：按首轮线索选择互不重复的信息需求，可用意图包括 event discovery（范围内还有哪些重要变化）、entity check（某关键主体是否漏检或只有零散线索）、primary verification（定位一手正文与关键限定）、gap repair（补齐日期、指标、发布状态、冲突）；可用实体别名、原语言产品名、首轮出现的完整发布标题或明确指标词。第三轮补缺：仅当仍有高价值具体缺口时，用同一 Scout 多轮或再派少量同类任务；优先补"重要事件没有可用正文"，其次补"改变结论的指标/日期/条件"，不要给材料已充分的支线再堆重复来源。轮数是执行安排，不替代硬预算，满足任务可提前停止，不要求花完搜索次数；每条查询都要能回答"相对已有材料，这次想多知道什么"，不重复已经失败或已充分覆盖的相近查询。发现阶段可用综述、媒体、索引页发现事件及原始链接，取证阶段再优先一手来源'+('；具体搜索参数、获取失败后的换路与停止条件见本轮 Scout 技能。' if managed else '。'))
     dispatch_word = {'codex':'spawn/delegate', 'opencode':'task 工具'}.get(backend, '宿主原生子任务接口')
     id_word = '真实子 agent 会话 ID（task 结果中的 ses_ ID）' if backend == 'opencode' else '宿主实际返回的 agent ID'
-    if tavily_enabled:
-        budget_note='本轮共享硬预算见 input.json.research_budget_status：所有 Scout 共用，不是每人一份。受控 Tavily Search/Extract 在每次调用时事务检查并返回 remaining；search_requests/candidate_urls 只硬计受控 Tavily Search，source_pages 硬计所有受控 add-url/Extract 的唯一 URL，同 URL 回退与缓存不重复算页。出现 budget_exhausted 时保留现有来源，把简短缺口写入研究交接记录，停止新增检索并交接，不重试消耗上限的操作。派发每个批次前先对照三类 remaining（搜索请求、候选 URL、唯一正文 URL）：前轮不要一次占满全部预算，给补缺同时留出搜索、候选和正文名额；三类是各自独立的硬上限，剩下搜索次数但候选或正文名额不足时不要绕过。旧任务 limits=null 表示未设置预算，不追溯限制。'
+    if managed:
+        # The note follows whether the provider is metered, not which one it is:
+        # DDG search requests and candidate URLs are reserved in the same
+        # transaction as Tavily's, so a DDG run must budget against all three.
+        metered_calls=('受控 Tavily Search/Extract 在每次调用时事务检查并返回 remaining' if provider=='tavily'
+                       else '受控 DuckDuckGo web-search 与 add-url 在每次调用时事务检查并返回 remaining')
+        metered_search='受控 Tavily Search' if provider=='tavily' else '受控 DuckDuckGo web-search 调用'
+        metered_pages='受控 add-url/Extract' if provider=='tavily' else '受控 add-url'
+        budget_note=('本轮共享硬预算见 input.json.research_budget_status：所有 Scout 共用，不是每人一份。'+metered_calls
+                     +'；search_requests/candidate_urls 只硬计'+metered_search+'，source_pages 硬计所有'+metered_pages+'的唯一 URL，同 URL 回退与缓存不重复算页。出现 budget_exhausted 时保留现有来源，把简短缺口写入研究交接记录，停止新增检索并交接，不重试消耗上限的操作。派发每个批次前先对照三类 remaining（搜索请求、候选 URL、唯一正文 URL）：前轮不要一次占满全部预算，给补缺同时留出搜索、候选和正文名额；三类是各自独立的硬上限，剩下搜索次数但候选或正文名额不足时不要绕过。旧任务 limits=null 表示未设置预算，不追溯限制。')
     else:
         budget_note='本轮检索由宿主原生工具执行，BriefLoop 不精确计量原生搜索次数与候选 URL（input.json.research_budget_status 中这两项在原生模式下为空或未知，不是额度，不要当成可用次数去核对）；只有受控 add-url/Extract 的唯一正文 URL（source_pages）按事务计量。出现 budget_exhausted 时保留现有来源并简要交接缺口，不重试消耗上限的操作；派发每批前按剩余 source_pages 留出补缺名额，不把它当成可任意扩张的额度。旧任务 limits=null 表示未设置预算，不追溯限制。'
-    native_word = '原生 Codex 搜索不可精确计量' if backend == 'codex' else '原生 Opencode 搜索不可精确计量'
     research_plan_note=('' if not research_plan else
         '本轮是 quality_v1 分轮研究：计划已冻结，见 input.json.research_plan。structure.breadth 是每轮查询建议，depth 是最大轮数；current_round_id 是当前 active 轮次。'
         '完成本轮 Scout 并结构合并后，由同一 Analyst/主 Agent 查看本轮候选，再决定补证或收轮：需要下一轮时，先用 workspace-action `finish_research_round`（run_id、gaps：每项含 description，可选 source_ids/related_claim_ids/requirement_ids）拿到程序生成的真实 gap id，再用 `begin_research_round`（run_id、target_gap_ids=上一步返回的 gap id、tasks）开下一轮；不需要下一轮就只调用 finish_research_round 收轮。'
         '不要只用提示词模拟轮次；breadth 可按证据需要调整，实际硬上限是本任务已授权共享预算。恢复时先读取 research_status，复用已关闭轮次及真实缺口，不重新消耗已完成研究。')
+    handoff_note=''
+    if research_handoff is not None:
+        detail=('不符合交接契约（'+'；'.join(error['message'] for error in research_handoff.get('errors',[])[:3])
+                +'），不采信其中 learnings，按已登记缺口重新取证' if research_handoff.get('invalid')
+                else '无引用的 learning 已标待证，追问与覆盖情况照常使用')
+        handoff_note=('深度研究轮间交接：input.json.research_handoff 是第 '+str(research_handoff['round_index'])+' 轮的交接，'+detail
+                     +'；剩余预算视图为 input.json.research_budget_status.remaining（'+json.dumps(research_budget['remaining'],ensure_ascii=False)+'）。'
+                     '派发本轮每个 Scout 时把上一轮交接摘要与剩余预算一并写进任务消息：子查询从上一轮 learnings 与追问出发，不重复已覆盖问题，待证 learning 要么补证要么丢弃；预算耗尽不是失败，保留证据并交接。\n')
     view_word = '使用 view_image 直接读图' if backend == 'codex' else '用 read 工具直接读取图像路径'
     view_pages_word = '使用 view_image 读取页图' if backend == 'codex' else '用 read 工具读取返回的页图'
     check_word = 'view_image检查' if backend == 'codex' else '用 read 工具读取检查'
     return common+f'''
 {research_plan_note}
+{handoff_note}
 本轮输入：{folder/'input.json'}。你的工作目录：{folder}。先按字段读取 requirements、sources 索引、scout_slots 和能力路径；不要为分工先展开全部技能正文或 schema。
 图表与表格由主 Agent 根据报告目标、参考报告和可用数据决定类型、数量与正文位置，不要求凑图，也不固定成一种预测图。趋势、量价和事件反应用图，精确数值与竞争条件用表；IR任务优先二级市场量能/PR反应，市场细价按需求精简。
 先复用用户Excel/历史报告已有且适用的图表，不默认重绘。对XLSX来源用 `{tool} extract-workbook-figures --id SOURCE_ID` 获取原始内嵌图片与原生图表清单；原生图表需用可用渲染器，或复用经核对来自同版本工作簿的渲染图。重新绘图不能称原图复制，旧参考只提供表达方式，数据日期必须适用本期。

@@ -117,11 +117,18 @@ def freeze(store, run_id, *, preset=None, structure=None, owner_job_id=None):
             if existing.get('plan_fingerprint') == fingerprint:
                 return existing
             raise ValueError('该任务已冻结了不同的研究计划，不能改写')
-        round_id = uid('round')
+        # The deep preset pre-creates its whole round structure at freeze time;
+        # other presets keep the single round created on demand.
+        expanded = preset == 'deep'
         snapshot['plan_fingerprint'] = fingerprint
-        snapshot['current_round_id'] = round_id
-        snapshot['rounds'] = {round_id: {'status': 'active', 'index': 1, 'created': now(),
-                                         'target_gap_ids': [], 'tasks': [], 'gaps': [], 'outcome': None}}
+        rounds = {}
+        for index in range(1, (chosen['depth'] if expanded else 1) + 1):
+            rounds[uid('round')] = {'status': 'active' if index == 1 else 'pending', 'index': index,
+                                    'created': now() if index == 1 else None, 'target_gap_ids': [],
+                                    'tasks': _allocated_slots(store, run_id, index, chosen['breadth']) if expanded else [],
+                                    'gaps': [], 'outcome': None}
+        snapshot['current_round_id'] = next(identity for identity, info in rounds.items() if info['index'] == 1)
+        snapshot['rounds'] = rounds
         snapshot['created'] = now()
         connection.execute('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)', (_plan_key(run_id), dump(snapshot)))
         connection.execute('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)', (_protocol_key(run_id), dump(PROTOCOL)))
@@ -198,6 +205,13 @@ def _round_dir(store, run_id, index):
     return store.root / 'research' / run_id / 'rounds' / str(index)
 
 
+def _allocated_slots(store, run_id, index, breadth):
+    """Per-round Scout slots fixed by the frozen structure, not by later proposals."""
+    directory = _round_dir(store, run_id, index)
+    return [{'task_id': uid('task'), 'slot_id': f'scout-{number}',
+             'directory': str(directory / f'scout-{number}')} for number in range(1, breadth + 1)]
+
+
 def _write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix('.tmp')
@@ -224,24 +238,38 @@ def begin_round(store, run_id, *, target_gap_ids=None, tasks=None, job_id=None):
             if list(current.get('target_gap_ids') or []) == target:
                 return {'round_id': active, 'index': current['index'], 'tasks': current.get('tasks', []), 'idempotent': True}
             raise AdmissionError('上一轮尚未结束，不能开始新一轮', code='round_open')
-        index = max([int(r.get('index', 0)) for r in rounds.values()] or [0]) + 1
+        # Pending rounds are the pre-created future of an expanded deep plan,
+        # not progress: the next index follows the highest round actually opened.
+        index = max([int(r.get('index', 0)) for r in rounds.values() if r.get('status') != 'pending'] or [0]) + 1
         if index > int(plan['structure']['depth']):
             raise AdmissionError('已达到本任务的最大联网轮次', code='depth_reached')
         known = {gap['id'] for round_info in rounds.values() for gap in round_info.get('gaps', [])}
         unknown = [gap for gap in target if gap not in known]
         if unknown:
             raise ValueError('下一轮引用了不存在的缺口：' + ', '.join(unknown))
-        round_id = uid('round')
-        directories = [(t or {}).get('slot_id') for t in (tasks or [])]
-        allocated = []
-        for position, directory in enumerate(directories):
-            path = _round_dir(store, run_id, index) / ('scout-' + str(position + 1))
-            allocated.append({'task_id': uid('task'), 'slot_id': directory, 'directory': str(path)})
-        rounds[round_id] = {'status': 'active', 'index': index, 'created': now(),
-                            'target_gap_ids': target, 'tasks': allocated, 'gaps': [], 'outcome': None}
-        plan['rounds'] = rounds
-        plan['current_round_id'] = round_id
-        _save_plan(connection, run_id, plan)
+        pending = next((identity for identity, info in rounds.items()
+                        if info.get('status') == 'pending' and int(info.get('index') or 0) == index), None)
+        if pending is not None:
+            # Activate the round pre-created by freeze; its slot allocation is
+            # part of the frozen structure and later proposals cannot replace it.
+            rounds[pending]['status'] = 'active'
+            rounds[pending]['created'] = now()
+            rounds[pending]['target_gap_ids'] = target
+            plan['current_round_id'] = pending
+            _save_plan(connection, run_id, plan)
+            round_id, allocated = pending, rounds[pending].get('tasks', [])
+        else:
+            round_id = uid('round')
+            directories = [(t or {}).get('slot_id') for t in (tasks or [])]
+            allocated = []
+            for position, directory in enumerate(directories):
+                path = _round_dir(store, run_id, index) / ('scout-' + str(position + 1))
+                allocated.append({'task_id': uid('task'), 'slot_id': directory, 'directory': str(path)})
+            rounds[round_id] = {'status': 'active', 'index': index, 'created': now(),
+                                'target_gap_ids': target, 'tasks': allocated, 'gaps': [], 'outcome': None}
+            plan['rounds'] = rounds
+            plan['current_round_id'] = round_id
+            _save_plan(connection, run_id, plan)
     _write_json(_round_dir(store, run_id, index) / 'manifest.json',
                 {'round_id': round_id, 'index': index, 'status': 'active',
                  'target_gap_ids': target, 'tasks': allocated, 'created': now()})
@@ -274,7 +302,10 @@ def finish_round(store, run_id, *, round_id=None, gaps=None, summary='', job_id=
         round_id = round_id or plan.get('current_round_id')
         if round_id is None and rounds:
             # A replay after closing must return the already assigned gap identities.
-            round_id = max(rounds, key=lambda identity: rounds[identity].get('index', 0))
+            # Prefer the latest closed round: an expanded plan may still hold
+            # higher-index pending rounds that were never activated.
+            closed = [identity for identity, info in rounds.items() if info.get('status') == 'closed']
+            round_id = max(closed or rounds, key=lambda identity: rounds[identity].get('index', 0))
         info = rounds.get(round_id)
         if not info:
             raise ValueError('轮次不存在：' + str(round_id))

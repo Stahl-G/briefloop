@@ -238,7 +238,7 @@ class HarnessManager:
                 if previous_provider!=config.get('model_provider'):
                     old_thread_id=thread_id;self._threads.pop(thread_id,None);thread_id=None
                     self.chat.event(sid,'thread/providerChanged',{'previousThreadId':old_thread_id,'model_provider':config.get('model_provider'),'message':'已切换模型服务，新一轮使用新的 Codex 对话；旧消息保留查看，不自动发送到新服务。'})
-            native_web=bool(message['allow_web']) and not (internal and config.get('search_provider')=='tavily')
+            native_web=bool(message['allow_web']) and not (internal and config.get('search_provider') in ('tavily','duckduckgo'))
             thread_params={'cwd':session['cwd'],'model':config['model'],'approvalPolicy':'never','sandbox':config['permission'],'config':{'web_search':'live' if native_web else 'disabled'},'developerInstructions':instructions}
             if tier is not None:thread_params['serviceTier']=tier
             if config['model']=='default':thread_params.pop('model',None)

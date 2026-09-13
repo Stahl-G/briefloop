@@ -13,13 +13,18 @@ from .backends import BACKENDS
 from . import __version__
 
 
-def _tavily_failure(operation,exc):
+def _search_failure(operation,exc,provider='tavily'):
     """A structured, redacted failure so the Scout's path-switching can act on it."""
-    return {'provider':'tavily','operation':operation,'status':'failed',
+    return {'provider':getattr(exc,'provider',None) or provider,'operation':operation,'status':'failed',
             'failure_kind':getattr(exc,'failure_kind','provider_error'),
             'http_status':getattr(exc,'status',None),
             'error':str(exc),
             'request_record_path':getattr(exc,'request_record_path',None)}
+
+
+def _tavily_failure(operation,exc):
+    # Compat name for the Tavily-only commands and their tests.
+    return _search_failure(operation,exc)
 
 
 def main():
@@ -86,6 +91,15 @@ def main():
     tavily_extract=ts.add_parser('tavily-extract',help='保存 Tavily 提取的正文与提供方响应')
     tavily_extract.add_argument('--run',required=True);tavily_extract.add_argument('--url',action='append',required=True)
     tavily_extract.add_argument('--extract-depth',choices=['basic','advanced'],default='basic')
+    web=ts.add_parser('web-search',help='联网搜索摘要，按本轮冻结的搜索源自动选择 provider，只发现来源')
+    web.add_argument('--run',required=True);web.add_argument('--query',required=True)
+    web.add_argument('--topic',choices=['general','news'],default='general')
+    web.add_argument('--time-range',choices=['day','week','month','year'])
+    web.add_argument('--start-date');web.add_argument('--end-date')
+    web.add_argument('--include-domain',action='append',default=[])
+    web.add_argument('--exclude-domain',action='append',default=[])
+    web.add_argument('--max-results',type=int,default=5)
+    web.add_argument('--search-depth',choices=['basic','advanced'],default='basic')
     a=p.parse_args()
     if a.command=='version':
         from .software_version import runtime_info,check_update
@@ -156,13 +170,23 @@ def main():
                 p.exit(2, json.dumps({'status': 'invalid', 'error': 'validation_error',
                     'errors': errors}, ensure_ascii=False) + '\n')
             print(json.dumps(result, ensure_ascii=False))
+        elif a.tool=='web-search':
+            from . import websearch
+            try:
+                result=websearch.search(a.query,topic=a.topic,time_range=a.time_range,start_date=a.start_date,end_date=a.end_date,
+                                        include_domains=a.include_domain,exclude_domains=a.exclude_domain,
+                                        max_results=a.max_results,search_depth=a.search_depth,store=store,run_id=a.run)
+            except websearch.SearchError as exc:
+                print(json.dumps(_search_failure('search',exc),ensure_ascii=False))
+            else:
+                print(json.dumps(result,ensure_ascii=False))
         elif a.tool=='tavily-search':
             from . import tavily
             try:
                 tavily.check_run(store,a.run)
                 result=tavily.search(a.query,topic=a.topic,time_range=a.time_range,start_date=a.start_date,end_date=a.end_date,include_domains=a.include_domain,exclude_domains=a.exclude_domain,max_results=a.max_results,search_depth=a.search_depth,store=store,run_id=a.run)
             except tavily.TavilyError as exc:
-                print(json.dumps(_tavily_failure('search',exc),ensure_ascii=False))
+                print(json.dumps(_search_failure('search',exc),ensure_ascii=False))
             else:
                 print(json.dumps(result,ensure_ascii=False))
         elif a.tool=='tavily-extract':
@@ -170,7 +194,7 @@ def main():
             try:
                 result=tavily.extract(store,a.url,run_id=a.run,extract_depth=a.extract_depth)
             except tavily.TavilyError as exc:
-                print(json.dumps(_tavily_failure('extract',exc),ensure_ascii=False))
+                print(json.dumps(_search_failure('extract',exc),ensure_ascii=False))
             else:
                 print(json.dumps(result,ensure_ascii=False))
         elif a.tool=='prepare-report-data':

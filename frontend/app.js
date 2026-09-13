@@ -131,6 +131,7 @@ function applyRequirements(text){
  if(Array.isArray(data.key_questions))set('key_questions_text',data.key_questions.join('\n'));
  if(Array.isArray(data.manual_sections))set('manual_sections_text',data.manual_sections.join('\n'));
  if(data.report_profile)set('report_profile',data.report_profile);
+ if(data.research_tier)set('research_tier',data.research_tier);
  initializeWorkflowChoice(data,true);syncWorkflowProfile(false);
  if(data.writing_mode)set('writing_mode',data.writing_mode);
  if(data.target_words)set('target_words',data.target_words);
@@ -252,7 +253,9 @@ function render(first){
  renderTemplates(first);
  renderWorkflowChoices(first);
  if($('review-open'))$('review-open').textContent='审阅与需处理'+(state.conflicts?.length?' · '+state.conflicts.length+' 项来源分歧':'');
- if(first){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('chat-allow-web').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.settings.auto_learn;$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',effortValue(state.settings,'reasoning_effort'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.model_variant||'';updateModelLabel();renderRoleModels();renderBackend();$('search-provider').value=state.settings.search_provider==='tavily'?'tavily':'native';renderSearchProvider();refreshRuntimeDiscovery();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});syncWorkflowProfile(false)}
+EAD
+ if(first){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('chat-allow-web').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.settings.auto_learn;$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',effortValue(state.settings,'reasoning_effort'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.model_variant||'';updateModelLabel();renderRoleModels();renderBackend();$('search-provider').value=['tavily','duckduckgo'].includes(state.settings.search_provider)?state.settings.search_provider:'native';renderSearchProvider();refreshRuntimeDiscovery();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});syncWorkflowProfile(false)}
+557d96e7 (feat: deep research option with multi-provider search and round handoff)
  $('source-count').textContent=state.sources.length+' 份';$('source-list').innerHTML=state.sources.map(s=>`<div class="source-item"><input type="checkbox" data-check="${s.id}" ${selected.has(s.id)?'checked':''} aria-label="选择 ${esc(s.name)}"><button data-source="${s.id}">${esc(s.name)}</button><span class="tag ${s.status==='failed'?'error':''}">${s.status==='failed'?'读取失败':s.needs_visual?'需视觉读取':'可读取'}</span>${s.status==='failed'?`<button data-retry-source="${s.id}">重试</button>`:''}</div>`).join('');
  document.querySelectorAll('[data-retry-source]').forEach(b=>b.onclick=()=>action(async()=>{const s=await api('retry-source',{source_id:b.dataset.retrySource});selected.delete(b.dataset.retrySource);selected.add(s.id);notice(s.status==='ready'?'来源已重新读取':s.error,s.status!=='ready')}));
  document.querySelectorAll('[data-check]').forEach(b=>b.onchange=()=>{if(b.checked){selected.add(b.dataset.check);referenceSelected.delete(b.dataset.check);renderReferenceSources()}else selected.delete(b.dataset.check)});renderReferenceSources();
@@ -1200,7 +1203,7 @@ async function renderSourcePages(id,view){
 }
 $('source-dialog').addEventListener('close',()=>resetSourceMedia());
 
-function nativeSearchName(){const sp=$('search-provider').value;return sp==='tavily'?'Tavily':(runtimeName(state.settings.agent_backend||'codex')+' 原生')}
+function nativeSearchName(){const sp=$('search-provider').value;return sp==='tavily'?'Tavily':(sp==='duckduckgo'?'DuckDuckGo':(runtimeName(state.settings.agent_backend||'codex')+' 原生'))}
 function renderSearchProvider(){$('tavily-settings').hidden=$('search-provider').value!=='tavily';$('setup-search-summary').textContent='搜索工具：'+nativeSearchName();renderBudgetProviderScope()}
 async function refreshTavilySettings(){
  try{const result=await api('tavily');const where={environment:'环境变量',file:'本机配置'}[result.source]||'本机配置';$('tavily-key-status').textContent=result.configured?`已配置 · ${where} · 所有工作区可用`:'尚未配置 Tavily 密钥';$('tavily-key-remove').hidden=result.source!=='file';return result}
@@ -1302,13 +1305,15 @@ document.addEventListener('click',event=>{if(!event.target.closest('#session-act
 document.addEventListener('keydown',event=>{if(event.key==='Escape')closeSessionMenu()});
 
 const RESEARCH_BUDGET_PRESETS={weekly:{search_requests:30,candidate_urls:150,source_pages:60},monthly:{search_requests:80,candidate_urls:400,source_pages:150}};
+const RESEARCH_TIERS={quick:{search_requests:6,candidate_urls:30,source_pages:12},standard:{search_requests:30,candidate_urls:150,source_pages:60},deep:{search_requests:80,candidate_urls:400,source_pages:150}};
 const BUDGET_FIELDS={search_requests:'budget-search-requests',candidate_urls:'budget-candidate-urls',source_pages:'budget-source-pages'};
 function readResearchBudget(){return Object.fromEntries(Object.entries(BUDGET_FIELDS).map(([key,id])=>[key,Number($(id).value)]))}
 function reflectBudgetPreset(){const current=readResearchBudget();$('budget-preset').value=Object.keys(RESEARCH_BUDGET_PRESETS).find(name=>Object.keys(BUDGET_FIELDS).every(key=>current[key]===RESEARCH_BUDGET_PRESETS[name][key]))||'custom'}
 function initializeResearchBudget(requirements){const budget=requirements.research_budget||RESEARCH_BUDGET_PRESETS.weekly;for(const [key,id] of Object.entries(BUDGET_FIELDS))$(id).value=budget[key]??RESEARCH_BUDGET_PRESETS.weekly[key];reflectBudgetPreset();renderBudgetProviderScope()}
-function renderBudgetProviderScope(){$('budget-provider-scope').textContent=$('search-provider').value==='tavily'?'Tavily 搜索请求与候选 URL 可计量；经 BriefLoop 工具获取的全文来源受预算控制。':nativeSearchName()+'搜索的请求数和候选 URL 数不可精确计量；经 BriefLoop 工具获取的全文来源仍受预算控制。'}
+function renderBudgetProviderScope(){const label=nativeSearchName();$('budget-provider-scope').textContent=$('search-provider').value==='native'?label+'搜索的请求数和候选 URL 数不可精确计量；经 BriefLoop 工具获取的全文来源仍受预算控制。':label+' 搜索请求与候选 URL 可计量；经 BriefLoop 工具获取的全文来源受预算控制。'}
 $('budget-preset').onchange=()=>{const budget=RESEARCH_BUDGET_PRESETS[$('budget-preset').value];if(budget)for(const [key,id] of Object.entries(BUDGET_FIELDS))$(id).value=budget[key]};
 for(const id of Object.values(BUDGET_FIELDS))$(id).oninput=reflectBudgetPreset;
+$('research-tier').onchange=()=>{const budget=RESEARCH_TIERS[$('research-tier').value];if(!budget)return;for(const [key,id] of Object.entries(BUDGET_FIELDS))$(id).value=budget[key];reflectBudgetPreset();renderBudgetProviderScope()};
 
 let budgetPolling=false;
 function researchBudgetTarget(){
@@ -1320,10 +1325,10 @@ async function refreshReportBudget(){
  try{
   const result=await api('research-budget?run='+encodeURIComponent(target.id));if(researchBudgetTarget()?.id!==target.id)return;panel.hidden=false;panel.dataset.runId=target.id;
   if(!result.limits){$('budget-view-title').textContent='研究预算 · 未设置';$('budget-view-body').innerHTML=`<p class="help">${esc(target.label)}创建时未设置研究预算。</p>`;return}
-  const scope=result.scope||{},native=scope.search_provider!=='tavily',limits=result.limits,used=result.used||{},remaining=result.remaining||{},format=value=>typeof value==='number'?new Intl.NumberFormat('zh-CN').format(value):'未知';
+  const scope=result.scope||{},native=!['tavily','duckduckgo'].includes(scope.search_provider),limits=result.limits,used=result.used||{},remaining=result.remaining||{},format=value=>typeof value==='number'?new Intl.NumberFormat('zh-CN').format(value):'未知';
   $('budget-view-title').textContent='研究预算'+(result.exhausted?' · 已达到上限':'');
   const labels={search_requests:'搜索请求',candidate_urls:'候选 URL',source_pages:'全文获取（URL）'};
-  $('budget-view-body').innerHTML=`<p class="budget-run-label">${esc(target.label)}</p><table class="budget-usage-table"><thead><tr><th>项目</th><th>已用</th><th>上限</th><th>剩余</th></tr></thead><tbody>${Object.entries(labels).map(([key,label])=>{const unmetered=native&&key!=='source_pages';return `<tr><th>${label}</th><td>${unmetered?'不可精确计量':format(used[key])}</td><td>${format(limits[key])}</td><td>${unmetered?'—':format(remaining[key])}</td></tr>`}).join('')}</tbody></table><p class="help">${native?'Codex 原生搜索的请求数和候选 URL 数不作为精确计量。':''}全文获取按本轮不同 URL 计数，不代表已核验或已阅读数量；已有上传材料不扣。</p>${result.exhausted?'<p class="budget-exhausted">已达到预算上限，保留已有结果与缺口，不自动加额。</p>':''}`;
+  $('budget-view-body').innerHTML=`<p class="budget-run-label">${esc(target.label)}</p><table class="budget-usage-table"><thead><tr><th>项目</th><th>已用</th><th>上限</th><th>剩余</th></tr></thead><tbody>${Object.entries(labels).map(([key,label])=>{const unmetered=native&&key!=='source_pages';return `<tr><th>${label}</th><td>${unmetered?'不可精确计量':format(used[key])}</td><td>${format(limits[key])}</td><td>${unmetered?'—':format(remaining[key])}</td></tr>`}).join('')}</tbody></table><p class="help">${native?'宿主原生搜索的请求数和候选 URL 数不作为精确计量。':''}全文获取按本轮不同 URL 计数，不代表已核验或已阅读数量；已有上传材料不扣。</p>${result.exhausted?'<p class="budget-exhausted">已达到预算上限，保留已有结果与缺口，不自动加额。</p>':''}`;
  }catch{panel.hidden=false;$('budget-view-title').textContent='研究预算';$('budget-view-body').innerHTML='<p class="help">预算信息暂不可用。</p>'}finally{budgetPolling=false}
 }
 
