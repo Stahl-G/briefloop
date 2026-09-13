@@ -7,7 +7,7 @@ const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8
 const code=source.slice(source.indexOf('function effectiveReportJobs'),source.indexOf('function friendlyModel'));
 function fixture(status='running'){
  const nodes=new Map(),pending=[];
- const node=id=>{if(!nodes.has(id))nodes.set(id,{hidden:false,innerHTML:'',textContent:''});return nodes.get(id)};
+ const node=id=>{if(!nodes.has(id))nodes.set(id,{hidden:false,innerHTML:'',textContent:'',insertAdjacentHTML(_position,html){this.innerHTML+=html}});return nodes.get(id)};
  const job={id:'job',kind:'generate',status,payload:'{"run_id":"report"}',created:new Date().toISOString()};
  const context=vm.createContext({withoutSupersededRetries,$:node,parse:s=>JSON.parse(s||'{}'),esc:String,modelLabel:()=> 'test/model',
   current:null,pendingRun:'report',
@@ -67,3 +67,30 @@ for(const failOld of [false,true]){
  assert.equal(node('run-progress').textContent,'进度连接暂时中断，任务没有重新提交。');
 }
 console.log('PASS: stopped, resumed and switched reports reject stale progress; errors use fixed public text');
+
+{
+ const {context,node,pending}=fixture();
+ let opened=null;context.selectChat=id=>{opened=id};
+ const refresh=context.refreshProgress();
+ pending.shift().resolve([{kind:'runtime_started',data:'{"session_id":"bound-report-session"}'}]);
+ pending.shift().resolve({session_id:'unrelated-chat',worker_alive:true,pid:1,returncode:null});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(pending[0].route,'harness/session?id=bound-report-session');
+ pending.shift().resolve({requests:[{id:'old',status:'answered'},{id:'permission',status:'pending'}]});
+ await refresh;
+ assert.match(node('run-progress').innerHTML,/等待你的确认/);
+ assert.match(node('run-progress').innerHTML,/有 1 项操作等待确认/);
+ node('progress-requests').onclick();assert.equal(opened,'bound-report-session');
+}
+{
+ const {context,node,job,pending}=fixture();
+ const old=context.refreshProgress();
+ pending.shift().resolve([{kind:'runtime_started',data:'{"session_id":"old-session"}'}]);
+ pending.shift().resolve({});
+ await new Promise(resolve=>setImmediate(resolve));
+ const stale=pending.shift();job.status='cancelled';
+ const paused=context.refreshProgress();pending.shift().resolve({});await paused;
+ stale.resolve({requests:[{status:'pending'}]});await old;
+ assert.match(node('run-progress').innerHTML,/任务已暂停/);
+ assert.doesNotMatch(node('run-progress').innerHTML,/查看并处理/);
+}
