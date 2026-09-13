@@ -29,9 +29,9 @@ class WorkspaceService {
     const launchId = randomUUID();
     const log = await fs.open(path.join(directory, 'desktop-server.log'), 'a', 0o600);
     const env = {...process.env, BRIEFLOOP_LAUNCH_ID: launchId, BRIEFLOOP_NODE: node,
-      PATH: `${path.dirname(node)}:${process.env.PATH || '/usr/bin:/bin'}`, PYTHONNOUSERSITE: '1', PYTHONUNBUFFERED: '1'};
+      PATH: `${path.dirname(node)}:${process.env.PATH || '/usr/bin:/bin'}`, PYTHONNOUSERSITE: '1', PYTHONSAFEPATH: '1', PYTHONUNBUFFERED: '1'};
     delete env.PYTHONHOME; delete env.PYTHONPATH; delete env.ELECTRON_RUN_AS_NODE;
-    const child = spawn(python, ['-m', 'briefloop', 'serve', '--workspace', directory, '--port', '0', '--paused'],
+    const child = spawn(python, ['-I', '-m', 'briefloop', 'serve', '--workspace', directory, '--port', '0', '--paused'],
       {cwd: directory, env, stdio: ['ignore', log.fd, log.fd], windowsHide: true});
     this.child = child; this.directory = directory;
     this.exited = new Promise(resolve => child.once('close', (code, signal) => { this.child = null; this.info = null; resolve({code, signal}); this.onExit({code, signal}); }));
