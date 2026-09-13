@@ -224,4 +224,6 @@ def test_template_table_uses_cell_style_and_keeps_rows_together():
     assert table.cell(1, 0).paragraphs[0].style.name == cell_style.name
     assert table.columns[0].width > table.columns[2].width
     assert all(row._tr.trPr.find(qn('w:cantSplit')) is not None for row in table.rows)
+    assert all(p.paragraph_format.keep_with_next is True for cell in table.rows[0].cells for p in cell.paragraphs)
+    assert all(p.paragraph_format.keep_with_next is not True for cell in table.rows[1].cells for p in cell.paragraphs)
     assert table.cell(1, 2).text == '48'
