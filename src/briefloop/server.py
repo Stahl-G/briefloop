@@ -483,6 +483,16 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/harness/session':
                     choose_runtime(store,body.get('runtime'))
                     result=pick_harness(body.get('runtime')).create_session(body.get('title','新对话'),body.get('runtime'))
+                elif path.startswith('/api/schedules/'):
+                    from . import schedules
+                    command=path.rsplit('/',1)[-1]
+                    if command=='preview':
+                        _,config=schedules.validate(store,body)
+                        result={'next_at':schedules.stamp(schedules.next_time(config,schedules.clock()))}
+                    elif command=='save':result=schedules.save(store,body)
+                    elif command=='change':result=schedules.change(store,body)
+                    elif command=='run':result=schedules.fire(store,body['id'],manual=True,request_id=body.get('request_id'))
+                    else:raise ValueError('未知定时报告操作')
                 elif path=='/api/external/action':
                     from .external_requests import dispatch
                     result=dispatch(store,body)

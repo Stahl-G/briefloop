@@ -282,3 +282,7 @@ python -m briefloop.audit_bundle /absolute/path/report-audit.zip
 设置中的“版本与更新”读取当前后端的实际版本、构建标识和安装来源。桌面 App 与它管理的 CLI 共用环境，通过 App 更新；浏览器也可以检查 PyPI 的后端稳定版本，按页面提供的 pip、pipx 或 uv 命令更新后重启服务。开发源码单独标明，版本号相同不代表与发行包代码相同。
 
 `briefloop version` 输出相同的版本信息；`briefloop version --check` 只检查 PyPI，不安装、不重启。Electron 壳仍通过桌面更新；不要对 App 管理的环境另外执行 pip 升级。
+
+### 定时报告
+
+首页可管理每日、每周、每月预设与自定义间隔计划，暂停、编辑或立即运行。仅工作区服务运行期间执行，离线时点不补跑；每期复用报告流程与当前已启用的 WikiSkill。详见[定时报告指南](docs/定时报告.md)。
