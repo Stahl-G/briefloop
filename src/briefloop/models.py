@@ -323,6 +323,7 @@ class SaveRevision(Model):
 
 
 class Comment(Model):
+    learning_intent: Literal['feedback','explicit_requirement'] = 'feedback'
     version_id: str
     text: str = Field(min_length=1, max_length=20000)
 

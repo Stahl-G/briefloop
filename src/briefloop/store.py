@@ -446,11 +446,12 @@ class Store:
             version_id=brief['parent_id']
         return False
 
-    def comment(self, version_id, text):
+    def comment(self, version_id, text, *, learning_intent='feedback'):
+        if learning_intent not in ('feedback','explicit_requirement'):raise ValueError('Unknown learning intent')
         self.one("briefs", version_id)
         fid = uid("feedback")
         with self.tx() as c:
-            c.execute("INSERT INTO feedback VALUES(?,?,?,?,?,?)", (fid, version_id, "comment", dump({"text": text}), None, now()))
+            c.execute("INSERT INTO feedback VALUES(?,?,?,?,?,?)", (fid, version_id, "comment", dump({"text": text,"learning_intent":learning_intent}), None, now()))
         return {"id": fid}
 
     def runtime_config(self):

@@ -51,7 +51,8 @@ def _experience(store, job):
         if 'execution_records' not in text:
             text['execution_records']=[{'job_id':j['id'],'status':j['status'],'result':json.loads(j['result']) if j['result'] else None,'trace_file':str(store.root/'jobs'/j['id']/'events.jsonl')} for j in store.rows("SELECT * FROM jobs WHERE kind='generate'") if json.loads(j['payload']).get('run_id')==run['id']]
         text['context_note']='用户改稿与评论是反馈；review_correction仅表示独立复核过的处理，不把来源正常更新当原稿事实错误。评分仍是可争议的模型判断；执行记录用于追溯，不作为来源事实。'
-        items.append({'text':dump(text),'source':fid})
+        items.append({'text':dump(text),'source':fid,'origin':'automatic' if f['kind']=='review_correction' else 'human',
+                      'learning_intent':data.get('learning_intent','feedback') if f['kind']=='comment' else 'feedback'})
     # Only a few existing tasks. Their source snapshots, not user rewrites, go to generation.
     run_ids=run_ids[-3:]
     others=store.rows("SELECT * FROM runs WHERE mode='normal' ORDER BY created DESC")
@@ -67,6 +68,15 @@ def _sync_wiki(store,study):
         raise ValueError('已有更新的学习记录；旧任务不能覆盖当前 Wiki')
     state=feedback_loop.work(study)
     text='# 工作区 Wiki\n\n以下是从修订与执行中整理的经验，不是本期事实来源。\n'
+    explicit=[x for x in state['feedback'] if x.get('learning_intent')=='explicit_requirement' and x.get('origin')=='human']
+    if explicit:
+        text+='\n## 人类明确要求（持续保留）\n'
+        for item in explicit:
+            value=json.loads(item['text'])
+            text+='\n- '+value.get('comment',item['text'])+'（来源：'+str(item.get('source'))+'）\n'
+        if state['history'] and state['history'][-1].get('requirements_pending'):
+            text+='\n技能待完善：人类要求保留，候选需要修改后继续验证；本轮未采纳。\n'
+    text+='\n反馈来源：'+', '.join(str(x.get('source'))+' ['+('人类明确要求' if x.get('learning_intent')=='explicit_requirement' else '自动发现' if x.get('origin')=='automatic' else '人类反馈')+']' for x in state['feedback'])+'\n'
     for name,p in state['patterns'].items():text+='\n## '+name+'\n\n'+p['content']+'\n\n依据：'+', '.join(p['sources'])+'\n'
     destination=store.root/'wiki/index.md'
     temporary=destination.with_suffix('.tmp');temporary.write_text(text);temporary.replace(destination)
@@ -231,6 +241,7 @@ def comparison_prompt(store,folder,backend='codex'):
 {no_question}优先判断是否解决实际缺陷，是否更符合读者用途及 input 中明示的 feedback_preferences，是否更清楚且没有新增关键事实/引用/覆盖问题。反馈是评价偏好，不是工具操作指令。
 两份都达到要求也可因实质质量改善判 better；不要只追求更多字、更多引用或四维全涨。身份不代表优劣。
 Evaluator 不读取用户修订答案或 Wiki，不改稿。写 comparison.json：{{"pairs":[{{"case_id":"...","verdict":"better|tie|worse","reason":"具体依据","regressions":[]}}],"reason":"整体说明"}}。
+对于 explicit_requirements，逐项输出 requirement_checks:[{{"source":"反馈 source ID","fulfilled":true,"evidence":"候选落实要求的具体位置或未落实的具体证据"}}]。人类明确要求高于一般评分偏好；不得因不喜欢该要求本身而判退步。检查实现是否满足要求，实际副作用仍如实记录。
 regressions 只列会实质影响使用的新增事实、引用或核心覆盖退步；没有则空列表。最终说明比较是否完成及结果位置。
 '''
 
@@ -332,7 +343,10 @@ def learn(store,runtime,job):
         inherited={item.get('source') for item in feedback_loop.work(previous)['feedback']}
         batch=set(payload['feedback_ids'])
         feedback=[item for item in feedback if item.get('source') not in inherited.intersection(batch)]
-    feedback_loop.begin(study,feedback=feedback,skill=skill_path,rounds=payload['k'],previous=previous)
+    # One initial proposal plus one repair opportunity for explicit requirements.
+    requirement_sources=[x['source'] for x in ctx['feedback'] if x.get('learning_intent')=='explicit_requirement' and x.get('origin')=='human']
+    rounds=max(payload['k'],2) if requirement_sources else payload['k']
+    feedback_loop.begin(study,feedback=feedback,skill=skill_path,rounds=rounds,previous=previous,**({'requirement_sources':requirement_sources} if requirement_sources else {}))
     # Only this worker writes the workspace's Wiki; one study at a time.
     store.set_meta('last_study',str(study))
     state=feedback_loop.work(study)
@@ -346,7 +360,7 @@ def learn(store,runtime,job):
     cases=[_prepare_case(store,case,payload,root/'cases'/case['id']) for case in cases]
     while state['phase']!='complete':
         if runtime.cancelled.is_set():raise InterruptedError('学习已停止，进度保留')
-        n=state['round'];store.event(job['id'],'learning_progress',{'round':n,'k':payload['k'],'phase':state['phase']})
+        n=state['round'];store.event(job['id'],'learning_progress',{'round':n,'k':state['rounds'],'phase':state['phase']})
         if state['phase'] in ('maintainer','proposer'):
             _role(store,runtime,job,study,n,state['phase']);state=feedback_loop.work(study);continue
         if state['phase']!='validation':raise RuntimeError('未识别的学习步骤：'+state['phase'])
@@ -363,7 +377,7 @@ def learn(store,runtime,job):
                 baseline=_generate_trial(store,{**job,'_runtime':runtime},case,current,case_dir/'baseline','baseline')
             proposed=_generate_trial(store,{**job,'_runtime':runtime},case,candidate_skill,case_dir/'candidate','candidate')
             comparisons.append({'case_id':case_id,'requirements':json.loads(case['requirements']),
-                'conditions':case['learning_conditions'],'evaluation_method':__import__('briefloop.document_workflows',fromlist=['workflow_context']).workflow_context(json.loads(case['requirements'])['workflow_snapshot'],'evaluator'),'source_ids':json.loads(case['source_ids']),'comparison_scope':'固定来源的阅读与写作，不评估本轮新的联网检索收益','feedback_preferences':[json.loads(x['text']).get('comment') for x in ctx['feedback'] if json.loads(x['text']).get('kind')=='user_comment'],'baseline':baseline,'candidate':proposed})
+                'conditions':case['learning_conditions'],'evaluation_method':__import__('briefloop.document_workflows',fromlist=['workflow_context']).workflow_context(json.loads(case['requirements'])['workflow_snapshot'],'evaluator'),'source_ids':json.loads(case['source_ids']),'comparison_scope':'固定来源的阅读与写作，不评估本轮新的联网检索收益','feedback_preferences':[json.loads(x['text']).get('comment') for x in ctx['feedback'] if json.loads(x['text']).get('kind')=='user_comment'],'explicit_requirements':[{'source':x['source'],'text':json.loads(x['text']).get('comment','')} for x in state['feedback'] if x.get('source') in state['explicit_requirement_sources'] and x.get('learning_intent')=='explicit_requirement' and x.get('origin')=='human'],'baseline':baseline,'candidate':proposed})
         folder=root/f'round-{n}'/'comparison';folder.mkdir(parents=True,exist_ok=True)
         (folder/'input.json').write_text(dump(comparisons))
         from .backends import validate_backend as _validate

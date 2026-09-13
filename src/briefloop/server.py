@@ -498,7 +498,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     value=SaveRevision.model_validate(body)
                     result=store.revise(value.base_version,value.markdown,value.editor_document)
                 elif path=='/api/comment':
-                    value=Comment.model_validate(body);result=store.comment(value.version_id,value.text)
+                    value=Comment.model_validate(body);result=store.comment(value.version_id,value.text,learning_intent=value.learning_intent)
                 elif path=='/api/settings':
                     merged={**store.settings(),**body}
                     # Saving a model is the explicit choice the pending flag waits for.
