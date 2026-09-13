@@ -1,8 +1,9 @@
 import queue
+import json
 import time
 import pytest
 from briefloop.store import Store
-from briefloop.bridge_harness import BridgeHarness
+from briefloop.bridge_harness import BridgeHarness, normalize_bridge_usage
 
 
 class BridgeFixture:
@@ -15,6 +16,7 @@ class BridgeFixture:
             for event in [{'kind':'session','session_id':'native-session'},
                           {'kind':'reasoning','text':'weighing options'},
                           {'kind':'text','text':'visible answer'},
+                          {'kind':'usage','usage':{'input_tokens':12,'output_tokens':5}},
                           {'kind':'tool','id':'native-item','name':'read','status':'completed','input':{'path':'sample.txt'},'output':'data'},
                           {'kind':'end','status':'completed'}]:self.sinks[params['execution_id']].put(event)
             return {'execution_id':params['execution_id']}
@@ -32,6 +34,9 @@ def test_bridge_turn_is_durable_and_same_message_is_not_redispatched(tmp_path, b
         if snap['messages'][0]['status']=='completed':break
         time.sleep(.01)
     assert snap['messages'][0]['status']=='completed'
+    assert snap['token_usage']['last']=={'inputTokens':12,'outputTokens':5,'cachedInputTokens':None}
+    saved=h.store.rows("SELECT data FROM chat_events WHERE kind='thread/tokenUsage/updated'")
+    assert json.loads(saved[-1]['data'])['tokenUsage']['last']['inputTokens']==12
     assert snap['session']['thread_id']=='native-session'
     assert snap['messages'][1]['text']=='visible answer'
     assert 'reasoning' not in snap['messages'][1]
@@ -75,3 +80,38 @@ def test_bridge_host_gets_the_workspace_contract_once_per_native_session(tmp_pat
     turn('再继续','m3')
     assert bridge.starts[2]['prompt'].startswith('你是此本地 BriefLoop 工作区的交互助手')
     assert 'Tavily' in bridge.starts[2]['prompt']
+
+
+def test_codebuddy_saved_usage_is_reprojected_without_rewriting_history(tmp_path):
+    store=Store(tmp_path);h=BridgeHarness(store,BridgeFixture(),'codebuddy')
+    session=h.create_session('Synthetic saved session',{'model':'deepseek-v4.1-flash'})
+    raw={'sessionUpdate':'usage_update','used':30000,'size':1000000,
+         '_meta':{'usage':{'prompt_tokens':29217,'completion_tokens':571,'total_tokens':29788,
+                          'cache_read_input_tokens':0,'cached_tokens':0,
+                          'prompt_tokens_details':{'cached_tokens':29056},'prompt_cache_hit_tokens':29056}}}
+    h.chat.event(session['id'],'thread/tokenUsage/updated',
+                 {'tokenUsage':{'backend':'codebuddy','last':{'inputTokens':None,'outputTokens':None},'raw':raw}})
+    before=store.rows('SELECT * FROM chat_events')
+    snapshot=h.snapshot(session['id'])
+    usage=snapshot['token_usage']
+    assert usage['last']=={'inputTokens':29217,'cachedInputTokens':29056,'outputTokens':571}
+    assert usage['contextUsedTokens']==30000 and usage['modelContextWindow']==1000000
+    assert snapshot['events'][-1]['data']['tokenUsage']==usage
+    assert h.snapshot(session['id'],after=snapshot['events'][-1]['seq'])['token_usage']==usage
+    assert store.rows('SELECT * FROM chat_events')==before
+    h.chat.event(session['id'],'thread/providerChanged',{})
+    assert h.snapshot(session['id'])['token_usage'] is None
+
+
+def test_usage_unknown_and_zero_do_not_become_estimates():
+    usage=normalize_bridge_usage({'sessionUpdate':'usage_update','used':123,'size':1000},'codebuddy')
+    assert usage['last']=={'inputTokens':None,'outputTokens':None,'cachedInputTokens':None}
+    assert usage['contextUsedTokens']==123 and usage['modelContextWindow']==1000
+    invalid=normalize_bridge_usage({'input_tokens':True,'output_tokens':-1,'cache_read_input_tokens':'8',
+                                    'sessionUpdate':'usage_update','used':float('nan'),'size':0},'codebuddy')
+    assert all(value is None for value in invalid['last'].values())
+    assert invalid['contextUsedTokens'] is None and invalid['modelContextWindow'] is None
+    zero=normalize_bridge_usage({'input_tokens':0,'output_tokens':0,'cache_read_input_tokens':0,
+                                 'used':42,'size':99},'unknown-host')
+    assert zero['last']=={'inputTokens':0,'outputTokens':0,'cachedInputTokens':0}
+    assert zero['contextUsedTokens'] is None and zero['modelContextWindow'] is None
