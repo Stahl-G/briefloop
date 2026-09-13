@@ -472,7 +472,7 @@ async function refreshProgress(){
   const taskSession=start.session_id;
   let pendingRequests=[];
   if(taskSession){
-   const snapshot=await api('harness/session?id='+encodeURIComponent(taskSession));
+   const snapshot=await api('harness/session?id='+encodeURIComponent(taskSession)+'&requests_only=1');
    if(!isCurrent())return;
    pendingRequests=(snapshot.requests||[]).filter(r=>r.status==='pending');
   }

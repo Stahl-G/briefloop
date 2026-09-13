@@ -75,7 +75,7 @@ console.log('PASS: stopped, resumed and switched reports reject stale progress; 
  pending.shift().resolve([{kind:'runtime_started',data:'{"session_id":"bound-report-session"}'}]);
  pending.shift().resolve({session_id:'unrelated-chat',worker_alive:true,pid:1,returncode:null});
  await new Promise(resolve=>setImmediate(resolve));
- assert.equal(pending[0].route,'harness/session?id=bound-report-session');
+ assert.equal(pending[0].route,'harness/session?id=bound-report-session&requests_only=1');
  pending.shift().resolve({requests:[{id:'old',status:'answered'},{id:'permission',status:'pending'}]});
  await refresh;
  assert.match(node('run-progress').innerHTML,/等待你的确认/);

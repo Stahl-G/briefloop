@@ -124,7 +124,13 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     from .workspaces import list_workspaces
                     self.send(200,list_workspaces(store))
                 elif u.path=='/api/harness/sessions':self.send(200,{'sessions':harness.list_sessions(q.get('view',['active'])[0])})
-                elif u.path=='/api/harness/session':self.send(200,pick_harness(session_id=q['id'][0]).snapshot(q['id'][0],int(q.get('after',['0'])[0]),reasoning=q.get('reasoning',['0'])[0]=='1'))
+                elif u.path=='/api/harness/session':
+                    selected=pick_harness(session_id=q['id'][0])
+                    if q.get('requests_only',['0'])[0]=='1':
+                        selected.chat.session(q['id'][0])
+                        pending=store.rows("SELECT id,session_id,data,status,created FROM chat_requests WHERE session_id=? AND status='pending' ORDER BY created,rowid",(q['id'][0],))
+                        self.send(200,{'requests':[selected.chat.decode(r) for r in pending]})
+                    else:self.send(200,selected.snapshot(q['id'][0],int(q.get('after',['0'])[0]),reasoning=q.get('reasoning',['0'])[0]=='1'))
                 elif u.path=='/api/session':self.send(200,{'token':token})
                 elif u.path=='/api/connectors':self.send(200,{'connectors':self.server.connectors.list()})
                 elif u.path=='/api/runtime':
