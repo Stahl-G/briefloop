@@ -103,6 +103,7 @@ def table_defaults(doc):
             paragraph=cell.paragraphs[0] if cell.paragraphs else None
             run=paragraph.runs[0] if paragraph is not None and paragraph.runs else None
             result.append({'cell':xml(cell._tc.tcPr,('tcW','gridSpan','vMerge')),
+                           'paragraph_style':paragraph.style.name if paragraph is not None else None,
                            'paragraph':xml(paragraph._p.pPr,('pStyle','numPr')) if paragraph is not None else None,
                            'run':xml(run._r.rPr) if run is not None else None})
         return result

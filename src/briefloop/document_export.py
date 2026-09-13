@@ -140,7 +140,16 @@ def render_document(doc, document, *, figures=None, sources=None, append_sources
             table.style = styles.get('table', 'Table Grid')
             inherit_properties(table._tbl.tblPr,styles.get('table_properties'))
             default_widths=styles.get('table_widths',[])
-            ratios=default_widths if len(default_widths)==nc and all(default_widths) else [1]*nc
+            if len(default_widths)==nc and all(default_widths):
+                ratios=default_widths
+            else:
+                # A template's sample may have fewer columns than the report.
+                # Give descriptive cells room while keeping numeric columns compact.
+                def text_length(value):
+                    return len(value.get('text','')) + sum(text_length(child) for child in value.get('content',[]))
+                ratios=[6]*nc
+                for _,c,_,cs,value in cells:
+                    if cs==1:ratios[c]=max(ratios[c],min(32,text_length(value)))
             for index,column in enumerate(table.columns):column.width=int(max_width*ratios[index]/sum(ratios))
             for r, c, rs, cs, value in cells:
                 cell = table.cell(r, c)
@@ -157,6 +166,8 @@ def render_document(doc, document, *, figures=None, sources=None, append_sources
                 inherit_properties(cell._tc.get_or_add_tcPr(),profile.get('cell'))
                 for child in value.get('content', []): block(child, cell)
                 for p in cell.paragraphs:
+                    if profile.get('paragraph_style') and p.style.name==styles.get('paragraph'):
+                        p.style=profile['paragraph_style']
                     if ca.get('textAlign'): p.alignment = ALIGN[ca['textAlign']]
                     inherit_properties(p._p.get_or_add_pPr(),profile.get('paragraph'))
                     for run in p.runs:inherit_properties(run._r.get_or_add_rPr(),profile.get('run'))
@@ -164,6 +175,8 @@ def render_document(doc, document, *, figures=None, sources=None, append_sources
                         for run in p.runs: run.bold = True
             if all(cell['type'] == 'tableHeader' for cell in children[0]['content']):
                 table.rows[0]._tr.get_or_add_trPr().append(OxmlElement('w:tblHeader'))
+            for row in table.rows:
+                row._tr.get_or_add_trPr().append(OxmlElement('w:cantSplit'))
         else: raise ValueError('不支持的导出内容：' + kind)
 
     for node in document.get('content', []): block(node)

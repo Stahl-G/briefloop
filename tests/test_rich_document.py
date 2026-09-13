@@ -199,3 +199,29 @@ if(kinds([suggestion],{expression:3,showSuggestions:false}).length)throw Error('
 '''
     result = subprocess.run(['node', '--input-type=module', '-e', script], cwd=repo, capture_output=True, text=True, check=False)
     assert result.returncode == 0, result.stderr
+
+
+def test_template_table_uses_cell_style_and_keeps_rows_together():
+    from docx import Document
+    from docx.enum.style import WD_STYLE_TYPE
+    from docx.oxml.ns import qn
+    from briefloop.templates import table_defaults
+    from briefloop.document_export import render_document
+    doc = Document()
+    body = doc.styles.add_style('Report Body', WD_STYLE_TYPE.PARAGRAPH)
+    body.paragraph_format.line_spacing = 2.0
+    cell_style = doc.styles.add_style('Compact Cell', WD_STYLE_TYPE.PARAGRAPH)
+    cell_style.paragraph_format.line_spacing = 1.0
+    sample = doc.add_table(rows=2, cols=2)
+    for row in sample.rows:
+        for cell in row.cells:
+            cell.paragraphs[0].style = cell_style
+            cell.paragraphs[0].add_run('样例')
+    styles = {**table_defaults(doc), 'paragraph': body.name}
+    rich = markdown_document('| 指标 | 期间 | 数值 |\n|---|---|---|\n| 机构甲全年归母净利润预测 | 2026全年 | 48 |')
+    render_document(doc, rich, styles=styles)
+    table = doc.tables[-1]
+    assert table.cell(1, 0).paragraphs[0].style.name == cell_style.name
+    assert table.columns[0].width > table.columns[2].width
+    assert all(row._tr.trPr.find(qn('w:cantSplit')) is not None for row in table.rows)
+    assert table.cell(1, 2).text == '48'
