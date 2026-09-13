@@ -10,6 +10,7 @@ non-interactive mode), so ``answer()`` is unsupported by design.
 """
 import json
 import functools
+import inspect
 from pathlib import Path
 import re
 import threading
@@ -317,6 +318,9 @@ class OpencodeHarness:
         # persisted native session IDs intact; only wrap its public operations.
         for name in dir(client):
             if name.startswith('_') or name == 'close':
+                continue
+            # Inspect descriptors without executing properties such as base_url.
+            if not callable(inspect.getattr_static(client, name)):
                 continue
             method = getattr(client, name)
             if not callable(method):
