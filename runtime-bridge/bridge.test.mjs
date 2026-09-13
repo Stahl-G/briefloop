@@ -85,3 +85,21 @@ test('DeepSeek Harness grouped model choices round-trip and session/resume is ne
  assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');
  assert.equal(b.frames.find(x=>x.params?.kind==='session').params.session_id,'saved-dsh-session');
 });
+
+test('Antigravity stream uses explicit model/resume and does not duplicate final text or cumulative usage',async t=>{
+ const b=bridge(t),f=fixture(t,`const a=process.argv.slice(2);if(a[0]==='models'){console.log('fixture-model\tFixture');process.exit(0);}if(!a.includes('--disable-slash-commands')||a[a.indexOf('--conversation')+1]!=='saved-agy'||a[a.indexOf('--model')+1]!=='fixture-model')process.exit(3);let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{const m=JSON.parse(s);if(m.event!=='user'||m.message.content!=='hello')process.exit(4);const send=x=>console.log(JSON.stringify(x));send({event:'init',conversation_id:'saved-agy'});send({event:'step_update',step_update:{step_type:'agent_response',text_delta:'OK',state:'DONE',usage:{input_tokens:12}}});send({event:'result',result:{status:'SUCCESS',response:'OK',conversation_id:'saved-agy',usage:{input_tokens:999}}});});`);
+ b.send(1,'list_models',{runtime_id:'antigravity',...f});assert.ok((await b.wait(x=>x.id===1)).result.models.some(m=>m.id==='fixture-model'));
+ b.send(2,'start',{...f,runtime_id:'antigravity',execution_id:'agy',session_id:'saved-agy',model:'fixture-model',prompt:'hello',permission:'runtime-native',allow_web:null});
+ assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');assert.equal(b.frames.filter(x=>x.params?.kind==='text').map(x=>x.params.text).join(''),'OK');assert.equal(b.frames.filter(x=>x.params?.kind==='usage').length,1);
+});
+test('Antigravity zero exit with error result fails, and cancellation stops an active host',async t=>{
+ const b=bridge(t),f=fixture(t,`process.stdin.resume();process.stdin.on('end',()=>{console.log(JSON.stringify({event:'result',result:{status:'ERROR',conversation_id:'bad'}}));});`);
+ b.send(1,'start',{...f,runtime_id:'antigravity',execution_id:'agy-bad',prompt:'x',permission:'runtime-native',allow_web:null});assert.equal((await b.wait(x=>x.params?.execution_id==='agy-bad'&&x.params.kind==='end')).params.status,'failed');
+ const slow=fixture(t,`console.log(JSON.stringify({event:'init',conversation_id:'slow'}));process.stdin.resume();setInterval(()=>{},1000);`);
+ b.send(2,'start',{...slow,runtime_id:'antigravity',execution_id:'agy-stop',prompt:'x',permission:'runtime-native',allow_web:null});await b.wait(x=>x.params?.session_id==='slow');b.send(3,'cancel',{execution_id:'agy-stop'});assert.equal((await b.wait(x=>x.params?.execution_id==='agy-stop'&&x.params.kind==='end')).params.status,'cancelled');
+});
+
+test('Antigravity soft-denied tool without reply fails even when host says SUCCESS',async t=>{
+ const b=bridge(t),f=fixture(t,`process.stdin.resume();process.stdin.on('end',()=>{console.log(JSON.stringify({event:'step_update',step_update:{step_type:'tool',step_index:5,state:'DONE',tool_info:{name:'view_file',error:{type:'permission_denied',message:'user denied read_file'}}}}));console.log(JSON.stringify({event:'result',result:{status:'SUCCESS',conversation_id:'denied',response:''}}));});`);
+ b.send(1,'start',{...f,runtime_id:'antigravity',execution_id:'denied',prompt:'read',permission:'runtime-native',allow_web:null});assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'failed');assert.ok(b.frames.some(x=>x.params?.kind==='tool'&&x.params.output==='user denied read_file'));
+});

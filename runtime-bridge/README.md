@@ -25,6 +25,7 @@ stdin/stdout 各一行 JSON：请求 `{id,method,params}`，应答 `{id,result}`
 | Claude | stream-json | 已接入文本/工具/原生图片/恢复；使用宿主默认权限，无自动权限批准；未提供 headless 权限回答 |
 | MiMo | run --format json | 已接入文本/工具；已接入原生会话恢复；图片直发尚未验证 |
 | Codex、OpenCode | 原有 native manager | 本 bridge 检测它们；Python facade 负责分发给已存在的执行管理器 |
+| Antigravity | stream-json | 使用 agy 正式无界面协议，支持文本/工具/指定会话续接；遵守宿主原生权限，未提供 headless 权限回答 |
 | DeepSeek Harness | ACP | 使用已安装 dsh 的 acp profile；profile 初始化由宿主处理，实际模型调用需单独验证 |
 | 其他已知 CLI | 仅检测 | 未实现执行，不显示为已接通 |
 
@@ -39,3 +40,7 @@ ACP `agent_thought_chunk`（以及 Claude `thinking` 块、Opencode `reasoning` 
 模型目录直接复用上游 ACP、Codex 和 OpenCode 解析函数及 Claude 本机路由发现。Reasonix 使用原生 doctor 模型配置。内置建议标注来源，不作为选择白名单；用户仍可手填模型。
 
 DeepSeek Harness uses `dsh --profile acp` with its existing provider credentials. ACP session continuation prefers advertised `session/load`, or uses `session/resume` when advertised instead; unsupported continuation fails before prompting. Model IDs come from the host catalog.
+
+Antigravity 协议依据 https://antigravity.google/docs/cli/headless/；只把 SUCCESS 且正常退出的结果记为完成，累计会话用量不作本轮上下文输入。
+
+Antigravity 使用本机已有登录和原生权限。无界面调用不能回答交互权限请求；需要批准的工具可能被宿主 soft-deny，即使宿主返回 SUCCESS。桥接会保留工具错误，并把仅有失败工具且无正文的回合记为失败。请通过宿主官方 permissions.allow 配置明确的文件/工具范围；BriefLoop 不自动添加全局授权，也不传递跳过权限的参数。图片输入暂不支持。

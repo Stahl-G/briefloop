@@ -1191,11 +1191,11 @@ function emit(id, kind, data = {}) {
   wire({ method: "event", params: { execution_id: id, kind, ...data } });
 }
 function protocol(id) {
-  return id in acpArgs ? "acp" : id === "claude" ? "claude-stream-json" : id === "mimo" ? "opencode-json" : id === "codex" || id === "opencode" ? "native-manager" : null;
+  return id in acpArgs ? "acp" : id === "antigravity" ? "antigravity-stream-json" : id === "claude" ? "claude-stream-json" : id === "mimo" ? "opencode-json" : id === "codex" || id === "opencode" ? "native-manager" : null;
 }
 function capabilities(id) {
   const p = protocol(id);
-  return { chat: !!p, cancel: !!p, resume: p === "acp" ? "negotiated" : p === "claude-stream-json" || p === "opencode-json", images: p === "acp" ? "negotiated" : p === "claude-stream-json", questions: p === "acp", steer: false, read_only: false, network_control: false, permission_modes: ["runtime-native"] };
+  return { chat: !!p, cancel: !!p, resume: p === "acp" ? "negotiated" : p === "claude-stream-json" || p === "opencode-json" || p === "antigravity-stream-json", images: p === "acp" ? "negotiated" : p === "claude-stream-json", questions: p === "acp", steer: false, read_only: false, network_control: false, permission_modes: ["runtime-native"] };
 }
 function terminate(child) {
   if (!child?.pid) return;
@@ -1330,6 +1330,11 @@ async function listModels(p) {
     })], source: "native_config", note: "Models declared by the host; account availability is checked by a model call." };
   }
   const fallback = [...hostDefaults(p.runtime_id), ...fallbacks_default[p.runtime_id] || []];
+  if (p.runtime_id === "antigravity") {
+    const r = await exec(bin, ["models"], { env, cwd: p.cwd || process.cwd(), timeout: 2e4, maxBuffer: 1024 * 1024 });
+    const models = r.stdout.split(/\r?\n/).map((line) => line.trim().split(/\t+/)).filter(([id, label]) => label && sanitizeCustomModel(id)).map(([id, label]) => ({ id, label }));
+    return { models: [...defaults, ...models], source: models.length ? "host" : "host_default_only" };
+  }
   if (p.runtime_id === "claude") {
     const routed = await loadMmdRouteModels(env, fallback);
     return { models: routed || fallback, source: routed ? "local_routes" : "builtin_hints", note: "\u5185\u7F6E\u9009\u9879\u4E0E\u5DF2\u914D\u7F6E\u8DEF\u7531\uFF1B\u53EF\u624B\u52A8\u8F93\u5165\u5176\u4ED6\u6A21\u578B ID\u3002" };
@@ -1425,6 +1430,73 @@ async function runAcp(p, state) {
   } finally {
     terminate(conn.child);
   }
+}
+async function runAntigravity(p, state) {
+  if (p.images?.length) throw Error("Antigravity stream input supports text only");
+  const args = ["--input-format", "stream-json", "--output-format", "stream-json", "--disable-slash-commands"];
+  if (p.model && p.model !== "default") args.push("--model", p.model);
+  if (p.session_id) args.push("--conversation", p.session_id);
+  if (p.timeout_ms) args.push("--print-timeout", Math.ceil(p.timeout_ms / 1e3 + 30) + "s");
+  const child = launch(state.bin, args, p.cwd);
+  state.child = child;
+  state.cancel = () => terminate(child);
+  let result = null, lastSession = null, textSeen = false, toolFailed = false;
+  await new Promise((resolve, reject) => {
+    const timer = p.timeout_ms ? setTimeout(() => {
+      terminate(child);
+      reject(Error("Antigravity turn timed out"));
+    }, p.timeout_ms) : null;
+    const parser = createJsonLineStream((m) => {
+      const sid = m.conversation_id || m.step_update?.conversation_id || m.result?.conversation_id;
+      if (sid && sid !== lastSession) {
+        lastSession = sid;
+        emit(p.execution_id, "session", { session_id: sid });
+      }
+      if (m.event === "step_update") {
+        const step = m.step_update || {};
+        if (step.step_type === "agent_response") {
+          if (typeof step.text_delta === "string" && step.text_delta) {
+            textSeen = true;
+            emit(p.execution_id, "text", { text: step.text_delta, delta: true });
+          }
+          if (step.state === "DONE" && step.usage) emit(p.execution_id, "usage", { usage: step.usage });
+        }
+        if (step.step_type === "tool") {
+          const tool = step.tool_info || {};
+          if (tool.error) toolFailed = true;
+          emit(p.execution_id, "tool", { id: String(step.step_index), name: tool.name || step.tool_name || "\u5DE5\u5177\u64CD\u4F5C", status: tool.error ? "failed" : step.state === "DONE" ? "completed" : "running", input: tool.parameters, output: tool.output || tool.error?.message || tool.error?.type });
+        }
+      }
+      if (m.event === "result") {
+        result = m.result || {};
+        if (!textSeen && typeof result.response === "string" && result.response.trim()) {
+          textSeen = true;
+          emit(p.execution_id, "text", { text: result.response, delta: true });
+        }
+      }
+    });
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (c) => parser.feed(c));
+    child.stderr.resume();
+    child.stdin.on("error", () => {
+    });
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      parser.flush();
+      if (state.cancelled) return resolve();
+      if (code === 0 && result?.status === "SUCCESS" && lastSession) {
+        if (toolFailed && !textSeen) return reject(Error("Antigravity \u5DE5\u5177\u6267\u884C\u5931\u8D25\u4E14\u672A\u8FD4\u56DE\u7B54\u590D\uFF1B\u8BF7\u67E5\u770B\u5DE5\u5177\u8BE6\u60C5\u3002\u82E5\u6743\u9650\u88AB\u62D2\u7EDD\uFF0C\u8BF7\u5728 Antigravity \u4E2D\u914D\u7F6E\u5BF9\u5E94\u6587\u4EF6\u6216\u5DE5\u5177\u7684\u6743\u9650\u540E\u91CD\u8BD5\u3002"));
+        return resolve();
+      }
+      const status = typeof result?.status === "string" && /^[A-Z_]+$/.test(result.status) ? result.status : "NO_RESULT";
+      reject(Error("Antigravity " + status + " (exit " + code + ")"));
+    });
+    child.stdin.end(JSON.stringify({ event: "user", message: { content: p.prompt } }) + "\n");
+  });
 }
 async function runStream(p, state) {
   const claude = p.runtime_id === "claude";
@@ -1525,6 +1597,7 @@ async function execute(p, state) {
   try {
     if (state.cancelled) return;
     if (p.runtime_id in acpArgs) await runAcp(p, state);
+    else if (p.runtime_id === "antigravity") await runAntigravity(p, state);
     else await runStream(p, state);
     if (!state.cancelled && !state.publicActivity) throw Error("Host ended without visible output or tool activity; verify host configuration");
     emit(p.execution_id, "end", { status: state.cancelled ? "cancelled" : "completed" });
