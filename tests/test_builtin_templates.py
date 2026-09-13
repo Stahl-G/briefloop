@@ -28,7 +28,7 @@ def test_builtin_ships_prepares_is_idempotent_and_exports(tmp_path):
     record = template(store, next(r['id'] for r in rows if r['name'] == '通用报告·品牌绿'))
     assert [s['section_id'] for s in record['spec']['sections']] == ['summary', 'background', 'analysis', 'conclusion', 'risks']
     research = template(store, next(r['id'] for r in rows if r['name'] == '券商研报·珊瑚红'))
-    assert [s['section_id'] for s in research['spec']['sections']] == ['views', 'events', 'forecast', 'risks', 'disclaimer']
+    assert [s['section_id'] for s in research['spec']['sections']] == ['views', 'events', 'forecast', 'risks']
     import_builtin(store)
     assert len(store.rows('SELECT id FROM templates')) == 36
 

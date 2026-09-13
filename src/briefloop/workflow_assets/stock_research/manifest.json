@@ -1,0 +1,17 @@
+{
+  "id": "stock_research",
+  "label": "证券研究",
+  "version": "1.0.0",
+  "description": "依据披露、市场数据与明确假设，完成事件点评、公司研究或行业跟踪。",
+  "default_variant": "event_commentary",
+  "variants": [
+    {"id": "event_commentary", "label": "事件点评", "method_ids": ["event_commentary"]},
+    {"id": "company_research", "label": "公司研究", "method_ids": ["company_research"]},
+    {"id": "industry_tracking", "label": "行业跟踪", "method_ids": ["industry_tracking"]}
+  ],
+  "method_roles": {
+    "event_commentary": ["planning", "writing", "evaluation"],
+    "company_research": ["planning", "writing", "evaluation"],
+    "industry_tracking": ["planning", "writing", "evaluation"]
+  }
+}

@@ -38,7 +38,7 @@ def test_workflow_selection_is_shared_with_chat_and_preserves_legacy(tmp_path):
     from briefloop.document_workflows import resolve_workflow
     store = Store(tmp_path)
     catalog = workspace_action(store, {'action': 'workflows'})['workflows']
-    assert {x['id'] for x in catalog} == {'general_report', 'business_report', 'meeting_minutes'}
+    assert {x['id'] for x in catalog} == {'general_report', 'business_report', 'meeting_minutes', 'stock_research'}
     assert store.snapshot()['workflows'] == catalog
     assert resolve_workflow({'workflow_id': 'business_report'})['variant'] == next(
         item['default_variant'] for item in catalog if item['id'] == 'business_report') == 'decision_memo'
@@ -77,3 +77,28 @@ def test_meeting_template_selects_method_but_requires_actual_material(tmp_path):
     assert [s['title'] for s in saved['sections']] == [s['title'] for s in selected['spec']['sections']]
     explicit = json.loads(store.create_run({**req, 'workflow_id': 'general_report'}, [source['id']])['requirements'])
     assert explicit['workflow_id'] == 'general_report'
+
+
+def test_stock_template_routes_to_frozen_research_without_forced_disclosures(tmp_path):
+    from briefloop.templates import import_builtin, template, export_template
+    from briefloop.document_workflows import workflow_context
+    store = Store(tmp_path)
+    import_builtin(store)
+    for row in store.rows("SELECT id FROM templates WHERE name LIKE '券商研报%'"):
+        selected = template(store, row['id'])
+        source = store.add_source('合成业绩披露', '收入 120 百万元，上年同期 100 百万元；全年指引维持。')
+        req = {'title': '季度事件点评', 'objective': '分析收入变化；无评级要求', 'template_id': selected['id']}
+        run = store.create_run(req, [source['id']])
+        saved = json.loads(run['requirements'])
+        frozen = saved['workflow_snapshot']
+        assert frozen['id'] == 'stock_research' and frozen['variant'] == 'event_commentary'
+        assert [s['title'] for s in saved['sections']] == ['核心观点', '事件回顾', '盈利预测与估值', '风险提示']
+        assert '事件点评聚焦' in workflow_context(frozen, 'reviewer')
+        brief = store.publish(run['id'], {'title': req['title'], 'markdown': '收入增长 20%，全年指引维持。'})
+        doc = export_template(store, brief, {'type': 'doc', 'content': [{'type': 'paragraph', 'content': [{'type': 'text', 'text': '收入增长 20%。'}]}]}, {})
+        from io import BytesIO
+        from docx import Document
+        text = ''.join(Document(BytesIO(doc)).element.itertext())
+        assert '免责声明' not in text and '投资评级' not in text and '首次覆盖' not in text
+    explicit = json.loads(store.create_run({**req, 'workflow_id': 'stock_research', 'workflow_variant': 'company_research'}, [source['id']])['requirements'])
+    assert explicit['workflow_snapshot']['variant'] == 'company_research'
