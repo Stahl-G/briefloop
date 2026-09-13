@@ -7,6 +7,7 @@ const {randomUUID} = require('node:crypto');
 const {WorkspaceService} = require('./service.cjs');
 let window, service, switching = false, quitting = false, closePending = false, expectedExit = false;
 const prepared = new Map();
+let menuSave = null;
 const welcomeURL = pathToFileURL(path.join(__dirname, 'welcome.html')).href;
 const runtime = app.isPackaged ? path.join(process.resourcesPath, 'runtime') : path.join(__dirname, 'runtime', 'macos-arm64');
 if (process.env.BRIEFLOOP_DESKTOP_DATA) app.setPath('userData', path.resolve(process.env.BRIEFLOOP_DESKTOP_DATA));
@@ -27,6 +28,10 @@ function prepareClose() {
     prepared.set(requestId, result => { clearTimeout(timer); prepared.delete(requestId); result?.status === 'saved' ? resolve(result) : reject(Error(result?.error || '保存失败，窗口已保留。')); });
     window.webContents.send('workspace:prepare-close', requestId);
   });
+}
+function saveCurrent() {
+  if (closePending || switching || menuSave) return;
+  menuSave = prepareClose().catch(reportError).finally(() => { menuSave = null; if (!closePending && !switching) resumeEditing(); });
 }
 async function stopCurrent() {
   if (!service?.child) return true;
@@ -53,6 +58,7 @@ async function openWorkspace(request) {
   if (service?.info && target === service.directory) return {path: target, url: service.info.url};
   switching = true;
   try {
+    if (menuSave) await menuSave;
     if (service?.child && !(await stopCurrent())) return {cancelled: true};
     service = new WorkspaceService(runtime, () => {
       if (!expectedExit && !switching && !quitting && window && !window.isDestroyed()) {
@@ -71,6 +77,7 @@ async function openWorkspace(request) {
   } finally { switching = false; resumeEditing(); }
 }
 async function chooseWorkspace(create) {
+  if (closePending || switching) throw Error('正在保存或切换工作区，请稍候。');
   const result = create ? await dialog.showSaveDialog(window, {title: '新建工作区文件夹', buttonLabel: '新建工作区', defaultPath: path.join(app.getPath('documents'), 'BriefLoop 工作区'), properties: ['createDirectory', 'showOverwriteConfirmation']})
     : await dialog.showOpenDialog(window, {title: '打开 BriefLoop 工作区', buttonLabel: '打开工作区', properties: ['openDirectory']});
   if (result.canceled) return {cancelled: true};
@@ -81,6 +88,7 @@ async function requestQuit() {
   if (quitting || closePending || switching) return;
   closePending = true;
   try {
+    if (menuSave) await menuSave;
     if (!(await stopCurrent())) return;
     quitting = true;
     window.destroy();
@@ -118,7 +126,7 @@ else {
       {label: 'BriefLoop', submenu: [{role: 'about'}, {type: 'separator'}, {label: '退出 BriefLoop', accelerator: 'CmdOrCtrl+Q', click: requestQuit}]},
       {label: '文件', submenu: [{label: '新建工作区…', accelerator: 'CmdOrCtrl+N', click: () => chooseWorkspace(true).catch(reportError)},
         {label: '打开工作区…', accelerator: 'CmdOrCtrl+O', click: () => chooseWorkspace(false).catch(reportError)}, {type: 'separator'},
-        {label: '保存当前修改', accelerator: 'CmdOrCtrl+S', click: () => prepareClose().catch(reportError).finally(resumeEditing)}, {role: 'close'}]},
+        {label: '保存当前修改', accelerator: 'CmdOrCtrl+S', click: saveCurrent}, {role: 'close'}]},
       {label: '编辑', submenu: [{role: 'undo'}, {role: 'redo'}, {type: 'separator'}, {role: 'cut'}, {role: 'copy'}, {role: 'paste'}, {role: 'selectAll'}]},
       {label: '视图', submenu: [{role: 'resetZoom'}, {role: 'zoomIn'}, {role: 'zoomOut'}, {role: 'togglefullscreen'}]},
       {label: '窗口', submenu: [{role: 'minimize'}, {role: 'front'}]},
