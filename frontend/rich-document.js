@@ -25,6 +25,16 @@ export const Layout=Extension.create({name:'reportLayout',
   }}
  ]},
 });
+export function trailingParagraphPlugin(){return new Plugin({appendTransaction(transactions,oldState,state){
+ // Focus, selection and reader decorations must not turn a saved report into
+ // a user revision. Add an editing landing paragraph only after content edits.
+ const paragraph=state.schema.nodes.paragraph;
+ if(!transactions.some(tr=>tr.docChanged)||!paragraph||state.doc.lastChild?.type===paragraph)return null;
+ return state.tr.insert(state.doc.content.size,paragraph.create()).setMeta('addToHistory',false);
+}})}
+export const ReportTrailingParagraph=Extension.create({name:'reportTrailingParagraph',
+ addProseMirrorPlugins(){return [trailingParagraphPlugin()]},
+});
 export const ReportImage=Image.extend({
  addAttributes(){return {...this.parent?.(),width:{default:null,parseHTML:el=>Number(el.getAttribute('width'))||null},height:{default:null,parseHTML:el=>Number(el.getAttribute('height'))||null},caption:{default:null,parseHTML:el=>el.getAttribute('data-caption'),renderHTML:a=>a.caption?{'data-caption':a.caption}:{}}}},
  renderHTML({node,HTMLAttributes}){return ['figure',{class:'report-image'},['img',mergeAttributes(this.options.HTMLAttributes,HTMLAttributes)],...(node.attrs.caption?[['figcaption',{},node.attrs.caption]]:[])]},

@@ -13,7 +13,7 @@ const c=vm.createContext({console,Promise,$:el,dirty:false,saving:false,current:
  parse:s=>JSON.parse(s||'{}'),updateDownloads:()=>{},notice:()=>{},esc:s=>String(s),
  state:{briefs:[report]},report,
  Editor:class{constructor(options){editorContent=options.content}destroy(){}},
- StarterKit:{configure:()=>({})},TableKit:{},ReportImage:{configure:()=>({})},TextStyle:{},Layout:{},Citation:{},Markdown:{},MustFixHighlight:{},
+ StarterKit:{configure:()=>({})},TableKit:{},ReportImage:{configure:()=>({})},TextStyle:{},Layout:{},Citation:{},ReportTrailingParagraph:{},Markdown:{},MustFixHighlight:{},
  toEditor:x=>x,editorDocument:x=>x,changed:()=>{},updateFormattingTools:()=>{},
  assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},renderWordExports:()=>{},renderReportStatus:()=>{},renderAssistantSummary:()=>{},editor:null,
  document:{querySelectorAll:()=>[]}});
