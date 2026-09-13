@@ -959,6 +959,7 @@ async function switchWorkspace(path,create){
  try{
   rememberDraft();clearTimeout(saveTimer);const deadline=Date.now()+15000;while(saving&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,60));
   if(saving)throw Error('当前简报仍在保存，请稍后重试。');if(dirty){workspaceStatus('正在保存当前简报…');await save();if(dirty)throw Error('当前简报尚未保存，请先完成保存。')}
+  if(window.briefloopDesktop?.openWorkspace){const requested=path.trim();const result=await window.briefloopDesktop.openWorkspace({path:requested,create});if(result?.cancelled)workspaceStatus('已保留当前工作区。');return !result?.cancelled}
   const result=await api('workspaces/open',{path:path.trim(),create});if(!result.url)throw Error('工作区服务尚未准备好，请重试。');
  workspaceStatus(result.path?'已打开 '+result.path+'，正在切换…':'已打开，正在切换…');location.assign(result.url);return true;
  }catch(e){workspaceStatus(e.message,true);throw e} finally{workspaceSwitching=false;controls.forEach(c=>c.disabled=originalDisabled.get(c))}
@@ -1979,3 +1980,16 @@ if($('report-chat-close'))$('report-chat-close').onclick=()=>closeReportChat();
 if($('report-chat-backdrop'))$('report-chat-backdrop').onclick=()=>closeReportChat();
 
 const reportMcpSelection=mcpSelection($('report-mcp-selection'),api);
+
+// Desktop hosts request an acknowledged flush; ordinary web pages keep their unload behavior.
+if(window.briefloopDesktop?.onPrepareClose){
+ window.briefloopDesktop.onResume(()=>{document.body.inert=false});
+ window.briefloopDesktop.onPrepareClose(async()=>{
+  try{
+   if(chat.busy||chat.uploading)return {status:'failed',error:'消息正在发送或附件正在上传，请完成后再关闭。'};
+   document.body.inert=true;rememberDraft();clearTimeout(saveTimer);
+   if(current)await savedVersion();
+   return {status:'saved',version_id:current?.id||null};
+  }catch(error){document.body.inert=false;return {status:'failed',error:error.message||'修改尚未保存，请保留窗口。'}}
+ });
+}

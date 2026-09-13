@@ -1,0 +1,51 @@
+{
+  "name": "briefloop-desktop",
+  "version": "0.19.0",
+  "private": true,
+  "description": "BriefLoop local desktop workspace",
+  "author": "Stahl-G",
+  "license": "MIT",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.cjs",
+    "pack": "electron-builder --mac dir --arm64 --publish never",
+    "dist": "electron-builder --mac dmg zip --arm64 --publish never",
+    "postinstall": "node node_modules/electron/install.js"
+  },
+  "devDependencies": {
+    "electron": "44.3.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "ai.briefloop.desktop",
+    "productName": "BriefLoop",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "*.cjs",
+      "welcome.html",
+      "welcome.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "runtime/macos-arm64",
+        "to": "runtime"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "identity": null,
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "dmg": {
+      "sign": false
+    },
+    "publish": null
+  }
+}
