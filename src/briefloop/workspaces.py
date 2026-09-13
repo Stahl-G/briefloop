@@ -268,7 +268,7 @@ def _request_shutdown(url, pid, workspace_id):
     parsed = urlsplit(url)
     connection = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=5)
     try:
-        body = json.dumps({'pid': pid, 'workspace_id': workspace_id})
+        body = json.dumps({'pid': pid, 'workspace_id': workspace_id, 'busy_action': 'cancel'})
         connection.request('POST', '/api/service-stop', body=body,
                            headers={'Content-Type': 'application/json',
                                     'X-BriefLoop-Token': token, 'Origin': url})
