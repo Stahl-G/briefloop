@@ -123,7 +123,7 @@ class ProgressTracker:
                         if value:row['status']=value
                         if isinstance(status, dict):
                             if status.get('role'):row['role']=role_label(status['role'])
-                            for field in ('task', 'activity', 'last_activity'):
+                            for field in ('task', 'activity', 'activity_id', 'last_activity'):
                                 if status.get(field):row[field]=str(status[field])[:240]
                             if status.get('activity'):
                                 self.message=row['role']+'：'+str(status['activity'])[:240]

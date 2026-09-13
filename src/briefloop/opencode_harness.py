@@ -912,6 +912,9 @@ class OpencodeHarness:
             parts = assistant.get('parts', []) if assistant else []
             tools = [p for p in parts if p.get('type') == 'tool']
             tool = tools[-1] if tools else None
+            # A new call of the same tool is real progress, even when its label
+            # and status match the previous call. Do not expose tool payloads.
+            row['activity_id'] = str((tool or {}).get('id') or info.get('id') or '')[:240]
             activity = {'completed': '子任务已完成', 'failed': '子任务失败',
                         'unknown': '尚未读取到子任务执行状态', 'running': '子任务正在执行'}[status]
             if status == 'running' and tool:
@@ -924,6 +927,7 @@ class OpencodeHarness:
         row['status'] = status
         state = {'status': status, 'role': row['title'], 'task': row['title'],
                  'activity': activity, 'last_activity': now()}
+        if row.get('activity_id'):state['activity_id']=row['activity_id']
         item = {'id': 'child-' + cid, 'type': 'collabAgentToolCall', 'status': status,
                 'tool': activity, 'senderThreadId': row['parent'], 'receiverThreadIds': [cid],
                 'agentsStates': {cid: state}}

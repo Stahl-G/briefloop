@@ -39,7 +39,7 @@ class RecordedReviewHarness(OpencodeHarness):
         if sid in self._busy or not any(m['status']=='queued' for m in self.chat.snapshot(sid)['messages']):return
         self._busy.add(sid);self._epoch[sid]=self._epoch.get(sid,0)+1
         self._dispatch(sid,self._epoch[sid])
-    def _follow(self,sid,epoch,mid,admitted_at):
+    def _follow(self,sid,epoch,mid,admitted_at,*,client=None):
         folder=Path(self.chat.session(sid)['cwd'])
         index=json.loads((folder/'packet/index.json').read_text());target=json.loads((folder/'packet/target.json').read_text())
         # A transport acknowledgement must not invent a successful visual audit.

@@ -20,6 +20,15 @@ def test_baseline_is_bound_to_completed_attempt(tmp_path):
     from briefloop.review_learning import source_snapshot
     s.update_job(job['id'],'complete',result={'version_id':brief['id'],'source_snapshot':source_snapshot(s,run['id'])})
     payload=json.loads(job['payload']);payload['skill_id']=None
+    # Reuse requires the actual frozen method and comparison conditions, not
+    # merely a completed status and matching model.
+    assert _baseline_for_attempt(s,run,payload) is None
+    from briefloop.learning import _conditions
+    conditions=_conditions(s,run,payload)
+    folder=s.root/'jobs'/job['id'];folder.mkdir(parents=True,exist_ok=True)
+    (folder/'input.json').write_text(json.dumps({'requirements':conditions['requirements']}))
+    s.update_job(job['id'],'complete',result={'version_id':brief['id'],
+        'source_snapshot':source_snapshot(s,run['id']),'learning_conditions':conditions})
     assert _baseline_for_attempt(s,run,payload)['id']==brief['id']
     payload['runtime']={'model':'different'}
     assert _baseline_for_attempt(s,run,payload) is None
