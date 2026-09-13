@@ -35,10 +35,15 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
   let pending = null, asset = null, ready = null, native = null, available = false;
   const status = () => structuredClone(data);
   const publish = patch => {data = {...data, ...patch}; changed(status()); return status();};
-  const fail = error => publish({state: 'error', error: {
-    code: error instanceof UpdateError ? error.code : 'update_failed',
-    message: error instanceof UpdateError ? error.message : '更新请求失败，请检查网络后重试。'},
-    retryable: error instanceof UpdateError ? error.retryable : true});
+  const fail = error => {
+    if (installMode === 'native' && platform === 'win32' && error?.code === 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND') {
+      error = new UpdateError('windows_update_unavailable', '官方发布尚未提供 Windows 更新文件，请稍后重试。');
+    }
+    return publish({state: 'error', error: {
+      code: error instanceof UpdateError ? error.code : 'update_failed',
+      message: error instanceof UpdateError ? error.message : '更新请求失败，请检查网络后重试。'},
+      retryable: error instanceof UpdateError ? error.retryable : true});
+  };
   const once = operation => {
     if (pending) return pending;
     pending = Promise.resolve().then(operation).catch(fail).finally(() => {pending = null;});

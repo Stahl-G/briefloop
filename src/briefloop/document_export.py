@@ -4,7 +4,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.opc.constants import RELATIONSHIP_TYPE
-from .document_model import normalize_document, table_layout
+from .document_model import normalize_document, table_layout, citation_label_text
 
 ALIGN = {'left': WD_ALIGN_PARAGRAPH.LEFT, 'center': WD_ALIGN_PARAGRAPH.CENTER,
          'right': WD_ALIGN_PARAGRAPH.RIGHT, 'justify': WD_ALIGN_PARAGRAPH.JUSTIFY}
@@ -67,8 +67,14 @@ def render_document(doc, document, *, figures=None, sources=None, append_sources
             if kind != 'text': raise ValueError('段落中包含不支持的内容')
             marks = {m['type']: m.get('attrs', {}) for m in node.get('marks', [])}
             href = marks.get('link', {}).get('href')
+            reference = None
             if href and href.startswith('#source-'):
-                paragraph.add_run(cite(href[8:])); continue
+                reference = cite(href[8:])
+                if not citation_label_text(node['text']):
+                    paragraph.add_run(reference); continue
+                # Text typed into a citation link is still authored content.
+                # Keep it in full, including any numeric prefix we cannot infer.
+                href = None
             run = paragraph.add_run(node['text'])
             if 'bold' in marks: run.bold = True
             if 'italic' in marks: run.italic = True
@@ -82,6 +88,7 @@ def render_document(doc, document, *, figures=None, sources=None, append_sources
                 link.set(qn('r:id'), paragraph.part.relate_to(href, RELATIONSHIP_TYPE.HYPERLINK, is_external=True))
                 link.append(run._r); paragraph._p.append(link)
                 run.font.underline = True
+            if reference: paragraph.add_run(reference)
 
     def paragraph(container, style=None):
         # Word creates an initial empty paragraph inside a cell.

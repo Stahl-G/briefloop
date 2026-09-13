@@ -115,6 +115,32 @@ def test_legacy_import_and_complete_publication_identity(tmp_path):
         normalize_document({'type': 'doc', 'content': [{'type': 'image', 'attrs': {'src': 'file:///private/data.png'}}]})
 
 
+def test_saved_text_appended_to_citation_label_survives_markdown_and_word(tmp_path):
+    from lxml import etree
+    store = Store(tmp_path)
+    source = store.add_source('Synthetic source', 'Synthetic evidence for editing.')
+    run = store.create_run({'title': 'Citation edit', 'objective': 'Preserve authored text'}, [source['id']])
+    marks = [{'type': 'link', 'attrs': {'href': '#source-' + source['id']}}]
+    document = {'type': 'doc', 'content': [{'type': 'paragraph', 'content': [
+        {'type': 'text', 'text': '1', 'marks': marks}]}]}
+    original = store.publish(run['id'], {'title': 'Citation edit', 'editor_document': document})
+    assert original['markdown'] == '[@' + source['id'] + ']'
+    marker = '最终安装版校验：BriefLoop 0.20，中文与 Windows 字体 12345。'
+    edited = copy.deepcopy(document)
+    edited['content'][0]['content'][0]['text'] = '1 ' + marker
+    saved = store.revise(original['id'], editor_document=edited)
+    restored = Store(tmp_path).one('briefs', saved['id'])
+    assert restored['markdown'] == '1 ' + marker + '[@' + source['id'] + ']'
+    assert json.loads(restored['editor_document'])['content'][0]['content'][0]['text'] == '1 ' + marker
+    for brief, expected in [(original, '[1]'), (restored, '1 ' + marker + '[1]')]:
+        payload = docx_bytes(document=json.loads(brief['editor_document']), source_records={source['id']: source})
+        with ZipFile(BytesIO(payload)) as archive:
+            xml = etree.fromstring(archive.read('word/document.xml'))
+            ns = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+            paragraphs = [''.join(p.itertext()) for p in xml.findall('.//w:p', ns)]
+        assert paragraphs[0] == expected
+
+
 def test_real_editor_schema_accepts_color_spans_and_citations():
     repo = Path(__file__).parents[1]
     script = '''

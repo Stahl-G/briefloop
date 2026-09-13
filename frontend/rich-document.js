@@ -30,6 +30,15 @@ export const ReportImage=Image.extend({
  renderHTML({node,HTMLAttributes}){return ['figure',{class:'report-image'},['img',mergeAttributes(this.options.HTMLAttributes,HTMLAttributes)],...(node.attrs.caption?[['figcaption',{},node.attrs.caption]]:[])]},
  renderMarkdown(node){const a=node.attrs;return '!['+(a.alt||'').replaceAll(']','\\]')+']('+a.src+')'+(a.caption?'\n\n'+a.caption:'')},
 });
+export function citationBoundaryPlugin(){return new Plugin({appendTransaction(transactions,oldState,state){
+ if(!state.selection.empty)return null;
+ const {$from}=state.selection,marks=state.storedMarks||$from.marks();
+ const citation=marks.find(mark=>mark.type.name==='link'&&/^#source-src_[A-Za-z0-9_-]+$/.test(mark.attrs.href||''));
+ if(!citation||$from.nodeAfter?.marks.some(mark=>mark.eq(citation)))return null;
+ // A cursor at the end of a legacy citation link must type ordinary prose;
+ // generic links and edits inside the citation retain their normal marks.
+ return state.tr.setStoredMarks(marks.filter(mark=>!mark.eq(citation))).setMeta('addToHistory',false);
+}})}
 export const Citation=Node.create({name:'citation',group:'inline',inline:true,atom:true,
  addAttributes(){return {sourceId:{default:null},label:{default:null}}},
  parseHTML(){return [{tag:'a[data-citation]',getAttrs:el=>({sourceId:el.getAttribute('data-citation')})}]},
@@ -40,7 +49,7 @@ export const Citation=Node.create({name:'citation',group:'inline',inline:true,at
   const ids=[],tr=state.tr;let changed=false;
   state.doc.descendants((node,pos)=>{if(node.type.name!=='citation')return;const sid=node.attrs.sourceId;if(!ids.includes(sid))ids.push(sid);const label=ids.indexOf(sid)+1;if(node.attrs.label!==label){tr.setNodeMarkup(pos,undefined,{...node.attrs,label});changed=true}});
   return changed?tr.setMeta('citationNumbering',true).setMeta('addToHistory',false):null;
- }})]},
+ }}),citationBoundaryPlugin()]},
 });
 
 function mapImages(document,convert){
