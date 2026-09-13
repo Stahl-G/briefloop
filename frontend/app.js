@@ -251,7 +251,7 @@ function render(first){
  const visible=[];
  for(const runId of [...new Set(state.briefs.map(b=>b.run_id))]){
   const versions=state.briefs.filter(b=>b.run_id===runId),latest=versions[0],original=[...versions].reverse().find(b=>['agent','example'].includes(b.author));
-  if(latest)visible.push({brief:latest,label:latest.author==='example'?'合成示例':latest.author==='user'?'当前编辑稿':latest.parent_id?'图表修订稿':'生成原稿'});
+  if(latest)visible.push({brief:latest,label:latest.author==='example'?'合成示例':latest.author==='user'?'当前编辑稿':latest.parent_id?'修订稿':'生成原稿'});
   if(original&&original.id!==latest?.id)visible.push({brief:original,label:original.author==='example'?'合成示例':'生成原稿'});
  }
  if(current&&!visible.some(v=>v.brief.id===current.id))visible.push({brief:current,label:'正在查看历史快照'});
