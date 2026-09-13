@@ -178,7 +178,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
             self.send_header('Referrer-Policy','same-origin')
             self.end_headers();self.wfile.write(payload)
         def error(self,exc):
-            self.send(409 if isinstance(exc,Conflict) else 400,{'error':str(exc)})
+            # Structured rejections carry a stable code (e.g. fact-check needs the
+            # web grant) so clients beyond our own frontend can branch on it.
+            code=getattr(exc,'code',None)
+            self.send(409 if isinstance(exc,Conflict) else 400,{'error':str(exc),**({'code':code} if isinstance(code,str) and code else {})})
         def do_GET(self):
             try:
                 u=urlsplit(self.path);q=parse_qs(u.query)

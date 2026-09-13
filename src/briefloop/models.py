@@ -67,6 +67,10 @@ class Requirements(Model):
     # a later plan freeze read the same choice. research_plan.PRESETS is the value.
     research_tier: Literal["quick", "standard", "deep"] = "standard"
     research_budget: ResearchBudget = Field(default_factory=ResearchBudget)
+    # Independent fact-check switch chosen at task creation; None follows the
+    # workspace default, which create_run resolves to a concrete bool on the run
+    # so pause/resume and later phases read one stored choice.
+    fact_check: bool | None = None
     target_words: int | None = Field(default=None, ge=1)
     max_words: int | None = Field(default=None, ge=1)
 
@@ -186,6 +190,8 @@ class Settings(RoleModel):
     auto_revision: bool = True
     default_template_id: str | None = None
     company_context_enabled: bool | None = None
+    # Workspace-wide default for the per-task fact_check switch; tasks may override.
+    fact_checker: bool = False
 
 
     @model_validator(mode='after')
