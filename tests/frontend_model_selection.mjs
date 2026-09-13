@@ -15,6 +15,11 @@ c.chat.id='existing';c.chat.session={runtime:{backend:'claude',model:'default'}}
 c.chat.drafts.set('existing',{text:'next turn',backend:'opencode',model:'deepseek/deepseek-flash'});
 vm.runInContext('restoreDraft()',c);assert.equal(c.chat.nextBackend,'opencode');assert.equal(el('chat-model').value,'deepseek/deepseek-flash');
 console.log('PASS: explicit chat choice survives pending workspace selection; model does not cross runtime boundaries');
+// Existing off is explicit; only genuinely new conversations inherit the default.
+c.chat.messages=[{role:'user',allow_web:false}];c.chat.drafts.clear();c.state.settings.chat_allow_web=true;vm.runInContext('restoreDraft()',c);assert.equal(el('chat-allow-web').checked,false);
+c.chat.id=null;c.chat.session=null;vm.runInContext('restoreDraft()',c);assert.equal(el('chat-allow-web').checked,true);
+c.state.settings.chat_allow_web=false;vm.runInContext('restoreDraft()',c);assert.equal(el('chat-allow-web').checked,false);
+c.chat.drafts.set('new',{backend:'claude',allow_web:true,host_options:{mode:'plan'}});vm.runInContext('restoreDraft()',c);assert.equal(el('chat-allow-web').checked,true);assert.equal(c.chat.hostOptions.mode,'plan');
 
 // Failed first send binds the unsent draft to the newly created session.
 c.chat={id:null,session:null,busy:false,uploading:0,attachments:new Set(),drafts:new Map(),request:null};

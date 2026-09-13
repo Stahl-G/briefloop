@@ -5,6 +5,9 @@ import {createJsonLineStream} from '../third_party/open-design/core/json-line-st
 export function piConnection(bin:string,p:any,launch:any,terminate:any,onEvent:any=()=>{}){
  const args=['--mode','rpc','--no-approve'];
  if(p.metadata)args.push('--no-session');
+ const mode=p.host_options?.mode||'native';
+ if(!['native','read','none'].includes(mode))throw Error('Invalid Pi tool mode');
+ if(mode!=='native')args.push('--no-extensions',...(mode==='none'?['--no-tools']:['--tools','read,grep,find,ls']));
  if(p.session_id)args.push('--session',p.session_id);
  const child=launch(bin,args,p.cwd),pending=new Map<string,any>();let seq=0;
  const send=(value:any)=>child.stdin.write(JSON.stringify(value)+'\n');
@@ -22,7 +25,7 @@ export async function piModels(bin:string,p:any,launch:any,terminate:any){
 
 export async function runPi(p:any,state:any,launch:any,terminate:any,emit:any){
  if(p.images?.length)throw Error('Pi image input is not enabled in this adapter');
- let finish:any,fail:any,lastMessage:any=null,textSeen=false,started=false;
+ let finish:any,fail:any,lastMessage:any=null,textSeen=false,started=false,contextWindow:any;
  const settled=new Promise<void>((resolve,reject)=>{finish=resolve;fail=reject;});settled.catch(()=>{});
  const c=piConnection(state.bin,p,launch,terminate,(m:any)=>{
   if(!started)return;
@@ -31,9 +34,9 @@ export async function runPi(p:any,state:any,launch:any,terminate:any,emit:any){
   if(m.type==='message_end'&&m.message?.role==='assistant'){
    lastMessage=m.message;
    if(!textSeen)for(const b of lastMessage.content||[])if(b.type==='text')emit(p.execution_id,'text',{text:b.text,delta:true});
-   if(lastMessage.usage)emit(p.execution_id,'usage',{usage:lastMessage.usage});
+   if(lastMessage.usage)emit(p.execution_id,'usage',{usage:{...lastMessage.usage,model_context_window:contextWindow}});
   }
-  if(m.type.startsWith('tool_execution_'))emit(p.execution_id,'tool',{id:m.toolCallId,name:m.toolName,status:m.type==='tool_execution_end'?(m.isError?'failed':'completed'):'running',input:m.args,output:m.result||m.partialResult});
+  if(typeof m.type==='string'&&m.type.startsWith('tool_execution_'))emit(p.execution_id,'tool',{id:m.toolCallId,name:m.toolName,status:m.type==='tool_execution_end'?(m.isError?'failed':'completed'):'running',input:m.args,output:m.result||m.partialResult});
   if(m.type==='extension_ui_request'){
    if(!['select','confirm','input','editor'].includes(m.method))return;
    const options=m.method==='confirm'?[{optionId:'yes',kind:'allow_once',name:'允许本次'},{optionId:'no',kind:'reject_once',name:'拒绝'}]:m.method==='select'?(m.options||[]).map((name:string,i:number)=>({optionId:String(i),name,kind:'choice'})):[];
@@ -50,7 +53,9 @@ export async function runPi(p:any,state:any,launch:any,terminate:any,emit:any){
   const info=await c.call('get_state');
   if(!info.sessionFile)throw Error('Pi did not provide a persistent session');
   if(p.session_id&&path.resolve(info.sessionFile)!==path.resolve(p.session_id))throw Error('Pi resumed a different session');
-  if(p.model&&p.model!=='default'){const split=p.model.indexOf('/');if(split<1)throw Error('Pi model must be provider/model');await c.call('set_model',{provider:p.model.slice(0,split),modelId:p.model.slice(split+1)});}
+  let selectedModel=info.model;
+  if(p.model&&p.model!=='default'){const split=p.model.indexOf('/');if(split<1)throw Error('Pi model must be provider/model');selectedModel=await c.call('set_model',{provider:p.model.slice(0,split),modelId:p.model.slice(split+1)});}
+  contextWindow=selectedModel?.contextWindow;
   emit(p.execution_id,'session',{session_id:info.sessionFile});started=true;
   if(p.timeout_ms)timer=setTimeout(()=>{c.close();fail(Error('Pi turn timed out'));},p.timeout_ms);
   await c.call('prompt',{message:p.prompt});await settled;

@@ -34,9 +34,15 @@ def normalize_bridge_usage(raw, backend):
     # cache hit count in the OpenAI/DeepSeek fields. Never add it to input again.
     cache_tokens=first(value for value in cached if count(value) is not None and value>0)
     if cache_tokens is None:cache_tokens=first(cached)
+    input_tokens=named('input_tokens','input','inputTokens','prompt_tokens')
+    # Pi subtracts cache reads/writes from `input` in its provider adapters.
+    # Reconstruct the full prompt; keep all other hosts' field semantics intact.
+    if backend=='pi' and count(raw.get('input')) is not None:
+        input_tokens=raw['input']+(count(raw.get('cacheRead')) or 0)+(count(raw.get('cacheWrite')) or 0)
+        cache_tokens=count(raw.get('cacheRead'))
     context=raw if raw.get('sessionUpdate')=='usage_update' else {}
-    size=count(context.get('size'))
-    return {'backend':backend,'last':{'inputTokens':named('input_tokens','input','inputTokens','prompt_tokens'),
+    size=count(context.get('size')) or (count(raw.get('model_context_window')) if backend=='pi' else None)
+    return {'backend':backend,'last':{'inputTokens':input_tokens,
                                      'outputTokens':named('output_tokens','output','outputTokens','completion_tokens'),
                                      'cachedInputTokens':cache_tokens},
             'contextUsedTokens':count(context.get('used')),
@@ -81,6 +87,8 @@ class BridgeHarness(OpencodeHarness):
         if value.get('review_root') or value['permission']!='runtime-native':
             raise ValueError('此 CLI 尚未验证受限文件或联网隔离；请选择支持该权限的执行引擎')
         if not isinstance(value['model'],str) or not value['model'].strip():raise ValueError('请输入模型 ID')
+        from .runtime_permissions import validate_options
+        value['host_options']=validate_options(self.backend,value.get('host_options'))
         return value
 
     def list_models(self,refresh=False):
@@ -98,6 +106,8 @@ class BridgeHarness(OpencodeHarness):
         from .chat_tools import chat_instructions
         internal=bool(self.store.rows("SELECT seq FROM chat_events WHERE session_id=? AND kind='session/internal' LIMIT 1",(sid,)))
         text=chat_instructions(self.store,config,internal=internal,allow_web=allow_web,backend=self.backend)
+        if self.backend=='pi' and config.get('host_options',{}).get('mode') in ('read','none'):
+            text+='\n本轮 Pi 工具限制：'+('所有工具均已关闭，不得声称能执行命令、读取或修改文件；只能基于对话文字回答。' if config['host_options']['mode']=='none' else '仅开放 read、grep、find、ls。不能执行命令、写入或编辑文件。')
         digest=hashlib.sha256(text.encode()).hexdigest()
         if session.get('thread_id'):
             rows=self.store.rows("SELECT data FROM chat_events WHERE session_id=? AND kind='thread/instructions' ORDER BY seq DESC LIMIT 1",(sid,))
@@ -113,6 +123,9 @@ class BridgeHarness(OpencodeHarness):
         coordinator=getattr(self,'coordinator',None)
         if not coordinator and session['runtime'].get('backend','codex')!=self.backend:raise ValueError('切换执行引擎请新建会话')
         config=coordinator.config(self,session,runtime) if coordinator else self._config({**session['runtime'],**(runtime or {})})
+        if self.backend=='antigravity':
+            from .runtime_permissions import permission_digest
+            config['native_permissions_digest']=permission_digest()
         for source in source_ids or []:self.store.one('sources',source)
         mid=message_id or uid('msg')
         with self._lock:
@@ -145,6 +158,11 @@ class BridgeHarness(OpencodeHarness):
             mid=message['id'];execution=mid
             coordinator=getattr(self,'coordinator',None)
             config=self._config(message['runtime']);text,files=self._input(coordinator.input(sid,message) if coordinator else message,session['cwd'])
+            if self.backend=='antigravity' and config.get('native_permissions_digest'):
+                from .runtime_permissions import permission_digest
+                if config['native_permissions_digest']!=permission_digest():
+                    self.chat.patch_message(mid,status='failed')
+                    raise ValueError('Antigravity 原生权限已变化，本条已排队消息未执行；请确认新权限后重新发送')
             if not message['allow_web']:text+='\n本轮不主动检索网络来源，仅使用已提供材料。'
             images=[]
             if files:
@@ -162,7 +180,7 @@ class BridgeHarness(OpencodeHarness):
             instructions=self._host_instructions(sid,session,config,bool(message['allow_web']))
             if instructions:instructions+='\n\n（以上工作区约定是执行环境说明，不要原文复述给用户。）\n\n---\n\n'
             params={'execution_id':execution,'runtime_id':self.backend,'cwd':session['cwd'],'prompt':text,
-                    'model':config['model'],'permission':'runtime-native','allow_web':None,
+                    'model':config['model'],'permission':'runtime-native','allow_web':None,'host_options':config.get('host_options',{}),
                     'images':images,
                     # The host owns its search tools; grant them only when this turn asked for web access.
                     'web_tools':bool(message['allow_web'])}
@@ -238,8 +256,12 @@ class BridgeHarness(OpencodeHarness):
         request=self.chat.request(request_id)
         if request['session_id']!=session_id or request['status']!='pending':raise ValueError('问题已结束或不属于当前会话')
         values=(answers.get('permission') or {}).get('answers',[])
-        option=next((o for o in request['data']['native_options'] if (o.get('name') or o.get('optionId')) in values),None)
-        if option is None:raise ValueError('请选择宿主提供的权限选项')
+        if not isinstance(values,list) or len(values)!=1:raise ValueError('请选择一个宿主提供的权限选项')
+        options=request['data']['native_options']
+        matches=[o for o in options if o.get('optionId')==values[0]]
+        if not matches:matches=[o for o in options if o.get('name')==values[0]]
+        if len(matches)!=1:raise ValueError('请选择明确的宿主权限选项')
+        option=matches[0]
         result=self.bridge.call('answer',{**request['rpc_id'],'option_id':option['optionId']})
         self.chat.request_status(request_id,'answered');return result
 

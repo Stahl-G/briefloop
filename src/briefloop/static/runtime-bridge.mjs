@@ -251,6 +251,9 @@ function piConnection(bin, p, launch2, terminate2, onEvent = () => {
 }) {
   const args = ["--mode", "rpc", "--no-approve"];
   if (p.metadata) args.push("--no-session");
+  const mode = p.host_options?.mode || "native";
+  if (!["native", "read", "none"].includes(mode)) throw Error("Invalid Pi tool mode");
+  if (mode !== "native") args.push("--no-extensions", ...mode === "none" ? ["--no-tools"] : ["--tools", "read,grep,find,ls"]);
   if (p.session_id) args.push("--session", p.session_id);
   const child = launch2(bin, args, p.cwd), pending = /* @__PURE__ */ new Map();
   let seq = 0;
@@ -301,7 +304,7 @@ async function piModels(bin, p, launch2, terminate2) {
 }
 async function runPi(p, state, launch2, terminate2, emit2) {
   if (p.images?.length) throw Error("Pi image input is not enabled in this adapter");
-  let finish, fail, lastMessage = null, textSeen = false, started = false;
+  let finish, fail, lastMessage = null, textSeen = false, started = false, contextWindow;
   const settled = new Promise((resolve, reject) => {
     finish = resolve;
     fail = reject;
@@ -323,9 +326,9 @@ async function runPi(p, state, launch2, terminate2, emit2) {
       if (!textSeen) {
         for (const b of lastMessage.content || []) if (b.type === "text") emit2(p.execution_id, "text", { text: b.text, delta: true });
       }
-      if (lastMessage.usage) emit2(p.execution_id, "usage", { usage: lastMessage.usage });
+      if (lastMessage.usage) emit2(p.execution_id, "usage", { usage: { ...lastMessage.usage, model_context_window: contextWindow } });
     }
-    if (m.type.startsWith("tool_execution_")) emit2(p.execution_id, "tool", { id: m.toolCallId, name: m.toolName, status: m.type === "tool_execution_end" ? m.isError ? "failed" : "completed" : "running", input: m.args, output: m.result || m.partialResult });
+    if (typeof m.type === "string" && m.type.startsWith("tool_execution_")) emit2(p.execution_id, "tool", { id: m.toolCallId, name: m.toolName, status: m.type === "tool_execution_end" ? m.isError ? "failed" : "completed" : "running", input: m.args, output: m.result || m.partialResult });
     if (m.type === "extension_ui_request") {
       if (!["select", "confirm", "input", "editor"].includes(m.method)) return;
       const options = m.method === "confirm" ? [{ optionId: "yes", kind: "allow_once", name: "\u5141\u8BB8\u672C\u6B21" }, { optionId: "no", kind: "reject_once", name: "\u62D2\u7EDD" }] : m.method === "select" ? (m.options || []).map((name, i) => ({ optionId: String(i), name, kind: "choice" })) : [];
@@ -363,11 +366,13 @@ async function runPi(p, state, launch2, terminate2, emit2) {
     const info = await c.call("get_state");
     if (!info.sessionFile) throw Error("Pi did not provide a persistent session");
     if (p.session_id && path.resolve(info.sessionFile) !== path.resolve(p.session_id)) throw Error("Pi resumed a different session");
+    let selectedModel = info.model;
     if (p.model && p.model !== "default") {
       const split = p.model.indexOf("/");
       if (split < 1) throw Error("Pi model must be provider/model");
-      await c.call("set_model", { provider: p.model.slice(0, split), modelId: p.model.slice(split + 1) });
+      selectedModel = await c.call("set_model", { provider: p.model.slice(0, split), modelId: p.model.slice(split + 1) });
     }
+    contextWindow = selectedModel?.contextWindow;
     emit2(p.execution_id, "session", { session_id: info.sessionFile });
     started = true;
     if (p.timeout_ms) timer = setTimeout(() => {
@@ -1334,7 +1339,7 @@ function protocol(id) {
 }
 function capabilities(id) {
   const p = protocol(id);
-  return { chat: !!p, cancel: !!p, resume: p === "acp" ? "negotiated" : p === "claude-stream-json" || p === "opencode-json" || p === "antigravity-stream-json" || p === "pi-rpc", images: p === "acp" ? "negotiated" : p === "claude-stream-json", questions: p === "acp" || p === "pi-rpc", steer: false, read_only: false, network_control: false, permission_modes: ["runtime-native"] };
+  return { chat: !!p, cancel: !!p, resume: p === "acp" ? "negotiated" : p === "claude-stream-json" || p === "opencode-json" || p === "antigravity-stream-json" || p === "pi-rpc", images: p === "acp" ? "negotiated" : p === "claude-stream-json", questions: p === "acp" || p === "pi-rpc" || p === "claude-stream-json", steer: false, read_only: false, network_control: false, permission_modes: ["runtime-native"] };
 }
 function terminate(child) {
   if (!child?.pid) return;
@@ -1519,6 +1524,22 @@ function acpToolTitle(tool) {
   if (typeof file === "string" && file) return `\u6587\u4EF6\u64CD\u4F5C \xB7 ${file}`;
   return tool?.kind || "\u5DE5\u5177\u64CD\u4F5C";
 }
+function acpPermissionModes(session) {
+  const modes = session.modes?.availableModes || [];
+  return modes.filter((m) => typeof m.id === "string" && typeof m.name === "string").map((m) => ({ id: m.id, name: m.name }));
+}
+async function permissionOptions(p) {
+  const bin = findBin(defFor(p.runtime_id), p.path);
+  if (!bin) throw Error("Runtime not installed");
+  const conn = connect(bin, p.runtime_id === "mimo" ? ["acp"] : acpArguments(p.runtime_id, bin), p.cwd, () => {
+  }, (_m, reply) => reply({ error: "Metadata probe cannot grant permissions" }));
+  try {
+    const { session } = await handshake(conn, p);
+    return { modes: acpPermissionModes(session) };
+  } finally {
+    terminate(conn.child);
+  }
+}
 async function runAcp(p, state) {
   let sessionId;
   const args = acpArguments(p.runtime_id, state.bin);
@@ -1534,7 +1555,7 @@ async function runAcp(p, state) {
     if (m.method === "session/request_permission") {
       const id = String(m.id);
       state.questions.set(id, { reply, options: m.params?.options || [] });
-      emit(p.execution_id, "question", { request_id: id, type: "permission", title: acpToolTitle(m.params?.toolCall), options: m.params?.options || [] });
+      emit(p.execution_id, "question", { request_id: id, type: "permission", title: acpToolTitle(m.params?.toolCall) + (m.params?.toolCall?.rawInput ? "\n" + JSON.stringify(m.params.toolCall.rawInput) : ""), options: m.params?.options || [] });
     } else {
       reply({ error: "Client method unsupported" });
     }
@@ -1549,6 +1570,10 @@ async function runAcp(p, state) {
     sessionId = p.session_id || session.sessionId;
     if (!sessionId) throw Error("No session ID returned");
     emit(p.execution_id, "session", { session_id: sessionId, capabilities: init.agentCapabilities || {} });
+    if (p.host_options?.mode && p.host_options.mode !== "native") {
+      if (!acpPermissionModes(session).some((m) => m.id === p.host_options.mode)) throw Error("Host does not advertise this permission mode");
+      await conn.call("session/set_mode", { sessionId, modeId: p.host_options.mode });
+    }
     if (p.model && p.model !== "default" && p.runtime_id !== "reasonix") {
       const cfg = findModelConfigOption(session.configOptions);
       await conn.call(cfg ? "session/set_config_option" : "session/set_model", cfg ? { sessionId, configId: cfg.configId, value: acpSelectedModel(p.runtime_id, p.model, session.configOptions) } : { sessionId, modelId: p.model });
@@ -1640,7 +1665,16 @@ async function runAntigravity(p, state) {
 }
 async function runStream(p, state) {
   const claude = p.runtime_id === "claude";
-  let args = claude ? ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"] : ["run", "--format", "json"];
+  let args = claude ? ["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--permission-prompt-tool", "stdio"] : ["run", "--format", "json"];
+  if (claude && p.host_options?.mode && p.host_options.mode !== "native") {
+    if (!["manual", "acceptEdits", "dontAsk", "plan"].includes(p.host_options.mode)) throw Error("Invalid Claude permission mode");
+    args.push("--permission-mode", p.host_options.mode);
+  }
+  if (!claude && p.host_options?.mode && p.host_options.mode !== "native") {
+    const options = await permissionOptions({ ...p, path: state.bin });
+    if (!options.modes.some((m) => m.id === p.host_options.mode)) throw Error("Host does not advertise this mode");
+    args.push("--agent", p.host_options.mode);
+  }
   if (p.model && p.model !== "default") args.push("--model", p.model);
   if (p.session_id) args.push(claude ? "--resume" : "--session", p.session_id);
   if (claude && p.web_tools === true) args.push("--allowedTools", "WebSearch", "WebFetch");
@@ -1662,6 +1696,17 @@ async function runStream(p, state) {
         emit(p.execution_id, "session", { session_id: sid });
       }
       if (claude) {
+        if (m.type === "control_request") {
+          const request = m.request || {}, id = String(m.request_id), send = (response) => child.stdin.write(JSON.stringify({ type: "control_response", response: { subtype: "success", request_id: id, response } }) + "\n");
+          if (request.subtype !== "can_use_tool") {
+            child.stdin.write(JSON.stringify({ type: "control_response", response: { subtype: "error", request_id: id, error: "Unsupported control request" } }) + "\n");
+            return;
+          }
+          const options = [{ optionId: "allow", name: "\u5141\u8BB8\u672C\u6B21", kind: "allow_once" }, { optionId: "deny", name: "\u62D2\u7EDD", kind: "reject_once" }];
+          state.questions.set(id, { options, reply: (r) => send(r.outcome?.optionId === "allow" ? { behavior: "allow", updatedInput: request.input } : { behavior: "deny", message: "\u7528\u6237\u62D2\u7EDD\u4E86\u672C\u6B21\u64CD\u4F5C" }) });
+          emit(p.execution_id, "question", { request_id: id, type: "permission", title: (request.title || request.tool_name || "Claude \u8BF7\u6C42\u6743\u9650") + " \xB7 " + JSON.stringify(request.input || {}), options });
+          return;
+        }
         if (m.type === "assistant") {
           for (const b of m.message?.content || []) {
             if (b.type === "text") emit(p.execution_id, "text", { text: b.text, delta: true });
@@ -1674,6 +1719,7 @@ async function runStream(p, state) {
         }
         if (m.type === "result") {
           resultSeen = true;
+          child.stdin.end();
           if (m.usage) emit(p.execution_id, "usage", { usage: m.usage });
           if (m.is_error) {
             reject(Error("Host reported unsuccessful result"));
@@ -1729,7 +1775,7 @@ async function runStream(p, state) {
         }
         content.push({ type: "image", source: { type: "base64", media_type: mime, data: data.toString("base64") } });
       }
-      child.stdin.end(JSON.stringify({ type: "user", message: { role: "user", content } }) + "\n");
+      child.stdin.write(JSON.stringify({ type: "user", message: { role: "user", content } }) + "\n");
     } else child.stdin.end(p.prompt);
   });
 }
@@ -1753,6 +1799,7 @@ async function execute(p, state) {
 async function handle(method, p) {
   if (method === "discover") return discover(p);
   if (method === "list_models") return listModels(p);
+  if (method === "permission_options") return permissionOptions(p);
   if (method === "start") {
     const bin = validate(p);
     const state = { bin, cancelled: false, questions: /* @__PURE__ */ new Map() };

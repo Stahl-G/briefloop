@@ -173,6 +173,7 @@ class Settings(RoleModel):
     agent_backend: Literal['codex', 'opencode','claude','kimi','hermes','reasonix','mimo','codebuddy','kilo','kiro','vibe','deepseek-harness','antigravity','pi'] = 'codex'
     model_selection_required: bool = True
     role_models: dict[Literal['evaluator','maintainer','proposer'], RoleModel] = Field(default_factory=dict)
+    chat_allow_web: bool = True
     search_provider: Literal['native','tavily'] = 'native'
     k: int = Field(default=1, ge=1, le=20)
     auto_learn: bool = True
