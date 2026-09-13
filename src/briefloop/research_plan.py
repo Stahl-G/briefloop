@@ -88,7 +88,12 @@ def _fingerprint(value):
 def freeze(store, run_id, *, preset=None, structure=None, owner_job_id=None):
     """Freeze one research plan for the run. Same input is idempotent; different input is refused."""
     run = store.one('runs', run_id)
-    authorized = authorized_budget(json.loads(run['requirements']))
+    requirements = json.loads(run['requirements'])
+    authorized = authorized_budget(requirements)
+    # Without an explicit preset the run's stored research tier decides; the
+    # task-creation entries all land it in requirements.
+    if preset is None:
+        preset = requirements.get('research_tier') if requirements.get('research_tier') in PRESETS else DEFAULT_PRESET
     chosen = dict(PRESETS.get(preset or DEFAULT_PRESET, PRESETS[DEFAULT_PRESET]))
     budget = dict(authorized) if authorized is not None else {field: chosen[field] for field in BUDGET_FIELDS}
     if structure:
@@ -220,6 +225,24 @@ def _read_plan(connection, run_id):
 
 def _save_plan(connection, run_id, plan):
     connection.execute('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)', (_plan_key(run_id), dump(plan)))
+
+
+def _mutate_plan(store, run_id, mutate, *, missing='研究计划尚未冻结'):
+    """Read-modify-write the whole plan inside one BEGIN IMMEDIATE transaction.
+
+    Concurrent writers serialize on the store's write transaction, so the
+    mutation applies exactly once. ``mutate(plan) -> (changed, result)`` must
+    have no persistent side effects of its own — files and events are written
+    only after the transaction commits.
+    """
+    with store.tx() as connection:
+        plan = _read_plan(connection, run_id)
+        if plan is None:
+            raise AdmissionError(missing, code='plan_missing')
+        changed, result = mutate(plan)
+        if changed:
+            _save_plan(connection, run_id, plan)
+    return result
 
 
 def _round_dir(store, run_id, index):
@@ -422,7 +445,7 @@ def admit_fact_check(store, run_id, budget_source, *, job_id=None):
         plan['fact_check'] = stage
         return True, {**stage, 'idempotent': False}
 
-    result = _save_plan(store, run_id, mutate, missing='本轮尚未冻结研究计划；不能接纳核查阶段')
+    result = _mutate_plan(store, run_id, mutate, missing='本轮尚未冻结研究计划；不能接纳核查阶段')
     if not result['idempotent'] and job_id:
         store.event(job_id, 'fact_check', {'action': 'admit', 'stage_id': result['stage_id'],
                                            'budget_source': result['budget_source']})
@@ -456,7 +479,7 @@ def finish_fact_check(store, run_id, *, status, summary='', job_id=None):
         return True, {'stage_id': stage['stage_id'], 'status': status,
                       'outcome': stage['outcome'], 'idempotent': False}
 
-    result = _save_plan(store, run_id, mutate, missing='本轮尚未冻结研究计划')
+    result = _mutate_plan(store, run_id, mutate, missing='本轮尚未冻结研究计划')
     if not result['idempotent'] and job_id:
         store.event(job_id, 'fact_check', {'action': 'finish', 'stage_id': result['stage_id'], 'status': status})
     return result
@@ -507,7 +530,7 @@ def add_fact_check_grant(store, run_id, limits, *, job_id=None):
                 raise AdmissionError('核查阶段已变化，请刷新后重试', code='fact_check_conflict')
             current.setdefault('grants', []).append(grant)
             return True, {'stage_id': stage['stage_id'], 'status': 'active'}
-        _save_plan(store, run_id, append)
+        _mutate_plan(store, run_id, append)
         if job_id:
             store.event(job_id, 'fact_check', {'action': 'grant_added', 'stage_id': stage['stage_id'], 'limits': grant['limits']})
         return {'status': 'active', 'stage_id': stage['stage_id'], 'limits': grant['limits']}
@@ -522,7 +545,7 @@ def add_fact_check_grant(store, run_id, limits, *, job_id=None):
                      'created': now(), 'closed': None, 'outcome': None}
             plan['fact_check'] = fresh
             return True, fresh
-        fresh = _save_plan(store, run_id, reopen)
+        fresh = _mutate_plan(store, run_id, reopen)
         if job_id:
             store.event(job_id, 'fact_check', {'action': 'grant_reopened', 'stage_id': fresh['stage_id'],
                                                'limits': grant['limits'], 'previous_stage_id': stage['stage_id']})

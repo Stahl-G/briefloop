@@ -187,8 +187,8 @@ def test_concurrent_begin_round_replays_instead_of_losing_a_round(tmp_path, monk
     plan = original(store, run['id'])
     assert len(plan['rounds']) == 2
     assert plan['current_round_id'] == results[0]['round_id']
-    # freeze committed rev 1, the setup finish_round rev 2, the winning begin rev 3.
-    assert plan['rev'] == 3
+    # Serialization now comes from the store's BEGIN IMMEDIATE write transaction
+    # (no plan-level rev counter); the convergence assertions above carry the guarantee.
 
 
 def test_join_scouts_enforces_run_scope_and_source_statements(tmp_path):

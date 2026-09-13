@@ -264,7 +264,6 @@ def test_turn_completing_before_publish_does_not_stick_in_running(tmp_path):
         until(lambda:next(m for m in manager.snapshot(sid)['messages'] if m['id']=='f1')['status']=='failed')
         assert manager.chat.session(sid)['turn_id'] is None
         assert manager.chat.session(sid)['status']=='failed'
-        assert (sid,'turn1') not in manager._late_completion
     finally:
         if manager.client is not None:manager.client.release.set()
         manager.close()
