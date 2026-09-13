@@ -1,13 +1,18 @@
 # BriefLoop 架构
 
-> 本图由代码调研绘制（2026-09-12），依据均指向仓库源码。BriefLoop 是本地研究与报告工具：主 Agent 负责对话、研究规划、写稿与修订，Evaluator / Wiki Maintainer / Skill Proposer 独立运行，所有结论绑定证据版本。
+> 0.20.0 架构说明，更新于 2026-09-13。BriefLoop 是本地研究与报告工具：主 Agent 负责对话、研究规划、写稿与修订，Evaluator / Wiki Maintainer / Skill Proposer 独立运行。稿件、证据与审阅分别保存并绑定版本；绑定本身不证明结论正确。
 
 ## 整体架构图
 
 ```mermaid
 flowchart TB
     subgraph 浏览器
-        UI["Web UI<br/>(static/index.html + app.js)<br/>原生 HTML/CSS/JS，无构建框架"]
+        UI["共享 WebUI<br/>(static/index.html + app.js)<br/>对话、富文本报告与设置"]
+    end
+
+    subgraph 桌面 ["Electron 桌面 App"]
+        APP["main / preload<br/>原生选择、另存、保存退出、更新"]
+        ENV["本机 Python 检测<br/>App 专属 venv + 随包 wheel"]
     end
 
     subgraph Python 服务 ["Python 服务 (src/briefloop)"]
@@ -37,7 +42,7 @@ flowchart TB
     subgraph 模型宿主 ["外部 CLI 宿主"]
         CODEX["codex CLI"]
         OC["opencode server"]
-        ACP["claude / kimi / hermes /<br/>kilo / kiro / vibe (ACP)"]
+        ACP["Claude / Kimi / Hermes /<br/>Reasonix / MiMo / CodeBuddy"]
     end
 
     subgraph 学习与技能 ["WikiSkill (src/wikiskill)"]
@@ -45,6 +50,10 @@ flowchart TB
         WAG["wiki_agents.py<br/>Wiki Maintainer / Skill Proposer"]
     end
 
+    APP --> UI
+    APP --> ENV
+    ENV -- "启动所属工作区服务" --> SRV
+    APP -- "复用 Electron Node" --> RB
     CLI --> SRV
     UI -- "fetch /api/* + token (frontend/app.js:40)" --> SRV
     SRV --> ST
