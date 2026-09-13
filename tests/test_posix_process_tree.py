@@ -22,6 +22,67 @@ def _running(pid):
     return bool(result.stdout.strip()) and not result.stdout.strip().startswith('Z')
 
 
+@pytest.mark.parametrize('kill_owner', [True, False])
+def test_owner_watch_reclaims_host_and_descendants(tmp_path, kill_owner):
+    """SIGKILL requires kernel pipe EOF, not a Python atexit callback."""
+    ready = tmp_path / 'ready.json'
+    host_script = '''
+import json, os, pathlib, signal, subprocess, sys, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+child = subprocess.Popen([sys.executable, '-c',
+    'import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(90)'])
+p = pathlib.Path(sys.argv[1]); q = p.with_suffix('.tmp')
+q.write_text(json.dumps({'host':os.getpid(), 'child':child.pid})); q.replace(p)
+time.sleep(90)
+'''
+    owner_script = '''
+import signal,sys
+from briefloop.platform_support import OwnedProcess
+p = OwnedProcess([sys.executable, '-c', sys.argv[1], sys.argv[2]], parent_death=True)
+signal.pause()
+'''
+    owner = subprocess.Popen([sys.executable, '-c', owner_script, host_script, str(ready)],
+                             start_new_session=True)
+    unrelated = subprocess.Popen([sys.executable, '-c', 'import time;time.sleep(90)'],
+                                 start_new_session=True)
+    state = None
+    try:
+        deadline = time.monotonic() + 10
+        while not ready.exists() and time.monotonic() < deadline:
+            assert owner.poll() is None
+            time.sleep(.02)
+        state = json.loads(ready.read_text())
+        assert os.getpgid(state['child']) == state['host']
+        if kill_owner:
+            owner.kill(); owner.wait(timeout=5)
+        else:
+            os.kill(state['host'], signal.SIGKILL)
+        deadline = time.monotonic() + 8
+        while any(_running(pid) for pid in state.values()) and time.monotonic() < deadline:
+            time.sleep(.05)
+        assert not any(_running(pid) for pid in state.values())
+        assert unrelated.poll() is None
+    finally:
+        if owner.poll() is None:
+            owner.kill(); owner.wait(timeout=5)
+        if state:
+            try: os.killpg(state['host'], signal.SIGKILL)
+            except ProcessLookupError: pass
+        unrelated.terminate(); unrelated.wait(timeout=5)
+
+
+def test_owner_watch_preserves_stdio_and_exit_status():
+    host = OwnedProcess([sys.executable, '-c',
+        'import sys;print(sys.stdin.read());sys.exit(7)'], parent_death=True,
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    try:
+        output, _ = host.communicate('hello', timeout=5)
+        assert output == 'hello\n'
+        assert host.returncode == 7
+    finally:
+        host.close_tree(timeout=2)
+
+
 @pytest.mark.parametrize('leader_exits_first', [False, True])
 def test_close_tree_kills_term_ignoring_child_after_leader_exit(tmp_path, leader_exits_first):
     ready = tmp_path / 'child-ready.json'

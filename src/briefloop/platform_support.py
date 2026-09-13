@@ -5,6 +5,7 @@ import signal
 import subprocess
 import sys
 import time
+import weakref
 
 
 class WorkspaceLock:
@@ -90,9 +91,12 @@ def process_alive(pid):
 
 class OwnedProcess(subprocess.Popen):
     """One owned process tree. No lookup by executable name or arbitrary PID."""
-    def __init__(self, args, **kwargs):
+    def __init__(self, args, *, parent_death=False, **kwargs):
         self._job = None
         self._tree_closed = False
+        self._owner_pipe = None
+        read_fd = None
+        command = cli_command(args)
         if kwargs.get('text') or kwargs.get('universal_newlines'):
             kwargs.setdefault('encoding', 'utf-8')
         kwargs['env'] = {**(kwargs.get('env') or os.environ), 'PYTHONUTF8': '1'}
@@ -103,8 +107,17 @@ class OwnedProcess(subprocess.Popen):
             kwargs['creationflags'] = kwargs.get('creationflags', 0) | 0x00000004 | subprocess.CREATE_NO_WINDOW
         else:
             kwargs['start_new_session'] = True
+            if parent_death:
+                # The pipe's write end belongs only to this Python owner.
+                # A fresh, single-threaded helper starts the watcher before
+                # exec, avoiding preexec_fn/fork inside our threaded server.
+                read_fd, write_fd = os.pipe()
+                self._owner_pipe = weakref.finalize(self, os.close, write_fd)
+                kwargs['pass_fds'] = (*kwargs.get('pass_fds', ()), read_fd)
+                command = [sys.executable, '-I', str(Path(__file__).with_name('parent_watch.py')),
+                           str(read_fd), *command]
         try:
-            super().__init__(cli_command(args), **kwargs)
+            super().__init__(command, **kwargs)
             if self._job:
                 self._job.assign_and_resume(self)
         except BaseException:
@@ -113,7 +126,12 @@ class OwnedProcess(subprocess.Popen):
                 self.wait()
             if self._job:
                 self._job.close()
+            if self._owner_pipe:
+                self._owner_pipe()
             raise
+        finally:
+            if read_fd is not None:
+                os.close(read_fd)
 
     def _signal_group(self, sig, deadline):
         try:
@@ -155,3 +173,5 @@ class OwnedProcess(subprocess.Popen):
                 time.sleep(min(.05, remaining))
             self.wait(timeout=timeout)
         self._tree_closed = True
+        if self._owner_pipe:
+            self._owner_pipe()
