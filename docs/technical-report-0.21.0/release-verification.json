@@ -1,0 +1,68 @@
+{
+  "checked_at": "2026-09-13T22:34:43.880795+00:00",
+  "release_tag": "v0.21.0",
+  "main_commit": "ddc6583890bf9ddc09c71bd8e078dbc08c2a0dc0",
+  "release_commit": "847452bfb39e4185e5d91cc537e030c8e4d7da69",
+  "main_tree_equals_release_tree": true,
+  "git_tree": "11eb5713bcb36f4b8c4fc8b6ba259795edade511",
+  "downloaded_assets": [
+    {
+      "name": "briefloop-0.21.0-py3-none-any.whl",
+      "url": "https://github.com/Stahl-G/briefloop/releases/download/v0.21.0/briefloop-0.21.0-py3-none-any.whl",
+      "bytes": 2523651,
+      "sha256": "6cfdb806a758b7dda4359bb7844ec4ac603b13b86b06777a6f3e25efba82b644",
+      "github_digest_matches": true
+    },
+    {
+      "name": "freeze.json",
+      "url": "https://github.com/Stahl-G/briefloop/releases/download/v0.21.0/freeze.json",
+      "bytes": 192,
+      "sha256": "6d46b0d5a2d705a3ad63cc9678ee3352e828acb72c6e1674a498fe2daa8c7034",
+      "github_digest_matches": true
+    },
+    {
+      "name": "mac-0210-native-acceptance.md",
+      "url": "https://github.com/Stahl-G/briefloop/releases/download/v0.21.0/mac-0210-native-acceptance.md",
+      "bytes": 2042,
+      "sha256": "35dd7e39230cb6e2b3fff439073e819e104a0f4a7853104aad58c34cbe60a081",
+      "github_digest_matches": true
+    },
+    {
+      "name": "mac-differential-acceptance.json",
+      "url": "https://github.com/Stahl-G/briefloop/releases/download/v0.21.0/mac-differential-acceptance.json",
+      "bytes": 458,
+      "sha256": "d3a95bf04e21cecabe30383595c39886caa5cec74aee4fa60412729760fdf722",
+      "github_digest_matches": true
+    },
+    {
+      "name": "manifest.json",
+      "url": "https://github.com/Stahl-G/briefloop/releases/download/v0.21.0/manifest.json",
+      "bytes": 154,
+      "sha256": "c60b2cbd0bc8a24b13d3c4b15f0cce95f5710fc47b4c278f21d982ccb720c3de",
+      "github_digest_matches": true
+    },
+    {
+      "name": "native-artifacts-0210.json",
+      "url": "https://github.com/Stahl-G/briefloop/releases/download/v0.21.0/native-artifacts-0210.json",
+      "bytes": 1482,
+      "sha256": "55d3b2b7ab126063c5e88d3d9811b5ac6a665b4e2579aca07e0ce55f837d76fd",
+      "github_digest_matches": true
+    },
+    {
+      "name": "published-channel-versions-final.json",
+      "url": "https://github.com/Stahl-G/briefloop/releases/download/v0.21.0/published-channel-versions-final.json",
+      "bytes": 1480,
+      "sha256": "730e58a2408655c2e38d7fba5ff557030ff36d3d95e26c71bfe42c7257f9c4c0",
+      "github_digest_matches": true
+    },
+    {
+      "name": "windows-0210-acceptance-scope.md",
+      "url": "https://github.com/Stahl-G/briefloop/releases/download/v0.21.0/windows-0210-acceptance-scope.md",
+      "bytes": 2902,
+      "sha256": "3624fc059430da8f316c4e838e2f8a46ddfe0c11e01e27cbbb97a2c7b9b4a94c",
+      "github_digest_matches": true
+    }
+  ],
+  "pypi_wheel_sha256": "6cfdb806a758b7dda4359bb7844ec4ac603b13b86b06777a6f3e25efba82b644",
+  "scope": "Small release assets and wheel downloaded and hashed by report author. Desktop hashes/native/model acceptance cited from published release records; no new native or model run."
+}
