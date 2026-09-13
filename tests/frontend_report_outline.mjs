@@ -15,7 +15,7 @@ const c=vm.createContext({console,Promise,$:el,dirty:false,saving:false,current:
  Editor:class{constructor(options){editorContent=options.content}destroy(){}},
  StarterKit:{configure:()=>({})},TableKit:{},ReportImage:{configure:()=>({})},TextStyle:{},Layout:{},Citation:{},Markdown:{},MustFixHighlight:{},
  toEditor:x=>x,editorDocument:x=>x,changed:()=>{},updateFormattingTools:()=>{},
- assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},renderReportStatus:()=>{},renderAssistantSummary:()=>{},editor:null,
+ assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},renderWordExports:()=>{},renderReportStatus:()=>{},renderAssistantSummary:()=>{},editor:null,
  document:{querySelectorAll:()=>[]}});
 el('report-grid').hidden=true;el('report-outline').hidden=false;
 vm.runInContext(outlineCode+'\n'+openCode,c);
