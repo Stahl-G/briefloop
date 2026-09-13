@@ -78,3 +78,26 @@ Windows 默认委托 `electron-updater`；未来签名 macOS 构建可由主进�
 显式本地源也可提供与当前 App 完全相同的稳定版本，用于重新安装真实构建。此时 `reinstall: true`，界面显示“重新安装当前 App v{版本}”；版本、tag、资产文件名、大小与校验要求保持一致，不能用更高的虚报版本包装旧构建。本地 feed 作者须核对 DMG 内 App 的实际版本；下载器不挂载 DMG 或自行解释安装包，单凭文件名与哈希不证明包内 App 版本。生产官方源对同版本仍返回 `current`，所有来源均不能下载降级版本。此能力不改变正式更新 feed，也不代表发布了新版本。
 
 原生 `installReady()` 的 `requested: true` 仅表示请求已交给成熟更新器，不表示安装成功。主进程在请求返回后继续监听该安装事务的错误；在 App 仍存活时收到失败，会撤销退出、恢复 owned 服务并解除编辑器暂停。`electron.autoUpdater` 的 `before-quit-for-update` 用于识别更新器随后排队的退出，失败事务会阻止它且不会重新进入用户退出门禁。这里不以短延时推断安装完成；进程已经退出后的安装器失败仍由平台安装器处理，本地测试不构成 Windows 安装成功证明。
+
+## 增量下载（DMG / Windows NSIS）
+
+- macOS 仍使用原生 DMG 安装流程；增量只减少传输，不修改正在运行的 App。
+  发布最终 DMG 和同名 `.dmg.blockmap` 到同一 release；GitHub 资产必须提供完整 DMG 的
+  SHA-256/SHA-512 digest。`npm run dist` 生成并验证 blockmap；签名流程在 stapling
+  改变 DMG 后重新生成，不能上传 stapling 前的旧 map。
+- 第一次没有缓存时下载全包并保存已校验的基线。后续版本使用 electron-builder 的
+  blockmap 比较数据块，只用 HTTP Range 下载变化部分，再验证整个重建 DMG。
+  缓存损坏、map 不可用、Range 不受支持、变化超过 90%、过多请求或校验失败时回退
+  全量。新基线保存成功后清理前一个已验证基线，不扫描/删除用户的其他下载。
+- Windows NSIS 显式开启 `differentialPackage` 和 electron-updater 的差分下载。
+  发布 EXE、对应 `.exe.blockmap` 和 `latest.yml`，保留旧版本资产。使用原生安装器
+  管理的 `installer.exe` / `current.blockmap` 缓存；缓存缺失或差分失败时原生更新器
+  回退完整 EXE。不能因存在 blockmap 就声称某次更新实际使用了增量。
+- 两端都下载并验证完整可安装产物后才进入既有保存/忙任务/退出门禁。
+  Electron 升级或大量内容变化仍可能下载接近全包。旧版更新器需先全量升级一次。
+
+本地行为验证：`node --test test/updater.test.cjs test/differential-update.test.cjs`。
+真实 DMG 对比（不安装、不改变已安装 App）：
+`node scripts/verify-differential-download.cjs /path/old.dmg /path/new.dmg`。
+输出实际安装包请求字节（不含小型 metadata/blockmap 和 HTTP 头）、重建哈希与节省比例。
+Windows 应额外记录真实 NSIS 差分传输与安装后版本；Mac 的下载重建测试不能冒充 Windows 安装验收。

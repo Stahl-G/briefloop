@@ -109,6 +109,8 @@ test('native integration delegates download/install and never auto-installs on q
   await updater.check();
   assert.deepEqual(native.feed, {provider: 'github', owner: 'Stahl-G', repo: 'briefloop', private: false});
   assert.equal(native.autoDownload, false); assert.equal(native.autoInstallOnAppQuit, false);
+  assert.equal(native.disableDifferentialDownload, false);
+  assert.equal(require('../electron-builder.windows.cjs').nsis.differentialPackage, true);
   assert.equal(native.allowPrerelease, false); assert.equal(native.allowDowngrade, false);
   await updater.download(); assert.deepEqual(native.calls, ['check', 'download']);
   assert.deepEqual(await updater.installReady(), {mode: 'native', requested: true});

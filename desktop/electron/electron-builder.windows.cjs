@@ -18,6 +18,7 @@ module.exports = {
     signAndEditExecutable: true,
   },
   nsis: {
+    differentialPackage: true,
     oneClick: false,
     perMachine: false,
     allowElevation: false,

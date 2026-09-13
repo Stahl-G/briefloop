@@ -50,6 +50,8 @@ async function main(args = process.argv.slice(2)) {
     run('xcrun', ['stapler','staple',file]);
     run('xcrun', ['stapler','validate',file]);
     run('spctl', ['--assess','--type','open','--context','context:primary-signature','--verbose=2',file]);
+    // Stapling changes the DMG bytes: generate its blockmap only afterwards.
+    await require('./prepare-update-blockmaps.cjs').prepare(file);
     records.push({file:path.basename(file),sha256:hash(file),submission_id:submission.id,status:submission.status});
   }
   if (!records.length) throw Error('No DMG produced; release verification incomplete.');

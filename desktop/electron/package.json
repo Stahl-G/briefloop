@@ -10,7 +10,7 @@
     "start": "electron .",
     "test": "node --test test/*.test.cjs",
     "pack": "electron-builder --mac dir --arm64 --publish never",
-    "dist": "electron-builder --mac dmg zip --arm64 --publish never",
+    "dist": "electron-builder --mac dmg zip --arm64 --publish never && node scripts/prepare-update-blockmaps.cjs",
     "postinstall": "node node_modules/electron/install.js",
     "dist:signed": "node scripts/build-mac-signed.cjs",
     "signing:check": "node scripts/build-mac-signed.cjs --check"
@@ -48,7 +48,8 @@
       "icon": "assets/Mac.icns"
     },
     "dmg": {
-      "sign": false
+      "sign": false,
+      "writeUpdateInfo": true
     },
     "publish": null,
     "win": {

@@ -2178,6 +2178,8 @@ function renderAppUpdates(value=appUpdateState){
  $('app-update-progress-box').hidden=!progress;
  $('app-update-progress').value=progress?.percent||0;
  $('app-update-progress-text').textContent=progress?`${Math.round(progress.percent||0)}% · ${(Math.max(0,progress.transferred||0)/1048576).toFixed(1)} / ${(Math.max(0,progress.total||0)/1048576).toFixed(1)} MiB`:'';
+ if(progress?.mode==='differential')$('app-update-progress-text').textContent+=` · 增量下载，复用 ${(Math.max(0,progress.reused||0)/1048576).toFixed(1)} MiB`;
+ else if(progress?.mode==='full')$('app-update-progress-text').textContent+=progress.fallback==='no_baseline'?' · 首次下载，建立增量缓存':progress.fallback==='differential_unavailable'?' · 增量不可用，已回退完整下载':' · 此版本无可用增量信息，完整下载';
  $('app-update-notes-box').hidden=!value?.notes;$('app-update-notes').textContent=value?.notes||'';
 }
 async function refreshAppUpdates(){
