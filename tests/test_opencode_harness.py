@@ -600,7 +600,7 @@ def test_live_child_activity_reaches_parent_progress_without_repeated_heartbeats
     assert manager._poll_children(session['id'], 'turn', 'parent', 10000, poll, force=True)
     progress, _ = project()
     assert progress['agents'][0]['status'] == 'completed'
-    public = log.read_text() + json.dumps(progress)
+    public = log.read_text(encoding="utf-8") + json.dumps(progress)
     assert all(text not in public for text in ('SECRET REASONING', 'PRIVATE DRAFT', 'PRIVATE TOOL OUTPUT'))
 
 
