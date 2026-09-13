@@ -8,7 +8,7 @@ import Image from '@tiptap/extension-image';
 import {Markdown} from '@tiptap/markdown';
 import {connectorSettings} from './connectors.js';
 import {mcpSelection} from './mcp-selection.js';
-import {TextStyle,Layout,ReportImage,Citation,editorDocument,savedDocument,readerHighlights} from './rich-document.js';
+import {TextStyle,Layout,ReportImage,Citation,ReportTrailingParagraph,editorDocument,savedDocument,readerHighlights} from './rich-document.js';
 // Reader-appropriateness marks are editor decorations: they never enter the saved
 // document, Word export or Markdown. Hover shows the violation and its requirement.
 let highlightQuotes=[],showSuggestionMarks=false,highlightFindings=new Map(),highlightKinds=new Map();
@@ -272,7 +272,7 @@ function tryOpenPending(){
  if(incoming&&openBrief(incoming,{follow:true})){pendingRun=null;return true}
  return false;
 }
-function openBrief(b,{follow=false}={}){if(dirty||saving){notice('请先保存当前修改，再切换版本',true);return false}followUpdates=follow;current=b;renderWordExports();$('report-title').textContent=parse(b.detail).title||'简报';updateDownloads(b);if(editor)editor.destroy();highlightQuotes=[];editor=new Editor({element:$('editor'),editable:state.briefs.find(x=>x.run_id===b.run_id)?.id===b.id,extensions:[StarterKit.configure({link:{openOnClick:false}}),TableKit,ReportImage.configure({HTMLAttributes:{class:'briefloop-figure'},allowBase64:false}),TextStyle,Layout,Citation,Markdown,MustFixHighlight],content:b.editor_document?editorDocument(parse(b.editor_document),b.id):toEditor(b.markdown),...(b.editor_document?{}:{contentType:'markdown'}),onUpdate:changed,onSelectionUpdate:updateFormattingTools});$('markdown-source').value=b.markdown;const historical=state.briefs.find(x=>x.run_id===b.run_id)?.id!==b.id;$('markdown-source').readOnly=historical;$('toolbar').querySelectorAll('button,input,select').forEach(x=>x.disabled=historical);$('save-state').textContent=historical?'历史记录（只读）':b.author==='example'?'合成示例已保存':b.author==='user'?'当前编辑稿已自动保存':'原稿已保存';$('version-select').value=b.id;assessment();citations();renderBriefLength();setReportView('edit');renderReportStatus();renderAssistantSummary();return true}
+function openBrief(b,{follow=false}={}){if(dirty||saving){notice('请先保存当前修改，再切换版本',true);return false}followUpdates=follow;current=b;renderWordExports();$('report-title').textContent=parse(b.detail).title||'简报';updateDownloads(b);if(editor)editor.destroy();highlightQuotes=[];editor=new Editor({element:$('editor'),editable:state.briefs.find(x=>x.run_id===b.run_id)?.id===b.id,extensions:[StarterKit.configure({link:{openOnClick:false},trailingNode:false}),ReportTrailingParagraph,TableKit,ReportImage.configure({HTMLAttributes:{class:'briefloop-figure'},allowBase64:false}),TextStyle,Layout,Citation,Markdown,MustFixHighlight],content:b.editor_document?editorDocument(parse(b.editor_document),b.id):toEditor(b.markdown),...(b.editor_document?{}:{contentType:'markdown'}),onUpdate:changed,onSelectionUpdate:updateFormattingTools});$('markdown-source').value=b.markdown;const historical=state.briefs.find(x=>x.run_id===b.run_id)?.id!==b.id;$('markdown-source').readOnly=historical;$('toolbar').querySelectorAll('button,input,select').forEach(x=>x.disabled=historical);$('save-state').textContent=historical?'历史记录（只读）':b.author==='example'?'合成示例已保存':b.author==='user'?'当前编辑稿已自动保存':'原稿已保存';$('version-select').value=b.id;assessment();citations();renderBriefLength();setReportView('edit');renderReportStatus();renderAssistantSummary();return true}
 async function renderDeliveryChecks(){
  const ticket=(renderDeliveryChecks.ticket||0)+1;renderDeliveryChecks.ticket=ticket;
  if(!current||!$('assessment'))return;const vid=current.id;
@@ -1268,6 +1268,10 @@ function renderWorkflowChoices(first=false){
  const workflow=catalog.find(w=>w.id===(choice.workflow_id||template?.workflow_hint||'general_report'));
  const variant=workflow?.variants.find(v=>v.id===(choice.workflow_variant||workflow.default_variant));
  $('workflow-hint').textContent=workflow?`${choice.workflow_id?'已选':'本轮建议'}：${workflow.label} · ${variant?.label||''}。用于规划、写作和评价；Word 版式由报告模板决定。`:'文档方法目录暂不可用，请刷新后再选择。';
+ const meeting=workflow?.id==='meeting_minutes';
+ $('source-requirement').textContent=meeting?'需要本次会议记录':'可选';
+ $('source-input-hint').textContent=meeting?'请添加并选择本次会议转写或笔记。只有议程时可整理框架，不能生成未发生的讨论或决议。':'可选：图片、PDF、Word、Excel、Markdown、文本、CSV。也可以直接输入目标，让 Agent 联网研究。';
+ $('source-web-hint').textContent=meeting?'会议内容来自已选转写或笔记；公开检索只能补充另行要求的背景，不能替代会中记录。':'开启后，无需先上传文件，Agent 会围绕目标查找并保存公开来源。关闭时仍可讨论问题或使用已有材料。';
 }
 function syncWorkflowProfile(changeLength=true){
  const choice=readWorkflowChoice();

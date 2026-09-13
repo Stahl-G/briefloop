@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 
 ASSETS = Path(__file__).with_name('workflow_assets')
-WORKFLOW_IDS = ('general_report', 'business_report')
+WORKFLOW_IDS = ('general_report', 'business_report', 'meeting_minutes')
 ROLE_KEYS = {'orchestrator': 'planning', 'scout': 'planning', 'analyst': 'writing',
              'revision': 'writing', 'evaluator': 'evaluation', 'reviewer': 'evaluation'}
 
@@ -78,7 +78,7 @@ def _template_hints():
     root = Path(__file__).with_name('template_assets')
     hints = {}
     for filename, _, _ in BUILTIN_TEMPLATES:
-        family = next((name for name in ('business-report', 'general-report') if filename.startswith(name)), None)
+        family = next((name for name in ('business-report', 'general-report', 'meeting-minutes') if filename.startswith(name)), None)
         if family:
             hints[hashlib.sha256((root / filename).read_bytes()).hexdigest()] = family.replace('-', '_')
     return hints

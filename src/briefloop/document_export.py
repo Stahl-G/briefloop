@@ -106,6 +106,12 @@ def render_document(doc, document, *, figures=None, sources=None, append_sources
             if attrs.get('textAlign'): p.alignment = ALIGN[attrs['textAlign']]
             if depth: p.paragraph_format.left_indent = Mm(depth * 5)
             inline(p, children)
+            # Short standalone bold labels are commonly authored as paragraphs
+            # before lists. Keep the label with its first item in Word.
+            if (kind == 'paragraph' and not list_style and children
+                    and all(c.get('type') == 'text' and any(m.get('type') == 'bold' for m in c.get('marks', [])) for c in children)
+                    and 0 < len(p.text.strip()) <= 40):
+                p.paragraph_format.keep_with_next = True
             if kind == 'heading' and attrs.get('blockId'): anchor_heading(p, attrs['blockId'])
             if kind == 'codeBlock':
                 for run in p.runs: run.font.name = 'Consolas'; run.font.size = Pt(9)

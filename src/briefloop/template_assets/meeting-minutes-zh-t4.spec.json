@@ -3,35 +3,32 @@
   {
    "section_id": "topics",
    "title": "会议议题",
-   "index": 4,
+   "index": 1,
    "purpose": "讨论议题"
   },
   {
    "section_id": "decisions",
    "title": "决议事项",
-   "index": 5,
+   "index": 2,
    "purpose": "形成的决议"
   },
   {
    "section_id": "actions",
    "title": "待办事项",
-   "index": 6,
+   "index": 3,
    "purpose": "责任与时限"
   },
   {
    "section_id": "others",
    "title": "其他事项",
-   "index": 7,
+   "index": 4,
    "purpose": "补充记录"
   }
  ],
  "keep_blocks": [
-  0,
-  1,
-  2,
-  3
+  0
  ],
- "paragraph_index": 8,
+ "paragraph_index": 5,
  "fields": [
   {
    "old": "{{title}}",

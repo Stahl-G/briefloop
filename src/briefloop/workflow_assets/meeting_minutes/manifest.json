@@ -1,0 +1,8 @@
+{
+  "id": "meeting_minutes",
+  "label": "会议纪要",
+  "version": "1.0.0",
+  "description": "从已提供的会议转写或笔记整理议题、决议、待办和未定事项。",
+  "default_variant": "minutes",
+  "variants": [{"id": "minutes", "label": "会议记录整理", "method_ids": []}]
+}

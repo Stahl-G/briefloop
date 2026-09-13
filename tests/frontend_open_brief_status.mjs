@@ -20,7 +20,7 @@ test('opening another version immediately refreshes scored and unscored headers 
  let renders=0;
  const context=vm.createContext({state,current:briefs[0],dirty:false,saving:false,followUpdates:false,editor:null,highlightQuotes:[],
   $,parse:JSON.parse,esc:String,runConflicts:()=>[],runSourceCount:()=>0,reviewPending,notice:()=>{},updateDownloads:()=>{},
-  Editor:class{destroy(){}},StarterKit:configurable,TableKit:{},ReportImage:configurable,TextStyle:{},Layout:{},Citation:{},Markdown:{},MustFixHighlight:{},
+  Editor:class{destroy(){}},StarterKit:configurable,TableKit:{},ReportImage:configurable,TextStyle:{},Layout:{},Citation:{},ReportTrailingParagraph:{},Markdown:{},MustFixHighlight:{},
   editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},
   api:async()=>state,renderWordExports:()=>{},render:()=>renders++,refreshProgress:async()=>{},refreshCandidates:async()=>{},refreshReportBudget:async()=>{},refreshReleaseState:async()=>{}});
  // Run the real app entry point and renderers; only editor/DOM plumbing is stubbed.
