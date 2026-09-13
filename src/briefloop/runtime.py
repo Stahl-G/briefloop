@@ -597,7 +597,7 @@ class Worker:
     def review_loop(self):
         from .interactive_runtime import InteractiveRuntime
         from .review import run_review
-        for jobs in self._queued(1,"SELECT * FROM jobs WHERE kind='review' AND status='queued' ORDER BY rowid LIMIT 1"):
+        for jobs in self._queued(1,"SELECT * FROM jobs WHERE kind IN ('review','fact_check') AND status='queued' ORDER BY rowid LIMIT 1"):
             if not jobs:continue
             job=jobs[0]
             with self._claim_lock:
@@ -608,7 +608,8 @@ class Worker:
                 if self._review_runtime is None:self._review_runtime=InteractiveRuntime(self.store,backends=self.runtime.backends)
                 self._review_runtime.cancelled.clear()
             try:
-                result=run_review(self.store,self._review_runtime,job,json.loads(job['payload'])['version_id'],self.folder(job))
+                result=(self.run_fact_check(job,runtime=self._review_runtime) if job['kind']=='fact_check' else
+                        run_review(self.store,self._review_runtime,job,json.loads(job['payload'])['version_id'],self.folder(job)))
                 self._settle_job(job['id'],'complete',result=result,runtime=self._review_runtime)
             except InterruptedError as exc:self._settle_job(job['id'],'cancelled',error=str(exc))
             except Exception as exc:self._settle_job(job['id'],'failed',error=str(exc))
@@ -616,7 +617,7 @@ class Worker:
                 with self._claim_lock:self.review_current=None
 
     def loop(self):
-        for jobs in self._queued(0,"SELECT * FROM jobs WHERE status='queued' AND kind!='review' AND kind NOT IN (?,?,?) ORDER BY rowid LIMIT 1",FILE_JOB_KINDS):
+        for jobs in self._queued(0,"SELECT * FROM jobs WHERE status='queued' AND kind NOT IN ('review','fact_check') AND kind NOT IN (?,?,?) ORDER BY rowid LIMIT 1",FILE_JOB_KINDS):
             if not jobs:
                 if self.store.settings()['auto_learn'] and not self.opened_paused:
                     try:
@@ -650,7 +651,6 @@ class Worker:
                     args=json.loads(job['payload'])
                     result=refresh(self.store,args['run_id'],args['source_id'],information_cutoff=args['information_cutoff'],trigger='manual')
                 elif job['kind']=='generate':result=self.generate(job)
-                elif job['kind']=='fact_check':result=self.run_fact_check(job)
                 elif job['kind']=='assess':result=self.assess(job)
                 elif job['kind']=='revise':
                     brief=self.store.one('briefs',json.loads(job['payload'])['version_id'])
@@ -770,7 +770,34 @@ class Worker:
         self.store.event(job['id'],'fact_check',{'action':'dispatch','stage_id':admitted['stage_id'],'job_id':queued['id']})
         return admitted
 
-    def run_fact_check(self,job):
+    def _wait_fact_check(self,parent,brief):
+        """Final review consumes the check result; its independent lane stays cancellable."""
+        pending=self.store.rows("SELECT * FROM jobs WHERE kind='fact_check' AND json_extract(payload,'$.parent_job_id')=? AND json_extract(payload,'$.version_id')=? ORDER BY rowid DESC LIMIT 1",(parent['id'],brief['id']))
+        if not pending:return
+        child=pending[0]
+        while True:
+            if self.runtime.cancelled.is_set() or self.stopping.is_set():
+                self.stop_job(child['id']);raise InterruptedError('报告已停止，关联核查也已停止')
+            record=self.store.one('jobs',child['id'])
+            if record['status']=='complete':return
+            if record['status'] in ('failed','cancelled','interrupted'):
+                self.store.event(parent['id'],'fact_check',{'action':'incomplete','job_id':child['id'],
+                                 'error':record['error'] or '事实核查未完成；保留草稿并继续独立审阅'})
+                return
+            # Direct Worker.generate callers have no queue threads. Claim and
+            # settle the same persisted child, rather than leave it queued forever.
+            if not self.review_thread.is_alive():
+                with self.store.tx() as c:
+                    claimed=c.execute("UPDATE jobs SET status='running',updated=? WHERE id=? AND status='queued'",(now(),child['id'])).rowcount
+                if claimed:
+                    try:self._settle_job(child['id'],'complete',result=self.run_fact_check(self.store.one('jobs',child['id'])),runtime=self.runtime)
+                    except InterruptedError:
+                        self._settle_job(child['id'],'cancelled',error='任务已停止');raise
+                    except Exception as exc:self._settle_job(child['id'],'failed',error=str(exc))
+                    continue
+            self.stopping.wait(.2)
+
+    def run_fact_check(self,job,*,runtime=None):
         """Run the orchestrated fact-check turn: task pack, native session, stage close.
 
         The fact-checker is an independent CLI-host session (its own job folder
@@ -799,7 +826,7 @@ class Worker:
         job={**job,'allow_web':True}
         self.store.event(job['id'],'fact_check',{'action':'run','stage_id':stage['stage_id'],'version_id':brief['id']})
         try:
-            self.runtime.execute(job,fact_check_prompt(self.store,job,brief,folder,backend),folder)
+            (runtime or self.runtime).execute(job,fact_check_prompt(self.store,job,brief,folder,backend),folder)
         except InterruptedError:
             finish_fact_check(self.store,run_id,status='cancelled',summary='核查任务已停止',job_id=job['id'])
             raise
@@ -908,8 +935,19 @@ class Worker:
         self._admit_fact_check(job,brief)
         if not score or payload.get('single_evaluation') is False:
             return {**result,'version_id':brief['id'],**self._generated_sources(folder,brief['id'])}
+        self._wait_fact_check(job,brief)
         scoring=None
-        if not self.store.rows('SELECT id FROM assessments WHERE version_id=?',(current,)):
+        assessed=bool(self.store.rows('SELECT id FROM assessments WHERE version_id=?',(current,)))
+        if json.loads(run['requirements']).get('fact_check'):
+            # A checkpoint made before the check cannot skip final review. Reuse
+            # only a completed review whose actual packet still covers this input.
+            from .review import validate_applicable_review
+            assessed=False
+            for reviewed in self.store.rows("SELECT id FROM reviews WHERE version_id=? AND status='complete' ORDER BY rowid DESC",(current,)):
+                try:validate_applicable_review(self.store,reviewed['id'],current)
+                except (ValueError,OSError,KeyError):continue
+                assessed=True;break
+        if not assessed:
             legacy=folder/'assessment.json'
             if 'role_models' not in payload and legacy.exists():
                 # Preserve results of old jobs that scored inside the writing turn.
@@ -1112,7 +1150,7 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
 
     def assess_version(self,job,brief,folder,backend):
         req=json.loads(self.store.one('runs',brief['run_id'])['requirements'])
-        if req.get('writing_mode')=='internal_report':
+        if req.get('writing_mode')=='internal_report' or req.get('fact_check'):
             from .review import run_review
             if (folder/'review'/'review-id.json').exists() or not self.thread.is_alive():return run_review(self.store,self.runtime,job,brief['id'],folder/'review')
             pending=self._review_child(job,brief)

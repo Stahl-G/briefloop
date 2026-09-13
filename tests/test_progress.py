@@ -148,3 +148,17 @@ def test_worker_timestamp_alone_does_not_repeat_full_snapshot(tmp_path):
     emit('核对来源','2026-09-13T10:00:00Z');assert count()==1
     emit('核对来源','2026-09-13T10:00:01Z');assert count()==1
     emit('保存稿件','2026-09-13T10:00:02Z');assert count()==2
+
+
+def test_deep_research_keeps_readable_stage_and_round_label(tmp_path):
+    from briefloop.research_plan import freeze
+    store=Store(tmp_path/'workspace')
+    run=store.create_run({'title':'R','objective':'o','research_tier':'deep','allow_web':True},[],research_protocol='quality_v1')
+    freeze(store,run['id'])
+    job=store.enqueue('generate',{'run_id':run['id']})
+    folder=store.root/'jobs'/job['id'];folder.mkdir(parents=True)
+    tracker=ProgressTracker(store,job['id'],folder,context=job)
+    tracker.update()
+    data=json.loads(store.rows("SELECT data FROM events WHERE job_id=? AND kind='runtime_progress' ORDER BY seq DESC LIMIT 1",(job['id'],))[0]['data'])
+    assert isinstance(data['stage'],str) and data['stage']
+    assert next(item['label'] for item in data['stages'] if item['id']=='research')=='深度研究 第 1/4 轮'

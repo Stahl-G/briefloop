@@ -179,8 +179,8 @@ class ProgressTracker:
         note = deep_round_note(self.store,self.run_id)
         if note:
             # One plan-meta read per recompute; the label changes only between rounds.
-            for stage in stages:
-                if stage['id']=='research':stage['label']='深度研究 第 {}/{} 轮'.format(note[0],note[1])
+            for pipeline_stage in stages:
+                if pipeline_stage['id']=='research':pipeline_stage['label']='深度研究 第 {}/{} 轮'.format(note[0],note[1])
         if self.phase:
             identity, label, stage = self.phase
             stages = [{'id': identity, 'label': label, 'status': 'active', 'agents': workers}]

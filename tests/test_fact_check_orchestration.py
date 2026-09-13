@@ -106,10 +106,6 @@ def test_worker_runs_fact_check_job_and_closes_stage(tmp_path):
             return {}
 
     queued = store.enqueue('fact_check', {'run_id': run['id'], 'version_id': brief['id']})
-    # The main lane's claim query really picks the check job up for dispatch.
-    claimable = store.rows("SELECT id FROM jobs WHERE status='queued' AND kind!='review'"
-                           " AND kind NOT IN ('export_docx','release','audit_bundle') ORDER BY rowid")
-    assert [row['id'] for row in claimable] == [queued['id']]
     outcome = Worker(store, Runtime()).run_fact_check(store.one('jobs', queued['id']))
     assert outcome['execution'] == 'completed' and outcome['candidates'] == 1
     assert research_plan.frozen(store, run['id'])['fact_check']['status'] == 'completed'
@@ -296,3 +292,65 @@ def test_grant_is_reachable_through_the_product_http_api(tmp_path):
         server.shutdown(); thread.join()
         server.harness.close(); server.opencode_harness.close()
         server.server_close(); server.workspace_lock.close()
+
+@pytest.mark.parametrize('check_fails', [False, True])
+def test_generation_waits_for_check_before_review_and_revision(tmp_path, monkeypatch, check_fails):
+    """Exercise both real queue lanes: a late check must not miss the first review."""
+    import time
+    store, run, source = _world(tmp_path)
+    order = []
+
+    class Runtime:
+        def __init__(self):self.cancelled = threading.Event()
+        def cancel(self):self.cancelled.set()
+        def execute(self, job, prompt, folder, on_tick=lambda: None, **kwargs):
+            if job['kind'] == 'fact_check':
+                order.append('check')
+                if check_fails:raise RuntimeError('synthetic provider failure')
+                pack = json.loads((folder / 'input.json').read_text())
+                claim = pack['claims'][0]['claim_id']
+                span = create_span(store, {'source_id': source['id'],
+                    'locator': {'kind': 'text', 'start_line': 1, 'end_line': 1}})['id']
+                query = budget.reserve_search(store, run['id'], 1)['request_id']
+                fact_check.submit_result(store, run['id'], {
+                    'version_id': pack['brief']['version_id'], 'stage_id': pack['stage_id'],
+                    'selection': {'claim_ids': [claim], 'unselected': []},
+                    'candidates': [{'claim_id': claim, 'status': 'supported_for_scope',
+                        'reason': '同一公告同一期间', 'span_ids': [span], 'query_ids': [query]}],
+                    'execution': {'status': 'completed', 'summary': 'done'}}, job_id=job['id'])
+            else:
+                order.append('draft')
+                (folder / 'draft.json').write_text(json.dumps({'title': 'R', 'markdown': '公司2026财年营业收入12.0百万美元。'}))
+                on_tick()
+                brief = store.rows('SELECT * FROM briefs WHERE run_id=?', (run['id'],))[0]
+                claim = create_claim(store, run['id'], {'statement': '公司2026财年营业收入12.0百万美元。', 'kind': 'fact'})
+                block = next(iter(blocks(json.loads(brief['editor_document']))))
+                bind_claim(store, brief['id'], claim['id'], block, '12.0百万美元')
+                research_plan.finish_round(store, run['id'])
+            return {}
+
+    worker = Worker(store, Runtime())
+    worker._review_runtime = Runtime()
+    def assess(job, brief, folder, backend):
+        order.append('review')
+        child = store.rows("SELECT * FROM jobs WHERE kind='fact_check'")[0]
+        assert child['status'] == ('failed' if check_fails else 'complete')
+        assert bool(fact_check.records_for(store, run['id'])) is not check_fails
+        return {}
+    def revise(job, brief, folder):
+        order.append('revision')
+        return {}
+    monkeypatch.setattr(worker, 'assess_version', assess)
+    monkeypatch.setattr(worker, 'auto_revise', revise)
+    job = store.enqueue('generate', {'run_id': run['id'], 'auto_revision': True})
+    worker.start()
+    try:
+        until = time.monotonic() + 10
+        while time.monotonic() < until:
+            saved = store.one('jobs', job['id'])
+            if saved['status'] not in ('queued', 'running'):break
+            time.sleep(.05)
+        assert saved['status'] == 'complete', saved['error']
+        assert order == ['draft', 'check', 'review', 'revision']
+    finally:
+        worker.close()
