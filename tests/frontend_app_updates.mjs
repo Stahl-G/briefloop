@@ -39,3 +39,14 @@ dto={...dto,state:'error',retryable:true,error:{code:'open_failed',message:'无�
 await desktop.el('app-update-retry').onclick();assert.deepEqual(calls,['install','install']);
 assert.equal(desktop.el('app-update-error').textContent,'无法打开 DMG');
 console.log('PASS: browser fallback, actual App version, local-test label, text-only notes, progress, install cancellation and retry');
+
+dto={...dto,currentAppVersion:'0.19.0',releaseVersion:'0.19.0',state:'available',error:null,reinstall:true};changed(dto);
+assert.equal(desktop.el('app-update-status').textContent,'重新安装当前 App v0.19.0');
+assert.equal(desktop.el('app-update-download').textContent,'下载当前版本安装包');
+assert.doesNotMatch(desktop.el('app-update-status').textContent,/发现/);
+assert.match(desktop.el('app-update-guidance').textContent,/重新安装当前版本/);
+assert.doesNotMatch(desktop.el('app-update-guidance').textContent,/新版本/);
+changed({...dto,state:'downloaded'});
+assert.match(desktop.el('app-update-status').textContent,/重新安装当前 App v0.19.0/);
+assert.match(desktop.el('app-update-source').textContent,/本地测试/);
+console.log('PASS: local same-version reinstall stays explicit across update states');

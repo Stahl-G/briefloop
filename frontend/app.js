@@ -2014,9 +2014,12 @@ function renderAppUpdates(value=appUpdateState){
  $('app-update-controls').hidden=!desktop;
  $('app-update-version').textContent=desktop?`当前 App v${value?.currentAppVersion||'读取中'}`:`网页客户端 v${box.dataset.webVersion}`;
  $('app-update-source').textContent=value?.source==='local-test'?'本地测试更新源 · 仅验证流程，不代表官方发布':'官方稳定来源：Stahl-G/briefloop · GitHub Releases';
- $('app-update-guidance').textContent=!desktop?'浏览器不能安装 App 更新。请在桌面 App 检查更新，或从官方下载页安装。':value?.installMode==='dmg'?'下载后会先保存编辑并处理忙任务，再退出 App、打开 DMG；请在 Finder 中手动安装新版本。':'下载后会先保存编辑并处理忙任务，再退出 App 并交给原生安装器更新。';
+ const reinstall=value?.source==='local-test'&&value?.reinstall===true;
+ $('app-update-guidance').textContent=!desktop?'浏览器不能安装 App 更新。请在桌面 App 检查更新，或从官方下载页安装。':value?.installMode==='dmg'?`下载后会先保存编辑并处理忙任务，再退出 App、打开 DMG；请在 Finder 中${reinstall?'重新安装当前版本':'手动安装新版本'}。`:'下载后会先保存编辑并处理忙任务，再退出 App 并交给原生安装器更新。';
  const labels={idle:'尚未检查更新',checking:'正在检查更新…',available:'发现可用更新',current:'当前 App 无需更新',downloading:'正在下载更新…',downloaded:'下载完成，等待安装',error:'更新未完成'};
- $('app-update-status').textContent=desktop?(labels[value?.state]||'正在读取 App 版本…')+(value?.releaseVersion?` · v${value.releaseVersion}`:''):'请从官方发布页查看最新版本。';
+ const reinstallLabel=`重新安装当前 App v${value?.currentAppVersion||''}`;
+ $('app-update-status').textContent=desktop?(reinstall&&value?.state==='available'?reinstallLabel:(labels[value?.state]||'正在读取 App 版本…')+(reinstall?` · ${reinstallLabel}`:value?.releaseVersion?` · v${value.releaseVersion}`:'')):'请从官方发布页查看最新版本。';
+ $('app-update-download').textContent=reinstall?'下载当前版本安装包':'下载更新';
  const busy=appUpdatePending||['checking','downloading'].includes(value?.state);
  $('app-update-check').disabled=busy;
  $('app-update-download').hidden=value?.state!=='available';$('app-update-download').disabled=busy;

@@ -24,7 +24,7 @@ async function fixture(t, options = {}) {
   const origin = `http://127.0.0.1:${server.address().port}`;
   const release = {tag_name: 'v0.20.0', draft: false, prerelease: false, html_url: `${origin}/notes`,
     body: 'Synthetic release notes', assets: [{name: 'BriefLoop-0.20.0-arm64.dmg', size: bytes.length,
-      browser_download_url: `${origin}/asset`, digest: 'sha256:' + crypto.createHash('sha256').update(bytes).digest('hex')}]};
+      browser_download_url: `${origin}/Stahl-G/briefloop/releases/download/v0.20.0/BriefLoop-0.20.0-arm64.dmg`, digest: 'sha256:' + crypto.createHash('sha256').update(bytes).digest('hex')}]};
   const changes = [], opened = [];
   const config = {app: {getVersion: () => '0.19.0', getPath: () => directory},
     shell: {openPath: async file => {opened.push(file); return '';}}, platform: 'darwin', arch: 'arm64',
@@ -153,4 +153,41 @@ test('native installation error event is propagated so the main gate can recover
   await assert.rejects(updater.installReady(), /更新请求失败/);
   assert.equal(updater.status().state, 'error');
   assert.doesNotMatch(JSON.stringify(updater.status()), /private diagnostic/);
+});
+
+
+test('only explicit local feeds allow equal-version reinstall; production equality and all downgrades stay current', async t => {
+  const f = await fixture(t);
+  f.release.tag_name = 'v0.19.0';
+  f.release.assets[0].name = 'BriefLoop-0.19.0-arm64.dmg';
+  const origin = new URL(f.config.testFeed).origin;
+  f.release.assets[0].browser_download_url = `${origin}/Stahl-G/briefloop/releases/download/v0.19.0/BriefLoop-0.19.0-arm64.dmg`;
+  const checked = await f.updater.check();
+  assert.equal(checked.state, 'available'); assert.equal(checked.reinstall, true);
+  assert.equal(checked.currentAppVersion, '0.19.0'); assert.equal(checked.releaseVersion, '0.19.0');
+  assert.equal((await f.updater.download()).state, 'downloaded');
+  assert.equal(f.updater.status().reinstall, true);
+  const official = createUpdater({...f.config, testFeed: null, fetch: async url => {
+    assert.equal(url, 'https://api.github.com/repos/Stahl-G/briefloop/releases/latest');
+    return new Response(JSON.stringify({...f.release, html_url: 'https://github.com/Stahl-G/briefloop/releases/tag/v0.19.0'}));
+  }});
+  assert.equal((await official.check()).state, 'current');
+  assert.equal(official.status().reinstall, false);
+  assert.equal((await official.download()).error.code, 'not_available');
+  const lower = createUpdater(f.config);
+  f.release.tag_name = 'v0.18.0';
+  assert.equal((await lower.check()).state, 'current'); assert.equal(lower.status().reinstall, false);
+  assert.equal((await lower.download()).error.code, 'not_available');
+  assert.equal(f.assetRequests(), 1);
+});
+
+test('equal-version local reinstall keeps filename and exact tag binding', async t => {
+  const f = await fixture(t);
+  f.release.tag_name = 'v0.19.0';
+  assert.equal((await f.updater.check()).error.code, 'asset_version_mismatch');
+  f.release.assets[0].name = 'BriefLoop-0.19.0-arm64.dmg';
+  const origin = new URL(f.config.testFeed).origin;
+  f.release.assets[0].browser_download_url = `${origin}/Stahl-G/briefloop/releases/download/v0.18.0/BriefLoop-0.19.0-arm64.dmg`;
+  assert.equal((await f.updater.check()).error.code, 'asset_version_mismatch');
+  assert.equal(f.updater.status().reinstall, false); assert.equal(f.assetRequests(), 0);
 });

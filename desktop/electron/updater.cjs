@@ -31,7 +31,7 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
   if (local && installMode !== 'dmg') throw new Error('Local test feed only supports the DMG test path');
   const currentAppVersion = app.getVersion();
   let data = {currentAppVersion, state: 'idle', releaseVersion: null, notes: '', url: null,
-              progress: null, installMode, error: null, retryable: false, source: local ? 'local-test' : 'github'};
+              progress: null, installMode, error: null, retryable: false, reinstall: false, source: local ? 'local-test' : 'github'};
   let pending = null, asset = null, ready = null, native = null, available = false;
   const status = () => structuredClone(data);
   const publish = patch => {data = {...data, ...patch}; changed(status()); return status();};
@@ -125,7 +125,7 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
   }
   async function checkImpl() {
     if (data.state === 'downloaded') return status();
-    publish({state: 'checking', error: null, retryable: false, progress: null}); asset = null; available = false;
+    publish({state: 'checking', error: null, retryable: false, progress: null, reinstall: false}); asset = null; available = false;
     if (installMode === 'native') {
       const result = await setupNative().checkForUpdates();
       if (!result?.updateInfo) throw new UpdateError('feed_unavailable', '原生更新源尚未就绪，请稍后重试。');
@@ -140,7 +140,8 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
     if (release.draft || release.prerelease) throw new UpdateError('unstable_release', '仅接受已公开的稳定版本。', false);
     const version = releaseVersion(release.tag_name), url = releaseURL(release.html_url);
     publish({releaseVersion: version, notes: typeof release.body === 'string' ? release.body.slice(0, 20000) : '', url});
-    if (!semver.gt(version, currentAppVersion)) return publish({state: 'current'});
+    const reinstall = !!local && version === semver.valid(currentAppVersion);
+    if (!semver.gt(version, currentAppVersion) && !reinstall) return publish({state: 'current'});
     const candidates = (Array.isArray(release.assets) ? release.assets : []).filter(item =>
       typeof item.name === 'string' && /(?:^|[-_.])arm64(?:[-_.]|$)/i.test(item.name) && /\.dmg$/i.test(item.name));
     if (candidates.length !== 1) throw new UpdateError('asset_unavailable', '该版本尚无唯一可用的 Apple Silicon DMG，请稍后重试。');
@@ -150,7 +151,7 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
     const expectedName = `BriefLoop-${version}-arm64.dmg`;
     if (selected.name !== expectedName) throw new UpdateError('asset_version_mismatch', '更新文件名与发布版本不一致。', false);
     const selectedURL = new URL(trusted(selected.browser_download_url, 'asset'));
-    if (!local && (decodeURIComponent(selectedURL.pathname) !== `/${REPOSITORY}/releases/download/${release.tag_name}/${expectedName}` || selectedURL.search)) {
+    if (decodeURIComponent(selectedURL.pathname) !== `/${REPOSITORY}/releases/download/${release.tag_name}/${expectedName}` || selectedURL.search) {
       throw new UpdateError('asset_version_mismatch', '更新文件不属于所选发布版本。', false);
     }
     if (!Number.isSafeInteger(selected.size) || selected.size <= 0 || selected.size > MAX_ASSET) {
@@ -166,7 +167,7 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
     }
     asset = {url: trusted(selected.browser_download_url, 'asset'), size: selected.size, digest};
     available = true;
-    return publish({state: 'available'});
+    return publish({state: 'available', reinstall});
   }
   async function downloadImpl() {
     if (ready && data.state === 'downloaded') return status();

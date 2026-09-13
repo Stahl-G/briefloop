@@ -32,6 +32,7 @@ DTO 字段：
 | `installMode` | `native` 或 `dmg` |
 | `error` | null 或 `{code,message}`，不含凭据或原始错误全文 |
 | `retryable` | 操作失败后是否可重试 |
+| `reinstall` | 仅显式本地源的同版本 DMG 为 true；界面显示“重新安装当前 App”，不称为新版本 |
 | `source` | `github` 或 `local-test`；后者应在界面持续明确标注 |
 
 下载失败可再次调用 `download()`；源信息失效或缺少资产时先 `check()`。不允许降级或预发布。检查/下载不自动安装，也不自动停止服务。
@@ -52,7 +53,7 @@ Windows 默认委托 `electron-updater`；未来签名 macOS 构建可由主进�
 
 ## 无公开发布的本地验证
 
-构造器允许主进程显式传入 `testFeed: 'http://127.0.0.1:PORT/release'`，仅适用于 DMG 测试路径；也可用 localhost 或 IPv6 回环。该地址返回 GitHub Release 形状 JSON。测试资产必须在同一回环 origin，重定向不能离开；DTO 强制 `source: 'local-test'`。本模块不自动读取环境变量。主进程仅在 `!app.isPackaged` 时接受显式 `BRIEFLOOP_UPDATE_TEST_FEED`；打包 App 忽略该变量，始终使用官方来源。界面持续显示“本地测试更新源”，不接受网页传入 feed。
+构造器允许主进程显式传入 `testFeed: 'http://127.0.0.1:PORT/release'`，仅适用于 DMG 测试路径；也可用 localhost 或 IPv6 回环。该地址返回 GitHub Release 形状 JSON。测试资产必须在同一回环 origin，路径必须为 `/Stahl-G/briefloop/releases/download/{tag_name}/BriefLoop-{version}-arm64.dmg`，重定向不能离开；DTO 强制 `source: 'local-test'`。本模块不自动读取环境变量。主进程仅在 `!app.isPackaged` 时接受显式 `BRIEFLOOP_UPDATE_TEST_FEED`；打包 App 忽略该变量，始终使用官方来源。界面持续显示“本地测试更新源”，不接受网页传入 feed。
 
 ```json
 {
@@ -64,10 +65,12 @@ Windows 默认委托 `electron-updater`；未来签名 macOS 构建可由主进�
   "assets": [{
     "name": "BriefLoop-0.20.0-arm64.dmg",
     "size": 123,
-    "browser_download_url": "http://127.0.0.1:PORT/asset",
+    "browser_download_url": "http://127.0.0.1:PORT/Stahl-G/briefloop/releases/download/v0.20.0/BriefLoop-0.20.0-arm64.dmg",
     "digest": "sha256:实际资产的64位十六进制摘要"
   }]
 }
 ```
 
 运行 `node --test test/updater.test.cjs`。测试使用临时回环 HTTP 服务和合成字节，不执行安装器：覆盖失败重试、哈希拒绝、稳定版/降级/缺资产、越界 URL 拒绝、公开来源约束、原生库方法委托及自动安装关闭。它们不证明 GitHub 公开更新链、macOS 原地更新或 Windows 本机安装已验收；安装包实测应由各平台另行完成。
+
+显式本地源也可提供与当前 App 完全相同的稳定版本，用于重新安装真实构建。此时 `reinstall: true`，界面显示“重新安装当前 App v{版本}”；版本、tag、资产文件名、大小与校验要求保持一致，不能用更高的虚报版本包装旧构建。本地 feed 作者须核对 DMG 内 App 的实际版本；下载器不挂载 DMG 或自行解释安装包，单凭文件名与哈希不证明包内 App 版本。生产官方源对同版本仍返回 `current`，所有来源均不能下载降级版本。此能力不改变正式更新 feed，也不代表发布了新版本。
