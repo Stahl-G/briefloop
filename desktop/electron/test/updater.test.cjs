@@ -115,6 +115,35 @@ test('native integration delegates download/install and never auto-installs on q
   assert.deepEqual(native.calls[2], ['install', false, true]);
 });
 
+test('Windows missing update files have a specific safe message and checking can retry', async () => {
+  class Native extends EventEmitter {
+    checks = 0;
+    setFeedURL() {}
+    async checkForUpdates() {
+      if (++this.checks < 3) {
+        const error = Object.assign(Error('private provider URL https://private.invalid/?token=synthetic-secret'),
+          {code: this.checks === 1 ? 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND' : 'UNKNOWN_PROVIDER_ERROR'});
+        this.emit('error', error); throw error;
+      }
+      return {updateInfo: {version: '0.20.0'}};
+    }
+  }
+  const native = new Native(), changes = [];
+  const updater = createUpdater({app: {getVersion: () => '0.19.0'}, shell: {}, platform: 'win32',
+    nativeUpdater: native, changed: value => changes.push(value)});
+  const missing = await updater.check();
+  assert.equal(missing.state, 'error'); assert.equal(missing.retryable, true);
+  assert.deepEqual(missing.error, {code: 'windows_update_unavailable', message: '官方发布尚未提供 Windows 更新文件，请稍后重试。'});
+  const unknown = await updater.check();
+  assert.equal(unknown.state, 'error'); assert.equal(unknown.retryable, true);
+  assert.deepEqual(unknown.error, {code: 'update_failed', message: '更新请求失败，请检查网络后重试。'});
+  const recovered = await updater.check();
+  assert.equal(recovered.state, 'available'); assert.equal(recovered.error, null);
+  assert.equal(native.checks, 3);
+  assert.equal(changes.filter(value => value.state === 'checking').length, 3);
+  assert.doesNotMatch(JSON.stringify(changes), /private\.invalid|synthetic-secret|UNKNOWN_PROVIDER_ERROR/);
+});
+
 test('temporary DMG open failure retries the verified existing bytes', async t => {
   const f = await fixture(t);
   let attempts = 0;
