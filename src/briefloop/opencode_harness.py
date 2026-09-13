@@ -561,11 +561,13 @@ class OpencodeHarness:
         assistant_id = None
         seen_tools = set()
         started_at = time.monotonic()
-        deadline = started_at + self.store.settings()['timeout_minutes'] * 60
-        child_poll = {'deadline': deadline}
+        child_poll = {}
         last_activity = started_at
         execution_started = False
         while True:
+            minutes = self.store.settings()['timeout_minutes']
+            deadline = started_at + minutes * 60 if minutes > 0 else float('inf')
+            child_poll['deadline'] = deadline
             if self._epoch.get(sid) != epoch:
                 return
             if sid in self._cancel_requested:
@@ -656,11 +658,11 @@ class OpencodeHarness:
                     child_running = any(row.get('status') == 'running' and
                                         time.monotonic() - row.get('observed_running_at', float('-inf')) <= 10
                                         for row in child_poll.get('children', {}).values())
-                    if time.monotonic() - last_activity > 120 and not child_running:
+                    if minutes > 0 and time.monotonic() - last_activity > 120 and not child_running:
                         self.chat.event(sid, 'error', {'message': 'Opencode 子步骤完成后 120 秒无后续，已停止等待'})
                         self._finish(sid, mid, 'failed')
                         raise RuntimeError('Opencode 执行停滞；详情保存在会话与任务日志')
-            if not execution_started and time.monotonic() - started_at >= 90:
+            if minutes > 0 and not execution_started and time.monotonic() - started_at >= 90:
                 # Unresolvable models stall without any step event; fail fast
                 # with an actionable message instead of burning the job budget.
                 self._interrupt_once(sid, bound, mid)
