@@ -44,3 +44,5 @@ DeepSeek Harness uses `dsh --profile acp` with its existing provider credentials
 Antigravity 协议依据 https://antigravity.google/docs/cli/headless/；只把 SUCCESS 且正常退出的结果记为完成，累计会话用量不作本轮上下文输入。
 
 Antigravity 使用本机已有登录和原生权限。无界面调用不能回答交互权限请求；需要批准的工具可能被宿主 soft-deny，即使宿主返回 SUCCESS。桥接会保留工具错误，并把仅有失败工具且无正文的回合记为失败。请通过宿主官方 permissions.allow 配置明确的文件/工具范围；BriefLoop 不自动添加全局授权，也不传递跳过权限的参数。图片输入暂不支持。
+
+Pi 使用已安装 CLI 的 `--mode rpc`，按 `get_available_models` 返回的 provider/model 精确选择，使用原生 sessionFile 续接。等待 `agent_settled` 结束回合；扩展 select/confirm 请求由用户回答，文本型扩展输入尚未接入，图片暂不支持。协议来源为 Pi 随包 docs/rpc.md。

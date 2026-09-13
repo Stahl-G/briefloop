@@ -1,12 +1,7 @@
 // Includes Apache-2.0 Open Design helpers; see runtime-bridge.LICENSE.txt and runtime-bridge.NOTICE.txt.
 
-// runtime-bridge/main.ts
-import { spawn as spawn2, execFile } from "node:child_process";
-import { accessSync, constants, readFileSync } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import path2 from "node:path";
-import { promisify } from "node:util";
-import { createInterface } from "node:readline";
+// runtime-bridge/pi.ts
+import path from "node:path";
 
 // third_party/open-design/core/json-line-stream.ts
 function createJsonLineStream(onMessage) {
@@ -251,13 +246,157 @@ function classifyJsonCandidate(value) {
   return rootComplete && stack.length === 0 ? "complete" : "incomplete";
 }
 
+// runtime-bridge/pi.ts
+function piConnection(bin, p, launch2, terminate2, onEvent = () => {
+}) {
+  const args = ["--mode", "rpc", "--no-approve"];
+  if (p.metadata) args.push("--no-session");
+  if (p.session_id) args.push("--session", p.session_id);
+  const child = launch2(bin, args, p.cwd), pending = /* @__PURE__ */ new Map();
+  let seq = 0;
+  const send = (value) => child.stdin.write(JSON.stringify(value) + "\n");
+  const rejectPending = (error) => {
+    for (const q of pending.values()) {
+      clearTimeout(q.timer);
+      q.reject(error);
+    }
+    pending.clear();
+  };
+  const parser = createJsonLineStream((m) => {
+    if (m.type === "response" && pending.has(m.id)) {
+      const q = pending.get(m.id);
+      pending.delete(m.id);
+      clearTimeout(q.timer);
+      m.success ? q.resolve(m.data) : q.reject(Error(m.error || "Pi rejected " + m.command));
+    } else onEvent(m);
+  });
+  child.stdout.setEncoding("utf8");
+  child.stdout.on("data", (c) => parser.feed(c));
+  child.stderr.resume();
+  child.stdin.on("error", () => {
+  });
+  child.on("error", rejectPending);
+  child.on("close", () => {
+    parser.flush();
+    rejectPending(Error("Pi process exited"));
+  });
+  return { child, send, close: () => terminate2(child), call: (type, data = {}, timeout = 2e4) => new Promise((resolve, reject) => {
+    const id = String(++seq);
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(Error("Pi " + type + " timed out"));
+    }, timeout);
+    pending.set(id, { resolve, reject, timer });
+    send({ id, type, ...data });
+  }) };
+}
+async function piModels(bin, p, launch2, terminate2) {
+  const c = piConnection(bin, { ...p, metadata: true }, launch2, terminate2);
+  try {
+    const result = await c.call("get_available_models");
+    return { source: "host", models: [{ id: "default", label: "\u5BBF\u4E3B\u9ED8\u8BA4\u6A21\u578B" }, ...(result.models || []).map((m) => ({ id: m.provider + "/" + m.id, label: m.name || m.id }))] };
+  } finally {
+    c.close();
+  }
+}
+async function runPi(p, state, launch2, terminate2, emit2) {
+  if (p.images?.length) throw Error("Pi image input is not enabled in this adapter");
+  let finish, fail, lastMessage = null, textSeen = false, started = false;
+  const settled = new Promise((resolve, reject) => {
+    finish = resolve;
+    fail = reject;
+  });
+  settled.catch(() => {
+  });
+  const c = piConnection(state.bin, p, launch2, terminate2, (m) => {
+    if (!started) return;
+    if (m.type === "message_start" && m.message?.role === "assistant") textSeen = false;
+    if (m.type === "message_update") {
+      const e = m.assistantMessageEvent || {};
+      if (e.type === "text_delta") {
+        textSeen = true;
+        emit2(p.execution_id, "text", { text: e.delta, delta: true });
+      } else if (e.type === "thinking_delta") emit2(p.execution_id, "reasoning", { text: e.delta, delta: true });
+    }
+    if (m.type === "message_end" && m.message?.role === "assistant") {
+      lastMessage = m.message;
+      if (!textSeen) {
+        for (const b of lastMessage.content || []) if (b.type === "text") emit2(p.execution_id, "text", { text: b.text, delta: true });
+      }
+      if (lastMessage.usage) emit2(p.execution_id, "usage", { usage: lastMessage.usage });
+    }
+    if (m.type.startsWith("tool_execution_")) emit2(p.execution_id, "tool", { id: m.toolCallId, name: m.toolName, status: m.type === "tool_execution_end" ? m.isError ? "failed" : "completed" : "running", input: m.args, output: m.result || m.partialResult });
+    if (m.type === "extension_ui_request") {
+      if (!["select", "confirm", "input", "editor"].includes(m.method)) return;
+      const options = m.method === "confirm" ? [{ optionId: "yes", kind: "allow_once", name: "\u5141\u8BB8\u672C\u6B21" }, { optionId: "no", kind: "reject_once", name: "\u62D2\u7EDD" }] : m.method === "select" ? (m.options || []).map((name, i) => ({ optionId: String(i), name, kind: "choice" })) : [];
+      if (!options.length) {
+        c.send({ type: "extension_ui_response", id: m.id, cancelled: true });
+        fail(Error("Pi extension requested unsupported text input"));
+        return;
+      }
+      state.questions.set(String(m.id), { options, reply: (r) => {
+        const id = r.outcome?.optionId;
+        const value = options.find((o) => o.optionId === id);
+        c.send({ type: "extension_ui_response", id: m.id, ...!value ? { cancelled: true } : m.method === "confirm" ? { confirmed: id === "yes" } : { value: value.name } });
+      } });
+      emit2(p.execution_id, "question", { request_id: String(m.id), type: "permission", title: m.title || m.message || "Pi \u8BF7\u6C42\u786E\u8BA4", options });
+    }
+    if (m.type === "agent_settled") {
+      if (state.cancelled) return finish();
+      if (!lastMessage || ["error", "aborted", "toolUse"].includes(lastMessage.stopReason)) fail(Error(lastMessage?.errorMessage || "Pi ended without a successful final reply"));
+      else finish();
+    }
+  });
+  state.child = c.child;
+  state.cancel = () => {
+    c.send({ type: "clear_queue" });
+    c.send({ type: "abort" });
+    c.close();
+    finish();
+  };
+  c.child.on("error", fail);
+  c.child.on("close", () => {
+    if (!state.cancelled) fail(Error("Pi exited before the turn settled"));
+  });
+  let timer;
+  try {
+    const info = await c.call("get_state");
+    if (!info.sessionFile) throw Error("Pi did not provide a persistent session");
+    if (p.session_id && path.resolve(info.sessionFile) !== path.resolve(p.session_id)) throw Error("Pi resumed a different session");
+    if (p.model && p.model !== "default") {
+      const split = p.model.indexOf("/");
+      if (split < 1) throw Error("Pi model must be provider/model");
+      await c.call("set_model", { provider: p.model.slice(0, split), modelId: p.model.slice(split + 1) });
+    }
+    emit2(p.execution_id, "session", { session_id: info.sessionFile });
+    started = true;
+    if (p.timeout_ms) timer = setTimeout(() => {
+      c.close();
+      fail(Error("Pi turn timed out"));
+    }, p.timeout_ms);
+    await c.call("prompt", { message: p.prompt });
+    await settled;
+  } finally {
+    clearTimeout(timer);
+    c.close();
+  }
+}
+
+// runtime-bridge/main.ts
+import { spawn as spawn2, execFile } from "node:child_process";
+import { accessSync, constants, readFileSync } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import path3 from "node:path";
+import { promisify } from "node:util";
+import { createInterface } from "node:readline";
+
 // third_party/open-design/acp/session-params.ts
-import path from "node:path";
+import path2 from "node:path";
 function buildAcpSessionNewParams(cwd, { mcpServers, envFormat = "array" } = {}) {
   const servers = Array.isArray(mcpServers) ? mcpServers : [];
   const wantsMap = envFormat === "map";
   return {
-    cwd: path.resolve(cwd),
+    cwd: path2.resolve(cwd),
     // MCP is an optional compatibility layer. Default to no MCP servers so ACP
     // agents can run through the skill + CLI path without MCP support. Do not
     // auto-install or mutate user/global MCP config; callers must pass an
@@ -1129,13 +1268,13 @@ function exec(bin, args, options) {
 }
 var acpArgs = { codebuddy: ["--acp"], kimi: ["acp"], hermes: ["acp"], reasonix: ["acp"], kilo: ["acp"], kiro: ["acp"], vibe: [], "deepseek-harness": ["--profile", "acp"] };
 function acpArguments(id, bin) {
-  return id === "hermes" && /^hermes-acp(?:\.(?:exe|cmd|bat))?$/i.test(path2.basename(bin)) ? [] : [...acpArgs[id]];
+  return id === "hermes" && /^hermes-acp(?:\.(?:exe|cmd|bat))?$/i.test(path3.basename(bin)) ? [] : [...acpArgs[id]];
 }
 var active = /* @__PURE__ */ new Map();
 var defaults = [{ id: "default", label: "\u5BBF\u4E3B\u9ED8\u8BA4\u6A21\u578B" }];
 function claudeConfiguredModel() {
   try {
-    const file = JSON.parse(readFileSync(path2.join(homedir2(), ".claude", "settings.json"), "utf8"));
+    const file = JSON.parse(readFileSync(path3.join(homedir2(), ".claude", "settings.json"), "utf8"));
     const alias = typeof file?.model === "string" ? file.model.trim() : "";
     const configured = file?.env && typeof file.env === "object" ? file.env : {};
     const merged = { ...configured, ...env };
@@ -1163,12 +1302,12 @@ if (process.platform === "win32") {
   env.PATH = process.env.PATH || process.env.Path || "";
   delete env.Path;
 }
-var dirs = [...(env.PATH || "").split(path2.delimiter), path2.join(homedir2(), ".local/bin"), path2.join(homedir2(), ".kimi-code/bin"), path2.join(homedir2(), ".opencode/bin"), path2.join(homedir2(), ".npm-global/bin"), path2.join(homedir2(), ".bun/bin"), path2.join(homedir2(), ".cargo/bin"), path2.join(homedir2(), ".dsh/bin"), "/opt/homebrew/bin", "/usr/local/bin"];
-if (process.platform === "win32" && env.APPDATA) dirs.push(path2.join(env.APPDATA, "npm"));
-env.PATH = [...new Set(dirs)].join(path2.delimiter);
+var dirs = [...(env.PATH || "").split(path3.delimiter), path3.join(homedir2(), ".local/bin"), path3.join(homedir2(), ".kimi-code/bin"), path3.join(homedir2(), ".opencode/bin"), path3.join(homedir2(), ".npm-global/bin"), path3.join(homedir2(), ".bun/bin"), path3.join(homedir2(), ".cargo/bin"), path3.join(homedir2(), ".dsh/bin"), "/opt/homebrew/bin", "/usr/local/bin"];
+if (process.platform === "win32" && env.APPDATA) dirs.push(path3.join(env.APPDATA, "npm"));
+env.PATH = [...new Set(dirs)].join(path3.delimiter);
 function findBin(def, custom) {
   const extensions = process.platform === "win32" ? [".exe", ".cmd", ".bat", ""] : [""];
-  for (const f of custom ? [path2.resolve(custom)] : def.bins.flatMap((b) => dirs.flatMap((d) => extensions.map((e) => path2.join(d, b + e))))) {
+  for (const f of custom ? [path3.resolve(custom)] : def.bins.flatMap((b) => dirs.flatMap((d) => extensions.map((e) => path3.join(d, b + e))))) {
     try {
       accessSync(f, constants.X_OK);
       return f;
@@ -1191,11 +1330,11 @@ function emit(id, kind, data = {}) {
   wire({ method: "event", params: { execution_id: id, kind, ...data } });
 }
 function protocol(id) {
-  return id in acpArgs ? "acp" : id === "antigravity" ? "antigravity-stream-json" : id === "claude" ? "claude-stream-json" : id === "mimo" ? "opencode-json" : id === "codex" || id === "opencode" ? "native-manager" : null;
+  return id in acpArgs ? "acp" : id === "pi" ? "pi-rpc" : id === "antigravity" ? "antigravity-stream-json" : id === "claude" ? "claude-stream-json" : id === "mimo" ? "opencode-json" : id === "codex" || id === "opencode" ? "native-manager" : null;
 }
 function capabilities(id) {
   const p = protocol(id);
-  return { chat: !!p, cancel: !!p, resume: p === "acp" ? "negotiated" : p === "claude-stream-json" || p === "opencode-json" || p === "antigravity-stream-json", images: p === "acp" ? "negotiated" : p === "claude-stream-json", questions: p === "acp", steer: false, read_only: false, network_control: false, permission_modes: ["runtime-native"] };
+  return { chat: !!p, cancel: !!p, resume: p === "acp" ? "negotiated" : p === "claude-stream-json" || p === "opencode-json" || p === "antigravity-stream-json" || p === "pi-rpc", images: p === "acp" ? "negotiated" : p === "claude-stream-json", questions: p === "acp" || p === "pi-rpc", steer: false, read_only: false, network_control: false, permission_modes: ["runtime-native"] };
 }
 function terminate(child) {
   if (!child?.pid) return;
@@ -1330,6 +1469,7 @@ async function listModels(p) {
     })], source: "native_config", note: "Models declared by the host; account availability is checked by a model call." };
   }
   const fallback = [...hostDefaults(p.runtime_id), ...fallbacks_default[p.runtime_id] || []];
+  if (p.runtime_id === "pi") return piModels(bin, p, launch, terminate);
   if (p.runtime_id === "antigravity") {
     const r = await exec(bin, ["models"], { env, cwd: p.cwd || process.cwd(), timeout: 2e4, maxBuffer: 1024 * 1024 });
     const models = r.stdout.split(/\r?\n/).map((line) => line.trim().split(/\t+/)).filter(([id, label]) => label && sanitizeCustomModel(id)).map(([id, label]) => ({ id, label }));
@@ -1417,7 +1557,7 @@ async function runAcp(p, state) {
     if (p.images?.length && !init.agentCapabilities?.promptCapabilities?.image) throw Error("Host does not advertise image input");
     for (const image of p.images || []) {
       const f = typeof image === "string" ? image : image.path;
-      const mime = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" }[path2.extname(f).toLowerCase()];
+      const mime = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" }[path3.extname(f).toLowerCase()];
       if (!mime) throw Error("Unsupported image format");
       const data = readFileSync(f);
       if (data.length > 20 * 1024 * 1024) throw Error("Image exceeds 20 MiB");
@@ -1575,7 +1715,7 @@ async function runStream(p, state) {
       const content = [{ type: "text", text: p.prompt }];
       for (const img of p.images || []) {
         const f = typeof img === "string" ? img : img.path;
-        const mime = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" }[path2.extname(f).toLowerCase()];
+        const mime = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" }[path3.extname(f).toLowerCase()];
         if (!mime) {
           terminate(child);
           reject(Error("Unsupported image"));
@@ -1597,6 +1737,7 @@ async function execute(p, state) {
   try {
     if (state.cancelled) return;
     if (p.runtime_id in acpArgs) await runAcp(p, state);
+    else if (p.runtime_id === "pi") await runPi(p, state, launch, terminate, emit);
     else if (p.runtime_id === "antigravity") await runAntigravity(p, state);
     else await runStream(p, state);
     if (!state.cancelled && !state.publicActivity) throw Error("Host ended without visible output or tool activity; verify host configuration");
