@@ -727,6 +727,38 @@ function reasoningHTML(message){
 }
 function liveStatusText(){const active=activeActivityEntries(activityEntries());const e=active.at(-1);return e?`正在${e.label}…`:'正在回复…'}
 function typingHTML(){return `<span class="typing-status"><span class="typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>${esc(liveStatusText())}</span>`}
+function runtimeFeedback(messages, events){
+ const rows=new Map(),users=messages.filter(m=>m.role==='user'&&m.status!=='queued');
+ for(const event of [...events].sort((a,b)=>a.seq-b.seq)){
+  if(!['error','runtime/status'].includes(event.kind))continue;
+  const data=event.data||{};
+  const user=users.find(m=>m.id===data.turnId||m.turn_id===data.turnId)||users.filter(m=>m.created<=event.created).at(-1);
+  if(!user)continue;
+  const key=user.turn_id||user.id,previous=rows.get(key);
+  if(data.status==='resumed'){
+   if(previous&&previous.retry)rows.set(key,{...previous,retry:false,resumed:true});
+   continue;
+  }
+  rows.set(key,{key,userId:user.id,message:data.message||data.error?.message||'请求未完成',retry:data.status==='retry',attempt:data.attempt,next:data.next,created:event.created});
+ }
+ return [...rows.values()].map(row=>{
+  const answer=messages.filter(m=>m.role==='assistant'&&m.turn_id===row.key).at(-1);
+  const user=messages.find(m=>m.id===row.userId);
+  const ended=['completed','failed','cancelled','interrupted'].includes(user?.status);
+  return {...row,retry:row.retry&&!ended,resumed:row.resumed||(row.retry&&user?.status==='completed'),anchor:answer?.id||row.userId};
+ });
+}
+function renderRuntimeFeedback(){
+ for(const row of runtimeFeedback(chat.messages,chat.events.values())){
+  const node=document.createElement('article');node.dataset.messageId='runtime:'+row.key;
+  node.className='chat-message from-assistant task-notice message-error';node.setAttribute('role','status');
+  const label=row.retry?'模型服务正在重试':row.resumed?'宿主已结束重试':'模型服务提示';
+  const retry=row.retry?`第 ${Number.isInteger(row.attempt)?row.attempt:'—'} 次重试${Number.isFinite(row.next)?' · 下次尝试 '+new Date(row.next).toLocaleTimeString():''}。可以等待，也可以点击停止。`:'';
+  node.innerHTML=`<div class="message-heading"><strong>${esc(label)}</strong><span>${messageTime(row.created)}</span></div><div class="message-body">${esc(row.message)}</div>${retry?`<p class="help">${esc(retry)}</p>`:''}`;
+  const anchor=[...$('chat-messages').children].find(n=>n.dataset.messageId===row.anchor);
+  if(anchor)anchor.after(node);else $('chat-messages').append(node);
+ }
+}
 function renderMessages(){
  const scroll=$('chat-scroll'),nearEnd=scroll.scrollHeight-scroll.scrollTop-scroll.clientHeight<140;
  let liveSeq=0;for(const key of chat.events.keys())if(key>liveSeq)liveSeq=key;
@@ -746,7 +778,7 @@ function renderMessages(){
   node.querySelectorAll('[data-message-source]').forEach(button=>button.onclick=()=>action(async()=>showSource(await api('source?id='+encodeURIComponent(button.dataset.messageSource)))));
   if(message.role==='assistant'&&message.status==='completed'&&message.text&&message.mode!=='notice'){api('render',{markdown:message.text}).then(result=>{if(node.isConnected&&node.dataset.signature===messageSignature){node.querySelector('.message-body').innerHTML=result.html;node.querySelector('.message-body').classList.add('rendered-markdown');if(nearEnd)scroll.scrollTop=scroll.scrollHeight}}).catch(()=>{})}
  }
- for(const node of nodes.values())node.remove();if(nearEnd)scroll.scrollTop=scroll.scrollHeight;
+ for(const node of nodes.values())node.remove();renderRuntimeFeedback();if(nearEnd)scroll.scrollTop=scroll.scrollHeight;
  }
 }
 function homeGreeting(){

@@ -42,7 +42,9 @@ def _public_native_error(error):
             r'(?:[A-Z][A-Za-z0-9]{0,60})?(?:Error|Exception)', name) else '执行失败'
     message = sanitize(message)
     message = re.sub(r'''(?i)\bhttps?://[^\s<>"']+''', '[URL omitted]', message)
-    return message.strip()[:300]
+    code = data.get('statusCode', error.get('statusCode'))
+    prefix = f'HTTP {code} · ' if type(code) is int and 100 <= code <= 599 else ''
+    return prefix + message.strip()[:300]
 
 
 def _permission_rules(config, allow_web, root):
@@ -527,7 +529,7 @@ class OpencodeHarness:
             # never observe 'failed' before its error event exists.
             if mid:
                 self.chat.patch_message(mid, status='failed')
-            self.chat.event(sid, 'error', {'message': str(exc)})
+            self.chat.event(sid, 'error', {'turnId': mid, 'message': _public_native_error({'message': str(exc)})})
             self.chat.update(sid, status='failed', turn_id=None)
         finally:
             with self._lock:
@@ -564,6 +566,7 @@ class OpencodeHarness:
         child_poll = {}
         last_activity = started_at
         execution_started = False
+        status_poll = {}
         while True:
             minutes = self.store.settings()['timeout_minutes']
             deadline = started_at + minutes * 60 if minutes > 0 else float('inf')
@@ -580,10 +583,11 @@ class OpencodeHarness:
                 self.chat.event(sid, 'error', {'message': 'Opencode 已达到本轮执行时限，已请求停止'})
                 self._finish(sid, mid, 'failed')
                 raise TimeoutError('Opencode 已达到本轮执行时限')
+            self._poll_runtime_status(client, sid, mid, bound, directory, status_poll)
             try:
                 messages = client.messages(bound, directory=directory)
             except OpencodeError as exc:
-                self.chat.event(sid, 'error', {'message': str(exc)})
+                self.chat.event(sid, 'error', {'turnId': mid, 'message': _public_native_error({'message': str(exc)})})
                 time.sleep(2)
                 continue
             if sid in self._cancel_requested or time.monotonic() >= deadline:
@@ -592,9 +596,9 @@ class OpencodeHarness:
             info = assistant.get('info', {}) if assistant else {}
             if info.get('error') or info.get('finish') == 'error':
                 self._interrupt_once(sid, bound, mid)
-                self.chat.event(sid, 'error', {'message': 'Opencode 执行失败：' + _public_native_error(info.get('error'))})
+                self.chat.event(sid, 'error', {'turnId': mid, 'message': 'Opencode 执行失败：' + _public_native_error(info.get('error'))})
                 self._finish(sid, mid, 'failed')
-                raise RuntimeError('Opencode 执行失败；详情保存在会话与任务日志')
+                raise RuntimeError('Opencode 执行失败：' + _public_native_error(info.get('error')))
             if self._poll_children(sid, mid, bound, admitted_at, child_poll):
                 last_activity = time.monotonic()
             # Native quota/provider failures can leave an empty assistant shell.
@@ -670,6 +674,40 @@ class OpencodeHarness:
                 self._finish(sid, mid, 'failed')
                 raise RuntimeError('Opencode 长时间未开始执行；详情保存在会话与任务日志')
             time.sleep(1)
+
+    def _poll_runtime_status(self, client, sid, mid, bound, directory, cache):
+        # Native retries may have no assistant message at all. Read the status
+        # for this bound session only; never expose other sessions or headers.
+        if not hasattr(client, 'session_status') or cache.get('unsupported'):
+            return
+        now = time.monotonic()
+        if now < cache.get('next_poll', 0):
+            return
+        cache['next_poll'] = now + 3
+        try:
+            status = client.session_status(bound, directory=directory)
+        except OpencodeError as exc:
+            if exc.status in (404, 405):
+                cache['unsupported'] = True
+            return  # Message polling still reports actual transport failures.
+        if not isinstance(status, dict):
+            return
+        retry = status.get('type') == 'retry'
+        if retry:
+            data = {'turnId': mid, 'status': 'retry',
+                    'message': _public_native_error({'message': status.get('message')})}
+            for key in ('attempt', 'next'):
+                if type(status.get(key)) is int and status[key] >= 0:
+                    data[key] = status[key]
+        elif cache.get('retry') and status.get('type') in ('busy', 'idle'):
+            data = {'turnId': mid, 'status': 'resumed', 'message': '宿主已结束重试等待'}
+        else:
+            return
+        signature = json.dumps(data, sort_keys=True)
+        if signature != cache.get('signature'):
+            self.chat.event(sid, 'runtime/status', data)
+            cache['signature'] = signature
+        cache['retry'] = retry
 
     @staticmethod
     def _turn_message(messages, admitted_at):
@@ -875,7 +913,7 @@ class OpencodeHarness:
         try:
             self._client().abort(bound, directory=self.chat.session(sid)['cwd'])
         except OpencodeError as exc:
-            self.chat.event(sid, 'error', {'message': str(exc)})
+            self.chat.event(sid, 'error', {'turnId': mid, 'message': _public_native_error({'message': str(exc)})})
 
     def _finish(self, sid, mid, status):
         for message in self.snapshot(sid)['messages']:
