@@ -122,7 +122,11 @@ def validate_secrets(value: dict | None) -> dict:
     # Do not allow environment injection into the Python transport supervisor.
     if any(k.startswith('PYTHON') or k in ('LD_PRELOAD', 'DYLD_INSERT_LIBRARIES', 'DYLD_LIBRARY_PATH') for k in env):
         raise ConnectorError('不允许覆盖解释器或动态库加载环境。')
-    return {'bearer_token': token, 'authorization_header': authorization, 'env': env}
+    # Preserve the legacy credential shape when raw Authorization is unused.
+    result = {'bearer_token': token, 'env': env}
+    if authorization:
+        result['authorization_header'] = authorization
+    return result
 
 
 class LocalConfig:

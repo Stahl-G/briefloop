@@ -53,7 +53,7 @@ async def connection_transport(config: dict, secrets: dict, diagnostics: dict):
             response.stream = BoundedStream(response.stream, config['max_response_bytes'])
 
         headers = {'Accept-Encoding': 'identity'}
-        if secrets['authorization_header']:
+        if secrets.get('authorization_header'):
             headers['Authorization'] = secrets['authorization_header']
         elif secrets.get('bearer_token'):
             headers['Authorization'] = 'Bearer ' + secrets['bearer_token']

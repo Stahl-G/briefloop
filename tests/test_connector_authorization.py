@@ -70,7 +70,7 @@ def test_raw_authorization_stays_private_and_survives_config_edit(tmp_path):
         reloaded._config.credential_path(record['credential_binding']).write_text(
             json.dumps({'bearer_token': 'synthetic-legacy-token', 'env': {}}))
         legacy = reloaded._config.get_secrets(record)
-        assert legacy == {'bearer_token': 'synthetic-legacy-token', 'authorization_header': '', 'env': {}}
+        assert legacy == {'bearer_token': 'synthetic-legacy-token', 'env': {}}
         assert reloaded.status(saved['id'])['credential_type'] == 'bearer'
         switched = reloaded.save(CONFIG, connector_id=saved['id'], secrets={'authorization_header': 'new-raw'})
         assert switched['has_credentials']

@@ -74,7 +74,7 @@ class ConnectorService:
 
     @staticmethod
     def _credential_type(values):
-        if values['authorization_header']:return 'authorization'
+        if values.get('authorization_header'):return 'authorization'
         if values['bearer_token']:return 'bearer'
         return 'env' if values['env'] else 'none'
 
@@ -90,7 +90,7 @@ class ConnectorService:
             values = secrets if secrets is not None else self._config.get_secrets(existing) if existing else validate_secrets(None)
             if validated['transport'] == 'http' and values['env']:
                 raise ConnectorError('HTTP 连接器请使用令牌凭据；env 仅适用于 stdio。')
-            if validated['transport'] == 'stdio' and (values['bearer_token'] or values['authorization_header']):
+            if validated['transport'] == 'stdio' and (values['bearer_token'] or values.get('authorization_header')):
                 raise ConnectorError('stdio 连接器请通过 env 提供凭据。')
             if existing:
                 self._generation[connector_id] = self._generation.get(connector_id, 0) + 1
@@ -99,7 +99,7 @@ class ConnectorService:
             record = {'id': identifier, 'config': validated, 'revision': existing['revision'] + 1 if existing else 1,
                       'enabled': False, 'credential_binding': binding,
                       'credential_type': self._credential_type(values),
-                      'has_credentials': bool(values['bearer_token'] or values['authorization_header'] or values['env']), 'env_names': sorted(values['env']),
+                      'has_credentials': bool(values['bearer_token'] or values.get('authorization_header') or values['env']), 'env_names': sorted(values['env']),
                       'last_test': None}
             self._config.records[identifier] = record
             self._config.persist()
