@@ -4,4 +4,6 @@
 
 数据进入 prepare-report-data：report_data 只提交有来源的原始 records，derived 交给工具确定计算。记录包含 metric、unit、current、current_date、source_id 与具体 locator；预测、指引和一致预期另含 category、as_of。变化比较提供 previous、previous_date、previous_unit、previous_tax_basis、previous_category，确认可比才设置 comparable=true。图表和表格从这些数据组织，禁止为了画图补点或平滑造数。
 
+图表登记会将数据与脚本快照保存为 data 加原扩展名、script 加原扩展名。制作时按此文件名组织自包含输入，脚本相对自身目录读取数据并实际运行；登记后核对脚本引用与快照文件名一致。保留可回查的数据和脚本，不修改历史图表快照。
+
 事件分析区分公布日、发生日和数据截至日。市场反应使用相同交易窗口的价格、成交量和基准，复权方式及币种保持一致；价格同期变化本身不能证明事件因果。估值只在输入足够时计算：说明价格时点、股本或稀释口径、净债务与盈利期间，分开事实输入和情景假设。数据不支持时不硬算目标价或评级。
