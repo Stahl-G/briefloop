@@ -4,6 +4,11 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const {randomUUID} = require('node:crypto');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+function finishesWithin(promise, ms) {
+  let timer;
+  return Promise.race([promise.then(() => true), new Promise(resolve => { timer = setTimeout(() => resolve(false), ms); })])
+    .finally(() => clearTimeout(timer));
+}
 
 function validateMarker(marker, child, launchId) {
   const url = new URL(marker.url);
@@ -57,7 +62,7 @@ class WorkspaceService {
       }
       throw Error('工作区启动超时，请查看 desktop-server.log。');
     } catch (error) {
-      if (this.child === child && child.pid) { child.kill('SIGTERM'); await Promise.race([this.exited, sleep(10000)]); }
+      if (this.child === child && child.pid) { child.kill('SIGTERM'); await finishesWithin(this.exited, 10000); }
       throw error;
     }
   }
@@ -80,7 +85,7 @@ class WorkspaceService {
     if (!this.info) throw Error('工作区服务尚未就绪，请稍后重试。');
     const info = this.info;
     await this.request('/api/service-stop', {pid: info.pid, workspace_id: info.workspace_id, ...(cancelBusy ? {busy_action: 'cancel'} : {})});
-    const done = await Promise.race([this.exited.then(() => true), sleep(90000).then(() => false)]);
+    const done = await finishesWithin(this.exited, 90000);
     if (!done) throw Error('工作区仍在保存或停止任务，窗口已保留，请稍后重试。');
     // Remove only our own stale marker, after the owned child has really exited.
     try { const marker = JSON.parse(await fs.readFile(path.join(this.directory, 'server.json'), 'utf8'));
