@@ -63,6 +63,10 @@ def main():
     figure.add_argument('--run',required=True);figure.add_argument('--image',required=True);figure.add_argument('--title',required=True)
     figure.add_argument('--caption',default='');figure.add_argument('--source',action='append',default=[])
     figure.add_argument('--data');figure.add_argument('--script')
+    fact=ts.add_parser('fact-status',help='登记事实核查结果：逐条候选状态、一句依据与证据 span，只做确定性校验落库')
+    fact.add_argument('--run',required=True)
+    fact.add_argument('--file',required=True,help='UTF-8 JSON 结果文件（version_id/selection/candidates/execution）')
+    fact.add_argument('--job',help='本次核查任务 job id，用于记录事件')
     join=ts.add_parser('join-scouts');join.add_argument('--files',nargs='+',required=True)
     join.add_argument('--run');join.add_argument('--round');join.add_argument('--slots',nargs='+')
     join.add_argument('--output',help='保存合并结果为 UTF-8 JSON，避免 shell 重定向改变编码')
@@ -223,6 +227,23 @@ def main():
         elif a.tool=='register-figure':
             from .figures import register_figure
             print(json.dumps(register_figure(store,a.run,a.image,a.title,caption=a.caption,source_ids=a.source,data_path=a.data,script_path=a.script),ensure_ascii=False))
+        elif a.tool=='fact-status':
+            from .fact_check import submit_result,FactCheckError
+            from .research_plan import AdmissionError
+            try:payload=json.loads(Path(a.file).read_text(encoding='utf-8-sig'))
+            except (OSError,ValueError) as exc:
+                p.exit(2,json.dumps({'status':'error','error':'result_file_invalid','message':'--file 需要 UTF-8 JSON 结果文件：'+str(exc)},ensure_ascii=False)+'\n')
+            try:admitted=submit_result(store,a.run,payload,job_id=a.job)
+            except FactCheckError as exc:
+                # 契约违规整体结构化退回，供 agent 按逐条错误自修后重交。
+                print(json.dumps({'status':'invalid','error':'fact_check_contract','errors':exc.errors},ensure_ascii=False));raise SystemExit(1)
+            except AdmissionError as exc:
+                print(json.dumps({'status':'error','error':exc.code,'message':str(exc)},ensure_ascii=False));raise SystemExit(1)
+            record=admitted['record']
+            print(json.dumps({'status':'ok','record_id':record['id'],'version_id':record['version_id'],
+                              'stage_id':record['stage_id'],'execution':record['execution'],
+                              'checked':len(record['candidates']),'unchecked':record['unchecked'],
+                              'stage':admitted['stage']['status']},ensure_ascii=False))
         elif a.tool=='read-source':
             from .scout_tools import read_source
             print(read_source(store,a.id,start_line=a.start_line,end_line=a.end_line,max_chars=a.max_chars))
