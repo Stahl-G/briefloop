@@ -4,6 +4,33 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const {randomUUID} = require('node:crypto');
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+function runtimeLaunch(runtime, inherited = process.env, platform = process.platform) {
+  const windows = platform === 'win32';
+  const paths = windows ? path.win32 : path.posix;
+  const {python, node, nodeIsElectron, basePython} = runtime;
+  if (!paths.isAbsolute(python || '') || !paths.isAbsolute(node || '')) throw Error('请先准备应用运行环境。');
+  if (windows && !paths.isAbsolute(basePython || '')) throw Error('请重新验证应用 Python 运行环境。');
+  const env = {...inherited};
+  let hostPath = '';
+  // Windows environment names are case-insensitive; duplicate Path/PATH keys
+  // otherwise let Node silently select the inherited value during spawn.
+  for (const key of Object.keys(env)) {
+    const name = windows ? key.toUpperCase() : key;
+    if (name === 'PATH') { hostPath ||= env[key]; delete env[key]; }
+    if (['PYTHONHOME', 'PYTHONPATH', 'NODE_PATH', 'ELECTRON_RUN_AS_NODE', '__PYVENV_LAUNCHER__'].includes(name)) delete env[key];
+  }
+  env.PATH = [paths.dirname(python), ...hostPath.split(paths.delimiter).filter(entry => paths.isAbsolute(entry))].join(paths.delimiter);
+  env.BRIEFLOOP_NODE = node;
+  env.PYTHONNOUSERSITE = '1';
+  env.PYTHONSAFEPATH = '1';
+  env.PYTHONUNBUFFERED = '1';
+  if (nodeIsElectron) env.BRIEFLOOP_NODE_IS_ELECTRON = '1'; else delete env.BRIEFLOOP_NODE_IS_ELECTRON;
+  // CPython's Windows venv redirector launches the base interpreter this way.
+  // Start it directly so the owned child PID is the actual service PID, while
+  // retaining the verified venv prefix and packages without weakening identity.
+  if (windows) env.__PYVENV_LAUNCHER__ = python;
+  return {python, executable: windows ? basePython : python, node, env, args: ['-I', '-X', 'utf8', '-u']};
+}
 function finishesWithin(promise, ms) {
   let timer;
   return Promise.race([promise.then(() => true), new Promise(resolve => { timer = setTimeout(() => resolve(false), ms); })])
@@ -29,16 +56,12 @@ class WorkspaceService {
     directory = await fs.realpath(directory);
     if (!(await fs.stat(directory)).isDirectory()) throw Error('工作区必须是文件夹。');
     if (!create) await fs.access(path.join(directory, 'briefloop.db')).catch(() => { throw Error('这个文件夹还不是 BriefLoop 工作区，请使用“新建工作区”。'); });
-    const {python, node, nodeIsElectron} = this.runtime;
-    if (!path.isAbsolute(python || '') || !path.isAbsolute(node || '')) throw Error('请先准备应用运行环境。');
-    await Promise.all([fs.access(python, 1), fs.access(node, 1)]);
+    const launch = runtimeLaunch(this.runtime);
+    await Promise.all([fs.access(launch.python), fs.access(launch.executable), fs.access(launch.node)]);
     const launchId = randomUUID();
     const log = await fs.open(path.join(directory, 'desktop-server.log'), 'a', 0o600);
-    const env = {...process.env, BRIEFLOOP_LAUNCH_ID: launchId, BRIEFLOOP_NODE: node,
-      PATH: [path.dirname(python), ...(process.env.PATH || '').split(path.delimiter).filter(entry => path.isAbsolute(entry))].join(path.delimiter), PYTHONNOUSERSITE: '1', PYTHONSAFEPATH: '1', PYTHONUNBUFFERED: '1'};
-    delete env.PYTHONHOME; delete env.PYTHONPATH; delete env.ELECTRON_RUN_AS_NODE;
-    if (nodeIsElectron) env.BRIEFLOOP_NODE_IS_ELECTRON = '1'; else delete env.BRIEFLOOP_NODE_IS_ELECTRON;
-    const child = spawn(python, ['-I', '-m', 'briefloop', 'serve', '--workspace', directory, '--port', String(port), '--paused'],
+    const env = {...launch.env, BRIEFLOOP_LAUNCH_ID: launchId};
+    const child = spawn(launch.executable, [...launch.args, '-m', 'briefloop', 'serve', '--workspace', directory, '--port', String(port), '--paused'],
       {cwd: directory, env, stdio: ['ignore', log.fd, log.fd], windowsHide: true});
     this.child = child; this.directory = directory;
     this.exited = new Promise(resolve => child.once('close', (code, signal) => { const lastInfo = this.info; this.child = null; this.info = null; resolve({code, signal}); this.onExit({code, signal, lastInfo}); }));
@@ -94,4 +117,4 @@ class WorkspaceService {
     } catch {}
   }
 }
-module.exports = {WorkspaceService, validateMarker};
+module.exports = {WorkspaceService, validateMarker, runtimeLaunch};
