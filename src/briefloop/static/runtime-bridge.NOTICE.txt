@@ -27,3 +27,14 @@ Bridge uses upstream detectAcpModels, parseCodexDebugModels,
 parseOpenCodeModels and local route discovery. Fallbacks are labeled hints,
 not verified account availability. User-entered model IDs remain accepted.
 No launch permission bypass or design-prompt code is used by these imports.
+
+Runtime card icons (0.20.2):
+- Unmodified apps/web/public/agent-icons/{codex,claude,opencode,hermes,kimi,mimo,reasonix}.svg
+  from upstream be0887b39273993d939e83c4768922115f104bed, bundled as static/runtime-*.svg.
+- Layout studied from AgentIcon.tsx and SettingsDialog.tsx; BriefLoop rendering is independently implemented.
+- Apache-2.0 license retained in this directory. Brand marks identify the installed tools; no endorsement implied.
+
+Additional unmodified runtime icons from the same upstream commit: aider.png,
+amr.svg, antigravity.svg, copilot.svg, cursor-agent.svg, deepseek.svg, devin.png,
+grok-build.svg, kilo.svg, kiro.svg, pi.svg, qoder.svg, qwen.svg, trae-cli.png, vibe.svg.
+DeepSeek Harness reuses deepseek.svg. Missing artwork uses BriefLoop's neutral terminal symbol.
