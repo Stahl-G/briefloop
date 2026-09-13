@@ -38,7 +38,7 @@ def test_workflow_selection_is_shared_with_chat_and_preserves_legacy(tmp_path):
     from briefloop.document_workflows import resolve_workflow
     store = Store(tmp_path)
     catalog = workspace_action(store, {'action': 'workflows'})['workflows']
-    assert {x['id'] for x in catalog} == {'general_report', 'business_report'}
+    assert {x['id'] for x in catalog} == {'general_report', 'business_report', 'meeting_minutes'}
     assert store.snapshot()['workflows'] == catalog
     assert resolve_workflow({'workflow_id': 'business_report'})['variant'] == next(
         item['default_variant'] for item in catalog if item['id'] == 'business_report') == 'decision_memo'
@@ -49,3 +49,24 @@ def test_workflow_selection_is_shared_with_chat_and_preserves_legacy(tmp_path):
                 {'workflow_variant': 'work_progress'}]:
         with pytest.raises(ValueError):
             store.create_run({'title': 'Bad', 'objective': 'Check', 'allow_web': True, **bad}, [])
+
+
+def test_meeting_template_selects_method_but_requires_actual_material(tmp_path):
+    from briefloop.document_workflows import template_workflow_hint
+    from briefloop.templates import template, import_builtin
+    store = Store(tmp_path)
+    import_builtin(store)
+    templates = store.rows("SELECT id FROM templates WHERE name='会议纪要·品牌绿'")
+    selected = template(store, templates[0]['id'])
+    assert template_workflow_hint(selected) == 'meeting_minutes'
+    req = {'title': '纪要', 'objective': '保留更正与未定事项', 'template_id': selected['id'], 'allow_web': True}
+    with pytest.raises(ValueError, match='转写或笔记'):
+        store.create_run(req, [])
+    assert not store.rows('SELECT id FROM runs')
+    source = store.add_source('合成会议笔记', '负责人未定。原定周五交付，后确认改为下周一。')
+    saved = json.loads(store.create_run(req, [source['id']])['requirements'])
+    assert saved['workflow_id'] == 'meeting_minutes'
+    assert saved['workflow_snapshot']['variant'] == 'minutes'
+    assert [s['title'] for s in saved['sections']] == [s['title'] for s in selected['spec']['sections']]
+    explicit = json.loads(store.create_run({**req, 'workflow_id': 'general_report'}, [source['id']])['requirements'])
+    assert explicit['workflow_id'] == 'general_report'

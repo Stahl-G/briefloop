@@ -1268,6 +1268,10 @@ function renderWorkflowChoices(first=false){
  const workflow=catalog.find(w=>w.id===(choice.workflow_id||template?.workflow_hint||'general_report'));
  const variant=workflow?.variants.find(v=>v.id===(choice.workflow_variant||workflow.default_variant));
  $('workflow-hint').textContent=workflow?`${choice.workflow_id?'已选':'本轮建议'}：${workflow.label} · ${variant?.label||''}。用于规划、写作和评价；Word 版式由报告模板决定。`:'文档方法目录暂不可用，请刷新后再选择。';
+ const meeting=workflow?.id==='meeting_minutes';
+ $('source-requirement').textContent=meeting?'需要本次会议记录':'可选';
+ $('source-input-hint').textContent=meeting?'请添加并选择本次会议转写或笔记。只有议程时可整理框架，不能生成未发生的讨论或决议。':'可选：图片、PDF、Word、Excel、Markdown、文本、CSV。也可以直接输入目标，让 Agent 联网研究。';
+ $('source-web-hint').textContent=meeting?'会议内容来自已选转写或笔记；公开检索只能补充另行要求的背景，不能替代会中记录。':'开启后，无需先上传文件，Agent 会围绕目标查找并保存公开来源。关闭时仍可讨论问题或使用已有材料。';
 }
 function syncWorkflowProfile(changeLength=true){
  const choice=readWorkflowChoice();

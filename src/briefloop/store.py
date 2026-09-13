@@ -213,6 +213,8 @@ class Store:
         from .document_workflows import resolve_workflow, freeze_workflow, template_workflow_hint
         selection = resolve_workflow(req.model_dump(), template_workflow_hint(selected))
         req.workflow_id, req.workflow_variant = selection['id'], selection['variant']
+        if req.workflow_id == 'meeting_minutes' and not source_ids:
+            raise ValueError('会议纪要需要本次会议的转写或笔记；请先添加并选择材料，公开检索不能替代会议记录')
         req.workflow_snapshot = freeze_workflow(selection)
         for sid in req.reference_source_ids:
             self.one("sources", sid)
