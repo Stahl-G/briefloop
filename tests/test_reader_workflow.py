@@ -92,3 +92,36 @@ def test_company_gate_requires_choice_and_source_bound_maintenance(tmp_path):
     store.set_meta('settings',{**store.settings(),'company_context_enabled':False})
     declined=store.create_run(req,[public['id']])
     store.publish(declined['id'],{'title':'Declined','markdown':'Body'})
+
+
+def test_company_pending_fact_and_conflict_commit_together(tmp_path):
+    import sqlite3
+    store, _, source = setup(tmp_path)
+    store.set_meta('settings', {**store.settings(), 'company_context_enabled': True})
+    base = {'key': 'capacity', 'value': '12', 'source_id': source['id'], 'effective_date': '2026-09-01'}
+    first = propose(store, base)
+    with store.tx() as connection:
+        connection.execute("CREATE TRIGGER fail_conflict BEFORE INSERT ON conflicts BEGIN SELECT RAISE(ABORT, 'injected conflict failure'); END")
+    with pytest.raises(sqlite3.IntegrityError, match='injected conflict failure'):
+        propose(store, {**base, 'value': '14'})
+    assert [row['id'] for row in store.rows('SELECT * FROM company_facts')] == [first['id']]
+    assert snapshot(store)['pending'] == []
+    with store.tx() as connection:
+        connection.execute('DROP TRIGGER fail_conflict')
+    pending = propose(store, {**base, 'value': '14'})
+    assert resolve_conflict(store, pending['id'], False)['pending'][0]['id'] == pending['id']
+    assert snapshot(store)['facts'][0]['id'] == first['id']
+
+
+def test_each_pending_company_fact_has_an_actionable_conflict(tmp_path):
+    store, _, source = setup(tmp_path)
+    store.set_meta('settings', {**store.settings(), 'company_context_enabled': True})
+    base = {'key': 'capacity', 'value': '12', 'source_id': source['id'], 'effective_date': '2026-09-01'}
+    first = propose(store, base)
+    candidates = [propose(store, {**base, 'value': value}) for value in ['14', '16']]
+    for pending in candidates:
+        resolve_conflict(store, pending['id'], True)
+    conflicts = [json.loads(row['data']) for row in store.rows('SELECT * FROM conflicts')]
+    for pending in candidates:
+        assert any(pending['id'] in item['fact_ids'] and item['responses'] for item in conflicts)
+    assert snapshot(store)['facts'][0]['id'] == first['id']  # User preference is still not independent resolution.

@@ -27,6 +27,7 @@ def propose(store, value):
     store.source_text(source['id'])
     if origin=='public' and not source.get('url'):raise ValueError('公开更新需要已登记的公开来源地址；上传材料按用户材料处理')
     if not store.settings().get('company_context_enabled'):raise ValueError('用户尚未启用企业背景知识库')
+    conflict=None;created=False
     with store.tx() as c:
         previous=c.execute("SELECT * FROM company_facts WHERE fact_key=? AND status='accepted' ORDER BY rowid DESC LIMIT 1",(value['key'],)).fetchone()
         if previous and previous['value']==value['value'] and previous['source_id']==source['id'] and previous['effective_date']==value['effective_date']:
@@ -36,9 +37,12 @@ def propose(store, value):
         if previous and previous['value']==value['value'] and value['effective_date']<previous['effective_date']:status='historical'
         fid=uid('fact')
         c.execute('INSERT INTO company_facts VALUES(?,?,?,?,?,?,?,?,?,?,?)',(fid,value['key'],value['value'],source['id'],value.get('locator',''),value['effective_date'],origin,status,previous['id'] if previous else None,now(),None))
-    if status=='pending':
-        from .conflicts import create
-        create(store,source_ids=[previous['source_id'],source['id']],fact_ids=[previous['id'],fid],description='企业背景同一条目存在分歧：'+value['key'])
+        if status=='pending':
+            from .conflicts import create_in_transaction
+            conflict,created=create_in_transaction(store,c,source_ids=[previous['source_id'],source['id']],fact_ids=[previous['id'],fid],description='企业背景同一条目存在分歧：'+value['key'])
+    if created:
+        from .conflicts import notify_created
+        notify_created(store,conflict)
     return store.rows('SELECT * FROM company_facts WHERE id=?',(fid,))[0]
 
 
