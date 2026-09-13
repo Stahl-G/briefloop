@@ -365,11 +365,17 @@ def export_template(store,brief,document,figures,template_id=None):
             else:
                 plain=re.sub(r'^(?:[一二三四五六七八九十百]+[、．.]|\d+[.、])\s*','',text).strip()
                 if plain in by_title:node.setdefault('attrs',{})['blockId']=by_title[plain]
-    styles=row['spec']['styles']
-    if 'table_properties' not in styles:
+    styles=deepcopy(row['spec']['styles'])
+    profiles=('table_header','table_body','table_alternate')
+    if 'table_properties' not in styles or any('paragraph_style' not in p for key in profiles for p in styles.get(key,[])):
         original=_path(store,row,'original.docx')
         if hashlib.sha256(original.read_bytes()).hexdigest()!=row['source_hash']:raise ValueError('模板原件已变化')
-        styles={**table_defaults(Document(original)),**styles}
+        defaults=table_defaults(Document(original))
+        for key in profiles:
+            for index,profile in enumerate(styles.get(key,[])):
+                samples=defaults.get(key,[])
+                if samples:profile.setdefault('paragraph_style',samples[min(index,len(samples)-1)].get('paragraph_style'))
+        styles={**defaults,**styles}
     render_document(doc,document,figures=figures,styles=styles,
                     sources={sid:store.one('sources',sid) for sid in store.source_ids(brief['run_id'])})
     if ' TOC ' in doc.element.xml:
