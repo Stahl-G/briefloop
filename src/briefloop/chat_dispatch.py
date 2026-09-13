@@ -12,7 +12,8 @@ class ChatDispatcher:
         self.execution = ChatExecution(self.chat)
         self.lock = threading.RLock()
         # Admission, cancel and native completion must share one lock. Drivers
-        # retain their own clients, busy sets and native identity maps.
+        # retain their own clients, busy sets and native identity maps. Native I/O
+        # must run outside this lock, retaining a busy/admission reservation.
         for manager in managers.values():
             manager._lock = self.lock
             manager.coordinator = self
@@ -105,7 +106,7 @@ class ChatDispatcher:
         if any(sid in driver._busy for driver in self.managers.values()):
             return
         snapshot = self.chat.snapshot(sid)
-        if snapshot['session']['status'] == 'starting' and not any(
+        if snapshot['session']['status'] in ('starting', 'stopping') and not any(
                 message['status'] in ('queued', 'sending', 'delivered', 'streaming')
                 for message in snapshot['messages']):
             self.chat.update(sid, status='interrupted', turn_id=None)

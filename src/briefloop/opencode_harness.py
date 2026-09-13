@@ -97,6 +97,9 @@ class OpencodeHarness:
         self.client_factory = client_factory
         self.client = None
         self._lock = threading.RLock()
+        self._client_lock = threading.Lock()
+        self._closed = False
+        self._configuring = False
         self._busy = set()
         self._children = {}
         self._cancel_requested = set()
@@ -162,12 +165,20 @@ class OpencodeHarness:
         if key is not None and (not isinstance(key, str) or not key.strip() or len(key) > 8192):
             raise ValueError('API Key 格式无效')
         with self._lock:
-            if self._busy:
-                raise ValueError('当前有 Opencode 任务运行，请结束后再修改 Provider')
+            if self._busy or self._configuring:
+                raise ValueError('当前有 Opencode 任务或配置正在运行，请结束后再修改 Provider')
+            self._configuring=True
+        try:
             result = self._client().configure_provider(self.store.root, provider, model, base_url, key, supports_images, protocol, name, *limits)
-            self._models_cache = None
-            self._models_at = 0.0
+            with self._lock:
+                self._models_cache = None
+                self._models_at = 0.0
             return result
+        finally:
+            with self._lock:
+                self._configuring=False
+                for row in self.store.rows("SELECT DISTINCT session_id FROM chat_messages WHERE status='queued'"):
+                    self._schedule(row['session_id'])
 
     def test_provider_model(self, body):
         """An explicitly requested, visible native tool test; no report job."""
@@ -253,14 +264,21 @@ class OpencodeHarness:
     # -- messaging ----------------------------------------------------------
 
     def _client(self):
-        with self._lock:
-            if self.client is not None:
-                process = getattr(self.client, 'process', None)
-                if process is not None and process.poll() is not None:
-                    self.client = None
-            if self.client is None:
-                self.client = self.client_factory(self.store.root / 'opencode-runtime')
-            return self.client
+        with self._client_lock:
+            with self._lock:
+                if self._closed:raise OpencodeError('Opencode 已关闭')
+                client=self.client
+                process=getattr(client,'process',None)
+                if client is not None and (process is None or process.poll() is None):return client
+            if client is not None:client.close()
+            created=self.client_factory(self.store.root / 'opencode-runtime')
+            with self._lock:
+                closed=self._closed
+                if not closed:self.client=created
+            if closed:
+                created.close()
+                raise OpencodeError('Opencode 已关闭')
+            return created
 
     def send(self, session_id, text, mode='queue', source_ids=None, runtime=None,
              message_id=None, display_text=None, allow_web=False):
@@ -296,7 +314,6 @@ class OpencodeHarness:
                 session_id, display_text if display_text is not None else text,
                 source_ids=source_ids, mode=mode, mid=mid, runtime=config,
                 prompt=text if display_text is not None else None, allow_web=allow_web)
-            self._cancel_requested.discard(session_id)
             self.chat.event(session_id, 'message/queued', {'messageId': mid, 'mode': mode})
             self._schedule(session_id)
         message.pop('prompt', None)
@@ -328,12 +345,14 @@ class OpencodeHarness:
         return self._schedule_native(sid)
 
     def _schedule_native(self, sid):
+        if self._closed or self._configuring:return
         if self.chat.session(sid)['lifecycle'] != 'active':
             return
         if sid in self._busy or self.chat.session(sid).get('turn_id'):
             return
         if not any(m['status'] == 'queued' for m in self.snapshot(sid)['messages']):
             return
+        self._cancel_requested.discard(sid)
         self._busy.add(sid)
         self._epoch[sid] = self._epoch.get(sid, 0) + 1
         threading.Thread(target=self._dispatch, args=(sid, self._epoch[sid]), daemon=True).start()
@@ -527,16 +546,19 @@ class OpencodeHarness:
                     self.chat.patch_message(mid, status='cancelled')
                     self.chat.update(sid, status='interrupted')
                     return
-                client.prompt_async(bound, prompt_text, model=prompt_model(config['model']),
-                                    agent='build', files=prompt_files, system=instructions,
-                                    directory=session['cwd'])
-                admitted_at = int(time.time() * 1000)
+            admitted_at = int(time.time() * 1000)
+            client.prompt_async(bound, prompt_text, model=prompt_model(config['model']),
+                                agent='build', files=prompt_files, system=instructions,
+                                directory=session['cwd'])
+            with self._lock:
+                if self._closed or self._epoch.get(sid)!=epoch or client is not self.client:
+                    raise OpencodeError('Opencode 连接已关闭，未自动重发')
                 self.chat.update(sid, turn_id=mid, status='running')
                 self.chat.patch_message(mid, status='delivered', turn_id=mid)
                 self.chat.event(sid, 'message/delivered',
                                 {'messageId': mid, 'turnId': mid, 'runtime': config,
                                  **({'visual_inputs':message['_visual_delivery']} if '_visual_delivery' in message else {})})
-            self._follow(sid, epoch, mid, admitted_at)
+            self._follow(sid, epoch, mid, admitted_at, client=client)
         except Exception as exc:
             # Terminal data first, status last: waiters poll on status and must
             # never observe 'failed' before its error event exists.
@@ -569,36 +591,42 @@ class OpencodeHarness:
         # Sessions created before the backend split have no binding.
         return self.chat.session(sid).get('thread_id') or None
 
-    def _follow(self, sid, epoch, mid, admitted_at):
+    def _follow(self, sid, epoch, mid, admitted_at, *, client=None):
         """Poll the opencode session until our turn reaches a terminal state.
 
         One turn spans many assistant messages (one per tool round); only the
         newest reflects the live state. Intermediate ones complete with
         finish='tool-calls' and must never be mistaken for a done turn.
         """
-        client = self._client()
+        client = client or self._client()
         bound = self._bound_session(sid)
         directory = self.chat.session(sid)['cwd']
         assistant_id = None
         seen_tools = set()
         started_at = time.monotonic()
-        child_poll = {}
+        child_poll = {'client':client}
         last_activity = started_at
         execution_started = False
         status_poll = {}
+        last_error = None
         while True:
             minutes = self.store.settings()['timeout_minutes']
             deadline = started_at + minutes * 60 if minutes > 0 else float('inf')
             child_poll['deadline'] = deadline
             if self._epoch.get(sid) != epoch:
                 return
+            process=getattr(client,'process',None)
+            if self._closed or (process is not None and process.poll() is not None):
+                self.chat.event(sid,'error',{'turnId':mid,'message':'Opencode 连接已退出；已有内容保留，未自动重发'})
+                self._finish(sid,mid,'failed')
+                return
             if sid in self._cancel_requested:
-                self._interrupt_once(sid, bound, mid)
+                self._interrupt_once(sid, bound, mid, client=client)
                 self._finish(sid, mid, 'cancelled')
                 self.chat.event(sid, 'turn/interruptRequested', {'turnId': mid})
                 return
             if time.monotonic() >= deadline:
-                self._interrupt_once(sid, bound, mid)
+                self._interrupt_once(sid, bound, mid, client=client)
                 self.chat.event(sid, 'error', {'message': 'Opencode 已达到本轮执行时限，已请求停止'})
                 self._finish(sid, mid, 'failed')
                 raise TimeoutError('Opencode 已达到本轮执行时限')
@@ -606,15 +634,19 @@ class OpencodeHarness:
             try:
                 messages = client.messages(bound, directory=directory)
             except OpencodeError as exc:
-                self.chat.event(sid, 'error', {'turnId': mid, 'message': _public_native_error({'message': str(exc)})})
-                time.sleep(2)
+                error=_public_native_error({'message':str(exc)})
+                if error!=last_error:
+                    self.chat.event(sid,'error',{'turnId':mid,'message':error})
+                    last_error=error
+                time.sleep(.2 if process is not None and process.poll() is not None else 2)
                 continue
+            last_error=None
             if sid in self._cancel_requested or time.monotonic() >= deadline:
                 continue
             assistant = self._turn_message(messages, admitted_at)
             info = assistant.get('info', {}) if assistant else {}
             if info.get('error') or info.get('finish') == 'error':
-                self._interrupt_once(sid, bound, mid)
+                self._interrupt_once(sid, bound, mid, client=client)
                 self.chat.event(sid, 'error', {'turnId': mid, 'message': 'Opencode 执行失败：' + _public_native_error(info.get('error'))})
                 self._finish(sid, mid, 'failed')
                 raise RuntimeError('Opencode 执行失败：' + _public_native_error(info.get('error')))
@@ -671,7 +703,7 @@ class OpencodeHarness:
                     # finish=tool-calls is an intermediate assistant message.
                     if info.get('finish') == 'stop':
                         self._poll_children(sid, mid, bound, admitted_at, child_poll, force=True)
-                        self._record_children(sid,mid,bound,admitted_at)
+                        self._record_children(sid,mid,bound,admitted_at,client=client)
                         self._record_usage(sid, info)
                         self._finish(sid, mid, 'completed')
                         return
@@ -688,7 +720,7 @@ class OpencodeHarness:
             if minutes > 0 and not execution_started and time.monotonic() - started_at >= 90:
                 # Unresolvable models stall without any step event; fail fast
                 # with an actionable message instead of burning the job budget.
-                self._interrupt_once(sid, bound, mid)
+                self._interrupt_once(sid, bound, mid, client=client)
                 self.chat.event(sid, 'error', {'message': 'Opencode 90 秒内未开始执行；请检查模型 ID、provider 登录与可用额度'})
                 self._finish(sid, mid, 'failed')
                 raise RuntimeError('Opencode 长时间未开始执行；详情保存在会话与任务日志')
@@ -795,7 +827,7 @@ class OpencodeHarness:
                     break
                 owner = pending.pop()
                 try:
-                    discovered = self._client().children(owner, directory=self.chat.session(sid)['cwd'])
+                    discovered = (poll.get('client') or self._client()).children(owner, directory=self.chat.session(sid)['cwd'])
                 except OpencodeError:
                     continue  # An observation failure is not child completion.
                 # A successful listing can remove a vanished branch. Preserve
@@ -841,7 +873,7 @@ class OpencodeHarness:
             if row.get('settled') and not force:
                 continue
             try:
-                messages = self._client().messages(cid, directory=self.chat.session(sid)['cwd'])
+                messages = (poll.get('client') or self._client()).messages(cid, directory=self.chat.session(sid)['cwd'])
             except OpencodeError:
                 row.pop('observed_running_at', None)
                 if row.get('status') != 'unknown':
@@ -897,17 +929,18 @@ class OpencodeHarness:
         self._children[cid] = sid
         self.chat.event(sid, 'child/item/updated', {'item': item, 'turnId': mid, 'threadId': cid})
 
-    def _record_children(self,sid,mid,parent,admitted_at):
+    def _record_children(self,sid,mid,parent,admitted_at,*,client=None):
         from .execution_records import journal_tool
         directory = self.chat.session(sid)['cwd']
+        client=client or self._client()
         pending=[parent];seen={parent}
         while pending and len(seen)<128:
             owner=pending.pop()
-            for child in self._client().children(owner, directory=directory):
+            for child in client.children(owner, directory=directory):
                 cid=child.get('id')
                 if not cid or cid in seen:continue
                 seen.add(cid);pending.append(cid)
-                for message in self._client().messages(cid, directory=directory):
+                for message in client.messages(cid, directory=directory):
                     info=message.get('info',message)
                     created=(info.get('time') or {}).get('created',0)
                     if info.get('role')!='assistant' or created<admitted_at-1000:continue
@@ -924,25 +957,29 @@ class OpencodeHarness:
                  'modelContextWindow': None, 'backend': 'opencode'}
         self.chat.event(sid, 'thread/tokenUsage/updated', {'tokenUsage': usage})
 
-    def _interrupt_once(self, sid, bound, mid):
+    def _interrupt_once(self, sid, bound, mid, *, client=None):
         with self._lock:
             if mid in self._interrupted:
                 return
             self._interrupted.add(mid)
         try:
-            self._client().abort(bound, directory=self.chat.session(sid)['cwd'])
+            client=client or self.client
+            if client is not None:client.abort(bound, directory=self.chat.session(sid)['cwd'])
         except OpencodeError as exc:
             self.chat.event(sid, 'error', {'turnId': mid, 'message': _public_native_error({'message': str(exc)})})
 
     def _finish(self, sid, mid, status):
-        for message in self.snapshot(sid)['messages']:
-            if message['turn_id'] == mid and message['status'] in ('delivered', 'streaming'):
-                self.chat.patch_message(message['id'], status=status)
-        self.chat.update(sid, turn_id=None, status='idle' if status == 'completed' else status)
-        self.chat.event(sid, 'turn/completed' if status == 'completed' else 'turn/' + status,
-                        {'turnId': mid, 'status': status})
-        if status == 'completed':
-            self._schedule(sid)
+        with self._lock:
+            active=self.chat.session(sid).get('turn_id')
+            if active is not None and active!=mid:return
+            for message in self.snapshot(sid)['messages']:
+                if message['turn_id'] == mid and message['status'] in ('delivered', 'streaming'):
+                    self.chat.patch_message(message['id'], status=status)
+            self.chat.update(sid, turn_id=None, status='idle' if status == 'completed' else status)
+            self.chat.event(sid, 'turn/completed' if status == 'completed' else 'turn/' + status,
+                            {'turnId': mid, 'status': status})
+            if status == 'completed':
+                self._schedule(sid)
 
     def cancel(self, session_id):
         with self._lock:
@@ -951,16 +988,15 @@ class OpencodeHarness:
             for message in self.snapshot(session_id)['messages']:
                 if message['status'] == 'queued':
                     self.chat.patch_message(message['id'], status='cancelled')
-            if session['turn_id']:
-                bound = self._bound_session(session_id)
-                if bound:
-                    self._interrupt_once(session_id, bound, session['turn_id'])
-                self.chat.update(session_id, status='stopping')
-                self.chat.event(session_id, 'turn/interruptRequested', {'turnId': session['turn_id']})
+            turn=session['turn_id'];bound=self._bound_session(session_id) if turn else None
+            if turn or session_id in self._busy:self.chat.update(session_id, status='stopping')
+            if turn:self.chat.event(session_id, 'turn/interruptRequested', {'turnId': turn})
+        if bound:self._interrupt_once(session_id,bound,turn)
         return self.snapshot(session_id)
 
     def close(self):
         with self._lock:
+            self._closed=True
             client, self.client = self.client, None
         if client is not None:
             client.close()

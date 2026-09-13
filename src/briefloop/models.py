@@ -170,9 +170,10 @@ def runtime_fields(value, backend='codex'):
 class Settings(RoleModel):
     model: str = Field(default='gpt-5.6-luna', max_length=100)
     reasoning_effort: str | None = Field(default='high', min_length=1, max_length=100)
-    agent_backend: Literal['codex', 'opencode','claude','kimi','hermes','reasonix','mimo','codebuddy','kilo','kiro','vibe'] = 'codex'
+    agent_backend: Literal['codex', 'opencode','claude','kimi','hermes','reasonix','mimo','codebuddy','kilo','kiro','vibe','deepseek-harness','antigravity','pi'] = 'codex'
     model_selection_required: bool = True
     role_models: dict[Literal['evaluator','maintainer','proposer'], RoleModel] = Field(default_factory=dict)
+    chat_allow_web: bool = True
     search_provider: Literal['native','tavily'] = 'native'
     k: int = Field(default=1, ge=1, le=20)
     auto_learn: bool = True
@@ -323,6 +324,7 @@ class SaveRevision(Model):
 
 
 class Comment(Model):
+    learning_intent: Literal['feedback','explicit_requirement'] = 'feedback'
     version_id: str
     text: str = Field(min_length=1, max_length=20000)
 

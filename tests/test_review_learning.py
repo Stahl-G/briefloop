@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from briefloop.learning import _baseline_for_attempt, _experience, _generate_trial
+from briefloop.learning import _baseline_for_attempt, _experience, _generate_trial, _conditions
 from briefloop.review import accept_review, build_packet, respond, review_status
 from briefloop.review_learning import record_verified_corrections, source_snapshot
 from briefloop.store import Store, dump, now
@@ -11,10 +11,12 @@ from briefloop.store import Store, dump, now
 
 def attempt(tmp_path):
     store=Store(tmp_path);source=store.add_source('Facts','Revenue 12 million USD.')
-    run=store.create_run({'title':'Report','objective':'Explain revenue'},[source['id']])
+    run=store.create_run({'title':'Report','objective':'Explain revenue','allow_web':False},[source['id']])
     job=store.enqueue('generate',{'run_id':run['id']})
     brief=store.publish(run['id'],{'title':'Report','markdown':'Revenue 12 million USD.'},version_id='brief_'+job['id'][4:])
     payload={**json.loads(job['payload']),'skill_id':None}
+    folder=store.root/'jobs'/job['id'];folder.mkdir(exist_ok=True)
+    (folder/'input.json').write_text(dump({'requirements':json.loads(run['requirements'])}))
     return store,source,run,job,brief,payload
 
 
@@ -22,7 +24,7 @@ def test_baseline_requires_attempt_sources_and_actual_refined_version(tmp_path):
     store,source,run,job,brief,payload=attempt(tmp_path)
     refined=store.publish(run['id'],{'title':'Report','markdown':'Revenue was 12 million USD.'},parent_id=brief['id'])
     saved=source_snapshot(store,run['id'])
-    store.update_job(job['id'],'complete',result={'version_id':refined['id'],'source_snapshot':saved})
+    store.update_job(job['id'],'complete',result={'version_id':refined['id'],'source_snapshot':saved,'learning_conditions':_conditions(store,run,payload)})
     assert _baseline_for_attempt(store,run,payload)['id']==refined['id']
     later=store.add_source('Later correction','Revenue corrected to 120 million USD.')
     store.attach_source(run['id'],later['id'])
@@ -38,10 +40,10 @@ def test_baseline_requires_attempt_sources_and_actual_refined_version(tmp_path):
 
 def test_legacy_input_can_only_prove_complete_saved_ids_and_hashes(tmp_path):
     store,source,run,job,brief,payload=attempt(tmp_path)
-    store.update_job(job['id'],'complete',result={'version_id':brief['id']})
+    store.update_job(job['id'],'complete',result={'version_id':brief['id'],'learning_conditions':_conditions(store,run,payload)})
     assert _baseline_for_attempt(store,run,payload) is None
-    folder=store.root/'jobs'/job['id'];folder.mkdir()
-    legacy={'sources':[{'id':source['id'],'hash':source['hash'],'original_path':None}]}
+    folder=store.root/'jobs'/job['id'];folder.mkdir(exist_ok=True)
+    legacy={'requirements':json.loads(run['requirements']),'sources':[{'id':source['id'],'hash':source['hash'],'original_path':None}]}
     path=folder/'input.json';path.write_text(dump(legacy))
     assert _baseline_for_attempt(store,run,payload)['id']==brief['id']
     later=store.add_source('Supplement','A new metric.')
@@ -55,13 +57,13 @@ def test_original_hash_change_and_legacy_missing_raw_hash_invalidate_baseline(tm
     store,source,run,job,brief,payload=attempt(tmp_path)
     original=store.root/'sources'/(source['id']+'.bin');original.write_bytes(b'Original input')
     saved=source_snapshot(store,run['id'])
-    store.update_job(job['id'],'complete',result={'version_id':brief['id'],'source_snapshot':saved})
+    store.update_job(job['id'],'complete',result={'version_id':brief['id'],'source_snapshot':saved,'learning_conditions':_conditions(store,run,payload)})
     assert _baseline_for_attempt(store,run,payload)['id']==brief['id']
     original.write_bytes(b'Changed raw input, extraction still identical')
     assert _baseline_for_attempt(store,run,payload) is None
     original.write_bytes(b'Original input')
-    store.update_job(job['id'],'complete',result={'version_id':brief['id']})
-    folder=store.root/'jobs'/job['id'];folder.mkdir()
+    store.update_job(job['id'],'complete',result={'version_id':brief['id'],'learning_conditions':_conditions(store,run,payload)})
+    folder=store.root/'jobs'/job['id'];folder.mkdir(exist_ok=True)
     (folder/'input.json').write_text(dump({'sources':[{'id':source['id'],'hash':source['hash'],'original_path':str(original)}]}))
     assert _baseline_for_attempt(store,run,payload) is None
 
@@ -129,14 +131,14 @@ def test_unresolved_is_not_success_and_packet_history_tampering_is_rejected(tmp_
 
 def test_cached_trial_uses_actual_result_version_and_rejects_source_drift(tmp_path):
     store,source,case,_,_,payload=attempt(tmp_path)
-    trial_run=store.create_run(json.loads(case['requirements']),[source['id']],mode='trial')
+    trial_run=store._create_learning_run(case['id'],[source['id']])
     trial=store.enqueue('generate',{'run_id':trial_run['id']})
     early=store.publish(trial_run['id'],{'title':'First','markdown':'First draft'},version_id='brief_'+trial['id'][4:])
     final=store.publish(trial_run['id'],{'title':'Final','markdown':'Final draft'},parent_id=early['id'])
-    snapshot=source_snapshot(store,trial_run['id'])
-    store.update_job(trial['id'],'complete',result={'version_id':final['id'],'source_snapshot':snapshot})
-    folder=store.root/'trial-stage';folder.mkdir()
-    (folder/'trial.json').write_text(dump({'run_id':trial_run['id'],'job_id':trial['id'],'source_snapshot':snapshot}))
+    snapshot=source_snapshot(store,trial_run['id']);conditions=_conditions(store,case,payload)
+    store.update_job(trial['id'],'complete',result={'version_id':final['id'],'source_snapshot':snapshot,'learning_conditions':conditions})
+    folder=store.root/'trial-stage';folder.mkdir(exist_ok=True)
+    (folder/'trial.json').write_text(dump({'run_id':trial_run['id'],'job_id':trial['id'],'source_snapshot':snapshot,'conditions':conditions,'skill':None}))
     result=_generate_trial(store,{'payload':dump(payload),'_runtime':object()},case,None,folder,'baseline')
     assert result['id']==final['id']
     added=store.add_source('New','New facts');store.attach_source(case['id'],added['id'])

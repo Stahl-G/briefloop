@@ -197,16 +197,27 @@ class Store:
             raise Conflict("Source changed outside the application")
         return text
 
+    def _create_learning_run(self, origin_id, source_ids, *, skill_id=None):
+        origin=self.one('runs',origin_id)
+        requirements={**json.loads(origin['requirements']),'allow_web':False}
+        return self.create_run(requirements,source_ids,mode='trial',skill_id=skill_id,
+                               _learning_clone=(_LEARNING_CLONE,origin_id))
+
     def create_run(self, requirements, source_ids, **options):
+        clone=options.get('_learning_clone')
+        if clone is not None:
+            if not isinstance(clone,tuple) or len(clone)!=2 or clone[0] is not _LEARNING_CLONE:
+                raise ValueError('Invalid internal learning clone')
+            requirements={**json.loads(self.one('runs',clone[1])['requirements']),'allow_web':False}
         req = Requirements.model_validate(requirements)
         selected = None
-        if req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is None:
+        if clone is None and req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is None:
             raise ValueError('请先选择是否维护企业背景知识库；可选择不维护并继续报告')
-        req.company_context_required=req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is True
-        if self.settings().get('company_context_enabled') and not req.company_context_revision:
+        if clone is None:req.company_context_required=req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is True
+        if clone is None and self.settings().get('company_context_enabled') and not req.company_context_revision:
             from .company_context import snapshot
             req.company_context_revision=snapshot(self)['revision']
-        if req.template_id:
+        if clone is None and req.template_id:
             from .templates import template
             selected=template(self,req.template_id)
             if selected['status']!='ready':raise ValueError('所选模板尚未准备完成')
@@ -214,11 +225,15 @@ class Store:
                 from .models import ReportSection
                 req.sections=[ReportSection.model_validate(s) for s in selected['spec']['sections']]
         from .document_workflows import resolve_workflow, freeze_workflow, template_workflow_hint
-        selection = resolve_workflow(req.model_dump(), template_workflow_hint(selected))
+        selection = ({'id':req.workflow_snapshot['id'],'variant':req.workflow_snapshot['variant']}
+                     if clone is not None and req.workflow_snapshot else resolve_workflow(req.model_dump(), template_workflow_hint(selected)))
         req.workflow_id, req.workflow_variant = selection['id'], selection['variant']
         if req.workflow_id == 'meeting_minutes' and not source_ids:
             raise ValueError('会议纪要需要本次会议的转写或笔记；请先添加并选择材料，公开检索不能替代会议记录')
-        req.workflow_snapshot = freeze_workflow(selection)
+        if clone is not None and req.workflow_snapshot:
+            from .learning import validated_workflow
+            req.workflow_snapshot=validated_workflow(req.workflow_snapshot)
+        else:req.workflow_snapshot = freeze_workflow(selection)
         for sid in req.reference_source_ids:
             self.one("sources", sid)
         if set(source_ids) & set(req.reference_source_ids):
@@ -435,11 +450,12 @@ class Store:
             version_id=brief['parent_id']
         return False
 
-    def comment(self, version_id, text):
+    def comment(self, version_id, text, *, learning_intent='feedback'):
+        if learning_intent not in ('feedback','explicit_requirement'):raise ValueError('Unknown learning intent')
         self.one("briefs", version_id)
         fid = uid("feedback")
         with self.tx() as c:
-            c.execute("INSERT INTO feedback VALUES(?,?,?,?,?,?)", (fid, version_id, "comment", dump({"text": text}), None, now()))
+            c.execute("INSERT INTO feedback VALUES(?,?,?,?,?,?)", (fid, version_id, "comment", dump({"text": text,"learning_intent":learning_intent}), None, now()))
         return {"id": fid}
 
     def runtime_config(self):
@@ -575,3 +591,6 @@ class Store:
                 "skills": self.rows("SELECT * FROM skills ORDER BY rowid DESC"),
                 "active_skill": self.meta("active_skill"),
                 "wiki": (self.root/"wiki/index.md").read_text(encoding='utf-8') if (self.root/"wiki/index.md").exists() else ""}
+
+
+_LEARNING_CLONE = object()

@@ -87,6 +87,7 @@ class ChatExecution:
             identity = dump({'backend': backend, 'model': config.get('model'),
                              'model_provider': config.get('model_provider'), 'cwd': session['cwd'],
                              'variant': config.get('variant'), 'permission': config.get('permission'),
+                             'host_options':config.get('host_options'), 'native_permissions_digest':config.get('native_permissions_digest'),
                              'allow_web': bool(message['allow_web'])})
             # Resume only a native session that actually captured a completed
             # turn. Permission/web changes also require reseeding because some

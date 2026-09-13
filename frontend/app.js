@@ -247,7 +247,7 @@ function render(first){
  renderTemplates(first);
  renderWorkflowChoices(first);
  if($('review-open'))$('review-open').textContent='审阅与需处理'+(state.conflicts?.length?' · '+state.conflicts.length+' 项来源分歧':'');
- if(first){$('timeout-minutes').value=state.settings.timeout_minutes;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.settings.auto_learn;$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',effortValue(state.settings,'reasoning_effort'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.model_variant||'';updateModelLabel();renderRoleModels();renderBackend();$('search-provider').value=state.settings.search_provider==='tavily'?'tavily':'native';renderSearchProvider();refreshRuntimeDiscovery();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});syncWorkflowProfile(false)}
+ if(first){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('chat-allow-web').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.settings.auto_learn;$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',effortValue(state.settings,'reasoning_effort'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.model_variant||'';updateModelLabel();renderRoleModels();renderBackend();$('search-provider').value=state.settings.search_provider==='tavily'?'tavily':'native';renderSearchProvider();refreshRuntimeDiscovery();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});syncWorkflowProfile(false)}
  $('source-count').textContent=state.sources.length+' 份';$('source-list').innerHTML=state.sources.map(s=>`<div class="source-item"><input type="checkbox" data-check="${s.id}" ${selected.has(s.id)?'checked':''} aria-label="选择 ${esc(s.name)}"><button data-source="${s.id}">${esc(s.name)}</button><span class="tag ${s.status==='failed'?'error':''}">${s.status==='failed'?'读取失败':s.needs_visual?'需视觉读取':'可读取'}</span>${s.status==='failed'?`<button data-retry-source="${s.id}">重试</button>`:''}</div>`).join('');
  document.querySelectorAll('[data-retry-source]').forEach(b=>b.onclick=()=>action(async()=>{const s=await api('retry-source',{source_id:b.dataset.retrySource});selected.delete(b.dataset.retrySource);selected.add(s.id);notice(s.status==='ready'?'来源已重新读取':s.error,s.status!=='ready')}));
  document.querySelectorAll('[data-check]').forEach(b=>b.onchange=()=>{if(b.checked){selected.add(b.dataset.check);referenceSelected.delete(b.dataset.check);renderReferenceSources()}else selected.delete(b.dataset.check)});renderReferenceSources();
@@ -400,7 +400,7 @@ $('requirements').onsubmit=e=>{e.preventDefault();action(async()=>{const f=new F
 $('upload').onchange=e=>action(async()=>{for(const f of e.target.files){const buf=new Uint8Array(await f.arrayBuffer());let b='';for(let i=0;i<buf.length;i+=8192)b+=String.fromCharCode(...buf.subarray(i,i+8192));const s=await api('upload',{name:f.name,data:btoa(b)});selected.add(s.id)}e.target.value=''},'来源已保存');
 $('add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('source-url').value});selected.add(s.id);$('source-url').value='';notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
 $('rescore').onclick=()=>action(async()=>{await savedVersion();await api('assess',{version_id:current.id,session_id:chat.id||undefined})},'已提交评分');
-$('comment-submit').onclick=()=>action(async()=>{const text=$('comment').value;const version=await savedVersion();await api('comment',{version_id:version,text});if($('comment').value===text)$('comment').value='';scheduleLearning()},'反馈已保存');
+$('comment-submit').onclick=()=>action(async()=>{const text=$('comment').value,required=$('comment-required').checked;const version=await savedVersion();await api('comment',{version_id:version,text,learning_intent:required?'explicit_requirement':'feedback'});if($('comment').value===text&&$('comment-required').checked===required){$('comment').value='';$('comment-required').checked=false;}scheduleLearning()},'反馈已保存');
 $('learn-now').onclick=()=>action(async()=>{await savedVersion();clearTimeout(learnTimer);const result=await api('learn',{});notice(result.message||'已提交反馈学习')});
 async function setK(v){const k=Math.max(1,Math.min(20,Number(v)||1));$('rounds').value=k;await action(()=>api('settings',{k}),'轮数已保存，下一批生效')}
 $('rounds').onchange=e=>setK(e.target.value);$('k-minus').onclick=()=>setK(Number($('rounds').value)-1);$('k-plus').onclick=()=>setK(Number($('rounds').value)+1);$('auto-learn').onchange=e=>action(()=>api('settings',{auto_learn:e.target.checked}),'学习偏好已保存');
@@ -650,13 +650,13 @@ function renderChatBackendChoice(){
  select.disabled=chat.busy||[...chat.events.values()].some(e=>e.kind==='session/internal')||!!(chat.session?.lifecycle&&chat.session.lifecycle!=='active')||(chatActive()&&$('chat-mode').value==='steer');
 }
 $('chat-backend').onchange=()=>{
- chat.nextBackend=$('chat-backend').value;$('chat-mode').value='queue';
+ chat.nextBackend=$('chat-backend').value;chat.hostOptions={};$('chat-mode').value='queue';
  const previous=[...chat.messages].reverse().find(m=>m.role==='user'&&m.runtime?.backend===chat.nextBackend)?.runtime;
  $('chat-model').value=previous?.model||'';$('chat-model-provider').value=previous?.model_provider||'';$('chat-service-tier').value=previous?.service_tier||'';assignEffort('chat-effort',effortValue(previous||{},'effort'));
- renderChatRuntimePermissions();if(previous?.permission)$('chat-permission').value=previous.permission;
+ chat.hostOptions=previous?.host_options||{};renderChatRuntimePermissions();if(previous?.permission)$('chat-permission').value=previous.permission;
  chat.request=null;rememberDraft();updateComposer();refreshInlineModelPickers();
 };
-function rememberDraft(){chat.drafts.set(chat.id||'new',{text:$('chat-input').value,sources:[...chat.attachments],backend:chatBackendChoice(),model:$('chat-model').value,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,service_tier:(chatBackendChoice())==='codex'?($('chat-service-tier').value||null):null,allow_web:$('chat-allow-web').checked,permission:$('chat-permission').value});try{sessionStorage.setItem('briefloop-chat-drafts',JSON.stringify([...chat.drafts].slice(-30)))}catch{}}
+function rememberDraft(){chat.drafts.set(chat.id||'new',{text:$('chat-input').value,sources:[...chat.attachments],backend:chatBackendChoice(),model:$('chat-model').value,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,service_tier:(chatBackendChoice())==='codex'?($('chat-service-tier').value||null):null,allow_web:$('chat-allow-web').checked,permission:$('chat-permission').value,host_options:chat.hostOptions||{}});try{sessionStorage.setItem('briefloop-chat-drafts',JSON.stringify([...chat.drafts].slice(-30)))}catch{}}
 function restoreDraft(){
  const d=chat.drafts.get(chat.id||'new'),sessionRuntime=chat.session?.runtime;
  const backend=(chat.id&&d?.backend)||sessionRuntime?.backend||state.settings.agent_backend||'codex';
@@ -665,7 +665,7 @@ function restoreDraft(){
  const fallback={model:state.settings.model_selection_required?'':state.settings.model,backend,effort:state.settings.reasoning_effort,model_provider:state.settings.model_provider,service_tier:state.settings.service_tier};
  const runtime=saved||sessionRuntime||fallback;
  // Searching is the expected default for a fresh chat; a saved draft keeps the user's own choice.
- $('chat-input').value=d?.text||'';chat.attachments=new Set(d?.sources||[]);$('chat-allow-web').checked=d&&('allow_web' in d)?!!d.allow_web:true;
+ $('chat-input').value=d?.text||'';chat.attachments=new Set(d?.sources||[]);$('chat-allow-web').checked=d&&('allow_web' in d)?!!d.allow_web:(chat.id?[...(chat.messages||[])].reverse().find(m=>m.role==='user')?.allow_web??(state.settings.chat_allow_web!==false):state.settings.chat_allow_web!==false);chat.hostOptions=runtime.host_options||{};
  $('chat-model').value=runtime.model||'';assignEffort('chat-effort',effortValue(runtime,'effort'));
  $('chat-model-provider').value=runtime.model_provider||'';$('chat-service-tier').value=runtime.service_tier||'';$('chat-permission').value=runtime.permission||'workspace-write';
  renderAttachments();updateComposer();autoSizeChatInput();refreshInlineModelPickers();
@@ -699,7 +699,7 @@ function renderChatRuntimePermissions(){
  if(!canSteer&&$('chat-mode').value==='steer')$('chat-mode').value='queue';
  $('chat-effort').hidden=backend!=='codex';document.querySelector('.chat-provider-row').hidden=backend!=='codex';
 }
-function runtimeChoice(){const model=$('chat-model').value.trim();if(!model)throw Error('请输入模型 ID');const backend=chatBackendChoice();if(!['codex','opencode'].includes(backend)){return {model,backend,permission:'runtime-native'}}if(backend==='opencode'){if(!model.includes('/'))throw Error('Opencode 模型必须是 provider/model 形式，例如 opencode-go/gpt-5.6-luna');return {model,backend,variant:state.settings.model_variant||null,permission:$('chat-permission').value}}return {model,backend,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,service_tier:selectedServiceTier('chat-service-tier',fastControlConfig('chat'),true),permission:$('chat-permission').value}}
+function runtimeChoice(){const model=$('chat-model').value.trim();if(!model)throw Error('请输入模型 ID');const backend=chatBackendChoice();if(!['codex','opencode'].includes(backend)){return {model,backend,permission:'runtime-native',host_options:chat.hostOptions||{}}}if(backend==='opencode'){if(!model.includes('/'))throw Error('Opencode 模型必须是 provider/model 形式，例如 opencode-go/gpt-5.6-luna');return {model,backend,variant:state.settings.model_variant||null,permission:$('chat-permission').value}}return {model,backend,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,service_tier:selectedServiceTier('chat-service-tier',fastControlConfig('chat'),true),permission:$('chat-permission').value}}
 function messageTime(value){const date=new Date(value);return Number.isNaN(date.getTime())?'':date.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false})}
 function chatError(text=''){$('chat-error').textContent=text;$('chat-error').hidden=!text}
 function sessionMissing(error){return /会话或消息不存在|会话不存在/.test(String(error&&error.message||error||''))}
@@ -947,13 +947,80 @@ async function initChat(){
 }
 
 $('chat-allow-web').onchange=rememberDraft;
+let permissionPanel=null,permissionLoad=0;
+$('chat-permissions-refresh').onclick=loadPermissionPanel;
+$('chat-permissions-close').onclick=()=>$('chat-permissions-dialog').close();
+$('chat-permissions-open').onclick=async()=>{const dialog=$('chat-permissions-dialog');if(!dialog.open)dialog.showModal();renderPermissionRequests();await loadPermissionPanel()};
+$('settings-chat-web-default').onchange=async()=>{
+ const value=$('settings-chat-web-default').checked;
+ $('settings-chat-web-default').disabled=true;
+ try{await api('settings',{chat_allow_web:value});state.settings.chat_allow_web=value;$('settings-chat-web-status').textContent='已保存，用于之后的新对话。'}
+ catch(e){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('settings-chat-web-status').textContent=e.message}
+ finally{$('settings-chat-web-default').disabled=false}
+};
+function renderPermissionRequests(){
+ const pending=chat.requests.filter(r=>r.status==='pending'&&(r.data?.native_options||String(r.method||'').includes('Approval')));
+ $('chat-permissions-open').textContent='权限'+(pending.length?' · '+pending.length:'');
+ if(!$('chat-permissions-dialog').open)return;
+ const box=$('chat-permissions-pending'),signature=JSON.stringify([chat.id,pending]);
+ if(box.dataset.signature===signature)return;box.dataset.signature=signature;
+ box.innerHTML=pending.length?'<h3>等待你确认的操作</h3>':'<p class="help">当前没有待确认的操作。宿主发起授权请求后会显示在这里。</p>';
+ for(const request of pending){
+  const section=document.createElement('section');section.className='permission-request';
+  const title=document.createElement('p');title.textContent=request.data.questions?.[0]?.question||'宿主请求授权';section.append(title);
+  for(const [index,option] of (request.data.questions?.[0]?.options||[]).entries()){
+   const b=document.createElement('button');b.type='button';b.textContent=option.label;b.onclick=async()=>{
+    section.querySelectorAll('button').forEach(x=>x.disabled=true);
+    try{const q=request.data.questions[0];await api('harness/answer',{session_id:chat.id,request_id:request.id,answers:{[q.id]:{answers:[request.data.native_options?.[index]?.optionId||option.label]}}});await pollChat(true)}catch(e){$('chat-permissions-error').textContent=e.message;section.querySelectorAll('button').forEach(x=>x.disabled=false)}
+   };section.append(b);
+  }
+  box.append(section);
+ }
+}
+async function loadPermissionPanel(){
+ const backend=chatBackendChoice(),token=++permissionLoad;
+ permissionPanel=null;$('chat-permissions-host').textContent=runtimeName(backend)+' · 下一回合';$('chat-permissions-error').textContent='';$('chat-permissions-options').textContent='正在读取宿主权限…';$('chat-permissions-note').textContent='';$('chat-permissions-native').hidden=true;
+ try{
+  const p=await api('runtime/permissions?backend='+encodeURIComponent(backend));if(token!==permissionLoad||backend!==chatBackendChoice())return;
+  permissionPanel=p;$('chat-permissions-note').textContent=p.note;$('chat-permissions-error').textContent=p.diagnostic||'';
+  const box=$('chat-permissions-options');box.replaceChildren();$('chat-permissions-native').hidden=p.kind!=='native';
+  if(p.kind==='native')return;
+  if(p.kind!=='rules'){
+   const label=document.createElement('label');label.htmlFor='chat-host-permission-mode';label.textContent='下一回合权限';
+   const select=document.createElement('select');select.id='chat-host-permission-mode';
+   for(const mode of p.modes)select.add(new Option(mode.name,mode.id));select.value=chat.hostOptions?.mode||'native';
+   if(!select.value){select.value='native';$('chat-permissions-error').textContent='原权限模式已不在宿主列表中，请重新选择后再发送。'}
+   select.disabled=$('chat-permission').disabled||[...chat.events.values()].some(e=>e.kind==='session/internal');
+   select.onchange=()=>{chat.hostOptions={mode:select.value};rememberDraft();$('chat-permissions-error').textContent='已选择，下一回合生效。'};
+   box.append(label,select);return;
+  }
+  const list=document.createElement('div');list.className='permission-rule-list';
+  for(const row of p.rules){
+   const line=document.createElement('div'),text=document.createElement('code'),remove=document.createElement('button');
+   text.textContent=({allow:'允许',ask:'询问',deny:'拒绝'}[row.decision])+' · '+row.rule;
+   remove.type='button';remove.textContent='移除';remove.setAttribute('aria-label','移除 '+text.textContent);
+   remove.onclick=()=>saveNativeRule({operation:'remove',decision:row.decision,rule:row.rule});line.append(text,remove);list.append(line);
+  }
+  box.append(list);
+  const form=document.createElement('form');form.id='permission-rule-form';form.innerHTML='<h3>添加本机规则</h3><label for="permission-rule-decision">处理方式</label><select id="permission-rule-decision"><option value="ask">询问</option><option value="allow">允许</option><option value="deny">拒绝</option></select><label for="permission-rule-tool">操作</label><select id="permission-rule-tool"><option value="read_file">读取文件</option><option value="write_file">写入文件</option><option value="command">执行命令</option><option value="read_url">读取网址</option><option value="execute_url">执行网址操作</option><option value="mcp">MCP 工具</option></select><label for="permission-rule-scope">范围</label><input id="permission-rule-scope" required autocomplete="off" placeholder="完整文件路径、网址或宿主支持的规则范围"><p class="help">保存会修改此 Mac 上 Antigravity 的持久规则；范围越宽，允许的操作越多。可随时移除。</p><button type="submit">保存规则</button>';
+  form.onsubmit=event=>{event.preventDefault();saveNativeRule({operation:'add',decision:$('permission-rule-decision').value,rule:$('permission-rule-tool').value+'('+$('permission-rule-scope').value.trim()+')'})};box.append(form);
+ }catch(e){if(token===permissionLoad){$('chat-permissions-options').textContent='';$('chat-permissions-error').textContent=e.message}}
+}
+async function saveNativeRule(change){
+ const p=permissionPanel;if(!p||p.backend!==chatBackendChoice())return;
+ const controls=[...$('chat-permissions-options').querySelectorAll('button,input,select')];controls.forEach(e=>e.disabled=true);
+ try{await api('runtime/permissions',{backend:p.backend,revision:p.revision,...change});await loadPermissionPanel();$('chat-permissions-error').textContent='规则已保存。之后发送的任务使用新规则。'}
+ catch(e){$('chat-permissions-error').textContent=e.message;controls.forEach(e=>e.disabled=false)}
+}
+
 function renderRequests(){
+ renderPermissionRequests();
  const requests=chat.requests.filter(r=>r.status==='pending'),signature=JSON.stringify(requests);$('chat-requests').hidden=!requests.length;
  if(renderRequests.signature===signature)return;renderRequests.signature=signature;
  $('chat-requests').innerHTML=requests.map(request=>`<form class="agent-question" data-request-id="${esc(request.id)}"><strong>BriefLoop 需要你的补充</strong>${(request.data?.questions||[]).map((q,i)=>`<fieldset data-question-index="${i}"><legend>${esc(q.question||q.header||'请补充')}</legend>${(q.options||[]).map((option,j)=>`<label class="question-option"><input type="radio" name="answer-${i}" value="${j}"><span><b>${esc(option.label)}</b>${option.description?`<small>${esc(option.description)}</small>`:''}</span></label>`).join('')}<input class="question-text" name="text-${i}" aria-label="${esc(q.question||'补充说明')}" placeholder="${q.options?.length?'或直接输入你的回答':'输入回答'}"></fieldset>`).join('')}<button class="primary" type="submit">提交回答</button><span class="question-error" role="alert"></span></form>`).join('');
  $('chat-requests').querySelectorAll('form').forEach(form=>form.onsubmit=async event=>{
   event.preventDefault();const request=requests.find(r=>r.id===form.dataset.requestId),answers={};
-  for(const [i,q] of (request.data?.questions||[]).entries()){const custom=form.elements[`text-${i}`].value.trim(),option=form.querySelector(`input[name="answer-${i}"]:checked`);const value=custom||(option?q.options[Number(option.value)].label:'');if(!value){form.querySelector('.question-error').textContent='请回答每一个问题后提交。';return}answers[q.id]={answers:[value]}}
+  for(const [i,q] of (request.data?.questions||[]).entries()){const custom=form.elements[`text-${i}`].value.trim(),option=form.querySelector(`input[name="answer-${i}"]:checked`);const value=custom||(option?(request.data?.native_options?.[Number(option.value)]?.optionId||q.options[Number(option.value)].label):'');if(!value){form.querySelector('.question-error').textContent='请回答每一个问题后提交。';return}answers[q.id]={answers:[value]}}
   const button=form.querySelector('button');button.disabled=true;button.textContent='提交中…';form.querySelector('.question-error').textContent='';
   try{await api('harness/answer',{session_id:chat.id,request_id:request.id,answers});await pollChat(true)}catch(e){form.querySelector('.question-error').textContent=e.message}finally{button.disabled=false;button.textContent='提交回答'}
  });
@@ -1052,7 +1119,7 @@ function renderContext(){
  $('context-details').innerHTML=usage?`<strong>最近一次模型请求</strong><dl><div><dt>输入 Token</dt><dd>${count(last.inputTokens)}</dd></div><div><dt>其中缓存</dt><dd>${count(last.cachedInputTokens)}</dd></div><div><dt>输出 Token</dt><dd>${count(last.outputTokens)}</dd></div><div><dt>模型窗口</dt><dd>${hasWindow?count(windowSize):'未知'}</dd></div></dl>${hasInput&&hasWindow?`<meter min="0" max="${windowSize}" value="${Math.min(last.inputTokens,windowSize)}" aria-label="最近输入与上下文窗口的比例"></meter><p>最近输入占窗口 ${(last.inputTokens/windowSize*100).toFixed(1)}%。</p>`:''}<p>输入量来自最近一次请求，累计用量不作为上下文占用。</p>`:'<p>开始执行后，按后端返回的真实数据更新；暂无用量。</p>';
 }
 $('chat-permission').onchange=()=>{rememberDraft();updateComposer()};
-function showSettings(){$('timeout-minutes').value=state.settings.timeout_minutes;moveSearchSettings('settings');page('settings-dialog');$('settings-dialog').scrollIntoView({block:'start'});refreshRuntimeDiscovery();updateLearningPause().catch(()=>{});refreshTavilySettings().catch(()=>{})}
+function showSettings(){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;moveSearchSettings('settings');page('settings-dialog');$('settings-dialog').scrollIntoView({block:'start'});refreshRuntimeDiscovery();updateLearningPause().catch(()=>{});refreshTavilySettings().catch(()=>{})}
 $('settings-open').onclick=showSettings;$('settings-close').onclick=()=>page('chat');
 {
  const modelPanel=document.querySelector('.model-settings');const shortcut=document.createElement('div');shortcut.className='setup-settings-shortcut';shortcut.innerHTML='<div><span>生成模型</span><strong id="setup-model-summary">Luna / high</strong></div><button type="button" class="outline">模型与角色设置</button>';shortcut.querySelector('button').onclick=showSettings;modelPanel.before(shortcut);$('settings-model-block').append(modelPanel);
@@ -1154,7 +1221,7 @@ async function refreshCandidates(){
  try{
   const result=await api('learning-candidates'),candidates=result.candidates||[],signature=JSON.stringify(candidates);if(refreshCandidates.signature===signature)return;refreshCandidates.signature=signature;
   const opened=new Set([...$('learning-candidates').querySelectorAll('details[open]')].map(d=>d.dataset.candidateKey));
-  const labels={pending_validation:'待验证',validation_running:'正在验证',accepted:'已接受',rejected:'未采用',paused:'验证已暂停',failed:'验证未完成',no_action:'未提出候选'};
+  const labels={pending_validation:'待验证',validation_running:'正在验证',accepted:'已接受',revision_required:'待修改 · 要求保留',rejected:'未采用',paused:'验证已暂停',failed:'验证未完成',no_action:'未提出候选'};
   const pausedJobs=new Set(['paused','interrupted','cancelled','failed']);
   $('learning-candidates').innerHTML=candidates.length?candidates.map((candidate,i)=>{const key=`${candidate.job_id}:${candidate.title}:${i}`,paused=pausedJobs.has(candidate.job_status),canResume=paused&&!['accepted','rejected','no_action'].includes(candidate.status),label=labels[candidate.status]||'待处理';return `<details class="candidate-item" data-candidate-key="${esc(key)}" ${opened.has(key)?'open':''}><summary><strong>${esc(candidate.title||'候选技能')}</strong><span class="candidate-status">${esc(label)}${paused&&candidate.status==='pending_validation'?' · 已暂停':''}</span></summary>${candidate.reason?`<p class="candidate-reason">${esc(candidate.reason)}</p>`:''}${candidate.markdown?`<pre class="candidate-markdown">${esc(candidate.markdown)}</pre>`:'<p class="help">候选正文暂不可读取。</p>'}${canResume?`<button class="outline" data-resume-candidate="${esc(candidate.job_id)}">继续验证（调用模型）</button>`:''}</details>`}).join(''):'<p class="help">暂无候选技能。候选生成后会显示在这里。</p>';
   $('learning-candidates').querySelectorAll('[data-resume-candidate]').forEach(button=>button.onclick=()=>action(async()=>{button.disabled=true;try{await api('resume',{job_id:button.dataset.resumeCandidate});await refreshCandidates()}finally{button.disabled=false}},'已提交继续验证'));

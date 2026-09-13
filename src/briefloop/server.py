@@ -255,6 +255,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     self.send(200,key_status())
                 elif u.path=='/api/opencode/providers':
                     self.send(200,{'configurations':opencode_harness._client().provider_settings()})
+                elif u.path=='/api/runtime/permissions':
+                    from .runtime_permissions import catalog
+                    self.send(200,catalog(q.get('backend',['codex'])[0],store.root,bridge))
                 elif u.path=='/api/runtimes':
                     self.send(200,bridge.discover())
                 elif u.path=='/api/runtime/fast-capability':
@@ -437,6 +440,12 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     result=self.server.connectors.save(body['config'],connector_id=body.get('connector_id'),secrets=body.get('secrets'))
                 elif path in ('/api/connectors/test','/api/connectors/enable','/api/connectors/disable','/api/connectors/delete'):
                     result=getattr(self.server.connectors,path.rsplit('/',1)[-1])(body['connector_id'])
+                elif path=='/api/runtime/permissions':
+                    if body.get('backend')!='antigravity':raise ValueError('此宿主不使用文件规则管理')
+                    if store.rows("SELECT id FROM chat_messages WHERE status IN ('queued','sending','delivered','streaming') LIMIT 1") or store.rows("SELECT id FROM jobs WHERE status IN ('queued','running') LIMIT 1"):
+                        raise ValueError('请等待本工作区任务结束后再修改原生规则')
+                    from .runtime_permissions import change_antigravity
+                    result=change_antigravity(body)
                 elif path=='/api/runtime-test':
                     result=test_runtime(body)
                 elif path=='/api/opencode/provider-catalog':
@@ -459,7 +468,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     result=dispatch(store,body)
                 elif path=='/api/harness/message':
                     choose_runtime(store,body.get('runtime'))
-                    result=pick_harness(body.get('runtime'),body['session_id'],sending=True).send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),display_text=body.get('display_text'),allow_web=bool(body.get('allow_web',False)))
+                    result=pick_harness(body.get('runtime'),body['session_id'],sending=True).send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),display_text=body.get('display_text'),allow_web=bool(body.get('allow_web',store.settings().get('chat_allow_web',True))))
                 elif path=='/api/harness/answer':result=pick_harness(session_id=body['session_id']).answer(body['session_id'],body['request_id'],body['answers'])
                 elif path=='/api/harness/archive':result=pick_harness(session_id=body['session_id']).archive(body['session_id'])
                 elif path=='/api/harness/delete':result=pick_harness(session_id=body['session_id']).delete(body['session_id'])
@@ -509,7 +518,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     value=SaveRevision.model_validate(body)
                     result=store.revise(value.base_version,value.markdown,value.editor_document,allow_markdown_conversion=value.allow_markdown_conversion)
                 elif path=='/api/comment':
-                    value=Comment.model_validate(body);result=store.comment(value.version_id,value.text)
+                    value=Comment.model_validate(body);result=store.comment(value.version_id,value.text,learning_intent=value.learning_intent)
                 elif path=='/api/settings':
                     merged={**store.settings(),**body}
                     # Saving a model is the explicit choice the pending flag waits for.

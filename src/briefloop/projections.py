@@ -18,7 +18,7 @@ def learning_candidates(store):
         records=[]
         for h in state['history']:
             if h.get('candidate_skill'):
-                records.append((h['candidate_skill'],'accepted' if h['accepted'] else 'rejected',h.get('reason',''),h.get('round')))
+                records.append((h['candidate_skill'],'accepted' if h['accepted'] else 'revision_required' if h.get('requirements_pending') else 'rejected',('人类明确要求 · ' if h.get('policy')=='explicit_human_requirement' else '反馈优化 · ')+h.get('reason',''),h.get('round')))
         pending=state.get('candidate')
         if pending and pending.get('skill') and not any(x[0]['file']==pending['skill']['file'] for x in records):
             reason='候选已生成，尚未完成比较验证；当前仍使用原有技能。'
@@ -30,5 +30,5 @@ def learning_candidates(store):
             markdown=path.read_text()
             title=next((line.lstrip('# ').strip() for line in markdown.splitlines() if line.startswith('# ')),'候选技能')
             result.append({'job_id':job['id'],'job_status':job['status'],'title':title,'markdown':markdown,
-                           'status':status,'reason':reason,'round':round_number})
+                           'status':status,'reason':reason,'round':round_number,'origin':'explicit_human_requirement' if state.get('explicit_requirement_sources') else 'feedback_optimization'})
     return {'candidates':result}
