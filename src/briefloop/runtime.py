@@ -202,13 +202,17 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
     discovery=('初始来源为 0，这是正常的公开信息研究任务，不要求用户先上传材料。按目标、时间窗口与主题设计来源发现分工，至少安排一个 Scout；不要因为初始文件为 0 就安排 0 个 Scout。'
                if not sources and req['allow_web'] else
                '已有初始材料：先忠实读取，再按研究目标识别证据缺口；只有允许联网时才补充公开来源。')
-    common = COMMON if backend == 'codex' else COMMON_OPENCODE
+    common = COMMON_OPENCODE if backend == 'opencode' else COMMON
+    if backend != 'codex' and backend != 'opencode':
+        common = common.replace(
+            '用当前 host 暴露的 spawn/delegate 工具，原生子 agent 使用新上下文（工具支持时 fork_turns=none）。',
+            '按宿主实际暴露的原生子任务接口派发，新建上下文；没有原生子任务接口时由当前会话完成分配的研究与写作，并如实记录，agents.json 留空。')
     if not req['allow_web']:
         retrieval_strategy='本轮未开启联网：只读取上传材料与已有来源，不安排公开检索，也不承诺开放搜索或分轮搜索；按已有材料识别证据缺口并如实交接。'
     else:
         retrieval_strategy=('分三轮推进检索，而不是让每个支线先一次深挖到底。第一轮侦察：整批 Scout 合计 1–2 条互补查询（不是每个 Scout 各 1–2 条），找出本期重要事件、候选主体、候选标题、URL 与可能日期；`AI news`、`AI weekly`、`artificial intelligence news` 这类同义改写不算不同方向。第二轮聚焦：按首轮线索选择互不重复的信息需求，可用意图包括 event discovery（范围内还有哪些重要变化）、entity check（某关键主体是否漏检或只有零散线索）、primary verification（定位一手正文与关键限定）、gap repair（补齐日期、指标、发布状态、冲突）；可用实体别名、原语言产品名、首轮出现的完整发布标题或明确指标词。第三轮补缺：仅当仍有高价值具体缺口时，用同一 Scout 多轮或再派少量同类任务；优先补"重要事件没有可用正文"，其次补"改变结论的指标/日期/条件"，不要给材料已充分的支线再堆重复来源。轮数是执行安排，不替代硬预算，满足任务可提前停止，不要求花完搜索次数；每条查询都要能回答"相对已有材料，这次想多知道什么"，不重复已经失败或已充分覆盖的相近查询。发现阶段可用综述、媒体、索引页发现事件及原始链接，取证阶段再优先一手来源'+('；具体搜索参数、获取失败后的换路与停止条件见本轮 Scout 技能。' if tavily_enabled else '。'))
-    dispatch_word = 'spawn/delegate' if backend == 'codex' else 'task 工具'
-    id_word = '真实 agent ID' if backend == 'codex' else '真实子 agent 会话 ID（task 结果中的 ses_ ID）'
+    dispatch_word = {'codex':'spawn/delegate', 'opencode':'task 工具'}.get(backend, '宿主原生子任务接口')
+    id_word = '真实子 agent 会话 ID（task 结果中的 ses_ ID）' if backend == 'opencode' else '宿主实际返回的 agent ID'
     if tavily_enabled:
         budget_note='本轮共享硬预算见 input.json.research_budget_status：所有 Scout 共用，不是每人一份。受控 Tavily Search/Extract 在每次调用时事务检查并返回 remaining；search_requests/candidate_urls 只硬计受控 Tavily Search，source_pages 硬计所有受控 add-url/Extract 的唯一 URL，同 URL 回退与缓存不重复算页。出现 budget_exhausted 时保留现有来源，把简短缺口写入研究交接记录，停止新增检索并交接，不重试消耗上限的操作。派发每个批次前先对照三类 remaining（搜索请求、候选 URL、唯一正文 URL）：前轮不要一次占满全部预算，给补缺同时留出搜索、候选和正文名额；三类是各自独立的硬上限，剩下搜索次数但候选或正文名额不足时不要绕过。旧任务 limits=null 表示未设置预算，不追溯限制。'
     else:

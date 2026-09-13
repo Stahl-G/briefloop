@@ -64,3 +64,21 @@ def test_switching_runtime_still_asks_for_a_model(tmp_path):
         assert switched['model_selection_required'] is True
         with pytest.raises(ValueError,match='报告和学习'):
             server.store.runtime_config()
+
+
+def test_pending_request_poll_is_session_scoped_without_conversation(tmp_path):
+    server=make_server(tmp_path,port=0,paused=True)
+    journal=server.harness.chat
+    sid=server.harness.create_session('report')['id']
+    other=server.harness.create_session('other')['id']
+    journal.message(sid,'private conversation content')
+    wanted=journal.add_request(sid,1,{'questions':[{'id':'permission','question':'Read file?'}]})
+    stale=journal.add_request(sid,2,{'questions':[]});journal.request_status(stale,'answered')
+    journal.add_request(other,3,{'questions':[]})
+    with running(server):
+        url=f'http://127.0.0.1:{server.server_port}/api/harness/session?id={sid}&requests_only=1'
+        data=json.load(urllib.request.urlopen(url))
+        assert set(data)=={'requests'}
+        assert [r['id'] for r in data['requests']]==[wanted]
+        assert data['requests'][0]['data']['questions'][0]['question']=='Read file?'
+        assert 'private conversation content' not in json.dumps(data)

@@ -469,6 +469,13 @@ async function refreshProgress(){
   if(!isCurrent())return;
   const last=[...events].reverse().find(e=>e.kind==='runtime_progress');
   const p=last?parse(last.data):{};const started=[...events].reverse().find(e=>e.kind==='runtime_started');const start=started?parse(started.data):{};
+  const taskSession=start.session_id;
+  let pendingRequests=[];
+  if(taskSession){
+   const snapshot=await api('harness/session?id='+encodeURIComponent(taskSession)+'&requests_only=1');
+   if(!isCurrent())return;
+   pendingRequests=(snapshot.requests||[]).filter(r=>r.status==='pending');
+  }
   const run=state.runs.find(r=>r.id===parse(job.payload).run_id);
   const req=run?parse(run.requirements):{};
   const agents=p.agents||[];
@@ -477,7 +484,11 @@ async function refreshProgress(){
   const running=live.worker_alive&&live.pid&&live.returncode===null;
   const labels={running:'进行中',pending_init:'启动中',completed:'已完成',done:'已完成',closed:'已结束',failed:'失败',errored:'失败'};
   $('run-progress').hidden=false;
-  $('run-progress').innerHTML=`<div class="section-title"><div><p class="eyebrow">${({learn:'技能学习',review:'独立审阅',assess:'独立评分',revise:'稿件修订'})[job.kind]||'简报生成'} · ${running?'后台正在运行':'等待后台执行'}</p><h2>${esc(p.stage||(job.status==='queued'?'任务已排队':'正在启动 BriefLoop'))}</h2></div><button class="outline" id="progress-stop">停止任务</button></div><p><strong>${esc(jobModelLabel(job,start))}</strong> · 模型进程 PID ${live.pid||'—'}${live.server_pid?' · 本地服务 PID '+live.server_pid:''}</p><p class="help">本任务已用 ${mins} 分 ${secs} 秒 · 单次执行上限 ${state.settings.timeout_minutes} 分钟 <button id="progress-timeout" class="subtle-button">调整时限</button>${run?` · ${JSON.parse(run.source_ids).length} 份初始来源 · ${req.allow_web?'允许联网':'仅本地来源'}`:''}</p>${p.message?`<p class="progress-message">${esc(p.message)}</p>`:''}${stageRailHTML(p.stages)||`<div class="agent-progress">${agents.map(a=>`<div><strong>${esc(a.role)}</strong><span>${labels[a.status]||esc(a.status)}</span>${a.task?`<p>${esc(a.task)}</p>`:''}</div>`).join('')}</div>`}<p class="help">${p.draft_ready?'正文已可查看，评分独立完成。':'正文保存后会自动显示；等待子 agent 时可能暂时没有新消息。'}${p.last_activity?' 最近活动：'+new Date(p.last_activity).toLocaleTimeString():''}</p>`;
+  $('run-progress').innerHTML=`<div class="section-title"><div><p class="eyebrow">${({learn:'技能学习',review:'独立审阅',assess:'独立评分',revise:'稿件修订'})[job.kind]||'简报生成'} · ${running?'后台正在运行':'等待后台执行'}</p><h2>${esc(pendingRequests.length?'等待你的确认':p.stage||(job.status==='queued'?'任务已排队':'正在启动 BriefLoop'))}</h2></div><button class="outline" id="progress-stop">停止任务</button></div><p><strong>${esc(jobModelLabel(job,start))}</strong> · 模型进程 PID ${live.pid||'—'}${live.server_pid?' · 本地服务 PID '+live.server_pid:''}</p><p class="help">本任务已用 ${mins} 分 ${secs} 秒 · ${state.settings.timeout_minutes===0?'不限时':'单次执行上限 '+state.settings.timeout_minutes+' 分钟'} <button id="progress-timeout" class="subtle-button">调整时限</button>${run?` · ${JSON.parse(run.source_ids).length} 份初始来源 · ${req.allow_web?'允许联网':'仅本地来源'}`:''}</p>${p.message?`<p class="progress-message">${esc(p.message)}</p>`:''}${stageRailHTML(p.stages)||`<div class="agent-progress">${agents.map(a=>`<div><strong>${esc(a.role)}</strong><span>${labels[a.status]||esc(a.status)}</span>${a.task?`<p>${esc(a.task)}</p>`:''}</div>`).join('')}</div>`}<p class="help">${p.draft_ready?'正文已可查看，评分独立完成。':'正文保存后会自动显示；等待子 agent 时可能暂时没有新消息。'}${p.last_activity?' 最近活动：'+new Date(p.last_activity).toLocaleTimeString():''}</p>`;
+  if(pendingRequests.length){
+   $('run-progress').insertAdjacentHTML('beforeend',`<div class="agent-question" role="status"><strong>有 ${pendingRequests.length} 项操作等待确认</strong><p>打开任务对话，查看具体操作并选择允许、拒绝或补充信息。回答后任务会继续。</p><button id="progress-requests" class="primary">查看并处理</button></div>`);
+   $('progress-requests').onclick=()=>selectChat(taskSession);
+  }
   $('progress-timeout').onclick=showSettings;
   $('progress-stop').onclick=()=>action(()=>api('stop',{job_id:job.id}));
  }catch(e){if(isCurrent()){$('run-progress').hidden=false;$('run-progress').textContent='进度连接暂时中断，任务没有重新提交。'}}
@@ -1469,7 +1480,7 @@ $('custom-preset').onchange=()=>{
 
 $('timeout-minutes').onchange=()=>action(async()=>{
  const minutes=Number($('timeout-minutes').value);
- if(!Number.isInteger(minutes)||minutes<1||minutes>240)throw Error('执行时限请输入 1–240 的整数');
+ if(!Number.isInteger(minutes)||minutes<0||minutes>240)throw Error('执行时限请输入 0–240 的整数，0 表示不限时');
  await api('settings',{timeout_minutes:minutes});
 },'执行时限已更新，当前报告也会采用新上限');
 async function chooseCompanyContext(enabled){
@@ -1614,9 +1625,10 @@ function sourceRefreshOutcome(outcome){return {not_authorized:'本轮未允许�
 
 let connectorPanel=null;
 function settingsView(name){
- for(const view of ['models','execution','learning','workspaces','connectors'])$('settings-view-'+view).hidden=view!==name;
+ for(const view of ['models','execution','learning','workspaces','connectors','updates'])$('settings-view-'+view).hidden=view!==name;
  document.querySelectorAll('[data-settings-view]').forEach(b=>{b.classList.toggle('active',b.dataset.settingsView===name);b.setAttribute('aria-current',b.dataset.settingsView===name?'page':'false')});
  if(name==='workspaces')return renderSettingsWorkspaces();
+ if(name==='updates')return refreshAppUpdates();
  if(name==='connectors'){
   connectorPanel ||= connectorSettings($('settings-view-connectors'),api);
   return connectorPanel.refresh();
@@ -1993,3 +2005,63 @@ if(window.briefloopDesktop?.onPrepareClose){
   }catch(error){document.body.inert=false;return {status:'failed',error:error.message||'修改尚未保存，请保留窗口。'}}
  });
 }
+
+// App updates: fixed desktop capabilities, with a read-only browser fallback.
+let appUpdateState=null,appUpdatePending=false,appUpdateLastAction='check';
+function renderAppUpdates(value=appUpdateState){
+ const box=$('settings-view-updates');if(!box)return;
+ const desktop=typeof window.briefloopDesktop?.updateStatus==='function';
+ $('app-update-controls').hidden=!desktop;
+ $('app-update-version').textContent=desktop?`当前 App v${value?.currentAppVersion||'读取中'}`:`网页客户端 v${box.dataset.webVersion}`;
+ $('app-update-source').textContent=value?.source==='local-test'?'本地测试更新源 · 仅验证流程，不代表官方发布':'官方稳定来源：Stahl-G/briefloop · GitHub Releases';
+ const reinstall=value?.source==='local-test'&&value?.reinstall===true;
+ $('app-update-guidance').textContent=!desktop?'浏览器不能安装 App 更新。请在桌面 App 检查更新，或从官方下载页安装。':value?.installMode==='dmg'?`下载后会先保存编辑并处理忙任务，再退出 App、打开 DMG；请在 Finder 中${reinstall?'重新安装当前版本':'手动安装新版本'}。`:'下载后会先保存编辑并处理忙任务，再退出 App 并交给原生安装器更新。';
+ const labels={idle:'尚未检查更新',checking:'正在检查更新…',available:'发现可用更新',current:'当前 App 无需更新',downloading:'正在下载更新…',downloaded:'下载完成，等待安装',error:'更新未完成'};
+ const reinstallLabel=`重新安装当前 App v${value?.currentAppVersion||''}`;
+ $('app-update-status').textContent=desktop?(reinstall&&value?.state==='available'?reinstallLabel:(labels[value?.state]||'正在读取 App 版本…')+(reinstall?` · ${reinstallLabel}`:value?.releaseVersion?` · v${value.releaseVersion}`:'')):'请从官方发布页查看最新版本。';
+ $('app-update-download').textContent=reinstall?'下载当前版本安装包':'下载更新';
+ const busy=appUpdatePending||['checking','downloading'].includes(value?.state);
+ $('app-update-check').disabled=busy;
+ $('app-update-download').hidden=value?.state!=='available';$('app-update-download').disabled=busy;
+ $('app-update-install').hidden=value?.state!=='downloaded';$('app-update-install').disabled=busy;
+ $('app-update-install').textContent=value?.installMode==='dmg'?'保存并打开 DMG':'保存并安装更新';
+ $('app-update-retry').hidden=value?.state!=='error'||!value?.retryable;$('app-update-retry').disabled=busy;
+ $('app-update-error').hidden=!value?.error;$('app-update-error').textContent=value?.error?.message||'';
+ const progress=value?.progress;
+ $('app-update-progress-box').hidden=!progress;
+ $('app-update-progress').value=progress?.percent||0;
+ $('app-update-progress-text').textContent=progress?`${Math.round(progress.percent||0)}% · ${(Math.max(0,progress.transferred||0)/1048576).toFixed(1)} / ${(Math.max(0,progress.total||0)/1048576).toFixed(1)} MiB`:'';
+ $('app-update-notes-box').hidden=!value?.notes;$('app-update-notes').textContent=value?.notes||'';
+}
+async function refreshAppUpdates(){
+ renderAppUpdates();
+ if(typeof window.briefloopDesktop?.updateStatus!=='function')return;
+ try{appUpdateState=await window.briefloopDesktop.updateStatus();renderAppUpdates()}
+ catch{notice('无法读取 App 更新状态，请重新打开设置。',true)}
+}
+async function runAppUpdate(command){
+ if(appUpdatePending)return;
+ const desktop=window.briefloopDesktop;if(!desktop)return;
+ appUpdatePending=true;appUpdateLastAction=command;renderAppUpdates();
+ try{
+  if(command==='install'){
+   const result=await desktop.installUpdate();
+   if(result?.cancelled)notice('已保留当前工作区，更新包仍可稍后安装。');
+   // Successful installation closes this renderer. A cancelled gate keeps it live.
+   if(result?.cancelled)appUpdateState=await desktop.updateStatus();
+  }else appUpdateState=await (command==='download'?desktop.downloadUpdate():desktop.checkForUpdates());
+ }catch(error){
+  notice(error.message||'更新操作未完成，请重试。',true);
+  try{appUpdateState=await desktop.updateStatus()}catch{}
+ }finally{appUpdatePending=false;renderAppUpdates()}
+}
+if($('settings-view-updates')){
+ $('app-update-check').onclick=()=>runAppUpdate('check');
+ $('app-update-download').onclick=()=>runAppUpdate('download');
+ $('app-update-install').onclick=()=>runAppUpdate('install');
+ // A temporary DMG open error can retry the saved asset through the same gate.
+ $('app-update-retry').onclick=()=>runAppUpdate(appUpdateState?.error?.code==='open_failed'?'install':appUpdateLastAction==='install'?'download':appUpdateLastAction);
+ window.briefloopDesktop?.onUpdateStatus?.(value=>{appUpdateState=value;renderAppUpdates()});
+ renderAppUpdates();
+}
+// End App updates.
