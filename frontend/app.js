@@ -2080,9 +2080,11 @@ function renderAppUpdates(value=appUpdateState){
  $('app-update-source').textContent=value?.source==='local-test'?'本地测试更新源 · 仅验证流程，不代表官方发布':desktop?'官方稳定来源：Stahl-G/briefloop · GitHub Releases':'Python 包稳定来源：PyPI · briefloop';
  const reinstall=value?.source==='local-test'&&value?.reinstall===true;
  $('app-update-guidance').textContent=!desktop?(softwareInfo?.guidance||'正在读取安装来源…'):value?.installMode==='dmg'?`下载后会先保存编辑并处理忙任务，再退出 App、打开 DMG；请在 Finder 中${reinstall?'重新安装当前版本':'手动安装新版本'}。`:'下载后会先保存编辑并处理忙任务，再退出 App 并交给原生安装器更新。';
- const labels={idle:'尚未检查更新',checking:'正在检查更新…',available:'发现可用更新',current:'当前 App 无需更新',downloading:'正在下载更新…',downloaded:'下载完成，等待安装',error:'更新未完成'};
+ const errorOperation=value?.error?.operation||(value?.error?.code==='open_failed'?'install':appUpdateLastAction);
+ const errorLabel={check:'更新检查失败（当前安装不受影响）',download:'更新包下载未完成',install:'更新安装未完成'}[errorOperation]||'更新检查失败（当前安装不受影响）';
+ const labels={idle:'尚未检查更新',checking:'正在检查更新…',available:'发现可用更新',current:'当前 App 无需更新',downloading:'正在下载更新…',downloaded:'下载完成，等待安装',error:errorLabel};
  const reinstallLabel=`重新安装当前 App v${value?.currentAppVersion||''}`;
- $('app-update-status').textContent=desktop?(reinstall&&value?.state==='available'?reinstallLabel:(labels[value?.state]||'正在读取 App 版本…')+(reinstall?` · ${reinstallLabel}`:value?.releaseVersion?` · v${value.releaseVersion}`:'')):({idle:'尚未检查更新',checking:'正在检查更新…',available:`发现可用后端版本 v${value?.releaseVersion||''}`,current:'当前后端已是 PyPI 最新稳定版',ahead:`当前后端高于 PyPI 已发布版本 v${value?.releaseVersion||''}`,error:'版本检查未完成'}[value?.state||'idle']||'尚未检查更新');
+ $('app-update-status').textContent=desktop?(reinstall&&value?.state==='available'?reinstallLabel:(labels[value?.state]||'正在读取 App 版本…')+(value?.state==='error'&&errorOperation==='check'?'':reinstall?` · ${reinstallLabel}`:value?.releaseVersion?` · v${value.releaseVersion}`:'')):({idle:'尚未检查更新',checking:'正在检查更新…',available:`发现可用后端版本 v${value?.releaseVersion||''}`,current:'当前后端已是 PyPI 最新稳定版',ahead:`当前后端高于 PyPI 已发布版本 v${value?.releaseVersion||''}`,error:'版本检查未完成'}[value?.state||'idle']||'尚未检查更新');
  $('app-update-download').textContent=reinstall?'下载当前版本安装包':'下载更新';
  const busy=appUpdatePending||['checking','downloading'].includes(value?.state);
  $('app-update-check').disabled=busy;
@@ -2133,7 +2135,7 @@ if($('settings-view-updates')){
  $('app-update-download').onclick=()=>runAppUpdate('download');
  $('app-update-install').onclick=()=>runAppUpdate('install');
  // A temporary DMG open error can retry the saved asset through the same gate.
- $('app-update-retry').onclick=()=>runAppUpdate(appUpdateState?.error?.code==='open_failed'?'install':appUpdateLastAction==='install'?'download':appUpdateLastAction);
+ $('app-update-retry').onclick=()=>runAppUpdate(appUpdateState?.error?.code==='open_failed'?'install':(appUpdateState?.error?.operation||appUpdateLastAction)==='install'?'download':appUpdateState?.error?.operation||appUpdateLastAction);
  window.briefloopDesktop?.onUpdateStatus?.(value=>{appUpdateState=value;renderAppUpdates()});
  renderAppUpdates();
 }
