@@ -140,3 +140,18 @@ def test_new_protocol_requires_every_clause():
     bad = [ClauseCheck(clause_id=content['clause_id'], status='not_applicable', reason='x')] + [check for check in full if check.clause_id != content['clause_id']]
     with pytest.raises(ValueError, match='内容条款'):
         validate_clause_checks(spec, bad, 'complete')
+
+
+@pytest.mark.parametrize('backend', ['codebuddy', 'claude', 'opencode'])
+def test_dispatch_instructions_match_native_host(tmp_path, backend):
+    from briefloop.runtime import generation_prompt
+    from briefloop.store import Store
+    store = Store(tmp_path)
+    source = store.add_source('Input', 'Evidence')
+    run = store.create_run({'title':'Report', 'objective':'Explain'}, [source['id']])
+    folder = store.root / 'jobs' / 'prompt'; folder.mkdir(parents=True)
+    prompt = generation_prompt(store, run, folder, backend=backend)
+    assert ('ses_ ID' in prompt) == (backend == 'opencode')
+    if backend != 'opencode':
+        assert '没有原生子任务接口时由当前会话完成' in prompt
+        assert 'task 结果中的 ses_' not in prompt

@@ -111,8 +111,22 @@ def main():
             print(json.dumps({'document':document,'markdown':markdown},ensure_ascii=False))
         elif a.tool=='workspace-action':
             from .chat_tools import workspace_action
+            from pydantic import ValidationError
             # Windows PowerShell 5.1 writes a BOM for Out-File -Encoding utf8.
-            print(json.dumps(workspace_action(store,json.loads(Path(a.request).read_text(encoding='utf-8-sig'))),ensure_ascii=False))
+            try:
+                request = json.loads(Path(a.request).read_text(encoding='utf-8-sig'))
+            except (OSError, ValueError):
+                p.exit(2, json.dumps({'status': 'invalid', 'error': 'request_file_invalid',
+                    'message': '--request 需要工作区内 UTF-8 JSON 文件的路径，不是 JSON 正文。'}, ensure_ascii=False) + '\n')
+            try:
+                result = workspace_action(store, request)
+            except ValidationError as exc:
+                errors = [{'field': '.'.join(map(str, error['loc'])),
+                           'type': error['type'], 'message': error['msg']}
+                          for error in exc.errors(include_url=False, include_input=False, include_context=False)]
+                p.exit(2, json.dumps({'status': 'invalid', 'error': 'validation_error',
+                    'errors': errors}, ensure_ascii=False) + '\n')
+            print(json.dumps(result, ensure_ascii=False))
         elif a.tool=='tavily-search':
             from . import tavily
             try:
