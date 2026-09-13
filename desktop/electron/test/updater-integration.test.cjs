@@ -5,17 +5,17 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const main = fs.readFileSync(require.resolve('../main.cjs'), 'utf8');
 const stop = main.slice(main.indexOf('async function stopCurrent()'), main.indexOf('async function openWorkspace('));
-const install = main.slice(main.indexOf('async function installAppUpdate()'), main.indexOf('if (!app.requestSingleInstanceLock())'));
+const install = main.slice(main.indexOf('function beforeAppQuit('), main.indexOf('if (!app.requestSingleInstanceLock())'));
 function gate({busy=false,confirm=1,saveError=false,stopError=false,installError=false,mode='dmg',status='downloaded'}={}) {
   const calls=[];
   const service={child:{},directory:'/synthetic',info:{url:'http://127.0.0.1:12345'},
     status:async()=>{calls.push('status');return {busy}},
     stop:async value=>{calls.push(['stop',value.cancelBusy]);if(stopError)throw Error('stop failed');service.child=null},
     start:async(directory,options)=>{calls.push(['restart',options.port]);service.child={}}};
-  const context=vm.createContext({URL,quitting:false,closePending:false,switching:false,menuSave:null,expectedExit:false,service,
+  const context=vm.createContext({URL,nativeInstall:null,nativeQuitPending:false,quitting:false,closePending:false,switching:false,menuSave:null,expectedExit:false,service,
     prepareClose:async()=>{calls.push('save');if(saveError)throw Error('save failed')},
     dialog:{showMessageBox:async()=>{calls.push('busy-dialog');return {response:confirm}}},
-    updates:{status:()=>({state:status,error:status==='error'?{code:'open_failed'}:null}),installReady:async()=>{
+    updates:{status:()=>({state:status,installMode:mode,error:status==='error'?{code:'open_failed'}:null}),installReady:async()=>{
       calls.push(['install',context.quitting]);if(installError)throw Error('open failed');return {mode}}},
     window:{destroy:()=>calls.push('destroy')},app:{quit:()=>calls.push('quit')},resumeEditing:()=>calls.push('resume')});
   vm.runInContext(stop+install,context);
@@ -54,7 +54,88 @@ test('update IPC checks window identity, ignores extra renderer arguments, and p
   const init=main.slice(main.indexOf('    updates = createUpdater('),main.indexOf('    window = new BrowserWindow('));
   for(const packaged of [true,false]){
     let config;
-    vm.runInNewContext(init,{app:{isPackaged:packaged},shell:{},process:{env:{BRIEFLOOP_UPDATE_TEST_FEED:'http://127.0.0.1:12345/release'}},createUpdater:value=>{config=value},window:null});
+    vm.runInNewContext(init,{app:{isPackaged:packaged},shell:{},process:{env:{BRIEFLOOP_UPDATE_TEST_FEED:'http://127.0.0.1:12345/release'}},createUpdater:value=>{config=value},updateChanged:()=>{},window:null});
     assert.equal(config.testFeed,packaged?null:'http://127.0.0.1:12345/release');
   }
+});
+
+test('actual updater late native error restores the owned service and cancels its queued native quit', async () => {
+  const {EventEmitter}=require('node:events');
+  const {createUpdater}=require('../updater.cjs');
+  const f=gate({mode:'native'}),errors=[],states=[];
+  const app=new EventEmitter(),electronAutoUpdater=new EventEmitter();
+  let resolveQuit;
+  const attemptedQuit=new Promise(resolve=>{resolveQuit=resolve});
+  app.quit=()=>{
+    const event={prevented:false,preventDefault(){this.prevented=true}};
+    app.emit('before-quit',event);f.calls.push(['native-quit',event.prevented]);resolveQuit();
+  };
+  f.context.app=app;f.context.electronAutoUpdater=electronAutoUpdater;
+  f.context.window={isDestroyed:()=>false,webContents:{send:(_event,value)=>states.push(value)}};
+  f.context.reportError=async error=>errors.push(error.message);
+  f.context.requestQuit=()=>f.calls.push('user-quit-gate');
+  vm.runInContext(main.split('\n').filter(line=>line.includes("electronAutoUpdater.on('before-quit-for-update'")||line.includes("app.on('before-quit', beforeAppQuit)")).join('\n'),f.context);
+  class Native extends EventEmitter {
+    setFeedURL(){}
+    async checkForUpdates(){return {updateInfo:{version:'0.20.0'}}}
+    async downloadUpdate(){return ['installer.exe']}
+    quitAndInstall(){
+      setImmediate(()=>{
+        this.emit('error',Error('private installer diagnostic'));
+        this.emit('error',Error('duplicate diagnostic'));
+        // BaseUpdater queues app.quit independently of spawnLog().catch(dispatchError).
+        setImmediate(()=>{electronAutoUpdater.emit('before-quit-for-update');app.quit()});
+      });
+    }
+  }
+  f.context.updates=createUpdater({app:{getVersion:()=> '0.19.0'},shell:{},platform:'win32',nativeUpdater:new Native(),
+    changed:value=>f.context.updateChanged(value)});
+  await f.context.updates.check();await f.context.updates.download();
+  assert.equal((await f.run()).requested,true);
+  assert.equal(f.context.quitting,true);assert.equal(f.context.service.child,null);
+  await attemptedQuit;
+  assert.equal(f.context.quitting,false);assert.equal(f.context.closePending,false);
+  assert.ok(f.context.service.child);
+  assert.equal(f.calls.filter(value=>Array.isArray(value)&&value[0]==='restart').length,1);
+  assert.equal(f.calls.filter(value=>value==='resume').length,1);
+  assert.deepEqual(f.calls.at(-1),['native-quit',true]);assert.ok(!f.calls.includes('user-quit-gate'));
+  assert.equal(f.context.updates.status().state,'error');assert.deepEqual(errors,[]);
+  assert.doesNotMatch(JSON.stringify(states),/private installer|duplicate diagnostic/);
+  // Blocking the failed updater's quit must not disable a later ordinary user quit.
+  app.quit();assert.equal(f.calls.at(-2),'user-quit-gate');
+});
+
+test('native requested path permits its marked quit without repeating save or claiming installation completed', async () => {
+  const {EventEmitter}=require('node:events');
+  const f=gate({mode:'native'}),app=new EventEmitter(),electronAutoUpdater=new EventEmitter();
+  f.context.app=app;f.context.electronAutoUpdater=electronAutoUpdater;
+  f.context.requestQuit=()=>f.calls.push('user-quit-gate');
+  vm.runInContext(main.split('\n').filter(line=>line.includes("electronAutoUpdater.on('before-quit-for-update'")||line.includes("app.on('before-quit', beforeAppQuit)")).join('\n'),f.context);
+  await f.run();electronAutoUpdater.emit('before-quit-for-update');
+  let prevented=false;app.emit('before-quit',{preventDefault(){prevented=true}});
+  assert.equal(prevented,false);assert.equal(f.calls.filter(value=>value==='save').length,1);
+  assert.ok(!f.calls.includes('user-quit-gate'));assert.equal(f.context.nativeInstall.failed,false);
+});
+
+test('an error racing the native request return keeps the gate pending until owned service recovery finishes', async () => {
+  const f=gate({mode:'native'});
+  let releaseRecovery,returned=false;
+  f.context.service.start=async()=>{
+    f.calls.push('restart-pending');
+    await new Promise(resolve=>{releaseRecovery=resolve});
+    f.context.service.child={};
+  };
+  f.context.window={isDestroyed:()=>false,webContents:{send(){}}};
+  f.context.updates={status:()=>({state:'downloaded',installMode:'native'}),installReady:async()=>{
+    queueMicrotask(()=>f.context.updateChanged({installMode:'native',state:'error'}));
+    return {mode:'native',requested:true};
+  }};
+  const result=f.run().then(()=>{returned=true},error=>{returned=true;assert.match(error.message,/未完成/)});
+  // Advance through the deterministic microtasks; no timeout asserts installation success.
+  for(let step=0;step<20&&!releaseRecovery;step++)await Promise.resolve();
+  assert.equal(typeof releaseRecovery,'function');
+  assert.equal(returned,false);assert.equal(f.context.closePending,true);assert.equal(f.context.quitting,false);
+  releaseRecovery();await result;
+  assert.equal(f.context.closePending,false);assert.ok(f.context.service.child);
+  assert.equal(f.calls.filter(value=>value==='restart-pending').length,1);
 });

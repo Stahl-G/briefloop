@@ -1,5 +1,5 @@
 'use strict';
-const {app, BrowserWindow, Menu, dialog, ipcMain, shell, nativeImage} = require('electron');
+const {app, BrowserWindow, Menu, dialog, ipcMain, shell, nativeImage, autoUpdater: electronAutoUpdater} = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const {pathToFileURL} = require('node:url');
@@ -9,7 +9,7 @@ const {createUpdater} = require('./updater.cjs');
 let window, service, switching = false, quitting = false, closePending = false, expectedExit = false;
 const prepared = new Map();
 let menuSave = null, workspaceOrigin = null;
-let updates;
+let updates, nativeInstall = null, nativeQuitPending = false;
 const welcomeURL = pathToFileURL(path.join(__dirname, 'welcome.html')).href;
 const runtime = app.isPackaged ? path.join(process.resourcesPath, 'runtime') : path.join(__dirname, 'runtime', 'macos-arm64');
 if (process.env.BRIEFLOOP_DESKTOP_DATA) app.setPath('userData', path.resolve(process.env.BRIEFLOOP_DESKTOP_DATA));
@@ -108,6 +108,7 @@ async function chooseWorkspace(create) {
 async function reportError(error) { await dialog.showMessageBox(window, {type: 'error', message: '操作未完成', detail: String(error.message || error)}); }
 async function requestQuit() {
   if (quitting || closePending || switching) return;
+  nativeInstall = null;
   closePending = true;
   try {
     if (menuSave) await menuSave;
@@ -118,22 +119,62 @@ async function requestQuit() {
   } catch (error) { await reportError(error); }
   finally { closePending = false; if (!quitting) resumeEditing(); }
 }
+function beforeAppQuit(event) {
+  // electron-updater BaseUpdater emits this native event immediately before its
+  // queued app.quit(). A failed installer must not turn that quit into a user quit.
+  if (nativeQuitPending) {
+    nativeQuitPending = false;
+    if (nativeInstall?.failed) { event.preventDefault(); return; }
+  }
+  if (!quitting) { event.preventDefault(); requestQuit(); }
+}
+function recoverNativeInstall(transaction) {
+  if (transaction.recovery) return transaction.recovery;
+  transaction.failed = true;
+  quitting = false;
+  closePending = true;
+  transaction.recovery = (async () => {
+    try {
+      if (transaction.previous && !transaction.service.child) {
+        await transaction.service.start(transaction.service.directory, {port: Number(new URL(transaction.previous.url).port)});
+      }
+    } catch {
+      await reportError(Error('更新安装未完成，工作区尚未重新连接。请保留窗口并重新打开工作区。'));
+    } finally { closePending = false; resumeEditing(); }
+  })();
+  return transaction.recovery;
+}
+function updateChanged(value) {
+  // Keep watching after installReady returns "requested": spawning a native
+  // installer can fail on a later event-loop turn, before the App actually quits.
+  if (nativeInstall && nativeInstall.service === service && value.installMode === 'native' && value.state === 'error') {
+    void recoverNativeInstall(nativeInstall).catch(() => {});
+  }
+  if (window && !window.isDestroyed()) window.webContents.send('updates:changed', value);
+}
 async function installAppUpdate() {
   if (quitting || closePending || switching) throw Error('正在保存或退出，请稍候。');
   const update = updates.status();
   if (update.state !== 'downloaded' && !(update.state === 'error' && update.error?.code === 'open_failed')) throw Error('请先完成更新下载。');
   closePending = true;
   const previous = service?.info;
+  let transaction = null;
   try {
     if (menuSave) await menuSave;
     if (!(await stopCurrent())) return {cancelled: true};
     // electron-updater closes windows before before-quit. The save/busy/owned
     // stop gate has already finished; do not recursively enter it a second time.
     quitting = true;
+    if (update.installMode === 'native') nativeInstall = transaction = {service, previous, failed: false, recovery: null};
     const result = await updates.installReady();
+    if (transaction?.failed) {
+      await transaction.recovery;
+      throw Error(updates.status().error?.message || '原生更新安装未完成，请重试。');
+    }
     if (result.mode === 'dmg') { window.destroy(); app.quit(); }
     return result;
   } catch (error) {
+    if (transaction) { await recoverNativeInstall(transaction); throw error; }
     quitting = false;
     // A failed DMG open must leave a usable editor after its service was stopped.
     if (previous && !service.child) {
@@ -146,7 +187,8 @@ async function installAppUpdate() {
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); } });
-  app.on('before-quit', event => { if (!quitting) { event.preventDefault(); requestQuit(); } });
+  electronAutoUpdater.on('before-quit-for-update', () => { nativeQuitPending = true; });
+  app.on('before-quit', beforeAppQuit);
   app.whenReady().then(async () => {
     // Refresh this running app's Dock icon after same-path reinstalls.
     if (process.platform === 'darwin' && app.dock) {
@@ -156,7 +198,7 @@ else {
     updates = createUpdater({app, shell,
       // A packaged application always uses the fixed official source.
       testFeed: !app.isPackaged ? process.env.BRIEFLOOP_UPDATE_TEST_FEED || null : null,
-      changed: value => { if (window && !window.isDestroyed()) window.webContents.send('updates:changed', value); }});
+      changed: updateChanged});
     window = new BrowserWindow({width: 1320, height: 900, minWidth: 900, minHeight: 640, title: 'BriefLoop', backgroundColor: '#faf9f6',
       webPreferences: {preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, spellcheck: false}});
     window.on('close', event => { if (!quitting) { event.preventDefault(); requestQuit(); } });
