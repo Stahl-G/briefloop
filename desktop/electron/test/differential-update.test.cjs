@@ -20,10 +20,10 @@ async function scenario(t, failure) {
   let version = '1.0.0', transferred = 0, ranges = 0, full = 0;
   const server = http.createServer((req, res) => {
     const data = version === '1.0.0' ? old : next;
-    const url = `${origin}/Stahl-G/briefloop/releases/download/v${version}/BriefLoop-${version}-arm64.dmg`;
+    const url = `${origin}/Stahl-G/briefloop/releases/download/v${version}/BriefLoop-${version}-arm64-mac.zip`;
     if (req.url === '/release') return res.end(JSON.stringify({tag_name: 'v'+version, html_url: origin+'/notes', assets: [
-      {name: `BriefLoop-${version}-arm64.dmg`, size: data.length, digest: 'sha256:'+sha(data), browser_download_url: url},
-      {name: `BriefLoop-${version}-arm64.dmg.blockmap`, size: 1000, browser_download_url: url+'.blockmap'}]}));
+      {name: `BriefLoop-${version}-arm64-mac.zip`, size: data.length, digest: 'sha256:'+sha(data), browser_download_url: url},
+      {name: `BriefLoop-${version}-arm64-mac.zip.blockmap`, size: 1000, browser_download_url: url+'.blockmap'}]}));
     if (req.url.endsWith('.blockmap')) return res.end(zlib.gzipSync(JSON.stringify(map(version === '1.0.0' ? blocks : nextBlocks))));
     if (req.headers.range) {
       ranges++;
@@ -49,7 +49,10 @@ async function scenario(t, failure) {
   version = '1.0.1'; transferred = ranges = full = 0;
   const second = createUpdater(config); await second.check();
   const result = await second.download();
-  assert.equal(result.state,'downloaded'); await second.installReady();
+  assert.equal(result.state,'downloaded');
+  const index = JSON.parse(await fs.readFile(path.join(directory,'updates/differential-cache.json'),'utf8'));
+  assert.equal(sha(await fs.readFile(path.join(directory,'updates',index.file))), sha(next));
+  assert.equal(result.installMode,'zip');
   if (!failure) {
     assert.equal(result.progress.mode,'differential'); assert.equal(transferred,8192); assert.equal(full,0); assert.equal(ranges,1);
     assert.equal(result.progress.reused,11*8192);
