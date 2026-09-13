@@ -1049,7 +1049,7 @@ async function loadPermissionPanel(){
    recovery.append(description,approve);custom.append(recovery);
   }
   const form=document.createElement('form');form.id='permission-rule-form';form.innerHTML='<h3>授权具体操作</h3><label for="permission-rule-decision">处理方式</label><select id="permission-rule-decision"><option value="allow">允许所选操作</option><option value="deny">拒绝</option></select><label for="permission-rule-tool">操作</label><select id="permission-rule-tool"><option value="read_file">读取文件</option><option value="write_file">写入文件</option><option value="command">执行命令</option><option value="read_url">读取网址</option><option value="execute_url">执行网址操作</option><option value="mcp">MCP 工具</option></select><label for="permission-rule-scope">范围</label><input id="permission-rule-scope" required autocomplete="off" placeholder="填写要访问的完整文件路径或网址"><p class="help">此授权会保存到本机 Antigravity，也会影响其他会话。只填写你愿意授权的具体路径；可在上方撤销。</p><button type="submit">保存规则</button>';
-  form.onsubmit=event=>{event.preventDefault();saveNativeRule({operation:'add',decision:$('permission-rule-decision').value,rule:$('permission-rule-tool').value+'('+$('permission-rule-scope').value.trim()+')'})};const advanced=document.createElement('details'),summary=document.createElement('summary');summary.textContent='手动添加其他授权（高级）';advanced.append(summary,form);custom.append(advanced);
+  form.onsubmit=event=>{event.preventDefault();saveNativeRule({operation:'add',decision:$('permission-rule-decision').value,rule:$('permission-rule-tool').value+'('+$('permission-rule-scope').value.trim()+')'})};custom.append(form);
  }catch(e){if(token===permissionLoad){$('chat-permissions-options').textContent='';$('chat-permissions-error').textContent=e.message}}
 }
 async function saveNativeRule(change){
