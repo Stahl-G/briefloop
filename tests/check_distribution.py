@@ -35,7 +35,7 @@ def check(archive: Path) -> None:
                  'src/briefloop/static/runtime-bridge.LICENSE.txt', 'src/briefloop/static/runtime-bridge.NOTICE.txt',
                  'src/wikiskill/_licenses/LICENSE', 'src/wikiskill/_licenses/NOTICE.md']
         expected = {name: name for name in names}
-    for asset in (ROOT / 'src/briefloop/workflow_assets').rglob('*'):
+    for asset in [*(ROOT / 'src/briefloop/workflow_assets').rglob('*'), *(ROOT / 'src/briefloop/static').glob('runtime-*.svg'), *(ROOT / 'src/briefloop/static').glob('runtime-*.png')]:
         if asset.is_file():
             local = asset.relative_to(ROOT).as_posix()
             expected[local.removeprefix('src/') if archive.suffix == '.whl' else local] = local

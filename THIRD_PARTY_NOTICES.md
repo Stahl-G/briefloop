@@ -10,3 +10,8 @@
 - pypdfium2 / PDFium：用于本地 PDF 页面渲染，通过 Python 依赖安装。pypdfium2 包声明 BSD-3-Clause、Apache-2.0 及其依赖许可，完整许可随依赖包保留。
 
 - OpenDesign（be0887b39273993d939e83c4768922115f104bed）：Apache-2.0。复用原生运行时协议和模型目录辅助代码，来源与本地改动见 third_party/open-design/NOTICE.md；许可证同时随打包后的 runtime bridge 分发。
+
+### Runtime identification icons
+
+Runtime SVG/PNG assets (listed in the NOTICE) come unmodified from [Open Design](https://github.com/nexu-io/open-design/tree/be0887b39273993d939e83c4768922115f104bed/apps/web/public/agent-icons), Apache-2.0; see `third_party/open-design/LICENSE` and `NOTICE.md`.
+`static/runtime-codebuddy.svg` is the unmodified site icon from [CodeBuddy](https://www.codebuddy.cn), retrieved 2026-09-13 from https://download.codebuddy.cn/web/website/93a7cd0d70556625552d16b09c6a9cf8c2e089b9/assets/logo.svg. Brand artwork belongs to its respective owner and is used only to identify the corresponding runtime.

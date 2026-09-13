@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
+import {runtimeCard} from '../frontend/runtime-cards.js';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const code=source.slice(source.indexOf('function renderRuntimeDiscovery()'),source.indexOf("$('agent-backend').onchange="));
 const nodes=new Map(),calls=[];
@@ -12,7 +13,7 @@ const runtimes=[
  {id:'codex',name:'Codex',installed:false,available:false,version:null},
 ];
 node('agent-backend').value='hermes';
-const view=vm.createContext({$:node,esc:String,runtimeCatalog:[],runtimeScanned:false,
+const view=vm.createContext({$:node,esc:String,runtimeCatalog:[],runtimeScanned:false,runtimeCard,modelCatalogs:new Map(),
  state:{settings:{agent_backend:'hermes',model:'default'}},
  Option:class{constructor(text,value){this.text=text;this.value=value}},
  api:async route=>{calls.push(route);return {runtimes}},
@@ -23,8 +24,8 @@ assert.deepEqual(calls,['runtimes']);
 assert.equal(node('runtime-discovery-status').textContent,'检测到 2 个本机 CLI，其中 1 个可选择；检测未验证账号与模型调用，需另行短测试。');
 assert.doesNotMatch(node('runtime-discovery-status').textContent,/已接入|调用通过/);
 const cards=node('runtime-discovery-details').innerHTML;
-assert.match(cards,/版本未确认 · 已检测到，可选择/);
-assert.match(cards,/仅发现，尚未支持/);
+assert.match(cards,/版本未确认.*已检测到/);
+assert.match(cards,/尚未接入/);
 assert.match(cards,/当前选择/);
 assert.doesNotMatch(cards,/当前使用/);
 assert.match(cards,/Version probe failed/);
@@ -32,5 +33,10 @@ assert.equal(node('agent-backend').options.find(option=>option.value==='hermes')
 assert.equal(node('agent-backend').options.find(option=>option.value==='kilo').disabled,true);
 assert.equal(node('agent-backend').options.find(option=>option.value==='codex').disabled,true);
 runtimes[0].diagnostic=null;view.renderRuntimeDiscovery();
-assert.match(node('runtime-discovery-details').innerHTML,/可选择不代表调用通过/);
+assert.match(node('runtime-discovery-details').innerHTML,/账号与模型的可用性/);
+assert.match(cards,/runtime-hermes.svg/);
+assert.match(cards,/runtime-missing-grid/);
+assert.match(cards,/runtime-codex.svg/);
+assert.doesNotMatch(runtimeCard(runtimes[1],{chosen:'hermes',model:'private-model',esc:String}),/private-model/);
+assert.doesNotMatch(runtimeCard({id:'kilo',name:'Kilo',bins:['kilo'],installed:false,integrated:false,capabilities:{chat:true}},{chosen:'hermes',model:'private-model',esc:String,compact:true}),/安装后重新检测|已接入：/);
 console.log('PASS: detected, selectable and unintegrated runtimes remain distinct; no inference is claimed by discovery');

@@ -105,7 +105,8 @@ class RuntimeBridge:
         else:diagnostic=None
         from .backends import BACKENDS
         for item in result:
-            item['available']=bool(item['installed'] and item['id'] in BACKENDS)
+            item['integrated']=item['id'] in BACKENDS
+            item['available']=bool(item['installed'] and item['integrated'])
             if item['id'] in ('codex','opencode'):
                 item['capabilities']={'chat':True,'cancel':True,'images':'unknown','resume':'unknown','restricted_reviewer':'unknown',
                     'permission_modes':['workspace-write','read-only'],'steer':item['id']=='codex'}

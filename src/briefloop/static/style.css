@@ -172,7 +172,6 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 .artifact-item:hover{background:#edf0e9}
 .artifact-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .artifact-item small{color:var(--muted);flex:none}
-.chat-runtime-label{font:500 11px/1 var(--mono);color:var(--green);background:#eef4ef;border-radius:5px;padding:4px 7px;white-space:nowrap}
 /* First-run welcome: pick a host and model once, then enter the chat. */
 .welcome-wrap{max-width:640px;margin:6vh auto;padding:0 6px}
 .welcome-runtimes{display:grid;gap:8px;margin:16px 0}
@@ -574,3 +573,28 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 .connector-list{display:grid;gap:16px;margin:20px 0}.connector-card,.connector-form{border:1px solid var(--line,#dfe3da);border-radius:14px;padding:20px;background:var(--paper,#fff)}.connector-card h3{margin:0}.connector-address{overflow-wrap:anywhere}.connector-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}.connector-form{margin-top:20px}.connector-form label{display:block;margin-bottom:14px}.connector-form .check{display:flex}.connector-error{color:#ad472c}.connector-remove{border-top:1px solid var(--line,#dfe3da);margin-top:16px;padding-top:12px}
 
 .notification-dot{display:inline-block;flex:none;width:8px;height:8px;border-radius:50%;background:#c83d35;margin-left:auto}.notification-dot[hidden]{display:none}#notifications-open.has-unread{font-weight:700}#notifications-dialog{width:min(660px,90vw);max-height:80vh;overflow:auto}.notification-item{display:flex;align-items:center;gap:16px;padding:16px 0;border-bottom:1px solid var(--line,#dedfd8)}.notification-item>div{flex:1;min-width:0}.notification-item small{display:block;color:var(--muted,#6a706b);margin-top:5px}.notification-item p{margin:6px 0 0}.notification-item.unread strong:before{content:"";display:inline-block;width:7px;height:7px;background:#c83d35;border-radius:50%;margin-right:8px}.activity-error strong{color:#a53326}
+
+/* Runtime identity cards: shared by browser and Electron. */
+.runtime-icon{display:grid;place-items:center;flex:0 0 40px;height:40px;color:var(--ink)}
+.runtime-icon img{display:block;width:40px;height:40px;object-fit:contain}
+.runtime-card-head>.runtime-actions{flex:0 0 auto;display:flex;gap:8px}
+.runtime-card-head .runtime-description{color:var(--muted);margin:2px 0 4px}
+.runtime-version{font-variant-numeric:tabular-nums}
+.runtime-detection{display:inline-block;font-size:11px;margin-left:8px;padding:1px 6px;border:1px solid var(--line);border-radius:var(--radius-pill);white-space:nowrap}
+.runtime-current-model{margin-top:8px;overflow-wrap:anywhere;line-height:1.7}
+.runtime-model-source{display:inline-block;margin-left:12px;color:var(--muted);font-size:11px}
+.runtime-card summary:hover{color:var(--ink)}
+.runtime-card summary:focus-visible,.runtime-actions button:focus-visible{outline:2px solid var(--green);outline-offset:3px}
+.runtime-actions button:not(:disabled):active{background:var(--soft)}
+@media(max-width:620px){.runtime-card-head{flex-wrap:wrap}.runtime-card-head>.runtime-identity{flex:1 1 calc(100% - 54px)}.runtime-card-head>.runtime-actions{margin-left:50px}.runtime-model-source{display:block;margin-left:0}}
+
+.runtime-missing-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:16px}
+.runtime-missing-grid .runtime-card{margin:0;background:var(--surface);padding:16px}
+.runtime-missing-grid .runtime-card-head{align-items:flex-start;gap:12px}
+.runtime-missing-grid .runtime-identity h3{font-size:14px}
+.runtime-missing-grid .runtime-icon,.runtime-missing-grid .runtime-icon img{width:32px;height:32px;flex-basis:32px}
+.runtime-missing-grid .runtime-card details{margin-left:0}
+.runtime-uninstalled .runtime-missing-info{font-size:11px;margin:12px 0 0;padding-top:8px;border-top:1px solid var(--line);line-height:1.6;overflow-wrap:anywhere}
+@media(max-width:780px){.runtime-missing-grid{grid-template-columns:1fr}}
+
+.runtime-missing-grid .runtime-card-head p{margin:2px 0;line-height:1.6}
