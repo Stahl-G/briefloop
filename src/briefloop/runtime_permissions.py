@@ -10,9 +10,9 @@ import threading
 from .backends import validate_backend
 
 PRESETS = {
-    'default': {'toolPermission':'request-review','allowNonWorkspaceAccess':False,'enableTerminalSandbox':False},
-    'full-machine': {'toolPermission':'request-review','allowNonWorkspaceAccess':True,'enableTerminalSandbox':False},
-    'turbo': {'toolPermission':'always-proceed','allowNonWorkspaceAccess':True,'enableTerminalSandbox':False},
+    'default': {'toolPermission':'request-review','allowNonWorkspaceAccess':False},
+    'full-machine': {'toolPermission':'request-review','allowNonWorkspaceAccess':True},
+    'turbo': {'toolPermission':'always-proceed','allowNonWorkspaceAccess':True},
 }
 
 def preset_for(data):
@@ -45,7 +45,7 @@ def _read():
 def permission_digest():
     with _lock:
         _,_,data,permissions=_read()
-        policy={'permissions':permissions,**{k:data.get(k,v) for k,v in PRESETS['default'].items()}}
+        policy={'permissions':permissions,'enableTerminalSandbox':data.get('enableTerminalSandbox',False),**{k:data.get(k,v) for k,v in PRESETS['default'].items()}}
         return hashlib.sha256(json.dumps(policy,sort_keys=True).encode()).hexdigest()
 
 

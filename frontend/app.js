@@ -1028,7 +1028,7 @@ async function loadPermissionPanel(){
   for(const [id,name] of [['default','默认'],['full-machine','全机访问'],['turbo','Turbo'],['custom','自定义']])presets.add(new Option(name,id));
   presets.value=p.preset||'custom';presetHelp.className='help';applyPreset.type='button';applyPreset.textContent='应用权限模式';
   const custom=document.createElement('div');
-  const describe=()=>{presetHelp.textContent=({default:'工作区内读写；命令与工作区外访问需要授权。','full-machine':'允许访问全机文件；命令仍需要授权。',turbo:'自动执行文件、命令等操作，不逐次询问。',custom:'按具体文件、命令或网址管理规则。'})[presets.value];custom.hidden=presets.value!=='custom';applyPreset.hidden=presets.value==='custom';};
+  const describe=()=>{presetHelp.textContent=({default:'工作区内读写；命令与工作区外访问若需授权，会停止并提示你授权后重发。','full-machine':'允许访问全机文件；命令若需授权，会停止并提示你授权后重发。',turbo:'自动执行文件、命令等操作；已有拒绝、询问规则及沙箱限制继续有效。',custom:'按具体文件、命令或网址管理规则。'})[presets.value];custom.hidden=presets.value!=='custom';applyPreset.hidden=presets.value==='custom';};
   presets.onchange=describe;applyPreset.onclick=()=>saveNativeRule({operation:'preset',preset:presets.value});
   box.append(presetLabel,presets,presetHelp,applyPreset,custom);describe();
   const list=document.createElement('div');list.className='permission-rule-list';

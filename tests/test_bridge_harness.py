@@ -193,3 +193,26 @@ def test_codebuddy_sparse_usage_never_inherits_other_or_unknown_request(tmp_path
     else:meta.pop('codebuddy.ai/messageId')
     h.chat.event(sid,'thread/tokenUsage/updated',{'tokenUsage':normalize_bridge_usage({'_meta':meta},'codebuddy')})
     assert all(v is None for v in h.snapshot(sid)['token_usage']['last'].values())
+
+
+@pytest.mark.parametrize('failure',['error','end','exception'])
+def test_bridge_public_failures_redact_credentials(tmp_path,failure):
+    secret='token=acceptance-secret-value'
+    class FailingBridge(BridgeFixture):
+        def call(self,method,params,timeout=None):
+            if method!='start':return {}
+            if failure=='exception':raise RuntimeError(secret)
+            if failure=='error':self.sinks[params['execution_id']].put({'kind':'error','message':secret})
+            self.sinks[params['execution_id']].put({'kind':'end','status':'failed','error':secret})
+            return {}
+    h=BridgeHarness(Store(tmp_path),FailingBridge(),'claude');s=h.create_session('failure',{'model':'host-model'})
+    h.send(s['id'],'fixture')
+    deadline=time.monotonic()+3
+    while time.monotonic()<deadline:
+        snap=h.snapshot(s['id'])
+        if snap['messages'][0]['status']=='failed':break
+        time.sleep(.01)
+    assert snap['messages'][0]['status']=='failed'
+    errors=[e for e in snap['events'] if e['kind']=='error']
+    assert errors and 'acceptance-secret-value' not in json.dumps(errors)
+    assert '[credential omitted]' in json.dumps(errors)

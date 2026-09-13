@@ -81,7 +81,7 @@ def test_permission_answers_use_native_ids_not_ambiguous_labels(tmp_path):
 
 def test_antigravity_presets_preserve_rules_and_change_queue_digest(tmp_path,monkeypatch):
     path=tmp_path/'settings.json'
-    original={'permissions':{'deny':['read_file(/private)']},'unrelated':'keep'}
+    original={'permissions':{'deny':['read_file(/private)']},'unrelated':'keep','enableTerminalSandbox':True}
     path.write_text(json.dumps(original));monkeypatch.setattr(permissions,'antigravity_settings',lambda:path)
     before=permissions.permission_digest()
     for preset in ('full-machine','turbo','default'):
@@ -90,6 +90,7 @@ def test_antigravity_presets_preserve_rules_and_change_queue_digest(tmp_path,mon
         current=json.loads(path.read_text())
         assert current['permissions']==original['permissions']
         assert current['unrelated']=='keep'
+        assert current['enableTerminalSandbox'] is True
         assert permissions.catalog('antigravity',tmp_path,None)['preset']==preset
         if preset!='default':assert permissions.permission_digest()!=before
     assert permissions.permission_digest()==before
