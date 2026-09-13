@@ -49,3 +49,21 @@ def test_chart_rejects_missing_or_mixed_vintages_and_nonfinite_values():
     for variants in [records, [dict(r,as_of=r['current_date']) for r in records], [dict(r,as_of='2026-09-09',current='Infinity') for r in records], [dict(r,as_of='2026-09-09',current='NaN') for r in records], [dict(records[0],as_of='2026-09-09'),dict(records[1],as_of='not-a-date')]]:
         archive, _ = parts(docx_bytes('正文',report_profile='industry_periodic',report_data={'records':variants}))
         assert not any(name.startswith('word/media/') for name in archive.namelist())
+
+
+def test_rich_industry_export_deduplicates_only_matching_cover_heading():
+    from copy import deepcopy
+    from io import BytesIO
+    from docx import Document
+    document = {'type':'doc','content':[
+        {'type':'heading','attrs':{'level':1},'content':[{'type':'text','text':'本期行业报告'}]},
+        {'type':'heading','attrs':{'level':2},'content':[{'type':'text','text':'核心摘要'}]},
+        {'type':'paragraph','content':[{'type':'text','text':'交付增长，继续跟踪客户认证。'}]}]}
+    original = deepcopy(document)
+    def paragraphs(title, profile):
+        blob = docx_bytes(document=document, title=title, report_profile=profile)
+        return [p.text for p in Document(BytesIO(blob)).paragraphs]
+    assert paragraphs('本期行业报告','industry_periodic').count('本期行业报告') == 1
+    assert '本期行业报告' in paragraphs('管理层月报','industry_periodic')
+    assert paragraphs('本期行业报告','brief').count('本期行业报告') == 1
+    assert document == original

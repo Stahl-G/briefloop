@@ -31,9 +31,10 @@ def docx_bytes(markdown='', *, report_profile="brief", title="", report_date="",
     from .industry_export import append_inline, configure_document, style_heading, style_table, append_data_chart, insert_table_of_contents, enable_update_fields
     industry_report = report_profile == 'industry_periodic'
     if document is not None:
-        from .document_export import render_document
+        from .document_export import render_document, without_duplicate_cover_heading
         doc=Document()
         if industry_report:
+            document=without_duplicate_cover_heading(document,title)
             configure_document(doc,title=title,report_date=report_date,organization=organization,period=period,industry=industry)
             insert_table_of_contents(doc)
             enable_update_fields(doc)
