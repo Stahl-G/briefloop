@@ -42,6 +42,9 @@ Changelog = "https://github.com/Stahl-G/briefloop/blob/main/CHANGELOG.md"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
 [tool.setuptools.package-data]
 briefloop = ["static/*", "skill_assets/*/*.md", "template_assets/*", "workflow_assets/*/*.json", "workflow_assets/*/*.md", "workflow_assets/*/methods/*.md", "connectors/*.md"]
 wikiskill = ["**/*"]
