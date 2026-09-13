@@ -1,8 +1,9 @@
 import queue
+import json
 import time
 import pytest
 from briefloop.store import Store
-from briefloop.bridge_harness import BridgeHarness
+from briefloop.bridge_harness import BridgeHarness, normalize_bridge_usage
 
 
 class BridgeFixture:
@@ -15,6 +16,7 @@ class BridgeFixture:
             for event in [{'kind':'session','session_id':'native-session'},
                           {'kind':'reasoning','text':'weighing options'},
                           {'kind':'text','text':'visible answer'},
+                          {'kind':'usage','usage':{'input_tokens':12,'output_tokens':5}},
                           {'kind':'tool','id':'native-item','name':'read','status':'completed','input':{'path':'sample.txt'},'output':'data'},
                           {'kind':'end','status':'completed'}]:self.sinks[params['execution_id']].put(event)
             return {'execution_id':params['execution_id']}
@@ -32,6 +34,9 @@ def test_bridge_turn_is_durable_and_same_message_is_not_redispatched(tmp_path, b
         if snap['messages'][0]['status']=='completed':break
         time.sleep(.01)
     assert snap['messages'][0]['status']=='completed'
+    assert snap['token_usage']['last']=={'inputTokens':12,'outputTokens':5,'cachedInputTokens':None}
+    saved=h.store.rows("SELECT data FROM chat_events WHERE kind='thread/tokenUsage/updated'")
+    assert json.loads(saved[-1]['data'])['tokenUsage']['last']['inputTokens']==12
     assert snap['session']['thread_id']=='native-session'
     assert snap['messages'][1]['text']=='visible answer'
     assert 'reasoning' not in snap['messages'][1]
@@ -75,3 +80,85 @@ def test_bridge_host_gets_the_workspace_contract_once_per_native_session(tmp_pat
     turn('再继续','m3')
     assert bridge.starts[2]['prompt'].startswith('你是此本地 BriefLoop 工作区的交互助手')
     assert 'Tavily' in bridge.starts[2]['prompt']
+
+
+def test_codebuddy_saved_usage_is_reprojected_without_rewriting_history(tmp_path):
+    store=Store(tmp_path);h=BridgeHarness(store,BridgeFixture(),'codebuddy')
+    session=h.create_session('Synthetic saved session',{'model':'deepseek-v4.1-flash'})
+    raw={'sessionUpdate':'usage_update','used':30000,'size':1000000,
+         '_meta':{'usage':{'prompt_tokens':29217,'completion_tokens':571,'total_tokens':29788,
+                          'cache_read_input_tokens':0,'cached_tokens':0,
+                          'prompt_tokens_details':{'cached_tokens':29056},'prompt_cache_hit_tokens':29056}}}
+    h.chat.event(session['id'],'thread/tokenUsage/updated',
+                 {'tokenUsage':{'backend':'codebuddy','last':{'inputTokens':None,'outputTokens':None},'raw':raw}})
+    before=store.rows('SELECT * FROM chat_events')
+    snapshot=h.snapshot(session['id'])
+    usage=snapshot['token_usage']
+    assert usage['last']=={'inputTokens':29217,'cachedInputTokens':29056,'outputTokens':571}
+    assert usage['contextUsedTokens']==30000 and usage['modelContextWindow']==1000000
+    assert snapshot['events'][-1]['data']['tokenUsage']==usage
+    assert h.snapshot(session['id'],after=snapshot['events'][-1]['seq'])['token_usage']==usage
+    assert store.rows('SELECT * FROM chat_events')==before
+    h.chat.event(session['id'],'thread/providerChanged',{})
+    assert h.snapshot(session['id'])['token_usage'] is None
+
+
+def test_usage_unknown_and_zero_do_not_become_estimates():
+    usage=normalize_bridge_usage({'sessionUpdate':'usage_update','used':123,'size':1000},'codebuddy')
+    assert usage['last']=={'inputTokens':None,'outputTokens':None,'cachedInputTokens':None}
+    assert usage['contextUsedTokens']==123 and usage['modelContextWindow']==1000
+    invalid=normalize_bridge_usage({'input_tokens':True,'output_tokens':-1,'cache_read_input_tokens':'8',
+                                    'sessionUpdate':'usage_update','used':float('nan'),'size':0},'codebuddy')
+    assert all(value is None for value in invalid['last'].values())
+    assert invalid['contextUsedTokens'] is None and invalid['modelContextWindow'] is None
+    zero=normalize_bridge_usage({'input_tokens':0,'output_tokens':0,'cache_read_input_tokens':0,
+                                 'used':42,'size':99},'unknown-host')
+    assert zero['last']=={'inputTokens':0,'outputTokens':0,'cachedInputTokens':0}
+    assert zero['contextUsedTokens'] is None and zero['modelContextWindow'] is None
+
+
+def test_codebuddy_sparse_usage_reuses_only_same_request_message_without_rewriting_history(tmp_path):
+    store=Store(tmp_path);h=BridgeHarness(store,BridgeFixture(),'codebuddy')
+    sid=h.create_session('Sparse native usage',{'model':'deepseek-v4.1-flash'})['id']
+    identity={'codebuddy.ai/requestId':'request-1','codebuddy.ai/messageId':'message-1'}
+    complete={'sessionUpdate':'usage_update','used':33947,'size':1000000,
+              '_meta':{**identity,'usage':{'prompt_tokens':33947,'completion_tokens':102,
+                                        'prompt_cache_hit_tokens':23296}}}
+    sparse={'sessionUpdate':'usage_update','used':33947,'size':1000000,
+            '_meta':{**identity,'codebuddy.ai/usageByCategory':{'conversation':8645,'tools':23258}}}
+    for raw in (complete,sparse):
+        h.chat.event(sid,'thread/tokenUsage/updated',{'tokenUsage':normalize_bridge_usage(raw,'codebuddy')})
+    before=store.rows('SELECT * FROM chat_events')
+    snapshot=h.snapshot(sid)
+    expected={'inputTokens':33947,'cachedInputTokens':23296,'outputTokens':102}
+    assert snapshot['token_usage']['last']==expected
+    assert snapshot['events'][-1]['data']['tokenUsage']['last']==expected
+    assert snapshot['token_usage']['raw']==sparse
+    after=snapshot['events'][-1]['seq']
+    assert h.snapshot(sid,after=after)['token_usage']['last']==expected
+    assert h.snapshot(sid,after=after-1)['events'][0]['data']['tokenUsage']['last']==expected
+    assert store.rows('SELECT * FROM chat_events')==before
+
+    # An explicitly reported zero is not a missing value.
+    zero={'_meta':{**identity,'usage':{'prompt_tokens':0,'completion_tokens':0,'prompt_cache_hit_tokens':0}}}
+    h.chat.event(sid,'thread/tokenUsage/updated',{'tokenUsage':normalize_bridge_usage(zero,'codebuddy')})
+    usage=h.snapshot(sid)['token_usage']
+    assert usage['last']=={'inputTokens':0,'cachedInputTokens':0,'outputTokens':0}
+    assert usage['modelContextWindow']==1000000
+    h.chat.event(sid,'thread/providerChanged',{})
+    h.chat.event(sid,'thread/tokenUsage/updated',{'tokenUsage':normalize_bridge_usage(sparse,'codebuddy')})
+    assert all(v is None for v in h.snapshot(sid)['token_usage']['last'].values())
+
+
+@pytest.mark.parametrize('change', ['request','message','missing_identity'])
+def test_codebuddy_sparse_usage_never_inherits_other_or_unknown_request(tmp_path,change):
+    store=Store(tmp_path);h=BridgeHarness(store,BridgeFixture(),'codebuddy')
+    sid=h.create_session('Usage request boundary',{'model':'default'})['id']
+    meta={'codebuddy.ai/requestId':'request-1','codebuddy.ai/messageId':'message-1'}
+    full={'_meta':{**meta,'usage':{'prompt_tokens':33947,'completion_tokens':102,'prompt_cache_hit_tokens':23296}}}
+    h.chat.event(sid,'thread/tokenUsage/updated',{'tokenUsage':normalize_bridge_usage(full,'codebuddy')})
+    if change=='request':meta['codebuddy.ai/requestId']='request-2'
+    elif change=='message':meta['codebuddy.ai/messageId']='message-2'
+    else:meta.pop('codebuddy.ai/messageId')
+    h.chat.event(sid,'thread/tokenUsage/updated',{'tokenUsage':normalize_bridge_usage({'_meta':meta},'codebuddy')})
+    assert all(v is None for v in h.snapshot(sid)['token_usage']['last'].values())

@@ -7,10 +7,10 @@ import os from 'node:os';
 import path from 'node:path';
 import {createInterface} from 'node:readline';
 const fixtureDirectories=new WeakMap();
-function bridge(t){
+function bridge(t,extraEnv={}){
  const win=process.platform==='win32';
  if(win)assert.ok(process.env.BRIEFLOOP_PYTHON&&process.env.BRIEFLOOP_PROCESS_HELPER,'Set BRIEFLOOP_PYTHON and BRIEFLOOP_PROCESS_HELPER for Windows tests');
- const p=spawn(win?process.env.BRIEFLOOP_PYTHON:process.execPath,win?['-X','utf8',process.env.BRIEFLOOP_PROCESS_HELPER,process.execPath,'src/briefloop/static/runtime-bridge.mjs']:['src/briefloop/static/runtime-bridge.mjs'],{stdio:['pipe','pipe','inherit'],windowsHide:true});
+ const p=spawn(win?process.env.BRIEFLOOP_PYTHON:process.execPath,win?['-X','utf8',process.env.BRIEFLOOP_PROCESS_HELPER,process.execPath,'src/briefloop/static/runtime-bridge.mjs']:['src/briefloop/static/runtime-bridge.mjs'],{stdio:['pipe','pipe','inherit'],windowsHide:true,env:{...process.env,...extraEnv}});
  const directories=[];fixtureDirectories.set(t,directories);
  // exitCode is available before close, and separate after hooks do not express
  // this dependency. Gracefully drain the bridge and its owned processes before
@@ -59,4 +59,16 @@ test('ACP resume retains supplied ID and does not replay history as new output',
  b.send(1,'start',{...f,runtime_id:'kimi',execution_id:'resume',session_id:'saved-native-session',prompt:'continue',permission:'runtime-native',allow_web:null});
  assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');
  assert.equal(b.frames.filter(x=>x.params?.kind==='text').map(x=>x.params.text).join(''),'NEW REPLY');
+});
+test('Electron Node mode does not escape into host metadata probes or ACP subprocesses',async t=>{
+ const b=bridge(t,{ELECTRON_RUN_AS_NODE:'1'});
+ const f=fixture(t,`if(process.env.ELECTRON_RUN_AS_NODE!==undefined)process.exit(2);if(process.argv[2]==='doctor'){console.log(JSON.stringify({providers:[{name:'fixture',models:['host-env-clean']}]}));process.exit(0);}`+rpcFake);
+ // Wheel smoke has only the built bridge, not source catalog.json. Reasonix's
+ // metadata probe exercises the same execFile path using an explicit fixture.
+ b.send(1,'list_models',{runtime_id:'reasonix',...f});
+ assert.deepEqual((await b.wait(x=>x.id===1)).result.models.map(x=>x.id),['default','fixture/host-env-clean']);
+ b.send(2,'list_models',{runtime_id:'codebuddy',...f});
+ const result=(await b.wait(x=>x.id===2)).result;
+ assert.equal(result.source,'host');
+ assert.ok(result.models.some(x=>x.id==='test/model'));
 });

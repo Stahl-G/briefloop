@@ -1002,6 +1002,7 @@ async function switchWorkspace(path,create){
  try{
   rememberDraft();clearTimeout(saveTimer);const deadline=Date.now()+15000;while(saving&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,60));
   if(saving)throw Error('当前简报仍在保存，请稍后重试。');if(dirty){workspaceStatus('正在保存当前简报…');await save();if(dirty)throw Error('当前简报尚未保存，请先完成保存。')}
+  if(window.briefloopDesktop?.openWorkspace){const requested=path.trim();const result=await window.briefloopDesktop.openWorkspace({path:requested,create});if(result?.cancelled)workspaceStatus('已保留当前工作区。');return !result?.cancelled}
   const result=await api('workspaces/open',{path:path.trim(),create});if(!result.url)throw Error('工作区服务尚未准备好，请重试。');
  workspaceStatus(result.path?'已打开 '+result.path+'，正在切换…':'已打开，正在切换…');location.assign(result.url);return true;
  }catch(e){workspaceStatus(e.message,true);throw e} finally{workspaceSwitching=false;controls.forEach(c=>c.disabled=originalDisabled.get(c))}
@@ -1656,9 +1657,10 @@ function sourceRefreshOutcome(outcome){return {not_authorized:'本轮未允许�
 
 let connectorPanel=null;
 function settingsView(name){
- for(const view of ['models','execution','learning','workspaces','connectors'])$('settings-view-'+view).hidden=view!==name;
+ for(const view of ['models','execution','learning','workspaces','connectors','updates'])$('settings-view-'+view).hidden=view!==name;
  document.querySelectorAll('[data-settings-view]').forEach(b=>{b.classList.toggle('active',b.dataset.settingsView===name);b.setAttribute('aria-current',b.dataset.settingsView===name?'page':'false')});
  if(name==='workspaces')return renderSettingsWorkspaces();
+ if(name==='updates')return refreshAppUpdates();
  if(name==='connectors'){
   connectorPanel ||= connectorSettings($('settings-view-connectors'),api);
   return connectorPanel.refresh();
@@ -2022,3 +2024,76 @@ if($('report-chat-close'))$('report-chat-close').onclick=()=>closeReportChat();
 if($('report-chat-backdrop'))$('report-chat-backdrop').onclick=()=>closeReportChat();
 
 const reportMcpSelection=mcpSelection($('report-mcp-selection'),api);
+
+// Desktop hosts request an acknowledged flush; ordinary web pages keep their unload behavior.
+if(window.briefloopDesktop?.onPrepareClose){
+ window.briefloopDesktop.onResume(()=>{document.body.inert=false});
+ window.briefloopDesktop.onPrepareClose(async()=>{
+  try{
+   if(chat.busy||chat.uploading)return {status:'failed',error:'消息正在发送或附件正在上传，请完成后再关闭。'};
+   document.body.inert=true;rememberDraft();clearTimeout(saveTimer);
+   if(current)await savedVersion();
+   return {status:'saved',version_id:current?.id||null};
+  }catch(error){document.body.inert=false;return {status:'failed',error:error.message||'修改尚未保存，请保留窗口。'}}
+ });
+}
+
+// App updates: fixed desktop capabilities, with a read-only browser fallback.
+let appUpdateState=null,appUpdatePending=false,appUpdateLastAction='check';
+function renderAppUpdates(value=appUpdateState){
+ const box=$('settings-view-updates');if(!box)return;
+ const desktop=typeof window.briefloopDesktop?.updateStatus==='function';
+ $('app-update-controls').hidden=!desktop;
+ $('app-update-version').textContent=desktop?`当前 App v${value?.currentAppVersion||'读取中'}`:`网页客户端 v${box.dataset.webVersion}`;
+ $('app-update-source').textContent=value?.source==='local-test'?'本地测试更新源 · 仅验证流程，不代表官方发布':'官方稳定来源：Stahl-G/briefloop · GitHub Releases';
+ const reinstall=value?.source==='local-test'&&value?.reinstall===true;
+ $('app-update-guidance').textContent=!desktop?'浏览器不能安装 App 更新。请在桌面 App 检查更新，或从官方下载页安装。':value?.installMode==='dmg'?`下载后会先保存编辑并处理忙任务，再退出 App、打开 DMG；请在 Finder 中${reinstall?'重新安装当前版本':'手动安装新版本'}。`:'下载后会先保存编辑并处理忙任务，再退出 App 并交给原生安装器更新。';
+ const labels={idle:'尚未检查更新',checking:'正在检查更新…',available:'发现可用更新',current:'当前 App 无需更新',downloading:'正在下载更新…',downloaded:'下载完成，等待安装',error:'更新未完成'};
+ const reinstallLabel=`重新安装当前 App v${value?.currentAppVersion||''}`;
+ $('app-update-status').textContent=desktop?(reinstall&&value?.state==='available'?reinstallLabel:(labels[value?.state]||'正在读取 App 版本…')+(reinstall?` · ${reinstallLabel}`:value?.releaseVersion?` · v${value.releaseVersion}`:'')):'请从官方发布页查看最新版本。';
+ $('app-update-download').textContent=reinstall?'下载当前版本安装包':'下载更新';
+ const busy=appUpdatePending||['checking','downloading'].includes(value?.state);
+ $('app-update-check').disabled=busy;
+ $('app-update-download').hidden=value?.state!=='available';$('app-update-download').disabled=busy;
+ $('app-update-install').hidden=value?.state!=='downloaded';$('app-update-install').disabled=busy;
+ $('app-update-install').textContent=value?.installMode==='dmg'?'保存并打开 DMG':'保存并安装更新';
+ $('app-update-retry').hidden=value?.state!=='error'||!value?.retryable;$('app-update-retry').disabled=busy;
+ $('app-update-error').hidden=!value?.error;$('app-update-error').textContent=value?.error?.message||'';
+ const progress=value?.progress;
+ $('app-update-progress-box').hidden=!progress;
+ $('app-update-progress').value=progress?.percent||0;
+ $('app-update-progress-text').textContent=progress?`${Math.round(progress.percent||0)}% · ${(Math.max(0,progress.transferred||0)/1048576).toFixed(1)} / ${(Math.max(0,progress.total||0)/1048576).toFixed(1)} MiB`:'';
+ $('app-update-notes-box').hidden=!value?.notes;$('app-update-notes').textContent=value?.notes||'';
+}
+async function refreshAppUpdates(){
+ renderAppUpdates();
+ if(typeof window.briefloopDesktop?.updateStatus!=='function')return;
+ try{appUpdateState=await window.briefloopDesktop.updateStatus();renderAppUpdates()}
+ catch{notice('无法读取 App 更新状态，请重新打开设置。',true)}
+}
+async function runAppUpdate(command){
+ if(appUpdatePending)return;
+ const desktop=window.briefloopDesktop;if(!desktop)return;
+ appUpdatePending=true;appUpdateLastAction=command;renderAppUpdates();
+ try{
+  if(command==='install'){
+   const result=await desktop.installUpdate();
+   if(result?.cancelled)notice('已保留当前工作区，更新包仍可稍后安装。');
+   // Successful installation closes this renderer. A cancelled gate keeps it live.
+   if(result?.cancelled)appUpdateState=await desktop.updateStatus();
+  }else appUpdateState=await (command==='download'?desktop.downloadUpdate():desktop.checkForUpdates());
+ }catch(error){
+  notice(error.message||'更新操作未完成，请重试。',true);
+  try{appUpdateState=await desktop.updateStatus()}catch{}
+ }finally{appUpdatePending=false;renderAppUpdates()}
+}
+if($('settings-view-updates')){
+ $('app-update-check').onclick=()=>runAppUpdate('check');
+ $('app-update-download').onclick=()=>runAppUpdate('download');
+ $('app-update-install').onclick=()=>runAppUpdate('install');
+ // A temporary DMG open error can retry the saved asset through the same gate.
+ $('app-update-retry').onclick=()=>runAppUpdate(appUpdateState?.error?.code==='open_failed'?'install':appUpdateLastAction==='install'?'download':appUpdateLastAction);
+ window.briefloopDesktop?.onUpdateStatus?.(value=>{appUpdateState=value;renderAppUpdates()});
+ renderAppUpdates();
+}
+// End App updates.
