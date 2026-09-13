@@ -76,21 +76,13 @@ def _make_server(workspace, port, *, paused, backend, lock):
     from .backends import BRIDGE_BACKENDS
     bridge_harnesses={name:BridgeHarness(store,bridge,name) for name in BRIDGE_BACKENDS}
     managers={'codex':harness,'opencode':opencode_harness,**bridge_harnesses}
+    from .chat_dispatch import ChatDispatcher
+    chat_dispatch=ChatDispatcher(managers)
+    chat_dispatch.recover()
     worker.runtime=InteractiveRuntime(store,backends=managers)
     worker.opened_paused=paused
-    def pick_harness(runtime=None,session_id=None):
-        backend=(runtime or {}).get('backend')
-        if session_id is not None:
-            for candidate in managers.values():
-                try:
-                    owner=candidate.chat.session(session_id)['runtime'].get('backend','codex')
-                    if backend is not None and backend!=owner:raise ValueError('切换执行引擎请新建会话；当前会话沿用原宿主')
-                    backend=owner
-                    break
-                except KeyError:
-                    continue
-        backend=backend or store.settings().get('agent_backend','codex')
-        return managers[validate_backend(backend)]
+    def pick_harness(runtime=None,session_id=None,*,sending=False):
+        return chat_dispatch.select(runtime,session_id,sending=sending)
     def choose_runtime(store_,runtime):
         # A chat turn carries the runtime the user just picked; treat it as the choice.
         try:store_.confirm_runtime_choice((runtime or {}).get('backend'),runtime or {})
@@ -419,7 +411,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     result=pick_harness(body.get('runtime')).create_session(body.get('title','新对话'),body.get('runtime'))
                 elif path=='/api/harness/message':
                     choose_runtime(store,body.get('runtime'))
-                    result=pick_harness(body.get('runtime'),body['session_id']).send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),display_text=body.get('display_text'),allow_web=bool(body.get('allow_web',False)))
+                    result=pick_harness(body.get('runtime'),body['session_id'],sending=True).send(body['session_id'],body.get('text',''),mode=body.get('mode','queue'),source_ids=body.get('source_ids'),runtime=body.get('runtime'),message_id=body.get('message_id'),display_text=body.get('display_text'),allow_web=bool(body.get('allow_web',False)))
                 elif path=='/api/harness/answer':result=pick_harness(session_id=body['session_id']).answer(body['session_id'],body['request_id'],body['answers'])
                 elif path=='/api/harness/archive':result=pick_harness(session_id=body['session_id']).archive(body['session_id'])
                 elif path=='/api/harness/delete':result=pick_harness(session_id=body['session_id']).delete(body['session_id'])

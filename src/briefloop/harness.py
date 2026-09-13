@@ -87,7 +87,10 @@ class HarnessManager:
         session=self.chat.session(session_id)
         # Reject unusable explicit attachments before a message/model turn is queued.
         self._attachments(source_ids)
-        config=self._config({**session['runtime'],**(runtime or {})})
+        coordinator=getattr(self,'coordinator',None)
+        config=coordinator.config(self,session,runtime) if coordinator else self._config({**session['runtime'],**(runtime or {})})
+        if mode=='steer' and session['runtime'].get('backend','codex')!=self.backend:
+            raise ValueError('运行中追加不能切换宿主；请排队发送')
         if mode=='steer' and session.get('turn_id'):
             active=[m for m in self.snapshot(session_id)['messages'] if m.get('turn_id')==session['turn_id'] and m['role']=='user']
             actual=self._config(active[0]['runtime'] if active else session['runtime'])
@@ -102,7 +105,7 @@ class HarnessManager:
             message=self.chat.message(session_id,display_text if display_text is not None else text,source_ids=source_ids,mode=mode,mid=mid,runtime=config,prompt=text if display_text is not None else None,allow_web=allow_web)
             self._cancel_requested.discard(session_id)
             self._runtime[mid]=config
-            self.chat.update(session_id,runtime=config)
+            if not coordinator or coordinator.internal(session_id):self.chat.update(session_id,runtime=config)
             self.chat.event(session_id,'message/queued',{'messageId':mid,'mode':mode})
             if mode=='steer' and session.get('turn_id'):
                 threading.Thread(target=self._steer,args=(session_id,mid),daemon=True).start()
@@ -120,6 +123,10 @@ class HarnessManager:
         message=self.send(session_id,text,runtime=runtime,display_text=display_text,allow_web=allow_web,message_id=message_id,source_ids=source_ids)
         return InternalRun(session_id,message['id'])
     def _schedule(self,sid):
+        coordinator=getattr(self,'coordinator',None)
+        if coordinator:return coordinator.schedule(self,sid)
+        return self._schedule_native(sid)
+    def _schedule_native(self,sid):
         if self.chat.session(sid)['lifecycle']!='active':return
         if sid in self._busy or self.chat.session(sid).get('turn_id'):return
         if not any(m['status']=='queued' for m in self.snapshot(sid)['messages']):return
@@ -164,7 +171,8 @@ class HarnessManager:
                 if not queued:return
                 message=queued[0];mid=message['id'];self.chat.patch_message(mid,status='sending')
                 self.chat.update(sid,status='starting')
-            input_blocks=self._input(message)
+            coordinator=getattr(self,'coordinator',None)
+            input_blocks=self._input(coordinator.input(sid,message) if coordinator else message)
             client=self._client();thread_id=session['thread_id']
             config=self._config(message.get('runtime') or session['runtime'])
             from .fast_mode import capability, inherited_tier
@@ -201,7 +209,10 @@ class HarnessManager:
             actual_model=result.get('model') if config['model']=='default' else config['model']
             self.chat.event(sid,'thread/bound',{'threadId':thread_id,'model_provider':config.get('model_provider'),'actual_model':actual_model})
             with self._lock:
-                self._threads[thread_id]=sid;self.chat.update(sid,thread_id=thread_id)
+                if coordinator:
+                    if not coordinator.bind(sid,mid,thread_id):return
+                else:self.chat.update(sid,thread_id=thread_id)
+                self._threads[thread_id]=sid
                 if sid in self._cancel_requested:
                     self.chat.patch_message(mid,status='cancelled');self.chat.update(sid,status='interrupted');return
                 turn_params={'threadId':thread_id,'model':config['model'],'clientUserMessageId':mid,'input':input_blocks,'cwd':session['cwd'],'sandboxPolicy':policy}
@@ -226,6 +237,8 @@ class HarnessManager:
         finally:
             with self._lock:
                 self._busy.discard(sid)
+                coordinator=getattr(self,'coordinator',None)
+                if coordinator:coordinator.settle(sid)
                 if self.chat.session(sid)['status']=='idle':self._schedule(sid)
     def _steer(self,sid,mid):
         try:
@@ -405,6 +418,8 @@ class HarnessManager:
                     self.chat.event(sid,('child/' if child else '')+method,{'item':public,'turnId':turn_id,'threadId':thread_id})
             elif method=='turn/completed':
                 turn=params.get('turn',{});turn_id=turn.get('id',turn_id)
+                active_turn=self.chat.session(sid)['turn_id']
+                if active_turn and active_turn!=turn_id:return
                 status=turn.get('status','completed')
                 self._finish(sid,turn_id,status)
                 self.chat.event(sid,method,{'turnId':turn_id,'status':status})

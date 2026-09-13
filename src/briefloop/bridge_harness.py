@@ -110,8 +110,9 @@ class BridgeHarness(OpencodeHarness):
         if mode=='steer':raise ValueError('此 CLI 尚未接入运行中追加；请排队发送')
         if not isinstance(text,str) or not text.strip():raise ValueError('请输入消息')
         session=self.chat.session(session_id)
-        if session['runtime'].get('backend','codex')!=self.backend:raise ValueError('切换执行引擎请新建会话')
-        config=self._config({**session['runtime'],**(runtime or {})})
+        coordinator=getattr(self,'coordinator',None)
+        if not coordinator and session['runtime'].get('backend','codex')!=self.backend:raise ValueError('切换执行引擎请新建会话')
+        config=coordinator.config(self,session,runtime) if coordinator else self._config({**session['runtime'],**(runtime or {})})
         for source in source_ids or []:self.store.one('sources',source)
         mid=message_id or uid('msg')
         with self._lock:
@@ -142,7 +143,8 @@ class BridgeHarness(OpencodeHarness):
             message=next((m for m in self.chat.snapshot(sid,private=True)['messages'] if m['status']=='queued'),None)
             if message is None:return
             mid=message['id'];execution=mid
-            config=self._config(message['runtime']);text,files=self._input(message,session['cwd'])
+            coordinator=getattr(self,'coordinator',None)
+            config=self._config(message['runtime']);text,files=self._input(coordinator.input(sid,message) if coordinator else message,session['cwd'])
             if not message['allow_web']:text+='\n本轮不主动检索网络来源，仅使用已提供材料。'
             images=[]
             if files:
@@ -187,7 +189,9 @@ class BridgeHarness(OpencodeHarness):
                 elif kind=='reasoning':
                     reasoning+=event.get('text','');self.chat.patch_message(assistant['id'],reasoning=reasoning)
                 elif kind=='session':
-                    self.chat.update(sid,thread_id=event['session_id'])
+                    if coordinator:
+                        if not coordinator.bind(sid,mid,event['session_id']):continue
+                    else:self.chat.update(sid,thread_id=event['session_id'])
                     self.chat.event(sid,'runtime/session',{'execution_id':execution,**event})
                 elif kind=='tool':
                     key=event.get('id') or uid('tool');tools[key]={**tools.get(key,{}),**event}
@@ -227,6 +231,8 @@ class BridgeHarness(OpencodeHarness):
                     self.chat.update(sid,turn_id=None,status='idle' if status=='completed' else status)
                     self.chat.event(sid,'turn/'+status,{'turnId':mid,'status':status})
                     if status=='completed':self._schedule(sid)
+                coordinator=getattr(self,'coordinator',None)
+                if coordinator:coordinator.settle(sid)
 
     def answer(self,session_id,request_id,answers):
         request=self.chat.request(request_id)

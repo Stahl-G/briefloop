@@ -16,6 +16,7 @@ const context=vm.createContext({$:el,chat,runtimeCatalog,state:{settings:{agent_
  chatError(message){if(message)errors.push(message)},updateComposer(){},runtimeName:name=>name,
  async api(route,payload){assert.equal(route,'upload');uploads.push(payload);return {id:'source_'+uploads.length,status:'ready'}},
  async refresh(){},renderAttachments(){},rememberDraft(){}});
+vm.runInContext(source.slice(source.indexOf('function chatBackendChoice(){'),source.indexOf('function renderChatBackendChoice(){')),context);
 vm.runInContext(code,context);
 const file=new File(['Synthetic source'],'source.txt',{type:'text/plain'});
 const drop=()=>el('chat-form').handlers.drop({dataTransfer:{files:[file]},preventDefault(){}});

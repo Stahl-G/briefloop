@@ -5,11 +5,15 @@ const source=fs.readFileSync('frontend/app.js','utf8');
 const code=source.slice(source.indexOf('function restoreDraft(){'),source.indexOf('function renderChatRuntimePermissions()'));
 const elements=new Map();const el=id=>{if(!elements.has(id))elements.set(id,{});return elements.get(id)};
 const c=vm.createContext({$:el,chat:{id:'existing',drafts:new Map(),session:{runtime:{backend:'claude',model:'default'}}},state:{settings:{agent_backend:'claude',model:'default',model_selection_required:true}},effortValue:()=>null,assignEffort:()=>{},refreshInlineModelPickers:()=>{},renderAttachments:()=>{},updateComposer:()=>{},autoSizeChatInput:()=>{}});
+vm.runInContext(source.slice(source.indexOf('function chatBackendChoice(){'),source.indexOf('function renderChatBackendChoice(){')),c);
 vm.runInContext(code,c);vm.runInContext('restoreDraft()',c);assert.equal(el('chat-model').value,'default');
 c.chat.id=null;c.chat.session=null;c.chat.drafts.set('new',{text:'unsent message',backend:'claude',model:'default'});
 vm.runInContext('restoreDraft()',c);assert.equal(el('chat-model').value,'default');assert.equal(el('chat-input').value,'unsent message');
 c.chat.drafts.set('new',{text:'keep this text',backend:'codex',model:'old-codex-model'});
 vm.runInContext('restoreDraft()',c);assert.equal(el('chat-model').value,'');assert.equal(el('chat-input').value,'keep this text');
+c.chat.id='existing';c.chat.session={runtime:{backend:'claude',model:'default'}};
+c.chat.drafts.set('existing',{text:'next turn',backend:'opencode',model:'deepseek/deepseek-flash'});
+vm.runInContext('restoreDraft()',c);assert.equal(c.chat.nextBackend,'opencode');assert.equal(el('chat-model').value,'deepseek/deepseek-flash');
 console.log('PASS: explicit chat choice survives pending workspace selection; model does not cross runtime boundaries');
 
 // Failed first send binds the unsent draft to the newly created session.
@@ -37,6 +41,7 @@ const p=vm.createContext({$:id=>id==='chat-permission'?select:id==='chat-mode'?m
  chat:{session:{runtime:{backend:'claude'}}},state:{settings:{agent_backend:'claude'}},runtimeCatalog:[],
  document:{querySelector:()=>({hidden:false})},JSON,console,
  Option:class{constructor(text,value){this.text=text;this.value=value}}});
+vm.runInContext(source.slice(source.indexOf('function chatBackendChoice(){'),source.indexOf('function renderChatBackendChoice(){')),p);
 vm.runInContext(permissionCode,p);
 vm.runInContext('renderChatRuntimePermissions()',p);
 assert.equal(select.options.length,1);assert.equal(select.hidden,true,'a single permission mode is not a choice');
