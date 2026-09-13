@@ -7,7 +7,7 @@ const {randomUUID} = require('node:crypto');
 const {WorkspaceService} = require('./service.cjs');
 let window, service, switching = false, quitting = false, closePending = false, expectedExit = false;
 const prepared = new Map();
-let menuSave = null;
+let menuSave = null, workspaceOrigin = null;
 const welcomeURL = pathToFileURL(path.join(__dirname, 'welcome.html')).href;
 const runtime = app.isPackaged ? path.join(process.resourcesPath, 'runtime') : path.join(__dirname, 'runtime', 'macos-arm64');
 if (process.env.BRIEFLOOP_DESKTOP_DATA) app.setPath('userData', path.resolve(process.env.BRIEFLOOP_DESKTOP_DATA));
@@ -17,11 +17,11 @@ async function rememberWorkspace(directory) { await fs.mkdir(app.getPath('userDa
 function trusted(event) {
   if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) throw Error('窗口身份不匹配。');
   const url = event.senderFrame.url;
-  if (url !== welcomeURL && (!service?.info || new URL(url).origin !== service.info.url)) throw Error('页面来源不匹配。');
+  if (url !== welcomeURL && (!workspaceOrigin || new URL(url).origin !== workspaceOrigin)) throw Error('页面来源不匹配。');
 }
 function resumeEditing() { if (window && !window.isDestroyed()) window.webContents.send('workspace:resume'); }
 function prepareClose() {
-  if (!service?.info || window.webContents.getURL() === welcomeURL) return Promise.resolve({status: 'saved'});
+  if (window.webContents.getURL() === welcomeURL) return Promise.resolve({status: 'saved'});
   const requestId = randomUUID();
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { prepared.delete(requestId); reject(Error('页面尚未确认保存，窗口已保留。请等待保存完成后重试。')); }, 30000);
@@ -34,8 +34,8 @@ function saveCurrent() {
   menuSave = prepareClose().catch(reportError).finally(() => { menuSave = null; if (!closePending && !switching) resumeEditing(); });
 }
 async function stopCurrent() {
-  if (!service?.child) return true;
   await prepareClose();
+  if (!service?.child) return true;
   const status = await service.status();
   let cancelBusy = false;
   if (status.busy) {
@@ -60,16 +60,36 @@ async function openWorkspace(request) {
   try {
     if (menuSave) await menuSave;
     if (service?.child && !(await stopCurrent())) return {cancelled: true};
-    service = new WorkspaceService(runtime, () => {
-      if (!expectedExit && !switching && !quitting && window && !window.isDestroyed()) {
-        dialog.showMessageBox(window, {type: 'error', message: '工作区服务已退出', detail: '报告仍保存在工作区。请重新打开；若再次失败，可查看工作区内的 desktop-server.log。'}).catch(() => {});
-        window.loadURL(welcomeURL).catch(() => {});
-      }
+    service = new WorkspaceService(runtime, async ({lastInfo}) => {
+      if (expectedExit || switching || quitting || !window || window.isDestroyed()) return;
+      const result = await dialog.showMessageBox(window, {type: 'error', message: '工作区服务已退出',
+        detail: '窗口中的编辑已保留。重新连接后可以继续保存；失败时请保留窗口和正文。',
+        buttons: ['重新连接', '保留窗口'], defaultId: 0, cancelId: 1});
+      if (result.response !== 0 || !lastInfo || service.child) return;
+      switching = true;
+      try {
+        await service.start(service.directory, {port: Number(new URL(lastInfo.url).port)});
+        // Keep the same document and origin: its unsaved editor stays intact.
+        resumeEditing();
+      } catch (error) { await reportError(error); }
+      finally { switching = false; }
     });
     const opened = await service.start(target, {create: request.create});
-    await rememberWorkspace(opened.path);
-    await window.loadURL(opened.url);
+    workspaceOrigin = opened.url;
+    try { await window.loadURL(opened.url); }
+    catch (error) {
+      expectedExit = true;
+      try { await service.stop(); }
+      catch { error.message += ' 后台仍受此窗口管理，请再次打开或退出以处理。'; }
+      finally { expectedExit = false; }
+      workspaceOrigin = null;
+      await window.loadURL(welcomeURL);
+      throw error;
+    }
     window.setTitle(`BriefLoop · ${path.basename(opened.path)}`);
+    // A preferences disk error must not strand a live service behind the old page.
+    try { await rememberWorkspace(opened.path); }
+    catch { await dialog.showMessageBox(window, {type: 'warning', message: '工作区已打开', detail: '无法记住最近使用的目录；下次可通过“打开工作区”重新选择。报告仍保存在工作区。'}); }
     return opened;
   } catch (error) {
     if (!service?.info) await window.loadURL(welcomeURL);

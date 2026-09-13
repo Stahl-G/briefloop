@@ -16,8 +16,9 @@ function validateMarker(marker, child, launchId) {
 
 class WorkspaceService {
   constructor(runtime, onExit = () => {}) { this.runtime = runtime; this.onExit = onExit; this.child = null; this.info = null; }
-  async start(directory, {create = false} = {}) {
+  async start(directory, {create = false, port = 0} = {}) {
     if (this.child) throw Error('请先关闭当前工作区。');
+    if (!Number.isInteger(port) || port < 0 || port > 65535) throw Error('无效的工作区端口。');
     if (!path.isAbsolute(directory)) throw Error('请选择完整的本地工作区路径。');
     if (create) await fs.mkdir(directory, {recursive: true});
     directory = await fs.realpath(directory);
@@ -31,10 +32,10 @@ class WorkspaceService {
     const env = {...process.env, BRIEFLOOP_LAUNCH_ID: launchId, BRIEFLOOP_NODE: node,
       PATH: `${path.dirname(node)}:${process.env.PATH || '/usr/bin:/bin'}`, PYTHONNOUSERSITE: '1', PYTHONSAFEPATH: '1', PYTHONUNBUFFERED: '1'};
     delete env.PYTHONHOME; delete env.PYTHONPATH; delete env.ELECTRON_RUN_AS_NODE;
-    const child = spawn(python, ['-I', '-m', 'briefloop', 'serve', '--workspace', directory, '--port', '0', '--paused'],
+    const child = spawn(python, ['-I', '-m', 'briefloop', 'serve', '--workspace', directory, '--port', String(port), '--paused'],
       {cwd: directory, env, stdio: ['ignore', log.fd, log.fd], windowsHide: true});
     this.child = child; this.directory = directory;
-    this.exited = new Promise(resolve => child.once('close', (code, signal) => { this.child = null; this.info = null; resolve({code, signal}); this.onExit({code, signal}); }));
+    this.exited = new Promise(resolve => child.once('close', (code, signal) => { const lastInfo = this.info; this.child = null; this.info = null; resolve({code, signal}); this.onExit({code, signal, lastInfo}); }));
     let spawnError; child.once('error', error => { spawnError = error; });
     await log.close();
     try {
