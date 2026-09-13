@@ -33,7 +33,7 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
   let data = {currentAppVersion, state: 'idle', releaseVersion: null, notes: '', url: null,
               progress: null, installMode, error: null, retryable: false, reinstall: false, source: local ? 'local-test' : 'github'};
   let pending = null, asset = null, ready = null, native = null, available = false;
-  let metadataRateLimit = null;
+  let metadataRateLimit = null, operation = 'check';
   const status = () => structuredClone(data);
   const publish = patch => {data = {...data, ...patch}; changed(status()); return status();};
   const fail = error => {
@@ -41,13 +41,14 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
       error = new UpdateError('windows_update_unavailable', '官方发布尚未提供 Windows 更新文件，请稍后重试。');
     }
     return publish({state: 'error', error: {
-      code: error instanceof UpdateError ? error.code : 'update_failed',
+      operation, code: error instanceof UpdateError ? error.code : 'update_failed',
       message: error instanceof UpdateError ? error.message : '更新请求失败，请检查网络后重试。'},
       retryable: error instanceof UpdateError ? error.retryable : true});
   };
-  const once = operation => {
+  const once = (action, kind) => {
     if (pending) return pending;
-    pending = Promise.resolve().then(operation).catch(fail).finally(() => {pending = null;});
+    operation = kind;
+    pending = Promise.resolve().then(action).catch(fail).finally(() => {pending = null;});
     return pending;
   };
   function trusted(value, kind, redirected = false) {
@@ -242,6 +243,7 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
     // This method is main-process-only. The caller must finish its save/busy/
     // owned-service-stop gate BEFORE invoking it; there is no automatic install.
     if (pending || !ready || (data.state !== 'downloaded' && !(data.state === 'error' && data.error?.code === 'open_failed'))) throw new UpdateError('not_downloaded', '更新尚未下载完成。', false);
+    operation = 'install';
     try {
       if (ready.native) {
         setupNative().quitAndInstall(false, true);
@@ -259,7 +261,7 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
       return {mode: 'dmg', opened: true, manualInstall: true};
     } catch (error) {fail(error); throw new UpdateError(data.error.code, data.error.message, data.retryable);}
   }
-  return {status, check: () => once(checkImpl), download: () => once(downloadImpl), installReady};
+  return {status, check: () => once(checkImpl, 'check'), download: () => once(downloadImpl, 'download'), installReady};
 }
 
 module.exports = {createUpdater};
