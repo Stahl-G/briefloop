@@ -522,6 +522,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/company-resolve':
                     from .company_context import resolve_conflict
                     result=resolve_conflict(store,body['fact_id'],body['accept'])
+                elif path=='/api/fact-check-grant':
+                    # 用户明确追加核查预算：并入阶段计量限额；阶段以预算耗尽收束后追加重开并继续核查。
+                    from .fact_check import grant as grant_fact_check
+                    result=grant_fact_check(store,body['version_id'],body.get('limits'))
                 elif path=='/api/template-import':
                     from .templates import import_template
                     result=import_template(store,body['name'],_upload_data(body),body.get('parent_id'))

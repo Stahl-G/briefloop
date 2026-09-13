@@ -94,6 +94,8 @@ class ProgressTracker:
             self.phase = (('maintainer', '整理反馈经验', 'Maintainer 正在整理反馈经验')
                           if role == 'maintainer' else
                           ('proposer', '提出技能改进', 'Proposer 正在提出技能改进'))
+        elif context.get('kind') == 'fact_check':
+            self.phase = ('fact_check', '独立事实核查', '正在独立核查选定公开主张')
         elif self.folder.name == 'revision' or context.get('kind') == 'revise':
             self.phase = ('revision', '修订稿件', '正在按审阅意见修订稿件')
         self.has_saved_draft = False

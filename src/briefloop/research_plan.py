@@ -38,6 +38,7 @@ class AdmissionError(ValueError):
 def _plan_key(run_id): return 'research_plan:' + run_id
 def _protocol_key(run_id): return 'research_protocol:' + run_id
 def _requests_key(run_id): return 'research_requests:' + run_id
+def _grant_key(run_id): return 'fact_check_grant:' + run_id
 
 
 def frozen(store, run_id):
@@ -459,6 +460,90 @@ def finish_fact_check(store, run_id, *, status, summary='', job_id=None):
     if not result['idempotent'] and job_id:
         store.event(job_id, 'fact_check', {'action': 'finish', 'stage_id': result['stage_id'], 'status': status})
     return result
+
+
+def pending_fact_check_grant(store, run_id):
+    """A user grant recorded while research rounds were still open, if any."""
+    grant = store.meta(_grant_key(run_id))
+    return grant if isinstance(grant, dict) and grant.get('limits') else None
+
+
+def add_fact_check_grant(store, run_id, limits, *, job_id=None):
+    """Record an explicit user budget addition for fact checking.
+
+    The addition is real spendable budget (research_budget adds it to the run's
+    KINDS meter while the stage is active), not a bookkeeping label. Where it
+    lands depends on the stage: no stage yet — admit immediately when rounds
+    have closed, otherwise keep it pending for the Worker's admission; active —
+    append to the running stage; exhausted — reopen a fresh stage so the check
+    can continue. Completed/cancelled/failed stages are never reopened here.
+    Returns {'status': 'admitted'|'pending'|'active'|'reopened', ...}.
+    """
+    source = _fact_check_budget_source({'kind': 'user_grant', 'limits': limits})
+    grant = {'limits': source['limits'], 'created': now()}
+    run = store.one('runs', run_id)
+    requirements = json.loads(run['requirements'])
+    if not requirements.get('allow_web', False):
+        raise AdmissionError('离线任务不能追加联网核查预算', code='fact_check_offline')
+    plan = frozen(store, run_id)
+    if plan is None:
+        raise AdmissionError('本轮尚未冻结研究计划；不能追加核查预算', code='plan_missing')
+    stage = plan.get('fact_check')
+    if stage is None:
+        try:
+            admitted = admit_fact_check(store, run_id, {'kind': 'user_grant', 'limits': grant['limits']}, job_id=job_id)
+        except AdmissionError as exc:
+            if exc.code != 'fact_check_round_open':
+                raise
+            store.set_meta(_grant_key(run_id), grant)
+            if job_id:
+                store.event(job_id, 'fact_check', {'action': 'grant_pending', 'limits': grant['limits']})
+            return {'status': 'pending', 'limits': grant['limits']}
+        return {'status': 'admitted', 'stage_id': admitted['stage_id'], 'limits': grant['limits']}
+    if stage.get('status') == 'active':
+        def append(plan):
+            current = plan.get('fact_check')
+            if not current or current['stage_id'] != stage['stage_id'] or current.get('status') != 'active':
+                raise AdmissionError('核查阶段已变化，请刷新后重试', code='fact_check_conflict')
+            current.setdefault('grants', []).append(grant)
+            return True, {'stage_id': stage['stage_id'], 'status': 'active'}
+        _save_plan(store, run_id, append)
+        if job_id:
+            store.event(job_id, 'fact_check', {'action': 'grant_added', 'stage_id': stage['stage_id'], 'limits': grant['limits']})
+        return {'status': 'active', 'stage_id': stage['stage_id'], 'limits': grant['limits']}
+    if stage.get('status') == 'budget_exhausted':
+        def reopen(plan):
+            current = plan.get('fact_check')
+            if not current or current['stage_id'] != stage['stage_id'] or current['status'] != 'budget_exhausted':
+                raise AdmissionError('核查阶段已变化，请刷新后重试', code='fact_check_conflict')
+            plan.setdefault('fact_check_history', []).append(current)
+            fresh = {'stage_id': uid('fchk'), 'status': 'active',
+                     'budget_source': {'kind': 'user_grant', 'limits': grant['limits']},
+                     'created': now(), 'closed': None, 'outcome': None}
+            plan['fact_check'] = fresh
+            return True, fresh
+        fresh = _save_plan(store, run_id, reopen)
+        if job_id:
+            store.event(job_id, 'fact_check', {'action': 'grant_reopened', 'stage_id': fresh['stage_id'],
+                                               'limits': grant['limits'], 'previous_stage_id': stage['stage_id']})
+        return {'status': 'reopened', 'stage_id': fresh['stage_id'], 'limits': grant['limits']}
+    raise AdmissionError('核查阶段已以 ' + str(stage.get('status')) + ' 收束，追加预算不能重开；需重新核查请重新生成',
+                         code='fact_check_closed')
+
+
+def consume_pending_fact_check_grant(store, run_id, admitted_stage_id):
+    """Drop a pending grant after the Worker admitted its stage with it.
+
+    Admission is idempotent, so a crash between admitting and dropping only
+    replays into the same stage; the grant is only dropped when that stage is
+    really the one on the plan now.
+    """
+    stage = (frozen(store, run_id) or {}).get('fact_check') or {}
+    if stage.get('stage_id') != admitted_stage_id:
+        return False
+    with store.tx() as connection:
+        connection.execute('DELETE FROM meta WHERE key=?', (_grant_key(run_id),))
+    return True
 
 
 def search_slots_left(store, connection, run_id, round_id):

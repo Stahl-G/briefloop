@@ -104,7 +104,7 @@ def test_full_contract_passes_and_records_version_identity(tmp_path):
     assert record['execution']['status']=='completed' and record['unchecked']==[]
     assert record['stage_id']==world['stage']['stage_id']
     assert record['as_of']=='2026-09-01'  # 未显式给出时取报告截至日
-    assert record['snapshot']=={'model':'contract-test-model','search_provider':'native'}  # 任务入队时冻结的模型与搜索源
+    assert record['snapshot']=={'model':'contract-test-model','search_provider':'native','source':'fact_check_job'}  # 本次核查任务入队时冻结的模型与搜索源
     by_claim={item['claim_id']:item for item in record['candidates']}
     binding=store.rows('SELECT * FROM claim_bindings WHERE claim_id=?',(c['unit']['id'],))[0]
     unit=by_claim[c['unit']['id']]
@@ -191,3 +191,35 @@ def test_revised_draft_needs_a_new_check_identity(tmp_path):
     with pytest.raises(research_plan.AdmissionError) as info:  # v1 一个阶段一次接纳；重查需新阶段
         fact_check.submit_result(store,world['run']['id'],{**good_result(world),'version_id':revised['id']})
     assert info.value.code=='fact_check_closed'
+
+
+def test_completed_zero_selection_must_say_why_nothing_was_checked(tmp_path):
+    world=checked(tmp_path);store=world['store'];c=world['claims']
+    def zero(unselected=None,summary='核查完成'):
+        return {'version_id':world['brief']['id'],'stage_id':world['stage']['stage_id'],
+                'selection':{'claim_ids':[],'unselected':unselected or []},
+                'candidates':[],'execution':{'status':'completed','summary':summary}}
+    # Empty selection and empty unselected: "selected claims fully covered" would
+    # be vacuously true, so the contract demands an explanation instead.
+    with pytest.raises(fact_check.FactCheckError) as info:
+        fact_check.check_fact_result(store,world['run']['id'],zero())
+    assert 'empty_selection' in {error['code'] for error in info.value.errors}
+    # Passing over every bound claim with reasons is a valid completed empty pass.
+    everything=[{'claim_id':c[key]['id'],'reason':'不影响主要判断，未进本次核查'} for key,_,_ in PLAN]
+    record=fact_check.check_fact_result(store,world['run']['id'],zero(unselected=everything))
+    assert record['candidates']==[] and len(record['selection']['unselected'])==len(PLAN)
+
+
+def test_completed_zero_selection_without_bound_claims_needs_a_summary(tmp_path):
+    world=checked(tmp_path);store=world['store']
+    # A version with registered claims but no bindings: nothing is checkable.
+    bare=store.publish(world['run']['id'],{'title':'R','editor_document':{'type':'doc','content':[
+        {'type':'paragraph','content':[{'type':'text','text':'占位稿'}]}]}})
+    result={'version_id':bare['id'],'selection':{'claim_ids':[],'unselected':[]},
+            'candidates':[],'execution':{'status':'completed','summary':''}}
+    with pytest.raises(fact_check.FactCheckError) as info:
+        fact_check.check_fact_result(store,world['run']['id'],result)
+    assert 'empty_selection' in {error['code'] for error in info.value.errors}
+    result['execution']['summary']='本版本没有已绑定主张，无可核查对象'
+    record=fact_check.check_fact_result(store,world['run']['id'],result)
+    assert record['candidates']==[] and record['selection']['claim_ids']==[]

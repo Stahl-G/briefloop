@@ -153,17 +153,26 @@ def test_worker_admits_fact_check_before_delivery_checks_only_with_claims(tmp_pa
         return worker.generate(job, score=False)
 
     store, run = make_store(True)
-    generate(store, run, register_claim=True)
+    result = generate(store, run, register_claim=True)
     plan = research_plan.frozen(store, run['id'])
     assert plan['fact_check']['status'] == 'active'
     assert plan['fact_check']['budget_source']['kind'] == 'task_reserve'
     assert all(plan['fact_check']['budget_source']['limits'][kind] <= plan['budget'][kind]
                for kind in research_plan.BUDGET_FIELDS)
-    events = store.rows("SELECT data FROM events WHERE kind='fact_check' ORDER BY rowid")
-    assert json.loads(events[-1]['data'])['action'] == 'admit'
+    actions = [json.loads(row['data'])['action']
+               for row in store.rows("SELECT data FROM events WHERE kind='fact_check' ORDER BY rowid")]
+    assert actions == ['admit', 'dispatch']  # admission is followed by the check's own job
+    # Phase B trigger: the Worker orchestrates the check's execution — a real
+    # fact_check job is queued against this run and the admitted version.
+    checks = store.rows("SELECT * FROM jobs WHERE kind='fact_check'")
+    assert len(checks) == 1 and checks[0]['status'] == 'queued'
+    payload = json.loads(checks[0]['payload'])
+    assert payload['run_id'] == run['id'] and payload['version_id'] == result['version_id']
+    assert payload['parent_job_id']  # stopping the writing job stops the check too
 
     quiet = Store(tmp_path / 'no-claims')
     quiet_run = _run(quiet, research_budget={'search_requests': 8, 'candidate_urls': 20, 'source_pages': 6})
     generate(quiet, quiet_run, register_claim=False)
     assert 'fact_check' not in research_plan.frozen(quiet, quiet_run['id'])
+    assert quiet.rows("SELECT * FROM jobs WHERE kind='fact_check'") == []
     assert quiet.rows("SELECT * FROM events WHERE kind='fact_check'") == []

@@ -12,7 +12,8 @@ from pathlib import Path
 ASSETS = Path(__file__).with_name('workflow_assets')
 WORKFLOW_IDS = ('general_report', 'business_report', 'meeting_minutes', 'stock_research')
 ROLE_KEYS = {'orchestrator': 'planning', 'scout': 'planning', 'analyst': 'writing',
-             'revision': 'writing', 'evaluator': 'evaluation', 'reviewer': 'evaluation'}
+             'revision': 'writing', 'evaluator': 'evaluation', 'reviewer': 'evaluation',
+             'fact-checker': 'evaluation'}
 
 
 def list_workflows():

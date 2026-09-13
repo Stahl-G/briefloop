@@ -57,3 +57,26 @@ test('fact-check panel renders per-claim candidates, separate execution status a
  assert.match(stale,/本稿不算已核查/);
  assert.equal(locatorText({kind:'text',start_line:2,end_line:3}),'第 2–3 行');
 });
+
+test('fact-check panel shows the stage state and the user grant entry when it can be spent',()=>{
+ // 耗尽的阶段：展示状态与追加入口，说明追加只在阶段期间并入计量
+ const exhausted=factCheckHTML({version_id:'v1',enabled:true,stage:{stage_id:'s1',status:'budget_exhausted',
+  budget_source:{kind:'task_reserve',limits:{}},grants:[],outcome:{}},records:[]});
+ assert.match(exhausted,/核查阶段预算耗尽/);assert.match(exhausted,/预算来源：任务预留份额/);
+ assert.match(exhausted,/data-fact-grant="v1"/);assert.match(exhausted,/追加核查预算（6 次搜索 · 30 候选 · 12 正文页）/);
+ assert.match(exhausted,/不代表主张真假/);
+ // 进行中的阶段同样可追加；已完成的阶段不再出现按钮
+ const active=factCheckHTML({version_id:'v1',enabled:true,stage:{stage_id:'s2',status:'active',
+  budget_source:{kind:'user_grant',limits:{}},grants:[{limits:{}}],outcome:null},records:[]});
+ assert.match(active,/核查阶段进行中/);assert.match(active,/预算来源：用户明确追加，另追加 1 次/);
+ assert.match(active,/data-fact-grant="v1"/);
+ const done=factCheckHTML({version_id:'v1',enabled:true,stage:{stage_id:'s3',status:'completed',
+  budget_source:{kind:'task_reserve',limits:{}},grants:[],outcome:{}},records:[]});
+ assert.match(done,/核查阶段已完成/);assert.ok(!done.includes('data-fact-grant'));
+ // 开关开启但阶段未接纳：提示自动执行，可预登记追加
+ const pre=factCheckHTML({version_id:'v1',enabled:true,stage:null,pending_grant:{limits:{search_requests:2,candidate_urls:10,source_pages:2}},records:[]});
+ assert.match(pre,/已开启，交付检查前自动执行/);assert.match(pre,/已登记追加核查预算（2 次搜索 · 10 候选 · 2 正文页）/);
+ assert.match(pre,/将在核查阶段接纳时并入计量/);assert.match(pre,/data-fact-grant="v1"/);
+ // 未开启且无记录：不渲染
+ assert.equal(factCheckHTML({version_id:'v1',enabled:false,stage:null,records:[]}),'');
+});

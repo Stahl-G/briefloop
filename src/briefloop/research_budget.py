@@ -21,6 +21,28 @@ def canonical_url(url):
     return urlunsplit((parts.scheme.lower(),parts.netloc.lower(),parts.path or '/',parts.query,''))
 
 
+def _fact_check_grant_limits(connection,run_id):
+    """User-granted additions attached to an ACTIVE fact-check stage (KINDS ints).
+
+    A user grant is spendable budget: while the stage runs, its amounts are
+    added to the meter's limits. The initial admission with kind=user_grant and
+    later stage['grants'] additions both count; once the stage closes the
+    additions lapse, so nothing silently expands the task budget forever.
+    """
+    row=connection.execute("SELECT value FROM meta WHERE key=?",('research_plan:'+run_id,)).fetchone()
+    if row is None:return None
+    try:stage=(json.loads(row['value']) or {}).get('fact_check') or {}
+    except (TypeError,ValueError):return None
+    if stage.get('status')!='active':return None
+    extra={kind:0 for kind in KINDS}
+    source=stage.get('budget_source') or {}
+    if source.get('kind')=='user_grant':
+        for kind in KINDS:extra[kind]+=int((source.get('limits') or {}).get(kind,0) or 0)
+    for grant in stage.get('grants') or []:
+        for kind in KINDS:extra[kind]+=int((grant.get('limits') or {}).get(kind,0) or 0)
+    return extra if any(extra.values()) else None
+
+
 def _load(store,connection,run_id):
     row=connection.execute('SELECT requirements FROM runs WHERE id=?',(run_id,)).fetchone()
     if row is None:raise KeyError('Run not found')
@@ -28,6 +50,12 @@ def _load(store,connection,run_id):
     # Missing on old records means unlimited; never infer a preset retroactively.
     limits=(ResearchBudget.model_validate(requirements['research_budget']).model_dump()
             if 'research_budget' in requirements else None)
+    extra=_fact_check_grant_limits(connection,run_id)
+    if extra is not None:
+        # A run without an authorized budget starts its fact-check stage from
+        # zero plus the grant; the user's explicit amount is the ceiling.
+        base=limits if limits is not None else {kind:0 for kind in KINDS}
+        limits={kind:base[kind]+extra[kind] for kind in KINDS}
     key='research_budget:'+run_id
     row=connection.execute('SELECT value FROM meta WHERE key=?',(key,)).fetchone()
     state=json.loads(row['value']) if row else {'search_requests':0,'candidate_urls':[],'source_pages':[]}

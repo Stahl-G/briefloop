@@ -54,10 +54,32 @@ function candidateCard(candidate) {
   `<p class="help">${escHtml(reviewer)}</p></details>`;
 }
 
+// Default addition mirrors the product's starting reserve share; an explicit
+// limits object (a recorded pending grant) renders its own numbers.
+export function factGrantText(limits) {
+ const l = limits || { search_requests: 6, candidate_urls: 30, source_pages: 12 };
+ return `${l.search_requests} 次搜索 · ${l.candidate_urls} 候选 · ${l.source_pages} 正文页`;
+}
+
 export function factCheckHTML(data) {
  const records = data?.records || [];
- if (!records.length) return '';
- return records.map(record => {
+ const stage = data?.stage || null;
+ const stageLabel = { active: '核查阶段进行中', budget_exhausted: '核查阶段预算耗尽', completed: '核查阶段已完成', cancelled: '核查阶段已取消', failed: '核查阶段执行失败' };
+ // The user-facing grant entry (plan D3): visible while the stage can still
+ // spend (active) or was closed by exhaustion (追加后重开继续)；预登记 shows when
+ // the switch is on but the stage has not been admitted yet.
+ const grantable = stage ? ['active', 'budget_exhausted'].includes(stage.status) : !!data?.enabled;
+ const grantNote = data?.pending_grant
+  ? `<p class="help">已登记追加核查预算（${escHtml(factGrantText(data.pending_grant.limits))}），将在核查阶段接纳时并入计量。</p>` : '';
+ const stageSection = (stage || data?.enabled || grantNote)
+  ? `<section class="issue-card fact-check"><div class="issue-head"><strong>独立事实核查</strong><span class="help">${escHtml(stage ? stageLabel[stage.status] || stage.status : '已开启，交付检查前自动执行')}</span></div>` +
+     (stage ? `<p class="help">预算来源：${escHtml(stage.budget_source?.kind === 'user_grant' ? '用户明确追加' : '任务预留份额')}${(stage.grants || []).length ? `，另追加 ${(stage.grants || []).length} 次` : ''}；追加额度只在阶段进行期间并入计量。</p>` : '') +
+     grantNote +
+     (stage?.status === 'budget_exhausted' ? '<p class="help">预算耗尽只是执行收束原因，不代表主张真假；追加后重开阶段继续核查。</p>' : '') +
+     (grantable ? `<p><button data-fact-grant="${escHtml(data.version_id)}">追加核查预算（${escHtml(factGrantText())}）</button></p>` : '') +
+    '</section>'
+  : '';
+ return stageSection + records.map(record => {
   const execution = record.execution || {};
   const executionLabel = FACT_EXECUTION_LABELS[execution.status] || execution.status || '';
   const model = record.snapshot?.model || '未记录模型';

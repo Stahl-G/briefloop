@@ -637,6 +637,7 @@ class Worker:
                     args=json.loads(job['payload'])
                     result=refresh(self.store,args['run_id'],args['source_id'],information_cutoff=args['information_cutoff'],trigger='manual')
                 elif job['kind']=='generate':result=self.generate(job)
+                elif job['kind']=='fact_check':result=self.run_fact_check(job)
                 elif job['kind']=='assess':result=self.assess(job)
                 elif job['kind']=='revise':
                     brief=self.store.one('briefs',json.loads(job['payload'])['version_id'])
@@ -714,25 +715,98 @@ class Worker:
         return {'source_snapshot':saved['sources']}
 
     def _admit_fact_check(self,job,brief):
-        """Admit the fact-check stage before delivery checks; nothing runs during writing.
+        """Admit the fact-check stage before delivery checks, then schedule its run.
 
-        v1 admits an empty stage only: the fact-checker itself is a later phase,
-        so this records the switch, the candidate claims and the budget source
-        without executing any check. A stage that cannot be admitted (offline,
-        no budget, rounds still open) is a structured event, never a run failure.
+        Trigger (plan §4 Phase B): before delivery checks, when the switch is on
+        and candidate claims exist — orchestrated by the Worker, never during the
+        writing turn. Admission records the budget source (a pending user grant
+        wins over the task reserve share) and the fact-checker's own job is
+        queued with the same frozen model/provider chain as this writing job.
+        A stage that cannot be admitted (offline, no budget, rounds still open)
+        is a structured event, never a run failure.
         """
-        from .research_plan import admit_fact_check,AdmissionError,frozen as frozen_plan
+        from .research_plan import (admit_fact_check,AdmissionError,consume_pending_fact_check_grant,
+                                    frozen as frozen_plan,pending_fact_check_grant)
         run_id=brief['run_id']
         requirements=json.loads(self.store.one('runs',run_id)['requirements'])
         if not requirements.get('fact_check'):return None
         if not self.store.rows('SELECT id FROM claims WHERE run_id=? LIMIT 1',(run_id,)):return None
-        limits=(frozen_plan(self.store,run_id) or {}).get('budget') or {}
-        share={field:min(FACT_CHECK_RESERVE[field],int(limits.get(field,0))) for field in FACT_CHECK_RESERVE}
+        grant=pending_fact_check_grant(self.store,run_id)
+        if grant:
+            source={'kind':'user_grant','limits':grant['limits']}
+        else:
+            limits=(frozen_plan(self.store,run_id) or {}).get('budget') or {}
+            share={field:min(FACT_CHECK_RESERVE[field],int(limits.get(field,0))) for field in FACT_CHECK_RESERVE}
+            source={'kind':'task_reserve','limits':share}
         try:
-            return admit_fact_check(self.store,run_id,{'kind':'task_reserve','limits':share},job_id=job['id'])
+            admitted=admit_fact_check(self.store,run_id,source,job_id=job['id'])
         except AdmissionError as exc:
             self.store.event(job['id'],'fact_check',{'action':'admit_refused','code':exc.code,'error':str(exc)})
             return None
+        if grant:
+            consume_pending_fact_check_grant(self.store,run_id,admitted['stage_id'])
+        if admitted.get('status')!='active':return admitted  # already closed; nothing to run
+        pending=self.store.rows("SELECT id FROM jobs WHERE kind='fact_check' AND status IN ('queued','running') AND json_extract(payload,'$.run_id')=?",(run_id,))
+        if pending:return admitted
+        payload=json.loads(job['payload'])
+        check={'run_id':run_id,'version_id':brief['id'],'parent_job_id':job['id']}
+        # Same frozen model/provider chain as the writing job, and the same
+        # conversation for status notes when the task started from a chat.
+        check.update({key:payload[key] for key in ('runtime','agent_backend','search_provider','role_models','session_id') if key in payload})
+        queued=self.store.enqueue('fact_check',check)
+        self.store.event(job['id'],'fact_check',{'action':'dispatch','stage_id':admitted['stage_id'],'job_id':queued['id']})
+        return admitted
+
+    def run_fact_check(self,job):
+        """Run the orchestrated fact-check turn: task pack, native session, stage close.
+
+        The fact-checker is an independent CLI-host session (its own job folder
+        conversation): it selects claims, runs metered neutral plus counter-
+        evidence queries and submits through the ``fact-status`` tool, which
+        validates and closes the stage (D4: reasoning in the agent, deterministic
+        checks in Python). This method owns transport only: a user stop closes
+        the stage as cancelled; any other failure fails the job while the stage
+        stays active for a resume. A turn that ends without any submission is
+        reported as failed, never as a completed check.
+        """
+        from .fact_check import fact_check_prompt,records_for
+        from .research_plan import finish_fact_check,frozen as frozen_plan
+        payload=json.loads(job['payload'])
+        brief=self.store.one('briefs',payload['version_id'])
+        folder=self.folder(job)
+        from .backends import validate_backend
+        backend=validate_backend(payload.get('agent_backend','codex'))
+        run_id=brief['run_id']
+        stage=(frozen_plan(self.store,run_id) or {}).get('fact_check') or {}
+        if stage.get('status')!='active':
+            # A resumed job after the stage already closed (late result refused,
+            # user grant reopened another stage) must not execute a second turn.
+            return {'version_id':brief['id'],'stage_id':stage.get('stage_id'),
+                    'execution':{'status':stage.get('status'),'summary':'阶段已收束，本次不执行'}}
+        job={**job,'allow_web':True}
+        self.store.event(job['id'],'fact_check',{'action':'run','stage_id':stage['stage_id'],'version_id':brief['id']})
+        try:
+            self.runtime.execute(job,fact_check_prompt(self.store,job,brief,folder,backend),folder)
+        except InterruptedError:
+            finish_fact_check(self.store,run_id,status='cancelled',summary='核查任务已停止',job_id=job['id'])
+            raise
+        except Exception:
+            # A transport failure is a job failure, not a check outcome: the
+            # stage stays active so the resumed job can retry the same turn.
+            raise
+        stage=(frozen_plan(self.store,run_id) or {}).get('fact_check') or {}
+        if stage.get('status')=='active':
+            # The turn ended without an admitted result: fail the job honestly;
+            # the stage stays active for a resume instead of pretending an
+            # empty check ran.
+            raise ValueError('核查会话结束但未提交结果；可恢复该任务重试')
+        rows=records_for(self.store,run_id)
+        record=rows[0] if rows else None
+        return {'version_id':brief['id'],'stage_id':stage.get('stage_id'),
+                'execution':stage.get('outcome',{}).get('status'),
+                'record_id':record['id'] if record else None,
+                'candidates':len(record['data']['candidates']) if record else 0,
+                'unchecked':len(record['data']['unchecked']) if record else 0}
 
     def generate(self,job,*,score=True):
         payload=json.loads(job['payload']);run=self.store.one('runs',payload['run_id']);folder=self.folder(job)
