@@ -81,7 +81,7 @@ flowchart TB
 
 ## 分层说明
 
-1. **界面层**：界面源码在 `frontend/`（app.js、rich-document.js），由 esbuild 打包（`npm run build`，`package.json`）输出到 `src/briefloop/static/app.js`，Python 服务只发布 `static/`（原生无框架运行时 + 打包后的 bundle，含 tiptap 富文档依赖）。浏览器用带 `X-BriefLoop-Token` 的 JSON 请求访问 `/api/*`，token 过期时自动重新握手（`frontend/app.js:40` 的 `api()`）。
+1. **界面层**：界面源码在 `frontend/`（app.js、rich-document.js），由 esbuild 打包（`npm run build`，`package.json`）输出到 `src/briefloop/static/app.js`，Python 服务只发布 `static/`（原生无框架运行时 + 打包后的 bundle，含 tiptap 富文档依赖）。浏览器的 JSON POST 带 `X-BriefLoop-Token`，token 过期时自动重新握手（`frontend/app.js:40` 的 `api()`）。
 
 2. **服务层**：`cli.py` 的 `serve/start` 进入 `server.py:make_server()`。服务先取得 `platform_support.WorkspaceLock`，再初始化 Store；POSIX 使用 `flock`，Windows 使用排他字节锁。启动时组装各 Harness 管理器和 `Worker`，并一次性恢复中断的会话状态（`harness.chat.recover_stale()`）。`GET /api/state` 返回整个工作区快照，写操作走 `POST /api/<命令>`。
 
@@ -99,3 +99,5 @@ flowchart TB
 - 一个工作区同时只允许一个服务实例（`platform_support.WorkspaceLock` 的操作系统锁）。Windows 所属宿主进程树由 Job Object 回收；它不提供文件或网络隔离。
 - runtime-bridge 需要本机 Node 20+，构建产物为 `src/briefloop/static/runtime-bridge.mjs`（`runtime-bridge/build.mjs`）。
 - 后端可选：`codex/opencode/claude/kimi/hermes/reasonix/mimo`（`cli.py:21`），ACP 类宿主经 Node 桥。
+
+私有 GET 统一检查 Origin 与 Fetch Metadata，拒绝明确的跨源浏览器请求（包括同机不同端口）。同源链接、地址栏导航及无浏览器来源头的本机客户端仍可下载，不在 URL 中携带会话 Token。服务仅监听 127.0.0.1 并严格校验 Host；这些机制不隔离同机进程，握手 Token 也不构成 OS 用户级认证。

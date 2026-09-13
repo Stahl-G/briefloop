@@ -23,6 +23,10 @@
 
 ## 服务范围
 
-接口只连接已验证身份的本机工作区服务，复用 Host 校验、会话 Token 和退出停止接收请求的逻辑。CLI 不打印 Token，不读取模型凭据。服务端每次请求再次检查 workspace_id；工作区更换或服务未就绪会明确失败。
+接口只连接已验证身份的本机工作区服务，复用 Host 校验、会话 Token 和退出停止接收请求的逻辑。CLI 不打印 Token，不读取模型凭据。外部 action 和客户端文件下载再次检查 workspace_id；工作区更换或服务未就绪会明确失败。
+
+私有 GET（包括握手、材料、稿件和所有下载接口）拒绝明确的外站 Origin，以及 Fetch Metadata 中的跨源请求；同机不同端口也属于跨源。根页和静态界面仍可从外部链接打开，再从工作区内下载。正常同源链接、地址栏导航和不带这些浏览器头的本机 CLI 保持可用，不在下载 URL 中放 Token。
+
+会话 Token 用于 JSON POST 的浏览器请求防护；下载 GET 不要求自定义 Token 头。外部客户端先通过带 Token 的 action/query 校验产物，再流式下载并核对哈希。这不是同机用户或进程之间的权限隔离：能访问本机服务的原生进程可以请求握手 Token；Origin/Fetch Metadata 也不是原生进程的身份证明。
 
 接口细节和可复制的请求示例以随包的 [Skill](../src/briefloop/skill_assets/briefloop-external/SKILL.md) 为准。`inspect` 默认返回最近 100 个来源和 20 个稿件；已知历史 ID 仍可精确读取。
