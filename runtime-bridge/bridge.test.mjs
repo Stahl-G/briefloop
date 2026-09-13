@@ -72,3 +72,16 @@ test('Electron Node mode does not escape into host metadata probes or ACP subpro
  assert.equal(result.source,'host');
  assert.ok(result.models.some(x=>x.id==='test/model'));
 });
+
+test('DeepSeek Harness grouped model choices round-trip and session/resume is negotiated',async t=>{
+ const b=bridge(t);
+ const fake=rpcFake.replace('loadSession:true','sessionCapabilities:{resume:{}}').replace("m.method==='session/load'","m.method==='session/resume'").replace("models:{availableModels:[{modelId:'test/model',name:'Test'}]}",`configOptions:[{id:'model',category:'model',type:'select',currentValue:JSON.stringify(['deepseek-official','deepseek-flash']),options:[{group:'deepseek-official',options:[{value:JSON.stringify(['deepseek-official','deepseek-flash']),name:'Flash'}]}]}]`).replace("m.method==='session/set_model')result({})","m.method==='session/set_config_option'){if(m.params.value!==JSON.stringify(['deepseek-official','deepseek-flash']))process.exit(3);result({});}").replace("};else if(m.method==='session/prompt')","}else if(m.method==='session/prompt')");
+ const f=fixture(t,`if(JSON.stringify(process.argv.slice(2))!==JSON.stringify(['--profile','acp']))process.exit(2);`+fake,'dsh');
+ b.send(1,'list_models',{runtime_id:'deepseek-harness',...f});
+ assert.ok((await b.wait(x=>x.id===1)).result.models.some(m=>m.id==='deepseek-official/deepseek-flash'));
+ b.send(2,'start',{...f,runtime_id:'deepseek-harness',execution_id:'dsh-resume',session_id:'saved-dsh-session',model:'deepseek-official/deepseek-flash',prompt:'continue',permission:'runtime-native',allow_web:null});
+ const q=await b.wait(x=>x.params?.kind==='question');
+ b.send(3,'answer',{execution_id:'dsh-resume',request_id:q.params.request_id,option_id:'yes'});
+ assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');
+ assert.equal(b.frames.find(x=>x.params?.kind==='session').params.session_id,'saved-dsh-session');
+});

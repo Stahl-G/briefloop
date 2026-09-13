@@ -25,7 +25,8 @@ stdin/stdout 各一行 JSON：请求 `{id,method,params}`，应答 `{id,result}`
 | Claude | stream-json | 已接入文本/工具/原生图片/恢复；使用宿主默认权限，无自动权限批准；未提供 headless 权限回答 |
 | MiMo | run --format json | 已接入文本/工具；已接入原生会话恢复；图片直发尚未验证 |
 | Codex、OpenCode | 原有 native manager | 本 bridge 检测它们；Python facade 负责分发给已存在的执行管理器 |
-| 其他已知 CLI | 仅检测 | 未实现执行，不显示为已接通；DSH 需要另外验证已安装 profile，当前不自动创建 profile |
+| DeepSeek Harness | ACP | 使用已安装 dsh 的 acp profile；profile 初始化由宿主处理，实际模型调用需单独验证 |
+| 其他已知 CLI | 仅检测 | 未实现执行，不显示为已接通 |
 
 ACP `agent_thought_chunk`（以及 Claude `thinking` 块、Opencode `reasoning` part）作为独立的 `reasoning` 事件传给本地聊天展示，不与可见正文或工具事件混在一起；执行日志、通知与审计包仍由 BriefLoop 的既有记录层排除推理。并不将此通道宣称为通用敏感资料脱敏器；执行日志和审计包仍由 BriefLoop 的现有记录层处理。
 
@@ -36,3 +37,5 @@ ACP `agent_thought_chunk`（以及 Claude `thinking` 块、Opencode `reasoning` 
 `node --test runtime-bridge/bridge.test.mjs`：7 个合成协议行为覆盖宿主模型/会话、Hermes 两种入口、Reasonix 多模型标识、权限回答、推理独立事件通道、限制拒绝、取消和失败状态。测试不调用真实模型。每个本机 CLI 的短真实调用由试点验收记录单独说明，不以协议 fixture 宣称实机成功。
 
 模型目录直接复用上游 ACP、Codex 和 OpenCode 解析函数及 Claude 本机路由发现。Reasonix 使用原生 doctor 模型配置。内置建议标注来源，不作为选择白名单；用户仍可手填模型。
+
+DeepSeek Harness uses `dsh --profile acp` with its existing provider credentials. ACP session continuation prefers advertised `session/load`, or uses `session/resume` when advertised instead; unsupported continuation fails before prompting. Model IDs come from the host catalog.

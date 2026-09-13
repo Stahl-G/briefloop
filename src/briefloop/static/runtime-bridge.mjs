@@ -1127,7 +1127,7 @@ function exec(bin, args, options) {
   if (!env.BRIEFLOOP_PYTHON || !env.BRIEFLOOP_PROCESS_HELPER) throw Error("Windows process owner is unavailable");
   return rawExec(env.BRIEFLOOP_PYTHON, ["-X", "utf8", env.BRIEFLOOP_PROCESS_HELPER, bin, ...args], { ...options, windowsHide: true });
 }
-var acpArgs = { codebuddy: ["--acp"], kimi: ["acp"], hermes: ["acp"], reasonix: ["acp"], kilo: ["acp"], kiro: ["acp"], vibe: [] };
+var acpArgs = { codebuddy: ["--acp"], kimi: ["acp"], hermes: ["acp"], reasonix: ["acp"], kilo: ["acp"], kiro: ["acp"], vibe: [], "deepseek-harness": ["--profile", "acp"] };
 function acpArguments(id, bin) {
   return id === "hermes" && /^hermes-acp(?:\.(?:exe|cmd|bat))?$/i.test(path2.basename(bin)) ? [] : [...acpArgs[id]];
 }
@@ -1269,16 +1269,36 @@ function connect(bin, args, cwd, onUpdate, onRequest) {
 }
 async function handshake(conn, p) {
   const init = await conn.call("initialize", { protocolVersion: 1, clientCapabilities: { fs: { readTextFile: false, writeTextFile: false }, terminal: false }, clientInfo: { name: "briefloop", version: "1" } });
-  if (p.session_id && !init.agentCapabilities?.loadSession) throw Error("Host does not advertise session/load");
-  const session = await conn.call(p.session_id ? "session/load" : "session/new", { ...buildAcpSessionNewParams(p.cwd), ...p.session_id ? { sessionId: p.session_id } : {} });
+  const resumeMethod = init.agentCapabilities?.loadSession ? "session/load" : init.agentCapabilities?.sessionCapabilities?.resume ? "session/resume" : null;
+  if (p.session_id && !resumeMethod) throw Error("Host does not advertise session/load or session/resume");
+  const session = await conn.call(p.session_id ? resumeMethod : "session/new", { ...buildAcpSessionNewParams(p.cwd), ...p.session_id ? { sessionId: p.session_id } : {} });
   return { init, session };
 }
-async function windowsAcpModels(bin, args, cwd) {
+function acpModelOptions(runtime, options) {
+  if (!Array.isArray(options)) return options;
+  const flatten = (values) => values.flatMap((v) => Array.isArray(v?.options) ? flatten(v.options) : [v]);
+  return options.map((o) => ({ ...o, options: Array.isArray(o.options) ? flatten(o.options).map((v) => {
+    if (runtime !== "deepseek-harness") return v;
+    try {
+      const pair = JSON.parse(v.value);
+      if (Array.isArray(pair) && pair.length === 2 && pair.every((x) => typeof x === "string" && sanitizeCustomModel(x) && !x.includes("/"))) return { ...v, value: pair.join("/") };
+    } catch {
+    }
+    return v;
+  }) : o.options }));
+}
+function acpSelectedModel(runtime, model, options) {
+  if (runtime !== "deepseek-harness") return model;
+  const advertised = findModelConfigOption(acpModelOptions(runtime, options));
+  if (!advertised?.values.some((v) => v.value === model)) throw Error("Selected model is not advertised by DeepSeek Harness");
+  return JSON.stringify(model.split("/"));
+}
+async function acpSessionModels(bin, args, cwd, runtime) {
   const conn = connect(bin, args, cwd, () => {
   }, (_m, reply) => reply({ outcome: { outcome: "cancelled" } }));
   try {
     const { session } = await handshake(conn, { cwd });
-    return normalizeModels(session.models, defaults[0], session.configOptions);
+    return normalizeModels(session.models, defaults[0], acpModelOptions(runtime, session.configOptions));
   } finally {
     terminate(conn.child);
   }
@@ -1327,7 +1347,7 @@ async function listModels(p) {
     }
     if (p.runtime_id in acpArgs) {
       const args = acpArguments(p.runtime_id, bin);
-      const models = process.platform === "win32" ? await windowsAcpModels(bin, args, p.cwd || process.cwd()) : await detectAcpModels({ bin, args, cwd: p.cwd || process.cwd(), env, timeoutMs: 15e3, defaultModelOption: defaults[0], clientName: "briefloop-models" });
+      const models = process.platform === "win32" || p.runtime_id === "deepseek-harness" ? await acpSessionModels(bin, args, p.cwd || process.cwd(), p.runtime_id) : await detectAcpModels({ bin, args, cwd: p.cwd || process.cwd(), env, timeoutMs: 15e3, defaultModelOption: defaults[0], clientName: "briefloop-models" });
       const live = models.some((m) => m.id !== "default");
       return { models: live ? models : fallback, source: live ? "host" : "builtin_hints" };
     }
@@ -1386,7 +1406,7 @@ async function runAcp(p, state) {
     emit(p.execution_id, "session", { session_id: sessionId, capabilities: init.agentCapabilities || {} });
     if (p.model && p.model !== "default" && p.runtime_id !== "reasonix") {
       const cfg = findModelConfigOption(session.configOptions);
-      await conn.call(cfg ? "session/set_config_option" : "session/set_model", cfg ? { sessionId, configId: cfg.configId, value: p.model } : { sessionId, modelId: p.model });
+      await conn.call(cfg ? "session/set_config_option" : "session/set_model", cfg ? { sessionId, configId: cfg.configId, value: acpSelectedModel(p.runtime_id, p.model, session.configOptions) } : { sessionId, modelId: p.model });
     }
     const blocks = buildPromptBlocks(p.prompt, []);
     if (p.images?.length && !init.agentCapabilities?.promptCapabilities?.image) throw Error("Host does not advertise image input");

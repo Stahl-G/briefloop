@@ -20,7 +20,7 @@ function exec(bin:string,args:string[],options:any):any {
  if(!env.BRIEFLOOP_PYTHON||!env.BRIEFLOOP_PROCESS_HELPER)throw Error('Windows process owner is unavailable');
  return rawExec(env.BRIEFLOOP_PYTHON,['-X','utf8',env.BRIEFLOOP_PROCESS_HELPER,bin,...args],{...options,windowsHide:true});
 }
-const acpArgs = {codebuddy:['--acp'],kimi:['acp'],hermes:['acp'],reasonix:['acp'],kilo:['acp'],kiro:['acp'],vibe:[]};
+const acpArgs = {codebuddy:['--acp'],kimi:['acp'],hermes:['acp'],reasonix:['acp'],kilo:['acp'],kiro:['acp'],vibe:[],'deepseek-harness':['--profile','acp']};
 function acpArguments(id:string,bin:string):string[]{
  // The dedicated Hermes entry point starts ACP directly and avoids CLI/plugin startup.
  return id==='hermes'&&/^hermes-acp(?:\.(?:exe|cmd|bat))?$/i.test(path.basename(bin))?[]:[...acpArgs[id]];
@@ -78,10 +78,25 @@ function connect(bin:string,args:string[],cwd:string,onUpdate:(v:any)=>void,onRe
  child.on('error',fail);child.stdin.on('error',fail);child.on('close',(code)=>{parser.flush();fail(Error('ACP exited before response: '+code));});
  return {child,notify:(method:string,params:any)=>send({jsonrpc:'2.0',method,params}),call:(method:string,params:any,timeout=20000)=>new Promise<any>((resolve,reject)=>{const id=++seq;const timer=timeout>0?setTimeout(()=>{pending.delete(id);reject(Error(method+' timed out'));},timeout):null;pending.set(id,{resolve,reject,timer});send({jsonrpc:'2.0',id,method,params});})};
 }
-async function handshake(conn:any,p:any){const init=await conn.call('initialize',{protocolVersion:1,clientCapabilities:{fs:{readTextFile:false,writeTextFile:false},terminal:false},clientInfo:{name:'briefloop',version:'1'}});if(p.session_id&&!init.agentCapabilities?.loadSession)throw Error('Host does not advertise session/load');const session=await conn.call(p.session_id?'session/load':'session/new',{...buildAcpSessionNewParams(p.cwd),...(p.session_id?{sessionId:p.session_id}:{})});return {init,session};}
-async function windowsAcpModels(bin:string,args:string[],cwd:string){
+async function handshake(conn:any,p:any){const init=await conn.call('initialize',{protocolVersion:1,clientCapabilities:{fs:{readTextFile:false,writeTextFile:false},terminal:false},clientInfo:{name:'briefloop',version:'1'}});const resumeMethod=init.agentCapabilities?.loadSession?'session/load':init.agentCapabilities?.sessionCapabilities?.resume?'session/resume':null;if(p.session_id&&!resumeMethod)throw Error('Host does not advertise session/load or session/resume');const session=await conn.call(p.session_id?resumeMethod:'session/new',{...buildAcpSessionNewParams(p.cwd),...(p.session_id?{sessionId:p.session_id}:{})});return {init,session};}
+function acpModelOptions(runtime:string,options:any){
+ if(!Array.isArray(options))return options;
+ const flatten=(values:any[]):any[]=>values.flatMap(v=>Array.isArray(v?.options)?flatten(v.options):[v]);
+ return options.map(o=>({...o,options:Array.isArray(o.options)?flatten(o.options).map(v=>{
+  if(runtime!=='deepseek-harness')return v;
+  try{const pair=JSON.parse(v.value);if(Array.isArray(pair)&&pair.length===2&&pair.every(x=>typeof x==='string'&&sanitizeCustomModel(x)&&!x.includes('/')))return {...v,value:pair.join('/')};}catch{}
+  return v;
+ }):o.options}));
+}
+function acpSelectedModel(runtime:string,model:string,options:any){
+ if(runtime!=='deepseek-harness')return model;
+ const advertised=findModelConfigOption(acpModelOptions(runtime,options));
+ if(!advertised?.values.some((v:any)=>v.value===model))throw Error('Selected model is not advertised by DeepSeek Harness');
+ return JSON.stringify(model.split('/'));
+}
+async function acpSessionModels(bin:string,args:string[],cwd:string,runtime:string){
  const conn=connect(bin,args,cwd,()=>{},(_m,reply)=>reply({outcome:{outcome:'cancelled'}}));
- try{const {session}=await handshake(conn,{cwd});return normalizeModels(session.models,defaults[0],session.configOptions);}
+ try{const {session}=await handshake(conn,{cwd});return normalizeModels(session.models,defaults[0],acpModelOptions(runtime,session.configOptions));}
  finally{terminate(conn.child);}
 }
 async function discover(p:any){return await Promise.all(catalog.filter(d=>d.id!=='byok-opencode').map(async d=>{const bin=findBin(d,p.paths?.[d.id]);if(!bin)return {...d,path:null,installed:false,status:'not_installed',capabilities:capabilities(d.id)};let version=null,error=null;try{const r=await exec(bin,['--version'],{env,timeout:5000,maxBuffer:16384});version=r.stdout.trim().split('\n')[0].slice(0,160);}catch{error='Version probe failed';}const impl=protocol(d.id);return {...d,path:bin,installed:true,version,status:impl?'detected':'not_integrated',protocol:impl,implemented:!!impl,error,capabilities:capabilities(d.id)};}));}
@@ -98,7 +113,7 @@ async function listModels(p:any){const d=defFor(p.runtime_id),bin=findBin(d,p.pa
  try{
   if(p.runtime_id==='codex'){const r=await exec(bin,['debug','models'],{env,timeout:5000,maxBuffer:4*1024*1024});const models=parseCodexDebugModels(r.stdout);return {models:models||fallback,source:models?'host':'builtin_hints'};}
   if(['mimo','opencode'].includes(p.runtime_id)){const r=await exec(bin,['models','--verbose'],{env,timeout:20000,maxBuffer:8*1024*1024});const models=parseOpenCodeModels(r.stdout);return {models:models||fallback,source:models?'host':'builtin_hints'};}
-  if(p.runtime_id in acpArgs){const args=acpArguments(p.runtime_id,bin);const models=process.platform==='win32'?await windowsAcpModels(bin,args,p.cwd||process.cwd()):await detectAcpModels({bin,args,cwd:p.cwd||process.cwd(),env,timeoutMs:15000,defaultModelOption:defaults[0],clientName:'briefloop-models'});const live=models.some(m=>m.id!=='default');return {models:live?models:fallback,source:live?'host':'builtin_hints'};}
+  if(p.runtime_id in acpArgs){const args=acpArguments(p.runtime_id,bin);const models=process.platform==='win32'||p.runtime_id==='deepseek-harness'?await acpSessionModels(bin,args,p.cwd||process.cwd(),p.runtime_id):await detectAcpModels({bin,args,cwd:p.cwd||process.cwd(),env,timeoutMs:15000,defaultModelOption:defaults[0],clientName:'briefloop-models'});const live=models.some(m=>m.id!=='default');return {models:live?models:fallback,source:live?'host':'builtin_hints'};}
  }catch{return {models:fallback,source:'builtin_hints',diagnostic:'宿主目录读取失败，已显示内置建议；也可直接输入模型 ID。'};}
  return {models:fallback,source:'builtin_hints'};
 }
@@ -114,7 +129,7 @@ function acpToolTitle(tool:any){
 async function runAcp(p:any,state:any){let sessionId;const args=acpArguments(p.runtime_id,state.bin);if(p.runtime_id==='reasonix'&&p.model&&p.model!=='default')args.push('-model',p.model);const conn=connect(state.bin,args,p.cwd,(m)=>{if(m.method!=='session/update'||!state.promptStarted)return;const u=m.params?.update||{};if(u.sessionUpdate==='agent_message_chunk'&&u.content?.type==='text')emit(p.execution_id,'text',{text:u.content.text,delta:true});else if(u.sessionUpdate==='agent_thought_chunk'&&u.content?.type==='text')emit(p.execution_id,'reasoning',{text:u.content.text,delta:true});else if(['tool_call','tool_call_update'].includes(u.sessionUpdate)&&!['think','thinking','reasoning'].includes(u.kind))emit(p.execution_id,'tool',{id:u.toolCallId,name:acpToolTitle(u),status:u.status,input:u.rawInput,output:u.rawOutput});else if(u.sessionUpdate==='usage_update')emit(p.execution_id,'usage',{usage:u.usage||u});},(m,reply)=>{if(m.method==='session/request_permission'){const id=String(m.id);state.questions.set(id,{reply,options:m.params?.options||[]});emit(p.execution_id,'question',{request_id:id,type:'permission',title:acpToolTitle(m.params?.toolCall),options:m.params?.options||[]});}else {reply({error:'Client method unsupported'});}});
  state.child=conn.child;state.cancel=()=>{if(sessionId)conn.notify('session/cancel',{sessionId});terminate(conn.child);};
  try{const {init,session}=await handshake(conn,p);sessionId=p.session_id||session.sessionId;if(!sessionId)throw Error('No session ID returned');emit(p.execution_id,'session',{session_id:sessionId,capabilities:init.agentCapabilities||{}});
- if(p.model&&p.model!=='default'&&p.runtime_id!=='reasonix'){const cfg=findModelConfigOption(session.configOptions);await conn.call(cfg?'session/set_config_option':'session/set_model',cfg?{sessionId,configId:cfg.configId,value:p.model}:{sessionId,modelId:p.model});}
+ if(p.model&&p.model!=='default'&&p.runtime_id!=='reasonix'){const cfg=findModelConfigOption(session.configOptions);await conn.call(cfg?'session/set_config_option':'session/set_model',cfg?{sessionId,configId:cfg.configId,value:acpSelectedModel(p.runtime_id,p.model,session.configOptions)}:{sessionId,modelId:p.model});}
  const blocks=buildPromptBlocks(p.prompt,[]);if(p.images?.length&&!init.agentCapabilities?.promptCapabilities?.image)throw Error('Host does not advertise image input');for(const image of p.images||[]){const f=typeof image==='string'?image:image.path;const mime=({'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp'})[path.extname(f).toLowerCase()];if(!mime)throw Error('Unsupported image format');const data=readFileSync(f);if(data.length>20*1024*1024)throw Error('Image exceeds 20 MiB');blocks.push({type:'image',mimeType:mime,data:data.toString('base64')});}
  state.promptStarted=true;const result=await conn.call('session/prompt',{sessionId,prompt:blocks},p.timeout_ms||0);if(result?.usage)emit(p.execution_id,'usage',{usage:result.usage});if(result?.stopReason==='cancelled')state.cancelled=true;
  }finally{terminate(conn.child);}}

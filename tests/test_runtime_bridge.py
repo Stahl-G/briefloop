@@ -69,7 +69,7 @@ def test_acp_adapters_are_selectable_after_installation(monkeypatch):
     from briefloop.backends import validate_backend
     from briefloop.models import Settings
     bridge=RuntimeBridge()
-    rows=[{'id':name,'installed':True,'capabilities':{'chat':True},'protocol':'acp'} for name in ('kilo','kiro','vibe')]
+    rows=[{'id':name,'installed':True,'capabilities':{'chat':True},'protocol':'acp'} for name in ('kilo','kiro','vibe','deepseek-harness')]
     monkeypatch.setattr(bridge,'call',lambda *args,**kwargs:rows)
     for row in bridge.discover()['runtimes']:
         assert row['integrated'] and row['available']
