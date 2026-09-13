@@ -134,7 +134,6 @@ class BridgeHarness(OpencodeHarness):
             if prior:return prior
             message=self.chat.message(session_id,display_text or text,source_ids=source_ids,mid=mid,runtime=config,
                                       prompt=text if display_text is not None else None,allow_web=allow_web)
-            self._cancel_requested.discard(session_id)
             self.chat.event(session_id,'message/queued',{'messageId':mid,'mode':'queue'})
             self._schedule(session_id)
         message.pop('prompt',None);return message

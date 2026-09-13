@@ -115,6 +115,17 @@ class OwnedProcess(subprocess.Popen):
                 self._job.close()
             raise
 
+    def _signal_group(self, sig, deadline):
+        try:
+            os.killpg(self.pid, sig)
+        except PermissionError as denied:
+            # Darwin can report EPERM while our exiting leader is a zombie.
+            # Reap only our Popen child, then probe/signal the SAME owned group.
+            # A surviving group that still denies access must remain an error.
+            try:self.wait(timeout=max(0,min(.05,deadline-time.monotonic())))
+            except subprocess.TimeoutExpired:raise denied
+            os.killpg(self.pid, sig)
+
     def close_tree(self, timeout=5):
         if self._tree_closed:return
         if self._job:
@@ -123,7 +134,7 @@ class OwnedProcess(subprocess.Popen):
         else:
             deadline = time.monotonic() + timeout
             try:
-                os.killpg(self.pid, signal.SIGTERM)
+                self._signal_group(signal.SIGTERM, deadline)
             except ProcessLookupError:
                 pass
             # The leader may exit before a descendant that ignores SIGTERM.
@@ -131,13 +142,13 @@ class OwnedProcess(subprocess.Popen):
             while True:
                 self.poll()
                 try:
-                    os.killpg(self.pid, 0)
+                    self._signal_group(0, deadline)
                 except ProcessLookupError:
                     break
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     try:
-                        os.killpg(self.pid, signal.SIGKILL)
+                        self._signal_group(signal.SIGKILL, deadline)
                     except ProcessLookupError:
                         pass  # The last member exited between probe and signal.
                     break

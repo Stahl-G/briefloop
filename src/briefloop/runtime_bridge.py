@@ -8,6 +8,8 @@ import threading
 import uuid
 import queue
 import sys
+import time
+from .rpc_writer import PipeWriter
 from .platform_support import OwnedProcess, cli_command
 
 
@@ -15,6 +17,7 @@ class RuntimeBridge:
     def __init__(self, *, node_binary=None):
         self.node_binary=node_binary if node_binary is not None else os.environ.get('BRIEFLOOP_NODE')
         self._lock=threading.RLock()
+        self._start_lock=threading.Lock();self._closed=False;self._broken=None;self._writer=None
         self._pending={}
         self._events={}
         self._process=None
@@ -23,22 +26,46 @@ class RuntimeBridge:
     def process(self):return self._process
 
     def _start(self):
-        if self._process is not None and self._process.poll() is None:return
-        if self._process is not None:self._process.close_tree()
-        from .host_bins import SEARCH_HINT, find as _find_host_bin
-        node=_find_host_bin(self.node_binary or 'node')
-        if not node:
-            raise RuntimeError('未找到可执行的 Node.js：'+str(self.node_binary or 'node')+
-                '。Bridge 引擎需要 Node.js 20+；请安装后重启服务，或将 BRIEFLOOP_NODE 设置为 Node 可执行文件路径；'+SEARCH_HINT)
-        env={**os.environ,'BRIEFLOOP_PYTHON':sys.executable,
-             'BRIEFLOOP_PROCESS_HELPER':str(files('briefloop').joinpath('process_host.py'))}
-        # Electron's Node mode belongs only to this bridge child, never the service.
-        env.pop('ELECTRON_RUN_AS_NODE',None)
-        if env.get('BRIEFLOOP_NODE_IS_ELECTRON')=='1':env['ELECTRON_RUN_AS_NODE']='1'
-        self._process=OwnedProcess([node,str(files('briefloop').joinpath('static/runtime-bridge.mjs'))],
-            stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,bufsize=1,
-            env=env)
-        threading.Thread(target=self._read,args=(self._process,),daemon=True).start()
+        with self._start_lock:
+            with self._lock:
+                if self._closed:raise RuntimeError('Runtime bridge 已关闭')
+                old=self._process
+                if old is not None and old is not self._broken and old.poll() is None:return old,self._writer
+            if old is not None:old.close_tree(timeout=.2)
+            from .host_bins import SEARCH_HINT, find as _find_host_bin
+            node=_find_host_bin(self.node_binary or 'node')
+            if not node:
+                raise RuntimeError('未找到可执行的 Node.js：'+str(self.node_binary or 'node')+
+                    '。Bridge 引擎需要 Node.js 20+；请安装后重启服务，或将 BRIEFLOOP_NODE 设置为 Node 可执行文件路径；'+SEARCH_HINT)
+            env={**os.environ,'BRIEFLOOP_PYTHON':sys.executable,
+                 'BRIEFLOOP_PROCESS_HELPER':str(files('briefloop').joinpath('process_host.py'))}
+            # Electron's Node mode belongs only to this bridge child, never the service.
+            env.pop('ELECTRON_RUN_AS_NODE',None)
+            if env.get('BRIEFLOOP_NODE_IS_ELECTRON')=='1':env['ELECTRON_RUN_AS_NODE']='1'
+            proc=OwnedProcess([node,str(files('briefloop').joinpath('static/runtime-bridge.mjs'))],
+                stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,bufsize=1,
+                env=env)
+            writer=PipeWriter(proc.stdin,lambda error:self._abort(proc,error))
+            with self._lock:
+                closed=self._closed
+                if not closed:self._process=proc;self._writer=writer;self._broken=None
+            if closed:
+                writer.abort();proc.close_tree(timeout=.2)
+                raise RuntimeError('Runtime bridge 已关闭')
+            threading.Thread(target=self._read,args=(proc,),daemon=True).start()
+            return proc,writer
+
+    def _abort(self,proc,error):
+        with self._lock:
+            if self._process is proc:
+                self._broken=proc
+                pending=list(self._pending.values());self._pending.clear()
+                sinks=list(self._events.values())
+            else:pending=[];sinks=[]
+        for future in pending:
+            if not future.done():future.set_exception(error)
+        for sink in sinks:sink.put({'kind':'end','status':'failed','error':str(error)})
+        proc.close_tree(timeout=.2)
 
     def _read(self,proc):
         try:
@@ -47,31 +74,30 @@ class RuntimeBridge:
                 except ValueError:continue
                 if message.get('method')=='event':
                     event=message.get('params',{})
-                    with self._lock:sink=self._events.get(event.get('execution_id'))
+                    with self._lock:sink=self._events.get(event.get('execution_id')) if self._process is proc else None
                     if sink is not None:sink.put(event)
                     continue
-                with self._lock:future=self._pending.pop(message.get('id'),None)
+                with self._lock:future=self._pending.pop(message.get('id'),None) if self._process is proc else None
                 if future is None:continue
                 if 'error' in message:future.set_exception(RuntimeError(message['error'].get('message','Bridge error')))
                 else:future.set_result(message.get('result'))
         finally:
-            with self._lock:
-                if self._process is proc:
-                    for future in self._pending.values():future.set_exception(RuntimeError('Runtime bridge 已退出'))
-                    self._pending.clear()
-                    for sink in self._events.values():sink.put({'kind':'end','status':'failed','error':'Bridge 已退出，宿主接收与执行状态未确认；未自动重发'})
+            with self._lock:writer=self._writer if self._process is proc else None
+            if writer is not None:writer.abort(RuntimeError('Runtime bridge 已退出，接收状态未确认；未自动重发'))
 
     def call(self,method,params=None,timeout=30):
-        rid=uuid.uuid4().hex;future=Future()
+        deadline=time.monotonic()+timeout
+        rid=uuid.uuid4().hex;future=Future();proc,writer=self._start()
         with self._lock:
-            self._start();self._pending[rid]=future
-            try:
-                self._process.stdin.write(json.dumps({'id':rid,'method':method,'params':params or {}})+'\n')
-                self._process.stdin.flush()
-            except (BrokenPipeError,OSError):
-                self._pending.pop(rid,None)
-                raise RuntimeError('Bridge 未确认接收请求；不会自动重发') from None
-        try:return future.result(timeout)
+            if self._closed or proc is self._broken or proc is not self._process:raise RuntimeError('Bridge 连接已变化；未自动重发')
+            self._pending[rid]=future
+        try:
+            remaining=max(0,deadline-time.monotonic())
+            writer.send({'id':rid,'method':method,'params':params or {}},timeout=min(5,remaining))
+            return future.result(timeout=max(0,deadline-time.monotonic()))
+        except TimeoutError:
+            writer.abort(RuntimeError('Bridge 请求超时，接收状态未确认；未自动重发'))
+            raise
         finally:
             with self._lock:self._pending.pop(rid,None)
 
@@ -115,8 +141,6 @@ class RuntimeBridge:
 
     def close(self):
         with self._lock:
-            if self._process is not None and self._process.poll() is None:
-                self._process.stdin.close()
-                try:self._process.wait(timeout=3)
-                except subprocess.TimeoutExpired:pass
-            if self._process is not None:self._process.close_tree()
+            self._closed=True;writer=self._writer;proc=self._process
+        if writer is not None:writer.abort()
+        elif proc is not None:proc.close_tree(timeout=.2)
