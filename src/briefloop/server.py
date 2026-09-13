@@ -7,6 +7,7 @@ import json
 import secrets
 import os
 import signal
+import threading
 from .platform_support import WorkspaceLock
 from markdown_it import MarkdownIt
 from pydantic import ValidationError
@@ -16,6 +17,35 @@ from .harness import HarnessManager
 from .interactive_runtime import InteractiveRuntime
 from .store import Store, Conflict, dump
 from . import sources
+
+
+def _service_status(server):
+    from .chat_store import BUSY_SQL
+    with server._admission:
+        with server.store.tx() as connection:
+            jobs=[dict(row) for row in connection.execute(
+                "SELECT id,kind,status FROM jobs WHERE status IN ('queued','running') ORDER BY rowid")]
+            sessions=[{'id':row['id'],'title':row['title'],'status':row['status'],
+                       'backend':json.loads(row['runtime']).get('backend','codex'),'busy':True}
+                      for row in connection.execute(
+                          'SELECT s.id,s.title,s.status,s.runtime FROM chat_sessions s WHERE '+BUSY_SQL+' ORDER BY s.rowid')]
+        return {'pid':os.getpid(),'workspace_id':server.store.meta('workspace_id'),
+                'busy':bool(jobs or sessions or server._active_posts),'jobs':jobs,'sessions':sessions,
+                'draining':server.draining}
+
+
+def _close_service(server):
+    """Attempt every owned cleanup even if an earlier transport fails."""
+    operations=[('bridge:'+name,manager.close) for name,manager in server.bridge_harnesses.items()]
+    operations.extend([('worker',server.worker.close),('harness',server.harness.close),
+                       ('opencode',server.opencode_harness.close),('runtime_bridge',server.runtime_bridge.close),
+                       ('server',server.server_close),('workspace_lock',server.workspace_lock.close)])
+    errors=list(getattr(server,'shutdown_errors',[]))
+    for name,close in operations:
+        try:close()
+        except BaseException as exc:
+            errors.append({'component':name,'error_type':type(exc).__name__})
+    return errors
 
 
 def make_server(workspace, port=8765, *, paused=False, backend=None):
@@ -126,6 +156,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/harness/sessions':self.send(200,{'sessions':harness.list_sessions(q.get('view',['active'])[0])})
                 elif u.path=='/api/harness/session':self.send(200,pick_harness(session_id=q['id'][0]).snapshot(q['id'][0],int(q.get('after',['0'])[0]),reasoning=q.get('reasoning',['0'])[0]=='1'))
                 elif u.path=='/api/session':self.send(200,{'token':token})
+                elif u.path=='/api/service-status':self.send(200,_service_status(self.server))
                 elif u.path=='/api/connectors':self.send(200,{'connectors':self.server.connectors.list()})
                 elif u.path=='/api/runtime':
                     observed=worker._review_runtime if worker.review_current and not worker.current else worker.runtime
@@ -288,6 +319,20 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 else:self.send(404,{'error':'未找到页面'})
             except (ValueError,KeyError,OSError,RuntimeError) as exc:self.error(exc)
         def do_POST(self):
+            path=urlsplit(self.path).path
+            control=path in ('/api/service-stop','/api/stop','/api/harness/cancel','/api/connectors/task-revoke')
+            with self.server._admission:
+                if self.server.draining and not control:
+                    self.send(503,{'error':'服务正在退出，不能接受新操作。','code':'service_draining'});return
+                if not control:self.server._active_posts+=1
+            try:self._post_admitted()
+            finally:
+                if not control:
+                    with self.server._admission:
+                        self.server._active_posts-=1
+                        self.server._admission.notify_all()
+
+        def _post_admitted(self):
             try:
                 if urlsplit(self.path).path == '/api/connectors/task-tool':
                     n=int(self.headers.get('Content-Length','0'))
@@ -306,9 +351,37 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 if path=='/api/service-stop':
                     if body.get('pid')!=os.getpid() or body.get('workspace_id')!=store.meta('workspace_id'):
                         raise ValueError('服务身份已变化，未执行停止')
-                    import threading
+                    with self.server._admission:
+                        if self.server.draining:
+                            self.send(200,{'stopping':True});return
+                        state=_service_status(self.server)
+                        if state['busy'] and body.get('busy_action')!='cancel':
+                            self.send(409,{'error':'服务仍有任务或对话，请等待完成或明确停止后退出。',
+                                           'code':'service_busy',**state});return
+                        self.server.draining=True
+                        # Stop queue admission and automatic learning before the
+                        # cancellation sweep; already-admitted HTTP writes finish.
+                        worker.opened_paused=True
+                        worker.stopping.set()
+                    def drain_and_shutdown():
+                        with self.server._admission:
+                            while self.server._active_posts:self.server._admission.wait()
+                        if body.get('busy_action')=='cancel':
+                            with worker._claim_lock:
+                                pending=_service_status(self.server)
+                                for job in pending['jobs']:
+                                    try:worker.stop_job(job['id'])
+                                    except Exception as exc:
+                                        self.server.shutdown_errors.append({'component':'job_cancel',
+                                                                            'error_type':type(exc).__name__})
+                            for session in pending['sessions']:
+                                try:pick_harness(session_id=session['id']).cancel(session['id'])
+                                except Exception as exc:
+                                    self.server.shutdown_errors.append({'component':'session_cancel',
+                                                                        'error_type':type(exc).__name__})
+                        self.server.shutdown()
                     self.send(200,{'stopping':True})
-                    threading.Thread(target=self.server.shutdown,daemon=True).start()
+                    threading.Thread(target=drain_and_shutdown,daemon=True).start()
                     return
                 elif path=='/api/tavily':
                     from .tavily import save_key,delete_key
@@ -440,6 +513,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
     except OSError:
         harness.close();opencode_harness.close();lock.close();raise
     server.daemon_threads=True
+    server._admission=threading.Condition(threading.RLock())
+    server._active_posts=0
+    server.draining=False
+    server.shutdown_errors=[]
     from .connectors import ConnectorService
     try:
         server.connectors=ConnectorService(store.root)
@@ -476,5 +553,5 @@ def serve(workspace,port=8765,*,paused=False,backend=None):
     try:server.serve_forever()
     except KeyboardInterrupt:pass
     finally:
-        for manager in server.bridge_harnesses.values():manager.close()
-        server.worker.close();server.harness.close();server.opencode_harness.close();server.runtime_bridge.close();server.server_close();server.workspace_lock.close()
+        errors=_close_service(server)
+        if errors:print('BriefLoop cleanup: '+dump(errors),flush=True)

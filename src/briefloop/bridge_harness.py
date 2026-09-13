@@ -11,11 +11,55 @@ from .harness import InternalRun
 from .store import uid
 
 
+def normalize_bridge_usage(raw, backend):
+    """Project reported counts, keeping request usage separate from context occupancy."""
+    raw=raw if isinstance(raw,dict) else {}
+    meta=raw.get('_meta')
+    nested=meta.get('usage') if isinstance(meta,dict) else None
+    values=[raw]+([nested] if isinstance(nested,dict) else [])
+    def count(value):
+        return value if type(value) is int and value>=0 else None
+    def first(items):
+        return next((value for item in items if (value:=count(item)) is not None),None)
+    def named(*keys):
+        return first(row.get(key) for row in values for key in keys)
+    cached=[]
+    for row in values:
+        details=row.get('prompt_tokens_details')
+        cache=row.get('cache')
+        cached.extend([details.get('cached_tokens') if isinstance(details,dict) else None,
+                       row.get('prompt_cache_hit_tokens'),row.get('cache_read_input_tokens'),
+                       row.get('cachedInputTokens'),cache.get('read') if isinstance(cache,dict) else None])
+    # Some gateways zero-fill the Anthropic aliases while reporting the actual
+    # cache hit count in the OpenAI/DeepSeek fields. Never add it to input again.
+    cache_tokens=first(value for value in cached if count(value) is not None and value>0)
+    if cache_tokens is None:cache_tokens=first(cached)
+    context=raw if raw.get('sessionUpdate')=='usage_update' else {}
+    size=count(context.get('size'))
+    return {'backend':backend,'last':{'inputTokens':named('input_tokens','input','inputTokens','prompt_tokens'),
+                                     'outputTokens':named('output_tokens','output','outputTokens','completion_tokens'),
+                                     'cachedInputTokens':cache_tokens},
+            'contextUsedTokens':count(context.get('used')),
+            'modelContextWindow':size if size else None,'raw':raw}
+
+
 class BridgeHarness(OpencodeHarness):
     def __init__(self,store,bridge,backend):
         super().__init__(store)
         self.bridge=bridge;self.client=bridge;self.backend=backend
         self._active_executions={}
+
+    def snapshot(self,session_id,after=0,reasoning=False):
+        snapshot=super().snapshot(session_id,after,reasoning=reasoning)
+        def project(usage):
+            if isinstance(usage,dict) and isinstance(usage.get('raw'),dict):
+                return {**usage,**normalize_bridge_usage(usage['raw'],self.backend)}
+            return usage
+        snapshot['token_usage']=project(snapshot['token_usage'])
+        for event in snapshot['events']:
+            if event['kind']=='thread/tokenUsage/updated':
+                event['data']['tokenUsage']=project(event['data'].get('tokenUsage'))
+        return snapshot
 
     def _config(self,runtime):
         value={'permission':'runtime-native','model':'default','backend':self.backend,**(runtime or {})}
@@ -147,7 +191,7 @@ class BridgeHarness(OpencodeHarness):
                     self.chat.event(sid,'runtime/question',{'requestId':rid})
                 elif kind=='usage':
                     usage=event.get('usage') or {}
-                    self.chat.event(sid,'thread/tokenUsage/updated',{'tokenUsage':{'last':{'inputTokens':usage.get('input_tokens',usage.get('input')),'outputTokens':usage.get('output_tokens',usage.get('output'))},'raw':usage,'backend':self.backend}})
+                    self.chat.event(sid,'thread/tokenUsage/updated',{'tokenUsage':normalize_bridge_usage(usage,self.backend)})
                 elif kind=='error':self.chat.event(sid,'error',{'message':event.get('message','CLI 执行失败')})
                 elif kind=='end':
                     status=event.get('status','failed')

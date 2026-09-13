@@ -1,4 +1,4 @@
-"""No server/model launch: verify identity, bounded discovery and separate data."""
+"""No application/model launch: verify identity, bounded discovery and separate data."""
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -112,3 +112,32 @@ def test_workspace_create_only_creates_siblings(tmp_path):
         open_workspace(current,str(outside),create=True)
     assert not outside.exists()
     assert current.root.parent==(tmp_path/'nearby').resolve()
+
+
+def test_explicit_workspace_shutdown_sends_cancel_with_verified_identity():
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from briefloop.workspaces import _request_shutdown
+
+    received=[]
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self,*args):pass
+        def do_GET(self):
+            assert self.path=='/api/session'
+            self.send_response(200);self.end_headers()
+            self.wfile.write(b'{"token":"synthetic-local-token"}')
+        def do_POST(self):
+            received.append({'path':self.path,'body':json.loads(self.rfile.read(int(self.headers['Content-Length']))),
+                             'token':self.headers.get('X-BriefLoop-Token'),'origin':self.headers.get('Origin')})
+            self.send_response(200);self.end_headers();self.wfile.write(b'{"stopping":true}')
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    url=f'http://127.0.0.1:{server.server_port}'
+    try:
+        _request_shutdown(url,12345,'synthetic-workspace')
+        assert received==[{'path':'/api/service-stop',
+                           'body':{'pid':12345,'workspace_id':'synthetic-workspace','busy_action':'cancel'},
+                           'token':'synthetic-local-token','origin':url}]
+    finally:
+        server.shutdown();thread.join(timeout=5);server.server_close()
