@@ -9,6 +9,7 @@ from pathlib import Path
 import plistlib
 import re
 import subprocess
+import sys
 import tomllib
 from urllib.request import Request, urlopen
 from zipfile import ZipFile
@@ -25,7 +26,7 @@ def wheel_version(path):
 
 def backend_versions(resources):
     base = resources / 'backend'
-    manifest = json.loads((base / 'manifest.json').read_text())
+    manifest = json.loads((base / 'manifest.json').read_text(encoding='utf-8'))
     wheel = (base / manifest['wheel']).resolve()
     if wheel.parent != base.resolve():
         raise ValueError('Invalid backend wheel path')
@@ -35,13 +36,13 @@ def backend_versions(resources):
 
 
 def source_versions(root):
-    tree = ast.parse((root / 'src/briefloop/__init__.py').read_text())
+    tree = ast.parse((root / 'src/briefloop/__init__.py').read_text(encoding='utf-8'))
     python_version = next(ast.literal_eval(n.value) for n in tree.body if isinstance(n, ast.Assign)
                           and any(isinstance(t, ast.Name) and t.id == '__version__' for t in n.targets))
-    desktop = json.loads((root / 'desktop/electron/package.json').read_text())
-    lock = json.loads((root / 'desktop/electron/package-lock.json').read_text())
-    html = (root / 'src/briefloop/static/index.html').read_text()
-    return {'version_file': (root / 'VERSION').read_text().strip(), 'python': python_version, 'desktop_mac_windows': desktop['version'],
+    desktop = json.loads((root / 'desktop/electron/package.json').read_text(encoding='utf-8'))
+    lock = json.loads((root / 'desktop/electron/package-lock.json').read_text(encoding='utf-8'))
+    html = (root / 'src/briefloop/static/index.html').read_text(encoding='utf-8')
+    return {'version_file': (root / 'VERSION').read_text(encoding='utf-8').strip(), 'python': python_version, 'desktop_mac_windows': desktop['version'],
             'desktop_lock': lock['version'], 'desktop_lock_root': lock['packages']['']['version'],
             'web': re.search(r'data-web-version="([^"]+)"', html).group(1)}
 
@@ -52,7 +53,7 @@ def compare(expected, values):
 
 def check(args):
     root = args.root.resolve()
-    expected = tomllib.loads((root / 'pyproject.toml').read_text())['project']['version']
+    expected = tomllib.loads((root / 'pyproject.toml').read_text(encoding='utf-8'))['project']['version']
     results = {'source': compare(expected, source_versions(root))}
     results.update({name: {'status': 'unverified', 'reason': 'No artifact or channel requested'} for name in CHANNELS})
 
@@ -118,6 +119,8 @@ def check(args):
 
 
 def main():
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, default=ROOT)
     parser.add_argument('--cli', help='Actual installed briefloop executable')

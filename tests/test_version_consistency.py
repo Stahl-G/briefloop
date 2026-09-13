@@ -16,7 +16,7 @@ def args(root, **values):
 
 
 def test_source_follows_current_metadata_and_missing_platforms_never_pass(tmp_path):
-    expected=tomllib.loads((ROOT/'pyproject.toml').read_text())['project']['version']
+    expected=tomllib.loads((ROOT/'pyproject.toml').read_text(encoding='utf-8'))['project']['version']
     result,status=checker.check(args(ROOT))
     assert result['expected']==expected and result['checks']['source']['status']=='match'
     assert status==0 and result['all_platforms_consistent'] is False
@@ -25,7 +25,7 @@ def test_source_follows_current_metadata_and_missing_platforms_never_pass(tmp_pa
     for filename in ('VERSION','pyproject.toml','src/briefloop/__init__.py','desktop/electron/package.json',
                      'desktop/electron/package-lock.json','src/briefloop/static/index.html'):
         target=tmp_path/filename;target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(ROOT/filename,target)
-    target=tmp_path/'desktop/electron/package.json';data=json.loads(target.read_text())
+    target=tmp_path/'desktop/electron/package.json';data=json.loads(target.read_text(encoding='utf-8'))
     numbers=expected.split('.');numbers[-1]=str(int(numbers[-1])+1);data['version']='.'.join(numbers)
     target.write_text(json.dumps(data))
     result,status=checker.check(args(tmp_path))
