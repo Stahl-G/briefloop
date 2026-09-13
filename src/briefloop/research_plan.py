@@ -13,6 +13,9 @@ from .store import dump, uid, now
 PROTOCOL = 'quality_v1'
 BUDGET_FIELDS = ('search_requests', 'candidate_urls', 'source_pages')
 STRUCTURE_FIELDS = ('breadth', 'depth', 'parallel')
+# Execution outcomes of the fact-check stage; they say why a check stopped, never
+# whether a claim held (that judgement belongs to the Reviewer).
+FACT_CHECK_STATUSES = ('completed', 'cancelled', 'failed', 'budget_exhausted')
 
 # Product starting values, not quality-tuned optima. Per-round breadth is advisory;
 # the run budget below is the hard ceiling.
@@ -136,49 +139,65 @@ def freeze(store, run_id, *, preset=None, structure=None, owner_job_id=None):
 
 
 def admission(store, connection, run_id, operation):
-    """Return the active round id for a quality run, or None for a legacy run.
+    """Return (admitting id, stage) — a round with 'research', the fact-check
+    stage id with 'fact_check' — or (None, None) for a legacy run.
 
     Must run inside the caller's reservation transaction so an admitted request
-    cannot race a plan change or a closed round.
+    cannot race a plan change or a closed stage.
     """
     marker = connection.execute('SELECT value FROM meta WHERE key=?', (_protocol_key(run_id),)).fetchone()
     if marker is None:
-        return None
+        return None, None
     try:
         protocol = json.loads(marker['value'])
     except (TypeError, ValueError):
-        return None
+        return None, None
     if protocol != PROTOCOL:
-        return None
+        return None, None
     row = connection.execute('SELECT value FROM meta WHERE key=?', (_plan_key(run_id),)).fetchone()
     if row is None:
         raise AdmissionError('本轮尚未冻结研究计划；受控联网前必须先冻结', code='plan_missing')
     plan = json.loads(row['value'])
+    stage = plan.get('fact_check') or {}
+    if stage.get('status') == 'active':
+        return stage['stage_id'], 'fact_check'
     round_id = plan.get('current_round_id')
     info = (plan.get('rounds') or {}).get(round_id) or {}
     if not round_id or info.get('status') != 'active':
+        if stage:
+            raise AdmissionError('核查阶段已结束，不再接纳新的受控联网请求', code='fact_check_closed')
         raise AdmissionError('当前没有可用的联网轮次；受控联网已停止', code='round_closed')
-    return round_id
+    return round_id, 'research'
 
 
-def record_request(store, connection, run_id, request_id, operation, round_id):
+def record_request(store, connection, run_id, request_id, operation, round_id, stage='research'):
     """Persist a reserved controlled request in the same transaction as admission."""
     key = _requests_key(run_id)
     row = connection.execute('SELECT value FROM meta WHERE key=?', (key,)).fetchone()
     data = json.loads(row['value']) if row else {}
-    data[request_id] = {'operation': operation, 'round_id': round_id, 'status': 'reserved', 'created': now()}
+    data[request_id] = {'operation': operation, 'round_id': round_id, 'stage': stage,
+                        'status': 'reserved', 'created': now()}
     connection.execute('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)', (key, dump(data)))
 
 
 def settle_request(store, run_id, request_id, status, *, failure_kind=None, record_path=None):
-    """Settle a reserved request after the network call; never settles someone else's id."""
+    """Settle a reserved request after the network call; never settles someone else's id.
+
+    Returns False without writing when the request belongs to a fact-check stage
+    that already closed: a result arriving after cancellation is not admitted.
+    """
     if not request_id:
-        return
+        return True
     with store.tx() as connection:
         key = _requests_key(run_id)
         row = connection.execute('SELECT value FROM meta WHERE key=?', (key,)).fetchone()
         data = json.loads(row['value']) if row else {}
         entry = data.get(request_id) or {}
+        if entry.get('stage') == 'fact_check':
+            plan_row = connection.execute('SELECT value FROM meta WHERE key=?', (_plan_key(run_id),)).fetchone()
+            stage = (json.loads(plan_row['value']) if plan_row else {}).get('fact_check') or {}
+            if stage.get('stage_id') == entry.get('round_id') and stage.get('status') != 'active':
+                return False
         entry.update({'status': status, 'updated': now()})
         if failure_kind is not None:
             entry['failure_kind'] = failure_kind
@@ -186,6 +205,7 @@ def settle_request(store, run_id, request_id, status, *, failure_kind=None, reco
             entry['request_record_path'] = record_path
         data[request_id] = entry
         connection.execute('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)', (key, dump(data)))
+    return True
 
 
 def pending_requests(store, run_id):
@@ -238,6 +258,10 @@ def begin_round(store, run_id, *, target_gap_ids=None, tasks=None, job_id=None):
             if list(current.get('target_gap_ids') or []) == target:
                 return {'round_id': active, 'index': current['index'], 'tasks': current.get('tasks', []), 'idempotent': True}
             raise AdmissionError('上一轮尚未结束，不能开始新一轮', code='round_open')
+        if (plan.get('fact_check') or {}).get('status') == 'active':
+            # Billing attribution stays unambiguous: no Scout round may restart
+            # inside an admitted fact-check stage.
+            raise AdmissionError('核查阶段进行中，不能开始新的研究轮次', code='fact_check_active')
         # Pending rounds are the pre-created future of an expanded deep plan,
         # not progress: the next index follows the highest round actually opened.
         index = max([int(r.get('index', 0)) for r in rounds.values() if r.get('status') != 'pending'] or [0]) + 1
@@ -339,6 +363,102 @@ def round_usage(store, run_id, round_id):
     plan = frozen(store, run_id) or {}
     return {'round_id': round_id, 'search': used.get('search', 0), 'pages': used.get('pages', 0),
             'breadth': (plan.get('structure') or {}).get('breadth')}
+
+
+def _fact_check_budget_source(value):
+    """Validate {'kind': task_reserve|user_grant, 'limits': KINDS ints}."""
+    if not isinstance(value, dict) or value.get('kind') not in ('task_reserve', 'user_grant'):
+        raise AdmissionError('核查预算来源需要 kind=task_reserve 或 user_grant', code='fact_check_budget_source')
+    limits = value.get('limits')
+    try:
+        share = {field: int(limits[field]) for field in BUDGET_FIELDS}
+    except (AttributeError, KeyError, TypeError, ValueError):
+        raise AdmissionError('核查预算份额需要 ' + '/'.join(BUDGET_FIELDS) + ' 三项整数',
+                             code='fact_check_budget_source') from None
+    if any(count < 0 for count in share.values()) or not any(count > 0 for count in share.values()):
+        raise AdmissionError('核查预算份额各项非负且至少一项为正', code='fact_check_budget_source')
+    return {'kind': value['kind'], 'limits': share}
+
+
+def admit_fact_check(store, run_id, budget_source, *, job_id=None):
+    """Admit an explicit fact-check stage onto the frozen plan. Repeats reuse the stage.
+
+    The stage never disguises itself as a Scout round and never bills outside the
+    run's KINDS meter: its controlled requests are recorded against the stage id.
+    ``budget_source`` records where the money comes from — a share reserved from
+    the task's total budget, or an amount the user explicitly granted on top.
+    """
+    run = store.one('runs', run_id)
+    requirements = json.loads(run['requirements'])
+    if not requirements.get('allow_web', False):
+        raise AdmissionError('离线任务不能接纳联网核查阶段', code='fact_check_offline')
+    source = _fact_check_budget_source(budget_source)
+    if source['kind'] == 'task_reserve':
+        if authorized_budget(requirements) is None:
+            # A run without an authorized budget has no number to reserve from;
+            # inventing a default share would silently add SAFE-style budget.
+            raise AdmissionError('本任务没有已授权预算，不能预留核查份额；需用户明确追加额度',
+                                 code='fact_check_no_budget')
+
+    def mutate(plan):
+        existing = plan.get('fact_check')
+        if existing:
+            return False, {'stage_id': existing['stage_id'], 'status': existing['status'],
+                           'budget_source': existing['budget_source'], 'idempotent': True}
+        rounds = plan.get('rounds') or {}
+        active = plan.get('current_round_id')
+        if active and (rounds.get(active) or {}).get('status') == 'active':
+            raise AdmissionError('研究轮次尚未收束，不能接纳核查阶段', code='fact_check_round_open')
+        if source['kind'] == 'task_reserve':
+            from .research_budget import spent
+            used = spent(store, run_id)
+            for field in BUDGET_FIELDS:
+                if source['limits'][field] > max(0, plan['budget'][field] - used[field]):
+                    raise AdmissionError('核查预留份额超过任务剩余预算：' + field,
+                                         code='fact_check_share_exceeds_budget')
+        stage = {'stage_id': uid('fchk'), 'status': 'active', 'budget_source': source,
+                 'created': now(), 'closed': None, 'outcome': None}
+        plan['fact_check'] = stage
+        return True, {**stage, 'idempotent': False}
+
+    result = _save_plan(store, run_id, mutate, missing='本轮尚未冻结研究计划；不能接纳核查阶段')
+    if not result['idempotent'] and job_id:
+        store.event(job_id, 'fact_check', {'action': 'admit', 'stage_id': result['stage_id'],
+                                           'budget_source': result['budget_source']})
+    return result
+
+
+def finish_fact_check(store, run_id, *, status, summary='', job_id=None):
+    """Close the fact-check stage with an execution status, never a factual verdict.
+
+    Idempotent per stage: a replay returns the recorded outcome unchanged, so a
+    late second close cannot rewrite 'cancelled' into 'completed'.
+    """
+    if status not in FACT_CHECK_STATUSES:
+        raise ValueError('核查阶段结束状态必须是 ' + '/'.join(FACT_CHECK_STATUSES))
+
+    def mutate(plan):
+        stage = plan.get('fact_check')
+        if not stage:
+            raise AdmissionError('尚未接纳核查阶段', code='fact_check_missing')
+        if stage['status'] != 'active':
+            return False, {'stage_id': stage['stage_id'], 'status': stage['status'],
+                           'outcome': stage['outcome'], 'idempotent': True}
+        usage = {'search': 0, 'pages': 0}
+        for entry in pending_requests(store, run_id).values():
+            if entry.get('round_id') == stage['stage_id']:
+                operation = entry.get('operation')
+                usage[operation] = usage.get(operation, 0) + 1
+        stage['status'] = status
+        stage['closed'] = now()
+        stage['outcome'] = {'status': status, 'summary': summary, 'usage': usage, 'closed_at': stage['closed']}
+        return True, {'stage_id': stage['stage_id'], 'status': status,
+                      'outcome': stage['outcome'], 'idempotent': False}
+
+    result = _save_plan(store, run_id, mutate, missing='本轮尚未冻结研究计划')
+    if not result['idempotent'] and job_id:
+        store.event(job_id, 'fact_check', {'action': 'finish', 'stage_id': result['stage_id'], 'status': status})
+    return result
 
 
 def search_slots_left(store, connection, run_id, round_id):

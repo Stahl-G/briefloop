@@ -25,7 +25,8 @@ def test_quality_run_requires_freeze_before_any_controlled_request(tmp_path):
     reserved = budget.reserve_search(store, run['id'], 5)
     assert reserved['round_id'] == plan['current_round_id']
     entry = research_plan.pending_requests(store, run['id'])[reserved['request_id']]
-    assert entry == {'operation': 'search', 'round_id': plan['current_round_id'], 'status': 'reserved', 'created': entry['created']}
+    assert entry == {'operation': 'search', 'round_id': plan['current_round_id'], 'stage': 'research',
+                     'status': 'reserved', 'created': entry['created']}
 
 
 def test_freeze_is_idempotent_and_refuses_a_different_plan(tmp_path):

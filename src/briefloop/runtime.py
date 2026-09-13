@@ -16,6 +16,11 @@ from .agent_commands import tool_command, quote_path
 
 FILE_JOB_KINDS = ('export_docx', 'release', 'audit_bundle')
 
+# Product starting value, not a tuned split. The share the Worker reserves from
+# the task budget when admitting the fact-check stage; real runs decide the
+# actual sizing (feasibility report §6, third stage).
+FACT_CHECK_RESERVE = {'search_requests': 6, 'candidate_urls': 30, 'source_pages': 12}
+
 
 COMMON = '''你在运行 BriefLoop 本地应用。用户已授权本轮研究、写作、评分。
 你是 Orchestrator，负责语义规划和调用真实原生子 agent。不要模拟多个角色自问自答。
@@ -708,6 +713,27 @@ class Worker:
         if not saved or saved['brief_hash']!=self.store.one('briefs',version_id)['hash'] or saved.get('sources') is None:return {}
         return {'source_snapshot':saved['sources']}
 
+    def _admit_fact_check(self,job,brief):
+        """Admit the fact-check stage before delivery checks; nothing runs during writing.
+
+        v1 admits an empty stage only: the fact-checker itself is a later phase,
+        so this records the switch, the candidate claims and the budget source
+        without executing any check. A stage that cannot be admitted (offline,
+        no budget, rounds still open) is a structured event, never a run failure.
+        """
+        from .research_plan import admit_fact_check,AdmissionError,frozen as frozen_plan
+        run_id=brief['run_id']
+        requirements=json.loads(self.store.one('runs',run_id)['requirements'])
+        if not requirements.get('fact_check'):return None
+        if not self.store.rows('SELECT id FROM claims WHERE run_id=? LIMIT 1',(run_id,)):return None
+        limits=(frozen_plan(self.store,run_id) or {}).get('budget') or {}
+        share={field:min(FACT_CHECK_RESERVE[field],int(limits.get(field,0))) for field in FACT_CHECK_RESERVE}
+        try:
+            return admit_fact_check(self.store,run_id,{'kind':'task_reserve','limits':share},job_id=job['id'])
+        except AdmissionError as exc:
+            self.store.event(job['id'],'fact_check',{'action':'admit_refused','code':exc.code,'error':str(exc)})
+            return None
+
     def generate(self,job,*,score=True):
         payload=json.loads(job['payload']);run=self.store.one('runs',payload['run_id']);folder=self.folder(job)
         from .backends import validate_backend
@@ -789,6 +815,10 @@ class Worker:
         brief=self.store.one('briefs',current)
         from .task_notify import notify as _notify_task
         _notify_task(self.store, job, 'draft_ready', text='简报草稿已保存，可以查看和编辑。')
+        # Delivery checks run inside scoring below (refcheck in the evaluation
+        # pack); the fact-check stage is admitted before them and never during
+        # the writing turn itself.
+        self._admit_fact_check(job,brief)
         if not score or payload.get('single_evaluation') is False:
             return {**result,'version_id':brief['id'],**self._generated_sources(folder,brief['id'])}
         scoring=None

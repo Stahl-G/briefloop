@@ -41,6 +41,25 @@ def _save(connection,key,state):
     connection.execute('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)',(key,dump(state)))
 
 
+def spent(store,run_id):
+    """Raw KINDS counters for admission checks; provider display scope never changes them."""
+    state=store.meta('research_budget:'+run_id) or {'search_requests':0,'candidate_urls':[],'source_pages':[]}
+    return {'search_requests':state['search_requests'],'candidate_urls':len(state['candidate_urls']),
+            'source_pages':len(state['source_pages'])}
+
+
+def _stage_usage(store,run_id):
+    # Same KINDS meter, split by which stage admitted the request; entries written
+    # before the stage tag existed count as research.
+    from .research_plan import pending_requests
+    stages={'research':{'search_requests':0,'source_pages':0},'fact_check':{'search_requests':0,'source_pages':0}}
+    for entry in pending_requests(store,run_id).values():
+        stage=entry.get('stage') or 'research'
+        key={'search':'search_requests','pages':'source_pages'}.get(entry.get('operation'))
+        if stage in stages and key:stages[stage][key]+=1
+    return stages
+
+
 def _view(store,run_id,limits,state):
     from .websearch import MANAGED_PROVIDERS
     provider=store.search_provider_for_run(run_id)
@@ -51,7 +70,8 @@ def _view(store,run_id,limits,state):
         for kind in KINDS[:2]:used[kind]=None;remaining[kind]=None
     exhausted=[kind for kind,value in remaining.items() if value==0]
     return {'limits':limits,'used':used,'remaining':remaining,'exhausted':bool(exhausted),
-            'exhausted_resources':exhausted,'scope':{'search_provider':provider,
+            'exhausted_resources':exhausted,'stages':_stage_usage(store,run_id),
+            'scope':{'search_provider':provider,
             'search_requests':'managed_provider_only','candidate_urls':'managed_provider_only',
             'source_pages':'managed_unique_urls','native_codex_search_metered':False,
             'legacy_unlimited':limits is None}}
@@ -70,12 +90,13 @@ def snapshot(store,run_id):
 def reserve_search(store,run_id,max_results):
     """Charge before the HTTP call; failed requests retain this charge.
 
-    Admission (frozen plan + active round for quality runs) and the request
-    reservation happen in the same transaction, before any network call.
+    Admission (frozen plan + active round or fact-check stage for quality runs)
+    and the request reservation happen in the same transaction, before any
+    network call.
     """
     from .research_plan import admission,record_request
     with store.tx() as connection:
-        round_id=admission(store,connection,run_id,'search')
+        round_id,stage=admission(store,connection,run_id,'search')
         key,limits,state=_load(store,connection,run_id)
         if limits is not None:
             for kind in ('search_requests','candidate_urls'):
@@ -85,8 +106,8 @@ def reserve_search(store,run_id,max_results):
         state['search_requests']+=1
         _save(connection,key,state)
         request_id=uid('search')
-        if round_id:record_request(store,connection,run_id,request_id,'search',round_id)
-    return {'request_id':request_id,'max_results':max_results,'round_id':round_id}
+        if round_id:record_request(store,connection,run_id,request_id,'search',round_id,stage=stage)
+    return {'request_id':request_id,'max_results':max_results,'round_id':round_id,'stage':stage}
 
 
 def record_candidates(store,run_id,urls):
@@ -111,7 +132,7 @@ def reserve_pages(store,run_id,urls,*,request_id=None):
     from .research_plan import admission,record_request
     urls=list(dict.fromkeys(canonical_url(url) for url in urls))
     with store.tx() as connection:
-        round_id=admission(store,connection,run_id,'pages')
+        round_id,stage=admission(store,connection,run_id,'pages')
         key,limits,state=_load(store,connection,run_id)
         new=[url for url in urls if url not in state['source_pages']]
         if limits is not None and len(state['source_pages'])+len(new)>limits['source_pages']:
@@ -119,8 +140,8 @@ def reserve_pages(store,run_id,urls,*,request_id=None):
         state['source_pages'].extend(new)
         _save(connection,key,state)
         request_id=request_id or uid('extract')
-        if round_id:record_request(store,connection,run_id,request_id,'pages',round_id)
-    return {**snapshot(store,run_id),'round_id':round_id,'request_id':request_id}
+        if round_id:record_request(store,connection,run_id,request_id,'pages',round_id,stage=stage)
+    return {**snapshot(store,run_id),'round_id':round_id,'stage':stage,'request_id':request_id}
 
 
 def save_discovery(store,run_id,request_id,raw):
