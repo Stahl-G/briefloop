@@ -324,6 +324,9 @@ def prepare(store,template_id,spec):
            'preparation_spec':deepcopy(spec),
            'prepared_hash':hashlib.sha256(destination.read_bytes()).hexdigest()}
     with store.tx() as c:c.execute("UPDATE templates SET status='ready',spec=?,error=NULL WHERE id=?",(dump(final),template_id))
+    if row.get('origin')!='builtin':
+        from .notifications import post
+        post(store,'template:'+template_id+':'+final['prepared_hash'],'templates','模板已更新：'+row['name'],target={'template_id':template_id})
     return template(store,template_id)
 
 
