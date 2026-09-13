@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawn} from 'node:child_process';
-import {mkdtempSync,writeFileSync} from 'node:fs';
+import {mkdtempSync,writeFileSync,readFileSync} from 'node:fs';
 import {rm} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -28,7 +28,7 @@ function bridge(t,extraEnv={}){
    await rm(directory,{recursive:true,force:true,maxRetries:20,retryDelay:100});
   }
  });
- return {frames,send:(id,method,params)=>p.stdin.write(JSON.stringify({id,method,params})+'\n'),wait:predicate=>{const found=frames.find(predicate);if(found)return Promise.resolve(found);return new Promise((resolve,reject)=>{const w={predicate,resolve,timer:setTimeout(()=>reject(Error('missing frame')),5000)};waiters.push(w);});}};
+ return {frames,stop:()=>p.stdin.end(),send:(id,method,params)=>p.stdin.write(JSON.stringify({id,method,params})+'\n'),wait:predicate=>{const found=frames.find(predicate);if(found)return Promise.resolve(found);return new Promise((resolve,reject)=>{const w={predicate,resolve,timer:setTimeout(()=>reject(Error('missing frame')),5000)};waiters.push(w);});}};
 }
 function fixture(t,body,name='cli'){const directories=fixtureDirectories.get(t);assert.ok(directories,'Create the bridge before its fixtures');const d=mkdtempSync(path.join(os.tmpdir(),'bridge-fixture-')),f=path.join(d,name);directories.push(d);writeFileSync(f,'#!/usr/bin/env node\n'+body,{mode:0o755});if(process.platform==='win32'){writeFileSync(path.join(d,'entry.cjs'),body);writeFileSync(f,'exec node "$basedir/entry.cjs" "$@"');writeFileSync(f+'.cmd','@echo off');return {path:f+'.cmd',cwd:d};}return {path:f,cwd:d};}
 const rpcFake=`const rl=require('node:readline').createInterface({input:process.stdin});const send=v=>process.stdout.write(JSON.stringify(v)+'\\n');let promptId;rl.on('line',line=>{const m=JSON.parse(line);const result=r=>send({jsonrpc:'2.0',id:m.id,result:r});if(m.method==='initialize')result({agentCapabilities:{loadSession:true,promptCapabilities:{image:true}}});else if(m.method==='session/new'||m.method==='session/load')result({sessionId:'real-session',models:{availableModels:[{modelId:'test/model',name:'Test'}]}});else if(m.method==='session/set_model')result({});else if(m.method==='session/prompt'){promptId=m.id;send({method:'session/update',params:{update:{sessionUpdate:'agent_thought_chunk',content:{type:'text',text:'HIDDEN'}}}});send({id:90,method:'session/request_permission',params:{options:[{optionId:'yes',kind:'allow_once',name:'Allow once'}],toolCall:{title:'Read fixture'}}});}else if(m.id===90){if(m.result.outcome.optionId!=='yes')process.exit(2);send({method:'session/update',params:{update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'OK'}}}});send({id:promptId,result:{stopReason:'end_turn'}});}});`;
@@ -132,4 +132,21 @@ test('MiMo retains JSON execution and applies only an advertised native agent mo
  b.send(1,'start',{...f,runtime_id:'mimo',execution_id:'mimo-mode',prompt:'hello',permission:'runtime-native',host_options:{mode:'plan'}});
  assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');
  assert.ok(b.frames.some(x=>x.params?.text==='MiMo mode OK'));
+});
+
+
+test('stdin EOF reaps an in-flight metadata probe, not only active turns',async t=>{
+ const b=bridge(t);
+ const f=fixture(t,`require('node:fs').writeFileSync(require('node:path').join(__dirname,'probe.pid'),String(process.pid));setInterval(()=>{},1000);`);
+ b.send(1,'list_models',{...f,runtime_id:'reasonix'});
+ let pid;
+ for(let i=0;i<100&&!pid;i++){
+  try{pid=Number(readFileSync(path.join(f.cwd,'probe.pid'),'utf8'));}catch{}
+  if(!pid)await new Promise(r=>setTimeout(r,20));
+ }
+ assert.ok(pid,'metadata probe really started');
+ b.stop();
+ const alive=()=>{try{process.kill(pid,0);return true;}catch{return false;}};
+ for(let i=0;i<150&&alive();i++)await new Promise(r=>setTimeout(r,20));
+ assert.equal(alive(),false,'owned metadata process must exit after bridge EOF');
 });

@@ -8,7 +8,7 @@ import {promisify} from 'node:util';
 import {createInterface} from 'node:readline';
 import {createJsonLineStream} from '../third_party/open-design/core/json-line-stream.js';
 import {buildAcpSessionNewParams, buildPromptBlocks} from '../third_party/open-design/acp/session-params.js';
-import {normalizeModels, findModelConfigOption, detectAcpModels} from '../third_party/open-design/acp/models.js';
+import {normalizeModels, findModelConfigOption} from '../third_party/open-design/acp/models.js';
 import catalog from './catalog.json';
 import {sanitizeCustomModel} from '../third_party/open-design/runtime-models/models.js';
 import {loadMmdRouteModels,loadMmdRouteLaunchEnv} from '../third_party/open-design/runtime-models/mmd-routes.js';
@@ -16,10 +16,21 @@ import {parseCodexDebugModels} from '../third_party/open-design/runtime-models/c
 import {parseOpenCodeModels} from '../third_party/open-design/runtime-models/opencode-models.js';
 import fallbackModels from '../third_party/open-design/runtime-models/fallbacks.json';
 const rawExec = promisify(execFile);
+// Only processes started by this bridge belong to its shutdown scope.
+const ownedChildren = new Set<any>();
+let stopping = false;
+const terminating = new WeakSet<object>();
+function own(child:any){
+ ownedChildren.add(child);
+ child.once('close',()=>{ownedChildren.delete(child);terminate(child);});
+ if(stopping)terminate(child);
+ return child;
+}
 function exec(bin:string,args:string[],options:any):any {
- if(process.platform!=='win32')return rawExec(bin,args,options);
+ if(stopping)throw Error('Runtime bridge is shutting down');
+ if(process.platform!=='win32'){const result=rawExec(bin,args,{...options,detached:true});own(result.child);return result;}
  if(!env.BRIEFLOOP_PYTHON||!env.BRIEFLOOP_PROCESS_HELPER)throw Error('Windows process owner is unavailable');
- return rawExec(env.BRIEFLOOP_PYTHON,['-X','utf8',env.BRIEFLOOP_PROCESS_HELPER,bin,...args],{...options,windowsHide:true});
+ const result=rawExec(env.BRIEFLOOP_PYTHON,['-X','utf8',env.BRIEFLOOP_PROCESS_HELPER,bin,...args],{...options,windowsHide:true});own(result.child);return result;
 }
 const acpArgs = {codebuddy:['--acp'],kimi:['acp'],hermes:['acp'],reasonix:['acp'],kilo:['acp'],kiro:['acp'],vibe:[],'deepseek-harness':['--profile','acp']};
 function acpArguments(id:string,bin:string):string[]{
@@ -62,13 +73,14 @@ function wire(value:any){process.stdout.write(JSON.stringify(value)+'\n');}
 function emit(id:string,kind:string,data:any={}){const state=active.get(id);if(state&&((kind==='text'&&data.text?.trim())||kind==='tool'))state.publicActivity=true;wire({method:'event',params:{execution_id:id,kind,...data}});}
 function protocol(id:string){return id in acpArgs?'acp':id==='pi'?'pi-rpc':id==='antigravity'?'antigravity-stream-json':id==='claude'?'claude-stream-json':id==='mimo'?'opencode-json':id==='codex'||id==='opencode'?'native-manager':null;}
 function capabilities(id:string){const p=protocol(id);return {chat:!!p,cancel:!!p,resume:p==='acp'?'negotiated':p==='claude-stream-json'||p==='opencode-json'||p==='antigravity-stream-json'||p==='pi-rpc',images:p==='acp'?'negotiated':p==='claude-stream-json',questions:p==='acp'||p==='pi-rpc'||p==='claude-stream-json',steer:false,read_only:false,network_control:false,permission_modes:['runtime-native']};}
-function terminate(child:any){if(!child?.pid)return;if(process.platform==='win32'){child.kill();return;}try{process.kill(-child.pid,'SIGTERM');}catch{try{child.kill('SIGTERM');}catch{}}setTimeout(()=>{try{process.kill(-child.pid,'SIGKILL');}catch{}},1200).unref();}
+function terminate(child:any){if(!child?.pid||terminating.has(child))return;terminating.add(child);if(process.platform==='win32'){child.kill();return;}try{process.kill(-child.pid,'SIGTERM');}catch{try{child.kill('SIGTERM');}catch{}}setTimeout(()=>{try{process.kill(-child.pid,'SIGKILL');}catch{}},1200).unref();}
 function launch(bin:string,args:string[],cwd:string,childEnv:any=env){
+ if(stopping)throw Error('Runtime bridge is shutting down');
  if(process.platform==='win32'){
   if(!env.BRIEFLOOP_PYTHON||!env.BRIEFLOOP_PROCESS_HELPER)throw Error('Windows process owner is unavailable');
-  return spawn(env.BRIEFLOOP_PYTHON,['-X','utf8',env.BRIEFLOOP_PROCESS_HELPER,bin,...args],{cwd,env:childEnv,stdio:['pipe','pipe','pipe'],windowsHide:true});
+  return own(spawn(env.BRIEFLOOP_PYTHON,['-X','utf8',env.BRIEFLOOP_PROCESS_HELPER,bin,...args],{cwd,env:childEnv,stdio:['pipe','pipe','pipe'],windowsHide:true}));
  }
- return spawn(bin,args,{cwd,env:childEnv,stdio:['pipe','pipe','pipe'],detached:true});
+ return own(spawn(bin,args,{cwd,env:childEnv,stdio:['pipe','pipe','pipe'],detached:true}));
 }
 function connect(bin:string,args:string[],cwd:string,onUpdate:(v:any)=>void,onRequest:(v:any,reply:(r:any)=>void)=>void){
  const child=launch(bin,args,cwd);let seq=0;const pending=new Map();
@@ -116,7 +128,7 @@ async function listModels(p:any){const d=defFor(p.runtime_id),bin=findBin(d,p.pa
  try{
   if(p.runtime_id==='codex'){const r=await exec(bin,['debug','models'],{env,timeout:5000,maxBuffer:4*1024*1024});const models=parseCodexDebugModels(r.stdout);return {models:models||fallback,source:models?'host':'builtin_hints'};}
   if(['mimo','opencode'].includes(p.runtime_id)){const r=await exec(bin,['models','--verbose'],{env,timeout:20000,maxBuffer:8*1024*1024});const models=parseOpenCodeModels(r.stdout);return {models:models||fallback,source:models?'host':'builtin_hints'};}
-  if(p.runtime_id in acpArgs){const args=acpArguments(p.runtime_id,bin);const models=process.platform==='win32'||p.runtime_id==='deepseek-harness'?await acpSessionModels(bin,args,p.cwd||process.cwd(),p.runtime_id):await detectAcpModels({bin,args,cwd:p.cwd||process.cwd(),env,timeoutMs:15000,defaultModelOption:defaults[0],clientName:'briefloop-models'});const live=models.some(m=>m.id!=='default');return {models:live?models:fallback,source:live?'host':'builtin_hints'};}
+  if(p.runtime_id in acpArgs){const args=acpArguments(p.runtime_id,bin);const models=await acpSessionModels(bin,args,p.cwd||process.cwd(),p.runtime_id);const live=models.some(m=>m.id!=='default');return {models:live?models:fallback,source:live?'host':'builtin_hints'};}
  }catch{return {models:fallback,source:'builtin_hints',diagnostic:'宿主目录读取失败，已显示内置建议；也可直接输入模型 ID。'};}
  return {models:fallback,source:'builtin_hints'};
 }
@@ -193,4 +205,4 @@ async function runStream(p:any,state:any){const claude=p.runtime_id==='claude';l
  if(claude){const content:any[]=[{type:'text',text:p.prompt}];for(const img of p.images||[]){const f=typeof img==='string'?img:img.path;const mime=({'.png':'image/png','.jpg':'image/jpeg','.jpeg':'image/jpeg','.webp':'image/webp'})[path.extname(f).toLowerCase()];if(!mime){terminate(child);reject(Error('Unsupported image'));return;}const data=readFileSync(f);if(data.length>20*1024*1024){terminate(child);reject(Error('Image exceeds 20 MiB'));return;}content.push({type:'image',source:{type:'base64',media_type:mime,data:data.toString('base64')}});}child.stdin.write(JSON.stringify({type:'user',message:{role:'user',content}})+'\n');}else child.stdin.end(p.prompt);});}
 async function execute(p:any,state:any){try{if(state.cancelled)return;if(p.runtime_id in acpArgs)await runAcp(p,state);else if(p.runtime_id==='pi')await runPi(p,state,launch,terminate,emit);else if(p.runtime_id==='antigravity')await runAntigravity(p,state);else await runStream(p,state);if(!state.cancelled&&!state.publicActivity)throw Error('Host ended without visible output or tool activity; verify host configuration');emit(p.execution_id,'end',{status:state.cancelled?'cancelled':'completed'});}catch(e){if(!state.cancelled)emit(p.execution_id,'error',{message:String(e.message||e)});emit(p.execution_id,'end',{status:state.cancelled?'cancelled':'failed',error:state.cancelled?undefined:String(e.message||e)});}finally{state.questions.clear();active.delete(p.execution_id);}}
 async function handle(method:string,p:any){if(method==='discover')return discover(p);if(method==='list_models')return listModels(p);if(method==='permission_options')return permissionOptions(p);if(method==='start'){const bin=validate(p);const state={bin,cancelled:false,questions:new Map()};active.set(p.execution_id,state);setImmediate(()=>execute(p,state));return {execution_id:p.execution_id};}if(method==='cancel'){const s=active.get(p.execution_id);if(!s)return {cancelled:false};s.cancelled=true;s.cancel?.();return {cancelled:true};}if(method==='answer'){const s=active.get(p.execution_id),q=s?.questions.get(String(p.request_id));if(!q)throw Error('Request no longer pending');if(p.option_id&&!q.options.some(o=>o.optionId===p.option_id))throw Error('Unknown permission option');q.reply({outcome:p.option_id?{outcome:'selected',optionId:p.option_id}:{outcome:'cancelled'}});s.questions.delete(String(p.request_id));return {accepted:true};}throw Error('Unknown bridge method');}
-const input=createInterface({input:process.stdin});input.on('line',async line=>{let m;try{m=JSON.parse(line);wire({id:m.id,result:await handle(m.method,m.params||{})});}catch(e){wire({id:m?.id??null,error:{message:String(e.message||e)}});}});function shutdown(){for(const s of active.values()){s.cancelled=true;s.cancel?.();}setTimeout(()=>process.exit(0),1500).unref();}input.on('close',shutdown);process.on('SIGINT',shutdown);process.on('SIGTERM',shutdown);
+const input=createInterface({input:process.stdin});input.on('line',async line=>{let m;try{m=JSON.parse(line);wire({id:m.id,result:await handle(m.method,m.params||{})});}catch(e){wire({id:m?.id??null,error:{message:String(e.message||e)}});}});function shutdown(){if(stopping)return;stopping=true;for(const s of active.values()){s.cancelled=true;s.cancel?.();}for(const child of ownedChildren)terminate(child);setTimeout(()=>process.exit(0),1500).unref();}input.on('close',shutdown);process.on('SIGINT',shutdown);process.on('SIGTERM',shutdown);

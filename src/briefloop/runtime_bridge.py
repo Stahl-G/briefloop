@@ -14,6 +14,7 @@ from .platform_support import OwnedProcess, cli_command
 
 
 class RuntimeBridge:
+    IDLE_SECONDS = 30.0
     def __init__(self, *, node_binary=None):
         self.node_binary=node_binary if node_binary is not None else os.environ.get('BRIEFLOOP_NODE')
         self._lock=threading.RLock()
@@ -21,6 +22,7 @@ class RuntimeBridge:
         self._pending={}
         self._events={}
         self._process=None
+        self._calls=0;self._active=set();self._idle_timer=None;self._idle_epoch=0
 
     @property
     def process(self):return self._process
@@ -59,13 +61,15 @@ class RuntimeBridge:
         with self._lock:
             if self._process is proc:
                 self._broken=proc
-                pending=list(self._pending.values());self._pending.clear()
+                pending=list(self._pending.values());self._pending.clear();self._active.clear()
                 sinks=list(self._events.values())
             else:pending=[];sinks=[]
         for future in pending:
             if not future.done():future.set_exception(error)
         for sink in sinks:sink.put({'kind':'end','status':'failed','error':str(error)})
-        proc.close_tree(timeout=.2)
+        # Node handles SIGTERM by terminating its detached CLI children; allow
+        # its 1.2-second escalation to finish before forcibly stopping the bridge.
+        proc.close_tree(timeout=2)
 
     def _read(self,proc):
         try:
@@ -74,7 +78,11 @@ class RuntimeBridge:
                 except ValueError:continue
                 if message.get('method')=='event':
                     event=message.get('params',{})
-                    with self._lock:sink=self._events.get(event.get('execution_id')) if self._process is proc else None
+                    with self._lock:
+                        if self._process is proc and event.get('kind')=='end':
+                            self._active.discard(event.get('execution_id'))
+                            self._arm_idle_locked()
+                        sink=self._events.get(event.get('execution_id')) if self._process is proc else None
                     if sink is not None:sink.put(event)
                     continue
                 with self._lock:future=self._pending.pop(message.get('id'),None) if self._process is proc else None
@@ -85,29 +93,76 @@ class RuntimeBridge:
             with self._lock:writer=self._writer if self._process is proc else None
             if writer is not None:writer.abort(RuntimeError('Runtime bridge 已退出，接收状态未确认；未自动重发'))
 
+    def _arm_idle_locked(self):
+        if self._idle_timer is not None:self._idle_timer.cancel()
+        self._idle_epoch+=1
+        self._idle_timer=None
+        if self._closed or self._process is None or self._calls or self._pending or self._events or self._active:
+            return
+        timer=threading.Timer(self.IDLE_SECONDS,self._reap_idle,args=(self._idle_epoch,))
+        timer.daemon=True;self._idle_timer=timer;timer.start()
+
+    def _reap_idle(self,epoch):
+        # Serialize retirement with startup. Never retire a live RPC or execution,
+        # including one whose observer has not yet consumed its terminal event.
+        with self._start_lock:
+            with self._lock:
+                if (self._closed or epoch!=self._idle_epoch or self._calls or
+                        self._pending or self._events or self._active):return
+                proc,writer=self._process,self._writer
+                self._process=None;self._writer=None;self._broken=None;self._idle_timer=None
+            if proc is None:return
+            # No pending writes at this point: EOF lets Node reap its owned CLI
+            # children before the process-tree fallback, rather than killing Node first.
+            try:
+                proc.stdin.close()
+                proc.wait(timeout=2)
+            except (OSError,ValueError,subprocess.TimeoutExpired):
+                proc.close_tree(timeout=.5)
+            finally:
+                if writer is not None:writer.abort()
+
     def call(self,method,params=None,timeout=30):
         deadline=time.monotonic()+timeout
-        rid=uuid.uuid4().hex;future=Future();proc,writer=self._start()
+        rid=uuid.uuid4().hex;future=Future();params=params or {}
+        execution=params.get('execution_id') if method=='start' else None
         with self._lock:
-            if self._closed or proc is self._broken or proc is not self._process:raise RuntimeError('Bridge 连接已变化；未自动重发')
-            self._pending[rid]=future
+            if self._closed:raise RuntimeError('Runtime bridge 已关闭')
+            self._calls+=1
+            if execution:self._active.add(execution)
+            self._arm_idle_locked()
         try:
-            remaining=max(0,deadline-time.monotonic())
-            writer.send({'id':rid,'method':method,'params':params or {}},timeout=min(5,remaining))
-            return future.result(timeout=max(0,deadline-time.monotonic()))
-        except TimeoutError:
-            writer.abort(RuntimeError('Bridge 请求超时，接收状态未确认；未自动重发'))
+            proc,writer=self._start()
+            with self._lock:
+                if self._closed or proc is self._broken or proc is not self._process:raise RuntimeError('Bridge 连接已变化；未自动重发')
+                self._pending[rid]=future
+            try:
+                remaining=max(0,deadline-time.monotonic())
+                writer.send({'id':rid,'method':method,'params':params},timeout=min(5,remaining))
+                return future.result(timeout=max(0,deadline-time.monotonic()))
+            except TimeoutError:
+                writer.abort(RuntimeError('Bridge 请求超时，接收状态未确认；未自动重发'))
+                raise
+        except BaseException:
+            with self._lock:
+                if execution:self._active.discard(execution)
             raise
         finally:
-            with self._lock:self._pending.pop(rid,None)
+            with self._lock:
+                self._pending.pop(rid,None);self._calls-=1
+                self._arm_idle_locked()
 
     def subscribe(self,execution_id):
         with self._lock:
             if execution_id in self._events:raise ValueError('Execution already observed')
-            sink=queue.Queue();self._events[execution_id]=sink;return sink
+            sink=queue.Queue();self._events[execution_id]=sink
+            self._arm_idle_locked()
+            return sink
 
     def unsubscribe(self,execution_id):
-        with self._lock:self._events.pop(execution_id,None)
+        with self._lock:
+            self._events.pop(execution_id,None)
+            self._arm_idle_locked()
 
     def discover(self):
         try:result=self.call('discover',timeout=15)
@@ -142,5 +197,8 @@ class RuntimeBridge:
     def close(self):
         with self._lock:
             self._closed=True;writer=self._writer;proc=self._process
+            self._idle_epoch+=1
+            if self._idle_timer is not None:self._idle_timer.cancel()
+            self._idle_timer=None
         if writer is not None:writer.abort()
         elif proc is not None:proc.close_tree(timeout=.2)

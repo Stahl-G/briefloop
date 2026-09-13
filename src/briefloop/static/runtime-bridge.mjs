@@ -388,7 +388,7 @@ async function runPi(p, state, launch2, terminate2, emit2) {
 }
 
 // runtime-bridge/main.ts
-import { spawn as spawn2, execFile } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
 import { accessSync, constants, readFileSync } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import path3 from "node:path";
@@ -441,12 +441,7 @@ function buildPromptBlocks(prompt, resourcePaths) {
   return blocks;
 }
 
-// third_party/open-design/acp/models.ts
-import { spawn } from "node:child_process";
-
 // third_party/open-design/acp/constants.ts
-var ACP_PROTOCOL_VERSION = 1;
-var DEFAULT_TIMEOUT_MS = 15e3;
 var MAX_TIMEOUT_MS = 24 * 60 * 60 * 1e3;
 var DEFAULT_STAGE_TIMEOUT_MS = 10 * 60 * 1e3;
 var ACP_ARTIFACT_OPEN_PATTERN = String.raw`<\s*(?:\|?\s*DSML[\s,]+artifact\b|artifact\b)`;
@@ -458,39 +453,8 @@ var ACP_ARTIFACT_ECHO_START_RE = new RegExp(
 var MODEL_CONFIG_OPTION_IDS = /* @__PURE__ */ new Set(["model", "models", "modelid", "modelids"]);
 
 // third_party/open-design/acp/json.ts
-function errorMessage(err) {
-  return err instanceof Error ? err.message : String(err);
-}
-function resolveAcpTimeoutMs(env2, fallbackMs) {
-  const raw = Number(env2.OD_ACP_TIMEOUT_MS);
-  if (!Number.isFinite(raw)) return fallbackMs;
-  return Math.min(MAX_TIMEOUT_MS, Math.max(0, Math.floor(raw)));
-}
 function asObject(value) {
   return value && typeof value === "object" ? value : null;
-}
-
-// third_party/open-design/acp/rpc.ts
-function sendRpc(writable, id, method, params, observeSerializedFrame) {
-  const frame = `${JSON.stringify({ jsonrpc: "2.0", id, method, params })}
-`;
-  writable.write(frame);
-  try {
-    observeSerializedFrame?.({
-      method,
-      frameBytes: Buffer.byteLength(frame, "utf8")
-    });
-  } catch {
-  }
-}
-function rpcErrorMessage(raw) {
-  const obj = asObject(raw);
-  const error = asObject(obj?.error);
-  if (!obj || !error) {
-    return "";
-  }
-  const message = typeof error.message === "string" ? error.message : typeof error.code === "number" ? String(error.code) : "json-rpc error";
-  return typeof obj.id === "number" ? `json-rpc id ${obj.id}: ${message}` : message;
 }
 
 // third_party/open-design/acp/models.ts
@@ -563,104 +527,6 @@ function normalizeModels(models, defaultModelOption, configOptions) {
     out.push({ id, label: isCurrent ? `${labelBase} \u2022 current` : labelBase });
   }
   return out.length > 1 || !configModels ? out : configModels.models;
-}
-async function detectAcpModels({
-  bin,
-  args,
-  cwd = process.cwd(),
-  env: env2 = process.env,
-  timeoutMs = DEFAULT_TIMEOUT_MS,
-  clientName = "open-design-detect",
-  clientVersion = "runtime-adapter",
-  defaultModelOption = { id: "default", label: "Default (CLI config)" }
-}) {
-  const effectiveTimeoutMs = resolveAcpTimeoutMs(env2, timeoutMs);
-  return await new Promise((resolve, reject) => {
-    const child = spawn(bin, args, {
-      cwd,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: { ...env2 }
-    });
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    let settled = false;
-    let stderrBuf = "";
-    let expectedId = 1;
-    let nextId = 2;
-    let timer = null;
-    const finish = (fn, value) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      try {
-        child.stdin.end();
-      } catch {
-      }
-      fn(value);
-    };
-    const fail = (message) => {
-      finish(reject, new Error(message));
-      if (!child.killed) child.kill("SIGTERM");
-    };
-    const writeRpc = (id, method, params) => {
-      try {
-        sendRpc(child.stdin, id, method, params);
-      } catch (err) {
-        fail(`stdin write failed: ${errorMessage(err)}`);
-      }
-    };
-    const sendSessionNew = () => {
-      expectedId = nextId;
-      writeRpc(nextId, "session/new", buildAcpSessionNewParams(cwd));
-      nextId += 1;
-    };
-    const parser = createJsonLineStream((raw) => {
-      const obj = asObject(raw);
-      const error = asObject(obj?.error);
-      const result = asObject(obj?.result);
-      const rpcErr = rpcErrorMessage(raw);
-      if (rpcErr) {
-        if (error?.code === -32603 && obj?.id !== expectedId) return;
-        fail(rpcErr);
-        return;
-      }
-      if (obj?.id !== expectedId || !result) return;
-      if (expectedId === 1) {
-        sendSessionNew();
-        return;
-      }
-      if (expectedId === 2) {
-        const models = normalizeModels(result.models, defaultModelOption, result.configOptions);
-        finish(resolve, models);
-        if (!child.killed) child.kill("SIGTERM");
-      }
-    });
-    child.stdout.on("data", (chunk) => parser.feed(chunk));
-    child.stdout.on("close", () => parser.flush());
-    child.stdin.on("error", (err) => fail(`stdin error: ${err.message}`));
-    child.stderr.on("data", (chunk) => {
-      stderrBuf = `${stderrBuf}${chunk}`.slice(-16e3);
-    });
-    child.on("error", (err) => fail(`spawn failed: ${err.message}`));
-    child.on("close", (code, signal) => {
-      parser.flush();
-      if (!settled) {
-        const errTail = stderrBuf.trim();
-        const suffix = errTail ? ` stderr=${errTail}` : "";
-        fail(`ACP model detection exited code=${code} signal=${signal ?? "none"}${suffix}`);
-      }
-    });
-    if (effectiveTimeoutMs > 0) {
-      timer = setTimeout(() => {
-        fail(`ACP model detection timed out after ${effectiveTimeoutMs}ms`);
-      }, effectiveTimeoutMs);
-    }
-    writeRpc(1, "initialize", {
-      protocolVersion: ACP_PROTOCOL_VERSION,
-      clientCapabilities: { terminal: false },
-      clientInfo: { name: clientName, version: clientVersion }
-    });
-  });
 }
 
 // runtime-bridge/catalog.json
@@ -1266,10 +1132,29 @@ var fallbacks_default = {
 
 // runtime-bridge/main.ts
 var rawExec = promisify(execFile);
+var ownedChildren = /* @__PURE__ */ new Set();
+var stopping = false;
+var terminating = /* @__PURE__ */ new WeakSet();
+function own(child) {
+  ownedChildren.add(child);
+  child.once("close", () => {
+    ownedChildren.delete(child);
+    terminate(child);
+  });
+  if (stopping) terminate(child);
+  return child;
+}
 function exec(bin, args, options) {
-  if (process.platform !== "win32") return rawExec(bin, args, options);
+  if (stopping) throw Error("Runtime bridge is shutting down");
+  if (process.platform !== "win32") {
+    const result2 = rawExec(bin, args, { ...options, detached: true });
+    own(result2.child);
+    return result2;
+  }
   if (!env.BRIEFLOOP_PYTHON || !env.BRIEFLOOP_PROCESS_HELPER) throw Error("Windows process owner is unavailable");
-  return rawExec(env.BRIEFLOOP_PYTHON, ["-X", "utf8", env.BRIEFLOOP_PROCESS_HELPER, bin, ...args], { ...options, windowsHide: true });
+  const result = rawExec(env.BRIEFLOOP_PYTHON, ["-X", "utf8", env.BRIEFLOOP_PROCESS_HELPER, bin, ...args], { ...options, windowsHide: true });
+  own(result.child);
+  return result;
 }
 var acpArgs = { codebuddy: ["--acp"], kimi: ["acp"], hermes: ["acp"], reasonix: ["acp"], kilo: ["acp"], kiro: ["acp"], vibe: [], "deepseek-harness": ["--profile", "acp"] };
 function acpArguments(id, bin) {
@@ -1342,7 +1227,8 @@ function capabilities(id) {
   return { chat: !!p, cancel: !!p, resume: p === "acp" ? "negotiated" : p === "claude-stream-json" || p === "opencode-json" || p === "antigravity-stream-json" || p === "pi-rpc", images: p === "acp" ? "negotiated" : p === "claude-stream-json", questions: p === "acp" || p === "pi-rpc" || p === "claude-stream-json", steer: false, read_only: false, network_control: false, permission_modes: ["runtime-native"] };
 }
 function terminate(child) {
-  if (!child?.pid) return;
+  if (!child?.pid || terminating.has(child)) return;
+  terminating.add(child);
   if (process.platform === "win32") {
     child.kill();
     return;
@@ -1363,11 +1249,12 @@ function terminate(child) {
   }, 1200).unref();
 }
 function launch(bin, args, cwd, childEnv = env) {
+  if (stopping) throw Error("Runtime bridge is shutting down");
   if (process.platform === "win32") {
     if (!env.BRIEFLOOP_PYTHON || !env.BRIEFLOOP_PROCESS_HELPER) throw Error("Windows process owner is unavailable");
-    return spawn2(env.BRIEFLOOP_PYTHON, ["-X", "utf8", env.BRIEFLOOP_PROCESS_HELPER, bin, ...args], { cwd, env: childEnv, stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    return own(spawn(env.BRIEFLOOP_PYTHON, ["-X", "utf8", env.BRIEFLOOP_PROCESS_HELPER, bin, ...args], { cwd, env: childEnv, stdio: ["pipe", "pipe", "pipe"], windowsHide: true }));
   }
-  return spawn2(bin, args, { cwd, env: childEnv, stdio: ["pipe", "pipe", "pipe"], detached: true });
+  return own(spawn(bin, args, { cwd, env: childEnv, stdio: ["pipe", "pipe", "pipe"], detached: true }));
 }
 function connect(bin, args, cwd, onUpdate, onRequest) {
   const child = launch(bin, args, cwd);
@@ -1497,7 +1384,7 @@ async function listModels(p) {
     }
     if (p.runtime_id in acpArgs) {
       const args = acpArguments(p.runtime_id, bin);
-      const models = process.platform === "win32" || p.runtime_id === "deepseek-harness" ? await acpSessionModels(bin, args, p.cwd || process.cwd(), p.runtime_id) : await detectAcpModels({ bin, args, cwd: p.cwd || process.cwd(), env, timeoutMs: 15e3, defaultModelOption: defaults[0], clientName: "briefloop-models" });
+      const models = await acpSessionModels(bin, args, p.cwd || process.cwd(), p.runtime_id);
       const live = models.some((m) => m.id !== "default");
       return { models: live ? models : fallback, source: live ? "host" : "builtin_hints" };
     }
@@ -1835,10 +1722,13 @@ input.on("line", async (line) => {
   }
 });
 function shutdown() {
+  if (stopping) return;
+  stopping = true;
   for (const s of active.values()) {
     s.cancelled = true;
     s.cancel?.();
   }
+  for (const child of ownedChildren) terminate(child);
   setTimeout(() => process.exit(0), 1500).unref();
 }
 input.on("close", shutdown);
