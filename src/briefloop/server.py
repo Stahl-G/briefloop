@@ -19,6 +19,14 @@ from .interactive_runtime import InteractiveRuntime
 from .store import Store, Conflict, dump
 from . import sources
 
+MAX_REQUEST_BYTES=25*1024*1024
+MAX_UPLOAD_BYTES=18*1024*1024
+
+def _upload_data(body):
+    data=base64.b64decode(body['data'],validate=True)
+    if len(data)>MAX_UPLOAD_BYTES:raise ValueError(f"{body.get('name','文件')} 超过单文件 18 MiB 限制，请压缩或拆分后重试")
+    return data
+
 
 def _service_status(server):
     from .chat_store import BUSY_SQL
@@ -211,7 +219,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/external/capabilities':
                     from .external_requests import capabilities
                     self.send(200,capabilities())
-                elif u.path=='/api/session':self.send(200,{'token':token})
+                elif u.path=='/api/session':self.send(200,{'token':token,'upload_limits':{'max_file_bytes':MAX_UPLOAD_BYTES,'max_request_bytes':MAX_REQUEST_BYTES}})
                 elif u.path=='/api/service-status':self.send(200,_service_status(self.server))
                 elif u.path=='/api/connectors':self.send(200,{'connectors':self.server.connectors.list()})
                 elif u.path=='/api/runtime':
@@ -412,7 +420,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 if self.headers.get('X-BriefLoop-Token')!=token or origin and origin!=expected:
                     self.send(403,{'error':'页面会话已过期，请刷新后重试'});return
                 n=int(self.headers.get('Content-Length','0'))
-                if not 0<n<25*1024*1024:raise ValueError('请求为空或过大')
+                if not 0<n<MAX_REQUEST_BYTES:
+                    self.close_connection=True
+                    self.send(413,{'error':'请求为空或超过 25 MiB（含 Base64 与 JSON）；单文件上限 18 MiB，请压缩、拆分文件后重试','code':'request_too_large'});return
                 body=json.loads(self.rfile.read(n));path=urlsplit(self.path).path
                 if path=='/api/software-update-check':
                     from .software_version import check_update
@@ -486,7 +496,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/harness/archive-completed':result={'count':sum(manager.archive_completed(name)['count'] for name,manager in managers.items())}
                 elif path=='/api/harness/cancel':result=pick_harness(session_id=body['session_id']).cancel(body['session_id'])
                 elif path=='/api/upload':
-                    data=base64.b64decode(body['data'],validate=True)
+                    data=_upload_data(body)
                     result=sources.upload(store,body['name'],data)
                 elif path=='/api/source-url':result=sources.fetch(store,body['url'])
                 elif path=='/api/retry-source':result=sources.retry_source(store,body['source_id'])
@@ -501,14 +511,14 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/import-revision':
                     from .word_import import import_revision
                     result=import_revision(store,body['base_version'],body.get('name','revision.docx'),
-                        base64.b64decode(body['data'],validate=True) if body.get('data') else b'',
+                        _upload_data(body) if body.get('data') else b'',
                         accept_unaligned=bool(body.get('accept_unaligned',False)),source_id=body.get('source_id'))
                 elif path=='/api/company-resolve':
                     from .company_context import resolve_conflict
                     result=resolve_conflict(store,body['fact_id'],body['accept'])
                 elif path=='/api/template-import':
                     from .templates import import_template
-                    result=import_template(store,body['name'],base64.b64decode(body['data'],validate=True),body.get('parent_id'))
+                    result=import_template(store,body['name'],_upload_data(body),body.get('parent_id'))
                 elif path=='/api/export':
                     from .export_jobs import enqueue_export
                     result=enqueue_export(store,body['version_id'],body.get('template_id'))

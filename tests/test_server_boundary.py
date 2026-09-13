@@ -83,3 +83,27 @@ def test_private_get_origin_boundary_preserves_navigation_and_native_clients(tmp
         for path in ['/','/index.html','/app.js','/style.css']:
             assert get(path,[('Origin','https://untrusted.example'),('Sec-Fetch-Site','cross-site')])[0]==200
     finally:server.shutdown();thread.join();_close_service(server)
+
+
+def test_upload_limits_are_disclosed_and_enforced_before_source_creation(tmp_path,monkeypatch):
+    import base64
+    from briefloop import server as module
+    monkeypatch.setattr(module,'MAX_UPLOAD_BYTES',3)
+    server=make_server(tmp_path/'workspace',port=0,paused=True)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    def request(body=None,length=None):
+        conn=http.client.HTTPConnection('127.0.0.1',server.server_port)
+        headers={} if body is None else {'X-BriefLoop-Token':token}
+        if length is not None:headers['Content-Length']=str(length)
+        conn.request('GET' if body is None else 'POST','/api/session' if body is None else '/api/upload',body,headers)
+        r=conn.getresponse();value=(r.status,json.loads(r.read()));conn.close();return value
+    try:
+        status,session=request();token=session['token']
+        assert session['upload_limits']=={'max_file_bytes':3,'max_request_bytes':module.MAX_REQUEST_BYTES}
+        status,error=request(json.dumps({'name':'large.txt','data':base64.b64encode(b'abcd').decode()}))
+        assert status==400 and 'large.txt' in error['error']
+        assert not server.store.rows('SELECT * FROM sources')
+        assert request(json.dumps({'name':'ok.txt','data':base64.b64encode(b'abc').decode()}))[0]==200
+        status,error=request('',length=module.MAX_REQUEST_BYTES)
+        assert status==413 and error['code']=='request_too_large'
+    finally:server.shutdown();thread.join();module._close_service(server)
