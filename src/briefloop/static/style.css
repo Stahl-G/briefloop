@@ -655,3 +655,12 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 @media(max-width:700px){.task-progress-card{padding:16px}.task-progress-header{align-items:flex-start;flex-direction:column}.task-progress-rail{flex-wrap:wrap}.task-progress-rail li{flex-basis:40%}.task-progress-timeline li{flex-wrap:wrap}}
 
 .task-progress-card button,.task-progress-card summary{min-height:44px}.task-progress-card.is-loading .task-progress-meta{background:var(--paper);border-radius:6px;padding:8px}.task-progress-card.is-complete .task-progress-status{color:var(--green)}
+
+.compact-report-options{display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:8px 0;color:var(--muted);font:400 12px/1.6 var(--font)}
+.compact-report-options label{display:inline-flex;align-items:center;gap:4px;margin:0;font:inherit;color:inherit}
+.compact-report-options select,.compact-report-options input{width:auto;min-height:28px;height:28px;margin:0;padding:2px 4px;font:inherit;color:inherit;border:1px solid var(--line);border-radius:6px;background:var(--surface)}
+.compact-report-options input[type=checkbox]{width:16px;height:16px;min-height:16px;accent-color:var(--green)}
+.compact-report-options input[type=number]{width:48px}.compact-report-options details{position:relative;margin:0;padding:0;border:0}.compact-report-options summary{cursor:pointer;list-style:none}
+.compact-options-menu{position:absolute;z-index:30;top:28px;right:0;width:230px;padding:12px;border:1px solid var(--line);border-radius:6px;background:var(--surface);box-shadow:var(--shadow-sm)}.compact-options-menu label{display:flex;justify-content:space-between;margin:4px 0}
+
+.compact-legacy-option[hidden]{display:none!important}

@@ -6,7 +6,7 @@ from briefloop.runtime import Worker
 from briefloop.research_plan import freeze, mark_protocol
 
 
-@pytest.mark.parametrize('quality,plan_parallel,legacy,expected', [(False, None, False, 3), (True, None, False, 2), (True, 8, False, 3), (False, None, True, 7)])
+@pytest.mark.parametrize('quality,plan_parallel,legacy,expected', [(False, None, False, 3), (True, None, False, 3), (True, 8, False, 3), (False, None, True, 7)])
 def test_generation_uses_queued_limit_and_frozen_plan(tmp_path, quality, plan_parallel, legacy, expected):
     store = Store(tmp_path/'workspace')
     store.set_meta('settings', {**store.settings(), 'max_parallel': 3})

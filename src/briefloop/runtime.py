@@ -414,8 +414,11 @@ input.refcheck 是程序对本稿的确定性检查：broken_refs 必须逐条�
 class Worker:
     IDLE_POLL_SECONDS = 5.0
 
-    def __init__(self,store,runtime=None):
+    def __init__(self,store,runtime=None,report_runtime_factory=None):
         self._claim_lock=threading.RLock()
+        self._generation_jobs={}
+        self._report_runtime_factory=report_runtime_factory
+        self._execution_local=threading.local()
         self.opened_paused=False
         self.store=store;self._runtime=runtime;self.stopping=threading.Event();self.current=None
         self._queue_wakes=[threading.Event() for _ in range(3)]
@@ -431,6 +434,8 @@ class Worker:
     def runtime(self):
         # Production injects the shared InteractiveRuntime; this lazy default
         # keeps a Worker built without one on a real transport.
+        local=getattr(self._execution_local,"runtime",None)
+        if local is not None:return local
         if self._runtime is None:
             from .interactive_runtime import InteractiveRuntime
             self._runtime=InteractiveRuntime(self.store)
@@ -453,9 +458,13 @@ class Worker:
 
     def close(self):
         self.stopping.set();self.wake();self._file_cancelled.set();self.runtime.cancel()
+        with self._claim_lock:
+            generations=list(self._generation_jobs.values())
+        for thread,runtime in generations:runtime.cancel()
         if self._review_runtime:self._review_runtime.cancel()
         if self.schedule_thread.is_alive():self.schedule_thread.join(timeout=12)
         self.thread.join(timeout=12)
+        for thread,runtime in generations:thread.join(timeout=12)
         if self.review_thread.is_alive():self.review_thread.join(timeout=12)
         if self.file_thread.is_alive():self.file_thread.join(timeout=12)
         if self.store._job_wakeup==self.wake:self.store._job_wakeup=None
@@ -498,6 +507,7 @@ class Worker:
             if changed:
                 tasks=getattr(self,'connector_tasks',None)
                 if tasks is not None and tasks.has_binding(jid):tasks.revoke(jid)
+                if jid in self._generation_jobs:self._generation_jobs[jid][1].cancel()
                 if self.current==jid:self.runtime.cancel()
                 if self.review_current==jid and self._review_runtime:self._review_runtime.cancel()
                 if self.file_current==jid:self._file_cancelled.set()
@@ -615,6 +625,7 @@ class Worker:
                 with self.store.tx() as c:
                     changed=c.execute("UPDATE jobs SET status='running',error=NULL,updated=? WHERE id=? AND status='queued'",(now(),job['id'])).rowcount
                 if not changed:continue
+                self.store.event(job['id'],'job_started',{})
                 self.review_current=job['id']
                 if self._review_runtime is None:self._review_runtime=InteractiveRuntime(self.store,backends=self.runtime.backends)
                 self._review_runtime.cancelled.clear()
@@ -640,48 +651,71 @@ class Worker:
                 continue
             job=jobs[0]
             with self._claim_lock:
+                if self.stopping.is_set():break
+                if job['kind']=='generate' and len(self._generation_jobs)>=self.store.settings()['max_reports']:
+                    continue
                 with self.store.tx() as c:
                     claimed=c.execute("UPDATE jobs SET status='running',error=NULL,updated=? WHERE id=? AND status='queued'",
                                       (now(),job['id'])).rowcount
                 if not claimed:continue
-                self.current=job['id'];self.runtime.cancelled.clear()
-            job=self.store.one('jobs',job['id'])
-            try:
-                from .notifications import job_status
-                job_status(self.store,job,'running')
-                if job['kind']=='prepare_template':
-                    from .templates import template,preparation_prompt,prepare
-                    row=template(self.store,json.loads(job['payload'])['template_id'])
-                    if row['status']!='ready':
-                        folder=self.folder(job)
-                        self.runtime.execute(job,TASK_CONTEXT+preparation_prompt(self.store,row,folder),folder,resume_on_complete=True)
-                        row=prepare(self.store,row['id'],json.loads((folder/'template.json').read_text(encoding='utf-8-sig')))
-                    result={'template_id':row['id'],'revision':row['revision'],'status':row['status']}
-                elif job['kind']=='source_refresh':
-                    from .source_updates import refresh
-                    args=json.loads(job['payload'])
-                    result=refresh(self.store,args['run_id'],args['source_id'],information_cutoff=args['information_cutoff'],trigger='manual')
-                elif job['kind']=='generate':result=self.generate(job)
-                elif job['kind']=='assess':result=self.assess(job)
-                elif job['kind']=='revise':
-                    brief=self.store.one('briefs',json.loads(job['payload'])['version_id'])
-                    result=self.auto_revise(job,brief,self.folder(job))
-                elif job['kind']=='review':
-                    from .review import run_review
-                    result=run_review(self.store,self.runtime,job,json.loads(job['payload'])['version_id'],self.folder(job))
-                elif job['kind']=='learn':
-                    from .learning import learn
-                    result=learn(self.store,self.runtime,job)
-                else:raise ValueError('Unknown job kind')
-                self._settle_job(job['id'],'complete',result=result,runtime=self.runtime)
-            except InterruptedError as exc:self._settle_job(job['id'],'cancelled',error=str(exc))
-            except Exception as exc:
-                if job['kind']=='prepare_template':
-                    with self.store.tx() as c:c.execute("UPDATE templates SET status='failed',error=? WHERE id=?",(str(exc),json.loads(job['payload'])['template_id']))
-                self._settle_job(job['id'],'failed',error=str(exc))
-            finally:
-                with self._claim_lock:self.current=None
+                if job['kind']=='generate':
+                    from .interactive_runtime import InteractiveRuntime
+                    try:runtime=self._report_runtime_factory() if self._report_runtime_factory else InteractiveRuntime(self.store,backends=self.runtime.backends)
+                    except Exception as exc:
+                        self._settle_job(job['id'],'failed',error=str(exc));continue
+                    thread=threading.Thread(target=self._execute_main_job,args=(job,runtime),name='briefloop-report-'+job['id'],daemon=True)
+                    self._generation_jobs[job['id']]=(thread,runtime)
+                    self.store.event(job['id'],'job_started',{})
+                    thread.start()
+                else:
+                    self.current=job['id'];self.runtime.cancelled.clear()
+            if job['kind']!='generate':
+                self.store.event(job['id'],'job_started',{})
+                self._execute_main_job(job)
 
+    def _execute_main_job(self,job,runtime=None):
+        if runtime is not None:self._execution_local.runtime=runtime
+        job=self.store.one('jobs',job['id'])
+        try:
+            if job['status']!='running' or self.stopping.is_set():raise InterruptedError('任务已停止')
+            from .notifications import job_status
+            job_status(self.store,job,'running')
+            if job['kind']=='prepare_template':
+                from .templates import template,preparation_prompt,prepare
+                row=template(self.store,json.loads(job['payload'])['template_id'])
+                if row['status']!='ready':
+                    folder=self.folder(job)
+                    self.runtime.execute(job,TASK_CONTEXT+preparation_prompt(self.store,row,folder),folder,resume_on_complete=True)
+                    row=prepare(self.store,row['id'],json.loads((folder/'template.json').read_text(encoding='utf-8-sig')))
+                result={'template_id':row['id'],'revision':row['revision'],'status':row['status']}
+            elif job['kind']=='source_refresh':
+                from .source_updates import refresh
+                args=json.loads(job['payload'])
+                result=refresh(self.store,args['run_id'],args['source_id'],information_cutoff=args['information_cutoff'],trigger='manual')
+            elif job['kind']=='generate':result=self.generate(job)
+            elif job['kind']=='assess':result=self.assess(job)
+            elif job['kind']=='revise':
+                brief=self.store.one('briefs',json.loads(job['payload'])['version_id'])
+                result=self.auto_revise(job,brief,self.folder(job))
+            elif job['kind']=='review':
+                from .review import run_review
+                result=run_review(self.store,self.runtime,job,json.loads(job['payload'])['version_id'],self.folder(job))
+            elif job['kind']=='learn':
+                from .learning import learn
+                result=learn(self.store,self.runtime,job)
+            else:raise ValueError('Unknown job kind')
+            self._settle_job(job['id'],'complete',result=result,runtime=self.runtime)
+        except InterruptedError as exc:self._settle_job(job['id'],'cancelled',error=str(exc))
+        except Exception as exc:
+            if job['kind']=='prepare_template':
+                with self.store.tx() as c:c.execute("UPDATE templates SET status='failed',error=? WHERE id=?",(str(exc),json.loads(job['payload'])['template_id']))
+            self._settle_job(job['id'],'failed',error=str(exc))
+        finally:
+            with self._claim_lock:
+                self._generation_jobs.pop(job["id"],None)
+                if self.current==job["id"]:self.current=None
+            if hasattr(self._execution_local,"runtime"):del self._execution_local.runtime
+            self.wake()
     def file_loop(self):
         """Produce requested files even while generation or Review is running."""
         for jobs in self._queued(2,"SELECT * FROM jobs WHERE status='queued' AND kind IN (?,?,?) ORDER BY rowid LIMIT 1",FILE_JOB_KINDS):
@@ -693,6 +727,7 @@ class Worker:
                     claimed=c.execute("UPDATE jobs SET status='running',error=NULL,updated=? WHERE id=? AND status='queued'",
                                       (now(),job['id'])).rowcount
                 if not claimed:continue
+                self.store.event(job['id'],'job_started',{})
                 self.file_current=job['id'];self._file_cancelled.clear()
             job=self.store.one('jobs',job['id'])
             try:

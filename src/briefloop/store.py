@@ -219,6 +219,8 @@ class Store:
             if not isinstance(clone,tuple) or len(clone)!=2 or clone[0] is not _LEARNING_CLONE:
                 raise ValueError('Invalid internal learning clone')
             requirements={**json.loads(self.one('runs',clone[1])['requirements']),'allow_web':False}
+        if "research_tier" not in requirements:
+            requirements={**requirements,"research_tier":self.settings().get("research_tier","standard")}
         req = Requirements.model_validate(requirements)
         if clone is None:
             from .report_time import freeze

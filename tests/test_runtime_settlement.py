@@ -159,7 +159,7 @@ def test_word_file_completes_while_generation_and_review_still_run(tmp_path):
     store=Store(tmp_path);run,source,_=report(store)
     generation=store.enqueue('generate',{'run_id':run['id'],'single_evaluation':False})
     primary=WaitingRuntime(write_draft=True);review_runtime=WaitingRuntime()
-    worker=Worker(store,primary);worker._review_runtime=review_runtime;worker.start()
+    worker=Worker(store,primary,report_runtime_factory=lambda:primary);worker._review_runtime=review_runtime;worker.start()
     try:
         assert primary.entered.wait(5)
         brief=store.one('briefs','brief_'+generation['id'][4:])
@@ -185,7 +185,7 @@ def test_file_stop_preserves_terminal_state_without_cancelling_model_and_can_res
     from briefloop.export_jobs import enqueue_export,output_path
     store=Store(tmp_path);run,source,_=report(store)
     generation=store.enqueue('generate',{'run_id':run['id'],'single_evaluation':False})
-    primary=WaitingRuntime(write_draft=True);worker=Worker(store,primary)
+    primary=WaitingRuntime(write_draft=True);worker=Worker(store,primary,report_runtime_factory=lambda:primary)
     rendered=threading.Event();release_settlement=threading.Event()
     settle=worker._settle_job
     def delayed_settle(jid,status,**kwargs):

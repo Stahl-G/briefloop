@@ -110,6 +110,8 @@ def freeze(store, run_id, *, preset=None, structure=None, owner_job_id=None):
         chosen['depth'] = max(1, min(chosen['depth'], budget['search_requests']))
         chosen['breadth'] = max(1, min(chosen['breadth'], budget['search_requests'] // chosen['depth']))
     job = _owner_job(store, run_id)
+    if not structure or 'parallel' not in structure:
+        chosen['parallel'] = _runtime_snapshot(store, job)['max_parallel']
     snapshot = {
         'research_protocol': PROTOCOL,
         'run_id': run_id,

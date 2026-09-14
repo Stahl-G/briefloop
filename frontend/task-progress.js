@@ -16,7 +16,7 @@ export function taskProgressCard(job,p,{label='报告任务',kindLabel='',expand
  const stage=(active?(p?.needs_attention?'等待你的确认':p?.stage):states[job.status])||(job.status==='queued'?'等待后台开始':states[job.status]||'读取进度中');
  const workers=p?.agents||[],activeWorkers=workers.filter(w=>['running','pending_init'].includes(w.status));
  const tier={quick:'快速研究',standard:'标准研究',deep:'深度研究'}[p?.tier];
- const meta=[!p&&!error?'正在读取进度':null,tier,p?.round?`第 ${p.round} 轮`:null,`已${active?'等待 / 运行':'用时'} ${elapsedText(p?.started||job.created,!active?Date.parse(p?.ended||job.updated||job.created):now)}`,p?.last_activity?`最近活动记录 ${elapsedText(p.last_activity,now)}前`:null].filter(Boolean).join(' · ');
+ const meta=[!p&&!error?'正在读取进度':null,tier,p?.round?`第 ${p.round} 轮`:null,job.status==='queued'?`已等待 ${elapsedText(job.created,now)} · 尚未执行`:p?.started?`排队 ${elapsedText(p.queued_at||job.created,Date.parse(p.started))} · 已执行 ${elapsedText(p.started,!active?Date.parse(p.ended||job.updated):now)}`:'执行时间待确认',p?.last_activity?`最近活动记录 ${elapsedText(p.last_activity,now)}前`:null].filter(Boolean).join(' · ');
  const chips=p&&p.run_id?[`已保存 ${p.source_count} 份材料`,...(p.search_metered?[`成功搜索 ${p.search_counts.completed} 次`,...(p.search_counts.failed?[`失败 ${p.search_counts.failed} 次`]:[])]:[]),...(activeWorkers.length&&active?[`${activeWorkers.length} 个子任务进行中`]:[])]:[];
  const rail=(p?.stages||[]).map(s=>`<li class="${e(s.status)}"><span aria-hidden="true">${s.status==='done'?'✓':'●'}</span>${e(s.label)}</li>`).join('');
  const timeline=(p?.timeline||[]).map(t=>`<li class="${e(t.status)}"><span class="progress-bullet" aria-hidden="true">${t.status==='done'?'✓':'•'}</span><div><strong>${e(t.label)}</strong>${t.detail?`<p>${e(t.detail)}</p>`:''}</div></li>`).join('');
