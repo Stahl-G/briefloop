@@ -1,3 +1,4 @@
+import {beginPanel,updatePanel} from './report-panels.js';
 import {taskProgressCard} from './task-progress.js';
 import {copyText} from './clipboard.js';
 import {scheduleUI} from './schedules.js';
@@ -314,11 +315,10 @@ function openBrief(b,{follow=false}={}){if(dirty||saving){notice('请先保存�
 async function renderDeliveryChecks(){
  const ticket=(renderDeliveryChecks.ticket||0)+1;renderDeliveryChecks.ticket=ticket;
  if(!current||!$('assessment'))return;const vid=current.id;
- const old=$('assessment').querySelector('.delivery-checks');if(old)old.remove();
- const box=document.createElement('div');box.className='delivery-checks';
- box.textContent=dirty?'有未保存修改；下列检查仅针对已保存版本。':'正在检查已保存版本…';
- $('assessment').prepend(box);
- let c;try{c=await api('version-checks?version='+encodeURIComponent(vid))}catch(e){if(box.isConnected)box.textContent='检查暂不可用，请稍后重试；未判定通过。';return}
+ let box=$('assessment').querySelector('.delivery-checks');
+ if(!box){box=document.createElement('div');box.className='delivery-checks';$('assessment').prepend(box)}
+ beginPanel(box,vid,dirty?'有未保存修改；下列检查仅针对已保存版本。':'正在检查已保存版本…');
+ let c;try{c=await api('version-checks?version='+encodeURIComponent(vid))}catch(e){if(box.isConnected&&current?.id===vid&&ticket===renderDeliveryChecks.ticket)updatePanel(box,'检查暂不可用，请稍后重试；未判定通过。');return}
  if(!current||current.id!==vid||ticket!==renderDeliveryChecks.ticket||!box.isConnected)return;
  const parts=[];
  if(dirty)parts.push('<span class="tag">有未保存修改；仅检查已保存版本</span>');
@@ -340,10 +340,10 @@ async function renderDeliveryChecks(){
   parts.push(findings.length?`<span class="tag error">版式：${esc(findings.join('；'))}</span>`:'<span class="tag">版式：标题层级、表头与空标题检查通过</span>');
  }
  if(c.assessment_overall)parts.push(`<span class="tag">模型评分：${esc(c.assessment_overall)}</span>`);
- box.innerHTML='<strong>已保存版本检查</strong> '+parts.join(' ')+'<p class="help">数值检查仅覆盖已提交并成功定位的绑定，不代表正文数字已全部核验；事实含义、研究覆盖与交付质量仍需评价。</p>';
+ updatePanel(box,'<strong>已保存版本检查</strong> '+parts.join(' ')+'<p class="help">数值检查仅覆盖已提交并成功定位的绑定，不代表正文数字已全部核验；事实含义、研究覆盖与交付质量仍需评价。</p>');
 }
 
-function changed(){followUpdates=false;dirty=true;renderDeliveryChecks.ticket=(renderDeliveryChecks.ticket||0)+1;const check=$('assessment').querySelector('.delivery-checks');if(check)check.textContent='有未保存修改；保存后重新检查。';renderBriefLength();$('save-state').textContent='有未保存修改';clearTimeout(saveTimer);saveTimer=setTimeout(save,1400)}
+function changed(){followUpdates=false;dirty=true;renderDeliveryChecks.ticket=(renderDeliveryChecks.ticket||0)+1;const check=$('assessment').querySelector('.delivery-checks');if(check)updatePanel(check,'有未保存修改；保存后重新检查。');renderBriefLength();$('save-state').textContent='有未保存修改';clearTimeout(saveTimer);saveTimer=setTimeout(save,1400)}
 $('version-select').onchange=e=>openBrief(state.briefs.find(b=>b.id===e.target.value));
 let savePromise=null,lastSaveError=null;
 function save(){
@@ -391,8 +391,8 @@ function scheduleLearning(){ /* Worker consumes the durable feedback after inact
 async function renderReportIssues(){
  const ticket=(renderReportIssues.ticket||0)+1;renderReportIssues.ticket=ticket;
  const box=$('report-issues');if(!box||!current)return;
- const vid=current.id;box.innerHTML='<p class="help">正在读取问题…</p>';
- let data;try{data=await api('review-status?version='+encodeURIComponent(vid))}catch(e){if(box.isConnected&&current?.id===vid&&ticket===renderReportIssues.ticket)box.innerHTML='<p class="help">问题清单暂不可用，请稍后重试。</p>';return}
+ const vid=current.id;beginPanel(box,vid,'<p class="help">正在读取问题…</p>');
+ let data;try{data=await api('review-status?version='+encodeURIComponent(vid))}catch(e){if(box.isConnected&&current?.id===vid&&ticket===renderReportIssues.ticket)updatePanel(box,'<p class="help">问题清单暂不可用，请稍后重试。</p>');return}
  if(!current||current.id!==vid||ticket!==renderReportIssues.ticket)return;
  const kinds={contradiction:'实质矛盾',insufficient_evidence:'证据不足',missing_requirement:'要求缺口',missing_binding:'未绑定正文',execution_gap:'执行缺口',expression:'表达问题'};
  const cards=[];
@@ -422,9 +422,9 @@ async function renderReportIssues(){
  }
  if(reconciliation&&reconciliation.stale)notes.push('来源或时间注释已变化，对照记录需更新');
  if(reconciliation&&reconciliation.error)notes.push('对照记录不可用：'+reconciliation.error);
- box.innerHTML=(cards.length||notes.length)
+ updatePanel(box,(cards.length||notes.length)
   ? `${cards.length?`<div class="issue-head"><strong>需要处理 ${cards.length} 项</strong></div>`:''}${cards.map(card=>`<details class="issue-card ${card.tone}"><summary><span class="issue-label">${esc(card.label)}</span><strong>${esc(card.title)}</strong></summary>${card.basis?`<p class="issue-basis">${esc(card.basis)}</p>`:''}${card.scope?`<p class="help">关联：${esc(card.scope)}</p>`:''}${card.action?`<p>${esc(card.action)}</p>`:''}<p class="help">状态：${esc(card.state)}</p></details>`).join('')}${notes.length?`<p class="help">${notes.map(esc).join(' · ')}</p>`:''}`
-  : '<p class="help">暂未发现需要处理的问题；独立审阅完成后会更新。</p>';
+  : '<p class="help">暂未发现需要处理的问题；独立审阅完成后会更新。</p>');
 }
 const RELATION_LABELS={compatible:'可合并',different_scope:'口径不同',temporal_sequence:'时间演进',correction:'明确更正',supersession:'替代',republication:'转载',attributed_difference:'归属分歧',contradiction:'实质矛盾',unknown:'无法判断'};
 async function renderFactChecks(){
@@ -432,17 +432,17 @@ async function renderFactChecks(){
  // links, execution status on its own line; never part of the report body.
  const box=$('fact-checks');if(!box||!current)return;
  const ticket=(renderFactChecks.ticket||0)+1;renderFactChecks.ticket=ticket;
- const vid=current.id;box.innerHTML='';
+ const vid=current.id;beginPanel(box,vid);
  let data;try{data=await api('fact-checks?version='+encodeURIComponent(vid))}catch(e){return}
  if(!current||current.id!==vid||ticket!==renderFactChecks.ticket||!box.isConnected)return;
- box.innerHTML=factCheckHTML(data);if(box.innerHTML)bindSources();
+ updatePanel(box,factCheckHTML(data));if(box.innerHTML)bindSources();
  box.querySelectorAll('[data-fact-grant]').forEach(b=>b.onclick=()=>action(async()=>{
   await api('fact-check-grant',{version_id:b.dataset.factGrant,limits:{search_requests:6,candidate_urls:30,source_pages:12}});
   notice('已追加核查预算，将在核查阶段计量中生效');
   await renderFactChecks();
  }));
 }
-function assessment(){if(!current)return;queueMicrotask(()=>{renderDeliveryChecks();renderReportIssues();renderFactChecks()});const r=state.assessments.find(a=>a.version_id===current.id);if(!r){highlightQuotes=[];applyHighlights();const pending=reviewPending(current,state.jobs);$('assessment').innerHTML=pending?'<p class="muted">评分将自动进行</p><p class="help">本轮生成完成后，系统会用独立 Evaluator 自动评分，不需要手动点「重新评分」。</p>':'<p class="muted">尚未评分</p><p class="help">你可以先阅读和修改。评分针对这个版本独立运行。</p>';return}const d=parse(r.data),findings=d.findings||[];highlightQuotes=readerHighlights(findings,{expression:d.expression,showSuggestions:showSuggestionMarks}).map(item=>({quote:item.quote,kind:item.kind,title:findingTitle(item.finding),findingIndex:findings.indexOf(item.finding)}));highlightFindings=new Map(findings.map((f,i)=>[String(i),f]));highlightKinds=new Map(highlightQuotes.map(q=>[String(q.findingIndex),q.kind]));applyHighlights();const toggle=`<label class="finding-toggle help"><input type="checkbox" id="show-suggestions" ${showSuggestionMarks?'checked':''}> 显示建议标记（黄）；必须修正句始终标红</label>`;$('assessment').innerHTML=`<div class="judgment">${esc(d.overall)}</div><p>${esc(d.summary)}</p><div class="grades">${[['evidence','证据与准确性'],['coverage','覆盖与取舍'],['analysis','分析有效性'],['expression','表达与可用性']].map(([k,l])=>`<div class="grade"><span>${l}</span><strong>${d[k]??'—'}</strong><small>${d[k]?' / 5':''}</small></div>`).join('')}</div><p class="help">等级是本轮要求完成程度，评分可有不同意见。</p>${(typeof d.expression==='number'&&d.expression<=2&&d.overall==='达到要求')?'<p class="help">表达分偏低但总体仍判为「达到要求」，两者不一致；系统会按此安排一次修订，实际以正文和独立审阅为准。</p>':''}${findings.length?toggle:''}${findings.map((f,i)=>`<details class="finding" data-finding="${i}"><summary>${f.severity==='major'?'●':'○'} ${esc(f.description)}</summary>${f.report_quote?`<blockquote>${esc(f.report_quote)}</blockquote>`:''}<p>${esc(f.requirement)}</p><p>${esc(f.evidence)}</p>${f.source_id?`<button data-source="${esc(f.source_id)}">查看来源 · ${esc(f.locator)}</button>`:''}<p>${esc(f.suggestion)}</p></details>`).join('')}`;bindSources();const toggleEl=$('show-suggestions');if(toggleEl)toggleEl.onchange=()=>{showSuggestionMarks=toggleEl.checked;assessment()}}
+function assessment(){if(!current)return;queueMicrotask(()=>{renderDeliveryChecks();renderReportIssues();renderFactChecks()});const r=state.assessments.find(a=>a.version_id===current.id);const signature=JSON.stringify([current.id,r?.data,reviewPending(current,state.jobs),showSuggestionMarks]);if(assessment.signature===signature&&assessment.editor===editor)return;assessment.signature=signature;assessment.editor=editor;if(!r){highlightQuotes=[];applyHighlights();const pending=reviewPending(current,state.jobs);$('assessment').innerHTML=pending?'<p class="muted">评分将自动进行</p><p class="help">本轮生成完成后，系统会用独立 Evaluator 自动评分，不需要手动点「重新评分」。</p>':'<p class="muted">尚未评分</p><p class="help">你可以先阅读和修改。评分针对这个版本独立运行。</p>';return}const d=parse(r.data),findings=d.findings||[];highlightQuotes=readerHighlights(findings,{expression:d.expression,showSuggestions:showSuggestionMarks}).map(item=>({quote:item.quote,kind:item.kind,title:findingTitle(item.finding),findingIndex:findings.indexOf(item.finding)}));highlightFindings=new Map(findings.map((f,i)=>[String(i),f]));highlightKinds=new Map(highlightQuotes.map(q=>[String(q.findingIndex),q.kind]));applyHighlights();const toggle=`<label class="finding-toggle help"><input type="checkbox" id="show-suggestions" ${showSuggestionMarks?'checked':''}> 显示建议标记（黄）；必须修正句始终标红</label>`;$('assessment').innerHTML=`<div class="judgment">${esc(d.overall)}</div><p>${esc(d.summary)}</p><div class="grades">${[['evidence','证据与准确性'],['coverage','覆盖与取舍'],['analysis','分析有效性'],['expression','表达与可用性']].map(([k,l])=>`<div class="grade"><span>${l}</span><strong>${d[k]??'—'}</strong><small>${d[k]?' / 5':''}</small></div>`).join('')}</div><p class="help">等级是本轮要求完成程度，评分可有不同意见。</p>${(typeof d.expression==='number'&&d.expression<=2&&d.overall==='达到要求')?'<p class="help">表达分偏低但总体仍判为「达到要求」，两者不一致；系统会按此安排一次修订，实际以正文和独立审阅为准。</p>':''}${findings.length?toggle:''}${findings.map((f,i)=>`<details class="finding" data-finding="${i}"><summary>${f.severity==='major'?'●':'○'} ${esc(f.description)}</summary>${f.report_quote?`<blockquote>${esc(f.report_quote)}</blockquote>`:''}<p>${esc(f.requirement)}</p><p>${esc(f.evidence)}</p>${f.source_id?`<button data-source="${esc(f.source_id)}">查看来源 · ${esc(f.locator)}</button>`:''}<p>${esc(f.suggestion)}</p></details>`).join('')}`;bindSources();const toggleEl=$('show-suggestions');if(toggleEl)toggleEl.onchange=()=>{showSuggestionMarks=toggleEl.checked;assessment()}}
 function citations(){const detail=parse(current.detail),derived=new Set((detail.content_citations||[]).map(r=>r.source_id));const refs=(detail.citations||[]).filter(r=>derived.has(r.source_id)||toEditor(current.markdown).includes('#source-'+r.source_id));$('citations').innerHTML=refs.length?'引用来源 '+refs.map(r=>`<button data-source="${esc(r.source_id)}">${esc(state.sources.find(s=>s.id===r.source_id)?.name||r.source_id)} · ${esc(r.locator)}</button>`).join(''):'尚无引用记录';bindSources()}
 function bindSources(){document.querySelectorAll('[data-source]').forEach(b=>b.onclick=()=>action(async()=>{const r=await api('source?id='+b.dataset.source);showSource(r)}))}
 $('close-source').onclick=()=>$('source-dialog').close();
