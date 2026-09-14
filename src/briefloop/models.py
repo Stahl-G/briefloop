@@ -78,6 +78,10 @@ class Requirements(Model):
     allow_web: bool = False
     search_policy: SearchPolicy | None = None
     period: str = ""
+    period_start: str = ""
+    period_end: str = ""
+    report_timezone: str = ""
+    time_context: dict | None = None
     raw_input: str = ""
     # Research tier chosen at task creation; stored on the run so pause/resume and
     # a later plan freeze read the same choice. research_plan.PRESETS is the value.
@@ -262,7 +266,18 @@ class GapRecord(Model):
     status: Literal["open", "addressed", "review_needed", "resolved", "unresolved"] = "open"
 
 
+class TemporalClaim(Model):
+    statement: str
+    event_date: str = ""
+    published_at: str = ""
+    fetched_at: str = ""
+    source_id: str = ""
+    locator: str = ""
+    usage: Literal["current", "background"] = "current"
+
+
 class BriefDraft(Model):
+    temporal_claims: list[TemporalClaim] = Field(default_factory=list)
     figures: list[str] = Field(default_factory=list)
     report_data: IndustryData | None = None
     title: str

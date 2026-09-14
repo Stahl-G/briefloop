@@ -246,7 +246,7 @@ body{font-size:14px}.workspace-shell{height:100dvh;min-height:0;overflow:hidden}
 .assistant-card h3{font-size:12px;color:var(--muted);font-weight:550;margin:0 0 8px}
 .assistant-card p{margin:0;font-size:12px;color:var(--muted);line-height:1.7}
 .kv{display:flex;justify-content:space-between;gap:12px;font-size:12px;padding:4px 0}
-.kv dt{color:var(--muted);margin:0}.kv dd{margin:0;color:var(--ink)}
+.kv dt{color:var(--muted);margin:0;flex:none}.kv dd{margin:0;color:var(--ink);min-width:0;overflow-wrap:anywhere}
 .attention{display:flex;align-items:flex-start;gap:8px;font-size:12px;padding:6px 0;color:var(--ink)}
 .attention .badge{flex:none;font-size:10px;padding:3px 7px;border-radius:var(--radius-pill);border:1px solid var(--line)}
 .attention .badge.warn{background:#fbf6e7;border-color:#e6dcc0;color:var(--warn)}
@@ -506,6 +506,7 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 /* Feedback and Wiki learning folded into the research assistant pane */
 .assistant-feedback{border-top:1px solid var(--line);margin-top:14px;padding-top:14px;display:grid;gap:10px}
 .assistant-feedback textarea{width:100%}
+.assistant-feedback .feedback-guidance{margin:0;min-width:0;line-height:1.6;overflow-wrap:anywhere}
 
 /* Rail block headings and hover explanations */
 .rail-block-head{display:flex;align-items:center;gap:8px}

@@ -220,6 +220,9 @@ class Store:
                 raise ValueError('Invalid internal learning clone')
             requirements={**json.loads(self.one('runs',clone[1])['requirements']),'allow_web':False}
         req = Requirements.model_validate(requirements)
+        if clone is None:
+            from .report_time import freeze
+            req.time_context = freeze(req.model_dump())
         selected = None
         if clone is None and req.writing_mode=='internal_report' and self.settings().get('company_context_enabled') is None:
             raise ValueError('请先选择是否维护企业背景知识库；可选择不维护并继续报告')
@@ -588,6 +591,7 @@ class Store:
         self.event(None, "skill_binding", {"skill_id": skill_id})
 
     def snapshot(self):
+        clock = datetime.now().astimezone()
         from .notifications import snapshot as notification_snapshot
         from .document_workflows import list_workflows, template_workflow_hint
         jobs=self.rows("SELECT * FROM jobs ORDER BY rowid DESC LIMIT 30")
@@ -618,6 +622,7 @@ class Store:
                 "conflicts":self.rows("SELECT id,status,data,run_id FROM conflicts WHERE status!='resolved' ORDER BY rowid DESC LIMIT 100"),
                 "company_context_pending":self.rows("SELECT * FROM company_facts WHERE status='pending' ORDER BY rowid DESC"),
                 "sources": annotate_sources(self,self.rows("SELECT * FROM sources ORDER BY created")),
+                "system_clock": {"now": clock.isoformat(), "today": clock.date().isoformat(), "timezone": str(clock.tzinfo)},
                 "runs": runs,
                 "briefs": briefs,
                 "assessments": self.rows("SELECT * FROM assessments ORDER BY rowid DESC"),

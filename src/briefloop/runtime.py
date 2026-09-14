@@ -157,6 +157,8 @@ def generation_prompt(store, run, folder, backend='codex'):
     from .models import normalize_search_provider
     raw_requirements=json.loads(run['requirements'])
     req=Requirements.model_validate(raw_requirements).model_dump()
+    from .report_time import instructions as time_instructions
+    temporal_note = time_instructions(req.get('time_context'))
     if 'research_budget' not in raw_requirements:req['research_budget']=None
     from .research_budget import snapshot as budget_snapshot
     research_budget=budget_snapshot(store,run['id'])
@@ -173,9 +175,9 @@ def generation_prompt(store, run, folder, backend='codex'):
     from .deliverable_spec import resolve,instructions,reader_contract_schema
     deliverable=resolve(req)
     (folder/'reader_contract.schema.json').write_text(json.dumps(reader_contract_schema(deliverable),ensure_ascii=False,indent=2),encoding='utf-8')
-    (folder/'analyst-writing.md').write_text(instructions(deliverable,role='analyst'),encoding='utf-8')
+    (folder/'analyst-writing.md').write_text(instructions(deliverable,role='analyst')+'\n'+temporal_note,encoding='utf-8')
     scout_contract=(folder/'scout-contract.md').resolve()
-    scout_contract.write_text(instructions(deliverable,role='scout'),encoding='utf-8')
+    scout_contract.write_text(instructions(deliverable,role='scout')+'\n'+temporal_note,encoding='utf-8')
     from .company_context import prompt as company_prompt
     company=company_prompt(store,run['id']) if req.get('writing_mode')=='internal_report' else ''
     max_parallel=run.get('max_parallel',store.settings()['max_parallel'])
@@ -288,6 +290,8 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
     view_pages_word = '使用 view_image 读取页图' if backend == 'codex' else '用 read 工具读取返回的页图'
     check_word = 'view_image检查' if backend == 'codex' else '用 read 工具读取检查'
     return common+f'''
+{temporal_note}
+任务创建时间：{run['created']}。报告期间要求：{req.get('period') or '未指定'}。日期以任务创建时间和用户明确期间为准，不按模型记忆中的年份推断今天。日报的当期动态必须核对事件日期与发布日期；历史发布只能标作背景，不计作今日新增。派发每个 Scout 时传递同一报告期间；Tavily 查询使用适用的 --time-range 或 --start-date/--end-date，原生搜索将期间写入查询并核对正文日期。时间过滤不证明事件新近发生，抓取时间也不是发布日期。缺少当期证据时明确缺口，不能用旧新闻凑数。
 {research_plan_note}
 {handoff_note}
 本轮输入：{folder/'input.json'}。你的工作目录：{folder}。先按字段读取 requirements、sources 索引、scout_slots 和能力路径；不要为分工先展开全部技能正文或 schema。
@@ -380,6 +384,8 @@ def assessment_prompt(store, brief, folder, backend='codex'):
     input_pack['figures']=[{**f,'absolute_image_path':str(store.root/f['image_path'])} for f in validate_figures(store,run['id'],brief['markdown'])]
     from .delivery_checks import brief_checks
     input_pack['refcheck']=brief_checks(store,brief['id'])
+    from .report_time import instructions as time_instructions
+    input_pack['time_instructions']=time_instructions(json.loads(run['requirements']).get('time_context'))
     input_pack['number_bindings']=detail.get('number_bindings',[])
     input_pack['gap_records']=detail.get('gap_records',[])
     input_pack['clause_index']=clause_items(deliverable)
@@ -391,6 +397,7 @@ def assessment_prompt(store, brief, folder, backend='codex'):
     view_pages_word = '使用 view_image 读取页图' if backend == 'codex' else '用 read 工具读取返回的页图'
     figure_view_word = '实际view_image查看其absolute_image_path' if backend == 'codex' else '实际用 read 工具读取其absolute_image_path'
     return EVALUATOR_CONTEXT+f'''
+{input_pack['time_instructions']}
 {report_profile.get('evaluation','')}
 {instructions(deliverable,role='evaluator')}
 核对正文是否完成本轮读者需求。准确限定保留在相关句子，内部核查过程留在独立记录；不要要求作者用反复免责声明证明谨慎。研究未完成照常评价覆盖。
@@ -932,9 +939,20 @@ class Worker:
                         checkpoint[0]=True
         from .connectors.runtime_tools import generation_access
         with generation_access(self,job) as connector_instructions:
-            result=self.runtime.execute(job,generation_prompt(self.store,run,folder,backend)+connector_instructions,folder,publish)
+            prompt=generation_prompt(self.store,run,folder,backend)+connector_instructions
+            result=self.runtime.execute(job,prompt,folder,publish)
+            publish()
+            if not self.store.rows('SELECT id FROM briefs WHERE id=?',(latest[0],)):
+                if self.runtime.cancelled.is_set():
+                    raise InterruptedError('任务已停止，已生成内容保留')
+                # A successful transport turn can contain only a progress message.
+                # Continue the same durable session once, without resampling research.
+                self.store.event(job['id'],'draft_missing_resume',{'message':'模型回合已结束，但尚未保存草稿；继续完成当前任务。'})
+                result=self.runtime.execute(job,prompt+'\n本次是同一任务的收尾续行：上轮只返回了研究进度，没有保存 draft.json。读取现有计划和 Scout 结果，等待已有子任务并复用有效材料，完成正文和 draft.json；不要重新创建报告任务或重复已完成研究。不能完成时明确报告具体缺项，不把进度说明当作交付。',folder,publish,resume_on_complete=True)
         publish()
         current=latest[0]
+        if not self.store.rows('SELECT id FROM briefs WHERE id=?',(current,)):
+            raise RuntimeError('模型回合已结束，但未保存可用草稿（draft.json）；已保留研究材料和会话，可恢复继续。')
         brief=self.store.one('briefs',current)
         from .task_notify import notify as _notify_task
         _notify_task(self.store, job, 'draft_ready', text='简报草稿已保存，可以查看和编辑。')

@@ -210,3 +210,28 @@ def test_file_stop_preserves_terminal_state_without_cancelling_model_and_can_res
         assert not primary.cancelled.is_set() and store.one('jobs',generation['id'])['status']=='running'
     finally:release_settlement.set();worker.close()
     assert not worker.file_thread.is_alive()
+
+
+@pytest.mark.parametrize('writes_draft',[True,False])
+def test_generation_continues_progress_only_turn_once(tmp_path,writes_draft):
+    store=Store(tmp_path)
+    source=store.add_source('测试材料','测试内容')
+    run=store.create_run({'title':'日报','objective':'AI daily news','period':'2026-09-14'},[source['id']])
+    job=store.enqueue('generate',{'run_id':run['id']})
+    class ProgressRuntime(NoModel):
+        def __init__(self):super().__init__();self.calls=[]
+        def execute(self,job,prompt,folder,on_tick=lambda:None,**kwargs):
+            self.calls.append(kwargs)
+            assert run['created'] in prompt
+            if len(self.calls)==2 and writes_draft:
+                (folder/'draft.json').write_text(dump({'title':'日报','markdown':'当期证据不足，保留缺口。'}))
+            return {'returncode':0}
+    runtime=ProgressRuntime();worker=Worker(store,runtime)
+    if writes_draft:
+        result=worker.generate(job,score=False)
+        assert json.loads(store.one('briefs',result['version_id'])['detail'])['title']=='日报'
+    else:
+        with pytest.raises(RuntimeError,match='未保存可用草稿'):
+            worker.generate(job,score=False)
+    assert len(runtime.calls)==2
+    assert runtime.calls[1]['resume_on_complete'] is True
