@@ -170,7 +170,7 @@ def workspace_action(store, request):
             'briefs':briefs,
             'jobs':store.rows('SELECT id,kind,status,error,created FROM jobs ORDER BY rowid DESC LIMIT 20'),
             'runtime':store.runtime_config(),
-            'note':'简要工作区索引；需要原文时使用 read-source --id SOURCE_ID。',
+            'note':'简要工作区索引；需要原文时使用 read-source --id SOURCE_ID。任务状态和 error 是已记录事实，不代表根因诊断；没有对应日志证据不得声称服务重启、网络故障或权限拒绝。来源已保存不代表已核验其真实性或时效性，研究进度不代表报告已完成。',
         }
     if action=='generate':
         requirements=Requirements.model_validate(request['requirements'])
