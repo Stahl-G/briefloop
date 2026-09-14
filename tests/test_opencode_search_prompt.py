@@ -87,8 +87,10 @@ def test_generation_packet_is_utf8_with_cp1252_default(tmp_path,monkeypatch,prov
     assert payload['search_provider']==provider
     deliverable=resolve(Requirements.model_validate(json.loads(run['requirements'])).model_dump())
     assert payload['deliverable_spec']==deliverable
-    assert packet['analyst-writing.md'].replace('\r\n','\n')==instructions(deliverable,role='analyst')
-    assert packet['scout-contract.md'].replace('\r\n','\n')==instructions(deliverable,role='scout')
+    from briefloop.report_time import instructions as time_instructions
+    temporal_note=time_instructions(payload['requirements']['time_context'])
+    assert packet['analyst-writing.md'].replace('\r\n','\n')==instructions(deliverable,role='analyst')+'\n'+temporal_note
+    assert packet['scout-contract.md'].replace('\r\n','\n')==instructions(deliverable,role='scout')+'\n'+temporal_note
     assert json.loads(packet['reader_contract.schema.json'])==reader_contract_schema(deliverable)
     expected={'input.json','analyst-writing.md','scout-contract.md','reader_contract.schema.json'}
     for slot in payload['scout_slots']:

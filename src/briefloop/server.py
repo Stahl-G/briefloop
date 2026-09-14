@@ -545,6 +545,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/demo':
                     from .demo import create_demo
                     result=create_demo(store)
+                elif path=='/api/report-time-preview':
+                    from .report_time import freeze
+                    result=freeze(Requirements.model_validate(body['requirements']).model_dump())
                 elif path=='/api/generate':
                     req=Requirements.model_validate(body['requirements'])
                     if 'connector_selection' in body:

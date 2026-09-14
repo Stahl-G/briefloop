@@ -120,7 +120,7 @@ def test_failed_search_records_kind_and_parameters(tmp_path,monkeypatch):
     record=json.loads(Path(info.value.request_record_path).read_text())
     assert record['outcome']=='failed' and record['failure_kind']=='auth'
     assert record['query']=='blocked query' and record['parameters']['topic']=='news'
-    assert record['parameters']['start_date']=='2026-09-05'
+    assert record['parameters']['start_date']==json.loads(run['requirements'])['time_context']['start'][:10]
     assert record['raw_response_path'] is None and record['provider_request_id'] is None
 
 
