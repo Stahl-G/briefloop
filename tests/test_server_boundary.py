@@ -68,7 +68,7 @@ def test_private_get_origin_boundary_preserves_navigation_and_native_clients(tmp
     try:
         # All private entry points reject before reading records, rendering or
         # disclosing the handshake. Keep this contract uniform across downloads.
-        private=['/api/session','/api/state',original,'/api/source-image?id=unused','/api/figure?id=unused',
+        private=['/api/session','/api/state','/api/task-progress?job=unused',original,'/api/source-image?id=unused','/api/figure?id=unused',
                  '/api/export-file?job=unused','/api/release-file?id=unused','/api/audit-file?job=unused',
                  '/api/download?version=unused','/api/research-notes?version=unused']
         for path in private:
