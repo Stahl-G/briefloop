@@ -1494,11 +1494,11 @@ async function runAntigravity(p, state) {
   const args = ["--input-format", "stream-json", "--output-format", "stream-json", "--disable-slash-commands"];
   if (p.model && p.model !== "default") args.push("--model", p.model);
   if (p.session_id) args.push("--conversation", p.session_id);
-  if (p.timeout_ms) args.push("--print-timeout", Math.ceil(p.timeout_ms / 1e3 + 30) + "s");
+  args.push("--print-timeout", p.timeout_ms ? Math.ceil(p.timeout_ms / 1e3 + 30) + "s" : "87600h");
   const child = launch(state.bin, args, p.cwd);
   state.child = child;
   state.cancel = () => terminate(child);
-  let result = null, lastSession = null, textSeen = false, toolFailed = false, lastToolError = "";
+  let result = null, lastSession = null, textSeen = false, toolFailed = false, lastToolError = "", stderr = "";
   await new Promise((resolve, reject) => {
     const timer = p.timeout_ms ? setTimeout(() => {
       terminate(child);
@@ -1538,7 +1538,10 @@ async function runAntigravity(p, state) {
     });
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (c) => parser.feed(c));
-    child.stderr.resume();
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (c) => {
+      stderr = (stderr + c).slice(-8192);
+    });
     child.stdin.on("error", () => {
     });
     child.on("error", (e) => {
@@ -1549,6 +1552,7 @@ async function runAntigravity(p, state) {
       clearTimeout(timer);
       parser.flush();
       if (state.cancelled) return resolve();
+      if (/(?:print.{0,20}timeout|timed out|timeout.{0,40}partial)/i.test(stderr)) return reject(Error("Antigravity \u7B49\u5F85\u8D85\u65F6\uFF0C\u8FD4\u56DE\u5185\u5BB9\u53EF\u80FD\u4E0D\u5B8C\u6574\uFF1B\u5DF2\u4FDD\u7559\u4F1A\u8BDD\uFF0C\u53EF\u6062\u590D\u7EE7\u7EED\u3002"));
       if (code === 0 && result?.status === "SUCCESS" && lastSession) {
         if (toolFailed && !textSeen) return reject(Error("Antigravity \u672A\u5B8C\u6210\u64CD\u4F5C\uFF1A" + lastToolError + "\u3002\u8BF7\u6253\u5F00\u5BF9\u8BDD\u6846\u4E2D\u7684\u6743\u9650\u6309\u94AE\uFF0C\u6838\u5BF9\u88AB\u62D2\u7EDD\u7684\u64CD\u4F5C\u5E76\u6388\u6743\u540E\u91CD\u65B0\u53D1\u9001\u3002"));
         return resolve();

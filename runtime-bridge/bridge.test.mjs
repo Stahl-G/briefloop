@@ -87,7 +87,7 @@ test('DeepSeek Harness grouped model choices round-trip and session/resume is ne
 });
 
 test('Antigravity stream uses explicit model/resume and does not duplicate final text or cumulative usage',async t=>{
- const b=bridge(t),f=fixture(t,`const a=process.argv.slice(2);if(a[0]==='models'){console.log('fixture-model\tFixture');process.exit(0);}if(!a.includes('--disable-slash-commands')||a[a.indexOf('--conversation')+1]!=='saved-agy'||a[a.indexOf('--model')+1]!=='fixture-model')process.exit(3);let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{const m=JSON.parse(s);if(m.event!=='user'||m.message.content!=='hello')process.exit(4);const send=x=>console.log(JSON.stringify(x));send({event:'init',conversation_id:'saved-agy'});send({event:'step_update',step_update:{step_type:'agent_response',text_delta:'OK',state:'DONE',usage:{input_tokens:12}}});send({event:'result',result:{status:'SUCCESS',response:'OK',conversation_id:'saved-agy',usage:{input_tokens:999}}});});`);
+ const b=bridge(t),f=fixture(t,`const a=process.argv.slice(2);if(a[0]==='models'){console.log('fixture-model\tFixture');process.exit(0);}if(a[a.indexOf('--print-timeout')+1]!=='87600h'||!a.includes('--disable-slash-commands')||a[a.indexOf('--conversation')+1]!=='saved-agy'||a[a.indexOf('--model')+1]!=='fixture-model')process.exit(3);let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{const m=JSON.parse(s);if(m.event!=='user'||m.message.content!=='hello')process.exit(4);const send=x=>console.log(JSON.stringify(x));send({event:'init',conversation_id:'saved-agy'});send({event:'step_update',step_update:{step_type:'agent_response',text_delta:'OK',state:'DONE',usage:{input_tokens:12}}});send({event:'result',result:{status:'SUCCESS',response:'OK',conversation_id:'saved-agy',usage:{input_tokens:999}}});});`);
  b.send(1,'list_models',{runtime_id:'antigravity',...f});assert.ok((await b.wait(x=>x.id===1)).result.models.some(m=>m.id==='fixture-model'));
  b.send(2,'start',{...f,runtime_id:'antigravity',execution_id:'agy',session_id:'saved-agy',model:'fixture-model',prompt:'hello',permission:'runtime-native',allow_web:null});
  assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');assert.equal(b.frames.filter(x=>x.params?.kind==='text').map(x=>x.params.text).join(''),'OK');assert.equal(b.frames.filter(x=>x.params?.kind==='usage').length,1);
@@ -149,4 +149,10 @@ test('stdin EOF reaps an in-flight metadata probe, not only active turns',async 
  const alive=()=>{try{process.kill(pid,0);return true;}catch{return false;}};
  for(let i=0;i<150&&alive();i++)await new Promise(r=>setTimeout(r,20));
  assert.equal(alive(),false,'owned metadata process must exit after bridge EOF');
+});
+
+test('Antigravity partial timeout warning cannot count as successful completion',async t=>{
+ const b=bridge(t),f=fixture(t,`process.stdin.resume();process.stdin.on('end',()=>{console.error('warning: print timeout reached; returning partial output');console.log(JSON.stringify({event:'result',result:{status:'SUCCESS',conversation_id:'partial',response:'Still working'}}));});`);
+ b.send(1,'start',{...f,runtime_id:'antigravity',execution_id:'partial',prompt:'x',permission:'runtime-native',allow_web:null});
+ assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'failed');
 });
