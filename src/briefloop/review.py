@@ -769,7 +769,11 @@ def run_review(store,runtime,job,version_id,folder):
     clauses=clause_items(target['requirements']) if protocol=='clauses_v1' else []
     requirement_instruction=('本次为条款级审阅：对下表的 reader_contract 条款逐条给 clause_checks（clause_id、status(covered/partial/missing/not_applicable/unverified)、reason、basis）。clause_id 必须逐字复制程序给出的 ID，不要自行计算或改写。reader_content 核对正文是否实际回答；research_method 核对方法是否落实（过程要求需有来源、核查或执行记录，无法确认写 unverified）；writing_preference 核对呈现；manual_assignment 只核对占位。not_applicable 仅限条款自身带适用条件且本稿不满足，并给依据；内容条款不得标为不适用。必须逐条覆盖；仍要对照原始要求，发现漏拆或误分类用 finding 指出。' if clauses else
         '对requirements.requirement_items逐项给requirement_checks：requirement_id、status(covered/manual/partial/missing)、reason。manual只能用于用户原要求中mode=manual的项目，不得自行降低必答要求。')
-    prompt=f'''你是独立只读 Reviewer，核对已保存产物与实际依据，不重新研究或运行计算。
+    from .report_time import instructions as time_instructions
+    temporal_note=time_instructions(target.get('requirements_input',{}).get('time_context'))
+    prompt=f'''{temporal_note}
+核对正文每条当期动态的事件与发布日期，不能只核对作者提交的 temporal_claims；缺少日期记录或原文日期证据写 unverified，旧消息冒充当期用 finding 指出。
+你是独立只读 Reviewer，核对已保存产物与实际依据，不重新研究或运行计算。
 只读取 {folder/'packet'/'index.json'} 所索引的文件。JSON已分行；遇到单行截断，target-long-text.json提供长字段分块、sources/*.view.json提供原文行与分块，按顺序无分隔拼接，不把截断当缺失。先看target.json的本轮要求、正文和claim_evidence关联；核对具体原文与图表；本次报告图和已选证据视觉会作为原生图片附件交给当前选定模型，visual-inputs.json记录它们与固定文件的对应关系。先实际检查这些附件的轴、图注、单位和可见内容，附件不可读时用原生read读取同一packet文件；仍失败则说明本次失败。必要时读history中的本报告历史。绝不查询宿主或其他工作区数据库。
 只有read工具可用。禁止bash、执行脚本、修改文件、联网、委派。history/reviews.json提供过去实际审阅；只复用已完成且依赖未变的核查，历史的未核验/图像能力失败必须在本次实际输入上重新检查，不能据此判断当前模型能力。重点核对本次修改与处理说明，不重复扩大研究。发现需补搜/重算/改稿的问题交主Agent，不能自己执行。
 检查所有重要事实与判断是否有依据，包括作者未登记的主张；逐项核查已有claim并报告支持范围、反证、证据不足或未知。图像不可读、执行记录缺失和审阅失败不是通过。对每个遗漏、错误给正文片段及依据。
