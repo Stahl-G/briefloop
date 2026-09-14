@@ -592,6 +592,21 @@ class Store:
         self.set_meta("active_skill", skill_id)
         self.event(None, "skill_binding", {"skill_id": skill_id})
 
+    def delete_report(self, version_id):
+        """Remove a report from browsing while retaining referenced audit history."""
+        with self.tx() as c:
+            brief=c.execute('SELECT run_id FROM briefs WHERE id=?',(version_id,)).fetchone()
+            if not brief:raise ValueError('报告不存在')
+            run_id=brief['run_id']
+            for row in c.execute("SELECT payload FROM jobs WHERE status IN ('queued','running')"):
+                payload=json.loads(row['payload'])
+                linked=payload.get('version_id') or payload.get('base_version')
+                parent=c.execute('SELECT run_id FROM briefs WHERE id=?',(linked,)).fetchone() if linked else None
+                if payload.get('run_id')==run_id or (parent and parent['run_id']==run_id):
+                    raise ValueError('报告仍有任务，请先停止或等待完成后再删除')
+            c.execute('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)',('deleted_report:'+run_id,dump(now())))
+        return {'run_id':run_id,'deleted':True}
+
     def snapshot(self):
         clock = datetime.now().astimezone()
         from .notifications import snapshot as notification_snapshot
@@ -609,8 +624,10 @@ class Store:
             ids=list(dict.fromkeys(json.loads(run['source_ids'])+acquired.get(run['id'],[])))
             run['all_source_ids']=ids
             run['source_count']=len(ids)
+        deleted={r['key'].removeprefix('deleted_report:') for r in self.rows("SELECT key FROM meta WHERE key LIKE 'deleted_report:%'")}
         requirements={r['id']:json.loads(r['requirements']) for r in runs}
         briefs=self.rows("SELECT b.* FROM briefs b JOIN runs r ON r.id=b.run_id WHERE r.mode='normal' ORDER BY b.rowid DESC")
+        briefs=[b for b in briefs if b['run_id'] not in deleted]
         for brief in briefs:
             req=requirements[brief['run_id']]
             # Historical requirements are not retroactively assigned a new budget.
@@ -625,7 +642,7 @@ class Store:
                 "company_context_pending":self.rows("SELECT * FROM company_facts WHERE status='pending' ORDER BY rowid DESC"),
                 "sources": annotate_sources(self,self.rows("SELECT * FROM sources ORDER BY created")),
                 "system_clock": {"now": clock.isoformat(), "today": clock.date().isoformat(), "timezone": str(clock.tzinfo)},
-                "runs": runs,
+                "runs": [r for r in runs if r['id'] not in deleted],
                 "briefs": briefs,
                 "assessments": self.rows("SELECT * FROM assessments ORDER BY rowid DESC"),
                 "feedback": self.rows("SELECT * FROM feedback ORDER BY rowid DESC LIMIT 100"),
