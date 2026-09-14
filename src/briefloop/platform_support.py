@@ -137,12 +137,19 @@ class OwnedProcess(subprocess.Popen):
         try:
             os.killpg(self.pid, sig)
         except PermissionError as denied:
-            # Darwin can report EPERM while our exiting leader is a zombie.
-            # Reap only our Popen child, then probe/signal the SAME owned group.
-            # A surviving group that still denies access must remain an error.
+            # Darwin can report EPERM while an exiting member is still an
+            # unreaped zombie. Reap only our Popen child, then probe/signal
+            # the SAME owned group: init reaps orphaned zombies within
+            # milliseconds, so outlast that window; a surviving group that
+            # still denies access beyond this grace must remain an error.
             try:self.wait(timeout=max(0,min(.05,deadline-time.monotonic())))
             except subprocess.TimeoutExpired:raise denied
-            os.killpg(self.pid, sig)
+            until = time.monotonic()+.25
+            while True:
+                try:os.killpg(self.pid, sig);return
+                except PermissionError:
+                    if time.monotonic() >= until:raise
+                    time.sleep(.001)
 
     def close_tree(self, timeout=5):
         if self._tree_closed:return

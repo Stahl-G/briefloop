@@ -2,7 +2,7 @@
   "protocol_id": "BL-OQA-SR-v1.0",
   "experiment_id": "briefloop-officeqa-structured",
   "created": "2026-09-14",
-  "status": "Q0-scoring-adapter-complete; Q3 freeze pending",
+  "status": "Q0+Q1 complete; Q2 data+runner complete (dry-run only); Q3 freeze pending",
   "_notes": "JSON 无注释：所有 null 字段都是『等待 Q3 冻结』的占位（协议 §10 Q3、§11 问 10：config 无 null/TODO 才允许开跑）。已定字段全部填实。scorer 的两个哈希（Git blob SHA-1 与文件 SHA-256）均在本文件记录并在 tests/test_officeqa_score_projection.py 中由实际文件重算核对。",
   "baseline": {
     "product_version": "0.22.3",
@@ -63,6 +63,18 @@
     "format_repair_attempts_per_episode": 1,
     "search_budget": null,
     "note": "数值为协议 §8.1 起始建议，Q3 冻结；A/B 必须同工具同数值。"
+  },
+  "episode_runner": {
+    "entrypoint": "experiments/officeqa_structured/run_episodes.py",
+    "real_execution": "not wired; run refuses without --dry-run until the Q3 authorization gate and freeze",
+    "episode_workspace_settings": {
+      "auto_learn": false,
+      "fact_checker": false,
+      "auto_revision": true,
+      "timeout_minutes": 0
+    },
+    "shared_corpus_tool": "experiments/officeqa_structured/corpus_adapter.py (docs/search/read/page; accept registers a used document as a real run source)",
+    "closure_note": "设计 §4：episode 内关闭自动学习、定时报告、企业背景；runner 在 episode 工作区强制 auto_learn=false/fact_checker=false。"
   },
   "pending_freeze": [
     "baseline.integration_commit",
