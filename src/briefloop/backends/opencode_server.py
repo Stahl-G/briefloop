@@ -103,7 +103,11 @@ class OpencodeServerClient:
         self._stderr = (root / 'opencode-serve.stderr.log').open('a')
         self.process = OwnedProcess(
             [executable, 'serve', '--port', str(self.port), '--hostname', '127.0.0.1'],
-            stdout=subprocess.DEVNULL, stderr=self._stderr, env=env, parent_death=True)
+            # The desktop service reads its stdin to watch for owner shutdown.
+            # This HTTP server needs no stdin; sharing that pipe can stall its
+            # startup on Windows while the ownership watcher is reading it.
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=self._stderr, env=env, parent_death=True)
         self._lock = threading.Lock()
         try:
             self.version = self._wait_ready()
