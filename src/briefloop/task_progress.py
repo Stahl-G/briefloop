@@ -126,7 +126,7 @@ def summary(store, job_id):
             'tier': plan.get('preset_id') or req.get('research_tier'),
             'round': opened[-1]['index'] if opened else None,
             'sources': sources, 'source_count': len(sources), 'search_counts': search_counts,
-            'search_metered': bool(budget and budget['scope']['search_provider'] in ('tavily', 'duckduckgo')),
+            'search_metered': bool(budget and budget['used']['search_requests'] is not None),
             'budget_remaining': budget['remaining'] if budget else None,
             'gaps': [{'text': public_text(g.get('question') or g.get('description') or g.get('reason'))} for r in opened for g in r.get('gaps', [])],
             'agents': agents, 'stages': stages, 'timeline': timeline[-12:],

@@ -265,12 +265,21 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/report-data':
                     from .report_tools import report_details
                     self.send(200,report_details(store,store.one('briefs',q['version'][0])))
+                elif u.path=='/api/search-activity':
+                    from .search_policy import activity
+                    self.send(200,activity(store,q['run'][0]))
                 elif u.path=='/api/research-budget':
                     from .research_budget import snapshot
                     self.send(200,snapshot(store,q['run'][0]))
                 elif u.path=='/api/learning-candidates':
                     from .projections import learning_candidates
                     self.send(200,learning_candidates(store))
+                elif u.path=='/api/zhipu-search':
+                    from .zhipu import key_status
+                    self.send(200,key_status())
+                elif u.path=='/api/bocha':
+                    from .bocha import key_status
+                    self.send(200,key_status())
                 elif u.path=='/api/tavily':
                     from .tavily import key_status
                     self.send(200,key_status())
@@ -458,6 +467,12 @@ def _make_server(workspace, port, *, paused, backend, lock):
                         _begin_service_shutdown(self.server,cancel=body.get('busy_action')=='cancel')
                     self.send(200,{'stopping':True})
                     return
+                elif path=='/api/zhipu-search':
+                    from .zhipu import save_key,delete_key
+                    result=delete_key() if body.get('remove') else save_key(body['api_key'])
+                elif path=='/api/bocha':
+                    from .bocha import save_key,delete_key
+                    result=delete_key() if body.get('remove') else save_key(body['api_key'])
                 elif path=='/api/tavily':
                     from .tavily import save_key,delete_key
                     result=delete_key() if body.get('remove') else save_key(body['api_key'])

@@ -90,16 +90,18 @@ def _stage_usage(store,run_id):
 
 def _view(store,run_id,limits,state):
     from .websearch import MANAGED_PROVIDERS
-    provider=store.search_provider_for_run(run_id)
+    from .search_policy import for_run,allowed
+    policy=for_run(store,run_id);channels=allowed(policy)
+    provider=policy['primary_provider']
     used={'search_requests':state['search_requests'],'candidate_urls':len(state['candidate_urls']),
           'source_pages':len(state['source_pages'])}
     remaining={kind:max(0,limits[kind]-used[kind]) if limits is not None else None for kind in KINDS}
-    if provider not in MANAGED_PROVIDERS:
+    if not any(p in MANAGED_PROVIDERS for p in channels):
         for kind in KINDS[:2]:used[kind]=None;remaining[kind]=None
     exhausted=[kind for kind,value in remaining.items() if value==0]
     return {'limits':limits,'used':used,'remaining':remaining,'exhausted':bool(exhausted),
             'exhausted_resources':exhausted,'stages':_stage_usage(store,run_id),
-            'scope':{'search_provider':provider,
+            'scope':{'search_provider':provider,'allowed_providers':channels,'native_search_enabled':'native' in channels,'native_search_requests':None,
             'search_requests':'managed_provider_only','candidate_urls':'managed_provider_only',
             'source_pages':'managed_unique_urls','native_codex_search_metered':False,
             'legacy_unlimited':limits is None}}

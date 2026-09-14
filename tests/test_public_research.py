@@ -60,18 +60,19 @@ def test_search_provider_is_frozen_and_tavily_provenance_is_explicit(tmp_path):
     retrieval=json.loads((folder/'input.json').read_text())['retrieval_skill']
     from pathlib import Path
     skill_text=Path(retrieval['path']).read_text()
-    assert 'tavily-search --run '+run['id'] in skill_text
+    assert 'web-search --run '+run['id'] in skill_text and 'PROVIDER 可选 tavily' in skill_text
     assert 'tavily-extract --run '+run['id'] in skill_text
-    assert '不是原网站字节' in skill_text and '不调用 Tavily Research' in skill_text
+    assert '提取响应不是网站原始字节' in skill_text and '摘要和挑战页不算正文' in skill_text
     assert json.loads((folder/'input.json').read_text())['search_provider']=='tavily'
     # Old jobs keep their prior Codex behavior even if settings now select Tavily.
     payload.pop('search_provider')
+    payload.pop('search_policy')
     with store.tx() as connection:
         connection.execute('UPDATE jobs SET payload=? WHERE id=?',(dump(payload),job['id']))
     store.set_meta('settings',{**store.settings(),'search_provider':'tavily'})
     assert store.search_provider_for_run(run['id'])=='native'
     text=chat_instructions(store,{'model':'gpt-5.6-luna','effort':'high'},allow_web=False)
-    assert '当前正式研究搜索源：Tavily' in text
+    assert '本轮冻结搜索策略：优先 Tavily' in text
     assert '实际联网状态：未开启' in text
 
 
@@ -104,7 +105,7 @@ def test_builtin_tavily_skill_only_enters_enabled_scout_context(tmp_path, monkey
             assert run['id'] in content and '公开确认已读' in prompt
             assert 'SYNTHETIC_SECRET_DO_NOT_INJECT' not in prompt+content+dispatch+dump(payload)
             assert 'Analyst、Evaluator、Maintainer' in prompt
-            assert '受控 Tavily Search' in prompt and '三类 remaining' in prompt
+            assert '受控搜索统一命令' in prompt and '三类 remaining' in prompt
         else:
             assert 'retrieval_skill' not in payload
             assert not (folder/'capabilities'/'tavily'/'SKILL.md').exists()
@@ -134,7 +135,7 @@ def test_duckduckgo_run_is_fully_managed_at_the_prompt_layer(tmp_path):
     content=Path(binding['path']).read_text()
     assert 'web-search --run '+run['id'] in content
     assert 'add-url --run '+run['id'] in content
-    assert '没有提供方提取服务' in content and 'SYNTHETIC_SECRET' not in content
+    assert 'Tavily在允许渠道内时才能用tavily-extract' in content and 'SYNTHETIC_SECRET' not in content
     assert content in payload['role_skills']['scout']['instructions']
     assert 'retrieval_skill_path' not in payload['role_skills'].get('analyst',{})
     assert payload['search_provider']=='duckduckgo'
@@ -144,7 +145,7 @@ def test_duckduckgo_run_is_fully_managed_at_the_prompt_layer(tmp_path):
     assert '当前执行引擎' not in prompt and 'Opencode 原生搜索' not in prompt
     assert '原生网络搜索工具' not in prompt
     # Budget note follows the managed-provider branch: DDG IS metered.
-    assert '受控 DuckDuckGo web-search' in prompt and '三类 remaining' in prompt
+    assert '受控搜索统一命令' in prompt and '三类 remaining' in prompt
     assert '不精确计量原生搜索次数' not in prompt
     assert '见本轮 Scout 技能' in prompt and 'add-url 或明确的 Tavily extract' not in prompt
 
@@ -169,16 +170,13 @@ def test_evaluator_initial_sources_follow_citations_and_keep_full_index(tmp_path
     assert store.one('briefs',brief['id'])==brief
 
 
-def test_chat_surfaces_the_search_source_and_recommends_tavily(tmp_path,monkeypatch):
-    from briefloop import tavily as tavily_module
-    monkeypatch.setattr(tavily_module,'key_status',lambda **kwargs:{'configured':False,'source':None})
+def test_chat_surfaces_default_and_explicit_search_channels(tmp_path):
     store=Store(tmp_path/'workspace')
     runtime={'model':'gpt-5.6-luna','effort':'high'}
+    default=chat_instructions(store,runtime)
+    assert '优先 Tavily；允许渠道：Tavily、宿主自带搜索' in default
+    assert '缺少密钥时提示配置该渠道' in default and '已有授权补充渠道可在预算内使用' in default
+    store.set_meta('settings',{**store.settings(),'search_provider':'native'})
     native=chat_instructions(store,runtime)
-    assert '当前搜索源是宿主原生搜索' in native and '建议在' in native and 'Tavily' in native
-    store.set_meta('settings',{**store.settings(),'search_provider':'tavily'})
-    missing=chat_instructions(store,runtime)
-    assert '尚未配置 API Key' in missing and '不要用原生搜索冒充 Tavily' in missing
-    monkeypatch.setattr(tavily_module,'key_status',lambda **kwargs:{'configured':True,'source':'file'})
-    ready=chat_instructions(store,runtime)
-    assert '当前搜索源：Tavily（已配置）' in ready
+    assert '优先 宿主自带搜索；允许渠道：宿主自带搜索。' in native
+    assert '优先 Tavily' not in native

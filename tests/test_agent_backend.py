@@ -8,11 +8,11 @@ from briefloop.interactive_runtime import InteractiveRuntime
 
 def test_enqueue_freezes_backend_and_old_jobs_stay_codex(tmp_path):
     store = Store(tmp_path / 'workspace')
-    first = store.enqueue('generate', {'run_id': 'run-old'})
+    first = store.enqueue('generate', {'run_id': store.create_run({'title':'测试','objective':'测试任务绑定','allow_web':True},[])['id']})
     assert json.loads(first['payload'])['agent_backend'] == 'codex'
     store.set_meta('settings', {**store.settings(), 'agent_backend': 'opencode',
                                 'model': 'opencode-go/gpt-5.6-luna'})
-    second = store.enqueue('generate', {'run_id': 'run-new'})
+    second = store.enqueue('generate', {'run_id': store.create_run({'title':'测试','objective':'测试任务绑定','allow_web':True},[])['id']})
     frozen = json.loads(second['payload'])
     assert frozen['agent_backend'] == 'opencode'
     assert frozen['runtime'] == {'model': 'opencode-go/gpt-5.6-luna'}
@@ -26,7 +26,7 @@ def test_enqueue_freezes_backend_and_old_jobs_stay_codex(tmp_path):
 
 def test_resume_across_backend_keeps_the_frozen_backend(tmp_path):
     store = Store(tmp_path / 'workspace')
-    job = store.enqueue('generate', {'run_id': 'run-x'})
+    job = store.enqueue('generate', {'run_id': store.create_run({'title':'测试','objective':'测试任务绑定','allow_web':True},[])['id']})
     store.update_job(job['id'], 'failed')
     store.set_meta('settings', {**store.settings(), 'agent_backend': 'opencode',
                                 'model': 'opencode-go/gpt-5.6-luna'})
@@ -62,13 +62,13 @@ def test_runtime_routes_by_frozen_backend_and_pins_binding(tmp_path):
     runtime = InteractiveRuntime(store, backends={'codex': FakeHarness(), 'opencode': FakeOpencode()})
     folder = tmp_path / 'folder'
     folder.mkdir()
-    codex_job = store.enqueue('generate', {'run_id': 'r1'})
+    codex_job = store.enqueue('generate', {'run_id': store.create_run({'title':'测试','objective':'测试任务绑定','allow_web':True},[])['id']})
     with pytest.raises(RuntimeError, match='codex transport'):
         runtime.execute(codex_job, 'prompt', folder)
     assert calls[-1][0] == 'codex'
     store.set_meta('settings', {**store.settings(), 'agent_backend': 'opencode',
                                 'model': 'opencode-go/gpt-5.6-luna'})
-    opencode_job = store.enqueue('generate', {'run_id': 'r2'})
+    opencode_job = store.enqueue('generate', {'run_id': store.create_run({'title':'测试','objective':'测试任务绑定','allow_web':True},[])['id']})
     other = tmp_path / 'other'
     other.mkdir()
     with pytest.raises(RuntimeError, match='opencode transport'):

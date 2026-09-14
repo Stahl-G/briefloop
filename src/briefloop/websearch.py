@@ -6,10 +6,11 @@ bookkeeping live here so every provider is metered identically. 'native' is the
 host backend's own search and is deliberately not a managed provider here.
 """
 import json
+import time
 from .store import dump
 
-MANAGED_PROVIDERS=('tavily','duckduckgo')
-PROVIDER_LABELS={'tavily':'Tavily','duckduckgo':'DuckDuckGo'}
+MANAGED_PROVIDERS=('tavily','duckduckgo','bocha','zhipu')
+PROVIDER_LABELS={'tavily':'Tavily','duckduckgo':'DuckDuckGo','bocha':'博查','zhipu':'智谱搜索'}
 
 # Stable, redacted classification for the request envelope. Do not infer a
 # provider's billing outcome from these; they only say why an attempt stopped.
@@ -57,6 +58,10 @@ def provider_module(provider):
         from . import tavily as module
     elif provider=='duckduckgo':
         from . import duckduckgo as module
+    elif provider=='zhipu':
+        from . import zhipu as module
+    elif provider=='bocha':
+        from . import bocha as module
     else:raise ValueError('未知搜索 provider：'+str(provider))
     return module
 
@@ -65,14 +70,15 @@ def normalize_provider(value):
     from .models import normalize_search_provider
     provider=normalize_search_provider(value)
     if provider not in MANAGED_PROVIDERS:
-        error=marked('本轮搜索源是宿主原生搜索；受控检索只支持 Tavily 与 DuckDuckGo，请在设置中选择后发起新任务')
+        error=marked('本轮搜索源是宿主原生搜索；受控检索支持 Tavily、博查、智谱与 DuckDuckGo，请在设置中选择后发起新任务')
         error.provider=provider
         raise error
     return provider
 
 
 def provider_for_run(store,run_id):
-    return normalize_provider(store.search_provider_for_run(run_id))
+    from .search_policy import for_run
+    return normalize_provider(for_run(store,run_id)['primary_provider'])
 
 
 def check_run(store,run_id,provider):
@@ -82,19 +88,22 @@ def check_run(store,run_id,provider):
     run=store.one('runs',run_id)
     if not json.loads(run['requirements']).get('allow_web'):
         error=fail('本轮未允许联网搜索');error.provider=provider;raise error
-    if store.search_provider_for_run(run_id)!=provider:
+    from .search_policy import for_run,allowed
+    if provider not in allowed(for_run(store,run_id)):
         error=fail('本轮搜索服务不是 '+PROVIDER_LABELS[provider]+'，请在设置中选择后发起新任务');error.provider=provider;raise error
     return run
 
 
 def search(query,*,provider=None,topic='general',time_range=None,start_date=None,end_date=None,
            include_domains=None,exclude_domains=None,max_results=5,search_depth='basic',
-           key_file=None,store=None,run_id=None):
+           key_file=None,store=None,run_id=None,purpose='primary',reason='',gap_id=None):
     """One metered search request; provider stays swappable behind one envelope."""
     if provider is None:
         if store is None or run_id is None:raise SearchError('未指定搜索 provider')
         provider=provider_for_run(store,run_id)
     else:provider=normalize_provider(provider)
+    if purpose not in ('primary','coverage_probe','gap_repair'):raise SearchError('无效搜索用途')
+    if not isinstance(reason,str) or len(reason)>1000:raise SearchError('搜索原因过长')
     module=provider_module(provider)
     if store is not None and run_id and provider == 'tavily':
         import json
@@ -111,22 +120,33 @@ def search(query,*,provider=None,topic='general',time_range=None,start_date=None
     options={'topic':topic,'time_range':time_range,'start_date':start_date,'end_date':end_date,
              'include_domains':list(include_domains or []),'exclude_domains':list(exclude_domains or []),
              'max_results':max_results,'search_depth':search_depth}
+    if provider=='zhipu':
+        from .search_policy import for_run
+        options['search_engine']=for_run(store,run_id)['zhipu_engine'] if store is not None and run_id else 'search_std'
     parameters=module.validate_search(query,options)
     reservation=None;local_id=None;round_id=None
     if store is not None and run_id is not None:
         check_run(store,run_id,provider)
+        if gap_id:
+            from .research_plan import frozen
+            plan=frozen(store,run_id) or {}
+            gaps=[g for info in plan.get('rounds',{}).values() for g in info.get('gaps',[])]
+            if not any(g.get('id')==gap_id for g in gaps):raise SearchError('缺口不属于本轮计划')
         from . import research_budget as budget
         try:reservation=budget.reserve_search(store,run_id,max_results)
         except budget.BudgetExhausted as exc:return exc.result
         max_results=reservation['max_results'];parameters['max_results']=max_results
         local_id=reservation['request_id'];round_id=reservation['round_id']
     envelope={'local_request_id':local_id,'provider_request_id':None,'query_id':None,'run_id':run_id,'round_id':round_id,
+              'purpose':purpose,'reason':reason,'gap_id':gap_id,
               'provider':provider,'operation':'search','query':query,'parameters':parameters,'outcome':None,
               'failure_kind':None,'raw_response_path':None,'admitted_urls':[],'unadmitted_urls':[],'budget_after':{}}
+    started=time.monotonic()
     try:
         parsed,raw,provider_request_id,usage=module.call_search(query,parameters,key_file=key_file)
     except SearchError as exc:
         exc.provider=provider
+        envelope['elapsed_ms']=round((time.monotonic()-started)*1000);envelope['http_status']=getattr(exc,'status',None)
         envelope['outcome']='failed';envelope['failure_kind']=getattr(exc,'failure_kind','provider_error')
         if reservation:
             budget.save_discovery(store,run_id,reservation['request_id'],dump({'status':'failed','query':query,'error':str(exc)}).encode())
@@ -135,6 +155,7 @@ def search(query,*,provider=None,topic='general',time_range=None,start_date=None
             from .research_plan import settle_request
             settle_request(store,run_id,reservation['request_id'],'failed',failure_kind=envelope['failure_kind'],record_path=path)
         raise
+    envelope['elapsed_ms']=round((time.monotonic()-started)*1000)
     discovery=None
     if reservation:
         # Preserve the complete provider response before any candidate limiting.
@@ -148,6 +169,8 @@ def search(query,*,provider=None,topic='general',time_range=None,start_date=None
     if reservation:
         admitted=budget.record_candidates(store,run_id,[row['url'] for row in results])
         allowed=set(admitted['allowed_urls'])
+        from .search_policy import record_origins
+        record_origins(store,allowed,envelope)
         envelope['admitted_urls']=sorted(allowed);envelope['unadmitted_urls']=admitted['unadmitted_urls'];envelope['budget_after']=admitted['budget']
         output.update({'results':[row for row in results if budget.canonical_url(row['url']) in allowed],
                        'status':'budget_exhausted' if admitted['unadmitted_urls'] else 'ok',

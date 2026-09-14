@@ -33,7 +33,7 @@ def test_opencode_frozen_tavily_reaches_both_coordinator_and_scout(tmp_path):
     skill=Path(binding['path']).read_text(encoding='utf-8')
     dispatch=Path(binding['dispatch_prompt_path']).read_text(encoding='utf-8')
     assert binding['path'] in dispatch
-    assert 'tavily-search --run '+run['id'] in skill
+    assert 'web-search --run '+run['id'] in skill
     assert 'tavily-extract --run '+run['id'] in skill
     assert skill in payload['role_skills']['scout']['instructions']
     assert 'retrieval_skill_path' not in payload['role_skills'].get('analyst',{})
@@ -101,6 +101,6 @@ def test_generation_packet_is_utf8_with_cp1252_default(tmp_path,monkeypatch,prov
     if provider=='tavily' and allowed:
         expected.update({'capabilities/tavily/SKILL.md','capabilities/tavily/scout-dispatch.md'})
         assert '开始时完整读取一次' in packet['capabilities/tavily/scout-dispatch.md']
-        assert 'tavily-search --run '+run['id'] in packet['capabilities/tavily/SKILL.md']
+        assert 'web-search --run '+run['id'] in packet['capabilities/tavily/SKILL.md']
         assert payload['retrieval_skill']['path'] in prompt
     assert set(packet)==expected

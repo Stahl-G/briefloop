@@ -227,24 +227,10 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
                 '只读取本次任务包、明确分配给本角色的 Wiki/技能及所需来源；必要的原文核对可以按需展开。遵循本轮专用提示词，'
                 '将产物写到指定位置并按该角色任务决定是否使用子 agent。不要再次调用 workspace-action generate、'
                 'assess 或 learn 来安排同一任务，避免递归入队。用户的补充消息属于当前任务的交互。')
-    provider=store.settings()['search_provider']
-    native_name=(f'{BACKEND_LABELS[backend]} 宿主自带的联网工具' if backend in ('codex','opencode')
-                 else f'{BACKEND_LABELS[backend]} 自带的联网工具')
-    search_note=('当前正式研究搜索源：Tavily。正式生成任务会固定这个选择，后台 Scout 使用工作区的 tavily-search / tavily-extract CLI，并绑定实际 run ID；你通过 generate 提交任务，不自行调用另一套研究流水线。Scout 决定查询与筛选，Python 工具调用 API。search content 只是检索线索；候选 URL 先直接抓取，失败可显式 Tavily extract；提取正文不等于原网站字节。不会使用 Tavily Research 的模型报告作为来源。'
-                 if provider=='tavily' else
-                 ('当前正式研究搜索源：DuckDuckGo（免密钥）。正式生成任务会固定这个选择，后台 Scout 使用工作区的 web-search CLI，并绑定实际 run ID；你通过 generate 提交任务，不自行调用另一套研究流水线。Scout 决定查询与筛选，Python 工具调用 API。search content 只是检索线索；候选 URL 用 add-url 直接抓取登记正文，DuckDuckGo 没有提供方提取服务。'
-                  if provider=='duckduckgo' else
-                  f'当前正式研究搜索源：{native_name}；是否可用取决于宿主账号、权限与本轮设置，BriefLoop 不额外提供搜索。生成任务会固定这个选择，Scout 搜索后仍需保存并核对公开正文。'))
-    from .tavily import key_status as _tavily_key_status
-    tavily_ready=bool(_tavily_key_status().get('configured'))
-    if provider=='tavily' and tavily_ready:
-        search_choice='当前搜索源：Tavily（已配置）。'
-    elif provider=='tavily':
-        search_choice='当前已选择 Tavily 但尚未配置 API Key。用户要公开研究时，先提示在“设置”或“材料与需求”页填入 Tavily API Key，配置后再生成本轮；不要用原生搜索冒充 Tavily。'
-    elif provider=='duckduckgo':
-        search_choice='当前搜索源：DuckDuckGo（免密钥，无需配置即可用）。覆盖与稳定性通常不如 Tavily，摘要不提供相关性分数，也未提取发布日期；需要更强检索时可在“设置”或“材料与需求”页配置 Tavily API Key 并选择 Tavily。'
-    else:
-        search_choice='当前搜索源是宿主原生搜索，Tavily 未启用。用户要开展公开研究时，先用一两句说明将使用原生搜索、覆盖通常不如 Tavily，并建议在“设置”或“材料与需求”页配置 Tavily API Key 并选择 Tavily；用户确认后再生成本轮。用户明确选择原生或拒绝配置时再继续，不要静默使用原生。'
+    from .search_policy import resolve as resolve_search_policy, instructions as policy_instructions
+    policy=resolve_search_policy(store.settings().get('search_policy'),store.settings()['search_provider'])
+    search_note='正式报告会冻结首选与允许补充渠道、共用预算；通过generate提交，不自行创建另一套流水线。'+policy_instructions(policy,'briefloop tool','本任务真实run ID')
+    search_choice='尊重用户已选择的渠道，不宣称某服务覆盖必然更好，不再次要求确认原生选择。缺少密钥时提示配置该渠道；已有授权补充渠道可在预算内使用。'
     if backend=='opencode':
         request_runtime={'model':runtime['model'],'model_variant':runtime.get('variant'),'agent_backend':'opencode'}
         runtime_json=json.dumps(request_runtime,ensure_ascii=False)

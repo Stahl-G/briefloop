@@ -17,7 +17,7 @@ def test_read_survives_reopen_and_cannot_swallow_new_activity(tmp_path):
 
 def test_task_without_chat_still_notifies_and_attempts_stay_distinct(tmp_path):
     store=Store(tmp_path)
-    job=store.enqueue('generate',{'run_id':'fixture'})
+    job=store.enqueue('generate',{'run_id': store.create_run({'title':'测试','objective':'测试任务绑定','allow_web':True},[])['id']})
     assert snapshot(store)['unread']==0  # queued is not running
     job_status(store,job,'running');job_status(store,job,'complete')
     job_status(store,job,'complete')

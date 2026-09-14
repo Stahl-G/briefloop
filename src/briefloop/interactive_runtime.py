@@ -269,7 +269,7 @@ class InteractiveRuntime:
                 harness.start_internal((folder / 'prompt.md').read_text(encoding='utf-8'), session_id=sid,
                     runtime=runtime, cwd=folder, job_id=job['id'], display_text=label,
                     allow_web=bool(job.get('allow_web', False)), message_id=binding['message_id'],
-                    search_provider=payload.get('search_provider','codex'),
+                    search_provider=payload.get('search_provider','codex'),search_policy=payload.get('search_policy'),
                     source_ids=self._input_source_ids(job,folder))
                 self.store.event(job['id'], 'runtime_started', {'session_id': sid,
                     'message_id': binding['message_id'], 'folder': str(folder), 'runtime': configured,

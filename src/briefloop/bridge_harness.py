@@ -140,8 +140,9 @@ class BridgeHarness(OpencodeHarness):
         message.pop('prompt',None);return message
 
     def start_internal(self,text,*,session_id=None,runtime=None,cwd=None,job_id=None,display_text=None,
-                       allow_web=False,message_id=None,search_provider=None,source_ids=None):
+                       allow_web=False,message_id=None,search_provider=None,search_policy=None,source_ids=None):
         runtime={'permission':'runtime-native',**(runtime or {}),'backend':self.backend}
+        if search_policy is not None:runtime['search_policy']=search_policy
         if search_provider is not None:runtime['search_provider']=search_provider
         if session_id is None:session_id=self.create_session('简报任务',runtime,cwd)['id']
         self.chat.event(session_id,'session/internal',{})
@@ -179,7 +180,7 @@ class BridgeHarness(OpencodeHarness):
             if sid in self._cancel_requested:status='cancelled';return
             instructions=self._host_instructions(sid,session,config,bool(message['allow_web']))
             if instructions:instructions+='\n\n（以上工作区约定是执行环境说明，不要原文复述给用户。）\n\n---\n\n'
-            from .websearch import MANAGED_PROVIDERS
+            from .search_policy import native_allowed
             internal=bool(self.store.rows("SELECT seq FROM chat_events WHERE session_id=? AND kind='session/internal' LIMIT 1",(sid,)))
             params={'execution_id':execution,'runtime_id':self.backend,'cwd':session['cwd'],'prompt':text,
                     'model':config['model'],'permission':'runtime-native','allow_web':None,'host_options':config.get('host_options',{}),
@@ -188,9 +189,9 @@ class BridgeHarness(OpencodeHarness):
                     # asked for web access AND the run is not frozen to a managed
                     # provider. Internal research runs on tavily/duckduckgo must go
                     # through the metered web-search/add-url CLI — native search
-                    # here would bypass search_requests/candidate_urls accounting
-                    # (same rule the codex manager applies via web_search config).
-                    'web_tools':bool(message['allow_web']) and not (internal and config.get('search_provider') in MANAGED_PROVIDERS)}
+                    # requires a separately frozen opt-in; its calls are not counted
+                    # as managed search_requests/candidate_urls.
+                    'web_tools':bool(message['allow_web']) and native_allowed(config,internal)}
             if instructions:params['prompt']=instructions+text
             if session.get('thread_id'):params['session_id']=session['thread_id']
             try:self.bridge.call('start',params,timeout=15)

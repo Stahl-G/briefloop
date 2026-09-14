@@ -82,7 +82,8 @@ def _permission_rules(config, allow_web, root):
         rules += [{'permission': 'external_directory', 'action': 'deny', 'pattern': '*'},
                   {'permission': 'external_directory', 'action': 'allow',
                    'pattern': str(root / '**')}]
-    if not allow_web:
+    from .search_policy import native_allowed
+    if not allow_web or not native_allowed(config, bool(config.get('search_policy') or config.get('search_provider'))):
         # Best effort: opencode has no per-turn network kill switch; bash keeps
         # network access. The UI states this honestly wherever allow_web shows.
         rules += [{'permission': 'webfetch', 'action': 'deny', 'pattern': '*'},
@@ -403,9 +404,10 @@ class OpencodeHarness:
         return message
 
     def start_internal(self, text, *, session_id=None, runtime=None, cwd=None, job_id=None,
-                       display_text=None, allow_web=False, message_id=None, search_provider=None,
+                       display_text=None, allow_web=False, message_id=None, search_provider=None,search_policy=None,
                        source_ids=None):
         runtime = {'permission':'workspace-write', **(runtime or {}), 'backend': 'opencode'}
+        if search_policy is not None:runtime['search_policy']=search_policy
         if search_provider is not None:
             from .models import normalize_search_provider
             runtime['search_provider'] = normalize_search_provider(search_provider)

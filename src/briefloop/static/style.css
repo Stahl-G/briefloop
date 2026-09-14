@@ -626,6 +626,21 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 #schedule-error{color:var(--danger)}
 #schedule-form input:not([type=checkbox]),#schedule-form textarea,#schedule-form select{font-weight:400}
 
+/* Search settings share compact controls in WebUI and Electron. */
+.search-policy-fields{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;margin-bottom:12px}
+.search-policy-fields label{display:block;margin-bottom:8px}
+#search-supplements{border:1px solid var(--line);border-radius:var(--radius);padding:8px 16px 12px;margin:16px 0 12px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 16px}
+#search-supplements legend{font-size:13px;font-weight:550;padding:0 6px;color:var(--ink)}
+#search-supplements .check{margin:4px 0;min-height:28px;font-size:14px;line-height:1.5;gap:10px}
+#search-supplements input[type=checkbox]{width:16px;height:16px;min-height:16px;flex:0 0 16px;margin:0;padding:0;accent-color:var(--green)}
+#search-supplements label:has(input:disabled){color:var(--muted)}
+#search-policy-save{margin:16px 0 8px}
+#bocha-settings,#tavily-settings,#zhipu-settings{border-top:1px solid var(--line);margin-top:16px;padding-top:16px}
+#bocha-settings h4,#zhipu-settings h4{font-size:14px;margin:0 0 8px}
+#zhipu-settings .tavily-key-actions,#bocha-settings .tavily-key-actions,#tavily-settings .tavily-key-actions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}
+#search-activity-dialog{width:min(720px,90vw);max-height:80vh;overflow:auto}
+#search-activity-body .panel{padding:16px;margin:12px 0}
+@media(max-width:780px){.search-policy-fields,#search-supplements{grid-template-columns:1fr}}
 /* Report progress: existing BriefLoop tokens, factual milestones, no estimated percentage. */
 .report-tasks{background:transparent;border:0;padding:0}.report-task-cards{display:grid;gap:16px}
 .task-progress-card{background:var(--surface,#fff);border:1px solid var(--line);border-radius:12px;padding:24px;min-width:0}

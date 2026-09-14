@@ -71,3 +71,14 @@ def test_progress_http_is_read_only_and_source_is_openable(tmp_path):
         assert not server.worker.thread.is_alive()
     finally:
         server.shutdown();thread.join();server.harness.close();server.server_close();server.workspace_lock.close()
+
+
+def test_progress_metering_follows_all_frozen_managed_channels(tmp_path):
+    store=Store(tmp_path)
+    for primary,supplemental,expected in [('bocha',[],True),('zhipu',[],True),('native',['tavily'],True),('native',[],False)]:
+        run=store.create_run({'title':'搜索进度','objective':'核对','allow_web':True,
+            'search_policy':{'primary_provider':primary,'supplemental_providers':supplemental}},[])
+        job=store.enqueue('generate',{'run_id':run['id']})
+        progress=summary(store,job['id'])
+        assert progress['search_metered'] is expected
+        assert progress['search_counts']=={'completed':0,'failed':0,'reserved':0}
