@@ -104,7 +104,9 @@ def test_full_contract_passes_and_records_version_identity(tmp_path):
     assert record['execution']['status']=='completed' and record['unchecked']==[]
     assert record['stage_id']==world['stage']['stage_id']
     assert record['as_of']=='2026-09-01'  # 未显式给出时取报告截至日
-    assert record['snapshot']=={'model':'contract-test-model','search_provider':'native','source':'fact_check_job'}  # 本次核查任务入队时冻结的模型与搜索源
+    frozen=json.loads(world['job']['payload'])
+    assert record['snapshot']=={'model':'contract-test-model','search_provider':frozen['search_provider'],
+                                'search_policy':frozen['search_policy'],'source':'fact_check_job'}  # 本次核查任务入队时冻结的模型与搜索源
     by_claim={item['claim_id']:item for item in record['candidates']}
     binding=store.rows('SELECT * FROM claim_bindings WHERE claim_id=?',(c['unit']['id'],))[0]
     unit=by_claim[c['unit']['id']]

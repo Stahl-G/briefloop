@@ -200,10 +200,8 @@ def generation_prompt(store, run, folder, backend='codex'):
     payload={'deliverable_spec':deliverable,'report_profile':report_profile,'reference_sources':references,'requirements':req,'research_budget_status':research_budget,'research_plan':research_plan,'search_provider':provider,'sources':sources,'initial_source_count':len(sources),'skill':skill,'role_skills':bind_context(store,skill),'additional_roles':store.meta('additional_roles',{}),'max_parallel':max_parallel,'scout_slots':scout_slots,'scout_contract_path':str(scout_contract),'reusable_research':run.get('reusable_research',[])}
     if research_handoff is not None:payload['research_handoff']=research_handoff
     tool=tool_command(store.root,backend=backend)
-    # Every managed provider (tavily, duckduckgo) gets the same treatment: a
-    # generated Scout-only skill, metered CLI retrieval and a managed budget
-    # note. Internal generation sessions have host-native web search disabled
-    # for managed providers, so a DDG run must never be told to use it.
+    # Inject one Scout retrieval skill for the frozen set of managed channels.
+    # Host-native permission is independent and follows the same policy.
     from .websearch import MANAGED_PROVIDERS, PROVIDER_LABELS
     from .search_policy import for_run as search_policy_for_run,allowed as search_channels,instructions as search_instructions
     policy=search_policy_for_run(store,run['id'])
@@ -265,11 +263,9 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
         # The note follows whether the provider is metered, not which one it is:
         # DDG search requests and candidate URLs are reserved in the same
         # transaction as Tavily's, so a DDG run must budget against all three.
-        metered_calls=('受控 Tavily Search/Extract 在每次调用时事务检查并返回 remaining' if provider=='tavily'
-                       else '受控 DuckDuckGo web-search 与 add-url 在每次调用时事务检查并返回 remaining')
         metered_calls='所有已允许渠道的受控 web-search/add-url/Extract 事务检查并返回 remaining；宿主原生搜索次数未知，不在此硬计量'
         metered_search='所有受控 web-search 调用'
-        metered_pages='受控 add-url/Extract' if provider=='tavily' else '受控 add-url'
+        metered_pages='受控 add-url/Extract' if 'tavily' in search_channels(policy) else '受控 add-url'
         budget_note=('本轮共享硬预算见 input.json.research_budget_status：所有 Scout 共用，不是每人一份。'+metered_calls
                      +'；search_requests/candidate_urls 只硬计'+metered_search+'，source_pages 硬计所有'+metered_pages+'的唯一 URL，同 URL 回退与缓存不重复算页。出现 budget_exhausted 时保留现有来源，把简短缺口写入研究交接记录，停止新增检索并交接，不重试消耗上限的操作。派发每个批次前先对照三类 remaining（搜索请求、候选 URL、唯一正文 URL）：前轮不要一次占满全部预算，给补缺同时留出搜索、候选和正文名额；三类是各自独立的硬上限，剩下搜索次数但候选或正文名额不足时不要绕过。旧任务 limits=null 表示未设置预算，不追溯限制。')
     else:
