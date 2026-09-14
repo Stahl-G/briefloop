@@ -75,6 +75,7 @@ def _runtime_snapshot(store, job):
     return {
         'agent_backend': payload.get('agent_backend') or settings.get('agent_backend', 'codex'),
         'search_provider': payload.get('search_provider') or settings.get('search_provider', 'native'),
+        'search_policy': payload.get('search_policy'),
         'role_models': payload.get('role_models') or {},
         'model': runtime.get('model') or settings.get('model'),
         'max_parallel': int(payload.get('max_parallel', settings.get('max_parallel', 4))),

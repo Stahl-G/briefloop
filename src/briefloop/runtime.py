@@ -203,12 +203,18 @@ def generation_prompt(store, run, folder, backend='codex'):
     # note. Internal generation sessions have host-native web search disabled
     # for managed providers, so a DDG run must never be told to use it.
     from .websearch import MANAGED_PROVIDERS, PROVIDER_LABELS
-    managed=req['allow_web'] and provider in MANAGED_PROVIDERS
+    from .search_policy import for_run as search_policy_for_run,allowed as search_channels,instructions as search_instructions
+    policy=search_policy_for_run(store,run['id'])
+    if not store.rows("SELECT id FROM jobs WHERE kind='generate' AND json_extract(payload,'$.run_id')=?",(run['id'],)) and not req.get('search_policy'):
+        from .search_policy import resolve as resolve_search_policy
+        policy=resolve_search_policy(primary=provider)
+    payload['search_policy']=policy
+    managed=req['allow_web'] and any(p in MANAGED_PROVIDERS for p in search_channels(policy))
     if managed:
-        template=files('briefloop').joinpath('skill_assets',provider,'SKILL.md').read_text(encoding='utf-8')
+        template=files('briefloop').joinpath('skill_assets','multi-search','SKILL.md').read_text(encoding='utf-8')
         retrieval_path=(folder/'capabilities'/provider/'SKILL.md').resolve()
         retrieval_path.parent.mkdir(parents=True,exist_ok=True)
-        content=template.replace('{tool}',tool).replace('{run_id}',run['id'])
+        content=template.replace('{tool}',tool).replace('{run_id}',run['id'])+'\n'+search_instructions(policy,tool,run['id'])
         retrieval_path.write_text(content,encoding='utf-8')
         dispatch_path=retrieval_path.with_name('scout-dispatch.md')
         dispatch_path.write_text('你是本轮负责找资料的 Scout。按分配主题和槽位绝对路径执行。'
@@ -231,12 +237,13 @@ def generation_prompt(store, run, folder, backend='codex'):
                   ('本轮冻结搜索源：当前执行引擎。允许联网时 Scout 使用 host 的原生网络搜索工具设计查询、筛选公开原始发布者；搜索摘要仅用于发现，后续仍须读取并登记正文。'
                    if req['allow_web'] else '本轮未允许联网，只处理已登记的材料，不加载外部检索技能。'))
     else:
-        search = f'''本轮冻结搜索源：{PROVIDER_LABELS[provider]}。已生成仅供检索 Scout 的技能：{retrieval_path}。
+        search = f'''本轮冻结搜索源：{PROVIDER_LABELS.get(provider,'宿主自带搜索')}。已生成仅供检索 Scout 的技能：{retrieval_path}。
 每个检索 Scout 的实际 spawn/delegate 消息优先使用精简任务：具体分工、槽位/结果/schema 的绝对路径和技能绝对路径 {retrieval_path}，要求 Scout 完整读取一次并公开确认已读。{dispatch_path} 提供精简派发说明。
 父会话不必先读取技能全文再复制两份；input.role_skills 中的正文仍可按需使用，但不要重复展开已通过技能路径分配的内容。保存实际 dispatch prompt、子 agent 句柄及真实读取确认，不伪造。
 retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generation input.json 注入 Analyst、Evaluator、Maintainer 或 Proposer。他们只接收相应任务、来源及检索结果。'''
     if backend == 'opencode' and managed:
         search = search.replace('实际 spawn/delegate 消息优先使用精简任务', '实际 task 工具消息优先使用精简任务')
+    if req['allow_web']:search+='\n'+search_instructions(policy,tool,run['id'])
     registration = 'add-url 或明确的 Tavily extract' if managed and provider=='tavily' else 'add-url'
     discovery=('初始来源为 0，这是正常的公开信息研究任务，不要求用户先上传材料。按目标、时间窗口与主题设计来源发现分工，至少安排一个 Scout；不要因为初始文件为 0 就安排 0 个 Scout。'
                if not sources and req['allow_web'] else
@@ -258,7 +265,8 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
         # transaction as Tavily's, so a DDG run must budget against all three.
         metered_calls=('受控 Tavily Search/Extract 在每次调用时事务检查并返回 remaining' if provider=='tavily'
                        else '受控 DuckDuckGo web-search 与 add-url 在每次调用时事务检查并返回 remaining')
-        metered_search='受控 Tavily Search' if provider=='tavily' else '受控 DuckDuckGo web-search 调用'
+        metered_calls='所有已允许渠道的受控 web-search/add-url/Extract 事务检查并返回 remaining；宿主原生搜索次数未知，不在此硬计量'
+        metered_search='所有受控 web-search 调用'
         metered_pages='受控 add-url/Extract' if provider=='tavily' else '受控 add-url'
         budget_note=('本轮共享硬预算见 input.json.research_budget_status：所有 Scout 共用，不是每人一份。'+metered_calls
                      +'；search_requests/candidate_urls 只硬计'+metered_search+'，source_pages 硬计所有'+metered_pages+'的唯一 URL，同 URL 回退与缓存不重复算页。出现 budget_exhausted 时保留现有来源，把简短缺口写入研究交接记录，停止新增检索并交接，不重试消耗上限的操作。派发每个批次前先对照三类 remaining（搜索请求、候选 URL、唯一正文 URL）：前轮不要一次占满全部预算，给补缺同时留出搜索、候选和正文名额；三类是各自独立的硬上限，剩下搜索次数但候选或正文名额不足时不要绕过。旧任务 limits=null 表示未设置预算，不追溯限制。')
@@ -766,7 +774,7 @@ class Worker:
         check={'run_id':run_id,'version_id':brief['id'],'parent_job_id':job['id']}
         # Same frozen model/provider chain as the writing job, and the same
         # conversation for status notes when the task started from a chat.
-        check.update({key:payload[key] for key in ('runtime','agent_backend','search_provider','role_models','session_id') if key in payload})
+        check.update({key:payload[key] for key in ('runtime','agent_backend','search_provider','search_policy','role_models','session_id') if key in payload})
         queued=self.store.enqueue('fact_check',check)
         self.store.event(job['id'],'fact_check',{'action':'dispatch','stage_id':admitted['stage_id'],'job_id':queued['id']})
         return admitted

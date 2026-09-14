@@ -28,6 +28,21 @@ class ResearchBudget(Model):
     source_pages: int = Field(default=60, ge=0)
 
 
+class SearchPolicy(Model):
+    primary_provider: Literal['native','tavily','duckduckgo','bocha','zhipu'] = 'native'
+    supplemental_providers: list[Literal['tavily','duckduckgo','bocha','zhipu']] = Field(default_factory=list)
+    zhipu_engine: Literal['search_std','search_pro','search_pro_sogou','search_pro_quark'] = 'search_std'
+    native_search_enabled: bool = False
+    coverage_mode: Literal['primary_only','on_gap','coverage'] = 'coverage'
+    market_scope: str = Field(default='', max_length=500)
+    platform_scope: list[Literal['wechat','xiaohongshu']] = Field(default_factory=list)
+
+    @model_validator(mode='after')
+    def unique_channels(self):
+        self.supplemental_providers=list(dict.fromkeys(p for p in self.supplemental_providers if p!=self.primary_provider))
+        return self
+
+
 class ReportSection(Model):
     section_id: str = Field(min_length=1, max_length=120)
     title: str = Field(min_length=1, max_length=200)
@@ -61,6 +76,7 @@ class Requirements(Model):
     language: str = "中文"
     extent: Literal["quick", "compact", "balanced", "detailed"] = "balanced"
     allow_web: bool = False
+    search_policy: SearchPolicy | None = None
     period: str = ""
     raw_input: str = ""
     # Research tier chosen at task creation; stored on the run so pause/resume and
@@ -112,7 +128,7 @@ def normalize_search_provider(value):
     # 'codex' was the original name for backend-native search; it now reads 'native'.
     if value in (None, '', 'codex'):
         return 'native'
-    if value not in ('native', 'tavily', 'duckduckgo'):
+    if value not in ('native', 'tavily', 'duckduckgo', 'bocha', 'zhipu'):
         raise ValueError('无效搜索来源')
     return value
 
@@ -181,7 +197,8 @@ class Settings(RoleModel):
     model_selection_required: bool = True
     role_models: dict[Literal['evaluator','maintainer','proposer'], RoleModel] = Field(default_factory=dict)
     chat_allow_web: bool = True
-    search_provider: Literal['native','tavily','duckduckgo'] = 'native'
+    search_provider: Literal['native','tavily','duckduckgo','bocha','zhipu'] = 'tavily'
+    search_policy: SearchPolicy | None = None
     k: int = Field(default=1, ge=1, le=20)
     auto_learn: bool = True
     max_parallel: int = Field(default=4, ge=1, le=16)
@@ -206,7 +223,7 @@ class Settings(RoleModel):
             value=dict(value)
             if 'role_models' in value:
                 value['role_models']=normalize_role_models(value['role_models'])
-            if value.get('search_provider','native') not in ('native','tavily','duckduckgo'):
+            if value.get('search_provider','native') not in ('native','tavily','duckduckgo','bocha','zhipu'):
                 value['search_provider']=normalize_search_provider(value.get('search_provider'))
         return value
 

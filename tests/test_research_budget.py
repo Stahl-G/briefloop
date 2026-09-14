@@ -89,9 +89,10 @@ def test_failed_direct_then_extract_and_cache_count_one_page_per_run(tmp_path,mo
     assert store.one('sources',failed['id'])['status']=='failed'
 
 
-def test_defaults_native_scope_and_legacy_missing_budget_are_explicit(tmp_path):
+def test_explicit_native_scope_and_legacy_missing_budget_are_explicit(tmp_path):
     assert Requirements(title='weekly',objective='research').research_budget.model_dump()==RESEARCH_BUDGET_PRESETS['weekly']
     store=Store(tmp_path/'workspace')
+    store.set_meta('settings',{**store.settings(),'search_provider':'native'})
     run=store.create_run({'title':'native','objective':'research','allow_web':True},[])
     current=budget.snapshot(store,run['id'])
     assert current['used']['search_requests'] is None and current['remaining']['candidate_urls'] is None

@@ -530,7 +530,18 @@ class Store:
             # Freeze inherited defaults too; later settings never mutate queued jobs.
             overrides=normalize_role_models(payload.get('role_models',self.role_model_config(runtime,backend)))
             provider=normalize_search_provider(payload.get('search_provider',self.settings()['search_provider']))
-            payload={**payload,'agent_backend':backend,'runtime':runtime,'search_provider':provider,
+            from .search_policy import resolve as resolve_search_policy,for_run as search_policy_for_run
+            policy=payload.get('search_policy')
+            if policy is None and payload.get('run_id'):
+                if kind=='generate':
+                    policy=json.loads(self.one('runs',payload['run_id'])['requirements']).get('search_policy')
+                else:policy=search_policy_for_run(self,payload['run_id'])
+            if policy is None:policy=self.settings().get('search_policy')
+            policy=resolve_search_policy(policy,provider)
+            if 'search_provider' in payload and 'search_policy' not in payload:
+                policy=resolve_search_policy({**policy,'primary_provider':provider})
+            provider=policy['primary_provider']
+            payload={**payload,'agent_backend':backend,'runtime':runtime,'search_provider':provider,'search_policy':policy,
                      'role_models':{role:runtime_fields(overrides.get(role,runtime),backend) for role in ROLE_NAMES}}
             if kind=='generate':
                 payload.setdefault('auto_revision',self.settings()['auto_revision'])
@@ -598,6 +609,7 @@ class Store:
             req=requirements[brief['run_id']]
             # Historical requirements are not retroactively assigned a new budget.
             brief['length_stats']=length_stats(brief['markdown'],target_words=req.get('target_words'),max_words=req.get('max_words'))
+        from .search_policy import annotate_sources
         from .schedules import listing as schedule_listing
         return {"schedules":schedule_listing(self),"notifications":notification_snapshot(self),"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "requirements": self.meta("requirements"), "settings": self.settings(),
                 "profile": self.meta("workspace_profile") or {},
@@ -605,7 +617,7 @@ class Store:
                 "templates":[{**row, 'workflow_hint':template_workflow_hint(row)} for row in self.rows('SELECT * FROM templates ORDER BY created DESC')],
                 "conflicts":self.rows("SELECT id,status,data,run_id FROM conflicts WHERE status!='resolved' ORDER BY rowid DESC LIMIT 100"),
                 "company_context_pending":self.rows("SELECT * FROM company_facts WHERE status='pending' ORDER BY rowid DESC"),
-                "sources": self.rows("SELECT * FROM sources ORDER BY created"),
+                "sources": annotate_sources(self,self.rows("SELECT * FROM sources ORDER BY created")),
                 "runs": runs,
                 "briefs": briefs,
                 "assessments": self.rows("SELECT * FROM assessments ORDER BY rowid DESC"),

@@ -14,6 +14,7 @@ import json
 from datetime import date
 from typing import get_args
 from .store import dump, uid, now
+from .search_policy import for_run as search_policy_for_run
 from .evidence import digest, inspect_bindings, record as evidence_record
 from .review import ClaimCheck
 from .research_plan import FACT_CHECK_STATUSES, AdmissionError, frozen as frozen_plan, pending_requests
@@ -83,17 +84,20 @@ def fact_check_prompt(store,job,brief,folder,backend='codex'):
     from .models import normalize_search_provider
     provider=normalize_search_provider(json.loads(job['payload']).get('search_provider'))
     retrieval=''
-    if provider in MANAGED_PROVIDERS:
-        template=files('briefloop').joinpath('skill_assets',provider,'SKILL.md').read_text(encoding='utf-8')
+    from .search_policy import for_run,allowed,instructions
+    policy=for_run(store,run['id'])
+    if any(p in MANAGED_PROVIDERS for p in allowed(policy)):
+        template=files('briefloop').joinpath('skill_assets','multi-search','SKILL.md').read_text(encoding='utf-8')
         retrieval_path=(folder/'capabilities'/provider/'SKILL.md').resolve()
         retrieval_path.parent.mkdir(parents=True,exist_ok=True)
         retrieval_path.write_text(template.replace('{tool}',tool).replace('{run_id}',run['id']),encoding='utf-8')
-        retrieval=(f'本轮核查使用受控检索源 {PROVIDER_LABELS[provider]}：先完整读取一次 {retrieval_path} 并简短确认已读。'
+        retrieval=(f'本轮核查使用受控检索源 {PROVIDER_LABELS.get(provider,'宿主自带搜索')}：先完整读取一次 {retrieval_path} 并简短确认已读。'
                   '搜索与抓取经该技能的 CLI 调用由 Python 计费并返回 remaining；出现 budget_exhausted 时停止新增检索，'
                   '保留已核证据并以 execution.status=budget_exhausted 提交，不重试消耗上限的操作。')
     else:
         retrieval=('本轮核查使用宿主原生网络搜索发现线索；发现后仍必须用 add-url 登记原文并读取正文，'
                   '搜索摘要与转载不算已验证证据。原生搜索次数不精确计量，唯一正文 URL 仍按 source_pages 计量。')
+    retrieval+='\n'+instructions(policy,tool,run['id'])
     contract=('''结果契约：把核查结果写入 {result}，UTF-8 JSON，结构为
 {{"version_id":"{vid}","stage_id":"{sid}","as_of":"YYYY-MM-DD"(可省略，默认任务报告日),
 "selection":{{"claim_ids":["选中并已核查的主张id"],"unselected":[{{"claim_id":"...","reason":"未选原因"}}]}},
@@ -133,7 +137,9 @@ def runtime_snapshot(store,run_id):
     settings=store.settings()
     return {'model':(payload or {}).get('runtime',{}).get('model') or settings.get('model'),
             'search_provider':(payload or {}).get('search_provider') or store.search_provider_for_run(run_id),
-            'source':'fact_check_job' if used_kind=='fact_check' else ('generate_job' if used_kind else 'settings')}
+            'search_policy':search_policy_for_run(store,run_id),
+            'search_policy':payload.get('search_policy') or search_policy_for_run(store,run_id),
+                      'source':'fact_check_job' if used_kind=='fact_check' else ('generate_job' if used_kind else 'settings')}
 
 
 def version_fingerprint(store,version_id):
@@ -346,6 +352,7 @@ def submit_result(store,run_id,result,*,job_id=None):
             settings=store.settings()
             snapshot={'model':payload.get('runtime',{}).get('model') or settings.get('model'),
                       'search_provider':payload.get('search_provider') or store.search_provider_for_run(run_id),
+                      'search_policy':payload.get('search_policy') or search_policy_for_run(store,run_id),
                       'source':'fact_check_job'}
     from .research_plan import _read_plan, _save_plan, _requests_key, _finish_fact_check_plan
     # Serialize validation, acceptance and stage closure with cancellation and
@@ -397,7 +404,7 @@ def grant(store,version_id,limits,*,job_id=None):
         payload={'run_id':brief['run_id'],'version_id':brief['id']}
         if owner is not None:
             original=json.loads(owner['payload'])
-            payload.update({key:original[key] for key in ('runtime','agent_backend','search_provider','role_models') if key in original})
+            payload.update({key:original[key] for key in ('runtime','agent_backend','search_provider','search_policy','role_models') if key in original})
         job=store.enqueue('fact_check',payload)
         outcome['job_id']=job['id']
     return outcome

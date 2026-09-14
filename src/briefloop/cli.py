@@ -97,6 +97,9 @@ def main():
     tavily_extract.add_argument('--extract-depth',choices=['basic','advanced'],default='basic')
     web=ts.add_parser('web-search',help='联网搜索摘要，按本轮冻结的搜索源自动选择 provider，只发现来源')
     web.add_argument('--run',required=True);web.add_argument('--query',required=True)
+    web.add_argument('--provider',choices=['tavily','duckduckgo','bocha','zhipu'])
+    web.add_argument('--purpose',choices=['primary','coverage_probe','gap_repair'],default='primary')
+    web.add_argument('--reason',default='');web.add_argument('--gap-id')
     web.add_argument('--topic',choices=['general','news'],default='general')
     web.add_argument('--time-range',choices=['day','week','month','year'])
     web.add_argument('--start-date');web.add_argument('--end-date')
@@ -177,7 +180,7 @@ def main():
         elif a.tool=='web-search':
             from . import websearch
             try:
-                result=websearch.search(a.query,topic=a.topic,time_range=a.time_range,start_date=a.start_date,end_date=a.end_date,
+                result=websearch.search(a.query,provider=a.provider,purpose=a.purpose,reason=a.reason,gap_id=a.gap_id,topic=a.topic,time_range=a.time_range,start_date=a.start_date,end_date=a.end_date,
                                         include_domains=a.include_domain,exclude_domains=a.exclude_domain,
                                         max_results=a.max_results,search_depth=a.search_depth,store=store,run_id=a.run)
             except websearch.SearchError as exc:

@@ -107,7 +107,7 @@ def test_bridge_host_gets_the_workspace_contract_once_per_native_session(tmp_pat
     assert 'BriefLoop 工作区的交互助手' not in bridge.starts[1]['prompt']
     assert bridge.starts[1]['prompt'].startswith('继续')
     # A changed contract (here: the search provider) must be re-sent to that session.
-    h.store.set_meta('settings',{**h.store.settings(),'search_provider':'tavily'})
+    h.store.set_meta('settings',{**h.store.settings(),'search_provider':'duckduckgo'})
     turn('再继续','m3')
     assert bridge.starts[2]['prompt'].startswith('你是此本地 BriefLoop 工作区的交互助手')
     assert 'Tavily' in bridge.starts[2]['prompt']

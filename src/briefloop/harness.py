@@ -153,8 +153,9 @@ class HarnessManager:
             else:self._schedule(session_id)
         message.pop("prompt",None)
         return message
-    def start_internal(self,text,*,session_id=None,runtime=None,cwd=None,job_id=None,display_text=None,allow_web=False,message_id=None,search_provider=None,source_ids=None):
+    def start_internal(self,text,*,session_id=None,runtime=None,cwd=None,job_id=None,display_text=None,allow_web=False,message_id=None,search_provider=None,search_policy=None,source_ids=None):
         runtime={**(runtime or {}),'permission':'workspace-write'}
+        if search_policy is not None:runtime['search_policy']=search_policy
         if search_provider is not None:
             from .models import normalize_search_provider
             runtime['search_provider']=normalize_search_provider(search_provider)
@@ -238,7 +239,8 @@ class HarnessManager:
                 if previous_provider!=config.get('model_provider'):
                     old_thread_id=thread_id;self._threads.pop(thread_id,None);thread_id=None
                     self.chat.event(sid,'thread/providerChanged',{'previousThreadId':old_thread_id,'model_provider':config.get('model_provider'),'message':'已切换模型服务，新一轮使用新的 Codex 对话；旧消息保留查看，不自动发送到新服务。'})
-            native_web=bool(message['allow_web']) and not (internal and config.get('search_provider') in ('tavily','duckduckgo'))
+            from .search_policy import native_allowed
+            native_web=bool(message['allow_web']) and native_allowed(config,internal)
             thread_params={'cwd':session['cwd'],'model':config['model'],'approvalPolicy':'never','sandbox':config['permission'],'config':{'web_search':'live' if native_web else 'disabled'},'developerInstructions':instructions}
             if tier is not None:thread_params['serviceTier']=tier
             if config['model']=='default':thread_params.pop('model',None)
