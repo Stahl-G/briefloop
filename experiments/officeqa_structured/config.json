@@ -1,0 +1,77 @@
+{
+  "protocol_id": "BL-OQA-SR-v1.0",
+  "experiment_id": "briefloop-officeqa-structured",
+  "created": "2026-09-14",
+  "status": "Q0-scoring-adapter-complete; Q3 freeze pending",
+  "_notes": "JSON 无注释：所有 null 字段都是『等待 Q3 冻结』的占位（协议 §10 Q3、§11 问 10：config 无 null/TODO 才允许开跑）。已定字段全部填实。scorer 的两个哈希（Git blob SHA-1 与文件 SHA-256）均在本文件记录并在 tests/test_officeqa_score_projection.py 中由实际文件重算核对。",
+  "baseline": {
+    "product_version": "0.22.3",
+    "baseline_commit": "66a2a1345a2cc9a4f91d93e6cfbb84bda3c1af2b",
+    "integration_commit": null
+  },
+  "scorer": {
+    "repository": "databricks/officeqa",
+    "commit": "7b9a3c154ef9fb40215bb67934afc43e6799de16",
+    "file": "reward.py",
+    "path": "experiments/officeqa_structured/official/reward.py",
+    "git_blob_sha1": "45a22db4771f20105bdc9340df82e3c405ec84d0",
+    "sha256": "0d91698c87df6d889339aac36f63ae0966607f169890b0bf8b472b26bfe8138f",
+    "bytes": 28094,
+    "tolerance": 0.0,
+    "verified_at": "2026-09-14",
+    "verification_record": "experiments/officeqa_structured/SCORER_VERIFICATION.md",
+    "note": "blob SHA-1 与 SHA-256 是不同哈希，不可混称（协议 §1.3）。文件必须与官方 blob 字节一致，禁止任何本地改动。"
+  },
+  "answer_contract": {
+    "schema_version": "officeqa.answer.v1",
+    "schemas": [
+      "schemas/answer.schema.json",
+      "schemas/evidence.schema.json"
+    ],
+    "projection_module": "score_answer_record.py",
+    "tolerance": 0.0
+  },
+  "dataset": {
+    "benchmark": "officeqa-pro-v2",
+    "official_questions": 90,
+    "corpus_documents": 1435,
+    "source_root": "/Users/yihongguo/Developer/datasets/officeqa-pro-v2",
+    "revision": null,
+    "eligible_questions": null,
+    "exposure_ledger": null,
+    "note": "fullcorpus/ 为 V2 全语料；officeqa_pro*.csv 含 gold，属受限数据，仅数据准备进程可读（协议 §6.4）。"
+  },
+  "data_area": {
+    "root": "/Users/yihongguo/Developer/briefloop-data/officeqa",
+    "subdirs": ["gated", "question_only", "corpus", "episodes", "evaluator-only"],
+    "in_git": false
+  },
+  "arms": {
+    "A": "native agent control（同宿主/模型/语料工具 + 认真配置的研究指令）",
+    "B": "briefloop grounded_qa_v1（真实 run/job/review 路径 + 一次修订）"
+  },
+  "runtime": {
+    "host": null,
+    "model": null,
+    "reviewer_model": null,
+    "note": "协议 §5.1：只测一个预先选择的真实可用模型组合；冻结后不得按成绩换模型。"
+  },
+  "budget": {
+    "episode_wall_clock_seconds": 1800,
+    "max_concurrent_model_calls": 4,
+    "max_automatic_revisions_B": 1,
+    "format_repair_attempts_per_episode": 1,
+    "search_budget": null,
+    "note": "数值为协议 §8.1 起始建议，Q3 冻结；A/B 必须同工具同数值。"
+  },
+  "pending_freeze": [
+    "baseline.integration_commit",
+    "dataset.revision",
+    "dataset.eligible_questions",
+    "dataset.exposure_ledger",
+    "runtime.host",
+    "runtime.model",
+    "runtime.reviewer_model",
+    "budget.search_budget"
+  ]
+}

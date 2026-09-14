@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "officeqa.answer.v1",
+  "title": "OfficeQA structured short answer (answer.json)",
+  "description": "模型唯一需要提交的对象（协议 BL-OQA-SR-v1.0 §3.1）。answer 永远是字符串：数字、日期、列表都按题目要求的直接形式书写，数值不用 JSON number（避免 12.50 变 12.5）。本 schema 是输出说明；评分时的权威校验以 gold-blind 适配器 score_answer_record.project_answer 为准（其规则覆盖大小写不敏感的 FINAL_ANSWER 注入、剥离首尾空白后再计数等 schema 无法完全表达的部分）。额外字段不会传给 scorer，只记诊断警告。",
+  "type": "object",
+  "required": ["schema_version", "status", "answer"],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "const": "officeqa.answer.v1"
+    },
+    "status": {
+      "enum": ["answered", "abstained"]
+    },
+    "answer": {
+      "description": "answered 时为单行字符串（剥离首尾空白后 1..250 字符，不得嵌入 FINAL_ANSWER 标签，列表按原题顺序如 \"[North, 0.866]\"）；abstained 时必须为 null（计 0 分）。",
+      "anyOf": [
+        { "type": "null" },
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 250,
+          "pattern": "^[^\\n\\r]*$",
+          "not": { "pattern": "FINAL_ANSWER" }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "status": { "const": "answered" } },
+        "required": ["status"]
+      },
+      "then": { "properties": { "answer": { "type": "string" } } }
+    },
+    {
+      "if": {
+        "properties": { "status": { "const": "abstained" } },
+        "required": ["status"]
+      },
+      "then": { "properties": { "answer": { "type": "null" } } }
+    }
+  ]
+}

@@ -1,0 +1,90 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "officeqa.evidence.v1",
+  "title": "OfficeQA optional evidence attachment (evidence_draft.json)",
+  "description": "可选证据与计算附件（协议 BL-OQA-SR-v1.0 §3.2）。记录公开可核对的原文定位、操作数与计算关系，不要求保存模型隐藏思维链。官方 scorer 永不读取该附件：其中恰好包含 gold 不能改变错误 answer 的判定；附件为空不扣减官方答案得分，另计证据缺失诊断。source_id 只能使用允许语料中存在的 ID；文本行号 1-based，PDF/JSON 的 page_index 0-based（不等于纸面页码）；结构化元素同时记录 page_index 与 element_index。计算表达式是文本，不被 eval 执行。",
+  "type": "object",
+  "required": ["schema_version", "evidence", "calculations", "limitations"],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "const": "officeqa.evidence.v1"
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source_id", "locator", "excerpt"],
+        "additionalProperties": false,
+        "properties": {
+          "source_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "由资料工具返回的语料内 ID。"
+          },
+          "locator": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["kind", "start", "end"],
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "line_range" },
+                  "start": { "type": "integer", "minimum": 1 },
+                  "end": { "type": "integer", "minimum": 1 }
+                }
+              },
+              {
+                "type": "object",
+                "required": ["kind", "page_index"],
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "const": "page" },
+                  "page_index": { "type": "integer", "minimum": 0 },
+                  "element_index": { "type": "integer", "minimum": 0 }
+                }
+              }
+            ]
+          },
+          "excerpt": {
+            "type": "string",
+            "description": "公开可核对的原文摘录。"
+          }
+        }
+      }
+    },
+    "calculations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["expression", "inputs", "result"],
+        "additionalProperties": false,
+        "properties": {
+          "expression": { "type": "string" },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "value"],
+              "additionalProperties": false,
+              "properties": {
+                "name": { "type": "string" },
+                "value": { "type": "string" },
+                "evidence_index": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "指向 evidence 数组下标。"
+                }
+              }
+            }
+          },
+          "result": { "type": "string" }
+        }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}
