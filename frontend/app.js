@@ -422,6 +422,8 @@ for(const id of ['download','download-docx','download-bundle']){
    await downloadWord();return}const format=id==='download-docx'?'docx':id==='download-bundle'?'bundle':null;window.location.assign('/api/download?version='+encodeURIComponent(version)+(format?'&format='+format:''))}catch(e){notice('下载未开始：'+e.message,true)}};
 }
 
+
+function scheduleLearning(){ /* Worker consumes the durable feedback after inactivity. */ }
 document.addEventListener('click',event=>{if(event.target.closest('button')?.id!=='delete-report')return;action(async()=>{
  const version=await savedVersion();
  if(!confirm('删除这份报告及全部稿件版本？报告将从列表移除，来源文件和已下载文件保留；内部核查与学习引用记录保留。'))return;
@@ -466,7 +468,6 @@ document.addEventListener('click',async event=>{
  }catch(e){preview?.close();notice('导出未完成：'+e.message,true)}
 });
 
-function scheduleLearning(){ /* Worker consumes the durable feedback after inactivity. */ }
 async function renderReportIssues(){
  const ticket=(renderReportIssues.ticket||0)+1;renderReportIssues.ticket=ticket;
  const box=$('report-issues');if(!box||!current)return;
