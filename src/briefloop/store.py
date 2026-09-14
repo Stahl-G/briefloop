@@ -288,8 +288,12 @@ class Store:
     def publish(self, run_id, draft, *, version_id=None, parent_id=None, author='agent'):
         if author not in ('agent', 'example'):raise ValueError('无效稿件作者')
         draft = BriefDraft.model_validate(draft)
-        from .document_model import document_hash, source_ids
+        from .answer_result import admit_answer
         run=self.one("runs", run_id)
+        # grounded_qa_v1 gate: contract-valid answer, run-scoped evidence ids,
+        # and a body equal to the mechanical projection of that answer.
+        admit_answer(self, run, draft)
+        from .document_model import document_hash, source_ids
         from .company_context import require_review
         company_review=require_review(self,run)
         if draft.reader_contract is not None:
@@ -347,6 +351,10 @@ class Store:
                 old_detail.setdefault('research_notes',[])
                 old_detail.setdefault('reader_contract',None)
                 old_detail.setdefault('reconciliation_id',None)
+                # Jobs in flight across the QA-mode upgrade re-publish the same
+                # version; the new nullable answer keys must not read as drift.
+                old_detail.setdefault('answer_result',None)
+                old_detail.setdefault('answer_evidence',None)
                 if old_detail!=detail:raise Conflict('Completed draft metadata differs; save a new version')
             else:
                 c.execute("INSERT INTO briefs VALUES(?,?,?,?,?,?,?,?,?)", (vid, run_id, parent_id, author, draft.markdown, sha, dump(detail), dump(draft.editor_document) if draft.editor_document is not None else None, now()))

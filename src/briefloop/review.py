@@ -275,6 +275,16 @@ def _snapshot(store,version_id,snapshot_version=7):
                                   'scope':data.get('scope',''),'attribution':data.get('attribution',''),
                                   'supports':[support['span_id'] for support in data.get('supports',[])]})
     detail=json.loads(brief['detail']);requirements=json.loads(run['requirements'])
+    # grounded_qa_v1 (protocol §5.3): the version body must be the mechanical
+    # projection of the saved answer, and the answer + attachment hashes enter
+    # the packet target, so the review fingerprint binds the exact answer a
+    # revision replaces. A stale review of an older answer cannot apply.
+    grounded_qa=None
+    if requirements.get('result_format')=='grounded_qa_v1':
+        from .answer_result import answer_identity,qa_projection
+        if qa_projection(requirements,detail.get('answer_result') or {},detail.get('answer_evidence'))!=brief['markdown']:
+            raise ValueError('QA 版本正文与答案机械投影不一致，不能据此审阅；请提交新的答案版本')
+        grounded_qa=answer_identity(detail)
     reconciliation=None
     if detail.get('reconciliation_id'):
         try:
@@ -303,6 +313,7 @@ def _snapshot(store,version_id,snapshot_version=7):
     return {'snapshot_version':snapshot_version,'candidate_claims':candidates,'version_id':version_id,'brief_hash':brief['hash'],'document':brief_document(brief),
             'requirements':resolve(requirements,reader_contract=detail.get('reader_contract')),'detail':detail,
             **({'requirements_input':requirements} if snapshot_version>=4 else {}),
+            **({'grounded_qa':grounded_qa} if grounded_qa is not None else {}),
             **({'source_updates':changes,'source_timing':timing} if snapshot_version>=5 else {}),
             **({'source_statements':source_statements,'reconciliation':reconciliation} if snapshot_version>=6 else {}),
             **({'fact_checks':fact_checks} if snapshot_version>=7 else {}),
@@ -771,8 +782,16 @@ def run_review(store,runtime,job,version_id,folder):
         '对requirements.requirement_items逐项给requirement_checks：requirement_id、status(covered/manual/partial/missing)、reason。manual只能用于用户原要求中mode=manual的项目，不得自行降低必答要求。')
     from .report_time import instructions as time_instructions
     temporal_note=time_instructions(target.get('requirements_input',{}).get('time_context'))
+    # Shortest review projection for QA runs: the reviewer sees the frozen
+    # question, the exact answer and the evidence entries; it never rewrites
+    # the projection and scores grounding, not prose (protocol §5.3).
+    qa_note=('' if target.get('requirements_input',{}).get('result_format')!='grounded_qa_v1'
+             else '''本轮是 grounded_qa_v1 问答任务（BriefLoop QA profile）。target.grounded_qa 是本版本保存的答案记录与附件哈希；正文是程序生成的最短机械投影（问题、答案、证据入口），不是作者撰写的报告。
+审阅内容方法：核对答案是否回答了原题、证据入口是否支持（含单位与计算）、有无证据不足或冲突。不评篇幅、文采、摘要或章节；不要求作者改写投影，也不能自己重写答案或投影；发现答案问题交主 Agent 按一次修订提交新答案版本，旧核查不因新答案继承。
+assessment 四维按问答核对给分：evidence=答案的证据支持，coverage=是否回答原题与必答要求，analysis=单位与计算核对，expression=答案对 answer.json 契约的遵守（单行、题目要求的直接形式、无多余内容）。
+''')
     prompt=f'''{temporal_note}
-核对正文每条当期动态的事件与发布日期，不能只核对作者提交的 temporal_claims；缺少日期记录或原文日期证据写 unverified，旧消息冒充当期用 finding 指出。
+{qa_note}核对正文每条当期动态的事件与发布日期，不能只核对作者提交的 temporal_claims；缺少日期记录或原文日期证据写 unverified，旧消息冒充当期用 finding 指出。
 你是独立只读 Reviewer，核对已保存产物与实际依据，不重新研究或运行计算。
 只读取 {folder/'packet'/'index.json'} 所索引的文件。JSON已分行；遇到单行截断，target-long-text.json提供长字段分块、sources/*.view.json提供原文行与分块，按顺序无分隔拼接，不把截断当缺失。先看target.json的本轮要求、正文和claim_evidence关联；核对具体原文与图表；本次报告图和已选证据视觉会作为原生图片附件交给当前选定模型，visual-inputs.json记录它们与固定文件的对应关系。先实际检查这些附件的轴、图注、单位和可见内容，附件不可读时用原生read读取同一packet文件；仍失败则说明本次失败。必要时读history中的本报告历史。绝不查询宿主或其他工作区数据库。
 只有read工具可用。禁止bash、执行脚本、修改文件、联网、委派。history/reviews.json提供过去实际审阅；只复用已完成且依赖未变的核查，历史的未核验/图像能力失败必须在本次实际输入上重新检查，不能据此判断当前模型能力。重点核对本次修改与处理说明，不重复扩大研究。发现需补搜/重算/改稿的问题交主Agent，不能自己执行。

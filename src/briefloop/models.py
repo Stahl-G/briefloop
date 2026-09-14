@@ -93,6 +93,11 @@ class Requirements(Model):
     fact_check: bool | None = None
     target_words: int | None = Field(default=None, ge=1)
     max_words: int | None = Field(default=None, ge=1)
+    # Explicit opt-in for the grounded QA output mode (protocol BL-OQA-SR-v1.0
+    # §5.3): None keeps the existing report path byte-for-byte; only
+    # 'grounded_qa_v1' switches runs to the answer.json contract. Unknown
+    # values are rejected here, never silently treated as reports.
+    result_format: Literal['grounded_qa_v1'] | None = None
 
     @model_validator(mode='before')
     @classmethod
@@ -292,6 +297,13 @@ class BriefDraft(Model):
     research_notes: list[dict] = Field(default_factory=list)
     reader_contract: dict | None = None
     reconciliation_id: str | None = None
+    # grounded_qa_v1 structured content (protocol §5.3): explicit fields so the
+    # answer/attachment survive prune_unknown — an unknown-key payload would be
+    # dropped at admission and the scored artifact silently lost. Validated by
+    # answer_result.admit_answer, which also pins markdown to the mechanical
+    # projection of this answer.
+    answer_result: dict | None = None
+    answer_evidence: dict | None = None
 
     @model_validator(mode='after')
     def normalize_content(self):

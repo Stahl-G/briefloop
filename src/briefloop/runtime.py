@@ -10,7 +10,7 @@ import time
 from .models import Assessment, BriefDraft, ScoutResult, ROLE_NAMES, Requirements
 from .report_profiles import profile_context
 from .industry_data import prepare_report_data
-from .store import Conflict, dump, now
+from .store import Conflict, content_hash, dump, now
 from .skills import bind_context
 from .agent_commands import tool_command, quote_path
 
@@ -155,8 +155,11 @@ def _research_handoff(store, run_id, plan):
 
 def generation_prompt(store, run, folder, backend='codex'):
     from .models import normalize_search_provider
+    from .answer_result import (ANSWER_SCHEMA_JSON, EVIDENCE_SCHEMA_JSON, QA_CONTENT_METHOD,
+                                QA_SCOUT_CONTRACT, is_qa)
     raw_requirements=json.loads(run['requirements'])
     req=Requirements.model_validate(raw_requirements).model_dump()
+    qa=is_qa(req)
     from .report_time import instructions as time_instructions
     temporal_note = time_instructions(req.get('time_context'))
     if 'research_budget' not in raw_requirements:req['research_budget']=None
@@ -174,10 +177,17 @@ def generation_prompt(store, run, folder, backend='codex'):
     report_profile=profile_context(req)
     from .deliverable_spec import resolve,instructions,reader_contract_schema
     deliverable=resolve(req)
-    (folder/'reader_contract.schema.json').write_text(json.dumps(reader_contract_schema(deliverable),ensure_ascii=False,indent=2),encoding='utf-8')
-    (folder/'analyst-writing.md').write_text(instructions(deliverable,role='analyst')+'\n'+temporal_note,encoding='utf-8')
+    if qa:
+        # QA mode carries its own output contract; the report reader contract,
+        # prose rules and section instructions do not apply (protocol §5.3).
+        (folder/'answer.schema.json').write_text(ANSWER_SCHEMA_JSON,encoding='utf-8')
+        (folder/'evidence.schema.json').write_text(EVIDENCE_SCHEMA_JSON,encoding='utf-8')
+        (folder/'analyst-writing.md').write_text(QA_CONTENT_METHOD+'\n'+temporal_note,encoding='utf-8')
+    else:
+        (folder/'reader_contract.schema.json').write_text(json.dumps(reader_contract_schema(deliverable),ensure_ascii=False,indent=2),encoding='utf-8')
+        (folder/'analyst-writing.md').write_text(instructions(deliverable,role='analyst')+'\n'+temporal_note,encoding='utf-8')
     scout_contract=(folder/'scout-contract.md').resolve()
-    scout_contract.write_text(instructions(deliverable,role='scout')+'\n'+temporal_note,encoding='utf-8')
+    scout_contract.write_text((QA_SCOUT_CONTRACT if qa else instructions(deliverable,role='scout'))+'\n'+temporal_note,encoding='utf-8')
     from .company_context import prompt as company_prompt
     company=company_prompt(store,run['id']) if req.get('writing_mode')=='internal_report' else ''
     max_parallel=run.get('max_parallel',store.settings()['max_parallel'])
@@ -285,6 +295,38 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
     view_word = '使用 view_image 直接读图' if backend == 'codex' else '用 read 工具直接读取图像路径'
     view_pages_word = '使用 view_image 读取页图' if backend == 'codex' else '用 read 工具读取返回的页图'
     check_word = 'view_image检查' if backend == 'codex' else '用 read 工具读取检查'
+    if qa:
+        # Grounded QA turn (BriefLoop QA profile, protocol §5.3): the content
+        # method is answer/evidence/calculation only. Research, source
+        # admission, budget discipline and evidence registration stay; report
+        # prose, sections, length targets and style are gone, and the scored
+        # artifact is answer.json instead of draft.json.
+        return common+f'''
+{temporal_note}
+任务创建时间：{run['created']}。这是 grounded 问答任务（BriefLoop QA profile）：内容方法只有三件事——回答该问题、识别证据不足或冲突、核对单位和计算。不撰写报告正文；没有篇幅、文采、摘要或完整章节要求，不为格式消耗预算。日期以任务创建时间和用户明确期间为准，不按模型记忆中的年份推断今天；答案涉及期间或时点时按原文日期核对，不把抓取时间当发布日期。
+{research_plan_note}
+{handoff_note}
+本轮输入：{folder/'input.json'}。你的工作目录：{folder}。先读取 requirements、sources 索引和 scout_slots；不要为分工先展开全部技能正文或 schema。
+来源索引包含 text_path、original_path、media_type、image_path、pages、needs_visual 和已渲染页路径；文字抽取不是图像内容。
+给实际读资料的 Scout 明确传递 source_id、图像原件/可视路径与相关 PDF 页码 locator。image_path 可用时，负责核对者{view_word}；PDF 按需执行 `{tool} render-source --id SOURCE_ID --pages 1 3`（替换为所需页码），再{view_pages_word}。已有页缓存按路径复用，不无脑渲染全本。
+父会话看过图片不等于子 agent 看过；每个实际判断角色必须获得图像或亲自读取对应页图。来源 status/error 显示失败时将具体失败写入独立核查记录；所选模型/provider 若拒绝视觉输入或工具不可用，报告实际错误，不悄悄换模型或把图片当二进制文本读。
+{discovery}
+{search}
+预算与停止条件：{budget_note}
+按 input.json.role_skills 给对应角色分配当前技能及版本（若有绑定）。保存实际角色任务和返回句柄。
+1. 写 {folder/'plan.json'}：要回答的问题、判定答案所需的证据与计算、Scout 分工与停止条件。不写 reader_contract，不解释写作、排版或篇幅要求。
+2. 根据数量、大小、主题和可用并发能力决定 Scout 数量，上限 {max_parallel}；不要无条件开满。input.json.scout_slots 是预分配的文件位，不替你决定主题或实际派发数量。
+   {retrieval_strategy}
+   为每个实际派发的 Scout 选择一个不同的 scout_slots 条目，把该条目的 directory、result_file、schema_path、scout_contract_path 四个绝对路径完整写进其实际 {dispatch_word} 任务消息，并记录{id_word}与 slot_id/result_file 的对应关系。Scout 结果保存到槽位的绝对 result_file（统一 ScoutResult 契约）；用 `{tool} join-scouts --run {run['id']} --files SCOUT_RESULT_PATHS --output {quote_path(folder/'joined-scouts.json',backend)}` 合并。
+   找到 URL 后用 `{tool} add-url --run {run['id']} --url URL` 保存原始来源并登记到本轮，得到真实稳定 source_id。只有成功读取的正文才能支持事实；搜索摘要或列出 URL 不算已验证。
+   读取材料时保留数值、单位、主体、时间口径及计划/已实现等状态；区分发布日期与事件/统计期间，检查表头和脚注。发现冲突或证据不足时按依据标出，不静默取舍。需要原文时先用 `{tool} read-source --id SOURCE_ID --start-line 1 --end-line 80 --max-chars 6000` 定向读取，不把截断当全文。
+3. 核对与计算：对将进入答案的关键事实，用 `{tool} workspace-action --request REQUEST_JSON` 登记 evidence_span（evidence 包含 source_id、locator、excerpt；文本 locator 为 kind=text/start_line/end_line，PDF 为 kind=pdf/page），再以 claim_create（claim_role="report_statement"、supports=[span_id]）登记主张；不调用 claim_bind——本模式正文由程序从答案机械生成，没有可绑定的人工正文。需要计算时用真实工具核对单位换算与量级，操作数取自已登记来源。
+4. 提交答案：把最终答案写为 {folder/'answer.json'}（UTF-8 JSON，临时文件写完后原子重命名），契约见 {folder/'answer.schema.json'}：schema_version="officeqa.answer.v1"、status="answered"或"abstained"、answer 恒为字符串（数字、日期、列表都按题目要求的直接形式书写，数值不用 JSON number；单行、去首尾空白后最多 250 字符；不嵌入 FINAL_ANSWER 标签；不附"答案是"、解释、引用序号、置信度或替代答案）。确实不能确定时 status="abstained"、answer=null。
+   可选证据附件 {folder/'evidence_draft.json'}，契约见 {folder/'evidence.schema.json'}：evidence[].source_id 必须是本轮已登记的真实 source_id，不能填裸 URL 或自拟 ID；locator 用 line_range（1-based 行号）或 page（0-based page_index，结构化元素另带 element_index）；calculations 记录表达式、操作数与结果（文本，不被执行）；limitations 记录证据不足、冲突或其他局限。附件为空不扣减答案得分，另计证据缺失诊断。
+   保存后调用 `{tool} check-answer --file {quote_path(folder/'answer.json',backend)} --run {run['id']}` 自检（提交了附件时加 `--evidence {quote_path(folder/'evidence_draft.json',backend)}`）：status!=ok 按 errors 指出的字段修正后重存。
+   本模式没有 draft.json，不撰写报告正文、摘要或章节；不要为格式消耗预算。证据缺口如实进入 limitations 或研究记录，禁止编造数字、来源或成功状态。
+最终回复一句完成状态和 answer.json 位置。审阅由应用随后用独立 Reviewer 会话处理；修订必须提交新的 answer.json 版本，旧核查不继承。
+'''
     return common+f'''
 {temporal_note}
 任务创建时间：{run['created']}。报告期间要求：{req.get('period') or '未指定'}。日期以任务创建时间和用户明确期间为准，不按模型记忆中的年份推断今天。日报的当期动态必须核对事件日期与发布日期；历史发布只能标作背景，不计作今日新增。派发每个 Scout 时传递同一报告期间；Tavily 查询使用适用的 --time-range 或 --start-date/--end-date，原生搜索将期间写入查询并核对正文日期。时间过滤不证明事件新近发生，抓取时间也不是发布日期。缺少当期证据时明确缺口，不能用旧新闻凑数。
@@ -916,21 +958,34 @@ class Worker:
         prepare_review(self.store,self.runtime,job,run,folder,backend)
         vid='brief_'+job['id'][4:]
         latest=[vid];checkpoint=[False];started=time.monotonic();reported=[None]
+        from .answer_result import is_qa
+        qa=is_qa(run['requirements'])
         def publish():
             from .store import Conflict
             from .document_model import markdown_document,document_hash
-            p=folder/'draft.json'
-            if not p.exists():return
-            try:data=json.loads(p.read_text(encoding='utf-8-sig'))
-            except (json.JSONDecodeError,UnicodeDecodeError):return
-            from .models import prune_unknown,describe_invalid
-            data,dropped=prune_unknown(data,BriefDraft)
-            if dropped and dropped!=reported[0]:
-                reported[0]=dropped
-                self.store.event(job['id'],'draft_fields_dropped',{'fields':dropped})
-            if not data.get('editor_document') and data.get('markdown'):
-                data['editor_document']=markdown_document(data['markdown'])
-            if payload.get('reader_contract_required'):
+            if qa:
+                # The scored artifact is answer.json (+ optional attachment);
+                # the program builds the version payload from it mechanically.
+                from .answer_result import AnswerContractError,build_answer_draft
+                if not (folder/'answer.json').exists():return
+                try:data=build_answer_draft(self.store,run,folder)
+                except AnswerContractError as exc:
+                    (folder/'answer-invalid.json').write_bytes((folder/'answer.json').read_bytes())
+                    raise ValueError('答案提交不符合契约（'+str(exc)
+                                     +'）；原件保留在 answer-invalid.json，修正后重存') from None
+            else:
+                p=folder/'draft.json'
+                if not p.exists():return
+                try:data=json.loads(p.read_text(encoding='utf-8-sig'))
+                except (json.JSONDecodeError,UnicodeDecodeError):return
+                from .models import prune_unknown,describe_invalid
+                data,dropped=prune_unknown(data,BriefDraft)
+                if dropped and dropped!=reported[0]:
+                    reported[0]=dropped
+                    self.store.event(job['id'],'draft_fields_dropped',{'fields':dropped})
+                if not data.get('editor_document') and data.get('markdown'):
+                    data['editor_document']=markdown_document(data['markdown'])
+            if not qa and payload.get('reader_contract_required'):
                 from .deliverable_spec import save_reader_contract
                 contract=self.store.meta('reader_contract:'+run['id'])
                 if contract is None:
@@ -943,9 +998,12 @@ class Worker:
                 # The agent's work is the expensive part: keep the rejected draft and
                 # say which field was wrong, rather than losing it to a raw dump.
                 (folder/'draft-invalid.json').write_text(dump(data),encoding='utf-8')
-                raise ValueError('draft.json 不符合稿件契约（'+describe_invalid(exc)
+                raise ValueError(('answer.json' if qa else 'draft.json')+' 不符合稿件契约（'+describe_invalid(exc)
                                  +'）；原稿保留在 draft-invalid.json') from None
-            sha=document_hash(normalized.editor_document)
+            # QA versions stay markdown projections: no rich document is derived,
+            # so the stored body remains byte-equal to the mechanical projection.
+            sha=(content_hash(normalized.markdown) if normalized.editor_document is None
+                 else document_hash(normalized.editor_document))
             known={row['id'] for row in self.store.rows('SELECT id FROM briefs WHERE run_id=?',(run['id'],))}
             try:record=self.store.publish(run['id'],data,version_id=vid)
             except Conflict:
@@ -978,12 +1036,15 @@ class Worker:
                     raise InterruptedError('任务已停止，已生成内容保留')
                 # A successful transport turn can contain only a progress message.
                 # Continue the same durable session once, without resampling research.
-                self.store.event(job['id'],'draft_missing_resume',{'message':'模型回合已结束，但尚未保存草稿；继续完成当前任务。'})
-                result=self.runtime.execute(job,prompt+'\n本次是同一任务的收尾续行：上轮只返回了研究进度，没有保存 draft.json。读取现有计划和 Scout 结果，等待已有子任务并复用有效材料，完成正文和 draft.json；不要重新创建报告任务或重复已完成研究。不能完成时明确报告具体缺项，不把进度说明当作交付。',folder,publish,resume_on_complete=True)
+                self.store.event(job['id'],'draft_missing_resume',{'message':'模型回合已结束，但尚未保存答案；继续完成当前任务。' if qa else '模型回合已结束，但尚未保存草稿；继续完成当前任务。'})
+                result=self.runtime.execute(job,prompt+(
+                    '\n本次是同一任务的收尾续行：上轮只返回了研究进度，没有保存 answer.json。读取现有计划和 Scout 结果，等待已有子任务并复用有效材料，完成最终答案和 answer.json；不要重新创建任务或重复已完成研究。不能完成时明确报告具体缺项，不把进度说明当作交付。' if qa else
+                    '\n本次是同一任务的收尾续行：上轮只返回了研究进度，没有保存 draft.json。读取现有计划和 Scout 结果，等待已有子任务并复用有效材料，完成正文和 draft.json；不要重新创建报告任务或重复已完成研究。不能完成时明确报告具体缺项，不把进度说明当作交付。'),folder,publish,resume_on_complete=True)
         publish()
         current=latest[0]
         if not self.store.rows('SELECT id FROM briefs WHERE id=?',(current,)):
-            raise RuntimeError('模型回合已结束，但未保存可用草稿（draft.json）；已保留研究材料和会话，可恢复继续。')
+            raise RuntimeError('模型回合已结束，但未保存可用答案（answer.json）；已保留研究材料和会话，可恢复继续。' if qa
+                               else '模型回合已结束，但未保存可用草稿（draft.json）；已保留研究材料和会话，可恢复继续。')
         brief=self.store.one('briefs',current)
         from .task_notify import notify as _notify_task
         _notify_task(self.store, job, 'draft_ready', text='简报草稿已保存，可以查看和编辑。')
@@ -1089,10 +1150,27 @@ class Worker:
                         'reason':{'type':'string','minLength':1}}} if finding_ids else False}
             (stage/'responses.schema.json').write_text(json.dumps(response_schema,ensure_ascii=False,indent=2), encoding='utf-8')
             from .deliverable_spec import resolve,instructions
+            from .answer_result import QA_CONTENT_METHOD,build_answer_draft,is_qa
+            run_row=self.store.one('runs',brief['run_id'])
+            qa=is_qa(run_row['requirements'])
             contract=json.loads(brief['detail']).get('reader_contract')
-            spec=resolve(json.loads(self.store.one('runs',brief['run_id'])['requirements']),reader_contract=contract)
-            tool=tool_command(self.store.root,backend=payload.get('agent_backend','codex'))
-            prompt=TASK_CONTEXT+instructions(spec,role='revision')+f'''本次仅针对已有报告进行一次修订。读取 {stage/'input.json'} 的原稿、评价和本轮要求。
+            spec=resolve(json.loads(run_row['requirements']),reader_contract=contract)
+            backend=payload.get('agent_backend','codex')
+            tool=tool_command(self.store.root,backend=backend)
+            if qa:
+                # A QA revision must submit a NEW answer version; the body is
+                # again the mechanical projection of that answer (protocol
+                # §5.3: 修订必须新版本，旧核查不继承).
+                prompt=TASK_CONTEXT+QA_CONTENT_METHOD+f'''本次仅针对已有答案进行一次修订。读取 {stage/'input.json'} 的原答案版本、评价和本轮要求。
+优先处理 input.revision_reasons 指向的证据、必答内容与单位/计算问题；总评达到要求不豁免这些问题。
+必要来源按 source_id 从工作区 {self.store.root/'sources'} 定向读取；需要修正主张依据时，使用 `{tool} workspace-action --request REQUEST_JSON` 的 evidence_span/claim_create 接口（修订原有主张时传 previous_id，不删历史）；不调用 claim_bind，正文投影由程序生成。
+对input.review_findings逐项处理，并将处理说明保存到 {stage/'responses.json'}，格式为数组，每项包含finding_id、action(corrected/removed/disagree)、reason（具体修改或异议依据）。这不是关闭发现，后续Reviewer独立复核。
+responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 input.review_findings[].id，每个ID恰好一次。assessment.findings 是评分修改依据，不是已登记的 Reviewer finding ID，禁止为它们自拟ID。如果 input.review_findings 为空，responses.json 必须写 []，仍按 assessment 修正答案。
+将修订后的最终答案写为 {stage/'answer.json'}（契约同生成阶段 answer.schema.json：schema_version="officeqa.answer.v1"、status="answered"或"abstained"、answer 恒为字符串、单行、去首尾空白后最多 250 字符、不嵌入 FINAL_ANSWER）；可选证据附件写 {stage/'evidence_draft.json'}（source_id 必须是本轮已登记 ID，locator 用 line_range/page）。修订必须提交新的答案版本，不改写旧版本、不撰写报告正文。
+保存后调用 `{tool} check-answer --file {quote_path(stage/'answer.json',backend)} --run {brief['run_id']}` 自检（提交了附件时加 `--evidence {quote_path(stage/'evidence_draft.json',backend)}`）。仅做此轮修订，不自行启动下一轮评价或技能学习。
+'''
+            else:
+                prompt=TASK_CONTEXT+instructions(spec,role='revision')+f'''本次仅针对已有报告进行一次修订。读取 {stage/'input.json'} 的原稿、评价和本轮要求。
 优先处理 input.revision_reasons 指向的证据、必答内容和明确要求违规；总评达到要求不豁免这些问题。普通可选润色不扩展本轮工作。
 保留原稿已有的有效事实、图表及明确人工占位。核对来源，只修正有依据的错误、遗漏和写作问题；不重新开展无关研究，不改用户模板默认。
 必要来源按 source_id 从工作区 {self.store.root/'sources'} 定向读取，保留引用和 research_notes。按评分纠正问题，内部核查过程留在独立记录，不将免责声明加回正文。
@@ -1105,11 +1183,17 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
 '''
             self.store.event(job['id'],'revision_progress',{'stage':'writing','base_version':brief['id']})
             self.runtime.execute(job,prompt,stage,resume_on_complete=(stage/'admission-error.json').exists())
-            value=json.loads((stage/'draft.json').read_text(encoding='utf-8-sig'))
-            if contract is not None:value['reader_contract']=contract
-            if not value.get('editor_document') and value.get('markdown'):
-                from .document_model import markdown_document
-                value['editor_document']=markdown_document(value['markdown'])
+            if qa:
+                if not (stage/'answer.json').exists():
+                    (stage/'admission-error.json').write_text(dump({'error':'修订未提交新的 answer.json 答案版本'}), encoding='utf-8')
+                    raise ValueError('grounded_qa_v1 修订必须提交新的 answer.json 答案版本，不能沿用旧答案')
+                value=build_answer_draft(self.store,run_row,stage)
+            else:
+                value=json.loads((stage/'draft.json').read_text(encoding='utf-8-sig'))
+                if contract is not None:value['reader_contract']=contract
+                if not value.get('editor_document') and value.get('markdown'):
+                    from .document_model import markdown_document
+                    value['editor_document']=markdown_document(value['markdown'])
             try:
                 revised=self.store.publish(brief['run_id'],value,version_id=revision_id,parent_id=brief['id'])
                 self._remember_generated_sources(folder,revised)
@@ -1208,7 +1292,11 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
 
     def assess_version(self,job,brief,folder,backend):
         req=json.loads(self.store.one('runs',brief['run_id'])['requirements'])
-        if req.get('writing_mode')=='internal_report' or req.get('fact_check'):
+        # QA versions are checked by the independent packet Reviewer: the
+        # answer enters the review fingerprint, so a stale review of an older
+        # answer can never be inherited (protocol §5.3).
+        if (req.get('writing_mode')=='internal_report' or req.get('fact_check')
+                or req.get('result_format')=='grounded_qa_v1'):
             from .review import run_review
             if (folder/'review'/'review-id.json').exists() or not self.thread.is_alive():return run_review(self.store,self.runtime,job,brief['id'],folder/'review')
             pending=self._review_child(job,brief)

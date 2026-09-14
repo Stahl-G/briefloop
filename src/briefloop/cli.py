@@ -77,6 +77,10 @@ def main():
     count.add_argument('--target-words',type=int);count.add_argument('--max-words',type=int)
     check=ts.add_parser('check-draft',help='按稿件契约自检 draft.json；只检查不发布')
     check.add_argument('--file',required=True)
+    answer_check=ts.add_parser('check-answer',help='按答案契约自检 answer.json 与可选 evidence_draft.json；只检查不发布')
+    answer_check.add_argument('--file',required=True)
+    answer_check.add_argument('--evidence',help='可选证据附件 evidence_draft.json 路径')
+    answer_check.add_argument('--run',help='提供 run id 时校验证据 source_id 属于本任务已登记来源')
     report_data=ts.add_parser('prepare-report-data',help='核对行业指标来源并计算变化；输出计算表与数据缺口')
     report_data.add_argument('--run',required=True);report_data.add_argument('--file',required=True)
     report_data.add_argument('--output',help='保存计算包 JSON 的路径；原始 records 写入 draft.report_data')
@@ -218,6 +222,13 @@ def main():
         elif a.tool=='check-draft':
             from .models import BriefDraft, check_artifact
             report=check_artifact(json.loads(Path(a.file).expanduser().read_text(encoding='utf-8-sig')),BriefDraft)
+            print(json.dumps(report,ensure_ascii=False))
+            if report['status']!='ok':raise SystemExit(1)
+        elif a.tool=='check-answer':
+            from .answer_result import check_files
+            try:report=check_files(store,a.file,a.evidence,run_id=a.run)
+            except (OSError,ValueError) as exc:
+                p.exit(2,json.dumps({'status':'error','message':'--file 需要 UTF-8 JSON 答案文件：'+str(exc)},ensure_ascii=False)+'\n')
             print(json.dumps(report,ensure_ascii=False))
             if report['status']!='ok':raise SystemExit(1)
         elif a.tool=='count-brief':
