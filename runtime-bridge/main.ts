@@ -172,9 +172,9 @@ async function runAntigravity(p:any,state:any){
  if(p.model&&p.model!=='default')args.push('--model',p.model);
  if(p.session_id)args.push('--conversation',p.session_id);
  // The owned timeout must expire before the host can return partial timeout output.
- if(p.timeout_ms)args.push('--print-timeout',Math.ceil(p.timeout_ms/1000+30)+'s');
+ args.push('--print-timeout',p.timeout_ms?Math.ceil(p.timeout_ms/1000+30)+'s':'87600h');
  const child=launch(state.bin,args,p.cwd);state.child=child;state.cancel=()=>terminate(child);
- let result:any=null,lastSession:string|null=null,textSeen=false,toolFailed=false,lastToolError='';
+ let result:any=null,lastSession:string|null=null,textSeen=false,toolFailed=false,lastToolError='',stderr='';
  await new Promise<void>((resolve,reject)=>{
   const timer=p.timeout_ms?setTimeout(()=>{terminate(child);reject(Error('Antigravity turn timed out'));},p.timeout_ms):null;
   const parser=createJsonLineStream((m:any)=>{
@@ -194,9 +194,9 @@ async function runAntigravity(p:any,state:any){
     // Result usage is cumulative across the session, not the latest request.
    }
   });
-  child.stdout.setEncoding('utf8');child.stdout.on('data',c=>parser.feed(c));child.stderr.resume();child.stdin.on('error',()=>{});
+  child.stdout.setEncoding('utf8');child.stdout.on('data',c=>parser.feed(c));child.stderr.setEncoding('utf8');child.stderr.on('data',c=>{stderr=(stderr+c).slice(-8192);});child.stdin.on('error',()=>{});
   child.on('error',e=>{clearTimeout(timer);reject(e);});
-  child.on('close',code=>{clearTimeout(timer);parser.flush();if(state.cancelled)return resolve();if(code===0&&result?.status==='SUCCESS'&&lastSession){if(toolFailed&&!textSeen)return reject(Error('Antigravity 未完成操作：'+lastToolError+'。请打开对话框中的权限按钮，核对被拒绝的操作并授权后重新发送。'));return resolve();}const status=typeof result?.status==='string'&&/^[A-Z_]+$/.test(result.status)?result.status:'NO_RESULT';reject(Error('Antigravity '+status+' (exit '+code+')'));});
+  child.on('close',code=>{clearTimeout(timer);parser.flush();if(state.cancelled)return resolve();if(/(?:print.{0,20}timeout|timed out|timeout.{0,40}partial)/i.test(stderr))return reject(Error('Antigravity 等待超时，返回内容可能不完整；已保留会话，可恢复继续。'));if(code===0&&result?.status==='SUCCESS'&&lastSession){if(toolFailed&&!textSeen)return reject(Error('Antigravity 未完成操作：'+lastToolError+'。请打开对话框中的权限按钮，核对被拒绝的操作并授权后重新发送。'));return resolve();}const status=typeof result?.status==='string'&&/^[A-Z_]+$/.test(result.status)?result.status:'NO_RESULT';reject(Error('Antigravity '+status+' (exit '+code+')'));});
   child.stdin.end(JSON.stringify({event:'user',message:{content:prompt}})+'\n');
  });
 }

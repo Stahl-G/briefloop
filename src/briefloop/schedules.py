@@ -170,6 +170,7 @@ def fire(store, sid, *, at=None, manual=False, request_id=None):
                     previous=local.replace(year=year,month=month0+1,day=min(local.day,calendar.monthrange(year,month0+1)[1]))
                     duration=local-previous
                 else:duration=timedelta(days={'daily':1,'weekly':7}[config['frequency']])
+                req.update(period_start='', period_end='', report_timezone=config['timezone'])
                 req['period']=f'{(local-duration).isoformat(timespec="minutes")} 至 {local.isoformat(timespec="minutes")}'
                 saved_requirements=view.meta('requirements')
                 result=_operation(view,'submit',{'requirements':req,'source_ids':config['source_ids']})

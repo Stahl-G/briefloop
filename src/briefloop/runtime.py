@@ -157,6 +157,8 @@ def generation_prompt(store, run, folder, backend='codex'):
     from .models import normalize_search_provider
     raw_requirements=json.loads(run['requirements'])
     req=Requirements.model_validate(raw_requirements).model_dump()
+    from .report_time import instructions as time_instructions
+    temporal_note = time_instructions(req.get('time_context'))
     if 'research_budget' not in raw_requirements:req['research_budget']=None
     from .research_budget import snapshot as budget_snapshot
     research_budget=budget_snapshot(store,run['id'])
@@ -173,9 +175,9 @@ def generation_prompt(store, run, folder, backend='codex'):
     from .deliverable_spec import resolve,instructions,reader_contract_schema
     deliverable=resolve(req)
     (folder/'reader_contract.schema.json').write_text(json.dumps(reader_contract_schema(deliverable),ensure_ascii=False,indent=2),encoding='utf-8')
-    (folder/'analyst-writing.md').write_text(instructions(deliverable,role='analyst'),encoding='utf-8')
+    (folder/'analyst-writing.md').write_text(instructions(deliverable,role='analyst')+'\n'+temporal_note,encoding='utf-8')
     scout_contract=(folder/'scout-contract.md').resolve()
-    scout_contract.write_text(instructions(deliverable,role='scout'),encoding='utf-8')
+    scout_contract.write_text(instructions(deliverable,role='scout')+'\n'+temporal_note,encoding='utf-8')
     from .company_context import prompt as company_prompt
     company=company_prompt(store,run['id']) if req.get('writing_mode')=='internal_report' else ''
     max_parallel=run.get('max_parallel',store.settings()['max_parallel'])
@@ -280,6 +282,7 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
     view_pages_word = '使用 view_image 读取页图' if backend == 'codex' else '用 read 工具读取返回的页图'
     check_word = 'view_image检查' if backend == 'codex' else '用 read 工具读取检查'
     return common+f'''
+{temporal_note}
 任务创建时间：{run['created']}。报告期间要求：{req.get('period') or '未指定'}。日期以任务创建时间和用户明确期间为准，不按模型记忆中的年份推断今天。日报的当期动态必须核对事件日期与发布日期；历史发布只能标作背景，不计作今日新增。派发每个 Scout 时传递同一报告期间；Tavily 查询使用适用的 --time-range 或 --start-date/--end-date，原生搜索将期间写入查询并核对正文日期。时间过滤不证明事件新近发生，抓取时间也不是发布日期。缺少当期证据时明确缺口，不能用旧新闻凑数。
 {research_plan_note}
 {handoff_note}
@@ -373,6 +376,8 @@ def assessment_prompt(store, brief, folder, backend='codex'):
     input_pack['figures']=[{**f,'absolute_image_path':str(store.root/f['image_path'])} for f in validate_figures(store,run['id'],brief['markdown'])]
     from .delivery_checks import brief_checks
     input_pack['refcheck']=brief_checks(store,brief['id'])
+    from .report_time import instructions as time_instructions
+    input_pack['time_instructions']=time_instructions(json.loads(run['requirements']).get('time_context'))
     input_pack['number_bindings']=detail.get('number_bindings',[])
     input_pack['gap_records']=detail.get('gap_records',[])
     input_pack['clause_index']=clause_items(deliverable)
@@ -384,6 +389,7 @@ def assessment_prompt(store, brief, folder, backend='codex'):
     view_pages_word = '使用 view_image 读取页图' if backend == 'codex' else '用 read 工具读取返回的页图'
     figure_view_word = '实际view_image查看其absolute_image_path' if backend == 'codex' else '实际用 read 工具读取其absolute_image_path'
     return EVALUATOR_CONTEXT+f'''
+{input_pack['time_instructions']}
 {report_profile.get('evaluation','')}
 {instructions(deliverable,role='evaluator')}
 核对正文是否完成本轮读者需求。准确限定保留在相关句子，内部核查过程留在独立记录；不要要求作者用反复免责声明证明谨慎。研究未完成照常评价覆盖。

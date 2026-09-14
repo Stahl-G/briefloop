@@ -254,7 +254,9 @@ def brief_checks(store, version_id):
         # Older drafts only filled the free-text list; keep those gaps visible.
         open_records = [{'impact': str(text), 'status': 'open', 'legacy': True} for text in legacy]
         total = len(legacy)
-    return {'version_id': version_id,
+    from .report_time import check as check_time
+    temporal = check_time(json.loads(run['requirements']).get('time_context'), detail.get('temporal_claims', []))
+    return {'temporal': temporal, 'version_id': version_id,
             'broken_refs': check_refs(store, brief['markdown']),
             'gaps': {'total': total, 'open': len(open_records), 'open_records': open_records,
                      'legacy': bool(legacy and not records)},

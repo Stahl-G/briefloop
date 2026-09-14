@@ -96,6 +96,18 @@ def search(query,*,provider=None,topic='general',time_range=None,start_date=None
         provider=provider_for_run(store,run_id)
     else:provider=normalize_provider(provider)
     module=provider_module(provider)
+    if store is not None and run_id and provider == 'tavily':
+        import json
+        from datetime import datetime, timedelta
+        window = json.loads(store.one('runs', run_id)['requirements']).get('time_context')
+        if window:
+            start_date = datetime.fromisoformat(window['start']).date().isoformat()
+            # Tavily ends before end_date and accepts dates, not timestamps.
+            # Round a partial last day up, then review exact event times separately.
+            end = datetime.fromisoformat(window['end_exclusive'])
+            ceiling = end if (end.hour,end.minute,end.second,end.microsecond)==(0,0,0,0) else end+timedelta(days=1)
+            end_date = ceiling.date().isoformat()
+            time_range = None
     options={'topic':topic,'time_range':time_range,'start_date':start_date,'end_date':end_date,
              'include_domains':list(include_domains or []),'exclude_domains':list(exclude_domains or []),
              'max_results':max_results,'search_depth':search_depth}
