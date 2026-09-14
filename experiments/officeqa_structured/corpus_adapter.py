@@ -573,6 +573,59 @@ def probe(corpus_root: Path, *, write_report: bool = True) -> dict[str, Any]:
     return report
 
 
+# --- per-episode search budget (protocol §8.1, identical tool + limits) --------
+
+
+def _guard_budget(budget_file: Path | str | None, kind: str, limit: int | None,
+                  detail: dict[str, Any]) -> None:
+    """Append-only per-episode budget journal; refuse once the cap is reached.
+
+    Both arms call the very same CLI with the very same ``--budget-file`` and
+    limits (protocol §8.1: 两组使用相同工具实现和相同数值), so the cap is
+    enforced at the tool, not trusted to the agent.  A refusal is data, not a
+    crash: the error text tells the agent to keep the evidence it already has
+    and continue, mirroring the product's ``budget_exhausted`` semantics.  The
+    journal doubles as the episode's post-hoc usage record.
+    """
+    if budget_file is None:
+        return
+    if limit is not None and int(limit) < 0:
+        raise CorpusError(f"{kind} budget must be >= 0, got {limit}")
+    path = Path(budget_file).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    entry = json.dumps({"op": kind, "at": _now(), **detail}, ensure_ascii=False)
+    import fcntl
+
+    with path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            handle.seek(0)
+            used = sum(1 for line in handle if line.strip())
+            if limit is not None and used >= int(limit):
+                raise CorpusError(
+                    f"本 episode 的 {kind} 预算已用完（{used}/{int(limit)}）：保留已获取的证据继续作答，不要重试该操作。")
+            handle.seek(0, os.SEEK_END)
+            handle.write(entry + "\n")
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def budget_usage(budget_file: Path | str | None) -> dict[str, int]:
+    """Count journal lines per op — the honest, post-hoc usage view."""
+    if budget_file is None or not Path(budget_file).is_file():
+        return {}
+    usage: dict[str, int] = {}
+    for line in Path(budget_file).read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        usage[row.get("op", "?")] = usage.get(row.get("op", "?"), 0) + 1
+    return usage
+
+
 # --- CLI -----------------------------------------------------------------------
 
 
@@ -604,6 +657,8 @@ def main(argv: list[str] | None = None) -> int:
     search.add_argument("--query", required=True)
     search.add_argument("--doc", help="restrict to one document (name or doc_id)")
     search.add_argument("--limit", type=int, default=20)
+    search.add_argument("--budget-file", help="per-episode budget journal (enables the shared cap)")
+    search.add_argument("--search-budget", type=int, help="max search requests for this episode")
 
     read = commands.add_parser("read", help="read a 1-based line range of one document")
     read.add_argument("--data-root")
@@ -616,6 +671,8 @@ def main(argv: list[str] | None = None) -> int:
     page.add_argument("--data-root")
     page.add_argument("--doc", required=True)
     page.add_argument("--page-index", type=int, required=True)
+    page.add_argument("--budget-file", help="per-episode budget journal (enables the shared cap)")
+    page.add_argument("--page-budget", type=int, help="max page views for this episode")
 
     accept = commands.add_parser("accept", help="register a used document as a BriefLoop run source")
     accept.add_argument("--data-root")
@@ -641,6 +698,8 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(adapter.docs(args.query, limit=200), ensure_ascii=False, indent=2))
             return 0
         if args.command == "search":
+            _guard_budget(args.budget_file, "search", args.search_budget if args.budget_file else None,
+                          {"query": args.query[:200], "doc": args.doc})
             with CorpusAdapter(corpus_root) as adapter:
                 print(json.dumps(adapter.search(args.query, doc=args.doc, limit=args.limit),
                                  ensure_ascii=False, indent=2))
@@ -651,6 +710,8 @@ def main(argv: list[str] | None = None) -> int:
                                               max_chars=args.max_chars), ensure_ascii=False, indent=2))
             return 0
         if args.command == "page":
+            _guard_budget(args.budget_file, "page", args.page_budget if args.budget_file else None,
+                          {"doc": args.doc, "page_index": args.page_index})
             with CorpusAdapter(corpus_root) as adapter:
                 print(json.dumps(adapter.page(args.doc, args.page_index), ensure_ascii=False, indent=2))
             return 0

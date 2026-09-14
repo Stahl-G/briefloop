@@ -33,6 +33,9 @@ GOLD_A = 'unobtainium-9931'
 GOLD_B = '[vibranium-4477, 0.123]'
 QUESTION_A = 'What was the total customs revenue collected in fiscal year 1854, in dollars?'
 QUESTION_B = 'Which fiscal year shows war expenditures of exactly 1921 million dollars?'
+# 历史 Pro v1 池（开发 pilot 的来源；题面与 v2 不同哈希）
+HIST_QUESTION = 'What were total expenditures for national defense in calendar year 1940, in millions?'
+HIST_GOLD = 'adamanthistory-7700'
 
 
 def write_csv(path: Path, rows: list[dict], fields: list[str]) -> None:
@@ -77,6 +80,10 @@ def chain(tmp_path_factory):
         {'uid': '1', 'question': QUESTION_B, 'answer': GOLD_B, 'source_docs': '', 'source_files': 'doc_beta__1921.txt'},
         {'uid': '0', 'question': QUESTION_A, 'answer': GOLD_A, 'source_docs': '', 'source_files': 'doc_alpha__1854.txt'},
     ], fields)
+    write_csv(source / 'officeqa_pro.csv', [
+        {'uid': 'UID0031', 'question': HIST_QUESTION, 'answer': HIST_GOLD, 'source_docs': '',
+         'source_files': 'treasury_bulletin_1941_01.txt'},
+    ], fields)
     data_root = base / 'data'
     pd.prepare(source, data_root)
     assert ca.probe(data_root / 'corpus', write_report=False)['status'] == 'green'
@@ -106,7 +113,8 @@ def test_episode_records_carry_protocol_33_fields(chain):
         assert episode['budget'] == {'wall_clock_seconds': budget.wall_clock_seconds,
                                      'max_concurrent_model_calls': budget.max_concurrent_model_calls,
                                      'max_automatic_revisions_B': budget.max_automatic_revisions_B,
-                                     'format_repair_attempts': budget.format_repair_attempts}
+                                     'format_repair_attempts': budget.format_repair_attempts,
+                                     'search_budget': dict(budget.search_budget)}
         assert episode['usage_complete'] is False  # stub：用量不完整要如实标记
         assert episode['format_repairs_issued'] >= 0  # §4 修复次数入档
         for submission in episode['submissions']:
@@ -241,21 +249,80 @@ def test_freeze_seals_bytes_and_score_reports_stub_accuracy(chain):
     assert all(row['outcome'] == 'answered' and row['score'] == 0.0 for row in scores)
 
 
-def test_runner_has_no_real_execution_path_and_no_dataset_reference():
+def test_runner_sources_never_reference_restricted_data():
+    """runner 源码不直接引用数据集凭据或原 datasets 目录；凭据剥离只在 isolation 模块。"""
     source = (EXPERIMENT / 'run_episodes.py').read_text(encoding='utf-8')
-    for forbidden in ('HF_TOKEN', 'datasets/officeqa-pro-v2', 'subprocess', 'codex exec', 'Popen',
-                      'InteractiveRuntime'):
+    for forbidden in ('HF_TOKEN', 'datasets/officeqa-pro-v2'):
         assert forbidden not in source, forbidden
 
 
-def test_run_without_dry_run_refuses_with_zero_side_effects(chain, tmp_path):
+def _unfrozen_config(tmp_path):
+    """Q2 形态的未冻结 config（null 占位），用于证明新门在冻结前拒跑。"""
+    config = re_mod.load_config()
+    config['baseline']['integration_commit'] = None
+    config['runtime'] = {'host': None, 'model': None, 'reviewer_model': None,
+                         'reasoning_effort': None}
+    config['budget']['search_budget'] = None
+    config['isolation']['solver_boundary'] = None
+    config['web_search']['entrypoint'] = None
+    path = tmp_path / 'unfrozen-config.json'
+    path.write_text(json.dumps(config, ensure_ascii=False), encoding='utf-8')
+    return str(path)
+
+
+def test_run_without_dry_run_refuses_unfrozen_config_with_zero_side_effects(chain, tmp_path, capsys):
+    """真实执行门 = config 冻结校验：未冻结 config 拒跑且零副作用（协议 §11 问 10）。"""
     before = sorted(str(path) for path in (chain / 'episodes').rglob('*'))
-    assert re_mod.main(['run', '--data-root', str(chain), '--run-label', 'gated',
-                        '--cases', '1']) == 2
-    assert re_mod.main(['run', '--data-root', str(chain), '--run-label', 'gated',
-                        '--cases', '1', '--seed', '1']) == 2  # 传种子也救不了授权门
+    assert re_mod.main(['run', '--data-root', str(chain), '--config', _unfrozen_config(tmp_path),
+                        '--run-label', 'gated', '--cases', '1']) == 2
+    assert re_mod.main(['run', '--data-root', str(chain), '--config', _unfrozen_config(tmp_path),
+                        '--run-label', 'gated', '--cases', '1', '--seed', '1']) == 2  # 传种子也救不了冻结门
+    message = capsys.readouterr().err
+    assert 'config 冻结校验未通过' in message and 'null/TODO' in message
     after = sorted(str(path) for path in (chain / 'episodes').rglob('*'))
     assert before == after
+
+
+def test_config_freeze_errors_name_every_pending_field():
+    """冻结校验逐项点名：null 扫描 + 各冻结字段的结构要求。"""
+    config = re_mod.load_config()
+    if not re_mod.config_freeze_errors(config):
+        pytest.skip('config.json 已冻结（Q3 之后），未冻结形态用副本构造')
+    config = json.loads(json.dumps(config))  # 深拷贝后逐一破坏
+    errors = re_mod.config_freeze_errors(config)
+    assert errors, '未冻结 config 必须给出错误清单'
+    assert any('null/TODO' in error for error in errors)
+
+
+def test_config_freeze_validation_passes_on_a_frozen_shape():
+    """冻结形态的 config 通过校验——包括 integration_commit 为当前 HEAD 的代码态检查。"""
+    config = json.loads(json.dumps(re_mod.load_config()))
+    import subprocess as sp
+    head = sp.run(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], capture_output=True, text=True)
+    if head.returncode != 0:
+        pytest.skip('不在 git 工作树内')
+    config['_notes'] = 'frozen for the test shape'  # 注释文字也不得含 TODO（§11 问 10）
+    config['baseline']['integration_commit'] = head.stdout.strip()
+    config['runtime'] = {'host': 'opencode', 'model': 'opencode-go/deepseek-v4.1-flash',
+                         'reviewer_model': 'opencode-go/deepseek-v4.1-flash',
+                         'reasoning_effort': 'high', 'note': 'x'}
+    config['budget']['search_budget'] = {'search_requests': 30, 'candidate_urls': 150, 'source_pages': 60}
+    config['isolation']['solver_boundary'] = {'kind': 'sandbox', 'detail': 'seatbelt profile at <data>/solver-boundary/solver.sb'}
+    config['web_search']['entrypoint'] = 'offline'
+    config['dataset']['revision'] = 'a' * 64
+    config['dataset']['eligible_questions'] = {'dev_pilot': {'case_keys': ['b' * 64]}}
+    config['dataset']['exposure_ledger'] = {'path': 'question_only/exposure_ledger.json'}
+    assert re_mod.config_freeze_errors(config) == []
+    # 逐项破坏都要被点名
+    broken = json.loads(json.dumps(config))
+    broken['runtime']['host'] = 'codex'
+    assert any('runtime.host' in error for error in re_mod.config_freeze_errors(broken))
+    broken = json.loads(json.dumps(config))
+    broken['budget']['search_budget']['search_requests'] = 'many'
+    assert any('budget.search_budget' in error for error in re_mod.config_freeze_errors(broken))
+    broken = json.loads(json.dumps(config))
+    broken['isolation']['solver_boundary'] = {'kind': 'chmod-only', 'detail': 'x'}
+    assert any('solver_boundary' in error for error in re_mod.config_freeze_errors(broken))
 
 
 def test_score_refuses_without_freeze(chain):
@@ -438,3 +505,181 @@ def test_run_refuses_when_data_area_permissions_drift(chain, tmp_path):
         assert not (chain / 'episodes' / 'drift').exists()  # 审计失败零副作用
     finally:
         os.chmod(gated, original)
+
+
+# --- Q3：同额搜索预算（§8.1）在工具层执行 ----------------------------------------
+
+
+def test_corpus_search_budget_guard_caps_and_journals(chain, tmp_path):
+    budget_file = tmp_path / 'episode' / 'corpus-budget.jsonl'
+    run = lambda extra: ca.main(['search', '--data-root', str(chain),
+                                 '--query', 'customs revenue'] + extra)
+    for _ in range(2):
+        assert run(['--budget-file', str(budget_file), '--search-budget', '2']) == 0
+    assert ca.main(['search', '--data-root', str(chain), '--query', 'customs revenue',
+                    '--budget-file', str(budget_file), '--search-budget', '2']) == 2  # 超限拒绝
+    usage = ca.budget_usage(budget_file)
+    assert usage == {'search': 2}
+    # 无预算文件 → 不设限（dry-run/探针路径）
+    assert run([]) == 0
+
+
+def test_corpus_page_budget_guard_counts_page_views(chain, tmp_path):
+    import contextlib
+    import io
+    budget_file = tmp_path / 'episode' / 'corpus-budget.jsonl'
+    # 用 docs 命令找一个真实文档名（不依赖答案信息）
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        assert ca.main(['docs', '--data-root', str(chain)]) == 0
+    name = json.loads(buffer.getvalue())[0]['name']
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        assert ca.main(['page', '--data-root', str(chain), '--doc', name, '--page-index', '0',
+                        '--budget-file', str(budget_file), '--page-budget', '1']) == 0
+        refused = ca.main(['page', '--data-root', str(chain), '--doc', name, '--page-index', '0',
+                           '--budget-file', str(budget_file), '--page-budget', '1'])
+    assert refused == 2  # 第二次按页查看被拒
+    assert ca.budget_usage(budget_file) == {'page': 1}
+
+
+def test_corpus_tool_instructions_embed_the_shared_budget(chain, tmp_path):
+    budget_file = tmp_path / 'episode' / 'corpus-budget.jsonl'
+    instructions = re_mod.corpus_tool_instructions(
+        chain, search_budget={'search_requests': 30, 'candidate_urls': 150, 'source_pages': 60},
+        budget_file=budget_file)
+    assert f'--budget-file {budget_file} --search-budget 30' in instructions
+    assert f'--budget-file {budget_file} --page-budget 60' in instructions
+    assert '两组同额同工具' in instructions
+    # 无预算时指令保持原样（dry-run 路径不撒谎）
+    assert '--budget-file' not in re_mod.corpus_tool_instructions(chain)
+
+
+# --- Q3：开发 6 题（evaluator 选 key，题面走 sanitization 门） --------------------
+
+
+def test_dev_pilot_marks_and_sanitized_question_view(chain, tmp_path):
+    """dev-pilot：key 不在池内失败关闭；合法 key 产出脱敏题面 + ledger dev 标记。"""
+    ledger = json.loads((chain / 'question_only' / 'exposure_ledger.json').read_text(encoding='utf-8'))
+    historical_revision = ledger['historical_revision']
+    rows = [json.loads(line) for line in
+            (chain / 'evaluator-only' / 'gold' / 'officeqa_pro_v1.gold.jsonl').read_text().splitlines() if line.strip()]
+    keys = sorted(row['case_key'] for row in rows)[:1]
+    assert pd.mark_dev_pilot(chain / 'gated', chain, list(keys))['marked'] == 1
+    view = [json.loads(line) for line in
+            (chain / 'question_only' / 'dev_pilot.jsonl').read_text().splitlines() if line.strip()]
+    assert [row['case_key'] for row in view] == keys
+    assert set(view[0]) == set(pd.QUESTION_FIELDS)
+    assert view[0]['dataset'] == pd.HISTORICAL_DATASET
+    ledger = json.loads((chain / 'question_only' / 'exposure_ledger.json').read_text(encoding='utf-8'))
+    assert ledger['dev_pilot']['case_keys'] == keys
+    # gold 答案不随题面泄出
+    answers = [row['answer'] for row in rows]
+    blob = (chain / 'question_only' / 'dev_pilot.jsonl').read_bytes()
+    for answer in answers:
+        assert answer.encode('utf-8') not in blob
+    # runner 视角：dev 池可载入且 exposure=dev
+    cases = re_mod.load_cases(chain)
+    dev = [case for case in cases if case.exposure == 'dev']
+    assert [case.case_key for case in dev] == keys
+    selected = re_mod._select_cases(cases, limit=None, case_keys=[], pool='dev')
+    assert [case.case_key for case in selected] == keys
+    # 未知 key 失败关闭
+    with pytest.raises(pd.PrepareError):
+        pd.mark_dev_pilot(chain / 'gated', chain, ['f' * 64])
+
+
+# --- Q3：真实传输（零模型调用，用假宿主二进制验证进程语义） -----------------------
+
+
+def _fake_host(tmp_path, body: str):
+    """一个可执行假 opencode：测试 turn 的 argv/超时/输出捕获，绝不连模型。"""
+    binary = tmp_path / 'fake-opencode'
+    binary.write_text('#!/bin/sh\n' + body, encoding='utf-8')
+    binary.chmod(0o755)
+    return binary
+
+
+def test_opencode_run_solver_turn_argv_deadline_and_capture(chain, tmp_path):
+    """A 组真实传输：shim argv、prompt 落盘、超时杀进程组、stdout 捕获、占槽。"""
+    fake = _fake_host(tmp_path, 'echo "fake-host $1 $2"\nexit 0\n')
+    shim = tmp_path / 'shim-opencode'
+    shim.write_text('#!/bin/sh\nexec "$FAKE_HOST_BIN" "$@"\n', encoding='utf-8')
+    shim.chmod(0o755)
+    real = re_mod.RealContext(model='opencode-go/deepseek-v4.1-flash', variant='high',
+                              host_version='fake 1.18.30', shim=shim,
+                              solver_env={**os.environ, 'FAKE_HOST_BIN': str(fake)})
+    workspace = tmp_path / 'ep' / 'workspace'
+    workspace.mkdir(parents=True)
+    limiter = re_mod.ModelCallLimiter(4)
+    solver = re_mod.OpencodeRunSolver(real, workspace, limiter)
+    solver._write_host_config(tmp_path / 'ep')
+    host_config = json.loads((workspace / 'opencode.json').read_text(encoding='utf-8'))
+    assert host_config['permission']['bash'] == 'allow'
+    assert host_config['permission']['websearch'] == 'deny'
+    record = solver.turn('PROMPT-TEXT', title='t', deadline=time.time() + 30)
+    assert record['returncode'] == 0 and record['deadline_hit'] is False
+    argv = record['argv']
+    assert argv[:6] == [str(shim), 'run', '--dir', str(workspace),
+                        '--model', 'opencode-go/deepseek-v4.1-flash']
+    assert argv[argv.index('--variant') + 1] == 'high'
+    assert 'PROMPT-TEXT' not in record['argv']  # prompt 不进 argv 记录（落盘为准）
+    assert limiter.report()['total_calls'] == 1
+    stdout = (workspace / 'opencode-main.stdout').read_text(encoding='utf-8')
+    assert 'fake-host run --dir' in stdout
+
+
+def test_opencode_run_solver_kills_past_deadline(tmp_path):
+    """超deadline：进程组被杀，记录 deadline_hit，不抛异常（§8.3 截止即终点）。"""
+    fake = _fake_host(tmp_path, 'sleep 30\n')
+    shim = tmp_path / 'shim-opencode'
+    shim.write_text('#!/bin/sh\nexec "$FAKE_HOST_BIN" "$@"\n', encoding='utf-8')
+    shim.chmod(0o755)
+    real = re_mod.RealContext(model='p/m', variant=None, host_version='fake', shim=shim,
+                              solver_env={**os.environ, 'FAKE_HOST_BIN': str(fake)})
+    workspace = tmp_path / 'ep2' / 'workspace'
+    workspace.mkdir(parents=True)
+    solver = re_mod.OpencodeRunSolver(real, workspace, re_mod.ModelCallLimiter(1))
+    started = time.time()
+    record = solver.turn('go', title='t', deadline=started + 1.5)
+    assert record['deadline_hit'] is True
+    assert time.time() - started < 20  # 没有陪着 sleep 30 跑完
+
+
+def test_slot_accounted_runtime_wraps_execute(chain, tmp_path):
+    """B 组包装：每个 execute 占一个 §8.1 槽位，其余属性透传。"""
+
+    class Inner:
+        backends = {'opencode': object()}
+        cancelled = threading.Event()
+
+        def execute(self, job, prompt, folder, on_tick=lambda: None, **kw):
+            return {'job': job['id'], 'prompt_chars': len(prompt)}
+
+    limiter = re_mod.ModelCallLimiter(2)
+    wrapped = re_mod.SlotAccountedRuntime(Inner(), limiter)
+    assert wrapped.execute({'id': 'job_x'}, 'hello', '/tmp') == {'job': 'job_x', 'prompt_chars': 5}
+    assert limiter.report()['total_calls'] == 1
+    assert wrapped.backends is not None and wrapped.cancelled is not None  # __getattr__ 透传
+
+
+def test_prepare_solver_boundary_probes_fail_closed(chain, tmp_path, monkeypatch):
+    """边界准备：profile/shim 落盘、活动探针证明围栏生效、PATH 注入 shim 目录。"""
+    if not Path(re_mod.SANDBOX_EXEC).is_file():
+        pytest.skip('本机无 sandbox-exec（非 macOS seatbelt 环境）')
+    fake = _fake_host(tmp_path, 'echo fake-opencode-9.9.9\n')
+    monkeypatch.setattr(re_mod.shutil, 'which', lambda name: str(fake) if name == 'opencode' else None)
+    original_path = os.environ['PATH']
+    config = {'dataset': {'source_root': str(chain / 'gated')},
+              'isolation': {'solver_boundary': {'kind': 'sandbox', 'detail': 'test seatbelt'}}}
+    try:
+        probe = re_mod.prepare_solver_boundary(chain, config)
+    finally:
+        os.environ['PATH'] = original_path
+    assert probe['probe:gated']['denied'] is True
+    assert probe['probe:evaluator-only']['denied'] is True
+    assert probe['probe:profile-readable']['denied'] is False
+    shim = Path(probe['shim'])
+    assert shim.is_file() and shim.stat().st_mode & stat.S_IXUSR
+    profile = Path(probe['profile']).read_text(encoding='utf-8')
+    assert '(allow default)' in profile and 'deny file-read*' in profile

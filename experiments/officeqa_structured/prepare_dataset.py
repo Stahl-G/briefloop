@@ -368,19 +368,107 @@ def prepare(source_root: Path, data_root: Path, *, corpus_source: Path | None = 
     return summary
 
 
+def mark_dev_pilot(source_root: Path, data_root: Path, case_keys: list[str]) -> dict[str, Any]:
+    """Emit the sanitized dev-pilot question view for evaluator-selected cases.
+
+    Protocol §7.2 / design §3 Q3: the 6-question dev pilot comes from the
+    exposed historical Pro v1 pool.  WHICH cases is an evaluator-side
+    decision (case keys were sorted and picked from the evaluator-only v1
+    gold; gold never leaves that area); this command only receives the keys
+    and re-derives everything from the gated CSV it is allowed to read,
+    failing closed if a key does not resolve.  The emitted
+    ``question_only/dev_pilot.jsonl`` carries question text only — the same
+    allow-listed fields and the same sanitization gate as the v2 view — and
+    the exposure ledger records the dev/exposed marks.
+    """
+    if not case_keys:
+        raise PrepareError("no case keys given for the dev pilot")
+    data_root = Path(data_root).expanduser().resolve()
+    ledger_path = data_root / "question_only" / "exposure_ledger.json"
+    if not ledger_path.is_file():
+        raise PrepareError(f"exposure ledger is missing under {data_root}; run prepare first")
+    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+    historical_revision = ledger.get("historical_revision")
+    if not historical_revision:
+        raise PrepareError("ledger has no historical_revision; no v1 pool was prepared")
+    rows = _load_csv(Path(source_root).expanduser().resolve() / HISTORICAL_CSV,
+                     required={"uid", "question", "answer", "source_files", "source_docs"})
+    by_key: dict[str, dict[str, str]] = {}
+    for row in rows:
+        digest = question_sha256(row["question"])
+        by_key[case_key(historical_revision, row["uid"].strip(), digest)] = row
+    missing = [key for key in case_keys if key not in by_key]
+    if missing:
+        raise PrepareError(f"dev-pilot case keys not present in the historical pool: {missing[:3]}")
+    selected = []
+    for key in case_keys:
+        row = by_key[key]
+        digest = question_sha256(row["question"])
+        selected.append({
+            "schema_version": SCHEMA_QUESTION, "dataset": HISTORICAL_DATASET,
+            "revision": historical_revision, "uid": row["uid"].strip(), "case_key": key,
+            "question": row["question"].strip(), "question_sha256": digest,
+        })
+        # The same sanitization gate as v2 (§6.4): no answer or per-question
+        # source hint may ride out with the question text.
+        carriers = f"{HISTORICAL_DATASET} {row['uid'].strip()} {row['question'].strip()}"
+        for forbidden in (row.get("answer") or "", *(split_names(row.get("source_files") or ""))):
+            if forbidden and forbidden in carriers and forbidden not in row["question"]:
+                raise PrepareError(f"sanitization gate failed for uid {row['uid']!r}")
+    selected.sort(key=lambda entry: entry["case_key"])
+    (data_root / "question_only" / "dev_pilot.jsonl").write_text(
+        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in selected) + "\n", encoding="utf-8")
+    marked = set(case_keys)
+    for entry in ledger.get("historical_exposed_pool", []):
+        digest = entry.get("question_sha256")
+        uid = entry.get("uid")
+        if digest and uid and case_key(historical_revision, uid, digest) in marked:
+            entry["dev_pilot"] = True
+    ledger["dev_pilot"] = {
+        "case_keys": sorted(marked), "marked_at": _now(),
+        "selection": "evaluator-only v1 pool sorted by case_key, first 6 (protocol §7.2)",
+        "note": ("开发 pilot 题（已暴露旧题）来自历史 Pro v1 池；题面与选择键进入 question_only，"
+                 "gold 只留在 evaluator-only。语料条件：这些题的官方出处（旧 Treasury Bulletin）"
+                 "不在冻结的 V2 全语料中，pilot 成绩只作接入诊断（协议 §7 记录为条件偏差）。"),
+    }
+    ledger_path.write_text(json.dumps(ledger, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return {"schema_version": "officeqa.dev_pilot.v1", "marked": len(marked),
+            "case_keys": sorted(marked), "revision": historical_revision,
+            "output": str(data_root / "question_only" / "dev_pilot.jsonl")}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--source-root", default=str(DEFAULT_SOURCE_ROOT),
-                        help="restricted local dataset root (read-only)")
-    parser.add_argument("--data-root", default=str(DEFAULT_DATA_ROOT))
-    parser.add_argument("--corpus-source", help="V2 fullcorpus directory (default <source-root>/fullcorpus)")
-    parser.add_argument("--skip-corpus", action="store_true",
-                        help="only rebuild the question/gold/ledger outputs")
+    sub = parser.add_subparsers(dest="command")
+
+    prepare_cmd = sub.add_parser("prepare", help="gate the restricted CSVs and build every sanitized output")
+    prepare_cmd.add_argument("--source-root", default=str(DEFAULT_SOURCE_ROOT),
+                             help="restricted local dataset root (read-only)")
+    prepare_cmd.add_argument("--data-root", default=str(DEFAULT_DATA_ROOT))
+    prepare_cmd.add_argument("--corpus-source", help="V2 fullcorpus directory (default <source-root>/fullcorpus)")
+    prepare_cmd.add_argument("--skip-corpus", action="store_true",
+                             help="only rebuild the question/gold/ledger outputs")
+
+    dev = sub.add_parser("dev-pilot", help="emit the sanitized dev-pilot question view + ledger dev marks")
+    dev.add_argument("--source-root", default=str(DEFAULT_SOURCE_ROOT))
+    dev.add_argument("--data-root", default=str(DEFAULT_DATA_ROOT))
+    dev.add_argument("--case-keys", nargs="+", required=True,
+                     help="evaluator-selected case keys (sorted-first-N of the evaluator-only v1 pool)")
+
+    argv = list(sys.argv[1:]) if argv is None else list(argv)
+    if argv and argv[0].startswith("-"):
+        argv = ["prepare", *argv]  # legacy flag-style invocation means `prepare`
     args = parser.parse_args(argv)
+    if args.command is None:
+        parser.print_help()
+        return 2
     try:
-        summary = prepare(Path(args.source_root), Path(args.data_root),
-                          corpus_source=Path(args.corpus_source) if args.corpus_source else None,
-                          skip_corpus=args.skip_corpus)
+        if args.command == "dev-pilot":
+            summary = mark_dev_pilot(Path(args.source_root), Path(args.data_root), list(args.case_keys))
+        else:
+            summary = prepare(Path(args.source_root), Path(args.data_root),
+                              corpus_source=Path(args.corpus_source) if args.corpus_source else None,
+                              skip_corpus=args.skip_corpus)
     except (PrepareError, corpus_adapter.CorpusError) as exc:
         print(f"prepare_dataset error: {exc}", file=sys.stderr)
         return 2

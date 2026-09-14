@@ -1,6 +1,6 @@
 """Two-arm episode runner for the OfficeQA structured-answer experiment.
 
-Design-0223 §3.Q2 / protocol BL-OQA-SR-v1.0 §5, §8, §9.  Arm A is a native
+Design-0223 §3.Q2-Q3 / protocol BL-OQA-SR-v1.0 §5, §8, §9.  Arm A is a native
 agent control (same host/model/corpus tools plus a seriously configured
 research prompt); arm B drives the real BriefLoop pipeline — the
 ``external_requests`` submit/query interface, ``result_format=
@@ -23,13 +23,16 @@ a concrete submit directory drained into the ``SubmissionBox``; format
 repair (protocol §4) is bounded per episode with gold-blind feedback the
 agent — never this program — acts on.
 
-Zero real model calls.  ``run --dry-run`` executes both arms with stub
-solvers (a deterministic native stub, and a transport stub that walks the
-real product interfaces); there is deliberately **no real-execution path
-other than --dry-run** — wiring an actual host/model transport is the Q3
-authorization gate (design §5), which additionally demands an enforced
-OS-level solver boundary (``isolation.solver_boundary`` in config) and
-fails closed here.
+Two execution modes.  ``run --dry-run`` is the zero-model-call path: stub
+solvers over the real interfaces (tests live here).  Without ``--dry-run``
+the Q3 real transports run — arm A as one ``opencode run`` process per turn
+in the episode workspace (model/variant from the frozen config), arm B as
+the real ``InteractiveRuntime`` over an ``OpencodeHarness`` — and the gate
+is the frozen-config validation (protocol §11 Q10: config 无 null/TODO 才
+允许开跑) plus the enforced OS-level solver boundary: every solver process
+is launched through a macOS seatbelt shim that denies reads on ``gated/``
+and ``evaluator-only/`` (design §2 — the boundary is the OS, not prompt
+text), with dataset credentials stripped from the environment.
 """
 from __future__ import annotations
 
@@ -39,6 +42,9 @@ import json
 import os
 import random
 import re
+import shutil
+import signal
+import subprocess
 import sys
 import threading
 import time
@@ -62,8 +68,13 @@ ARMS = ("A", "B")
 CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
 CORPUS_TOOL_PATH = Path(__file__).resolve().parent / "corpus_adapter.py"
 DEFAULT_DATA_ROOT = corpus_adapter.DEFAULT_DATA_ROOT
+WORKTREE_ROOT = Path(__file__).resolve().parents[2]
 _REQUIRED_BUDGET_FIELDS = ("episode_wall_clock_seconds", "max_concurrent_model_calls",
                            "max_automatic_revisions_B", "format_repair_attempts_per_episode")
+# Protocol §8.1 / product research_budget.KINDS: the shared search budget shape
+# both arms get, expressed with the same tool (the corpus CLI) and same numbers.
+SEARCH_BUDGET_KINDS = ("search_requests", "candidate_urls", "source_pages")
+SANDBOX_EXEC = "/usr/bin/sandbox-exec"
 
 
 class RunnerError(RuntimeError):
@@ -71,7 +82,7 @@ class RunnerError(RuntimeError):
 
 
 class RealExecutionGateError(RunnerError):
-    """Real model execution is not wired until the Q3 authorization gate."""
+    """Real model execution refused: the frozen-config/isolation gate failed."""
 
 
 def _now() -> str:
@@ -157,14 +168,23 @@ class Budget:
     max_concurrent_model_calls: int
     max_automatic_revisions_B: int
     format_repair_attempts: int
+    search_budget: dict[str, int]
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "Budget":
         budget = config["budget"]
+        search = budget.get("search_budget") or {}
+        # Missing/unset search_budget reads as zero for dry-run plumbing; the
+        # real-execution gate (config_freeze_errors) is what demands frozen,
+        # positive, identical-for-both-arms numbers.
+        resolved = {kind: search.get(kind) for kind in SEARCH_BUDGET_KINDS}
+        if not all(isinstance(value, int) for value in resolved.values()):
+            resolved = {kind: 0 for kind in SEARCH_BUDGET_KINDS}
         return cls(wall_clock_seconds=int(budget["episode_wall_clock_seconds"]),
                    max_concurrent_model_calls=int(budget["max_concurrent_model_calls"]),
                    max_automatic_revisions_B=int(budget["max_automatic_revisions_B"]),
-                   format_repair_attempts=int(budget["format_repair_attempts_per_episode"]))
+                   format_repair_attempts=int(budget["format_repair_attempts_per_episode"]),
+                   search_budget={kind: int(resolved[kind]) for kind in SEARCH_BUDGET_KINDS})
 
 
 @dataclass(frozen=True)
@@ -175,14 +195,17 @@ class Case:
     question_sha256: str
     revision: str
     exposure: str
+    dataset: str = prepare_dataset.DATASET
 
 
 def load_cases(data_root: Path) -> list[Case]:
     """Load the sanitized question view; verify every case identity (§1.2).
 
-    Opens only ``question_only/question_only.jsonl`` and the exposure ledger.
-    Recomputing the question hash and case key here proves the runner's view
-    is the prepared one — and the runner has no path to any answer payload.
+    Opens only ``question_only/question_only.jsonl``, the optional
+    ``question_only/dev_pilot.jsonl`` view (protocol §7: 开发 pilot 来自已
+    暴露旧题) and the exposure ledger.  Recomputing the question hash and
+    case key here proves the runner's view is the prepared one — and the
+    runner has no path to any answer payload.
     """
     data_root = Path(data_root).expanduser().resolve()
     question_path = data_root / "question_only" / "question_only.jsonl"
@@ -192,24 +215,41 @@ def load_cases(data_root: Path) -> list[Case]:
     ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
     exposure = {entry["case_key"]: entry["exposure"] for entry in ledger["cases"]}
     revision = ledger["revision"]
+    dev_keys = set((ledger.get("dev_pilot") or {}).get("case_keys") or [])
     cases: list[Case] = []
-    for line in question_path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        row = json.loads(line)
+
+    def _admit(row: dict[str, Any], *, expected_revision: str, expected_dataset: str,
+               default_exposure: str) -> None:
         digest = prepare_dataset.question_sha256(row["question"])
         if digest != row["question_sha256"]:
             raise RunnerError(f"question hash mismatch for uid {row['uid']!r}")
-        if prepare_dataset.case_key(revision, row["uid"], digest) != row["case_key"]:
+        if prepare_dataset.case_key(expected_revision, row["uid"], digest) != row["case_key"]:
             raise RunnerError(f"case key mismatch for uid {row['uid']!r}")
-        if row["revision"] != revision:
-            raise RunnerError(f"revision mismatch for uid {row['uid']!r}")
+        if row["revision"] != expected_revision or row["dataset"] != expected_dataset:
+            raise RunnerError(f"revision/dataset mismatch for uid {row['uid']!r}")
         cases.append(Case(case_key=row["case_key"], uid=row["uid"], question=row["question"],
-                          question_sha256=digest, revision=revision,
-                          exposure=exposure.get(row["case_key"], "unknown")))
+                          question_sha256=digest, revision=expected_revision,
+                          exposure="dev" if row["case_key"] in dev_keys else default_exposure,
+                          dataset=expected_dataset))
+
+    for line in question_path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            _admit(json.loads(line), expected_revision=revision,
+                   expected_dataset=prepare_dataset.DATASET, default_exposure="unknown")
+    dev_path = data_root / "question_only" / "dev_pilot.jsonl"
+    if dev_path.is_file():
+        historical_revision = ledger.get("historical_revision")
+        if not historical_revision:
+            raise RunnerError("dev_pilot.jsonl exists but the ledger has no historical_revision")
+        for line in dev_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                _admit(json.loads(line), expected_revision=historical_revision,
+                       expected_dataset=prepare_dataset.HISTORICAL_DATASET, default_exposure="exposed")
     if not cases:
         raise RunnerError("question_only.jsonl is empty")
-    if set(exposure) != {case.case_key for case in cases}:
+    if dev_keys and dev_keys != {case.case_key for case in cases if case.exposure == "dev"}:
+        raise RunnerError("ledger dev_pilot marks and the dev question view disagree")
+    if not dev_keys and set(exposure) != {case.case_key for case in cases}:
         raise RunnerError("exposure ledger and question list disagree")
     return cases
 
@@ -217,7 +257,9 @@ def load_cases(data_root: Path) -> list[Case]:
 # --- shared instructions (identical corpus surface for both arms, §6.1) --------
 
 
-def corpus_tool_instructions(data_root: Path, *, web_entry: str | None = None) -> str:
+def corpus_tool_instructions(data_root: Path, *, web_entry: str | None = None,
+                             search_budget: dict[str, int] | None = None,
+                             budget_file: Path | None = None) -> str:
     """The one corpus surface both arms see: search, snippet read, page view.
 
     No document list, no year hints, no file names — the agent must locate
@@ -228,6 +270,11 @@ def corpus_tool_instructions(data_root: Path, *, web_entry: str | None = None) -
     configuration actually names one (``config.json web_search.entrypoint``,
     frozen at Q3).  With no entry wired, the instructions say so explicitly
     instead of promising a capability the runner does not provide.
+
+    ``search_budget``/``budget_file`` (protocol §8.1) wire the identical
+    shared search budget into the tool invocations themselves: the CLI
+    refuses past the cap for either arm, and the journal doubles as the
+    episode's usage record.
     """
     manifest_path = Path(data_root).expanduser().resolve() / "corpus" / "index" / "manifest.json"
     documents = "全量"
@@ -239,13 +286,23 @@ def corpus_tool_instructions(data_root: Path, *, web_entry: str | None = None) -
                 "只读取原始发布者正文并记录全部请求；禁止浏览基准答案键、公开解题文章或任何评测输出。"
                 if web_entry else
                 "本次运行未接入联网搜索入口；全部资料只能来自上述本地只读语料，不要假定可以联网检索。")
+    search_flags = page_flags = ""
+    budget_line = ""
+    if budget_file is not None and search_budget:
+        search_flags = (f" --budget-file {Path(budget_file)} --search-budget "
+                        f"{search_budget.get('search_requests', 0)}")
+        page_flags = (f" --budget-file {Path(budget_file)} --page-budget "
+                      f"{search_budget.get('source_pages', 0)}")
+        budget_line = (f"\n检索与按页查看共享本 episode 预算（检索 {search_budget.get('search_requests', 0)} 次、"
+                       f"按页 {search_budget.get('source_pages', 0)} 次，两组同额同工具）；"
+                       "超出后命令会拒绝执行——保留已获取的证据继续作答，不要重试被拒的操作。")
     return f"""可用资料：一套本地只读语料（美国财政部公报全量解析，{documents} 份文档；不提供文件清单，也不给任何题目相关的文件提示）。
 统一用以下命令操作语料（Python 已就绪，直接运行；输出为 JSON）：
 - 查找文档：python3 {tool} docs --data-root {root} --query 关键词子串
-- 关键词检索：python3 {tool} search --data-root {root} --query "关键词" [--doc 文档名] [--limit 20]
+- 关键词检索：python3 {tool} search --data-root {root} --query "关键词" [--doc 文档名] [--limit 20]{search_flags}
 - 片段读取（1-based 行号）：python3 {tool} read --data-root {root} --doc 文档名 --start-line N --end-line M
-- 按页查看（0-based page_index）：python3 {tool} page --data-root {root} --doc 文档名 --page-index P
-检索词按文档年代、主题、指标与表头术语组合；同一文档先检索定位行号，再片段读取或按页查看；表格元素内容较长时会截断，需要完整内容时缩小行号范围。
+- 按页查看（0-based page_index）：python3 {tool} page --data-root {root} --doc 文档名 --page-index P{page_flags}
+检索词按文档年代、主题、指标与表头术语组合；同一文档先检索定位行号，再片段读取或按页查看；表格元素内容较长时会截断，需要完整内容时缩小行号范围。{budget_line}
 {web_line}"""
 
 
@@ -399,6 +456,258 @@ class SubmissionBox:
         return (self.submissions / f"{chosen['seq']:04d}-answer.json").read_bytes()
 
 
+# --- real-execution context: OS solver boundary + shared transports ------------
+
+
+def _git(args: list[str]) -> str:
+    result = subprocess.run(["git", "-C", str(WORKTREE_ROOT), *args], capture_output=True,
+                            text=True, timeout=30)
+    if result.returncode != 0:
+        raise RunnerError(f"git {' '.join(args)} failed: {result.stderr.strip()[:200]}")
+    return result.stdout.strip()
+
+
+def code_state_matches(integration_commit: str) -> dict[str, Any]:
+    """Real runs execute the frozen code: src/ and experiments/ must be
+    byte-identical to ``baseline.integration_commit`` — except the freeze
+    record itself (config.json / RUNBOOK.md), which is exactly what moves in
+    the freeze commit.  Returns a report; ``matches`` False fails closed.
+    """
+    checked = ["src", "experiments",
+               ":!experiments/officeqa_structured/config.json",
+               ":!experiments/officeqa_structured/RUNBOOK.md"]
+    try:
+        head = _git(["rev-parse", "HEAD"])
+        diff = subprocess.run(["git", "-C", str(WORKTREE_ROOT), "diff", "--quiet",
+                               integration_commit, "--", *checked],
+                              capture_output=True, text=True, timeout=60)
+        return {"matches": diff.returncode == 0, "head": head, "integration_commit": integration_commit,
+                "checked_paths": checked}
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"matches": False, "error": f"{type(exc).__name__}: {exc}",
+                "integration_commit": integration_commit, "checked_paths": checked}
+
+
+def prepare_solver_boundary(data_root: Path, config: dict[str, Any]) -> dict[str, Any]:
+    """Materialize the OS-level solver boundary (design §2 / protocol §6.4).
+
+    macOS seatbelt profile denying reads on ``gated/`` and ``evaluator-only/``
+    (plus reads/writes on the original dataset directory and writes on the
+    staged corpus), plus an ``opencode`` shim so every solver process — arm
+    A's ``opencode run`` and arm B's managed ``opencode serve`` — executes
+    inside it.  A live probe proves the fence actually bites before any
+    episode starts; the canonical (``/private``-resolved) paths matter,
+    seatbelt does not match through the ``/tmp`` symlink.
+    """
+    boundary = (config.get("isolation") or {}).get("solver_boundary") or {}
+    if boundary.get("kind") != "sandbox":
+        raise RunnerError("real runs need isolation.solver_boundary.kind=sandbox in this environment")
+    data_root = Path(data_root).expanduser().resolve()
+    area = data_root / "solver-boundary"
+    profile_path = area / "solver.sb"
+    shim_dir = area / "bin"
+    real_binary = shutil.which("opencode") or str(Path.home() / ".opencode" / "bin" / "opencode")
+    if not Path(real_binary).is_file():
+        raise RunnerError(f"opencode CLI not found at {real_binary}")
+    # (action, path): deny-read fences confidentiality (gated snapshot,
+    # evaluator outputs, the original dataset directory); deny-write protects
+    # the staged corpus — its files are hardlinks, an edit would corrupt the
+    # dataset itself.  Corpus READS stay allowed: that is the shared surface.
+    gates = (
+        ("deny-read", "gated", data_root / "gated"),
+        ("deny-read", "evaluator-only", data_root / "evaluator-only"),
+        ("deny-read", "dataset source", Path(config["dataset"]["source_root"]).expanduser().resolve()),
+        ("deny-write", "staged corpus", data_root / "corpus"),
+    )
+    rules = []
+    for action, label, path in gates:
+        if not path.exists():
+            raise RunnerError(f"solver boundary gate path is missing ({label}): {path}")
+        verbs = ("file-read*",) if action == "deny-read" else ("file-write*",)
+        for verb in verbs:
+            rules.append(f"(deny {verb} (subpath \"{path}\"))  ; {action}: {label}")
+    profile = "(version 1)\n(allow default)\n" + "\n".join(rules) + "\n"
+    area.mkdir(parents=True, exist_ok=True)
+    profile_path.write_text(profile, encoding="utf-8")
+    os.chmod(profile_path, 0o644)
+    shim_dir.mkdir(parents=True, exist_ok=True)
+    shim = shim_dir / "opencode"
+    shim.write_text("#!/bin/sh\n"
+                    f"exec {SANDBOX_EXEC} -f {profile_path} -- {real_binary} \"$@\"\n",
+                    encoding="utf-8")
+    os.chmod(shim, 0o755)
+    # Live probe (before any episode): the fence must deny a gated read and
+    # still allow an ordinary one.  Refuse to start real episodes otherwise.
+    probe = {"profile": str(profile_path), "shim": str(shim), "real_binary": real_binary,
+             "rules": [rule.split(";", 1)[0].strip() for rule in rules]}
+    for label, path in (("gated", data_root / "gated"), ("evaluator-only", data_root / "evaluator-only")):
+        member = sorted(path.glob("*"))[0] if sorted(path.glob("*")) else None
+        if member is None:
+            continue
+        denied = subprocess.run([SANDBOX_EXEC, "-f", str(profile_path), "/bin/cat", str(member)],
+                                capture_output=True, timeout=30)
+        probe[f"probe:{label}"] = {"path": str(member), "denied": denied.returncode != 0}
+        if denied.returncode == 0:
+            raise RunnerError(f"solver boundary probe failed: {label} stayed readable under the sandbox")
+    allowed = subprocess.run([SANDBOX_EXEC, "-f", str(profile_path), "/bin/cat", str(profile_path)],
+                             capture_output=True, timeout=30)
+    probe["probe:profile-readable"] = {"denied": allowed.returncode != 0}
+    if allowed.returncode != 0:
+        raise RunnerError("solver boundary probe failed: the sandbox denied its own profile")
+    # B's managed serve resolves `opencode` through PATH (host_bins.find);
+    # prepending the shim dir keeps that spawn inside the boundary too.
+    os.environ["PATH"] = f"{shim_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+    return probe
+
+
+@dataclass
+class RealContext:
+    """Everything the real transports need, gated and prepared once per run."""
+    model: str
+    variant: str | None
+    host_version: str
+    shim: Path
+    solver_env: dict[str, str]
+
+    @classmethod
+    def build(cls, config: dict[str, Any], boundary_probe: dict[str, Any]) -> "RealContext":
+        runtime = config["runtime"]
+        from briefloop.host_bins import find as find_host_bin
+        real_binary = boundary_probe["real_binary"]
+        resolved = find_host_bin("opencode") or real_binary
+        version = subprocess.run([real_binary, "--version"], capture_output=True, text=True, timeout=30)
+        host_version = (version.stdout or version.stderr).strip().splitlines()[0][:120]
+        return cls(model=runtime["model"], variant=runtime.get("reasoning_effort"),
+                   host_version=host_version, shim=Path(boundary_probe["shim"]),
+                   solver_env=isolation.solver_environment())
+
+
+class OpencodeRunSolver:
+    """Arm-A real transport (protocol §5.1): ``opencode run`` in the workspace.
+
+    One process per turn holds one §8.1 slot for its whole duration; the
+    episode deadline kills the process group (the CLI boots its own server
+    tree).  The first turn carries NATIVE_FRAME; a format-repair turn
+    continues the same session with gold-blind feedback (protocol §4).
+    """
+
+    def __init__(self, real: RealContext, workspace: Path, limiter: "ModelCallLimiter"):
+        self.real = real
+        self.workspace = Path(workspace)
+        self.limiter = limiter
+        self.turns: list[dict[str, Any]] = []
+
+    def _write_host_config(self, episode_dir: Path) -> None:
+        """Workspace opencode.json: the non-interactive permission surface.
+
+        Bash and workspace edits allowed (the corpus tool and the answer file
+        need them); question/web denied (offline run, no user to ask); file
+        tools scoped to this episode directory plus the read-only corpus.
+        """
+        canonical = lambda path: str(Path(path).resolve())
+        config = {
+            "$schema": "https://opencode.ai/config.json",
+            "permission": {
+                "question": "deny",
+                "webfetch": "deny",
+                "websearch": "deny",
+                "bash": "allow",
+                "edit": "allow",
+                "external_directory": {
+                    "*": "deny",
+                    canonical(episode_dir) + "/**": "allow",
+                },
+            },
+        }
+        (self.workspace / "opencode.json").write_text(json.dumps(config, ensure_ascii=False, indent=2),
+                                                      encoding="utf-8")
+
+    def turn(self, prompt: str, *, title: str, deadline: float,
+             continue_last: bool = False, tag: str = "main") -> dict[str, Any]:
+        argv = [str(self.real.shim), "run", "--dir", str(self.workspace),
+                "--model", self.real.model, "--title", title]
+        if self.real.variant:
+            argv += ["--variant", self.real.variant]
+        if continue_last:
+            argv += ["--continue"]
+        argv.append(prompt)
+        stdout_path = self.workspace / f"opencode-{tag}.stdout"
+        stderr_path = self.workspace / f"opencode-{tag}.stderr"
+        record: dict[str, Any] = {"tag": tag, "argv": [str(self.real.shim), "run", "--dir", str(self.workspace),
+                                                       "--model", self.real.model]
+                                  + (["--variant", self.real.variant] if self.real.variant else [])
+                                  + (["--continue"] if continue_last else []),
+                                  "stdout": str(stdout_path), "stderr": str(stderr_path)}
+        started = time.time()
+        with self.limiter.slot():
+            with stdout_path.open("wb") as out, stderr_path.open("wb") as err:
+                process = subprocess.Popen(argv, cwd=str(self.workspace), env=self.real.solver_env,
+                                            stdin=subprocess.DEVNULL, stdout=out, stderr=err,
+                                            start_new_session=True)
+                try:
+                    record["returncode"] = process.wait(timeout=max(1.0, deadline - time.time()))
+                    record["deadline_hit"] = False
+                except subprocess.TimeoutExpired:
+                    record["deadline_hit"] = True
+                    self._kill_tree(process)
+                    record["returncode"] = process.poll()
+        record["seconds"] = round(time.time() - started, 1)
+        self.turns.append(record)
+        return record
+
+    @staticmethod
+    def _kill_tree(process: subprocess.Popen) -> None:
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        except OSError:
+            process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except OSError:
+                process.kill()
+            process.wait(timeout=10)
+
+
+class SlotAccountedRuntime:
+    """Wrap the real InteractiveRuntime so every model turn holds one §8.1 slot.
+
+    ``execute`` is the single entry the Worker uses for every model turn
+    (generate / review / revision); wrapping it keeps the run-wide cap honest
+    without touching product code.  Everything else delegates.
+    """
+
+    def __init__(self, inner: Any, limiter: "ModelCallLimiter"):
+        self._inner = inner
+        self._limiter = limiter
+
+    def execute(self, job: dict[str, Any], prompt: str, folder: str,
+                on_tick: Callable[[], None] = lambda: None, **kwargs: Any) -> dict[str, Any]:
+        with self._limiter.slot():
+            return self._inner.execute(job, prompt, folder, on_tick=on_tick, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._inner, name)
+
+
+def real_briefloop_runtime(store: Any, limiter: "ModelCallLimiter") -> SlotAccountedRuntime:
+    """The real B transport: InteractiveRuntime over a managed OpencodeHarness.
+
+    The workspace settings freeze ``agent_backend=opencode`` with the frozen
+    model/variant, so every job payload carries the same runtime identity
+    (store.enqueue freezes it at admission); the harness boots the managed
+    ``opencode serve`` through the sandbox shim resolved via PATH.
+    """
+    from briefloop.interactive_runtime import InteractiveRuntime
+    from briefloop.opencode_harness import OpencodeHarness
+
+    harness = OpencodeHarness(store)
+    inner = InteractiveRuntime(store, backends={"opencode": harness})
+    return SlotAccountedRuntime(inner, limiter)
+
+
 # --- arm A: native control (stub transport in dry-run) -------------------------
 
 
@@ -465,7 +774,8 @@ class StubNativeSolver:
 
 def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: str,
                        order_index: int, limiter: "ModelCallLimiter",
-                       web_entry: str | None = None) -> dict[str, Any]:
+                       web_entry: str | None = None,
+                       real: RealContext | None = None) -> dict[str, Any]:
     episode_dir = Path(data_root) / "episodes" / label / "A" / case.case_key
     if episode_dir.exists():
         raise RunnerError(f"episode directory already exists: {episode_dir}")
@@ -478,33 +788,72 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
     # drained into the SubmissionBox after the solver finishes.
     submit_dir = episode_dir / "submit"
     submit_dir.mkdir()
+    budget_file = episode_dir / "corpus-budget.jsonl"
     (workspace / "question.md").write_text(f"# OfficeQA {case.uid}\n\n{case.question}\n", encoding="utf-8")
     (workspace / "prompt.md").write_text(
         native_frame(submit_dir, web_entry) + "\n## Question\n\n" + case.question + "\n\n"
-        + corpus_tool_instructions(data_root, web_entry=web_entry) + "\n",
+        + corpus_tool_instructions(data_root, web_entry=web_entry,
+                                   search_budget=budget.search_budget if real else None,
+                                   budget_file=budget_file if real else None) + "\n",
         encoding="utf-8")
     tool_calls: list[dict[str, Any]] = []
     box = SubmissionBox(episode_dir, deadline, repair_budget=budget.format_repair_attempts)
-    with corpus_adapter.CorpusAdapter(Path(data_root) / "corpus") as adapter:
-        solver = StubNativeSolver()
-        solver.solve(case, submit_dir, adapter, tool_calls)
-        # Format-repair loop (§4): drain the submit directory, hand gold-blind
-        # feedback to the agent, let it rewrite; bounded by the episode budget.
-        for _ in range(max(0, box.repair_budget) + 1):
-            entries = box.drain_submit_directory(submit_dir)
-            latest = entries[-1] if entries else None
-            if latest is None or latest.get("accepted"):
-                break
-            feedback = box.offer_format_repair(latest)
-            if feedback is None:
-                break
-            solver.resubmit_after_format_feedback(submit_dir, feedback, tool_calls)
-        box.drain_submit_directory(submit_dir)
+    turns: list[dict[str, Any]] = []
+    error: str | None = None
+    if real is None:
+        with corpus_adapter.CorpusAdapter(Path(data_root) / "corpus") as adapter:
+            solver = StubNativeSolver()
+            solver.solve(case, submit_dir, adapter, tool_calls)
+            # Format-repair loop (§4): drain the submit directory, hand gold-blind
+            # feedback to the agent, let it rewrite; bounded by the episode budget.
+            for _ in range(max(0, box.repair_budget) + 1):
+                entries = box.drain_submit_directory(submit_dir)
+                latest = entries[-1] if entries else None
+                if latest is None or latest.get("accepted"):
+                    break
+                feedback = box.offer_format_repair(latest)
+                if feedback is None:
+                    break
+                solver.resubmit_after_format_feedback(submit_dir, feedback, tool_calls)
+            box.drain_submit_directory(submit_dir)
+        identifiers = {"transport": "stub-native", "host": None, "model": None}
+    else:
+        solver = OpencodeRunSolver(real, workspace, limiter)
+        solver._write_host_config(episode_dir)
+        prompt = (workspace / "prompt.md").read_text(encoding="utf-8")
+        try:
+            turns.append(solver.turn(prompt, title=f"OfficeQA {case.uid} · A", deadline=deadline))
+            # Format-repair loop (§4) over the real transport: gold-blind feedback
+            # is delivered as a continuation turn of the SAME session; the agent
+            # (never this program) authors the resubmission.  Past the deadline
+            # there is no repair — whatever is accepted so far is the answer.
+            if time.time() <= deadline:
+                for _ in range(max(0, box.repair_budget) + 1):
+                    entries = box.drain_submit_directory(submit_dir)
+                    latest = entries[-1] if entries else None
+                    if latest is None or latest.get("accepted"):
+                        break
+                    feedback = box.offer_format_repair(latest)
+                    if feedback is None or time.time() > deadline:
+                        break
+                    turns.append(solver.turn(feedback, title=f"OfficeQA {case.uid} · A · format-repair",
+                                             deadline=deadline, continue_last=True, tag="format-repair"))
+        except Exception as exc:  # noqa: BLE001 - a crashed transport still keeps
+            # every accepted submission and lands in the denominator (§8.3).
+            error = f"{type(exc).__name__}: {exc}"
+        try:
+            box.drain_submit_directory(submit_dir)
+        except Exception as exc:  # noqa: BLE001
+            error = (error + "; " if error else "") + f"drain failed: {exc}"
+        identifiers = {"transport": "opencode-run", "host": real.host_version,
+                       "model": real.model, "variant": real.variant,
+                       "binary": str(real.shim)}
     record = _episode_record(case=case, arm="A", label=label, order_index=order_index,
                              episode_dir=episode_dir, started=started, deadline=deadline,
                              budget=budget, box=box, tool_calls=tool_calls,
-                             identifiers={"transport": "stub-native", "host": None, "model": None},
-                             linkage=None, usage_complete=False)
+                             identifiers=identifiers,
+                             linkage={"turns": turns} if turns else None, usage_complete=False,
+                             error=error)
     return record
 
 
@@ -619,7 +968,8 @@ class StubBriefloopTransport:
         return {}
 
 
-def _episode_workspace_settings(store: Any, budget: Budget) -> None:
+def _episode_workspace_settings(store: Any, budget: Budget,
+                                real: RealContext | None = None) -> None:
     """Design §4 closure list, enforced at the episode workspace level.
 
     Beyond the original four keys this pins the remaining closure items the
@@ -633,6 +983,11 @@ def _episode_workspace_settings(store: Any, budget: Budget) -> None:
     ``max_reports`` is deliberately 1: it gates how many generate jobs one
     Worker may run at once inside a single episode, NOT the protocol §8.1
     model-call cap — that is the runner-wide ModelCallLimiter.
+
+    With ``real`` (Q3), the frozen runtime identity is pinned here too:
+    ``agent_backend=opencode`` plus the frozen model and variant, so
+    ``store.enqueue`` freezes exactly that runtime into every job payload
+    (protocol §5.1: 每个角色使用同一模型及推理档，冻结后不得换模型).
     """
     raw = store.meta("settings")
     raw.update({"auto_learn": False,
@@ -644,6 +999,9 @@ def _episode_workspace_settings(store: Any, budget: Budget) -> None:
                 "search_policy": {"primary_provider": "native", "supplemental_providers": [],
                                   "native_search_enabled": False, "coverage_mode": "primary_only"},
                 "max_reports": 1})
+    if real is not None:
+        raw.update({"agent_backend": "opencode", "model": real.model,
+                    "model_variant": real.variant, "model_selection_required": False})
     store.set_meta("settings", raw)
     # 设计 §4：episode 内关闭定时任务及其他后台模型作业——独立、干净的
     # episode 工作区天然没有定时报告与通知；显式断言二者为空，一旦未来
@@ -657,7 +1015,8 @@ def _episode_workspace_settings(store: Any, budget: Budget) -> None:
 
 def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label: str,
                           order_index: int, limiter: "ModelCallLimiter",
-                          web_entry: str | None = None) -> dict[str, Any]:
+                          web_entry: str | None = None,
+                          real: RealContext | None = None) -> dict[str, Any]:
     from briefloop.answer_result import RESULT_FORMAT, answer_of
     from briefloop.external_requests import dispatch
     from briefloop.runtime import Worker
@@ -671,81 +1030,125 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
     deadline = started + budget.wall_clock_seconds
     workspace = episode_dir / "workspace"
     store = Store(workspace)
-    _episode_workspace_settings(store, budget)
+    _episode_workspace_settings(store, budget, real=real)
     # allow_web tells the truth about what is wired: no controlled entry
     # configured (Q3 freeze) means no web claim and no web permission.
+    budget_file = episode_dir / "corpus-budget.jsonl"
     requirements = {"title": f"OfficeQA {case.uid}"[:200], "objective": case.question,
                     "key_questions": [case.question], "result_format": RESULT_FORMAT,
                     "allow_web": web_entry is not None, "fact_check": False,
-                    "raw_input": corpus_tool_instructions(data_root, web_entry=web_entry)}
+                    "raw_input": corpus_tool_instructions(data_root, web_entry=web_entry,
+                                                          search_budget=budget.search_budget if real else None,
+                                                          budget_file=budget_file if real else None)}
+    if real is not None:
+        # Protocol §8.1: the shared search budget rides the run requirements
+        # through the product's own ResearchBudget fields (same KINDS shape).
+        requirements["research_budget"] = budget.search_budget
     submitted = dispatch(store, {"workspace_id": store.meta("workspace_id"), "action": "submit",
                                  "request_id": f"oqa-{case.case_key[:16]}",
                                  "requirements": requirements, "source_ids": []})
     job_id, run_id = submitted["job_id"], submitted["run_id"]
-    box = SubmissionBox(episode_dir, deadline)
+    box = SubmissionBox(episode_dir, deadline, repair_budget=budget.format_repair_attempts if real else 0)
     tool_calls: list[dict[str, Any]] = []
     snapshots: set[str] = set()
 
-    with corpus_adapter.CorpusAdapter(Path(data_root) / "corpus") as adapter:
-        transport = StubBriefloopTransport(store, adapter, limiter)
+    if real is None:
+        with corpus_adapter.CorpusAdapter(Path(data_root) / "corpus") as adapter:
+            transport = StubBriefloopTransport(store, adapter, limiter)
+            worker = Worker(store, runtime=transport, report_runtime_factory=lambda: transport)
+            worker._review_runtime = transport
+            worker.start()
+            try:
+                state = _drive_briefloop_episode(store, worker, box, job_id, run_id, deadline, snapshots)
+            finally:
+                worker.close()
+            tool_calls.extend(transport.tool_calls)
+            model_calls = list(transport.calls)
+        identifiers = {"transport": "stub-briefloop", "host": None, "model": None}
+        error = None
+    else:
+        transport = real_briefloop_runtime(store, limiter)
         worker = Worker(store, runtime=transport, report_runtime_factory=lambda: transport)
         worker._review_runtime = transport
         worker.start()
+        state: dict[str, Any] = {}
+        error: str | None = None
         try:
-            state: dict[str, Any] = {}
-            while True:
-                state = dispatch(store, {"workspace_id": store.meta("workspace_id"),
-                                         "action": "query", "job_id": job_id})
-                for version in store.rows("SELECT id FROM briefs WHERE run_id=? ORDER BY rowid", (run_id,)):
-                    if version["id"] in snapshots:
-                        continue
-                    snapshots.add(version["id"])
-                    identity = answer_of(store, version["id"])
-                    if identity is None:
-                        continue
-                    entry = box.accept(_canonical_bytes(identity["answer"]), source="briefloop-version")
-                    entry["version_id"] = version["id"]
-                    if not entry["accepted"]:
-                        # §4 repair accounting for B as well: a format-invalid
-                        # version consumes the shared episode repair budget
-                        # with the same gold-blind feedback.  Delivering that
-                        # feedback into the run is real-transport plumbing
-                        # (the worker's revision path carries it); the dry-run
-                        # stub always projects valid answers, so this stays
-                        # dormant here by construction.
-                        box.offer_format_repair(entry)
-                if state.get("terminal"):
-                    break
-                if time.time() > deadline:
-                    worker.stop_job(job_id)
-                    break
-                time.sleep(0.05)
-            # A revision admitted in the last instant still counts: sweep once
-            # more after the job settled (protocol §8.3 keeps every accepted
-            # submission, failures never erase them).
-            for version in store.rows("SELECT id FROM briefs WHERE run_id=? ORDER BY rowid", (run_id,)):
-                if version["id"] not in snapshots:
-                    snapshots.add(version["id"])
-                    identity = answer_of(store, version["id"])
-                    if identity is not None:
-                        entry = box.accept(_canonical_bytes(identity["answer"]), source="briefloop-version")
-                        entry["version_id"] = version["id"]
-                        if not entry["accepted"]:
-                            box.offer_format_repair(entry)
+            state = _drive_briefloop_episode(store, worker, box, job_id, run_id, deadline, snapshots)
+        except Exception as exc:  # noqa: BLE001 - keep every admitted version and
+            # stay in the denominator; the failure rides the record (§8.3).
+            error = f"{type(exc).__name__}: {exc}"
         finally:
             worker.close()
-        tool_calls.extend(transport.tool_calls)
-        model_calls = list(transport.calls)
+        # Honest post-hoc accounting at job granularity: every model turn the
+        # product ran for this episode is one queued→terminal job row.  Token
+        # totals stay best-effort (usage_complete=False) until per-role usage
+        # is proven complete.
+        jobs = store.rows(
+            "SELECT id, kind, status, error FROM jobs WHERE json_extract(payload,'$.run_id')=? ORDER BY rowid",
+            (run_id,))
+        model_calls = [{"job_id": job["id"], "kind": job["kind"], "status": job["status"]}
+                       for job in jobs]
+        identifiers = {"transport": "briefloop-interactive-runtime+opencode", "host": real.host_version,
+                       "model": real.model, "variant": real.variant}
     record = _episode_record(case=case, arm="B", label=label, order_index=order_index,
                              episode_dir=episode_dir, started=started, deadline=deadline,
                              budget=budget, box=box, tool_calls=tool_calls,
-                             identifiers={"transport": "stub-briefloop", "host": None, "model": None},
+                             identifiers=identifiers,
                              linkage={"run_id": run_id, "job_id": job_id,
                                       "job_status": state.get("status"),
                                       "version_ids": sorted(snapshots),
                                       "model_calls": model_calls},
-                             usage_complete=False)
+                             usage_complete=False, error=error)
     return record
+
+
+def _drive_briefloop_episode(store: Any, worker: Any, box: SubmissionBox, job_id: str,
+                             run_id: str, deadline: float, snapshots: set[str]) -> dict[str, Any]:
+    """Poll the real external_requests query surface until terminal or deadline.
+
+    Every admitted brief version is projected through ``answer_of`` and
+    submitted to the box (§8.3); format-invalid versions consume the shared
+    repair budget with the same gold-blind feedback path arm A uses.
+    """
+    from briefloop.answer_result import answer_of
+    from briefloop.external_requests import dispatch
+
+    def admit_versions() -> None:
+        for version in store.rows("SELECT id FROM briefs WHERE run_id=? ORDER BY rowid", (run_id,)):
+            if version["id"] in snapshots:
+                continue
+            snapshots.add(version["id"])
+            identity = answer_of(store, version["id"])
+            if identity is None:
+                continue
+            entry = box.accept(_canonical_bytes(identity["answer"]), source="briefloop-version")
+            entry["version_id"] = version["id"]
+            if not entry["accepted"]:
+                # §4 repair accounting for B as well: a format-invalid version
+                # consumes the shared episode repair budget with the same
+                # gold-blind feedback.  The dry-run stub always projects valid
+                # answers, so this stays dormant there by construction; in a
+                # real run the feedback is recorded here for the record while
+                # the worker's own revision chain carries the repair turn.
+                box.offer_format_repair(entry)
+
+    state: dict[str, Any] = {}
+    while True:
+        state = dispatch(store, {"workspace_id": store.meta("workspace_id"),
+                                 "action": "query", "job_id": job_id})
+        admit_versions()
+        if state.get("terminal"):
+            break
+        if time.time() > deadline:
+            worker.stop_job(job_id)
+            break
+        time.sleep(0.05)
+    # A revision admitted in the last instant still counts: sweep once more
+    # after the job settled (protocol §8.3 keeps every accepted submission,
+    # failures never erase them).
+    admit_versions()
+    return state
 
 
 # --- episode record (protocol §3.3) --------------------------------------------
@@ -754,14 +1157,16 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
 def _episode_record(*, case: Case, arm: str, label: str, order_index: int, episode_dir: Path,
                     started: float, deadline: float, budget: Budget, box: SubmissionBox,
                     tool_calls: list[dict[str, Any]], identifiers: dict[str, Any],
-                    linkage: dict[str, Any] | None, usage_complete: bool) -> dict[str, Any]:
+                    linkage: dict[str, Any] | None, usage_complete: bool,
+                    error: str | None = None) -> dict[str, Any]:
     finished = time.time()
     chosen = box.chosen()
+    corpus_budget_file = Path(episode_dir) / "corpus-budget.jsonl"
     record = {
         "schema_version": EPISODE_SCHEMA,
         "protocol_id": None,  # filled by the caller with config identity
         "experiment_id": None,
-        "dataset": {"benchmark": prepare_dataset.DATASET, "revision": case.revision},
+        "dataset": {"benchmark": case.dataset, "revision": case.revision},
         "case_key": case.case_key,
         "uid": case.uid,
         "question_sha256": case.question_sha256,
@@ -777,8 +1182,11 @@ def _episode_record(*, case: Case, arm: str, label: str, order_index: int, episo
         "budget": {"wall_clock_seconds": budget.wall_clock_seconds,
                    "max_concurrent_model_calls": budget.max_concurrent_model_calls,
                    "max_automatic_revisions_B": budget.max_automatic_revisions_B,
-                   "format_repair_attempts": budget.format_repair_attempts},
+                   "format_repair_attempts": budget.format_repair_attempts,
+                   "search_budget": dict(budget.search_budget)},
         "tool_calls": tool_calls,
+        "corpus_budget_usage": (corpus_adapter.budget_usage(corpus_budget_file)
+                                if corpus_budget_file.is_file() else {}),
         "usage_complete": usage_complete,
         "format_repairs_issued": box.repairs_used,
         "submissions": box.entries(),
@@ -786,8 +1194,8 @@ def _episode_record(*, case: Case, arm: str, label: str, order_index: int, episo
                                "received_at": chosen["received_at"],
                                "status": chosen["status"]} if chosen else None),
         "workspace": str(episode_dir),
-        "error": None,
-        **({"briefloop": linkage} if linkage else {}),
+        "error": error,
+        **({("briefloop" if arm == "B" else "native"): linkage} if linkage else {}),
     }
     (episode_dir / "episode_record.json").write_text(
         json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -800,6 +1208,61 @@ _EPISODE_RUNNERS: dict[str, Callable[..., dict[str, Any]]] = {"A": run_native_ep
                                                               "B": run_briefloop_episode}
 
 
+def _walk_nulls(node: Any, path: str = "config") -> list[str]:
+    """Every null/TODO leaf — the protocol §11 Q10 freeze condition."""
+    found: list[str] = []
+    if node is None:
+        found.append(path)
+    elif isinstance(node, str) and "TODO" in node:
+        found.append(f"{path} (contains TODO)")
+    elif isinstance(node, dict):
+        for key, value in node.items():
+            found.extend(_walk_nulls(value, f"{path}.{key}"))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            found.extend(_walk_nulls(value, f"{path}[{index}]"))
+    return found
+
+
+def config_freeze_errors(config: dict[str, Any]) -> list[str]:
+    """Protocol §10 Q3 / §11 Q10: the frozen-config validation behind the
+    real-execution gate.  A real run may start only when this is empty —
+    plus the isolation assertions and the live solver-boundary probe the
+    runner performs on top of it.
+    """
+    errors = [f"null/TODO 字段：{path}" for path in _walk_nulls(config)]
+    commit = ((config.get("baseline") or {}).get("integration_commit") or "")
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        errors.append("baseline.integration_commit 必须是 40 位十六进制提交 SHA")
+    runtime = config.get("runtime") or {}
+    if runtime.get("host") != "opencode":
+        errors.append("runtime.host 必须是 opencode（本次接线的唯一真实宿主）")
+    if "/" not in str(runtime.get("model") or ""):
+        errors.append("runtime.model 必须是 provider/model 形式")
+    if not str(runtime.get("reviewer_model") or "").strip():
+        errors.append("runtime.reviewer_model 未冻结")
+    if not str(runtime.get("reasoning_effort") or "").strip():
+        errors.append("runtime.reasoning_effort 未冻结")
+    search = (config.get("budget") or {}).get("search_budget")
+    if not isinstance(search, dict) or not all(
+            isinstance(search.get(kind), int) and search.get(kind, -1) >= 0
+            for kind in SEARCH_BUDGET_KINDS):
+        errors.append(f"budget.search_budget 必须含非负整数 {list(SEARCH_BUDGET_KINDS)}")
+    if not isolation.boundary_report(config)["enforced"]:
+        errors.append("isolation.solver_boundary 未配置为真实 OS 边界（dedicated-user 或 sandbox）")
+    if not str((config.get("web_search") or {}).get("entrypoint") or "").strip():
+        errors.append("web_search.entrypoint 未显式冻结（离线运行写 \"offline\"）")
+    dataset = config.get("dataset") or {}
+    if not re.fullmatch(r"[0-9a-f]{64}", str(dataset.get("revision") or "")):
+        errors.append("dataset.revision 必须是 64 位十六进制数据修订哈希")
+    eligible = dataset.get("eligible_questions")
+    if not isinstance(eligible, dict) or not (eligible.get("dev_pilot") or {}).get("case_keys"):
+        errors.append("dataset.eligible_questions.dev_pilot.case_keys 未冻结（开发 6 题）")
+    if not dataset.get("exposure_ledger"):
+        errors.append("dataset.exposure_ledger 未冻结")
+    return errors
+
+
 def _select_cases(cases: list[Case], *, limit: int | None, case_keys: list[str],
                   pool: str | None) -> list[Case]:
     if case_keys:
@@ -810,7 +1273,7 @@ def _select_cases(cases: list[Case], *, limit: int | None, case_keys: list[str],
         return [by_key[key] for key in case_keys]
     selected = cases
     if pool is not None:
-        if pool not in ("unknown", "exposed"):
+        if pool not in ("unknown", "exposed", "dev"):
             raise RunnerError(f"unknown pool {pool!r}")
         selected = [case for case in cases if case.exposure == pool]
         if not selected:
@@ -819,17 +1282,8 @@ def _select_cases(cases: list[Case], *, limit: int | None, case_keys: list[str],
 
 
 def command_run(args: argparse.Namespace) -> int:
-    if not args.dry_run:
-        # Authorization gate (design §5): Q3/Q4 need explicit user sign-off,
-        # and no real transport is wired in this tree.  Fail closed — and the
-        # same gate demands an enforced OS-level solver boundary plus a clean
-        # data-area audit, because permission bits alone do not separate a
-        # same-user solver from the restricted dataset (design §2).
-        raise RealExecutionGateError(
-            "真实模型执行未接入：本 runner 只有 --dry-run（stub）路径；Q3 授权与冻结（config 无 null/TODO）后才能实现并启用真实宿主/模型传输。"
-            "真实开跑还必须先通过 isolation 断言（专用 OS 用户或沙箱承担同用户隔离，config isolation.solver_boundary 非空；"
-            "数据区权限审计为 green；solver 环境无数据集凭据）")
-    config = load_config()
+    config_path = Path(args.config).expanduser().resolve()
+    config = load_config(config_path)
     budget = Budget.from_config(config)
     data_root = Path(args.data_root).expanduser().resolve()
     # Isolation preflight (design §2 / protocol §6.4): fail closed on
@@ -837,7 +1291,33 @@ def command_run(args: argparse.Namespace) -> int:
     isolation_audit = isolation.audit_data_area(data_root)
     if isolation_audit["status"] != "green":
         raise RunnerError(f"data-area isolation audit failed: {isolation_audit['failures'][:5]}")
+    real: RealContext | None = None
+    boundary_probe: dict[str, Any] | None = None
+    code_state: dict[str, Any] | None = None
+    if not args.dry_run:
+        # Q3 real-execution gate (design §5 / protocol §11 Q10): the frozen
+        # config validation replaces the old blanket refusal.  On top of it:
+        # enforced OS isolation, credential-free solver environment, and the
+        # integration-commit code state — fail closed on any of them.
+        errors = config_freeze_errors(config)
+        if errors:
+            raise RealExecutionGateError(
+                "config 冻结校验未通过，拒绝真实执行：" + "；".join(errors[:8])
+                + f"（共 {len(errors)} 项；config={config_path}）")
+        isolation.assert_real_run_isolation(config, data_root)
+        # B's managed serve inherits this process's environment; scrub dataset
+        # credentials here so no solver path can inherit them either.
+        for name in isolation.CREDENTIAL_ENV_VARS:
+            os.environ.pop(name, None)
+        code_state = code_state_matches(config["baseline"]["integration_commit"])
+        if not code_state.get("matches"):
+            raise RealExecutionGateError(
+                f"代码状态与冻结的 integration_commit 不一致：{code_state}；真实执行必须运行冻结代码")
+        boundary_probe = prepare_solver_boundary(data_root, config)
+        real = RealContext.build(config, boundary_probe)
     web_entry = (config.get("web_search") or {}).get("entrypoint") or None
+    if web_entry == "offline":
+        web_entry = None  # explicit freeze of "no web entry wired" (§6.3)
     cases = load_cases(data_root)
     selected = _select_cases(cases, limit=args.cases, case_keys=args.case_keys or [], pool=args.pool)
     arms = [arm for arm in args.arms.split(",") if arm]
@@ -845,7 +1325,8 @@ def command_run(args: argparse.Namespace) -> int:
         raise RunnerError(f"--arms must be a comma-separated subset of {ARMS}")
     if "B" in arms and budget.max_automatic_revisions_B < 0:
         raise RunnerError("max_automatic_revisions_B must be >= 0")
-    label = args.run_label or f"dryrun-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
+    prefix = "dryrun" if args.dry_run else "run"
+    label = args.run_label or f"{prefix}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}"
     episodes_root = data_root / "episodes" / label
     if episodes_root.exists():
         raise RunnerError(f"run label already exists: {label}")
@@ -882,7 +1363,7 @@ def command_run(args: argparse.Namespace) -> int:
     with ThreadPoolExecutor(max_workers=episode_workers) as pool_executor:
         futures = {pool_executor.submit(_EPISODE_RUNNERS[arm], case, data_root=data_root,
                                         budget=budget, label=label, order_index=order_index,
-                                        limiter=limiter, web_entry=web_entry):
+                                        limiter=limiter, web_entry=web_entry, real=real):
                    (case.case_key, arm) for case, arm, order_index in tasks}
         for future in as_completed(futures):
             case_key, arm = futures[future]
@@ -895,19 +1376,28 @@ def command_run(args: argparse.Namespace) -> int:
         "schema_version": "officeqa.episode_index.v1",
         "run_label": label, "created": _now(),
         "protocol_id": config["protocol_id"], "experiment_id": config["experiment_id"],
-        "dry_run": True, "seed": args.seed, "arms": arms,
+        "dry_run": bool(args.dry_run), "seed": args.seed, "arms": arms,
         "episode_workers": episode_workers,
+        "config": {"path": str(config_path),
+                   "sha256": _sha256_bytes(config_path.read_bytes())},
         "model_calls": limiter.report(),
         "isolation": {"data_area": isolation_audit,
                       "boundary": isolation.boundary_report(config),
-                      "solver_environment": "credential-stripped via isolation.solver_environment()"},
+                      "solver_environment": "credential-stripped via isolation.solver_environment()",
+                      **({"boundary_probe": boundary_probe, "code_state": code_state}
+                         if boundary_probe is not None else {})},
+        "runtime": ({"host": "opencode", "model": real.model, "variant": real.variant,
+                     "host_version": real.host_version}
+                    if real else {"host": None, "model": None, "variant": None,
+                                  "host_version": None}),
         "web_entry": web_entry,
         "budget": {"wall_clock_seconds": budget.wall_clock_seconds,
                    "max_concurrent_model_calls": budget.max_concurrent_model_calls,
                    "max_automatic_revisions_B": budget.max_automatic_revisions_B,
-                   "format_repair_attempts": budget.format_repair_attempts},
-        "cases": [{"case_key": case.case_key, "uid": case.uid, "exposure": case.exposure}
-                  for case in selected],
+                   "format_repair_attempts": budget.format_repair_attempts,
+                   "search_budget": dict(budget.search_budget)},
+        "cases": [{"case_key": case.case_key, "uid": case.uid, "dataset": case.dataset,
+                   "exposure": case.exposure} for case in selected],
         "episodes": sorted(results, key=lambda r: (r["case_key"], r["arm"])),
         "failures": failures,
     }
@@ -989,11 +1479,18 @@ def command_score(args: argparse.Namespace) -> int:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     score_answer_record.verify_scorer_pin(config["scorer"])  # infra error if the pin drifted
     gold = {}
-    gold_path = data_root / "evaluator-only" / "gold" / "officeqa_pro_v2.gold.jsonl"
-    for line in gold_path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            row = json.loads(line)
-            gold[row["case_key"]] = row["answer"]
+    # Evaluator side (protocol §6.4): every prepared gold side-load is in play —
+    # the v2 main set plus the historical v1 pool the dev pilot draws from.
+    gold_files = sorted((data_root / "evaluator-only" / "gold").glob("officeqa_pro_*.gold.jsonl"))
+    if not gold_files:
+        raise RunnerError(f"no gold side-loads under {data_root / 'evaluator-only' / 'gold'}")
+    for gold_path in gold_files:
+        for line in gold_path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                row = json.loads(line)
+                if row["case_key"] in gold:
+                    raise RunnerError(f"duplicate case_key across gold files: {row['case_key'][:16]}")
+                gold[row["case_key"]] = row["answer"]
     scores: list[dict[str, Any]] = []
     for line in predictions_path.read_text(encoding="utf-8").splitlines():
         if not line.strip():
@@ -1022,7 +1519,8 @@ def command_score(args: argparse.Namespace) -> int:
                "experiment_id": config["experiment_id"], "dry_run": manifest.get("dry_run", False),
                "scorer_sha256": config["scorer"]["sha256"], "tolerance": config["scorer"]["tolerance"],
                "arms": {}, "paired_delta_b_minus_a": None, "note":
-               "dry-run stub 答案为固定合成值，分数只验证管线，不代表任何模型成绩"}
+               ("dry-run stub 答案为固定合成值，分数只验证管线，不代表任何模型成绩" if manifest.get("dry_run", False)
+                else "真实运行分数；开发 pilot 题目为已暴露旧题（协议 §7），只作接入诊断，不构成泛化结论")}
     for arm in ARMS:
         rows = [row for row in scores if row["arm"] == arm]
         if not rows:
@@ -1061,13 +1559,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
 
-    run = commands.add_parser("run", help="run A/B episodes (only --dry-run is implemented)")
+    run = commands.add_parser("run", help="run A/B episodes (--dry-run = stubs; without it the "
+                                          "frozen-config gate opens the real opencode transports)")
     run.add_argument("--data-root", default=str(DEFAULT_DATA_ROOT))
+    run.add_argument("--config", default=str(CONFIG_PATH),
+                     help="experiment config (default: the frozen config.json next to this module; "
+                          "the run index records the path and its SHA-256)")
     run.add_argument("--run-label")
     run.add_argument("--arms", default="A,B")
     run.add_argument("--cases", type=int, help="first N cases from the prepared order")
     run.add_argument("--case-keys", nargs="*", help="explicit case keys")
-    run.add_argument("--pool", choices=("unknown", "exposed"), help="restrict to an exposure pool")
+    run.add_argument("--pool", choices=("unknown", "exposed", "dev"),
+                     help="restrict to an exposure pool (dev = the Q3 pilot questions)")
     run.add_argument("--seed", type=int, default=20260914)
     run.add_argument("--episode-workers", type=int, default=0,
                      help="episode scheduling parallelism (0 = max_concurrent_model_calls). "
