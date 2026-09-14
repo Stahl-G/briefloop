@@ -117,7 +117,7 @@ class Requirements(Model):
 
     @model_validator(mode='after')
     def fill_length_preferences(self):
-        target,maximum=(5000,5500) if self.report_profile=="industry_periodic" else LENGTH_PRESETS[self.extent]
+        target,maximum=(10000,12000) if self.research_tier=="deep" else (5000,5500) if self.report_profile=="industry_periodic" else LENGTH_PRESETS[self.extent]
         if self.target_words is None:self.target_words=target
         if self.max_words is None:self.max_words=max(maximum,self.target_words)
         if self.max_words<self.target_words:
@@ -205,14 +205,16 @@ class Settings(RoleModel):
     search_policy: SearchPolicy | None = None
     k: int = Field(default=1, ge=1, le=20)
     auto_learn: bool = True
+    max_reports: int = Field(default=4, ge=1, le=16)
     max_parallel: int = Field(default=4, ge=1, le=16)
-    timeout_minutes: int = Field(default=30, ge=0, le=240)  # 0 disables the run deadline.
+    timeout_minutes: int = Field(default=60, ge=0, le=240)  # 0 disables the run deadline.
     skill_targets: list[str] = Field(default_factory=lambda: ["scout", "analyst"])
     auto_revision: bool = True
     default_template_id: str | None = None
     company_context_enabled: bool | None = None
     # Workspace-wide default for the per-task fact_check switch; tasks may override.
     fact_checker: bool = False
+    research_tier: Literal['quick','standard','deep'] = 'standard'
 
 
     @model_validator(mode='after')

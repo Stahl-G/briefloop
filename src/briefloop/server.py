@@ -226,9 +226,13 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/service-status':self.send(200,_service_status(self.server))
                 elif u.path=='/api/connectors':self.send(200,{'connectors':self.server.connectors.list()})
                 elif u.path=='/api/runtime':
-                    observed=worker._review_runtime if worker.review_current and not worker.current else worker.runtime
-                    proc=observed.process
-                    self.send(200,{'server_pid':os.getpid(),'worker_alive':worker.thread.is_alive(),'automatic_learning_paused':worker.opened_paused,'paused':worker.opened_paused,'job_id':worker.current,'pid':proc.pid if proc else None,'returncode':proc.poll() if proc else None})
+                    with worker._claim_lock:
+                        active=dict(worker._generation_jobs)
+                    selected=q.get('job_id',[None])[0]
+                    observed=active[selected][1] if selected in active else (worker._review_runtime if worker.review_current and not worker.current else worker.runtime)
+                    if selected and selected not in active and selected not in (worker.current,worker.review_current):observed=None
+                    proc=observed.process if observed else None
+                    self.send(200,{'server_pid':os.getpid(),'worker_alive':worker.thread.is_alive(),'automatic_learning_paused':worker.opened_paused,'paused':worker.opened_paused,'job_id':selected if selected in active else worker.current,'generation_job_ids':list(active),'pid':proc.pid if proc else None,'returncode':proc.poll() if proc else None})
                 elif u.path=='/api/source':
                     from .projections import source_details
                     sid=q['id'][0];source,provenance,original=source_details(store,sid)

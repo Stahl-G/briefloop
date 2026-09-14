@@ -42,7 +42,7 @@ def test_freeze_cannot_exceed_the_authorized_budget(tmp_path):
     store, run = quality_run(tmp_path, values={'search_requests': 4, 'candidate_urls': 20, 'source_pages': 6})
     plan = research_plan.freeze(store, run['id'], structure={'breadth': 6, 'depth': 2})
     assert plan['budget']['search_requests'] == 4
-    assert plan['structure'] == {'breadth': 6, 'depth': 2, 'parallel': 2}
+    assert plan['structure'] == {'breadth': 6, 'depth': 2, 'parallel': 4}
     for _ in range(4):
         budget.reserve_search(store, run['id'], 1)
     with pytest.raises(budget.BudgetExhausted):
@@ -409,3 +409,13 @@ def test_concurrent_round_mutations_share_committed_identities(tmp_path, monkeyp
         assert recorded['round_id'] == results[0]['round_id']
         assert recorded[field] == info[field]
         assert len(saved['rounds']) == (2 if operation == 'begin' else 1)
+
+
+def test_scout_limit_uses_authorized_settings_without_expanding_budget(tmp_path):
+    store, run = quality_run(tmp_path)
+    store.set_meta('settings', {**store.settings(), 'max_parallel': 12})
+    plan = research_plan.freeze(store, run['id'])
+    assert plan['structure']['parallel'] == 12
+    assert plan['budget']['search_requests'] == 30
+    store.set_meta('settings', {**store.settings(), 'max_parallel': 4})
+    assert research_plan.frozen(store, run['id'])['structure']['parallel'] == 12

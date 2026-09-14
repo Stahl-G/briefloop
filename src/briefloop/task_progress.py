@@ -120,8 +120,10 @@ def summary(store, job_id):
     started_event = next((e for e in reversed(events) if e['kind'] == 'runtime_started'), None)
     session_id = json.loads(started_event['data']).get('session_id') if started_event and running else None
     activity_times = [x for x in [p.get('last_activity'), progress_event['created'] if progress_event else None] + [r.get('updated') or r.get('created') for r in requests] if x]
+    starts=store.rows("SELECT created FROM events WHERE job_id=? AND kind='job_started' ORDER BY seq DESC LIMIT 1",(job_id,))
+    own_start=starts[0]['created'] if starts else None
     return {'session_id': session_id, 'job_id': job_id, 'run_id': run_id, 'status': job['status'], 'title': public_text(title, 160),
-            'stage': stage, 'started': job['created'], 'ended': job['updated'] if not running else None,
+            'stage': stage, 'queued_at': job['created'], 'started': own_start, 'ended': job['updated'] if not running else None,
             'last_activity': max(activity_times) if activity_times else None,
             'tier': plan.get('preset_id') or req.get('research_tier'),
             'round': opened[-1]['index'] if opened else None,
