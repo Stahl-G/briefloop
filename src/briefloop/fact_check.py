@@ -91,7 +91,7 @@ def fact_check_prompt(store,job,brief,folder,backend='codex'):
         retrieval_path=(folder/'capabilities'/provider/'SKILL.md').resolve()
         retrieval_path.parent.mkdir(parents=True,exist_ok=True)
         retrieval_path.write_text(template.replace('{tool}',tool).replace('{run_id}',run['id']),encoding='utf-8')
-        retrieval=(f'本轮核查使用受控检索源 {PROVIDER_LABELS.get(provider,'宿主自带搜索')}：先完整读取一次 {retrieval_path} 并简短确认已读。'
+        retrieval=(f'本轮核查使用受控检索源 {PROVIDER_LABELS.get(provider,"宿主自带搜索")}：先完整读取一次 {retrieval_path} 并简短确认已读。'
                   '搜索与抓取经该技能的 CLI 调用由 Python 计费并返回 remaining；出现 budget_exhausted 时停止新增检索，'
                   '保留已核证据并以 execution.status=budget_exhausted 提交，不重试消耗上限的操作。')
     else:
