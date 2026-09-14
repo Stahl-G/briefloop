@@ -304,6 +304,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                         catalog=bridge.call('list_models',{'runtime_id':'codex','cwd':str(store.root)})
                         self.send(200,{'backend':backend,**catalog});return
                     self.send(200,{'backend':backend,'count':len(models),'models':models})
+                elif u.path=='/api/task-progress':
+                    from .task_progress import summary
+                    self.send(200,summary(store,q['job'][0]))
                 elif u.path=='/api/events':
                     jid=q['job'][0];self.send(200,store.rows('SELECT * FROM events WHERE job_id=? ORDER BY seq',(jid,)))
                 elif u.path=='/api/learning-details':

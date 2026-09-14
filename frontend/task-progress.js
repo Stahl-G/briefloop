@@ -1,0 +1,26 @@
+// Public facts only; presentation never estimates percent complete or time remaining.
+const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const states={queued:'等待开始',running:'正在运行',complete:'任务已结束',failed:'未完成',interrupted:'已中断',cancelled:'已停止'};
+const workerStates={running:'进行中',pending_init:'启动中',completed:'已完成',done:'已完成',closed:'已结束',failed:'失败',errored:'失败',unknown:'状态待确认'};
+export function elapsedText(start,end=Date.now()){
+ const seconds=Math.max(0,Math.floor((Number(end)-Date.parse(start))/1000));
+ if(!Number.isFinite(seconds))return '时间待确认';
+ return seconds<60?`${seconds} 秒`:`${Math.floor(seconds/60)} 分 ${seconds%60} 秒`;
+}
+export function taskProgressCard(job,p,{label='报告任务',kindLabel='',expanded=false,materials=false,error=false,busy='',now=Date.now()}={}){
+ const e=escape,active=['queued','running'].includes(job.status),paused=['failed','interrupted','cancelled'].includes(job.status);
+ if(p?.status&&p.status!==job.status)p={...p,stage:null,stages:[],agents:[],needs_attention:false,attention_unknown:false,error:null,ended:null};
+ const reportTask=['generate','review','revise','assess','fact_check'].includes(job.kind);
+ const title=p?.title||label;
+ const actions=`${active?`<button ${busy?'disabled':''} class="outline" data-task-stop="${e(job.id)}">停止</button>`:''}${paused?`<button ${busy?'disabled':''} class="outline" data-task-resume="${e(job.id)}">恢复任务</button><button ${busy?'disabled':''} class="ghost" data-task-dismiss="${e(job.id)}" aria-label="清除未完成任务，保留记录">清除</button>`:''}<button class="ghost" data-task-open="${e(job.id)}">打开任务 ↗</button>`;
+ const stage=(active?(p?.needs_attention?'等待你的确认':p?.stage):states[job.status])||(job.status==='queued'?'等待后台开始':states[job.status]||'读取进度中');
+ const workers=p?.agents||[],activeWorkers=workers.filter(w=>['running','pending_init'].includes(w.status));
+ const tier={quick:'快速研究',standard:'标准研究',deep:'深度研究'}[p?.tier];
+ const meta=[!p&&!error?'正在读取进度':null,tier,p?.round?`第 ${p.round} 轮`:null,`已${active?'等待 / 运行':'用时'} ${elapsedText(p?.started||job.created,!active?Date.parse(p?.ended||job.updated||job.created):now)}`,p?.last_activity?`最近活动记录 ${elapsedText(p.last_activity,now)}前`:null].filter(Boolean).join(' · ');
+ const chips=p&&p.run_id?[`已保存 ${p.source_count} 份材料`,...(p.search_metered?[`成功搜索 ${p.search_counts.completed} 次`,...(p.search_counts.failed?[`失败 ${p.search_counts.failed} 次`]:[])]:[]),...(activeWorkers.length&&active?[`${activeWorkers.length} 个子任务进行中`]:[])]:[];
+ const rail=(p?.stages||[]).map(s=>`<li class="${e(s.status)}"><span aria-hidden="true">${s.status==='done'?'✓':'●'}</span>${e(s.label)}</li>`).join('');
+ const timeline=(p?.timeline||[]).map(t=>`<li class="${e(t.status)}"><span class="progress-bullet" aria-hidden="true">${t.status==='done'?'✓':'•'}</span><div><strong>${e(t.label)}</strong>${t.detail?`<p>${e(t.detail)}</p>`:''}</div></li>`).join('');
+ const agents=workers.map(w=>`<li><span aria-hidden="true">↳</span><div><strong>${e(w.task||w.role||'研究子任务')}</strong>${w.activity?`<p>${e(w.activity)}</p>`:''}</div><small>${e(!active&&['running','pending_init'].includes(w.status)?'最后记录为进行中':workerStates[w.status]||'状态待确认')}</small></li>`).join('');
+ const gaps=(p?.gaps||[]).filter(g=>g.text).map(g=>`<li>${e(g.text)}</li>`).join('');
+ return `<article aria-busy="${!p&&!error}" class="task-progress-card ${!p?'is-loading ':''}${active?'is-running':paused?'is-error':'is-complete'}" data-progress-card="${e(job.id)}"><div class="task-progress-header"><div><h3>${e(title)}</h3><span class="task-progress-status">${e([kindLabel,states[job.status]||job.status].filter(Boolean).join(' · '))}</span></div><div class="task-progress-actions">${actions}</div></div><h4>${e(stage)}</h4><p class="task-progress-meta">${e(meta)}</p>${busy?`<p role="status" class="help">${e(busy)}</p>`:''}${error?'<p class="error" role="status">进度暂时无法刷新，稍后自动重试；已显示的信息可能较旧。</p>':''}${active&&p?.needs_attention?'<p class="error">任务正在等待授权或回复，请打开任务处理。</p>':''}${active&&p?.attention_unknown?'<p class="help">暂时无法读取确认请求，可打开任务检查。</p>':''}${p?.error?`<p class="error">${e(p.error)}</p>`:''}<div class="task-progress-chips">${chips.map(c=>`<span>${e(c)}</span>`).join('')}</div>${rail?`<ol class="task-progress-rail" aria-label="任务阶段">${rail}</ol>`:''}<details class="task-progress-detail" data-task-detail="${e(job.id)}" ${expanded?'open':''}><summary>${reportTask?'研究过程':'任务过程'}</summary><ol class="task-progress-timeline">${timeline}${agents||(!timeline?'<li>尚无新的过程记录，任务状态会自动刷新。</li>':'')}</ol>${gaps?`<details data-task-gaps="${e(job.id)}"><summary>研究中记录的问题</summary><ul>${gaps}</ul></details>`:''}</details><div class="task-progress-foot">${p?.version_id?`<button class="primary" data-progress-version="${e(p.version_id)}">查看已保存的稿件</button>`:`<span>${active&&reportTask?'初稿保存后即可阅读，核查与修订会继续进行。':'已有材料保留，可打开任务查看后续操作。'}</span>`}</div>${p?.sources?.length?`<details class="task-progress-materials" data-task-materials="${e(job.id)}" ${materials?'open':''}><summary>查看已保存的材料（${p.source_count}）</summary><ul>${p.sources.map(s=>`<li><button class="ghost" data-progress-source="${e(s.id)}">${e(s.name)}</button><small>${e(s.status==='ready'?'可用':s.status==='failed'?'读取失败':s.status)}</small></li>`).join('')}</ul></details>`:''}</article>`;
+}

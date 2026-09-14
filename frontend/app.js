@@ -1,3 +1,4 @@
+import {taskProgressCard} from './task-progress.js';
 import {copyText} from './clipboard.js';
 import {scheduleUI} from './schedules.js';
 import {adaptivePoll} from './polling.js';
@@ -49,7 +50,7 @@ let uploadLimits=null;
 let token='',state,current,pendingRun=null,editor,dirty=false,saving=false,saveTimer,learnTimer,markdownMode=false,selected=new Set(),referenceSelected=new Set();
 function notice(s,error=false){$('notice').textContent=s;$('notice').classList.toggle('error',error);$('notice').hidden=false;clearTimeout(notice.timer);notice.timer=setTimeout(()=>$('notice').hidden=true,error?12000:4500)}
 async function api(path,data,retried=false){const r=await fetch('/api/'+path,data===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json','X-BriefLoop-Token':token},body:JSON.stringify(data)});const b=await r.json();if(r.status===403&&data!==undefined&&!retried){token=(await api('session')).token;return api(path,data,true)}if(!r.ok)throw Error(b.error||'操作失败');if(path==='session')uploadLimits=b.upload_limits;return b}
-function page(name){if(document.body.classList.contains('report-chat-open'))setReportChatOpen(false);if(((name==='chat'&&!chat.id)||name==='setup')&&(state?.settings?.model_selection_required||!state?.settings?.model)){notice('请先在欢迎页选择执行宿主和模型');name='welcome'}if(name!=='settings-dialog'&&$('custom-api-key'))$('custom-api-key').value='';for(const id of ['chat','report','reports','sources','templates','setup','learning','settings-dialog','welcome'])$(id).hidden=id!==name;document.querySelectorAll('nav [data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===name));if(name==='learning')refreshCandidates();if(name==='setup'){if(typeof reportMcpSelection!=='undefined')reportMcpSelection.refresh();moveSearchSettings('setup');applyPendingSetupFields()}else if($('tavily-key'))$('tavily-key').value='';if(['reports','templates','learning'].includes(name))activity?.readCategory(name)}
+function page(name){if(document.body.classList.contains('report-chat-open'))setReportChatOpen(false);if(((name==='chat'&&!chat.id)||name==='setup')&&(state?.settings?.model_selection_required||!state?.settings?.model)){notice('请先在欢迎页选择执行宿主和模型');name='welcome'}if(name!=='settings-dialog'&&$('custom-api-key'))$('custom-api-key').value='';for(const id of ['chat','report','reports','sources','templates','setup','learning','settings-dialog','welcome'])$(id).hidden=id!==name;document.querySelectorAll('nav [data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===name));if(name==='learning')refreshCandidates();if(name==='setup'){if(typeof reportMcpSelection!=='undefined')reportMcpSelection.refresh();moveSearchSettings('setup');applyPendingSetupFields()}else if($('tavily-key'))$('tavily-key').value='';if(name==='reports'){renderTasks();renderTaskGraph()}if(['reports','templates','learning'].includes(name))activity?.readCategory(name)}
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>page(b.dataset.page));
 async function action(fn,message){try{await fn();if(message)notice(message);await refresh()}catch(e){notice(e.message,true)}}
 let tooltipTarget=null;
@@ -155,41 +156,66 @@ function openTask(job){
  if(!job)return;
  const payload=parse(job.payload);
  const brief=state.briefs.find(b=>b.id===payload.version_id)||state.briefs.find(b=>b.run_id===payload.run_id);
- if(brief)openBrief(brief,{follow:true});
- page('report');
+ if(brief){if(!openBrief(brief,{follow:true}))return;pendingRun=null}
+ else if(payload.run_id)pendingRun=payload.run_id;
+ page('report');refreshProgress();
+}
+const taskSnapshots=new Map(),taskExpanded=new Set(),taskMaterials=new Set(),taskActions=new Map();
+let taskGraphRequest=null;
+function visibleReportTasks(){
+ const all=(state.jobs||[]).filter(j=>TASK_LABELS[j.kind]).sort((a,b)=>new Date(b.created)-new Date(a.created));
+ const activeParents=new Set(all.filter(j=>['queued','running'].includes(j.status)).map(j=>j.id));
+ return (renderTasks.showAll?all:all.filter(j=>['queued','running','failed','interrupted','cancelled'].includes(j.status)&&!activeParents.has(parse(j.payload).parent_job_id))).slice(0,15);
+}
+function taskCardHTML(j){const cached=taskSnapshots.get(j.id);return taskProgressCard(j,cached?.data,{label:bannerTitle(j)||TASK_LABELS[j.kind],kindLabel:TASK_LABELS[j.kind],expanded:taskExpanded.has(j.id),materials:taskMaterials.has(j.id),error:cached?.error,busy:taskActions.get(j.id)})}
+function bindTaskCards(){
+ const box=$('report-task-cards');
+ const mutate=async(id,route,label)=>{if(taskActions.has(id))return;taskActions.set(id,label);renderTasks();try{await action(()=>api(route,{job_id:id}))}finally{taskActions.delete(id);renderTasks()}};
+ box.querySelectorAll('[data-task-detail]').forEach(d=>d.ontoggle=()=>{if(d.open)taskExpanded.add(d.dataset.taskDetail);else taskExpanded.delete(d.dataset.taskDetail)});
+ box.querySelectorAll('[data-task-materials]').forEach(d=>d.ontoggle=()=>{if(d.open)taskMaterials.add(d.dataset.taskMaterials);else taskMaterials.delete(d.dataset.taskMaterials)});
+ box.querySelectorAll('[data-task-open]').forEach(b=>b.onclick=()=>openTask(taskFor(b.dataset.taskOpen)));
+ box.querySelectorAll('[data-task-stop]').forEach(b=>b.onclick=()=>mutate(b.dataset.taskStop,'stop','正在停止任务…'));
+ box.querySelectorAll('[data-task-resume]').forEach(b=>b.onclick=()=>mutate(b.dataset.taskResume,'resume','正在恢复任务…'));
+ box.querySelectorAll('[data-task-dismiss]').forEach(b=>b.onclick=()=>mutate(b.dataset.taskDismiss,'task-dismiss','正在清除任务…'));
+ box.querySelectorAll('[data-progress-version]').forEach(b=>b.onclick=()=>{const brief=state.briefs.find(x=>x.id===b.dataset.progressVersion);if(brief&&openBrief(brief,{follow:false})){pendingRun=null;page('report')}});
+ box.querySelectorAll('[data-progress-source]').forEach(b=>b.onclick=()=>action(async()=>showSource(await api('source?id='+encodeURIComponent(b.dataset.progressSource)))));
 }
 async function renderTaskGraph(){
- const box=$('report-task-graph');if(!box)return;
- const job=(state.jobs||[]).filter(j=>TASK_LABELS[j.kind]&&['queued','running'].includes(j.status)).sort((a,b)=>new Date(b.updated||b.created)-new Date(a.updated||a.created))[0];
- if(!job){box.hidden=true;box.innerHTML='';return}
- if(renderTaskGraph.busy&&renderTaskGraph.job===job.id)return;
- renderTaskGraph.busy=true;renderTaskGraph.job=job.id;
+ if($('reports').hidden)return;
+ const jobs=visibleReportTasks();
+ const key=jobs.map(j=>j.id+':'+j.status).join('|');
+ if(taskGraphRequest?.key===key)return;
+ const request={key};taskGraphRequest=request;
+ const isCurrent=()=>taskGraphRequest===request&&visibleReportTasks().map(j=>j.id+':'+j.status).join('|')===key;
  try{
-  const events=await api('events?job='+job.id);const last=[...events].reverse().find(e=>e.kind==='runtime_progress');const p=last?parse(last.data):null;
-  if(!p||!p.stages){box.hidden=true;box.innerHTML='';return}
-  box.hidden=false;box.innerHTML=`<div class="task-graph-head"><span>正在进行：${esc(TASK_LABELS[job.kind])}</span></div>${stageRailHTML(p.stages)}`;
- }catch(e){box.hidden=true;box.innerHTML=''}
- finally{renderTaskGraph.busy=false}
+  const replies=await Promise.all(jobs.map(async j=>{try{const data=await api('task-progress?job='+encodeURIComponent(j.id));if(data.session_id&&['queued','running'].includes(j.status)){try{const session=await api('harness/session?id='+encodeURIComponent(data.session_id)+'&requests_only=1');data.needs_attention=(session.requests||[]).some(r=>r.status==='pending')}catch{data.attention_unknown=true}}return {id:j.id,data}}catch{return {id:j.id,error:true}}}));
+  if(!isCurrent())return;
+  for(const r of replies)taskSnapshots.set(r.id,r.error?{...taskSnapshots.get(r.id),error:true}:r);
+  renderTasks();
+ }finally{if(taskGraphRequest===request)taskGraphRequest=null}
 }
 function renderTasks(){
  const box=$('report-task-cards');if(!box)return;
- const openStatus=['queued','running','failed','interrupted','cancelled'];
- const all=(state.jobs||[]).filter(j=>TASK_LABELS[j.kind]).sort((a,b)=>new Date(b.created)-new Date(a.created));
- const unfinished=all.filter(j=>openStatus.includes(j.status));
- const tasks=renderTasks.showAll?all:unfinished.slice(0,15);
- const panel=$('report-tasks');if(panel)panel.hidden=!tasks.length;
- const count=$('report-tasks-count');if(count)count.textContent=renderTasks.showAll?`${all.length} 个任务`:(unfinished.length?`${unfinished.length} 个待完成任务`:'');
- const allBtn=$('report-tasks-all');if(allBtn){allBtn.hidden=!unfinished.length&&!renderTasks.showAll;allBtn.textContent=renderTasks.showAll?'收起':'查看全部 →'}
- box.innerHTML=tasks.length?tasks.map(j=>{
-  const running=['queued','running'].includes(j.status),paused=['failed','interrupted','cancelled'].includes(j.status);
-  const dot=paused?'error':running?'running':'';
-  const milestone=j.progress?` · 第 ${j.progress.round}/${j.progress.k} 轮`:'';
-  return `<div class="report-task-card"><span class="task-dot ${dot}"></span><div class="report-task-main"><strong>${TASK_LABELS[j.kind]}</strong><small>${esc(statuses[j.status]||j.status)}${milestone}${j.error?' · '+esc(j.error):''}</small></div><div class="report-task-actions">${running?`<button type="button" class="task-icon" data-task-stop="${j.id}" title="停止">■</button>`:''}${paused?`<button type="button" class="task-icon" data-task-resume="${j.id}" title="恢复（沿用原模型）">↻</button><button type="button" class="task-icon" data-task-dismiss="${j.id}" title="清除这个未完成任务（保留记录）">✕</button>`:''}<button type="button" class="task-icon" data-task-open="${j.id}" title="打开任务">↗</button></div></div>`;
- }).join(''):'<p class="help">暂无未完成的任务</p>';
- box.querySelectorAll('[data-task-open]').forEach(b=>b.onclick=()=>openTask(taskFor(b.dataset.taskOpen)));
- box.querySelectorAll('[data-task-stop]').forEach(b=>b.onclick=()=>action(()=>api('stop',{job_id:b.dataset.taskStop})));
- box.querySelectorAll('[data-task-resume]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.taskResume})));
- box.querySelectorAll('[data-task-dismiss]').forEach(b=>b.onclick=()=>action(()=>api('task-dismiss',{job_id:b.dataset.taskDismiss})));
+ const tasks=visibleReportTasks(),panel=$('report-tasks');if(panel)panel.hidden=!(state.jobs||[]).some(j=>TASK_LABELS[j.kind]);
+ $('report-tasks-count').textContent=tasks.length?`${tasks.length} 个任务`:'暂无待完成任务';
+ const allBtn=$('report-tasks-all');allBtn.hidden=false;allBtn.textContent=renderTasks.showAll?'只看待完成':'查看最近任务';
+ // Preserve disclosure choices across polling.
+ const html=tasks.map(taskCardHTML).join('');
+ if(box._rendered!==html){
+  // Polling must not collapse nested disclosures or steal keyboard focus.
+  const nodeKey=node=>{
+   const owner=node.closest('[data-progress-card]')?.dataset.progressCard;
+   const target=node.tagName==='SUMMARY'?node.parentElement:node;
+   return owner+':'+JSON.stringify(target.dataset);
+  };
+  const focused=box.contains(document.activeElement)?nodeKey(document.activeElement):null;
+  const disclosures=new Map([...box.querySelectorAll('details')].map(d=>[nodeKey(d),d.open]));
+  box.innerHTML=html;box._rendered=html;
+  box.querySelectorAll('details').forEach(d=>{if(disclosures.has(nodeKey(d)))d.open=disclosures.get(nodeKey(d))});
+  if(focused)[...box.querySelectorAll('button,summary')].find(n=>nodeKey(n)===focused)?.focus({preventScroll:true});
+  bindTaskCards();
+ }
+ const oldGraph=$('report-task-graph');if(oldGraph){oldGraph.hidden=true;oldGraph.innerHTML=''}
 }
 const BANNER_RESULT_KINDS=['generate','revise','assess','review'];
 const BANNER_RESULT_WINDOW=6*60*60*1000;
@@ -1979,9 +2005,10 @@ function renderReports(){
   return true;
  });
  box.className='report-list'+(view==='grid'?' grid':'');
- const sig=JSON.stringify([view,q,fStatus,fTime,fSource,rows.map(b=>{const st=reportStatus(b);return [b.id,b.status,b.updated,st.label,runSourceCount(b.run_id)]})]);if(renderReports.sig===sig)return;renderReports.sig=sig;
+ const makingFirst=!state.briefs.length&&state.jobs.some(j=>j.kind==='generate'&&['queued','running'].includes(j.status));
+ const sig=JSON.stringify([view,q,fStatus,fTime,fSource,makingFirst,all.length,rows.map(b=>{const st=reportStatus(b);return [b.id,b.status,b.updated,st.label,runSourceCount(b.run_id)]})]);if(renderReports.sig===sig)return;renderReports.sig=sig;
  const end=$('reports-end');if(end)end.hidden=!rows.length;
- box.innerHTML=rows.length?rows.map(b=>{const st=reportStatus(b),sources=runSourceCount(b.run_id),desc=reportDescription(b);const when=new Date(b.updated||b.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});return `<article class="report-card"><span class="report-card-icon" aria-hidden="true">▤</span><div class="report-card-body"><h3 class="report-card-title">${esc(parse(b.detail).title||'简报')}</h3>${desc?`<p class="report-card-desc">${esc(desc)}</p>`:''}<div class="report-card-meta"><span>${sources} 个来源</span><span>${esc(when)} 最后编辑</span></div></div><div class="report-card-side"><span class="chip ${st.cls}">${esc(st.label)}</span><button type="button" class="primary" data-report-open="${esc(b.id)}">${st.key==='draft'?'继续编辑':'打开'}</button><div class="menu-wrap report-card-menu"><button type="button" class="ghost" data-report-menu aria-haspopup="menu" aria-expanded="false" aria-label="更多操作">⋯</button><div class="popover" role="menu" hidden><button type="button" role="menuitem" data-report-open="${esc(b.id)}">打开</button><a role="menuitem" href="/api/download?version=${encodeURIComponent(b.id)}">下载 Markdown</a><button type="button" role="menuitem" data-report-release="${esc(b.id)}">正式交付与审计包</button></div></div></div></article>`}).join(''):'<div class="empty-inline"><p class="help">还没有报告。生成后会显示在这里。</p><button type="button" class="primary" data-page="setup">＋ 新建报告</button></div>';
+ box.innerHTML=rows.length?rows.map(b=>{const st=reportStatus(b),sources=runSourceCount(b.run_id),desc=reportDescription(b);const when=new Date(b.updated||b.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});return `<article class="report-card"><span class="report-card-icon" aria-hidden="true">▤</span><div class="report-card-body"><h3 class="report-card-title">${esc(parse(b.detail).title||'简报')}</h3>${desc?`<p class="report-card-desc">${esc(desc)}</p>`:''}<div class="report-card-meta"><span>${sources} 个来源</span><span>${esc(when)} 最后编辑</span></div></div><div class="report-card-side"><span class="chip ${st.cls}">${esc(st.label)}</span><button type="button" class="primary" data-report-open="${esc(b.id)}">${st.key==='draft'?'继续编辑':'打开'}</button><div class="menu-wrap report-card-menu"><button type="button" class="ghost" data-report-menu aria-haspopup="menu" aria-expanded="false" aria-label="更多操作">⋯</button><div class="popover" role="menu" hidden><button type="button" role="menuitem" data-report-open="${esc(b.id)}">打开</button><a role="menuitem" href="/api/download?version=${encodeURIComponent(b.id)}">下载 Markdown</a><button type="button" role="menuitem" data-report-release="${esc(b.id)}">正式交付与审计包</button></div></div></div></article>`}).join(''):(makingFirst?'<div class="empty-inline"><strong>首份报告正在制作</strong><p class="help">初稿保存后会显示在这里。</p></div>':all.length?'<div class="empty-inline"><p class="help">没有符合筛选条件的报告，请调整搜索或筛选。</p></div>':'<div class="empty-inline"><p class="help">还没有报告。生成后会显示在这里。</p><button type="button" class="primary" data-page="setup">＋ 新建报告</button></div>');
  box.querySelectorAll('[data-report-open]').forEach(el=>el.onclick=()=>{const b=state.briefs.find(x=>x.id===el.dataset.reportOpen);if(b&&openBrief(b,{follow:false}))page('report')});
  box.querySelectorAll('[data-page="setup"]').forEach(el=>el.onclick=()=>page('setup'));
  box.querySelectorAll('.report-card-menu').forEach(wrap=>{const toggle=wrap.querySelector('[data-report-menu]'),pop=wrap.querySelector('.popover');if(!toggle||!pop)return;toggle.onclick=e=>{e.stopPropagation();const open=pop.hidden;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'));pop.hidden=!open;toggle.setAttribute('aria-expanded',String(open))}});
@@ -2170,7 +2197,7 @@ document.querySelectorAll('[data-source-tab]').forEach(b=>b.onclick=()=>setSourc
 if($('reports-search'))$('reports-search').oninput=()=>{renderReports.sig='';renderReports()};
 ['reports-filter-status','reports-filter-time','reports-filter-source'].forEach(id=>{const el=$(id);if(el)el.onchange=()=>{renderReports.sig='';renderReports()}});
 document.querySelectorAll('[data-reports-view]').forEach(b=>b.onclick=()=>{renderReports.view=b.dataset.reportsView;document.querySelectorAll('[data-reports-view]').forEach(x=>x.classList.toggle('active',x===b));renderReports.sig='';renderReports()});
-if($('report-tasks-all'))$('report-tasks-all').onclick=()=>{renderTasks.showAll=!renderTasks.showAll;renderTasks()};
+if($('report-tasks-all'))$('report-tasks-all').onclick=()=>{renderTasks.showAll=!renderTasks.showAll;renderTasks();renderTaskGraph()};
 if($('report-chat-expand'))$('report-chat-expand').onclick=()=>openReportChat();
 if($('report-chat-close'))$('report-chat-close').onclick=()=>closeReportChat();
 if($('report-chat-backdrop'))$('report-chat-backdrop').onclick=()=>closeReportChat();
