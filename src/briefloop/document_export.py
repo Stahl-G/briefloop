@@ -10,6 +10,43 @@ ALIGN = {'left': WD_ALIGN_PARAGRAPH.LEFT, 'center': WD_ALIGN_PARAGRAPH.CENTER,
          'right': WD_ALIGN_PARAGRAPH.RIGHT, 'justify': WD_ALIGN_PARAGRAPH.JUSTIFY}
 
 
+def reader_source_blocks(document, sources):
+    """Replace only a recognized internal source index, not authored data tables."""
+    def text(node):
+        return node.get('text', '') + ''.join(text(c) for c in node.get('content', []))
+    blocks = document.get('content', [])
+    kept, indexed = [], []
+    for node in blocks:
+        rows = node.get('content', [])
+        headers = [text(c).strip() for c in rows[0].get('content', [])] if rows else []
+        ids = []
+        if (node.get('type') == 'table' and kept and kept[-1].get('type') == 'heading'
+                and text(kept[-1]).strip() in ('来源', '参考来源', '参考资料')
+                and headers in (['编号', '主体/来源', 'source_id'], ['编号', '主体来源', 'source_id'])
+                and len(rows) > 1):
+            for row in rows[1:]:
+                cells = row.get('content', [])
+                if len(cells) != 3 or not text(cells[0]).strip().isdigit():
+                    break
+                if any(len(c.get('content', [])) != 1 or c['content'][0].get('type') != 'paragraph'
+                       or any(n.get('type') != 'text' for n in c['content'][0].get('content', []))
+                       for c in cells):
+                    break
+                sid = text(cells[2]).strip()
+                if sid not in sources or not sources[sid].get('name'):
+                    break
+                # Do not discard merged cells or additional structured content.
+                if any(c.get('attrs', {}).get(k, 1) != 1 for c in cells for k in ('colspan', 'rowspan')):
+                    break
+                ids.append(sid)
+            if len(ids) == len(rows) - 1:
+                kept.pop()
+                indexed.extend(ids)
+                continue
+        kept.append(node)
+    return kept, indexed
+
+
 def without_duplicate_cover_heading(document,title):
     """Drop one repeated cover H1, preserving every surrounding block and table."""
     from copy import deepcopy
@@ -185,14 +222,22 @@ def render_document(doc, document, *, figures=None, sources=None, append_sources
                 row._tr.get_or_add_trPr().append(OxmlElement('w:cantSplit'))
         else: raise ValueError('不支持的导出内容：' + kind)
 
-    for node in document.get('content', []): block(node)
+    blocks, indexed = reader_source_blocks(document, sources) if append_sources else (document.get('content', []), [])
+    for node in blocks: block(node)
+    for sid in indexed:
+        if sid not in used: used.append(sid)
     if append_sources and used:
         doc.add_heading('来源', level=2)
         for i, sid in enumerate(used, 1):
             source = sources.get(sid, {})
-            p = doc.add_paragraph(f'{i}. ' + source.get('name', sid))
-            if source.get('url'):
-                inline(p, [{'type': 'text', 'text': ' 原文', 'marks': [{'type': 'link', 'attrs': {'href': source['url']}}]}])
+            p = doc.add_paragraph(f'{i}. ')
+            label = source.get('name') or '引用来源未关联，请补充核对'
+            url = source.get('url') or ''
+            if url.startswith(('https://', 'http://')):
+                inline(p, [{'type': 'text', 'text': label, 'marks': [{'type': 'link', 'attrs': {'href': url}},
+                        {'type': 'textStyle', 'attrs': {'color': '#0563C1'}}]}])
+            else:
+                p.add_run(label)
     from .industry_export import populate_table_of_contents
     populate_table_of_contents(doc)
     return doc
