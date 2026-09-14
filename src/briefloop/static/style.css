@@ -664,3 +664,15 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 .compact-options-menu{position:absolute;z-index:30;top:28px;right:0;width:230px;padding:12px;border:1px solid var(--line);border-radius:6px;background:var(--surface);box-shadow:var(--shadow-sm)}.compact-options-menu label{display:flex;justify-content:space-between;margin:4px 0}
 
 .compact-legacy-option[hidden]{display:none!important}
+
+.version-diff-dialog{width:min(1200px,94vw);max-height:90vh;padding:var(--space-5);border:1px solid var(--line);border-radius:var(--radius);color:var(--ink)}
+.version-diff-header,.version-diff-labels{display:flex;align-items:center;justify-content:space-between;gap:var(--space-4)}
+.version-diff-labels>*{flex:1;min-width:0}.version-diff-labels select{max-width:100%;font-size:13px}
+#diff-summary{font-size:13px;color:var(--muted)}
+.version-diff-row{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);border-bottom:1px solid var(--line)}
+.version-diff-cell{padding:var(--space-4);overflow-wrap:anywhere;min-width:0;overflow:auto;line-height:1.8}.version-diff-cell+*{border-left:1px solid var(--line)}
+.version-diff-cell img{max-width:100%;height:auto}.version-diff-cell table{border-collapse:collapse;width:100%}.version-diff-cell td,.version-diff-cell th{border:1px solid var(--line);padding:var(--space-2)}
+.diff-added{color:var(--green);background:var(--soft);text-decoration:underline}.diff-removed{color:var(--danger);text-decoration:line-through}
+.diff-block-added{box-shadow:inset 3px 0 var(--green)}.diff-block-removed{box-shadow:inset 3px 0 var(--danger)}
+.version-diff-cell h1{font-size:23px}.version-diff-cell h2{font-size:17px}
+@media(max-width:780px){.version-diff-dialog{padding:var(--space-2)}.version-diff-cell{padding:var(--space-2)}.version-diff-labels{align-items:flex-start}}

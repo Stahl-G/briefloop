@@ -1,3 +1,5 @@
+import {renderVersionDiff} from './version-diff.js';
+import {DOMSerializer} from 'prosemirror-model';
 import {beginPanel,updatePanel} from './report-panels.js';
 import {taskProgressCard} from './task-progress.js';
 import {copyText} from './clipboard.js';
@@ -316,7 +318,7 @@ function syncPendingReport(){
  const waiting=!!pendingRun&&!current;
  let box=$('pending-report');if(!box){box=document.createElement('div');box.id='pending-report';box.className='empty';$('document-area').before(box)}
  box.hidden=!waiting;$('document-area').hidden=!current;
- for(const id of ['export-menu-toggle','more-menu-toggle','version-history'])if($(id))$(id).hidden=waiting;
+ for(const id of ['export-menu-toggle','more-menu-toggle','version-history','version-diff'])if($(id))$(id).hidden=waiting;
  if(!waiting)return;
  const run=state.runs.find(r=>r.id===pendingRun),job=state.jobs.find(j=>j.kind==='generate'&&parse(j.payload).run_id===pendingRun);
  $('report-title').textContent=parse(run?.requirements).title||'新报告';$('save-state').textContent='';$('version-select').value='run:'+pendingRun;
@@ -717,6 +719,35 @@ $('version-history').onclick=()=>action(async()=>{
  $('history-dialog').showModal();
 });
 $('close-history').onclick=()=>$('history-dialog').close();
+$('version-diff').onclick=()=>action(async()=>{
+ await savedVersion();if(!current)return;
+ const versions=state.briefs.filter(b=>b.run_id===current.run_id);
+ const index=versions.findIndex(b=>b.id===current.id),older=versions.slice(index+1);
+ if(!older.length){notice('这是第一稿，还没有可比较的上一版本');return}
+ const target=current;
+ const label=b=>new Date(b.created).toLocaleString('zh-CN',{hour12:false})+' · '+(b.author==='agent'?'AI 稿件':b.author==='user'?'用户修改':'原稿');
+ $('diff-base').innerHTML=older.map((b,i)=>`<option value="${esc(b.id)}">${i===0?'上一稿 · ':i===older.length-1?'第一稿 · ':''}${esc(label(b))}</option>`).join('');
+ $('diff-target').textContent='当前稿 · '+label(target);
+ function documentFor(b){
+  if(b.editor_document)return editor.schema.nodeFromJSON(parse(b.editor_document)).toJSON();
+  const temporary=new Editor({extensions:[StarterKit,TableKit,ReportImage,TextStyle,Layout,Citation,Markdown],content:toEditor(b.markdown),contentType:'markdown'});
+  try{return temporary.getJSON()}finally{temporary.destroy()}
+ }
+ const after=documentFor(target);
+ $('diff-base').onchange=()=>{
+  const base=older.find(b=>b.id===$('diff-base').value);if(!base)return;
+  const before=documentFor(base),serializer=DOMSerializer.fromSchema(editor.schema);
+  const count=renderVersionDiff($('diff-body'),before.content,after.content,(node,side)=>{
+   const doc=editorDocument({type:'doc',content:[node]},side==='before'?base.id:target.id);
+   return serializer.serializeNode(editor.schema.nodeFromJSON(doc.content[0]));
+  });
+  $('diff-next').disabled=!count;let changeIndex=0;$('diff-next').onclick=()=>{const rows=$('diff-body').querySelectorAll('[data-change]');if(rows.length)rows[changeIndex++%rows.length].scrollIntoView({block:'center',behavior:'smooth'})};
+  $('diff-summary').textContent=count?`${count} 处内容或格式变化 · 绿色为新增，红色删除线为删去；边框标出图表或格式变化`:'两稿内容和格式相同';
+ };
+ $('diff-base').onchange();$('diff-dialog').showModal();
+});
+$('close-diff').onclick=()=>$('diff-dialog').close();
+
 
 // Interactive agent conversations. Artifact editors keep their existing state.
 const chat = {view:'active',home:true,sessions:[],id:null,session:null,messages:[],requests:[],events:new Map(),after:0,busy:false,uploading:0,polling:false,drafts:new Map(),attachments:new Set(),request:null};
