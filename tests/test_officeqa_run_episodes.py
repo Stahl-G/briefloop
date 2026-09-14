@@ -202,9 +202,10 @@ def test_run_index_records_concurrency_and_isolation(chain):
     assert index['model_calls']['peak_concurrent'] <= budget.max_concurrent_model_calls
     assert index['model_calls']['total_calls'] > 0  # B 桩的 execute 都占了槽位
     assert index['episode_workers'] >= 1
-    # 隔离：数据区审计 green，边界（同用户隔离机制）如实记录为未配置
+    # 隔离：数据区审计 green；边界状态如实镜像 config（Q3 冻结后为已配置的 sandbox）
     assert index['isolation']['data_area']['status'] == 'green'
-    assert index['isolation']['boundary']['enforced'] is False
+    configured = re_mod.isolation.boundary_report(re_mod.load_config())['enforced']
+    assert index['isolation']['boundary']['enforced'] is configured
 
 
 def test_gold_never_appears_in_question_only_or_episodes(chain):
