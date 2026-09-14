@@ -39,3 +39,30 @@ def test_concurrent_exports_share_job_and_rebuild_missing_or_damaged_file(tmp_pa
     revised = store.revise(brief['id'], '# 验收\n\n本周三项交付。')
     changed = export_jobs.enqueue_export(store, revised['id'])
     assert changed['id'] not in {job['id'] for job in store.rows("SELECT * FROM jobs WHERE kind='export_docx'") if job['payload'] == rebuilt['payload']}
+
+
+def test_reader_source_upgrade_invalidates_both_renderer_caches(tmp_path, monkeypatch):
+    from briefloop.templates import import_builtin
+    store = Store(tmp_path)
+    import_builtin(store)
+    template_id = store.rows('SELECT id FROM templates LIMIT 1')[0]['id']
+    source = store.add_source('Synthetic', '本周两项交付。')
+    run = store.create_run({'title': '验收', 'objective': '合成测试'}, [source['id']])
+    brief = store.publish(run['id'], {'title': '验收', 'markdown': '# 验收\n\n本周两项交付。'})
+    current_input = export_jobs.export_input
+    def old_input(*args, **kwargs):
+        identity, figures = current_input(*args, **kwargs)
+        identity['renderer'] = 15 if identity['requirements'].get('template_id') else 17
+        return identity, figures
+    for layout in (None, template_id):
+        monkeypatch.setattr(export_jobs, 'export_input', old_input)
+        old = export_jobs.enqueue_export(store, brief['id'], layout)
+        result = export_jobs.generate_word(store, old, threading.Event())
+        with store.tx() as c:
+            c.execute("UPDATE jobs SET status='complete',result=? WHERE id=?", (dump(result), old['id']))
+        assert export_jobs.enqueue_export(store, brief['id'], layout)['id'] == old['id']
+        monkeypatch.setattr(export_jobs, 'export_input', current_input)
+        upgraded = export_jobs.enqueue_export(store, brief['id'], layout)
+        assert upgraded['id'] != old['id']
+        assert export_jobs.enqueue_export(store, brief['id'], layout)['id'] == upgraded['id']
+        assert export_jobs.output_path(store, old).is_file()
