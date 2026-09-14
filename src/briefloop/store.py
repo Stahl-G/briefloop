@@ -261,7 +261,11 @@ class Store:
             raise ValueError("同一材料不能同时作为本期证据和风格参考，请选择用途")
         for sid in source_ids:
             self.one("sources", sid)
-        if not source_ids and not req.allow_web and not options.get('connector_selection_validated', False):
+        if not source_ids and not req.allow_web and req.result_format != 'grounded_qa_v1' \
+                and not options.get('connector_selection_validated', False):
+            # grounded_qa_v1 例外：QA 运行从只读语料出发，实际使用的文档在运行期
+            # 通过语料适配器的 accept 路径登记为本 run 的来源（run_sources），不在
+            # 提交时预置来源，也不借此打开联网开关。
             raise ValueError("请添加来源，或允许联网查找来源")
         rid = uid("run")
         with self.tx() as c:

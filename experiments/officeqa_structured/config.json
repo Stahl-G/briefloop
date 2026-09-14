@@ -36,10 +36,11 @@
     "official_questions": 90,
     "corpus_documents": 1435,
     "source_root": "/Users/yihongguo/Developer/datasets/officeqa-pro-v2",
+    "pdf_originals": false,
     "revision": null,
     "eligible_questions": null,
     "exposure_ledger": null,
-    "note": "fullcorpus/ 为 V2 全语料；officeqa_pro*.csv 含 gold，属受限数据，仅数据准备进程可读（协议 §6.4）。"
+    "note": "fullcorpus/ 为 V2 全语料；officeqa_pro*.csv 含 gold，属受限数据，仅数据准备进程可读（协议 §6.4）。pdf_originals=false：本地 fullcorpus 已核实无任何 *.pdf（find 计数为 0），协议 §6.1 的 PDF 按页视觉对等因此不适用——A/B 共享同一解析元素 page 视图，按语料条件偏差记录（corpus_adapter stage/probe 会如实报告）。"
   },
   "data_area": {
     "root": "/Users/yihongguo/Developer/briefloop-data/officeqa",
@@ -56,6 +57,14 @@
     "reviewer_model": null,
     "note": "协议 §5.1：只测一个预先选择的真实可用模型组合；冻结后不得按成绩换模型。"
   },
+  "isolation": {
+    "solver_boundary": null,
+    "note": "设计 §2：隔离靠 OS 不靠提示词。0700/0600 权限位只防其他用户，不防同用户 solver；真实开跑前必须在这里冻结一个真实边界（kind=dedicated-user 时 detail 写专用用户名，kind=sandbox 时写拒绝读取受限数据目录的沙箱配置），并且 solver 进程必须以 isolation.solver_environment() 的凭据剥离环境启动。run_episodes 的真实执行门会对此断言。"
+  },
+  "web_search": {
+    "entrypoint": null,
+    "note": "协议 §6.3 受控联网入口。null=未接入：共享指令与 NATIVE_FRAME 均不得宣称有联网搜索，B 的 allow_web=false。Q3 冻结时填写两组同一入口及请求全量记录方式。"
+  },
   "budget": {
     "episode_wall_clock_seconds": 1800,
     "max_concurrent_model_calls": 4,
@@ -66,15 +75,20 @@
   },
   "episode_runner": {
     "entrypoint": "experiments/officeqa_structured/run_episodes.py",
-    "real_execution": "not wired; run refuses without --dry-run until the Q3 authorization gate and freeze",
+    "real_execution": "not wired; run refuses without --dry-run until the Q3 authorization gate, freeze, and an enforced isolation.solver_boundary",
     "episode_workspace_settings": {
       "auto_learn": false,
       "fact_checker": false,
       "auto_revision": true,
-      "timeout_minutes": 0
+      "timeout_minutes": 0,
+      "company_context_enabled": false,
+      "research_tier": "standard",
+      "search_policy": {"primary_provider": "native", "supplemental_providers": [], "native_search_enabled": false, "coverage_mode": "primary_only"},
+      "max_reports": 1
     },
     "shared_corpus_tool": "experiments/officeqa_structured/corpus_adapter.py (docs/search/read/page; accept registers a used document as a real run source)",
-    "closure_note": "设计 §4：episode 内关闭自动学习、定时报告、企业背景；runner 在 episode 工作区强制 auto_learn=false/fact_checker=false。"
+    "concurrency": "run_episodes.ModelCallLimiter 按协议 §8.1 限制同时活跃模型调用（跨组、跨角色、跨 episode）；episode 调度并行度是独立的 --episode-workers，默认等于 max_concurrent_model_calls。",
+    "closure_note": "设计 §4：episode 内关闭自动学习、定时报告、企业背景、通知、多搜索渠道切换、研究档位。runner 在 episode 工作区显式强制 auto_learn/fact_checker/company_context_enabled/search_policy/research_tier，并断言 report_schedules 与 notifications 为空；版本对比 UI 与紧凑控件是桌面界面能力，headless episode 工作区不暴露（协议 §8.2）。"
   },
   "pending_freeze": [
     "baseline.integration_commit",
@@ -84,6 +98,8 @@
     "runtime.host",
     "runtime.model",
     "runtime.reviewer_model",
-    "budget.search_budget"
+    "budget.search_budget",
+    "isolation.solver_boundary",
+    "web_search.entrypoint"
   ]
 }

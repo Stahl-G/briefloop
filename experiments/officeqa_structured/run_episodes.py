@@ -14,30 +14,44 @@ Gold reaches the process only in the ``score`` step, after ``freeze`` has
 sealed the predictions (protocol §8.3), and the scorer itself is the pinned
 official reward.py behind ``score_answer_record``.
 
+Protocol §8.1's concurrency cap is a run-wide ``ModelCallLimiter`` over
+simultaneously active model calls — every transport call holds one slot;
+episode scheduling (``--episode-workers``) is deliberately decoupled from
+it.  Before any episode runs, ``isolation.audit_data_area`` re-verifies the
+data-area permission bits and fails closed on drift.  Arm A submits through
+a concrete submit directory drained into the ``SubmissionBox``; format
+repair (protocol §4) is bounded per episode with gold-blind feedback the
+agent — never this program — acts on.
+
 Zero real model calls.  ``run --dry-run`` executes both arms with stub
 solvers (a deterministic native stub, and a transport stub that walks the
 real product interfaces); there is deliberately **no real-execution path
 other than --dry-run** — wiring an actual host/model transport is the Q3
-authorization gate (design §5) and fails closed here.
+authorization gate (design §5), which additionally demands an enforced
+OS-level solver boundary (``isolation.solver_boundary`` in config) and
+fails closed here.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import os
 import random
 import re
 import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Iterator
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import corpus_adapter  # noqa: E402  (same experiment directory)
+import isolation  # noqa: E402  (same experiment directory)
 import prepare_dataset  # noqa: E402
 import score_answer_record  # noqa: E402
 
@@ -70,6 +84,56 @@ def _canonical_bytes(record: dict[str, Any]) -> bytes:
 
 def _sha256_bytes(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
+
+
+def _write_private_bytes(path: Path, payload: bytes) -> None:
+    """Write an evaluator-only artifact with owner-only bits (design §2)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_bytes(payload)
+    os.chmod(temporary, 0o600)
+    temporary.replace(path)
+
+
+class ModelCallLimiter:
+    """Protocol §8.1: a run-global cap on simultaneously *active model calls*.
+
+    This is deliberately NOT episode parallelism: one episode may host several
+    concurrent role calls (orchestrator, scouts, reviewer, revision) and several
+    episodes may be in flight — every real transport call, in every arm, must
+    hold one slot for its duration.  Dry-run stub transports take slots too, so
+    the accounting path is exercised end to end without any model.  A future
+    real transport that bypasses ``slot()`` is a protocol deviation: wire Q3
+    transports through this limiter, and read ``report()`` into the run index.
+    """
+
+    def __init__(self, limit: int):
+        if limit < 1:
+            raise RunnerError(f"max_concurrent_model_calls must be >= 1, got {limit}")
+        self.limit = limit
+        self._semaphore = threading.BoundedSemaphore(limit)
+        self._lock = threading.Lock()
+        self._active = 0
+        self.peak = 0
+        self.total = 0
+
+    @contextmanager
+    def slot(self) -> Iterator[None]:
+        with self._semaphore:
+            with self._lock:
+                self._active += 1
+                self.total += 1
+                self.peak = max(self.peak, self._active)
+            try:
+                yield
+            finally:
+                with self._lock:
+                    self._active -= 1
+
+    def report(self) -> dict[str, Any]:
+        with self._lock:
+            return {"limit": self.limit, "peak_concurrent": self.peak,
+                    "total_calls": self.total}
 
 
 # --- configuration and sanitized case view -------------------------------------
@@ -153,12 +217,17 @@ def load_cases(data_root: Path) -> list[Case]:
 # --- shared instructions (identical corpus surface for both arms, §6.1) --------
 
 
-def corpus_tool_instructions(data_root: Path) -> str:
+def corpus_tool_instructions(data_root: Path, *, web_entry: str | None = None) -> str:
     """The one corpus surface both arms see: search, snippet read, page view.
 
     No document list, no year hints, no file names — the agent must locate
     evidence itself (protocol §6.1).  B registers documents it actually uses
     through ``accept``; A reads without registration.
+
+    The controlled web entry (protocol §6.3) is claimed ONLY when the run
+    configuration actually names one (``config.json web_search.entrypoint``,
+    frozen at Q3).  With no entry wired, the instructions say so explicitly
+    instead of promising a capability the runner does not provide.
     """
     manifest_path = Path(data_root).expanduser().resolve() / "corpus" / "index" / "manifest.json"
     documents = "全量"
@@ -166,6 +235,10 @@ def corpus_tool_instructions(data_root: Path) -> str:
         documents = str(json.loads(manifest_path.read_text(encoding="utf-8")).get("documents", documents))
     tool = str(CORPUS_TOOL_PATH)
     root = str(Path(data_root).expanduser().resolve())
+    web_line = (f"每组还有同一受控联网搜索入口可用于补充公开资料：{web_entry}；"
+                "只读取原始发布者正文并记录全部请求；禁止浏览基准答案键、公开解题文章或任何评测输出。"
+                if web_entry else
+                "本次运行未接入联网搜索入口；全部资料只能来自上述本地只读语料，不要假定可以联网检索。")
     return f"""可用资料：一套本地只读语料（美国财政部公报全量解析，{documents} 份文档；不提供文件清单，也不给任何题目相关的文件提示）。
 统一用以下命令操作语料（Python 已就绪，直接运行；输出为 JSON）：
 - 查找文档：python3 {tool} docs --data-root {root} --query 关键词子串
@@ -173,18 +246,32 @@ def corpus_tool_instructions(data_root: Path) -> str:
 - 片段读取（1-based 行号）：python3 {tool} read --data-root {root} --doc 文档名 --start-line N --end-line M
 - 按页查看（0-based page_index）：python3 {tool} page --data-root {root} --doc 文档名 --page-index P
 检索词按文档年代、主题、指标与表头术语组合；同一文档先检索定位行号，再片段读取或按页查看；表格元素内容较长时会截断，需要完整内容时缩小行号范围。
-每组还有同一受控联网搜索入口可用于补充公开资料：只读取原始发布者正文并记录全部请求；禁止浏览基准答案键、公开解题文章或任何评测输出。"""
+{web_line}"""
 
 
-NATIVE_FRAME = """You are answering one OfficeQA question against a local read-only corpus of parsed U.S. Treasury publications.
+def native_frame(submit_dir: Path, web_entry: str | None) -> str:
+    """Arm-A frame (protocol §5.1): names the concrete submit endpoint.
+
+    The submit directory is the program acceptance endpoint (protocol §8.3):
+    the runner creates it, watches it, and accepts/timestamps/hashes every
+    answer file the agent writes there.  The web clause matches what the
+    runner actually wired — no promised entry when none is configured.
+    """
+    submit = str(Path(submit_dir).expanduser().resolve())
+    web_clause = ("You have the corpus tools and the controlled web entry described below; "
+                  "no other assistance."
+                  if web_entry else
+                  "You have the corpus tools described below and no other assistance; "
+                  "this run wires no web access.")
+    return f"""You are answering one OfficeQA question against a local read-only corpus of parsed U.S. Treasury publications.
 
 Work like a professional archivist: narrow by document era and family first (combined statements, govinfo receipts, appendix tables), then search entity and measure terms including period naming variants, then read the relevant tables closely — check headers, footnotes, units and the exact fiscal period before extracting operands. Multi-step arithmetic is allowed after extracting exact values.
 
-This is a research task with self-checks: verify the answer against the located table, re-derive any computation, and confirm units and rounding follow the question. You have the corpus tools and the controlled web entry described below; no other assistance.
+This is a research task with self-checks: verify the answer against the located table, re-derive any computation, and confirm units and rounding follow the question. {web_clause}
 
-Submit the final answer as a single UTF-8 JSON file `answer.json` in the submit directory, exactly:
+Submit the final answer as a single UTF-8 JSON file `answer.json` written into the submit directory ({submit}), exactly:
 {{"schema_version": "officeqa.answer.v1", "status": "answered", "answer": "<single-line direct answer>"}}
-The answer keeps the direct form the question asks for (number, date, text, or a list string in the question's order such as "[North, 0.866]"). No explanations, units the question did not ask for, citation markers, confidence or alternatives. One line, at most 250 characters after trimming. If you genuinely cannot determine the answer, submit {{"schema_version": "officeqa.answer.v1", "status": "abstained", "answer": null}}. The submitting program accepts, timestamps and hashes every answer file; only your latest accepted submission before the deadline counts.
+The answer keeps the direct form the question asks for (number, date, text, or a list string in the question's order such as "[North, 0.866]"). No explanations, units the question did not ask for, citation markers, confidence or alternatives. One line, at most 250 characters after trimming. If you genuinely cannot determine the answer, submit {{"schema_version": "officeqa.answer.v1", "status": "abstained", "answer": null}}. The submitting program accepts, timestamps and hashes every answer file in that directory; only your latest accepted submission before the deadline counts.
 """
 
 
@@ -198,15 +285,24 @@ class SubmissionBox:
     their raw bytes preserved; format-invalid payloads (and anything arriving
     after the deadline) are kept as attempts without acceptance, so scoring
     falls back to the previous accepted answer exactly as §8.3 requires.
+
+    Format repair (protocol §4): ``offer_format_repair`` turns one rejected
+    invalid submission into gold-blind feedback for the *agent* to resubmit
+    — at most ``repair_budget`` times per episode, never authored by this
+    program.  ``drain_submit_directory`` is the file endpoint arm A's frame
+    points at: every answer file sitting in the submit directory is
+    accepted, timestamped and hashed.
     """
 
-    def __init__(self, episode_dir: Path, deadline: float):
+    def __init__(self, episode_dir: Path, deadline: float, *, repair_budget: int = 0):
         self.episode_dir = Path(episode_dir)
         self.submissions = self.episode_dir / "submissions"
         self.attempts = self.episode_dir / "attempts"
         self.submissions.mkdir(parents=True, exist_ok=True)
         self.attempts.mkdir(parents=True, exist_ok=True)
         self.deadline = deadline
+        self.repair_budget = int(repair_budget)
+        self.repairs_used = 0
         self._lock = threading.Lock()
 
     def accept(self, payload: bytes, *, source: str) -> dict[str, Any]:
@@ -230,6 +326,59 @@ class SubmissionBox:
             with (self.episode_dir / "submissions" / "index.jsonl").open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
         return entry
+
+    def offer_format_repair(self, entry: dict[str, Any]) -> str | None:
+        """Protocol §4: bounded, gold-blind format repair for the agent.
+
+        Conditions: the entry is a pre-deadline format-invalid submission and
+        the episode still has repair budget.  The returned text carries only
+        the recorded projection reason plus the answer contract — the agent
+        (never this program) authors the resubmission.  Issuances are
+        appended to the submission index with ``source="format-repair"``.
+        """
+        if entry.get("accepted") or entry.get("status") != "invalid":
+            return None
+        if time.time() > self.deadline:
+            return None
+        with self._lock:
+            if self.repairs_used >= self.repair_budget:
+                return None
+            self.repairs_used += 1
+            repair_seq = self.repairs_used
+            record = {"source": "format-repair", "accepted": False,
+                      "repair_seq": repair_seq, "issued_at": _now(),
+                      "for_sha256": entry.get("sha256"), "reason": entry.get("reason")}
+            with (self.submissions / "index.jsonl").open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        return (f"格式修复（第 {repair_seq}/{self.repair_budget} 次，整次 episode 共用）："
+                f"上一次提交未被接纳，原因：{entry.get('reason')}。"
+                "请由你自己重新提交一份符合 answer.json 契约的答案文件（单行 answer 字符串、"
+                "无解释/单位/引用标记、不得超过 250 字符；确实无法确定则提交 abstained）。"
+                "控制程序不会替你改正内容。")
+
+    def drain_submit_directory(self, submit_dir: Path) -> list[dict[str, Any]]:
+        """Accept every answer file currently sitting in the submit directory.
+
+        Files are processed in (mtime, name) order; a file whose exact bytes
+        were already recorded does not count again, so an agent overwriting
+        ``answer.json`` with new bytes is a new submission (§8.3: the latest
+        accepted submission before the deadline is the scored one).
+        """
+        submit_dir = Path(submit_dir)
+        if not submit_dir.is_dir():
+            return []
+        with self._lock:
+            known = {row.get("sha256") for row in self.entries()}
+        accepted_now: list[dict[str, Any]] = []
+        for path in sorted(submit_dir.glob("*.json"), key=lambda item: (item.stat().st_mtime, item.name)):
+            payload = path.read_bytes()
+            digest = _sha256_bytes(payload)
+            if digest in known:
+                continue
+            entry = self.accept(payload, source=f"submit-dir:{path.name}")
+            known.add(digest)
+            accepted_now.append(entry)
+        return accepted_now
 
     def entries(self, *, accepted_only: bool = False) -> list[dict[str, Any]]:
         index = self.submissions / "index.jsonl"
@@ -277,26 +426,46 @@ class StubNativeSolver:
     """Deterministic A-arm stub: exercises the same corpus surface, no model.
 
     Searches the corpus with a question-derived term, reads one snippet, and
-    submits a fixed synthetic answer.  The term comes from the question text
-    only — the stub never sees any gold.
+    writes its answer file into the episode submit directory — first with a
+    deliberately tag-injected payload so the dry-run exercises the §4
+    format-repair loop (gold-blind feedback, agent resubmits), then a clean
+    payload after feedback.  The term and every answer byte come from the
+    question text and fixed synthetic strings — the stub never sees gold.
+
+    A real Q3 native transport plays exactly this role against the same
+    submit directory and feedback channel, holding one ModelCallLimiter slot
+    per model call.
     """
 
     answer = "native-stub-answer"
 
-    def solve(self, case: Case, workspace: Path, box: SubmissionBox,
+    def _write_answer(self, submit_dir: Path, payload: dict[str, Any]) -> None:
+        (Path(submit_dir) / "answer.json").write_bytes(_canonical_bytes(payload))
+
+    def solve(self, case: Case, submit_dir: Path,
               adapter: corpus_adapter.CorpusAdapter, tool_calls: list[dict[str, Any]]) -> None:
         hit = _first_hit(adapter, case.question, tool_calls, limit=5)
         if hit:
             snippet = adapter.read(hit["name"], hit["line"], hit["line"] + 2)
             tool_calls.append({"op": "read", "args": {"doc": hit["name"], "line": hit["line"]},
                                "results": snippet["returned"]})
-        payload = {"schema_version": score_answer_record.ANSWER_SCHEMA_VERSION,
-                   "status": "answered", "answer": self.answer}
-        box.accept(_canonical_bytes(payload), source="solver")
+        # First attempt embeds a FINAL_ANSWER tag — a contract violation the
+        # box rejects, so the repair loop below gets exercised in dry-run.
+        self._write_answer(submit_dir, {"schema_version": score_answer_record.ANSWER_SCHEMA_VERSION,
+                                        "status": "answered",
+                                        "answer": f"<FINAL_ANSWER>{self.answer}</FINAL_ANSWER>"})
+
+    def resubmit_after_format_feedback(self, submit_dir: Path, feedback: str,
+                                        tool_calls: list[dict[str, Any]]) -> None:
+        """The agent-side half of §4: fix the format itself, then rewrite."""
+        tool_calls.append({"op": "format-repair-resubmit", "args": {"feedback_chars": len(feedback)}})
+        self._write_answer(submit_dir, {"schema_version": score_answer_record.ANSWER_SCHEMA_VERSION,
+                                        "status": "answered", "answer": self.answer})
 
 
 def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: str,
-                       order_index: int) -> dict[str, Any]:
+                       order_index: int, limiter: "ModelCallLimiter",
+                       web_entry: str | None = None) -> dict[str, Any]:
     episode_dir = Path(data_root) / "episodes" / label / "A" / case.case_key
     if episode_dir.exists():
         raise RunnerError(f"episode directory already exists: {episode_dir}")
@@ -305,14 +474,32 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
     deadline = started + budget.wall_clock_seconds
     workspace = episode_dir / "workspace"
     workspace.mkdir()
+    # The program acceptance endpoint (§8.3): created here, named in the frame,
+    # drained into the SubmissionBox after the solver finishes.
+    submit_dir = episode_dir / "submit"
+    submit_dir.mkdir()
     (workspace / "question.md").write_text(f"# OfficeQA {case.uid}\n\n{case.question}\n", encoding="utf-8")
     (workspace / "prompt.md").write_text(
-        NATIVE_FRAME + "\n## Question\n\n" + case.question + "\n\n" + corpus_tool_instructions(data_root) + "\n",
+        native_frame(submit_dir, web_entry) + "\n## Question\n\n" + case.question + "\n\n"
+        + corpus_tool_instructions(data_root, web_entry=web_entry) + "\n",
         encoding="utf-8")
     tool_calls: list[dict[str, Any]] = []
-    box = SubmissionBox(episode_dir, deadline)
+    box = SubmissionBox(episode_dir, deadline, repair_budget=budget.format_repair_attempts)
     with corpus_adapter.CorpusAdapter(Path(data_root) / "corpus") as adapter:
-        StubNativeSolver().solve(case, workspace, box, adapter, tool_calls)
+        solver = StubNativeSolver()
+        solver.solve(case, submit_dir, adapter, tool_calls)
+        # Format-repair loop (§4): drain the submit directory, hand gold-blind
+        # feedback to the agent, let it rewrite; bounded by the episode budget.
+        for _ in range(max(0, box.repair_budget) + 1):
+            entries = box.drain_submit_directory(submit_dir)
+            latest = entries[-1] if entries else None
+            if latest is None or latest.get("accepted"):
+                break
+            feedback = box.offer_format_repair(latest)
+            if feedback is None:
+                break
+            solver.resubmit_after_format_feedback(submit_dir, feedback, tool_calls)
+        box.drain_submit_directory(submit_dir)
     record = _episode_record(case=case, arm="A", label=label, order_index=order_index,
                              episode_dir=episode_dir, started=started, deadline=deadline,
                              budget=budget, box=box, tool_calls=tool_calls,
@@ -339,9 +526,10 @@ class StubBriefloopTransport:
     initial_answer = "briefloop-stub-answer"
     revised_answer = "briefloop-stub-answer-revised"
 
-    def __init__(self, store: Any, adapter: corpus_adapter.CorpusAdapter):
+    def __init__(self, store: Any, adapter: corpus_adapter.CorpusAdapter, limiter: "ModelCallLimiter"):
         self.store = store
         self.adapter = adapter
+        self.limiter = limiter
         self.cancelled = threading.Event()
         self.calls: list[dict[str, Any]] = []
         self.tool_calls: list[dict[str, Any]] = []
@@ -355,6 +543,14 @@ class StubBriefloopTransport:
 
     def execute(self, job: dict[str, Any], prompt: str, folder: str,
                 on_tick: Callable[[], None] = lambda: None, **kwargs: Any) -> dict[str, Any]:
+        # Every execute() stands in for one real model call, so it holds one
+        # run-global §8.1 slot for its duration — the same contract a Q3 real
+        # transport must satisfy (never bypass the limiter).
+        with self.limiter.slot():
+            return self._execute_locked(job, prompt, folder, on_tick=on_tick, **kwargs)
+
+    def _execute_locked(self, job: dict[str, Any], prompt: str, folder: str,
+                        on_tick: Callable[[], None] = lambda: None, **kwargs: Any) -> dict[str, Any]:
         target = Path(folder)
         with self._lock:
             if "独立只读 Reviewer" in prompt:
@@ -424,18 +620,44 @@ class StubBriefloopTransport:
 
 
 def _episode_workspace_settings(store: Any, budget: Budget) -> None:
-    """Design §4 closure list: no auto-learning, no fact checker, one revision,
-    product-level deadlines off (the runner enforces its own wall clock)."""
+    """Design §4 closure list, enforced at the episode workspace level.
+
+    Beyond the original four keys this pins the remaining closure items the
+    design names: scheduled reports and notifications are asserted absent
+    (fresh workspace, runner never registers any), the multi-channel search
+    switch is pinned to a single disabled native channel, company context is
+    off, and the report research tier never varies a QA episode.  The
+    version-compare UI is a desktop-only surface — headless episode
+    workspaces never expose it, which the config closure note records.
+
+    ``max_reports`` is deliberately 1: it gates how many generate jobs one
+    Worker may run at once inside a single episode, NOT the protocol §8.1
+    model-call cap — that is the runner-wide ModelCallLimiter.
+    """
     raw = store.meta("settings")
-    raw.update({"auto_learn": False, "fact_checker": False,
+    raw.update({"auto_learn": False,
+                "fact_checker": False,
                 "auto_revision": budget.max_automatic_revisions_B > 0,
-                "max_reports": budget.max_concurrent_model_calls,
-                "timeout_minutes": 0})
+                "timeout_minutes": 0,
+                "company_context_enabled": False,
+                "research_tier": "standard",
+                "search_policy": {"primary_provider": "native", "supplemental_providers": [],
+                                  "native_search_enabled": False, "coverage_mode": "primary_only"},
+                "max_reports": 1})
     store.set_meta("settings", raw)
+    # 设计 §4：episode 内关闭定时任务及其他后台模型作业——独立、干净的
+    # episode 工作区天然没有定时报告与通知；显式断言二者为空，一旦未来
+    # 默认行为变化在这里立即失败，而不是静默带后台作业开跑。
+    schedules = (store.rows("SELECT COUNT(*) AS n FROM report_schedules") or [{"n": 0}])[0]["n"]
+    notifications = (store.rows("SELECT COUNT(*) AS n FROM notifications") or [{"n": 0}])[0]["n"]
+    if schedules or notifications:
+        raise RunnerError(f"episode workspace must start without background jobs "
+                          f"(schedules={schedules}, notifications={notifications})")
 
 
 def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label: str,
-                          order_index: int) -> dict[str, Any]:
+                          order_index: int, limiter: "ModelCallLimiter",
+                          web_entry: str | None = None) -> dict[str, Any]:
     from briefloop.answer_result import RESULT_FORMAT, answer_of
     from briefloop.external_requests import dispatch
     from briefloop.runtime import Worker
@@ -450,10 +672,12 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
     workspace = episode_dir / "workspace"
     store = Store(workspace)
     _episode_workspace_settings(store, budget)
+    # allow_web tells the truth about what is wired: no controlled entry
+    # configured (Q3 freeze) means no web claim and no web permission.
     requirements = {"title": f"OfficeQA {case.uid}"[:200], "objective": case.question,
                     "key_questions": [case.question], "result_format": RESULT_FORMAT,
-                    "allow_web": True, "fact_check": False,
-                    "raw_input": corpus_tool_instructions(data_root)}
+                    "allow_web": web_entry is not None, "fact_check": False,
+                    "raw_input": corpus_tool_instructions(data_root, web_entry=web_entry)}
     submitted = dispatch(store, {"workspace_id": store.meta("workspace_id"), "action": "submit",
                                  "request_id": f"oqa-{case.case_key[:16]}",
                                  "requirements": requirements, "source_ids": []})
@@ -463,7 +687,7 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
     snapshots: set[str] = set()
 
     with corpus_adapter.CorpusAdapter(Path(data_root) / "corpus") as adapter:
-        transport = StubBriefloopTransport(store, adapter)
+        transport = StubBriefloopTransport(store, adapter, limiter)
         worker = Worker(store, runtime=transport, report_runtime_factory=lambda: transport)
         worker._review_runtime = transport
         worker.start()
@@ -481,6 +705,15 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
                         continue
                     entry = box.accept(_canonical_bytes(identity["answer"]), source="briefloop-version")
                     entry["version_id"] = version["id"]
+                    if not entry["accepted"]:
+                        # §4 repair accounting for B as well: a format-invalid
+                        # version consumes the shared episode repair budget
+                        # with the same gold-blind feedback.  Delivering that
+                        # feedback into the run is real-transport plumbing
+                        # (the worker's revision path carries it); the dry-run
+                        # stub always projects valid answers, so this stays
+                        # dormant here by construction.
+                        box.offer_format_repair(entry)
                 if state.get("terminal"):
                     break
                 if time.time() > deadline:
@@ -497,6 +730,8 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
                     if identity is not None:
                         entry = box.accept(_canonical_bytes(identity["answer"]), source="briefloop-version")
                         entry["version_id"] = version["id"]
+                        if not entry["accepted"]:
+                            box.offer_format_repair(entry)
         finally:
             worker.close()
         tool_calls.extend(transport.tool_calls)
@@ -545,6 +780,7 @@ def _episode_record(*, case: Case, arm: str, label: str, order_index: int, episo
                    "format_repair_attempts": budget.format_repair_attempts},
         "tool_calls": tool_calls,
         "usage_complete": usage_complete,
+        "format_repairs_issued": box.repairs_used,
         "submissions": box.entries(),
         "chosen_submission": ({"seq": chosen["seq"], "sha256": chosen["sha256"],
                                "received_at": chosen["received_at"],
@@ -585,12 +821,23 @@ def _select_cases(cases: list[Case], *, limit: int | None, case_keys: list[str],
 def command_run(args: argparse.Namespace) -> int:
     if not args.dry_run:
         # Authorization gate (design §5): Q3/Q4 need explicit user sign-off,
-        # and no real transport is wired in this tree.  Fail closed.
+        # and no real transport is wired in this tree.  Fail closed — and the
+        # same gate demands an enforced OS-level solver boundary plus a clean
+        # data-area audit, because permission bits alone do not separate a
+        # same-user solver from the restricted dataset (design §2).
         raise RealExecutionGateError(
-            "真实模型执行未接入：本 runner 只有 --dry-run（stub）路径；Q3 授权与冻结（config 无 null/TODO）后才能实现并启用真实宿主/模型传输")
+            "真实模型执行未接入：本 runner 只有 --dry-run（stub）路径；Q3 授权与冻结（config 无 null/TODO）后才能实现并启用真实宿主/模型传输。"
+            "真实开跑还必须先通过 isolation 断言（专用 OS 用户或沙箱承担同用户隔离，config isolation.solver_boundary 非空；"
+            "数据区权限审计为 green；solver 环境无数据集凭据）")
     config = load_config()
     budget = Budget.from_config(config)
     data_root = Path(args.data_root).expanduser().resolve()
+    # Isolation preflight (design §2 / protocol §6.4): fail closed on
+    # permission drift, record the boundary status in the run index.
+    isolation_audit = isolation.audit_data_area(data_root)
+    if isolation_audit["status"] != "green":
+        raise RunnerError(f"data-area isolation audit failed: {isolation_audit['failures'][:5]}")
+    web_entry = (config.get("web_search") or {}).get("entrypoint") or None
     cases = load_cases(data_root)
     selected = _select_cases(cases, limit=args.cases, case_keys=args.case_keys or [], pool=args.pool)
     arms = [arm for arm in args.arms.split(",") if arm]
@@ -613,6 +860,16 @@ def command_run(args: argparse.Namespace) -> int:
         tasks.extend((case, arm, index + 1) for index, arm in enumerate(order))
     rng.shuffle(tasks)
 
+    # Protocol §8.1's cap is on simultaneously ACTIVE MODEL CALLS, not on
+    # episodes: a run-wide ModelCallLimiter enforces it across every arm and
+    # role call, while episode scheduling gets its own --episode-workers
+    # knob (they are decoupled on purpose — waiting on a slot is the
+    # correct behaviour when episodes would oversubscribe the call budget).
+    limiter = ModelCallLimiter(budget.max_concurrent_model_calls)
+    episode_workers = args.episode_workers or budget.max_concurrent_model_calls
+    if episode_workers < 1:
+        raise RunnerError("--episode-workers must be >= 1 (0 means max_concurrent_model_calls)")
+
     def stamp(record: dict[str, Any]) -> dict[str, Any]:
         record["protocol_id"] = config["protocol_id"]
         record["experiment_id"] = config["experiment_id"]
@@ -622,9 +879,10 @@ def command_run(args: argparse.Namespace) -> int:
 
     results: list[dict[str, Any]] = []
     failures: list[dict[str, str]] = []
-    with ThreadPoolExecutor(max_workers=budget.max_concurrent_model_calls) as pool_executor:
+    with ThreadPoolExecutor(max_workers=episode_workers) as pool_executor:
         futures = {pool_executor.submit(_EPISODE_RUNNERS[arm], case, data_root=data_root,
-                                        budget=budget, label=label, order_index=order_index):
+                                        budget=budget, label=label, order_index=order_index,
+                                        limiter=limiter, web_entry=web_entry):
                    (case.case_key, arm) for case, arm, order_index in tasks}
         for future in as_completed(futures):
             case_key, arm = futures[future]
@@ -638,6 +896,12 @@ def command_run(args: argparse.Namespace) -> int:
         "run_label": label, "created": _now(),
         "protocol_id": config["protocol_id"], "experiment_id": config["experiment_id"],
         "dry_run": True, "seed": args.seed, "arms": arms,
+        "episode_workers": episode_workers,
+        "model_calls": limiter.report(),
+        "isolation": {"data_area": isolation_audit,
+                      "boundary": isolation.boundary_report(config),
+                      "solver_environment": "credential-stripped via isolation.solver_environment()"},
+        "web_entry": web_entry,
         "budget": {"wall_clock_seconds": budget.wall_clock_seconds,
                    "max_concurrent_model_calls": budget.max_concurrent_model_calls,
                    "max_automatic_revisions_B": budget.max_automatic_revisions_B,
@@ -685,7 +949,7 @@ def command_freeze(args: argparse.Namespace) -> int:
                 if _sha256_bytes(payload) != chosen["sha256"]:
                     raise RunnerError(f"frozen answer bytes changed for {arm} {case['case_key']}")
                 name = f"{arm}-{case['case_key']}.answer.json"
-                (answers_root / name).write_bytes(payload)
+                _write_private_bytes(answers_root / name, payload)
                 entry.update({"status": chosen["status"], "answer_sha256": chosen["sha256"],
                               "submission_seq": chosen["seq"], "answer_file": str(answers_root / name)})
             else:
@@ -705,10 +969,10 @@ def command_freeze(args: argparse.Namespace) -> int:
                 "predictions": len(predictions),
                 "answers_sha256": {entry["answer_file"].rsplit("/", 1)[-1]: entry["answer_sha256"]
                                    for entry in predictions if entry["answer_file"]}}
-    (frozen_root / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    (frozen_root / "predictions.jsonl").write_text(
-        "\n".join(json.dumps(entry, ensure_ascii=False) for entry in predictions) + "\n", encoding="utf-8")
+    _write_private_bytes(frozen_root / "manifest.json",
+                         json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8") + b"\n")
+    _write_private_bytes(frozen_root / "predictions.jsonl",
+                         ("\n".join(json.dumps(entry, ensure_ascii=False) for entry in predictions) + "\n").encode("utf-8"))
     print(json.dumps({"frozen": len(predictions), "root": str(frozen_root)}, ensure_ascii=False))
     return 0
 
@@ -784,10 +1048,10 @@ def command_score(args: argparse.Namespace) -> int:
             summary["b_right_to_wrong"] = sum(1 for b, a in pairs if b < a)
     scores_root = data_root / "evaluator-only" / "scores" / args.run_label
     scores_root.mkdir(parents=True, exist_ok=True)
-    (scores_root / "scores.jsonl").write_text(
-        "\n".join(json.dumps(row, ensure_ascii=False) for row in scores) + "\n", encoding="utf-8")
-    (scores_root / "summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _write_private_bytes(scores_root / "scores.jsonl",
+                         ("\n".join(json.dumps(row, ensure_ascii=False) for row in scores) + "\n").encode("utf-8"))
+    _write_private_bytes(scores_root / "summary.json",
+                         (json.dumps(summary, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
     print(json.dumps({"run_label": args.run_label, "arms": summary["arms"],
                       "out": str(scores_root / "summary.json")}, ensure_ascii=False))
     return 0
@@ -805,6 +1069,10 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("--case-keys", nargs="*", help="explicit case keys")
     run.add_argument("--pool", choices=("unknown", "exposed"), help="restrict to an exposure pool")
     run.add_argument("--seed", type=int, default=20260914)
+    run.add_argument("--episode-workers", type=int, default=0,
+                     help="episode scheduling parallelism (0 = max_concurrent_model_calls). "
+                          "Deliberately separate from the §8.1 model-call cap, which the "
+                          "run-wide ModelCallLimiter enforces across all arms and roles.")
     run.add_argument("--dry-run", action="store_true",
                      help="stub solvers over the real interfaces; zero model calls")
 

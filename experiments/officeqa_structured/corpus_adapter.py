@@ -100,39 +100,76 @@ def _source_pairs(source_root: Path) -> list[tuple[Path, Path]]:
     return [(jsons[stem], txts[stem]) for stem in sorted(jsons)]
 
 
+def _pdf_sources(source_root: Path) -> list[Path]:
+    """PDF originals when the corpus release ships them (0 in this V2 tree).
+
+    Checked layouts: ``parsed_corpus/pdfs/*.pdf`` and PDFs sitting next to
+    the JSON parses.  The local V2 fullcorpus has been verified to contain
+    none (``find fullcorpus -name '*.pdf' | wc -l`` == 0), so visual parity
+    per protocol §6.1 is moot rather than asymmetric: both arms share the
+    same parsed-element page view.  The staging mechanism stays so a later
+    release with PDFs is picked up instead of silently dropped.
+    """
+    candidates: list[Path] = []
+    pdfs_dir = source_root / "parsed_corpus" / "pdfs"
+    if pdfs_dir.is_dir():
+        candidates.extend(sorted(pdfs_dir.glob("*.pdf")))
+    candidates.extend(sorted((source_root / "parsed_corpus").glob("*.pdf")))
+    unique: dict[str, Path] = {path.name: path for path in candidates}
+    return [unique[name] for name in sorted(unique)]
+
+
 def stage_documents(source_root: Path, corpus_root: Path) -> dict[str, Any]:
     """Stage the official corpus into the data area, read-only on the source.
 
     Hardlinks when the data area is on the same volume (no duplicate bytes),
     copies otherwise.  Existing identical targets are left alone so the
-    command is re-runnable; a differing target fails closed.
+    command is re-runnable; a differing target fails closed.  PDF originals
+    are staged into ``documents/pdf`` when present — this release ships
+    none, which the report records as a corpus condition.
     """
     source_root = Path(source_root).expanduser().resolve()
     corpus_root = Path(corpus_root).expanduser().resolve()
     json_target = corpus_root.joinpath(*_JSON_REL)
     txt_target = corpus_root.joinpath(*_TXT_REL)
+    pdf_target = corpus_root.joinpath(*_PDF_REL)
     json_target.mkdir(parents=True, exist_ok=True)
     txt_target.mkdir(parents=True, exist_ok=True)
+    pdf_target.mkdir(parents=True, exist_ok=True)
     linked = copied = kept = 0
-    for json_path, txt_path in _source_pairs(source_root):
-        for src, dst_dir in ((json_path, json_target), (txt_path, txt_target)):
-            dst = dst_dir / src.name
-            if dst.exists():
-                try:
-                    if os.path.samefile(src, dst) or _sha256_file(src) == _sha256_file(dst):
-                        kept += 1
-                        continue
-                except OSError:
-                    pass
-                raise CorpusError(f"staged corpus file differs from source, refusing to overwrite: {dst}")
+
+    def _stage(src: Path, dst_dir: Path) -> None:
+        nonlocal linked, copied, kept
+        dst = dst_dir / src.name
+        if dst.exists():
             try:
-                os.link(src, dst)
-                linked += 1
+                if os.path.samefile(src, dst) or _sha256_file(src) == _sha256_file(dst):
+                    kept += 1
+                    return
             except OSError:
-                shutil.copy2(src, dst)
-                copied += 1
+                pass
+            raise CorpusError(f"staged corpus file differs from source, refusing to overwrite: {dst}")
+        try:
+            os.link(src, dst)
+            linked += 1
+        except OSError:
+            shutil.copy2(src, dst)
+            copied += 1
+
+    for json_path, txt_path in _source_pairs(source_root):
+        _stage(json_path, json_target)
+        _stage(txt_path, txt_target)
+    pdfs = _pdf_sources(source_root)
+    for pdf_path in pdfs:
+        _stage(pdf_path, pdf_target)
     return {"documents": len(_source_pairs(source_root)), "linked": linked,
             "copied": copied, "already_current": kept,
+            "pdf_documents": len(pdfs),
+            "pdf_note": ("PDF originals staged under documents/pdf for the render-source path"
+                         if pdfs else
+                         "this V2 corpus release ships parsed JSON + TXT only (verified: no *.pdf "
+                         "under fullcorpus); protocol §6.1 visual parity is therefore moot — both "
+                         "arms share the same parsed-element page view, recorded as a corpus condition"),
             "json_dir": str(json_target), "txt_dir": str(txt_target)}
 
 
@@ -513,9 +550,14 @@ def probe(corpus_root: Path, *, write_report: bool = True) -> dict[str, Any]:
             "generic_query_hits": generic_hits,
             "fts_integrity": "ok",
             "pdf": {"present": bool(pdf_files), "count": len(pdf_files),
-                    "note": ("PDF originals staged under documents/pdf are exposed with page view; "
-                             "rendering goes through the existing render-source tool" if pdf_files else
-                             "this V2 corpus ships parsed JSON + TXT only; no PDF originals staged")},
+                    "note": ("PDF originals staged under documents/pdf; the page command still returns "
+                             "the parsed-element view — PDF page rendering goes through the product's "
+                             "render-source tool on a registered source, and arm A needs the same "
+                             "render capability wired before visual parity holds (protocol §6.1)"
+                             if pdf_files else
+                             "this V2 corpus ships parsed JSON + TXT only; no PDF originals exist to "
+                             "stage, so §6.1 visual parity is moot — A/B share the same parsed-element "
+                             "page view. Recorded as a corpus condition, not an arm asymmetry")},
             "failures": failures,
             # Per-document findable/readable/searchable is the gate; the fixed
             # generic terms are informational global sanity (a two-document

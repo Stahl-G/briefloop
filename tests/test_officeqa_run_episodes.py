@@ -12,7 +12,10 @@ submit/query + Worker generate→独立审阅→一次修订链与 grounded_qa_v
 """
 import hashlib
 import json
+import os
+import stat
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -105,7 +108,10 @@ def test_episode_records_carry_protocol_33_fields(chain):
                                      'max_automatic_revisions_B': budget.max_automatic_revisions_B,
                                      'format_repair_attempts': budget.format_repair_attempts}
         assert episode['usage_complete'] is False  # stub：用量不完整要如实标记
+        assert episode['format_repairs_issued'] >= 0  # §4 修复次数入档
         for submission in episode['submissions']:
+            if not submission.get('accepted'):
+                continue  # 失败尝试与 format-repair 记录不占顺序号
             payload = (Path(episode['workspace']) / 'submissions' /
                        f"{submission['seq']:04d}-answer.json").read_bytes()
             assert hashlib.sha256(payload).hexdigest() == submission['sha256']
@@ -135,14 +141,62 @@ def test_shared_corpus_surface_is_identical_for_both_arms(chain):
     a_prompt = (Path(by_arm['A']['workspace']) / 'workspace' / 'prompt.md').read_text(encoding='utf-8')
     instructions = re_mod.corpus_tool_instructions(chain)
     assert instructions in a_prompt
+    # 无受控联网入口接入时，指令必须明说没有，而不是宣称有一个不存在的入口
+    assert '联网搜索入口可用于补充公开资料' not in instructions
+    assert '未接入联网搜索入口' in instructions
+    assert index['web_entry'] is None
     import sqlite3
     connection = sqlite3.connect(Path(by_arm['B']['workspace']) / 'workspace' / 'briefloop.db')
     requirements = json.loads(connection.execute('SELECT requirements FROM runs').fetchone()[0])
+    settings = json.loads(connection.execute("SELECT value FROM meta WHERE key='settings'").fetchone()[0])
     connection.close()
     assert requirements['raw_input'] == instructions  # B 与 A 看到同一语料面
+    assert requirements['allow_web'] is False  # 声明与能力一致
+    # 设计 §4 关闭清单在工作区设置层落实（多搜索渠道/企业背景/研究档位显式固定）
+    assert settings['search_policy']['primary_provider'] == 'native'
+    assert settings['search_policy']['native_search_enabled'] is False
+    assert settings['company_context_enabled'] is False
+    assert settings['research_tier'] == 'standard'
+    assert settings['max_reports'] == 1  # 不是 §8.1 的模型调用上限，语义分离
     assert requirements['result_format'] == 'grounded_qa_v1'
     for forbidden in (GOLD_A, GOLD_B, 'doc_alpha__1854.txt', 'doc_beta__1921.txt'):
         assert forbidden not in a_prompt
+
+
+def test_arm_a_submits_through_the_named_submit_directory_with_format_repair(chain):
+    """§8.3 提交端点 + §4 格式修复：A 桩先交违规载荷，收到 gold-blind 反馈后自行重交。"""
+    index = json.loads((chain / 'episodes' / 'chain' / 'run_index.json').read_text(encoding='utf-8'))
+    for episode in [e for e in index['episodes'] if e['arm'] == 'A']:
+        prompt = (Path(episode['workspace']) / 'workspace' / 'prompt.md').read_text(encoding='utf-8')
+        submit_dir = Path(episode['workspace']) / 'submit'
+        assert submit_dir.is_dir() and str(submit_dir) in prompt  # 端点被创建并写进指令
+        rows = episode['submissions']
+        invalid = [row for row in rows if row['source'] == 'submit-dir:answer.json'
+                   and row['status'] == 'invalid']
+        repair = [row for row in rows if row['source'] == 'format-repair']
+        accepted = [row for row in rows if row.get('accepted')]
+        assert len(invalid) == 1 and invalid[0]['accepted'] is False  # 第一次尝试确实违规
+        assert episode['format_repairs_issued'] == 1 and len(repair) == 1  # 恰好一次修复（整集共用）
+        assert repair[0]['for_sha256'] == invalid[0]['sha256']  # 修复绑定到那次违规提交
+        assert len(accepted) == 1 and accepted[0]['seq'] == 1
+        assert episode['chosen_submission']['seq'] == 1  # 修复后的重交是被评分答案
+        assert any(call['op'] == 'format-repair-resubmit' for call in episode['tool_calls'])
+        # 修复反馈由程序生成但不代答：attempts 里保留原始违规字节
+        attempt = (Path(episode['workspace']) / 'attempts' / '0001-answer.json').read_bytes()
+        assert b'FINAL_ANSWER' in attempt
+
+
+def test_run_index_records_concurrency_and_isolation(chain):
+    index = json.loads((chain / 'episodes' / 'chain' / 'run_index.json').read_text(encoding='utf-8'))
+    # §8.1：并发上限是“同时活跃模型调用”，由 run 级 ModelCallLimiter 承担并如实上报
+    budget = re_mod.Budget.from_config(re_mod.load_config())
+    assert index['model_calls']['limit'] == budget.max_concurrent_model_calls
+    assert index['model_calls']['peak_concurrent'] <= budget.max_concurrent_model_calls
+    assert index['model_calls']['total_calls'] > 0  # B 桩的 execute 都占了槽位
+    assert index['episode_workers'] >= 1
+    # 隔离：数据区审计 green，边界（同用户隔离机制）如实记录为未配置
+    assert index['isolation']['data_area']['status'] == 'green'
+    assert index['isolation']['boundary']['enforced'] is False
 
 
 def test_gold_never_appears_in_question_only_or_episodes(chain):
@@ -234,3 +288,153 @@ def test_submission_box_validates_sequences_and_deadline(tmp_path):
     second = box.accept(json.dumps({'schema_version': 'officeqa.answer.v1', 'status': 'abstained',
                                     'answer': None}).encode(), source='revision')
     assert second['seq'] == 2 and box.chosen()['seq'] == 2
+
+
+def test_format_repair_is_bounded_and_gold_blind(tmp_path):
+    """§4：修复只给 gold-blind 反馈、预算整集共用、超限即拒绝。"""
+    box = re_mod.SubmissionBox(tmp_path / 'episode', deadline=time.time() + 60, repair_budget=1)
+    bad = json.dumps({'schema_version': 'officeqa.answer.v1', 'status': 'answered',
+                      'answer': '<FINAL_ANSWER>42</FINAL_ANSWER>'}).encode()
+    first = box.accept(bad, source='solver')
+    feedback = box.offer_format_repair(first)
+    assert feedback and '格式修复（第 1/1 次' in feedback and first['reason'] in feedback
+    assert box.repairs_used == 1
+    # 第二次违规提交：预算耗尽，不再发反馈
+    again = box.accept(b'{"a": 1}', source='solver')
+    assert box.offer_format_repair(again) is None and box.repairs_used == 1
+    # 有效提交与截止后提交都不触发修复
+    good = json.dumps({'schema_version': 'officeqa.answer.v1', 'status': 'answered',
+                       'answer': '42'}).encode()
+    assert box.offer_format_repair(box.accept(good, source='solver')) is None
+    expired = re_mod.SubmissionBox(tmp_path / 'episode2', deadline=time.time() - 1, repair_budget=1)
+    late_bad = expired.accept(bad, source='solver')
+    assert expired.offer_format_repair(late_bad) is None
+
+
+def test_submit_directory_drain_dedupes_and_accepts_new_bytes(tmp_path):
+    """§8.3 文件端点：同字节不重复接纳，覆盖新字节算一次新提交。"""
+    box = re_mod.SubmissionBox(tmp_path / 'episode', deadline=time.time() + 60)
+    submit = tmp_path / 'episode' / 'submit'
+    submit.mkdir(parents=True)
+    first = json.dumps({'schema_version': 'officeqa.answer.v1', 'status': 'answered',
+                        'answer': '11'}).encode()
+    (submit / 'answer.json').write_bytes(first)
+    entries = box.drain_submit_directory(submit)
+    assert len(entries) == 1 and entries[0]['source'] == 'submit-dir:answer.json'
+    assert box.drain_submit_directory(submit) == []  # 同字节重复 drain 不再接纳
+    revised = json.dumps({'schema_version': 'officeqa.answer.v1', 'status': 'answered',
+                          'answer': '22'}).encode()
+    (submit / 'answer.json').write_bytes(revised)
+    entries = box.drain_submit_directory(submit)
+    assert [entry['seq'] for entry in entries] == [2]  # 覆盖新字节 = 新提交
+    assert box.chosen()['seq'] == 2
+
+
+def test_model_call_limiter_caps_active_calls_not_threads():
+    """§8.1：上限管的是“同时活跃模型调用”，超限的调用阻塞等待而不是放行。"""
+    limiter = re_mod.ModelCallLimiter(2)
+    inside = threading.Semaphore(0)
+    release = threading.Event()
+
+    def hold():
+        with limiter.slot():
+            inside.release()
+            assert release.wait(timeout=10)
+
+    holders = [threading.Thread(target=hold) for _ in range(2)]
+    for thread in holders:
+        thread.start()
+    assert inside.acquire(timeout=10) and inside.acquire(timeout=10)
+    assert limiter.report()['peak_concurrent'] == 2
+    blocked: list[bool] = []
+
+    def wait_for_slot():
+        with limiter.slot():
+            blocked.append(True)
+
+    third = threading.Thread(target=wait_for_slot)
+    third.start()
+    third.join(0.3)
+    assert not blocked and limiter.report()['peak_concurrent'] == 2  # 第三个调用在等槽位
+    release.set()
+    for thread in holders:
+        thread.join(timeout=10)
+    third.join(timeout=10)
+    assert blocked and limiter.report()['total_calls'] == 3
+    assert limiter.report()['peak_concurrent'] == 2  # 峰值从未超过上限
+    with pytest.raises(re_mod.RunnerError):
+        re_mod.ModelCallLimiter(0)
+
+
+def test_solver_environment_strips_dataset_credentials(monkeypatch):
+    import isolation
+
+    monkeypatch.setenv('HF_TOKEN', 'secret-token')
+    monkeypatch.setenv('HUGGING_FACE_HUB_TOKEN', 'another-secret')
+    assert isolation.present_credentials() == ['HF_TOKEN', 'HUGGING_FACE_HUB_TOKEN']
+    cleaned = isolation.solver_environment()
+    assert 'HF_TOKEN' not in cleaned and 'HUGGING_FACE_HUB_TOKEN' not in cleaned
+    assert isolation.present_credentials(cleaned) == []
+    monkeypatch.delenv('HF_TOKEN')
+    monkeypatch.delenv('HUGGING_FACE_HUB_TOKEN')
+    assert isolation.solver_environment().get('PATH') == isolation.solver_environment(os.environ).get('PATH')
+
+
+def test_data_area_audit_fails_closed_on_permission_drift(tmp_path):
+    import isolation
+
+    (tmp_path / 'gated').mkdir(mode=0o700)
+    (tmp_path / 'evaluator-only').mkdir(mode=0o700)
+    (tmp_path / 'evaluator-only' / 'gold').mkdir(mode=0o700)
+    (tmp_path / 'evaluator-only' / 'gold' / 'g.jsonl').write_text('{}\n')
+    os.chmod(tmp_path / 'evaluator-only' / 'gold' / 'g.jsonl', 0o600)
+    assert isolation.audit_data_area(tmp_path)['status'] == 'green'
+    # gold 文件变成组/世界可读 → red
+    os.chmod(tmp_path / 'evaluator-only' / 'gold' / 'g.jsonl', 0o644)
+    report = isolation.audit_data_area(tmp_path)
+    assert report['status'] == 'red' and any('group/world' in failure['error']
+                                             for failure in report['failures'])
+    os.chmod(tmp_path / 'evaluator-only' / 'gold' / 'g.jsonl', 0o600)
+    # gated 目录变宽 → red
+    os.chmod(tmp_path / 'gated', 0o755)
+    assert isolation.audit_data_area(tmp_path)['status'] == 'red'
+    os.chmod(tmp_path / 'gated', 0o700)
+    # solver 可见目录里出现指向数据区之外的符号链接 → red
+    (tmp_path / 'question_only').mkdir()
+    outside_dir = tmp_path.parent / (tmp_path.name + '-outside')
+    outside_dir.mkdir()
+    outside = outside_dir / 'secret.csv'
+    outside.write_text('uid,answer\n0,leak\n')
+    (tmp_path / 'question_only' / 'escaped.json').symlink_to(outside)
+    report = isolation.audit_data_area(tmp_path)
+    assert report['status'] == 'red' and any('escapes the data area' in failure['error']
+                                             for failure in report['failures'])
+
+
+def test_boundary_report_demands_a_real_os_boundary(tmp_path):
+    import isolation
+
+    assert isolation.boundary_report({})['enforced'] is False
+    assert isolation.boundary_report({'isolation': {'solver_boundary': None}})['enforced'] is False
+    assert isolation.boundary_report({'isolation': {'solver_boundary': {
+        'kind': 'chmod-only'}}})['enforced'] is False  # 权限位不是同用户边界
+    enforced = isolation.boundary_report({'isolation': {'solver_boundary': {
+        'kind': 'dedicated-user', 'detail': 'officeqa-solver'}}})
+    assert enforced['enforced'] is True
+    # green 数据区 + 无边界配置：真实执行前的断言仍要失败关闭
+    (tmp_path / 'gated').mkdir(mode=0o700)
+    (tmp_path / 'evaluator-only').mkdir(mode=0o700)
+    with pytest.raises(isolation.IsolationError, match='solver_boundary'):
+        isolation.assert_real_run_isolation({'isolation': {'solver_boundary': None}}, tmp_path)
+
+
+def test_run_refuses_when_data_area_permissions_drift(chain, tmp_path):
+    gated = chain / 'gated'
+    original = stat.S_IMODE(gated.stat().st_mode)
+    os.chmod(gated, 0o755)
+    try:
+        assert re_mod.main(['run', '--data-root', str(chain), '--run-label', 'drift',
+                            '--cases', '1', '--dry-run']) == 2
+        assert not (chain / 'episodes' / 'drift').exists()  # 审计失败零副作用
+    finally:
+        os.chmod(gated, original)

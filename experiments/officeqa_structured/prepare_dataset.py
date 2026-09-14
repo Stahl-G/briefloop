@@ -39,6 +39,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import corpus_adapter  # noqa: E402  (same experiment directory)
+import isolation  # noqa: E402  (same experiment directory)
 
 SCHEMA_QUESTION = "officeqa.question.v1"
 SCHEMA_GOLD = "officeqa.gold.v1"
@@ -358,6 +359,9 @@ def prepare(source_root: Path, data_root: Path, *, corpus_source: Path | None = 
                              "probe_failures": len(report["failures"])}
         if report["status"] != "green":
             raise PrepareError(f"corpus visibility probe is not green: {report['failures'][:5]}")
+    # 7. isolation audit: permission bits as-built plus the honest statement
+    #    that same-user solver isolation needs the Q3 boundary (design §2).
+    summary["isolation"] = isolation.audit_data_area(data_root)
     summary["seconds"] = round(time.monotonic() - started, 1)
     (data_root / "prepare_summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
