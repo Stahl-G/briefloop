@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
-import {preflightUploads,uploadPayload} from '../frontend/uploads.js';
+import {preflightSources} from '../frontend/uploads.js';
 
 const source=fs.readFileSync('frontend/app.js','utf8');
 const code=source.slice(source.indexOf('async function uploadChatFiles('),source.indexOf("document.querySelectorAll('[data-prompt]')"));
@@ -14,9 +14,9 @@ const chat={busy:false,uploading:0,session:{runtime:{backend:'codex'},lifecycle:
 const runtimeCatalog=[{id:'codex',capabilities:{images:true}}];
 const uploads=[],errors=[];
 const context=vm.createContext({$:el,chat,runtimeCatalog,state:{settings:{agent_backend:'codex'}},selected:new Set(),File,Uint8Array,String,Date,btoa,
- preflightUploads,uploadPayload,uploadLimits:{max_file_bytes:18*1024*1024,max_request_bytes:25*1024*1024},
+ preflightSources,uploadLimits:{max_file_bytes:18*1024*1024,max_request_bytes:25*1024*1024,max_pdf_bytes:100*1024*1024},
  chatError(message){if(message)errors.push(message)},updateComposer(){},runtimeName:name=>name,
- async api(route,payload){assert.equal(route,'upload');uploads.push(payload);return {id:'source_'+uploads.length,status:'ready'}},
+ async uploadSource(file){uploads.push(file);return {id:'source_'+uploads.length,status:'ready'}},
  async refresh(){},renderAttachments(){},rememberDraft(){}});
 vm.runInContext(source.slice(source.indexOf('function chatBackendChoice(){'),source.indexOf('function renderChatBackendChoice(){')),context);
 vm.runInContext(code,context);

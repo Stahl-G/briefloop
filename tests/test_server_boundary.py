@@ -99,11 +99,43 @@ def test_upload_limits_are_disclosed_and_enforced_before_source_creation(tmp_pat
         r=conn.getresponse();value=(r.status,json.loads(r.read()));conn.close();return value
     try:
         status,session=request();token=session['token']
-        assert session['upload_limits']=={'max_file_bytes':3,'max_request_bytes':module.MAX_REQUEST_BYTES}
+        assert session['upload_limits']=={'max_file_bytes':3,'max_request_bytes':module.MAX_REQUEST_BYTES,'max_pdf_bytes':module.MAX_PDF_UPLOAD_BYTES}
         status,error=request(json.dumps({'name':'large.txt','data':base64.b64encode(b'abcd').decode()}))
         assert status==400 and 'large.txt' in error['error']
         assert not server.store.rows('SELECT * FROM sources')
         assert request(json.dumps({'name':'ok.txt','data':base64.b64encode(b'abc').decode()}))[0]==200
         status,error=request('',length=module.MAX_REQUEST_BYTES)
         assert status==413 and error['code']=='request_too_large'
+    finally:server.shutdown();thread.join();module._close_service(server)
+
+
+def test_raw_source_upload_allows_larger_pdfs_and_rejects_before_creating_sources(tmp_path,monkeypatch):
+    import io,socket
+    from urllib.parse import quote
+    from pypdf import PdfWriter
+    from briefloop import server as module
+    writer=PdfWriter();writer.add_blank_page(width=200,height=100);pdf=io.BytesIO();writer.write(pdf);pdf=pdf.getvalue()
+    monkeypatch.setattr(module,'MAX_UPLOAD_BYTES',3)
+    monkeypatch.setattr(module,'MAX_PDF_UPLOAD_BYTES',len(pdf))
+    server=make_server(tmp_path/'workspace',port=0,paused=True)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    def post(name,body,headers=None):
+        conn=http.client.HTTPConnection('127.0.0.1',server.server_port)
+        conn.request('POST','/api/upload-file?name='+quote(name),body,{'X-BriefLoop-Token':token,'Content-Type':'application/octet-stream',**(headers or {})})
+        r=conn.getresponse();value=(r.status,json.loads(r.read()));conn.close();return value
+    try:
+        conn=http.client.HTTPConnection('127.0.0.1',server.server_port);conn.request('GET','/api/session')
+        token=json.loads(conn.getresponse().read())['token'];conn.close()
+        assert post('big.txt',b'abcd')[0]==413
+        assert post('big.pdf',pdf+b'x')[0]==413
+        assert post('',b'abc')[0]==400
+        assert post('ok.pdf',pdf,{'X-BriefLoop-Token':'stale'})[0]==403
+        # A body shorter than its declared length is not admitted as a source.
+        raw=socket.create_connection(('127.0.0.1',server.server_port))
+        raw.sendall(f'POST /api/upload-file?name=cut.pdf HTTP/1.1\r\nHost: 127.0.0.1:{server.server_port}\r\nX-BriefLoop-Token: {token}\r\nContent-Length: {len(pdf)}\r\n\r\n'.encode()+pdf[:10])
+        raw.shutdown(socket.SHUT_WR);assert b' 400 ' in raw.recv(4096).split(b'\r\n',1)[0]+b' ';raw.close()
+        assert not server.store.rows('SELECT * FROM sources')
+        status,source=post('../年报.pdf',pdf)
+        assert status==200 and source['name']=='年报.pdf' and source['status']=='ready'
+        assert post('ok.txt',b'abc')[1]['status']=='ready'
     finally:server.shutdown();thread.join();module._close_service(server)

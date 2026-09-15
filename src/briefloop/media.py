@@ -191,15 +191,20 @@ def source_attachment(store, sid):
               'image_path':None,'width':None,'height':None,'pages':None,'needs_visual':False,
               'status':source['status'],'error':source.get('error'),'rendered_pages':[]}
     if original is None:return result
-    data=original.read_bytes()
-    kind=detect_media_type(original.name,data,metadata.get('content_type') or metadata.get('media_type') or '')
+    recorded=_recorded_pdf(metadata)
+    if recorded:
+        # source_files verified raw_sha256; do not reread and reparse a large PDF.
+        data=None;kind='application/pdf';digest=metadata['raw_sha256']
+    else:
+        data=original.read_bytes()
+        kind=detect_media_type(original.name,data,metadata.get('content_type') or metadata.get('media_type') or '')
+        digest=hashlib.sha256(data).hexdigest()
     result['media_type']=kind
-    result['raw_sha256']=hashlib.sha256(data).hexdigest()
+    result['raw_sha256']=digest
     if kind.startswith('image/'):
         if source['status']=='failed' and metadata.get('media_type'):
             result['needs_visual']=True
             return result
-        digest=hashlib.sha256(data).hexdigest()
         expected=safe_source_path(store,f'sources/media/{digest}/image.png',must_exist=False)
         if metadata.get('image_path') and safe_source_path(store,metadata['image_path'])!=expected:raise ValueError('图像缓存路径与原件不匹配')
         if expected.exists() and metadata.get('image_sha256'):
@@ -209,10 +214,9 @@ def source_attachment(store, sid):
             image,width,height=_validated_cached_image(store,prepared['image_path'],prepared['image_sha256'])
         result.update(status='ready',error=None,image_path=str(image),width=width,height=height,needs_visual=True)
     elif kind=='application/pdf':
-        details=pdf_metadata(data)
+        details={'pages':recorded} if recorded else pdf_metadata(data)
         text=store.source_text(sid).strip()
         result.update(status='ready',error=None,pages=details['pages'],needs_visual=bool(metadata.get('needs_visual')) or not text or text==PDF_NOTICE)
-        digest=hashlib.sha256(data).hexdigest()
         directory=safe_source_path(store,f'sources/media/{digest}',must_exist=False)
         if directory.exists():
             for path in sorted(directory.glob('page-*.png')):
@@ -237,13 +241,29 @@ def _rendered_page(store, digest, page):
     return {'page':page,'path':str(image),'width':width,'height':height}
 
 
+def _recorded_pdf(provenance):
+    """Page count recorded when a PDF was admitted, if its original digest is bound."""
+    pages=(provenance or {}).get('pages')
+    if (provenance or {}).get('media_type')=='application/pdf' and type(pages) is int and 1<=pages<=10_000 and provenance.get('raw_sha256'):
+        return pages
+    return None
+
+
+def _pdf_original(store, sid):
+    _,provenance,original=source_files(store,sid)
+    if original is None:raise ValueError('该来源不是 PDF')
+    pages=_recorded_pdf(provenance)
+    if pages:return original,pages,provenance['raw_sha256'],None
+    data=original.read_bytes()
+    if detect_media_type(original.name,data)!='application/pdf':raise ValueError('该来源不是 PDF')
+    return original,pdf_metadata(data)['pages'],hashlib.sha256(data).hexdigest(),data
+
+
 def rendered_page_path(store, sid, page):
     if type(page) is not int or page<1:raise ValueError('页码必须为从 1 开始的整数')
-    _,_,original=source_files(store,sid)
-    if original is None or detect_media_type(original.name,original.read_bytes())!='application/pdf':raise ValueError('该来源不是 PDF')
-    details=pdf_metadata(original.read_bytes())
-    if page>details['pages']:raise ValueError('页码超出 PDF 范围')
-    result=_rendered_page(store,_hash(original),page)
+    _,count,digest,_=_pdf_original(store,sid)
+    if page>count:raise ValueError('页码超出 PDF 范围')
+    result=_rendered_page(store,digest,page)
     return Path(result['path']) if result else None
 
 
@@ -251,19 +271,20 @@ def render_source_pages(store, sid, pages):
     if not isinstance(pages,(list,tuple)) or not 1<=len(pages)<=MAX_RENDER_PAGES or any(type(p) is not int or p<1 for p in pages):
         raise ValueError(f'请指定 1 至 {MAX_RENDER_PAGES} 个从 1 开始的 PDF 页码')
     if len(set(pages))!=len(pages):raise ValueError('页码不能重复')
-    _,_,original=source_files(store,sid)
-    if original is None or detect_media_type(original.name,original.read_bytes())!='application/pdf':raise ValueError('该来源不是 PDF')
-    data=original.read_bytes();details=pdf_metadata(data)
-    if any(p>details['pages'] for p in pages):raise ValueError('页码超出 PDF 范围')
-    digest=hashlib.sha256(data).hexdigest();results=[]
+    original,count,digest,data=_pdf_original(store,sid)
+    if any(p>count for p in pages):raise ValueError('页码超出 PDF 范围')
+    cached={number:_rendered_page(store,digest,number) for number in pages}
+    if all(cached.values()):return {'source_id':sid,'pages':[cached[number] for number in pages]}
+    if data is None:data=original.read_bytes()
+    results=[]
     try:import pypdfium2 as pdfium
     except ImportError as exc:raise ValueError('缺少 PDF 页面渲染依赖 pypdfium2，请更新 BriefLoop 安装') from exc
     with _RENDER_LOCK:
         document=pdfium.PdfDocument(data)
         try:
+            if any(number>len(document) for number in pages):raise ValueError('页码超出 PDF 范围')
             for number in pages:
-                cached=_rendered_page(store,digest,number)
-                if cached:results.append(cached);continue
+                if cached[number]:results.append(cached[number]);continue
                 page=document[number-1]
                 try:
                     width,height=page.get_size()

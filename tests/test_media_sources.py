@@ -107,3 +107,19 @@ def test_source_metadata_and_cache_cannot_escape_or_silently_drift(tmp_path):
     with pytest.raises(ValueError):media.source_attachment(store,sid)
     record.unlink();record.symlink_to(outside)
     with pytest.raises(ValueError):media.source_attachment(store,sid)
+
+
+def test_pdf_page_views_use_recorded_metadata_instead_of_reparsing(tmp_path,monkeypatch):
+    store=Store(tmp_path);source=sources.upload(store,'scan.pdf',blank_pdf(3))
+    first=media.render_source_pages(store,source['id'],[2])['pages'][0]
+    def reparsed(data):raise AssertionError('recorded PDF must not be parsed again')
+    monkeypatch.setattr(media,'pdf_metadata',reparsed)
+    attachment=media.source_attachment(store,source['id'])
+    assert attachment['pages']==3 and [p['page'] for p in attachment['rendered_pages']]==[2]
+    assert str(media.rendered_page_path(store,source['id'],2))==first['path']
+    assert media.render_source_pages(store,source['id'],[2])['pages'][0]['path']==first['path']
+    assert media.render_source_pages(store,source['id'],[3])['pages'][0]['page']==3
+    with pytest.raises(ValueError,match='超出'):media.rendered_page_path(store,source['id'],4)
+    # A changed original still fails the bound digest instead of trusting metadata.
+    Path(attachment['original_path']).write_bytes(blank_pdf(4))
+    with pytest.raises(ValueError,match='哈希不匹配'):media.rendered_page_path(store,source['id'],2)
