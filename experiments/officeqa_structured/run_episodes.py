@@ -64,7 +64,7 @@ import score_answer_record  # noqa: E402
 EPISODE_SCHEMA = "officeqa.episode_record.v1"
 PREDICTIONS_SCHEMA = "officeqa.predictions.v1"
 SCORES_SCHEMA = "officeqa.scores.v1"
-ARMS = ("A", "B")
+ARMS = ("A", "A2", "B")  # A2 = A + one self-review under the aligned rubric (review 2026-09-15)
 CONFIG_PATH = Path(__file__).resolve().parent / "config.json"
 CORPUS_TOOL_PATH = Path(__file__).resolve().parent / "corpus_adapter.py"
 DEFAULT_DATA_ROOT = corpus_adapter.DEFAULT_DATA_ROOT
@@ -1024,8 +1024,8 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
                        order_index: int, limiter: "ModelCallLimiter",
                        corpus_name: str = V2_CORPUS_NAME,
                        web_entry: str | None = None,
-                       real: RealContext | None = None, strict: bool = False, self_review: bool = False) -> dict[str, Any]:
-    episode_dir = Path(data_root) / "episodes" / label / "A" / case.case_key
+                       real: RealContext | None = None, strict: bool = False, self_review: bool = False, arm_name: str = "A") -> dict[str, Any]:
+    episode_dir = Path(data_root) / "episodes" / label / arm_name / case.case_key
     if episode_dir.exists():
         raise RunnerError(f"episode directory already exists: {episode_dir}")
     episode_dir.mkdir(parents=True)
@@ -1113,12 +1113,12 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
             box.drain_submit_directory(submit_dir)
         except Exception as exc:  # noqa: BLE001
             error = (error + "; " if error else "") + f"drain failed: {exc}"
-        identifiers = {"transport": "opencode-run", "host": real.host_version,
+        identifiers = {"transport": "opencode-run", "arm": arm_name, "host": real.host_version,
                        "model": real.model, "variant": real.variant,
                        "binary": str(real.shim)}
     res_sampler.__exit__(None, None, None)
     usage = episode_token_usage(workspace)
-    record = _episode_record(case=case, arm="A", label=label, order_index=order_index,
+    record = _episode_record(case=case, arm=arm_name, label=label, order_index=order_index,
                              episode_dir=episode_dir, started=started, deadline=deadline,
                              budget=budget, box=box, tool_calls=tool_calls,
                              identifiers=identifiers,
@@ -1507,7 +1507,7 @@ def _episode_record(*, case: Case, arm: str, label: str, order_index: int, episo
 def run_native_self_review(case: Case, **kwargs: Any) -> dict[str, Any]:
     """A′ arm (review 2026-09-15): A plus one self-review under BriefLoop's
     verbatim QA rubric and one resubmission."""
-    return run_native_episode(case, self_review=True, **kwargs)
+    return run_native_episode(case, self_review=True, arm_name="A2", **kwargs)
 
 
 _EPISODE_RUNNERS: dict[str, Callable[..., dict[str, Any]]] = {"A": run_native_episode,
