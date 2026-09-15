@@ -12,14 +12,31 @@
   由 `store.enqueue` 冻结进每个 job payload。
 - 开发 6 题：evaluator-only v1 池按 case key 排序前 6（`config.dataset.eligible_questions.dev_pilot.case_keys`），
   已由 `prepare_dataset.py dev-pilot` 写入 `question_only/dev_pilot.jsonl` 并在 ledger 标 dev/exposed；
-  gold 只在 evaluator-only。语料条件：这 6 题官方出处（旧 Treasury Bulletin）不在冻结的 V2 全语料（1435 份）中，
-  pilot 成绩只作接入诊断。
-- 真实执行门：`run` 不带 `--dry-run` 时依次校验 config 冻结（无 null/占位）、数据区审计 green、
-  凭据剥离、代码态与 `integration_commit`（`afe0233b`）一致（src/experiments 除 config 与本 RUNBOOK）、
-  solver 边界活动探针（seatbelt profile + shim）。任一失败即拒跑。
+  gold 只在 evaluator-only。语料按题集路由（2026-09-15 修复）：这 6 题官方出处（旧 Treasury Bulletin）经
+  v1 纯文本语料 `corpus-v1/`（官方 revision `8ecbf18d`，697 份 txt，源文档零缺失）接入，runner 把 dev pilot
+  episode 路由到 `--corpus corpus-v1`（无按页查看，page 语义 not_applicable），主测试仍用 V2 `corpus/`；
+  pilot 成绩只作接入诊断（已暴露旧题，协议 §7）。
+- 真实执行门：`run` 不带 `--dry-run` 时依次校验 config 冻结（无 null/占位，含 `dataset.dev_corpus` 结构）、
+  数据区审计 green、凭据剥离、代码态与 `integration_commit`（v1 语料代码提交落地后回填的新 HEAD；
+  src/experiments 除 config 与本 RUNBOOK）一致、solver 边界活动探针（seatbelt profile + shim，围栏同样
+  覆盖 corpus-v1 与 v1 语料源目录）。任一失败即拒跑。
 - 预算：单集墙钟 1800 秒、并发活跃调用 4、格式修复 1 次、检索 30 次/候选 150/按页 60（A/B 同额同工具，
   由 corpus_adapter 按 episode 记账硬限）。
 - 付费授权仅限既定 12 个 episodes（6 题 × 2 组）。绝不加跑；重跑失败 episode 需要新的授权与新的 run label。
+
+## 0) 语料预检（一次性，query-blind）
+
+```bash
+cd /Users/yihongguo/Developer/briefloop-worktrees/officeqa-experiment && \
+.venv/bin/python experiments/officeqa_structured/corpus_adapter.py build \
+  --format v1 \
+  --source /Users/yihongguo/Developer/datasets/officeqa/treasury_bulletins_parsed/transformed && \
+.venv/bin/python experiments/officeqa_structured/corpus_adapter.py probe --corpus corpus-v1
+```
+
+- v1 语料 staging 到数据区 `corpus-v1/`（与 V2 `corpus/` 并列，后者不动）；build/probe 只读语料目录，
+  不接触题面/gold。验收：probe 全绿 697/697（2026-09-15 实跑通过）。
+- V2 `corpus/` 已由 `prepare_dataset.py prepare` 建好并冻结；两套索引互不影响（`--corpus` 选择目标）。
 
 ## 1) smoke：第 1 题双组（2 episodes）
 

@@ -256,15 +256,55 @@ def load_cases(data_root: Path) -> list[Case]:
 
 # --- shared instructions (identical corpus surface for both arms, §6.1) --------
 
+V2_CORPUS_NAME = "corpus"
 
-def corpus_tool_instructions(data_root: Path, *, web_entry: str | None = None,
+
+def corpus_selection(config: dict[str, Any]) -> dict[str, str]:
+    """Route each question dataset to its staged corpus directory (§6.1).
+
+    The main test (officeqa-pro-v2) always reads the frozen V2 corpus; the
+    dev pilot (historical officeqa-pro-v1, protocol §7) reads the v1
+    plain-text corpus named by ``config.dataset.dev_corpus`` — its source
+    documents (old Treasury Bulletins) are not part of the V2 release.
+    An unmapped dataset fails closed at selection time, never silently
+    falls back to the wrong corpus.
+    """
+    dev_name = str(((config.get("dataset") or {}).get("dev_corpus") or {}).get("name") or "")
+    selection = {prepare_dataset.DATASET: V2_CORPUS_NAME}
+    if dev_name:
+        selection[prepare_dataset.HISTORICAL_DATASET] = dev_name
+    return selection
+
+
+def _corpus_manifest(data_root: Path, corpus_name: str) -> dict[str, Any]:
+    manifest_path = (Path(data_root).expanduser().resolve() / corpus_name / "index" / "manifest.json")
+    if not manifest_path.is_file():
+        return {}
+    return json.loads(manifest_path.read_text(encoding="utf-8"))
+
+
+def _corpus_identity(data_root: Path, corpus_name: str) -> dict[str, Any]:
+    """The corpus an episode actually used, as recorded in its §3.3 record."""
+    manifest = _corpus_manifest(data_root, corpus_name)
+    return {"name": corpus_name, "format": manifest.get("format", "v2"),
+            "documents": manifest.get("documents")}
+
+
+def corpus_tool_instructions(data_root: Path, *, corpus_name: str = V2_CORPUS_NAME,
+                             web_entry: str | None = None,
                              search_budget: dict[str, int] | None = None,
                              budget_file: Path | None = None) -> str:
-    """The one corpus surface both arms see: search, snippet read, page view.
+    """The one corpus surface both arms see, generated for the selected corpus.
 
     No document list, no year hints, no file names — the agent must locate
     evidence itself (protocol §6.1).  B registers documents it actually uses
-    through ``accept``; A reads without registration.
+    through ``accept``; A reads without registration.  ``corpus_name`` picks
+    the staged corpus the episode's question set routes to (V2 main test =
+    ``corpus``; dev pilot = the v1 plain-text corpus), and every emitted
+    command carries that ``--corpus`` path so the instruction text can never
+    point one arm at the wrong corpus.  The v1 format has no page parse
+    (page semantics not_applicable), so its instructions name read-only line
+    ranges instead of promising a page view that does not exist.
 
     The controlled web entry (protocol §6.3) is claimed ONLY when the run
     configuration actually names one (``config.json web_search.entrypoint``,
@@ -276,10 +316,9 @@ def corpus_tool_instructions(data_root: Path, *, web_entry: str | None = None,
     refuses past the cap for either arm, and the journal doubles as the
     episode's usage record.
     """
-    manifest_path = Path(data_root).expanduser().resolve() / "corpus" / "index" / "manifest.json"
-    documents = "全量"
-    if manifest_path.is_file():
-        documents = str(json.loads(manifest_path.read_text(encoding="utf-8")).get("documents", documents))
+    manifest = _corpus_manifest(data_root, corpus_name)
+    documents = str(manifest.get("documents") or "全量")
+    fmt = str(manifest.get("format") or "v2")
     tool = str(CORPUS_TOOL_PATH)
     root = str(Path(data_root).expanduser().resolve())
     web_line = (f"每组还有同一受控联网搜索入口可用于补充公开资料：{web_entry}；"
@@ -291,18 +330,35 @@ def corpus_tool_instructions(data_root: Path, *, web_entry: str | None = None,
     if budget_file is not None and search_budget:
         search_flags = (f" --budget-file {Path(budget_file)} --search-budget "
                         f"{search_budget.get('search_requests', 0)}")
-        page_flags = (f" --budget-file {Path(budget_file)} --page-budget "
-                      f"{search_budget.get('source_pages', 0)}")
-        budget_line = (f"\n检索与按页查看共享本 episode 预算（检索 {search_budget.get('search_requests', 0)} 次、"
-                       f"按页 {search_budget.get('source_pages', 0)} 次，两组同额同工具）；"
+        budget_line = (f"\n检索本 episode 预算（检索 {search_budget.get('search_requests', 0)} 次，两组同额同工具）；"
                        "超出后命令会拒绝执行——保留已获取的证据继续作答，不要重试被拒的操作。")
-    return f"""可用资料：一套本地只读语料（美国财政部公报全量解析，{documents} 份文档；不提供文件清单，也不给任何题目相关的文件提示）。
+        if fmt != "v1":
+            page_flags = (f" --budget-file {Path(budget_file)} --page-budget "
+                          f"{search_budget.get('source_pages', 0)}")
+            budget_line = (f"\n检索与按页查看共享本 episode 预算（检索 {search_budget.get('search_requests', 0)} 次、"
+                           f"按页 {search_budget.get('source_pages', 0)} 次，两组同额同工具）；"
+                           "超出后命令会拒绝执行——保留已获取的证据继续作答，不要重试被拒的操作。")
+    if fmt == "v1":
+        corpus_line = (f"可用资料：一套本地只读语料（美国财政部公报 v1 全量纯文本，{documents} 份整档文档；"
+                       "不提供文件清单，也不给任何题目相关的文件提示）。")
+        commands = f"""- 查找文档：python3 {tool} docs --data-root {root} --corpus {corpus_name} --query 关键词子串
+- 关键词检索：python3 {tool} search --data-root {root} --corpus {corpus_name} --query "关键词" [--doc 文档名] [--limit 20]{search_flags}
+- 片段读取（1-based 行号）：python3 {tool} read --data-root {root} --corpus {corpus_name} --doc 文档名 --start-line N --end-line M"""
+        usage_line = ("这套语料是纯文本整档（无分页解析，page 语义 not_applicable），不提供按页查看命令；"
+                      "行号即文件行号，检索定位后用片段读取按行号范围读取，表格行内容较长时缩小行号范围。")
+    else:
+        corpus_line = (f"可用资料：一套本地只读语料（美国财政部公报全量解析，{documents} 份文档；"
+                       "不提供文件清单，也不给任何题目相关的文件提示）。")
+        commands = f"""- 查找文档：python3 {tool} docs --data-root {root} --corpus {corpus_name} --query 关键词子串
+- 关键词检索：python3 {tool} search --data-root {root} --corpus {corpus_name} --query "关键词" [--doc 文档名] [--limit 20]{search_flags}
+- 片段读取（1-based 行号）：python3 {tool} read --data-root {root} --corpus {corpus_name} --doc 文档名 --start-line N --end-line M
+- 按页查看（0-based page_index）：python3 {tool} page --data-root {root} --corpus {corpus_name} --doc 文档名 --page-index P{page_flags}"""
+        usage_line = ("检索词按文档年代、主题、指标与表头术语组合；同一文档先检索定位行号，再片段读取或按页查看；"
+                      "表格元素内容较长时会截断，需要完整内容时缩小行号范围。")
+    return f"""{corpus_line}
 统一用以下命令操作语料（Python 已就绪，直接运行；输出为 JSON）：
-- 查找文档：python3 {tool} docs --data-root {root} --query 关键词子串
-- 关键词检索：python3 {tool} search --data-root {root} --query "关键词" [--doc 文档名] [--limit 20]{search_flags}
-- 片段读取（1-based 行号）：python3 {tool} read --data-root {root} --doc 文档名 --start-line N --end-line M
-- 按页查看（0-based page_index）：python3 {tool} page --data-root {root} --doc 文档名 --page-index P{page_flags}
-检索词按文档年代、主题、指标与表头术语组合；同一文档先检索定位行号，再片段读取或按页查看；表格元素内容较长时会截断，需要完整内容时缩小行号范围。{budget_line}
+{commands}
+{usage_line}{budget_line}
 {web_line}"""
 
 
@@ -510,15 +566,26 @@ def prepare_solver_boundary(data_root: Path, config: dict[str, Any]) -> dict[str
     if not Path(real_binary).is_file():
         raise RunnerError(f"opencode CLI not found at {real_binary}")
     # (action, path): deny-read fences confidentiality (gated snapshot,
-    # evaluator outputs, the original dataset directory); deny-write protects
-    # the staged corpus — its files are hardlinks, an edit would corrupt the
+    # evaluator outputs, the original dataset directories); deny-write protects
+    # the staged corpora — their files are hardlinks, an edit would corrupt the
     # dataset itself.  Corpus READS stay allowed: that is the shared surface.
-    gates = (
+    # The dev-pilot v1 corpus gets the same fences when it is staged/configured,
+    # so a routed dev episode is fenced exactly like a main-test one.
+    gates = [
         ("deny-read", "gated", data_root / "gated"),
         ("deny-read", "evaluator-only", data_root / "evaluator-only"),
         ("deny-read", "dataset source", Path(config["dataset"]["source_root"]).expanduser().resolve()),
         ("deny-write", "staged corpus", data_root / "corpus"),
-    )
+    ]
+    dev_corpus = ((config.get("dataset") or {}).get("dev_corpus") or {})
+    if dev_corpus.get("name"):
+        dev_staged = data_root / str(dev_corpus["name"])
+        if dev_staged.exists():
+            gates.append(("deny-write", "staged dev corpus", dev_staged))
+    if dev_corpus.get("source_root"):
+        dev_source = Path(str(dev_corpus["source_root"])).expanduser().resolve()
+        if dev_source.exists():
+            gates.append(("deny-read", "dev dataset source", dev_source))
     rules = []
     for action, label, path in gates:
         if not path.exists():
@@ -774,6 +841,7 @@ class StubNativeSolver:
 
 def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: str,
                        order_index: int, limiter: "ModelCallLimiter",
+                       corpus_name: str = V2_CORPUS_NAME,
                        web_entry: str | None = None,
                        real: RealContext | None = None) -> dict[str, Any]:
     episode_dir = Path(data_root) / "episodes" / label / "A" / case.case_key
@@ -792,7 +860,7 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
     (workspace / "question.md").write_text(f"# OfficeQA {case.uid}\n\n{case.question}\n", encoding="utf-8")
     (workspace / "prompt.md").write_text(
         native_frame(submit_dir, web_entry) + "\n## Question\n\n" + case.question + "\n\n"
-        + corpus_tool_instructions(data_root, web_entry=web_entry,
+        + corpus_tool_instructions(data_root, corpus_name=corpus_name, web_entry=web_entry,
                                    search_budget=budget.search_budget if real else None,
                                    budget_file=budget_file if real else None) + "\n",
         encoding="utf-8")
@@ -801,7 +869,7 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
     turns: list[dict[str, Any]] = []
     error: str | None = None
     if real is None:
-        with corpus_adapter.CorpusAdapter(Path(data_root) / "corpus") as adapter:
+        with corpus_adapter.CorpusAdapter(Path(data_root) / corpus_name) as adapter:
             solver = StubNativeSolver()
             solver.solve(case, submit_dir, adapter, tool_calls)
             # Format-repair loop (§4): drain the submit directory, hand gold-blind
@@ -853,7 +921,7 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
                              budget=budget, box=box, tool_calls=tool_calls,
                              identifiers=identifiers,
                              linkage={"turns": turns} if turns else None, usage_complete=False,
-                             error=error)
+                             error=error, corpus=_corpus_identity(data_root, corpus_name))
     return record
 
 
@@ -1015,6 +1083,7 @@ def _episode_workspace_settings(store: Any, budget: Budget,
 
 def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label: str,
                           order_index: int, limiter: "ModelCallLimiter",
+                          corpus_name: str = V2_CORPUS_NAME,
                           web_entry: str | None = None,
                           real: RealContext | None = None) -> dict[str, Any]:
     from briefloop.answer_result import RESULT_FORMAT, answer_of
@@ -1037,7 +1106,8 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
     requirements = {"title": f"OfficeQA {case.uid}"[:200], "objective": case.question,
                     "key_questions": [case.question], "result_format": RESULT_FORMAT,
                     "allow_web": web_entry is not None, "fact_check": False,
-                    "raw_input": corpus_tool_instructions(data_root, web_entry=web_entry,
+                    "raw_input": corpus_tool_instructions(data_root, corpus_name=corpus_name,
+                                                          web_entry=web_entry,
                                                           search_budget=budget.search_budget if real else None,
                                                           budget_file=budget_file if real else None)}
     if real is not None:
@@ -1053,7 +1123,7 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
     snapshots: set[str] = set()
 
     if real is None:
-        with corpus_adapter.CorpusAdapter(Path(data_root) / "corpus") as adapter:
+        with corpus_adapter.CorpusAdapter(Path(data_root) / corpus_name) as adapter:
             transport = StubBriefloopTransport(store, adapter, limiter)
             worker = Worker(store, runtime=transport, report_runtime_factory=lambda: transport)
             worker._review_runtime = transport
@@ -1099,7 +1169,8 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
                                       "job_status": state.get("status"),
                                       "version_ids": sorted(snapshots),
                                       "model_calls": model_calls},
-                             usage_complete=False, error=error)
+                             usage_complete=False, error=error,
+                             corpus=_corpus_identity(data_root, corpus_name))
     return record
 
 
@@ -1158,7 +1229,8 @@ def _episode_record(*, case: Case, arm: str, label: str, order_index: int, episo
                     started: float, deadline: float, budget: Budget, box: SubmissionBox,
                     tool_calls: list[dict[str, Any]], identifiers: dict[str, Any],
                     linkage: dict[str, Any] | None, usage_complete: bool,
-                    error: str | None = None) -> dict[str, Any]:
+                    error: str | None = None,
+                    corpus: dict[str, Any] | None = None) -> dict[str, Any]:
     finished = time.time()
     chosen = box.chosen()
     corpus_budget_file = Path(episode_dir) / "corpus-budget.jsonl"
@@ -1167,6 +1239,7 @@ def _episode_record(*, case: Case, arm: str, label: str, order_index: int, episo
         "protocol_id": None,  # filled by the caller with config identity
         "experiment_id": None,
         "dataset": {"benchmark": case.dataset, "revision": case.revision},
+        "corpus": corpus,
         "case_key": case.case_key,
         "uid": case.uid,
         "question_sha256": case.question_sha256,
@@ -1260,6 +1333,23 @@ def config_freeze_errors(config: dict[str, Any]) -> list[str]:
         errors.append("dataset.eligible_questions.dev_pilot.case_keys 未冻结（开发 6 题）")
     if not dataset.get("exposure_ledger"):
         errors.append("dataset.exposure_ledger 未冻结")
+    dev_corpus = dataset.get("dev_corpus")
+    if dev_corpus is not None:
+        # The dev-pilot corpus pointer: dev questions route to this staged v1
+        # corpus, so its name/revision/size/source must be frozen like the
+        # rest — a null or stub here would silently route dev episodes at a
+        # missing or wrong corpus.
+        if not isinstance(dev_corpus, dict):
+            errors.append("dataset.dev_corpus 必须是对象（v1 语料指针）")
+        else:
+            if not str(dev_corpus.get("name") or "").strip():
+                errors.append("dataset.dev_corpus.name 未冻结（开发题集路由的语料目录名）")
+            if not str(dev_corpus.get("revision") or "").strip():
+                errors.append("dataset.dev_corpus.revision 未冻结（v1 语料官方修订标识）")
+            if not isinstance(dev_corpus.get("documents"), int) or dev_corpus.get("documents", 0) < 1:
+                errors.append("dataset.dev_corpus.documents 必须是正整数（v1 语料份数）")
+            if not str(dev_corpus.get("source_root") or "").strip():
+                errors.append("dataset.dev_corpus.source_root 未冻结（v1 语料只读源目录）")
     return errors
 
 
@@ -1320,6 +1410,19 @@ def command_run(args: argparse.Namespace) -> int:
         web_entry = None  # explicit freeze of "no web entry wired" (§6.3)
     cases = load_cases(data_root)
     selected = _select_cases(cases, limit=args.cases, case_keys=args.case_keys or [], pool=args.pool)
+    # Corpus routing by question set (protocol §6.1): the dev pilot's v1
+    # questions read the staged v1 plain-text corpus, the main test reads the
+    # frozen V2 corpus.  Fail closed here — before any episode starts — when
+    # a selected dataset has no mapped corpus or its index is missing.
+    selection = corpus_selection(config)
+    for case in selected:
+        if case.dataset not in selection:
+            raise RunnerError(f"no staged corpus configured for dataset {case.dataset!r} "
+                              f"(case {case.case_key[:16]})")
+    for corpus_name in sorted({selection[case.dataset] for case in selected}):
+        if not (data_root / corpus_name / "index" / "manifest.json").is_file():
+            raise RunnerError(f"selected cases need corpus {corpus_name!r} but its index is "
+                              f"missing under {data_root}; run corpus_adapter build first")
     arms = [arm for arm in args.arms.split(",") if arm]
     if not arms or any(arm not in ARMS for arm in arms):
         raise RunnerError(f"--arms must be a comma-separated subset of {ARMS}")
@@ -1363,6 +1466,7 @@ def command_run(args: argparse.Namespace) -> int:
     with ThreadPoolExecutor(max_workers=episode_workers) as pool_executor:
         futures = {pool_executor.submit(_EPISODE_RUNNERS[arm], case, data_root=data_root,
                                         budget=budget, label=label, order_index=order_index,
+                                        corpus_name=selection[case.dataset],
                                         limiter=limiter, web_entry=web_entry, real=real):
                    (case.case_key, arm) for case, arm, order_index in tasks}
         for future in as_completed(futures):
@@ -1397,7 +1501,8 @@ def command_run(args: argparse.Namespace) -> int:
                    "format_repair_attempts": budget.format_repair_attempts,
                    "search_budget": dict(budget.search_budget)},
         "cases": [{"case_key": case.case_key, "uid": case.uid, "dataset": case.dataset,
-                   "exposure": case.exposure} for case in selected],
+                   "exposure": case.exposure, "corpus": selection[case.dataset]}
+                  for case in selected],
         "episodes": sorted(results, key=lambda r: (r["case_key"], r["arm"])),
         "failures": failures,
     }

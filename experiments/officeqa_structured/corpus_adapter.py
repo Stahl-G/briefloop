@@ -1,10 +1,10 @@
-"""Query-blind local read-only corpus adapter for OfficeQA Pro V2 (design §3.Q2).
+"""Query-blind local read-only corpus adapter for OfficeQA Pro (design §3.Q2).
 
 Protocol BL-OQA-SR-v1.0 §6.1: A/B share one full-corpus surface — search,
-snippet read and page view over all 1,435 documents — built without ever
-reading the questions' provenance hints.  This module only ever receives
-corpus directories; it has no code path that opens a question file, the
-gated CSVs or any gold.
+snippet read and (when the format has pages) page view over every document —
+built without ever reading the questions' provenance hints.  This module only
+ever receives corpus directories; it has no code path that opens a question
+file, the gated CSVs or any gold.
 
 Two phases, two trust boundaries:
 
@@ -16,13 +16,24 @@ Two phases, two trust boundaries:
   commands (episode time): open the staged corpus under the data area in
   read-only mode.  The episode runner never references the dataset directory.
 
-The V2 JSON parse is never ``repr``-ed into one blob (§6.1): every indexed
-line is one ``document.elements`` entry, so line numbers, ``page_index`` and
-``element_index`` agree with the evidence locators of protocol §3.2.  ``accept``
-registers a document the agent actually used as a real BriefLoop run source
-(Store.add_source + attach_source — the same deterministic acceptance path
-``add-url`` uses), so B's evidence ``source_id`` refers to a registered source
-and the Q1 attachment validation can locate excerpts.
+Two corpus formats share this module (``--format`` on ``build``):
+
+* ``v2`` (default, target ``<data-root>/corpus``): the official JSON parse,
+  1,435 documents.  The parse is never ``repr``-ed into one blob (§6.1): every
+  indexed line is one ``document.elements`` entry, so line numbers,
+  ``page_index`` and ``element_index`` agree with the evidence locators of
+  protocol §3.2.
+* ``v1`` (target ``<data-root>/corpus-v1``): the historical full plain-text
+  corpus (official parsed release, pure ``*.txt``, no JSON parse exists).
+  The whole document is the unit and indexed lines are the file's physical
+  1-based lines; there is no page parse, so ``page`` semantics are recorded
+  as ``not_applicable`` and the ``page`` command refuses instead of inventing
+  pages.  Line-range reads and evidence locators work exactly as on v2.
+
+``accept`` registers a document the agent actually used as a real BriefLoop
+run source (Store.add_source + attach_source — the same deterministic
+acceptance path ``add-url`` uses), so B's evidence ``source_id`` refers to a
+registered source and the Q1 attachment validation can locate excerpts.
 """
 from __future__ import annotations
 
@@ -41,7 +52,13 @@ from pathlib import Path
 from typing import Any, Iterable
 
 INDEX_SCHEMA_VERSION = "officeqa.corpus_index.v1"
+TXT_INDEX_SCHEMA_VERSION = "officeqa.corpus_index_txt.v1"
+CORPUS_FORMATS = ("v2", "v1")
 DEFAULT_DATA_ROOT = Path.home() / "Developer" / "briefloop-data" / "officeqa"
+# Default staged directory per format: the V2 main-test corpus keeps the
+# historical ``corpus`` name (byte-for-byte compatibility with the frozen
+# V2 index); the v1 dev-pilot corpus stages beside it as ``corpus-v1``.
+DEFAULT_CORPUS_NAME = {"v2": "corpus", "v1": "corpus-v1"}
 
 _JSON_REL = ("documents", "parsed")
 _TXT_REL = ("documents", "text")
@@ -119,15 +136,51 @@ def _pdf_sources(source_root: Path) -> list[Path]:
     return [unique[name] for name in sorted(unique)]
 
 
-def stage_documents(source_root: Path, corpus_root: Path) -> dict[str, Any]:
-    """Stage the official corpus into the data area, read-only on the source.
+class _Stager:
+    """Stage corpus files into the data area, read-only on the source.
 
     Hardlinks when the data area is on the same volume (no duplicate bytes),
-    copies otherwise.  Existing identical targets are left alone so the
-    command is re-runnable; a differing target fails closed.  PDF originals
-    are staged into ``documents/pdf`` when present — this release ships
-    none, which the report records as a corpus condition.
+    copies otherwise.  Existing identical targets are left alone so a build is
+    re-runnable; a differing target fails closed (its files may be hardlinks —
+    overwriting one would corrupt the dataset itself).
     """
+
+    def __init__(self) -> None:
+        self.linked = 0
+        self.copied = 0
+        self.kept = 0
+
+    def stage(self, src: Path, dst_dir: Path) -> None:
+        dst = dst_dir / src.name
+        if dst.exists():
+            try:
+                if os.path.samefile(src, dst) or _sha256_file(src) == _sha256_file(dst):
+                    self.kept += 1
+                    return
+            except OSError:
+                pass
+            raise CorpusError(f"staged corpus file differs from source, refusing to overwrite: {dst}")
+        try:
+            os.link(src, dst)
+            self.linked += 1
+        except OSError:
+            shutil.copy2(src, dst)
+            self.copied += 1
+
+
+def stage_documents(source_root: Path, corpus_root: Path, *, fmt: str = "v2") -> dict[str, Any]:
+    """Stage the official corpus into the data area, read-only on the source.
+
+    ``fmt="v2"`` stages the paired JSON+TXT fullcorpus parse (with PDF
+    originals when the release ships them — this one ships none, recorded as
+    a corpus condition).  ``fmt="v1"`` stages the historical plain-text
+    release: a flat directory of ``*.txt`` files with no JSON parse and no
+    PDF originals, so the report says so instead of implying a missing side.
+    """
+    if fmt not in CORPUS_FORMATS:
+        raise CorpusError(f"unknown corpus format {fmt!r}; expected one of {CORPUS_FORMATS}")
+    if fmt == "v1":
+        return _stage_v1_documents(source_root, corpus_root)
     source_root = Path(source_root).expanduser().resolve()
     corpus_root = Path(corpus_root).expanduser().resolve()
     json_target = corpus_root.joinpath(*_JSON_REL)
@@ -136,34 +189,16 @@ def stage_documents(source_root: Path, corpus_root: Path) -> dict[str, Any]:
     json_target.mkdir(parents=True, exist_ok=True)
     txt_target.mkdir(parents=True, exist_ok=True)
     pdf_target.mkdir(parents=True, exist_ok=True)
-    linked = copied = kept = 0
-
-    def _stage(src: Path, dst_dir: Path) -> None:
-        nonlocal linked, copied, kept
-        dst = dst_dir / src.name
-        if dst.exists():
-            try:
-                if os.path.samefile(src, dst) or _sha256_file(src) == _sha256_file(dst):
-                    kept += 1
-                    return
-            except OSError:
-                pass
-            raise CorpusError(f"staged corpus file differs from source, refusing to overwrite: {dst}")
-        try:
-            os.link(src, dst)
-            linked += 1
-        except OSError:
-            shutil.copy2(src, dst)
-            copied += 1
-
-    for json_path, txt_path in _source_pairs(source_root):
-        _stage(json_path, json_target)
-        _stage(txt_path, txt_target)
+    stager = _Stager()
+    pairs = _source_pairs(source_root)
+    for json_path, txt_path in pairs:
+        stager.stage(json_path, json_target)
+        stager.stage(txt_path, txt_target)
     pdfs = _pdf_sources(source_root)
     for pdf_path in pdfs:
-        _stage(pdf_path, pdf_target)
-    return {"documents": len(_source_pairs(source_root)), "linked": linked,
-            "copied": copied, "already_current": kept,
+        stager.stage(pdf_path, pdf_target)
+    return {"format": "v2", "documents": len(pairs), "linked": stager.linked,
+            "copied": stager.copied, "already_current": stager.kept,
             "pdf_documents": len(pdfs),
             "pdf_note": ("PDF originals staged under documents/pdf for the render-source path"
                          if pdfs else
@@ -171,6 +206,28 @@ def stage_documents(source_root: Path, corpus_root: Path) -> dict[str, Any]:
                          "under fullcorpus); protocol §6.1 visual parity is therefore moot — both "
                          "arms share the same parsed-element page view, recorded as a corpus condition"),
             "json_dir": str(json_target), "txt_dir": str(txt_target)}
+
+
+def _stage_v1_documents(source_root: Path, corpus_root: Path) -> dict[str, Any]:
+    """Stage the v1 plain-text corpus: one flat ``*.txt`` directory, 1:1."""
+    source_root = Path(source_root).expanduser().resolve()
+    if not source_root.is_dir():
+        raise CorpusError(f"v1 plain-text corpus directory is missing: {source_root}")
+    txts = sorted(source_root.glob("*.txt"))
+    if not txts:
+        raise CorpusError(f"no *.txt documents under {source_root}")
+    txt_target = Path(corpus_root).expanduser().resolve().joinpath(*_TXT_REL)
+    txt_target.mkdir(parents=True, exist_ok=True)
+    stager = _Stager()
+    for txt_path in txts:
+        stager.stage(txt_path, txt_target)
+    return {"format": "v1", "documents": len(txts), "linked": stager.linked,
+            "copied": stager.copied, "already_current": stager.kept,
+            "pdf_documents": 0,
+            "pdf_note": ("v1 plain-text corpus: the official parsed release ships pure *.txt with "
+                         "no PDF originals and no JSON parse, so there is nothing else to stage "
+                         "(recorded as a corpus condition, not a missing side)"),
+            "txt_dir": str(txt_target)}
 
 
 # --- index build --------------------------------------------------------------
@@ -230,8 +287,120 @@ def _connect(db_path: Path, *, readonly: bool) -> sqlite3.Connection:
     return connection
 
 
-def build_index(corpus_root: Path) -> dict[str, Any]:
-    """Parse every staged JSON into the SQLite index; write index/manifest.json."""
+def _txt_lines(raw: bytes, name: str) -> list[str]:
+    """Project one plain-text document onto line-per-physical-line rows.
+
+    Line numbers are the file's 1-based physical lines (the whole document is
+    the unit — there is no JSON parse to elementize).  Line terminators are
+    stripped (a lone trailing ``\\r`` from CRLF is dropped); every other byte,
+    including significant table-alignment whitespace, is preserved verbatim so
+    reads reproduce the file exactly.
+    """
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise CorpusError(f"document {name!r} is not valid UTF-8: {exc}") from exc
+    lines = text.split("\n")
+    if lines and lines[-1] == "":  # trailing terminator: not a phantom last line
+        lines.pop()
+    return [line[:-1] if line.endswith("\r") else line for line in lines]
+
+
+def _build_txt_index(corpus_root: Path) -> dict[str, Any]:
+    """Index every staged v1 ``*.txt``: whole-document model, line = file line."""
+    corpus_root = Path(corpus_root).expanduser().resolve()
+    txt_dir = corpus_root.joinpath(*_TXT_REL)
+    index_dir = corpus_root.joinpath(*_INDEX_REL)
+    index_dir.mkdir(parents=True, exist_ok=True)
+    txts = sorted(txt_dir.glob("*.txt"))
+    if not txts:
+        raise CorpusError(f"no staged plain-text documents under {txt_dir}; run staging first")
+
+    db_path = index_dir / "corpus.sqlite"
+    started = time.monotonic()
+    if db_path.exists():
+        db_path.unlink()
+    connection = _connect(db_path, readonly=False)
+    total_lines = 0
+    try:
+        connection.execute("PRAGMA journal_mode=OFF")
+        connection.execute("PRAGMA synchronous=OFF")
+        # Same element shape as the v2 index (page_id/raw_page_id/element_id
+        # exist but carry the not_applicable semantics: pages=0, page 0,
+        # no parse element ids), so search/read/evidence locators and the
+        # acceptance path work identically over both formats.
+        connection.executescript(
+            """
+            CREATE TABLE docs(
+              doc_id TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL,
+              text_path TEXT NOT NULL,
+              sha256 TEXT NOT NULL, bytes INTEGER NOT NULL,
+              pages INTEGER NOT NULL, elements INTEGER NOT NULL);
+            CREATE TABLE elements(
+              id INTEGER PRIMARY KEY, doc_id TEXT NOT NULL, line INTEGER NOT NULL,
+              page_id INTEGER NOT NULL, raw_page_id INTEGER NOT NULL, element_id INTEGER,
+              etype TEXT NOT NULL, content TEXT NOT NULL,
+              UNIQUE(doc_id, line));
+            CREATE INDEX elements_doc_page ON elements(doc_id, page_id, line);
+            CREATE VIRTUAL TABLE elements_fts USING fts5(
+              content, doc_id, content='elements', content_rowid='id');
+            """
+        )
+        element_pk = 0
+        for number, txt_path in enumerate(txts, start=1):
+            doc_id = f"d{number:04d}"
+            raw = txt_path.read_bytes()
+            contents = _txt_lines(raw, txt_path.name)
+            connection.execute(
+                "INSERT INTO docs VALUES(?,?,?,?,?,0,?)",
+                (doc_id, txt_path.stem, str(txt_path), _sha256_file(txt_path),
+                 txt_path.stat().st_size, len(contents)),
+            )
+            connection.executemany(
+                "INSERT INTO elements(id,doc_id,line,page_id,raw_page_id,element_id,etype,content)"
+                " VALUES(?,?,?,0,0,NULL,'text_line',?)",
+                [((element_pk := element_pk + 1), doc_id, line, content)
+                 for line, content in enumerate(contents, start=1)],
+            )
+            total_lines += len(contents)
+            connection.commit()
+            if number % 100 == 0:
+                print(f"  parsed {number}/{len(txts)} documents", flush=True)
+        connection.execute("INSERT INTO elements_fts(elements_fts) VALUES('rebuild')")
+        connection.execute("INSERT INTO elements_fts(elements_fts) VALUES('integrity-check')")
+        connection.commit()
+        count = connection.execute("SELECT COUNT(*) AS n FROM docs").fetchone()["n"]
+        if count != len(txts):
+            raise CorpusError(f"index has {count} docs, staged {len(txts)}")
+    except sqlite3.Error as exc:
+        raise CorpusError(f"corpus index build failed: {exc}") from exc
+    finally:
+        connection.close()
+    manifest = {
+        "schema_version": TXT_INDEX_SCHEMA_VERSION,
+        "format": "v1",
+        "built_at": _now(),
+        "documents": len(txts),
+        "total_elements": total_lines,
+        "projection": ("one line per physical file line, 1-based; the whole document is the unit "
+                       "(no JSON parse exists for this corpus); line terminators stripped, all "
+                       "other whitespace preserved verbatim"),
+        "page_semantics": "not_applicable",
+        "db": str(db_path),
+        "db_bytes": db_path.stat().st_size,
+        "build_seconds": round(time.monotonic() - started, 1),
+    }
+    (index_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+                                             encoding="utf-8")
+    return manifest
+
+
+def build_index(corpus_root: Path, *, fmt: str = "v2") -> dict[str, Any]:
+    """Parse every staged document into the SQLite index; write index/manifest.json."""
+    if fmt not in CORPUS_FORMATS:
+        raise CorpusError(f"unknown corpus format {fmt!r}; expected one of {CORPUS_FORMATS}")
+    if fmt == "v1":
+        return _build_txt_index(corpus_root)
     corpus_root = Path(corpus_root).expanduser().resolve()
     json_dir = corpus_root.joinpath(*_JSON_REL)
     txt_dir = corpus_root.joinpath(*_TXT_REL)
@@ -310,6 +479,7 @@ def build_index(corpus_root: Path) -> dict[str, Any]:
         connection.close()
     manifest = {
         "schema_version": INDEX_SCHEMA_VERSION,
+        "format": "v2",
         "built_at": _now(),
         "documents": len(jsons),
         "total_elements": total_elements,
@@ -365,6 +535,9 @@ class CorpusAdapter:
         if not manifest_path.is_file() or not db_path.is_file():
             raise CorpusError(f"corpus index is missing under {self.root}; run build first")
         self.manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        # Pre-v1-format manifests (the frozen V2 index) predate the format
+        # field; absence means v2.
+        self.format = str(self.manifest.get("format") or "v2")
         self._db = _connect(db_path, readonly=True)
         # One adapter is shared by the episode's worker threads; SQLite
         # connections must not run interleaved cursors, so every query takes
@@ -444,7 +617,10 @@ class CorpusAdapter:
                 "truncated": truncated or len(emitted) < len(lines)}
 
     def page(self, doc: str, page_index: int, *, max_element_chars: int = _READ_ELEMENT_CHARS) -> dict[str, Any]:
-        """View one 0-based page: its elements in reading order."""
+        """View one 0-based page: its elements in reading order (v2 only)."""
+        if self.format == "v1":
+            raise CorpusError("this corpus is v1 plain text with no page parse "
+                              "(page semantics: not_applicable); use read with 1-based line ranges")
         row = self._doc_row(doc)
         page = int(page_index)
         with self._query_lock:
@@ -504,27 +680,46 @@ def probe(corpus_root: Path, *, write_report: bool = True) -> dict[str, Any]:
     """Answer-free visibility probe: every document findable, searchable, readable.
 
     Probe queries come only from the corpus itself (fixed generic terms and
-    each document's own tokens) — never from question text or gold.
+    each document's own tokens) — never from question text or gold.  The
+    readable check follows the corpus format: v2 walks a page view plus a
+    head read; v1 has no pages (not_applicable), so it verifies the head read
+    and that the whole-document projection carries exactly the indexed line
+    count — the integrity statement of the whole-document+line-number model.
     """
     started = time.monotonic()
     with CorpusAdapter(corpus_root) as adapter:
         db = adapter._db
         failures: list[dict[str, str]] = []
-        docs = [dict(row) for row in db.execute(
-            "SELECT doc_id, name, pages, elements, json_path, text_path FROM docs ORDER BY name")]
+        columns = ("doc_id, name, pages, elements, text_path" if adapter.format == "v1"
+                   else "doc_id, name, pages, elements, json_path, text_path")
+        docs = [dict(row) for row in db.execute(f"SELECT {columns} FROM docs ORDER BY name")]
         if not docs:
             raise CorpusError("index has no documents")
         searchable = 0
         for entry in docs:
             name = entry["name"]
-            if not Path(entry["json_path"]).is_file() or not Path(entry["text_path"]).is_file():
+            staged = [entry["text_path"]] if adapter.format == "v1" else [entry["json_path"],
+                                                                          entry["text_path"]]
+            if not all(Path(path).is_file() for path in staged):
                 failures.append({"doc": name, "check": "findable", "error": "staged file missing"})
                 continue
             try:
-                page = adapter.page(name, 0)
-                head = adapter.read(name, 1, 3)
-                if not page["elements"] and not head["lines"] and entry["elements"]:
-                    raise CorpusError("no readable lines or page elements")
+                if adapter.format == "v1":
+                    head = adapter.read(name, 1, min(3, max(1, entry["elements"])))
+                    text = adapter.document_text(name)
+                    if not entry["elements"] or not text:
+                        raise CorpusError("no indexed lines")
+                    if text.count("\n") + 1 != entry["elements"]:
+                        raise CorpusError(
+                            f"line-count drift: index says {entry['elements']}, "
+                            f"projection has {text.count(chr(10)) + 1}")
+                    if not head["lines"] and entry["elements"]:
+                        raise CorpusError("head read returned no lines")
+                else:
+                    page = adapter.page(name, 0)
+                    head = adapter.read(name, 1, 3)
+                    if not page["elements"] and not head["lines"] and entry["elements"]:
+                        raise CorpusError("no readable lines or page elements")
             except CorpusError as exc:
                 failures.append({"doc": name, "check": "readable", "error": str(exc)})
                 continue
@@ -538,8 +733,23 @@ def probe(corpus_root: Path, *, write_report: bool = True) -> dict[str, Any]:
         db.execute("SELECT COUNT(*) FROM elements_fts")  # full-table sanity walk
         pdf_dir = adapter.root.joinpath(*_PDF_REL)
         pdf_files = sorted(pdf_dir.glob("*.pdf")) if pdf_dir.is_dir() else []
+        if adapter.format == "v1":
+            pdf_note = ("v1 plain-text corpus: pure *.txt official release, no PDF originals and no "
+                        "JSON parse exist, so §6.1 visual parity and the page view are moot by "
+                        "format — A/B share the same whole-document line view. Recorded as a corpus "
+                        "condition, not an arm asymmetry")
+        elif pdf_files:
+            pdf_note = ("PDF originals staged under documents/pdf; the page command still returns "
+                        "the parsed-element view — PDF page rendering goes through the product's "
+                        "render-source tool on a registered source, and arm A needs the same "
+                        "render capability wired before visual parity holds (protocol §6.1)")
+        else:
+            pdf_note = ("this V2 corpus ships parsed JSON + TXT only; no PDF originals exist to "
+                        "stage, so §6.1 visual parity is moot — A/B share the same parsed-element "
+                        "page view. Recorded as a corpus condition, not an arm asymmetry")
         report = {
             "schema_version": "officeqa.corpus_probe.v1",
+            "format": adapter.format,
             "probed_at": _now(),
             "corpus_root": str(adapter.root),
             "documents": len(docs),
@@ -549,15 +759,8 @@ def probe(corpus_root: Path, *, write_report: bool = True) -> dict[str, Any]:
             "searchable": searchable,
             "generic_query_hits": generic_hits,
             "fts_integrity": "ok",
-            "pdf": {"present": bool(pdf_files), "count": len(pdf_files),
-                    "note": ("PDF originals staged under documents/pdf; the page command still returns "
-                             "the parsed-element view — PDF page rendering goes through the product's "
-                             "render-source tool on a registered source, and arm A needs the same "
-                             "render capability wired before visual parity holds (protocol §6.1)"
-                             if pdf_files else
-                             "this V2 corpus ships parsed JSON + TXT only; no PDF originals exist to "
-                             "stage, so §6.1 visual parity is moot — A/B share the same parsed-element "
-                             "page view. Recorded as a corpus condition, not an arm asymmetry")},
+            "pdf": {"present": bool(pdf_files), "count": len(pdf_files), "note": pdf_note},
+            **({"page_semantics": "not_applicable"} if adapter.format == "v1" else {}),
             "failures": failures,
             # Per-document findable/readable/searchable is the gate; the fixed
             # generic terms are informational global sanity (a two-document
@@ -629,9 +832,9 @@ def budget_usage(budget_file: Path | str | None) -> dict[str, int]:
 # --- CLI -----------------------------------------------------------------------
 
 
-def _require_data_root(value: str | None) -> Path:
+def _require_data_root(value: str | None, corpus: str = "corpus") -> Path:
     root = Path(value).expanduser().resolve() if value else DEFAULT_DATA_ROOT
-    corpus_root = root / "corpus"
+    corpus_root = root / corpus
     if not corpus_root.is_dir():
         raise CorpusError(f"corpus area is missing: {corpus_root}")
     return corpus_root
@@ -642,18 +845,31 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
 
     build = commands.add_parser("build", help="stage the source corpus and build the index (data preparation)")
-    build.add_argument("--source", required=True, help="V2 fullcorpus directory (read-only)")
+    build.add_argument("--source", required=True,
+                       help="source corpus directory (read-only): V2 fullcorpus for --format v2, "
+                            "the flat *.txt directory for --format v1")
+    build.add_argument("--format", choices=CORPUS_FORMATS, default="v2",
+                       help="corpus release format (default v2 = JSON+TXT fullcorpus; "
+                            "v1 = historical plain-text Treasury Bulletins)")
+    build.add_argument("--corpus",
+                       help="target corpus directory name under the data root "
+                            f"(default {DEFAULT_CORPUS_NAME['v2']} for v2, {DEFAULT_CORPUS_NAME['v1']} for v1)")
     build.add_argument("--data-root", help=f"data area root (default {DEFAULT_DATA_ROOT})")
 
     probe_cmd = commands.add_parser("probe", help="answer-free visibility probe over every staged document")
     probe_cmd.add_argument("--data-root")
+    probe_cmd.add_argument("--corpus", default=DEFAULT_CORPUS_NAME["v2"],
+                           help="staged corpus directory name (default %(default)s; v1 plain text "
+                                f"lives at {DEFAULT_CORPUS_NAME['v1']})")
 
     docs = commands.add_parser("docs", help="list/find documents by name substring")
     docs.add_argument("--data-root")
+    docs.add_argument("--corpus", default=DEFAULT_CORPUS_NAME["v2"])
     docs.add_argument("--query")
 
     search = commands.add_parser("search", help="keyword search across the whole corpus or one document")
     search.add_argument("--data-root")
+    search.add_argument("--corpus", default=DEFAULT_CORPUS_NAME["v2"])
     search.add_argument("--query", required=True)
     search.add_argument("--doc", help="restrict to one document (name or doc_id)")
     search.add_argument("--limit", type=int, default=20)
@@ -662,13 +878,16 @@ def main(argv: list[str] | None = None) -> int:
 
     read = commands.add_parser("read", help="read a 1-based line range of one document")
     read.add_argument("--data-root")
+    read.add_argument("--corpus", default=DEFAULT_CORPUS_NAME["v2"])
     read.add_argument("--doc", required=True)
     read.add_argument("--start-line", type=int, required=True)
     read.add_argument("--end-line", type=int, required=True)
     read.add_argument("--max-chars", type=int, default=6000)
 
-    page = commands.add_parser("page", help="view one 0-based page of one document")
+    page = commands.add_parser("page", help="view one 0-based page of one document (v2 only; "
+                                            "v1 plain text has no pages)")
     page.add_argument("--data-root")
+    page.add_argument("--corpus", default=DEFAULT_CORPUS_NAME["v2"])
     page.add_argument("--doc", required=True)
     page.add_argument("--page-index", type=int, required=True)
     page.add_argument("--budget-file", help="per-episode budget journal (enables the shared cap)")
@@ -676,6 +895,7 @@ def main(argv: list[str] | None = None) -> int:
 
     accept = commands.add_parser("accept", help="register a used document as a BriefLoop run source")
     accept.add_argument("--data-root")
+    accept.add_argument("--corpus", default=DEFAULT_CORPUS_NAME["v2"])
     accept.add_argument("--workspace", required=True, help="BriefLoop workspace root of this episode")
     accept.add_argument("--run", required=True)
     accept.add_argument("--doc", required=True)
@@ -684,11 +904,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "build":
             data_root = Path(args.data_root).expanduser().resolve() if args.data_root else DEFAULT_DATA_ROOT
-            staging = stage_documents(Path(args.source), data_root / "corpus")
-            manifest = build_index(data_root / "corpus")
+            corpus_name = args.corpus or DEFAULT_CORPUS_NAME[args.format]
+            staging = stage_documents(Path(args.source), data_root / corpus_name, fmt=args.format)
+            manifest = build_index(data_root / corpus_name, fmt=args.format)
             print(json.dumps({"staging": staging, "manifest": manifest}, ensure_ascii=False, indent=2))
             return 0
-        corpus_root = _require_data_root(args.data_root)
+        corpus_root = _require_data_root(args.data_root, args.corpus)
         if args.command == "probe":
             report = probe(corpus_root)
             print(json.dumps(report, ensure_ascii=False, indent=2))

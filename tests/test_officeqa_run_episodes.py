@@ -324,6 +324,13 @@ def test_config_freeze_validation_passes_on_a_frozen_shape():
     broken = json.loads(json.dumps(config))
     broken['isolation']['solver_boundary'] = {'kind': 'chmod-only', 'detail': 'x'}
     assert any('solver_boundary' in error for error in re_mod.config_freeze_errors(broken))
+    broken = json.loads(json.dumps(config))
+    broken['dataset']['dev_corpus'] = {'name': None, 'revision': None, 'documents': None,
+                                       'source_root': None}
+    errors = re_mod.config_freeze_errors(broken)
+    for field in ('dev_corpus.name', 'dev_corpus.revision', 'dev_corpus.documents',
+                  'dev_corpus.source_root'):
+        assert any(field in error for error in errors), field  # 四个冻结字段逐一点名
 
 
 def test_score_refuses_without_freeze(chain):
@@ -684,3 +691,125 @@ def test_prepare_solver_boundary_probes_fail_closed(chain, tmp_path, monkeypatch
     assert shim.is_file() and shim.stat().st_mode & stat.S_IXUSR
     profile = Path(probe['profile']).read_text(encoding='utf-8')
     assert '(allow default)' in profile and 'deny file-read*' in profile
+
+
+# --- v1 语料接入：按题集路由（dev pilot → corpus-v1，主测试 → corpus） -------------
+
+
+def _stage_dev_corpus(chain, tmp_path):
+    """在 chain 数据区旁接入合成 v1 纯文本语料（与真实接入同一 staging/索引路径）。"""
+    source = tmp_path / 'v1src'
+    source.mkdir(parents=True, exist_ok=True)
+    (source / 'treasury_bulletin_1941_01.txt').write_text(
+        'TREASURY BULLETIN\nJANUARY 1941\n'
+        'Expenditures for national defense calendar year 1940 totaled 7,327 million dollars\n'
+        'Public debt operations by month\n', encoding='utf-8')
+    ca.stage_documents(source, chain / 'corpus-v1', fmt='v1')
+    ca.build_index(chain / 'corpus-v1', fmt='v1')
+
+
+def _mark_one_dev_case(chain):
+    """从 ledger 的历史池标 1 个 dev 题（不接触 evaluator-only gold）。"""
+    ledger = json.loads((chain / 'question_only' / 'exposure_ledger.json').read_text(encoding='utf-8'))
+    revision = ledger['historical_revision']
+    keys = [pd.case_key(revision, entry['uid'], entry['question_sha256'])
+            for entry in ledger['historical_exposed_pool']]
+    assert pd.mark_dev_pilot(chain / 'gated', chain, keys[:1])['marked'] == 1
+    return keys[0]
+
+
+def test_corpus_selection_and_per_corpus_instructions(chain, tmp_path):
+    """路由表：v2→corpus，v1→config 指名的 dev 语料；无配置时 v1 数据集无映射（fail closed）。"""
+    config = re_mod.load_config()
+    selection = re_mod.corpus_selection(config)
+    assert selection[pd.DATASET] == 'corpus'
+    assert selection[pd.HISTORICAL_DATASET] == 'corpus-v1'
+    assert re_mod.corpus_selection({}) == {pd.DATASET: 'corpus'}  # 未配置 dev_corpus：v1 不回落
+    _stage_dev_corpus(chain, tmp_path)
+    v1 = re_mod.corpus_tool_instructions(chain, corpus_name='corpus-v1')
+    assert '--corpus corpus-v1' in v1 and str(re_mod.CORPUS_TOOL_PATH) in v1
+    assert '--page-index' not in v1 and '--page-budget' not in v1  # v1 无按页查看
+    assert 'not_applicable' in v1 and '纯文本整档' in v1
+    assert 'v1 全量纯文本，1 份整档文档' in v1  # 文档数来自所选语料的 manifest
+    v2 = re_mod.corpus_tool_instructions(chain)
+    assert '--corpus corpus --query' in v2 and '--page-index P' in v2
+    assert '全量解析，2 份文档' in v2
+    # 预算旗标按语料生成：v1 只带检索预算，v2 检索+按页都带
+    budget = {'search_requests': 30, 'candidate_urls': 150, 'source_pages': 60}
+    budget_file = tmp_path / 'episode' / 'corpus-budget.jsonl'
+    v1_budgeted = re_mod.corpus_tool_instructions(chain, corpus_name='corpus-v1',
+                                                  search_budget=budget, budget_file=budget_file)
+    v2_budgeted = re_mod.corpus_tool_instructions(chain, search_budget=budget, budget_file=budget_file)
+    assert f'--budget-file {budget_file} --search-budget 30' in v1_budgeted
+    assert '--page-budget' not in v1_budgeted
+    assert f'--budget-file {budget_file} --page-budget 60' in v2_budgeted
+
+
+def test_dev_pilot_episode_routes_to_the_dev_corpus(chain, tmp_path):
+    """端到端 dry-run：dev 题集双组都路由 corpus-v1，episode_record 记录所用语料。"""
+    import sqlite3
+    _stage_dev_corpus(chain, tmp_path)
+    dev_key = _mark_one_dev_case(chain)
+    assert re_mod.main(['run', '--data-root', str(chain), '--run-label', 'devroute',
+                        '--pool', 'dev', '--dry-run', '--seed', '5']) == 0
+    index = json.loads((chain / 'episodes' / 'devroute' / 'run_index.json').read_text(encoding='utf-8'))
+    assert len(index['episodes']) == 2 and not index['failures']
+    assert [case['case_key'] for case in index['cases']] == [dev_key]
+    for case in index['cases']:
+        assert case['dataset'] == pd.HISTORICAL_DATASET and case['corpus'] == 'corpus-v1'
+    for episode in index['episodes']:
+        assert episode['corpus'] == {'name': 'corpus-v1', 'format': 'v1', 'documents': 1}
+        if episode['arm'] == 'A':
+            prompt = (Path(episode['workspace']) / 'workspace' / 'prompt.md').read_text(encoding='utf-8')
+            assert '--corpus corpus-v1' in prompt and '--page-index' not in prompt
+        else:
+            connection = sqlite3.connect(Path(episode['workspace']) / 'workspace' / 'briefloop.db')
+            requirements = json.loads(connection.execute('SELECT requirements FROM runs').fetchone()[0])
+            connection.close()
+            assert '--corpus corpus-v1' in requirements['raw_input']
+            assert requirements['raw_input'] == re_mod.corpus_tool_instructions(
+                chain, corpus_name='corpus-v1')  # A/B 看到同一语料面（§6.1）
+    # stub 真的在 v1 语料上工作：B 组检索并接纳了 corpus-v1 的文档
+    arm_b = next(e for e in index['episodes'] if e['arm'] == 'B')
+    assert any(call['op'] == 'search' for call in arm_b['tool_calls'])
+    accepted = [call for call in arm_b['tool_calls'] if call['op'] == 'accept']
+    assert accepted and accepted[0]['args']['doc'] == 'treasury_bulletin_1941_01'
+
+
+def test_dev_route_fails_closed_when_the_v1_index_is_missing(chain, tmp_path):
+    """dev 题集需要 corpus-v1 而索引缺失：开跑前拒绝（exit 2），零 episodes 副作用。"""
+    _stage_dev_corpus(chain, tmp_path)
+    _mark_one_dev_case(chain)
+    moved = chain / 'corpus-v1-away'
+    (chain / 'corpus-v1').rename(moved)
+    try:
+        assert re_mod.main(['run', '--data-root', str(chain), '--run-label', 'devmissing',
+                            '--pool', 'dev', '--dry-run']) == 2
+        assert not (chain / 'episodes' / 'devmissing').exists()
+    finally:
+        moved.rename(chain / 'corpus-v1')
+
+
+def test_prepare_solver_boundary_fences_the_dev_corpus_too(chain, tmp_path, monkeypatch):
+    """配了 dev_corpus 时：staged corpus-v1 deny-write、v1 源目录 deny-read 进 profile。"""
+    import subprocess as sp
+    if not Path(re_mod.SANDBOX_EXEC).is_file():
+        pytest.skip('本机无 sandbox-exec（非 macOS seatbelt 环境）')
+    source = _stage_dev_corpus(chain, tmp_path) or tmp_path / 'v1src'
+    fake = _fake_host(tmp_path, 'echo fake-opencode-9.9.9\n')
+    monkeypatch.setattr(re_mod.shutil, 'which', lambda name: str(fake) if name == 'opencode' else None)
+    original_path = os.environ['PATH']
+    config = {'dataset': {'source_root': str(chain / 'gated'),
+                          'dev_corpus': {'name': 'corpus-v1', 'source_root': str(source)}},
+              'isolation': {'solver_boundary': {'kind': 'sandbox', 'detail': 'test seatbelt'}}}
+    try:
+        probe = re_mod.prepare_solver_boundary(chain, config)
+    finally:
+        os.environ['PATH'] = original_path
+    profile = Path(probe['profile']).read_text(encoding='utf-8')
+    fenced = str(chain / 'corpus-v1')
+    assert f'(subpath "{fenced}")' in profile  # deny-write 保护硬链接
+    denied = sp.run([re_mod.SANDBOX_EXEC, '-f', str(Path(probe['profile'])),
+                     '/bin/cat', str(source / 'treasury_bulletin_1941_01.txt')],
+                    capture_output=True, timeout=30)
+    assert denied.returncode != 0  # 活动探针：v1 源目录在沙箱内不可读

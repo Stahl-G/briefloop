@@ -3,12 +3,12 @@
   "experiment_id": "briefloop-officeqa-structured",
   "created": "2026-09-14",
   "frozen_at": "2026-09-15",
-  "status": "Q3 frozen: real opencode transports wired (integration a7a3541d); 6-question dev pilot selected; config 占位字段全部清空，真实执行门以冻结校验放行",
-  "_notes": "JSON 无注释。Q3 已冻结：run_episodes.run 不带 --dry-run 时先过 config_freeze_errors（无 null/待办占位、runtime/budget/isolation 结构完整）、isolation 断言、integration_commit 代码态比对与 solver 边界活动探针，全部通过才放行真实传输。scorer 的两个哈希（Git blob SHA-1 与文件 SHA-256）在本文件记录并在 tests/test_officeqa_score_projection.py 由实际文件重算核对。",
+  "status": "Q3 re-frozen 2026-09-15: v1 dev-pilot corpus wired (corpus-v1, 697 份纯文本, revision 8ecbf18d)；runner 按题集路由语料（dev pilot→corpus-v1，主测试→corpus）；真实执行门与冻结校验不变",
+  "_notes": "JSON 无注释。Q3 已冻结：run_episodes.run 不带 --dry-run 时先过 config_freeze_errors（无 null/待办占位、runtime/budget/isolation/dataset.dev_corpus 结构完整）、isolation 断言、integration_commit 代码态比对与 solver 边界活动探针，全部通过才放行真实传输。2026-09-15 重新冻结只新增 dev_corpus 路由与 v1 语料修订记录；baseline.integration_commit 指向接入 v1 语料代码落库前的提交（8f145289），该代码提交落地后须回填为新 HEAD（config 与 RUNBOOK 不在代码态比对范围内，回填属冻结提交动作；回填前代码态校验失败关闭，不会误放行）。scorer 的两个哈希（Git blob SHA-1 与文件 SHA-256）在本文件记录并在 tests/test_officeqa_score_projection.py 由实际文件重算核对。",
   "baseline": {
     "product_version": "0.22.3",
     "baseline_commit": "66a2a1345a2cc9a4f91d93e6cfbb84bda3c1af2b",
-    "integration_commit": "a7a3541df3ae5a9325cb0946ba7807c7a1289411"
+    "integration_commit": "8f145289530e60072cd5d92730a47c09cdd814da"
   },
   "scorer": {
     "repository": "databricks/officeqa",
@@ -64,11 +64,28 @@
       "dev_pool": "dev",
       "marking": "prepare_dataset.py dev-pilot --case-keys …（2026-09-15 执行，6 题标 dev/exposed，题面入 question_only/dev_pilot.jsonl，gold 留 evaluator-only）"
     },
-    "note": "fullcorpus/ 为 V2 全语料；officeqa_pro*.csv 含 gold，属受限数据，仅数据准备进程可读（协议 §6.4）。pdf_originals=false：本地 fullcorpus 已核实无任何 *.pdf（find 计数为 0），协议 §6.1 的 PDF 按页视觉对等因此不适用——A/B 共享同一解析元素 page 视图，按语料条件偏差记录（corpus_adapter stage/probe 会如实报告）。开发 pilot 语料条件：所选 6 题的官方出处（旧 Treasury Bulletin）不在冻结的 V2 全语料中，V2 语料含同年代 combined statements；pilot 成绩只作接入诊断（协议 §7 条件偏差）。"
+    "dev_corpus": {
+      "name": "corpus-v1",
+      "format": "v1",
+      "revision": "8ecbf18d",
+      "documents": 697,
+      "source_root": "/Users/yihongguo/Developer/datasets/officeqa/treasury_bulletins_parsed/transformed",
+      "built_at": "2026-09-15",
+      "build_command": "corpus_adapter.py build --format v1 --source <source_root> --data-root <data_root>（目标目录 corpus-v1/，与 corpus/ 并列）",
+      "note": "开发 pilot（officeqa-pro-v1 题集）路由到此 v1 纯文本语料：官方全量解析发布（revision 8ecbf18d）的 697 份 Treasury Bulletin txt，无 JSON 解析件、无 PDF 原件。索引按整文档+物理行号建模（行号即文件行号，行 1-based），page 语义 not_applicable（page 命令拒绝而非造页）。已核实开发 6 题源文档零缺失；staging 保持 query-blind（build/probe 只读语料目录，不接触任何题面/gold）。"
+    },
+    "fixes": [
+      {
+        "date": "2026-09-15",
+        "issue": "开发 pilot 6 题的源文档（旧 Treasury Bulletin）不在 V2 主测试语料（corpus/，1435 份）中：dev 题集此前无法在所选语料内定位官方出处证据，构成题集-语料不匹配的条件偏差",
+        "fix": "接入 v1 全量纯文本语料（官方 revision 8ecbf18d，697 份 txt）staging 为数据区 corpus-v1/ 并按整文档+行号建索引；run_episodes 按题集路由语料——dev pilot（officeqa-pro-v1）用 dev_corpus=corpus-v1，主测试仍用 V2 corpus/（一个字节未动）；指令文本中的语料命令按所选语料生成（v1 无按页查看，page 语义 not_applicable）；solver 边界对 corpus-v1 与 v1 源目录同样设 deny-write/deny-read 门"
+      }
+    ],
+    "note": "fullcorpus/ 为 V2 全语料；officeqa_pro*.csv 含 gold，属受限数据，仅数据准备进程可读（协议 §6.4）。pdf_originals=false：本地 fullcorpus 已核实无任何 *.pdf（find 计数为 0），协议 §6.1 的 PDF 按页视觉对等因此不适用——A/B 共享同一解析元素 page 视图，按语料条件偏差记录（corpus_adapter stage/probe 会如实报告）。开发 pilot 语料条件（2026-09-15 修复后）：所选 6 题的官方出处（旧 Treasury Bulletin）经 dev_corpus=corpus-v1（v1 纯文本全量，revision 8ecbf18d）接入，源文档零缺失；pilot 成绩仍只作接入诊断（协议 §7：题目为已暴露旧题，条件偏差如实记录）。"
   },
   "data_area": {
     "root": "/Users/yihongguo/Developer/briefloop-data/officeqa",
-    "subdirs": ["gated", "question_only", "corpus", "episodes", "evaluator-only"],
+    "subdirs": ["gated", "question_only", "corpus", "corpus-v1", "episodes", "evaluator-only"],
     "in_git": false
   },
   "arms": {
@@ -86,7 +103,7 @@
   "isolation": {
     "solver_boundary": {
       "kind": "sandbox",
-      "detail": "macOS seatbelt（sandbox-exec）profile 由 run_episodes.prepare_solver_boundary 生成于 <data_root>/solver-boundary/solver.sb：deny file-read* 于 gated/、evaluator-only/ 与原 datasets/officeqa-pro-v2（含 file-write*），deny file-write* 于 staged corpus/（hardlink 保护）；opencode shim 于 <data_root>/solver-boundary/bin/opencode，A 组 opencode run 与 B 组受管 opencode serve（PATH 解析）全部经 shim 启动，沙箱随进程树继承；开跑前活动探针证明围栏生效，runner 同时以 isolation.solver_environment() 剥离 HF_TOKEN 等数据集凭据。",
+      "detail": "macOS seatbelt（sandbox-exec）profile 由 run_episodes.prepare_solver_boundary 生成于 <data_root>/solver-boundary/solver.sb：deny file-read* 于 gated/、evaluator-only/、原 datasets/officeqa-pro-v2 与 v1 语料源目录 datasets/officeqa/treasury_bulletins_parsed/transformed（后者另含 file-write*，前者含 file-write*），deny file-write* 于 staged corpus/ 与 staged corpus-v1/（hardlink 保护）；opencode shim 于 <data_root>/solver-boundary/bin/opencode，A 组 opencode run 与 B 组受管 opencode serve（PATH 解析）全部经 shim 启动，沙箱随进程树继承；开跑前活动探针证明围栏生效，runner 同时以 isolation.solver_environment() 剥离 HF_TOKEN 等数据集凭据。",
       "note": "0700/0600 权限位只防其他用户；同用户隔离由该沙箱承担（设计 §2：隔离靠 OS 不靠提示词）。"
     }
   },
@@ -119,7 +136,7 @@
       "search_policy": {"primary_provider": "native", "supplemental_providers": [], "native_search_enabled": false, "coverage_mode": "primary_only"},
       "max_reports": 1
     },
-    "shared_corpus_tool": "experiments/officeqa_structured/corpus_adapter.py (docs/search/read/page/accept; search/page 受同额预算硬限，accept registers a used document as a real run source)",
+    "shared_corpus_tool": "experiments/officeqa_structured/corpus_adapter.py (docs/search/read/page/accept; search/page 受同额预算硬限，accept registers a used document as a real run source)。语料按题集路由（corpus_selection）：主测试 → corpus（V2），dev pilot → dataset.dev_corpus.name（corpus-v1，纯文本，page 语义 not_applicable，指令文本不提供按页查看命令）；episode_record 记录每集实际使用的语料（name/format/documents）。",
     "concurrency": "run_episodes.ModelCallLimiter 按协议 §8.1 限制同时活跃模型调用（跨组、跨角色、跨 episode；A 组每个 opencode run 回合、B 组每个 Worker execute 各占一槽）；episode 调度并行度是独立的 --episode-workers，默认等于 max_concurrent_model_calls。",
     "closure_note": "设计 §4：episode 内关闭自动学习、定时报告、企业背景、通知、多搜索渠道切换、研究档位。runner 在 episode 工作区显式强制 auto_learn/fact_checker/company_context_enabled/search_policy/research_tier，并断言 report_schedules 与 notifications 为空；版本对比 UI 与紧凑控件是桌面界面能力，headless episode 工作区不暴露（协议 §8.2）。"
   },

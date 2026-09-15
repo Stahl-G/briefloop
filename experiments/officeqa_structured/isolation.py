@@ -51,6 +51,18 @@ _PRIVATE_DIRS = ("gated", "evaluator-only")
 _SOLVER_VISIBLE_DIRS = ("question_only", "corpus", "episodes")
 
 
+def _solver_visible_roots(data_root: Path) -> list[Path]:
+    """Named solver-visible directories plus every staged ``corpus*`` variant.
+
+    The V2 main-test corpus is ``corpus``; the dev-pilot v1 plain-text corpus
+    stages beside it as ``corpus-v1``.  Both are inside the solver's read
+    surface, so both belong in the symlink-containment audit.
+    """
+    roots = {data_root / name for name in _SOLVER_VISIBLE_DIRS}
+    roots.update(path for path in data_root.glob("corpus*") if path.is_dir())
+    return sorted(roots)
+
+
 class IsolationError(RuntimeError):
     """Isolation audit failed closed."""
 
@@ -101,8 +113,7 @@ def audit_data_area(data_root: Path) -> dict[str, Any]:
             if file.is_file() and _mode_bits(file) & 0o177:
                 failures.append({"path": str(file.relative_to(data_root)),
                                  "error": f"mode {_mode_bits(file):o} grants group/world access"})
-    for name in _SOLVER_VISIBLE_DIRS:
-        root = data_root / name
+    for root in _solver_visible_roots(data_root):
         if not root.is_dir():
             continue
         for dirpath, _dirnames, filenames in os.walk(root, followlinks=False):
