@@ -28,7 +28,7 @@ def runtime_info():
         kind = 'source'
         try:
             build = subprocess.check_output(['git', '-C', str(checkout), 'describe', '--always', '--abbrev=12', '--dirty', '--exclude=*'],
-                                            stderr=subprocess.DEVNULL, timeout=2).decode().strip()
+                                            stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2).decode().strip()
         except (OSError, subprocess.SubprocessError):
             pass
     # Desktop and its CLI resolve the same active interpreter. Environment flags

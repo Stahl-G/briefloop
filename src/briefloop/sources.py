@@ -65,7 +65,7 @@ def extract(name, data, *, with_extractor=False):
         if pdftotext:
             with tempfile.TemporaryDirectory(prefix='briefloop-read-') as tmp:
                 p=Path(tmp)/'source.pdf';p.write_bytes(data)
-                proc=subprocess.run([pdftotext,'-layout',str(p),'-'],capture_output=True,timeout=90)
+                proc=subprocess.run([pdftotext,'-layout',str(p),'-'],stdin=subprocess.DEVNULL,capture_output=True,timeout=90)
                 text=proc.stdout.decode('utf-8',errors='replace') if proc.returncode==0 else ''
         else:text=''
         if not text.strip():
@@ -173,7 +173,7 @@ def _fetch_bytes(url):
         with tempfile.TemporaryDirectory(prefix='briefloop-web-') as tmp:
             path=Path(tmp)/'response'
             command=[curl,'--fail','--silent','--show-error','--location','--proto','=http,https','--proto-redir','=http,https','--connect-timeout','12','--max-time','40','--max-filesize',str(15*1024*1024),'-A',f'BriefLoop/{__version__} (local research reader)','-o',str(path),'-w','%{content_type}',url]
-            proc=subprocess.run(command,capture_output=True,text=True,env=env,timeout=45)
+            proc=subprocess.run(command,stdin=subprocess.DEVNULL,capture_output=True,text=True,env=env,timeout=45)
             if proc.returncode:raise ValueError(proc.stderr.strip() or '网页读取失败')
             data=path.read_bytes();content_type=proc.stdout;encoding='utf-8'
     else:

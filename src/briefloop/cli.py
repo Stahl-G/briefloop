@@ -133,7 +133,7 @@ def main():
         root=Path(a.workspace).resolve();root.mkdir(parents=True,exist_ok=True)
         launch_id=secrets.token_hex(16)
         with (root/'server.log').open('a') as log:
-            proc=subprocess.Popen(entry_command('serve','--workspace',root,'--port',a.port)+(['--paused'] if a.paused else [])+(['--backend',a.backend] if a.backend else []),stdout=log,stderr=log,start_new_session=True,env={**os.environ,'BRIEFLOOP_LAUNCH_ID':launch_id},**({'creationflags':subprocess.CREATE_NO_WINDOW} if sys.platform=='win32' else {}))
+            proc=subprocess.Popen(entry_command('serve','--workspace',root,'--port',a.port)+(['--paused'] if a.paused else [])+(['--backend',a.backend] if a.backend else []),stdin=subprocess.DEVNULL,stdout=log,stderr=log,start_new_session=True,env={**os.environ,'BRIEFLOOP_LAUNCH_ID':launch_id},**({'creationflags':subprocess.CREATE_NO_WINDOW} if sys.platform=='win32' else {}))
         # A clean Windows workspace imports bundled templates before readiness.
         for _ in range(450):
             if proc.poll() is not None:raise RuntimeError('服务未能启动，请查看 '+str(root/'server.log'))
