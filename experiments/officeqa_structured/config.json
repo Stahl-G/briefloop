@@ -8,8 +8,8 @@
   "baseline": {
     "product_version": "0.22.3",
     "baseline_commit": "66a2a1345a2cc9a4f91d93e6cfbb84bda3c1af2b",
-    "integration_commit": "92fc118e45e28c204d12938fbf2aa48e3ca72862",
-    "integration_commit_note": "回填至 Track A 基建提交（共享解析语料+预算看门狗+censored 记账；协议 v2.0）"
+    "integration_commit": "56fc42b70a45d540bf865abe78d4d6703bf02695",
+    "integration_commit_note": "回填至 db 锁退避重试 + 终版 Track A 预算提交（dev pilot 证据驱动；用户 2026-09-16 决定）"
   },
   "scorer": {
     "repository": "databricks/officeqa",
