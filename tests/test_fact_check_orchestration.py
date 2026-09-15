@@ -330,7 +330,7 @@ def test_generation_waits_for_check_before_review_and_revision(tmp_path, monkeyp
             return {}
 
     worker = Worker(store, Runtime(), report_runtime_factory=Runtime)
-    worker._review_runtime = Runtime()
+    worker._review_runtime_factory = Runtime
     def assess(job, brief, folder, backend):
         order.append('review')
         child = store.rows("SELECT * FROM jobs WHERE kind='fact_check'")[0]

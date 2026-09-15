@@ -228,9 +228,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/runtime':
                     with worker._claim_lock:
                         active=dict(worker._generation_jobs)
+                        reviews={jid:item[1] for jid,item in worker._review_jobs.items()}
                     selected=q.get('job_id',[None])[0]
-                    observed=active[selected][1] if selected in active else (worker._review_runtime if worker.review_current and not worker.current else worker.runtime)
-                    if selected and selected not in active and selected not in (worker.current,worker.review_current):observed=None
+                    observed=active[selected][1] if selected in active else reviews[selected] if selected in reviews else (next(iter(reviews.values())) if reviews and not worker.current else worker.runtime)
+                    if selected and selected not in active and selected not in reviews and selected!=worker.current:observed=None
                     proc=observed.process if observed else None
                     self.send(200,{'server_pid':os.getpid(),'worker_alive':worker.thread.is_alive(),'automatic_learning_paused':worker.opened_paused,'paused':worker.opened_paused,'job_id':selected if selected in active else worker.current,'generation_job_ids':list(active),'pid':proc.pid if proc else None,'returncode':proc.poll() if proc else None})
                 elif u.path=='/api/source':

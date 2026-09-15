@@ -82,3 +82,46 @@ def test_long_task_and_full_report_slots_do_not_starve_other_work(tmp_path):
     finally:
         for event in list(gates.values()):event.set()
         worker.close()
+
+
+def test_reviews_of_different_reports_run_in_parallel_and_stop_independently(tmp_path,monkeypatch):
+    import briefloop.review as review
+    store=Store(tmp_path)
+    store.set_meta('settings',{**store.settings(),'auto_learn':False,'max_reports':3})
+    source=store.add_source('synthetic','材料')
+    versions=[]
+    for title in ('A','B'):
+        run=store.create_run({'title':title,'objective':'核对'},[source['id']])
+        versions.append(store.publish(run['id'],{'title':title,'markdown':title+' 正文'})['id'])
+    class Runtime:
+        def __init__(self):self.cancelled=threading.Event()
+        def cancel(self):self.cancelled.set()
+    started={};gates={};lock=threading.Lock()
+    def gate(jid):
+        with lock:return gates.setdefault(jid,threading.Event())
+    def run_review(store,runtime,job,version_id,folder):
+        started[job['id']]=runtime
+        while not gate(job['id']).wait(.02):
+            if runtime.cancelled.is_set():raise InterruptedError('cancelled')
+        return {'version_id':version_id}
+    monkeypatch.setattr(review,'run_review',run_review)
+    worker=Worker(store,review_runtime_factory=Runtime)
+    first=store.enqueue('review',{'version_id':versions[0]})
+    other=store.enqueue('review',{'version_id':versions[1]})
+    same=store.enqueue('review',{'version_id':versions[0]})
+    worker.thread.start();worker.review_thread.start()
+    try:
+        wait_for(lambda:first['id'] in started and other['id'] in started)
+        assert started[first['id']] is not started[other['id']]
+        time.sleep(.6)  # a free slot is not used by a second job of the same report
+        assert same['id'] not in started
+        worker.stop_job(other['id'])
+        wait_for(lambda:store.one('jobs',other['id'])['status']=='cancelled')
+        assert not started[first['id']].cancelled.is_set()
+        gate(first['id']).set()
+        wait_for(lambda:same['id'] in started)
+        gate(same['id']).set()
+        for job in (first,same):wait_for(lambda job=job:store.one('jobs',job['id'])['status']=='complete')
+    finally:
+        for event in list(gates.values()):event.set()
+        worker.close()
