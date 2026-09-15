@@ -519,6 +519,17 @@ def corpus_tool_instructions(data_root: Path, *, corpus_name: str = V2_CORPUS_NA
 {web_line}"""
 
 
+SELF_REVIEW_FRAME = """自我复核（A′ 臂，提纲与 BriefLoop QA 审阅逐字对齐）：
+
+本轮是 grounded_qa_v1 问答任务（BriefLoop QA profile）。请像独立审阅者一样核对你自己已提交的答案：
+- evidence = 答案的证据支持（所用 PDF 与页/表定位是否真的支持该值）；
+- coverage = 是否回答原题与必答要求（主体、期间、口径、单位是否对齐）；
+- analysis = 单位与计算核对（换算、聚合、取整是否按题目要求重算过一遍）；
+- expression = 答案对 answer.json 契约的遵守（单行、题目要求的直接形式、无多余内容）。
+
+只评这四项，不评篇幅或文采。若发现任何问题，**由你本人**重写并重新提交修正后的 answer.json 到同一 submit 目录（截止前最新已接纳版本为准）；若确认无问题，说明理由后停止。不要修改题目或语料。"""
+
+
 def native_frame(submit_dir: Path, web_entry: str | None, pdf_dir: Path | None = None) -> str:
     """Arm-A frame (protocol §5.1): names the concrete submit endpoint.
 
@@ -1013,7 +1024,7 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
                        order_index: int, limiter: "ModelCallLimiter",
                        corpus_name: str = V2_CORPUS_NAME,
                        web_entry: str | None = None,
-                       real: RealContext | None = None, strict: bool = False) -> dict[str, Any]:
+                       real: RealContext | None = None, strict: bool = False, self_review: bool = False) -> dict[str, Any]:
     episode_dir = Path(data_root) / "episodes" / label / "A" / case.case_key
     if episode_dir.exists():
         raise RunnerError(f"episode directory already exists: {episode_dir}")
@@ -1044,6 +1055,7 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
     box = SubmissionBox(episode_dir, deadline, repair_budget=budget.format_repair_attempts)
     turns: list[dict[str, Any]] = []
     error: str | None = None
+    repair_delivered = 0
     if real is None:
         with corpus_adapter.CorpusAdapter(Path(data_root) / corpus_name) as adapter:
             solver = StubNativeSolver()
@@ -1082,10 +1094,18 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
                     if latest is None or latest.get("accepted"):
                         break
                     feedback = box.offer_format_repair(latest)
+                    repair_delivered += 1
                     if feedback is None or time.time() > deadline:
                         break
                     turns.append(solver.turn(feedback, title=f"OfficeQA {case.uid} · A · format-repair",
                                              deadline=deadline, continue_last=True, tag="format-repair"))
+            if self_review and real is not None and time.time() <= deadline:
+                accepted = box.entries(accepted_only=True)
+                if accepted:
+                    turns.append(solver.turn(SELF_REVIEW_FRAME,
+                                             title=f"OfficeQA {case.uid} · A′ · self-review",
+                                             deadline=deadline, continue_last=False, tag="self-review"))
+                    box.drain_submit_directory(submit_dir)
         except Exception as exc:  # noqa: BLE001 - a crashed transport still keeps
             # every accepted submission and lands in the denominator (§8.3).
             error = f"{type(exc).__name__}: {exc}"
@@ -1105,6 +1125,10 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
                              linkage={"turns": turns} if turns else None,
                              usage_complete=bool(usage and usage.get("usage_complete")),
                              usage=usage, resources=res_sampler.summary(),
+                             format_repair={"budget": budget.format_repair_attempts,
+                                            "invalid_submissions": repair_delivered,
+                                            "feedback_delivered": True,
+                                            "mechanism": "agent-turn (reason delivered)"},
                              error=error, corpus=_corpus_identity(data_root, corpus_name))
     return record
 
@@ -1309,6 +1333,7 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
     box = SubmissionBox(episode_dir, deadline, repair_budget=budget.format_repair_attempts if real else 0)
     tool_calls: list[dict[str, Any]] = []
     snapshots: set[str] = set()
+    b_format_rejections = 0
 
     if real is None:
         with corpus_adapter.CorpusAdapter(Path(data_root) / corpus_name) as adapter:
@@ -1360,8 +1385,12 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
                                       "version_ids": sorted(snapshots),
                                       "model_calls": model_calls},
                              usage_complete=bool(usage and usage.get("usage_complete")),
-                             usage=usage, error=error,
-                             corpus=_corpus_identity(data_root, corpus_name))
+                             usage=usage, resources=res_sampler.summary(),
+                             format_repair={"budget": budget.format_repair_attempts,
+                                            "invalid_submissions": b_format_rejections,
+                                            "feedback_delivered": False,
+                                            "mechanism": "product-revision-chain (reason NOT delivered)"},
+                             error=error, corpus=_corpus_identity(data_root, corpus_name))
     return record
 
 
@@ -1393,6 +1422,7 @@ def _drive_briefloop_episode(store: Any, worker: Any, box: SubmissionBox, job_id
                 # answers, so this stays dormant there by construction; in a
                 # real run the feedback is recorded here for the record while
                 # the worker's own revision chain carries the repair turn.
+                b_format_rejections += 1  # review 2026-09-15: reason not delivered to B (recorded asymmetry)
                 box.offer_format_repair(entry)
 
     state: dict[str, Any] = {}
@@ -1423,7 +1453,8 @@ def _episode_record(*, case: Case, arm: str, label: str, order_index: int, episo
                     error: str | None = None,
                     corpus: dict[str, Any] | None = None,
                     usage: dict[str, Any] | None = None,
-                    resources: dict[str, Any] | None = None) -> dict[str, Any]:
+                    resources: dict[str, Any] | None = None,
+                    format_repair: dict[str, Any] | None = None) -> dict[str, Any]:
     finished = time.time()
     chosen = box.chosen()
     corpus_budget_file = Path(episode_dir) / "corpus-budget.jsonl"
@@ -1456,6 +1487,7 @@ def _episode_record(*, case: Case, arm: str, label: str, order_index: int, episo
         "usage_complete": usage_complete,
                              **({"usage": usage} if usage else {}),
                              **({"resources": resources} if resources else {}),
+                             **({"format_repair": format_repair} if format_repair else {}),
         "format_repairs_issued": box.repairs_used,
         "submissions": box.entries(),
         "chosen_submission": ({"seq": chosen["seq"], "sha256": chosen["sha256"],
@@ -1472,7 +1504,14 @@ def _episode_record(*, case: Case, arm: str, label: str, order_index: int, episo
 
 # --- run / freeze / score commands ----------------------------------------------
 
+def run_native_self_review(case: Case, **kwargs: Any) -> dict[str, Any]:
+    """A′ arm (review 2026-09-15): A plus one self-review under BriefLoop's
+    verbatim QA rubric and one resubmission."""
+    return run_native_episode(case, self_review=True, **kwargs)
+
+
 _EPISODE_RUNNERS: dict[str, Callable[..., dict[str, Any]]] = {"A": run_native_episode,
+                                                              "A2": run_native_self_review,
                                                               "B": run_briefloop_episode}
 
 
