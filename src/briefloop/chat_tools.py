@@ -226,7 +226,9 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
                 '本次任务包已给出工具、路径和输出约定；不要加载个人长期 memory、无关项目规则、应用源码或重复读取全局配置。'
                 '只读取本次任务包、明确分配给本角色的 Wiki/技能及所需来源；必要的原文核对可以按需展开。遵循本轮专用提示词，'
                 '将产物写到指定位置并按该角色任务决定是否使用子 agent。不要再次调用 workspace-action generate、'
-                'assess 或 learn 来安排同一任务，避免递归入队。用户的补充消息属于当前任务的交互。')
+                'assess 或 learn 来安排同一任务，避免递归入队。用户的补充消息属于当前任务的交互。'
+                '本轮没有任何用户在旁可问：不要调用宿主的提问工具，也不要发起并等待宿主授权；'
+                '遇到含糊或被拒绝的操作，如实记录失败并按任务目标继续可完成的部分。')
     from .search_policy import resolve as resolve_search_policy, instructions as policy_instructions
     policy=resolve_search_policy(store.settings().get('search_policy'),store.settings()['search_provider'])
     search_note='正式报告会冻结首选与允许补充渠道、共用预算；通过generate提交，不自行创建另一套流水线。'+policy_instructions(policy,'briefloop tool','本任务真实run ID')

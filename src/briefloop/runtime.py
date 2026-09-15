@@ -33,6 +33,7 @@ COMMON = '''你在运行 BriefLoop 本地应用。用户已授权本轮研究、
 来源不全时把具体缺口写入研究结果 gaps 及执行记录；禁止编造数字、来源或成功状态。
 所有 JSON 使用 UTF-8，最终文件采用临时文件写完后 rename，避免读取半份结果。
 完成已分配任务才结束；不要只输出计划。若工具缺失或真实调用失败，请记录具体失败，不假装完成。
+本轮没有任何用户在旁可问：不要调用宿主的提问或等待授权的工具；遇到含糊之处自行按任务目标决断，并在结果中记录假设。
 '''
 
 
@@ -389,7 +390,7 @@ def assessment_prompt(store, brief, folder, backend='codex'):
     input_pack['claim_evidence']=inspect_bindings(store,brief['id'])
     (folder/'input.json').write_text(json.dumps(input_pack,ensure_ascii=False,indent=2),encoding='utf-8')
     tool=tool_command(store.root,backend=backend)
-    no_question='本轮没有任何用户在旁可问：不要调用 question 工具；遇到含糊之处自行按任务目标决断，并在结果中记录假设。\n' if backend=='opencode' else ''
+    no_question='本轮没有任何用户在旁可问：不要调用宿主的提问或等待授权的工具；遇到含糊之处自行按任务目标决断，并在结果中记录假设。\n'
     view_pages_word = '使用 view_image 读取页图' if backend == 'codex' else '用 read 工具读取返回的页图'
     figure_view_word = '实际view_image查看其absolute_image_path' if backend == 'codex' else '实际用 read 工具读取其absolute_image_path'
     return EVALUATOR_CONTEXT+f'''
