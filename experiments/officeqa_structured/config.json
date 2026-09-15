@@ -1,214 +1,215 @@
 {
- "protocol_id": "BL-OQA-SR-v1.0",
- "experiment_id": "briefloop-officeqa-structured",
- "created": "2026-09-14",
- "frozen_at": "2026-09-15",
- "status": "Q3 re-frozen 2026-09-15: v1 dev-pilot corpus wired (corpus-v1, 697 份纯文本, revision 8ecbf18d)；runner 按题集路由语料（dev pilot→corpus-v1，主测试→corpus）；真实执行门与冻结校验不变",
- "_notes": "JSON 无注释。Q3 已冻结：run_episodes.run 不带 --dry-run 时先过 config_freeze_errors（无 null/待办占位、runtime/budget/isolation/dataset.dev_corpus 结构完整）、isolation 断言、integration_commit 代码态比对与 solver 边界活动探针，全部通过才放行真实传输。2026-09-15 重新冻结只新增 dev_corpus 路由与 v1 语料修订记录；baseline.integration_commit 指向接入 v1 语料代码落库前的提交（8f145289），该代码提交落地后须回填为新 HEAD（config 与 RUNBOOK 不在代码态比对范围内，回填属冻结提交动作；回填前代码态校验失败关闭，不会误放行）。scorer 的两个哈希（Git blob SHA-1 与文件 SHA-256）在本文件记录并在 tests/test_officeqa_score_projection.py 由实际文件重算核对。",
- "baseline": {
-  "product_version": "0.22.3",
-  "baseline_commit": "66a2a1345a2cc9a4f91d93e6cfbb84bda3c1af2b",
-  "integration_commit": "8a9f9e2f7c02e373091480743cf781be055bb8bf",
-  "integration_commit_note": "回填至覆盖门提交（旧值 8f145289 为 v1 接线前的过渡冻结）"
- },
- "scorer": {
-  "repository": "databricks/officeqa",
-  "commit": "7b9a3c154ef9fb40215bb67934afc43e6799de16",
-  "file": "reward.py",
-  "path": "experiments/officeqa_structured/official/reward.py",
-  "git_blob_sha1": "45a22db4771f20105bdc9340df82e3c405ec84d0",
-  "sha256": "0d91698c87df6d889339aac36f63ae0966607f169890b0bf8b472b26bfe8138f",
-  "bytes": 28094,
-  "tolerance": 0.0,
-  "verified_at": "2026-09-14",
-  "verification_record": "experiments/officeqa_structured/SCORER_VERIFICATION.md",
-  "note": "blob SHA-1 与 SHA-256 是不同哈希，不可混称（协议 §1.3）。文件必须与官方 blob 字节一致，禁止任何本地改动。"
- },
- "answer_contract": {
-  "schema_version": "officeqa.answer.v1",
-  "schemas": [
-   "schemas/answer.schema.json",
-   "schemas/evidence.schema.json"
-  ],
-  "projection_module": "score_answer_record.py",
-  "tolerance": 0.0
- },
- "dataset": {
-  "benchmark": "officeqa-pro-v2",
-  "official_questions": 90,
-  "corpus_documents": 1435,
-  "source_root": "/Users/yihongguo/Developer/datasets/officeqa-pro-v2",
-  "pdf_originals": false,
-  "revision": "2fd0a8dcc9dd144a3b3b3027df8bf9dc9e7045cc0dbe3b750fcbafc15b6dfe9a",
-  "eligible_questions": {
-   "dev_pilot": {
-    "count": 6,
-    "selection": "evaluator-only v1 pool (officeqa_pro_v1.gold.jsonl) sorted by case_key, first 6 — protocol §7.2 exposed-old-question dev pilot",
-    "case_keys": [
-     "0149cdbe9d9bb9197ade59d4be8388522fc9537298037459557998132a31161a",
-     "0150618853280e165f95fb73770d9ad8754138d116fb4a0c5373e597f4d774b5",
-     "024fdc37027f0510d882e6d9151bb477a601c619ce091b9caabcfb14c72a4e5d",
-     "02f497d1512fd70085f5acc5a89deccdc83a3930033cd3b4d7c00e5dcd65b11d",
-     "080830120bd2a2fd4753db7f22d0f5436a3ac72303a3512be2c108b1b6059c84",
-     "0910bdb78dda02ffe01f9fc22f2e20a73d29479e8c35088f29656e029f12be1f"
+  "protocol_id": "BL-OQA-SR-v1.0",
+  "experiment_id": "briefloop-officeqa-structured",
+  "created": "2026-09-14",
+  "frozen_at": "2026-09-15",
+  "status": "Q3 re-frozen 2026-09-15: v1 dev-pilot corpus wired (corpus-v1, 697 份纯文本, revision 8ecbf18d)；runner 按题集路由语料（dev pilot→corpus-v1，主测试→corpus）；真实执行门与冻结校验不变",
+  "_notes": "JSON 无注释。Q3 已冻结：run_episodes.run 不带 --dry-run 时先过 config_freeze_errors（无 null/待办占位、runtime/budget/isolation/dataset.dev_corpus 结构完整）、isolation 断言、integration_commit 代码态比对与 solver 边界活动探针，全部通过才放行真实传输。2026-09-15 重新冻结只新增 dev_corpus 路由与 v1 语料修订记录；baseline.integration_commit 指向接入 v1 语料代码落库前的提交（8f145289），该代码提交落地后须回填为新 HEAD（config 与 RUNBOOK 不在代码态比对范围内，回填属冻结提交动作；回填前代码态校验失败关闭，不会误放行）。scorer 的两个哈希（Git blob SHA-1 与文件 SHA-256）在本文件记录并在 tests/test_officeqa_score_projection.py 由实际文件重算核对。",
+  "baseline": {
+    "product_version": "0.22.3",
+    "baseline_commit": "66a2a1345a2cc9a4f91d93e6cfbb84bda3c1af2b",
+    "integration_commit": "c85f97eed609c2d69f6d8670cfc70d89e79332bc",
+    "integration_commit_note": "回填至提供方熔断修复提交（2026-09-15 夜事故：代理断连+静默记账烧毁 66 集后重冻结）"
+  },
+  "scorer": {
+    "repository": "databricks/officeqa",
+    "commit": "7b9a3c154ef9fb40215bb67934afc43e6799de16",
+    "file": "reward.py",
+    "path": "experiments/officeqa_structured/official/reward.py",
+    "git_blob_sha1": "45a22db4771f20105bdc9340df82e3c405ec84d0",
+    "sha256": "0d91698c87df6d889339aac36f63ae0966607f169890b0bf8b472b26bfe8138f",
+    "bytes": 28094,
+    "tolerance": 0.0,
+    "verified_at": "2026-09-14",
+    "verification_record": "experiments/officeqa_structured/SCORER_VERIFICATION.md",
+    "note": "blob SHA-1 与 SHA-256 是不同哈希，不可混称（协议 §1.3）。文件必须与官方 blob 字节一致，禁止任何本地改动。"
+  },
+  "answer_contract": {
+    "schema_version": "officeqa.answer.v1",
+    "schemas": [
+      "schemas/answer.schema.json",
+      "schemas/evidence.schema.json"
     ],
-    "revision": "388a036f869eb86d4799283b433c9f4977af1df6c97b18cd79338e645a9933b9"
-   },
-   "main_test": {
-    "status": "not-frozen-by-design",
-    "note": "Pro V2 90 题主测试清单在 Q4 授权后、开跑前另行冻结（协议 §10 Q4）；当前冻结范围只覆盖 Q3 开发 pilot。"
-   }
+    "projection_module": "score_answer_record.py",
+    "tolerance": 0.0
   },
-  "exposure_ledger": {
-   "path": "question_only/exposure_ledger.json",
-   "revision": "2fd0a8dcc9dd144a3b3b3027df8bf9dc9e7045cc0dbe3b750fcbafc15b6dfe9a",
-   "dev_pool": "dev",
-   "marking": "prepare_dataset.py dev-pilot --case-keys …（2026-09-15 执行，6 题标 dev/exposed，题面入 question_only/dev_pilot.jsonl，gold 留 evaluator-only）"
+  "dataset": {
+    "benchmark": "officeqa-pro-v2",
+    "official_questions": 90,
+    "corpus_documents": 1435,
+    "source_root": "/Users/yihongguo/Developer/datasets/officeqa-pro-v2",
+    "pdf_originals": false,
+    "revision": "2fd0a8dcc9dd144a3b3b3027df8bf9dc9e7045cc0dbe3b750fcbafc15b6dfe9a",
+    "eligible_questions": {
+      "dev_pilot": {
+        "count": 6,
+        "selection": "evaluator-only v1 pool (officeqa_pro_v1.gold.jsonl) sorted by case_key, first 6 — protocol §7.2 exposed-old-question dev pilot",
+        "case_keys": [
+          "0149cdbe9d9bb9197ade59d4be8388522fc9537298037459557998132a31161a",
+          "0150618853280e165f95fb73770d9ad8754138d116fb4a0c5373e597f4d774b5",
+          "024fdc37027f0510d882e6d9151bb477a601c619ce091b9caabcfb14c72a4e5d",
+          "02f497d1512fd70085f5acc5a89deccdc83a3930033cd3b4d7c00e5dcd65b11d",
+          "080830120bd2a2fd4753db7f22d0f5436a3ac72303a3512be2c108b1b6059c84",
+          "0910bdb78dda02ffe01f9fc22f2e20a73d29479e8c35088f29656e029f12be1f"
+        ],
+        "revision": "388a036f869eb86d4799283b433c9f4977af1df6c97b18cd79338e645a9933b9"
+      },
+      "main_test": {
+        "status": "not-frozen-by-design",
+        "note": "Pro V2 90 题主测试清单在 Q4 授权后、开跑前另行冻结（协议 §10 Q4）；当前冻结范围只覆盖 Q3 开发 pilot。"
+      }
+    },
+    "exposure_ledger": {
+      "path": "question_only/exposure_ledger.json",
+      "revision": "2fd0a8dcc9dd144a3b3b3027df8bf9dc9e7045cc0dbe3b750fcbafc15b6dfe9a",
+      "dev_pool": "dev",
+      "marking": "prepare_dataset.py dev-pilot --case-keys …（2026-09-15 执行，6 题标 dev/exposed，题面入 question_only/dev_pilot.jsonl，gold 留 evaluator-only）"
+    },
+    "dev_corpus": {
+      "name": "corpus-v1",
+      "format": "v1",
+      "revision": "8ecbf18d",
+      "documents": 697,
+      "source_root": "/Users/yihongguo/Developer/datasets/officeqa/treasury_bulletins_parsed/transformed",
+      "built_at": "2026-09-15",
+      "build_command": "corpus_adapter.py build --format v1 --source <source_root> --data-root <data_root>（目标目录 corpus-v1/，与 corpus/ 并列）",
+      "note": "开发 pilot（officeqa-pro-v1 题集）路由到此 v1 纯文本语料：官方全量解析发布（revision 8ecbf18d）的 697 份 Treasury Bulletin txt，无 JSON 解析件、无 PDF 原件。索引按整文档+物理行号建模（行号即文件行号，行 1-based），page 语义 not_applicable（page 命令拒绝而非造页）。已核实开发 6 题源文档零缺失；staging 保持 query-blind（build/probe 只读语料目录，不接触任何题面/gold）。"
+    },
+    "fixes": [
+      {
+        "date": "2026-09-15",
+        "issue": "开发 pilot 6 题的源文档（旧 Treasury Bulletin）不在 V2 主测试语料（corpus/，1435 份）中：dev 题集此前无法在所选语料内定位官方出处证据，构成题集-语料不匹配的条件偏差",
+        "fix": "接入 v1 全量纯文本语料（官方 revision 8ecbf18d，697 份 txt）staging 为数据区 corpus-v1/ 并按整文档+行号建索引；run_episodes 按题集路由语料——dev pilot（officeqa-pro-v1）用 dev_corpus=corpus-v1，主测试仍用 V2 corpus/（一个字节未动）；指令文本中的语料命令按所选语料生成（v1 无按页查看，page 语义 not_applicable）；solver 边界对 corpus-v1 与 v1 源目录同样设 deny-write/deny-read 门"
+      }
+    ],
+    "note": "fullcorpus/ 为 V2 全语料；officeqa_pro*.csv 含 gold，属受限数据，仅数据准备进程可读（协议 §6.4）。pdf_originals=false：本地 fullcorpus 已核实无任何 *.pdf（find 计数为 0），协议 §6.1 的 PDF 按页视觉对等因此不适用——A/B 共享同一解析元素 page 视图，按语料条件偏差记录（corpus_adapter stage/probe 会如实报告）。开发 pilot 语料条件（2026-09-15 修复后）：所选 6 题的官方出处（旧 Treasury Bulletin）经 dev_corpus=corpus-v1（v1 纯文本全量，revision 8ecbf18d）接入，源文档零缺失；pilot 成绩仍只作接入诊断（协议 §7：题目为已暴露旧题，条件偏差如实记录）。"
   },
-  "dev_corpus": {
-   "name": "corpus-v1",
-   "format": "v1",
-   "revision": "8ecbf18d",
-   "documents": 697,
-   "source_root": "/Users/yihongguo/Developer/datasets/officeqa/treasury_bulletins_parsed/transformed",
-   "built_at": "2026-09-15",
-   "build_command": "corpus_adapter.py build --format v1 --source <source_root> --data-root <data_root>（目标目录 corpus-v1/，与 corpus/ 并列）",
-   "note": "开发 pilot（officeqa-pro-v1 题集）路由到此 v1 纯文本语料：官方全量解析发布（revision 8ecbf18d）的 697 份 Treasury Bulletin txt，无 JSON 解析件、无 PDF 原件。索引按整文档+物理行号建模（行号即文件行号，行 1-based），page 语义 not_applicable（page 命令拒绝而非造页）。已核实开发 6 题源文档零缺失；staging 保持 query-blind（build/probe 只读语料目录，不接触任何题面/gold）。"
+  "data_area": {
+    "root": "/Users/yihongguo/Developer/briefloop-data/officeqa",
+    "subdirs": [
+      "gated",
+      "question_only",
+      "corpus",
+      "corpus-v1",
+      "episodes",
+      "evaluator-only"
+    ],
+    "in_git": false
   },
-  "fixes": [
-   {
-    "date": "2026-09-15",
-    "issue": "开发 pilot 6 题的源文档（旧 Treasury Bulletin）不在 V2 主测试语料（corpus/，1435 份）中：dev 题集此前无法在所选语料内定位官方出处证据，构成题集-语料不匹配的条件偏差",
-    "fix": "接入 v1 全量纯文本语料（官方 revision 8ecbf18d，697 份 txt）staging 为数据区 corpus-v1/ 并按整文档+行号建索引；run_episodes 按题集路由语料——dev pilot（officeqa-pro-v1）用 dev_corpus=corpus-v1，主测试仍用 V2 corpus/（一个字节未动）；指令文本中的语料命令按所选语料生成（v1 无按页查看，page 语义 not_applicable）；solver 边界对 corpus-v1 与 v1 源目录同样设 deny-write/deny-read 门"
-   }
-  ],
-  "note": "fullcorpus/ 为 V2 全语料；officeqa_pro*.csv 含 gold，属受限数据，仅数据准备进程可读（协议 §6.4）。pdf_originals=false：本地 fullcorpus 已核实无任何 *.pdf（find 计数为 0），协议 §6.1 的 PDF 按页视觉对等因此不适用——A/B 共享同一解析元素 page 视图，按语料条件偏差记录（corpus_adapter stage/probe 会如实报告）。开发 pilot 语料条件（2026-09-15 修复后）：所选 6 题的官方出处（旧 Treasury Bulletin）经 dev_corpus=corpus-v1（v1 纯文本全量，revision 8ecbf18d）接入，源文档零缺失；pilot 成绩仍只作接入诊断（协议 §7：题目为已暴露旧题，条件偏差如实记录）。"
- },
- "data_area": {
-  "root": "/Users/yihongguo/Developer/briefloop-data/officeqa",
-  "subdirs": [
-   "gated",
-   "question_only",
-   "corpus",
-   "corpus-v1",
-   "episodes",
-   "evaluator-only"
-  ],
-  "in_git": false
- },
- "arms": {
-  "A": "native agent control（同一 opencode 宿主/模型/语料工具 + 认真配置的研究指令，每回合一个 opencode run 进程）",
-  "B": "briefloop grounded_qa_v1（真实 InteractiveRuntime+OpencodeHarness 的 run/job/review 路径 + 一次修订）"
- },
- "runtime": {
-  "host": "opencode",
-  "model": "opencode-go/deepseek-v4.1-flash",
-  "reviewer_model": "opencode-go/deepseek-v4.1-flash",
-  "reasoning_effort": "high",
-  "host_version_verified": "1.18.30",
-  "note": "协议 §5.1：只测一个预先选择的真实可用模型组合；冻结后不得按成绩换模型。effort 传法已查证：opencode run --help 的 --variant（provider-specific reasoning effort），且宿主模型目录为该模型声明 variants {low,high,max}→reasoningEffort；HTTP 会话 ModelRef.variant 同路。B 组经 settings agent_backend=opencode + model_variant=high 由 store.enqueue 冻结进每个 job payload；A 组经 --model/--variant 命令行传入。每个角色（orchestrator/scout/reviewer/revision）同模型同档，无 role_models 覆盖。"
- },
- "isolation": {
-  "solver_boundary": {
-   "kind": "sandbox",
-   "detail": "macOS seatbelt（sandbox-exec）profile 由 run_episodes.prepare_solver_boundary 生成于 <data_root>/solver-boundary/solver.sb：deny file-read* 于 gated/、evaluator-only/、原 datasets/officeqa-pro-v2 与 v1 语料源目录 datasets/officeqa/treasury_bulletins_parsed/transformed（后者另含 file-write*，前者含 file-write*），deny file-write* 于 staged corpus/ 与 staged corpus-v1/（hardlink 保护）；opencode shim 于 <data_root>/solver-boundary/bin/opencode，A 组 opencode run 与 B 组受管 opencode serve（PATH 解析）全部经 shim 启动，沙箱随进程树继承；开跑前活动探针证明围栏生效，runner 同时以 isolation.solver_environment() 剥离 HF_TOKEN 等数据集凭据。",
-   "note": "0700/0600 权限位只防其他用户；同用户隔离由该沙箱承担（设计 §2：隔离靠 OS 不靠提示词）。"
-  }
- },
- "web_search": {
-  "entrypoint": "offline",
-  "note": "协议 §6.3 受控联网入口未接入（Q3 冻结为显式 offline，非占位 null）：共享指令与 NATIVE_FRAME 均明说无联网，B 组 allow_web=false 且宿主 webfetch/websearch 被权限规则拒绝。接入入口属协议变更，需新实验 ID。"
- },
- "budget": {
-  "episode_wall_clock_seconds": null,
-  "max_concurrent_model_calls": 6,
-  "max_automatic_revisions_B": 1,
-  "format_repair_attempts_per_episode": 1,
-  "search_budget": {
-   "search_requests": 30,
-   "candidate_urls": 150,
-   "source_pages": 60
+  "arms": {
+    "A": "native agent control（同一 opencode 宿主/模型/语料工具 + 认真配置的研究指令，每回合一个 opencode run 进程）",
+    "B": "briefloop grounded_qa_v1（真实 InteractiveRuntime+OpencodeHarness 的 run/job/review 路径 + 一次修订）"
   },
-  "note": "协议 §8.1 冻结值。search_budget 沿产品 research_budget.KINDS 字段结构；离线运行下 search_requests 由 corpus_adapter search 命令按 episode 记账硬限（--budget-file/--search-budget），source_pages 映射为按页查看硬限（--page-budget），candidate_urls 离线无消耗仪器、保留为冻结记录。A/B 同工具同数值：两组指令嵌入同一路径模式与同额上限，超限由工具拒绝。",
-  "safety_cap_seconds": 14400,
-  "termination_note": "研究语义无墙钟（用户指令 2026-09-15，对齐官方条件）：agent 自然结束为准；safety_cap_seconds 仅为防挂死保险丝（本批 strict-smoke 仍按当时冻结的 1800s 跑完）",
-  "concurrency_note": "中批实测 6 路（原设计 4）；episode_workers 同步 6"
- },
- "episode_runner": {
-  "entrypoint": "experiments/officeqa_structured/run_episodes.py",
-  "real_execution": "wired in integration a7a3541d: without --dry-run the frozen-config validation (config_freeze_errors: no null/占位, runtime/budget/isolation structure) plus isolation asserts, the integration-commit code-state check and the live solver-boundary probe must all pass; arm A = opencode run per turn, arm B = real InteractiveRuntime over OpencodeHarness",
-  "episode_workspace_settings": {
-   "auto_learn": false,
-   "fact_checker": false,
-   "auto_revision": true,
-   "timeout_minutes": 0,
-   "company_context_enabled": false,
-   "research_tier": "standard",
-   "search_policy": {
-    "primary_provider": "native",
-    "supplemental_providers": [],
-    "native_search_enabled": false,
-    "coverage_mode": "primary_only"
-   },
-   "max_reports": 1
+  "runtime": {
+    "host": "opencode",
+    "model": "opencode-go/deepseek-v4.1-flash",
+    "reviewer_model": "opencode-go/deepseek-v4.1-flash",
+    "reasoning_effort": "high",
+    "host_version_verified": "1.18.30",
+    "note": "协议 §5.1：只测一个预先选择的真实可用模型组合；冻结后不得按成绩换模型。effort 传法已查证：opencode run --help 的 --variant（provider-specific reasoning effort），且宿主模型目录为该模型声明 variants {low,high,max}→reasoningEffort；HTTP 会话 ModelRef.variant 同路。B 组经 settings agent_backend=opencode + model_variant=high 由 store.enqueue 冻结进每个 job payload；A 组经 --model/--variant 命令行传入。每个角色（orchestrator/scout/reviewer/revision）同模型同档，无 role_models 覆盖。"
   },
-  "shared_corpus_tool": "experiments/officeqa_structured/corpus_adapter.py (docs/search/read/page/accept; search/page 受同额预算硬限，accept registers a used document as a real run source)。语料按题集路由（corpus_selection）：主测试 → corpus（V2），dev pilot → dataset.dev_corpus.name（corpus-v1，纯文本，page 语义 not_applicable，指令文本不提供按页查看命令）；episode_record 记录每集实际使用的语料（name/format/documents）。",
-  "concurrency": "run_episodes.ModelCallLimiter 按协议 §8.1 限制同时活跃模型调用（跨组、跨角色、跨 episode；A 组每个 opencode run 回合、B 组每个 Worker execute 各占一槽）；episode 调度并行度是独立的 --episode-workers，默认等于 max_concurrent_model_calls。",
-  "closure_note": "设计 §4：episode 内关闭自动学习、定时报告、企业背景、通知、多搜索渠道切换、研究档位。runner 在 episode 工作区显式强制 auto_learn/fact_checker/company_context_enabled/search_policy/research_tier，并断言 report_schedules 与 notifications 为空；版本对比 UI 与紧凑控件是桌面界面能力，headless episode 工作区不暴露（协议 §8.2）。"
- },
- "usage_accounting": {
-  "usage_complete": false,
-  "note": "Q3 如实标记 usage_complete=false：A 组仅有 CLI stdout、B 组有宿主 tokenUsage 事件，尚不能证明全角色（含子 agent）用量完整（协议 §2 H3）。墙钟、模型回合数、检索/按页预算消耗均入 episode_record。"
- },
- "strict_v2": {
-  "enabled": true,
-  "corpus": {
-   "name": "corpus-v2-pdf",
-   "format": "pdf",
-   "documents": 1435,
-   "source_root": "/Users/yihongguo/Developer/datasets/officeqa-pro-v2/pdfs",
-   "list_sha256": "2180519aad11f685a5dd5d0e39c9db7b5b24c46181f30ff5a5deb92bd3a34712"
+  "isolation": {
+    "solver_boundary": {
+      "kind": "sandbox",
+      "detail": "macOS seatbelt（sandbox-exec）profile 由 run_episodes.prepare_solver_boundary 生成于 <data_root>/solver-boundary/solver.sb：deny file-read* 于 gated/、evaluator-only/、原 datasets/officeqa-pro-v2 与 v1 语料源目录 datasets/officeqa/treasury_bulletins_parsed/transformed（后者另含 file-write*，前者含 file-write*），deny file-write* 于 staged corpus/ 与 staged corpus-v1/（hardlink 保护）；opencode shim 于 <data_root>/solver-boundary/bin/opencode，A 组 opencode run 与 B 组受管 opencode serve（PATH 解析）全部经 shim 启动，沙箱随进程树继承；开跑前活动探针证明围栏生效，runner 同时以 isolation.solver_environment() 剥离 HF_TOKEN 等数据集凭据。",
+      "note": "0700/0600 权限位只防其他用户；同用户隔离由该沙箱承担（设计 §2：隔离靠 OS 不靠提示词）。"
+    }
   },
-  "web": "native",
-  "metering": "none",
-  "smoke_case_keys": [
-   "0028a08ba8c6c97ae9be70c5e734e87cbcbee94db2fba893783941d42d9ca072",
-   "00a8dc3d42863758aa2387580c741d487b376a0c5da7527a303c0610fe0ca9d6",
-   "00d9692bd20e2ad5526b857404068aa9fae78cb5d8257df094af46f8752ce602"
-  ],
-  "note": "严格官方条件（用户指令 2026-09-15）：PDF 原件、无逐次检索计量、联网开、A=opencode/ds-flash 原生，B=同能力+BriefLoop 链",
-  "mid_case_keys": [
-   "052468da65df66005c1d4dbe4064e1c2748552c52dca9284650b006727ff61ca",
-   "0696622978486736a4a5c338e217128107b59b575f02c42d71945a7bb634015c",
-   "09cef790daed0a22c6ace8e3e7f05c329a1b4af41dbad7ff5b113d68755f76d0",
-   "1721b6520e341c78896516bb52808426c830cd33dc54b95c334cd2ecfcd33cfb",
-   "1b21cc951d271c71eea0ee8f3369a9dc671379fdccc9d074aa03d05560e476d4",
-   "1c0057e9ddef1650922107545eb00bb34adc58c8f7d51a369daac309cd504790",
-   "1d4f6d5eb702340a6d4d3d13588fa86f34ee9dba76712b9f055c2d751e33727a",
-   "1d9a9b8d9fa2a43292cdb7302a213e35c1498da1028a9093297e77c01a51e709",
-   "20f352a8ac856e2f1fe28a6b99d31f77da6f158f0874949d0ca87a8d6bcd0ad3",
-   "243b4af555db52750e38e766d272d5d54aff50922ca73707b91619a56e092411",
-   "25f74a744c56edeaa604cd9bbf62ba1d602d065e0a61911114d27eb99b074eb1",
-   "2e17b8dcde17584b9f5c073f742f1807025c1069f34e7bd53041a42fabecf997",
-   "337c3b3b3b5cabb1fe83e374a028850e626a7177d0fca067ff763c23c1407fb7",
-   "3569ce7d727c0f10238947876b35a929ec0b47414f379a47b057bb33bdd18221",
-   "3d9c8a667a53daf9f14ad806255e4e450fa9d55650e3570b7b4c72dccddc77fa",
-   "3fdb2ea2eebe1db7095399ea1e0498cf225979977655347c1f5b22b50ea2d93d",
-   "43f8b002885ecaff60e2ebd2649987f35aec21251c82bec240cbaa3d0b1dbcb5",
-   "4b5ab2d3e95a9cea23ed6814ccb6d4cc1bfea632545fa14302ae9100fc85e29a",
-   "4baa249d3c8c086c979c2f006e5ccc0d39ee256d4d14f48371a39cf8d5727637",
-   "4ed77db1bfd5e3376aecb9ccc9c634cef9411eb072b808b1ee1d7c6b6bdb7ebb",
-   "511bfb6560e947db8bef0f4a6e8104df6c6c35f225172c2a384d59e488905dfe",
-   "53af6c051bbbc13f423f6fbe82afa75cd8d80fa04a97a9b35e8055f18c79261b",
-   "55a2b7734e59732a9f6efd251fe23c3e08fc691da42b7e2f52c128034ced3ca9",
-   "5b985c3b855ec68450b2a9142ec894ef23e1ddf220c9cbc95af3bc2b6b4a96c9",
-   "5e446ae52bf4bc7449df531a5bd6daef73e3f4298490d3cc9d1e6d10bfe78d9a",
-   "61d9f57f438ad559024655be1193839a5ef29cf700dff36d995b45567dfc9d49",
-   "6221a56514b7d61f43fe04bbb7c7ff2bf461a33abb42427d3a56fe935f26c18d",
-   "64bcab56060fa1850a4c72cee8c2af783e5ca43366df7625914cd7b3fa5e0f87",
-   "68c940be62f380f1047dbc3efd6aba1ea814a399f0755e169c8ec017a2bd285f",
-   "6d19a2b4b87d532eecdaa1dd98c11f5b17b98536f28c4c304912feb3607d21a6"
-  ],
-  "concurrency_test": "2026-09-15 中批并发实测：模型调用上限 4→6，记录 run_index.model_calls.peak_concurrent 与限流失败；峰时如现 429 下批回落 4"
- }
+  "web_search": {
+    "entrypoint": "offline",
+    "note": "协议 §6.3 受控联网入口未接入（Q3 冻结为显式 offline，非占位 null）：共享指令与 NATIVE_FRAME 均明说无联网，B 组 allow_web=false 且宿主 webfetch/websearch 被权限规则拒绝。接入入口属协议变更，需新实验 ID。"
+  },
+  "budget": {
+    "episode_wall_clock_seconds": null,
+    "max_concurrent_model_calls": 6,
+    "max_automatic_revisions_B": 1,
+    "format_repair_attempts_per_episode": 1,
+    "search_budget": {
+      "search_requests": 30,
+      "candidate_urls": 150,
+      "source_pages": 60
+    },
+    "note": "协议 §8.1 冻结值。search_budget 沿产品 research_budget.KINDS 字段结构；离线运行下 search_requests 由 corpus_adapter search 命令按 episode 记账硬限（--budget-file/--search-budget），source_pages 映射为按页查看硬限（--page-budget），candidate_urls 离线无消耗仪器、保留为冻结记录。A/B 同工具同数值：两组指令嵌入同一路径模式与同额上限，超限由工具拒绝。",
+    "safety_cap_seconds": 14400,
+    "termination_note": "研究语义无墙钟（用户指令 2026-09-15，对齐官方条件）：agent 自然结束为准；safety_cap_seconds 仅为防挂死保险丝（本批 strict-smoke 仍按当时冻结的 1800s 跑完）",
+    "concurrency_note": "中批实测 6 路（原设计 4）；episode_workers 同步 6"
+  },
+  "episode_runner": {
+    "entrypoint": "experiments/officeqa_structured/run_episodes.py",
+    "real_execution": "wired in integration a7a3541d: without --dry-run the frozen-config validation (config_freeze_errors: no null/占位, runtime/budget/isolation structure) plus isolation asserts, the integration-commit code-state check and the live solver-boundary probe must all pass; arm A = opencode run per turn, arm B = real InteractiveRuntime over OpencodeHarness",
+    "episode_workspace_settings": {
+      "auto_learn": false,
+      "fact_checker": false,
+      "auto_revision": true,
+      "timeout_minutes": 0,
+      "company_context_enabled": false,
+      "research_tier": "standard",
+      "search_policy": {
+        "primary_provider": "native",
+        "supplemental_providers": [],
+        "native_search_enabled": false,
+        "coverage_mode": "primary_only"
+      },
+      "max_reports": 1
+    },
+    "shared_corpus_tool": "experiments/officeqa_structured/corpus_adapter.py (docs/search/read/page/accept; search/page 受同额预算硬限，accept registers a used document as a real run source)。语料按题集路由（corpus_selection）：主测试 → corpus（V2），dev pilot → dataset.dev_corpus.name（corpus-v1，纯文本，page 语义 not_applicable，指令文本不提供按页查看命令）；episode_record 记录每集实际使用的语料（name/format/documents）。",
+    "concurrency": "run_episodes.ModelCallLimiter 按协议 §8.1 限制同时活跃模型调用（跨组、跨角色、跨 episode；A 组每个 opencode run 回合、B 组每个 Worker execute 各占一槽）；episode 调度并行度是独立的 --episode-workers，默认等于 max_concurrent_model_calls。",
+    "closure_note": "设计 §4：episode 内关闭自动学习、定时报告、企业背景、通知、多搜索渠道切换、研究档位。runner 在 episode 工作区显式强制 auto_learn/fact_checker/company_context_enabled/search_policy/research_tier，并断言 report_schedules 与 notifications 为空；版本对比 UI 与紧凑控件是桌面界面能力，headless episode 工作区不暴露（协议 §8.2）。"
+  },
+  "usage_accounting": {
+    "usage_complete": false,
+    "note": "Q3 如实标记 usage_complete=false：A 组仅有 CLI stdout、B 组有宿主 tokenUsage 事件，尚不能证明全角色（含子 agent）用量完整（协议 §2 H3）。墙钟、模型回合数、检索/按页预算消耗均入 episode_record。"
+  },
+  "strict_v2": {
+    "enabled": true,
+    "corpus": {
+      "name": "corpus-v2-pdf",
+      "format": "pdf",
+      "documents": 1435,
+      "source_root": "/Users/yihongguo/Developer/datasets/officeqa-pro-v2/pdfs",
+      "list_sha256": "2180519aad11f685a5dd5d0e39c9db7b5b24c46181f30ff5a5deb92bd3a34712"
+    },
+    "web": "native",
+    "metering": "none",
+    "smoke_case_keys": [
+      "0028a08ba8c6c97ae9be70c5e734e87cbcbee94db2fba893783941d42d9ca072",
+      "00a8dc3d42863758aa2387580c741d487b376a0c5da7527a303c0610fe0ca9d6",
+      "00d9692bd20e2ad5526b857404068aa9fae78cb5d8257df094af46f8752ce602"
+    ],
+    "note": "严格官方条件（用户指令 2026-09-15）：PDF 原件、无逐次检索计量、联网开、A=opencode/ds-flash 原生，B=同能力+BriefLoop 链",
+    "mid_case_keys": [
+      "052468da65df66005c1d4dbe4064e1c2748552c52dca9284650b006727ff61ca",
+      "0696622978486736a4a5c338e217128107b59b575f02c42d71945a7bb634015c",
+      "09cef790daed0a22c6ace8e3e7f05c329a1b4af41dbad7ff5b113d68755f76d0",
+      "1721b6520e341c78896516bb52808426c830cd33dc54b95c334cd2ecfcd33cfb",
+      "1b21cc951d271c71eea0ee8f3369a9dc671379fdccc9d074aa03d05560e476d4",
+      "1c0057e9ddef1650922107545eb00bb34adc58c8f7d51a369daac309cd504790",
+      "1d4f6d5eb702340a6d4d3d13588fa86f34ee9dba76712b9f055c2d751e33727a",
+      "1d9a9b8d9fa2a43292cdb7302a213e35c1498da1028a9093297e77c01a51e709",
+      "20f352a8ac856e2f1fe28a6b99d31f77da6f158f0874949d0ca87a8d6bcd0ad3",
+      "243b4af555db52750e38e766d272d5d54aff50922ca73707b91619a56e092411",
+      "25f74a744c56edeaa604cd9bbf62ba1d602d065e0a61911114d27eb99b074eb1",
+      "2e17b8dcde17584b9f5c073f742f1807025c1069f34e7bd53041a42fabecf997",
+      "337c3b3b3b5cabb1fe83e374a028850e626a7177d0fca067ff763c23c1407fb7",
+      "3569ce7d727c0f10238947876b35a929ec0b47414f379a47b057bb33bdd18221",
+      "3d9c8a667a53daf9f14ad806255e4e450fa9d55650e3570b7b4c72dccddc77fa",
+      "3fdb2ea2eebe1db7095399ea1e0498cf225979977655347c1f5b22b50ea2d93d",
+      "43f8b002885ecaff60e2ebd2649987f35aec21251c82bec240cbaa3d0b1dbcb5",
+      "4b5ab2d3e95a9cea23ed6814ccb6d4cc1bfea632545fa14302ae9100fc85e29a",
+      "4baa249d3c8c086c979c2f006e5ccc0d39ee256d4d14f48371a39cf8d5727637",
+      "4ed77db1bfd5e3376aecb9ccc9c634cef9411eb072b808b1ee1d7c6b6bdb7ebb",
+      "511bfb6560e947db8bef0f4a6e8104df6c6c35f225172c2a384d59e488905dfe",
+      "53af6c051bbbc13f423f6fbe82afa75cd8d80fa04a97a9b35e8055f18c79261b",
+      "55a2b7734e59732a9f6efd251fe23c3e08fc691da42b7e2f52c128034ced3ca9",
+      "5b985c3b855ec68450b2a9142ec894ef23e1ddf220c9cbc95af3bc2b6b4a96c9",
+      "5e446ae52bf4bc7449df531a5bd6daef73e3f4298490d3cc9d1e6d10bfe78d9a",
+      "61d9f57f438ad559024655be1193839a5ef29cf700dff36d995b45567dfc9d49",
+      "6221a56514b7d61f43fe04bbb7c7ff2bf461a33abb42427d3a56fe935f26c18d",
+      "64bcab56060fa1850a4c72cee8c2af783e5ca43366df7625914cd7b3fa5e0f87",
+      "68c940be62f380f1047dbc3efd6aba1ea814a399f0755e169c8ec017a2bd285f",
+      "6d19a2b4b87d532eecdaa1dd98c11f5b17b98536f28c4c304912feb3607d21a6"
+    ],
+    "concurrency_test": "2026-09-15 中批并发实测：模型调用上限 4→6，记录 run_index.model_calls.peak_concurrent 与限流失败；峰时如现 429 下批回落 4"
+  },
+  "integration_commit_note": "回填至提供方熔断修复提交（2026-09-15 夜事故：代理断连+静默记账烧毁 66 集后重冻结）"
 }
