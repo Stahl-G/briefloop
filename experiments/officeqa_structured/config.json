@@ -156,5 +156,23 @@
  "usage_accounting": {
   "usage_complete": false,
   "note": "Q3 如实标记 usage_complete=false：A 组仅有 CLI stdout、B 组有宿主 tokenUsage 事件，尚不能证明全角色（含子 agent）用量完整（协议 §2 H3）。墙钟、模型回合数、检索/按页预算消耗均入 episode_record。"
+ },
+ "strict_v2": {
+  "enabled": true,
+  "corpus": {
+   "name": "corpus-v2-pdf",
+   "format": "pdf",
+   "documents": 1435,
+   "source_root": "/Users/yihongguo/Developer/datasets/officeqa-pro-v2/pdfs",
+   "list_sha256": "2180519aad11f685a5dd5d0e39c9db7b5b24c46181f30ff5a5deb92bd3a34712"
+  },
+  "web": "native",
+  "metering": "none",
+  "smoke_case_keys": [
+   "0028a08ba8c6c97ae9be70c5e734e87cbcbee94db2fba893783941d42d9ca072",
+   "00a8dc3d42863758aa2387580c741d487b376a0c5da7527a303c0610fe0ca9d6",
+   "00d9692bd20e2ad5526b857404068aa9fae78cb5d8257df094af46f8752ce602"
+  ],
+  "note": "严格官方条件（用户指令 2026-09-15）：PDF 原件、无逐次检索计量、联网开、A=opencode/ds-flash 原生，B=同能力+BriefLoop 链"
  }
 }

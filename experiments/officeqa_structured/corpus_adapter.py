@@ -38,6 +38,7 @@ registered source and the Q1 attachment validation can locate excerpts.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
