@@ -342,6 +342,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/research-notes':
                     from .deliverable_spec import research_record
                     self.send(200,research_record(store,store.one('briefs',q['version'][0])),download_name='research-notes.json' if q.get('download') else None)
+                elif u.path=='/api/export-status':
+                    job=store.one('jobs',q['job'][0])
+                    if job['kind']!='export_docx':raise ValueError('不是导出任务')
+                    self.send(200,job)
                 elif u.path=='/api/export-file':
                     if q.get('workspace_id',[store.meta('workspace_id')])[0]!=store.meta('workspace_id'):
                         raise Conflict('工作区身份已变化，未下载文件')
@@ -351,7 +355,11 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     data=output_path(store,job).read_bytes()
                     import hashlib
                     if hashlib.sha256(data).hexdigest()!=json.loads(job['result'])['sha256']:raise ValueError('Word 文件已变化，请重新生成')
-                    self.send(200,data,'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name='report.docx')
+                    brief=store.one('briefs',json.loads(job['payload'])['version_id'])
+                    title=json.loads(brief['detail']).get('title') or '报告'
+                    import re
+                    name=re.sub(r'[\x00-\x1f<>:"/\\|?*]', '_', title).strip('. ')[:120] or '报告'
+                    self.send(200,data,'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name=name+'.docx')
                 elif u.path=='/api/release-state':
                     from .release import eligibility,list_releases
                     version=q['version'][0];brief=store.one('briefs',version)
@@ -561,6 +569,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/template-import':
                     from .templates import import_template
                     result=import_template(store,body['name'],_upload_data(body),body.get('parent_id'))
+                elif path=='/api/reports/delete':result=store.delete_report(body['version_id'])
                 elif path=='/api/export':
                     from .export_jobs import enqueue_export
                     result=enqueue_export(store,body['version_id'],body.get('template_id'))
