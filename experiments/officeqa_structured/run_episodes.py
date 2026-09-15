@@ -1771,6 +1771,8 @@ def command_run(args: argparse.Namespace) -> int:
 
     results: list[dict[str, Any]] = []
     failures: list[dict[str, str]] = []
+    provider_failures = 0
+    abort_reason: str | None = None
     with ThreadPoolExecutor(max_workers=episode_workers) as pool_executor:
         futures = {pool_executor.submit(_EPISODE_RUNNERS[arm], case, data_root=data_root,
                                         budget=budget, label=label, order_index=order_index,
@@ -1781,7 +1783,24 @@ def command_run(args: argparse.Namespace) -> int:
         for future in as_completed(futures):
             case_key, arm = futures[future]
             try:
-                results.append(stamp(future.result()))
+                record = future.result()
+                usage = record.get("usage") or {}
+                no_submission = not (record.get("chosen_submission") or {}).get("status")
+                zero_usage = not usage.get("input") and not usage.get("output")
+                if no_submission and zero_usage:
+                    # A dead model channel ends episodes in seconds with nothing
+                    # spent; surfacing these as plain results let one quota death
+                    # poison an entire batch under a green rc=0.
+                    record["error"] = ("provider_channel_failed: no submission and zero model "
+                                       "usage (suspect quota exhaustion or unreachable API)")
+                    provider_failures += 1
+                    failures.append({"case_key": case_key, "arm": arm, "error": record["error"]})
+                    if provider_failures >= 3 and abort_reason is None:
+                        abort_reason = (f"{provider_failures} zero-usage episodes: model "
+                                        "channel appears dead; remaining episodes cancelled")
+                        for pending in futures:
+                            pending.cancel()
+                results.append(stamp(record))
             except Exception as exc:  # noqa: BLE001 - recorded, the batch continues
                 failures.append({"case_key": case_key, "arm": arm,
                                  "error": f"{type(exc).__name__}: {exc}"})
@@ -1815,9 +1834,13 @@ def command_run(args: argparse.Namespace) -> int:
         "episodes": sorted(results, key=lambda r: (r["case_key"], r["arm"])),
         "failures": failures,
     }
+    if abort_reason:
+        index["status"] = "aborted_provider_failure"
+        index["abort_reason"] = abort_reason
     (episodes_root / "run_index.json").write_text(
         json.dumps(index, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps({"run_label": label, "episodes": len(results), "failures": failures,
+                      "status": "aborted_provider_failure" if abort_reason else "complete",
                       "index": str(episodes_root / "run_index.json")}, ensure_ascii=False))
     return 0 if not failures else 1
 
