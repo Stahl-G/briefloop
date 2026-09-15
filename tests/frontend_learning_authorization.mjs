@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
-const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
+// Windows checkouts may use CRLF; function extraction below matches LF boundaries.
+const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 function block(name){
  const start=source.indexOf(`function ${name}(`);assert.ok(start>=0,name);
  const prefix=source.lastIndexOf('\n',start)+1,end=source.indexOf('\n}',start);
