@@ -7,6 +7,7 @@ from io import BytesIO
 from urllib.parse import urlsplit
 from pathlib import Path
 import hashlib
+import http.client
 import ipaddress
 import re
 import socket
@@ -188,27 +189,63 @@ def _allowed_ip(value,allow_private=False):
     return allow_private and any(ip.version==n.version and ip in n for n in _PRIVATE_NETWORKS)
 
 
-def _public_target(url,allow_private=False):
+def _checked_addresses(host,port,allow_private=False):
     """Resolve once and refuse this machine, private networks and other non-global addresses.
 
     Source URLs may come from search results or model tool calls; the local
     BriefLoop API and LAN services must not become research sources. Only a
     user's own request may reach private (intranet) networks.
     """
-    parts=urlsplit(url)
-    if parts.scheme not in ('http','https') or not parts.hostname:raise ValueError('请输入 HTTP(S) 来源地址')
-    if _NUMERIC_HOST.fullmatch(parts.hostname):
-        try:ipaddress.IPv4Address(parts.hostname)
+    if _NUMERIC_HOST.fullmatch(host):
+        try:ipaddress.IPv4Address(host)
         except ValueError:raise ValueError('来源地址的 IP 写法不规范，已拒绝读取') from None
-    try:
-        port=parts.port or (443 if parts.scheme=='https' else 80)
-        infos=socket.getaddrinfo(parts.hostname,port,type=socket.SOCK_STREAM)
+    try:infos=socket.getaddrinfo(host,port,type=socket.SOCK_STREAM)
     except (OSError,UnicodeError,ValueError) as exc:raise ValueError('无法解析来源地址') from exc
     addresses=list(dict.fromkeys(info[4][0] for info in infos))
     # Every answer must be public: a mixed answer can still connect locally.
     if not addresses or not all(_allowed_ip(address,allow_private) for address in addresses):
         raise ValueError('来源地址指向本机或内网，已拒绝读取')
-    return parts.hostname,port,addresses
+    return addresses
+
+
+def _public_target(url,allow_private=False):
+    parts=urlsplit(url)
+    if parts.scheme not in ('http','https') or not parts.hostname:raise ValueError('请输入 HTTP(S) 来源地址')
+    try:port=parts.port or (443 if parts.scheme=='https' else 80)
+    except ValueError as exc:raise ValueError('无法解析来源地址') from exc
+    return parts.hostname,port,_checked_addresses(parts.hostname,port,allow_private)
+
+
+def _checked_connection(base,allow_private):
+    """An http.client connection that connects only to the addresses it just checked."""
+    class Connection(base):
+        def __init__(self,*args,**kwargs):
+            super().__init__(*args,**kwargs)
+            self._create_connection=self._connect_checked
+        def _connect_checked(self,address,timeout=socket._GLOBAL_DEFAULT_TIMEOUT,source_address=None):
+            host,port=address;error=None
+            for checked in _checked_addresses(host,port,allow_private):
+                try:return socket.create_connection((checked,port),timeout,source_address)
+                except OSError as exc:error=exc
+            raise error
+    return Connection
+
+
+class _CheckedHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self,allow_private=False):
+        super().__init__();self.allow_private=allow_private
+    def http_open(self,req):
+        # A configured proxy resolves the target itself; the URL was checked before sending.
+        if req.has_proxy():return super().http_open(req)
+        return self.do_open(_checked_connection(http.client.HTTPConnection,self.allow_private),req)
+
+
+class _CheckedHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self,allow_private=False,context=None):
+        super().__init__(context=context);self.allow_private=allow_private
+    def https_open(self,req):
+        if req.has_proxy() or req._tunnel_host:return super().https_open(req)
+        return self.do_open(_checked_connection(http.client.HTTPSConnection,self.allow_private),req,context=self._context)
 
 
 class _PublicRedirects(urllib.request.HTTPRedirectHandler):
@@ -245,7 +282,9 @@ def _fetch_bytes(url,*,allow_private=False):
             data=path.read_bytes() if path.exists() else b'';encoding='utf-8'
     else:
         req=urllib.request.Request(url,headers={'User-Agent':f'BriefLoop/{__version__} (local research reader)'})
-        with urllib.request.build_opener(_PublicRedirects(allow_private)).open(req,timeout=40) as response:
+        from .websearch import ssl_context
+        opener=urllib.request.build_opener(_PublicRedirects(allow_private),_CheckedHTTPHandler(allow_private),_CheckedHTTPSHandler(allow_private,context=ssl_context()))
+        with opener.open(req,timeout=40) as response:
             data=response.read(15*1024*1024+1)
             content_type=response.headers.get('Content-Type','')
             encoding=response.headers.get_content_charset() or 'utf-8'

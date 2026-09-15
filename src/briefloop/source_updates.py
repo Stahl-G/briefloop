@@ -262,11 +262,14 @@ def for_version(store, version_id):
     return result
 
 
-def refresh(store, run_id, source_id, *, information_cutoff, trigger='manual'):
+def refresh(store, run_id, source_id, *, information_cutoff, trigger='manual', allow_private=False):
     """Actually acquire a new snapshot, within the same run's existing budget.
 
     Deliberately bypass existing_for_run: its cached response cannot demonstrate
     freshness. No model or semantic change classification occurs here.
+    allow_private comes only from a user's own request (the queued UI job), never
+    from agent-supplied fields such as trigger: a registered URL may since have
+    started redirecting or resolving elsewhere.
     """
     _interval(information_cutoff)
     if trigger not in ('manual', 'next_run', 'research_refresh'):
@@ -290,8 +293,7 @@ def refresh(store, run_id, source_id, *, information_cutoff, trigger='manual'):
             outcome = 'budget_exhausted'
             data['budget'] = exc.result['budget']
         else:
-            # The URL is this run's registered source, not a new address.
-            new_source = sources.fetch(store, source['url'], allow_private=True)
+            new_source = sources.fetch(store, source['url'], allow_private=allow_private)
             store.attach_source(run_id, new_source['id'])
             data['new_snapshot'] = _snapshot(store, new_source['id'])
             if new_source['status'] != 'ready':

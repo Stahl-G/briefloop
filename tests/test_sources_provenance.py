@@ -163,3 +163,28 @@ def test_source_fetch_pins_checked_address_and_checks_every_redirect(tmp_path,mo
     try:handler.redirect_request(request,None,302,'Found',{},'http://127.0.0.1:8765/api/state')
     except ValueError:pass
     else:raise AssertionError('fallback reader must refuse the same redirect')
+
+
+def test_fallback_reader_connects_only_to_the_address_it_checked(monkeypatch):
+    import socket
+    answers=iter(['93.184.215.14','127.0.0.1'])
+    lookups=[];connections=[]
+    def resolve(host,port,*args,**kwargs):
+        address=next(answers,'127.0.0.1');lookups.append((host,address))
+        return [(socket.AF_INET,socket.SOCK_STREAM,6,'',(address,port))]
+    def connect(address,*args,**kwargs):
+        connections.append(address);raise OSError('synthetic: no network in tests')
+    monkeypatch.setattr(sources,'find_host_bin',lambda name:None)
+    monkeypatch.setattr(sources.urllib.request,'getproxies',lambda:{})
+    monkeypatch.setenv('no_proxy','*')
+    monkeypatch.setattr(sources.socket,'getaddrinfo',resolve)
+    monkeypatch.setattr(sources.socket,'create_connection',connect)
+    # First answer is public, the second (at connect time) is loopback: nothing is connected.
+    try:sources._fetch_bytes('http://rebind.example/report')
+    except ValueError as exc:assert '拒绝读取' in str(exc)
+    else:raise AssertionError('rebinding must be refused')
+    assert [address for _,address in lookups]==['93.184.215.14','127.0.0.1'] and connections==[]
+    answers=iter(['93.184.215.14','93.184.215.14'])
+    try:sources._fetch_bytes('https://stable.example/report')
+    except OSError:pass
+    assert connections==[('93.184.215.14',443)]

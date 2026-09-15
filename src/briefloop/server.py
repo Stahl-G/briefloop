@@ -600,7 +600,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/source-refresh':
                     brief=store.one('briefs',body['version_id'])
                     if body['source_id'] not in store.source_ids(brief['run_id']):raise ValueError('来源不属于本轮报告')
-                    result=store.enqueue('source_refresh',{'run_id':brief['run_id'],'version_id':brief['id'],'source_id':body['source_id'],'information_cutoff':body['information_cutoff']})
+                    result=store.enqueue('source_refresh',{'run_id':brief['run_id'],'version_id':brief['id'],'source_id':body['source_id'],'information_cutoff':body['information_cutoff'],'requested_by':'user'})
                 elif path=='/api/revise-findings':
                     store.one('briefs',body['version_id']);result=store.enqueue('revise',{'version_id':body['version_id']})
                 elif path=='/api/review':

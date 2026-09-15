@@ -691,7 +691,7 @@ class Worker:
             elif job['kind']=='source_refresh':
                 from .source_updates import refresh
                 args=json.loads(job['payload'])
-                result=refresh(self.store,args['run_id'],args['source_id'],information_cutoff=args['information_cutoff'],trigger='manual')
+                result=refresh(self.store,args['run_id'],args['source_id'],information_cutoff=args['information_cutoff'],trigger='manual',allow_private=args.get('requested_by')=='user')
             elif job['kind']=='generate':result=self.generate(job)
             elif job['kind']=='assess':result=self.assess(job)
             elif job['kind']=='revise':
