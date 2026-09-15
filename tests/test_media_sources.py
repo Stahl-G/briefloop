@@ -84,7 +84,7 @@ def test_scan_pdf_is_visual_ready_and_renders_only_requested_pages(tmp_path,monk
 
 def test_web_image_content_type_and_magic_do_not_decode_binary_as_text(tmp_path,monkeypatch):
     store=Store(tmp_path);data=image_bytes('WEBP')
-    monkeypatch.setattr(sources,'_fetch_bytes',lambda url:(data,'image/webp','utf-8'))
+    monkeypatch.setattr(sources,'_fetch_bytes',lambda url,**_:(data,'image/webp','utf-8'))
     source=sources.fetch(store,'https://example.test/download?file=chart')
     attachment=media.source_attachment(store,source['id'])
     assert source['status']=='ready' and attachment['media_type']=='image/webp'
