@@ -368,6 +368,44 @@ def prepare(source_root: Path, data_root: Path, *, corpus_source: Path | None = 
     return summary
 
 
+
+def _dev_corpus_coverage(by_key: dict[str, dict[str, str]], case_keys: list[str],
+                         data_root: Path, dev_corpus: str = "corpus-v1") -> dict:
+    """Fail-closed coverage audit of the dev pilot against its staged corpus.
+
+    The 2026-09-15 smoke failure taught this the hard way: machinery gates
+    (probe/review/freeze) verified the corpus and the pipeline separately and
+    nothing verified the questions are answerable from the staged corpus.
+    Evaluator-side only — reads the gated rows' source_files here; the data
+    area receives an aggregate verdict alone (booleans and counts, no
+    document names), and the per-case detail stays under evaluator-only.
+    """
+    corpus_dir = data_root / dev_corpus / "documents"
+    staged = {path.name for path in corpus_dir.rglob("*.txt")} if corpus_dir.is_dir() else set()
+    detail: dict[str, Any] = {}
+    all_covered = bool(staged)
+    for key in case_keys:
+        row = by_key[key]
+        missing = [name for name in split_names(row.get("source_files") or "") if name not in staged]
+        detail[key] = {"uid": row["uid"].strip(), "source_count": len(split_names(row.get("source_files") or "")), "missing": missing}
+        if missing:
+            all_covered = False
+    report = {"schema_version": "officeqa.dev_coverage.v1", "checked_at": _now(),
+              "corpus": dev_corpus, "staged_documents": len(staged),
+              "cases": detail, "all_covered": all_covered}
+    evaluator_dir = data_root / "evaluator-only" / "reports"
+    evaluator_dir.mkdir(parents=True, exist_ok=True)
+    (evaluator_dir / "dev_pilot_coverage.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    audit_dir = data_root / "audit"
+    audit_dir.mkdir(parents=True, exist_ok=True)
+    (audit_dir / "dev_pilot_coverage.json").write_text(json.dumps(
+        {"schema_version": "officeqa.dev_coverage.v1", "checked_at": report["checked_at"],
+         "corpus": dev_corpus, "staged_documents": len(staged), "cases": len(detail),
+         "all_covered": all_covered}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return report
+
+
 def mark_dev_pilot(source_root: Path, data_root: Path, case_keys: list[str]) -> dict[str, Any]:
     """Emit the sanitized dev-pilot question view for evaluator-selected cases.
 
@@ -431,9 +469,18 @@ def mark_dev_pilot(source_root: Path, data_root: Path, case_keys: list[str]) -> 
                  "gold 只留在 evaluator-only。语料条件：这些题的官方出处（旧 Treasury Bulletin）"
                  "不在冻结的 V2 全语料中，pilot 成绩只作接入诊断（协议 §7 记录为条件偏差）。"),
     }
+    coverage = _dev_corpus_coverage(by_key, sorted(marked), data_root)
+    ledger["dev_pilot"]["coverage"] = {
+        "corpus": coverage["corpus"], "staged_documents": coverage["staged_documents"],
+        "all_covered": coverage["all_covered"],
+        "note": ("开发 pilot 语料为 v1 Treasury Bulletin（corpus-v1）；覆盖审计"
+                 + ("全部命中，pilot 可跑。" if coverage["all_covered"]
+                    else "存在缺失，真实运行门将拒绝点火；缺失清单见 evaluator-only。")),
+    }
     ledger_path.write_text(json.dumps(ledger, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return {"schema_version": "officeqa.dev_pilot.v1", "marked": len(marked),
             "case_keys": sorted(marked), "revision": historical_revision,
+            "coverage_all": coverage["all_covered"],
             "output": str(data_root / "question_only" / "dev_pilot.jsonl")}
 
 

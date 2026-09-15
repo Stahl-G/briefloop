@@ -1297,6 +1297,34 @@ def _walk_nulls(node: Any, path: str = "config") -> list[str]:
     return found
 
 
+def dev_pilot_coverage_errors(data_root: Path, config: dict[str, Any]) -> list[str]:
+    """The 2026-09-15 lesson as a gate: dev questions must be provably
+    answerable from the staged dev corpus before any real run.  Reads only
+    the aggregate audit verdict the evaluator-side prepare wrote (booleans
+    and counts, never document names), and fails closed when it is missing,
+    stale against the frozen dev corpus, or not fully covered."""
+    dataset = config.get("dataset") or {}
+    dev = dataset.get("dev_corpus") or {}
+    pilot = ((dataset.get("eligible_questions") or {}).get("dev_pilot") or {})
+    expected_corpus = str(dev.get("name") or "corpus-v1")
+    expected_cases = len(pilot.get("case_keys") or [])
+    path = Path(data_root) / "audit" / "dev_pilot_coverage.json"
+    if not path.is_file():
+        return [f"开发题覆盖审计缺失：{path}；先运行 prepare 的 dev-pilot 生成覆盖裁决"]
+    try:
+        audit = json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError) as exc:
+        return [f"开发题覆盖审计不可读：{exc}"]
+    errors = []
+    if audit.get("corpus") != expected_corpus:
+        errors.append(f"覆盖审计的语料({audit.get('corpus')})与冻结的 dev_corpus({expected_corpus})不一致")
+    if expected_cases and audit.get("cases") != expected_cases:
+        errors.append(f"覆盖审计的题数({audit.get('cases')})与 dev_pilot 清单({expected_cases})不一致")
+    if audit.get("all_covered") is not True:
+        errors.append("开发题源文档未全覆盖 staged 语料；真实执行拒绝点火（缺失清单在 evaluator-only）")
+    return errors
+
+
 def config_freeze_errors(config: dict[str, Any]) -> list[str]:
     """Protocol §10 Q3 / §11 Q10: the frozen-config validation behind the
     real-execution gate.  A real run may start only when this is empty —
@@ -1389,7 +1417,7 @@ def command_run(args: argparse.Namespace) -> int:
         # config validation replaces the old blanket refusal.  On top of it:
         # enforced OS isolation, credential-free solver environment, and the
         # integration-commit code state — fail closed on any of them.
-        errors = config_freeze_errors(config)
+        errors = config_freeze_errors(config) + dev_pilot_coverage_errors(data_root, config)
         if errors:
             raise RealExecutionGateError(
                 "config 冻结校验未通过，拒绝真实执行：" + "；".join(errors[:8])

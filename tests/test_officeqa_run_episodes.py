@@ -813,3 +813,38 @@ def test_prepare_solver_boundary_fences_the_dev_corpus_too(chain, tmp_path, monk
                      '/bin/cat', str(source / 'treasury_bulletin_1941_01.txt')],
                     capture_output=True, timeout=30)
     assert denied.returncode != 0  # 活动探针：v1 源目录在沙箱内不可读
+
+
+def test_dev_pilot_coverage_gate_fails_closed(chain, tmp_path):
+    """覆盖审计门：未 staged→裁决 false 且聚合不携文档名；staged→true 且运行门放行。"""
+    import shutil
+    # 独立数据根验证未覆盖态：chain 可能已被更早的测试 staged 过语料
+    fresh = tmp_path / 'freshroot'
+    fresh.mkdir()
+    for name in ('question_only', 'evaluator-only', 'gated'):
+        shutil.copytree(chain / name, fresh / name)
+    ledger = json.loads((fresh / 'question_only' / 'exposure_ledger.json').read_text(encoding='utf-8'))
+    revision = ledger['historical_revision']
+    key = pd.case_key(revision, ledger['historical_exposed_pool'][0]['uid'],
+                      ledger['historical_exposed_pool'][0]['question_sha256'])
+    assert pd.mark_dev_pilot(fresh / 'gated', fresh, [key])['coverage_all'] is False
+    cfg = {"dataset": {"dev_corpus": {"name": "corpus-v1"},
+                       "eligible_questions": {"dev_pilot": {"case_keys": [key]}}}}
+    audit = json.loads((fresh / 'audit' / 'dev_pilot_coverage.json').read_text(encoding='utf-8'))
+    assert audit['all_covered'] is False and audit['cases'] == 1
+    assert '.txt' not in json.dumps(audit)  # 聚合裁决只含布尔/计数，无文档名
+    detail = json.loads((fresh / 'evaluator-only' / 'reports' / 'dev_pilot_coverage.json').read_text(encoding='utf-8'))
+    assert detail['cases'][key]['missing']  # 点名缺失的详报只在 evaluator-only
+    assert any('未全覆盖' in e for e in re_mod.dev_pilot_coverage_errors(fresh, cfg))
+    source = tmp_path / 'v1src'
+    source.mkdir()
+    (source / 'treasury_bulletin_1941_01.txt').write_text('TREASURY BULLETIN\nJANUARY 1941\n', encoding='utf-8')
+    ca.stage_documents(source, fresh / 'corpus-v1', fmt='v1')
+    ca.build_index(fresh / 'corpus-v1', fmt='v1')
+    assert pd.mark_dev_pilot(fresh / 'gated', fresh, [key])['coverage_all'] is True
+    assert re_mod.dev_pilot_coverage_errors(fresh, cfg) == []
+    bad_cfg = {"dataset": {"dev_corpus": {"name": "corpus-other"},
+                           "eligible_questions": {"dev_pilot": {"case_keys": [key]}}}}
+    assert any('语料' in e for e in re_mod.dev_pilot_coverage_errors(fresh, bad_cfg))
+    (fresh / 'audit' / 'dev_pilot_coverage.json').rename(fresh / 'audit' / 'dev_pilot_coverage.bak')
+    assert any('缺失' in e for e in re_mod.dev_pilot_coverage_errors(fresh, cfg))
