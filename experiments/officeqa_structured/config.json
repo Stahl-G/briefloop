@@ -120,7 +120,7 @@
   "note": "协议 §6.3 受控联网入口未接入（Q3 冻结为显式 offline，非占位 null）：共享指令与 NATIVE_FRAME 均明说无联网，B 组 allow_web=false 且宿主 webfetch/websearch 被权限规则拒绝。接入入口属协议变更，需新实验 ID。"
  },
  "budget": {
-  "episode_wall_clock_seconds": 1800,
+  "episode_wall_clock_seconds": null,
   "max_concurrent_model_calls": 4,
   "max_automatic_revisions_B": 1,
   "format_repair_attempts_per_episode": 1,
@@ -129,7 +129,9 @@
    "candidate_urls": 150,
    "source_pages": 60
   },
-  "note": "协议 §8.1 冻结值。search_budget 沿产品 research_budget.KINDS 字段结构；离线运行下 search_requests 由 corpus_adapter search 命令按 episode 记账硬限（--budget-file/--search-budget），source_pages 映射为按页查看硬限（--page-budget），candidate_urls 离线无消耗仪器、保留为冻结记录。A/B 同工具同数值：两组指令嵌入同一路径模式与同额上限，超限由工具拒绝。"
+  "note": "协议 §8.1 冻结值。search_budget 沿产品 research_budget.KINDS 字段结构；离线运行下 search_requests 由 corpus_adapter search 命令按 episode 记账硬限（--budget-file/--search-budget），source_pages 映射为按页查看硬限（--page-budget），candidate_urls 离线无消耗仪器、保留为冻结记录。A/B 同工具同数值：两组指令嵌入同一路径模式与同额上限，超限由工具拒绝。",
+  "safety_cap_seconds": 14400,
+  "termination_note": "研究语义无墙钟（用户指令 2026-09-15，对齐官方条件）：agent 自然结束为准；safety_cap_seconds 仅为防挂死保险丝（本批 strict-smoke 仍按当时冻结的 1800s 跑完）"
  },
  "episode_runner": {
   "entrypoint": "experiments/officeqa_structured/run_episodes.py",

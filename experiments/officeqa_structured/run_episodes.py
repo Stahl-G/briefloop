@@ -153,7 +153,14 @@ class ModelCallLimiter:
 def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
     config = json.loads(Path(path).read_text(encoding="utf-8"))
     budget = config.get("budget") or {}
-    missing = [field for field in _REQUIRED_BUDGET_FIELDS if not isinstance(budget.get(field), int)]
+    # episode_wall_clock_seconds may be null (official condition: no research
+    # wall clock, natural termination) — but then safety_cap_seconds must be a
+    # positive int as the anti-hang fuse.
+    missing = [field for field in _REQUIRED_BUDGET_FIELDS
+               if not isinstance(budget.get(field), int) and not (
+                   field == "episode_wall_clock_seconds" and budget.get(field) is None
+                   and isinstance(budget.get("safety_cap_seconds"), int)
+                   and budget.get("safety_cap_seconds", 0) > 0)]
     if missing:
         raise RunnerError(f"config.json budget is missing integer fields: {missing}")
     for field in ("protocol_id", "experiment_id"):
@@ -169,6 +176,8 @@ class Budget:
     max_automatic_revisions_B: int
     format_repair_attempts: int
     search_budget: dict[str, int]
+    termination: str = "wall_clock"
+    safety_cap_seconds: int = 14400
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "Budget":
@@ -180,7 +189,17 @@ class Budget:
         resolved = {kind: search.get(kind) for kind in SEARCH_BUDGET_KINDS}
         if not all(isinstance(value, int) for value in resolved.values()):
             resolved = {kind: 0 for kind in SEARCH_BUDGET_KINDS}
-        return cls(wall_clock_seconds=int(budget["episode_wall_clock_seconds"]),
+                # Research wall clock is OPTIONAL (user directive 2026-09-15: the official
+        # condition sets none).  ``episode_wall_clock_seconds: null`` means natural
+        # termination; ``safety_cap_seconds`` (default 14400) is an anti-hang fuse
+        # only — pathology insurance for wedged subprocesses, never a research
+        # constraint, and both values ride the run index for the record.
+        wall = budget.get("episode_wall_clock_seconds")
+        cap = int(budget.get("safety_cap_seconds") or 14400)
+        effective = int(wall) if wall else cap
+        return cls(wall_clock_seconds=effective,
+                   termination=("wall_clock" if wall else "natural+anti_hang_cap"),
+                   safety_cap_seconds=cap,
                    max_concurrent_model_calls=int(budget["max_concurrent_model_calls"]),
                    max_automatic_revisions_B=int(budget["max_automatic_revisions_B"]),
                    format_repair_attempts=int(budget["format_repair_attempts_per_episode"]),
@@ -1328,11 +1347,17 @@ _EPISODE_RUNNERS: dict[str, Callable[..., dict[str, Any]]] = {"A": run_native_ep
                                                               "B": run_briefloop_episode}
 
 
+# The one legal null (2026-09-15 user directive): no research wall clock means
+# natural termination; Budget.from_config demands safety_cap_seconds then.
+_LEGAL_NULLS = {"config.budget.episode_wall_clock_seconds"}
+
+
 def _walk_nulls(node: Any, path: str = "config") -> list[str]:
     """Every null/TODO leaf — the protocol §11 Q10 freeze condition."""
     found: list[str] = []
     if node is None:
-        found.append(path)
+        if path not in _LEGAL_NULLS:
+            found.append(path)
     elif isinstance(node, str) and "TODO" in node:
         found.append(f"{path} (contains TODO)")
     elif isinstance(node, dict):
