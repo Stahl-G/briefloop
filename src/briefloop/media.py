@@ -8,8 +8,10 @@ import os
 import re
 import tempfile
 import threading
+import struct
 import warnings
 import zipfile
+import zlib
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pypdf import PdfReader
@@ -34,16 +36,60 @@ def _source_id(sid):
 MAX_OFFICE_EXPANDED_BYTES = 150_000_000
 
 
-def office_archive(data):
-    """Open DOCX/XLSX bytes only when their declared expansion is bounded.
+_ZIP_LOCAL_HEADER = struct.Struct('<4s5H3I2H')
+_INFLATE_INPUT = 64 * 1024
+_INFLATE_OUTPUT = 1024 * 1024
 
-    zipfile stops each member at its declared size and a longer stream fails
-    its CRC, so the directory sizes bound what reading can decompress.
+
+def office_archive(data):
+    """Open DOCX/XLSX bytes only after measuring what each member really inflates to.
+
+    Directory sizes are untrusted and zipfile.read() inflates a whole member before
+    truncating it to the declared size. Inflate every member in bounded steps, stop
+    at the cap, and require the actual size to equal the declared one, so later
+    readers (zipfile, python-docx) cannot expand past what was measured here.
     """
     archive = zipfile.ZipFile(BytesIO(data))
-    if sum(item.file_size for item in archive.infolist()) > MAX_OFFICE_EXPANDED_BYTES:
+    try:
+        total = 0
+        def counted(size):
+            if total + size > MAX_OFFICE_EXPANDED_BYTES:
+                raise ValueError('Office 文件展开后过大，请删减内容或拆分后重试')
+        for item in archive.infolist():
+            if item.flag_bits & 0x1:raise ValueError('Office 文件含加密内容，无法读取')
+            if item.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+                raise ValueError('Office 文件使用了不支持的压缩方式')
+            header = _ZIP_LOCAL_HEADER.unpack_from(data, item.header_offset)
+            start = item.header_offset + _ZIP_LOCAL_HEADER.size + header[9] + header[10]
+            raw = memoryview(data)[start:start + item.compress_size]
+            if header[0] != b'PK\x03\x04' or len(raw) != item.compress_size:
+                raise ValueError('Office 文件已损坏，无法读取')
+            if item.compress_type == zipfile.ZIP_STORED:
+                actual = len(raw)
+                counted(actual)
+            else:
+                inflater, actual = zlib.decompressobj(-15), 0
+                for offset in range(0, len(raw), _INFLATE_INPUT):
+                    pending = raw[offset:offset + _INFLATE_INPUT]
+                    while pending and not inflater.eof:
+                        actual += len(inflater.decompress(pending, _INFLATE_OUTPUT))
+                        counted(actual)
+                        pending = inflater.unconsumed_tail
+                    if inflater.eof:break
+                while not inflater.eof:
+                    step = len(inflater.decompress(b'', _INFLATE_OUTPUT))
+                    if not step:break
+                    actual += step
+                    counted(actual)
+                if not inflater.eof:raise ValueError('Office 文件已损坏，无法读取')
+            if actual != item.file_size:raise ValueError('Office 文件声明大小与实际内容不符，无法读取')
+            total += actual
+    except (struct.error, zlib.error) as exc:
         archive.close()
-        raise ValueError('Office 文件展开后过大，请删减内容或拆分后重试')
+        raise ValueError('Office 文件已损坏，无法读取') from exc
+    except BaseException:
+        archive.close()
+        raise
     return archive
 
 
