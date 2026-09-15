@@ -121,7 +121,7 @@
  },
  "budget": {
   "episode_wall_clock_seconds": null,
-  "max_concurrent_model_calls": 4,
+  "max_concurrent_model_calls": 6,
   "max_automatic_revisions_B": 1,
   "format_repair_attempts_per_episode": 1,
   "search_budget": {
@@ -131,7 +131,8 @@
   },
   "note": "协议 §8.1 冻结值。search_budget 沿产品 research_budget.KINDS 字段结构；离线运行下 search_requests 由 corpus_adapter search 命令按 episode 记账硬限（--budget-file/--search-budget），source_pages 映射为按页查看硬限（--page-budget），candidate_urls 离线无消耗仪器、保留为冻结记录。A/B 同工具同数值：两组指令嵌入同一路径模式与同额上限，超限由工具拒绝。",
   "safety_cap_seconds": 14400,
-  "termination_note": "研究语义无墙钟（用户指令 2026-09-15，对齐官方条件）：agent 自然结束为准；safety_cap_seconds 仅为防挂死保险丝（本批 strict-smoke 仍按当时冻结的 1800s 跑完）"
+  "termination_note": "研究语义无墙钟（用户指令 2026-09-15，对齐官方条件）：agent 自然结束为准；safety_cap_seconds 仅为防挂死保险丝（本批 strict-smoke 仍按当时冻结的 1800s 跑完）",
+  "concurrency_note": "中批实测 6 路（原设计 4）；episode_workers 同步 6"
  },
  "episode_runner": {
   "entrypoint": "experiments/officeqa_structured/run_episodes.py",
@@ -175,6 +176,39 @@
    "00a8dc3d42863758aa2387580c741d487b376a0c5da7527a303c0610fe0ca9d6",
    "00d9692bd20e2ad5526b857404068aa9fae78cb5d8257df094af46f8752ce602"
   ],
-  "note": "严格官方条件（用户指令 2026-09-15）：PDF 原件、无逐次检索计量、联网开、A=opencode/ds-flash 原生，B=同能力+BriefLoop 链"
+  "note": "严格官方条件（用户指令 2026-09-15）：PDF 原件、无逐次检索计量、联网开、A=opencode/ds-flash 原生，B=同能力+BriefLoop 链",
+  "mid_case_keys": [
+   "052468da65df66005c1d4dbe4064e1c2748552c52dca9284650b006727ff61ca",
+   "0696622978486736a4a5c338e217128107b59b575f02c42d71945a7bb634015c",
+   "09cef790daed0a22c6ace8e3e7f05c329a1b4af41dbad7ff5b113d68755f76d0",
+   "1721b6520e341c78896516bb52808426c830cd33dc54b95c334cd2ecfcd33cfb",
+   "1b21cc951d271c71eea0ee8f3369a9dc671379fdccc9d074aa03d05560e476d4",
+   "1c0057e9ddef1650922107545eb00bb34adc58c8f7d51a369daac309cd504790",
+   "1d4f6d5eb702340a6d4d3d13588fa86f34ee9dba76712b9f055c2d751e33727a",
+   "1d9a9b8d9fa2a43292cdb7302a213e35c1498da1028a9093297e77c01a51e709",
+   "20f352a8ac856e2f1fe28a6b99d31f77da6f158f0874949d0ca87a8d6bcd0ad3",
+   "243b4af555db52750e38e766d272d5d54aff50922ca73707b91619a56e092411",
+   "25f74a744c56edeaa604cd9bbf62ba1d602d065e0a61911114d27eb99b074eb1",
+   "2e17b8dcde17584b9f5c073f742f1807025c1069f34e7bd53041a42fabecf997",
+   "337c3b3b3b5cabb1fe83e374a028850e626a7177d0fca067ff763c23c1407fb7",
+   "3569ce7d727c0f10238947876b35a929ec0b47414f379a47b057bb33bdd18221",
+   "3d9c8a667a53daf9f14ad806255e4e450fa9d55650e3570b7b4c72dccddc77fa",
+   "3fdb2ea2eebe1db7095399ea1e0498cf225979977655347c1f5b22b50ea2d93d",
+   "43f8b002885ecaff60e2ebd2649987f35aec21251c82bec240cbaa3d0b1dbcb5",
+   "4b5ab2d3e95a9cea23ed6814ccb6d4cc1bfea632545fa14302ae9100fc85e29a",
+   "4baa249d3c8c086c979c2f006e5ccc0d39ee256d4d14f48371a39cf8d5727637",
+   "4ed77db1bfd5e3376aecb9ccc9c634cef9411eb072b808b1ee1d7c6b6bdb7ebb",
+   "511bfb6560e947db8bef0f4a6e8104df6c6c35f225172c2a384d59e488905dfe",
+   "53af6c051bbbc13f423f6fbe82afa75cd8d80fa04a97a9b35e8055f18c79261b",
+   "55a2b7734e59732a9f6efd251fe23c3e08fc691da42b7e2f52c128034ced3ca9",
+   "5b985c3b855ec68450b2a9142ec894ef23e1ddf220c9cbc95af3bc2b6b4a96c9",
+   "5e446ae52bf4bc7449df531a5bd6daef73e3f4298490d3cc9d1e6d10bfe78d9a",
+   "61d9f57f438ad559024655be1193839a5ef29cf700dff36d995b45567dfc9d49",
+   "6221a56514b7d61f43fe04bbb7c7ff2bf461a33abb42427d3a56fe935f26c18d",
+   "64bcab56060fa1850a4c72cee8c2af783e5ca43366df7625914cd7b3fa5e0f87",
+   "68c940be62f380f1047dbc3efd6aba1ea814a399f0755e169c8ec017a2bd285f",
+   "6d19a2b4b87d532eecdaa1dd98c11f5b17b98536f28c4c304912feb3607d21a6"
+  ],
+  "concurrency_test": "2026-09-15 中批并发实测：模型调用上限 4→6，记录 run_index.model_calls.peak_concurrent 与限流失败；峰时如现 429 下批回落 4"
  }
 }
