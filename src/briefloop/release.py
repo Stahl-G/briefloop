@@ -251,13 +251,20 @@ def eligibility(store, version_id):
     status = review_status(store, version_id)
     candidates = status['reviews']
     result = {'version_id': version_id, 'eligible': False, 'blockers': [], 'notices': []}
+    # Say why a review cannot be started here, instead of offering one that fails.
+    from .review_capability import delivery_blocker
+    unsupported = delivery_blocker(store.settings().get('agent_backend', 'codex'))
     if not candidates:
         result['blockers'].append({'code': 'review_missing', 'message': '本版本尚未完成独立核查'})
+        if unsupported:
+            result['blockers'].append(unsupported)
         return result
     # Never fall back to an older pass after a newer failure or unresolved review.
     newest = candidates[0]
     if newest['status'] != 'complete':
         result['blockers'].append({'code': 'review_incomplete', 'message': '最新审阅仍在进行、失败或未完成，不能沿用更早结果'})
+        if unsupported and newest['status'] != 'running':
+            result['blockers'].append(unsupported)
         return result
     try:
         review = _applicable_review(store, newest['id'], version_id)
