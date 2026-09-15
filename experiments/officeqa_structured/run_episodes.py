@@ -290,6 +290,30 @@ def _corpus_identity(data_root: Path, corpus_name: str) -> dict[str, Any]:
             "documents": manifest.get("documents")}
 
 
+STRICT_CORPUS_NAME = "corpus-v2-pdf"
+REGISTER_HELPER = Path(__file__).with_name("register_pdf.py")
+
+
+def strict_pdf_instructions(pdf_dir: Path) -> str:
+    """The strict official-condition surface — identical text for both arms.
+
+    Raw PDF originals, no parsed text, no index, no document list: extraction,
+    table parsing and search are the agent's own work with its own tools
+    (bash, pdftotext/pdfinfo, python3, web search).  No per-call metering;
+    the wall clock is the only search budget.  The single deliberate arm
+    asymmetry stays inside this shared text, exactly like the parsed-mode
+    accept note: the BriefLoop pipeline must register relied-on PDFs.
+    """
+    pdfs = str(Path(pdf_dir).expanduser().resolve())
+    reg = str(REGISTER_HELPER)
+    return f"""## Evidence corpus (strict condition)
+
+You are working against a local read-only directory of PDF originals: `{pdfs}`
+This directory is the whole evidence universe — official document scans. There is no parsed text, no index and no document list; locating, extracting and reading the documents (tables, charts, footnotes) is your job, with your own tools: bash (`pdftotext` and `pdfinfo` are installed, `python3` is available), normal file search, and web search for supplementary public information. There is no search metering — manage your own time against the wall clock.
+
+If you are running inside the BriefLoop pipeline, every PDF your answer relies on must be registered before it can carry evidence: `python3 {reg} <pdf-path> --workspace <episode workspace>`"""
+
+
 def corpus_tool_instructions(data_root: Path, *, corpus_name: str = V2_CORPUS_NAME,
                              web_entry: str | None = None,
                              search_budget: dict[str, int] | None = None,
@@ -362,7 +386,7 @@ def corpus_tool_instructions(data_root: Path, *, corpus_name: str = V2_CORPUS_NA
 {web_line}"""
 
 
-def native_frame(submit_dir: Path, web_entry: str | None) -> str:
+def native_frame(submit_dir: Path, web_entry: str | None, pdf_dir: Path | None = None) -> str:
     """Arm-A frame (protocol §5.1): names the concrete submit endpoint.
 
     The submit directory is the program acceptance endpoint (protocol §8.3):
@@ -371,12 +395,20 @@ def native_frame(submit_dir: Path, web_entry: str | None) -> str:
     runner actually wired — no promised entry when none is configured.
     """
     submit = str(Path(submit_dir).expanduser().resolve())
+    if pdf_dir is not None:
+        # Strict official condition: raw PDFs + the agent's own tools + web.
+        intro = ("You are answering one OfficeQA question against a local directory of "
+                 "official PDF originals — no parsed text, no index. Extraction and search "
+                 "are yours to do with your own tools (bash, pdftotext/pdfinfo, python3, "
+                 "web search). No per-call search metering; the wall clock is the budget.")
+    else:
+        intro = "You are answering one OfficeQA question against a local read-only corpus of parsed U.S. Treasury publications."
     web_clause = ("You have the corpus tools and the controlled web entry described below; "
                   "no other assistance."
                   if web_entry else
                   "You have the corpus tools described below and no other assistance; "
                   "this run wires no web access.")
-    return f"""You are answering one OfficeQA question against a local read-only corpus of parsed U.S. Treasury publications.
+    return f"""{intro}
 
 Work like a professional archivist: narrow by document era and family first (combined statements, govinfo receipts, appendix tables), then search entity and measure terms including period naming variants, then read the relevant tables closely — check headers, footnotes, units and the exact fiscal period before extracting operands. Multi-step arithmetic is allowed after extracting exact values.
 
@@ -571,7 +603,10 @@ def prepare_solver_boundary(data_root: Path, config: dict[str, Any]) -> dict[str
     # dataset itself.  Corpus READS stay allowed: that is the shared surface.
     # The dev-pilot v1 corpus gets the same fences when it is staged/configured,
     # so a routed dev episode is fenced exactly like a main-test one.
-    gates = [
+    strict_manifest = data_root / STRICT_CORPUS_NAME / "index" / "manifest.json"
+    strict_gates = ([("deny-write", "strict pdf corpus", data_root / STRICT_CORPUS_NAME)]
+                    if strict_manifest.is_file() else [])
+    gates = strict_gates + [
         ("deny-read", "gated", data_root / "gated"),
         ("deny-read", "evaluator-only", data_root / "evaluator-only"),
         ("deny-read", "dataset source", Path(config["dataset"]["source_root"]).expanduser().resolve()),
@@ -664,26 +699,28 @@ class OpencodeRunSolver:
         self.limiter = limiter
         self.turns: list[dict[str, Any]] = []
 
-    def _write_host_config(self, episode_dir: Path) -> None:
+    def _write_host_config(self, episode_dir: Path, *, web: bool = False,
+                           read_dirs: tuple[Path, ...] = ()) -> None:
         """Workspace opencode.json: the non-interactive permission surface.
 
         Bash and workspace edits allowed (the corpus tool and the answer file
-        need them); question/web denied (offline run, no user to ask); file
-        tools scoped to this episode directory plus the read-only corpus.
+        need them); question/web denied unless the run's frozen condition
+        wires web (strict mode: the official harness condition); file tools
+        scoped to this episode directory plus the read-only corpus dirs.
         """
         canonical = lambda path: str(Path(path).resolve())
+        external = {"*": "deny", canonical(episode_dir) + "/**": "allow"}
+        for extra in read_dirs:
+            external[canonical(extra) + "/**"] = "allow"
         config = {
             "$schema": "https://opencode.ai/config.json",
             "permission": {
                 "question": "deny",
-                "webfetch": "deny",
-                "websearch": "deny",
+                "webfetch": "allow" if web else "deny",
+                "websearch": "allow" if web else "deny",
                 "bash": "allow",
                 "edit": "allow",
-                "external_directory": {
-                    "*": "deny",
-                    canonical(episode_dir) + "/**": "allow",
-                },
+                "external_directory": external,
             },
         }
         (self.workspace / "opencode.json").write_text(json.dumps(config, ensure_ascii=False, indent=2),
@@ -843,7 +880,7 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
                        order_index: int, limiter: "ModelCallLimiter",
                        corpus_name: str = V2_CORPUS_NAME,
                        web_entry: str | None = None,
-                       real: RealContext | None = None) -> dict[str, Any]:
+                       real: RealContext | None = None, strict: bool = False) -> dict[str, Any]:
     episode_dir = Path(data_root) / "episodes" / label / "A" / case.case_key
     if episode_dir.exists():
         raise RunnerError(f"episode directory already exists: {episode_dir}")
@@ -858,11 +895,16 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
     submit_dir.mkdir()
     budget_file = episode_dir / "corpus-budget.jsonl"
     (workspace / "question.md").write_text(f"# OfficeQA {case.uid}\n\n{case.question}\n", encoding="utf-8")
+    strict_pdf_dir = Path(data_root) / STRICT_CORPUS_NAME / "documents" / "pdf" if strict else None
+    if strict:
+        surface = strict_pdf_instructions(strict_pdf_dir)
+    else:
+        surface = corpus_tool_instructions(data_root, corpus_name=corpus_name, web_entry=web_entry,
+                                           search_budget=budget.search_budget if real else None,
+                                           budget_file=budget_file if real else None)
     (workspace / "prompt.md").write_text(
-        native_frame(submit_dir, web_entry) + "\n## Question\n\n" + case.question + "\n\n"
-        + corpus_tool_instructions(data_root, corpus_name=corpus_name, web_entry=web_entry,
-                                   search_budget=budget.search_budget if real else None,
-                                   budget_file=budget_file if real else None) + "\n",
+        native_frame(submit_dir, web_entry, pdf_dir=strict_pdf_dir)
+        + "\n## Question\n\n" + case.question + "\n\n" + surface + "\n",
         encoding="utf-8")
     tool_calls: list[dict[str, Any]] = []
     box = SubmissionBox(episode_dir, deadline, repair_budget=budget.format_repair_attempts)
@@ -887,7 +929,9 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
         identifiers = {"transport": "stub-native", "host": None, "model": None}
     else:
         solver = OpencodeRunSolver(real, workspace, limiter)
-        solver._write_host_config(episode_dir)
+        solver._write_host_config(
+            episode_dir, web=strict,
+            read_dirs=((Path(data_root) / STRICT_CORPUS_NAME / "documents" / "pdf",) if strict else ()))
         prompt = (workspace / "prompt.md").read_text(encoding="utf-8")
         try:
             turns.append(solver.turn(prompt, title=f"OfficeQA {case.uid} · A", deadline=deadline))
@@ -1085,7 +1129,7 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
                           order_index: int, limiter: "ModelCallLimiter",
                           corpus_name: str = V2_CORPUS_NAME,
                           web_entry: str | None = None,
-                          real: RealContext | None = None) -> dict[str, Any]:
+                          real: RealContext | None = None, strict: bool = False) -> dict[str, Any]:
     from briefloop.answer_result import RESULT_FORMAT, answer_of
     from briefloop.external_requests import dispatch
     from briefloop.runtime import Worker
@@ -1106,10 +1150,13 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
     requirements = {"title": f"OfficeQA {case.uid}"[:200], "objective": case.question,
                     "key_questions": [case.question], "result_format": RESULT_FORMAT,
                     "allow_web": web_entry is not None, "fact_check": False,
-                    "raw_input": corpus_tool_instructions(data_root, corpus_name=corpus_name,
-                                                          web_entry=web_entry,
-                                                          search_budget=budget.search_budget if real else None,
-                                                          budget_file=budget_file if real else None)}
+                    "raw_input": (
+                        strict_pdf_instructions(Path(data_root) / STRICT_CORPUS_NAME / "documents" / "pdf")
+                        if strict else
+                        corpus_tool_instructions(data_root, corpus_name=corpus_name,
+                                                 web_entry=web_entry,
+                                                 search_budget=budget.search_budget if real else None,
+                                                 budget_file=budget_file if real else None))}
     if real is not None:
         # Protocol §8.1: the shared search budget rides the run requirements
         # through the product's own ResearchBudget fields (same KINDS shape).
@@ -1325,6 +1372,35 @@ def dev_pilot_coverage_errors(data_root: Path, config: dict[str, Any]) -> list[s
     return errors
 
 
+def strict_real_gates(data_root: Path, config: dict[str, Any]) -> list[str]:
+    """Fail-closed preconditions for strict-v2 real runs (user-directed 2026-09-15).
+
+    Raw PDF corpus staged and non-empty, evaluator-side strict coverage audit
+    all_covered, and the frozen strict_v2 block present and consistent."""
+    errors: list[str] = []
+    block = config.get("strict_v2") or {}
+    if not block.get("corpus") or block.get("web") != "native" or block.get("metering") != "none":
+        errors.append("config.strict_v2 冻结不完整（需 corpus/web=native/metering=none）")
+    manifest_path = Path(data_root) / STRICT_CORPUS_NAME / "index" / "manifest.json"
+    if not manifest_path.is_file():
+        errors.append(f"{STRICT_CORPUS_NAME} 未 staged（先 build --format pdf）")
+    else:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        expected = ((block.get("corpus") or {}).get("documents")) or 0
+        if manifest.get("format") != "pdf" or not manifest.get("documents"):
+            errors.append("PDF 语料 manifest 异常")
+        elif expected and manifest.get("documents") != expected:
+            errors.append(f"PDF 语料份数({manifest.get('documents')})与冻结值({expected})不一致")
+    audit_path = Path(data_root) / "audit" / "strict_coverage.json"
+    if not audit_path.is_file():
+        errors.append("strict 覆盖审计缺失：先运行 prepare 的 strict-coverage")
+    else:
+        audit = json.loads(audit_path.read_text(encoding="utf-8"))
+        if audit.get("all_covered") is not True:
+            errors.append("strict 题集的源 PDF 未全覆盖；拒绝点火")
+    return errors
+
+
 def config_freeze_errors(config: dict[str, Any]) -> list[str]:
     """Protocol §10 Q3 / §11 Q10: the frozen-config validation behind the
     real-execution gate.  A real run may start only when this is empty —
@@ -1436,6 +1512,16 @@ def command_run(args: argparse.Namespace) -> int:
     web_entry = (config.get("web_search") or {}).get("entrypoint") or None
     if web_entry == "offline":
         web_entry = None  # explicit freeze of "no web entry wired" (§6.3)
+    strict = getattr(args, "mode", "default") == "strict-v2"
+    if strict:
+        if not args.dry_run:
+            strict_errors = strict_real_gates(data_root, config)
+            if strict_errors:
+                raise RealExecutionGateError("strict-v2 前置门未通过：" + "；".join(strict_errors[:6]))
+        # The official condition: native web on, raw PDF corpus, no metering.
+        web_entry = "native"
+        selection = dict(selection)
+        selection[prepare_dataset.DATASET] = STRICT_CORPUS_NAME
     cases = load_cases(data_root)
     selected = _select_cases(cases, limit=args.cases, case_keys=args.case_keys or [], pool=args.pool)
     # Corpus routing by question set (protocol §6.1): the dev pilot's v1
@@ -1495,7 +1581,8 @@ def command_run(args: argparse.Namespace) -> int:
         futures = {pool_executor.submit(_EPISODE_RUNNERS[arm], case, data_root=data_root,
                                         budget=budget, label=label, order_index=order_index,
                                         corpus_name=selection[case.dataset],
-                                        limiter=limiter, web_entry=web_entry, real=real):
+                                        limiter=limiter, web_entry=web_entry, real=real,
+                                        strict=strict):
                    (case.case_key, arm) for case, arm, order_index in tasks}
         for future in as_completed(futures):
             case_key, arm = futures[future]
@@ -1700,6 +1787,9 @@ def main(argv: list[str] | None = None) -> int:
                           "the run index records the path and its SHA-256)")
     run.add_argument("--run-label")
     run.add_argument("--arms", default="A,B")
+    run.add_argument("--mode", choices=("default", "strict-v2"), default="default",
+                     help="default = staged parsed corpus + metered search; "
+                          "strict-v2 = raw PDF originals, no metering, web on (official condition)")
     run.add_argument("--cases", type=int, help="first N cases from the prepared order")
     run.add_argument("--case-keys", nargs="*", help="explicit case keys")
     run.add_argument("--pool", choices=("unknown", "exposed", "dev"),

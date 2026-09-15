@@ -848,3 +848,51 @@ def test_dev_pilot_coverage_gate_fails_closed(chain, tmp_path):
     assert any('语料' in e for e in re_mod.dev_pilot_coverage_errors(fresh, bad_cfg))
     (fresh / 'audit' / 'dev_pilot_coverage.json').rename(fresh / 'audit' / 'dev_pilot_coverage.bak')
     assert any('缺失' in e for e in re_mod.dev_pilot_coverage_errors(fresh, cfg))
+
+
+def test_strict_surface_and_host_config(tmp_path):
+    """严格面：指令含 PDF 目录与登记命令、无计量标志；权限面 web 开 + 语料目录可读。"""
+    pdf_dir = tmp_path / "corpus-v2-pdf" / "documents" / "pdf"
+    pdf_dir.mkdir(parents=True)
+    text = re_mod.strict_pdf_instructions(pdf_dir)
+    assert str(pdf_dir) in text and "register_pdf.py" in text
+    assert "--search-budget" not in text and "--budget-file" not in text  # 无逐次计量
+    frame = re_mod.native_frame(tmp_path / "submit", "native", pdf_dir=pdf_dir)
+    assert "PDF originals" in frame and "pdftotext" in frame
+    solver = object.__new__(re_mod.OpencodeRunSolver)
+    solver.workspace = tmp_path / "ws"; solver.workspace.mkdir()
+    solver._write_host_config(tmp_path / "ep", web=True, read_dirs=(pdf_dir,))
+    cfg = json.loads((solver.workspace / "opencode.json").read_text(encoding="utf-8"))
+    perm = cfg["permission"]
+    assert perm["webfetch"] == "allow" and perm["websearch"] == "allow"
+    assert str(pdf_dir.resolve()) + "/**" in perm["external_directory"]
+
+
+def test_strict_real_gates_fail_closed(tmp_path):
+    """严格门：无语料/无审计 → 拒；审计未覆盖 → 拒；齐备且一致 → 放行。"""
+    cfg = {"strict_v2": {"corpus": {"documents": 1}, "web": "native", "metering": "none"}}
+    assert any("未 staged" in e for e in re_mod.strict_real_gates(tmp_path, cfg))
+    manifest_dir = tmp_path / "corpus-v2-pdf" / "index"; manifest_dir.mkdir(parents=True)
+    (manifest_dir / "manifest.json").write_text(json.dumps({"format": "pdf", "documents": 1}), encoding="utf-8")
+    assert any("审计缺失" in e for e in re_mod.strict_real_gates(tmp_path, cfg))
+    (tmp_path / "audit").mkdir()
+    (tmp_path / "audit" / "strict_coverage.json").write_text(json.dumps({"all_covered": False}), encoding="utf-8")
+    assert any("未全覆盖" in e for e in re_mod.strict_real_gates(tmp_path, cfg))
+    (tmp_path / "audit" / "strict_coverage.json").write_text(json.dumps({"all_covered": True}), encoding="utf-8")
+    assert re_mod.strict_real_gates(tmp_path, cfg) == []
+
+
+def test_strict_coverage_audit(tmp_path):
+    """evaluator 侧覆盖审计：源 PDF 缺失→false 且详报点名；补齐→true；聚合不含文件名。"""
+    gold_dir = tmp_path / "evaluator-only" / "gold"; gold_dir.mkdir(parents=True)
+    key = "a" * 64
+    (gold_dir / "officeqa_pro_v2.gold.jsonl").write_text(json.dumps({
+        "case_key": key, "uid": "U1", "source_files": ["doc_a.txt", "doc_b.txt"]}) + "\n", encoding="utf-8")
+    pdf_dir = tmp_path / "corpus-v2-pdf" / "documents" / "pdf"; pdf_dir.mkdir(parents=True)
+    (pdf_dir / "doc_a.pdf").write_text("x", encoding="utf-8")
+    report = pd.write_strict_coverage(tmp_path, [key])
+    assert report["all_covered"] is False and report["cases"][key[:8]]["missing"] == ["doc_b.txt"]
+    (pdf_dir / "doc_b.pdf").write_text("x", encoding="utf-8")
+    assert pd.write_strict_coverage(tmp_path, [key])["all_covered"] is True
+    audit = json.loads((tmp_path / "audit" / "strict_coverage.json").read_text(encoding="utf-8"))
+    assert audit["all_covered"] is True and ".pdf" not in json.dumps(audit) and ".txt" not in json.dumps(audit)

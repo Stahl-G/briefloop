@@ -406,6 +406,55 @@ def _dev_corpus_coverage(by_key: dict[str, dict[str, str]], case_keys: list[str]
     return report
 
 
+
+def write_strict_coverage(data_root: Path, case_keys: list[str]) -> dict:
+    """Fail-closed strict-mode coverage audit (user-directed 2026-09-15).
+
+    Evaluator-side: reads the gated V2 gold rows for the given case keys and
+    checks every source document's PDF original exists in the staged
+    corpus-v2-pdf.  Aggregate verdict only reaches the data area; per-case
+    detail (including source names) stays under evaluator-only.
+    """
+    if not case_keys:
+        raise PrepareError("no case keys given for the strict coverage audit")
+    data_root = Path(data_root).expanduser().resolve()
+    pdf_dir = data_root / "corpus-v2-pdf" / "documents" / "pdf"
+    staged = {path.stem: path.name for path in pdf_dir.glob("*.pdf")} if pdf_dir.is_dir() else {}
+    gold_rows = []
+    for line in (data_root / "evaluator-only" / "gold" / "officeqa_pro_v2.gold.jsonl").read_text().splitlines():
+        if line.strip():
+            gold_rows.append(json.loads(line))
+    by_key = {row["case_key"]: row for row in gold_rows}
+    detail: dict[str, Any] = {}
+    all_covered = True
+    for key in case_keys:
+        row = by_key.get(key)
+        if not row:
+            detail[key[:8]] = {"error": "case key not in v2 gold"}
+            all_covered = False
+            continue
+        missing = [name for name in row.get("source_files", [])
+                   if Path(name).stem not in staged]
+        detail[key[:8]] = {"uid": row.get("uid"), "sources": len(row.get("source_files", [])),
+                           "missing": missing}
+        if missing:
+            all_covered = False
+    checked_at = _now()
+    report = {"schema_version": "officeqa.strict_coverage.v1", "checked_at": checked_at,
+              "corpus": "corpus-v2-pdf", "staged_documents": len(staged),
+              "cases": detail, "all_covered": all_covered}
+    (data_root / "evaluator-only" / "reports").mkdir(parents=True, exist_ok=True)
+    (data_root / "evaluator-only" / "reports" / "strict_coverage.json").write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (data_root / "audit").mkdir(parents=True, exist_ok=True)
+    (data_root / "audit" / "strict_coverage.json").write_text(json.dumps(
+        {"schema_version": "officeqa.strict_coverage.v1", "checked_at": checked_at,
+         "corpus": "corpus-v2-pdf", "staged_documents": len(staged),
+         "cases": len(detail), "all_covered": all_covered}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8")
+    return report
+
+
 def mark_dev_pilot(source_root: Path, data_root: Path, case_keys: list[str]) -> dict[str, Any]:
     """Emit the sanitized dev-pilot question view for evaluator-selected cases.
 
@@ -496,6 +545,10 @@ def main(argv: list[str] | None = None) -> int:
     prepare_cmd.add_argument("--skip-corpus", action="store_true",
                              help="only rebuild the question/gold/ledger outputs")
 
+    strict = sub.add_parser("strict-coverage", help="evaluator-side strict-mode PDF coverage audit")
+    strict.add_argument("--data-root", default=str(DEFAULT_DATA_ROOT))
+    strict.add_argument("--case-keys", nargs="+", required=True)
+
     dev = sub.add_parser("dev-pilot", help="emit the sanitized dev-pilot question view + ledger dev marks")
     dev.add_argument("--source-root", default=str(DEFAULT_SOURCE_ROOT))
     dev.add_argument("--data-root", default=str(DEFAULT_DATA_ROOT))
@@ -510,7 +563,11 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 2
     try:
-        if args.command == "dev-pilot":
+        if args.command == "strict-coverage":
+            report = write_strict_coverage(Path(args.data_root), list(args.case_keys))
+            summary = {"all_covered": report["all_covered"], "cases": len(report["cases"]),
+                       "staged_documents": report["staged_documents"]}
+        elif args.command == "dev-pilot":
             summary = mark_dev_pilot(Path(args.source_root), Path(args.data_root), list(args.case_keys))
         else:
             summary = prepare(Path(args.source_root), Path(args.data_root),

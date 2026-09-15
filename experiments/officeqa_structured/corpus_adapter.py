@@ -53,12 +53,12 @@ from typing import Any, Iterable
 
 INDEX_SCHEMA_VERSION = "officeqa.corpus_index.v1"
 TXT_INDEX_SCHEMA_VERSION = "officeqa.corpus_index_txt.v1"
-CORPUS_FORMATS = ("v2", "v1")
+CORPUS_FORMATS = ("v2", "v1", "pdf")
 DEFAULT_DATA_ROOT = Path.home() / "Developer" / "briefloop-data" / "officeqa"
 # Default staged directory per format: the V2 main-test corpus keeps the
 # historical ``corpus`` name (byte-for-byte compatibility with the frozen
 # V2 index); the v1 dev-pilot corpus stages beside it as ``corpus-v1``.
-DEFAULT_CORPUS_NAME = {"v2": "corpus", "v1": "corpus-v1"}
+DEFAULT_CORPUS_NAME = {"v2": "corpus", "v1": "corpus-v1", "pdf": "corpus-v2-pdf"}
 
 _JSON_REL = ("documents", "parsed")
 _TXT_REL = ("documents", "text")
@@ -166,6 +166,45 @@ class _Stager:
         except OSError:
             shutil.copy2(src, dst)
             self.copied += 1
+
+
+def stage_pdfs(source_root: Path, corpus_root: Path) -> dict:
+    """Strict mode: stage the PDF originals as plain files — no parse, no index.
+
+    The official agent-harness condition (README: agents over the PDF corpus
+    with full tools) is the point of this corpus: extraction and search are
+    the agent's job, not the substrate's.  Read-only hardlinks when possible,
+    copies otherwise; the directory is chmod'd read-only so neither arm can
+    mutate the shared evidence.
+    """
+    source_root = Path(source_root).expanduser().resolve()
+    corpus_root = Path(corpus_root).expanduser().resolve()
+    pdfs = sorted(source_root.glob("*.pdf"))
+    if not pdfs:
+        raise CorpusError(f"no PDFs under {source_root}")
+    (corpus_root / "documents" / "pdf").mkdir(parents=True, exist_ok=True)
+    linked = copied = 0
+    for src in pdfs:
+        dst = corpus_root / "documents" / "pdf" / src.name
+        if dst.exists():
+            if dst.stat().st_size != src.stat().st_size:
+                raise CorpusError(f"staged PDF differs from source, refusing: {dst.name}")
+            continue
+        try:
+            os.link(src, dst); linked += 1
+        except OSError:
+            shutil.copy2(src, dst); copied += 1
+    pdf_dir = corpus_root / "documents" / "pdf"
+    names = [path.name for path in sorted(pdf_dir.glob("*.pdf"))]
+    manifest = {"schema_version": "officeqa.corpus_manifest.v1", "format": "pdf",
+                "built_at": _now(), "documents": len(names), "index": False,
+                "list_sha256": hashlib.sha256("\n".join(names).encode()).hexdigest(),
+                "note": "PDF originals only, no parsed text, no index (strict official condition)"}
+    (corpus_root / "index").mkdir(parents=True, exist_ok=True)
+    (corpus_root / "index" / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    os.chmod(pdf_dir, 0o555)
+    return {"linked": linked, "copied": copied, "documents": len(names)}
 
 
 def stage_documents(source_root: Path, corpus_root: Path, *, fmt: str = "v2") -> dict[str, Any]:
@@ -905,8 +944,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "build":
             data_root = Path(args.data_root).expanduser().resolve() if args.data_root else DEFAULT_DATA_ROOT
             corpus_name = args.corpus or DEFAULT_CORPUS_NAME[args.format]
-            staging = stage_documents(Path(args.source), data_root / corpus_name, fmt=args.format)
-            manifest = build_index(data_root / corpus_name, fmt=args.format)
+            if args.format == "pdf":
+                staging = stage_pdfs(Path(args.source), data_root / corpus_name)
+                manifest = json.loads((data_root / corpus_name / "index" / "manifest.json").read_text(encoding="utf-8"))
+            else:
+                staging = stage_documents(Path(args.source), data_root / corpus_name, fmt=args.format)
+                manifest = build_index(data_root / corpus_name, fmt=args.format)
             print(json.dumps({"staging": staging, "manifest": manifest}, ensure_ascii=False, indent=2))
             return 0
         corpus_root = _require_data_root(args.data_root, args.corpus)
