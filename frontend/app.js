@@ -1,3 +1,5 @@
+import {renderVersionDiff} from './version-diff.js';
+import {DOMSerializer} from '@tiptap/pm/model';
 import {beginPanel,updatePanel} from './report-panels.js';
 import {taskProgressCard} from './task-progress.js';
 import {copyText} from './clipboard.js';
@@ -9,8 +11,8 @@ import {activityCenter} from './notifications.js';
 var activity=null;
 import {reviewPending,withoutSupersededRetries,factCheckHTML} from './review-status.js';
 import {Editor,Extension} from '@tiptap/core';
-import {Plugin,PluginKey} from 'prosemirror-state';
-import {Decoration,DecorationSet} from 'prosemirror-view';
+import {Plugin,PluginKey} from '@tiptap/pm/state';
+import {Decoration,DecorationSet} from '@tiptap/pm/view';
 import StarterKit from '@tiptap/starter-kit';
 import {TableKit} from '@tiptap/extension-table';
 import Image from '@tiptap/extension-image';
@@ -316,7 +318,7 @@ function syncPendingReport(){
  const waiting=!!pendingRun&&!current;
  let box=$('pending-report');if(!box){box=document.createElement('div');box.id='pending-report';box.className='empty';$('document-area').before(box)}
  box.hidden=!waiting;$('document-area').hidden=!current;
- for(const id of ['export-menu-toggle','more-menu-toggle','version-history'])if($(id))$(id).hidden=waiting;
+ for(const id of ['download-word','export-menu-toggle','more-menu-toggle','version-history','version-diff'])if($(id))$(id).hidden=waiting;
  if(!waiting)return;
  const run=state.runs.find(r=>r.id===pendingRun),job=state.jobs.find(j=>j.kind==='generate'&&parse(j.payload).run_id===pendingRun);
  $('report-title').textContent=parse(run?.requirements).title||'新报告';$('save-state').textContent='';$('version-select').value='run:'+pendingRun;
@@ -398,16 +400,106 @@ async function savedVersion(){
  if(!current)throw Error('尚无稿件');
  return current.id;
 }
+let wordDownloading=false;
+async function downloadWord(){
+ if(wordDownloading)return;wordDownloading=true;const button=$('download-word');button.disabled=true;button.textContent='正在制作…';
+ try{
+  const version=await savedVersion(),workspace=state.workspace_id;
+  const override=$('export-template')?.value;
+  let job=await api('export',{version_id:version,...(override?{template_id:override}:{})});
+  while(['queued','running'].includes(job.status)){
+   button.textContent=job.status==='queued'?'等待制作…':'正在制作…';
+   await new Promise(resolve=>setTimeout(resolve,1000));
+   if(state.workspace_id!==workspace)throw Error('工作区已切换，请在原工作区下载');
+   job=await api('export-status?job='+encodeURIComponent(job.id));
+  }
+  if(job.status!=='complete')throw Error(job.error||'Word 制作未完成，请重试');
+  const link=document.createElement('a');link.href='/api/export-file?job='+encodeURIComponent(job.id)+'&workspace_id='+encodeURIComponent(workspace);link.download='';link.click();notice('Word 已生成，正在下载');await refresh();
+ }catch(e){notice('Word 下载未完成：'+e.message,true)}finally{wordDownloading=false;button.disabled=false;button.textContent='下载 Word'}
+}
+$('download-word').onclick=downloadWord;
 for(const id of ['download','download-docx','download-bundle']){
  const link=$(id);if(!link)continue;
  link.onclick=async e=>{e.preventDefault();try{const version=await savedVersion();if(id==='download-docx'){
-   const override=$('export-template')?$('export-template').value:'';
-   await api('export',override?{version_id:version,template_id:override}:{version_id:version});
-   const label=override?(state.templates||[]).find(t=>t.id===override)?.name:'';
-   notice(label?`Word 已排队制作（版式：${label}）`:'Word 已排队制作');await refresh();return}const format=id==='download-docx'?'docx':id==='download-bundle'?'bundle':null;window.location.assign('/api/download?version='+encodeURIComponent(version)+(format?'&format='+format:''))}catch(e){notice('下载未开始：'+e.message,true)}};
+   await downloadWord();return}const format=id==='download-docx'?'docx':id==='download-bundle'?'bundle':null;window.location.assign('/api/download?version='+encodeURIComponent(version)+(format?'&format='+format:''))}catch(e){notice('下载未开始：'+e.message,true)}};
 }
 
+
 function scheduleLearning(){ /* Worker consumes the durable feedback after inactivity. */ }
+document.addEventListener('click',event=>{if(event.target.closest('button')?.id!=='delete-report')return;action(async()=>{
+ const version=await savedVersion();
+ if(!confirm('删除这份报告及全部稿件版本？报告将从列表移除，来源文件和已下载文件保留；内部核查与学习引用记录保留。'))return;
+ await api('reports/delete',{version_id:version});current=null;dirty=false;await refresh();page('reports');notice('报告已删除');
+})});
+function exportFileName(title){return String(title??'').replace(/[\x00-\x1f<>:"/\\|?*]/g,'_').replace(/^[. ]+|[. ]+$/g,'').slice(0,120)||'报告'}
+// Print from a sandboxed frame instead of a new window: the desktop shell
+// denies window.open, and a frame needs no pop-up permission in browsers.
+// Its load event already waits for the inline images; img.decode() would not
+// settle here because browsers pause rendering in a hidden frame.
+function printHtml(html){
+ printHtml.frame?.remove();
+ const frame=document.createElement('iframe');printHtml.frame=frame;
+ frame.setAttribute('sandbox','allow-same-origin allow-modals');frame.setAttribute('aria-hidden','true');frame.tabIndex=-1;
+ frame.style.cssText='position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+ return new Promise((resolve,reject)=>{
+  frame.onload=()=>{
+   const view=frame.contentWindow;if(view?.location.href!=='about:srcdoc')return;
+   try{
+    view.addEventListener('afterprint',()=>{if(printHtml.frame===frame){frame.remove();printHtml.frame=null}},{once:true});
+    view.focus();view.print();resolve();
+   }catch(e){frame.remove();reject(e)}
+  };
+  frame.srcdoc=html;document.body.append(frame);
+ });
+}
+async function exportPdf(html,title){
+ const desktop=window.briefloopDesktop;
+ if(typeof desktop?.exportPdf!=='function'){await printHtml(html);return}
+ let result;
+ try{result=await desktop.exportPdf({html,title})}
+ catch(e){throw Error(String(e.message||e).replace(/^Error invoking remote method '[^']+': (Error: )?/,''))}
+ if(result?.status==='saved')notice('PDF 已保存：'+result.name);
+}
+if(typeof window.briefloopDesktop?.exportPdf==='function'&&$('download-pdf'))$('download-pdf').textContent='导出 PDF';
+document.addEventListener('click',async event=>{
+ const id=event.target.closest('button')?.id;if(!['download-html','download-pdf'].includes(id))return;
+ const kind=id==='download-html'?'html':'pdf';
+ try{
+  // savedVersion() settles pending edits and returns the open draft's id, whose
+  // full body is `current`; the report list does not need to carry bodies.
+  const version=await savedVersion(),brief=current;
+  let doc;
+  if(brief.editor_document)doc=parse(brief.editor_document);
+  else {const tmp=new Editor({extensions:[StarterKit,TableKit,ReportImage,TextStyle,Layout,Citation,Markdown],content:toEditor(brief.markdown),contentType:'markdown'});try{doc=tmp.getJSON()}finally{tmp.destroy()}}
+  const body=document.createElement('article');
+  body.append(DOMSerializer.fromSchema(editor.schema).serializeFragment(editor.schema.nodeFromJSON(editorDocument(doc,version)).content));
+  const cited=[];
+  for(const a of body.querySelectorAll('a[href^="#source-"]')){
+   const sid=a.getAttribute('href').slice(8);if(!cited.includes(sid))cited.push(sid);
+   a.setAttribute('href','#reference-'+(cited.indexOf(sid)+1));
+  }
+  if(cited.length){const heading=document.createElement('h2');heading.textContent='来源';body.append(heading);const list=document.createElement('ol');
+   for(const [i,sid] of cited.entries()){const source=state.sources.find(s=>s.id===sid);const row=document.createElement('li');row.id='reference-'+(i+1);const name=source?.name||'未关联来源';
+    if(source?.url&&/^https?:\/\//i.test(source.url)){const link=document.createElement('a');link.href=source.url;link.textContent=name;row.append(link)}else row.textContent=name;
+    list.append(row);
+   }body.append(list);
+  }
+  // A saved HTML file opens outside the app: keep only web, mail and in-page links.
+  for(const a of body.querySelectorAll('a[href]'))if(!/^(https?:|mailto:|#)/i.test(a.getAttribute('href')))a.removeAttribute('href');
+  for(const img of body.querySelectorAll('img')){
+   const url=new URL(img.getAttribute('src'),location.href);
+   if(url.protocol==='data:')continue;
+   if(url.origin!==location.origin)throw Error('图片尚未保存到工作区，无法生成独立文件');
+   const res=await fetch(url);if(!res.ok)throw Error('图片读取失败');
+   const blob=await res.blob();img.src=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(blob)});
+  }
+  const title=parse(brief.detail).title||'报告';
+  const html='<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>'+esc(title)+'</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;color:#1E2320;line-height:1.7;margin:40px auto;padding:0 24px;max-width:900px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #DEDFD8;padding:8px}img{max-width:100%;height:auto}a{color:#006838}h1,h2,h3{break-after:avoid}tr,img{break-inside:avoid}@page{size:A4;margin:20mm}@media print{body{margin:0;padding:0;max-width:none}}</style><body>'+body.innerHTML+'</body></html>';
+  if(kind==='pdf')await exportPdf(html,title);
+  else{const url=URL.createObjectURL(new Blob([html],{type:'text/html;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=exportFileName(title)+'.html';document.body.append(a);a.click();a.remove();notice('HTML 已生成，正在下载');setTimeout(()=>URL.revokeObjectURL(url),60000)}
+ }catch(e){notice('导出未完成：'+e.message,true)}
+});
+
 async function renderReportIssues(){
  const ticket=(renderReportIssues.ticket||0)+1;renderReportIssues.ticket=ticket;
  const box=$('report-issues');if(!box||!current)return;
@@ -719,6 +811,41 @@ $('version-history').onclick=()=>action(async()=>{
  $('history-dialog').showModal();
 });
 $('close-history').onclick=()=>$('history-dialog').close();
+$('version-diff').onclick=()=>action(async()=>{
+ await savedVersion();if(!current)return;
+ const versions=state.briefs.filter(b=>b.run_id===current.run_id);
+ const index=versions.findIndex(b=>b.id===current.id),older=versions.slice(index+1);
+ if(!older.length){notice('这是第一稿，还没有可比较的上一版本');return}
+ const target=current;
+ const label=b=>new Date(b.created).toLocaleString('zh-CN',{hour12:false})+' · '+(b.author==='agent'?'AI 稿件':b.author==='user'?'用户修改':'原稿');
+ $('diff-base').innerHTML=older.map((b,i)=>`<option value="${esc(b.id)}">${i===0?'上一稿 · ':i===older.length-1?'第一稿 · ':''}${esc(label(b))}</option>`).join('');
+ $('diff-target').textContent='当前稿 · '+label(target);
+ function documentFor(b){
+  if(b.editor_document)return editor.schema.nodeFromJSON(parse(b.editor_document)).toJSON();
+  const temporary=new Editor({extensions:[StarterKit,TableKit,ReportImage,TextStyle,Layout,Citation,Markdown],content:toEditor(b.markdown),contentType:'markdown'});
+  try{return temporary.getJSON()}finally{temporary.destroy()}
+ }
+ const after=documentFor(target);
+ // Polled state lists earlier versions without bodies: load the chosen base on
+ // demand, and let only the latest choice render.
+ let comparison=0;
+ async function compare(){
+  const base=older.find(b=>b.id===$('diff-base').value);if(!base)return;
+  const ticket=++comparison;$('diff-summary').textContent='正在读取比较版本…';
+  const full=await loadBrief(base);if(ticket!==comparison)return;
+  const before=documentFor(full),serializer=DOMSerializer.fromSchema(editor.schema);
+  const count=renderVersionDiff($('diff-body'),before.content,after.content,(node,side)=>{
+   const doc=editorDocument({type:'doc',content:[node]},side==='before'?base.id:target.id);
+   return serializer.serializeNode(editor.schema.nodeFromJSON(doc.content[0]));
+  });
+  $('diff-next').disabled=!count;let changeIndex=0;$('diff-next').onclick=()=>{const rows=$('diff-body').querySelectorAll('[data-change]');if(rows.length)rows[changeIndex++%rows.length].scrollIntoView({block:'center',behavior:'smooth'})};
+  $('diff-summary').textContent=count?`${count} 处内容或格式变化 · 绿色为新增，红色删除线为删去；边框标出图表或格式变化`:'两稿内容和格式相同';
+ }
+ $('diff-base').onchange=()=>{const ticket=comparison+1;compare().catch(e=>{if(ticket===comparison){$('diff-body').replaceChildren();$('diff-next').disabled=true;$('diff-summary').textContent='比较版本读取失败：'+e.message}})};
+ await compare();$('diff-dialog').showModal();
+});
+$('close-diff').onclick=()=>$('diff-dialog').close();
+
 
 // Interactive agent conversations. Artifact editors keep their existing state.
 const chat = {view:'active',home:true,sessions:[],id:null,session:null,messages:[],requests:[],events:new Map(),after:0,busy:false,uploading:0,polling:false,drafts:new Map(),attachments:new Set(),request:null};
@@ -2004,7 +2131,7 @@ document.querySelectorAll('#report-tabs [data-report-tab]').forEach(b=>b.onclick
 document.querySelectorAll('#report-tabs [data-report-view]').forEach(b=>b.onclick=()=>setReportView(b.dataset.reportView));
 if($('report-panel-toggle'))$('report-panel-toggle').onclick=toggleReportPanel;
 document.querySelectorAll('.menu-wrap').forEach(wrap=>{const toggle=wrap.querySelector('button[aria-haspopup="menu"]'),pop=wrap.querySelector('.popover');if(!toggle||!pop)return;toggle.onclick=e=>{e.stopPropagation();const open=pop.hidden;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'));pop.hidden=!open;toggle.setAttribute('aria-expanded',String(open))}});
-document.addEventListener('click',()=>{document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'))});
+document.addEventListener('click',e=>{if(e.target.closest?.('.export-template-row'))return;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'))});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'))}});
 if($('assistant-form'))$('assistant-form').onsubmit=e=>{e.preventDefault();sendReportQuestion($('assistant-input').value)};
 document.querySelectorAll('[data-assistant-prompt]').forEach(b=>b.onclick=()=>{const input=$('assistant-input');if(input){input.value=b.dataset.assistantPrompt;input.focus()}});

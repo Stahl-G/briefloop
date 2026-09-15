@@ -11,7 +11,7 @@ const elements=new Map();
 const el=id=>{if(!elements.has(id))elements.set(id,{value:'',href:'',textContent:''});return elements.get(id)};
 let pending=[],calls=[],downloads=[],timers=[];
 const c=vm.createContext({console,Promise,withoutSupersededRetries,syncPendingReport:()=>{},renderWordExports:()=>{},renderReportStatus:()=>{},renderAssistantSummary:()=>{},setTimeout:fn=>{timers.push(fn);return timers.length},clearTimeout:()=>{},$:el,
- dirty:true,saving:false,current:{id:'old',run_id:'r'},markdownMode:true,saveTimer:null,
+ state:{workspace_id:"test"},dirty:true,saving:false,current:{id:'old',run_id:'r'},markdownMode:true,saveTimer:null,
  updateDownloads:()=>{},refresh:async()=>{},scheduleLearning:()=>{},notice:()=>{},setReportView:()=>{},
  window:{location:{assign:url=>downloads.push(url)}},
  api:(route,payload)=>{calls.push({route,payload});if(route==='save')return new Promise((resolve,reject)=>pending.push({resolve,reject}));return Promise.resolve({})},

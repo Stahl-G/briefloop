@@ -596,6 +596,7 @@ class Store:
         """One version with its body and length against that run's own requirements."""
         from .length import length_stats
         brief=self.one('briefs',version_id)
+        if brief['run_id'] in self.deleted_reports():raise ValueError('报告已删除')
         # Historical requirements are not retroactively assigned a new budget.
         req=json.loads(self.one('runs',brief['run_id'])['requirements'])
         brief['length_stats']=length_stats(brief['markdown'],target_words=req.get('target_words'),max_words=req.get('max_words'))
@@ -605,8 +606,28 @@ class Store:
         """Runs whose saved versions contain text; bodies stay out of polled state."""
         text=str(text or '').strip().lower()
         if not text or len(text)>200:return []
+        deleted=self.deleted_reports()
         return [row['run_id'] for row in self.rows("SELECT DISTINCT b.run_id FROM briefs b JOIN runs r ON r.id=b.run_id "
-                                                   "WHERE r.mode='normal' AND instr(lower(b.markdown),?)>0",(text,))]
+                                                   "WHERE r.mode='normal' AND instr(lower(b.markdown),?)>0",(text,))
+                if row['run_id'] not in deleted]
+
+    def delete_report(self, version_id):
+        """Remove a report from browsing while retaining referenced audit history."""
+        with self.tx() as c:
+            brief=c.execute('SELECT run_id FROM briefs WHERE id=?',(version_id,)).fetchone()
+            if not brief:raise ValueError('报告不存在')
+            run_id=brief['run_id']
+            for row in c.execute("SELECT payload FROM jobs WHERE status IN ('queued','running')"):
+                payload=json.loads(row['payload'])
+                linked=payload.get('version_id') or payload.get('base_version')
+                parent=c.execute('SELECT run_id FROM briefs WHERE id=?',(linked,)).fetchone() if linked else None
+                if payload.get('run_id')==run_id or (parent and parent['run_id']==run_id):
+                    raise ValueError('报告仍有任务，请先停止或等待完成后再删除')
+            c.execute('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)',('deleted_report:'+run_id,dump(now())))
+        return {'run_id':run_id,'deleted':True}
+
+    def deleted_reports(self):
+        return {r['key'].removeprefix('deleted_report:') for r in self.rows("SELECT key FROM meta WHERE key LIKE 'deleted_report:%'")}
 
     def snapshot(self):
         clock = datetime.now().astimezone()
@@ -624,9 +645,11 @@ class Store:
             ids=list(dict.fromkeys(json.loads(run['source_ids'])+acquired.get(run['id'],[])))
             run['all_source_ids']=ids
             run['source_count']=len(ids)
+        deleted=self.deleted_reports()
         # Polled state lists versions only; bodies and length come from brief_view on demand.
         briefs=self.rows("SELECT b.id,b.run_id,b.parent_id,b.author,b.hash,b.detail,b.created,substr(b.markdown,1,400) AS excerpt "
                          "FROM briefs b JOIN runs r ON r.id=b.run_id WHERE r.mode='normal' ORDER BY b.rowid DESC")
+        briefs=[b for b in briefs if b['run_id'] not in deleted]
         from .search_policy import annotate_sources
         from .schedules import listing as schedule_listing
         return {"schedules":schedule_listing(self),"notifications":notification_snapshot(self),"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "requirements": self.meta("requirements"), "settings": self.settings(),
@@ -637,7 +660,7 @@ class Store:
                 "company_context_pending":self.rows("SELECT * FROM company_facts WHERE status='pending' ORDER BY rowid DESC"),
                 "sources": annotate_sources(self,self.rows("SELECT * FROM sources ORDER BY created")),
                 "system_clock": {"now": clock.isoformat(), "today": clock.date().isoformat(), "timezone": str(clock.tzinfo)},
-                "runs": runs,
+                "runs": [r for r in runs if r['id'] not in deleted],
                 "briefs": briefs,
                 "assessments": self.rows("SELECT * FROM assessments ORDER BY rowid DESC"),
                 "feedback": self.rows("SELECT * FROM feedback ORDER BY rowid DESC LIMIT 100"),
