@@ -309,6 +309,53 @@ def _corpus_identity(data_root: Path, corpus_name: str) -> dict[str, Any]:
             "documents": manifest.get("documents")}
 
 
+OPENCODE_DB = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
+
+
+def episode_token_usage(episode_workspace: Path) -> dict[str, Any] | None:
+    """Per-episode token/cost accounting from opencode's local session DB.
+
+    Covers every model turn the episode produced: arm A's single session plus
+    arm B's one session per job (generate, reviewer, subagents, revision) —
+    attribution key is the session.directory living under the episode
+    workspace.  Returns None when the DB is absent (then usage_complete stays
+    false); cost is the host's own accounting, not our estimate.
+    """
+    if not OPENCODE_DB.is_file():
+        return None
+    import sqlite3
+    ws = str(Path(episode_workspace).expanduser().resolve())
+    try:
+        db = sqlite3.connect(f"file:{OPENCODE_DB}?mode=ro", uri=True)
+        rows = db.execute(
+            "SELECT m.data FROM message m JOIN session s ON m.session_id = s.id "
+            "WHERE s.directory LIKE ?", (ws + "%",)).fetchall()
+    except sqlite3.Error:
+        return None
+    finally:
+        try: db.close()
+        except Exception: pass
+    total = {"input": 0, "output": 0, "reasoning": 0, "cache_read": 0, "cache_write": 0,
+             "cost": 0.0, "messages": 0}
+    for (payload,) in rows:
+        try:
+            data = json.loads(payload) or {}
+        except ValueError:
+            continue
+        tk = data.get("tokens") or {}
+        total["input"] += tk.get("input") or 0
+        total["output"] += tk.get("output") or 0
+        total["reasoning"] += tk.get("reasoning") or 0
+        cache = tk.get("cache") or {}
+        total["cache_read"] += cache.get("read") or 0
+        total["cache_write"] += cache.get("write") or 0
+        total["cost"] += data.get("cost") or 0
+        total["messages"] += 1
+    total["source"] = "opencode-db"
+    total["usage_complete"] = True
+    return total if total["messages"] else {"messages": 0, "usage_complete": False, "source": "opencode-db"}
+
+
 STRICT_CORPUS_NAME = "corpus-v2-pdf"
 REGISTER_HELPER = Path(__file__).with_name("register_pdf.py")
 
@@ -979,12 +1026,14 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
         identifiers = {"transport": "opencode-run", "host": real.host_version,
                        "model": real.model, "variant": real.variant,
                        "binary": str(real.shim)}
+    usage = episode_token_usage(workspace)
     record = _episode_record(case=case, arm="A", label=label, order_index=order_index,
                              episode_dir=episode_dir, started=started, deadline=deadline,
                              budget=budget, box=box, tool_calls=tool_calls,
                              identifiers=identifiers,
-                             linkage={"turns": turns} if turns else None, usage_complete=False,
-                             error=error, corpus=_corpus_identity(data_root, corpus_name))
+                             linkage={"turns": turns} if turns else None,
+                             usage_complete=bool(usage and usage.get("usage_complete")),
+                             usage=usage, error=error, corpus=_corpus_identity(data_root, corpus_name))
     return record
 
 
@@ -1227,6 +1276,7 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
                        for job in jobs]
         identifiers = {"transport": "briefloop-interactive-runtime+opencode", "host": real.host_version,
                        "model": real.model, "variant": real.variant}
+    usage = episode_token_usage(workspace)
     record = _episode_record(case=case, arm="B", label=label, order_index=order_index,
                              episode_dir=episode_dir, started=started, deadline=deadline,
                              budget=budget, box=box, tool_calls=tool_calls,
@@ -1235,7 +1285,8 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
                                       "job_status": state.get("status"),
                                       "version_ids": sorted(snapshots),
                                       "model_calls": model_calls},
-                             usage_complete=False, error=error,
+                             usage_complete=bool(usage and usage.get("usage_complete")),
+                             usage=usage, error=error,
                              corpus=_corpus_identity(data_root, corpus_name))
     return record
 
@@ -1296,7 +1347,8 @@ def _episode_record(*, case: Case, arm: str, label: str, order_index: int, episo
                     tool_calls: list[dict[str, Any]], identifiers: dict[str, Any],
                     linkage: dict[str, Any] | None, usage_complete: bool,
                     error: str | None = None,
-                    corpus: dict[str, Any] | None = None) -> dict[str, Any]:
+                    corpus: dict[str, Any] | None = None,
+                    usage: dict[str, Any] | None = None) -> dict[str, Any]:
     finished = time.time()
     chosen = box.chosen()
     corpus_budget_file = Path(episode_dir) / "corpus-budget.jsonl"
@@ -1327,6 +1379,7 @@ def _episode_record(*, case: Case, arm: str, label: str, order_index: int, episo
         "corpus_budget_usage": (corpus_adapter.budget_usage(corpus_budget_file)
                                 if corpus_budget_file.is_file() else {}),
         "usage_complete": usage_complete,
+                             **({"usage": usage} if usage else {}),
         "format_repairs_issued": box.repairs_used,
         "submissions": box.entries(),
         "chosen_submission": ({"seq": chosen["seq"], "sha256": chosen["sha256"],

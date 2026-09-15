@@ -896,3 +896,30 @@ def test_strict_coverage_audit(tmp_path):
     assert pd.write_strict_coverage(tmp_path, [key])["all_covered"] is True
     audit = json.loads((tmp_path / "audit" / "strict_coverage.json").read_text(encoding="utf-8"))
     assert audit["all_covered"] is True and ".pdf" not in json.dumps(audit) and ".txt" not in json.dumps(audit)
+
+
+def test_episode_token_usage_from_opencode_db(tmp_path, monkeypatch):
+    """token 记账：按 episode 目录前缀聚合 A 会话与 B 各 job 会话；库缺失/空 → 不谎报。"""
+    import sqlite3
+    db_path = tmp_path / "opencode.db"
+    db = sqlite3.connect(db_path)
+    db.execute("CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT)")
+    db.execute("CREATE TABLE message (id TEXT, session_id TEXT, data TEXT)")
+    ws = tmp_path / "episodes" / "run" / "A" / "key" / "workspace"
+    other = tmp_path / "episodes" / "run" / "B" / "other" / "workspace"
+    db.execute("INSERT INTO session VALUES ('s1', ?)", (str(ws),))
+    db.execute("INSERT INTO session VALUES ('s2', ?)", (str(ws) + "/jobs/job1",))
+    db.execute("INSERT INTO session VALUES ('s3', ?)", (str(other),))
+    for sid, tokens, cost in (("s1", {"input": 100, "output": 10, "cache": {"read": 5, "write": 1}}, 0.5),
+                              ("s2", {"input": 200, "output": 20, "reasoning": 3}, 0.25),
+                              ("s3", {"input": 999, "output": 999}, 9.9)):
+        db.execute("INSERT INTO message VALUES (?, ?, ?)", ("m" + sid, sid,
+                   json.dumps({"tokens": tokens, "cost": cost})))
+    db.commit(); db.close()
+    monkeypatch.setattr(re_mod, "OPENCODE_DB", db_path)
+    usage = re_mod.episode_token_usage(ws)
+    assert usage["input"] == 300 and usage["output"] == 30 and usage["reasoning"] == 3
+    assert usage["cache_read"] == 5 and usage["cache_write"] == 1
+    assert abs(usage["cost"] - 0.75) < 1e-9 and usage["usage_complete"] is True
+    monkeypatch.setattr(re_mod, "OPENCODE_DB", tmp_path / "absent.db")
+    assert re_mod.episode_token_usage(ws) is None
