@@ -124,7 +124,7 @@ def test_refresh_obeys_permission_and_budget_and_never_reports_cache_as_fresh(tm
     from briefloop import sources
     calls = []
 
-    def acquire(store, url):
+    def acquire(store, url, **_):
         calls.append(url)
         return store.add_source('Fresh response', 'Revenue was USD 12 million in H1.', url=url)
 
@@ -142,7 +142,7 @@ def test_refresh_obeys_permission_and_budget_and_never_reports_cache_as_fresh(tm
     assert result['data']['budget']['used']['source_pages'] == 1
     assert store.one('sources', old['id']) == old
 
-    def changed(store, url):
+    def changed(store, url, **_):
         return store.add_source('Changed response', 'H1 revenue corrected to USD 120 million.', url=url)
 
     monkeypatch.setattr(sources, 'fetch', changed)
@@ -153,7 +153,7 @@ def test_refresh_obeys_permission_and_budget_and_never_reports_cache_as_fresh(tm
     assert change['conflict_id'] == result['data']['conflict_id']
     assert len(store.rows('SELECT id FROM conflicts')) == 1
 
-    monkeypatch.setattr(sources, 'fetch', lambda store, url: store.add_source('Unavailable', '', url=url, error='HTTP 503'))
+    monkeypatch.setattr(sources, 'fetch', lambda store, url, **_: store.add_source('Unavailable', '', url=url, error='HTTP 503'))
     result = refresh(store, run['id'], old['id'], information_cutoff='2026-08-31')
     assert result['outcome'] == 'fetch_failed' and result['data']['error'] == 'HTTP 503'
     assert result['outcome'] != 'unchanged_snapshot'

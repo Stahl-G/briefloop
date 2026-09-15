@@ -4,9 +4,12 @@ from html import unescape
 from . import __version__
 from .host_bins import find as find_host_bin
 from io import BytesIO
+from urllib.parse import urlsplit
 from pathlib import Path
 import hashlib
+import ipaddress
 import re
+import socket
 import subprocess
 import os
 import tempfile
@@ -163,8 +166,62 @@ def upload(store, name, data):
     return store.add_source(name,text,error=error,source_id=sid)
 
 
-def _fetch_bytes(url):
-    if not url.startswith(('https://','http://')):raise ValueError('请输入 HTTP(S) 来源地址')
+MAX_REDIRECTS=5
+_NAT64=ipaddress.ip_network('64:ff9b::/96')
+# Clash/Surge fake-IP DNS answers public names from the benchmarking range.
+_PROXY_FAKE_IP=ipaddress.ip_network('198.18.0.0/15')
+# Intranet pages a user adds by hand; never loopback, link-local or metadata.
+_PRIVATE_NETWORKS=tuple(ipaddress.ip_network(n) for n in ('10.0.0.0/8','172.16.0.0/12','192.168.0.0/16','100.64.0.0/10','fc00::/7'))
+# Octal, hex, integer or short IPv4 spellings are parsed differently by
+# resolvers and curl; only canonical address literals are accepted.
+_NUMERIC_HOST=re.compile(r'(?:0x[0-9a-f]*|[0-9]+)(?:\.(?:0x[0-9a-f]*|[0-9]+)){0,3}\.?',re.I)
+
+
+def _allowed_ip(value,allow_private=False):
+    ip=ipaddress.ip_address(value.split('%',1)[0])
+    if ip.version==6:
+        embedded=ip.ipv4_mapped or ip.sixtofour or (ip.teredo[1] if ip.teredo else None)
+        if embedded is None and ip in _NAT64:embedded=ipaddress.IPv4Address(int(ip)&0xffffffff)
+        if embedded is not None:ip=embedded
+    if ip.is_multicast:return False
+    if ip.is_global or ip.version==4 and ip in _PROXY_FAKE_IP:return True
+    return allow_private and any(ip.version==n.version and ip in n for n in _PRIVATE_NETWORKS)
+
+
+def _public_target(url,allow_private=False):
+    """Resolve once and refuse this machine, private networks and other non-global addresses.
+
+    Source URLs may come from search results or model tool calls; the local
+    BriefLoop API and LAN services must not become research sources. Only a
+    user's own request may reach private (intranet) networks.
+    """
+    parts=urlsplit(url)
+    if parts.scheme not in ('http','https') or not parts.hostname:raise ValueError('请输入 HTTP(S) 来源地址')
+    if _NUMERIC_HOST.fullmatch(parts.hostname):
+        try:ipaddress.IPv4Address(parts.hostname)
+        except ValueError:raise ValueError('来源地址的 IP 写法不规范，已拒绝读取') from None
+    try:
+        port=parts.port or (443 if parts.scheme=='https' else 80)
+        infos=socket.getaddrinfo(parts.hostname,port,type=socket.SOCK_STREAM)
+    except (OSError,UnicodeError,ValueError) as exc:raise ValueError('无法解析来源地址') from exc
+    addresses=list(dict.fromkeys(info[4][0] for info in infos))
+    # Every answer must be public: a mixed answer can still connect locally.
+    if not addresses or not all(_allowed_ip(address,allow_private) for address in addresses):
+        raise ValueError('来源地址指向本机或内网，已拒绝读取')
+    return parts.hostname,port,addresses
+
+
+class _PublicRedirects(urllib.request.HTTPRedirectHandler):
+    max_redirections=MAX_REDIRECTS
+    def __init__(self,allow_private=False):
+        self.allow_private=allow_private
+    def redirect_request(self,req,fp,code,msg,headers,newurl):
+        _public_target(newurl,self.allow_private)
+        return super().redirect_request(req,fp,code,msg,headers,newurl)
+
+
+def _fetch_bytes(url,*,allow_private=False):
+    host,port,addresses=_public_target(url,allow_private)
     curl=find_host_bin('curl')
     if curl:
         env=dict(os.environ)
@@ -172,13 +229,23 @@ def _fetch_bytes(url):
             if key in ('http','https','all'):env.setdefault(key+'_proxy',value)
         with tempfile.TemporaryDirectory(prefix='briefloop-web-') as tmp:
             path=Path(tmp)/'response'
-            command=[curl,'--fail','--silent','--show-error','--location','--proto','=http,https','--proto-redir','=http,https','--connect-timeout','12','--max-time','40','--max-filesize',str(15*1024*1024),'-A',f'BriefLoop/{__version__} (local research reader)','-o',str(path),'-w','%{content_type}',url]
-            proc=subprocess.run(command,capture_output=True,text=True,env=env,timeout=45)
-            if proc.returncode:raise ValueError(proc.stderr.strip() or '网页读取失败')
-            data=path.read_bytes();content_type=proc.stdout;encoding='utf-8'
+            for hop in range(MAX_REDIRECTS+1):
+                if hop:host,port,addresses=_public_target(url,allow_private)
+                command=[curl,'--fail','--silent','--show-error','--max-redirs','0','--proto','=http,https','--connect-timeout','12','--max-time','40','--max-filesize',str(15*1024*1024),'-A',f'BriefLoop/{__version__} (local research reader)','-o',str(path),'-w','%{http_code}\\n%{redirect_url}\\n%{content_type}']
+                try:ipaddress.ip_address(host)
+                except ValueError:
+                    # Connect to the addresses just checked, not a second DNS answer.
+                    command+=['--resolve',f'{host}:{port}:'+','.join(f'[{a}]' if ':' in a else a for a in addresses)]
+                proc=subprocess.run(command+[url],stdin=subprocess.DEVNULL,capture_output=True,text=True,env=env,timeout=45)
+                if proc.returncode:raise ValueError(proc.stderr.strip() or '网页读取失败')
+                status,location,content_type=(proc.stdout.split('\n',2)+['',''])[:3]
+                if not (status.startswith('3') and location):break
+                url=location
+            else:raise ValueError('网页重定向次数过多')
+            data=path.read_bytes() if path.exists() else b'';encoding='utf-8'
     else:
         req=urllib.request.Request(url,headers={'User-Agent':f'BriefLoop/{__version__} (local research reader)'})
-        with urllib.request.urlopen(req,timeout=40) as response:
+        with urllib.request.build_opener(_PublicRedirects(allow_private)).open(req,timeout=40) as response:
             data=response.read(15*1024*1024+1)
             content_type=response.headers.get('Content-Type','')
             encoding=response.headers.get_content_charset() or 'utf-8'
@@ -200,11 +267,11 @@ def _fetch_suffix(name,data,content_type):
             'image/gif':'.gif','image/tiff':'.tiff','image/bmp':'.bmp','text/html':'.html','text/plain':'.txt'}.get(kind,'.bin')
 
 
-def _fetch(store, url):
+def _fetch(store, url, *, allow_private=False):
     from .store import uid,now,content_hash,dump
     from .media import detect_media_type,safe_source_path
     from urllib.parse import urlsplit,unquote
-    data,content_type,encoding=_fetch_bytes(url)
+    data,content_type,encoding=_fetch_bytes(url,allow_private=allow_private)
     sid=uid('src');raw_name=Path(unquote(urlsplit(url).path)).name or '网页'
     title=html_title(data,content_type,encoding)
     name=title or raw_name
@@ -227,10 +294,10 @@ def _fetch(store, url):
     return store.add_source(name,text,url=url,error=error,source_id=sid)
 
 
-def fetch(store, url):
+def fetch(store, url, *, allow_private=False):
     url=url.strip()
     if not url.startswith(('https://','http://')):raise ValueError('请输入 HTTP(S) 来源地址')
-    try:return _fetch(store,url)
+    try:return _fetch(store,url,allow_private=allow_private)
     except (OSError,ValueError,subprocess.SubprocessError) as exc:
         return store.add_source(url.rsplit('/',1)[-1] or url,'',url=url,error=str(exc))
 
@@ -238,7 +305,7 @@ def fetch(store, url):
 def retry_source(store, source_id):
     from .media import source_files
     old,_,original=source_files(store,source_id)
-    if old['url']:return fetch(store,old['url'])
+    if old['url']:return fetch(store,old['url'],allow_private=True)
     if original is None:raise ValueError('原始文件未保留，请重新上传；原失败记录仍保留')
     return upload(store,old['name'],original.read_bytes())
 

@@ -290,7 +290,8 @@ def refresh(store, run_id, source_id, *, information_cutoff, trigger='manual'):
             outcome = 'budget_exhausted'
             data['budget'] = exc.result['budget']
         else:
-            new_source = sources.fetch(store, source['url'])
+            # The URL is this run's registered source, not a new address.
+            new_source = sources.fetch(store, source['url'], allow_private=True)
             store.attach_source(run_id, new_source['id'])
             data['new_snapshot'] = _snapshot(store, new_source['id'])
             if new_source['status'] != 'ready':

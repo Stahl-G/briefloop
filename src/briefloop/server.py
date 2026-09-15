@@ -536,7 +536,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/upload':
                     data=_upload_data(body)
                     result=sources.upload(store,body['name'],data)
-                elif path=='/api/source-url':result=sources.fetch(store,body['url'])
+                elif path=='/api/source-url':result=sources.fetch(store,body['url'],allow_private=True)
                 elif path=='/api/retry-source':result=sources.retry_source(store,body['source_id'])
                 elif path=='/api/source-pages':
                     from .media import render_source_pages

@@ -65,7 +65,7 @@ def test_failed_direct_then_extract_and_cache_count_one_page_per_run(tmp_path,mo
     limits={'search_requests':2,'candidate_urls':4,'source_pages':1}
     store,run=make_run(tmp_path,limits);fetches=[];extracts=[]
     url='https://example.test/report'
-    def failed_fetch(value):fetches.append(value);raise OSError('synthetic direct failure')
+    def failed_fetch(value,**_):fetches.append(value);raise OSError('synthetic direct failure')
     monkeypatch.setattr(sources,'_fetch_bytes',failed_fetch)
     failed=sources.fetch_for_run(store,run['id'],url)
     assert failed['status']=='failed'

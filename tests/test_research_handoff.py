@@ -126,7 +126,7 @@ def test_exhausted_deep_run_ends_handed_off_instead_of_failed(tmp_path, monkeypa
     monkeypatch.setattr(duckduckgo, '_post', lambda form: (html, raw))
     from briefloop import sources
     page = b'<html><head><title>Example Doc</title></head><body><p>Capacity 45 MW.</p></body></html>'
-    monkeypatch.setattr(sources, '_fetch_bytes', lambda url: (page, 'text/html; charset=utf-8', 'utf-8'))
+    monkeypatch.setattr(sources, '_fetch_bytes', lambda url,**_: (page, 'text/html; charset=utf-8', 'utf-8'))
 
     class ScoutRuntime:
         cancelled = threading.Event()
