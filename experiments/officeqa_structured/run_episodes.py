@@ -1520,8 +1520,6 @@ def command_run(args: argparse.Namespace) -> int:
                 raise RealExecutionGateError("strict-v2 前置门未通过：" + "；".join(strict_errors[:6]))
         # The official condition: native web on, raw PDF corpus, no metering.
         web_entry = "native"
-        selection = dict(selection)
-        selection[prepare_dataset.DATASET] = STRICT_CORPUS_NAME
     cases = load_cases(data_root)
     selected = _select_cases(cases, limit=args.cases, case_keys=args.case_keys or [], pool=args.pool)
     # Corpus routing by question set (protocol §6.1): the dev pilot's v1
@@ -1529,6 +1527,9 @@ def command_run(args: argparse.Namespace) -> int:
     # frozen V2 corpus.  Fail closed here — before any episode starts — when
     # a selected dataset has no mapped corpus or its index is missing.
     selection = corpus_selection(config)
+    if strict:
+        selection = dict(selection)
+        selection[prepare_dataset.DATASET] = STRICT_CORPUS_NAME
     for case in selected:
         if case.dataset not in selection:
             raise RunnerError(f"no staged corpus configured for dataset {case.dataset!r} "
