@@ -8,7 +8,7 @@
  "baseline": {
   "product_version": "0.22.3",
   "baseline_commit": "66a2a1345a2cc9a4f91d93e6cfbb84bda3c1af2b",
-  "integration_commit": "391c1554bf6446684bc18911e13249f81aa4b5a4",
+  "integration_commit": "e0ce1ed8f0c381f70c93134c24dbf7fdc5250dbf",
   "integration_commit_note": "回填至覆盖门提交（旧值 8f145289 为 v1 接线前的过渡冻结）"
  },
  "scorer": {
