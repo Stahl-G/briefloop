@@ -38,7 +38,8 @@ class WorkspaceLock:
 def ensure_utf8():
     """Console scripts and python -m use the same UTF-8 mode on Windows."""
     if os.name == 'nt' and not sys.flags.utf8_mode:
-        raise SystemExit(subprocess.call([sys.executable, '-X', 'utf8', *sys.orig_argv[1:]],
+        # The re-executed process is this same command: it keeps the caller's stdin.
+        raise SystemExit(subprocess.call([sys.executable, '-X', 'utf8', *sys.orig_argv[1:]], stdin=None,
                                         env={**os.environ, 'PYTHONUTF8': '1'}))
 
 

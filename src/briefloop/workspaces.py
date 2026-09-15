@@ -185,7 +185,7 @@ def open_workspace(store, path, create=False):
     command = entry_command('start', '--workspace', root, '--port', '0', '--paused')
     detail = ''
     try:
-        launched = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', timeout=50)
+        launched = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding='utf-8', timeout=50)
         detail = (launched.stderr or launched.stdout or '')[-600:]
     except subprocess.TimeoutExpired:
         # The detached child may still become ready; do not kill that service.
