@@ -107,3 +107,23 @@ def test_upload_limits_are_disclosed_and_enforced_before_source_creation(tmp_pat
         status,error=request('',length=module.MAX_REQUEST_BYTES)
         assert status==413 and error['code']=='request_too_large'
     finally:server.shutdown();thread.join();module._close_service(server)
+
+
+def test_runtime_status_reports_the_selected_review_job(tmp_path):
+    from briefloop.server import _close_service
+    class Process:
+        pid=4242
+        def poll(self):return None
+    class Runtime:
+        process=Process()
+    server=make_server(tmp_path/'workspace',port=0,paused=True)
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    try:
+        server.worker.current='learning-job'
+        server.worker._review_jobs['review-B']=(None,Runtime(),'run-B')
+        conn=http.client.HTTPConnection('127.0.0.1',server.server_port)
+        conn.request('GET','/api/runtime?job_id=review-B');status=json.loads(conn.getresponse().read());conn.close()
+        assert status['job_id']=='review-B' and status['pid']==4242
+    finally:
+        server.worker.current=None;server.worker._review_jobs.clear()
+        server.shutdown();thread.join();_close_service(server)
