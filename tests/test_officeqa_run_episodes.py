@@ -923,3 +923,16 @@ def test_episode_token_usage_from_opencode_db(tmp_path, monkeypatch):
     assert abs(usage["cost"] - 0.75) < 1e-9 and usage["usage_complete"] is True
     monkeypatch.setattr(re_mod, "OPENCODE_DB", tmp_path / "absent.db")
     assert re_mod.episode_token_usage(ws) is None
+
+
+def test_episode_resource_sampler_parses_ps(tmp_path, monkeypatch):
+    """CPU 采样器：只统计命令行含 episode 目录的进程，TIME 解析正确，负载入样。"""
+    ep = tmp_path / "ep"; ep.mkdir()
+    sampler = re_mod.EpisodeResourceSampler(ep)
+    fake = (" 0:42.50 python3 /x/other/thing\n"
+            " 1:05.25 opencode run --dir " + str(ep) + "/workspace\n"
+            " 0:10.00 bash " + str(ep) + "/workspace/do.sh\n")
+    monkeypatch.setattr(re_mod.subprocess, "run",
+                        lambda *a, **k: type("R", (), {"stdout": fake})())
+    count, cpu = sampler._ps()
+    assert count == 2 and abs(cpu - 75.25) < 0.01

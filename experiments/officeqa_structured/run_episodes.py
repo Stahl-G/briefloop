@@ -309,6 +309,73 @@ def _corpus_identity(data_root: Path, corpus_name: str) -> dict[str, Any]:
             "documents": manifest.get("documents")}
 
 
+class EpisodeResourceSampler:
+    """Per-episode CPU/process/load sampling (Claude Science review S2, 2026-09-15).
+
+    mid30 ran without this, so its CPU attribution is unrecoverable; every later
+    episode records: process count and accumulated CPU seconds of processes whose
+    command line names the episode directory, plus the system load average.
+    Cheap (one ps every SAMPLE_SECONDS) and harness-side only.
+    """
+
+    SAMPLE_SECONDS = 20.0
+
+    def __init__(self, episode_dir: Path):
+        self.episode_dir = str(Path(episode_dir).resolve())
+        self.samples: list[dict[str, Any]] = []
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def _ps(self) -> tuple[int, float]:
+        try:
+            out = subprocess.run(["ps", "-axo", "time=,command="], capture_output=True,
+                                 text=True, timeout=10).stdout
+        except (OSError, subprocess.SubprocessError):
+            return 0, 0.0
+        count, cpu = 0, 0.0
+        for line in out.splitlines():
+            if self.episode_dir not in line:
+                continue
+            head, _, _ = line.strip().partition(" ")
+            if ":" in head:
+                try:
+                    minutes, seconds = head.split(":")
+                    cpu += int(minutes) * 60 + float(seconds)
+                except ValueError:
+                    pass
+            count += 1
+        return count, cpu
+
+    def _loop(self) -> None:
+        while not self._stop.wait(self.SAMPLE_SECONDS):
+            count, cpu = self._ps()
+            try:
+                load = os.getloadavg()[0]
+            except OSError:
+                load = None
+            self.samples.append({"at": _now(), "processes": count, "cpu_seconds": round(cpu, 1),
+                                 "load1": load})
+
+    def __enter__(self) -> "EpisodeResourceSampler":
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=2)
+
+    def summary(self) -> dict[str, Any]:
+        if not self.samples:
+            return {"samples": 0}
+        return {"samples": len(self.samples),
+                "peak_processes": max(s["processes"] for s in self.samples),
+                "cpu_seconds_final": self.samples[-1]["cpu_seconds"],
+                "load1_max": max((s["load1"] or 0) for s in self.samples),
+                "note": "harness-side sampling; cpu_seconds = sum of ps TIME of processes naming the episode dir"}
+
+
 OPENCODE_DB = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
 
 
@@ -953,6 +1020,7 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
     episode_dir.mkdir(parents=True)
     started = time.time()
     deadline = started + budget.wall_clock_seconds
+    res_sampler = EpisodeResourceSampler(episode_dir); res_sampler.__enter__()
     workspace = episode_dir / "workspace"
     workspace.mkdir()
     # The program acceptance endpoint (§8.3): created here, named in the frame,
@@ -995,9 +1063,11 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
         identifiers = {"transport": "stub-native", "host": None, "model": None}
     else:
         solver = OpencodeRunSolver(real, workspace, limiter)
+        import tempfile
+        scratch_dirs = (Path(tempfile.gettempdir()),)  # parity: A's agents need scratch too (review S2)
         solver._write_host_config(
             episode_dir, web=strict,
-            read_dirs=((Path(data_root) / STRICT_CORPUS_NAME / "documents" / "pdf",) if strict else ()))
+            read_dirs=scratch_dirs + ((Path(data_root) / STRICT_CORPUS_NAME / "documents" / "pdf",) if strict else ()))
         prompt = (workspace / "prompt.md").read_text(encoding="utf-8")
         try:
             turns.append(solver.turn(prompt, title=f"OfficeQA {case.uid} · A", deadline=deadline))
@@ -1026,6 +1096,7 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
         identifiers = {"transport": "opencode-run", "host": real.host_version,
                        "model": real.model, "variant": real.variant,
                        "binary": str(real.shim)}
+    res_sampler.__exit__(None, None, None)
     usage = episode_token_usage(workspace)
     record = _episode_record(case=case, arm="A", label=label, order_index=order_index,
                              episode_dir=episode_dir, started=started, deadline=deadline,
@@ -1033,7 +1104,8 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
                              identifiers=identifiers,
                              linkage={"turns": turns} if turns else None,
                              usage_complete=bool(usage and usage.get("usage_complete")),
-                             usage=usage, error=error, corpus=_corpus_identity(data_root, corpus_name))
+                             usage=usage, resources=res_sampler.summary(),
+                             error=error, corpus=_corpus_identity(data_root, corpus_name))
     return record
 
 
@@ -1209,6 +1281,7 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
     episode_dir.mkdir(parents=True)
     started = time.time()
     deadline = started + budget.wall_clock_seconds
+    res_sampler = EpisodeResourceSampler(episode_dir); res_sampler.__enter__()
     workspace = episode_dir / "workspace"
     store = Store(workspace)
     _episode_workspace_settings(store, budget, real=real)
@@ -1276,6 +1349,7 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
                        for job in jobs]
         identifiers = {"transport": "briefloop-interactive-runtime+opencode", "host": real.host_version,
                        "model": real.model, "variant": real.variant}
+    res_sampler.__exit__(None, None, None)
     usage = episode_token_usage(workspace)
     record = _episode_record(case=case, arm="B", label=label, order_index=order_index,
                              episode_dir=episode_dir, started=started, deadline=deadline,
@@ -1348,7 +1422,8 @@ def _episode_record(*, case: Case, arm: str, label: str, order_index: int, episo
                     linkage: dict[str, Any] | None, usage_complete: bool,
                     error: str | None = None,
                     corpus: dict[str, Any] | None = None,
-                    usage: dict[str, Any] | None = None) -> dict[str, Any]:
+                    usage: dict[str, Any] | None = None,
+                    resources: dict[str, Any] | None = None) -> dict[str, Any]:
     finished = time.time()
     chosen = box.chosen()
     corpus_budget_file = Path(episode_dir) / "corpus-budget.jsonl"
@@ -1380,6 +1455,7 @@ def _episode_record(*, case: Case, arm: str, label: str, order_index: int, episo
                                 if corpus_budget_file.is_file() else {}),
         "usage_complete": usage_complete,
                              **({"usage": usage} if usage else {}),
+                             **({"resources": resources} if resources else {}),
         "format_repairs_issued": box.repairs_used,
         "submissions": box.entries(),
         "chosen_submission": ({"seq": chosen["seq"], "sha256": chosen["sha256"],
