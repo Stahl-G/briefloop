@@ -71,7 +71,7 @@ def _run_with_owner_pipe(script, *args):
 
 def test_source_reads_and_runtime_probe_do_not_share_owner_pipe(tmp_path):
     script = r'''
-import io, json, subprocess, sys
+import io, json, socket, subprocess, sys
 from pypdf import PdfWriter
 from briefloop import host_bins, sources
 from briefloop.runtime_bridge import RuntimeBridge
@@ -97,6 +97,8 @@ def observe(call):
     return 'NOT_SPAWNED'
 
 results = {}
+# Deterministic public DNS: address checks before curl must pass without a network.
+socket.getaddrinfo = lambda host, port, *args, **kwargs: [(socket.AF_INET, socket.SOCK_STREAM, 6, '', ('93.184.215.14', port))]
 sources.find_host_bin = lambda name: name
 results['curl'] = observe(lambda: sources._fetch_bytes('https://example.invalid/'))
 pdf = io.BytesIO(); writer = PdfWriter(); writer.add_blank_page(72, 72); writer.write(pdf)
