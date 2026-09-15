@@ -3,9 +3,9 @@
 Run from the repo root:
     .venv/bin/python scripts/build_builtin_template.py
 
-The built-in set is a full 5-theme x 8-genre matrix (40 templates), mirroring
-the orthogonal "template defines structure, theme defines tokens" model:
-every genre can be rendered with every theme. Theme supplies the primary
+The built-in set contains 36 templates: seven genres with five themes each,
+plus one government layout with a fixed theme. The model separates
+"template defines structure, theme defines tokens". Theme supplies the primary
 color, heading font and body font/size; genre supplies structure (cover
 composition, chapter anchors, table borders, page-number format). Two
 documented exceptions keep conventions intact: the government red-head stays
@@ -416,6 +416,12 @@ def build_one(genre, theme):
     return {'stem': stem, 'label': f"{genre['label']}·{theme['label']}"}
 
 
+def builtin_variants():
+    """The non-writing build plan, also checked against the shipped catalog."""
+    return [(genre, theme) for genre in GENRES
+            for theme in ((THEMES[3],) if genre['stem'] == 'government-doc-zh' else THEMES)]
+
+
 def main():
     ASSETS.mkdir(parents=True, exist_ok=True)
     for stale in list(ASSETS.glob('*.docx')) + list(ASSETS.glob('*.spec.json')):
@@ -423,9 +429,9 @@ def main():
     # The government layout is theme-fixed by GB/T 9704 (red head, 仿宋 body,
     # black headings): across themes its bytes are identical, so it ships
     # only in its canonical theme instead of five dummy variants.
-    summary = [build_one(genre, theme) for genre in GENRES
-               for theme in ((THEMES[3],) if genre['stem'] == 'government-doc-zh' else THEMES)]
-    print(json.dumps({'templates': len(summary), 'matrix': '5 themes x 8 genres'}, ensure_ascii=False))
+    summary = [build_one(genre, theme) for genre, theme in builtin_variants()]
+    print(json.dumps({'templates': len(summary), 'genres': len(GENRES),
+                      'themes': len(THEMES), 'fixed_theme_genres': ['government-doc-zh']}, ensure_ascii=False))
 
 
 if __name__ == '__main__':
