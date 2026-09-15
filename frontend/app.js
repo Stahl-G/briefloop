@@ -1,5 +1,5 @@
 import {renderVersionDiff} from './version-diff.js';
-import {DOMSerializer} from 'prosemirror-model';
+import {DOMSerializer} from '@tiptap/pm/model';
 import {beginPanel,updatePanel} from './report-panels.js';
 import {taskProgressCard} from './task-progress.js';
 import {copyText} from './clipboard.js';
@@ -11,8 +11,8 @@ import {activityCenter} from './notifications.js';
 var activity=null;
 import {reviewPending,withoutSupersededRetries,factCheckHTML} from './review-status.js';
 import {Editor,Extension} from '@tiptap/core';
-import {Plugin,PluginKey} from 'prosemirror-state';
-import {Decoration,DecorationSet} from 'prosemirror-view';
+import {Plugin,PluginKey} from '@tiptap/pm/state';
+import {Decoration,DecorationSet} from '@tiptap/pm/view';
 import StarterKit from '@tiptap/starter-kit';
 import {TableKit} from '@tiptap/extension-table';
 import Image from '@tiptap/extension-image';
@@ -429,12 +429,43 @@ document.addEventListener('click',event=>{if(event.target.closest('button')?.id!
  if(!confirm('删除这份报告及全部稿件版本？报告将从列表移除，来源文件和已下载文件保留；内部核查与学习引用记录保留。'))return;
  await api('reports/delete',{version_id:version});current=null;dirty=false;await refresh();page('reports');notice('报告已删除');
 })});
+function exportFileName(title){return String(title??'').replace(/[\x00-\x1f<>:"/\\|?*]/g,'_').replace(/^[. ]+|[. ]+$/g,'').slice(0,120)||'报告'}
+// Print from a sandboxed frame instead of a new window: the desktop shell
+// denies window.open, and a frame needs no pop-up permission in browsers.
+// Its load event already waits for the inline images; img.decode() would not
+// settle here because browsers pause rendering in a hidden frame.
+function printHtml(html){
+ printHtml.frame?.remove();
+ const frame=document.createElement('iframe');printHtml.frame=frame;
+ frame.setAttribute('sandbox','allow-same-origin allow-modals');frame.setAttribute('aria-hidden','true');frame.tabIndex=-1;
+ frame.style.cssText='position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+ return new Promise((resolve,reject)=>{
+  frame.onload=()=>{
+   const view=frame.contentWindow;if(view?.location.href!=='about:srcdoc')return;
+   try{
+    view.addEventListener('afterprint',()=>{if(printHtml.frame===frame){frame.remove();printHtml.frame=null}},{once:true});
+    view.focus();view.print();resolve();
+   }catch(e){frame.remove();reject(e)}
+  };
+  frame.srcdoc=html;document.body.append(frame);
+ });
+}
+async function exportPdf(html,title){
+ const desktop=window.briefloopDesktop;
+ if(typeof desktop?.exportPdf!=='function'){await printHtml(html);return}
+ let result;
+ try{result=await desktop.exportPdf({html,title})}
+ catch(e){throw Error(String(e.message||e).replace(/^Error invoking remote method '[^']+': (Error: )?/,''))}
+ if(result?.status==='saved')notice('PDF 已保存：'+result.name);
+}
+if(typeof window.briefloopDesktop?.exportPdf==='function'&&$('download-pdf'))$('download-pdf').textContent='导出 PDF';
 document.addEventListener('click',async event=>{
  const id=event.target.closest('button')?.id;if(!['download-html','download-pdf'].includes(id))return;
  const kind=id==='download-html'?'html':'pdf';
- const preview=kind==='pdf'?window.open('','_blank'):null;
  try{
-  const version=await savedVersion(),brief=state.briefs.find(b=>b.id===version)||current;
+  // savedVersion() settles pending edits and returns the open draft's id, whose
+  // full body is `current`; the report list does not need to carry bodies.
+  const version=await savedVersion(),brief=current;
   let doc;
   if(brief.editor_document)doc=parse(brief.editor_document);
   else {const tmp=new Editor({extensions:[StarterKit,TableKit,ReportImage,TextStyle,Layout,Citation,Markdown],content:toEditor(brief.markdown),contentType:'markdown'});try{doc=tmp.getJSON()}finally{tmp.destroy()}}
@@ -451,6 +482,8 @@ document.addEventListener('click',async event=>{
     list.append(row);
    }body.append(list);
   }
+  // A saved HTML file opens outside the app: keep only web, mail and in-page links.
+  for(const a of body.querySelectorAll('a[href]'))if(!/^(https?:|mailto:|#)/i.test(a.getAttribute('href')))a.removeAttribute('href');
   for(const img of body.querySelectorAll('img')){
    const url=new URL(img.getAttribute('src'),location.href);
    if(url.protocol==='data:')continue;
@@ -460,12 +493,9 @@ document.addEventListener('click',async event=>{
   }
   const title=parse(brief.detail).title||'报告';
   const html='<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>'+esc(title)+'</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;color:#1E2320;line-height:1.7;margin:40px auto;padding:0 24px;max-width:900px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #DEDFD8;padding:8px}img{max-width:100%;height:auto}a{color:#006838}h1,h2,h3{break-after:avoid}tr,img{break-inside:avoid}@page{size:A4;margin:20mm}@media print{body{margin:0;padding:0;max-width:none}}</style><body>'+body.innerHTML+'</body></html>';
-  if(kind==='pdf'){
-   if(!preview)throw Error('请允许打开打印窗口后重试');
-   preview.document.open();preview.document.write(html);preview.document.close();
-   await Promise.all([...preview.document.images].map(img=>img.decode().catch(()=>{})));preview.focus();preview.print();
-  }else{const url=URL.createObjectURL(new Blob([html],{type:'text/html;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=title+'.html';document.body.append(a);a.click();a.remove();notice('HTML 已生成，正在下载');setTimeout(()=>URL.revokeObjectURL(url),60000)}
- }catch(e){preview?.close();notice('导出未完成：'+e.message,true)}
+  if(kind==='pdf')await exportPdf(html,title);
+  else{const url=URL.createObjectURL(new Blob([html],{type:'text/html;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=exportFileName(title)+'.html';document.body.append(a);a.click();a.remove();notice('HTML 已生成，正在下载');setTimeout(()=>URL.revokeObjectURL(url),60000)}
+ }catch(e){notice('导出未完成：'+e.message,true)}
 });
 
 async function renderReportIssues(){
