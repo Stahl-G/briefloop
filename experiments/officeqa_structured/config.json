@@ -8,8 +8,8 @@
   "baseline": {
     "product_version": "0.22.3",
     "baseline_commit": "66a2a1345a2cc9a4f91d93e6cfbb84bda3c1af2b",
-    "integration_commit": "c85f97eed609c2d69f6d8670cfc70d89e79332bc",
-    "integration_commit_note": "回填至提供方熔断修复提交（2026-09-15 夜事故：代理断连+静默记账烧毁 66 集后重冻结）"
+    "integration_commit": "92fc118e45e28c204d12938fbf2aa48e3ca72862",
+    "integration_commit_note": "回填至 Track A 基建提交（共享解析语料+预算看门狗+censored 记账；协议 v2.0）"
   },
   "scorer": {
     "repository": "databricks/officeqa",
