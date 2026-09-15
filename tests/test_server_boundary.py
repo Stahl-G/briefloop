@@ -70,7 +70,7 @@ def test_private_get_origin_boundary_preserves_navigation_and_native_clients(tmp
         # disclosing the handshake. Keep this contract uniform across downloads.
         private=['/api/session','/api/state','/api/task-progress?job=unused',original,'/api/source-image?id=unused','/api/figure?id=unused',
                  '/api/export-file?job=unused','/api/release-file?id=unused','/api/audit-file?job=unused',
-                 '/api/download?version=unused','/api/research-notes?version=unused']
+                 '/api/download?version=unused','/api/research-notes?version=unused','/api/brief?id=unused','/api/report-search?q=canary']
         for path in private:
             status,data=get(path,[('Origin','https://untrusted.example')])
             assert status==403 and json.loads(data)['code']=='cross_origin_read_denied'

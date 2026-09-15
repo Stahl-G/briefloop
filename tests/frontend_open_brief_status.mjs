@@ -44,3 +44,34 @@ test('opening another version immediately refreshes scored and unscored headers 
   assert.equal(JSON.stringify(state),signature);
  }
 });
+
+test('polled version summaries load their body once and a later choice wins',async()=>{
+ const summary={id:'old',run_id:'run',detail:'{}',hash:'h1',author:'agent'};
+ const other={id:'new',run_id:'run',detail:'{}',hash:'h2',author:'user',markdown:'Loaded new'};
+ const state={briefs:[other,summary],jobs:[],runs:[],assessments:[]};
+ const nodes=new Map();
+ const $=id=>{if(!nodes.has(id))nodes.set(id,{dataset:{},innerHTML:'',value:'',hidden:true,textContent:'',querySelectorAll:()=>[]});return nodes.get(id)};
+ const configurable={configure:()=>({})};
+ const requests=[];let resolveBody;
+ const context=vm.createContext({state,current:null,dirty:false,saving:false,followUpdates:false,editor:null,highlightQuotes:[],pendingRun:null,
+  $,parse:JSON.parse,notice:()=>{},updateDownloads:()=>{},syncPendingReport:()=>{},renderWordExports:()=>{},renderReportStatus:()=>{},renderAssistantSummary:()=>{},
+  Editor:class{destroy(){}},StarterKit:configurable,TableKit:{},ReportImage:configurable,TextStyle:{},Layout:{},Citation:{},ReportTrailingParagraph:{},Markdown:{},MustFixHighlight:{},
+  editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},
+  api:route=>{requests.push(route);return new Promise(resolve=>{resolveBody=resolve})},encodeURIComponent});
+ vm.runInContext(oneLine('openBrief'),context);
+ assert.equal(vm.runInContext("openBrief(state.briefs[1])",context),true);
+ vm.runInContext("openBrief(state.briefs[1])",context);
+ assert.deepEqual(requests,['brief?id=old'],'repeated polling opens share one request');
+ assert.equal(context.current,null);
+ resolveBody({...summary,markdown:'Loaded old',length_stats:{count:2}});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(vm.runInContext('current.markdown',context),'Loaded old');
+ assert.equal($('version-select').value,'old');
+ vm.runInContext("openBrief(state.briefs[1])",context);
+ assert.equal(requests.length,1,'an unchanged hash reuses the loaded body');
+ // A newer choice made while a body is loading must not be replaced by it.
+ vm.runInContext("state.briefs[1]={...state.briefs[1],hash:'h3'};openBrief(state.briefs[1]);openBrief(state.briefs[0])",context);
+ resolveBody({...summary,hash:'h3',markdown:'Late old'});
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(vm.runInContext('current.id',context),'new');
+});

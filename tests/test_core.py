@@ -98,3 +98,20 @@ class CoreBehavior(unittest.TestCase):
 
 
 if __name__=='__main__':unittest.main()
+
+
+def test_polled_state_lists_versions_without_bodies(tmp_path):
+    store=Store(tmp_path)
+    source=store.add_source('synthetic','材料')
+    run=store.create_run({'title':'长期周报','objective':'核对','target_words':2,'max_words':3},[source['id']])
+    original=store.publish(run['id'],{'title':'长期周报','markdown':'历史正文包含独特词 AlphaCanary。'})
+    edited=store.revise(original['id'],'新的正文')
+    listed={row['id']:row for row in store.snapshot()['briefs']}
+    assert set(listed)=={original['id'],edited['id']}
+    for row in listed.values():
+        assert not {'markdown','editor_document','length_stats'}&set(row) and row['hash'] and row['detail']
+    assert listed[original['id']]['excerpt'].startswith('历史正文')
+    view=store.brief_view(original['id'])
+    assert view['markdown']==original['markdown'] and view['length_stats']['over_limit'] is True
+    # Full-text report search still reaches historical bodies, without sending them.
+    assert store.search_briefs('alphacanary')==[run['id']] and store.search_briefs('absent')==[]

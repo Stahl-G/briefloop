@@ -592,6 +592,22 @@ class Store:
         self.set_meta("active_skill", skill_id)
         self.event(None, "skill_binding", {"skill_id": skill_id})
 
+    def brief_view(self, version_id):
+        """One version with its body and length against that run's own requirements."""
+        from .length import length_stats
+        brief=self.one('briefs',version_id)
+        # Historical requirements are not retroactively assigned a new budget.
+        req=json.loads(self.one('runs',brief['run_id'])['requirements'])
+        brief['length_stats']=length_stats(brief['markdown'],target_words=req.get('target_words'),max_words=req.get('max_words'))
+        return brief
+
+    def search_briefs(self, text):
+        """Runs whose saved versions contain text; bodies stay out of polled state."""
+        text=str(text or '').strip().lower()
+        if not text or len(text)>200:return []
+        return [row['run_id'] for row in self.rows("SELECT DISTINCT b.run_id FROM briefs b JOIN runs r ON r.id=b.run_id "
+                                                   "WHERE r.mode='normal' AND instr(lower(b.markdown),?)>0",(text,))]
+
     def snapshot(self):
         clock = datetime.now().astimezone()
         from .notifications import snapshot as notification_snapshot
@@ -600,7 +616,6 @@ class Store:
         for j in jobs:
             events=self.rows("SELECT data FROM events WHERE job_id=? AND kind='learning_progress' ORDER BY seq DESC LIMIT 1",(j['id'],))
             j['progress']=json.loads(events[0]['data']) if events else None
-        from .length import length_stats
         runs=self.rows("SELECT * FROM runs ORDER BY created DESC")
         acquired={}
         for row in self.rows("SELECT run_id,source_id FROM run_sources ORDER BY rowid"):
@@ -609,12 +624,9 @@ class Store:
             ids=list(dict.fromkeys(json.loads(run['source_ids'])+acquired.get(run['id'],[])))
             run['all_source_ids']=ids
             run['source_count']=len(ids)
-        requirements={r['id']:json.loads(r['requirements']) for r in runs}
-        briefs=self.rows("SELECT b.* FROM briefs b JOIN runs r ON r.id=b.run_id WHERE r.mode='normal' ORDER BY b.rowid DESC")
-        for brief in briefs:
-            req=requirements[brief['run_id']]
-            # Historical requirements are not retroactively assigned a new budget.
-            brief['length_stats']=length_stats(brief['markdown'],target_words=req.get('target_words'),max_words=req.get('max_words'))
+        # Polled state lists versions only; bodies and length come from brief_view on demand.
+        briefs=self.rows("SELECT b.id,b.run_id,b.parent_id,b.author,b.hash,b.detail,b.created,substr(b.markdown,1,400) AS excerpt "
+                         "FROM briefs b JOIN runs r ON r.id=b.run_id WHERE r.mode='normal' ORDER BY b.rowid DESC")
         from .search_policy import annotate_sources
         from .schedules import listing as schedule_listing
         return {"schedules":schedule_listing(self),"notifications":notification_snapshot(self),"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "requirements": self.meta("requirements"), "settings": self.settings(),

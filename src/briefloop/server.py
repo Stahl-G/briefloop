@@ -206,6 +206,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
                                 source['media_type']=meta.get('media_type');source['needs_visual']=bool(meta.get('needs_visual',False))
                             except (ValueError,OSError):pass
                     self.send(200,snapshot)
+                elif u.path=='/api/brief':
+                    self.send(200,store.brief_view(q['id'][0]))
+                elif u.path=='/api/report-search':
+                    self.send(200,{'run_ids':store.search_briefs(q.get('q',[''])[0])})
                 elif u.path=='/api/software-version':
                     self.send(200,software_identity)
                 elif u.path=='/api/workspaces':
@@ -581,7 +585,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                         result=store.enqueue('generate',payload)
                 elif path=='/api/save':
                     value=SaveRevision.model_validate(body)
-                    result=store.revise(value.base_version,value.markdown,value.editor_document,allow_markdown_conversion=value.allow_markdown_conversion)
+                    result=store.brief_view(store.revise(value.base_version,value.markdown,value.editor_document,allow_markdown_conversion=value.allow_markdown_conversion)['id'])
                 elif path=='/api/comment':
                     value=Comment.model_validate(body);result=store.comment(value.version_id,value.text,learning_intent=value.learning_intent)
                 elif path=='/api/settings':
