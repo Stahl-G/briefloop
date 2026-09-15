@@ -1036,6 +1036,48 @@ class OpencodeRunSolver:
         return record
 
     @staticmethod
+    def _db_locked(record: dict[str, Any]) -> bool:
+        """Fast-fail signature of SQLite contention on opencode's shared DB.
+
+        The process dies within seconds having spent nothing; the stderr
+        holds "database is locked".  Pure local contention (20-way
+        concurrency on one opencode.db), not a provider fault.
+        """
+        if record.get("returncode") == 0:
+            return False
+        stderr_path = record.get("stderr")
+        if not stderr_path:
+            return False
+        try:
+            tail = Path(stderr_path).read_text(encoding="utf-8", errors="replace")[-2000:]
+        except OSError:
+            return False
+        return "database is locked" in tail
+
+    def turn_with_db_lock_retry(self, prompt: str, *, title: str, deadline: float,
+                                caps: dict[str, int | None] | None = None,
+                                tag: str = "main", max_retries: int = 3) -> list[dict[str, Any]]:
+        """turn() with exponential backoff on shared-DB lock fast-fails.
+
+        Retries ONLY the "database is locked, zero work spent" signature —
+        every other failure returns as-is.  Delays 15/45/90s; retries stop
+        early once the deadline is within a minute.
+        """
+        records: list[dict[str, Any]] = []
+        delays = (15, 45, 90)
+        for attempt in range(max_retries + 1):
+            suffix = tag if attempt == 0 else f"{tag}-retry{attempt}"
+            record = self.turn(prompt, title=title, deadline=deadline, caps=caps, tag=suffix)
+            records.append(record)
+            if not self._db_locked(record):
+                return records
+            if attempt < max_retries and time.time() < deadline - 60:
+                time.sleep(delays[min(attempt, len(delays) - 1)])
+            else:
+                return records
+        return records
+
+    @staticmethod
     def _kill_tree(process: subprocess.Popen) -> None:
         try:
             os.killpg(os.getpgid(process.pid), signal.SIGTERM)
@@ -1218,8 +1260,9 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
                      + ((track_a_json_dir,) if track_a else ()))
         prompt = (workspace / "prompt.md").read_text(encoding="utf-8")
         try:
-            turns.append(solver.turn(prompt, title=f"OfficeQA {case.uid} · A", deadline=deadline,
-                                     caps=budget.caps() if track_a else None))
+            turns.extend(solver.turn_with_db_lock_retry(
+                prompt, title=f"OfficeQA {case.uid} · A", deadline=deadline,
+                caps=budget.caps() if track_a else None))
             # Format-repair loop (§4) over the real transport: gold-blind feedback
             # is delivered as a continuation turn of the SAME session; the agent
             # (never this program) authors the resubmission.  Past the deadline

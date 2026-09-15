@@ -214,11 +214,11 @@
   "integration_commit_note": "回填至提供方熔断修复提交（2026-09-15 夜事故：代理断连+静默记账烧毁 66 集后重冻结）",
   "track_a": {
     "corpus": "corpus-v2-parsed",
-    "episode_wall_clock_seconds": 1800,
-    "episode_workers": 20,
-    "input_tokens": 1600000,
-    "output_reasoning_tokens": 200000,
-    "tool_calls": 250,
+    "episode_wall_clock_seconds": 2400,
+    "episode_workers": 12,
+    "input_tokens": 4000000,
+    "output_reasoning_tokens": 300000,
+    "tool_calls": 400,
     "web": false,
     "test_case_keys": [
       "0149cdbe9d9bb9197ade59d4be8388522fc9537298037459557998132a31161a",
