@@ -9,6 +9,7 @@ import re
 import tempfile
 import threading
 import warnings
+import zipfile
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pypdf import PdfReader
@@ -28,6 +29,22 @@ def _source_id(sid):
     if not isinstance(sid, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', sid):
         raise ValueError('无效来源 ID')
     return sid
+
+
+MAX_OFFICE_EXPANDED_BYTES = 150_000_000
+
+
+def office_archive(data):
+    """Open DOCX/XLSX bytes only when their declared expansion is bounded.
+
+    zipfile stops each member at its declared size and a longer stream fails
+    its CRC, so the directory sizes bound what reading can decompress.
+    """
+    archive = zipfile.ZipFile(BytesIO(data))
+    if sum(item.file_size for item in archive.infolist()) > MAX_OFFICE_EXPANDED_BYTES:
+        archive.close()
+        raise ValueError('Office 文件展开后过大，请删减内容或拆分后重试')
+    return archive
 
 
 def safe_source_path(store, value, *, must_exist=True):

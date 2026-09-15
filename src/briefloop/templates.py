@@ -27,6 +27,8 @@ def _path(store, row, name):
 
 def import_template(store,name,data,parent_id=None,*,prepare_job=True,origin='upload'):
     if Path(name).suffix.lower()!='.docx':raise ValueError('主模板请上传 DOCX')
+    from .media import office_archive
+    office_archive(data).close()  # python-docx loads every part into memory
     doc=Document(BytesIO(data))
     if len(doc.sections)!=1:raise ValueError('首版模板支持单节报告；请将多节版式另存为单节主模板，原文件不变')
     tid=uid('tpl');parent=template(store,parent_id) if parent_id else None

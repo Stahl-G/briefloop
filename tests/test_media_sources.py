@@ -107,3 +107,23 @@ def test_source_metadata_and_cache_cannot_escape_or_silently_drift(tmp_path):
     with pytest.raises(ValueError):media.source_attachment(store,sid)
     record.unlink();record.symlink_to(outside)
     with pytest.raises(ValueError):media.source_attachment(store,sid)
+
+
+def test_office_expansion_limit_covers_docx_sources_and_templates(tmp_path,monkeypatch):
+    import zipfile
+    from docx import Document
+    from briefloop.templates import import_template
+    store=Store(tmp_path)
+    doc=Document();doc.add_paragraph('正文'*4000)
+    small=io.BytesIO();doc.save(small)
+    with zipfile.ZipFile(small) as archive:expanded=sum(item.file_size for item in archive.infolist())
+    monkeypatch.setattr(media,'MAX_OFFICE_EXPANDED_BYTES',expanded-1)
+    uploaded=sources.upload(store,'bomb.docx',small.getvalue())
+    assert uploaded['status']=='failed' and '展开后过大' in uploaded['error']
+    monkeypatch.setattr(sources,'_fetch_bytes',lambda url,**_:(small.getvalue(),'application/vnd.openxmlformats-officedocument.wordprocessingml.document','utf-8'))
+    fetched=sources.fetch(store,'https://example.test/bomb.docx')
+    assert fetched['status']=='failed' and '展开后过大' in fetched['error']
+    with pytest.raises(ValueError,match='展开后过大'):import_template(store,'bomb.docx',small.getvalue(),prepare_job=False)
+    assert not (store.root/'templates').exists() or not any((store.root/'templates').iterdir())
+    monkeypatch.setattr(media,'MAX_OFFICE_EXPANDED_BYTES',expanded)
+    assert sources.upload(store,'ok.docx',small.getvalue())['status']=='ready'
