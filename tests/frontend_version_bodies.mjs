@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 
-const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
+// Windows checkouts may use CRLF; handler extraction below matches LF boundaries.
+const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
 const start=source.indexOf("$('version-diff').onclick=");
 const handler=source.slice(start,source.indexOf('\n});\n',start)+4);
 
