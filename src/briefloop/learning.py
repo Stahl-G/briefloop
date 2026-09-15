@@ -16,10 +16,15 @@ def enqueue_feedback(store, *, automatic=False):
         if c.execute("SELECT id FROM jobs WHERE kind='learn' AND status IN ('queued','running')").fetchone():
             return {'status':'pending','message':'已有学习任务，新反馈会进入下一批'}
         latest=datetime.fromisoformat(rows[-1]['created'])
+        settings=store.settings()
+        from .learning_budget import automatic_allowed, plan
+        # Worker idleness or a reopened page never stands in for the user's confirmation.
+        if automatic and not automatic_allowed(settings):
+            return {'status':'not_authorized','message':'自动学习未获确认，反馈已保存'}
         if automatic and (datetime.now(timezone.utc)-latest).total_seconds()<30:
             return {'status':'collecting'}
-        settings=store.settings();jid=uid('job')
-        payload={'feedback_ids':[r['id'] for r in rows],'k':settings['k'],
+        jid=uid('job')
+        payload={'feedback_ids':[r['id'] for r in rows],'k':settings['k'],'budget':plan(settings),
                  'targets':settings['skill_targets'],'skill_id':store.meta('active_skill'),'runtime':store.runtime_config(),
                  'role_models':store.role_model_config(),'agent_backend':settings.get('agent_backend','codex')}
         c.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',(jid,'learn','queued',dump(payload),None,None,now(),now()))
@@ -182,6 +187,19 @@ def _eligible_cases(store,ids):
     return cases,skipped
 
 
+class LearningBudgetExhausted(RuntimeError):
+    code='learning_budget_exhausted'
+
+
+def _budget(payload):
+    """Budget frozen at enqueue; older batches derive the same bound from their k."""
+    from .learning_budget import MAX_CASES, TRIALS_PER_CASE, max_rounds
+    frozen=payload.get('budget') or {}
+    rounds=frozen.get('rounds_with_explicit_requirement',max_rounds(payload.get('k',1)))
+    return {'rounds_with_explicit_requirement':rounds,
+            'max_trial_generations':frozen.get('max_trial_generations',MAX_CASES*TRIALS_PER_CASE*rounds)}
+
+
 def _generate_trial(store,job,case,skill,folder,tag):
     from .review_learning import source_snapshot
     selected=case.get('learning_source_ids',store.source_ids(case['id']))
@@ -199,6 +217,11 @@ def _generate_trial(store,job,case,skill,folder,tag):
         if info.get('conditions')!=conditions or info.get('skill')!=skill:
             raise ValueError('学习比较条件或技能已变化，不能复用旧阶段')
     else:
+        # Hard cap from the budget frozen when the batch was queued: a resume or a
+        # repeated round cannot start more trial generations than were confirmed.
+        started=sum(1 for _ in (store.root/'jobs'/job['id']).rglob('trial.json')) if job.get('id') else 0
+        if started>=_budget(parent)['max_trial_generations']:
+            raise LearningBudgetExhausted(f'学习验证已达到确认的试写上限（{started} 次），未启用候选；反馈与已完成的试写保留')
         run=store._create_learning_run(case['learning_origin_id'],selected,skill_id=skill['id'] if skill else None)
         parent=json.loads(job['payload'])
         trial=store.enqueue('generate',{'run_id':run['id'],'skill_override':skill,'single_evaluation':False,'runtime':parent.get('runtime',store.runtime_config()),'role_models':parent.get('role_models',{}),'agent_backend':parent.get('agent_backend',store.settings().get('agent_backend','codex'))})
@@ -347,6 +370,8 @@ def learn(store,runtime,job):
     # One initial proposal plus one repair opportunity for explicit requirements.
     requirement_sources=[x['source'] for x in ctx['feedback'] if x.get('learning_intent')=='explicit_requirement' and x.get('origin')=='human']
     rounds=max(payload['k'],2) if requirement_sources else payload['k']
+    if rounds>_budget(payload)['rounds_with_explicit_requirement']:
+        raise LearningBudgetExhausted('学习轮数超过确认的上限，未开始；请重新确认后发起')
     feedback_loop.begin(study,feedback=feedback,skill=skill_path,rounds=rounds,previous=previous,**({'requirement_sources':requirement_sources} if requirement_sources else {}))
     # Only this worker writes the workspace's Wiki; one study at a time.
     store.set_meta('last_study',str(study))

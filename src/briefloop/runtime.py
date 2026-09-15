@@ -680,7 +680,8 @@ class Worker:
         # long learning or revision turn never keeps free report slots idle.
         for jobs in self._queued(0,"SELECT * FROM jobs WHERE status='queued' AND kind NOT IN ('review','fact_check') AND kind NOT IN (?,?,?) ORDER BY rowid",FILE_JOB_KINDS):
             if not jobs:
-                if self.store.settings()['auto_learn'] and not self.opened_paused:
+                from .learning_budget import automatic_allowed
+                if automatic_allowed(self.store.settings()) and not self.opened_paused:
                     try:
                         from .learning import enqueue_feedback
                         enqueue_feedback(self.store,automatic=True)

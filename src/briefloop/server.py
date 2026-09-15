@@ -618,7 +618,8 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/comment':
                     value=Comment.model_validate(body);result=store.comment(value.version_id,value.text,learning_intent=value.learning_intent)
                 elif path=='/api/settings':
-                    merged={**store.settings(),**body}
+                    from .learning_budget import apply_settings_change
+                    merged=apply_settings_change(store.settings(),body)
                     # Saving a model is the explicit choice the pending flag waits for.
                     if 'model_selection_required' not in body and str(body.get('model') or '').strip():merged['model_selection_required']=False
                     settings=Settings.model_validate(merged)
@@ -648,6 +649,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     result=store.enqueue('assess',payload)
                 elif path=='/api/learn':
                     from .learning import enqueue_feedback
+                    if body.get('confirmed') is not True:
+                        from .learning_budget import LearningAuthorizationRequired
+                        raise LearningAuthorizationRequired('学习验证会调用模型；请先查看并确认本次调用上限')
                     result=enqueue_feedback(store)
                 elif path=='/api/stop':worker.stop_job(body['job_id']);result={'ok':True}
                 elif path=='/api/resume':result=worker.retry_with_current_model(body['job_id']) if body.get('use_current_model') is True else worker.resume(body['job_id'])
