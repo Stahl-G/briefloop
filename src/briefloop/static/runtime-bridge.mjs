@@ -907,7 +907,7 @@ function parseCodexDebugModels(stdout) {
   for (const raw of models) {
     if (!raw || typeof raw !== "object") continue;
     const entry = raw;
-    if (entry.visibility === "hidden") continue;
+    if (entry.visibility === "hidden" || entry.visibility === "hide") continue;
     const id = typeof entry.slug === "string" ? entry.slug.trim() : typeof entry.id === "string" ? entry.id.trim() : "";
     if (!id || seen.has(id)) continue;
     seen.add(id);

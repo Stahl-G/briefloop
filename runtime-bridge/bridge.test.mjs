@@ -156,3 +156,15 @@ test('Antigravity partial timeout warning cannot count as successful completion'
  b.send(1,'start',{...f,runtime_id:'antigravity',execution_id:'partial',prompt:'x',permission:'runtime-native',allow_web:null});
  assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'failed');
 });
+
+test('Codex catalog keeps new host models and skips both hidden spellings',async t=>{
+ const b=bridge(t),f=fixture(t,`console.log(JSON.stringify({models:[
+  {slug:'new-host-model',display_name:'New host model',visibility:'list'},
+  {slug:'internal-reserve',visibility:'hide'},
+  {slug:'internal-review',visibility:'hidden'},
+  {slug:'legacy-visible'}]}));`);
+ b.send(1,'list_models',{runtime_id:'codex',...f});
+ const {result}=await b.wait(x=>x.id===1);
+ assert.equal(result.source,'host');
+ assert.deepEqual(result.models.map(x=>x.id),['default','new-host-model','legacy-visible']);
+});

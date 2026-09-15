@@ -18,7 +18,8 @@ Model directory reuse:
 - runtime-models/models.ts ← runtimes/models.ts (unchanged; model helpers only).
 - runtime-models/mmd-routes.ts ← runtimes/mmd-routes.ts (unchanged).
 - runtime-models/codex-models.ts ← parser functions/constants preceding
-  GPT_5_5_SERVICE_TIER_OPTIONS in runtimes/defs/codex.ts; imports narrowed.
+  GPT_5_5_SERVICE_TIER_OPTIONS in runtimes/defs/codex.ts; imports narrowed,
+  and entries with Codex catalog visibility `hide` are skipped like `hidden`.
 - runtime-models/opencode-models.ts ← parser functions/constants before
   opencodeAgentDef in runtimes/defs/opencode.ts; imports narrowed.
 - runtime-models/fallbacks.json ← id/label entries from the five upstream
