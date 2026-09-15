@@ -88,7 +88,8 @@ def extract(name, data, *, with_extractor=False):
     elif ext == '.docx':
         extractor='DOCX word/document.xml paragraph text'
         try:
-            with zipfile.ZipFile(BytesIO(data)) as z:
+            from .media import office_archive
+            with office_archive(data) as z:
                 doc=ET.fromstring(z.read('word/document.xml'))
                 text='\n'.join(''.join(n.itertext()) for n in doc.iter() if n.tag.endswith('}p'))
         except (KeyError,zipfile.BadZipFile,ET.ParseError) as exc:

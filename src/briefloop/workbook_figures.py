@@ -1,14 +1,12 @@
 """Read workbook cells/drawing inventory and extract embedded pixels without editing it."""
-from io import BytesIO
 from pathlib import PurePosixPath,Path
-import posixpath,zipfile,json,hashlib
+import posixpath,json,hashlib
 import xml.etree.ElementTree as ET
 NS={'s':'http://schemas.openxmlformats.org/spreadsheetml/2006/main','r':'http://schemas.openxmlformats.org/officeDocument/2006/relationships','x':'http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing','a':'http://schemas.openxmlformats.org/drawingml/2006/main','c':'http://schemas.openxmlformats.org/drawingml/2006/chart'}
 
 def _archive(data):
-    z=zipfile.ZipFile(BytesIO(data))
-    if sum(i.file_size for i in z.infolist())>150_000_000:raise ValueError('工作簿展开后过大')
-    return z
+    from .media import office_archive
+    return office_archive(data)
 
 def _rels(z,part):
     rel=posixpath.join(posixpath.dirname(part),'_rels',posixpath.basename(part)+'.rels')

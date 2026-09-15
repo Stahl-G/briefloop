@@ -107,3 +107,48 @@ def test_source_metadata_and_cache_cannot_escape_or_silently_drift(tmp_path):
     with pytest.raises(ValueError):media.source_attachment(store,sid)
     record.unlink();record.symlink_to(outside)
     with pytest.raises(ValueError):media.source_attachment(store,sid)
+
+
+def test_office_expansion_limit_covers_docx_sources_and_templates(tmp_path,monkeypatch):
+    import zipfile
+    from docx import Document
+    from briefloop.templates import import_template
+    store=Store(tmp_path)
+    doc=Document();doc.add_paragraph('正文'*4000)
+    small=io.BytesIO();doc.save(small)
+    with zipfile.ZipFile(small) as archive:expanded=sum(item.file_size for item in archive.infolist())
+    monkeypatch.setattr(media,'MAX_OFFICE_EXPANDED_BYTES',expanded-1)
+    uploaded=sources.upload(store,'bomb.docx',small.getvalue())
+    assert uploaded['status']=='failed' and '展开后过大' in uploaded['error']
+    monkeypatch.setattr(sources,'_fetch_bytes',lambda url,**_:(small.getvalue(),'application/vnd.openxmlformats-officedocument.wordprocessingml.document','utf-8'))
+    fetched=sources.fetch(store,'https://example.test/bomb.docx')
+    assert fetched['status']=='failed' and '展开后过大' in fetched['error']
+    with pytest.raises(ValueError,match='展开后过大'):import_template(store,'bomb.docx',small.getvalue(),prepare_job=False)
+    assert not (store.root/'templates').exists() or not any((store.root/'templates').iterdir())
+    monkeypatch.setattr(media,'MAX_OFFICE_EXPANDED_BYTES',expanded)
+    assert sources.upload(store,'ok.docx',small.getvalue())['status']=='ready'
+
+
+def test_office_archive_measures_real_expansion_not_declared_sizes(tmp_path,monkeypatch):
+    import struct,tracemalloc,zipfile,zlib
+    from briefloop.templates import import_template
+    store=Store(tmp_path)
+    payload=b'<w:document/>'+b'A'*(8*1024*1024)
+    buffer=io.BytesIO()
+    with zipfile.ZipFile(buffer,'w',zipfile.ZIP_DEFLATED) as archive:archive.writestr('word/document.xml',payload)
+    forged=bytearray(buffer.getvalue())
+    # Declare 37 bytes with a CRC that matches them; zipfile.read() would still inflate 8 MiB.
+    for signature,crc_at,size_at in ((b'PK\x03\x04',14,22),(b'PK\x01\x02',16,24)):
+        at=forged.find(signature);struct.pack_into('<I',forged,at+crc_at,zlib.crc32(payload[:37]))
+        struct.pack_into('<I',forged,at+size_at,37)
+    with zipfile.ZipFile(io.BytesIO(bytes(forged))) as archive:
+        assert sum(item.file_size for item in archive.infolist())==37
+    monkeypatch.setattr(media,'MAX_OFFICE_EXPANDED_BYTES',1024*1024)
+    tracemalloc.start()
+    uploaded=sources.upload(store,'forged.docx',bytes(forged))
+    peak=tracemalloc.get_traced_memory()[1];tracemalloc.stop()
+    assert uploaded['status']=='failed' and '展开后过大' in uploaded['error']
+    assert peak<6*1024*1024  # rejected in bounded steps, never inflated whole
+    monkeypatch.setattr(media,'MAX_OFFICE_EXPANDED_BYTES',150_000_000)
+    assert '声明大小与实际内容不符' in sources.upload(store,'forged.docx',bytes(forged))['error']
+    with pytest.raises(ValueError,match='声明大小与实际内容不符'):import_template(store,'forged.docx',bytes(forged),prepare_job=False)
