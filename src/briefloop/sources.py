@@ -63,13 +63,13 @@ def extract(name, data, *, with_extractor=False):
     ext=Path(name).suffix.lower()
     if ext == '.pdf':
         from .media import pdf_metadata,PDF_NOTICE
-        pdf_metadata(data)
+        pages=pdf_metadata(data)['pages']
         extractor='pdftotext -layout'
         pdftotext=find_host_bin('pdftotext')
         if pdftotext:
             with tempfile.TemporaryDirectory(prefix='briefloop-read-') as tmp:
                 p=Path(tmp)/'source.pdf';p.write_bytes(data)
-                proc=subprocess.run([pdftotext,'-layout',str(p),'-'],stdin=subprocess.DEVNULL,capture_output=True,timeout=90)
+                proc=subprocess.run([pdftotext,'-layout',str(p),'-'],stdin=subprocess.DEVNULL,capture_output=True,timeout=min(600,max(90,pages)))
                 text=proc.stdout.decode('utf-8',errors='replace') if proc.returncode==0 else ''
         else:text=''
         if not text.strip():

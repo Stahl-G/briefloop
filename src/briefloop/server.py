@@ -21,6 +21,8 @@ from . import sources
 
 MAX_REQUEST_BYTES=25*1024*1024
 MAX_UPLOAD_BYTES=18*1024*1024
+# Raw source uploads skip Base64/JSON copies, so PDFs (annual reports, scans) may be larger.
+MAX_PDF_UPLOAD_BYTES=100*1024*1024
 
 def _upload_data(body):
     data=base64.b64decode(body['data'],validate=True)
@@ -222,7 +224,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/external/capabilities':
                     from .external_requests import capabilities
                     self.send(200,capabilities())
-                elif u.path=='/api/session':self.send(200,{'token':token,'upload_limits':{'max_file_bytes':MAX_UPLOAD_BYTES,'max_request_bytes':MAX_REQUEST_BYTES}})
+                elif u.path=='/api/session':self.send(200,{'token':token,'upload_limits':{'max_file_bytes':MAX_UPLOAD_BYTES,'max_request_bytes':MAX_REQUEST_BYTES,'max_pdf_bytes':MAX_PDF_UPLOAD_BYTES}})
                 elif u.path=='/api/service-status':self.send(200,_service_status(self.server))
                 elif u.path=='/api/connectors':self.send(200,{'connectors':self.server.connectors.list()})
                 elif u.path=='/api/runtime':
@@ -412,6 +414,21 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     self.send(200,asset_bytes[u.path[1:]],'text/javascript' if u.path.endswith('.js') else 'text/css')
                 else:self.send(404,{'error':'未找到页面'})
             except (ValueError,KeyError,OSError,RuntimeError) as exc:self.error(exc)
+        def _upload_file(self):
+            # One source file as the raw request body; the name travels in the query.
+            name=os.path.basename(parse_qs(urlsplit(self.path).query).get('name',[''])[0].replace('\\','/'))
+            limit=MAX_PDF_UPLOAD_BYTES if name.lower().endswith('.pdf') else MAX_UPLOAD_BYTES
+            try:n=int(self.headers.get('Content-Length',''))
+            except ValueError:n=-1
+            if not name or len(name)>255 or not 0<n<=limit:
+                self.close_connection=True
+                self.send(413 if name and n>limit else 400,{'error':(f'{name} 超过单文件 {limit//1048576} MiB 限制，请压缩或拆分后重试' if name and n>limit
+                                                                     else '上传请求缺少文件名或文件为空'),'code':'request_too_large' if name and n>limit else 'invalid_upload'})
+                return
+            data=self.rfile.read(n)
+            if len(data)!=n:
+                self.close_connection=True;self.send(400,{'error':'上传未完成，请重试','code':'invalid_upload'});return
+            self.send(200,sources.upload(store,name,data))
         def do_POST(self):
             path=urlsplit(self.path).path
             control=path in ('/api/service-stop','/api/stop','/api/harness/cancel','/api/connectors/task-revoke')
@@ -442,6 +459,8 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 expected=f'http://127.0.0.1:{self.server.server_port}'
                 if self.headers.get('X-BriefLoop-Token')!=token or origin and origin!=expected:
                     self.send(403,{'error':'页面会话已过期，请刷新后重试'});return
+                if urlsplit(self.path).path=='/api/upload-file':
+                    self._upload_file();return
                 n=int(self.headers.get('Content-Length','0'))
                 if not 0<n<MAX_REQUEST_BYTES:
                     self.close_connection=True
