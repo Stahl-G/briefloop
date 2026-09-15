@@ -11,6 +11,7 @@
     "@tiptap/extension-image": "3.31.3",
     "@tiptap/extension-table": "^3.0.0",
     "@tiptap/markdown": "^3.0.0",
+    "@tiptap/pm": "3.31.3",
     "@tiptap/starter-kit": "^3.0.0"
   },
   "devDependencies": {
