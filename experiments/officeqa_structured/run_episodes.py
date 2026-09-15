@@ -178,6 +178,19 @@ class Budget:
     search_budget: dict[str, int]
     termination: str = "wall_clock"
     safety_cap_seconds: int = 14400
+    # Protocol v2.0 Track A per-trial caps (Σ across every agent of the arm;
+    # None = uncapped, the v1.0 conditions).  Breaches censor the episode.
+    input_tokens: int | None = None
+    output_reasoning_tokens: int | None = None
+    tool_calls: int | None = None
+
+    def caps(self) -> dict[str, int] | None:
+        if self.input_tokens is None and self.output_reasoning_tokens is None \
+                and self.tool_calls is None:
+            return None
+        return {"input_tokens": self.input_tokens,
+                "output_reasoning_tokens": self.output_reasoning_tokens,
+                "tool_calls": self.tool_calls}
 
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> "Budget":
@@ -423,8 +436,87 @@ def episode_token_usage(episode_workspace: Path) -> dict[str, Any] | None:
     return total if total["messages"] else {"messages": 0, "usage_complete": False, "source": "opencode-db"}
 
 
+def episode_usage_probe(episode_workspace: Path) -> dict[str, int] | None:
+    """Live budget probe for Track A enforcement: Σ tokens + Σ tool parts.
+
+    Same attribution key as ``episode_token_usage`` (sessions under the
+    episode workspace), plus the count of ``type=tool`` parts — one part per
+    tool invocation, which is the protocol's Σ tool-call cap.  Returns None
+    when the DB is unreadable (watchdog treats None as "no signal", not 0).
+    """
+    if not OPENCODE_DB.is_file():
+        return None
+    import sqlite3
+    ws = str(Path(episode_workspace).expanduser().resolve())
+    try:
+        db = sqlite3.connect(f"file:{OPENCODE_DB}?mode=ro", uri=True)
+        rows = db.execute(
+            "SELECT m.data FROM message m JOIN session s ON m.session_id = s.id "
+            "WHERE s.directory LIKE ?", (ws + "%",)).fetchall()
+        tools = db.execute(
+            "SELECT COUNT(*) FROM part p JOIN session s ON p.session_id = s.id "
+            "WHERE s.directory LIKE ? AND json_extract(p.data, '$.type') = 'tool'",
+            (ws + "%",)).fetchone()[0]
+    except sqlite3.Error:
+        return None
+    finally:
+        try: db.close()
+        except Exception: pass
+    tokens = {"input": 0, "output": 0, "reasoning": 0}
+    for (payload,) in rows:
+        try:
+            tk = (json.loads(payload) or {}).get("tokens") or {}
+        except ValueError:
+            continue
+        tokens["input"] += tk.get("input") or 0
+        tokens["output"] += tk.get("output") or 0
+        tokens["reasoning"] += tk.get("reasoning") or 0
+    tokens["tool_calls"] = int(tools)
+    return tokens
+
+
 STRICT_CORPUS_NAME = "corpus-v2-pdf"
+TRACK_A_CORPUS_NAME = "corpus-v2-parsed"
 REGISTER_HELPER = Path(__file__).with_name("register_pdf.py")
+REGISTER_JSON_HELPER = Path(__file__).with_name("register_json.py")
+
+
+def parsed_json_instructions(json_dir: Path, budget: "Budget") -> str:
+    """Track A surface — identical corpus description for both arms.
+
+    The official V2 parsed release is the shared, frozen preprocessing:
+    document parsing/OCR is constant across arms and NOT part of the
+    treatment.  Both arms get the same corpus view, the same tools and the
+    same budget statement; there is no web entry in Track A.
+    """
+    register_line = ""
+    if REGISTER_JSON_HELPER.is_file():
+        register_line = (
+            f"\nIf you are running inside the BriefLoop pipeline, every document your answer "
+            f"relies on must be registered before it can carry evidence: "
+            f"`python3 {REGISTER_JSON_HELPER} <json-path> --workspace <episode workspace>`\n")
+    caps = budget.caps()
+    if caps:
+        budget_line = (f"Budget for the whole episode (hard, enforced by the harness): wall clock "
+                       f"{budget.wall_clock_seconds}s; cumulative model input ≤ {caps['input_tokens']} "
+                       f"tokens; cumulative output+reasoning ≤ {caps['output_reasoning_tokens']} tokens; "
+                       f"≤ {caps['tool_calls']} tool calls. Exceeding any cap stops the run and the "
+                       f"episode is recorded as censored — budget your exploration accordingly.\n")
+    else:
+        budget_line = f"The wall clock ({budget.wall_clock_seconds}s) is the budget.\n"
+    return f"""## Evidence corpus (Track A: shared official parsed JSON)
+
+You are working against a local read-only directory: `{json_dir}`
+It holds 1,435 documents of the official OfficeQA Pro V2 parsed release, one `<name>.json` per document. Parsing is frozen and identical for every participant — your work starts from the parsed elements, not from page images.
+
+Each file is:
+- `document.elements[]` — the parse of the whole document. Every element has `type` (e.g. `table`, `text`, `title`, `section_header`, `page_header`, `page_number`, `figure`), `content` (the parsed text or table), `id`, `confidence`, and `bbox` (which page it sits on, plus coordinates).
+- `document.pages[]` — page ids in order (figures carry a VLM `description`; page images are NOT part of this corpus).
+
+Documents are U.S. Treasury publications across two families: `combined_statement__*` (annual combined statements, 1860s–1970s) and `govinfo_receipts__*` (monthly receipt/statement extracts). File names encode era and family — use them to narrow first, then search element `content` for entities, measures and period wording variants, then read the located tables closely (headers, footnotes, units, exact fiscal period) before extracting operands. `python3` is available for JSON navigation and multi-step arithmetic; bash/grep work directly on the files.
+
+{budget_line}
+There is no web access in this track; the corpus directory is the whole evidence universe.{register_line}"""
 
 
 def strict_pdf_instructions(pdf_dir: Path) -> str:
@@ -530,7 +622,8 @@ SELF_REVIEW_FRAME = """自我复核（A′ 臂，提纲与 BriefLoop QA 审阅�
 只评这四项，不评篇幅或文采。若发现任何问题，**由你本人**重写并重新提交修正后的 answer.json 到同一 submit 目录（截止前最新已接纳版本为准）；若确认无问题，说明理由后停止。不要修改题目或语料。"""
 
 
-def native_frame(submit_dir: Path, web_entry: str | None, pdf_dir: Path | None = None) -> str:
+def native_frame(submit_dir: Path, web_entry: str | None, pdf_dir: Path | None = None,
+                 track_a: bool = False) -> str:
     """Arm-A frame (protocol §5.1): names the concrete submit endpoint.
 
     The submit directory is the program acceptance endpoint (protocol §8.3):
@@ -545,6 +638,11 @@ def native_frame(submit_dir: Path, web_entry: str | None, pdf_dir: Path | None =
                  "official PDF originals — no parsed text, no index. Extraction and search "
                  "are yours to do with your own tools (bash, pdftotext/pdfinfo, python3, "
                  "web search). No per-call search metering; the wall clock is the budget.")
+    elif track_a:
+        intro = ("You are answering one OfficeQA question against the official parsed-JSON "
+                 "corpus (1,435 U.S. Treasury documents, structure and coordinates included). "
+                 "Parsing is given and shared; retrieval, extraction checking, multi-step "
+                 "arithmetic and self-verification are yours. No web access.")
     else:
         intro = "You are answering one OfficeQA question against a local read-only corpus of parsed U.S. Treasury publications."
     web_clause = ("You have the corpus tools and the controlled web entry described below; "
@@ -871,7 +969,8 @@ class OpencodeRunSolver:
                                                       encoding="utf-8")
 
     def turn(self, prompt: str, *, title: str, deadline: float,
-             continue_last: bool = False, tag: str = "main") -> dict[str, Any]:
+             continue_last: bool = False, tag: str = "main",
+             caps: dict[str, int | None] | None = None) -> dict[str, Any]:
         argv = [str(self.real.shim), "run", "--dir", str(self.workspace),
                 "--model", self.real.model, "--title", title]
         if self.real.variant:
@@ -892,6 +991,36 @@ class OpencodeRunSolver:
                 process = subprocess.Popen(argv, cwd=str(self.workspace), env=self.real.solver_env,
                                             stdin=subprocess.DEVNULL, stdout=out, stderr=err,
                                             start_new_session=True)
+                # Track A budget watchdog: polls the opencode session DB for
+                # Σ tokens / Σ tool calls while the agent runs.  A cap breach
+                # kills the process group mid-turn and is recorded as
+                # budget_stop — the episode later reports as censored with
+                # the spent amounts (protocol v2.0 §预算锁).
+                watchdog: threading.Thread | None = None
+                stop_flag = threading.Event()
+                if caps:
+                    def _watch() -> None:
+                        while not stop_flag.wait(20.0):
+                            if process.poll() is not None:
+                                return
+                            usage = episode_usage_probe(self.workspace)
+                            if not usage:
+                                continue
+                            breach = None
+                            if caps.get("input_tokens") and usage["input"] > caps["input_tokens"]:
+                                breach = f"input_tokens {usage['input']} > {caps['input_tokens']}"
+                            elif caps.get("output_reasoning_tokens") and \
+                                    usage["output"] + usage["reasoning"] > caps["output_reasoning_tokens"]:
+                                breach = (f"output+reasoning {usage['output'] + usage['reasoning']} "
+                                          f"> {caps['output_reasoning_tokens']}")
+                            elif caps.get("tool_calls") and usage["tool_calls"] > caps["tool_calls"]:
+                                breach = f"tool_calls {usage['tool_calls']} > {caps['tool_calls']}"
+                            if breach:
+                                record["budget_stop"] = breach
+                                self._kill_tree(process)
+                                return
+                    watchdog = threading.Thread(target=_watch, daemon=True)
+                    watchdog.start()
                 try:
                     record["returncode"] = process.wait(timeout=max(1.0, deadline - time.time()))
                     record["deadline_hit"] = False
@@ -899,6 +1028,9 @@ class OpencodeRunSolver:
                     record["deadline_hit"] = True
                     self._kill_tree(process)
                     record["returncode"] = process.poll()
+                finally:
+                    if watchdog is not None:
+                        stop_flag.set()
         record["seconds"] = round(time.time() - started, 1)
         self.turns.append(record)
         return record
@@ -1024,7 +1156,7 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
                        order_index: int, limiter: "ModelCallLimiter",
                        corpus_name: str = V2_CORPUS_NAME,
                        web_entry: str | None = None,
-                       real: RealContext | None = None, strict: bool = False, self_review: bool = False, arm_name: str = "A") -> dict[str, Any]:
+                       real: RealContext | None = None, strict: bool = False, self_review: bool = False, arm_name: str = "A", track_a: bool = False) -> dict[str, Any]:
     episode_dir = Path(data_root) / "episodes" / label / arm_name / case.case_key
     if episode_dir.exists():
         raise RunnerError(f"episode directory already exists: {episode_dir}")
@@ -1041,14 +1173,17 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
     budget_file = episode_dir / "corpus-budget.jsonl"
     (workspace / "question.md").write_text(f"# OfficeQA {case.uid}\n\n{case.question}\n", encoding="utf-8")
     strict_pdf_dir = Path(data_root) / STRICT_CORPUS_NAME / "documents" / "pdf" if strict else None
+    track_a_json_dir = Path(data_root) / TRACK_A_CORPUS_NAME / "documents" / "json" if track_a else None
     if strict:
         surface = strict_pdf_instructions(strict_pdf_dir)
+    elif track_a:
+        surface = parsed_json_instructions(track_a_json_dir, budget)
     else:
         surface = corpus_tool_instructions(data_root, corpus_name=corpus_name, web_entry=web_entry,
                                            search_budget=budget.search_budget if real else None,
                                            budget_file=budget_file if real else None)
     (workspace / "prompt.md").write_text(
-        native_frame(submit_dir, web_entry, pdf_dir=strict_pdf_dir)
+        native_frame(submit_dir, web_entry, pdf_dir=strict_pdf_dir, track_a=track_a)
         + "\n## Question\n\n" + case.question + "\n\n" + surface + "\n",
         encoding="utf-8")
     tool_calls: list[dict[str, Any]] = []
@@ -1079,10 +1214,12 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
         scratch_dirs = (Path(tempfile.gettempdir()),)  # parity: A's agents need scratch too (review S2)
         solver._write_host_config(
             episode_dir, web=strict,
-            read_dirs=scratch_dirs + ((Path(data_root) / STRICT_CORPUS_NAME / "documents" / "pdf",) if strict else ()))
+            read_dirs=scratch_dirs + ((Path(data_root) / STRICT_CORPUS_NAME / "documents" / "pdf",) if strict else ())
+                     + ((track_a_json_dir,) if track_a else ()))
         prompt = (workspace / "prompt.md").read_text(encoding="utf-8")
         try:
-            turns.append(solver.turn(prompt, title=f"OfficeQA {case.uid} · A", deadline=deadline))
+            turns.append(solver.turn(prompt, title=f"OfficeQA {case.uid} · A", deadline=deadline,
+                                     caps=budget.caps() if track_a else None))
             # Format-repair loop (§4) over the real transport: gold-blind feedback
             # is delivered as a continuation turn of the SAME session; the agent
             # (never this program) authors the resubmission.  Past the deadline
@@ -1118,6 +1255,7 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
                        "binary": str(real.shim)}
     res_sampler.__exit__(None, None, None)
     usage = episode_token_usage(workspace)
+    budget_stops = [t.get("budget_stop") for t in turns if t.get("budget_stop")]
     record = _episode_record(case=case, arm=arm_name, label=label, order_index=order_index,
                              episode_dir=episode_dir, started=started, deadline=deadline,
                              budget=budget, box=box, tool_calls=tool_calls,
@@ -1125,6 +1263,7 @@ def run_native_episode(case: Case, *, data_root: Path, budget: Budget, label: st
                              linkage={"turns": turns} if turns else None,
                              usage_complete=bool(usage and usage.get("usage_complete")),
                              usage=usage, resources=res_sampler.summary(),
+                             censored=("; ".join(budget_stops) if budget_stops else None),
                              format_repair={"budget": budget.format_repair_attempts,
                                             "invalid_submissions": repair_delivered,
                                             "feedback_delivered": True,
@@ -1293,7 +1432,8 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
                           order_index: int, limiter: "ModelCallLimiter",
                           corpus_name: str = V2_CORPUS_NAME,
                           web_entry: str | None = None,
-                          real: RealContext | None = None, strict: bool = False) -> dict[str, Any]:
+                          real: RealContext | None = None, strict: bool = False,
+                          track_a: bool = False) -> dict[str, Any]:
     from briefloop.answer_result import RESULT_FORMAT, answer_of
     from briefloop.external_requests import dispatch
     from briefloop.runtime import Worker
@@ -1318,6 +1458,8 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
                     "raw_input": (
                         strict_pdf_instructions(Path(data_root) / STRICT_CORPUS_NAME / "documents" / "pdf")
                         if strict else
+                        parsed_json_instructions(Path(data_root) / TRACK_A_CORPUS_NAME / "documents" / "json", budget)
+                        if track_a else
                         corpus_tool_instructions(data_root, corpus_name=corpus_name,
                                                  web_entry=web_entry,
                                                  search_budget=budget.search_budget if real else None,
@@ -1356,12 +1498,42 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
         worker.start()
         state: dict[str, Any] = {}
         error: str | None = None
+        # Track A watchdog for arm B: the pipeline owns its own opencode
+        # processes, so a cap breach kills every opencode process whose
+        # --dir points under this episode workspace (same attribution key
+        # as the usage probe) and the episode is marked censored.
+        caps = budget.caps() if track_a else None
+        b_stop = threading.Event()
+        b_censored: list[str] = []
+        def _b_watch() -> None:
+            while not b_stop.wait(20.0):
+                usage_now = episode_usage_probe(workspace)
+                if not usage_now:
+                    continue
+                breach = None
+                if caps and caps.get("input_tokens") and usage_now["input"] > caps["input_tokens"]:
+                    breach = f"input_tokens {usage_now['input']} > {caps['input_tokens']}"
+                elif caps and caps.get("output_reasoning_tokens") and \
+                        usage_now["output"] + usage_now["reasoning"] > caps["output_reasoning_tokens"]:
+                    breach = (f"output+reasoning {usage_now['output'] + usage_now['reasoning']} "
+                              f"> {caps['output_reasoning_tokens']}")
+                elif caps and caps.get("tool_calls") and usage_now["tool_calls"] > caps["tool_calls"]:
+                    breach = f"tool_calls {usage_now['tool_calls']} > {caps['tool_calls']}"
+                if breach:
+                    b_censored.append(breach)
+                    subprocess.run(["pkill", "-9", "-f", f"opencode run --dir {workspace}"],
+                                   capture_output=True)
+                    return
+        watcher = threading.Thread(target=_b_watch, daemon=True)
+        if caps:
+            watcher.start()
         try:
             state = _drive_briefloop_episode(store, worker, box, job_id, run_id, deadline, snapshots)
         except Exception as exc:  # noqa: BLE001 - keep every admitted version and
             # stay in the denominator; the failure rides the record (§8.3).
             error = f"{type(exc).__name__}: {exc}"
         finally:
+            b_stop.set()
             worker.close()
         # Honest post-hoc accounting at job granularity: every model turn the
         # product ran for this episode is one queued→terminal job row.  Token
@@ -1377,6 +1549,7 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
     res_sampler.__exit__(None, None, None)
     usage = episode_token_usage(workspace)
     record = _episode_record(case=case, arm="B", label=label, order_index=order_index,
+                             censored=("; ".join(b_censored) if (track_a and real and b_censored) else None),
                              episode_dir=episode_dir, started=started, deadline=deadline,
                              budget=budget, box=box, tool_calls=tool_calls,
                              identifiers=identifiers,
@@ -1454,7 +1627,8 @@ def _episode_record(*, case: Case, arm: str, label: str, order_index: int, episo
                     corpus: dict[str, Any] | None = None,
                     usage: dict[str, Any] | None = None,
                     resources: dict[str, Any] | None = None,
-                    format_repair: dict[str, Any] | None = None) -> dict[str, Any]:
+                    format_repair: dict[str, Any] | None = None,
+                    censored: str | None = None) -> dict[str, Any]:
     finished = time.time()
     chosen = box.chosen()
     corpus_budget_file = Path(episode_dir) / "corpus-budget.jsonl"
@@ -1480,7 +1654,10 @@ def _episode_record(*, case: Case, arm: str, label: str, order_index: int, episo
                    "max_concurrent_model_calls": budget.max_concurrent_model_calls,
                    "max_automatic_revisions_B": budget.max_automatic_revisions_B,
                    "format_repair_attempts": budget.format_repair_attempts,
-                   "search_budget": dict(budget.search_budget)},
+                   "search_budget": dict(budget.search_budget),
+                   "input_tokens": budget.input_tokens,
+                   "output_reasoning_tokens": budget.output_reasoning_tokens,
+                   "tool_calls": budget.tool_calls},
         "tool_calls": tool_calls,
         "corpus_budget_usage": (corpus_adapter.budget_usage(corpus_budget_file)
                                 if corpus_budget_file.is_file() else {}),
@@ -1495,6 +1672,10 @@ def _episode_record(*, case: Case, arm: str, label: str, order_index: int, episo
                                "status": chosen["status"]} if chosen else None),
         "workspace": str(episode_dir),
         "error": error,
+        # Protocol v2.0 预算锁: a cap breach censors the episode — the accepted
+        # answer stays visible for audit but is excluded from headline scoring;
+        # the spent usage above is the disclosure.
+        **({"censored": censored} if censored else {}),
         **({("briefloop" if arm == "B" else "native"): linkage} if linkage else {}),
     }
     (episode_dir / "episode_record.json").write_text(
@@ -1706,6 +1887,31 @@ def command_run(args: argparse.Namespace) -> int:
     if web_entry == "offline":
         web_entry = None  # explicit freeze of "no web entry wired" (§6.3)
     strict = getattr(args, "mode", "default") == "strict-v2"
+    track_a = getattr(args, "mode", "default") == "track-a"
+    if track_a:
+        # Protocol v2.0 Track A: shared parsed JSON corpus, no web, hard
+        # per-trial caps (Σ across agents).  The wall clock is the frozen
+        # 1800s budget — not the anti-hang safety cap.
+        track_cfg = config.get("track_a") or {}
+        if not args.dry_run and not track_cfg.get("episode_wall_clock_seconds"):
+            raise RealExecutionGateError("track-a 需要 config.track_a.episode_wall_clock_seconds（1800 冻结值）")
+        if not args.dry_run:
+            caps_ok = all(isinstance(track_cfg.get(f), int) and track_cfg.get(f) > 0
+                          for f in ("input_tokens", "output_reasoning_tokens", "tool_calls"))
+            if not caps_ok:
+                raise RealExecutionGateError("track-a 需要 config.track_a 三项预算上限（200k/30k/150 冻结值）")
+        budget = Budget(wall_clock_seconds=int(track_cfg["episode_wall_clock_seconds"]),
+                        max_concurrent_model_calls=max(budget.max_concurrent_model_calls,
+                                                       int(track_cfg.get("episode_workers", 20))),
+                        max_automatic_revisions_B=budget.max_automatic_revisions_B,
+                        format_repair_attempts=budget.format_repair_attempts,
+                        search_budget=dict(budget.search_budget),
+                        termination="wall_clock",
+                        safety_cap_seconds=int(track_cfg["episode_wall_clock_seconds"]),
+                        input_tokens=int(track_cfg["input_tokens"]),
+                        output_reasoning_tokens=int(track_cfg["output_reasoning_tokens"]),
+                        tool_calls=int(track_cfg["tool_calls"]))
+        web_entry = None
     if strict:
         if not args.dry_run:
             strict_errors = strict_real_gates(data_root, config)
@@ -1720,9 +1926,10 @@ def command_run(args: argparse.Namespace) -> int:
     # frozen V2 corpus.  Fail closed here — before any episode starts — when
     # a selected dataset has no mapped corpus or its index is missing.
     selection = corpus_selection(config)
-    if strict:
+    if strict or track_a:
         selection = dict(selection)
-        selection[prepare_dataset.DATASET] = STRICT_CORPUS_NAME
+        selection[prepare_dataset.DATASET] = (STRICT_CORPUS_NAME if strict
+                                              else TRACK_A_CORPUS_NAME)
     for case in selected:
         if case.dataset not in selection:
             raise RunnerError(f"no staged corpus configured for dataset {case.dataset!r} "
@@ -1778,7 +1985,7 @@ def command_run(args: argparse.Namespace) -> int:
                                         budget=budget, label=label, order_index=order_index,
                                         corpus_name=selection[case.dataset],
                                         limiter=limiter, web_entry=web_entry, real=real,
-                                        strict=strict):
+                                        strict=strict, track_a=track_a):
                    (case.case_key, arm) for case, arm, order_index in tasks}
         for future in as_completed(futures):
             case_key, arm = futures[future]
@@ -2004,7 +2211,7 @@ def main(argv: list[str] | None = None) -> int:
                           "the run index records the path and its SHA-256)")
     run.add_argument("--run-label")
     run.add_argument("--arms", default="A,B")
-    run.add_argument("--mode", choices=("default", "strict-v2"), default="default",
+    run.add_argument("--mode", choices=("default", "strict-v2", "track-a"), default="default",
                      help="default = staged parsed corpus + metered search; "
                           "strict-v2 = raw PDF originals, no metering, web on (official condition)")
     run.add_argument("--cases", type=int, help="first N cases from the prepared order")

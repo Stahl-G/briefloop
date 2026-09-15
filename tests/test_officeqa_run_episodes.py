@@ -114,7 +114,9 @@ def test_episode_records_carry_protocol_33_fields(chain):
                                      'max_concurrent_model_calls': budget.max_concurrent_model_calls,
                                      'max_automatic_revisions_B': budget.max_automatic_revisions_B,
                                      'format_repair_attempts': budget.format_repair_attempts,
-                                     'search_budget': dict(budget.search_budget)}
+                                     'search_budget': dict(budget.search_budget),
+                                     'input_tokens': None, 'output_reasoning_tokens': None,
+                                     'tool_calls': None}
         assert episode['usage_complete'] is False  # stub：用量不完整要如实标记
         assert episode['format_repairs_issued'] >= 0  # §4 修复次数入档
         for submission in episode['submissions']:

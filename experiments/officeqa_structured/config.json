@@ -211,5 +211,14 @@
     ],
     "concurrency_test": "2026-09-15 中批并发实测：模型调用上限 4→6，记录 run_index.model_calls.peak_concurrent 与限流失败；峰时如现 429 下批回落 4"
   },
-  "integration_commit_note": "回填至提供方熔断修复提交（2026-09-15 夜事故：代理断连+静默记账烧毁 66 集后重冻结）"
+  "integration_commit_note": "回填至提供方熔断修复提交（2026-09-15 夜事故：代理断连+静默记账烧毁 66 集后重冻结）",
+  "track_a": {
+    "corpus": "corpus-v2-parsed",
+    "episode_wall_clock_seconds": 1800,
+    "episode_workers": 20,
+    "input_tokens": 200000,
+    "output_reasoning_tokens": 30000,
+    "tool_calls": 150,
+    "web": false
+  }
 }

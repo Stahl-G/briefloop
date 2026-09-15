@@ -54,12 +54,12 @@ from typing import Any, Iterable
 
 INDEX_SCHEMA_VERSION = "officeqa.corpus_index.v1"
 TXT_INDEX_SCHEMA_VERSION = "officeqa.corpus_index_txt.v1"
-CORPUS_FORMATS = ("v2", "v1", "pdf")
+CORPUS_FORMATS = ("v2", "v1", "pdf", "v2-json")
 DEFAULT_DATA_ROOT = Path.home() / "Developer" / "briefloop-data" / "officeqa"
 # Default staged directory per format: the V2 main-test corpus keeps the
 # historical ``corpus`` name (byte-for-byte compatibility with the frozen
 # V2 index); the v1 dev-pilot corpus stages beside it as ``corpus-v1``.
-DEFAULT_CORPUS_NAME = {"v2": "corpus", "v1": "corpus-v1", "pdf": "corpus-v2-pdf"}
+DEFAULT_CORPUS_NAME = {"v2": "corpus", "v1": "corpus-v1", "pdf": "corpus-v2-pdf", "v2-json": "corpus-v2-parsed"}
 
 _JSON_REL = ("documents", "parsed")
 _TXT_REL = ("documents", "text")
@@ -435,12 +435,102 @@ def _build_txt_index(corpus_root: Path) -> dict[str, Any]:
     return manifest
 
 
+
+def _build_json_only_index(corpus_root: Path, *, manifest_format: str) -> dict[str, Any]:
+    """Track A index (protocol v2.0): staged JSON documents only, no TXT side.
+
+    Serves the dry-run stub plumbing and any corpus-side query surface over
+    corpus-v2-parsed; real Track A agents read the staged directory directly.
+    Same docs/elements/FTS schema as the v2 index so the adapter is unchanged.
+    """
+    corpus_root = Path(corpus_root).expanduser().resolve()
+    json_dir = corpus_root / "documents" / "json"
+    index_dir = corpus_root.joinpath(*_INDEX_REL)
+    index_dir.mkdir(parents=True, exist_ok=True)
+    jsons = sorted(json_dir.glob("*.json"))
+    if not jsons:
+        raise CorpusError(f"no staged JSON documents under {json_dir}; run stage_v2_parsed first")
+
+    db_path = index_dir / "corpus.sqlite"
+    if db_path.exists():
+        db_path.unlink()
+    connection = _connect(db_path, readonly=False)
+    try:
+        connection.execute("PRAGMA journal_mode=OFF")
+        connection.execute("PRAGMA synchronous=OFF")
+        connection.executescript(
+            """
+            CREATE TABLE docs(
+              doc_id TEXT PRIMARY KEY, name TEXT UNIQUE NOT NULL,
+              json_path TEXT NOT NULL, text_path TEXT NOT NULL,
+              sha256 TEXT NOT NULL, bytes INTEGER NOT NULL,
+              pages INTEGER NOT NULL, elements INTEGER NOT NULL);
+            CREATE TABLE elements(
+              id INTEGER PRIMARY KEY, doc_id TEXT NOT NULL, line INTEGER NOT NULL,
+              page_id INTEGER NOT NULL, raw_page_id INTEGER NOT NULL, element_id INTEGER,
+              etype TEXT NOT NULL, content TEXT NOT NULL,
+              UNIQUE(doc_id, line));
+            CREATE INDEX elements_doc_page ON elements(doc_id, page_id, line);
+            CREATE VIRTUAL TABLE elements_fts USING fts5(
+              content, doc_id, content='elements', content_rowid='id');
+            """
+        )
+        total_elements = 0
+        element_pk = 0
+        for number, json_path in enumerate(jsons, start=1):
+            doc_id = f"d{number:04d}"
+            payload = json.loads(json_path.read_bytes().decode("utf-8"))
+            rows = _element_lines(payload)
+            pages = len({row["raw_page_id"] for row in rows})
+            connection.execute(
+                "INSERT INTO docs VALUES(?,?,?,?,?,?,?,?)",
+                (doc_id, json_path.stem, str(json_path), str(json_path),
+                 _sha256_file(json_path), json_path.stat().st_size, pages, len(rows)),
+            )
+            connection.executemany(
+                "INSERT INTO elements(id,doc_id,line,page_id,raw_page_id,element_id,etype,content)"
+                " VALUES(?,?,?,?,?,?,?,?)",
+                [((element_pk := element_pk + 1), doc_id, row["line"], row["page_id"],
+                  row["raw_page_id"], row["element_id"], row["etype"], row["content"])
+                 for row in rows],
+            )
+            total_elements += len(rows)
+            connection.commit()
+            if number % 200 == 0:
+                print(f"  parsed {number}/{len(jsons)} documents", flush=True)
+        connection.execute("INSERT INTO elements_fts(elements_fts) VALUES('rebuild')")
+        connection.execute("INSERT INTO elements_fts(elements_fts) VALUES('integrity-check')")
+        connection.commit()
+        count = connection.execute("SELECT COUNT(*) AS n FROM docs").fetchone()["n"]
+        if count != len(jsons):
+            raise CorpusError(f"indexed {count} docs, expected {len(jsons)}")
+        manifest = {
+            "schema_version": "officeqa.corpus_manifest.v1",
+            "format": manifest_format,
+            "built_at": datetime.now(timezone.utc).isoformat(),
+            "documents": len(jsons),
+            "elements": total_elements,
+            "index": True,
+            "list_sha256": hashlib.sha256(
+                "\n".join(f"{p.name} {_sha256_file(p)}" for p in jsons).encode()
+            ).hexdigest(),
+            "note": ("Track A shared parsed-JSON corpus (protocol v2.0): staging via "
+                     "stage_v2_parsed.py, index for dry-run plumbing only"),
+        }
+        (index_dir / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        return manifest
+    finally:
+        connection.close()
+
+
 def build_index(corpus_root: Path, *, fmt: str = "v2") -> dict[str, Any]:
     """Parse every staged document into the SQLite index; write index/manifest.json."""
     if fmt not in CORPUS_FORMATS:
         raise CorpusError(f"unknown corpus format {fmt!r}; expected one of {CORPUS_FORMATS}")
     if fmt == "v1":
         return _build_txt_index(corpus_root)
+    if fmt == "v2-json":
+        return _build_json_only_index(corpus_root, manifest_format="v2-json")
     corpus_root = Path(corpus_root).expanduser().resolve()
     json_dir = corpus_root.joinpath(*_JSON_REL)
     txt_dir = corpus_root.joinpath(*_TXT_REL)
@@ -948,6 +1038,13 @@ def main(argv: list[str] | None = None) -> int:
             if args.format == "pdf":
                 staging = stage_pdfs(Path(args.source), data_root / corpus_name)
                 manifest = json.loads((data_root / corpus_name / "index" / "manifest.json").read_text(encoding="utf-8"))
+            elif args.format == "v2-json":
+                # staged by stage_v2_parsed.py (hardlinks + hash manifest);
+                # build only creates the query index
+                if not (data_root / corpus_name / "documents" / "json").is_dir():
+                    raise CorpusError(f"staged corpus missing: {data_root / corpus_name}; run stage_v2_parsed.py first")
+                staging = {"skipped": "already staged by stage_v2_parsed.py"}
+                manifest = build_index(data_root / corpus_name, fmt=args.format)
             else:
                 staging = stage_documents(Path(args.source), data_root / corpus_name, fmt=args.format)
                 manifest = build_index(data_root / corpus_name, fmt=args.format)
