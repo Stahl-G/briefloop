@@ -58,7 +58,7 @@ test('polled version summaries load their body once and a later choice wins',asy
   Editor:class{destroy(){}},StarterKit:configurable,TableKit:{},ReportImage:configurable,TextStyle:{},Layout:{},Citation:{},ReportTrailingParagraph:{},Markdown:{},MustFixHighlight:{},
   editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},
   api:route=>{requests.push(route);return new Promise(resolve=>{resolveBody=resolve})},encodeURIComponent});
- vm.runInContext(oneLine('openBrief'),context);
+ vm.runInContext(oneLine('loadBrief')+'\n'+oneLine('openBrief'),context);
  assert.equal(vm.runInContext("openBrief(state.briefs[1])",context),true);
  vm.runInContext("openBrief(state.briefs[1])",context);
  assert.deepEqual(requests,['brief?id=old'],'repeated polling opens share one request');
@@ -74,4 +74,34 @@ test('polled version summaries load their body once and a later choice wins',asy
  resolveBody({...summary,hash:'h3',markdown:'Late old'});
  await new Promise(resolve=>setImmediate(resolve));
  assert.equal(vm.runInContext('current.id',context),'new');
+});
+
+test('a loading body never overrides a later pending report or the report being waited for',async()=>{
+ const tick=()=>new Promise(resolve=>setImmediate(resolve));
+ const a={id:'version-A',run_id:'run-A',hash:'hash-A',detail:'{}',author:'agent'};
+ const b={id:'version-B',run_id:'run-B',hash:'hash-B',detail:'{}',author:'agent'};
+ const renderTail=source.slice(source.indexOf('tryOpenPending();if(!current'),source.indexOf('if(current&&followUpdates&&!dirty&&!saving){'));
+ const fixture=briefs=>{
+  const nodes=new Map(),requests=[],resolvers=new Map();
+  const $=id=>{if(!nodes.has(id))nodes.set(id,{dataset:{},value:'',hidden:false,textContent:'',querySelectorAll:()=>[]});return nodes.get(id)};
+  const configurable={configure:()=>({})};
+  const context=vm.createContext({state:{briefs,sources:[],runs:[],jobs:[]},current:null,pendingRun:null,dirty:false,saving:false,followUpdates:true,editor:null,highlightQuotes:[],$,
+   parse:s=>JSON.parse(s||'{}'),notice:()=>{},syncPendingReport:()=>{},renderWordExports:()=>{},updateDownloads:()=>{},renderReportStatus:()=>{},renderAssistantSummary:()=>{},
+   Editor:class{destroy(){}},StarterKit:configurable,ReportImage:configurable,ReportTrailingParagraph:{},TableKit:{},TextStyle:{},Layout:{},Citation:{},Markdown:{},MustFixHighlight:{},
+   editorDocument:x=>x,toEditor:x=>x,changed:()=>{},updateFormattingTools:()=>{},assessment:()=>{},citations:()=>{},renderBriefLength:()=>{},setReportView:()=>{},
+   api:route=>{requests.push(route);return new Promise(resolve=>resolvers.set(route,resolve))},encodeURIComponent});
+  vm.runInContext([oneLine('loadBrief'),oneLine('openBrief'),...['showPendingReport','tryOpenPending'].map(name=>{const at=source.indexOf(`function ${name}(`);return source.slice(at,source.indexOf('\n}',at)+2)})].join('\n'),context);
+  return {context,requests,resolve:brief=>resolvers.get('brief?id='+brief.id)({...brief,markdown:'Body for '+brief.id})};
+ };
+ // Choosing a generating report invalidates a body still loading for another version.
+ let f=fixture([a]);
+ vm.runInContext("openBrief(state.briefs[0]);showPendingReport('run-new')",f.context);
+ f.resolve(a);await tick();
+ assert.equal(f.context.pendingRun,'run-new');assert.equal(f.context.current,null);
+ // Waiting for report A: its loading body must not let the default selection open B.
+ f=fixture([b,a]);f.context.pendingRun='run-A';
+ vm.runInContext(renderTail,f.context);vm.runInContext(renderTail,f.context);
+ assert.deepEqual(f.requests,['brief?id=version-A']);assert.equal(f.context.pendingRun,'run-A');
+ f.resolve(a);await tick();
+ assert.equal(f.context.current.id,'version-A');assert.equal(f.context.pendingRun,null);
 });
