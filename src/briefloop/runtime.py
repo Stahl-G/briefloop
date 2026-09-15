@@ -425,6 +425,7 @@ class Worker:
         self.store._job_wakeup=self.wake
         self.schedule_thread=threading.Thread(target=self.schedule_loop,name='briefloop-schedules',daemon=True)
         self.thread=threading.Thread(target=self.loop,name='briefloop-worker',daemon=True)
+        self.task_thread=None
         self.review_current=None;self._review_runtime=None
         self.review_thread=threading.Thread(target=self.review_loop,name='briefloop-review-worker',daemon=True)
         self.file_current=None;self._file_cancelled=threading.Event()
@@ -465,6 +466,7 @@ class Worker:
         if self.schedule_thread.is_alive():self.schedule_thread.join(timeout=12)
         self.thread.join(timeout=12)
         for thread,runtime in generations:thread.join(timeout=12)
+        if self.task_thread and self.task_thread.is_alive():self.task_thread.join(timeout=12)
         if self.review_thread.is_alive():self.review_thread.join(timeout=12)
         if self.file_thread.is_alive():self.file_thread.join(timeout=12)
         if self.store._job_wakeup==self.wake:self.store._job_wakeup=None
@@ -638,8 +640,20 @@ class Worker:
             finally:
                 with self._claim_lock:self.review_current=None
 
+    def _next_runnable(self,jobs):
+        """Oldest queued job that can start now; a blocked head never hides later work."""
+        reports_full=len(self._generation_jobs)>=self.store.settings()['max_reports']
+        for job in jobs:
+            if job['kind']=='generate':
+                if not reports_full:return job
+            elif self.current is None:return job
+        return None
+
     def loop(self):
-        for jobs in self._queued(0,"SELECT * FROM jobs WHERE status='queued' AND kind NOT IN ('review','fact_check') AND kind NOT IN (?,?,?) ORDER BY rowid LIMIT 1",FILE_JOB_KINDS):
+        # Dispatch only. Reports run in their own threads up to max_reports; other
+        # main-lane jobs share one serial task thread (and the shared runtime), so a
+        # long learning or revision turn never keeps free report slots idle.
+        for jobs in self._queued(0,"SELECT * FROM jobs WHERE status='queued' AND kind NOT IN ('review','fact_check') AND kind NOT IN (?,?,?) ORDER BY rowid",FILE_JOB_KINDS):
             if not jobs:
                 if self.store.settings()['auto_learn'] and not self.opened_paused:
                     try:
@@ -649,11 +663,10 @@ class Worker:
                         self.store.event(None,'learning_schedule_failed',{'error':str(exc)})
                         self.stopping.wait(5)
                 continue
-            job=jobs[0]
             with self._claim_lock:
                 if self.stopping.is_set():break
-                if job['kind']=='generate' and len(self._generation_jobs)>=self.store.settings()['max_reports']:
-                    continue
+                job=self._next_runnable(jobs)
+                if job is None:continue
                 with self.store.tx() as c:
                     claimed=c.execute("UPDATE jobs SET status='running',error=NULL,updated=? WHERE id=? AND status='queued'",
                                       (now(),job['id'])).rowcount
@@ -665,13 +678,12 @@ class Worker:
                         self._settle_job(job['id'],'failed',error=str(exc));continue
                     thread=threading.Thread(target=self._execute_main_job,args=(job,runtime),name='briefloop-report-'+job['id'],daemon=True)
                     self._generation_jobs[job['id']]=(thread,runtime)
-                    self.store.event(job['id'],'job_started',{})
-                    thread.start()
                 else:
                     self.current=job['id'];self.runtime.cancelled.clear()
-            if job['kind']!='generate':
+                    thread=threading.Thread(target=self._execute_main_job,args=(job,),name='briefloop-task-'+job['id'],daemon=True)
+                    self.task_thread=thread
                 self.store.event(job['id'],'job_started',{})
-                self._execute_main_job(job)
+                thread.start()
 
     def _execute_main_job(self,job,runtime=None):
         if runtime is not None:self._execution_local.runtime=runtime
