@@ -114,10 +114,17 @@ def test_pdf_page_views_use_recorded_metadata_instead_of_reparsing(tmp_path,monk
     first=media.render_source_pages(store,source['id'],[2])['pages'][0]
     def reparsed(data):raise AssertionError('recorded PDF must not be parsed again')
     monkeypatch.setattr(media,'pdf_metadata',reparsed)
+    original_path=Path(media.source_attachment(store,source['id'])['original_path'])
+    read_bytes=Path.read_bytes
+    def no_whole_original(self):
+        assert self!=original_path,'cached views must not load the whole original'
+        return read_bytes(self)
+    monkeypatch.setattr(Path,'read_bytes',no_whole_original)
     attachment=media.source_attachment(store,source['id'])
     assert attachment['pages']==3 and [p['page'] for p in attachment['rendered_pages']]==[2]
     assert str(media.rendered_page_path(store,source['id'],2))==first['path']
     assert media.render_source_pages(store,source['id'],[2])['pages'][0]['path']==first['path']
+    monkeypatch.setattr(Path,'read_bytes',read_bytes)  # rendering a new page does read the PDF
     assert media.render_source_pages(store,source['id'],[3])['pages'][0]['page']==3
     with pytest.raises(ValueError,match='超出'):media.rendered_page_path(store,source['id'],4)
     # A changed original still fails the bound digest instead of trusting metadata.

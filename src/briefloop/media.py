@@ -57,7 +57,9 @@ def safe_source_path(store, value, *, must_exist=True):
 
 
 def _hash(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    # Integrity checks stay on every access; stream so a large original is not held in memory.
+    with path.open('rb') as file:
+        return hashlib.file_digest(file, 'sha256').hexdigest()
 
 
 def source_files(store, sid):
