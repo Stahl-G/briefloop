@@ -8,6 +8,7 @@ from briefloop.store import Store, dump
 from briefloop.runtime import Worker, stage_job
 from briefloop.interactive_runtime import InteractiveRuntime
 from briefloop.learning import enqueue_feedback, _role
+from briefloop.learning_budget import plan as learning_plan
 
 
 def test_role_models_freeze_and_generation_scores_in_its_own_stage(tmp_path):
@@ -52,7 +53,7 @@ def test_role_models_freeze_and_generation_scores_in_its_own_stage(tmp_path):
     # The feedback queue independently freezes current overrides.
     store.set_meta('settings',{**store.settings(),'role_models':roles})
     store.comment(result['version_id'],'明确预计状态')
-    learning=enqueue_feedback(store)
+    learning=enqueue_feedback(store,confirmed_plan=learning_plan(store.settings())['fingerprint'])
     assert json.loads(learning['payload'])['role_models']==roles
     # Actual WikiSkill dispatch picks the phase model, not the writing model.
     learning_calls=[]
@@ -107,7 +108,7 @@ def test_evaluator_migration_preserves_settings_and_frozen_legacy_modes(tmp_path
     run=store.create_run({'title':'Report','objective':'Explain'},[source['id']])
     brief=store.publish(run['id'],{'title':'Report','markdown':'Saved fact'})
     store.comment(brief['id'],'Keep the source attribution')
-    job=enqueue_feedback(store)
+    job=enqueue_feedback(store,confirmed_plan=learning_plan(store.settings())['fingerprint'])
     assert set(json.loads(job['payload'])['role_models'])=={'evaluator','maintainer','proposer'}
     payload=json.loads(job['payload'])
     payload['role_models']={'scorer':astra,'assessor':other,'maintainer':payload['runtime'],'proposer':payload['runtime']}

@@ -652,7 +652,8 @@ class Store:
         briefs=[b for b in briefs if b['run_id'] not in deleted]
         from .search_policy import annotate_sources
         from .schedules import listing as schedule_listing
-        return {"schedules":schedule_listing(self),"notifications":notification_snapshot(self),"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "requirements": self.meta("requirements"), "settings": self.settings(),
+        from .learning_budget import snapshot as learning_authorization
+        return {"schedules":schedule_listing(self),"notifications":notification_snapshot(self),"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "learning_authorization":learning_authorization(self.settings()), "requirements": self.meta("requirements"), "settings": self.settings(),
                 "profile": self.meta("workspace_profile") or {},
                 "workflows":list_workflows(),
                 "templates":[{**row, 'workflow_hint':template_workflow_hint(row)} for row in self.rows('SELECT * FROM templates ORDER BY created DESC')],

@@ -32,7 +32,8 @@ def test_remote_office_uses_same_reader_and_corrupt_archive_is_failed(tmp_path):
 
 
 def test_old_study_cannot_replace_new_wiki(tmp_path):
-    store=Store(tmp_path);job=store.enqueue('learn',{'feedback_ids':[],'skill_id':None,'k':1,'targets':['analyst']})
+    store=Store(tmp_path);job=store.enqueue('learn',{'feedback_ids':[],'skill_id':None,'k':1,'targets':['analyst'],
+        'authorization':{'kind':'manual','rounds':2,'fingerprint':'x'*64,'max_trial_generations':12}})
     root=store.root/'jobs'/job['id'];root.mkdir();(root/'study').mkdir()
     (root/'context.json').write_text('{"feedback":[],"cases":[]}')
     store.set_meta('last_study','new-study')

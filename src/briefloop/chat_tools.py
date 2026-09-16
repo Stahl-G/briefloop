@@ -201,7 +201,15 @@ def workspace_action(store, request):
         return {**result,'message':'反馈已保存；是否自动学习遵循页面的自动学习设置。'}
     if action=='learn':
         from .learning import enqueue_feedback
-        return enqueue_feedback(store)
+        from .learning_budget import automatic_allowed, plan
+        budget=plan(store.settings())
+        # An agent request is not the user's confirmation. Without a recorded
+        # authorization it returns the plan for the user to confirm in settings.
+        if not automatic_allowed(store.settings()):
+            return {'status':'confirmation_required','budget':budget,
+                    'message':'学习验证会调用模型。请把下面的上限告诉用户，由用户在“设置 → 学习”中确认后再启动；本次没有创建任务。'}
+        result=enqueue_feedback(store,automatic=True)
+        return {**result,'budget':budget} if isinstance(result,dict) else result
     raise ValueError('不支持的 action；当前接口：'+', '.join(WORKSPACE_ACTIONS))
 
 
@@ -293,7 +301,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"generate","requirements":{{"title":"标题","objective":"用户目的","audience":"读者","language":"中文","extent":"compact|balanced|detailed","research_tier":"quick|standard|deep","allow_web":{str(bool(allow_web)).lower()},"period":"时间范围"}},"source_ids":["真实来源ID"],"runtime":{runtime_json}}}：正式生成可在页面编辑的简报。research_tier 是研究深度档位（默认 standard）：quick 单轮检索，deep 预排 4 轮迭代研究；按用户明确要求选，用户未提就不写该字段。
 - {{"action":"assess","version_id":"真实简报版本ID"}}：为已有稿件安排评分。
 - {{"action":"comment","version_id":"真实简报版本ID","text":"用户反馈"}}：记录用户明确提出的反馈。页面自动学习开启时，保存反馈可能稍后自动触发学习，要如实告知。
-- {{"action":"learn"}}：仅当用户明确要求启动技能学习时调用，会消耗额外模型额度。
+- {{"action":"learn"}}：仅当用户明确要求启动技能学习时调用，会消耗额外模型额度。调用前先告诉用户上限（每轮最多 3 个案例、每案例基线与候选各试写一次，另有整理、提案与比较回合；轮数按学习设置），得到明确同意后再调用；保存反馈本身不需要调用它。
 做不同主题的报告时不要在当前工作区硬混：当用户想做一份与当前工作区主题明显不同、希望彼此隔离的报告时，先确认；用户同意后，不要在对话里自己新建或写入工作区（当前“读写工作区”权限只覆盖本工作区，新建同级目录会被权限挡住），而是在回复末尾单独给出一个 ```briefloop-workspace 代码块，内容为 JSON：{{"name":"新工作区名称"}}。界面会在当前工作区同级目录新建并切换到新工作区，并让用户确认；不要声称你已切换界面。同一主题的续写、修订或同一批材料不要新建工作区。
 任务路由按用户目的判断，不要求用户说出“正式生成”四个字。用户交付多维公司研究、竞争对手对比分析、行业周报等完整研究任务时，默认产出可在 BriefLoop 页面编辑、核查和导出的报告；先满足用户要求的澄清步骤，必要信息齐备后调用 generate，不先在聊天里写完整报告再问是否整理成简报。用户明确只要口头讨论、简短答疑或不生成报告时直接回答；/discuss 仍只讨论需求。
 用户要求上述公开信息研究任务，且本轮 allow_web=true 时，可以直接准备需求并调用 generate，requirements.allow_web=true、source_ids=[]；没有上传文件不是必须追问或阻止生成的理由。已有明确要求和附件则照常复用，通过 inspect 取得真实来源 ID，不要丢掉用户指定材料。实际联网未开启时，不把 requirements.allow_web 偷改为 true，不提交依赖联网的生成任务。

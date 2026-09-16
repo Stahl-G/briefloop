@@ -7,6 +7,7 @@ import pytest
 from wikiskill import feedback_loop, product
 
 from briefloop.learning import enqueue_feedback, learn
+from briefloop.learning_budget import plan as learning_plan
 from briefloop.review import enqueue_review, run_review
 from briefloop.runtime import Worker
 from briefloop.store import Store
@@ -28,7 +29,7 @@ def switch_model(store):
 
 def failed_learning(store,brief):
     fid=store.comment(brief['id'],'Keep the currency explicit')['id']
-    job=enqueue_feedback(store)
+    job=enqueue_feedback(store,confirmed_plan=learning_plan(store.settings())['fingerprint'])
     store.update_job(job['id'],'interrupted',error='Synthetic interrupted maintainer')
     return store.one('jobs',job['id']),fid
 

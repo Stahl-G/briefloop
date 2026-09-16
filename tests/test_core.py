@@ -6,6 +6,7 @@ import unittest
 from briefloop.store import Store, Conflict
 from briefloop.runtime import Worker
 from briefloop.learning import enqueue_feedback, apply_accepted
+from briefloop.learning_budget import plan as learning_plan
 from wikiskill import feedback_loop, native_agents
 
 
@@ -32,9 +33,9 @@ class CoreBehavior(unittest.TestCase):
         s=self.store;s.revise(self.brief['id'],'**预计**交付。')
         self.assertEqual(len(s.rows('SELECT id FROM feedback')),0)
         s.comment(self.brief['id'],'保持交付状态限定')
-        job=enqueue_feedback(s);self.assertEqual(json.loads(job['payload'])['k'],1)
+        job=enqueue_feedback(s,confirmed_plan=learning_plan(s.settings())['fingerprint']);self.assertEqual(json.loads(job['payload'])['k'],1)
         s.set_meta('settings',{**s.settings(),'k':3})
-        self.assertEqual(enqueue_feedback(s)['status'],'idle')
+        self.assertEqual(enqueue_feedback(s,confirmed_plan=learning_plan(s.settings())['fingerprint'])['status'],'idle')
         self.assertEqual(json.loads(s.one('jobs',job['id'])['payload'])['k'],1)
         s.create_run({'title':'试验任务','objective':'仅用于验证'},json.loads(self.run['source_ids']),mode='trial',skill_id=None)
         self.assertEqual(s.meta('requirements')['title'],'测试')

@@ -69,7 +69,8 @@ def test_all_answer_only_cases_skip_without_model_or_adoption(tmp_path):
     store=Store(tmp_path/'workspace');answer=store.add_source('Revision answer','Only a user rewrite')
     case=store.create_run({'title':'Synthetic','objective':'Summarize'},[answer['id']])
     (store.root/'sources'/(answer['id']+'.provenance.json')).write_text(dump({'usage':'revision_feedback'}))
-    job=store.enqueue('learn',{'feedback_ids':[],'skill_id':None,'targets':['analyst'],'k':1})
+    job=store.enqueue('learn',{'feedback_ids':[],'skill_id':None,'targets':['analyst'],'k':1,
+        'authorization':{'kind':'manual','rounds':2,'fingerprint':'x'*64,'max_trial_generations':12}})
     folder=store.root/'jobs'/job['id'];folder.mkdir()
     (folder/'context.json').write_text(dump({'feedback':[],'cases':[case['id']]}))
     class Runtime:

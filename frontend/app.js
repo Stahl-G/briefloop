@@ -286,7 +286,7 @@ function render(first){
  renderWorkflowChoices(first);
  if($('review-open'))$('review-open').textContent='审阅与需处理'+(state.conflicts?.length?' · '+state.conflicts.length+' 项来源分歧':'');
  if(first&&$('report-system-clock')&&state.system_clock)$('report-system-clock').textContent=`本机日期：${state.system_clock.today} · ${state.system_clock.timezone}；提交时再次由后台核对。`;
- if(first){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('chat-allow-web').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.settings.auto_learn;$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',effortValue(state.settings,'reasoning_effort'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.model_variant||'';updateModelLabel();renderRoleModels();renderBackend();loadSearchPolicy();renderSearchProvider();refreshRuntimeDiscovery();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});if(!state.requirements||state.requirements.fact_check==null)$('requirements').elements.fact_check.checked=!!state.settings.fact_checker;syncFactCheckControl();syncWorkflowProfile(false);previewReportTime()}
+ if(first){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('chat-allow-web').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.learning_authorization?.state==='authorized';$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',effortValue(state.settings,'reasoning_effort'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.model_variant||'';updateModelLabel();renderRoleModels();renderBackend();loadSearchPolicy();renderSearchProvider();refreshRuntimeDiscovery();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});if(!state.requirements||state.requirements.fact_check==null)$('requirements').elements.fact_check.checked=!!state.settings.fact_checker;syncFactCheckControl();syncWorkflowProfile(false);previewReportTime()}
  $('source-count').textContent=state.sources.length+' 份';$('source-list').innerHTML=state.sources.map(s=>`<div class="source-item"><input type="checkbox" data-check="${s.id}" ${selected.has(s.id)?'checked':''} aria-label="选择 ${esc(s.name)}"><button data-source="${s.id}">${esc(s.name)}</button><span class="tag ${s.status==='failed'?'error':''}">${s.status==='failed'?'读取失败':s.needs_visual?'需视觉读取':'可读取'}</span>${s.status==='failed'?`<button data-retry-source="${s.id}">重试</button>`:''}</div>`).join('');
  document.querySelectorAll('[data-retry-source]').forEach(b=>b.onclick=()=>action(async()=>{const s=await api('retry-source',{source_id:b.dataset.retrySource});selected.delete(b.dataset.retrySource);selected.add(s.id);notice(s.status==='ready'?'来源已重新读取':s.error,s.status!=='ready')}));
  document.querySelectorAll('[data-check]').forEach(b=>b.onchange=()=>{if(b.checked){selected.add(b.dataset.check);referenceSelected.delete(b.dataset.check);renderReferenceSources()}else selected.delete(b.dataset.check)});renderReferenceSources();
@@ -579,9 +579,27 @@ $('upload').onchange=e=>action(async()=>{preflightSources(e.target.files,uploadL
 $('add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('source-url').value});selected.add(s.id);$('source-url').value='';notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
 $('rescore').onclick=()=>action(async()=>{await savedVersion();await api('assess',{version_id:current.id,session_id:chat.id||undefined})},'已提交评分');
 $('comment-submit').onclick=()=>action(async()=>{const text=$('comment').value,required=$('comment-required').checked;const version=await savedVersion();await api('comment',{version_id:version,text,learning_intent:required?'explicit_requirement':'feedback'});if($('comment').value===text&&$('comment-required').checked===required){$('comment').value='';$('comment-required').checked=true;}scheduleLearning()},'反馈已保存');
-$('learn-now').onclick=()=>action(async()=>{await savedVersion();clearTimeout(learnTimer);const result=await api('learn',{});notice(result.message||'已提交反馈学习')});
-async function setK(v){const k=Math.max(1,Math.min(20,Number(v)||1));$('rounds').value=k;await action(()=>api('settings',{k}),'轮数已保存，下一批生效')}
-$('rounds').onchange=e=>setK(e.target.value);$('k-minus').onclick=()=>setK(Number($('rounds').value)-1);$('k-plus').onclick=()=>setK(Number($('rounds').value)+1);$('auto-learn').onchange=e=>action(()=>api('settings',{auto_learn:e.target.checked}),'学习偏好已保存');
+// Saving feedback is free; starting a learning validation calls models (#727).
+function learningPlanText(plan){
+ return `每轮最多用 ${plan.cases} 份历史报告，每份基线和候选各试写一次（最多 ${plan.trial_generations_per_round} 次，可复用的基线不重写），另有整理经验、提出候选和一次成对比较；`+
+  `最多 ${plan.rounds} 轮，含用户明确需求时最多 ${plan.rounds_with_explicit_requirement} 轮，试写合计不超过 ${plan.max_trial_generations} 次。试写使用固定来源，不联网检索。`+
+  `执行后端：${plan.backend_label} · ${plan.model||'尚未选择模型'}${roleModelText(plan)}。`+
+  `上限计的是试写次数，不含宿主内部子 agent 的回合或 token 数；费用以宿主或 API 账户实际计费为准，BriefLoop 无法估算金额。`;
+}
+function roleModelText(plan){
+ const roles=Object.entries(plan.role_models||{}).filter(([,value])=>value&&value.model);
+ return roles.length?('；角色模型 '+roles.map(([role,value])=>`${role}=${value.model}`).join('、')):'';
+}
+function confirmLearning(message){const plan=state?.learning_authorization?.plan;return !!plan&&confirm(message+'\n\n'+learningPlanText(plan))}
+async function setAutoLearn(enabled){
+ if(!enabled){await api('settings',{auto_learn:false});return false}
+ if(!confirmLearning('开启后，改稿或评论会在后台自动启动学习验证并调用模型。'))return false;
+ const plan=state.learning_authorization.plan;
+ await api('settings',{auto_learn:true,confirm_learning_rounds:plan.rounds,confirm_plan:plan.fingerprint});return true;
+}
+$('learn-now').onclick=()=>action(async()=>{await savedVersion();clearTimeout(learnTimer);if(!confirmLearning('现在用已保存的反馈启动一次学习验证。'))return;const result=await api('learn',{confirm_plan:state.learning_authorization.plan.fingerprint});notice(result.message||'已提交反馈学习')});
+async function setK(v){const k=Math.max(1,Math.min(20,Number(v)||1));$('rounds').value=k;await action(async()=>{await api('settings',{k});await refresh();if(state.learning_authorization?.state==='rounds_exceed')notice(learningAuthorizationNote());else notice('轮数已保存，下一批生效')})}
+$('rounds').onchange=e=>setK(e.target.value);$('k-minus').onclick=()=>setK(Number($('rounds').value)-1);$('k-plus').onclick=()=>setK(Number($('rounds').value)+1);
 $('toolbar').querySelectorAll('button').forEach(b=>b.onclick=()=>{if(!editor)return;const c=editor.chain().focus();({bold:()=>c.toggleBold().run(),italic:()=>c.toggleItalic().run(),heading:()=>c.toggleHeading({level:2}).run(),bullet:()=>c.toggleBulletList().run(),table:()=>c.insertTable({rows:3,cols:3,withHeaderRow:true}).run(),undo:()=>c.undo().run(),redo:()=>c.redo().run(),addRow:()=>c.addRowAfter().run(),deleteRow:()=>c.deleteRow().run(),addColumn:()=>c.addColumnAfter().run(),deleteColumn:()=>c.deleteColumn().run(),mergeCells:()=>c.mergeCells().run(),splitCell:()=>c.splitCell().run(),imageCaption:()=>{const a=editor.getAttributes('image');if(!a.src)return;const caption=window.prompt('图注',a.caption||'');if(caption!==null)c.updateAttributes('image',{caption}).run()},imageWidth:()=>{const a=editor.getAttributes('image');if(!a.src)return;const raw=window.prompt('图像宽度（像素）',String(a.width||480));if(raw===null)return;const width=Number(raw);if(Number.isInteger(width)&&width>0&&width<=10000)c.updateAttributes('image',{width,height:null}).run();else notice('请输入有效宽度',true)}})[b.dataset.command]()});
 $('markdown-toggle').onclick=()=>$('markdown-import').click();
 let pendingMarkdownImport=null;
@@ -1375,10 +1393,19 @@ function autoSizeChatInput(){const input=$('chat-input');input.style.height='aut
 {
  const inputHandler=$('chat-input').oninput;$('chat-input').oninput=event=>{inputHandler?.(event);autoSizeChatInput()};
 }
-async function updateLearningPause(){
- const runtime=await api('runtime'),paused=runtime.automatic_learning_paused===true;const note=$('settings-paused-note');note.hidden=!paused;note.textContent=paused?'此工作区的自动学习已暂停。勾选下方选项后启用。':'';if(paused)$('auto-learn').checked=false;else $('auto-learn').checked=!!state.settings.auto_learn;
+function learningAuthorizationNote(){
+ const auth=state?.learning_authorization;
+ if(auth?.state==='needs_confirmation')return '自动学习等待确认：开启会在后台调用模型做学习验证，需要先确认一次调用上限。反馈照常保存，已启用的技能照常用于报告。';
+ if(auth?.state==='rounds_exceed')return `学习轮数已高于确认时的 ${auth.authorized_rounds} 轮，自动学习已暂停；重新勾选即可确认新的上限。`;
+ if(auth?.state==='plan_changed')return '执行后端或模型在确认之后发生了变化，自动学习已暂停；重新勾选即可按新的配置确认上限。';
+ return '';
 }
-$('auto-learn').onchange=async event=>{const enabled=event.target.checked;event.target.disabled=true;try{await api('settings',{auto_learn:enabled});await refresh();await updateLearningPause()}catch(e){notice(e.message,true)}finally{event.target.disabled=false}};
+async function updateLearningPause(){
+ const runtime=await api('runtime'),paused=runtime.automatic_learning_paused===true,note=$('settings-paused-note'),waiting=learningAuthorizationNote();
+ note.textContent=paused?'此工作区的自动学习已暂停。勾选下方选项后启用。':waiting;note.hidden=!note.textContent;
+ $('auto-learn').checked=!paused&&state.learning_authorization?.state==='authorized';
+}
+$('auto-learn').onchange=async event=>{const enabled=event.target.checked;event.target.disabled=true;try{await setAutoLearn(enabled);await refresh();await updateLearningPause()}catch(e){notice(e.message,true)}finally{event.target.disabled=false;syncCompactReportControls()}};
 
 function sourceOriginalLink(result){
  const provenance=result.provenance||{};
@@ -2498,9 +2525,10 @@ function compactReportInstruction(){
 }
 function compactReportControls(where){
  const row=document.createElement('div');row.className='compact-report-options';row.dataset.reportOptions=where;
- row.innerHTML='<label>研究 <select data-option="tier" aria-label="研究深度"><option value="quick">快速</option><option value="standard" selected>标准</option><option value="deep">深度研究</option></select></label><label title="生成后联网补查关键主张，增加时间与用量"><input type="checkbox" data-option="fact">事实核查</label><label title="基于反馈提出改进，经比较验证后采用"><input type="checkbox" data-option="learn" checked>WikiSkill</label><label><input type="number" min="1" max="20" value="1" data-option="rounds" aria-label="WikiSkill 轮数">轮</label><details><summary aria-label="更多报告选项">更多 ⋯</summary><div class="compact-options-menu"><label>单次执行上限 <select data-option="timeout"><option value="30">30 分钟</option><option value="60" selected>60 分钟</option><option value="120">120 分钟</option><option value="0">不限时</option></select></label><label>Scout 并发 <input data-option="scouts" type="number" min="1" max="16" value="4"></label></div></details>';
+ row.innerHTML='<label>研究 <select data-option="tier" aria-label="研究深度"><option value="quick">快速</option><option value="standard" selected>标准</option><option value="deep">深度研究</option></select></label><label title="生成后联网补查关键主张，增加时间与用量"><input type="checkbox" data-option="fact">事实核查</label><label title="改稿或评论后在后台启动学习验证，会调用模型；已启用的技能不受这个开关影响"><input type="checkbox" data-option="learn">自动学习</label><label><input type="number" min="1" max="20" value="1" data-option="rounds" aria-label="自动学习最多轮数">轮</label><details><summary aria-label="更多报告选项">更多 ⋯</summary><div class="compact-options-menu"><label>单次执行上限 <select data-option="timeout"><option value="30">30 分钟</option><option value="60" selected>60 分钟</option><option value="120">120 分钟</option><option value="0">不限时</option></select></label><label>Scout 并发 <input data-option="scouts" type="number" min="1" max="16" value="4"></label></div></details>';
  row.addEventListener('change',event=>action(async()=>{
   const key=event.target.dataset.option;if(!key)return;const value=event.target.type==='checkbox'?event.target.checked:event.target.value;
+  if(key==='learn'){try{await setAutoLearn(value);await refresh()}finally{syncCompactReportControls()}$('auto-learn').checked=state.learning_authorization?.state==='authorized';return}
   if(key==='tier'){$('research-tier').value=value;$('research-tier').dispatchEvent(new Event('change'))}
   if(key==='fact')$('requirements').elements.fact_check.checked=value;
   const field={tier:'research_tier',fact:'fact_checker',learn:'auto_learn',rounds:'k',timeout:'timeout_minutes',scouts:'max_parallel'}[key];
@@ -2514,7 +2542,7 @@ function syncCompactReportControls(){
  if(!state?.settings)return;
  document.querySelectorAll('[data-report-options]').forEach(row=>{
   const web=row.dataset.reportOptions==='chat'?$('chat-allow-web').checked:$('requirements').elements.allow_web.checked;
-  for(const [key,value] of Object.entries({tier:row.dataset.reportOptions==='setup'?$('research-tier').value:state.settings.research_tier||'standard',fact:row.dataset.reportOptions==='setup'?$('requirements').elements.fact_check.checked:state.settings.fact_checker,learn:state.settings.auto_learn,rounds:state.settings.k,timeout:state.settings.timeout_minutes,scouts:state.settings.max_parallel})){
+  for(const [key,value] of Object.entries({tier:row.dataset.reportOptions==='setup'?$('research-tier').value:state.settings.research_tier||'standard',fact:row.dataset.reportOptions==='setup'?$('requirements').elements.fact_check.checked:state.settings.fact_checker,learn:state.learning_authorization?.state==='authorized',rounds:state.settings.k,timeout:state.settings.timeout_minutes,scouts:state.settings.max_parallel})){
    const input=row.querySelector(`[data-option="${key}"]`);if(document.activeElement===input)continue;if(input.type==='checkbox')input.checked=!!value;else input.value=value;
   }
   const fact=row.querySelector('[data-option="fact"]');fact.disabled=!web;if(!web)fact.checked=false;
