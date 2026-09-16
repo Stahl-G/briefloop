@@ -797,20 +797,22 @@ def _git(args: list[str]) -> str:
     return result.stdout.strip()
 
 
-def condition_drift_error(config: dict[str, Any], head: str | None,
+def condition_drift_error(config: dict[str, Any], code_matches_expected: bool,
                          declared: bool) -> str | None:
     """§6.4 freeze guard: batches must run the pinned expected_code_state.
 
     code_state_matches only proves the working tree equals HEAD — HEAD
-    itself can move and be silently re-frozen.  This pin makes a moved
-    baseline refuse to start unless --declare-condition-change is explicit
-    (recorded in run_index.condition_change).  Same defect class as
-    number_bindings: a signal with no consumer.
+    itself can move and be silently re-frozen.  This pin refuses a run
+    whose CODE CONTENT (checked paths, freeze records excluded — the same
+    paths code_state_matches uses) differs from the pinned commit, unless
+    --declare-condition-change is explicit (recorded in
+    run_index.condition_change).  Content, not hash: a freeze commit that
+    only moves config must not trip its own guard.
     """
     expected = (config.get("baseline") or {}).get("expected_code_state")
-    if not expected or head is None or head == expected or declared:
+    if not expected or code_matches_expected or declared:
         return None
-    return (f"条件漂移拒绝：批次须运行冻结的 expected_code_state={expected}，当前 HEAD={head}。"
+    return (f"条件漂移拒绝：批次代码内容偏离冻结的 expected_code_state={expected}。"
             "新条件必须显式传 --declare-condition-change 并在冻结记录中说明变更内容后重冻结。")
 
 
@@ -2000,7 +2002,10 @@ def command_run(args: argparse.Namespace) -> int:
         for name in isolation.CREDENTIAL_ENV_VARS:
             os.environ.pop(name, None)
         code_state = code_state_matches(config["baseline"]["integration_commit"])
-        drift = condition_drift_error(config, code_state.get("head"),
+        expected_state = (config.get("baseline") or {}).get("expected_code_state")
+        code_matches_expected = (not expected_state
+                                 or code_state_matches(expected_state)["matches"])
+        drift = condition_drift_error(config, code_matches_expected,
                                       getattr(args, "declare_condition_change", False))
         if drift:
             raise RealExecutionGateError(drift)

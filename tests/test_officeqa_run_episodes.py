@@ -945,8 +945,8 @@ def test_condition_drift_refuses_without_declaration():
     unless the change is explicitly declared."""
     from experiments.officeqa_structured.run_episodes import condition_drift_error
     cfg = {"baseline": {"expected_code_state": "a" * 40}}
-    assert condition_drift_error(cfg, "a" * 40, False) is None          # pinned == head
-    assert condition_drift_error(cfg, "b" * 40, False) is not None      # drift refuses
-    assert "条件漂移" in condition_drift_error(cfg, "b" * 40, False)
-    assert condition_drift_error(cfg, "b" * 40, True) is None           # declared passes
-    assert condition_drift_error({"baseline": {}}, "b" * 40, False) is None  # unpinned legacy
+    assert condition_drift_error(cfg, True, False) is None              # code content matches
+    assert condition_drift_error(cfg, False, False) is not None         # drift refuses
+    assert "条件漂移" in condition_drift_error(cfg, False, False)
+    assert condition_drift_error(cfg, False, True) is None              # declared passes
+    assert condition_drift_error({"baseline": {}}, False, False) is None  # unpinned legacy
