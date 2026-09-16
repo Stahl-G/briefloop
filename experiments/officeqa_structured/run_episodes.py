@@ -1775,14 +1775,13 @@ def _qa_evidence_diagnostics(episode_dir: Path, box: "SubmissionBox") -> dict[st
     if db.is_file():
         d = _sq.connect(f"file:{db}?mode=ro", uri=True)
         try:
-            rows = d.execute("SELECT data FROM briefs ORDER BY rowid").fetchall()
+            rows = d.execute("SELECT detail FROM briefs ORDER BY rowid").fetchall()
             for (payload,) in rows:
                 detail = json.loads(payload)
                 ans = detail.get("answer_result") or {}
                 versions.append(ans)
                 if ans.get("status") == "answered":
                     final_answer = ans.get("answer")
-            drafts = d.execute("SELECT data FROM briefs ORDER BY rowid DESC LIMIT 1").fetchall()
         finally:
             d.close()
     answered_versions = [v for v in versions if v.get("status") == "answered"]
