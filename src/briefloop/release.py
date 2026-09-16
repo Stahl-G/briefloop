@@ -198,6 +198,14 @@ def decision(snapshot, review_result, findings, protocol='legacy', *, clauses=No
               label=item.get('label', ''), expected=item.get('expected', ''), reason=item.get('reason', ''))
     for item in numbers.get('skipped', []):
         notices.append({'code': 'number_unchecked', 'message': str(item.get('label') or item.get('expected') or '未命名数值') + '：' + str(item.get('reason', '未检查'))})
+    if numbers.get('status') == 'not_checked':
+        body_count = numbers.get('body_quantity_count') or 0
+        if body_count:
+            notices.append({'code': 'numbers_unbound', 'count': body_count,
+                            'message': f'正文检出 {body_count} 处数值，但没有任何数字绑定；数值核验未执行'})
+        else:
+            notices.append({'code': 'numbers_absent',
+                            'message': '正文未检出数值，本稿无数值核验'})
     for source_id in deterministic.get('broken_refs', []):
         issue('broken_reference', '正文引用了不存在的来源：' + str(source_id), source_id=source_id)
     return {'eligible': not blockers, 'blockers': blockers, 'notices': notices}

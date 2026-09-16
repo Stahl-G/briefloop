@@ -179,3 +179,35 @@ def test_layout_findings_are_reported_but_never_blocking(tmp_path):
     layout = brief_checks(store, brief['id'])['layout']
     assert layout['status'] == 'issues' and len(layout['heading_jumps']) == 1 and layout['tables_without_header'] == ['数值']
     assert layout['empty_headings'] == 0
+
+
+def test_quantities_separates_numeric_from_prose_only_bodies():
+    """Regression seam for the silent-inactive defect: the detector that
+    separates "body has numbers" from "body has none" must see bare years
+    and percentages — the OfficeQA shapes that escaped the old trigger."""
+    from briefloop.delivery_checks import quantities
+    numeric = '峰值出现在 1990 年，占比 34.2%，约 2.414 倍。'
+    prose = '本段不包含可检出的数值表述。'
+    assert len(list(quantities(numeric))) >= 3
+    assert len(list(quantities(prose))) == 0
+
+
+def test_release_flags_numbers_unbound_and_numbers_absent():
+    """Zero-binding bodies must stop being invisible in the release record:
+    numbers-present/not-checked is a notice (report mode), absent is its own
+    quieter notice — neither reads as a completed check."""
+    from briefloop.release import decision
+    base = {'deterministic': {'numbers': {'total': 0, 'checked': 0, 'matched': 0,
+                                          'status': 'not_checked', 'unmatched': [], 'skipped': []}},
+            'coverage': {'complete': True}, 'premises': {},
+            'requirements': {'satisfied': True, 'requirement_items': []},
+            'evidence': {'bindings': []}}
+    review = {'status': 'complete', 'overall': 'pass', 'coverage': True, 'premises': True,
+              'requirement_checks': [], 'coverage_scan_complete': True}
+    with_numbers = decision({**base, 'deterministic': {**base['deterministic'], 'numbers': {
+        **base['deterministic']['numbers'], 'body_quantity_count': 7}}}, review, [])
+    codes = {n['code'] for n in with_numbers['notices']}
+    assert 'numbers_unbound' in codes
+    absent = decision(base, review, [])
+    codes = {n['code'] for n in absent['notices']}
+    assert 'numbers_absent' in codes and 'numbers_unbound' not in codes

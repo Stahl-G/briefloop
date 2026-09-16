@@ -30,6 +30,18 @@ def normalized(value, unit):
         return number * _CAPACITY[unit], 'power'
     if unit in ('股', 'shares'):
         return number, 'shares'
+    # Bare scalars — years, multipliers, counts — carry conclusions too
+    # (OfficeQA evidence: years/ratios escaped both the binding trigger and
+    # the checker).  Supported so a broadened binding actually checks
+    # instead of piling into skipped.
+    if unit in ('年', 'year', 'fy'):
+        return number, 'year'
+    if unit in ('倍', 'x', '×'):
+        return number, 'ratio'
+    if unit in ('个', '项', '次', '人', '家', '条', 'count', 'items'):
+        return number, 'count'
+    if unit == '':
+        return number, 'scalar'
     if unit in ('$', 'usd', '美元'):
         return number, 'USD'
     if unit in ('cny', 'rmb', '人民币', '元', '元人民币'):
@@ -57,6 +69,19 @@ _UNIT = (r'(?:thousand|millions?|billions?)(?:\s+(?:USD|CNY|RMB|EUR|GBP))?'
 _QUANTITY = re.compile(r'(?<![A-Za-z0-9_.,+\-−])(?P<prefix>\$|USD\s+|CNY\s+|RMB\s+|百分之)?'
                        r'(?P<number>' + _NUM + r')\s*(?P<unit>' + _UNIT + r')?'
                        r'(?P<denom>\s*/\s*[\w]+|每[\w]+)?', re.I)
+
+
+_NUMERIC_TOKEN = re.compile(r'(?<![A-Za-z0-9_.])\d+(?:[.,]\d+)*(?![A-Za-z0-9_])')
+
+
+def _numeric_token_count(text):
+    """Presence of numeric tokens in a body, independent of unit support.
+
+    ``quantities`` only yields shapes ``normalized`` supports, so a bare
+    ``1990`` or ``2.414 倍`` written in an unsupported era would be
+    invisible there too — exactly the blind spot this counter exposes.
+    """
+    return len(_NUMERIC_TOKEN.findall(text or ''))
 
 
 def quantities(text):
@@ -264,7 +289,13 @@ def brief_checks(store, version_id):
                         'matched': sum(r['found'] for r in numbers),
                         'status': 'not_checked' if not checked else 'partial' if checked < len(numbers) else 'checked_bindings',
                         'unmatched': [r for r in numbers if r['checked'] and not r['found']],
-                        'skipped': [r for r in numbers if not r['checked']]},
+                        'skipped': [r for r in numbers if not r['checked']],
+                        # Numeric tokens the body actually carries vs the bound
+                        # set: with zero bindings this separates "no numbers to
+                        # check" from "numbers present, none ever bound" — the
+                        # silent-inactive case — and gives the matched-rate
+                        # denominator (matched / body_quantity_count).
+                        'body_quantity_count': _numeric_token_count(brief['markdown'])},
             'export': export,
             'layout': layout,
             'assessment_overall': json.loads(rows[0]['data']).get('overall') if rows else None}
