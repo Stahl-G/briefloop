@@ -54,6 +54,8 @@ interface SessionEntry {
   expectJson: boolean;
   repairs: number;
   finalText: string;
+  idleMs: number;
+  idleTimer: ReturnType<typeof setTimeout> | undefined;
   unsubscribe: () => void;
 }
 
@@ -138,11 +140,37 @@ function resolveModel(spec: unknown) {
   return registry.find(s.slice(0, slash), s.slice(slash + 1));
 }
 
+// Any session event proves the model stream or a tool is alive. If nothing
+// arrives for idleMs during an active turn the provider connection has stalled
+// (observed: opencode-go held a silent socket for 18+ min); fail the turn
+// honestly instead of waiting forever.
+function armIdle(clientSid: string, execId: string, entry: SessionEntry): void {
+  if (entry.idleTimer) clearTimeout(entry.idleTimer);
+  entry.idleTimer = setTimeout(() => {
+    entry.idleTimer = undefined;
+    entry.cancelled = true;
+    void entry.session.abort().catch(() => {});
+    emit(clientSid, execId, "end", {
+      status: "failed",
+      error: `model stream idle for ${Math.round(entry.idleMs / 1000)}s; aborted as a stalled request`,
+    });
+    // The stalled turn may still settle later; it must not emit a second end.
+    (entry as any).execRef.current = "";
+    entry.busy = false;
+  }, entry.idleMs);
+}
+
+function disarmIdle(entry: SessionEntry): void {
+  if (entry.idleTimer) clearTimeout(entry.idleTimer);
+  entry.idleTimer = undefined;
+}
+
 function wireSessionEvents(clientSid: string, executionIdRef: { current: string }, entry: SessionEntry): void {
   const state = { turnError: "" as string };
   entry.unsubscribe = entry.session.subscribe((event) => {
     const execId = executionIdRef.current;
     if (!execId) return;
+    armIdle(clientSid, execId, entry);
     const e = event as Record<string, any>;
     switch (e.type) {
       case "message_start":
@@ -176,11 +204,14 @@ function wireSessionEvents(clientSid: string, executionIdRef: { current: string 
           // without converging. Kill the turn deterministically; the reviewer
           // contract is small enough that the cap is generous headroom.
           entry.cancelled = true;
+          disarmIdle(entry);
           void entry.session.abort().catch(() => {});
           emit(clientSid, execId, "end", {
             status: "failed",
             error: `tool-call budget exhausted (${entry.maxToolCalls}); the model did not converge`,
           });
+          (entry as any).execRef.current = "";
+          entry.busy = false;
           break;
         }
         emit(clientSid, execId, "tool", {
@@ -240,6 +271,7 @@ function wireSessionEvents(clientSid: string, executionIdRef: { current: string 
             finalJson = JSON.stringify(parsed);
           }
         }
+        disarmIdle(entry);
         emit(clientSid, execId, "end", {
           status,
           aborted: entry.cancelled,
@@ -317,6 +349,8 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     expectJson: false,
     repairs: 0,
     finalText: "",
+    idleMs: 240000,
+    idleTimer: undefined,
     unsubscribe: () => {},
   };
   const execRef = { current: "" };
@@ -345,11 +379,16 @@ async function turnStart(id: string | undefined, p: Record<string, unknown>): Pr
   entry.expectJson = p.expect_json === true;
   entry.repairs = 0;
   entry.finalText = "";
+  const idle = Number(p.idle_timeout_s);
+  if (Number.isFinite(idle) && idle > 0) entry.idleMs = Math.min(1800, idle) * 1000;
   (entry as any).execRef.current = execId;
   reply(id, { started: true });
+  // Arm immediately: the wait for the provider's first byte is covered too.
+  armIdle(String(p.session_id), execId, entry);
   try {
     await entry.session.prompt(prompt);
   } catch (err) {
+    disarmIdle(entry);
     emit(String(p.session_id), execId, "end", { status: "failed", error: String(err) });
   } finally {
     entry.busy = false;
@@ -361,6 +400,7 @@ async function turnAbort(id: string | undefined, p: Record<string, unknown>): Pr
   const entry = sessions.get(String(p.session_id ?? ""));
   if (!entry) throw new Error("unknown session_id");
   entry.cancelled = true;
+  disarmIdle(entry);
   await entry.session.abort();
   reply(id, { aborted: true });
 }
@@ -369,6 +409,7 @@ async function sessionClose(id: string | undefined, p: Record<string, unknown>):
   const sid = String(p.session_id ?? "");
   const entry = sessions.get(sid);
   if (entry) {
+    disarmIdle(entry);
     try { entry.unsubscribe(); } catch {}
     try { entry.session.dispose(); } catch {}
     sessions.delete(sid);
