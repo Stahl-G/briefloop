@@ -9,6 +9,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test test/*.test.cjs",
+    "verify:pdf": "electron test/electron-pdf-export",
     "pack": "electron-builder --mac dir --arm64 --publish never",
     "dist": "electron-builder --mac dmg zip --arm64 --publish never && node scripts/prepare-update-blockmaps.cjs",
     "postinstall": "node node_modules/electron/install.js",

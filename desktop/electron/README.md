@@ -54,3 +54,7 @@ preload 提供 `briefloopDesktop.onPrepareClose(callback)`。main 为每次准�
 `openWorkspace({path, create})` 是受限 IPC：main 校验调用窗口、当前 mainFrame 来源和本地路径，不接受命令、URL 或 PID。文件导入沿用同一 Web UI 的原生 file input；`will-download` 弹出系统另存对话框。可安装 `.app`／DMG 的最终位置和窗口操作结果以桌面验收记录为准。
 
 保存握手开始时 renderer 暂设 `body.inert`，防止保存确认与关闭之间继续输入。preload 的固定 `onResume` 回调响应 `workspace:resume`；main 在取消关闭、保存失败或仅完成 Cmd+S 保存时发送它恢复编辑，失败路径也解除 inert。
+
+`briefloopDesktop.exportPdf({html, title})` 是报告导出的受限 IPC：main 校验调用窗口与工作区来源，在隐藏窗口里离线渲染页面已生成的自包含 HTML（禁用 JavaScript、独立非持久 session、除自身文件与内联 `data:` 外的请求一律取消、禁止新窗口与跳转），`printToPDF` 后弹系统另存对话框，同一时间只导出一份，成功、取消与失败都销毁窗口并删除临时文件。桌面壳对新窗口一律 `deny`，这条通道不改变该策略。
+
+`test/*.test.cjs` 用替身覆盖上述规则，CI 运行其中的 `pdf-export.test.cjs`。真实运行时的验收另有 `npm run verify:pdf`（需要本机 Electron，不在 CI 内）：它在真实 Electron 主进程里执行同一段导出代码，检查生成的是真实 PDF（页数、体积）、外部请求确实没有发出、脚本确实没有执行、窗口与临时文件已清理、取消不落盘、并发导出被拒。`BRIEFLOOP_PDF_KEEP=1` 会保留产物供人工打开检查。
