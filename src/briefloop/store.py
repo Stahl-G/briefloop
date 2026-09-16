@@ -673,7 +673,8 @@ class Store:
         from .search_policy import annotate_sources
         from .schedules import listing as schedule_listing
         from .review_capability import summary as review_capability_summary
-        return {"schedules":schedule_listing(self),"notifications":notification_snapshot(self),"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "review_capability":review_capability_summary(), "requirements": self.meta("requirements"), "settings": self.settings(),
+        from .learning_budget import snapshot as learning_authorization
+        return {"schedules":schedule_listing(self),"notifications":notification_snapshot(self),"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "learning_authorization":learning_authorization(self.settings()), "review_capability":review_capability_summary(), "requirements": self.meta("requirements"), "settings": self.settings(),
                 "profile": self.meta("workspace_profile") or {},
                 "workflows":list_workflows(),
                 "templates":[{**row, 'workflow_hint':template_workflow_hint(row)} for row in self.rows('SELECT * FROM templates ORDER BY created DESC')],
