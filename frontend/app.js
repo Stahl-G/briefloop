@@ -477,7 +477,12 @@ document.addEventListener('click',async event=>{
   const cited=[];
   for(const a of body.querySelectorAll('a[href^="#source-"]')){
    const sid=a.getAttribute('href').slice(8);if(!cited.includes(sid))cited.push(sid);
-   a.setAttribute('href','#reference-'+(cited.indexOf(sid)+1));
+   const number=cited.indexOf(sid)+1;
+   a.setAttribute('href','#reference-'+number);
+   // A numeric citation from an older draft still shows the workspace source
+   // number; renumber it with the reference list. Named link text is kept.
+   const label=a.textContent.trim(),numeric=/^([[(（【]?)\s*(\d+)\s*([\])）】]?)$/.exec(label);
+   if(numeric)a.textContent=numeric[1]+number+numeric[3];
   }
   if(cited.length){const heading=document.createElement('h2');heading.textContent='来源';body.append(heading);const list=document.createElement('ol');
    for(const [i,sid] of cited.entries()){const source=state.sources.find(s=>s.id===sid);const row=document.createElement('li');row.id='reference-'+(i+1);const name=source?.name||'未关联来源';

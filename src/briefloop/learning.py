@@ -201,9 +201,13 @@ def _generate_trial(store,job,case,skill,folder,tag):
     else:
         run=store._create_learning_run(case['learning_origin_id'],selected,skill_id=skill['id'] if skill else None)
         parent=json.loads(job['payload'])
-        trial=store.enqueue('generate',{'run_id':run['id'],'skill_override':skill,'single_evaluation':False,'runtime':parent.get('runtime',store.runtime_config()),'role_models':parent.get('role_models',{}),'agent_backend':parent.get('agent_backend',store.settings().get('agent_backend','codex'))})
-        # This is a child operation of the current learning worker, not a second queued worker.
-        store.update_job(trial['id'],'running');info={'run_id':run['id'],'job_id':trial['id'],'source_snapshot':expected,'conditions':conditions,'skill':skill}
+        def own(connection,jid,_payload):
+            # The learning job runs this trial itself. Claiming it inside the same
+            # transaction leaves no queued window for the report dispatcher, which
+            # since #728 keeps running while learning works (#747 review F1).
+            connection.execute("UPDATE jobs SET status='running',updated=? WHERE id=?",(now(),jid))
+        trial=store.enqueue('generate',{'run_id':run['id'],'skill_override':skill,'single_evaluation':False,'inline_owner_job_id':job['id'],'runtime':parent.get('runtime',store.runtime_config()),'role_models':parent.get('role_models',{}),'agent_backend':parent.get('agent_backend',store.settings().get('agent_backend','codex'))},before_commit=own)
+        info={'run_id':run['id'],'job_id':trial['id'],'source_snapshot':expected,'conditions':conditions,'skill':skill}
         from wikiskill.product import write
         write(marker,info,immutable=True)
     trial=store.one('jobs',info['job_id'])
