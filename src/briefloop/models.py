@@ -204,7 +204,11 @@ class Settings(RoleModel):
     search_provider: Literal['native','tavily','duckduckgo','bocha','zhipu'] = 'tavily'
     search_policy: SearchPolicy | None = None
     k: int = Field(default=1, ge=1, le=20)
-    auto_learn: bool = True
+    # Saving feedback is free; automatic learning starts paid validation and needs
+    # a recorded confirmation of its upper bound (learning_budget, #727).
+    auto_learn: bool = False
+    auto_learn_authorized_rounds: int | None = Field(default=None, ge=1, le=20)
+    auto_learn_authorized_plan: str | None = Field(default=None, min_length=64, max_length=64)
     max_reports: int = Field(default=4, ge=1, le=16)
     max_parallel: int = Field(default=4, ge=1, le=16)
     timeout_minutes: int = Field(default=60, ge=0, le=240)  # 0 disables the run deadline.
