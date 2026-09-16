@@ -30,7 +30,7 @@ def test_exact_tokens_currency_and_dimension(tmp_path):
         row = check_numbers(quote, [bound(store, quote, token, value, unit, excerpt)], store)[0]
         assert row['checked'], row
         assert row['found'] is found, (quote, row)
-    for unit in ('USD/MWh', 'B USD', 'million EUR', '兆', '百分点'):
+    for unit in ('USD/MWh', 'B USD', 'million EUR', '兆'):
         assert normalized(5, unit) is None
     for quote, token in [('收入110美元', '10美元'), ('价格5美元/MWh', '5美元/MWh'), ('电量5MWh', '5MWh')]:
         item = bound(store, quote, token, 5, 'USD', '$5')
@@ -179,3 +179,75 @@ def test_layout_findings_are_reported_but_never_blocking(tmp_path):
     layout = brief_checks(store, brief['id'])['layout']
     assert layout['status'] == 'issues' and len(layout['heading_jumps']) == 1 and layout['tables_without_header'] == ['数值']
     assert layout['empty_headings'] == 0
+
+
+def test_quantities_separates_numeric_from_prose_only_bodies():
+    """Regression seam for the silent-inactive defect: the detector that
+    separates "body has numbers" from "body has none" must see bare years
+    and percentages — the OfficeQA shapes that escaped the old trigger.
+    Assertions land on DIMENSIONS, not just counts: a bare year must come
+    out as a year, a multiplier as a ratio."""
+    from briefloop.delivery_checks import quantities
+    numeric = '编号 42，峰值出现在 1990 年，占比 34.2%，约 2.414 倍。'
+    prose = '本段不包含可检出的数值表述。'
+    found = list(quantities(numeric))
+    dims = {dim for _, _, (_, dim) in found}
+    assert 'year' in dims and 'ratio' in dims and 'percent' in dims and 'scalar' in dims
+    assert len(found) >= 4
+    assert len(list(quantities(prose))) == 0
+
+
+def test_dimensionless_binding_requires_semantic_specificity(tmp_path):
+    """A scalar binding without label/entity matches any equal bare number
+    in an excerpt (page numbers, unrelated years) — it must be skipped as
+    under-specified, not silently matched."""
+    store = Store(tmp_path)
+    source = store.add_source('disclosure', 'Fiscal year 1990 total: 1990' + chr(10) + 'Page 1990 footer.')
+    bare = dict(label='', value='1990', unit='', entity='', period='',
+                source_id=source['id'], locator='line 1', source_excerpt='Fiscal year 1990 total: 1990',
+                report_quote='总数是 1990。', number_text='1990')
+    rows = check_numbers('总数是 1990。', [bare], store)
+    assert rows[0]['checked'] is False and '特异性不足' in rows[0]['reason']
+    specified = dict(bare, label='财年', entity='Treasury', period='FY1990')
+    rows2 = check_numbers('总数是 1990。', [specified], store)
+    assert rows2[0]['checked'] is True and rows2[0]['found'] is True
+    assert rows2[0].get('dimensionless') is True and '无量纲' in rows2[0]['reason']
+
+
+def test_release_flags_numbers_unbound_and_numbers_absent():
+    """Zero-binding bodies must stop being invisible in the release record:
+    numbers-present/not-checked is a notice (report mode), absent is its own
+    quieter notice — neither reads as a completed check."""
+    from briefloop.release import decision
+    base = {'deterministic': {'numbers': {'total': 0, 'checked': 0, 'matched': 0,
+                                          'status': 'not_checked', 'unmatched': [], 'skipped': []}},
+            'coverage': {'complete': True}, 'premises': {},
+            'requirements': {'satisfied': True, 'requirement_items': []},
+            'evidence': {'bindings': []}}
+    review = {'status': 'complete', 'overall': 'pass', 'coverage': True, 'premises': True,
+              'requirement_checks': [], 'coverage_scan_complete': True}
+    with_numbers = decision({**base, 'deterministic': {**base['deterministic'], 'numbers': {
+        **base['deterministic']['numbers'], 'body_quantity_count': 7}}}, review, [])
+    codes = {n['code'] for n in with_numbers['notices']}
+    assert 'numbers_unbound' in codes
+    absent = decision(base, review, [])
+    codes = {n['code'] for n in absent['notices']}
+    assert 'numbers_absent' in codes and 'numbers_unbound' not in codes
+
+
+def test_percentage_point_and_count_units_do_not_collide():
+    """Review findings A/B: '个' must not swallow '个百分点' compounds (a
+    check that reads matched while its dimension is wrong is the exact
+    false-assurance this file exists to prevent), and 百分点 must normalize
+    (it was regex-known but normalized-rejected, silently dropped)."""
+    from briefloop.delivery_checks import quantities, normalized
+    from decimal import Decimal
+    pp = [(v, d) for _, _, (v, d) in quantities('上升 1.2个百分点')]
+    assert pp == [(Decimal('1.2'), 'percentage_point')]
+    assert normalized(1.2, '百分点') == (Decimal('1.2'), 'percentage_point')
+    months = [(v, d) for _, _, (v, d) in quantities('近 3个月 环比增长 12%')]
+    assert ('percentage_point',) not in [(d,) for _, d in months]
+    assert (Decimal('12'), 'percent') in months
+    assert (Decimal('3'), 'count') not in months   # 3个月 is a period, not a count
+    counts = [(v, d) for _, _, (v, d) in quantities('新增 5 家机构')]
+    assert counts == [(Decimal('5'), 'count')]
