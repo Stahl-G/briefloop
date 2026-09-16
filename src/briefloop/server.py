@@ -649,10 +649,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     result=store.enqueue('assess',payload)
                 elif path=='/api/learn':
                     from .learning import enqueue_feedback
-                    if body.get('confirmed') is not True:
-                        from .learning_budget import LearningAuthorizationRequired
-                        raise LearningAuthorizationRequired('学习验证会调用模型；请先查看并确认本次调用上限')
-                    result=enqueue_feedback(store)
+                    # The confirmation names the plan the user saw, so a settings
+                    # change in another window cannot enlarge this batch (#727).
+                    result=enqueue_feedback(store,confirmed_plan=body.get('confirm_plan'))
                 elif path=='/api/stop':worker.stop_job(body['job_id']);result={'ok':True}
                 elif path=='/api/resume':result=worker.retry_with_current_model(body['job_id']) if body.get('use_current_model') is True else worker.resume(body['job_id'])
                 elif path=='/api/task-dismiss':

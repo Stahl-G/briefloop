@@ -6,10 +6,11 @@ import json
 from .agent_commands import agent_command, quote_path
 from wikiskill import feedback_loop, native_agents
 from .store import dump, uid, now, content_hash
+from .learning_budget import LearningAuthorizationRequired
 from .runtime import COMMON, COMMON_OPENCODE, EVALUATOR_CONTEXT, Worker, stage_job
 
 
-def enqueue_feedback(store, *, automatic=False):
+def enqueue_feedback(store, *, automatic=False, confirmed_plan=None):
     with store.tx() as c:
         rows=[dict(r) for r in c.execute('SELECT * FROM feedback WHERE batch_id IS NULL ORDER BY rowid')]
         if not rows:return {'status':'idle','message':'暂无未处理反馈'}
@@ -17,14 +18,16 @@ def enqueue_feedback(store, *, automatic=False):
             return {'status':'pending','message':'已有学习任务，新反馈会进入下一批'}
         latest=datetime.fromisoformat(rows[-1]['created'])
         settings=store.settings()
-        from .learning_budget import automatic_allowed, plan
-        # Worker idleness or a reopened page never stands in for the user's confirmation.
+        from .learning_budget import authorization, automatic_allowed, plan
+        # Worker idleness, a reopened page or an agent request never stands in for
+        # the user's confirmation, and the plan is re-checked inside this batch.
         if automatic and not automatic_allowed(settings):
             return {'status':'not_authorized','message':'自动学习未获确认，反馈已保存'}
         if automatic and (datetime.now(timezone.utc)-latest).total_seconds()<30:
             return {'status':'collecting'}
+        record=authorization(settings,'automatic' if automatic else 'manual',confirmed=confirmed_plan)
         jid=uid('job')
-        payload={'feedback_ids':[r['id'] for r in rows],'k':settings['k'],'budget':plan(settings),
+        payload={'feedback_ids':[r['id'] for r in rows],'k':settings['k'],'budget':plan(settings),'authorization':record,
                  'targets':settings['skill_targets'],'skill_id':store.meta('active_skill'),'runtime':store.runtime_config(),
                  'role_models':store.role_model_config(),'agent_backend':settings.get('agent_backend','codex')}
         c.execute('INSERT INTO jobs VALUES(?,?,?,?,?,?,?,?)',(jid,'learn','queued',dump(payload),None,None,now(),now()))
@@ -224,9 +227,13 @@ def _generate_trial(store,job,case,skill,folder,tag):
             raise LearningBudgetExhausted(f'学习验证已达到确认的试写上限（{started} 次），未启用候选；反馈与已完成的试写保留')
         run=store._create_learning_run(case['learning_origin_id'],selected,skill_id=skill['id'] if skill else None)
         parent=json.loads(job['payload'])
-        trial=store.enqueue('generate',{'run_id':run['id'],'skill_override':skill,'single_evaluation':False,'runtime':parent.get('runtime',store.runtime_config()),'role_models':parent.get('role_models',{}),'agent_backend':parent.get('agent_backend',store.settings().get('agent_backend','codex'))})
-        # This is a child operation of the current learning worker, not a second queued worker.
-        store.update_job(trial['id'],'running');info={'run_id':run['id'],'job_id':trial['id'],'source_snapshot':expected,'conditions':conditions,'skill':skill}
+        def own(connection,jid,_payload):
+            # The learning job runs this trial itself. Claiming it inside the same
+            # transaction leaves no queued window for the report dispatcher, which
+            # since #728 keeps running while learning works (#747 review F1).
+            connection.execute("UPDATE jobs SET status='running',updated=? WHERE id=?",(now(),jid))
+        trial=store.enqueue('generate',{'run_id':run['id'],'skill_override':skill,'single_evaluation':False,'inline_owner_job_id':job['id'],'runtime':parent.get('runtime',store.runtime_config()),'role_models':parent.get('role_models',{}),'agent_backend':parent.get('agent_backend',store.settings().get('agent_backend','codex'))},before_commit=own)
+        info={'run_id':run['id'],'job_id':trial['id'],'source_snapshot':expected,'conditions':conditions,'skill':skill}
         from wikiskill.product import write
         write(marker,info,immutable=True)
     trial=store.one('jobs',info['job_id'])
@@ -345,7 +352,14 @@ def _baseline_for_attempt(store, case, learning_payload):
 
 
 def learn(store,runtime,job):
-    payload=json.loads(job['payload']);root=store.root/'jobs'/job['id'];root.mkdir(exist_ok=True)
+    payload=json.loads(job['payload'])
+    from .learning_budget import verify
+    try:verify(payload.get('authorization'))
+    except LearningAuthorizationRequired as exc:
+        # Pause instead of failing: the batch keeps its feedback and trials and
+        # runs once the user confirms the bound (#727 review F3).
+        raise InterruptedError(str(exc)) from None
+    root=store.root/'jobs'/job['id'];root.mkdir(exist_ok=True)
     study=root/'study';context=root/'context.json'
     if not context.exists():
         feedback,cases=_experience(store,job)

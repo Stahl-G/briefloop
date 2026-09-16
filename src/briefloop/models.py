@@ -208,6 +208,7 @@ class Settings(RoleModel):
     # a recorded confirmation of its upper bound (learning_budget, #727).
     auto_learn: bool = False
     auto_learn_authorized_rounds: int | None = Field(default=None, ge=1, le=20)
+    auto_learn_authorized_plan: str | None = Field(default=None, min_length=64, max_length=64)
     max_reports: int = Field(default=4, ge=1, le=16)
     max_parallel: int = Field(default=4, ge=1, le=16)
     timeout_minutes: int = Field(default=60, ge=0, le=240)  # 0 disables the run deadline.

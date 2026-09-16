@@ -477,7 +477,12 @@ document.addEventListener('click',async event=>{
   const cited=[];
   for(const a of body.querySelectorAll('a[href^="#source-"]')){
    const sid=a.getAttribute('href').slice(8);if(!cited.includes(sid))cited.push(sid);
-   a.setAttribute('href','#reference-'+(cited.indexOf(sid)+1));
+   const number=cited.indexOf(sid)+1;
+   a.setAttribute('href','#reference-'+number);
+   // A numeric citation from an older draft still shows the workspace source
+   // number; renumber it with the reference list. Named link text is kept.
+   const label=a.textContent.trim(),numeric=/^([[(（【]?)\s*(\d+)\s*([\])）】]?)$/.exec(label);
+   if(numeric)a.textContent=numeric[1]+number+numeric[3];
   }
   if(cited.length){const heading=document.createElement('h2');heading.textContent='来源';body.append(heading);const list=document.createElement('ol');
    for(const [i,sid] of cited.entries()){const source=state.sources.find(s=>s.id===sid);const row=document.createElement('li');row.id='reference-'+(i+1);const name=source?.name||'未关联来源';
@@ -578,15 +583,21 @@ $('comment-submit').onclick=()=>action(async()=>{const text=$('comment').value,r
 function learningPlanText(plan){
  return `每轮最多用 ${plan.cases} 份历史报告，每份基线和候选各试写一次（最多 ${plan.trial_generations_per_round} 次，可复用的基线不重写），另有整理经验、提出候选和一次成对比较；`+
   `最多 ${plan.rounds} 轮，含用户明确需求时最多 ${plan.rounds_with_explicit_requirement} 轮，试写合计不超过 ${plan.max_trial_generations} 次。试写使用固定来源，不联网检索。`+
-  `执行后端：${plan.backend_label} · ${plan.model||'尚未选择模型'}。费用以宿主或 API 账户实际计费为准，BriefLoop 无法估算金额。`;
+  `执行后端：${plan.backend_label} · ${plan.model||'尚未选择模型'}${roleModelText(plan)}。`+
+  `上限计的是试写次数，不含宿主内部子 agent 的回合或 token 数；费用以宿主或 API 账户实际计费为准，BriefLoop 无法估算金额。`;
+}
+function roleModelText(plan){
+ const roles=Object.entries(plan.role_models||{}).filter(([,value])=>value&&value.model);
+ return roles.length?('；角色模型 '+roles.map(([role,value])=>`${role}=${value.model}`).join('、')):'';
 }
 function confirmLearning(message){const plan=state?.learning_authorization?.plan;return !!plan&&confirm(message+'\n\n'+learningPlanText(plan))}
 async function setAutoLearn(enabled){
  if(!enabled){await api('settings',{auto_learn:false});return false}
  if(!confirmLearning('开启后，改稿或评论会在后台自动启动学习验证并调用模型。'))return false;
- await api('settings',{auto_learn:true,confirm_learning_rounds:state.learning_authorization.plan.rounds});return true;
+ const plan=state.learning_authorization.plan;
+ await api('settings',{auto_learn:true,confirm_learning_rounds:plan.rounds,confirm_plan:plan.fingerprint});return true;
 }
-$('learn-now').onclick=()=>action(async()=>{await savedVersion();clearTimeout(learnTimer);if(!confirmLearning('现在用已保存的反馈启动一次学习验证。'))return;const result=await api('learn',{confirmed:true});notice(result.message||'已提交反馈学习')});
+$('learn-now').onclick=()=>action(async()=>{await savedVersion();clearTimeout(learnTimer);if(!confirmLearning('现在用已保存的反馈启动一次学习验证。'))return;const result=await api('learn',{confirm_plan:state.learning_authorization.plan.fingerprint});notice(result.message||'已提交反馈学习')});
 async function setK(v){const k=Math.max(1,Math.min(20,Number(v)||1));$('rounds').value=k;await action(async()=>{await api('settings',{k});await refresh();if(state.learning_authorization?.state==='rounds_exceed')notice(learningAuthorizationNote());else notice('轮数已保存，下一批生效')})}
 $('rounds').onchange=e=>setK(e.target.value);$('k-minus').onclick=()=>setK(Number($('rounds').value)-1);$('k-plus').onclick=()=>setK(Number($('rounds').value)+1);
 $('toolbar').querySelectorAll('button').forEach(b=>b.onclick=()=>{if(!editor)return;const c=editor.chain().focus();({bold:()=>c.toggleBold().run(),italic:()=>c.toggleItalic().run(),heading:()=>c.toggleHeading({level:2}).run(),bullet:()=>c.toggleBulletList().run(),table:()=>c.insertTable({rows:3,cols:3,withHeaderRow:true}).run(),undo:()=>c.undo().run(),redo:()=>c.redo().run(),addRow:()=>c.addRowAfter().run(),deleteRow:()=>c.deleteRow().run(),addColumn:()=>c.addColumnAfter().run(),deleteColumn:()=>c.deleteColumn().run(),mergeCells:()=>c.mergeCells().run(),splitCell:()=>c.splitCell().run(),imageCaption:()=>{const a=editor.getAttributes('image');if(!a.src)return;const caption=window.prompt('图注',a.caption||'');if(caption!==null)c.updateAttributes('image',{caption}).run()},imageWidth:()=>{const a=editor.getAttributes('image');if(!a.src)return;const raw=window.prompt('图像宽度（像素）',String(a.width||480));if(raw===null)return;const width=Number(raw);if(Number.isInteger(width)&&width>0&&width<=10000)c.updateAttributes('image',{width,height:null}).run();else notice('请输入有效宽度',true)}})[b.dataset.command]()});
@@ -1386,6 +1397,7 @@ function learningAuthorizationNote(){
  const auth=state?.learning_authorization;
  if(auth?.state==='needs_confirmation')return '自动学习等待确认：开启会在后台调用模型做学习验证，需要先确认一次调用上限。反馈照常保存，已启用的技能照常用于报告。';
  if(auth?.state==='rounds_exceed')return `学习轮数已高于确认时的 ${auth.authorized_rounds} 轮，自动学习已暂停；重新勾选即可确认新的上限。`;
+ if(auth?.state==='plan_changed')return '执行后端或模型在确认之后发生了变化，自动学习已暂停；重新勾选即可按新的配置确认上限。';
  return '';
 }
 async function updateLearningPause(){

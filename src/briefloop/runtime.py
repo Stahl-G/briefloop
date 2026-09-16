@@ -455,6 +455,13 @@ class Worker:
         if self.opened_paused:
             for job in self.store.rows("SELECT * FROM jobs WHERE status='queued'"):
                 self.store.update_job(job['id'],'interrupted',error='打开工作区时保留旧任务，尚未执行；点击恢复可继续')
+        # A learning batch queued before this release carries no confirmed bound.
+        # Hold it instead of letting the idle dispatcher start paid work (#727).
+        from .learning_budget import LearningAuthorizationRequired, verify
+        for job in self.store.rows("SELECT * FROM jobs WHERE kind='learn' AND status='queued'"):
+            try:verify(json.loads(job['payload']).get('authorization'))
+            except LearningAuthorizationRequired as exc:
+                self.store.update_job(job['id'],'interrupted',error=str(exc))
         from .schedules import skip_offline
         skip_offline(self.store)
         self.thread.start();self.review_thread.start();self.file_thread.start();self.schedule_thread.start()
@@ -550,6 +557,8 @@ class Worker:
                 job=dict(row)
                 if job['status'] not in ('failed','interrupted','cancelled'):raise ValueError('这个任务不需要恢复')
                 payload=json.loads(job['payload'])
+                if payload.get('inline_owner_job_id'):
+                    raise ValueError('这是学习任务内部的试写，请恢复对应的学习任务，它会接着跑这一步')
                 if job['kind']=='learn':
                     self._check_feedback_owner(c,jid,payload)
                 # Resume keeps the frozen configuration and original task identity.
@@ -586,6 +595,9 @@ class Worker:
             original=json.loads(job['payload'])
             fields=('version_id',) if job['kind']=='review' else ('feedback_ids','k','targets','skill_id')
             payload={key:original[key] for key in fields}
+            # A retry inherits the authorization and bound the user confirmed for
+            # this batch; a batch without one still has to be confirmed again.
+            payload.update({key:original[key] for key in ('authorization','budget') if key in original})
             if job['kind']=='review':self.store.one('briefs',payload['version_id'])
             payload['retry_of_job_id']=jid
             # Store.enqueue freezes the current settings (including role models and
@@ -678,7 +690,8 @@ class Worker:
         # Dispatch only. Reports run in their own threads up to max_reports; other
         # main-lane jobs share one serial task thread (and the shared runtime), so a
         # long learning or revision turn never keeps free report slots idle.
-        for jobs in self._queued(0,"SELECT * FROM jobs WHERE status='queued' AND kind NOT IN ('review','fact_check') AND kind NOT IN (?,?,?) ORDER BY rowid",FILE_JOB_KINDS):
+        # A trial generation owned by a learning job is executed by that job, never here.
+        for jobs in self._queued(0,"SELECT * FROM jobs WHERE status='queued' AND kind NOT IN ('review','fact_check') AND kind NOT IN (?,?,?) AND json_extract(payload,'$.inline_owner_job_id') IS NULL ORDER BY rowid",FILE_JOB_KINDS):
             if not jobs:
                 from .learning_budget import automatic_allowed
                 if automatic_allowed(self.store.settings()) and not self.opened_paused:

@@ -201,10 +201,15 @@ def workspace_action(store, request):
         return {**result,'message':'反馈已保存；是否自动学习遵循页面的自动学习设置。'}
     if action=='learn':
         from .learning import enqueue_feedback
-        from .learning_budget import plan
-        result=enqueue_feedback(store)
-        # The agent reports the confirmed-at-launch upper bound back to the user.
-        return {**result,'budget':plan(store.settings())} if isinstance(result,dict) else result
+        from .learning_budget import automatic_allowed, plan
+        budget=plan(store.settings())
+        # An agent request is not the user's confirmation. Without a recorded
+        # authorization it returns the plan for the user to confirm in settings.
+        if not automatic_allowed(store.settings()):
+            return {'status':'confirmation_required','budget':budget,
+                    'message':'学习验证会调用模型。请把下面的上限告诉用户，由用户在“设置 → 学习”中确认后再启动；本次没有创建任务。'}
+        result=enqueue_feedback(store,automatic=True)
+        return {**result,'budget':budget} if isinstance(result,dict) else result
     raise ValueError('不支持的 action；当前接口：'+', '.join(WORKSPACE_ACTIONS))
 
 

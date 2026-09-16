@@ -27,7 +27,7 @@ def test_trial_keeps_original_method_after_installed_method_changes(tmp_path,mon
             brief=self.store.publish(rid,{'title':'Synthetic','markdown':'Three files.'},version_id='brief_'+job['id'][4:])
             return {'version_id':brief['id'],'source_snapshot':source_snapshot(self.store,rid)}
     monkeypatch.setattr(learning,'Worker',Worker)
-    learning._generate_trial(store,{'payload':dump({'runtime':store.runtime_config(),'role_models':store.role_model_config(),'agent_backend':'codex'}),'_runtime':object()},case,None,tmp_path/'trial','baseline')
+    learning._generate_trial(store,{'id':'job_learning_case','payload':dump({'runtime':store.runtime_config(),'role_models':store.role_model_config(),'agent_backend':'codex'}),'_runtime':object()},case,None,tmp_path/'trial','baseline')
     # Public requests still freeze installed methods, ignoring a supplied snapshot.
     external=store.create_run({**json.loads(case['requirements']),'workflow_snapshot':original},[source['id']])
     assert json.loads(external['requirements'])['workflow_snapshot']!=original
@@ -69,7 +69,8 @@ def test_all_answer_only_cases_skip_without_model_or_adoption(tmp_path):
     store=Store(tmp_path/'workspace');answer=store.add_source('Revision answer','Only a user rewrite')
     case=store.create_run({'title':'Synthetic','objective':'Summarize'},[answer['id']])
     (store.root/'sources'/(answer['id']+'.provenance.json')).write_text(dump({'usage':'revision_feedback'}))
-    job=store.enqueue('learn',{'feedback_ids':[],'skill_id':None,'targets':['analyst'],'k':1})
+    job=store.enqueue('learn',{'feedback_ids':[],'skill_id':None,'targets':['analyst'],'k':1,
+        'authorization':{'kind':'manual','rounds':2,'fingerprint':'x'*64,'max_trial_generations':12}})
     folder=store.root/'jobs'/job['id'];folder.mkdir()
     (folder/'context.json').write_text(dump({'feedback':[],'cases':[case['id']]}))
     class Runtime:
