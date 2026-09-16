@@ -16,6 +16,9 @@ def check(archive: Path) -> None:
             'briefloop/static/app.js': 'src/briefloop/static/app.js',
             'briefloop/static/runtime-bridge.LICENSE.txt': 'src/briefloop/static/runtime-bridge.LICENSE.txt',
             'briefloop/static/runtime-bridge.NOTICE.txt': 'src/briefloop/static/runtime-bridge.NOTICE.txt',
+            'briefloop/static/native-engine.mjs': 'src/briefloop/static/native-engine.mjs',
+            'briefloop/static/native-engine-licenses.txt': 'src/briefloop/static/native-engine-licenses.txt',
+            'briefloop/static/native-engine-models.json': 'src/briefloop/static/native-engine-models.json',
             'wikiskill/_licenses/LICENSE': 'src/wikiskill/_licenses/LICENSE',
             'wikiskill/_licenses/NOTICE.md': 'src/wikiskill/_licenses/NOTICE.md',
         }
@@ -33,6 +36,8 @@ def check(archive: Path) -> None:
                  'scripts/build_frontend.mjs', 'scripts/build_frontend_licenses.mjs', 'scripts/test_frontend.mjs',
                  'src/briefloop/static/frontend-licenses.txt', 'src/briefloop/static/app.js',
                  'src/briefloop/static/runtime-bridge.LICENSE.txt', 'src/briefloop/static/runtime-bridge.NOTICE.txt',
+                 'src/briefloop/static/native-engine.mjs', 'src/briefloop/static/native-engine-licenses.txt',
+                 'src/briefloop/static/native-engine-models.json',
                  'src/wikiskill/_licenses/LICENSE', 'src/wikiskill/_licenses/NOTICE.md']
         expected = {name: name for name in names}
     for asset in [*(ROOT / 'src/briefloop/workflow_assets').rglob('*'), *(ROOT / 'src/briefloop/static').glob('runtime-*.svg'), *(ROOT / 'src/briefloop/static').glob('runtime-*.png')]:
