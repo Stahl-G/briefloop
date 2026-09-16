@@ -174,17 +174,27 @@ class NativeHarness:
     # -- driver -----------------------------------------------------------
 
     def _engine_session(self, sid, config, cwd):
+        # Engine sessions live in one engine process. The bridge retires an idle
+        # process after IDLE_SECONDS, so a session bound to an earlier process
+        # no longer exists; recreate it from its transcript instead of sending
+        # a turn to an unknown session. The caller already holds an event
+        # subscription, which keeps the current process from being retired.
         existing = self._engine_sessions.get(sid)
-        if existing is not None:
+        process = self.engine.process
+        if existing is not None and process is not None and existing['process'] is process:
             return existing
-        result = self.engine.call('session_create', {
+        previous = (existing or {}).get('session_file') or self.chat.session(sid).get('thread_id')
+        params = {
             'session_id': sid,
             'role': 'reviewer',
             'packet_root': config['review_root'],
             'session_dir': str(cwd),
             'model': config['model'],
             'thinking': _thinking(config),
-        }, timeout=60)
+        }
+        if isinstance(previous, str) and previous.endswith('.jsonl'):
+            params['session_file'] = previous
+        result = {**self.engine.call('session_create', params, timeout=60), 'process': self.engine.process}
         self._engine_sessions[sid] = result
         coordinator = getattr(self, 'coordinator', None)
         native_id = result.get('session_file') or sid
@@ -196,6 +206,7 @@ class NativeHarness:
             'backend': 'briefloop-native',
             'engine_session': sid,
             'session_file': result.get('session_file'),
+            'resumed': bool(result.get('resumed')),
             'model': result.get('model'),
         })
         return result
@@ -359,8 +370,11 @@ class NativeHarness:
     def close(self):
         with self._lock:
             self._closed = True
-        try:
-            self.engine.call('shutdown', {}, timeout=5)
-        except Exception:
-            pass
+        # A call would start the engine just to stop it; only a running one
+        # gets the chance to dispose its sessions before the bridge closes.
+        if self.engine.process is not None:
+            try:
+                self.engine.call('shutdown', {}, timeout=5)
+            except Exception:
+                pass
         self.engine.close()

@@ -9,7 +9,10 @@ old child handles.
 
 BRIDGE_BACKENDS = ('claude','kimi','hermes','reasonix','mimo','codebuddy','kilo','kiro','vibe','deepseek-harness','antigravity','pi')
 # BriefLoop's own embedded engine (pi SDK in-process); not an external CLI.
-OWN_BACKENDS = ('briefloop-native',)
+# Phase 1 runs only the restricted Reviewer: it has no tools to research, write
+# or learn with, so it can be pinned to a review job but never be the main
+# chain. Settings cannot select it and every other job kind is refused.
+REVIEW_ONLY_BACKENDS = ('briefloop-native',)
 BACKENDS = ('codex', 'opencode', 'briefloop-native', *BRIDGE_BACKENDS)
 
 DEFAULT_BACKEND = 'codex'
@@ -54,6 +57,14 @@ CAPABILITIES = {
 def validate_backend(name):
     if name not in BACKENDS:
         raise ValueError('未接入的 agent_backend：'+str(name))
+    return name
+
+
+def require_main_chain(name):
+    """The backend a report, scoring, research or learning job will run on."""
+    name = validate_backend(name)
+    if name in REVIEW_ONLY_BACKENDS:
+        raise ValueError(f'{BACKEND_LABELS[name]}目前只执行受限独立审阅，不能用于生成、评分、研究或学习；请改用其他执行后端。')
     return name
 
 

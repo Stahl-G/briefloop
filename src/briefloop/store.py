@@ -238,6 +238,8 @@ class Store:
             req.fact_check = self.settings().get('fact_checker') is True
         if req.fact_check and not req.allow_web:
             raise OfflineFactCheck('离线任务不能开启联网事实核查；请允许联网检索，或关闭该开关')
+        from .backends import require_main_chain
+        require_main_chain(options.get('agent_backend') or self.settings().get('agent_backend','codex'))
         if clone is None and req.fact_check:
             # Checked before the run exists: callers pass the backend they will enqueue with.
             from .review_capability import require_for_fact_check
@@ -537,9 +539,10 @@ class Store:
 
     def enqueue(self, kind, payload, *, before_commit=None):
         if kind not in ('export_docx','release','audit_bundle','source_refresh'):
-            from .backends import validate_backend
+            from .backends import require_main_chain,validate_backend
             from .models import normalize_search_provider
             backend=validate_backend(payload.get('agent_backend',self.settings().get('agent_backend','codex')))
+            if kind!='review':require_main_chain(backend)
             runtime=runtime_fields(payload['runtime'] if 'runtime' in payload else self.runtime_config(),backend)
             # Refuse before queueing, not after a paid turn: a fact-checked run and a
             # Review always need the restricted Reviewer (#726).
