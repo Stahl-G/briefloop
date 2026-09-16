@@ -938,3 +938,15 @@ def test_episode_resource_sampler_parses_ps(tmp_path, monkeypatch):
                         lambda *a, **k: type("R", (), {"stdout": fake})())
     count, cpu = sampler._ps()
     assert count == 2 and abs(cpu - 75.25) < 0.01
+
+
+def test_condition_drift_refuses_without_declaration():
+    """§6.4 freeze guard: pinned expected_code_state refuses a moved HEAD
+    unless the change is explicitly declared."""
+    from experiments.officeqa_structured.run_episodes import condition_drift_error
+    cfg = {"baseline": {"expected_code_state": "a" * 40}}
+    assert condition_drift_error(cfg, "a" * 40, False) is None          # pinned == head
+    assert condition_drift_error(cfg, "b" * 40, False) is not None      # drift refuses
+    assert "条件漂移" in condition_drift_error(cfg, "b" * 40, False)
+    assert condition_drift_error(cfg, "b" * 40, True) is None           # declared passes
+    assert condition_drift_error({"baseline": {}}, "b" * 40, False) is None  # unpinned legacy

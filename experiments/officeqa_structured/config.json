@@ -9,7 +9,9 @@
     "product_version": "0.22.3",
     "baseline_commit": "66a2a1345a2cc9a4f91d93e6cfbb84bda3c1af2b",
     "integration_commit": "56fc42b70a45d540bf865abe78d4d6703bf02695",
-    "integration_commit_note": "回填至 db 锁退避重试 + 终版 Track A 预算提交（dev pilot 证据驱动；用户 2026-09-16 决定）"
+    "integration_commit_note": "回填至 db 锁退避重试 + 终版 Track A 预算提交（dev pilot 证据驱动；用户 2026-09-16 决定）",
+    "expected_code_state": "733cdfa8eb27bde02c53bb1f8361d6ecc3320360",
+    "expected_code_state_note": "r1/r2 批次运行于 4307e4df（记录在案）；QA 修复 733cdfa8 之后任何代码移动都会被拒绝，除非 --declare-condition-change 显式声明。r3 冻结时此值回填为 r3 代码提交。"
   },
   "scorer": {
     "repository": "databricks/officeqa",

@@ -797,6 +797,23 @@ def _git(args: list[str]) -> str:
     return result.stdout.strip()
 
 
+def condition_drift_error(config: dict[str, Any], head: str | None,
+                         declared: bool) -> str | None:
+    """§6.4 freeze guard: batches must run the pinned expected_code_state.
+
+    code_state_matches only proves the working tree equals HEAD — HEAD
+    itself can move and be silently re-frozen.  This pin makes a moved
+    baseline refuse to start unless --declare-condition-change is explicit
+    (recorded in run_index.condition_change).  Same defect class as
+    number_bindings: a signal with no consumer.
+    """
+    expected = (config.get("baseline") or {}).get("expected_code_state")
+    if not expected or head is None or head == expected or declared:
+        return None
+    return (f"条件漂移拒绝：批次须运行冻结的 expected_code_state={expected}，当前 HEAD={head}。"
+            "新条件必须显式传 --declare-condition-change 并在冻结记录中说明变更内容后重冻结。")
+
+
 def code_state_matches(integration_commit: str) -> dict[str, Any]:
     """Real runs execute the frozen code: src/ and experiments/ must be
     byte-identical to ``baseline.integration_commit`` — except the freeze
@@ -1983,6 +2000,10 @@ def command_run(args: argparse.Namespace) -> int:
         for name in isolation.CREDENTIAL_ENV_VARS:
             os.environ.pop(name, None)
         code_state = code_state_matches(config["baseline"]["integration_commit"])
+        drift = condition_drift_error(config, code_state.get("head"),
+                                      getattr(args, "declare_condition_change", False))
+        if drift:
+            raise RealExecutionGateError(drift)
         if not code_state.get("matches"):
             raise RealExecutionGateError(
                 f"代码状态与冻结的 integration_commit 不一致：{code_state}；真实执行必须运行冻结代码")
@@ -2119,6 +2140,10 @@ def command_run(args: argparse.Namespace) -> int:
     index = {
         "schema_version": "officeqa.episode_index.v1",
         "run_label": label, "created": _now(),
+        **({"condition_change": {"declared": True,
+                                  "previous_expected": (config.get("baseline") or {}).get("expected_code_state"),
+                                  "head": code_state.get("head") if real else None}}
+           if real and getattr(args, "declare_condition_change", False) else {}),
         "protocol_id": config["protocol_id"], "experiment_id": config["experiment_id"],
         "dry_run": bool(args.dry_run), "seed": args.seed, "arms": arms,
         "episode_workers": episode_workers,
@@ -2316,6 +2341,9 @@ def main(argv: list[str] | None = None) -> int:
                           "the run index records the path and its SHA-256)")
     run.add_argument("--run-label")
     run.add_argument("--arms", default="A,B")
+    run.add_argument("--declare-condition-change", action="store_true",
+                     help="explicitly run on a code state that differs from the frozen "
+                          "expected_code_state; recorded in run_index.condition_change")
     run.add_argument("--mode", choices=("default", "strict-v2", "track-a"), default="default",
                      help="default = staged parsed corpus + metered search; "
                           "strict-v2 = raw PDF originals, no metering, web on (official condition)")
