@@ -59,6 +59,16 @@ class FakeRuntime:
     def __init__(self, answer='12 million', evidence=None, fail_after_publish=False):
         self.cancelled = threading.Event()
         self.answer = answer
+        # Numeric answers must be grounded (r3 wiring): default attachment
+        # grounds via a trivial calculation chain (no source ids needed).
+        if evidence is None:
+            numbers = re.findall(r'\d+(?:\.\d+)?', str(answer))
+            if numbers:
+                evidence = json.dumps({'schema_version': 'officeqa.evidence.v1',
+                                       'evidence': [],
+                                       'calculations': [{'expression': numbers[0], 'inputs': [],
+                                                         'result': str(answer)}],
+                                       'limitations': []}, ensure_ascii=False)
         self.evidence = evidence
         self.fail_after_publish = fail_after_publish
         self.prompts = []
@@ -78,6 +88,8 @@ class FakeRuntime:
             return {}
         if target.name == 'revision':
             target.joinpath('answer.json').write_text(answer_payload(self.answer), encoding='utf-8')
+            if self.evidence is not None:
+                target.joinpath('evidence_draft.json').write_text(self.evidence, encoding='utf-8')
             target.joinpath('responses.json').write_text('[]', encoding='utf-8')
             return {}
         target.joinpath('answer.json').write_text(answer_payload(self.answer), encoding='utf-8')
@@ -326,8 +338,12 @@ def test_check_answer_tool_reports_bare_url(tmp_path, monkeypatch, capsys):
     assert 'bare_url' in {error['code'] for error in payload['errors']}
     monkeypatch.setattr('sys.argv', ['briefloop', 'tool', '--workspace', str(store.root), 'check-answer',
                                      '--file', str(answer_file), '--run', run['id']])
-    main()
-    assert json.loads(capsys.readouterr().out)['status'] == 'ok'
+    with pytest.raises(SystemExit):
+        main()
+    # r3 wiring: a numeric answer with no attachment at all is ungrounded and
+    # the self-check must say so instead of reporting ok.
+    report = json.loads(capsys.readouterr().out)
+    assert report['status'] == 'invalid' and any('未接地' in e for e in report['errors'])
 
 
 # --- no LLM-written brief may pose as a QA version ---------------------------
@@ -337,6 +353,10 @@ def test_hand_written_brief_cannot_replace_the_projection(tmp_path):
     folder = tmp_path / 'submit'
     folder.mkdir()
     (folder / 'answer.json').write_text(answer_payload('12 million'), encoding='utf-8')
+    (folder / 'evidence_draft.json').write_text(json.dumps(
+        {'schema_version': 'officeqa.evidence.v1', 'evidence': [],
+         'calculations': [{'expression': '12', 'inputs': [], 'result': '12 million'}],
+         'limitations': []}), encoding='utf-8')
     data = build_answer_draft(store, run, folder)
     with pytest.raises(ValueError, match='机械投影'):
         store.publish(run['id'], {**data, 'markdown': '# 我写的报告\n\n正文很长。'})

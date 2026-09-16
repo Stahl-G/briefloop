@@ -322,7 +322,7 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
    读取材料时保留数值、单位、主体、时间口径及计划/已实现等状态；区分发布日期与事件/统计期间，检查表头和脚注。发现冲突或证据不足时按依据标出，不静默取舍。需要原文时先用 `{tool} read-source --id SOURCE_ID --start-line 1 --end-line 80 --max-chars 6000` 定向读取，不把截断当全文。
 3. 核对与计算：对将进入答案的关键事实，用 `{tool} workspace-action --request REQUEST_JSON` 登记 evidence_span（evidence 包含 source_id、locator、excerpt；文本 locator 为 kind=text/start_line/end_line，PDF 为 kind=pdf/page），再以 claim_create（claim_role="report_statement"、supports=[span_id]）登记主张；不调用 claim_bind——本模式正文由程序从答案机械生成，没有可绑定的人工正文。需要计算时用真实工具核对单位换算与量级，操作数取自已登记来源。
 4. 提交答案：把最终答案写为 {folder/'answer.json'}（UTF-8 JSON，临时文件写完后原子重命名），契约见 {folder/'answer.schema.json'}：schema_version="officeqa.answer.v1"、status="answered"或"abstained"、answer 恒为字符串（数字、日期、列表都按题目要求的直接形式书写，数值不用 JSON number；单行、去首尾空白后最多 250 字符；不嵌入 FINAL_ANSWER 标签；不附"答案是"、解释、引用序号、置信度或替代答案）。确实不能确定时 status="abstained"、answer=null。
-   可选证据附件 {folder/'evidence_draft.json'}，契约见 {folder/'evidence.schema.json'}：evidence[].source_id 必须是本轮已登记的真实 source_id，不能填裸 URL 或自拟 ID；locator 用 line_range（1-based 行号）或 page（0-based page_index，结构化元素另带 element_index）；calculations 记录表达式、操作数与结果（文本，不被执行）；limitations 记录证据不足、冲突或其他局限。附件为空不扣减答案得分，另计证据缺失诊断。
+   可选证据附件 {folder/'evidence_draft.json'}，契约见 {folder/'evidence.schema.json'}：evidence[].source_id 必须是本轮已登记的真实 source_id，不能填裸 URL 或自拟 ID；locator 用 line_range（1-based 行号）或 page（0-based page_index，结构化元素另带 element_index）；calculations 记录表达式、操作数与结果（文本，不被执行）；limitations 记录证据不足、冲突或其他局限。附件为空不扣减答案得分，另计证据缺失诊断。**数值答案接地要求**：answered 状态且答案含数字时，每个数字必须满足其一——evidence_draft.calculations 记录完整计算链（expression 用纯算术表达式，程序会确定性重算并按答案精度比对），或 evidence 摘录逐字包含该数值；两者都不满足的数值答案会被拒绝接纳，请提交前自查。弃权前先核对摘录：若所需数值已在证据摘录中出现仍弃权，将被记录为证据利用不足。
    保存后调用 `{tool} check-answer --file {quote_path(folder/'answer.json',backend)} --run {run['id']}` 自检（提交了附件时加 `--evidence {quote_path(folder/'evidence_draft.json',backend)}`）：status!=ok 按 errors 指出的字段修正后重存。
    本模式没有 draft.json，不撰写报告正文、摘要或章节；不要为格式消耗预算。证据缺口如实进入 limitations 或研究记录，禁止编造数字、来源或成功状态。
 最终回复一句完成状态和 answer.json 位置。审阅由应用随后用独立 Reviewer 会话处理；修订必须提交新的 answer.json 版本，旧核查不继承。
@@ -1163,7 +1163,7 @@ class Worker:
                 # §5.3: 修订必须新版本，旧核查不继承).
                 prompt=TASK_CONTEXT+QA_CONTENT_METHOD+f'''本次仅针对已有答案进行一次修订。读取 {stage/'input.json'} 的原答案版本、评价和本轮要求。
 优先处理 input.revision_reasons 指向的证据、必答内容与单位/计算问题；总评达到要求不豁免这些问题。
-必要来源按 source_id 从工作区 {self.store.root/'sources'} 定向读取；需要修正主张依据时，使用 `{tool} workspace-action --request REQUEST_JSON` 的 evidence_span/claim_create 接口（修订原有主张时传 previous_id，不删历史）；不调用 claim_bind，正文投影由程序生成。
+必要来源按 source_id 从工作区 {self.store.root/'sources'} 定向读取；需要修正主张依据时，使用 `{tool} workspace-action --request REQUEST_JSON` 的 evidence_span/claim_create 接口（修订原有主张时传 previous_id，不删历史）；不调用 claim_bind，正文投影由程序生成。修订轮必须对上一轮审阅的每条 finding 给出处置：修正答案/证据，或说明该 finding 为何不成立；答案不变时在 limitations 里写明维持原答案的依据，不得原样重交而不作说明。
 对input.review_findings逐项处理，并将处理说明保存到 {stage/'responses.json'}，格式为数组，每项包含finding_id、action(corrected/removed/disagree)、reason（具体修改或异议依据）。这不是关闭发现，后续Reviewer独立复核。
 responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 input.review_findings[].id，每个ID恰好一次。assessment.findings 是评分修改依据，不是已登记的 Reviewer finding ID，禁止为它们自拟ID。如果 input.review_findings 为空，responses.json 必须写 []，仍按 assessment 修正答案。
 将修订后的最终答案写为 {stage/'answer.json'}（契约同生成阶段 answer.schema.json：schema_version="officeqa.answer.v1"、status="answered"或"abstained"、answer 恒为字符串、单行、去首尾空白后最多 250 字符、不嵌入 FINAL_ANSWER）；可选证据附件写 {stage/'evidence_draft.json'}（source_id 必须是本轮已登记 ID，locator 用 line_range/page）。修订必须提交新的答案版本，不改写旧版本、不撰写报告正文。

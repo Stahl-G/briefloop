@@ -354,6 +354,125 @@ def _check_calculations(value, evidence_count: int, errors: list[dict[str, str]]
     return len(value)
 
 
+# --- deterministic calculation execution & answer grounding (r3 wiring) ----
+#
+# OfficeQA r1 post-mortem: 24/24 numeric answers were admitted with the
+# verification layer never executed; the attachment carried 81 recorded
+# calculation chains that nothing ran.  These helpers execute recorded
+# arithmetic deterministically and require every numeric answer token to be
+# grounded — either recomputed by a recorded calculation or located verbatim
+# in an evidence excerpt.  Lookup answers ground via excerpts; computed
+# answers ground via calculations.  Both checks are mechanical.
+
+import ast
+from decimal import Decimal, InvalidOperation
+
+_ALLOWED_NODES = (ast.Expression, ast.BinOp, ast.UnaryOp, ast.Add, ast.Sub,
+                  ast.Mult, ast.Div, ast.USub, ast.UAdd, ast.Constant)
+_ALLOWED_CONST_TYPES = (int, float)
+
+
+def _eval_arithmetic(expression: str) -> Decimal | None:
+    """Evaluate a pure-arithmetic expression; anything else is refused."""
+    try:
+        tree = ast.parse(expression, mode='eval')
+    except (SyntaxError, ValueError):
+        return None
+    for node in ast.walk(tree):
+        if not isinstance(node, _ALLOWED_NODES):
+            return None
+        if isinstance(node, ast.Constant) and not isinstance(node.value, _ALLOWED_CONST_TYPES):
+            return None
+    try:
+        value = eval(compile(tree, '<calculation>', 'eval'), {'__builtins__': {}}, {})
+    except (ZeroDivisionError, ArithmeticError, TypeError):
+        return None
+    try:
+        return Decimal(str(value))
+    except InvalidOperation:
+        return None
+
+
+_NUMBER_IN_TEXT = re.compile(r'(?<![A-Za-z0-9_.])\d+(?:\.\d+)?(?![A-Za-z0-9_])')
+
+
+def _numbers_in_text(text: str) -> list[Decimal]:
+    values = []
+    for token in _NUMBER_IN_TEXT.findall(text or ''):
+        try:
+            values.append(Decimal(token.replace(',', '')))
+        except InvalidOperation:
+            continue
+    return values
+
+
+def _value_matches(token: Decimal, computed: Decimal) -> bool:
+    """Precision-aware match: the token rounds to the computed value.
+
+    An answer ``2.41`` matches a computed ``2.414`` (2-decimals rounding);
+    ``2.4`` does not.  Keeps rounding discipline honest without demanding
+    more digits than the answer states.
+    """
+    if token == computed:
+        return True
+    decimals = max(0, -token.as_tuple().exponent)
+    quantum = Decimal(1).scaleb(-decimals)
+    return abs(computed - token) < Decimal('0.5').scaleb(-decimals) and \
+        computed.quantize(quantum) == token.quantize(quantum)
+
+
+def execute_calculations(calculations: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """Deterministically re-run recorded calculation chains.
+
+    Returns computed values, per-item match against the recorded result and
+    diagnostics; never raises — an unexecutable expression is reported, not
+    trusted.
+    """
+    checks, values = [], []
+    for index, item in enumerate(calculations or []):
+        if not isinstance(item, dict):
+            continue
+        computed = _eval_arithmetic(str(item.get('expression') or ''))
+        recorded_tokens = _numbers_in_text(str(item.get('result') or ''))
+        recorded = recorded_tokens[-1] if recorded_tokens else None
+        matches = (computed is not None and recorded is not None
+                   and _value_matches(recorded, computed))
+        checks.append({'index': index, 'computed': str(computed) if computed is not None else None,
+                       'recorded': str(recorded) if recorded is not None else None,
+                       'executable': computed is not None, 'matches_recorded': matches})
+        if computed is not None:
+            values.append(computed)
+    return {'checks': checks, 'values': values,
+            'mismatch_count': sum(1 for c in checks if c['executable'] and not c['matches_recorded'])}
+
+
+def grounding_verdict(answer: str | None, evidence_report: dict[str, Any],
+                      evidence_draft: dict[str, Any] | None) -> dict[str, Any]:
+    """Every numeric token in an answered value must be mechanically grounded:
+    recomputed by a recorded calculation, or present verbatim in an evidence
+    excerpt.  Text answers and abstentions are out of scope by construction.
+    """
+    tokens = _numbers_in_text(str(answer or ''))
+    if not tokens:
+        return {'status': 'not_numeric'}
+    execution = execute_calculations((evidence_draft or {}).get('calculations'))
+    excerpts = [str(e.get('excerpt') or '') for e in (evidence_draft or {}).get('evidence') or []
+                if isinstance(e, dict)]
+    excerpt_numbers = [n for text in excerpts for n in _numbers_in_text(text)]
+    ungrounded = [str(t) for t in tokens
+                  if not any(_value_matches(t, v) for v in execution['values'])
+                  and not any(_value_matches(t, n) for n in excerpt_numbers)]
+    verdict = {'status': 'grounded' if not ungrounded else 'ungrounded',
+               'answer_numeric_tokens': [str(t) for t in tokens],
+               'ungrounded_tokens': ungrounded,
+               'calculation_count': len(execution['values']),
+               'calculation_mismatch_count': execution['mismatch_count'],
+               'calculation_checks': execution['checks']}
+    if evidence_report is not None:
+        evidence_report.setdefault('grounding', verdict)
+    return verdict
+
+
 def canonical_evidence(raw: str | bytes) -> dict[str, Any]:
     """The attachment as saved on a version: contract fields only."""
     value = json.loads(_decode(raw), parse_constant=_reject_constant, object_pairs_hook=_reject_duplicate_keys)
@@ -443,6 +562,23 @@ def admit_answer(store, run, draft) -> None:
         report = validate_evidence(store, run['id'], _canonical_field(draft.answer_evidence, 'answer_evidence'))
         if report['errors']:
             raise AnswerContractError('保存的证据附件未通过校验：' + _join(report['errors']))
+    if projection.status == 'answered':
+        draft_evidence = None
+        if draft.answer_evidence is not None:
+            raw_ev = _canonical_field(draft.answer_evidence, 'answer_evidence')
+            if isinstance(raw_ev, dict):
+                draft_evidence = raw_ev
+            elif isinstance(raw_ev, (str, bytes)):
+                try:
+                    draft_evidence = json.loads(_decode(raw_ev))
+                except (ValueError, json.JSONDecodeError):
+                    draft_evidence = None
+        verdict = grounding_verdict(projection.answer, None, draft_evidence)
+        if verdict['status'] == 'ungrounded':
+            raise AnswerContractError(
+                '数值答案未接地：' + ', '.join(verdict['ungrounded_tokens'])
+                + '。数值答案必须在 evidence_draft 中给出可重算的 calculations（程序会确定性执行并按答案精度比对结果），'
+                  '或在 evidence 摘录中逐字定位到该数值；二者都不满足的数值答案不予接纳。')
     expected = qa_projection(requirements, draft.answer_result, draft.answer_evidence)
     if draft.markdown != expected:
         raise AnswerContractError('QA 版本正文必须与答案的机械投影一致（问题、答案、证据入口），不能另行撰写或改写')
@@ -510,6 +646,7 @@ def check_files(store, answer_path, evidence_path=None, run_id=None) -> dict[str
     report['warnings'].extend(projection.warnings)
     if projection.status == 'invalid':
         report['errors'].append(projection.reason)
+    draft_evidence = None
     if evidence_path:
         path = Path(evidence_path).expanduser()
         if path.exists():
@@ -517,8 +654,19 @@ def check_files(store, answer_path, evidence_path=None, run_id=None) -> dict[str
             report['evidence'] = evidence
             report['warnings'].extend(evidence['warnings'])
             report['errors'].extend(evidence['errors'])
+            try:
+                draft_evidence = json.loads(_decode(path.read_bytes()))
+            except (ValueError, json.JSONDecodeError):
+                draft_evidence = None
         else:
             report['warnings'].append('evidence 文件不存在，按无附件检查：' + str(evidence_path))
+    if projection.status == 'answered':
+        verdict = grounding_verdict(projection.answer, None, draft_evidence)
+        report['grounding'] = verdict
+        if verdict['status'] == 'ungrounded':
+            report['errors'].append(
+                '数值答案未接地：' + ', '.join(verdict['ungrounded_tokens'])
+                + '；需 calculations 重算一致或 evidence 摘录逐字含该数值')
     if report['errors']:
         report['status'] = 'invalid'
     return report

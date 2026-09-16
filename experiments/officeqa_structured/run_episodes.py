@@ -1591,8 +1591,18 @@ def run_briefloop_episode(case: Case, *, data_root: Path, budget: Budget, label:
                        "model": real.model, "variant": real.variant}
     res_sampler.__exit__(None, None, None)
     usage = episode_token_usage(workspace)
+    # r3 wiring diagnostics (protocol v2.0 defect post-mortem): was the numeric
+    # answer mechanically grounded, did abstentions ignore candidate operands,
+    # and did revisions actually change anything.  Read-only over the
+    # episode's own store — no gold access.
+    try:
+        import glob as _glob
+        diag = _qa_evidence_diagnostics(episode_dir, box)
+    except Exception as exc:  # noqa: BLE001 - diagnostics never fail an episode
+        diag = {'error': f'{type(exc).__name__}: {exc}'}
     record = _episode_record(case=case, arm="B", label=label, order_index=order_index,
                              censored=("; ".join(b_censored) if (track_a and real and b_censored) else None),
+                             evidence_diagnostics=diag or None,
                              episode_dir=episode_dir, started=started, deadline=deadline,
                              budget=budget, box=box, tool_calls=tool_calls,
                              identifiers=identifiers,
@@ -1671,7 +1681,8 @@ def _episode_record(*, case: Case, arm: str, label: str, order_index: int, episo
                     usage: dict[str, Any] | None = None,
                     resources: dict[str, Any] | None = None,
                     format_repair: dict[str, Any] | None = None,
-                    censored: str | None = None) -> dict[str, Any]:
+                    censored: str | None = None,
+                    evidence_diagnostics: dict[str, Any] | None = None) -> dict[str, Any]:
     finished = time.time()
     chosen = box.chosen()
     corpus_budget_file = Path(episode_dir) / "corpus-budget.jsonl"
@@ -1719,11 +1730,62 @@ def _episode_record(*, case: Case, arm: str, label: str, order_index: int, episo
         # answer stays visible for audit but is excluded from headline scoring;
         # the spent usage above is the disclosure.
         **({"censored": censored} if censored else {}),
+        **({"evidence_diagnostics": evidence_diagnostics} if evidence_diagnostics else {}),
         **({("briefloop" if arm == "B" else "native"): linkage} if linkage else {}),
     }
     (episode_dir / "episode_record.json").write_text(
         json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return record
+
+
+def _qa_evidence_diagnostics(episode_dir: Path, box: "SubmissionBox") -> dict[str, Any]:
+    """Gold-blind QA grounding diagnostics for one B episode.
+
+    Reads the episode's submitted answer plus its saved evidence drafts from
+    the product store; computes the grounding verdict, whether abstentions
+    had candidate numeric operands already in excerpts, and whether the
+    accepted revisions ever changed the answer bytes.
+    """
+    from briefloop.answer_result import grounding_verdict, _numbers_in_text
+    import sqlite3 as _sq
+    diag: dict[str, Any] = {}
+    db = Path(episode_dir) / "workspace" / "briefloop.db"
+    accepted = box.entries(accepted_only=True)
+    final_answer = None
+    versions = []
+    if db.is_file():
+        d = _sq.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            rows = d.execute("SELECT data FROM briefs ORDER BY rowid").fetchall()
+            for (payload,) in rows:
+                detail = json.loads(payload)
+                ans = detail.get("answer_result") or {}
+                versions.append(ans)
+                if ans.get("status") == "answered":
+                    final_answer = ans.get("answer")
+            drafts = d.execute("SELECT data FROM briefs ORDER BY rowid DESC LIMIT 1").fetchall()
+        finally:
+            d.close()
+    answered_versions = [v for v in versions if v.get("status") == "answered"]
+    diag["revision_answer_changed"] = bool(answered_versions) and len(
+        {json.dumps(v.get("answer"), sort_keys=True) for v in answered_versions}) > 1
+    # grounding over the LAST accepted answer + its own evidence draft
+    sub_files = sorted((Path(episode_dir) / "submissions").glob("*answer.json"))
+    ev_files = sorted(Path(episode_dir).rglob("evidence_draft.json"))
+    draft = None
+    if ev_files:
+        try:
+            draft = json.loads(ev_files[-1].read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            draft = None
+    if final_answer is not None:
+        diag["grounding"] = grounding_verdict(final_answer, None, draft)
+    else:
+        excerpts = [str(e.get("excerpt") or "") for e in (draft or {}).get("evidence") or []
+                    if isinstance(e, dict)]
+        diag["abstain_with_candidate_operands"] = sum(
+            1 for text in excerpts if _numbers_in_text(text))
+    return diag
 
 
 # --- run / freeze / score commands ----------------------------------------------
