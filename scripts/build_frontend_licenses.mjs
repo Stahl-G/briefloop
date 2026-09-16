@@ -2,7 +2,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-export function collectFrontendLicenses(metafile, root) {
+// `fallbacks`: [{ match: RegExp on package name, path: vendored license file }].
+// Some npm packages declare a license but ship no license file (e.g. pi's
+// scoped packages); for those we keep the license text vendored from the
+// source repository. A package with no file and no fallback is still a failure.
+export function collectFrontendLicenses(metafile, root, fallbacks = []) {
   const packages = new Map();
   for (const output of Object.values(metafile.outputs)) {
     for (const [input, contribution] of Object.entries(output.inputs)) {
@@ -22,7 +26,17 @@ export function collectFrontendLicenses(metafile, root) {
         /^(licen[cs]e|copying|copyright|notice)(?:$|[._-])/i.test(name)
         && fs.statSync(path.join(packageRoot, name)).isFile()).sort();
       if (!names.some(name => /^(licen[cs]e|copying)(?:$|[._-])/i.test(name))) {
-        throw new Error(`Missing license text for ${manifest.name}@${manifest.version}: ${packageRoot}`);
+        const fallback = fallbacks.find(f => f.match.test(manifest.name || '')
+          && (!f.license || f.license === manifest.license));
+        if (!fallback) {
+          throw new Error(`Missing license text for ${manifest.name}@${manifest.version}: ${packageRoot}`);
+        }
+        names.push(path.basename(fallback.path));
+        const text = fs.readFileSync(fallback.path, 'utf8').replace(/\r\n/g, '\n').trimEnd();
+        packages.set(packageRoot, { name: manifest.name, version: manifest.version,
+          license: typeof manifest.license === 'string' ? manifest.license : 'not specified',
+          notices: [{ name: `${fallback.path} (vendored; npm package ships no license file)`, text }] });
+        continue;
       }
       const notices = names.map(name => {
         const text = fs.readFileSync(path.join(packageRoot, name), 'utf8').replace(/\r\n/g, '\n').trimEnd();

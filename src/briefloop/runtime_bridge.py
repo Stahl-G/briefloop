@@ -15,8 +15,11 @@ from .platform_support import OwnedProcess, cli_command
 
 class RuntimeBridge:
     IDLE_SECONDS = 30.0
-    def __init__(self, *, node_binary=None):
+    SCRIPT = 'runtime-bridge.mjs'
+    NODE_MIN = '20'
+    def __init__(self, *, node_binary=None, script=None):
         self.node_binary=node_binary if node_binary is not None else os.environ.get('BRIEFLOOP_NODE')
+        self.script=script or self.SCRIPT
         self._lock=threading.RLock()
         self._start_lock=threading.Lock();self._closed=False;self._broken=None;self._writer=None
         self._pending={}
@@ -38,13 +41,13 @@ class RuntimeBridge:
             node=_find_host_bin(self.node_binary or 'node')
             if not node:
                 raise RuntimeError('未找到可执行的 Node.js：'+str(self.node_binary or 'node')+
-                    '。Bridge 引擎需要 Node.js 20+；请安装后重启服务，或将 BRIEFLOOP_NODE 设置为 Node 可执行文件路径；'+SEARCH_HINT)
+                    '。本地引擎需要 Node.js '+self.NODE_MIN+'+；请安装后重启服务，或将 BRIEFLOOP_NODE 设置为 Node 可执行文件路径；'+SEARCH_HINT)
             env={**os.environ,'BRIEFLOOP_PYTHON':sys.executable,
                  'BRIEFLOOP_PROCESS_HELPER':str(files('briefloop').joinpath('process_host.py'))}
             # Electron's Node mode belongs only to this bridge child, never the service.
             env.pop('ELECTRON_RUN_AS_NODE',None)
             if env.get('BRIEFLOOP_NODE_IS_ELECTRON')=='1':env['ELECTRON_RUN_AS_NODE']='1'
-            proc=OwnedProcess([node,str(files('briefloop').joinpath('static/runtime-bridge.mjs'))],
+            proc=OwnedProcess([node,str(files('briefloop').joinpath('static/'+self.script))],
                 stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True,bufsize=1,
                 env=env)
             writer=PipeWriter(proc.stdin,lambda error:self._abort(proc,error))
@@ -125,7 +128,7 @@ class RuntimeBridge:
     def call(self,method,params=None,timeout=30):
         deadline=time.monotonic()+timeout
         rid=uuid.uuid4().hex;future=Future();params=params or {}
-        execution=params.get('execution_id') if method=='start' else None
+        execution=params.get('execution_id') if method in ('start','turn_start') else None
         with self._lock:
             if self._closed:raise RuntimeError('Runtime bridge 已关闭')
             self._calls+=1
@@ -193,7 +196,43 @@ class RuntimeBridge:
                 item['capabilities']={'chat':True,'cancel':True,'images':'unknown','resume':'unknown','restricted_reviewer':restricted_review(item['id']),
                     'permission_modes':['workspace-write','read-only'],'steer':item['id']=='codex'}
             item['diagnostic']=('本机 CLI 已找到；执行协议尚未接入' if item['installed'] and not item['available'] else item.get('error'))
+        result.append(self._discover_native())
         return {'runtimes':result,**({'diagnostic':diagnostic} if diagnostic else {})}
+
+    @staticmethod
+    def _discover_native():
+        """The embedded engine is shipped with the app, not installed by the user.
+
+        A real ping boots Node and the model runtime; that is the honest
+        availability signal — a copied bundle on a too-old Node reports failed,
+        not "detected"."""
+        from .backends import BACKEND_LABELS
+        bundled=files('briefloop').joinpath('static/native-engine.mjs')
+        entry={'id':'briefloop-native','name':BACKEND_LABELS['briefloop-native'],
+               'path':str(bundled),
+               'installed':False,'version':None,'status':'embedded','protocol':'embedded-pi',
+               'integrated':True,'available':False,'error':None}
+        try:bundled.stat()
+        except OSError:
+            entry['error']='内置引擎文件缺失（构建未产出 native-engine.mjs）'
+            return entry
+        entry['installed']=True
+        from .native_engine import NativeEngine
+        engine=NativeEngine()
+        try:
+            info=engine.call('ping',{},timeout=20)
+            entry['version']=f"{info.get('pi','pi')} · {info.get('node','')}"
+            entry['available']=True
+            from .review_capability import restricted_review
+            entry['capabilities']={'chat':False,'cancel':True,'images':'packet','resume':'unknown',
+                'restricted_reviewer':restricted_review('briefloop-native'),
+                'permission_modes':['read-only'],'steer':False}
+        except Exception as exc:
+            entry['error']=str(exc)[:200]
+            entry['status']='failed'
+        finally:
+            engine.close()
+        return entry
 
     def close(self):
         with self._lock:

@@ -8,7 +8,9 @@ old child handles.
 """
 
 BRIDGE_BACKENDS = ('claude','kimi','hermes','reasonix','mimo','codebuddy','kilo','kiro','vibe','deepseek-harness','antigravity','pi')
-BACKENDS = ('codex', 'opencode', *BRIDGE_BACKENDS)
+# BriefLoop's own embedded engine (pi SDK in-process); not an external CLI.
+OWN_BACKENDS = ('briefloop-native',)
+BACKENDS = ('codex', 'opencode', 'briefloop-native', *BRIDGE_BACKENDS)
 
 DEFAULT_BACKEND = 'codex'
 
@@ -28,6 +30,7 @@ BACKEND_LABELS = {
     'deepseek-harness': 'DeepSeek Harness',
     'antigravity': 'Antigravity',
     'pi': 'Pi',
+    'briefloop-native': 'BriefLoop 内置引擎',
 }
 
 # Verified against opencode 1.18.20 (v1 message surface, same as the official
@@ -41,6 +44,10 @@ BACKEND_LABELS = {
 CAPABILITIES = {
     'codex': frozenset({'steer', 'cancel', 'questions', 'subagents', 'native_search'}),
     'opencode': frozenset({'cancel', 'subagents', 'native_search', 'restricted_review'}),
+    # Reviewer isolation here is our own tool proxy (packet-only reads, no
+    # built-in tools at all), verified in native-engine/engine.test.mjs and the
+    # phase-1 acceptance, not delegated to a host's permission UI.
+    'briefloop-native': frozenset({'cancel', 'restricted_review'}),
 }
 
 

@@ -170,9 +170,9 @@ class RoleModel(Model):
 
 
 def runtime_fields(value, backend='codex'):
-    if backend not in ('codex','opencode'):
+    if backend not in ('codex','opencode','briefloop-native'):
         return {'model':RoleModel.model_validate({'model':value['model']}).model}
-    if backend == 'opencode':
+    if backend in ('opencode','briefloop-native'):
         # Opencode models are provider/model in one string; effort is expressed
         # as an optional variant. Codex-only keys are dropped, never sent.
         from .backends.opencode_server import split_model
@@ -197,7 +197,7 @@ def runtime_fields(value, backend='codex'):
 class Settings(RoleModel):
     model: str = Field(default='gpt-5.6-luna', max_length=100)
     reasoning_effort: str | None = Field(default='high', min_length=1, max_length=100)
-    agent_backend: Literal['codex', 'opencode','claude','kimi','hermes','reasonix','mimo','codebuddy','kilo','kiro','vibe','deepseek-harness','antigravity','pi'] = 'codex'
+    agent_backend: Literal['codex', 'opencode','claude','kimi','hermes','reasonix','mimo','codebuddy','kilo','kiro','vibe','deepseek-harness','antigravity','pi','briefloop-native'] = 'codex'
     model_selection_required: bool = True
     role_models: dict[Literal['evaluator','maintainer','proposer'], RoleModel] = Field(default_factory=dict)
     chat_allow_web: bool = True
