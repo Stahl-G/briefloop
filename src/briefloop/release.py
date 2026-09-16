@@ -198,6 +198,25 @@ def decision(snapshot, review_result, findings, protocol='legacy', *, clauses=No
               label=item.get('label', ''), expected=item.get('expected', ''), reason=item.get('reason', ''))
     for item in numbers.get('skipped', []):
         notices.append({'code': 'number_unchecked', 'message': str(item.get('label') or item.get('expected') or '未命名数值') + '：' + str(item.get('reason', '未检查'))})
+    if numbers.get('status') == 'not_checked':
+        body_count = numbers.get('body_quantity_count') or 0
+        if body_count:
+            notices.append({'code': 'numbers_unbound', 'count': body_count,
+                            'message': f'正文检出 {body_count} 处数值，但没有任何数字绑定；数值核验未执行'})
+        else:
+            notices.append({'code': 'numbers_absent',
+                            'message': '正文未检出数值，本稿无数值核验'})
+    figure_error = (deterministic.get('export') or {}).get('figure_error')
+    if figure_error:
+        notices.append({'code': 'figure_registration_error',
+                        'message': '图表登记校验未完成：' + str(figure_error)})
+    layout = deterministic.get('layout') or {}
+    for key, label in (('heading_jumps', '标题层级跳跃'), ('tables_without_header', '表格缺少表头'),
+                       ('empty_headings', '空标题')):
+        items = layout.get(key) or []
+        if items:
+            notices.append({'code': 'layout_' + key, 'count': len(items),
+                            'message': f'{label} {len(items)} 处'})
     for source_id in deterministic.get('broken_refs', []):
         issue('broken_reference', '正文引用了不存在的来源：' + str(source_id), source_id=source_id)
     return {'eligible': not blockers, 'blockers': blockers, 'notices': notices}
@@ -280,6 +299,12 @@ def eligibility(store, version_id):
     result.update(decision(snapshot, review['result'], status['findings'],
                            (review.get('data') or {}).get('protocol', 'legacy')))
     result['review_id'] = review['id']
+    # Status, not defect: the latest assessment grade rides the release
+    # record itself (page + audit bundle render the record); the notice
+    # channel stays reserved for things a reader must act on.
+    overall = (snapshot.get('deterministic') or {}).get('assessment_overall')
+    if overall is not None:
+        result['assessment_overall'] = overall
     if result['eligible']:
         run = store.one('runs', brief['run_id'])
         skill = store.one('skills', run['skill_id']) if run.get('skill_id') else None
