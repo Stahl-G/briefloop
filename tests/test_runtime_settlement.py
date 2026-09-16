@@ -35,7 +35,7 @@ def test_parent_resume_reuses_admissible_failed_review_in_background_lane(tmp_pa
            'assessment':{'brief_hash':brief['hash'],'status':'complete','summary':'Synthetic score','overall':'达到要求','evidence':3,'coverage':3,'analysis':3,'expression':3}}
     (folder/'review.json').write_text(dump(value))
     store.update_job(child['id'],'failed',error='Old schema rejection');store.update_job(parent['id'],'failed',error='Child review failed')
-    worker=Worker(store,NoModel());worker._review_runtime=NoModel()
+    worker=Worker(store,NoModel(),review_runtime_factory=NoModel)
     worker.thread=type('LiveParent',(),{'is_alive':lambda self:True})()
     resumed=worker.resume(parent['id']);worker.review_thread.start()
     try:
@@ -51,7 +51,7 @@ def test_stop_is_persisted_before_transport_finishes_and_settlement_cannot_overw
     store=Store(tmp_path);job=store.enqueue('assess',{});store.update_job(job['id'],'running')
     runtime=NoModel();worker=Worker(store,runtime)
     if lane=='primary':worker.current=job['id']
-    else:worker.review_current=job['id'];worker._review_runtime=runtime
+    else:worker._review_jobs[job['id']]=(None,runtime,None)
     worker.stop_job(job['id'])
     assert store.one('jobs',job['id'])['status']=='cancelled' and runtime.cancelled.is_set()
     worker._settle_job(job['id'],'complete',result={'saved':True},runtime=runtime)
@@ -159,7 +159,7 @@ def test_word_file_completes_while_generation_and_review_still_run(tmp_path):
     store=Store(tmp_path);run,source,_=report(store)
     generation=store.enqueue('generate',{'run_id':run['id'],'single_evaluation':False})
     primary=WaitingRuntime(write_draft=True);review_runtime=WaitingRuntime()
-    worker=Worker(store,primary,report_runtime_factory=lambda:primary);worker._review_runtime=review_runtime;worker.start()
+    worker=Worker(store,primary,report_runtime_factory=lambda:primary,review_runtime_factory=lambda:review_runtime);worker.start()
     try:
         assert primary.entered.wait(5)
         brief=store.one('briefs','brief_'+generation['id'][4:])

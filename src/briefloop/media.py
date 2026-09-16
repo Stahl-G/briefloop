@@ -8,7 +8,10 @@ import os
 import re
 import tempfile
 import threading
+import struct
 import warnings
+import zipfile
+import zlib
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 from pypdf import PdfReader
@@ -28,6 +31,66 @@ def _source_id(sid):
     if not isinstance(sid, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', sid):
         raise ValueError('无效来源 ID')
     return sid
+
+
+MAX_OFFICE_EXPANDED_BYTES = 150_000_000
+
+
+_ZIP_LOCAL_HEADER = struct.Struct('<4s5H3I2H')
+_INFLATE_INPUT = 64 * 1024
+_INFLATE_OUTPUT = 1024 * 1024
+
+
+def office_archive(data):
+    """Open DOCX/XLSX bytes only after measuring what each member really inflates to.
+
+    Directory sizes are untrusted and zipfile.read() inflates a whole member before
+    truncating it to the declared size. Inflate every member in bounded steps, stop
+    at the cap, and require the actual size to equal the declared one, so later
+    readers (zipfile, python-docx) cannot expand past what was measured here.
+    """
+    archive = zipfile.ZipFile(BytesIO(data))
+    try:
+        total = 0
+        def counted(size):
+            if total + size > MAX_OFFICE_EXPANDED_BYTES:
+                raise ValueError('Office 文件展开后过大，请删减内容或拆分后重试')
+        for item in archive.infolist():
+            if item.flag_bits & 0x1:raise ValueError('Office 文件含加密内容，无法读取')
+            if item.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+                raise ValueError('Office 文件使用了不支持的压缩方式')
+            header = _ZIP_LOCAL_HEADER.unpack_from(data, item.header_offset)
+            start = item.header_offset + _ZIP_LOCAL_HEADER.size + header[9] + header[10]
+            raw = memoryview(data)[start:start + item.compress_size]
+            if header[0] != b'PK\x03\x04' or len(raw) != item.compress_size:
+                raise ValueError('Office 文件已损坏，无法读取')
+            if item.compress_type == zipfile.ZIP_STORED:
+                actual = len(raw)
+                counted(actual)
+            else:
+                inflater, actual = zlib.decompressobj(-15), 0
+                for offset in range(0, len(raw), _INFLATE_INPUT):
+                    pending = raw[offset:offset + _INFLATE_INPUT]
+                    while pending and not inflater.eof:
+                        actual += len(inflater.decompress(pending, _INFLATE_OUTPUT))
+                        counted(actual)
+                        pending = inflater.unconsumed_tail
+                    if inflater.eof:break
+                while not inflater.eof:
+                    step = len(inflater.decompress(b'', _INFLATE_OUTPUT))
+                    if not step:break
+                    actual += step
+                    counted(actual)
+                if not inflater.eof:raise ValueError('Office 文件已损坏，无法读取')
+            if actual != item.file_size:raise ValueError('Office 文件声明大小与实际内容不符，无法读取')
+            total += actual
+    except (struct.error, zlib.error) as exc:
+        archive.close()
+        raise ValueError('Office 文件已损坏，无法读取') from exc
+    except BaseException:
+        archive.close()
+        raise
+    return archive
 
 
 def safe_source_path(store, value, *, must_exist=True):
@@ -57,7 +120,9 @@ def safe_source_path(store, value, *, must_exist=True):
 
 
 def _hash(path):
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    # Integrity checks stay on every access; stream so a large original is not held in memory.
+    with path.open('rb') as file:
+        return hashlib.file_digest(file, 'sha256').hexdigest()
 
 
 def source_files(store, sid):
@@ -191,15 +256,20 @@ def source_attachment(store, sid):
               'image_path':None,'width':None,'height':None,'pages':None,'needs_visual':False,
               'status':source['status'],'error':source.get('error'),'rendered_pages':[]}
     if original is None:return result
-    data=original.read_bytes()
-    kind=detect_media_type(original.name,data,metadata.get('content_type') or metadata.get('media_type') or '')
+    recorded=_recorded_pdf(metadata)
+    if recorded:
+        # source_files verified raw_sha256; do not reread and reparse a large PDF.
+        data=None;kind='application/pdf';digest=metadata['raw_sha256']
+    else:
+        data=original.read_bytes()
+        kind=detect_media_type(original.name,data,metadata.get('content_type') or metadata.get('media_type') or '')
+        digest=hashlib.sha256(data).hexdigest()
     result['media_type']=kind
-    result['raw_sha256']=hashlib.sha256(data).hexdigest()
+    result['raw_sha256']=digest
     if kind.startswith('image/'):
         if source['status']=='failed' and metadata.get('media_type'):
             result['needs_visual']=True
             return result
-        digest=hashlib.sha256(data).hexdigest()
         expected=safe_source_path(store,f'sources/media/{digest}/image.png',must_exist=False)
         if metadata.get('image_path') and safe_source_path(store,metadata['image_path'])!=expected:raise ValueError('图像缓存路径与原件不匹配')
         if expected.exists() and metadata.get('image_sha256'):
@@ -209,10 +279,9 @@ def source_attachment(store, sid):
             image,width,height=_validated_cached_image(store,prepared['image_path'],prepared['image_sha256'])
         result.update(status='ready',error=None,image_path=str(image),width=width,height=height,needs_visual=True)
     elif kind=='application/pdf':
-        details=pdf_metadata(data)
+        details={'pages':recorded} if recorded else pdf_metadata(data)
         text=store.source_text(sid).strip()
         result.update(status='ready',error=None,pages=details['pages'],needs_visual=bool(metadata.get('needs_visual')) or not text or text==PDF_NOTICE)
-        digest=hashlib.sha256(data).hexdigest()
         directory=safe_source_path(store,f'sources/media/{digest}',must_exist=False)
         if directory.exists():
             for path in sorted(directory.glob('page-*.png')):
@@ -237,13 +306,29 @@ def _rendered_page(store, digest, page):
     return {'page':page,'path':str(image),'width':width,'height':height}
 
 
+def _recorded_pdf(provenance):
+    """Page count recorded when a PDF was admitted, if its original digest is bound."""
+    pages=(provenance or {}).get('pages')
+    if (provenance or {}).get('media_type')=='application/pdf' and type(pages) is int and 1<=pages<=10_000 and provenance.get('raw_sha256'):
+        return pages
+    return None
+
+
+def _pdf_original(store, sid):
+    _,provenance,original=source_files(store,sid)
+    if original is None:raise ValueError('该来源不是 PDF')
+    pages=_recorded_pdf(provenance)
+    if pages:return original,pages,provenance['raw_sha256'],None
+    data=original.read_bytes()
+    if detect_media_type(original.name,data)!='application/pdf':raise ValueError('该来源不是 PDF')
+    return original,pdf_metadata(data)['pages'],hashlib.sha256(data).hexdigest(),data
+
+
 def rendered_page_path(store, sid, page):
     if type(page) is not int or page<1:raise ValueError('页码必须为从 1 开始的整数')
-    _,_,original=source_files(store,sid)
-    if original is None or detect_media_type(original.name,original.read_bytes())!='application/pdf':raise ValueError('该来源不是 PDF')
-    details=pdf_metadata(original.read_bytes())
-    if page>details['pages']:raise ValueError('页码超出 PDF 范围')
-    result=_rendered_page(store,_hash(original),page)
+    _,count,digest,_=_pdf_original(store,sid)
+    if page>count:raise ValueError('页码超出 PDF 范围')
+    result=_rendered_page(store,digest,page)
     return Path(result['path']) if result else None
 
 
@@ -251,19 +336,20 @@ def render_source_pages(store, sid, pages):
     if not isinstance(pages,(list,tuple)) or not 1<=len(pages)<=MAX_RENDER_PAGES or any(type(p) is not int or p<1 for p in pages):
         raise ValueError(f'请指定 1 至 {MAX_RENDER_PAGES} 个从 1 开始的 PDF 页码')
     if len(set(pages))!=len(pages):raise ValueError('页码不能重复')
-    _,_,original=source_files(store,sid)
-    if original is None or detect_media_type(original.name,original.read_bytes())!='application/pdf':raise ValueError('该来源不是 PDF')
-    data=original.read_bytes();details=pdf_metadata(data)
-    if any(p>details['pages'] for p in pages):raise ValueError('页码超出 PDF 范围')
-    digest=hashlib.sha256(data).hexdigest();results=[]
+    original,count,digest,data=_pdf_original(store,sid)
+    if any(p>count for p in pages):raise ValueError('页码超出 PDF 范围')
+    cached={number:_rendered_page(store,digest,number) for number in pages}
+    if all(cached.values()):return {'source_id':sid,'pages':[cached[number] for number in pages]}
+    if data is None:data=original.read_bytes()
+    results=[]
     try:import pypdfium2 as pdfium
     except ImportError as exc:raise ValueError('缺少 PDF 页面渲染依赖 pypdfium2，请更新 BriefLoop 安装') from exc
     with _RENDER_LOCK:
         document=pdfium.PdfDocument(data)
         try:
+            if any(number>len(document) for number in pages):raise ValueError('页码超出 PDF 范围')
             for number in pages:
-                cached=_rendered_page(store,digest,number)
-                if cached:results.append(cached);continue
+                if cached[number]:results.append(cached[number]);continue
                 page=document[number-1]
                 try:
                     width,height=page.get_size()

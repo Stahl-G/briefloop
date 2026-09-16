@@ -229,6 +229,21 @@ class BridgeHarness(OpencodeHarness):
                         from .execution_records import journal_tool
                         journal_tool(self.chat,sid,mid,key,tool.get('name','tool'),tool.get('input',{}),tool.get('output',''),status=tool['status'],native_session=self.chat.session(sid).get('thread_id'))
                 elif kind=='question':
+                    if internal:
+                        # Background runs have no user attached; parking on a host
+                        # permission request would hold the job until its timeout
+                        # (#724). Reject deterministically and fail the turn fast.
+                        options=event.get('options',[])
+                        reject=next((o for o in options if str(o.get('kind','')).startswith('reject')),None)
+                        answer={'execution_id':execution,'request_id':event['request_id']}
+                        if reject:answer['option_id']=reject['optionId']
+                        try:self.bridge.call('answer',answer)
+                        except Exception:pass
+                        try:self.bridge.call('cancel',{'execution_id':execution})
+                        except Exception:pass
+                        self.chat.event(sid,'runtime/question',{'auto':'rejected','title':sanitize(event.get('title','宿主请求权限'))})
+                        raise RuntimeError('后台任务没有用户可回答宿主授权请求，已自动拒绝并终止本轮：'
+                                           +sanitize(event.get('title','宿主请求权限')))
                     options=event.get('options',[])
                     rid=self.chat.add_request(sid,{'execution_id':execution,'request_id':event['request_id']},
                         {'questions':[{'id':'permission','question':event.get('title','CLI 请求权限'),

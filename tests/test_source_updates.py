@@ -124,8 +124,10 @@ def test_refresh_obeys_permission_and_budget_and_never_reports_cache_as_fresh(tm
     from briefloop import sources
     calls = []
 
-    def acquire(store, url):
-        calls.append(url)
+    private = []
+
+    def acquire(store, url, allow_private=False):
+        calls.append(url);private.append(allow_private)
         return store.add_source('Fresh response', 'Revenue was USD 12 million in H1.', url=url)
 
     monkeypatch.setattr(sources, 'fetch', acquire)
@@ -138,11 +140,12 @@ def test_refresh_obeys_permission_and_budget_and_never_reports_cache_as_fresh(tm
     store, old, run, _, _, _ = case(tmp_path / 'online', allow_web=True)
     result = refresh(store, run['id'], old['id'], information_cutoff='2026-08-31', trigger='next_run')
     assert len(calls) == 1 and result['outcome'] == 'unchanged_snapshot'
+    assert private == [False]
     assert result['new_source_id'] != old['id']
     assert result['data']['budget']['used']['source_pages'] == 1
     assert store.one('sources', old['id']) == old
 
-    def changed(store, url):
+    def changed(store, url, **_):
         return store.add_source('Changed response', 'H1 revenue corrected to USD 120 million.', url=url)
 
     monkeypatch.setattr(sources, 'fetch', changed)
@@ -153,7 +156,31 @@ def test_refresh_obeys_permission_and_budget_and_never_reports_cache_as_fresh(tm
     assert change['conflict_id'] == result['data']['conflict_id']
     assert len(store.rows('SELECT id FROM conflicts')) == 1
 
-    monkeypatch.setattr(sources, 'fetch', lambda store, url: store.add_source('Unavailable', '', url=url, error='HTTP 503'))
+    monkeypatch.setattr(sources, 'fetch', lambda store, url, **_: store.add_source('Unavailable', '', url=url, error='HTTP 503'))
     result = refresh(store, run['id'], old['id'], information_cutoff='2026-08-31')
     assert result['outcome'] == 'fetch_failed' and result['data']['error'] == 'HTTP 503'
     assert result['outcome'] != 'unchanged_snapshot'
+
+
+def test_only_a_user_queued_refresh_may_reach_private_networks(tmp_path, monkeypatch):
+    from briefloop import sources
+    from briefloop.chat_tools import workspace_action
+    from briefloop.runtime import Worker
+    private = []
+
+    def acquire(store, url, allow_private=False):
+        private.append(allow_private)
+        return store.add_source('Fresh response', 'Revenue was USD 12 million in H1.', url=url)
+
+    monkeypatch.setattr(sources, 'fetch', acquire)
+    store, old, run, _, _, _ = case(tmp_path, allow_web=True)
+    # An agent tool call cannot raise its own network scope, whatever trigger it claims.
+    workspace_action(store, {'action': 'refresh_source', 'run_id': run['id'], 'source_id': old['id'],
+                             'information_cutoff': '2026-08-31', 'trigger': 'manual'})
+    for requested_by in (None, 'user'):
+        payload = {'run_id': run['id'], 'source_id': old['id'], 'information_cutoff': '2026-08-31'}
+        if requested_by: payload['requested_by'] = requested_by
+        job = store.enqueue('source_refresh', payload)
+        store.update_job(job['id'], 'running')
+        Worker(store)._execute_main_job(job)
+    assert private == [False, False, True]

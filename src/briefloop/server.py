@@ -21,6 +21,8 @@ from . import sources
 
 MAX_REQUEST_BYTES=25*1024*1024
 MAX_UPLOAD_BYTES=18*1024*1024
+# Raw source uploads skip Base64/JSON copies, so PDFs (annual reports, scans) may be larger.
+MAX_PDF_UPLOAD_BYTES=100*1024*1024
 
 def _upload_data(body):
     data=base64.b64decode(body['data'],validate=True)
@@ -206,6 +208,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
                                 source['media_type']=meta.get('media_type');source['needs_visual']=bool(meta.get('needs_visual',False))
                             except (ValueError,OSError):pass
                     self.send(200,snapshot)
+                elif u.path=='/api/brief':
+                    self.send(200,store.brief_view(q['id'][0]))
+                elif u.path=='/api/report-search':
+                    self.send(200,{'run_ids':store.search_briefs(q.get('q',[''])[0])})
                 elif u.path=='/api/software-version':
                     self.send(200,software_identity)
                 elif u.path=='/api/workspaces':
@@ -222,17 +228,18 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/external/capabilities':
                     from .external_requests import capabilities
                     self.send(200,capabilities())
-                elif u.path=='/api/session':self.send(200,{'token':token,'upload_limits':{'max_file_bytes':MAX_UPLOAD_BYTES,'max_request_bytes':MAX_REQUEST_BYTES}})
+                elif u.path=='/api/session':self.send(200,{'token':token,'upload_limits':{'max_file_bytes':MAX_UPLOAD_BYTES,'max_request_bytes':MAX_REQUEST_BYTES,'max_pdf_bytes':MAX_PDF_UPLOAD_BYTES}})
                 elif u.path=='/api/service-status':self.send(200,_service_status(self.server))
                 elif u.path=='/api/connectors':self.send(200,{'connectors':self.server.connectors.list()})
                 elif u.path=='/api/runtime':
                     with worker._claim_lock:
                         active=dict(worker._generation_jobs)
+                        reviews={jid:item[1] for jid,item in worker._review_jobs.items()}
                     selected=q.get('job_id',[None])[0]
-                    observed=active[selected][1] if selected in active else (worker._review_runtime if worker.review_current and not worker.current else worker.runtime)
-                    if selected and selected not in active and selected not in (worker.current,worker.review_current):observed=None
+                    observed=active[selected][1] if selected in active else reviews[selected] if selected in reviews else (next(iter(reviews.values())) if reviews and not worker.current else worker.runtime)
+                    if selected and selected not in active and selected not in reviews and selected!=worker.current:observed=None
                     proc=observed.process if observed else None
-                    self.send(200,{'server_pid':os.getpid(),'worker_alive':worker.thread.is_alive(),'automatic_learning_paused':worker.opened_paused,'paused':worker.opened_paused,'job_id':selected if selected in active else worker.current,'generation_job_ids':list(active),'pid':proc.pid if proc else None,'returncode':proc.poll() if proc else None})
+                    self.send(200,{'server_pid':os.getpid(),'worker_alive':worker.thread.is_alive(),'automatic_learning_paused':worker.opened_paused,'paused':worker.opened_paused,'job_id':selected if selected in active or selected in reviews else worker.current,'generation_job_ids':list(active),'pid':proc.pid if proc else None,'returncode':proc.poll() if proc else None})
                 elif u.path=='/api/source':
                     from .projections import source_details
                     sid=q['id'][0];source,provenance,original=source_details(store,sid)
@@ -342,6 +349,10 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/research-notes':
                     from .deliverable_spec import research_record
                     self.send(200,research_record(store,store.one('briefs',q['version'][0])),download_name='research-notes.json' if q.get('download') else None)
+                elif u.path=='/api/export-status':
+                    job=store.one('jobs',q['job'][0])
+                    if job['kind']!='export_docx':raise ValueError('不是导出任务')
+                    self.send(200,job)
                 elif u.path=='/api/export-file':
                     if q.get('workspace_id',[store.meta('workspace_id')])[0]!=store.meta('workspace_id'):
                         raise Conflict('工作区身份已变化，未下载文件')
@@ -351,7 +362,11 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     data=output_path(store,job).read_bytes()
                     import hashlib
                     if hashlib.sha256(data).hexdigest()!=json.loads(job['result'])['sha256']:raise ValueError('Word 文件已变化，请重新生成')
-                    self.send(200,data,'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name='report.docx')
+                    brief=store.one('briefs',json.loads(job['payload'])['version_id'])
+                    title=json.loads(brief['detail']).get('title') or '报告'
+                    import re
+                    name=re.sub(r'[\x00-\x1f<>:"/\\|?*]', '_', title).strip('. ')[:120] or '报告'
+                    self.send(200,data,'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name=name+'.docx')
                 elif u.path=='/api/release-state':
                     from .release import eligibility,list_releases
                     version=q['version'][0];brief=store.one('briefs',version)
@@ -411,6 +426,21 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     self.send(200,asset_bytes[u.path[1:]],'text/javascript' if u.path.endswith('.js') else 'text/css')
                 else:self.send(404,{'error':'未找到页面'})
             except (ValueError,KeyError,OSError,RuntimeError) as exc:self.error(exc)
+        def _upload_file(self):
+            # One source file as the raw request body; the name travels in the query.
+            name=os.path.basename(parse_qs(urlsplit(self.path).query).get('name',[''])[0].replace('\\','/'))
+            limit=MAX_PDF_UPLOAD_BYTES if name.lower().endswith('.pdf') else MAX_UPLOAD_BYTES
+            try:n=int(self.headers.get('Content-Length',''))
+            except ValueError:n=-1
+            if not name or len(name)>255 or not 0<n<=limit:
+                self.close_connection=True
+                self.send(413 if name and n>limit else 400,{'error':(f'{name} 超过单文件 {limit//1048576} MiB 限制，请压缩或拆分后重试' if name and n>limit
+                                                                     else '上传请求缺少文件名或文件为空'),'code':'request_too_large' if name and n>limit else 'invalid_upload'})
+                return
+            data=self.rfile.read(n)
+            if len(data)!=n:
+                self.close_connection=True;self.send(400,{'error':'上传未完成，请重试','code':'invalid_upload'});return
+            self.send(200,sources.upload(store,name,data))
         def do_POST(self):
             path=urlsplit(self.path).path
             control=path in ('/api/service-stop','/api/stop','/api/harness/cancel','/api/connectors/task-revoke')
@@ -441,6 +471,8 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 expected=f'http://127.0.0.1:{self.server.server_port}'
                 if self.headers.get('X-BriefLoop-Token')!=token or origin and origin!=expected:
                     self.send(403,{'error':'页面会话已过期，请刷新后重试'});return
+                if urlsplit(self.path).path=='/api/upload-file':
+                    self._upload_file();return
                 n=int(self.headers.get('Content-Length','0'))
                 if not 0<n<MAX_REQUEST_BYTES:
                     self.close_connection=True
@@ -536,7 +568,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/upload':
                     data=_upload_data(body)
                     result=sources.upload(store,body['name'],data)
-                elif path=='/api/source-url':result=sources.fetch(store,body['url'])
+                elif path=='/api/source-url':result=sources.fetch(store,body['url'],allow_private=True)
                 elif path=='/api/retry-source':result=sources.retry_source(store,body['source_id'])
                 elif path=='/api/source-pages':
                     from .media import render_source_pages
@@ -561,6 +593,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/template-import':
                     from .templates import import_template
                     result=import_template(store,body['name'],_upload_data(body),body.get('parent_id'))
+                elif path=='/api/reports/delete':result=store.delete_report(body['version_id'])
                 elif path=='/api/export':
                     from .export_jobs import enqueue_export
                     result=enqueue_export(store,body['version_id'],body.get('template_id'))
@@ -581,7 +614,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                         result=store.enqueue('generate',payload)
                 elif path=='/api/save':
                     value=SaveRevision.model_validate(body)
-                    result=store.revise(value.base_version,value.markdown,value.editor_document,allow_markdown_conversion=value.allow_markdown_conversion)
+                    result=store.brief_view(store.revise(value.base_version,value.markdown,value.editor_document,allow_markdown_conversion=value.allow_markdown_conversion)['id'])
                 elif path=='/api/comment':
                     value=Comment.model_validate(body);result=store.comment(value.version_id,value.text,learning_intent=value.learning_intent)
                 elif path=='/api/settings':
@@ -600,7 +633,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/source-refresh':
                     brief=store.one('briefs',body['version_id'])
                     if body['source_id'] not in store.source_ids(brief['run_id']):raise ValueError('来源不属于本轮报告')
-                    result=store.enqueue('source_refresh',{'run_id':brief['run_id'],'version_id':brief['id'],'source_id':body['source_id'],'information_cutoff':body['information_cutoff']})
+                    result=store.enqueue('source_refresh',{'run_id':brief['run_id'],'version_id':brief['id'],'source_id':body['source_id'],'information_cutoff':body['information_cutoff'],'requested_by':'user'})
                 elif path=='/api/revise-findings':
                     store.one('briefs',body['version_id']);result=store.enqueue('revise',{'version_id':body['version_id']})
                 elif path=='/api/review':

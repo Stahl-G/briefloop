@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const elements=new Map();
 const $=id=>{if(!elements.has(id))elements.set(id,{hidden:false,textContent:'',value:''});return elements.get(id)};
-const c=vm.createContext({$,current:{id:'old'},pendingRun:null,dirty:false,saving:false,editor:{destroy(){}},followUpdates:false,notice(){},parse:s=>JSON.parse(s||'{}'),state:{runs:[{id:'new',requirements:'{"title":"新周报"}'}],jobs:[{kind:'generate',status:'running',payload:'{"run_id":"new"}'}]}});
+const c=vm.createContext({$,openBrief:{},current:{id:'old'},pendingRun:null,dirty:false,saving:false,editor:{destroy(){}},followUpdates:false,notice(){},parse:s=>JSON.parse(s||'{}'),state:{runs:[{id:'new',requirements:'{"title":"新周报"}'}],jobs:[{kind:'generate',status:'running',payload:'{"run_id":"new"}'}]}});
 vm.runInContext(source.slice(source.indexOf('function showPendingReport('),source.indexOf('function tryOpenPending(')),c);
 assert.equal(vm.runInContext("showPendingReport('new')",c),true);
 assert.equal(c.current,null);assert.equal($('document-area').hidden,true);

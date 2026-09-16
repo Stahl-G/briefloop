@@ -83,6 +83,35 @@ def test_owner_watch_preserves_stdio_and_exit_status():
         host.close_tree(timeout=2)
 
 
+def test_group_probe_waits_out_a_zombie_watcher_it_cannot_reap(monkeypatch):
+    """Darwin: the watcher SIGKILLs itself and is launchd's zombie for a moment."""
+    import briefloop.platform_support as platform_support
+    host = OwnedProcess([sys.executable, '-c', 'pass'])
+    host.wait(timeout=5)
+    replies = [PermissionError(1, 'Operation not permitted')] * 3 + [ProcessLookupError()]
+    calls = []
+    def killpg(pid, sig):
+        calls.append((pid, sig))
+        raise replies[min(len(calls) - 1, len(replies) - 1)]
+    monkeypatch.setattr(platform_support.os, 'killpg', killpg)
+    host.close_tree(timeout=2)
+    assert calls[-1] == (host.pid, 0) and len(calls) >= 4
+    assert all(pid == host.pid for pid, _ in calls)
+
+
+def test_group_that_keeps_denying_access_is_still_an_error(monkeypatch):
+    import briefloop.platform_support as platform_support
+    host = OwnedProcess([sys.executable, '-c', 'pass'])
+    host.wait(timeout=5)
+    def killpg(pid, sig):
+        raise PermissionError(1, 'Operation not permitted')
+    monkeypatch.setattr(platform_support.os, 'killpg', killpg)
+    started = time.monotonic()
+    with pytest.raises(PermissionError):
+        host.close_tree(timeout=.1)
+    assert time.monotonic() - started < 2
+
+
 @pytest.mark.parametrize('leader_exits_first', [False, True])
 def test_close_tree_kills_term_ignoring_child_after_leader_exit(tmp_path, leader_exits_first):
     ready = tmp_path / 'child-ready.json'

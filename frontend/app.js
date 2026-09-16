@@ -1,16 +1,18 @@
+import {renderVersionDiff} from './version-diff.js';
+import {DOMSerializer} from '@tiptap/pm/model';
 import {beginPanel,updatePanel} from './report-panels.js';
 import {taskProgressCard} from './task-progress.js';
 import {copyText} from './clipboard.js';
 import {scheduleUI} from './schedules.js';
 import {adaptivePoll} from './polling.js';
-import {preflightUploads,uploadPayload} from './uploads.js';
+import {preflightSources,uploadPayload} from './uploads.js';
 import {runtimeCard,runtimeModelSummary} from './runtime-cards.js';
 import {activityCenter} from './notifications.js';
 var activity=null;
 import {reviewPending,withoutSupersededRetries,factCheckHTML} from './review-status.js';
 import {Editor,Extension} from '@tiptap/core';
-import {Plugin,PluginKey} from 'prosemirror-state';
-import {Decoration,DecorationSet} from 'prosemirror-view';
+import {Plugin,PluginKey} from '@tiptap/pm/state';
+import {Decoration,DecorationSet} from '@tiptap/pm/view';
 import StarterKit from '@tiptap/starter-kit';
 import {TableKit} from '@tiptap/extension-table';
 import Image from '@tiptap/extension-image';
@@ -51,6 +53,7 @@ let uploadLimits=null;
 let token='',state,current,pendingRun=null,editor,dirty=false,saving=false,saveTimer,learnTimer,markdownMode=false,selected=new Set(),referenceSelected=new Set();
 function notice(s,error=false){$('notice').textContent=s;$('notice').classList.toggle('error',error);$('notice').hidden=false;clearTimeout(notice.timer);notice.timer=setTimeout(()=>$('notice').hidden=true,error?12000:4500)}
 async function api(path,data,retried=false){const r=await fetch('/api/'+path,data===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json','X-BriefLoop-Token':token},body:JSON.stringify(data)});const b=await r.json();if(r.status===403&&data!==undefined&&!retried){token=(await api('session')).token;return api(path,data,true)}if(!r.ok)throw Error(b.error||'操作失败');if(path==='session')uploadLimits=b.upload_limits;return b}
+async function uploadSource(file,retried=false){preflightSources([file],uploadLimits);const r=await fetch('/api/upload-file?name='+encodeURIComponent(file.name),{method:'POST',headers:{'Content-Type':'application/octet-stream','X-BriefLoop-Token':token},body:file});const b=await r.json();if(r.status===403&&!retried){token=(await api('session')).token;return uploadSource(file,true)}if(!r.ok)throw Error(b.error||'上传失败');return b}
 function page(name){if(document.body.classList.contains('report-chat-open'))setReportChatOpen(false);if(((name==='chat'&&!chat.id)||name==='setup')&&(state?.settings?.model_selection_required||!state?.settings?.model)){notice('请先在欢迎页选择执行宿主和模型');name='welcome'}if(name!=='settings-dialog'&&$('custom-api-key'))$('custom-api-key').value='';for(const id of ['chat','report','reports','sources','templates','setup','learning','settings-dialog','welcome'])$(id).hidden=id!==name;document.querySelectorAll('nav [data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===name));if(name==='learning')refreshCandidates();if(name==='setup'){if(typeof reportMcpSelection!=='undefined')reportMcpSelection.refresh();moveSearchSettings('setup');applyPendingSetupFields()}else if($('tavily-key')){$('tavily-key').value='';$('bocha-key').value='';$('zhipu-key').value=''}if(name==='reports'){renderTasks();renderTaskGraph()}if(['reports','templates','learning'].includes(name))activity?.readCategory(name)}
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>page(b.dataset.page));
 async function action(fn,message){try{await fn();if(message)notice(message);await refresh()}catch(e){notice(e.message,true)}}
@@ -298,7 +301,7 @@ function render(first){
  $('version-select').innerHTML=pendingOptions+visible.map(({brief:b,label})=>`<option value="${b.id}">${esc(parse(b.detail).title||'简报')} · ${label}</option>`).join('');
  if($('version-history'))$('version-history').textContent='编辑历史'+(current?'（'+state.briefs.filter(b=>b.run_id===current.run_id&&b.author==='user').length+'）':'');
 
- tryOpenPending();if(!current&&!pendingRun&&state.briefs.length)openBrief(state.briefs[0],{follow:true});if(current&&followUpdates&&!dirty&&!saving){const latest=state.briefs.find(b=>b.run_id===current.run_id);if(latest?.parent_id===current.id&&latest.author==='agent')openBrief(latest,{follow:true})}if(current){$('version-select').value=current.id;assessment();citations();renderBriefLength()}
+ tryOpenPending();if(!current&&!pendingRun&&!openBrief.request&&state.briefs.length)openBrief(state.briefs[0],{follow:true});if(current&&followUpdates&&!dirty&&!saving){const latest=state.briefs.find(b=>b.run_id===current.run_id);if(latest?.parent_id===current.id&&latest.author==='agent')openBrief(latest,{follow:true})}if(current){$('version-select').value=current.id;assessment();citations();renderBriefLength()}
  $('empty').hidden=!!current||state.jobs.length>0;$('document-area').hidden=!current;syncPendingReport();
  $('jobs').innerHTML=state.jobs.filter(j=>j.status!=='dismissed').map(j=>`<div class="job"><span class="tag ${j.status==='failed'?'error':''}">${statuses[j.status]}</span><div class="job-main">${esc(TASK_LABELS[j.kind]||j.kind)}<small>${['export_docx','release','audit_bundle'].includes(j.kind)?'本地脚本':j.kind==='source_refresh'?'来源工具':parse(j.payload).runtime?esc(jobModelLabel(j)):'旧任务：沿用当时本机配置'} · ${j.progress?`第 ${j.progress.round}/${j.progress.k} 轮 · ${{maintainer:'整理经验',proposer:'提出候选',validation:'验证候选'}[j.progress.phase]||j.progress.phase} · `:''}${esc(j.error||(j.kind==='source_refresh'?sourceRefreshOutcome(parse(j.result).outcome):'')||new Date(j.created).toLocaleString())}</small></div>${j.kind==='learn'?`<button data-details="${j.id}">查看比较</button>`:''}${['queued','running'].includes(j.status)?`<button data-stop="${j.id}">停止</button>`:''}${['failed','interrupted','cancelled'].includes(j.status)?`<button data-resume="${j.id}">沿用原模型恢复</button>${['review','learn'].includes(j.kind)?`<button data-retry-current="${j.id}">按当前模型重试</button>`:''}`:''}</div>`).join('');
  document.querySelectorAll('[data-stop]').forEach(b=>b.onclick=()=>action(()=>api('stop',{job_id:b.dataset.stop})));document.querySelectorAll('[data-resume]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.resume})));document.querySelectorAll('[data-retry-current]').forEach(b=>b.onclick=()=>action(()=>api('resume',{job_id:b.dataset.retryCurrent,use_current_model:true})));renderTasks();renderTaskGraph();renderTaskBanner();renderAssistantSummary();renderReportStatus();renderReports();renderSourcesPage();renderTemplatesPage();if($('welcome')&&!$('welcome').hidden)renderWelcome();
@@ -308,7 +311,7 @@ function render(first){
 }
 function showPendingReport(runId){
  if(dirty||saving){notice('请先保存当前修改，再切换报告',true);return false}
- pendingRun=runId;current=null;followUpdates=true;
+ openBrief.request=null;pendingRun=runId;current=null;followUpdates=true;
  if(editor){editor.destroy();editor=null}
  syncPendingReport();return true;
 }
@@ -316,7 +319,7 @@ function syncPendingReport(){
  const waiting=!!pendingRun&&!current;
  let box=$('pending-report');if(!box){box=document.createElement('div');box.id='pending-report';box.className='empty';$('document-area').before(box)}
  box.hidden=!waiting;$('document-area').hidden=!current;
- for(const id of ['export-menu-toggle','more-menu-toggle','version-history'])if($(id))$(id).hidden=waiting;
+ for(const id of ['download-word','export-menu-toggle','more-menu-toggle','version-history','version-diff'])if($(id))$(id).hidden=waiting;
  if(!waiting)return;
  const run=state.runs.find(r=>r.id===pendingRun),job=state.jobs.find(j=>j.kind==='generate'&&parse(j.payload).run_id===pendingRun);
  $('report-title').textContent=parse(run?.requirements).title||'新报告';$('save-state').textContent='';$('version-select').value='run:'+pendingRun;
@@ -326,10 +329,12 @@ function syncPendingReport(){
 function tryOpenPending(){
  if(!pendingRun||dirty||saving)return false;
  const incoming=state?.briefs.find(b=>b.run_id===pendingRun);
- if(incoming&&openBrief(incoming,{follow:true})){pendingRun=null;return true}
+ // A body still loading keeps the waiting page; openBrief clears pendingRun once it opens.
+ if(incoming&&openBrief(incoming,{follow:true})&&current?.id===incoming.id){pendingRun=null;return true}
  return false;
 }
-function openBrief(b,{follow=false}={}){if(!b)return false;if(dirty||saving){notice('请先保存当前修改，再切换版本',true);return false}pendingRun=null;followUpdates=follow;current=b;syncPendingReport();renderWordExports();$('report-title').textContent=parse(b.detail).title||'简报';updateDownloads(b);if(editor)editor.destroy();highlightQuotes=[];editor=new Editor({element:$('editor'),editable:state.briefs.find(x=>x.run_id===b.run_id)?.id===b.id,extensions:[StarterKit.configure({link:{openOnClick:false},trailingNode:false}),ReportTrailingParagraph,TableKit,ReportImage.configure({HTMLAttributes:{class:'briefloop-figure'},allowBase64:false}),TextStyle,Layout,Citation,Markdown,MustFixHighlight],content:b.editor_document?editorDocument(parse(b.editor_document),b.id):toEditor(b.markdown),...(b.editor_document?{}:{contentType:'markdown'}),onUpdate:changed,onSelectionUpdate:updateFormattingTools});$('markdown-source').value=b.markdown;const historical=state.briefs.find(x=>x.run_id===b.run_id)?.id!==b.id;$('markdown-source').readOnly=historical;$('toolbar').querySelectorAll('button,input,select').forEach(x=>x.disabled=historical);$('save-state').textContent=historical?'历史记录（只读）':b.author==='example'?'合成示例已保存':b.author==='user'?'当前编辑稿已自动保存':'原稿已保存';$('version-select').value=b.id;assessment();citations();renderBriefLength();setReportView('edit');renderReportStatus();renderAssistantSummary();return true}
+async function loadBrief(b){if(!b||'markdown' in b)return b;const bodies=openBrief.bodies||(openBrief.bodies=new Map()),cached=bodies.get(b.id);if(cached&&cached.hash===b.hash)return cached;const full=await api('brief?id='+encodeURIComponent(b.id));bodies.set(full.id,full);return full}
+function openBrief(b,{follow=false}={}){if(!b)return false;if(dirty||saving){notice('请先保存当前修改，再切换版本',true);return false}if(!('markdown' in b)){const cached=openBrief.bodies?.get(b.id);if(cached?.hash!==b.hash){/* Polled state lists versions only. Choosing one records the request; it opens (and clears pending reports) only when its body arrives and is still the latest choice. */if(openBrief.request?.id===b.id&&openBrief.request.hash===b.hash)return true;const request=openBrief.request={id:b.id,hash:b.hash};loadBrief(b).then(full=>{if(openBrief.request===request){openBrief.request=null;openBrief(full,{follow})}}).catch(e=>{if(openBrief.request===request){openBrief.request=null;notice(e.message,true)}});return true}b=cached}openBrief.request=null;(openBrief.bodies||(openBrief.bodies=new Map())).set(b.id,b);pendingRun=null;followUpdates=follow;current=b;syncPendingReport();renderWordExports();$('report-title').textContent=parse(b.detail).title||'简报';updateDownloads(b);if(editor)editor.destroy();highlightQuotes=[];editor=new Editor({element:$('editor'),editable:state.briefs.find(x=>x.run_id===b.run_id)?.id===b.id,extensions:[StarterKit.configure({link:{openOnClick:false},trailingNode:false}),ReportTrailingParagraph,TableKit,ReportImage.configure({HTMLAttributes:{class:'briefloop-figure'},allowBase64:false}),TextStyle,Layout,Citation,Markdown,MustFixHighlight],content:b.editor_document?editorDocument(parse(b.editor_document),b.id):toEditor(b.markdown),...(b.editor_document?{}:{contentType:'markdown'}),onUpdate:changed,onSelectionUpdate:updateFormattingTools});$('markdown-source').value=b.markdown;const historical=state.briefs.find(x=>x.run_id===b.run_id)?.id!==b.id;$('markdown-source').readOnly=historical;$('toolbar').querySelectorAll('button,input,select').forEach(x=>x.disabled=historical);$('save-state').textContent=historical?'历史记录（只读）':b.author==='example'?'合成示例已保存':b.author==='user'?'当前编辑稿已自动保存':'原稿已保存';$('version-select').value=b.id;assessment();citations();renderBriefLength();setReportView('edit');renderReportStatus();renderAssistantSummary();return true}
 async function renderDeliveryChecks(){
  const ticket=(renderDeliveryChecks.ticket||0)+1;renderDeliveryChecks.ticket=ticket;
  if(!current||!$('assessment'))return;const vid=current.id;
@@ -396,16 +401,111 @@ async function savedVersion(){
  if(!current)throw Error('尚无稿件');
  return current.id;
 }
+let wordDownloading=false;
+async function downloadWord(){
+ if(wordDownloading)return;wordDownloading=true;const button=$('download-word');button.disabled=true;button.textContent='正在制作…';
+ try{
+  const version=await savedVersion(),workspace=state.workspace_id;
+  const override=$('export-template')?.value;
+  let job=await api('export',{version_id:version,...(override?{template_id:override}:{})});
+  while(['queued','running'].includes(job.status)){
+   button.textContent=job.status==='queued'?'等待制作…':'正在制作…';
+   await new Promise(resolve=>setTimeout(resolve,1000));
+   if(state.workspace_id!==workspace)throw Error('工作区已切换，请在原工作区下载');
+   job=await api('export-status?job='+encodeURIComponent(job.id));
+  }
+  if(job.status!=='complete')throw Error(job.error||'Word 制作未完成，请重试');
+  const link=document.createElement('a');link.href='/api/export-file?job='+encodeURIComponent(job.id)+'&workspace_id='+encodeURIComponent(workspace);link.download='';link.click();notice('Word 已生成，正在下载');await refresh();
+ }catch(e){notice('Word 下载未完成：'+e.message,true)}finally{wordDownloading=false;button.disabled=false;button.textContent='下载 Word'}
+}
+$('download-word').onclick=downloadWord;
 for(const id of ['download','download-docx','download-bundle']){
  const link=$(id);if(!link)continue;
  link.onclick=async e=>{e.preventDefault();try{const version=await savedVersion();if(id==='download-docx'){
-   const override=$('export-template')?$('export-template').value:'';
-   await api('export',override?{version_id:version,template_id:override}:{version_id:version});
-   const label=override?(state.templates||[]).find(t=>t.id===override)?.name:'';
-   notice(label?`Word 已排队制作（版式：${label}）`:'Word 已排队制作');await refresh();return}const format=id==='download-docx'?'docx':id==='download-bundle'?'bundle':null;window.location.assign('/api/download?version='+encodeURIComponent(version)+(format?'&format='+format:''))}catch(e){notice('下载未开始：'+e.message,true)}};
+   await downloadWord();return}const format=id==='download-docx'?'docx':id==='download-bundle'?'bundle':null;window.location.assign('/api/download?version='+encodeURIComponent(version)+(format?'&format='+format:''))}catch(e){notice('下载未开始：'+e.message,true)}};
 }
 
+
 function scheduleLearning(){ /* Worker consumes the durable feedback after inactivity. */ }
+document.addEventListener('click',event=>{if(event.target.closest('button')?.id!=='delete-report')return;action(async()=>{
+ const version=await savedVersion();
+ if(!confirm('删除这份报告及全部稿件版本？报告将从列表移除，来源文件和已下载文件保留；内部核查与学习引用记录保留。'))return;
+ await api('reports/delete',{version_id:version});current=null;dirty=false;await refresh();page('reports');notice('报告已删除');
+})});
+function exportFileName(title){return String(title??'').replace(/[\x00-\x1f<>:"/\\|?*]/g,'_').replace(/^[. ]+|[. ]+$/g,'').slice(0,120)||'报告'}
+// Print from a sandboxed frame instead of a new window: the desktop shell
+// denies window.open, and a frame needs no pop-up permission in browsers.
+// Its load event already waits for the inline images; img.decode() would not
+// settle here because browsers pause rendering in a hidden frame.
+function printHtml(html){
+ printHtml.frame?.remove();
+ const frame=document.createElement('iframe');printHtml.frame=frame;
+ frame.setAttribute('sandbox','allow-same-origin allow-modals');frame.setAttribute('aria-hidden','true');frame.tabIndex=-1;
+ frame.style.cssText='position:fixed;right:0;bottom:0;width:0;height:0;border:0;visibility:hidden';
+ return new Promise((resolve,reject)=>{
+  frame.onload=()=>{
+   const view=frame.contentWindow;if(view?.location.href!=='about:srcdoc')return;
+   try{
+    view.addEventListener('afterprint',()=>{if(printHtml.frame===frame){frame.remove();printHtml.frame=null}},{once:true});
+    view.focus();view.print();resolve();
+   }catch(e){frame.remove();reject(e)}
+  };
+  frame.srcdoc=html;document.body.append(frame);
+ });
+}
+async function exportPdf(html,title){
+ const desktop=window.briefloopDesktop;
+ if(typeof desktop?.exportPdf!=='function'){await printHtml(html);return}
+ let result;
+ try{result=await desktop.exportPdf({html,title})}
+ catch(e){throw Error(String(e.message||e).replace(/^Error invoking remote method '[^']+': (Error: )?/,''))}
+ if(result?.status==='saved')notice('PDF 已保存：'+result.name);
+}
+if(typeof window.briefloopDesktop?.exportPdf==='function'&&$('download-pdf'))$('download-pdf').textContent='导出 PDF';
+document.addEventListener('click',async event=>{
+ const id=event.target.closest('button')?.id;if(!['download-html','download-pdf'].includes(id))return;
+ const kind=id==='download-html'?'html':'pdf';
+ try{
+  // savedVersion() settles pending edits and returns the open draft's id, whose
+  // full body is `current`; the report list does not need to carry bodies.
+  const version=await savedVersion(),brief=current;
+  let doc;
+  if(brief.editor_document)doc=parse(brief.editor_document);
+  else {const tmp=new Editor({extensions:[StarterKit,TableKit,ReportImage,TextStyle,Layout,Citation,Markdown],content:toEditor(brief.markdown),contentType:'markdown'});try{doc=tmp.getJSON()}finally{tmp.destroy()}}
+  const body=document.createElement('article');
+  body.append(DOMSerializer.fromSchema(editor.schema).serializeFragment(editor.schema.nodeFromJSON(editorDocument(doc,version)).content));
+  const cited=[];
+  for(const a of body.querySelectorAll('a[href^="#source-"]')){
+   const sid=a.getAttribute('href').slice(8);if(!cited.includes(sid))cited.push(sid);
+   const number=cited.indexOf(sid)+1;
+   a.setAttribute('href','#reference-'+number);
+   // A numeric citation from an older draft still shows the workspace source
+   // number; renumber it with the reference list. Named link text is kept.
+   const label=a.textContent.trim(),numeric=/^([[(（【]?)\s*(\d+)\s*([\])）】]?)$/.exec(label);
+   if(numeric)a.textContent=numeric[1]+number+numeric[3];
+  }
+  if(cited.length){const heading=document.createElement('h2');heading.textContent='来源';body.append(heading);const list=document.createElement('ol');
+   for(const [i,sid] of cited.entries()){const source=state.sources.find(s=>s.id===sid);const row=document.createElement('li');row.id='reference-'+(i+1);const name=source?.name||'未关联来源';
+    if(source?.url&&/^https?:\/\//i.test(source.url)){const link=document.createElement('a');link.href=source.url;link.textContent=name;row.append(link)}else row.textContent=name;
+    list.append(row);
+   }body.append(list);
+  }
+  // A saved HTML file opens outside the app: keep only web, mail and in-page links.
+  for(const a of body.querySelectorAll('a[href]'))if(!/^(https?:|mailto:|#)/i.test(a.getAttribute('href')))a.removeAttribute('href');
+  for(const img of body.querySelectorAll('img')){
+   const url=new URL(img.getAttribute('src'),location.href);
+   if(url.protocol==='data:')continue;
+   if(url.origin!==location.origin)throw Error('图片尚未保存到工作区，无法生成独立文件');
+   const res=await fetch(url);if(!res.ok)throw Error('图片读取失败');
+   const blob=await res.blob();img.src=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(blob)});
+  }
+  const title=parse(brief.detail).title||'报告';
+  const html='<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>'+esc(title)+'</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;color:#1E2320;line-height:1.7;margin:40px auto;padding:0 24px;max-width:900px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #DEDFD8;padding:8px}img{max-width:100%;height:auto}a{color:#006838}h1,h2,h3{break-after:avoid}tr,img{break-inside:avoid}@page{size:A4;margin:20mm}@media print{body{margin:0;padding:0;max-width:none}}</style><body>'+body.innerHTML+'</body></html>';
+  if(kind==='pdf')await exportPdf(html,title);
+  else{const url=URL.createObjectURL(new Blob([html],{type:'text/html;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=exportFileName(title)+'.html';document.body.append(a);a.click();a.remove();notice('HTML 已生成，正在下载');setTimeout(()=>URL.revokeObjectURL(url),60000)}
+ }catch(e){notice('导出未完成：'+e.message,true)}
+});
+
 async function renderReportIssues(){
  const ticket=(renderReportIssues.ticket||0)+1;renderReportIssues.ticket=ticket;
  const box=$('report-issues');if(!box||!current)return;
@@ -475,7 +575,7 @@ async function previewReportTime(){
 }
 for(const key of ['period','period_start','period_end','report_timezone'])$('requirements').elements[key].addEventListener('change',previewReportTime);
 $('requirements').onsubmit=e=>{e.preventDefault();action(async()=>{const f=new FormData(e.target),req=Object.fromEntries(f.entries());if(req.writing_mode==='internal_report'&&state.settings.company_context_enabled==null){$('company-choice-dialog').showModal();return}req.allow_web=f.has('allow_web');req.fact_check=f.has('fact_check');req.target_words=Number(req.target_words);req.max_words=Number(req.max_words);req.research_budget=readResearchBudget();req.search_policy=readSearchPolicy();Object.assign(req,readWorkflowChoice());req.reference_source_ids=[...referenceSelected];req.template_id=req.template_id||null;req.sections=readTemplateSections();req.key_questions=(req.key_questions_text||'').split('\n').map(x=>x.trim()).filter(Boolean);delete req.key_questions_text;req.manual_sections=(req.manual_sections_text||'').split('\n').map(x=>x.trim()).filter(Boolean);for(const title of req.manual_sections){const found=req.sections.find(s=>s.title===title);if(found){found.mode='manual';found.placeholder='待填充'}}delete req.manual_sections_text;preserveWritingPreferences(req,state.requirements,writingPreferencesOverride);req.raw_input=req.objective;delete req.runtime_model;delete req.runtime_effort;await saveModel();if(current)await savedVersion();const connector_selection=reportMcpSelection.selection();const job=await api('generate',{...(connector_selection?{connector_selection}:{}),requirements:req,session_id:chat.id||undefined,source_ids:[...selected].filter(id=>!req.reference_source_ids.includes(id))});showPendingReport(parse(job.payload).run_id);page('report');notice('任务已排队，后台会生成简报')})};
-$('upload').onchange=e=>action(async()=>{preflightUploads(e.target.files,uploadLimits);for(const f of e.target.files){const s=await api('upload',await uploadPayload(f,uploadLimits));selected.add(s.id)}e.target.value=''},'来源已保存');
+$('upload').onchange=e=>action(async()=>{preflightSources(e.target.files,uploadLimits);for(const f of e.target.files){const s=await uploadSource(f);selected.add(s.id)}e.target.value=''},'来源已保存');
 $('add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('source-url').value});selected.add(s.id);$('source-url').value='';notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
 $('rescore').onclick=()=>action(async()=>{await savedVersion();await api('assess',{version_id:current.id,session_id:chat.id||undefined})},'已提交评分');
 $('comment-submit').onclick=()=>action(async()=>{const text=$('comment').value,required=$('comment-required').checked;const version=await savedVersion();await api('comment',{version_id:version,text,learning_intent:required?'explicit_requirement':'feedback'});if($('comment').value===text&&$('comment-required').checked===required){$('comment').value='';$('comment-required').checked=true;}scheduleLearning()},'反馈已保存');
@@ -717,6 +817,41 @@ $('version-history').onclick=()=>action(async()=>{
  $('history-dialog').showModal();
 });
 $('close-history').onclick=()=>$('history-dialog').close();
+$('version-diff').onclick=()=>action(async()=>{
+ await savedVersion();if(!current)return;
+ const versions=state.briefs.filter(b=>b.run_id===current.run_id);
+ const index=versions.findIndex(b=>b.id===current.id),older=versions.slice(index+1);
+ if(!older.length){notice('这是第一稿，还没有可比较的上一版本');return}
+ const target=current;
+ const label=b=>new Date(b.created).toLocaleString('zh-CN',{hour12:false})+' · '+(b.author==='agent'?'AI 稿件':b.author==='user'?'用户修改':'原稿');
+ $('diff-base').innerHTML=older.map((b,i)=>`<option value="${esc(b.id)}">${i===0?'上一稿 · ':i===older.length-1?'第一稿 · ':''}${esc(label(b))}</option>`).join('');
+ $('diff-target').textContent='当前稿 · '+label(target);
+ function documentFor(b){
+  if(b.editor_document)return editor.schema.nodeFromJSON(parse(b.editor_document)).toJSON();
+  const temporary=new Editor({extensions:[StarterKit,TableKit,ReportImage,TextStyle,Layout,Citation,Markdown],content:toEditor(b.markdown),contentType:'markdown'});
+  try{return temporary.getJSON()}finally{temporary.destroy()}
+ }
+ const after=documentFor(target);
+ // Polled state lists earlier versions without bodies: load the chosen base on
+ // demand, and let only the latest choice render.
+ let comparison=0;
+ async function compare(){
+  const base=older.find(b=>b.id===$('diff-base').value);if(!base)return;
+  const ticket=++comparison;$('diff-summary').textContent='正在读取比较版本…';
+  const full=await loadBrief(base);if(ticket!==comparison)return;
+  const before=documentFor(full),serializer=DOMSerializer.fromSchema(editor.schema);
+  const count=renderVersionDiff($('diff-body'),before.content,after.content,(node,side)=>{
+   const doc=editorDocument({type:'doc',content:[node]},side==='before'?base.id:target.id);
+   return serializer.serializeNode(editor.schema.nodeFromJSON(doc.content[0]));
+  });
+  $('diff-next').disabled=!count;let changeIndex=0;$('diff-next').onclick=()=>{const rows=$('diff-body').querySelectorAll('[data-change]');if(rows.length)rows[changeIndex++%rows.length].scrollIntoView({block:'center',behavior:'smooth'})};
+  $('diff-summary').textContent=count?`${count} 处内容或格式变化 · 绿色为新增，红色删除线为删去；边框标出图表或格式变化`:'两稿内容和格式相同';
+ }
+ $('diff-base').onchange=()=>{const ticket=comparison+1;compare().catch(e=>{if(ticket===comparison){$('diff-body').replaceChildren();$('diff-next').disabled=true;$('diff-summary').textContent='比较版本读取失败：'+e.message}})};
+ await compare();$('diff-dialog').showModal();
+});
+$('close-diff').onclick=()=>$('diff-dialog').close();
+
 
 // Interactive agent conversations. Artifact editors keep their existing state.
 const chat = {view:'active',home:true,sessions:[],id:null,session:null,messages:[],requests:[],events:new Map(),after:0,busy:false,uploading:0,polling:false,drafts:new Map(),attachments:new Set(),request:null};
@@ -987,13 +1122,13 @@ async function uploadChatFiles(files){
  chat.uploading++;chatError();updateComposer();
  const chatBackend=chatBackendChoice();
  const canImages=((runtimeCatalog||[]).find(r=>r.id===chatBackend)||{}).capabilities?.images!==false;
- try{preflightUploads(incoming,uploadLimits);for(const raw of incoming){
+ try{preflightSources(incoming,uploadLimits);for(const raw of incoming){
    const suffix=({ 'image/png':'.png','image/jpeg':'.jpg','image/webp':'.webp' })[raw.type]||'';
    const file=raw.name?raw:new File([raw],`粘贴内容-${Date.now()}${suffix}`,{type:raw.type||'application/octet-stream'});
    // A host that cannot take images must say so at attach time; the turn would
    // otherwise fail after the whole message was queued.
    if(file.type.startsWith('image/')&&!canImages){chatError(`${file.name}：${runtimeName(chatBackend)} 不支持直接读图；请改用支持读图的宿主，或先转成文字材料。`);continue}
-   const source=await api('upload',await uploadPayload(file,uploadLimits));if(source.status==='failed'){chatError(`${file.name} 读取失败：${source.error||'请检查文件后重试'}`);continue}chat.attachments.add(source.id);selected.add(source.id)}await refresh();renderAttachments();rememberDraft()}catch(e){chatError('上传未完成：'+e.message)}finally{chat.uploading--;updateComposer()}
+   const source=await uploadSource(file);if(source.status==='failed'){chatError(`${file.name} 读取失败：${source.error||'请检查文件后重试'}`);continue}chat.attachments.add(source.id);selected.add(source.id)}await refresh();renderAttachments();rememberDraft()}catch(e){chatError('上传未完成：'+e.message)}finally{chat.uploading--;updateComposer()}
 }
 $('chat-upload').onchange=event=>{const input=event.target,files=[...input.files];input.value='';uploadChatFiles(files)};
 $('chat-input').addEventListener('paste',event=>{
@@ -2002,7 +2137,7 @@ document.querySelectorAll('#report-tabs [data-report-tab]').forEach(b=>b.onclick
 document.querySelectorAll('#report-tabs [data-report-view]').forEach(b=>b.onclick=()=>setReportView(b.dataset.reportView));
 if($('report-panel-toggle'))$('report-panel-toggle').onclick=toggleReportPanel;
 document.querySelectorAll('.menu-wrap').forEach(wrap=>{const toggle=wrap.querySelector('button[aria-haspopup="menu"]'),pop=wrap.querySelector('.popover');if(!toggle||!pop)return;toggle.onclick=e=>{e.stopPropagation();const open=pop.hidden;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'));pop.hidden=!open;toggle.setAttribute('aria-expanded',String(open))}});
-document.addEventListener('click',()=>{document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'))});
+document.addEventListener('click',e=>{if(e.target.closest?.('.export-template-row'))return;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'))});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'))}});
 if($('assistant-form'))$('assistant-form').onsubmit=e=>{e.preventDefault();sendReportQuestion($('assistant-input').value)};
 document.querySelectorAll('[data-assistant-prompt]').forEach(b=>b.onclick=()=>{const input=$('assistant-input');if(input){input.value=b.dataset.assistantPrompt;input.focus()}});
@@ -2025,7 +2160,7 @@ function runConflicts(runId){
   try{return (JSON.parse(c.data).source_ids||[]).some(id=>scoped.has(id))}catch{return false}
  });
 }
-function reportDescription(b){const run=(state.runs||[]).find(r=>r.id===b.run_id);const req=run?parse(run.requirements):{};if(req.objective)return req.objective;const md=(b.markdown||'').replace(/[#>*`\[\]]/g,' ').replace(/\s+/g,' ').trim();return md.slice(0,120)}
+function reportDescription(b){const run=(state.runs||[]).find(r=>r.id===b.run_id);const req=run?parse(run.requirements):{};if(req.objective)return req.objective;const md=(b.markdown||b.excerpt||'').replace(/[#>*`\[\]]/g,' ').replace(/\s+/g,' ').trim();return md.slice(0,120)}
 function renderReports(){
  const box=$('reports-list');if(!box||!state)return;
  const seen=new Set(),all=[];
@@ -2039,7 +2174,7 @@ function renderReports(){
   if(fTime){const days=(Date.now()-new Date(b.updated||b.created).getTime())/86400000;if(days>Number(fTime))return false}
   if(fSource==='yes'&&!sources)return false;
   if(fSource==='no'&&sources)return false;
-  if(q){const hay=((parse(b.detail).title||'')+' '+(b.markdown||'')+' '+reportDescription(b)).toLowerCase();if(!hay.includes(q))return false}
+  if(q){const hay=((parse(b.detail).title||'')+' '+reportDescription(b)).toLowerCase(),found=renderReports.found;if(!hay.includes(q)&&!(found?.q===q&&found.runs.has(b.run_id)))return false}
   return true;
  });
  box.className='report-list'+(view==='grid'?' grid':'');
@@ -2222,7 +2357,7 @@ function renderTemplatesPage(){
  });
 }
 if($('new-report'))$('new-report').onclick=()=>page('setup');
-if($('sources-upload'))$('sources-upload').onchange=e=>action(async()=>{preflightUploads(e.target.files,uploadLimits);for(const f of e.target.files){await api('upload',await uploadPayload(f,uploadLimits))}e.target.value=''},'来源已保存');
+if($('sources-upload'))$('sources-upload').onchange=e=>action(async()=>{preflightSources(e.target.files,uploadLimits);for(const f of e.target.files){await uploadSource(f)}e.target.value=''},'来源已保存');
 if($('sources-add-url'))$('sources-add-url').onclick=()=>action(async()=>{const s=await api('source-url',{url:$('sources-url').value});$('sources-url').value='';const row=$('sources-add-url-row');if(row)row.hidden=true;notice(s.status==='ready'?'网页已读取':'来源已保存，但读取失败：'+s.error,s.status!=='ready')});
 if($('templates-upload'))$('templates-upload').onchange=e=>action(async()=>{const file=e.target.files[0];if(!file)return;await api('template-import',await uploadPayload(file,uploadLimits));e.target.value='';notice('模板已上传，BriefLoop 将准备章节和版式')});
 if($('sources-search'))$('sources-search').oninput=()=>{renderSourcesPage.sig='';renderSourcesPage()};
@@ -2235,7 +2370,7 @@ if($('sources-add-url-cancel'))$('sources-add-url-cancel').onclick=()=>{const ro
 if($('source-drawer-close'))$('source-drawer-close').onclick=()=>closeSourceDrawer();
 if($('source-drawer-backdrop'))$('source-drawer-backdrop').onclick=()=>closeSourceDrawer();
 document.querySelectorAll('[data-source-tab]').forEach(b=>b.onclick=()=>setSourceDrawerTab(b.dataset.sourceTab));
-if($('reports-search'))$('reports-search').oninput=()=>{renderReports.sig='';renderReports()};
+if($('reports-search'))$('reports-search').oninput=()=>{renderReports.sig='';renderReports();const q=$('reports-search').value.trim().toLowerCase();clearTimeout(renderReports.searchTimer);if(q)renderReports.searchTimer=setTimeout(()=>api('report-search?q='+encodeURIComponent(q)).then(r=>{if($('reports-search').value.trim().toLowerCase()!==q)return;renderReports.found={q,runs:new Set(r.run_ids)};renderReports.sig='';renderReports()}).catch(()=>{}),250)};
 ['reports-filter-status','reports-filter-time','reports-filter-source'].forEach(id=>{const el=$(id);if(el)el.onchange=()=>{renderReports.sig='';renderReports()}});
 document.querySelectorAll('[data-reports-view]').forEach(b=>b.onclick=()=>{renderReports.view=b.dataset.reportsView;document.querySelectorAll('[data-reports-view]').forEach(x=>x.classList.toggle('active',x===b));renderReports.sig='';renderReports()});
 if($('report-tasks-all'))$('report-tasks-all').onclick=()=>{renderTasks.showAll=!renderTasks.showAll;renderTasks();renderTaskGraph()};

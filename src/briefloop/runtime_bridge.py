@@ -176,7 +176,7 @@ class RuntimeBridge:
                 path=find_host_bin(name);version=None;error=None
                 if path:
                     try:
-                        probe=subprocess.run(cli_command([path,'--version']),capture_output=True,text=True,encoding='utf-8',timeout=5,check=True)
+                        probe=subprocess.run(cli_command([path,'--version']),stdin=subprocess.DEVNULL,capture_output=True,text=True,encoding='utf-8',timeout=5,check=True)
                         version=probe.stdout.strip().split('\n')[0][:160]
                     except (OSError,subprocess.SubprocessError):error='Version probe failed'
                 result.append({'id':name,'name':BACKEND_LABELS[name],'path':path,'installed':bool(path),
