@@ -8,9 +8,9 @@
   "baseline": {
     "product_version": "0.22.3",
     "baseline_commit": "66a2a1345a2cc9a4f91d93e6cfbb84bda3c1af2b",
-    "integration_commit": "c8a6038045fe8de82f27efcd63ca73d198f725f7",
-    "integration_commit_note": "冒烟条件冻结 2026-09-16：QA 修复(733cdfa8)+冻结钉(c8a60380)；r1/r2 运行于 4307e4df（缺陷条件，记录在案）。本条件供 smoke 与 r3 使用。",
-    "expected_code_state": "c8a6038045fe8de82f27efcd63ca73d198f725f7",
+    "integration_commit": "a78d67ee56e06bf8c0945d0c1107a2e584a25baa",
+    "integration_commit_note": "冒烟条件冻结 2026-09-16 二次：QA 修复 + 冻结钉 + 内容比较修正（a78d67ee）；r1/r2 运行于 4307e4df 缺陷条件。",
+    "expected_code_state": "a78d67ee56e06bf8c0945d0c1107a2e584a25baa",
     "expected_code_state_note": "r1/r2 批次运行于 4307e4df（记录在案）；QA 修复 733cdfa8 之后任何代码移动都会被拒绝，除非 --declare-condition-change 显式声明。r3 冻结时此值回填为 r3 代码提交。"
   },
   "scorer": {
