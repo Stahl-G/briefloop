@@ -40,6 +40,16 @@ const REVIEWER_SYSTEM_PROMPT = [
   "- Reply with ONE JSON object only (no markdown fences, no prose around it), matching the schema the task message gives you. Unknown/unsupported stays unknown — do not guess.",
 ].join("\n");
 
+const REPAIR_PROMPT = "Reply with ONLY the JSON object now. No markdown fences, no prose before or after.";
+const STALL_PROMPT =
+  "The previous model request stalled and was cancelled by the runtime. The packet tool results above are still valid; " +
+  "continue from where you left off.";
+const DEFAULT_IDLE_MS = 240_000;
+// A stall usually is one dead provider connection (or a laptop that slept
+// mid-request). Re-asking keeps every tool result already in the session.
+const STALL_RETRIES = 2;
+const JSON_REPAIRS = 1;
+
 interface WireRequest { id?: string; method: string; params?: Record<string, unknown>; }
 interface SessionEntry {
   session: AgentSession;
@@ -47,13 +57,18 @@ interface SessionEntry {
   cwd: string;
   tools: ReturnType<typeof packetTools>;
   sessionFile?: string;
-  busy: boolean;
+  // The execution this session is serving; "" while idle. Session events are
+  // forwarded only while it is set, and only turnStart clears it — after the
+  // single terminal `end` for that execution has been written.
+  execId: string;
   cancelled: boolean;
+  stalled: boolean;
+  budgetExceeded: boolean;
   toolCalls: number;
   maxToolCalls: number;
-  expectJson: boolean;
-  repairs: number;
   finalText: string;
+  turnError: string;
+  usage: unknown;
   idleMs: number;
   idleTimer: ReturnType<typeof setTimeout> | undefined;
   unsubscribe: () => void;
@@ -72,20 +87,23 @@ function extractJson(text: string): unknown | undefined {
       try { return JSON.parse(inner); } catch {}
     }
   }
+  // Escapes only make sense reading forward, so collect top-level spans first.
+  const spans: Array<[number, number]> = [];
   let depth = 0, start = -1, inStr = false, esc = false;
-  for (let i = trimmed.length - 1; i >= 0; i--) {
+  for (let i = 0; i < trimmed.length; i++) {
     const c = trimmed[i];
-    if (esc) { esc = false; continue; }
-    if (c === "\\") { if (inStr) esc = true; continue; }
-    if (c === '"') { inStr = !inStr; continue; }
-    if (inStr) continue;
-    if (c === "}") { if (depth === 0) start = i; depth++; }
-    else if (c === "{") {
-      depth--;
-      if (depth === 0 && start >= 0) {
-        try { return JSON.parse(trimmed.slice(i, start + 1)); } catch { start = -1; }
-      }
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
     }
+    if (c === '"') { if (depth > 0) inStr = true; }
+    else if (c === "{") { if (depth === 0) start = i; depth++; }
+    else if (c === "}" && depth > 0) { depth--; if (depth === 0) spans.push([start, i]); }
+  }
+  for (const [from, to] of spans.reverse()) {
+    try { return JSON.parse(trimmed.slice(from, to + 1)); } catch {}
   }
   return undefined;
 }
@@ -93,7 +111,6 @@ function extractJson(text: string): unknown | undefined {
 const sessions = new Map<string, SessionEntry>();
 let runtime: ModelRuntime | undefined;
 let registry: ModelRegistry | undefined;
-let shuttingDown = false;
 
 function send(msg: unknown): void {
   process.stdout.write(JSON.stringify(msg) + "\n");
@@ -130,33 +147,27 @@ async function ensureRuntime(): Promise<ModelRuntime> {
 
 function resolveModel(spec: unknown) {
   if (!registry) return undefined;
+  // No implicit default: a review must run on the model the job recorded.
   const s = String(spec ?? "").trim();
-  if (!s || s === "default") {
-    const available = registry.getAvailable();
-    return available[0];
-  }
   const slash = s.indexOf("/");
   if (slash <= 0) return undefined;
   return registry.find(s.slice(0, slash), s.slice(slash + 1));
 }
 
 // Any session event proves the model stream or a tool is alive. If nothing
-// arrives for idleMs during an active turn the provider connection has stalled
-// (observed: opencode-go held a silent socket for 18+ min); fail the turn
-// honestly instead of waiting forever.
-function armIdle(clientSid: string, execId: string, entry: SessionEntry): void {
+// arrives for idleMs the in-flight request has stalled (observed: a provider
+// socket silent for minutes, and a laptop that slept mid-request). Abort only
+// that request; turnStart decides whether to re-ask or to fail the turn.
+function armIdle(clientSid: string, entry: SessionEntry): void {
   if (entry.idleTimer) clearTimeout(entry.idleTimer);
   entry.idleTimer = setTimeout(() => {
     entry.idleTimer = undefined;
-    entry.cancelled = true;
-    void entry.session.abort().catch(() => {});
-    emit(clientSid, execId, "end", {
-      status: "failed",
-      error: `model stream idle for ${Math.round(entry.idleMs / 1000)}s; aborted as a stalled request`,
+    if (!entry.execId || entry.cancelled) return;
+    entry.stalled = true;
+    emit(clientSid, entry.execId, "status", {
+      message: `model stream idle for ${Math.round(entry.idleMs / 1000)}s; cancelling the stalled request`,
     });
-    // The stalled turn may still settle later; it must not emit a second end.
-    (entry as any).execRef.current = "";
-    entry.busy = false;
+    void entry.session.abort().catch(() => {});
   }, entry.idleMs);
 }
 
@@ -165,12 +176,14 @@ function disarmIdle(entry: SessionEntry): void {
   entry.idleTimer = undefined;
 }
 
-function wireSessionEvents(clientSid: string, executionIdRef: { current: string }, entry: SessionEntry): void {
-  const state = { turnError: "" as string };
+// Forwards pi events for the active execution and records what turnStart needs
+// to settle it. It never emits `end`: one execution has exactly one terminal
+// event, written by turnStart after every repair or retry has finished.
+function wireSessionEvents(clientSid: string, entry: SessionEntry): void {
   entry.unsubscribe = entry.session.subscribe((event) => {
-    const execId = executionIdRef.current;
+    const execId = entry.execId;
     if (!execId) return;
-    armIdle(clientSid, execId, entry);
+    armIdle(clientSid, entry);
     const e = event as Record<string, any>;
     switch (e.type) {
       case "message_start":
@@ -188,11 +201,16 @@ function wireSessionEvents(clientSid: string, executionIdRef: { current: string 
       }
       case "message_end":
         if (e.message?.role === "assistant") {
+          // The last assistant message decides: a provider error that pi
+          // retried successfully must not fail the turn afterwards.
           if (e.message?.stopReason === "error") {
-            state.turnError = e.message?.errorMessage || "model request failed";
-            emit(clientSid, execId, "error", { message: state.turnError });
+            entry.turnError = e.message?.errorMessage || "model request failed";
+            emit(clientSid, execId, "error", { message: entry.turnError });
+          } else if (e.message?.stopReason !== "aborted") {
+            entry.turnError = "";
           }
           if (e.message?.usage) {
+            entry.usage = e.message.usage;
             emit(clientSid, execId, "usage", { usage: e.message.usage });
           }
         }
@@ -201,17 +219,11 @@ function wireSessionEvents(clientSid: string, executionIdRef: { current: string 
         entry.toolCalls += 1;
         if (entry.toolCalls > entry.maxToolCalls) {
           // Runaway guard: a model that never stops calling tools burns budget
-          // without converging. Kill the turn deterministically; the reviewer
-          // contract is small enough that the cap is generous headroom.
-          entry.cancelled = true;
-          disarmIdle(entry);
-          void entry.session.abort().catch(() => {});
-          emit(clientSid, execId, "end", {
-            status: "failed",
-            error: `tool-call budget exhausted (${entry.maxToolCalls}); the model did not converge`,
-          });
-          (entry as any).execRef.current = "";
-          entry.busy = false;
+          // without converging. Stop the run; turnStart reports the failure.
+          if (!entry.budgetExceeded) {
+            entry.budgetExceeded = true;
+            void entry.session.abort().catch(() => {});
+          }
           break;
         }
         emit(clientSid, execId, "tool", {
@@ -245,46 +257,8 @@ function wireSessionEvents(clientSid: string, executionIdRef: { current: string 
       case "auto_retry_start":
         emit(clientSid, execId, "status", { message: `retry ${e.attempt}/${e.maxAttempts}: ${e.errorMessage}` });
         break;
-      case "agent_settled": {
-        if (!entry.cancelled && !state.turnError && entry.expectJson) {
-          const parsed = extractJson(entry.finalText);
-          if (parsed === undefined && entry.repairs < 1) {
-            // The contract is "reply is the JSON object". One in-session
-            // correction instead of failing admission on wrapped prose.
-            entry.repairs += 1;
-            emit(clientSid, execId, "status", { message: "reply was not a bare JSON object; requesting correction" });
-            void entry.session.prompt(
-              "Reply with ONLY the JSON object now. No markdown fences, no prose before or after."
-            ).catch((err) => {
-              emit(clientSid, execId, "end", { status: "failed", error: String(err) });
-            });
-            break;
-          }
-        }
-        const status = entry.cancelled ? "cancelled" : state.turnError ? "failed" : "completed";
-        const msgs = (entry.session as any).messages ?? [];
-        const usage = [...msgs].reverse().find((m: any) => m?.usage)?.usage;
-        let finalJson: string | undefined;
-        if (entry.expectJson && status === "completed") {
-          const parsed = extractJson(entry.finalText);
-          if (parsed !== undefined && typeof parsed === "object") {
-            finalJson = JSON.stringify(parsed);
-          }
-        }
-        disarmIdle(entry);
-        emit(clientSid, execId, "end", {
-          status,
-          aborted: entry.cancelled,
-          usage,
-          session_file: entry.sessionFile,
-          ...(finalJson !== undefined ? { final_text: finalJson } : {}),
-          ...(state.turnError ? { error: state.turnError } : {}),
-        });
-        state.turnError = "";
-        break;
-      }
       case "auto_retry_end":
-        if (!e.success) emit(clientSid, execId, "end", { status: "failed", error: e.finalError || "provider retry exhausted" });
+        if (!e.success) emit(clientSid, execId, "status", { message: `provider retry exhausted: ${e.finalError || "unknown error"}` });
         break;
     }
   });
@@ -311,9 +285,26 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     model = { ...model, maxTokens: Math.min(maxTokens, (model as any).maxTokens ?? maxTokens) };
   }
 
-  const sessionManager = sessionFile
-    ? SessionManager.open(sessionFile, sessionDir, cwd)
+  // Resuming an existing transcript keeps the conversation when the engine
+  // process was restarted between two turns of one BriefLoop session.
+  const resuming = !!sessionFile && existsSync(sessionFile);
+  const sessionManager = resuming
+    ? SessionManager.open(sessionFile!, sessionDir, cwd)
     : SessionManager.create(cwd, sessionDir);
+
+  const retryDelay = Number(p.retry_base_delay_ms);
+  // Settings are BriefLoop's, not the user's ~/.pi or anything under the
+  // packet: an auditor must not inherit a personal retry or compaction policy.
+  // Compaction is off because summarising packet reads mid-review would let
+  // the verdict rest on a paraphrase instead of the evidence.
+  const settingsManager = SettingsManager.inMemory({
+    retry: {
+      enabled: true,
+      maxRetries: 3,
+      baseDelayMs: Number.isFinite(retryDelay) ? Math.max(10, Math.min(10_000, retryDelay)) : 2000,
+    },
+    compaction: { enabled: false },
+  });
 
   const tools = packetTools(packetRoot);
   const { session } = await createAgentSession({
@@ -328,7 +319,7 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     customTools: tools,
     resourceLoader: fixedLoader(REVIEWER_SYSTEM_PROMPT),
     sessionManager,
-    settingsManager: SettingsManager.create(cwd),
+    settingsManager,
   });
   const active = session.getActiveToolNames().sort();
   if (active.join(",") !== "packet_list,packet_read") {
@@ -342,24 +333,25 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     cwd,
     tools,
     sessionFile: (session as any).sessionFile ?? sessionFile,
-    busy: false,
+    execId: "",
     cancelled: false,
+    stalled: false,
+    budgetExceeded: false,
     toolCalls: 0,
     maxToolCalls: Math.max(1, Math.min(200, Number(p.max_tool_calls) || 60)),
-    expectJson: false,
-    repairs: 0,
     finalText: "",
-    idleMs: 240000,
+    turnError: "",
+    usage: undefined,
+    idleMs: DEFAULT_IDLE_MS,
     idleTimer: undefined,
     unsubscribe: () => {},
   };
-  const execRef = { current: "" };
-  (entry as any).execRef = execRef;
-  wireSessionEvents(clientSid, execRef, entry);
+  wireSessionEvents(clientSid, entry);
   sessions.set(clientSid, entry);
   reply(id, {
     session_id: clientSid,
     session_file: entry.sessionFile,
+    resumed: resuming,
     model: `${model.provider}/${model.id}`,
     thinking: p.thinking ?? "high",
     tools: active,
@@ -367,33 +359,89 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
 }
 
 async function turnStart(id: string | undefined, p: Record<string, unknown>): Promise<void> {
-  const entry = sessions.get(String(p.session_id ?? ""));
+  const sid = String(p.session_id ?? "");
+  const entry = sessions.get(sid);
   if (!entry) throw new Error("unknown session_id");
-  if (entry.busy) throw new Error("session busy");
+  if (entry.execId) throw new Error("session busy");
   const execId = String(p.execution_id ?? "");
   const prompt = String(p.prompt ?? "");
   if (!execId || !prompt) throw new Error("execution_id and prompt required");
 
-  entry.busy = true;
-  entry.cancelled = false;
-  entry.expectJson = p.expect_json === true;
-  entry.repairs = 0;
-  entry.finalText = "";
+  const expectJson = p.expect_json === true;
   const idle = Number(p.idle_timeout_s);
-  if (Number.isFinite(idle) && idle > 0) entry.idleMs = Math.min(1800, idle) * 1000;
-  (entry as any).execRef.current = execId;
+  entry.idleMs = Number.isFinite(idle) && idle > 0 ? Math.min(1800, idle) * 1000 : DEFAULT_IDLE_MS;
+  entry.execId = execId;
+  entry.cancelled = false;
+  entry.budgetExceeded = false;
+  entry.toolCalls = 0;
+  entry.usage = undefined;
   reply(id, { started: true });
-  // Arm immediately: the wait for the provider's first byte is covered too.
-  armIdle(String(p.session_id), execId, entry);
+
+  let status = "completed";
+  let error = "";
+  let finalJson: string | undefined;
+  let message = prompt;
+  let stalls = 0;
+  let repairs = 0;
   try {
-    await entry.session.prompt(prompt);
+    for (;;) {
+      if (entry.cancelled) { status = "cancelled"; break; }
+      entry.stalled = false;
+      entry.turnError = "";
+      entry.finalText = "";
+      // Armed before the request: the wait for the provider's first byte counts.
+      armIdle(sid, entry);
+      await entry.session.prompt(message);
+      disarmIdle(entry);
+      if (entry.cancelled) { status = "cancelled"; break; }
+      if (entry.budgetExceeded) {
+        status = "failed";
+        error = `tool-call budget exhausted (${entry.maxToolCalls}); the model did not converge`;
+        break;
+      }
+      if (entry.stalled) {
+        if (stalls < STALL_RETRIES) {
+          stalls += 1;
+          emit(sid, execId, "status", { message: `re-asking after a stalled request (${stalls}/${STALL_RETRIES})` });
+          message = STALL_PROMPT;
+          continue;
+        }
+        status = "failed";
+        error = `model stream idle for ${Math.round(entry.idleMs / 1000)}s on ${stalls + 1} consecutive requests; gave up`;
+        break;
+      }
+      if (entry.turnError) { status = "failed"; error = entry.turnError; break; }
+      if (expectJson) {
+        const parsed = extractJson(entry.finalText);
+        if (parsed !== null && typeof parsed === "object") {
+          finalJson = JSON.stringify(parsed);
+        } else if (repairs < JSON_REPAIRS) {
+          // The contract is "reply is the JSON object". One in-session
+          // correction instead of failing admission on wrapped prose.
+          repairs += 1;
+          emit(sid, execId, "status", { message: "reply was not a bare JSON object; requesting correction" });
+          message = REPAIR_PROMPT;
+          continue;
+        }
+        // Still no object: complete with the raw text; admission judges it.
+      }
+      break;
+    }
   } catch (err) {
-    disarmIdle(entry);
-    emit(String(p.session_id), execId, "end", { status: "failed", error: String(err) });
+    status = entry.cancelled ? "cancelled" : "failed";
+    error = err instanceof Error ? err.message : String(err);
   } finally {
-    entry.busy = false;
-    (entry as any).execRef.current = "";
+    disarmIdle(entry);
   }
+  emit(sid, execId, "end", {
+    status,
+    aborted: entry.cancelled,
+    usage: entry.usage,
+    session_file: entry.sessionFile,
+    ...(finalJson !== undefined ? { final_text: finalJson } : {}),
+    ...(error && status !== "cancelled" ? { error } : {}),
+  });
+  entry.execId = "";
 }
 
 async function turnAbort(id: string | undefined, p: Record<string, unknown>): Promise<void> {
@@ -421,12 +469,13 @@ async function dispatch(req: WireRequest): Promise<void> {
   try {
     switch (req.method) {
       case "ping": {
-        const rt = await ensureRuntime();
+        await ensureRuntime();
         reply(req.id, {
           engine: ENGINE_VERSION,
           pi: PI_VERSION,
           node: process.version,
-          auth: registry ? "ok" : "unavailable",
+          // Models whose provider has a credential; zero means nothing can run.
+          models_available: registry ? registry.getAvailable().length : 0,
         });
         break;
       }
@@ -463,7 +512,6 @@ async function dispatch(req: WireRequest): Promise<void> {
       case "session_close": await sessionClose(req.id, req.params ?? {}); break;
       case "shutdown":
         reply(req.id, { ok: true });
-        shuttingDown = true;
         for (const [, e] of sessions) { try { e.session.dispose(); } catch {} }
         sessions.clear();
         process.exit(0);

@@ -1,14 +1,20 @@
 import { build } from "esbuild";
-import { cpSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { collectFrontendLicenses, renderFrontendLicenses } from "../scripts/build_frontend_licenses.mjs";
 
 // Bundle the engine into a single ESM file that ships inside the BriefLoop
 // package (src/briefloop/static/). Node >=22.19 is provided by the launcher
 // (Electron's embedded node in the desktop app, system/BRIEFLOOP_NODE for CLI).
+// `--check` rebuilds in memory and fails when a committed artifact drifted, so
+// the 6 MB minified bundle is never trusted without its source.
+process.chdir(fileURLToPath(new URL(".", import.meta.url)));
+const check = process.argv.includes("--check");
 const outfile = "../src/briefloop/static/native-engine.mjs";
-mkdirSync("../src/briefloop/static", { recursive: true });
 
 const result = await build({
+  // esbuild fixes its default working directory at import, before chdir.
+  absWorkingDir: process.cwd(),
   entryPoints: ["main.ts"],
   bundle: true,
   platform: "node",
@@ -18,6 +24,7 @@ const result = await build({
   sourcemap: false,
   minify: true,
   metafile: true,
+  write: false,
   banner: {
     js: [
       "// BriefLoop native engine — bundled from native-engine/ (pi SDK, MIT). Do not edit directly.",
@@ -38,10 +45,22 @@ const rows = collectFrontendLicenses(result.metafile, ".", [
   // Other MIT-declared packages that ship no file get the canonical MIT text.
   { match: /./, license: "MIT", path: "third_party/mit-canonical.txt" },
 ]);
-writeFileSync(
-  "../src/briefloop/static/native-engine-licenses.txt",
-  renderFrontendLicenses(rows),
-);
-cpSync("models.json", "../src/briefloop/static/native-engine-models.json");
-
-console.log(`built ${outfile} (${rows.length} license records)`);
+const artifacts = [
+  ...result.outputFiles.map((file) => ({ path: file.path, contents: Buffer.from(file.contents) })),
+  { path: "../src/briefloop/static/native-engine-licenses.txt", contents: Buffer.from(renderFrontendLicenses(rows)) },
+  { path: "../src/briefloop/static/native-engine-models.json", contents: readFileSync("models.json") },
+];
+let stale = false;
+for (const artifact of artifacts) {
+  if (check) {
+    if (!existsSync(artifact.path) || !readFileSync(artifact.path).equals(artifact.contents)) {
+      console.error(`Outdated generated file: ${artifact.path}; run node native-engine/build.mjs`);
+      stale = true;
+    }
+  } else {
+    mkdirSync("../src/briefloop/static", { recursive: true });
+    writeFileSync(artifact.path, artifact.contents);
+  }
+}
+if (stale) process.exitCode = 1;
+else console.log(`native engine ${check ? "verified" : "built"} (${rows.length} license records)`);
