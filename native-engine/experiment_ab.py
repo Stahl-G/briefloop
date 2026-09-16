@@ -35,8 +35,13 @@ def usage_totals(folder):
     if not ex.exists():
         return {}
     data = json.loads(ex.read_text())
+    rows = data.get('usage') or []
+    if rows and all(row.get('backend') == 'opencode' for row in rows):
+        # Opencode reports its latest step only; totals live in its own session
+        # store, so a sum here would look like a real (and far too small) figure.
+        return {'captured': False, 'seconds': data.get('seconds')}
     totals = {'input': 0, 'output': 0, 'reasoning': 0, 'cacheRead': 0, 'cost': 0.0}
-    for row in data.get('usage') or []:
+    for row in rows:
         raw = row.get('raw') or {}
         totals['input'] += raw.get('input', 0)
         totals['output'] += raw.get('output', 0)
@@ -61,11 +66,12 @@ def event_stats(folder):
             continue
         kind = event.get('type') or 'unknown'
         kinds[kind] = kinds.get(kind, 0) + 1
-        blob = json.dumps(event)
-        for name in ('packet_read', 'packet_list', 'read', 'bash', 'webfetch', 'glob', 'grep'):
-            if f'"{name}"' in blob:
-                tools[name] = tools.get(name, 0) + 1
-    return {'events': sum(kinds.values()), 'tool_events': tools}
+        # One tool.record per executed call; started/completed items would
+        # count the same call three times.
+        if kind == 'tool.record':
+            name = (event.get('data') or {}).get('record', {}).get('tool') or 'unknown'
+            tools[name] = tools.get(name, 0) + 1
+    return {'events': sum(kinds.values()), 'tool_calls': tools}
 
 
 def run_leg(source, version_id, backend, model, variant, repeat_index):
@@ -103,6 +109,8 @@ def run_leg(source, version_id, backend, model, variant, repeat_index):
                 'unchecked_items': len(data.get('unchecked_items', [])),
                 'overall': (data.get('assessment') or {}).get('overall'),
                 'admission_retry': (folder / 'admission-error.json').exists(),
+                # The reply failed ReviewOutput validation once and was re-asked.
+                'schema_correction': (folder / 'schema-correction.json').exists(),
             })
         except Exception as exc:
             outcome.update({'wall_seconds': round(time.monotonic() - t0, 1),
