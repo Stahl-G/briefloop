@@ -238,6 +238,10 @@ class Store:
             req.fact_check = self.settings().get('fact_checker') is True
         if req.fact_check and not req.allow_web:
             raise OfflineFactCheck('离线任务不能开启联网事实核查；请允许联网检索，或关闭该开关')
+        if clone is None and req.fact_check:
+            # Checked before the run exists: callers pass the backend they will enqueue with.
+            from .review_capability import require_for_fact_check
+            require_for_fact_check(options.get('agent_backend') or self.settings().get('agent_backend','codex'))
         if clone is None and req.template_id:
             from .templates import template
             selected=template(self,req.template_id)
@@ -453,11 +457,16 @@ class Store:
                 self.one("sources", f.source_id)
         return assessment
 
-    def assess(self, version_id, value):
+    def assess(self, version_id, value, *, basis=None):
+        """basis is set by the controller, never by the model's assessment file."""
         assessment = self.validate_assessment(version_id, value)
+        data = assessment.model_dump()
+        if basis is not None:
+            if basis != 'assessment_without_review':raise ValueError('Unknown assessment basis')
+            data['basis'] = basis
         aid = uid("assessment")
         with self.tx() as c:
-            c.execute("INSERT INTO assessments VALUES(?,?,?,?)", (aid, version_id, dump(assessment.model_dump()), now()))
+            c.execute("INSERT INTO assessments VALUES(?,?,?,?)", (aid, version_id, dump(data), now()))
         return self.one("assessments", aid)
 
     def generated_by(self,version_id,job_id):
@@ -532,6 +541,17 @@ class Store:
             from .models import normalize_search_provider
             backend=validate_backend(payload.get('agent_backend',self.settings().get('agent_backend','codex')))
             runtime=runtime_fields(payload['runtime'] if 'runtime' in payload else self.runtime_config(),backend)
+            # Refuse before queueing, not after a paid turn: a fact-checked run and a
+            # Review always need the restricted Reviewer (#726).
+            from .review_capability import require_for_fact_check,require_for_review
+            if kind=='review':require_for_review(backend)
+            elif kind in ('generate','assess','fact_check') and payload.get('single_evaluation') is not False:
+                run_id=payload.get('run_id')
+                if not run_id and payload.get('version_id'):
+                    found=self.rows('SELECT run_id FROM briefs WHERE id=?',(payload['version_id'],))
+                    run_id=found[0]['run_id'] if found else None
+                found=self.rows('SELECT requirements FROM runs WHERE id=?',(run_id,)) if run_id else []
+                if found and json.loads(found[0]['requirements']).get('fact_check') is True:require_for_fact_check(backend)
             # Freeze inherited defaults too; later settings never mutate queued jobs.
             overrides=normalize_role_models(payload.get('role_models',self.role_model_config(runtime,backend)))
             provider=normalize_search_provider(payload.get('search_provider',self.settings()['search_provider']))
@@ -652,8 +672,9 @@ class Store:
         briefs=[b for b in briefs if b['run_id'] not in deleted]
         from .search_policy import annotate_sources
         from .schedules import listing as schedule_listing
+        from .review_capability import summary as review_capability_summary
         from .learning_budget import snapshot as learning_authorization
-        return {"schedules":schedule_listing(self),"notifications":notification_snapshot(self),"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "learning_authorization":learning_authorization(self.settings()), "requirements": self.meta("requirements"), "settings": self.settings(),
+        return {"schedules":schedule_listing(self),"notifications":notification_snapshot(self),"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "learning_authorization":learning_authorization(self.settings()), "review_capability":review_capability_summary(), "requirements": self.meta("requirements"), "settings": self.settings(),
                 "profile": self.meta("workspace_profile") or {},
                 "workflows":list_workflows(),
                 "templates":[{**row, 'workflow_hint':template_workflow_hint(row)} for row in self.rows('SELECT * FROM templates ORDER BY created DESC')],

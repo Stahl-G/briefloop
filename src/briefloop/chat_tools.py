@@ -176,16 +176,17 @@ def workspace_action(store, request):
         requirements=Requirements.model_validate(request['requirements'])
         source_ids=request.get('source_ids',[])
         if not isinstance(source_ids,list) or not all(isinstance(x,str) for x in source_ids):raise ValueError('source_ids 必须是来源 ID 数组')
-        run=store.create_run(requirements.model_dump(),source_ids,research_protocol="quality_v1")
-        payload={'run_id':run['id']}
-        owner=_notify_owner(request)
-        if owner:payload['session_id']=owner
+        runtime_payload={}
         if request.get('runtime'):
             from .backends import validate_backend
             backend=validate_backend(request['runtime'].get('agent_backend',store.settings().get('agent_backend','codex')))
             settings=Settings.model_validate({**store.settings(),**request['runtime'],'agent_backend':backend})
-            payload['runtime']=runtime_fields(settings.model_dump(),backend)
-            payload['agent_backend']=backend
+            runtime_payload={'runtime':runtime_fields(settings.model_dump(),backend),'agent_backend':backend}
+        run=store.create_run(requirements.model_dump(),source_ids,research_protocol="quality_v1",
+                             **({'agent_backend':runtime_payload['agent_backend']} if runtime_payload else {}))
+        payload={'run_id':run['id'],**runtime_payload}
+        owner=_notify_owner(request)
+        if owner:payload['session_id']=owner
         job=store.enqueue('generate',payload)
         return {'job_id':job['id'],'run_id':run['id'],'status':job['status'],'message':'已提交生成任务；后台将在专门的可交互会话生成并保存简报。'}
     if action=='assess':

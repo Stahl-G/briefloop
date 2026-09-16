@@ -153,7 +153,8 @@ class InteractiveRuntime:
         runtime = {'model': configured['model'],
                    'effort': configured.get('reasoning_effort', configured.get('effort'))}
         if job.get('readonly_output'):
-            if backend!='opencode':raise ValueError('此后端的受限 Reviewer 工具策略尚未验证；审阅未完成，不能退回普通写权限')
+            from .review_capability import require_for_review
+            require_for_review(backend)
             runtime.update(permission='read-only',review_root=str((folder/'packet').resolve()))
             if job.get('review_id'):runtime['review_id']=job['review_id']
         if backend == 'codex' and 'service_tier' in configured:

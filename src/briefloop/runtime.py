@@ -951,6 +951,10 @@ class Worker:
         from .backends import validate_backend
         from .models import normalize_search_provider
         backend=validate_backend(payload.get('agent_backend','codex'))
+        if score and payload.get('single_evaluation') is not False and json.loads(run['requirements']).get('fact_check'):
+            # A job queued before this check, or resumed later, stops before any model turn.
+            from .review_capability import require_for_fact_check
+            require_for_fact_check(backend)
         run['search_provider']=normalize_search_provider(payload.get('search_provider'))
         if 'max_parallel' in payload:run['max_parallel']=payload['max_parallel']
         if payload.get('previous_job_id'):
@@ -1013,7 +1017,13 @@ class Worker:
                     (folder/'draft-refinement-suggestion.json').write_text(dump(data), encoding='utf-8');return
             latest[0]=record['id']
             if record['id'] not in known:self._remember_generated_sources(folder,record)
-            if self.thread.is_alive() and not checkpoint[0] and time.monotonic()-started>=180 and json.loads(run['requirements']).get('writing_mode')=='internal_report':
+            from .review_capability import restricted_review
+            if (self.thread.is_alive() and not checkpoint[0] and time.monotonic()-started>=180
+                    and json.loads(run['requirements']).get('writing_mode')=='internal_report'
+                    # The final scoring falls back to an ordinary assessment on a
+                    # backend without the restricted Reviewer; a checkpoint review
+                    # must use the same capability check instead of failing here.
+                    and restricted_review(backend)):
                 from .review import enqueue_review
                 with self._claim_lock:
                     if not self.runtime.cancelled.is_set() and not self.stopping.is_set() and self.store.one('jobs',job['id'])['status']!='cancelled':
@@ -1259,7 +1269,13 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
 
     def assess_version(self,job,brief,folder,backend):
         req=json.loads(self.store.one('runs',brief['run_id'])['requirements'])
-        if req.get('writing_mode')=='internal_report' or req.get('fact_check'):
+        from .review_capability import restricted_review,require_for_fact_check
+        if req.get('fact_check'):require_for_fact_check(backend)
+        # An internal report on a backend without the restricted Reviewer is still
+        # scored, but as ordinary assessment: it is labelled as such and cannot
+        # satisfy the delivery gate, which asks for a completed review (#726).
+        without_review=not restricted_review(backend)
+        if (req.get('writing_mode')=='internal_report' or req.get('fact_check')) and not without_review:
             from .review import run_review
             if (folder/'review'/'review-id.json').exists() or not self.thread.is_alive():return run_review(self.store,self.runtime,job,brief['id'],folder/'review')
             pending=self._review_child(job,brief)
@@ -1271,7 +1287,8 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
                     self.stop_job(pending['id']);raise InterruptedError('报告已停止，关联审阅也已停止')
                 time.sleep(.5)
         result=self.runtime.execute(job,assessment_prompt(self.store,brief,folder,backend),folder)
-        self.store.assess(brief['id'],json.loads((folder/'assessment.json').read_text(encoding='utf-8-sig')))
+        basis='assessment_without_review' if req.get('writing_mode')=='internal_report' and without_review else None
+        self.store.assess(brief['id'],json.loads((folder/'assessment.json').read_text(encoding='utf-8-sig')),basis=basis)
         return result
 
     def _review_child(self,parent,brief):

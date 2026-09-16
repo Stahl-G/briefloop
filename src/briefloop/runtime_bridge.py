@@ -189,7 +189,8 @@ class RuntimeBridge:
             item['integrated']=item['id'] in BACKENDS
             item['available']=bool(item['installed'] and item['integrated'])
             if item['id'] in ('codex','opencode'):
-                item['capabilities']={'chat':True,'cancel':True,'images':'unknown','resume':'unknown','restricted_reviewer':'unknown',
+                from .review_capability import restricted_review
+                item['capabilities']={'chat':True,'cancel':True,'images':'unknown','resume':'unknown','restricted_reviewer':restricted_review(item['id']),
                     'permission_modes':['workspace-write','read-only'],'steer':item['id']=='codex'}
             item['diagnostic']=('本机 CLI 已找到；执行协议尚未接入' if item['installed'] and not item['available'] else item.get('error'))
         return {'runtimes':result,**({'diagnostic':diagnostic} if diagnostic else {})}

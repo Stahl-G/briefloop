@@ -80,6 +80,10 @@ def validate(store, body):
         req['fact_check']=store.settings().get('fact_checker') is True
     if req['fact_check'] and not req['allow_web']:
         raise ValueError('离线任务不能开启联网事实核查；请允许联网检索，或关闭该开关')
+    if req['fact_check']:
+        # Each firing would stop at the same check; refuse the schedule when saved.
+        from .review_capability import require_for_fact_check
+        require_for_fact_check(store.settings().get('agent_backend','codex'))
     ids = config.get('source_ids',[])
     if not isinstance(ids,list) or not all(isinstance(s,str) for s in ids):raise ValueError('请选择材料')
     for sid in ids:store.one('sources',sid)

@@ -34,9 +34,13 @@ BACKEND_LABELS = {
 # `run --attach` client): queue prompt, abort, message polling, task tool.
 # v1 has no in-flight steer — steering a live opencode turn is refused and the
 # message stays queued. `questions` never hangs: sessions deny them at create.
+# `restricted_review`: the Reviewer reads only its fixed packet, with no shell,
+# writes, network or delegation, and the controller admits its reply. Only a
+# backend whose tool policy was verified for that contract may declare it; an
+# OS read-only sandbox alone is not enough. Unlisted backends never claim it.
 CAPABILITIES = {
     'codex': frozenset({'steer', 'cancel', 'questions', 'subagents', 'native_search'}),
-    'opencode': frozenset({'cancel', 'subagents', 'native_search'}),
+    'opencode': frozenset({'cancel', 'subagents', 'native_search', 'restricted_review'}),
 }
 
 
