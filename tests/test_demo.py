@@ -9,6 +9,7 @@ from briefloop.release import eligibility
 from briefloop.export_jobs import enqueue_export, generate_word, output_path
 
 
+@pytest.mark.real_review_capabilities
 def test_demo_is_saved_editable_unreviewed_and_exports_without_a_model(tmp_path):
     store = Store(tmp_path)
     result = create_demo(store)
@@ -31,9 +32,14 @@ def test_demo_is_saved_editable_unreviewed_and_exports_without_a_model(tmp_path)
     reopened = Store(tmp_path)
     assert reopened.meta('demo')['version_id'] == brief['id']
     assert reopened.one('briefs', edited['id'])['markdown'] == edited['markdown']
-    explicit = store.enqueue('review', {'version_id': brief['id'],
-        'runtime': {'model': 'explicit-review-model', 'reasoning_effort': 'high'}})
-    assert json.loads(explicit['payload'])['runtime']['model'] == 'explicit-review-model'
+    # Codex has no verified restricted Reviewer: the review is refused before queueing.
+    with pytest.raises(ValueError) as refused:
+        store.enqueue('review', {'version_id': brief['id'],
+            'runtime': {'model': 'explicit-review-model', 'reasoning_effort': 'high'}})
+    assert refused.value.code == 'review_backend_unsupported'
+    explicit = store.enqueue('review', {'version_id': brief['id'], 'agent_backend': 'opencode',
+        'runtime': {'model': 'synthetic/explicit-review-model'}})
+    assert json.loads(explicit['payload'])['runtime']['model'] == 'synthetic/explicit-review-model'
 
 
 def test_demo_does_not_change_an_existing_workspace(tmp_path):
