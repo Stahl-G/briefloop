@@ -84,7 +84,7 @@ def test_scan_pdf_is_visual_ready_and_renders_only_requested_pages(tmp_path,monk
 
 def test_web_image_content_type_and_magic_do_not_decode_binary_as_text(tmp_path,monkeypatch):
     store=Store(tmp_path);data=image_bytes('WEBP')
-    monkeypatch.setattr(sources,'_fetch_bytes',lambda url:(data,'image/webp','utf-8'))
+    monkeypatch.setattr(sources,'_fetch_bytes',lambda url,**_:(data,'image/webp','utf-8'))
     source=sources.fetch(store,'https://example.test/download?file=chart')
     attachment=media.source_attachment(store,source['id'])
     assert source['status']=='ready' and attachment['media_type']=='image/webp'
@@ -107,3 +107,71 @@ def test_source_metadata_and_cache_cannot_escape_or_silently_drift(tmp_path):
     with pytest.raises(ValueError):media.source_attachment(store,sid)
     record.unlink();record.symlink_to(outside)
     with pytest.raises(ValueError):media.source_attachment(store,sid)
+
+
+def test_office_expansion_limit_covers_docx_sources_and_templates(tmp_path,monkeypatch):
+    import zipfile
+    from docx import Document
+    from briefloop.templates import import_template
+    store=Store(tmp_path)
+    doc=Document();doc.add_paragraph('正文'*4000)
+    small=io.BytesIO();doc.save(small)
+    with zipfile.ZipFile(small) as archive:expanded=sum(item.file_size for item in archive.infolist())
+    monkeypatch.setattr(media,'MAX_OFFICE_EXPANDED_BYTES',expanded-1)
+    uploaded=sources.upload(store,'bomb.docx',small.getvalue())
+    assert uploaded['status']=='failed' and '展开后过大' in uploaded['error']
+    monkeypatch.setattr(sources,'_fetch_bytes',lambda url,**_:(small.getvalue(),'application/vnd.openxmlformats-officedocument.wordprocessingml.document','utf-8'))
+    fetched=sources.fetch(store,'https://example.test/bomb.docx')
+    assert fetched['status']=='failed' and '展开后过大' in fetched['error']
+    with pytest.raises(ValueError,match='展开后过大'):import_template(store,'bomb.docx',small.getvalue(),prepare_job=False)
+    assert not (store.root/'templates').exists() or not any((store.root/'templates').iterdir())
+    monkeypatch.setattr(media,'MAX_OFFICE_EXPANDED_BYTES',expanded)
+    assert sources.upload(store,'ok.docx',small.getvalue())['status']=='ready'
+
+
+def test_office_archive_measures_real_expansion_not_declared_sizes(tmp_path,monkeypatch):
+    import struct,tracemalloc,zipfile,zlib
+    from briefloop.templates import import_template
+    store=Store(tmp_path)
+    payload=b'<w:document/>'+b'A'*(8*1024*1024)
+    buffer=io.BytesIO()
+    with zipfile.ZipFile(buffer,'w',zipfile.ZIP_DEFLATED) as archive:archive.writestr('word/document.xml',payload)
+    forged=bytearray(buffer.getvalue())
+    # Declare 37 bytes with a CRC that matches them; zipfile.read() would still inflate 8 MiB.
+    for signature,crc_at,size_at in ((b'PK\x03\x04',14,22),(b'PK\x01\x02',16,24)):
+        at=forged.find(signature);struct.pack_into('<I',forged,at+crc_at,zlib.crc32(payload[:37]))
+        struct.pack_into('<I',forged,at+size_at,37)
+    with zipfile.ZipFile(io.BytesIO(bytes(forged))) as archive:
+        assert sum(item.file_size for item in archive.infolist())==37
+    monkeypatch.setattr(media,'MAX_OFFICE_EXPANDED_BYTES',1024*1024)
+    tracemalloc.start()
+    uploaded=sources.upload(store,'forged.docx',bytes(forged))
+    peak=tracemalloc.get_traced_memory()[1];tracemalloc.stop()
+    assert uploaded['status']=='failed' and '展开后过大' in uploaded['error']
+    assert peak<6*1024*1024  # rejected in bounded steps, never inflated whole
+    monkeypatch.setattr(media,'MAX_OFFICE_EXPANDED_BYTES',150_000_000)
+    assert '声明大小与实际内容不符' in sources.upload(store,'forged.docx',bytes(forged))['error']
+    with pytest.raises(ValueError,match='声明大小与实际内容不符'):import_template(store,'forged.docx',bytes(forged),prepare_job=False)
+
+
+def test_pdf_page_views_use_recorded_metadata_instead_of_reparsing(tmp_path,monkeypatch):
+    store=Store(tmp_path);source=sources.upload(store,'scan.pdf',blank_pdf(3))
+    first=media.render_source_pages(store,source['id'],[2])['pages'][0]
+    def reparsed(data):raise AssertionError('recorded PDF must not be parsed again')
+    monkeypatch.setattr(media,'pdf_metadata',reparsed)
+    original_path=Path(media.source_attachment(store,source['id'])['original_path'])
+    read_bytes=Path.read_bytes
+    def no_whole_original(self):
+        assert self!=original_path,'cached views must not load the whole original'
+        return read_bytes(self)
+    monkeypatch.setattr(Path,'read_bytes',no_whole_original)
+    attachment=media.source_attachment(store,source['id'])
+    assert attachment['pages']==3 and [p['page'] for p in attachment['rendered_pages']]==[2]
+    assert str(media.rendered_page_path(store,source['id'],2))==first['path']
+    assert media.render_source_pages(store,source['id'],[2])['pages'][0]['path']==first['path']
+    monkeypatch.setattr(Path,'read_bytes',read_bytes)  # rendering a new page does read the PDF
+    assert media.render_source_pages(store,source['id'],[3])['pages'][0]['page']==3
+    with pytest.raises(ValueError,match='超出'):media.rendered_page_path(store,source['id'],4)
+    # A changed original still fails the bound digest instead of trusting metadata.
+    Path(attachment['original_path']).write_bytes(blank_pdf(4))
+    with pytest.raises(ValueError,match='哈希不匹配'):media.rendered_page_path(store,source['id'],2)

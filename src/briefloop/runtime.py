@@ -33,6 +33,7 @@ COMMON = '''你在运行 BriefLoop 本地应用。用户已授权本轮研究、
 来源不全时把具体缺口写入研究结果 gaps 及执行记录；禁止编造数字、来源或成功状态。
 所有 JSON 使用 UTF-8，最终文件采用临时文件写完后 rename，避免读取半份结果。
 完成已分配任务才结束；不要只输出计划。若工具缺失或真实调用失败，请记录具体失败，不假装完成。
+本轮没有任何用户在旁可问：不要调用宿主的提问或等待授权的工具；遇到含糊之处自行按任务目标决断，并在结果中记录假设。
 '''
 
 
@@ -389,7 +390,7 @@ def assessment_prompt(store, brief, folder, backend='codex'):
     input_pack['claim_evidence']=inspect_bindings(store,brief['id'])
     (folder/'input.json').write_text(json.dumps(input_pack,ensure_ascii=False,indent=2),encoding='utf-8')
     tool=tool_command(store.root,backend=backend)
-    no_question='本轮没有任何用户在旁可问：不要调用 question 工具；遇到含糊之处自行按任务目标决断，并在结果中记录假设。\n' if backend=='opencode' else ''
+    no_question='本轮没有任何用户在旁可问：不要调用宿主的提问或等待授权的工具；遇到含糊之处自行按任务目标决断，并在结果中记录假设。\n'
     view_pages_word = '使用 view_image 读取页图' if backend == 'codex' else '用 read 工具读取返回的页图'
     figure_view_word = '实际view_image查看其absolute_image_path' if backend == 'codex' else '实际用 read 工具读取其absolute_image_path'
     return EVALUATOR_CONTEXT+f'''
@@ -414,10 +415,12 @@ input.refcheck 是程序对本稿的确定性检查：broken_refs 必须逐条�
 class Worker:
     IDLE_POLL_SECONDS = 5.0
 
-    def __init__(self,store,runtime=None,report_runtime_factory=None):
+    def __init__(self,store,runtime=None,report_runtime_factory=None,review_runtime_factory=None):
         self._claim_lock=threading.RLock()
         self._generation_jobs={}
         self._report_runtime_factory=report_runtime_factory
+        self._review_runtime_factory=review_runtime_factory
+        self._review_jobs={}
         self._execution_local=threading.local()
         self.opened_paused=False
         self.store=store;self._runtime=runtime;self.stopping=threading.Event();self.current=None
@@ -425,7 +428,7 @@ class Worker:
         self.store._job_wakeup=self.wake
         self.schedule_thread=threading.Thread(target=self.schedule_loop,name='briefloop-schedules',daemon=True)
         self.thread=threading.Thread(target=self.loop,name='briefloop-worker',daemon=True)
-        self.review_current=None;self._review_runtime=None
+        self.task_thread=None
         self.review_thread=threading.Thread(target=self.review_loop,name='briefloop-review-worker',daemon=True)
         self.file_current=None;self._file_cancelled=threading.Event()
         self.file_thread=threading.Thread(target=self.file_loop,name='briefloop-file-worker',daemon=True)
@@ -460,12 +463,15 @@ class Worker:
         self.stopping.set();self.wake();self._file_cancelled.set();self.runtime.cancel()
         with self._claim_lock:
             generations=list(self._generation_jobs.values())
+            reviews=list(self._review_jobs.values())
         for thread,runtime in generations:runtime.cancel()
-        if self._review_runtime:self._review_runtime.cancel()
+        for thread,runtime,run_id in reviews:runtime.cancel()
         if self.schedule_thread.is_alive():self.schedule_thread.join(timeout=12)
         self.thread.join(timeout=12)
         for thread,runtime in generations:thread.join(timeout=12)
+        if self.task_thread and self.task_thread.is_alive():self.task_thread.join(timeout=12)
         if self.review_thread.is_alive():self.review_thread.join(timeout=12)
+        for thread,runtime,run_id in reviews:thread.join(timeout=12)
         if self.file_thread.is_alive():self.file_thread.join(timeout=12)
         if self.store._job_wakeup==self.wake:self.store._job_wakeup=None
 
@@ -509,7 +515,7 @@ class Worker:
                 if tasks is not None and tasks.has_binding(jid):tasks.revoke(jid)
                 if jid in self._generation_jobs:self._generation_jobs[jid][1].cancel()
                 if self.current==jid:self.runtime.cancel()
-                if self.review_current==jid and self._review_runtime:self._review_runtime.cancel()
+                if jid in self._review_jobs:self._review_jobs[jid][1].cancel()
                 if self.file_current==jid:self._file_cancelled.set()
                 from .task_notify import notify as _notify_task
                 _notify_task(self.store,self.store.one('jobs',jid),'cancelled')
@@ -544,6 +550,8 @@ class Worker:
                 job=dict(row)
                 if job['status'] not in ('failed','interrupted','cancelled'):raise ValueError('这个任务不需要恢复')
                 payload=json.loads(job['payload'])
+                if payload.get('inline_owner_job_id'):
+                    raise ValueError('这是学习任务内部的试写，请恢复对应的学习任务，它会接着跑这一步')
                 if job['kind']=='learn':
                     self._check_feedback_owner(c,jid,payload)
                 # Resume keeps the frozen configuration and original task identity.
@@ -575,7 +583,7 @@ class Worker:
                 raise ValueError('只有失败、中断或已取消的任务可以新建重试')
             for row in self.store.rows("SELECT * FROM jobs WHERE kind=? AND status IN ('queued','running') ORDER BY rowid",(job['kind'],)):
                 if json.loads(row['payload']).get('retry_of_job_id')==jid:return row
-            if jid in (self.current,self.review_current):
+            if jid==self.current or jid in self._review_jobs:
                 raise ValueError('原任务仍在停止，请稍后重试')
             original=json.loads(job['payload'])
             fields=('version_id',) if job['kind']=='review' else ('feedback_ids','k','targets','skill_id')
@@ -615,31 +623,65 @@ class Worker:
             except ExistingRetry as existing:
                 return self.store.one('jobs',existing.args[0])
 
+    def _review_run_id(self,job):
+        payload=json.loads(job['payload'])
+        if payload.get('run_id'):return payload['run_id']
+        try:return self.store.one('briefs',payload['version_id'])['run_id']
+        except (KeyError,ValueError):return None
+
     def review_loop(self):
-        from .interactive_runtime import InteractiveRuntime
-        from .review import run_review
-        for jobs in self._queued(1,"SELECT * FROM jobs WHERE kind IN ('review','fact_check') AND status='queued' ORDER BY rowid LIMIT 1"):
+        # Reviews and fact checks of different reports run in parallel, each on its
+        # own runtime and cancel state, up to max_reports. Jobs of one report keep
+        # queue order: a checkpoint review never overlaps that report's fact check.
+        for jobs in self._queued(1,"SELECT * FROM jobs WHERE kind IN ('review','fact_check') AND status='queued' ORDER BY rowid"):
             if not jobs:continue
-            job=jobs[0]
             with self._claim_lock:
+                if self.stopping.is_set():break
+                if len(self._review_jobs)>=self.store.settings()['max_reports']:continue
+                busy={run_id for thread,runtime,run_id in self._review_jobs.values()}
+                job=next(((row,run_id) for row in jobs for run_id in [self._review_run_id(row)] if run_id is None or run_id not in busy),None)
+                if job is None:continue
+                job,run_id=job
                 with self.store.tx() as c:
                     changed=c.execute("UPDATE jobs SET status='running',error=NULL,updated=? WHERE id=? AND status='queued'",(now(),job['id'])).rowcount
                 if not changed:continue
+                from .interactive_runtime import InteractiveRuntime
+                try:runtime=self._review_runtime_factory() if self._review_runtime_factory else InteractiveRuntime(self.store,backends=self.runtime.backends)
+                except Exception as exc:
+                    self._settle_job(job['id'],'failed',error=str(exc));continue
+                runtime.cancelled.clear()
+                thread=threading.Thread(target=self._execute_review_job,args=(job,runtime),name='briefloop-review-'+job['id'],daemon=True)
+                self._review_jobs[job['id']]=(thread,runtime,run_id)
                 self.store.event(job['id'],'job_started',{})
-                self.review_current=job['id']
-                if self._review_runtime is None:self._review_runtime=InteractiveRuntime(self.store,backends=self.runtime.backends)
-                self._review_runtime.cancelled.clear()
-            try:
-                result=(self.run_fact_check(job,runtime=self._review_runtime) if job['kind']=='fact_check' else
-                        run_review(self.store,self._review_runtime,job,json.loads(job['payload'])['version_id'],self.folder(job)))
-                self._settle_job(job['id'],'complete',result=result,runtime=self._review_runtime)
-            except InterruptedError as exc:self._settle_job(job['id'],'cancelled',error=str(exc))
-            except Exception as exc:self._settle_job(job['id'],'failed',error=str(exc))
-            finally:
-                with self._claim_lock:self.review_current=None
+                thread.start()
+
+    def _execute_review_job(self,job,runtime):
+        from .review import run_review
+        try:
+            result=(self.run_fact_check(job,runtime=runtime) if job['kind']=='fact_check' else
+                    run_review(self.store,runtime,job,json.loads(job['payload'])['version_id'],self.folder(job)))
+            self._settle_job(job['id'],'complete',result=result,runtime=runtime)
+        except InterruptedError as exc:self._settle_job(job['id'],'cancelled',error=str(exc))
+        except Exception as exc:self._settle_job(job['id'],'failed',error=str(exc))
+        finally:
+            with self._claim_lock:self._review_jobs.pop(job['id'],None)
+            self.wake()
+
+    def _next_runnable(self,jobs):
+        """Oldest queued job that can start now; a blocked head never hides later work."""
+        reports_full=len(self._generation_jobs)>=self.store.settings()['max_reports']
+        for job in jobs:
+            if job['kind']=='generate':
+                if not reports_full:return job
+            elif self.current is None:return job
+        return None
 
     def loop(self):
-        for jobs in self._queued(0,"SELECT * FROM jobs WHERE status='queued' AND kind NOT IN ('review','fact_check') AND kind NOT IN (?,?,?) ORDER BY rowid LIMIT 1",FILE_JOB_KINDS):
+        # Dispatch only. Reports run in their own threads up to max_reports; other
+        # main-lane jobs share one serial task thread (and the shared runtime), so a
+        # long learning or revision turn never keeps free report slots idle.
+        # A trial generation owned by a learning job is executed by that job, never here.
+        for jobs in self._queued(0,"SELECT * FROM jobs WHERE status='queued' AND kind NOT IN ('review','fact_check') AND kind NOT IN (?,?,?) AND json_extract(payload,'$.inline_owner_job_id') IS NULL ORDER BY rowid",FILE_JOB_KINDS):
             if not jobs:
                 if self.store.settings()['auto_learn'] and not self.opened_paused:
                     try:
@@ -649,11 +691,10 @@ class Worker:
                         self.store.event(None,'learning_schedule_failed',{'error':str(exc)})
                         self.stopping.wait(5)
                 continue
-            job=jobs[0]
             with self._claim_lock:
                 if self.stopping.is_set():break
-                if job['kind']=='generate' and len(self._generation_jobs)>=self.store.settings()['max_reports']:
-                    continue
+                job=self._next_runnable(jobs)
+                if job is None:continue
                 with self.store.tx() as c:
                     claimed=c.execute("UPDATE jobs SET status='running',error=NULL,updated=? WHERE id=? AND status='queued'",
                                       (now(),job['id'])).rowcount
@@ -665,13 +706,12 @@ class Worker:
                         self._settle_job(job['id'],'failed',error=str(exc));continue
                     thread=threading.Thread(target=self._execute_main_job,args=(job,runtime),name='briefloop-report-'+job['id'],daemon=True)
                     self._generation_jobs[job['id']]=(thread,runtime)
-                    self.store.event(job['id'],'job_started',{})
-                    thread.start()
                 else:
                     self.current=job['id'];self.runtime.cancelled.clear()
-            if job['kind']!='generate':
+                    thread=threading.Thread(target=self._execute_main_job,args=(job,),name='briefloop-task-'+job['id'],daemon=True)
+                    self.task_thread=thread
                 self.store.event(job['id'],'job_started',{})
-                self._execute_main_job(job)
+                thread.start()
 
     def _execute_main_job(self,job,runtime=None):
         if runtime is not None:self._execution_local.runtime=runtime
@@ -691,7 +731,7 @@ class Worker:
             elif job['kind']=='source_refresh':
                 from .source_updates import refresh
                 args=json.loads(job['payload'])
-                result=refresh(self.store,args['run_id'],args['source_id'],information_cutoff=args['information_cutoff'],trigger='manual')
+                result=refresh(self.store,args['run_id'],args['source_id'],information_cutoff=args['information_cutoff'],trigger='manual',allow_private=args.get('requested_by')=='user')
             elif job['kind']=='generate':result=self.generate(job)
             elif job['kind']=='assess':result=self.assess(job)
             elif job['kind']=='revise':

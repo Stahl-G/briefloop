@@ -119,7 +119,7 @@ def test_duckduckgo_extract_registers_pages_through_the_metered_direct_fetch(tmp
     from briefloop import sources
     store,run=make_run(tmp_path,'duckduckgo')
     page=b'<html><head><title>Example Doc</title></head><body><p>Capacity 45 MW.</p></body></html>'
-    monkeypatch.setattr(sources,'_fetch_bytes',lambda url:(page,'text/html; charset=utf-8','utf-8'))
+    monkeypatch.setattr(sources,'_fetch_bytes',lambda url,**_:(page,'text/html; charset=utf-8','utf-8'))
     result=websearch.extract(store,['https://example.test/doc'],run_id=run['id'])
     assert result['provider']=='duckduckgo' and result['outcome']=='success'
     source=result['sources'][0]

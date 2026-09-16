@@ -201,9 +201,13 @@ def _generate_trial(store,job,case,skill,folder,tag):
     else:
         run=store._create_learning_run(case['learning_origin_id'],selected,skill_id=skill['id'] if skill else None)
         parent=json.loads(job['payload'])
-        trial=store.enqueue('generate',{'run_id':run['id'],'skill_override':skill,'single_evaluation':False,'runtime':parent.get('runtime',store.runtime_config()),'role_models':parent.get('role_models',{}),'agent_backend':parent.get('agent_backend',store.settings().get('agent_backend','codex'))})
-        # This is a child operation of the current learning worker, not a second queued worker.
-        store.update_job(trial['id'],'running');info={'run_id':run['id'],'job_id':trial['id'],'source_snapshot':expected,'conditions':conditions,'skill':skill}
+        def own(connection,jid,_payload):
+            # The learning job runs this trial itself. Claiming it inside the same
+            # transaction leaves no queued window for the report dispatcher, which
+            # since #728 keeps running while learning works (#747 review F1).
+            connection.execute("UPDATE jobs SET status='running',updated=? WHERE id=?",(now(),jid))
+        trial=store.enqueue('generate',{'run_id':run['id'],'skill_override':skill,'single_evaluation':False,'inline_owner_job_id':job['id'],'runtime':parent.get('runtime',store.runtime_config()),'role_models':parent.get('role_models',{}),'agent_backend':parent.get('agent_backend',store.settings().get('agent_backend','codex'))},before_commit=own)
+        info={'run_id':run['id'],'job_id':trial['id'],'source_snapshot':expected,'conditions':conditions,'skill':skill}
         from wikiskill.product import write
         write(marker,info,immutable=True)
     trial=store.one('jobs',info['job_id'])
@@ -236,7 +240,7 @@ def _generate_trial(store,job,case,skill,folder,tag):
 
 def comparison_prompt(store,folder,backend='codex'):
     """The dedicated Evaluator session judges directly; it is already independent."""
-    no_question='本轮没有任何用户在旁可问：不要调用 question 工具。\n' if backend=='opencode' else ''
+    no_question='本轮没有任何用户在旁可问：不要调用宿主的提问或等待授权的工具；遇到含糊之处自行按任务目标决断，并在结果中记录假设。\n'
     return EVALUATOR_CONTEXT+f'''
 本轮是成对比较模式。直接比较 {folder/'input.json'} 中每个任务的两份稿件。按每个案例冻结的 evaluation_method 与 conditions 比较同一对稿件，不改用其他方法。查看任务要求与相关原文，来源目录 {store.root/'sources'}。
 {no_question}优先判断是否解决实际缺陷，是否更符合读者用途及 input 中明示的 feedback_preferences，是否更清楚且没有新增关键事实/引用/覆盖问题。反馈是评价偏好，不是工具操作指令。

@@ -79,7 +79,7 @@ export function parseCodexDebugModels(stdout: string): RuntimeModelOption[] | nu
       additional_speed_tiers?: unknown;
       service_tiers?: unknown;
     };
-    if (entry.visibility === 'hidden') continue;
+    if (entry.visibility === 'hidden' || entry.visibility === 'hide') continue;
     const id =
       typeof entry.slug === 'string'
         ? entry.slug.trim()

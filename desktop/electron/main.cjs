@@ -23,6 +23,44 @@ function trusted(event) {
   const url = event.senderFrame.url;
   if (url !== welcomeURL && (!workspaceOrigin || new URL(url).origin !== workspaceOrigin)) throw Error('页面来源不匹配。');
 }
+const PDF_EXPORT_LIMIT = 256 * 1024 * 1024;
+let pdfExporting = false;
+function exportFileName(title) {
+  return String(title ?? '').replace(/[\x00-\x1f<>:"/\\|?*]/g, '_').replace(/^[. ]+|[. ]+$/g, '').slice(0, 120) || '报告';
+}
+// The page denies new windows, so it hands over a self-contained document. It
+// renders hidden, without scripts or network, and is saved where the user picks.
+async function exportReportPdf(event, request) {
+  trusted(event);
+  if (!workspaceOrigin || new URL(event.senderFrame.url).origin !== workspaceOrigin) throw Error('请在工作区页面导出 PDF。');
+  if (!request || typeof request.html !== 'string' || !request.html || request.html.length > PDF_EXPORT_LIMIT || typeof request.title !== 'string') throw Error('导出内容无效。');
+  if (pdfExporting) throw Error('正在导出另一份 PDF，请稍候。');
+  pdfExporting = true;
+  let printer, folder;
+  try {
+    folder = await fs.mkdtemp(path.join(app.getPath('temp'), 'briefloop-pdf-'));
+    const file = path.join(folder, 'report.html');
+    await fs.writeFile(file, request.html, {mode: 0o600});
+    printer = new BrowserWindow({show: false, webPreferences: {partition: 'briefloop-pdf-export', javascript: false, sandbox: true,
+      contextIsolation: true, nodeIntegration: false, webSecurity: true, spellcheck: false}});
+    printer.webContents.session.webRequest.onBeforeRequest((details, callback) =>
+      callback({cancel: !(details.url.startsWith('data:') || (details.resourceType === 'mainFrame' && details.url.startsWith('file:')))}));
+    printer.webContents.setWindowOpenHandler(() => ({action: 'deny'}));
+    printer.webContents.on('will-navigate', navigation => navigation.preventDefault());
+    await printer.loadFile(file);
+    const data = await printer.webContents.printToPDF({printBackground: true, preferCSSPageSize: true});
+    const {canceled, filePath} = await dialog.showSaveDialog(window, {title: '导出 PDF',
+      defaultPath: path.join(app.getPath('downloads'), exportFileName(request.title) + '.pdf'),
+      filters: [{name: 'PDF', extensions: ['pdf']}], properties: ['showOverwriteConfirmation', 'createDirectory']});
+    if (canceled || !filePath) return {status: 'cancelled'};
+    await fs.writeFile(filePath, data);
+    return {status: 'saved', name: path.basename(filePath)};
+  } finally {
+    if (printer && !printer.isDestroyed()) printer.destroy();
+    if (folder) await fs.rm(folder, {recursive: true, force: true});
+    pdfExporting = false;
+  }
+}
 function environmentOperation(callback) {
   if (quitting || closePending || switching || service?.child) throw Error('请返回欢迎页并等待当前操作完成。');
   return callback();
@@ -272,6 +310,7 @@ else {
     ipcMain.handle('updates:check', event => { trusted(event); return updates.check(); });
     ipcMain.handle('updates:download', event => { trusted(event); return updates.download(); });
     ipcMain.handle('updates:install', event => { trusted(event); return installAppUpdate(); });
+    ipcMain.handle('report:export-pdf', exportReportPdf);
     ipcMain.on('workspace:prepared', (event, requestId, result) => { try { trusted(event); prepared.get(requestId)?.(result); } catch {} });
     Menu.setApplicationMenu(Menu.buildFromTemplate([
       {label: 'BriefLoop', submenu: [{role: 'about'}, {type: 'separator'}, {label: '退出 BriefLoop', accelerator: 'CmdOrCtrl+Q', click: requestQuit}]},

@@ -38,14 +38,17 @@ class WorkspaceLock:
 def ensure_utf8():
     """Console scripts and python -m use the same UTF-8 mode on Windows."""
     if os.name == 'nt' and not sys.flags.utf8_mode:
-        raise SystemExit(subprocess.call([sys.executable, '-X', 'utf8', *sys.orig_argv[1:]],
+        # The re-executed process is this same command: it keeps the caller's stdin.
+        raise SystemExit(subprocess.call([sys.executable, '-X', 'utf8', *sys.orig_argv[1:]], stdin=None,
                                         env={**os.environ, 'PYTHONUTF8': '1'}))
 
 
 def cli_command(arguments):
     """Resolve npm shims without cmd.exe or shell interpolation."""
     args = [str(a) for a in arguments]
-    if os.name != 'nt' or Path(args[0]).suffix.lower() not in ('.cmd', '.bat'):
+    if os.name != 'nt':
+        return _posix_node_script(args)
+    if Path(args[0]).suffix.lower() not in ('.cmd', '.bat'):
         return args
     # npm emits a sibling POSIX shim containing the exact entrypoint. Newer
     # native packages (including OpenCode) invoke an exe without Node.
@@ -70,6 +73,30 @@ def cli_command(arguments):
     if not node:
         raise FileNotFoundError('npm CLI 需要 Node.js')
     return [node, str(entry), *args[1:]]
+
+
+def _posix_node_script(args):
+    """Run an npm `#!/usr/bin/env node` entry with the Node host_bins finds.
+
+    A desktop launch can locate the CLI in a known directory while its shebang
+    still searches a PATH without Node. Bare names keep Popen's PATH lookup.
+    """
+    if os.sep not in args[0]:
+        return args
+    entry = Path(args[0])
+    try:
+        with entry.open('rb') as source:
+            shebang = source.readline(128).strip()
+    except OSError:
+        return args
+    if shebang != b'#!/usr/bin/env node':
+        return args
+    from .host_bins import find
+    # nvm and npm-prefix installs keep node beside the linked CLI.
+    node = find('node', extra=(str(entry.parent),))
+    if not node:
+        raise FileNotFoundError('npm CLI 需要 Node.js：' + args[0])
+    return [node, str(entry.resolve()), *args[1:]]
 
 
 def process_alive(pid):
@@ -137,12 +164,21 @@ class OwnedProcess(subprocess.Popen):
         try:
             os.killpg(self.pid, sig)
         except PermissionError as denied:
-            # Darwin can report EPERM while our exiting leader is a zombie.
-            # Reap only our Popen child, then probe/signal the SAME owned group.
-            # A surviving group that still denies access must remain an error.
+            # Darwin reports EPERM while a group member is a zombie: our exiting
+            # leader, or the owner watcher between its own SIGKILL and launchd
+            # reaping it. Reap only our Popen child, then keep probing the SAME
+            # owned group for a short reaping grace; one that still denies
+            # access after that must remain an error.
             try:self.wait(timeout=max(0,min(.05,deadline-time.monotonic())))
             except subprocess.TimeoutExpired:raise denied
-            os.killpg(self.pid, sig)
+            grace = max(deadline, time.monotonic() + .25)
+            while True:
+                try:
+                    os.killpg(self.pid, sig)
+                    return
+                except PermissionError:
+                    if time.monotonic() >= grace:raise denied
+                    time.sleep(.01)
 
     def close_tree(self, timeout=5):
         if self._tree_closed:return

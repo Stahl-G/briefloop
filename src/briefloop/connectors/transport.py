@@ -89,7 +89,7 @@ async def connection_transport(config: dict, secrets: dict, diagnostics: dict):
                         # Marker PIDs are diagnostic only; never used to stop a process.
                         diagnostics.update(pid=pid, child_pid=candidate['child_pid'], cleanup='windows-job')
                     else:
-                        parent = subprocess.run(['ps', '-o', 'ppid=', '-p', str(pid)], capture_output=True, text=True).stdout.strip()
+                        parent = subprocess.run(['ps', '-o', 'ppid=', '-p', str(pid)], stdin=subprocess.DEVNULL, capture_output=True, text=True).stdout.strip()
                         if (not isinstance(pid, int) or candidate['pgid'] != pid or os.getpgid(pid) != pid
                                 or parent != str(os.getpid())):
                             raise ConnectorError('无法确认连接器进程所有权。', code='cleanup_failed')

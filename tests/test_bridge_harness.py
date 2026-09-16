@@ -24,6 +24,78 @@ class BridgeFixture:
 
 
 @pytest.mark.parametrize('backend', ['claude', 'codebuddy'])
+class QuestionBridge(BridgeFixture):
+    """Emits a host permission question mid-turn; records answer/cancel calls."""
+    def __init__(self,options=None):
+        super().__init__();self.calls=[]
+        self.options=options or [{'optionId':'allow','name':'允许本次','kind':'allow_once'},
+                                 {'optionId':'deny','name':'拒绝','kind':'reject_once'}]
+    def call(self,method,params,timeout=None):
+        if method in ('answer','cancel'):self.calls.append((method,params))
+        if method!='start':return {}
+        self.starts.append(params)
+        for event in [{'kind':'session','session_id':'native-session'},
+                      {'kind':'question','request_id':'q1','type':'permission',
+                       'title':'文件操作 · jobs/x/request.json','options':self.options},
+                      {'kind':'end','status':'completed'}]:
+            self.sinks[params['execution_id']].put(event)
+        return {'execution_id':params['execution_id']}
+
+
+def _wait_status(h,sid,mid,status):
+    deadline=time.monotonic()+3
+    while time.monotonic()<deadline:
+        snap=h.snapshot(sid)
+        if any(m['id']==mid and m['status']==status for m in snap['messages']):return snap
+        time.sleep(.01)
+    raise AssertionError(f'turn did not reach {status}')
+
+
+@pytest.mark.parametrize('backend', ['codebuddy', 'claude'])
+def test_internal_run_rejects_host_permission_question_instead_of_waiting(tmp_path, backend):
+    """A background job has no user to answer host questions: the permission
+    request must be rejected and the turn must fail fast (#724), not park on a
+    pending request until the task timeout."""
+    bridge=QuestionBridge();h=BridgeHarness(Store(tmp_path),bridge,backend)
+    run=h.start_internal('后台研究任务',message_id='bg-perm')
+    snap=_wait_status(h,run.session_id,run.message_id,'failed')
+    answers=[p for method,p in bridge.calls if method=='answer']
+    assert answers==[{'execution_id':'bg-perm','request_id':'q1','option_id':'deny'}]
+    assert {'execution_id':'bg-perm'} in [p for method,p in bridge.calls if method=='cancel']
+    assert snap['requests']==[]
+    question=next(e for e in snap['events'] if e['kind']=='runtime/question')
+    assert question['data']=={'auto':'rejected','title':'文件操作 · jobs/x/request.json'}
+    errors=[e for e in snap['events'] if e['kind']=='error']
+    assert errors and '没有用户可回答宿主授权请求' in errors[-1]['data']['message']
+
+
+def test_internal_run_without_reject_option_answers_cancelled(tmp_path):
+    """No host-provided reject option: reply with the cancelled outcome, still fail fast."""
+    options=[{'optionId':'allow','name':'允许','kind':'allow_once'}]
+    bridge=QuestionBridge(options);h=BridgeHarness(Store(tmp_path),bridge,'kimi')
+    run=h.start_internal('后台任务',message_id='bg-no-reject')
+    _wait_status(h,run.session_id,run.message_id,'failed')
+    answers=[p for method,p in bridge.calls if method=='answer']
+    assert answers==[{'execution_id':'bg-no-reject','request_id':'q1'}]
+
+
+def test_interactive_run_still_queues_permission_question_for_the_user(tmp_path):
+    bridge=QuestionBridge();h=BridgeHarness(Store(tmp_path),bridge,'codebuddy')
+    s=h.create_session('chat',{'model':'host-model'})
+    h.send(s['id'],'帮忙整理文件',message_id='chat-perm')
+    snap=_wait_status(h,s['id'],'chat-perm','completed')
+    assert not any(method=='answer' for method,_ in bridge.calls)
+    question=next(e for e in snap['events'] if e['kind']=='runtime/question')
+    assert 'requestId' in question['data'] and 'auto' not in question['data']
+    deadline=time.monotonic()+3
+    while time.monotonic()<deadline:
+        snap=h.snapshot(s['id'])
+        if snap['requests'] and snap['requests'][0]['status']=='expired':break
+        time.sleep(.01)
+    assert [r['status'] for r in snap['requests']]==['expired']
+
+
+@pytest.mark.parametrize('backend', ['claude', 'codebuddy'])
 def test_bridge_turn_is_durable_and_same_message_is_not_redispatched(tmp_path, backend):
     bridge=BridgeFixture();h=BridgeHarness(Store(tmp_path),bridge,backend)
     s=h.create_session('test',{'model':'host-model'})

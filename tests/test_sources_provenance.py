@@ -23,7 +23,7 @@ def test_source_metadata_round_trip_with_cp936_default(tmp_path,monkeypatch):
     attachment=source_attachment(store,uploaded['id'])
     assert attachment['image_path'] and attachment['width']==2
     raw='<html><title>中文材料</title><body>材料正文</body></html>'.encode('utf-8')
-    monkeypatch.setattr(sources,'_fetch_bytes',lambda url:(raw,'text/html; charset=utf-8','utf-8'))
+    monkeypatch.setattr(sources,'_fetch_bytes',lambda url,**_:(raw,'text/html; charset=utf-8','utf-8'))
     fetched=sources.fetch(store,'https://example.test/report')
     _,metadata,original=source_files(store,fetched['id'])
     assert metadata['title']=='中文材料' and original.read_bytes()==raw
@@ -32,7 +32,7 @@ def test_source_metadata_round_trip_with_cp936_default(tmp_path,monkeypatch):
 def test_web_snapshot_preserves_response_and_failed_extraction(tmp_path,monkeypatch):
     store=Store(tmp_path)
     raw=b'<html><table><tr><th>Company</th><th>USD</th><th>MW</th></tr><tr><td>A</td><td>120</td><td>45</td></tr></table></html>'
-    monkeypatch.setattr(sources,'_fetch_bytes',lambda url:(raw,'text/html; charset=utf-8','utf-8'))
+    monkeypatch.setattr(sources,'_fetch_bytes',lambda url,**_:(raw,'text/html; charset=utf-8','utf-8'))
     record=sources.fetch(store,'https://example.test/report')
     assert record['status']=='ready'
     text=store.source_text(record['id'])
@@ -44,7 +44,7 @@ def test_web_snapshot_preserves_response_and_failed_extraction(tmp_path,monkeypa
     assert metadata['url']==record['url']
     assert metadata['extractor']=='briefloop.sources.TextHTML (utf-8)'
     blank=b'<html><script>not body text</script></html>'
-    monkeypatch.setattr(sources,'_fetch_bytes',lambda url:(blank,'text/html','utf-8'))
+    monkeypatch.setattr(sources,'_fetch_bytes',lambda url,**_:(blank,'text/html','utf-8'))
     failed=sources.fetch(store,'https://example.test/blank')
     assert failed['status']=='failed' and failed['error']
     failure_meta=json.loads((store.root/'sources'/(failed['id']+'.provenance.json')).read_text(encoding='utf-8'))
@@ -66,7 +66,7 @@ def test_run_url_reuse_and_bounded_source_reader(tmp_path,monkeypatch,capsys):
     from briefloop.cli import main
     from briefloop.scout_tools import read_source
     store=Store(tmp_path);calls=[]
-    def response(url):
+    def response(url,**_):
         calls.append(url)
         if url.endswith('/retry') and calls.count(url)==1:return b'<html></html>','text/html','utf-8'
         return b'first\nsecond long line\nthird\nfourth\n','text/plain','utf-8'
@@ -114,3 +114,77 @@ def test_snapshot_run_includes_attached_sources_in_count(tmp_path):
     store.attach_source(run['id'],a['id']);store.attach_source(run['id'],b['id'])
     row=next(r for r in store.snapshot()['runs'] if r['id']==run['id'])
     assert row['source_count']==2 and set(row['all_source_ids'])=={a['id'],b['id']}
+
+
+def test_source_fetch_refuses_this_machine_and_private_networks(tmp_path,monkeypatch):
+    import socket
+    store=Store(tmp_path)
+    def no_spawn(*args,**kwargs):raise AssertionError('no request may be sent')
+    monkeypatch.setattr(sources.subprocess,'run',no_spawn)
+    monkeypatch.setattr(sources,'find_host_bin',lambda name:'curl')
+    answers={'localhost':['127.0.0.1','::1'],'rebind.example':['93.184.215.14','127.0.0.1']}
+    def resolve(host,port,*args,**kwargs):
+        return [(socket.AF_INET6 if ':' in a else socket.AF_INET,socket.SOCK_STREAM,6,'',(a,port)) for a in answers.get(host,[host])]
+    monkeypatch.setattr(sources.socket,'getaddrinfo',resolve)
+    for url in ('http://127.0.0.1:8765/api/state','http://localhost:8765/api/session','http://[::1]/','http://[::ffff:127.0.0.1]/',
+                'http://10.0.0.8/','http://192.168.1.1/','http://169.254.169.254/latest/meta-data','http://0.0.0.0/',
+                'http://2130706433/','http://0177.0.0.1/','http://127.1/','http://rebind.example/'):
+        record=sources.fetch(store,url)
+        assert record['status']=='failed' and '拒绝读取' in record['error'],url
+    # Proxy fake-IP DNS still reaches public sites; a user's own intranet page may
+    # use private networks, but never this machine or cloud metadata.
+    assert sources._public_target('https://198.18.0.7/')[2]==['198.18.0.7']
+    assert sources._public_target('http://192.168.1.20/wiki',allow_private=True)[2]==['192.168.1.20']
+    for url in ('http://127.0.0.1:8765/api/state','http://169.254.169.254/','http://rebind.example/'):
+        try:sources._public_target(url,allow_private=True)
+        except ValueError:continue
+        raise AssertionError(url)
+
+
+def test_source_fetch_pins_checked_address_and_checks_every_redirect(tmp_path,monkeypatch):
+    import socket
+    import urllib.request
+    commands=[]
+    def fake_curl(command,**kwargs):
+        commands.append(command)
+        Path(command[command.index('-o')+1]).write_bytes(b'moved')
+        class Result:returncode=0;stderr='';stdout='302\nhttp://127.0.0.1:8765/api/state\ntext/html'
+        return Result()
+    monkeypatch.setattr(sources.subprocess,'run',fake_curl)
+    monkeypatch.setattr(sources,'find_host_bin',lambda name:'curl')
+    monkeypatch.setattr(sources.socket,'getaddrinfo',lambda host,port,*a,**k:[(socket.AF_INET,socket.SOCK_STREAM,6,'',('93.184.215.14' if host=='example.com' else host,port))])
+    try:sources._fetch_bytes('https://example.com/report')
+    except ValueError as exc:assert '拒绝读取' in str(exc)
+    else:raise AssertionError('redirect to this machine must be refused')
+    [command]=commands  # the redirect target is refused before a second request
+    assert '--location' not in command and command[command.index('--resolve')+1]=='example.com:443:93.184.215.14'
+    handler=sources._PublicRedirects()
+    request=urllib.request.Request('https://example.com/report')
+    try:handler.redirect_request(request,None,302,'Found',{},'http://127.0.0.1:8765/api/state')
+    except ValueError:pass
+    else:raise AssertionError('fallback reader must refuse the same redirect')
+
+
+def test_fallback_reader_connects_only_to_the_address_it_checked(monkeypatch):
+    import socket
+    answers=iter(['93.184.215.14','127.0.0.1'])
+    lookups=[];connections=[]
+    def resolve(host,port,*args,**kwargs):
+        address=next(answers,'127.0.0.1');lookups.append((host,address))
+        return [(socket.AF_INET,socket.SOCK_STREAM,6,'',(address,port))]
+    def connect(address,*args,**kwargs):
+        connections.append(address);raise OSError('synthetic: no network in tests')
+    monkeypatch.setattr(sources,'find_host_bin',lambda name:None)
+    monkeypatch.setattr(sources.urllib.request,'getproxies',lambda:{})
+    monkeypatch.setenv('no_proxy','*')
+    monkeypatch.setattr(sources.socket,'getaddrinfo',resolve)
+    monkeypatch.setattr(sources.socket,'create_connection',connect)
+    # First answer is public, the second (at connect time) is loopback: nothing is connected.
+    try:sources._fetch_bytes('http://rebind.example/report')
+    except ValueError as exc:assert '拒绝读取' in str(exc)
+    else:raise AssertionError('rebinding must be refused')
+    assert [address for _,address in lookups]==['93.184.215.14','127.0.0.1'] and connections==[]
+    answers=iter(['93.184.215.14','93.184.215.14'])
+    try:sources._fetch_bytes('https://stable.example/report')
+    except OSError:pass
+    assert connections==[('93.184.215.14',443)]
