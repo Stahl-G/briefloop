@@ -217,9 +217,6 @@ def decision(snapshot, review_result, findings, protocol='legacy', *, clauses=No
         if items:
             notices.append({'code': 'layout_' + key, 'count': len(items),
                             'message': f'{label} {len(items)} 处'})
-    if deterministic.get('assessment_overall') is not None:
-        notices.append({'code': 'assessment_overall',
-                        'message': '上一轮评价总评：' + str(deterministic['assessment_overall'])})
     for source_id in deterministic.get('broken_refs', []):
         issue('broken_reference', '正文引用了不存在的来源：' + str(source_id), source_id=source_id)
     return {'eligible': not blockers, 'blockers': blockers, 'notices': notices}
@@ -302,6 +299,12 @@ def eligibility(store, version_id):
     result.update(decision(snapshot, review['result'], status['findings'],
                            (review.get('data') or {}).get('protocol', 'legacy')))
     result['review_id'] = review['id']
+    # Status, not defect: the latest assessment grade rides the release
+    # record itself (page + audit bundle render the record); the notice
+    # channel stays reserved for things a reader must act on.
+    overall = (snapshot.get('deterministic') or {}).get('assessment_overall')
+    if overall is not None:
+        result['assessment_overall'] = overall
     if result['eligible']:
         run = store.one('runs', brief['run_id'])
         skill = store.one('skills', run['skill_id']) if run.get('skill_id') else None

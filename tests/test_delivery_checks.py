@@ -30,7 +30,7 @@ def test_exact_tokens_currency_and_dimension(tmp_path):
         row = check_numbers(quote, [bound(store, quote, token, value, unit, excerpt)], store)[0]
         assert row['checked'], row
         assert row['found'] is found, (quote, row)
-    for unit in ('USD/MWh', 'B USD', 'million EUR', '兆', '百分点'):
+    for unit in ('USD/MWh', 'B USD', 'million EUR', '兆'):
         assert normalized(5, unit) is None
     for quote, token in [('收入110美元', '10美元'), ('价格5美元/MWh', '5美元/MWh'), ('电量5MWh', '5MWh')]:
         item = bound(store, quote, token, 5, 'USD', '$5')
@@ -233,3 +233,21 @@ def test_release_flags_numbers_unbound_and_numbers_absent():
     absent = decision(base, review, [])
     codes = {n['code'] for n in absent['notices']}
     assert 'numbers_absent' in codes and 'numbers_unbound' not in codes
+
+
+def test_percentage_point_and_count_units_do_not_collide():
+    """Review findings A/B: '个' must not swallow '个百分点' compounds (a
+    check that reads matched while its dimension is wrong is the exact
+    false-assurance this file exists to prevent), and 百分点 must normalize
+    (it was regex-known but normalized-rejected, silently dropped)."""
+    from briefloop.delivery_checks import quantities, normalized
+    from decimal import Decimal
+    pp = [(v, d) for _, _, (v, d) in quantities('上升 1.2个百分点')]
+    assert pp == [(Decimal('1.2'), 'percentage_point')]
+    assert normalized(1.2, '百分点') == (Decimal('1.2'), 'percentage_point')
+    months = [(v, d) for _, _, (v, d) in quantities('近 3个月 环比增长 12%')]
+    assert ('percentage_point',) not in [(d,) for _, d in months]
+    assert (Decimal('12'), 'percent') in months
+    assert (Decimal('3'), 'count') not in months   # 3个月 is a period, not a count
+    counts = [(v, d) for _, _, (v, d) in quantities('新增 5 家机构')]
+    assert counts == [(Decimal('5'), 'count')]

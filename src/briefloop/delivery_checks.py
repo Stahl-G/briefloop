@@ -26,6 +26,10 @@ def normalized(value, unit):
     unit = re.sub(r'\s+', ' ', unit.strip().lower())
     if unit in ('%', '％', 'percent', '百分之'):
         return number, 'percent'
+    # Percentage POINTS are a change in a percent-valued metric, not a ratio:
+    # a matched 百分点 must not be interchangeable with a percent figure.
+    if unit in ('百分点', '个百分点', 'percentage point', 'pp'):
+        return number, 'percentage_point'
     if unit in _CAPACITY:
         return number * _CAPACITY[unit], 'power'
     if unit in ('股', 'shares'):
@@ -66,7 +70,7 @@ _UNIT = (r'(?:thousand|millions?|billions?)(?:\s+(?:USD|CNY|RMB|EUR|GBP))?'
          r'|(?:USD|CNY|RMB|EUR|GBP)(?:\s+(?:thousand|millions?|billions?))?'
          r'|(?:十亿|千万|百万|亿|万)?(?:美元|元人民币|人民币|元)'
          r'|百分点|百分之|percent|％|%|GW|MW|kW|W|吉瓦|兆瓦|千瓦|瓦|shares|股'
-         r'|年|倍|个|项|次|人|家|条')
+         r'|年|倍|个百分点|个(?!百分点|月)|项|次|人|家|条')
 _QUANTITY = re.compile(r'(?<![A-Za-z0-9_.,+\-−])(?P<prefix>\$|USD\s+|CNY\s+|RMB\s+|百分之)?'
                        r'(?P<number>' + _NUM + r')\s*(?P<unit>' + _UNIT + r')?'
                        r'(?P<denom>\s*/\s*[\w]+|每[\w]+)?', re.I)
@@ -289,11 +293,12 @@ def brief_checks(store, version_id):
                         'status': 'not_checked' if not checked else 'partial' if checked < len(numbers) else 'checked_bindings',
                         'unmatched': [r for r in numbers if r['checked'] and not r['found']],
                         'skipped': [r for r in numbers if not r['checked']],
-                        # Numeric tokens the body actually carries vs the bound
-                        # set: with zero bindings this separates "no numbers to
-                        # check" from "numbers present, none ever bound" — the
-                        # silent-inactive case — and gives the matched-rate
-                        # denominator (matched / body_quantity_count).
+                        # Numeric tokens the body actually carries: with zero
+                        # bindings this separates "no numbers to check" from
+                        # "numbers present, none ever bound" — the silent-
+                        # inactive case.  A binary presence signal only: dates
+                        # and line references also count, so it is NOT a
+                        # matched-rate denominator.
                         'body_quantity_count': len(list(quantities(brief['markdown'])))},
             'export': export,
             'layout': layout,
