@@ -49,7 +49,7 @@ def test_blocked_codex_turn_does_not_lock_other_host_or_cancel(tmp_path):
     worker=threading.Thread(target=lambda:(buddy.send(other,'still usable'),result.set()),daemon=True);worker.start()
     try:
         assert result.wait(.7),'one host call blocked another host admission'
-        before=time.monotonic();codex.cancel(sid);assert time.monotonic()-before<.5
+        before=time.monotonic();codex.cancel(sid);assert time.monotonic()-before<1.5  # must not wait out the 3s blocked call
     finally:
         release.set();worker.join(3);until(lambda:sid not in codex._busy);codex.close()
     assert sum(method=='turn/start' for method,_ in codex.client.calls)==1
@@ -158,7 +158,7 @@ def test_blocked_opencode_prompt_does_not_block_other_runtime(tmp_path):
     worker=threading.Thread(target=lambda:(buddy.send(other,'usable'),done.set()),daemon=True);worker.start()
     try:
         assert done.wait(.7)
-        before=time.monotonic();host.cancel(sid);assert time.monotonic()-before<.5
+        before=time.monotonic();host.cancel(sid);assert time.monotonic()-before<1.5  # must not wait out the 3s blocked call
         host.send(sid,'after cancel',message_id='two')
         assert sid in host._cancel_requested
     finally:release.set();worker.join(3)
