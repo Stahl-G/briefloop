@@ -8,6 +8,7 @@ include scripts/build_frontend.mjs scripts/build_frontend_licenses.mjs scripts/t
 include tests/frontend_*.mjs tests/check_distribution.py
 recursive-include src/briefloop/static *
 recursive-include src/briefloop/skill_assets *.md
+recursive-include src/briefloop/prompt_assets *.md
 recursive-include src/briefloop/template_assets *
 recursive-include src/briefloop/workflow_assets *.json *.md
 prune workspaces

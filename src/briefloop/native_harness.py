@@ -6,8 +6,10 @@ the session lifecycle directly. Phase 1 accepts only restricted-review work —
 a runtime config without ``review_root`` is refused here, before any model
 call, instead of falling back to a wider permission.
 
-The reviewer prompt is a fixed engine-side contract; the per-task message stays
-the packet/schema instructions written by review.py, unchanged.
+The system prompt is BriefLoop's layered reviewer contract (agent_prompts); the
+engine appends the guide for the tools it registered. The per-task message is the
+review contract written by review.py for this backend. submit_review results are
+checked here with the same admission rules that later save the review.
 """
 import json
 import queue
@@ -184,7 +186,10 @@ class NativeHarness:
         if existing is not None and process is not None and existing['process'] is process:
             return existing
         previous = (existing or {}).get('session_file') or self.chat.session(sid).get('thread_id')
+        from .agent_prompts import system_prompt
+        prompt = system_prompt('reviewer', 'background')
         params = {
+            'system_prompt': prompt['text'],
             'session_id': sid,
             'role': 'reviewer',
             'packet_root': config['review_root'],
@@ -208,6 +213,10 @@ class NativeHarness:
             'session_file': result.get('session_file'),
             'resumed': bool(result.get('resumed')),
             'model': result.get('model'),
+            'prompt_version': prompt['version'],
+            'system_prompt_sha256': result.get('system_prompt_sha256'),
+            'image_input': result.get('image_input'),
+            'tools': result.get('tools'),
         })
         return result
 
@@ -244,7 +253,8 @@ class NativeHarness:
                 raise RuntimeError('内置引擎会话创建失败：' + str(exc)) from exc
             self.engine.call('turn_start', {
                 'session_id': sid, 'execution_id': execution, 'prompt': text,
-                'expect_json': True}, timeout=15)
+                'expect_json': True, 'require_submit': True,
+                'images': self._visual_inputs(config)}, timeout=30)
             self.chat.event(sid, 'runtime/admission',
                             {'execution_id': execution, 'status': 'accepted'})
             self.chat.patch_message(mid, status='delivered')
@@ -303,6 +313,8 @@ class NativeHarness:
                                  'outputTokens': usage.get('output'),
                                  'cachedInputTokens': usage.get('cacheRead')},
                         'raw': usage}})
+                elif kind == 'submit':
+                    self._admit(sid, config, event)
                 elif kind == 'status':
                     self.chat.event(sid, 'runtime/status',
                                     {'turnId': mid, 'message': event.get('message', '')})
@@ -347,6 +359,34 @@ class NativeHarness:
                         self._schedule(sid)
                 except KeyError:
                     pass
+
+    def _visual_inputs(self, config):
+        # Packet paths and hashes only; the engine re-reads and re-hashes the
+        # bytes inside the packet and decides whether the model can take them.
+        if not config.get('review_id'):
+            return []
+        from .review import visual_input_files
+        return [{k: item[k] for k in ('id', 'kind', 'title', 'file', 'mime', 'sha256') if k in item}
+                for item in visual_input_files(self.store, config['review_id'], config['review_root'])
+                if item.get('bytes') is not None]
+
+    def _admit(self, sid, config, event):
+        error = None
+        if config.get('review_id'):
+            from .review import check_review
+            try:
+                check_review(self.store, config['review_id'], event.get('review'))
+            except Exception as exc:
+                error = str(exc)[:4000]
+        self.chat.event(sid, 'runtime/status', {
+            'turnId': self.chat.session(sid).get('turn_id'),
+            'message': '审阅结果提交校验通过' if error is None else '审阅结果提交未通过校验，已退回模型修正'})
+        try:
+            self.engine.call('submit_result', {
+                'session_id': sid, 'request_id': event.get('request_id'),
+                'ok': error is None, 'error': error}, timeout=15)
+        except Exception:
+            pass  # The engine times the submission out and tells the model.
 
     def cancel(self, session_id):
         with self._lock:

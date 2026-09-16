@@ -46,5 +46,5 @@ where = ["src"]
 testpaths = ["tests"]
 
 [tool.setuptools.package-data]
-briefloop = ["static/*", "skill_assets/*/*.md", "template_assets/*", "workflow_assets/*/*.json", "workflow_assets/*/*.md", "workflow_assets/*/methods/*.md", "connectors/*.md"]
+briefloop = ["static/*", "skill_assets/*/*.md", "template_assets/*", "workflow_assets/*/*.json", "workflow_assets/*/*.md", "workflow_assets/*/methods/*.md", "connectors/*.md", "prompt_assets/*.md"]
 wikiskill = ["**/*"]

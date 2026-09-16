@@ -19,6 +19,8 @@ def check(archive: Path) -> None:
             'briefloop/static/native-engine.mjs': 'src/briefloop/static/native-engine.mjs',
             'briefloop/static/native-engine-licenses.txt': 'src/briefloop/static/native-engine-licenses.txt',
             'briefloop/static/native-engine-models.json': 'src/briefloop/static/native-engine-models.json',
+            **{f'briefloop/prompt_assets/{name}': f'src/briefloop/prompt_assets/{name}'
+               for name in ('core.zh.md', 'role.reviewer.zh.md', 'mode.background.zh.md')},
             'wikiskill/_licenses/LICENSE': 'src/wikiskill/_licenses/LICENSE',
             'wikiskill/_licenses/NOTICE.md': 'src/wikiskill/_licenses/NOTICE.md',
         }
@@ -38,6 +40,8 @@ def check(archive: Path) -> None:
                  'src/briefloop/static/runtime-bridge.LICENSE.txt', 'src/briefloop/static/runtime-bridge.NOTICE.txt',
                  'src/briefloop/static/native-engine.mjs', 'src/briefloop/static/native-engine-licenses.txt',
                  'src/briefloop/static/native-engine-models.json',
+                 'src/briefloop/prompt_assets/core.zh.md', 'src/briefloop/prompt_assets/role.reviewer.zh.md',
+                 'src/briefloop/prompt_assets/mode.background.zh.md',
                  'src/wikiskill/_licenses/LICENSE', 'src/wikiskill/_licenses/NOTICE.md']
         expected = {name: name for name in names}
     for asset in [*(ROOT / 'src/briefloop/workflow_assets').rglob('*'), *(ROOT / 'src/briefloop/static').glob('runtime-*.svg'), *(ROOT / 'src/briefloop/static').glob('runtime-*.png')]:

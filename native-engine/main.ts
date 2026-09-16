@@ -4,12 +4,16 @@
 //
 // Phase 1 scope: restricted reviewer sessions only. A session has no built-in
 // tools (no read/bash/edit/write), no extensions, no context-file discovery.
-// Its only senses are packet_list / packet_read, which resolve strictly inside
-// the generated review packet. Confinement is enforced in this process by our
-// own tool proxy — not by pi's read tool (which accepts absolute paths) and
-// not by prompt wording.
+// Its tools (packet-tools.ts) resolve strictly inside the generated review
+// packet. Confinement is enforced in this process by our own tools — not by
+// pi's read tool (which accepts absolute paths) and not by prompt wording.
+//
+// BriefLoop supplies the system prompt (shared baseline + role + mode); the
+// engine appends the guide for the tools it really registered, because pi's
+// custom-prompt path does not carry tool snippets.
+import { createHash } from "node:crypto";
 import { createInterface } from "node:readline";
-import { existsSync, mkdirSync, realpathSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,28 +26,17 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { fixedLoader } from "./loader.js";
-import { packetTools } from "./packet-tools.js";
+import { IMAGE_MIME, inside, packetTools, toolGuide } from "./packet-tools.js";
 
 const PI_VERSION = "0.85.1";
-const ENGINE_VERSION = "briefloop-native/1";
+const ENGINE_VERSION = "briefloop-native/2";
+const REVIEWER_TOOLS = ["packet_list", "packet_read", "packet_grep", "claim_trace", "calc", "submit_review"];
 
-const REVIEWER_SYSTEM_PROMPT = [
-  "You are the BriefLoop Reviewer, an independent read-only auditor of a frozen evidence packet.",
-  "",
-  "Authority:",
-  "- You can ONLY inspect this packet, through the packet_list and packet_read tools. Nothing else exists for you: no filesystem, no shell, no network, no search, no delegation, no writes.",
-  "- The packet is the sole authority. Treat general knowledge as auxiliary explanation, never as evidence.",
-  "",
-  "Contract:",
-  "- List the packet first; then read what you need: target.json (the report under review), sources/ (evidence excerpts), claims/ and history/ when present.",
-  "- Judge the packet's own gate criteria: source timing, material conflicts, source statements vs claims, reconciliation, unchecked items, packet identity.",
-  "- Reply with ONE JSON object only (no markdown fences, no prose around it), matching the schema the task message gives you. Unknown/unsupported stays unknown — do not guess.",
-].join("\n");
-
-const REPAIR_PROMPT = "Reply with ONLY the JSON object now. No markdown fences, no prose before or after.";
-const STALL_PROMPT =
-  "The previous model request stalled and was cancelled by the runtime. The packet tool results above are still valid; " +
-  "continue from where you left off.";
+const REPAIR_PROMPT = "只回复这个 JSON 对象本身，不加 Markdown 代码块，前后不加说明。";
+const SUBMIT_PROMPT = "你还没有通过 submit_review 提交审阅结果。请基于已完成的核查调用 submit_review 提交完整结果对象；未通过时按返回的错误修正后再次提交。";
+const STALL_PROMPT = "上一次模型请求卡住，已被运行器取消。上面的工具结果仍然有效，从中断处继续。";
+const SUBMIT_REPAIRS = 2;
+const ADMISSION_TIMEOUT_MS = 120_000;
 const DEFAULT_IDLE_MS = 240_000;
 // A stall usually is one dead provider connection (or a laptop that slept
 // mid-request). Re-asking keeps every tool result already in the session.
@@ -67,6 +60,10 @@ interface SessionEntry {
   toolCalls: number;
   maxToolCalls: number;
   finalText: string;
+  // Set by submit_review after the result passed schema and runner admission.
+  submitted: string | undefined;
+  pendingAdmission: Map<string, (error: string | undefined) => void>;
+  admissionSeq: number;
   turnError: string;
   usage: unknown;
   idleMs: number;
@@ -264,6 +261,53 @@ function wireSessionEvents(clientSid: string, entry: SessionEntry): void {
   });
 }
 
+function acceptsImages(model: unknown): boolean {
+  const input = (model as { input?: string[] } | undefined)?.input;
+  return Array.isArray(input) && input.includes("image");
+}
+
+// The runner (BriefLoop's Python side) owns review admission: IDs, version,
+// fingerprint and coverage rules live there. submit_review asks it over the
+// wire and waits, so the model sees the exact rejection while it can still fix it.
+function requestAdmission(clientSid: string, entry: SessionEntry | undefined, review: Record<string, unknown>): Promise<string | undefined> {
+  if (!entry || !entry.execId) return Promise.resolve("没有正在进行的审阅执行，无法提交");
+  const requestId = `adm-${++entry.admissionSeq}`;
+  return new Promise((resolveAdmission) => {
+    const timer = setTimeout(() => {
+      entry.pendingAdmission.delete(requestId);
+      resolveAdmission("运行器未在规定时间内完成接纳检查，请稍后重新提交");
+    }, ADMISSION_TIMEOUT_MS);
+    entry.pendingAdmission.set(requestId, (error) => { clearTimeout(timer); resolveAdmission(error); });
+    emit(clientSid, entry.execId, "submit", { request_id: requestId, review });
+  });
+}
+
+// Report figures chosen by the runner travel with the first message when the
+// model accepts images. Files are re-read inside the packet and re-hashed here;
+// the wire carries only packet paths.
+function visualInputs(entry: SessionEntry, packetRoot: string, specs: unknown): { images: Array<{ type: "image"; data: string; mimeType: string }>; note: string } {
+  const list = Array.isArray(specs) ? specs as Array<Record<string, unknown>> : [];
+  if (list.length === 0) return { images: [], note: "" };
+  const supported = acceptsImages(entry.session.model);
+  const images: Array<{ type: "image"; data: string; mimeType: string }> = [];
+  const manifest = list.map((spec) => {
+    const file = String(spec.file ?? "");
+    const record: Record<string, unknown> = { id: spec.id, kind: spec.kind, title: spec.title, file };
+    const mime = IMAGE_MIME[file.slice(file.lastIndexOf(".")).toLowerCase()];
+    if (!supported) return { ...record, delivery: "not_sent_model_text_only" };
+    if (!mime) return { ...record, delivery: "unavailable" };
+    const bytes = readFileSync(inside(packetRoot, file));
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    if (spec.sha256 && spec.sha256 !== digest) throw new Error(`visual input changed before sending: ${file}`);
+    images.push({ type: "image", data: bytes.toString("base64"), mimeType: mime });
+    return { ...record, delivery: "attached", order: images.length };
+  });
+  const guidance = supported
+    ? "标记 attached 的图片已按 order 顺序随本条消息提交，请实际查看轴、图注、单位和可见内容。"
+    : "当前模型不接收图像输入，这些图没有发送；不能声称已目视核验，可用图表数据文件核对数值，并把目视核验列为未核验事项。";
+  return { images, note: `\n\n本次实际视觉输入（仅资料，不改变核查职责）：\n${JSON.stringify(manifest)}\n${guidance}` };
+}
+
 async function sessionCreate(id: string | undefined, p: Record<string, unknown>): Promise<void> {
   const clientSid = String(p.session_id ?? "");
   if (!clientSid) throw new Error("session_id required");
@@ -306,7 +350,17 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     compaction: { enabled: false },
   });
 
-  const tools = packetTools(packetRoot);
+  const basePrompt = String(p.system_prompt ?? "").trim();
+  if (!basePrompt) throw new Error("system_prompt required: BriefLoop owns the reviewer contract");
+
+  // The entry does not exist yet when tools are built; hooks resolve it lazily.
+  let entryRef: SessionEntry | undefined;
+  let modelRef = model;
+  const tools = packetTools(packetRoot, {
+    admit: (review) => requestAdmission(clientSid, entryRef, review),
+    accept: (review) => { if (entryRef) entryRef.submitted = JSON.stringify(review); },
+  }, () => acceptsImages(modelRef));
+  const systemPrompt = `${basePrompt}\n\n${toolGuide(tools.map((t) => t.name))}`;
   const { session } = await createAgentSession({
     cwd,
     modelRuntime: runtime,
@@ -317,12 +371,12 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     // built-ins (read/bash/edit/write) off.
     tools: tools.map((t) => t.name),
     customTools: tools,
-    resourceLoader: fixedLoader(REVIEWER_SYSTEM_PROMPT),
+    resourceLoader: fixedLoader(systemPrompt),
     sessionManager,
     settingsManager,
   });
   const active = session.getActiveToolNames().sort();
-  if (active.join(",") !== "packet_list,packet_read") {
+  if (active.join(",") !== [...REVIEWER_TOOLS].sort().join(",")) {
     session.dispose();
     throw new Error(`reviewer tool confinement check failed: active tools are ${JSON.stringify(active)}`);
   }
@@ -338,17 +392,25 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     stalled: false,
     budgetExceeded: false,
     toolCalls: 0,
-    maxToolCalls: Math.max(1, Math.min(200, Number(p.max_tool_calls) || 60)),
+    maxToolCalls: Math.max(1, Math.min(300, Number(p.max_tool_calls) || 150)),
     finalText: "",
+    submitted: undefined,
+    pendingAdmission: new Map(),
+    admissionSeq: 0,
     turnError: "",
     usage: undefined,
     idleMs: DEFAULT_IDLE_MS,
     idleTimer: undefined,
     unsubscribe: () => {},
   };
+  entryRef = entry;
+  modelRef = session.model ?? model;
   wireSessionEvents(clientSid, entry);
   sessions.set(clientSid, entry);
   reply(id, {
+    // Hash of what pi actually assembled, so a run records the prompt it used.
+    system_prompt_sha256: createHash("sha256").update(session.systemPrompt).digest("hex"),
+    image_input: acceptsImages(modelRef),
     session_id: clientSid,
     session_file: entry.sessionFile,
     resumed: resuming,
@@ -368,6 +430,8 @@ async function turnStart(id: string | undefined, p: Record<string, unknown>): Pr
   if (!execId || !prompt) throw new Error("execution_id and prompt required");
 
   const expectJson = p.expect_json === true;
+  const requireSubmit = p.require_submit === true;
+  const visual = visualInputs(entry, entry.cwd, p.images);
   const idle = Number(p.idle_timeout_s);
   entry.idleMs = Number.isFinite(idle) && idle > 0 ? Math.min(1800, idle) * 1000 : DEFAULT_IDLE_MS;
   entry.execId = execId;
@@ -375,12 +439,14 @@ async function turnStart(id: string | undefined, p: Record<string, unknown>): Pr
   entry.budgetExceeded = false;
   entry.toolCalls = 0;
   entry.usage = undefined;
-  reply(id, { started: true });
+  entry.submitted = undefined;
+  reply(id, { started: true, images_attached: visual.images.length });
 
   let status = "completed";
   let error = "";
   let finalJson: string | undefined;
-  let message = prompt;
+  let message = prompt + visual.note;
+  let images = visual.images;
   let stalls = 0;
   let repairs = 0;
   try {
@@ -391,9 +457,13 @@ async function turnStart(id: string | undefined, p: Record<string, unknown>): Pr
       entry.finalText = "";
       // Armed before the request: the wait for the provider's first byte counts.
       armIdle(sid, entry);
-      await entry.session.prompt(message);
+      await entry.session.prompt(message, images.length ? { images } : undefined);
+      images = [];
       disarmIdle(entry);
       if (entry.cancelled) { status = "cancelled"; break; }
+      // An admitted submission settles the run even if the model's wrap-up
+      // request afterwards stalled or failed.
+      if (entry.submitted !== undefined) { finalJson = entry.submitted; break; }
       if (entry.budgetExceeded) {
         status = "failed";
         error = `tool-call budget exhausted (${entry.maxToolCalls}); the model did not converge`;
@@ -411,6 +481,19 @@ async function turnStart(id: string | undefined, p: Record<string, unknown>): Pr
         break;
       }
       if (entry.turnError) { status = "failed"; error = entry.turnError; break; }
+      if (requireSubmit) {
+        if (repairs < SUBMIT_REPAIRS) {
+          repairs += 1;
+          emit(sid, execId, "status", { message: `result not submitted; asking for submit_review (${repairs}/${SUBMIT_REPAIRS})` });
+          message = SUBMIT_PROMPT;
+          continue;
+        }
+        // Last resort: a bare JSON reply still reaches runner admission.
+        const parsed = extractJson(entry.finalText);
+        if (parsed !== null && typeof parsed === "object") finalJson = JSON.stringify(parsed);
+        else { status = "failed"; error = "model finished without submitting a review result"; }
+        break;
+      }
       if (expectJson) {
         const parsed = extractJson(entry.finalText);
         if (parsed !== null && typeof parsed === "object") {
@@ -432,6 +515,8 @@ async function turnStart(id: string | undefined, p: Record<string, unknown>): Pr
     error = err instanceof Error ? err.message : String(err);
   } finally {
     disarmIdle(entry);
+    for (const [, settle] of entry.pendingAdmission) settle("审阅执行已结束");
+    entry.pendingAdmission.clear();
   }
   emit(sid, execId, "end", {
     status,
@@ -508,6 +593,16 @@ async function dispatch(req: WireRequest): Promise<void> {
         break;
       }
       case "turn_start": await turnStart(req.id, req.params ?? {}); break;
+      case "submit_result": {
+        const entry = sessions.get(String(req.params?.session_id ?? ""));
+        if (!entry) throw new Error("unknown session_id");
+        const settle = entry.pendingAdmission.get(String(req.params?.request_id ?? ""));
+        if (!settle) throw new Error("no pending submission with that request_id");
+        entry.pendingAdmission.delete(String(req.params?.request_id));
+        settle(req.params?.ok === true ? undefined : String(req.params?.error || "接纳检查未通过"));
+        reply(req.id, { settled: true });
+        break;
+      }
       case "turn_abort": await turnAbort(req.id, req.params ?? {}); break;
       case "session_close": await sessionClose(req.id, req.params ?? {}); break;
       case "shutdown":

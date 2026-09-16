@@ -11,8 +11,16 @@
           "api": "openai-completions",
           "provider": "opencode-go",
           "reasoning": true,
-          "input": ["text"],
-          "cost": { "input": 0.22, "output": 0.66, "cacheRead": 0.007, "cacheWrite": 0 },
+          "input": [
+            "text",
+            "image"
+          ],
+          "cost": {
+            "input": 0.22,
+            "output": 0.66,
+            "cacheRead": 0.007,
+            "cacheWrite": 0
+          },
           "compat": {
             "supportsStore": false,
             "supportsDeveloperRole": false,
@@ -30,7 +38,25 @@
             "max": "max"
           }
         }
-      ]
+      ],
+      "modelOverrides": {
+        "deepseek-v4-flash": {
+          "input": [
+            "text",
+            "image"
+          ]
+        }
+      }
+    },
+    "deepseek": {
+      "modelOverrides": {
+        "deepseek-v4-flash": {
+          "input": [
+            "text",
+            "image"
+          ]
+        }
+      }
     }
   }
 }

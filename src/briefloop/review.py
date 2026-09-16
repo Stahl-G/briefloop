@@ -558,12 +558,18 @@ def validate_clause_checks(spec, clause_checks, status):
                          + ','.join(sorted(set(clauses) - set(supplied))))
 
 
-def accept_review(store,review_id,value):
+def check_review(store,review_id,value):
+    """Run every admission check without saving; submit tools use it mid-run."""
+    return accept_review(store,review_id,value,dry_run=True)
+
+
+def accept_review(store,review_id,value,dry_run=False):
     result=ReviewOutput.model_validate(value);review=get_review(store,review_id)
     if result.version_id!=review['version_id'] or result.fingerprint!=review['fingerprint']:
         raise ValueError('Reviewer 输出未绑定本次正文与核查包')
     if review['result']:
         if ReviewOutput.model_validate(review['result']).model_dump()!=result.model_dump():raise ValueError('已保存Review不可覆盖，请建立新审阅')
+        if dry_run:return result
         if result.assessment is not None:store.validate_assessment(result.version_id,result.assessment.model_dump())
         with store.tx() as c:_save_assessment(c,review_id,result)
         from .review_learning import record_verified_corrections
@@ -626,6 +632,7 @@ def accept_review(store,review_id,value):
             except ValueError:raise ValueError('冲突复核引用了不存在的证据片段：'+span_id) from None
     if result.status=='complete' and set(conflict_ids)!=allowed_conflicts:raise ValueError('完整审阅遗漏冲突复核')
     if result.assessment is not None:store.validate_assessment(result.version_id,result.assessment.model_dump())
+    if dry_run:return result
     with store.tx() as c:
         existing=c.execute('SELECT result FROM reviews WHERE id=?',(review_id,)).fetchone()
         serialized=dump(result.model_dump())
@@ -771,11 +778,23 @@ def run_review(store,runtime,job,version_id,folder):
         '对requirements.requirement_items逐项给requirement_checks：requirement_id、status(covered/manual/partial/missing)、reason。manual只能用于用户原要求中mode=manual的项目，不得自行降低必答要求。')
     from .report_time import instructions as time_instructions
     temporal_note=time_instructions(target.get('requirements_input',{}).get('time_context'))
+    # The review contract is shared; how to reach the packet and hand back the
+    # result is host-specific and must describe the tools this backend really has.
+    if json.loads(job['payload']).get('agent_backend')=='briefloop-native':
+        role_line=''
+        host_read=('核查包就是本会话可见的全部资料，路径一律相对核查包根目录（如 target.json、sources/<id>.view.json、history/responses.json）。'
+                   '先看target.json的本轮要求、正文和claim_evidence关联；再核对具体原文与图表。本次报告图与已选证据视觉的实际交付情况见本条消息末尾的视觉输入说明，visual-inputs.json记录它们与固定文件的对应关系；没有实际看到的图不能声称已目视核验，可以用图表数据文件核对数值。必要时读history中的本报告历史。')
+        host_tools=''
+        output_line='完成后调用 submit_review 提交结果对象（结构见 output.schema.json）；提交未通过时按返回的错误修正后再次提交，不要把 JSON 写进回复正文。'
+    else:
+        role_line='你是独立只读 Reviewer，核对已保存产物与实际依据，不重新研究或运行计算。\n'
+        host_read=f"只读取 {folder/'packet'/'index.json'} 所索引的文件。"+'JSON已分行；遇到单行截断，target-long-text.json提供长字段分块、sources/*.view.json提供原文行与分块，按顺序无分隔拼接，不把截断当缺失。先看target.json的本轮要求、正文和claim_evidence关联；核对具体原文与图表；本次报告图和已选证据视觉会作为原生图片附件交给当前选定模型，visual-inputs.json记录它们与固定文件的对应关系。先实际检查这些附件的轴、图注、单位和可见内容，附件不可读时用原生read读取同一packet文件；仍失败则说明本次失败。必要时读history中的本报告历史。绝不查询宿主或其他工作区数据库。'
+        host_tools='只有read工具可用。禁止bash、执行脚本、修改文件、联网、委派。'
+        output_line=f'最终回复一个符合 {schema} 的 JSON 对象，不加Markdown或说明，不写文件；运行器保存结果。'
     prompt=f'''{temporal_note}
 核对正文每条当期动态的事件与发布日期，不能只核对作者提交的 temporal_claims；缺少日期记录或原文日期证据写 unverified，旧消息冒充当期用 finding 指出。
-你是独立只读 Reviewer，核对已保存产物与实际依据，不重新研究或运行计算。
-只读取 {folder/'packet'/'index.json'} 所索引的文件。JSON已分行；遇到单行截断，target-long-text.json提供长字段分块、sources/*.view.json提供原文行与分块，按顺序无分隔拼接，不把截断当缺失。先看target.json的本轮要求、正文和claim_evidence关联；核对具体原文与图表；本次报告图和已选证据视觉会作为原生图片附件交给当前选定模型，visual-inputs.json记录它们与固定文件的对应关系。先实际检查这些附件的轴、图注、单位和可见内容，附件不可读时用原生read读取同一packet文件；仍失败则说明本次失败。必要时读history中的本报告历史。绝不查询宿主或其他工作区数据库。
-只有read工具可用。禁止bash、执行脚本、修改文件、联网、委派。history/reviews.json提供过去实际审阅；只复用已完成且依赖未变的核查，历史的未核验/图像能力失败必须在本次实际输入上重新检查，不能据此判断当前模型能力。重点核对本次修改与处理说明，不重复扩大研究。发现需补搜/重算/改稿的问题交主Agent，不能自己执行。
+{role_line}{host_read}
+{host_tools}history/reviews.json提供过去实际审阅；只复用已完成且依赖未变的核查，历史的未核验/图像能力失败必须在本次实际输入上重新检查，不能据此判断当前模型能力。重点核对本次修改与处理说明，不重复扩大研究。发现需补搜/重算/改稿的问题交主Agent，不能自己执行。
 检查所有重要事实与判断是否有依据，包括作者未登记的主张；逐项核查已有claim并报告支持范围、反证、证据不足或未知。图像不可读、执行记录缺失和审阅失败不是通过。对每个遗漏、错误给正文片段及依据。
 企业报告的核查详情留本结果，不要求正文堆免责声明；准确日期/单位/计划性质应保留。缺口披露不抵消研究覆盖与读者要求。不要使用“无发现”代替完整性检查。
 核对target.json中的source_updates和source_timing，区分统计/事件有效期、披露/可得时间、抓取时间与本轮截止时间。更正或新期间的分类声明仍需对照旧新原件，不把proposed当已确认。
@@ -786,7 +805,7 @@ claim_checks可以使用target.evidence.bindings、premises闭包以及candidate
 对history/responses.json每条当前版本的作者回应，必须在response_checks单独给response_id、decision(resolved/dismissed_with_evidence/unresolved)、reason。findings只放新发现，不要因已修复问题从findings消失就省略response_checks。作者说已修复不算解决，须对照修订和证据；图像不可读等遗留问题应明确unresolved，不重复创建同一发现。
 {requirement_instruction}
 未核验事项用unchecked_items记录description及importance(core/supporting)；普通表达建议使用minor finding，不冒充核心未核验。
-最终回复一个符合 {schema} 的 JSON 对象，不加Markdown或说明，不写文件；运行器保存结果。
+{output_line}
 version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief_hash={store.one('briefs',version_id)['hash']}。
 四维评分使用既有标准，不用高分抵消重大错误。review.status表示是否完成审阅，claim_checks.status表示依据结论。coverage_scan_complete仅在确实检查了正文重要主张遗漏后设true；未核验项写unchecked。
 字段边界（不要混用两套 finding）：顶层 overall/四维分数只属于 assessment；assessment 必须给出，不能省略。assessment.findings 用 dimension/severity/description/report_quote/requirement/source_id/locator/evidence/suggestion。顶层 findings 是核查发现，用 kind/severity/description/evidence，可带 claim_ids/block_ids/requirement_ids（条款可用 requirement_ids 关联，不要写 requirement 或 source_id）。

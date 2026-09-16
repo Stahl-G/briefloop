@@ -137,7 +137,14 @@ def test_real_engine_session_survives_bridge_idle_retirement(tmp_path, monkeypat
             self.send_response(200)
             self.send_header('content-type', 'text/event-stream')
             self.end_headers()
-            for delta, finish in (({'role': 'assistant', 'content': json.dumps({'turn': len(requests)})}, None), ({}, 'stop')):
+            # A fresh user turn is answered by submit_review; the tool result by a short reply.
+            if body['messages'][-1]['role'] == 'tool':
+                steps = (({'role': 'assistant', 'content': '已提交'}, None), ({}, 'stop'))
+            else:
+                call = {'index': 0, 'id': f'call_{len(requests)}', 'type': 'function',
+                        'function': {'name': 'submit_review', 'arguments': json.dumps({'review': {'turn': len(requests)}})}}
+                steps = (({'role': 'assistant', 'tool_calls': [call]}, None), ({}, 'tool_calls'))
+            for delta, finish in steps:
                 chunk = {'id': 'c', 'object': 'chat.completion.chunk', 'created': 0, 'model': 'm1',
                          'choices': [{'index': 0, 'delta': delta, 'finish_reason': finish}]}
                 self.wfile.write(b'data: ' + json.dumps(chunk).encode() + b'\n\n')
@@ -156,6 +163,7 @@ def test_real_engine_session_survives_bridge_idle_retirement(tmp_path, monkeypat
     packet = tmp_path / 'packet'
     packet.mkdir()
     (packet / 'target.json').write_text('{}')
+    (packet / 'output.schema.json').write_text('{"type": "object"}')
     home = tmp_path / 'home'
     home.mkdir()
     import briefloop.runtime_bridge as runtime_bridge
@@ -175,8 +183,15 @@ def test_real_engine_session_survives_bridge_idle_retirement(tmp_path, monkeypat
         assert engine.process is None, 'the bridge retires the idle engine'
         snap = _wait_status(h, sid, h.send(sid, 'second')['id'], 'completed', seconds=30)
         assert not [e for e in snap['events'] if e['kind'] == 'error']
-        assert any(m['role'] == 'assistant' and '"turn": 1' in str(m['content']) for m in requests[1]['messages']), \
-            'the resumed session keeps the first reply'
+        assert h.snapshot(sid)['messages'][1]['text'] == '{"turn":1}', 'the admitted submission is the turn result'
+        # An admitted submission ends the turn without another model request.
+        assert [[m['role'] for m in r['messages']] for r in requests] == [
+            ['system', 'user'], ['system', 'user', 'assistant', 'tool', 'user']]
+        second = requests[1]
+        assert second['messages'][2]['tool_calls'][0]['function']['name'] == 'submit_review', \
+            'the resumed session keeps the first submission'
+        system = second['messages'][0]
+        assert system['role'] in ('system', 'developer') and '独立只读 Reviewer' in str(system['content'])
     finally:
         h.close()
         server.shutdown()
