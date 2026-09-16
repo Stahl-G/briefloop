@@ -184,12 +184,34 @@ def test_layout_findings_are_reported_but_never_blocking(tmp_path):
 def test_quantities_separates_numeric_from_prose_only_bodies():
     """Regression seam for the silent-inactive defect: the detector that
     separates "body has numbers" from "body has none" must see bare years
-    and percentages — the OfficeQA shapes that escaped the old trigger."""
+    and percentages — the OfficeQA shapes that escaped the old trigger.
+    Assertions land on DIMENSIONS, not just counts: a bare year must come
+    out as a year, a multiplier as a ratio."""
     from briefloop.delivery_checks import quantities
-    numeric = '峰值出现在 1990 年，占比 34.2%，约 2.414 倍。'
+    numeric = '编号 42，峰值出现在 1990 年，占比 34.2%，约 2.414 倍。'
     prose = '本段不包含可检出的数值表述。'
-    assert len(list(quantities(numeric))) >= 3
+    found = list(quantities(numeric))
+    dims = {dim for _, _, (_, dim) in found}
+    assert 'year' in dims and 'ratio' in dims and 'percent' in dims and 'scalar' in dims
+    assert len(found) >= 4
     assert len(list(quantities(prose))) == 0
+
+
+def test_dimensionless_binding_requires_semantic_specificity(tmp_path):
+    """A scalar binding without label/entity matches any equal bare number
+    in an excerpt (page numbers, unrelated years) — it must be skipped as
+    under-specified, not silently matched."""
+    store = Store(tmp_path)
+    source = store.add_source('disclosure', 'Fiscal year 1990 total: 1990' + chr(10) + 'Page 1990 footer.')
+    bare = dict(label='', value='1990', unit='', entity='', period='',
+                source_id=source['id'], locator='line 1', source_excerpt='Fiscal year 1990 total: 1990',
+                report_quote='总数是 1990。', number_text='1990')
+    rows = check_numbers('总数是 1990。', [bare], store)
+    assert rows[0]['checked'] is False and '特异性不足' in rows[0]['reason']
+    specified = dict(bare, label='财年', entity='Treasury', period='FY1990')
+    rows2 = check_numbers('总数是 1990。', [specified], store)
+    assert rows2[0]['checked'] is True and rows2[0]['found'] is True
+    assert rows2[0].get('dimensionless') is True and '无量纲' in rows2[0]['reason']
 
 
 def test_release_flags_numbers_unbound_and_numbers_absent():

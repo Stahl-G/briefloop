@@ -206,6 +206,20 @@ def decision(snapshot, review_result, findings, protocol='legacy', *, clauses=No
         else:
             notices.append({'code': 'numbers_absent',
                             'message': '正文未检出数值，本稿无数值核验'})
+    figure_error = (deterministic.get('export') or {}).get('figure_error')
+    if figure_error:
+        notices.append({'code': 'figure_registration_error',
+                        'message': '图表登记校验未完成：' + str(figure_error)})
+    layout = deterministic.get('layout') or {}
+    for key, label in (('heading_jumps', '标题层级跳跃'), ('tables_without_header', '表格缺少表头'),
+                       ('empty_headings', '空标题')):
+        items = layout.get(key) or []
+        if items:
+            notices.append({'code': 'layout_' + key, 'count': len(items),
+                            'message': f'{label} {len(items)} 处'})
+    if deterministic.get('assessment_overall') is not None:
+        notices.append({'code': 'assessment_overall',
+                        'message': '上一轮评价总评：' + str(deterministic['assessment_overall'])})
     for source_id in deterministic.get('broken_refs', []):
         issue('broken_reference', '正文引用了不存在的来源：' + str(source_id), source_id=source_id)
     return {'eligible': not blockers, 'blockers': blockers, 'notices': notices}

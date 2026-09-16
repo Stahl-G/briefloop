@@ -65,23 +65,11 @@ _NUM = r'[+\-−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:[eE][+\-]?\d+)?'
 _UNIT = (r'(?:thousand|millions?|billions?)(?:\s+(?:USD|CNY|RMB|EUR|GBP))?'
          r'|(?:USD|CNY|RMB|EUR|GBP)(?:\s+(?:thousand|millions?|billions?))?'
          r'|(?:十亿|千万|百万|亿|万)?(?:美元|元人民币|人民币|元)'
-         r'|百分点|百分之|percent|％|%|GW|MW|kW|W|吉瓦|兆瓦|千瓦|瓦|shares|股')
+         r'|百分点|百分之|percent|％|%|GW|MW|kW|W|吉瓦|兆瓦|千瓦|瓦|shares|股'
+         r'|年|倍|个|项|次|人|家|条')
 _QUANTITY = re.compile(r'(?<![A-Za-z0-9_.,+\-−])(?P<prefix>\$|USD\s+|CNY\s+|RMB\s+|百分之)?'
                        r'(?P<number>' + _NUM + r')\s*(?P<unit>' + _UNIT + r')?'
                        r'(?P<denom>\s*/\s*[\w]+|每[\w]+)?', re.I)
-
-
-_NUMERIC_TOKEN = re.compile(r'(?<![A-Za-z0-9_.])\d+(?:[.,]\d+)*(?![A-Za-z0-9_])')
-
-
-def _numeric_token_count(text):
-    """Presence of numeric tokens in a body, independent of unit support.
-
-    ``quantities`` only yields shapes ``normalized`` supports, so a bare
-    ``1990`` or ``2.414 倍`` written in an unsupported era would be
-    invisible there too — exactly the blind spot this counter exposes.
-    """
-    return len(_NUMERIC_TOKEN.findall(text or ''))
 
 
 def quantities(text):
@@ -165,6 +153,14 @@ def check_numbers(markdown, bindings, store=None, allowed_sources=None):
         if expected is None:
             row['reason'] = '单位或数值不支持，未检查'
             continue
+        # A dimensionless scalar carries no unit specificity: any identical
+        # bare number in the excerpt (a page number, an unrelated year)
+        # satisfies the match.  Push the specificity into semantic fields.
+        if expected[1] == 'scalar':
+            row['dimensionless'] = True
+            if not (item.get('label') and (item.get('entity') or item.get('period'))):
+                row['reason'] = '裸数值绑定缺少 label 与 entity/period，特异性不足，未检查'
+                continue
         quote, token = item.get('report_quote', ''), item.get('number_text', '')
         if not quote or not token or markdown.count(quote) != 1 or quote.count(token) != 1:
             row['reason'] = '正文定位缺失、重复或已改动，需重新绑定'
@@ -203,7 +199,10 @@ def check_numbers(markdown, bindings, store=None, allowed_sources=None):
             continue
         row['checked'] = True
         row['found'] = candidates[0] == expected
-        row['reason'] = '绑定数值匹配，含义仍待评价' if row['found'] else '绑定正文数值与原始值不一致'
+        if row['found'] and row.get('dimensionless'):
+            row['reason'] = '裸数值匹配（无量纲，仅证数值存在），归属与含义仍待评价'
+        else:
+            row['reason'] = '绑定数值匹配，含义仍待评价' if row['found'] else '绑定正文数值与原始值不一致'
     return results
 
 
@@ -295,7 +294,7 @@ def brief_checks(store, version_id):
                         # check" from "numbers present, none ever bound" — the
                         # silent-inactive case — and gives the matched-rate
                         # denominator (matched / body_quantity_count).
-                        'body_quantity_count': _numeric_token_count(brief['markdown'])},
+                        'body_quantity_count': len(list(quantities(brief['markdown'])))},
             'export': export,
             'layout': layout,
             'assessment_overall': json.loads(rows[0]['data']).get('overall') if rows else None}
