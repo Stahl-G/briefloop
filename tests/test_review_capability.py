@@ -201,3 +201,53 @@ def test_schedules_and_the_runtime_gate_use_the_same_declaration(tmp_path):
            'payload': json.dumps({'agent_backend': 'codex', 'runtime': {'model': 'gpt-5.6-luna'}})}
     with pytest.raises(ReviewBackendUnsupported):
         runtime.execute(job, 'prompt', folder)
+
+
+def test_a_long_internal_report_starts_no_checkpoint_review_without_the_reviewer(tmp_path, monkeypatch):
+    """The 180s checkpoint must use the same capability check as final scoring."""
+    import threading
+    from briefloop import runtime as runtime_module
+    from briefloop.runtime import Worker
+    store = Store(tmp_path)
+    store.set_meta('settings', {**store.settings(), 'company_context_enabled': False, 'auto_learn': False})
+    source = _source(store)
+    run = store.create_run({'title': '内部周报', 'objective': 'o', 'allow_web': False, 'writing_mode': 'internal_report'}, [source['id']])
+    # The reader contract is a separate stage; this test is about the checkpoint.
+    job = store.enqueue('generate', {'run_id': run['id'], 'reader_contract_required': False, 'runtime': {'model': 'gpt-5.6-luna'}})
+    store.update_job(job['id'], 'running')
+    real, offset = runtime_module.time.monotonic, [0.0]
+    monkeypatch.setattr(runtime_module.time, 'monotonic', lambda: real() + offset[0])
+
+    class Runtime:
+        def __init__(self):
+            self.calls = []
+            self.cancelled = threading.Event()
+
+        def cancel(self):
+            self.cancelled.set()
+
+        def execute(self, staged, prompt, folder, on_tick=lambda: None, **kwargs):
+            self.calls.append(folder.name)
+            if staged.get('runtime_role') == 'evaluator':
+                pack = json.loads((folder / 'input.json').read_text(encoding='utf-8'))
+                (folder / 'assessment.json').write_text(json.dumps({'brief_hash': pack['brief']['hash'], 'summary': '普通评分',
+                                                                    'overall': '建议修改', 'evidence': 4, 'coverage': 4, 'analysis': 4, 'expression': 4}), encoding='utf-8')
+                return {'returncode': 0}
+            (folder / 'draft.json').write_text(json.dumps({'title': '内部周报', 'markdown': '本周交付三项。'}), encoding='utf-8')
+            offset[0] = 200  # the writing turn has now run past the checkpoint threshold
+            on_tick()
+            return {'returncode': 0}
+
+    runtime = Runtime()
+    worker = Worker(store, runtime)
+    worker.thread.start()
+    try:
+        result = worker.generate(store.one('jobs', job['id']))
+    finally:
+        worker.close()
+    assert store.rows("SELECT * FROM jobs WHERE kind='review'") == [] and store.rows('SELECT * FROM reviews') == []
+    version = result['version_id']
+    data = json.loads(store.rows('SELECT data FROM assessments WHERE version_id=? ORDER BY rowid DESC LIMIT 1', (version,))[0]['data'])
+    assert data['basis'] == 'assessment_without_review'
+    from briefloop.release import eligibility
+    assert [b['code'] for b in eligibility(store, version)['blockers']] == ['review_missing', CODE]

@@ -125,3 +125,50 @@ def test_reviews_of_different_reports_run_in_parallel_and_stop_independently(tmp
     finally:
         for event in list(gates.values()):event.set()
         worker.close()
+
+
+def test_a_learning_trial_has_exactly_one_executor(tmp_path,monkeypatch):
+    """The dispatcher keeps running during learning, so a trial must never be claimable."""
+    import json
+    from briefloop import learning
+    from briefloop.store import Store as RealStore
+    store=Store(tmp_path)
+    store.set_meta('settings',{**store.settings(),'auto_learn':False,'company_context_enabled':False})
+    source=store.add_source('Facts','Synthetic project A completed three files.')
+    case=store.create_run({'title':'Synthetic','objective':'Summarize','allow_web':False},[source['id']])
+    worker=Worker(store);claimed=[]
+    worker.generate=lambda job,**kwargs:claimed.append(job['id']) or {}
+    # Worst-case ordering: the dispatcher looks exactly when the trial is announced.
+    visible=[]
+    wake=RealStore.wake_jobs
+    def observe(self):
+        visible.append([(row['id'],row['status']) for row in self.rows("SELECT id,status FROM jobs")])
+        wake(self)
+    monkeypatch.setattr(RealStore,'wake_jobs',observe)
+    class Inline:
+        def __init__(self,store):self.store=store
+        def generate(self,job,score):
+            claimed.append(('inline',job['id']))
+            brief=self.store.publish(json.loads(job['payload'])['run_id'],{'title':'Synthetic','markdown':'Three files.'},version_id='brief_'+job['id'][4:])
+            from briefloop.review_learning import source_snapshot
+            return {'version_id':brief['id'],'source_snapshot':source_snapshot(self.store,json.loads(job['payload'])['run_id'])}
+    monkeypatch.setattr(learning,'Worker',Inline)
+    worker.thread.start()
+    try:
+        parent=store.enqueue('learn',{'feedback_ids':['f1'],'k':1,'targets':[],'skill_id':None})
+        store.update_job(parent['id'],'running')
+        learning._generate_trial(store,{'id':parent['id'],'_runtime':worker.runtime,
+            'payload':store.one('jobs',parent['id'])['payload']},case,None,store.root/'jobs'/parent['id']/'trial','baseline')
+        trial=[row for row in store.rows('SELECT * FROM jobs') if json.loads(row['payload']).get('inline_owner_job_id')]
+        assert len(trial)==1 and trial[0]['status']=='complete'  # finished by its owner
+        assert all(status!='queued' for snapshot in visible for jid,status in snapshot if jid==trial[0]['id']), visible
+        # Even if something re-queues it, the report dispatcher leaves it alone.
+        store.update_job(trial[0]['id'],'queued');worker.wake();time.sleep(.3)
+        assert store.one('jobs',trial[0]['id'])['status']=='queued'
+        assert claimed==[('inline',trial[0]['id'])]
+        import pytest
+        store.update_job(trial[0]['id'],'interrupted',error='service restart')
+        with pytest.raises(ValueError,match='学习任务'):worker.resume(trial[0]['id'])
+        assert store.one('jobs',trial[0]['id'])['status']=='interrupted'
+    finally:
+        worker.close()

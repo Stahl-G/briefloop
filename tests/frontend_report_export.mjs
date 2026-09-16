@@ -81,3 +81,20 @@ test('desktop PDF export uses the fixed shell channel instead of the frame',asyn
  await ctx.exportPdf('<p>browser</p>','x');
  assert.deepEqual(printed,['<p>browser</p>']);
 });
+
+test('numeric citations are renumbered with the reference list, named links are kept',()=>{
+ const start=source.indexOf("for(const a of body.querySelectorAll('a[href^=\"#source-\"]')){");
+ assert.ok(start>0);
+ const loop=source.slice(start,source.indexOf('\n  }\n',start)+4);
+ const anchor=(href,text)=>({href,textContent:text,attributes:{href},
+  getAttribute(name){return this.attributes[name]},setAttribute(name,value){this.attributes[name]=value}});
+ // An older draft numbered its citations by workspace source order.
+ const links=[anchor('#source-s5','5'),anchor('#source-s2','[2]'),anchor('#source-s5','5'),
+  anchor('#source-s9','（9）'),anchor('#source-s2','年度报告'),anchor('#source-s2','2 号材料')];
+ const cited=[];
+ vm.runInNewContext(loop,{body:{querySelectorAll:()=>links},cited});
+ assert.deepEqual(cited,['s5','s2','s9']);
+ assert.deepEqual(links.map(a=>[a.attributes.href,a.textContent]),[
+  ['#reference-1','1'],['#reference-2','[2]'],['#reference-1','1'],
+  ['#reference-3','（3）'],['#reference-2','年度报告'],['#reference-2','2 号材料']]);
+});

@@ -550,6 +550,8 @@ class Worker:
                 job=dict(row)
                 if job['status'] not in ('failed','interrupted','cancelled'):raise ValueError('这个任务不需要恢复')
                 payload=json.loads(job['payload'])
+                if payload.get('inline_owner_job_id'):
+                    raise ValueError('这是学习任务内部的试写，请恢复对应的学习任务，它会接着跑这一步')
                 if job['kind']=='learn':
                     self._check_feedback_owner(c,jid,payload)
                 # Resume keeps the frozen configuration and original task identity.
@@ -678,7 +680,8 @@ class Worker:
         # Dispatch only. Reports run in their own threads up to max_reports; other
         # main-lane jobs share one serial task thread (and the shared runtime), so a
         # long learning or revision turn never keeps free report slots idle.
-        for jobs in self._queued(0,"SELECT * FROM jobs WHERE status='queued' AND kind NOT IN ('review','fact_check') AND kind NOT IN (?,?,?) ORDER BY rowid",FILE_JOB_KINDS):
+        # A trial generation owned by a learning job is executed by that job, never here.
+        for jobs in self._queued(0,"SELECT * FROM jobs WHERE status='queued' AND kind NOT IN ('review','fact_check') AND kind NOT IN (?,?,?) AND json_extract(payload,'$.inline_owner_job_id') IS NULL ORDER BY rowid",FILE_JOB_KINDS):
             if not jobs:
                 if self.store.settings()['auto_learn'] and not self.opened_paused:
                     try:
@@ -1003,7 +1006,13 @@ class Worker:
                     (folder/'draft-refinement-suggestion.json').write_text(dump(data), encoding='utf-8');return
             latest[0]=record['id']
             if record['id'] not in known:self._remember_generated_sources(folder,record)
-            if self.thread.is_alive() and not checkpoint[0] and time.monotonic()-started>=180 and json.loads(run['requirements']).get('writing_mode')=='internal_report':
+            from .review_capability import restricted_review
+            if (self.thread.is_alive() and not checkpoint[0] and time.monotonic()-started>=180
+                    and json.loads(run['requirements']).get('writing_mode')=='internal_report'
+                    # The final scoring falls back to an ordinary assessment on a
+                    # backend without the restricted Reviewer; a checkpoint review
+                    # must use the same capability check instead of failing here.
+                    and restricted_review(backend)):
                 from .review import enqueue_review
                 with self._claim_lock:
                     if not self.runtime.cancelled.is_set() and not self.stopping.is_set() and self.store.one('jobs',job['id'])['status']!='cancelled':
