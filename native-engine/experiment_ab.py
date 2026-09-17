@@ -30,6 +30,42 @@ from briefloop.opencode_harness import OpencodeHarness  # noqa: E402
 from briefloop.review import run_review, get_review  # noqa: E402
 
 
+# One price table for both legs (USD per million tokens), so cost compares
+# token use rather than each runtime's own catalogue. Defaults: opencode-go
+# deepseek-v4.1-flash as listed in native-engine/models.json.
+PRICE = {'input': 0.22, 'output': 0.66, 'cacheRead': 0.007}
+
+# Real problems in the acceptance version brief_a56c592a9aaf461d_r1, checked by
+# hand. A leg "detects" one when a finding, assessment finding or unchecked item
+# matches every pattern. Matching is a first pass; read the texts before citing.
+KNOWN_ISSUES = {
+    'chart_footnote': [r'fig_dc483082d36b4165|放量', r'1\.5', r'脚注|内嵌|PNG|图片|图注'],
+    'cash_58_9_vs_85_9': [r'85\.9|8,590', r'58\.9|5,890'],
+}
+
+
+def opencode_usage(folder):
+    # Opencode's execution record keeps only the latest step; the per-request
+    # totals live in its session database under this leg's HOME.
+    import sqlite3
+    db = Path.home() / '.local/share/opencode/opencode.db'
+    if not db.exists():
+        return {'captured': False}
+    rows = sqlite3.connect(db).execute(
+        "SELECT data FROM message WHERE json_extract(data,'$.role')='assistant'").fetchall()
+    cwd = str(folder.resolve())
+    items = [json.loads(r[0]) for r in rows]
+    items = [m for m in items if str(Path((m.get('path') or {}).get('cwd', '/nonexistent')).resolve()) == cwd]
+    tokens = [m.get('tokens') or {} for m in items]
+    return {'captured': True, 'requests': len(items),
+            'input': sum(t.get('input', 0) for t in tokens),
+            # opencode counts reasoning separately from output
+            'output_total': sum(t.get('output', 0) + t.get('reasoning', 0) for t in tokens),
+            'reasoning': sum(t.get('reasoning', 0) for t in tokens),
+            'cacheRead': sum((t.get('cache') or {}).get('read', 0) for t in tokens),
+            'runtime_cost': sum(m.get('cost', 0) for m in items)}
+
+
 def usage_totals(folder):
     ex = folder / 'execution.json'
     if not ex.exists():
@@ -37,20 +73,30 @@ def usage_totals(folder):
     data = json.loads(ex.read_text())
     rows = data.get('usage') or []
     if rows and all(row.get('backend') == 'opencode' for row in rows):
-        # Opencode reports its latest step only; totals live in its own session
-        # store, so a sum here would look like a real (and far too small) figure.
-        return {'captured': False, 'seconds': data.get('seconds')}
-    totals = {'input': 0, 'output': 0, 'reasoning': 0, 'cacheRead': 0, 'cost': 0.0}
-    for row in rows:
-        raw = row.get('raw') or {}
-        totals['input'] += raw.get('input', 0)
-        totals['output'] += raw.get('output', 0)
-        totals['reasoning'] += raw.get('reasoning', 0)
-        totals['cacheRead'] += raw.get('cacheRead', 0)
-        totals['cost'] += (raw.get('cost') or {}).get('total', 0)
-    totals['turns'] = len(data.get('usage') or [])
+        totals = opencode_usage(folder)
+    else:
+        raws = [row.get('raw') or {} for row in rows]
+        totals = {'captured': True, 'requests': len(raws),
+                  'input': sum(r.get('input', 0) for r in raws),
+                  # pi's output already includes reasoning tokens
+                  'output_total': sum(r.get('output', 0) for r in raws),
+                  'reasoning': sum(r.get('reasoning', 0) for r in raws),
+                  'cacheRead': sum(r.get('cacheRead', 0) for r in raws),
+                  'runtime_cost': sum((r.get('cost') or {}).get('total', 0) for r in raws)}
+    if totals.get('captured'):
+        totals['cost_same_table'] = round((totals['input'] * PRICE['input'] + totals['output_total'] * PRICE['output']
+                                           + totals['cacheRead'] * PRICE['cacheRead']) / 1e6, 4)
     totals['seconds'] = data.get('seconds')
     return totals
+
+
+def detections(result):
+    import re
+    texts = [f.get('description', '') + ' ' + f.get('evidence', '') for f in result.get('findings', [])]
+    texts += [f.get('description', '') + ' ' + str(f.get('evidence', '')) for f in (result.get('assessment') or {}).get('findings', [])]
+    texts += [u.get('description', '') for u in result.get('unchecked_items', [])]
+    return {name: any(all(re.search(p, text) for p in patterns) for text in texts)
+            for name, patterns in KNOWN_ISSUES.items()}
 
 
 def event_stats(folder):
@@ -111,6 +157,9 @@ def run_leg(source, version_id, backend, model, variant, repeat_index):
                 'admission_retry': (folder / 'admission-error.json').exists(),
                 # The reply failed ReviewOutput validation once and was re-asked.
                 'schema_correction': (folder / 'schema-correction.json').exists(),
+                'major_findings': sum(1 for f in data.get('findings', []) + (data.get('assessment') or {}).get('findings', [])
+                                      if f.get('severity') == 'major'),
+                'detected': detections(data),
             })
         except Exception as exc:
             outcome.update({'wall_seconds': round(time.monotonic() - t0, 1),

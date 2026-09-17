@@ -796,6 +796,7 @@ def run_review(store,runtime,job,version_id,folder):
 {role_line}{host_read}
 {host_tools}history/reviews.json提供过去实际审阅；只复用已完成且依赖未变的核查，历史的未核验/图像能力失败必须在本次实际输入上重新检查，不能据此判断当前模型能力。重点核对本次修改与处理说明，不重复扩大研究。发现需补搜/重算/改稿的问题交主Agent，不能自己执行。
 检查所有重要事实与判断是否有依据，包括作者未登记的主张；逐项核查已有claim并报告支持范围、反证、证据不足或未知。图像不可读、执行记录缺失和审阅失败不是通过。对每个遗漏、错误给正文片段及依据。
+报告图上的文字、脚注和标注要与该图的数据文件及正文逐项对照；同一主体、指标和期间在不同来源或正文不同位置出现的数值要互相核对，不一致时用finding指出并说明各自口径。
 企业报告的核查详情留本结果，不要求正文堆免责声明；准确日期/单位/计划性质应保留。缺口披露不抵消研究覆盖与读者要求。不要使用“无发现”代替完整性检查。
 核对target.json中的source_updates和source_timing，区分统计/事件有效期、披露/可得时间、抓取时间与本轮截止时间。更正或新期间的分类声明仍需对照旧新原件，不把proposed当已确认。
 核对target.json中的conflicts，按明确更正、不同口径、预测归属或未决分歧分类，逐项给conflict_checks；不要因日期新或官方标签一刀切采用。冲突复核可带basis_span_ids与scope说明依据范围。
@@ -808,7 +809,7 @@ claim_checks可以使用target.evidence.bindings、premises闭包以及candidate
 {output_line}
 version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief_hash={store.one('briefs',version_id)['hash']}。
 四维评分使用既有标准，不用高分抵消重大错误。review.status表示是否完成审阅，claim_checks.status表示依据结论。coverage_scan_complete仅在确实检查了正文重要主张遗漏后设true；未核验项写unchecked。
-字段边界（不要混用两套 finding）：顶层 overall/四维分数只属于 assessment；assessment 必须给出，不能省略。assessment.findings 用 dimension/severity/description/report_quote/requirement/source_id/locator/evidence/suggestion。顶层 findings 是核查发现，用 kind/severity/description/evidence，可带 claim_ids/block_ids/requirement_ids（条款可用 requirement_ids 关联，不要写 requirement 或 source_id）。
+字段边界（不要混用两套 finding）：requirement_checks 只有 requirement_id/status/reason，不带 basis；basis 只属于 clause_checks。顶层 overall/四维分数只属于 assessment；assessment 必须给出，不能省略。assessment.findings 用 dimension/severity/description/report_quote/requirement/source_id/locator/evidence/suggestion。顶层 findings 是核查发现，用 kind/severity/description/evidence，可带 claim_ids/block_ids/requirement_ids（条款可用 requirement_ids 关联，不要写 requirement 或 source_id）。
 '''
     if target.get('fact_checks'):
         prompt+=('\n本次含可选独立事实核查（观察模式）留下的候选记录：fact_checks[].candidates 是查了什么（主张锚点、查询id、证据span、四态候选与一句依据），selection.unselected 与 unchecked 是没查什么及原因，execution 说明本次执行为何收束。'
