@@ -286,7 +286,7 @@ function render(first){
  renderWorkflowChoices(first);
  if($('review-open'))$('review-open').textContent='审阅与需处理'+(state.conflicts?.length?' · '+state.conflicts.length+' 项来源分歧':'');
  if(first&&$('report-system-clock')&&state.system_clock)$('report-system-clock').textContent=`本机日期：${state.system_clock.today} · ${state.system_clock.timezone}；提交时再次由后台核对。`;
- if(first){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('chat-allow-web').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.learning_authorization?.state==='authorized';$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',effortValue(state.settings,'reasoning_effort'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.model_variant||'';updateModelLabel();renderRoleModels();renderBackend();loadSearchPolicy();renderSearchProvider();refreshRuntimeDiscovery();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});if(!state.requirements||state.requirements.fact_check==null)$('requirements').elements.fact_check.checked=!!state.settings.fact_checker;syncFactCheckControl();syncWorkflowProfile(false);previewReportTime()}
+ if(first){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('chat-allow-web').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.learning_authorization?.state==='authorized';$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',effortValue(state.settings,'reasoning_effort'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.model_variant||'';updateModelLabel();renderRoleModels();renderReviewRuntime();renderBackend();loadSearchPolicy();renderSearchProvider();refreshRuntimeDiscovery();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});if(!state.requirements||state.requirements.fact_check==null)$('requirements').elements.fact_check.checked=!!state.settings.fact_checker;syncFactCheckControl();syncWorkflowProfile(false);previewReportTime()}
  $('source-count').textContent=state.sources.length+' 份';$('source-list').innerHTML=state.sources.map(s=>`<div class="source-item"><input type="checkbox" data-check="${s.id}" ${selected.has(s.id)?'checked':''} aria-label="选择 ${esc(s.name)}"><button data-source="${s.id}">${esc(s.name)}</button><span class="tag ${s.status==='failed'?'error':''}">${s.status==='failed'?'读取失败':s.needs_visual?'需视觉读取':'可读取'}</span>${s.status==='failed'?`<button data-retry-source="${s.id}">重试</button>`:''}</div>`).join('');
  document.querySelectorAll('[data-retry-source]').forEach(b=>b.onclick=()=>action(async()=>{const s=await api('retry-source',{source_id:b.dataset.retrySource});selected.delete(b.dataset.retrySource);selected.add(s.id);notice(s.status==='ready'?'来源已重新读取':s.error,s.status!=='ready')}));
  document.querySelectorAll('[data-check]').forEach(b=>b.onchange=()=>{if(b.checked){selected.add(b.dataset.check);referenceSelected.delete(b.dataset.check);renderReferenceSources()}else selected.delete(b.dataset.check)});renderReferenceSources();
@@ -567,15 +567,41 @@ $('close-source').onclick=()=>$('source-dialog').close();
 $('requirements').addEventListener('reset',()=>{writingPreferencesOverride=[];syncFactCheckControl()});
 // The server lists backends with a verified restricted Reviewer; the page keeps no list (#726).
 function reviewBackends(){return state?.review_capability?.restricted_review}
+function reviewRuntime(){return state?.settings?.review_runtime||null}
 function syncFactCheckControl(){
  const form=$('requirements'),box=form.elements.fact_check,listed=reviewBackends(),backend=backendValue();
- const reviewer=!listed||listed.some(b=>b.id===backend);
+ // A Reviewer chosen apart from the main chain is a route to independent review too.
+ const reviewer=!!reviewRuntime()||!listed||listed.some(b=>b.id===backend);
  box.disabled=!form.elements.allow_web.checked||!reviewer;if(box.disabled)box.checked=false;
  const note=$('review-capability-note');if(!note)return;
  note.hidden=reviewer;if(reviewer){note.textContent='';return}
  const label=$('agent-backend')?.selectedOptions?.[0]?.textContent||backend,alternatives=listed.map(b=>b.label).join('、')||'暂无已验证的执行后端';
- note.textContent=`${label} 尚未验证受限独立审阅，不能开启事实核查。`+(form.elements.writing_mode.value==='internal_report'?'企业内部报告仍可生成，评分为普通评分（不是独立审阅），正式交付需要先完成独立审阅。':'')+`需要时可在“执行后端”改用 ${alternatives}。`;
+ note.textContent=`${label} 尚未验证受限独立审阅，不能开启事实核查。`+(form.elements.writing_mode.value==='internal_report'?'企业内部报告仍可生成，评分为普通评分（不是独立审阅），正式交付需要先完成独立审阅。':'')+`需要时可在“独立审阅执行后端”单独选择审阅后端，或在“执行后端”改用 ${alternatives}。`;
 }
+function renderReviewRuntime(){
+ const select=$('review-backend');if(!select)return;
+ const choices=state?.review_capability?.review_choices||[],current=reviewRuntime();
+ select.innerHTML='<option value="">跟随执行后端</option>'+choices.map(c=>`<option value="${esc(c.id)}">${esc(c.label)}${c.experimental?'（实验）':''}</option>`).join('');
+ select.value=current?.backend||'';$('review-model').value=current?.model||'';$('review-variant').value=current?.model_variant||'';
+ $('review-model').disabled=$('review-variant').disabled=!select.value;
+ renderReviewRuntimeSummary();
+}
+function renderReviewRuntimeSummary(){
+ const current=reviewRuntime(),choice=(state?.review_capability?.review_choices||[]).find(c=>c.id===current?.backend);
+ $('review-runtime-summary').textContent=current?`${choice?.label||current.backend} · ${friendlyModel(current.model)}${current.model_variant?' / '+current.model_variant:''}`:'跟随执行后端';
+}
+async function saveReviewRuntime(){
+ const backend=$('review-backend').value,model=$('review-model').value.trim(),status=$('review-runtime-status');
+ $('review-model').disabled=$('review-variant').disabled=!backend;
+ if(backend&&!model){status.textContent='输入审阅模型（provider/model）后保存。';return}
+ const review_runtime=backend?{backend,model,model_variant:$('review-variant').value.trim()||null}:null;
+ status.textContent='保存中…';
+ try{const saved=await api('settings',{review_runtime});state.settings.review_runtime=saved.review_runtime??null;renderReviewRuntimeSummary();syncFactCheckControl();status.textContent='已保存，之后新建的任务使用这个审阅设置；已排队的任务不变。'}
+ catch(e){status.textContent='未保存：'+e.message}
+}
+$('review-backend').addEventListener('change',()=>action(saveReviewRuntime));
+$('review-model').addEventListener('change',()=>action(saveReviewRuntime));
+$('review-variant').addEventListener('change',()=>action(saveReviewRuntime));
 $('requirements').elements.allow_web.addEventListener('change',syncFactCheckControl);
 $('requirements').elements.writing_mode.addEventListener('change',syncFactCheckControl);
 $('agent-backend').addEventListener('change',syncFactCheckControl);
