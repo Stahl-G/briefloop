@@ -3,7 +3,7 @@ feature: home-v2
 status: delivered
 updated: 2026-09-18
 branch: design/system-v2
-commits: 4afde8358f4707fbd05ac8c23b9b794b003a5b97..41c3d2c621c59a7198f504c527339a02be41d15d
+commits: 4afde8358f4707fbd05ac8c23b9b794b003a5b97..7cd02001617167e1bd277c2ddc475dbb28863efe
 ---
 
 # 首页按 DESIGN v2 改版
