@@ -212,7 +212,8 @@ export const TOOL_GUIDE: Record<string, string> = {
 };
 
 export function toolGuide(names: string[]): string {
-  return ["## 本次可用工具", ...names.map((name) => `- ${name}：${TOOL_GUIDE[name] ?? ""}`)].join("\n");
+  return ["## 本次可用工具", "一次回复可以同时调用多个工具；互不依赖的调用会并行执行，submit_review 单独提交。",
+    ...names.map((name) => `- ${name}：${TOOL_GUIDE[name] ?? ""}`)].join("\n");
 }
 
 export function packetTools(packetRoot: string, hooks?: SubmitHooks, acceptsImages: () => boolean = () => true) {
