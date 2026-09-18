@@ -126,3 +126,11 @@ def test_harness_sends_the_layered_prompt_and_answers_admission(tmp_path, monkey
                       'error': '完整审阅遗漏正文已使用主张，必须标为未完成'}
     bound = next(e['data'] for e in snap['events'] if e['kind'] == 'session/bound')
     assert bound['prompt_version'] == system_prompt('reviewer')['version']
+
+
+def test_native_review_defaults_to_low_effort_unless_selected():
+    from briefloop.native_harness import _thinking
+    assert _thinking({}) == 'low'
+    assert _thinking({'variant': 'high'}) == 'high'
+    assert _thinking({'model_variant': ' MAX '}) == 'max'
+    assert _thinking({'variant': 'not-a-level'}) == 'low'
