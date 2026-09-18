@@ -42,6 +42,14 @@ const DEFAULT_IDLE_MS = 240_000;
 // mid-request). Re-asking keeps every tool result already in the session.
 const STALL_RETRIES = 2;
 const JSON_REPAIRS = 1;
+// One reply (thinking plus text) far beyond anything a review step needs is a
+// model thinking in circles: it streams, so the idle guard never fires, and it
+// can run until the run's time limit (observed: 250k characters of thinking in
+// one request over 28 minutes). The longest normal reply seen across models is
+// about 70k characters. Stop that request and ask for smaller steps.
+const DEFAULT_MAX_REPLY_CHARS = 120_000;
+const OVERLONG_RETRIES = 1;
+const OVERLONG_PROMPT = "上一次回复过长，已被运行器中止。不要在一次思考里核对全部内容：用工具分批取证，把已经确认的结论写进结果，然后调用 submit_review 提交。";
 
 interface WireRequest { id?: string; method: string; params?: Record<string, unknown>; }
 interface SessionEntry {
@@ -56,6 +64,9 @@ interface SessionEntry {
   execId: string;
   cancelled: boolean;
   stalled: boolean;
+  overlong: boolean;
+  replyChars: number;
+  maxReplyChars: number;
   budgetExceeded: boolean;
   toolCalls: number;
   maxToolCalls: number;
@@ -184,10 +195,19 @@ function wireSessionEvents(clientSid: string, entry: SessionEntry): void {
     const e = event as Record<string, any>;
     switch (e.type) {
       case "message_start":
+        entry.replyChars = 0;
         emit(clientSid, execId, "message_start", { role: e.message?.role });
         break;
       case "message_update": {
         const delta = e.assistantMessageEvent;
+        if ((delta?.type === "text_delta" || delta?.type === "thinking_delta") && typeof delta.delta === "string") {
+          entry.replyChars += delta.delta.length;
+          if (entry.replyChars > entry.maxReplyChars && !entry.overlong) {
+            entry.overlong = true;
+            emit(clientSid, execId, "status", { message: `reply exceeded ${entry.maxReplyChars} characters; stopping it` });
+            void entry.session.abort().catch(() => {});
+          }
+        }
         if (delta?.type === "text_delta") {
           entry.finalText += delta.delta;
           emit(clientSid, execId, "text", { delta: delta.delta });
@@ -390,6 +410,9 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     execId: "",
     cancelled: false,
     stalled: false,
+    overlong: false,
+    replyChars: 0,
+    maxReplyChars: DEFAULT_MAX_REPLY_CHARS,
     budgetExceeded: false,
     toolCalls: 0,
     maxToolCalls: Math.max(1, Math.min(300, Number(p.max_tool_calls) || 150)),
@@ -434,6 +457,8 @@ async function turnStart(id: string | undefined, p: Record<string, unknown>): Pr
   const visual = visualInputs(entry, entry.cwd, p.images);
   const idle = Number(p.idle_timeout_s);
   entry.idleMs = Number.isFinite(idle) && idle > 0 ? Math.min(1800, idle) * 1000 : DEFAULT_IDLE_MS;
+  const replyCap = Number(p.max_reply_chars);
+  entry.maxReplyChars = Number.isFinite(replyCap) && replyCap > 0 ? replyCap : DEFAULT_MAX_REPLY_CHARS;
   entry.execId = execId;
   entry.cancelled = false;
   entry.budgetExceeded = false;
@@ -448,11 +473,13 @@ async function turnStart(id: string | undefined, p: Record<string, unknown>): Pr
   let message = prompt + visual.note;
   let images = visual.images;
   let stalls = 0;
+  let overlongs = 0;
   let repairs = 0;
   try {
     for (;;) {
       if (entry.cancelled) { status = "cancelled"; break; }
       entry.stalled = false;
+      entry.overlong = false;
       entry.turnError = "";
       entry.finalText = "";
       // Armed before the request: the wait for the provider's first byte counts.
@@ -467,6 +494,17 @@ async function turnStart(id: string | undefined, p: Record<string, unknown>): Pr
       if (entry.budgetExceeded) {
         status = "failed";
         error = `tool-call budget exhausted (${entry.maxToolCalls}); the model did not converge`;
+        break;
+      }
+      if (entry.overlong) {
+        if (overlongs < OVERLONG_RETRIES) {
+          overlongs += 1;
+          emit(sid, execId, "status", { message: `re-asking after an overlong reply (${overlongs}/${OVERLONG_RETRIES})` });
+          message = OVERLONG_PROMPT;
+          continue;
+        }
+        status = "failed";
+        error = `reply exceeded ${entry.maxReplyChars} characters on ${overlongs + 1} consecutive requests; gave up`;
         break;
       }
       if (entry.stalled) {

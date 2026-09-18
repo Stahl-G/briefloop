@@ -471,5 +471,33 @@ export function packetTools(packetRoot: string, hooks?: SubmitHooks, acceptsImag
     },
   });
 
-  return [packetList, packetRead, packetGrep, claimTrace, calc, submitReview];
+  return [packetList, packetRead, packetGrep, claimTrace, calc, submitReview].map(lenientArguments);
+}
+
+// Some models write an object or array argument as a JSON string
+// ({"review": "{\"status\": ...}"}). Schema validation would reject it before
+// the tool runs, and the model tends to repeat the same encoding until it gives
+// up with a placeholder. Decode such strings where the schema wants an object
+// or array; anything else is left for validation to judge.
+function lenientArguments<T extends { parameters: any }>(tool: T): T {
+  const properties: Record<string, any> = tool.parameters?.properties ?? {};
+  const structured = Object.keys(properties).filter((key) => ["object", "array"].includes(properties[key]?.type));
+  if (!structured.length) return tool;
+  return {
+    ...tool,
+    prepareArguments: (args: unknown) => {
+      if (!args || typeof args !== "object" || Array.isArray(args)) return args;
+      let changed: Record<string, unknown> | undefined;
+      for (const key of structured) {
+        const value = (args as Record<string, unknown>)[key];
+        if (typeof value !== "string") continue;
+        try {
+          const decoded = JSON.parse(value);
+          const wanted = properties[key].type === "array" ? Array.isArray(decoded) : decoded && typeof decoded === "object" && !Array.isArray(decoded);
+          if (wanted) (changed ??= { ...(args as Record<string, unknown>) })[key] = decoded;
+        } catch { /* not JSON: validation reports it */ }
+      }
+      return changed ?? args;
+    },
+  };
 }

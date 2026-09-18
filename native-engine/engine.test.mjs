@@ -43,6 +43,27 @@ const reply = {
     res.end("data: [DONE]\n\n");
   },
   stall: () => (res) => { res.writeHead(200, { "content-type": "text/event-stream" }); provider.stalled.add(res); },
+  // Streams forever without content: a role chunk, then empty deltas and SSE
+  // comments (a provider queueing the request behind a live connection).
+  // One reply streamed in many text chunks.
+  long: (chars) => (res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    chunk(res, { role: "assistant", content: "" });
+    for (let sent = 0; sent < chars; sent += 100) chunk(res, { content: "核".repeat(100) });
+    chunk(res, {}, "stop", usage);
+    res.end("data: [DONE]\n\n");
+  },
+  trickle: () => (res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    provider.stalled.add(res);
+    chunk(res, { role: "assistant", content: "" });
+    const timer = setInterval(() => {
+      if (res.destroyed) return clearInterval(timer);
+      chunk(res, { content: "" });
+      res.write(": keepalive\n\n");
+    }, 150);
+    res.on("close", () => clearInterval(timer));
+  },
   status: (code) => (res) => {
     res.writeHead(code, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: { message: `scripted ${code}` } }));
@@ -302,6 +323,16 @@ test("a stalled request is re-asked in the same session and keeps tool results",
   assert.equal(ends(evts)[0].final_text, '{"after":"stall"}');
 });
 
+test("a stream that stays open without content counts as stalled", async () => {
+  script(reply.trickle(), reply.text('{"after":"trickle"}'));
+  const { session_id } = await reviewer();
+  const evts = await turn(session_id, "e-trickle");
+  assert.ok(evts.some((e) => e.kind === "status" && /re-asking after a stalled request \(1\/2\)/.test(e.message)));
+  assert.equal(ends(evts).length, 1);
+  assert.equal(ends(evts)[0].status, "completed");
+  assert.equal(ends(evts)[0].final_text, '{"after":"trickle"}');
+});
+
 test("repeated stalls fail the turn once, and the session stays usable", async () => {
   script(reply.stall());
   const { session_id } = await reviewer();
@@ -539,4 +570,39 @@ test("shipped models.json extends catalog providers without redirecting their mo
     assert.equal(entry.api, undefined, `${name}: provider-level api`);
     for (const model of entry.models ?? []) assert.ok(model.baseUrl && model.api, `${name}/${model.id}: endpoint`);
   }
+});
+
+test("an overlong reply is stopped and the model is asked for smaller steps", async () => {
+  script(reply.long(5000), reply.text('{"after":"overlong"}'));
+  const { session_id } = await reviewer();
+  const evts = await turn(session_id, "e-overlong", { max_reply_chars: 2000, idle_timeout_s: 30 });
+  assert.ok(evts.some((e) => e.kind === "status" && /re-asking after an overlong reply \(1\/1\)/.test(e.message)));
+  assert.match(JSON.stringify(provider.requests.at(-1).messages.at(-1)), /回复过长/);
+  assert.equal(ends(evts).length, 1);
+  assert.equal(ends(evts)[0].status, "completed");
+  assert.equal(ends(evts)[0].final_text, '{"after":"overlong"}');
+
+  script(reply.long(5000));
+  const again = await turn(session_id, "e-overlong-twice", { max_reply_chars: 2000, idle_timeout_s: 30 });
+  assert.equal(ends(again).length, 1);
+  assert.equal(ends(again)[0].status, "failed");
+  assert.match(ends(again)[0].error, /exceeded 2000 characters on 2 consecutive requests/);
+});
+
+test("object and array arguments written as JSON strings are decoded before validation", async () => {
+  const seen = [];
+  admission = (review) => { seen.push(review); return undefined; };
+  script(
+    reply.tool("packet_grep", { pattern: "evidence", patterns: JSON.stringify(["text"]) }),
+    reply.tool("submit_review", { review: JSON.stringify({ status: "complete", version_id: "v1" }) }),
+    reply.text("好"),
+  );
+  const { session_id } = await reviewer({ admission: "runner" });
+  const evts = await turn(session_id, "e-stringified", { require_submit: true, idle_timeout_s: 30 });
+  admission = () => undefined;
+  const toolResults = provider.requests.flatMap((r) => r.messages).filter((m) => m.role === "tool").map((m) => JSON.stringify(m.content));
+  assert.ok(!toolResults.some((t) => /Validation failed/.test(t)), toolResults.join("\n"));
+  assert.equal(seen.length, 1);
+  assert.equal(ends(evts)[0].status, "completed");
+  assert.deepEqual(JSON.parse(ends(evts)[0].final_text), { status: "complete", version_id: "v1" });
 });
