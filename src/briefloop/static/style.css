@@ -708,3 +708,31 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
   #new-report.new-session--primary{color:var(--color-on-primary,#fff)}
   .composer-params-panel{left:auto;right:0}
 }
+
+/* === home-v2 S4: normal-mode right rail (DESIGN §3.2 §7.3) === */
+.chat-page{display:flex;flex-direction:column}
+.chat-main-col{display:flex;flex-direction:column;flex:1;min-width:0;min-height:0}
+.home-rail{display:none}
+.chat-page.has-home-rail{display:grid;grid-template-columns:minmax(0,1fr) var(--rail-width,340px);gap:var(--space-5,24px);align-items:start;max-width:none}
+.chat-page.has-home-rail .chat-main-col{min-height:0;overflow:auto;padding-bottom:8px}
+.chat-page.has-home-rail .home-rail{display:flex;flex-direction:column;gap:0;align-self:start;position:sticky;top:12px;max-height:calc(100dvh - 40px);overflow:auto;background:var(--color-surface,#fff);border:1px solid var(--color-border,#dedfd8);border-radius:var(--radius,9px);padding:0}
+.home-rail-block{padding:var(--space-4,16px);border-bottom:1px solid var(--color-border,#dedfd8)}
+.home-rail-block:last-child{border-bottom:0}
+.home-rail-block .rail-block-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.home-rail-block .rail-block-head h3{margin:0;font:600 13px/1.4 var(--font);letter-spacing:-.01em}
+.home-rail-block .home-more{border:0;background:transparent;color:var(--color-primary,#006838);font-size:12px;padding:2px 4px}
+.home-rail-job-list{display:flex;flex-direction:column;gap:8px}
+.home-rail-job{display:flex;flex-direction:column;gap:4px;padding:10px 12px;border:1px solid var(--color-border,#dedfd8);border-radius:var(--radius-sm,6px);background:var(--color-surface-soft,#f4f6ef);font-size:12px}
+.home-rail-job strong{font-weight:550;font-size:13px}
+.home-rail-job small{color:var(--color-text-muted,#6a706b);font-size:11px}
+.home-rail-job .outline{align-self:flex-start;font-size:11px;padding:4px 8px;margin-top:2px}
+/* main-column recent block is only a fallback; hide when rail present */
+.chat-page.has-home-rail #home-block-recent{display:none!important}
+@media(max-width:1150px){
+  .chat-page.has-home-rail{grid-template-columns:minmax(0,1fr)}
+  .chat-page.has-home-rail .home-rail{position:static;max-height:none;order:2}
+  .chat-page.has-home-rail .chat-main-col{order:1}
+}
+@media(max-width:780px){
+  .chat-page.has-home-rail{grid-template-columns:1fr}
+}

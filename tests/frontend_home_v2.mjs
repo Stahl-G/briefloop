@@ -17,6 +17,21 @@ test('home loads tokens.css and keeps composer progressive disclosure markers',(
   assert.match(html,/cat-business/);
   assert.match(html,/cat-markets/);
   assert.match(html,/cat-academic/);
+  assert.match(html,/id="home-rail"/);
+  assert.match(html,/id="home-rail-jobs"/);
+  assert.match(html,/id="home-rail-recent"/);
+  assert.match(html,/chat-main-col/);
+});
+
+test('renderHome shows rail for jobs or reports and keeps recent only in rail',()=>{
+  assert.match(app,/has-home-rail/);
+  assert.match(app,/home-rail-jobs/);
+  assert.match(app,/home-rail-recent-list/);
+  assert.match(app,/home-block-recent'\)\)\$\('home-block-recent'\).hidden=true|home-block-recent.*/);
+  const renderHome=app.slice(app.indexOf('function renderHome()'),app.indexOf('function autoOpenActivity'));
+  assert.match(renderHome,/has-home-rail/);
+  assert.match(renderHome,/home-rail-recent-list/);
+  assert.match(renderHome,/home-block-recent/);
 });
 
 test('home does not render empty schedule/report placeholders',()=>{
