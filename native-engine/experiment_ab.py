@@ -35,13 +35,10 @@ from briefloop.review import run_review, get_review  # noqa: E402
 # deepseek-v4.1-flash as listed in native-engine/models.json.
 PRICE = {'input': 0.22, 'output': 0.66, 'cacheRead': 0.007}
 
-# Real problems in the acceptance version brief_a56c592a9aaf461d_r1, checked by
-# hand. A leg "detects" one when a finding, assessment finding or unchecked item
-# matches every pattern. Matching is a first pass; read the texts before citing.
-KNOWN_ISSUES = {
-    'chart_footnote': [r'fig_dc483082d36b4165|放量', r'1\.5', r'脚注|内嵌|PNG|图片|图注'],
-    'cash_58_9_vs_85_9': [r'85\.9|8,590', r'58\.9|5,890'],
-}
+import seed_defects  # noqa: E402
+
+# The two real problems of the acceptance version; --seed adds the planted ones.
+BASE_ISSUES = ('chart_footnote', 'cash_58_9_vs_85_9')
 
 
 def opencode_usage(folder):
@@ -90,13 +87,10 @@ def usage_totals(folder):
     return totals
 
 
-def detections(result):
-    import re
-    texts = [f.get('description', '') + ' ' + f.get('evidence', '') for f in result.get('findings', [])]
-    texts += [f.get('description', '') + ' ' + str(f.get('evidence', '')) for f in (result.get('assessment') or {}).get('findings', [])]
-    texts += [u.get('description', '') for u in result.get('unchecked_items', [])]
-    return {name: any(all(re.search(p, text) for p in patterns) for text in texts)
-            for name, patterns in KNOWN_ISSUES.items()}
+def detections(result, seeded=False):
+    issues = {name: patterns for name, patterns in seed_defects.ISSUES.items()
+              if seeded or name in BASE_ISSUES}
+    return seed_defects.detections(result, issues)
 
 
 def event_stats(folder):
@@ -120,9 +114,11 @@ def event_stats(folder):
     return {'events': sum(kinds.values()), 'tool_calls': tools}
 
 
-def run_leg(source, version_id, backend, model, variant, repeat_index):
+def run_leg(source, version_id, backend, model, variant, repeat_index, seeded=False):
     work = Path(tempfile.mkdtemp(prefix=f'bl-ab-{backend}-')).resolve()
     shutil.copytree(source, work / 'ws')
+    if seeded:
+        seed_defects.seed(work / 'ws', version_id)
     store = Store(work / 'ws')
     engine = NativeEngine()
     harness = NativeHarness(store, engine)
@@ -159,7 +155,7 @@ def run_leg(source, version_id, backend, model, variant, repeat_index):
                 'schema_correction': (folder / 'schema-correction.json').exists(),
                 'major_findings': sum(1 for f in data.get('findings', []) + (data.get('assessment') or {}).get('findings', [])
                                       if f.get('severity') == 'major'),
-                'detected': detections(data),
+                'detected': detections(data, seeded),
             })
         except Exception as exc:
             outcome.update({'wall_seconds': round(time.monotonic() - t0, 1),
@@ -184,6 +180,7 @@ def main():
     parser.add_argument('--backends', default='briefloop-native,opencode')
     parser.add_argument('--repeat', type=int, default=1)
     parser.add_argument('--out')
+    parser.add_argument('--seed', action='store_true', help='plant the known problems of seed_defects.py into the copy')
     args = parser.parse_args()
 
     source = Path(args.workspace).resolve()
@@ -191,14 +188,14 @@ def main():
     for backend in args.backends.split(','):
         for i in range(args.repeat):
             outcome = run_leg(source, args.version_id, backend.strip(),
-                              args.model, args.variant, i)
+                              args.model, args.variant, i, args.seed)
             results.append(outcome)
             print(json.dumps(outcome, ensure_ascii=False), flush=True)
     if args.out:
         out = Path(args.out).expanduser().resolve()
         out.mkdir(parents=True, exist_ok=True)
         path = out / f'ab-{int(time.time())}.json'
-        path.write_text(json.dumps({'model': args.model, 'variant': args.variant,
+        path.write_text(json.dumps({'model': args.model, 'variant': args.variant, 'seeded': args.seed,
                                     'version_id': args.version_id,
                                     'results': results}, ensure_ascii=False, indent=2))
         print(f'summary={path}')

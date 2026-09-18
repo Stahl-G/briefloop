@@ -506,13 +506,25 @@ def build_packet(store,version_id,folder):
                 name='sources/'+sid+'.cells.txt';save(name,workbook_text(original.read_bytes()).encode());item['cells_file']=name
         except (ValueError,OSError) as exc:item['read_error']=str(exc)
         source_index.append(item)
+    from .figure_text import figure_texts
+    figure_index=[]
     for figure in snapshot['figures']:
+        saved={}
         for key in ('image_path','data_path','script_path'):
             path=figure.get(key)
             if path:
                 source=(store.root/path).resolve()
                 if not source.is_relative_to(store.root) or not source.is_file():raise ValueError('图表核查资源路径无效')
-                save('figures/'+figure['figure_id']+'/'+Path(path).name,source.read_bytes())
+                name='figures/'+figure['figure_id']+'/'+Path(path).name;blob=source.read_bytes()
+                save(name,blob);saved[key]=(name,blob)
+        # Text drawn onto the image, read from the frozen script without running it,
+        # so a stale footnote can be checked against the data and the report.
+        script=saved.get('script_path')
+        figure_index.append({'figure_id':figure['figure_id'],'title':figure.get('title'),'caption':figure.get('caption'),
+                             'image':saved.get('image_path',(None,))[0],'data_file':saved.get('data_path',(None,))[0],
+                             'script':script[0] if script else None,
+                             **figure_texts(script[0] if script else None,script[1] if script else b'')})
+    if figure_index:save('figure-texts.json',pack_dump(figure_index).encode())
     visual_inputs=_visual_inputs(store,snapshot,packet,source_index,save)
     save('visual-inputs.json',pack_dump(visual_inputs).encode())
     # Only this report's persisted public history; never host-global DB queries.
@@ -776,6 +788,8 @@ def run_review(store,runtime,job,version_id,folder):
     clauses=clause_items(target['requirements']) if protocol=='clauses_v1' else []
     requirement_instruction=('本次为条款级审阅：对下表的 reader_contract 条款逐条给 clause_checks（clause_id、status(covered/partial/missing/not_applicable/unverified)、reason、basis）。clause_id 必须逐字复制程序给出的 ID，不要自行计算或改写。reader_content 核对正文是否实际回答；research_method 核对方法是否落实（过程要求需有来源、核查或执行记录，无法确认写 unverified）；writing_preference 核对呈现；manual_assignment 只核对占位。not_applicable 仅限条款自身带适用条件且本稿不满足，并给依据；内容条款不得标为不适用。必须逐条覆盖；仍要对照原始要求，发现漏拆或误分类用 finding 指出。' if clauses else
         '对requirements.requirement_items逐项给requirement_checks：requirement_id、status(covered/manual/partial/missing)、reason。manual只能用于用户原要求中mode=manual的项目，不得自行降低必答要求。')
+    figure_text_note=('（figure-texts.json 按图列出从生成脚本提取的图上文字及行号，可直接对照；标为只能看图核对的图须实际看图）'
+                      if (folder/'packet'/'figure-texts.json').exists() else '')
     from .report_time import instructions as time_instructions
     temporal_note=time_instructions(target.get('requirements_input',{}).get('time_context'))
     # The review contract is shared; how to reach the packet and hand back the
@@ -796,7 +810,7 @@ def run_review(store,runtime,job,version_id,folder):
 {role_line}{host_read}
 {host_tools}history/reviews.json提供过去实际审阅；只复用已完成且依赖未变的核查，历史的未核验/图像能力失败必须在本次实际输入上重新检查，不能据此判断当前模型能力。重点核对本次修改与处理说明，不重复扩大研究。发现需补搜/重算/改稿的问题交主Agent，不能自己执行。
 检查所有重要事实与判断是否有依据，包括作者未登记的主张；逐项核查已有claim并报告支持范围、反证、证据不足或未知。图像不可读、执行记录缺失和审阅失败不是通过。对每个遗漏、错误给正文片段及依据。
-报告图上的文字、脚注和标注要与该图的数据文件及正文逐项对照；同一主体、指标和期间在不同来源或正文不同位置出现的数值要互相核对，不一致时用finding指出并说明各自口径。
+报告图上的文字、脚注和标注要与该图的数据文件及正文逐项对照{figure_text_note}；同一主体、指标和期间在不同来源或正文不同位置出现的数值要互相核对，不一致时用finding指出并说明各自口径。
 企业报告的核查详情留本结果，不要求正文堆免责声明；准确日期/单位/计划性质应保留。缺口披露不抵消研究覆盖与读者要求。不要使用“无发现”代替完整性检查。
 核对target.json中的source_updates和source_timing，区分统计/事件有效期、披露/可得时间、抓取时间与本轮截止时间。更正或新期间的分类声明仍需对照旧新原件，不把proposed当已确认。
 核对target.json中的conflicts，按明确更正、不同口径、预测归属或未决分歧分类，逐项给conflict_checks；不要因日期新或官方标签一刀切采用。冲突复核可带basis_span_ids与scope说明依据范围。
