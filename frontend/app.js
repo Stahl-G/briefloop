@@ -1069,9 +1069,30 @@ function homeRecentReports(){
  return rows;
 }
 const scheduledReports=scheduleUI({api,getState:()=>state,refresh:async()=>{await refresh();await refresh();},notice,openReport:id=>{const brief=state.briefs.find(b=>b.id===id);if(brief&&openBrief(brief,{follow:false}))page('report')}});
+function svgLineIcon(name,size=18){
+ const body=ICONS[name]||ICONS.file||'';
+ return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+}
+function hydrateHomeIcons(){
+ document.querySelectorAll('[data-home-icon]').forEach(el=>{
+  if(el.dataset.homeIconReady)return;
+  el.innerHTML=svgLineIcon(el.dataset.homeIcon,18);
+  el.dataset.homeIconReady='1';
+ });
+}
+function homeReportIconMeta(title){
+ const t=String(title||'');
+ if(/周报|月报|行业|定期/.test(t))return {icon:'bars',cat:'cat-business'};
+ if(/竞品|对比|对手/.test(t))return {icon:'chart',cat:'cat-markets'};
+ if(/资料|文献|论文|研究简报/.test(t))return {icon:'book',cat:'cat-academic'};
+ if(/会议|纪要|讨论/.test(t))return {icon:'users',cat:'cat-collab'};
+ if(/合同|协议|公文/.test(t))return {icon:'file',cat:'cat-neutral'};
+ return {icon:'layers',cat:'cat-neutral'};
+}
 function renderHome(){
  scheduledReports.render();
  if($('home-greeting'))$('home-greeting').textContent=homeGreeting();
+ hydrateHomeIcons();
  const rows=homeRecentReports();
  const jobs=(state.jobs||[]).filter(j=>['queued','running'].includes(j.status));
  // Main-column recent is legacy; recent lives in the rail only (DESIGN §6.2/§7.3).
@@ -1097,14 +1118,14 @@ function renderHome(){
   recentBox.innerHTML=rows.map(b=>{
    const st=reportStatus(b),desc=reportDescription(b);
    const when=new Date(b.updated||b.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
-   return `<button type="button" class="home-report" data-home-report="${esc(b.id)}"><span class="home-report-icon" aria-hidden="true">▤</span><span class="home-report-body"><strong>${esc(parse(b.detail).title||'简报')}</strong>${desc?`<small>${esc(desc)}</small>`:''}</span><span class="home-report-meta"><time>${esc(when)}</time><span class="chip ${st.cls}">${esc(st.label)}</span></span></button>`;
+   const meta=homeReportIconMeta(parse(b.detail).title||b.detail);
+   return `<button type="button" class="home-report" data-home-report="${esc(b.id)}"><span class="home-report-icon ${meta.cat}" aria-hidden="true">${svgLineIcon(meta.icon,16)}</span><span class="home-report-body"><strong>${esc(parse(b.detail).title||'简报')}</strong>${desc?`<small>${esc(desc)}</small>`:''}</span><span class="home-report-meta"><time>${esc(when)}</time><span class="chip ${st.cls}">${esc(st.label)}</span></span></button>`;
   }).join('');
   recentBox.querySelectorAll('[data-home-report]').forEach(el=>el.onclick=()=>{
    const b=state.briefs.find(x=>x.id===el.dataset.homeReport);
    if(b&&openBrief(b,{follow:false}))page('report');
   });
  }
- // Legacy main list kept for tests/ids but empty when rail is primary
  const legacy=$('home-recent-list');
  if(legacy&&!rows.length)legacy.innerHTML='';
 }

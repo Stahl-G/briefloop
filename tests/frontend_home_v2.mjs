@@ -17,6 +17,8 @@ test('home loads tokens.css and keeps composer progressive disclosure markers',(
   assert.match(html,/cat-business/);
   assert.match(html,/cat-markets/);
   assert.match(html,/cat-academic/);
+  assert.match(html,/data-home-icon="briefcase"/);
+  assert.match(html,/data-home-icon="bars"/);
   assert.match(html,/id="home-rail"/);
   assert.match(html,/id="home-rail-jobs"/);
   assert.match(html,/id="home-rail-recent"/);
@@ -49,4 +51,11 @@ test('GENRE_META avoids primary/danger hue collisions for academic and markets',
   assert.match(genre,/'券商研报'[^}]*color:'#AD1457'/);
   assert.doesNotMatch(genre,/'学术论文'[^}]*color:'#006838'/);
   assert.doesNotMatch(genre,/'券商研报'[^}]*color:'#C62828'/);
+});
+
+ test('home hydrates linear ICONS from settings icon set',()=>{
+  assert.match(app,/svgLineIcon/);
+  assert.match(app,/hydrateHomeIcons/);
+  assert.match(app,/homeReportIconMeta/);
+  assert.match(app,/ICONS\[name\]/);
 });
