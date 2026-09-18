@@ -1,4 +1,0 @@
-[      56ms] [ERROR] Refused to apply style from 'http://127.0.0.1:8778/tokens.css' because its MIME type ('application/json') is not a supported stylesheet MIME type, and strict MIME checking is enabled. @ http://127.0.0.1:8778/:72
-[     117ms] [VERBOSE] [DOM] Password field is not contained in a form: (More info: https://goo.gl/9p2vKq) %o @ http://127.0.0.1:8778/:0
-[     117ms] [VERBOSE] [DOM] Password field is not contained in a form: (More info: https://goo.gl/9p2vKq) %o @ http://127.0.0.1:8778/:0
-[     117ms] [VERBOSE] [DOM] Password field is not contained in a form: (More info: https://goo.gl/9p2vKq) %o @ http://127.0.0.1:8778/:0
