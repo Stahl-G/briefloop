@@ -481,6 +481,9 @@ def build_packet(store,version_id,folder):
         if not path.exists():path.write_bytes(blob)
         entries[name]=sha(blob)
     save('target.json',pack_dump(snapshot).encode())
+    # Purpose-split views of the same snapshot; target.json stays the authority.
+    from .packet_views import views as packet_views,overview as packet_overview
+    for name,body in packet_views(snapshot).items():save(name,body.encode())
     long_text=[]
     def collect(value,path):
         if isinstance(value,str) and len(value)>1200:long_text.append({'json_path':path,'chunks':[value[i:i+1200] for i in range(0,len(value),1200)]})
@@ -546,6 +549,7 @@ def build_packet(store,version_id,folder):
     save('history/executions.json',pack_dump(executions).encode())
     responses=store.rows('SELECT r.*,f.data AS finding_data,f.status AS finding_status,f.version_id AS finding_version FROM review_responses r JOIN review_findings f ON f.id=r.finding_id JOIN briefs b ON b.id=f.version_id WHERE b.run_id=? ORDER BY r.rowid',(brief['run_id'],))
     save('history/responses.json',pack_dump([{**r,'data':json.loads(r['data']),'finding_data':json.loads(r['finding_data'])} for r in responses]).encode())
+    save('overview.json',pack_dump(packet_overview({name:(packet/name).stat().st_size for name in entries},snapshot)).encode())
     fingerprint=sha(dump({'target':snapshot,'files':entries}).encode())
     index={'fingerprint':fingerprint,'version_id':version_id,'sources':source_index,
            'files':entries,'visual_inputs':'visual-inputs.json','history':['history/versions.json','history/executions.json','history/responses.json','history/tools.json','history/reviews.json'],
@@ -794,6 +798,8 @@ def run_review(store,runtime,job,version_id,folder):
     clauses=clause_items(target['requirements']) if protocol=='clauses_v1' else []
     requirement_instruction=('本次为条款级审阅：对下表的 reader_contract 条款逐条给 clause_checks（clause_id、status(covered/partial/missing/not_applicable/unverified)、reason、basis）。clause_id 必须逐字复制程序给出的 ID，不要自行计算或改写。reader_content 核对正文是否实际回答；research_method 核对方法是否落实（过程要求需有来源、核查或执行记录，无法确认写 unverified）；writing_preference 核对呈现；manual_assignment 只核对占位。not_applicable 仅限条款自身带适用条件且本稿不满足，并给依据；内容条款不得标为不适用。必须逐条覆盖；仍要对照原始要求，发现漏拆或误分类用 finding 指出。' if clauses else
         '对requirements.requirement_items逐项给requirement_checks：requirement_id、status(covered/manual/partial/missing)、reason。manual只能用于用户原要求中mode=manual的项目，不得自行降低必答要求。')
+    packet_guide=('先读 overview.json，它说明每个文件的内容和大小：正文纯文本在 report.txt（每行一个段落，前面是段落ID），要求在 requirements.json，主张与证据在 claims.json，数字绑定在 numbers.json，引用摘录在 citations.json；target.json 是这些视图的完整依据，需要其他字段时按字段读取。'
+                  if (folder/'packet'/'overview.json').exists() else '先看target.json的本轮要求、正文和claim_evidence关联；')
     figure_text_note=('（figure-texts.json 按图列出从生成脚本提取的图上文字及行号，可直接对照；标为只能看图核对的图须实际看图）'
                       if (folder/'packet'/'figure-texts.json').exists() else '')
     from .report_time import instructions as time_instructions
@@ -803,14 +809,15 @@ def run_review(store,runtime,job,version_id,folder):
     if json.loads(job['payload']).get('agent_backend')=='briefloop-native':
         role_line=''
         host_read=('核查包就是本会话可见的全部资料，路径一律相对核查包根目录（如 target.json、sources/<id>.view.json、history/responses.json）。'
-                   '先看target.json的本轮要求、正文和claim_evidence关联；再核对具体原文与图表。本次报告图与已选证据视觉的实际交付情况见本条消息末尾的视觉输入说明，visual-inputs.json记录它们与固定文件的对应关系；没有实际看到的图不能声称已目视核验，可以用图表数据文件核对数值。必要时读history中的本报告历史。')
+                   '{packet_guide}再核对具体原文与图表。本次报告图与已选证据视觉的实际交付情况见本条消息末尾的视觉输入说明，visual-inputs.json记录它们与固定文件的对应关系；没有实际看到的图不能声称已目视核验，可以用图表数据文件核对数值。必要时读history中的本报告历史。')
         host_tools=''
         output_line='完成后调用 submit_review 提交结果对象（结构见 output.schema.json）；提交未通过时按返回的错误修正后再次提交，不要把 JSON 写进回复正文。'
     else:
         role_line='你是独立只读 Reviewer，核对已保存产物与实际依据，不重新研究或运行计算。\n'
-        host_read=f"只读取 {folder/'packet'/'index.json'} 所索引的文件。"+'JSON已分行；遇到单行截断，target-long-text.json提供长字段分块、sources/*.view.json提供原文行与分块，按顺序无分隔拼接，不把截断当缺失。先看target.json的本轮要求、正文和claim_evidence关联；核对具体原文与图表；本次报告图和已选证据视觉会作为原生图片附件交给当前选定模型，visual-inputs.json记录它们与固定文件的对应关系。先实际检查这些附件的轴、图注、单位和可见内容，附件不可读时用原生read读取同一packet文件；仍失败则说明本次失败。必要时读history中的本报告历史。绝不查询宿主或其他工作区数据库。'
+        host_read=f"只读取 {folder/'packet'/'index.json'} 所索引的文件。"+'JSON已分行；遇到单行截断，target-long-text.json提供长字段分块、sources/*.view.json提供原文行与分块，按顺序无分隔拼接，不把截断当缺失。{packet_guide}核对具体原文与图表；本次报告图和已选证据视觉会作为原生图片附件交给当前选定模型，visual-inputs.json记录它们与固定文件的对应关系。先实际检查这些附件的轴、图注、单位和可见内容，附件不可读时用原生read读取同一packet文件；仍失败则说明本次失败。必要时读history中的本报告历史。绝不查询宿主或其他工作区数据库。'
         host_tools='只有read工具可用。禁止bash、执行脚本、修改文件、联网、委派。'
         output_line=f'最终回复一个符合 {schema} 的 JSON 对象，不加Markdown或说明，不写文件；运行器保存结果。'
+    host_read=host_read.replace('{packet_guide}',packet_guide)
     prompt=f'''{temporal_note}
 核对正文每条当期动态的事件与发布日期，不能只核对作者提交的 temporal_claims；缺少日期记录或原文日期证据写 unverified，旧消息冒充当期用 finding 指出。
 {role_line}{host_read}

@@ -12,6 +12,7 @@ from zipfile import ZipFile, ZIP_DEFLATED, BadZipFile
 
 from .store import dump
 from .release import get_release, validate_release, safe_file, sha
+from .packet_views import DERIVED_VIEWS
 
 SCHEMA_VERSION = 2
 
@@ -265,6 +266,11 @@ def generate_bundle(store, job, cancelled):
         # permission must not be defeated by an alternate copy in a history log.
         if not all_original and (name == 'packet/target-long-text.json' or name.startswith('packet/history/tools/')):
             omissions.append({'file': name, 'reason': '存在未授权原件；省略可能包含原文的重复文本或工具输出，保留工具索引'})
+            continue
+        # Reviewer read views repeat parts of target.json, including source
+        # excerpts; the filtered target.json is the record when sources are restricted.
+        if not all_original and name.removeprefix('packet/') in DERIVED_VIEWS:
+            omissions.append({'file': name, 'reason': '存在未授权原件；省略由 target.json 派生的审阅视图，以过滤后的 target.json 为准'})
             continue
         if name.endswith('.json'):
             value = json.loads(safe_file(folder, name).read_text())

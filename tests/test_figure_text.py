@@ -57,3 +57,30 @@ def test_packet_lists_figure_text_next_to_data_and_image(tmp_path):
     assert entry['figure_id'] == saved['figure_id'] and entry['text_source'] == 'script'
     assert entry['data_file'].endswith('data.csv') and entry['image'].endswith('image.png')
     assert {'line': 6, 'text': '8月无单日量比≥1.5x的放量交易日'} in entry['texts']
+
+
+def test_packet_views_split_the_snapshot_by_purpose(tmp_path):
+    from briefloop.packet_views import report_text
+    document = {'type': 'doc', 'content': [
+        {'type': 'heading', 'attrs': {'blockId': 'b1', 'level': 2}, 'content': [{'type': 'text', 'text': '经营'}]},
+        {'type': 'paragraph', 'attrs': {'blockId': 'b2'}, 'content': [
+            {'type': 'text', 'text': '收入 12 百万美元。'}, {'type': 'citation', 'attrs': {'sourceId': 'src_a'}}]},
+        {'type': 'table', 'attrs': {'blockId': 'b3'}, 'content': [{'type': 'tableRow', 'content': [
+            {'type': 'tableHeader', 'content': [{'type': 'paragraph', 'content': [{'type': 'text', 'text': '指标'}]}]},
+            {'type': 'tableCell', 'content': [{'type': 'paragraph', 'content': [{'type': 'text', 'text': '12'}]}]}]}]}]}
+    assert report_text(document) == '[b1] ## 经营\n[b2] 收入 12 百万美元。[src_a]\n[b3] 表格：\n  | 指标 | 12 |\n'
+
+    store = Store(tmp_path)
+    source = store.add_source('Synthetic', 'Revenue was USD 12 million.')
+    run = store.create_run({'title': 'T', 'objective': 'Explain revenue'}, [source['id']])
+    brief = store.publish(run['id'], {'title': 'T', 'markdown': 'Revenue was USD 12 million.'})
+    _, files = build_packet(store, brief['id'], store.root / 'review')
+    packet = store.root / 'review/packet'
+    for name in ('report.txt', 'requirements.json', 'claims.json', 'numbers.json', 'citations.json', 'overview.json'):
+        assert name in files
+    assert 'Revenue was USD 12 million.' in (packet / 'report.txt').read_text(encoding='utf-8')
+    overview = json.loads((packet / 'overview.json').read_text(encoding='utf-8'))
+    listed = {item['path']: item for item in overview['files']}
+    assert listed['report.txt']['contains'] and listed['report.txt']['bytes'] > 0
+    assert 'document' in overview['target_json_sections_chars']
+    assert json.loads((packet / 'requirements.json').read_text(encoding='utf-8'))['requirements']['requirement_items']
