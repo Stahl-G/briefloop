@@ -216,7 +216,11 @@ export function toolGuide(names: string[]): string {
     ...names.map((name) => `- ${name}：${TOOL_GUIDE[name] ?? ""}`)].join("\n");
 }
 
-export function packetTools(packetRoot: string, hooks?: SubmitHooks, acceptsImages: () => boolean = () => true) {
+// runnerAdmits: the runner's admission (the validator that really admits a
+// result) checks structure too. The exported JSON Schema is stricter than it
+// (no field aliases), so checking it first rejected results the runner would
+// accept and cost the model a whole extra round.
+export function packetTools(packetRoot: string, hooks?: SubmitHooks, acceptsImages: () => boolean = () => true, runnerAdmits = false) {
   const root = realpathSync(packetRoot);
   let target: any;
   const loadTarget = () => (target ??= JSON.parse(readFileSync(inside(root, "target.json"), "utf-8")));
@@ -453,7 +457,8 @@ export function packetTools(packetRoot: string, hooks?: SubmitHooks, acceptsImag
       const review = full ?? { ...draft!, ...patch };
       draft = review;
       validator ??= JsonSchema.Compile(JSON.parse(readFileSync(inside(root, "output.schema.json"), "utf-8")));
-      const [ok, errors] = validator.Errors(review) as unknown as [boolean, Array<{ instancePath: string; message: string; params?: unknown }>];
+      const [ok, errors] = runnerAdmits && hooks ? [true, []] as [boolean, never[]]
+        : validator.Errors(review) as unknown as [boolean, Array<{ instancePath: string; message: string; params?: unknown }>];
       if (!ok) {
         const lines = errors.slice(0, 30).map((e) => `${e.instancePath || "(根)"}：${e.message}${e.params ? " " + JSON.stringify(e.params) : ""}`);
         throw new Error(`结构校验未通过（${errors.length} 处），只修改这些字段后重新提交：\n${lines.join("\n")}`);

@@ -512,3 +512,17 @@ test("a rejected submission is fixed by a patch of the failing fields", async ()
   const patchFirst = await call("tool_call", { session_id: fresh, name: "submit_review", args: { patch: { status: "complete" } } }).catch((e) => e.message);
   assert.match(String(patchFirst), /先用 review 提交完整对象/);
 });
+
+test("with runner admission, structure is judged by the runner alone", async () => {
+  // The output schema forbids extra fields; the runner accepts an alias. A
+  // local schema check must not reject what the runner would admit.
+  const seen = [];
+  admission = (review) => { seen.push(review); return undefined; };
+  script(reply.tool("submit_review", { review: { status: "complete", version_id: "v1", suggestion: "alias" } }), reply.text("好"));
+  const { session_id } = await reviewer({ admission: "runner" });
+  const evts = await turn(session_id, "e-runner", { require_submit: true, idle_timeout_s: 30 });
+  admission = () => undefined;
+  assert.equal(ends(evts)[0].status, "completed");
+  assert.equal(seen.length, 1);
+  assert.equal(JSON.parse(ends(evts)[0].final_text).suggestion, "alias");
+});

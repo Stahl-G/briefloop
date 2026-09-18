@@ -197,6 +197,9 @@ class NativeHarness:
             'model': config['model'],
             'thinking': _thinking(config),
         }
+        if config.get('review_id'):
+            # Structure is checked by the same admission that saves the review.
+            params['admission'] = 'runner'
         if isinstance(previous, str) and previous.endswith('.jsonl'):
             params['session_file'] = previous
         result = {**self.engine.call('session_create', params, timeout=60), 'process': self.engine.process}

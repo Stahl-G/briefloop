@@ -117,6 +117,7 @@ def test_harness_sends_the_layered_prompt_and_answers_admission(tmp_path, monkey
 
     created = next(p for name, p in engine.calls if name == 'session_create')
     assert created['system_prompt'] == system_prompt('reviewer')['text']
+    assert created['admission'] == 'runner', 'structure is judged by the admission that saves the review'
     started = next(p for name, p in engine.calls if name == 'turn_start')
     assert started['require_submit'] is True and started['images'] == [{'file': 'figures/f.png', 'sha256': 'a'}]
     assert seen == [('review_x', {'status': 'complete'})]

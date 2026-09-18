@@ -359,7 +359,7 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
   const tools = packetTools(packetRoot, {
     admit: (review) => requestAdmission(clientSid, entryRef, review),
     accept: (review) => { if (entryRef) entryRef.submitted = JSON.stringify(review); },
-  }, () => acceptsImages(modelRef));
+  }, () => acceptsImages(modelRef), p.admission === "runner");
   const systemPrompt = `${basePrompt}\n\n${toolGuide(tools.map((t) => t.name))}`;
   const { session } = await createAgentSession({
     cwd,
