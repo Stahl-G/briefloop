@@ -2394,6 +2394,8 @@ const ICONS={
  landmark:'<line x1="3" y1="22" x2="21" y2="22"/><line x1="5" y1="22" x2="5" y2="11"/><line x1="9" y1="22" x2="9" y2="11"/><line x1="15" y1="22" x2="15" y2="11"/><line x1="19" y1="22" x2="19" y2="11"/><path d="M2 11L12 3l10 8z"/>',
  layers:'<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
  paperclip:'<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
+ // Two buildings separated by a slash — competitor / dual-entity compare (Downloads icon ref)
+ buildingsSlash:'<path d="M4 21V9.5L9 6v15"/><path d="M4 21h7"/><line x1="6.2" y1="11" x2="7.8" y2="11"/><line x1="6.2" y1="14" x2="7.8" y2="14"/><line x1="6.2" y1="17" x2="7.8" y2="17"/><line x1="13.2" y1="5.5" x2="17.8" y2="18.5"/><path d="M14 21v-9.5L18.5 8.5V21"/><path d="M14 21h7"/><line x1="16" y1="14" x2="17.5" y2="14"/><line x1="16" y1="17" x2="17.5" y2="17"/>',
 };
 const THEME_COLORS={'品牌绿':'#006838','极简蓝':'#2563EB','珊瑚红':'#C62828','石墨黑':'#1E2320','典雅灰':'#8A9089'};
 const THEME_ORDER=Object.keys(THEME_COLORS);
