@@ -143,6 +143,7 @@ function settle(execId, timeout = 20000) {
 const ends = (evts) => evts.filter((e) => e.kind === "end");
 let sessions = 0;
 let admission = () => undefined;
+let runnerTool = () => ({ ok: false, error: "no runner tool configured" });
 async function reviewer(extra = {}) {
   const session_id = "s" + ++sessions;
   const res = await call("session_create", {
@@ -218,6 +219,11 @@ before(async () => {
           const error = admission(msg.params.review);
           void call("submit_result", { session_id: msg.params.session_id, request_id: msg.params.request_id, ok: !error, error });
         }
+        // Stands in for the Python runner executing a tool it declared.
+        if (msg.params.kind === "tool_request") {
+          const result = runnerTool(msg.params.tool, msg.params.args);
+          void call("tool_result", { session_id: msg.params.session_id, request_id: msg.params.request_id, ...result });
+        }
         for (const l of [...listeners]) l();
       }
       else if (msg.id && waiters.has(msg.id)) { waiters.get(msg.id)(msg); waiters.delete(msg.id); }
@@ -240,8 +246,8 @@ test("ping reports the engine and credentialed models", async () => {
   assert.equal(ping.models_available, 2);
 });
 
-test("session_create refuses non-reviewer roles and models without a provider", async () => {
-  assert.match(await callError("session_create", { session_id: "x1", role: "writer", packet_root: packet, model: MODEL }), /reviewer/);
+test("session_create refuses unknown roles and models without a provider", async () => {
+  assert.match(await callError("session_create", { session_id: "x1", role: "writer", packet_root: packet, model: MODEL }), /unsupported role: writer/);
   assert.match(await callError("session_create", { session_id: "x2", role: "reviewer", packet_root: packet, model: "m1", system_prompt: SYSTEM }), /unknown or unavailable model/);
   assert.match(await callError("session_create", { session_id: "x3", role: "reviewer", packet_root: packet, model: MODEL }), /system_prompt required/);
 });
@@ -605,4 +611,49 @@ test("object and array arguments written as JSON strings are decoded before vali
   assert.equal(seen.length, 1);
   assert.equal(ends(evts)[0].status, "completed");
   assert.deepEqual(JSON.parse(ends(evts)[0].final_text), { status: "complete", version_id: "v1" });
+});
+
+const ASSESSMENT = { name: "submit_assessment", description: "提交评分结果", guide: "提交评分，通过即结束。", settles: true,
+  parameters: { type: "object", required: ["assessment"], properties: { assessment: { type: "object" } } } };
+const RENDER = { name: "render_pages", description: "渲染 PDF 页", parameters: { type: "object", required: ["source_id", "pages"],
+  properties: { source_id: { type: "string" }, pages: { type: "array", items: { type: "integer" } } } } };
+
+test("an evaluator session has packet reads plus the runner's tools, and nothing else", async () => {
+  const { session_id, tools } = await reviewer({ role: "evaluator", runner_tools: [RENDER, ASSESSMENT] });
+  assert.deepEqual(tools, ["calc", "packet_grep", "packet_list", "packet_read", "render_pages", "submit_assessment"]);
+  script(reply.text("好"));
+  await turn(session_id, "e-eval-tools", { idle_timeout_s: 30 });
+  const prompt = JSON.stringify(provider.requests[0].messages[0]);
+  assert.match(prompt, /submit_assessment：提交评分，通过即结束。/);
+  assert.match(prompt, /submit_assessment 单独提交/);
+  assert.doesNotMatch(prompt, /submit_review|claim_trace/);
+  assert.match(await callError("session_create", { session_id: "x-dup", role: "evaluator", packet_root: packet, model: MODEL,
+    system_prompt: SYSTEM, runner_tools: [{ ...RENDER, name: "packet_read" }] }), /runner tool name taken: packet_read/);
+});
+
+test("runner tools run on the runner; a settling tool ends the run with the accepted value", async () => {
+  const calls = [];
+  runnerTool = (tool, args) => {
+    calls.push([tool, args]);
+    if (tool === "render_pages") return { ok: true, content: [{ type: "text", text: "第 2 页" }, { type: "image", data: PNG.toString("base64"), mimeType: "image/png" }] };
+    if (!args.assessment.brief_hash) return { ok: false, error: "brief_hash 必须是 H1" };
+    return { ok: true, content: [{ type: "text", text: "评分已保存" }], settle: JSON.stringify(args.assessment) };
+  };
+  script(
+    reply.tool("render_pages", { source_id: "src1", pages: [2] }),
+    reply.tool("submit_assessment", { assessment: { overall: 3 } }),
+    reply.tool("submit_assessment", { assessment: { overall: 3, brief_hash: "H1" } }),
+    reply.text("不应再有这次请求"),
+  );
+  const { session_id } = await reviewer({ role: "evaluator", runner_tools: [RENDER, ASSESSMENT] });
+  const evts = await turn(session_id, "e-eval-run", { require_submit: true, idle_timeout_s: 30 });
+  runnerTool = () => ({ ok: false, error: "no runner tool configured" });
+  assert.deepEqual(calls.map(([tool]) => tool), ["render_pages", "submit_assessment", "submit_assessment"]);
+  const toolResults = provider.requests.flatMap((r) => r.messages).filter((m) => m.role === "tool").map((m) => JSON.stringify(m.content));
+  assert.ok(toolResults.some((t) => /第 2 页/.test(t) && /当前模型不接收图像输入/.test(t)), "a text-only model gets a note, not the image");
+  assert.ok(toolResults.some((t) => /brief_hash 必须是 H1/.test(t)), "the runner's rejection goes back to the model");
+  assert.equal(provider.requests.length >= 3, true);
+  assert.equal(ends(evts).length, 1);
+  assert.equal(ends(evts)[0].status, "completed");
+  assert.deepEqual(JSON.parse(ends(evts)[0].final_text), { overall: 3, brief_hash: "H1" });
 });

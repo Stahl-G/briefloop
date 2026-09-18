@@ -211,9 +211,10 @@ export const TOOL_GUIDE: Record<string, string> = {
   submit_review: "提交最终审阅结果。先用 review 提交完整对象；提交时按 output.schema.json 和本次允许的 ID 当场校验，未通过时只用 patch 重交需要修改的顶层字段，会与上次草稿合并。通过即结束本次审阅，不要再在回复正文里输出 JSON。",
 };
 
-export function toolGuide(names: string[]): string {
-  return ["## 本次可用工具", "一次回复可以同时调用多个工具；互不依赖的调用会并行执行，submit_review 单独提交。",
-    ...names.map((name) => `- ${name}：${TOOL_GUIDE[name] ?? ""}`)].join("\n");
+// extra: guide lines of runner-declared tools; submit: the tool that ends the run.
+export function toolGuide(names: string[], extra: Record<string, string> = {}, submit = "submit_review"): string {
+  return ["## 本次可用工具", `一次回复可以同时调用多个工具；互不依赖的调用会并行执行，${submit} 单独提交。`,
+    ...names.map((name) => `- ${name}：${extra[name] ?? TOOL_GUIDE[name] ?? ""}`)].join("\n");
 }
 
 // runnerAdmits: the runner's admission (the validator that really admits a

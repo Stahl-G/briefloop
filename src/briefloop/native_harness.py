@@ -1,15 +1,17 @@
-"""Restricted reviewer sessions on the BriefLoop-owned native engine.
+"""Packet-confined sessions on the BriefLoop-owned native engine.
 
 Unlike the bridge harnesses, the engine has no foreign coding-agent persona or
 toolbelt to negotiate: BriefLoop controls the system prompt, the tool list and
-the session lifecycle directly. Phase 1 accepts only restricted-review work —
-a runtime config without ``review_root`` is refused here, before any model
-call, instead of falling back to a wider permission.
+the session lifecycle directly. One engine, one wire protocol; a role
+(native_roles) picks the prompt layer and the tools. Only packet-confined roles
+run so far (the Reviewer and the Evaluator): a runtime config without a
+read-only packet is refused here, before any model call, instead of falling
+back to a wider permission.
 
-The system prompt is BriefLoop's layered reviewer contract (agent_prompts); the
-engine appends the guide for the tools it registered. The per-task message is the
-review contract written by review.py for this backend. submit_review results are
-checked here with the same admission rules that later save the review.
+The system prompt is BriefLoop's layered contract for the role (agent_prompts);
+the engine appends the guide for the tools it registered. submit_review is
+admitted here with the rules that later save the review; runner tools the role
+declared are executed here when the engine forwards a call (tool_request).
 """
 import json
 import queue
@@ -105,11 +107,13 @@ class NativeHarness:
         if not isinstance(model, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_./:-]+', model.strip()):
             raise ValueError('内置引擎模型需要 provider/model 形式（如 deepseek/deepseek-v4-pro）')
         value['model'] = model.strip()
-        # Phase 1: this engine only executes the restricted review contract.
-        # Refusing here keeps a misrouted generate/learn job from ever reaching
-        # a model with a permission it was not designed for.
-        if value.get('permission') != 'read-only' or not value.get('review_root'):
-            raise ValueError('内置引擎当前仅执行受限独立审阅（需要只读核查包）')
+        # Only packet-confined roles run here so far (native_roles). Refusing
+        # here keeps a misrouted generate/learn job from ever reaching a model
+        # with a permission it was not designed for.
+        from .native_roles import role_of
+        role_of(value)
+        if value.get('permission') != 'read-only' or not (value.get('packet_root') or value.get('review_root')):
+            raise ValueError('内置引擎当前仅执行只读核查包内的审阅与评分')
         return value
 
     # -- messaging ------------------------------------------------------
@@ -191,12 +195,15 @@ class NativeHarness:
             return existing
         previous = (existing or {}).get('session_file') or self.chat.session(sid).get('thread_id')
         from .agent_prompts import system_prompt
-        prompt = system_prompt('reviewer', 'background')
+        from .native_roles import role_of, runner_tool_specs
+        role = role_of(config)
+        prompt = system_prompt(role, 'background')
         params = {
             'system_prompt': prompt['text'],
             'session_id': sid,
-            'role': 'reviewer',
-            'packet_root': config['review_root'],
+            'role': role,
+            'packet_root': config.get('packet_root') or config['review_root'],
+            'runner_tools': runner_tool_specs(role),
             'session_dir': str(cwd),
             'model': config['model'],
             'thinking': _thinking(config),
@@ -217,6 +224,7 @@ class NativeHarness:
         self.chat.event(sid, 'session/bound', {
             'backend': 'briefloop-native',
             'engine_session': sid,
+            'role': role,
             'session_file': result.get('session_file'),
             'resumed': bool(result.get('resumed')),
             'model': result.get('model'),
@@ -322,6 +330,8 @@ class NativeHarness:
                         'raw': usage}})
                 elif kind == 'submit':
                     self._admit(sid, config, event)
+                elif kind == 'tool_request':
+                    self._run_tool(sid, config, event)
                 elif kind == 'status':
                     self.chat.event(sid, 'runtime/status',
                                     {'turnId': mid, 'message': event.get('message', '')})
@@ -394,6 +404,18 @@ class NativeHarness:
                 'ok': error is None, 'error': error}, timeout=15)
         except Exception:
             pass  # The engine times the submission out and tells the model.
+
+    def _run_tool(self, sid, config, event):
+        from .native_roles import run_tool
+        result = run_tool(self.store, config, event.get('tool'), event.get('args'))
+        if not result['ok']:
+            self.chat.event(sid, 'runtime/status', {
+                'turnId': self.chat.session(sid).get('turn_id'),
+                'message': f"{event.get('tool')} 未通过：{result.get('error', '')[:200]}"})
+        try:
+            self.engine.call('tool_result', {'session_id': sid, 'request_id': event.get('request_id'), **result}, timeout=15)
+        except Exception:
+            pass  # The engine times the call out and tells the model.
 
     def cancel(self, session_id):
         with self._lock:

@@ -157,6 +157,10 @@ class InteractiveRuntime:
             require_for_review(backend)
             runtime.update(permission='read-only',review_root=str((folder/'packet').resolve()))
             if job.get('review_id'):runtime['review_id']=job['review_id']
+        native_packet = job.get('native_packet')
+        if native_packet and backend == 'briefloop-native':
+            runtime.update(permission='read-only', packet_root=str((folder/'packet').resolve()),
+                           native_role=native_packet['role'], version_id=native_packet['version_id'])
         if backend == 'codex' and 'service_tier' in configured:
             runtime['service_tier'] = configured['service_tier']
         if configured.get('model_provider'):

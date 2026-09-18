@@ -88,9 +88,11 @@ class EngineFixture:
 
 def test_refuses_sessions_that_are_not_restricted_reviews(tmp_path):
     h = NativeHarness(Store(tmp_path), EngineFixture())
-    with pytest.raises(ValueError, match='受限独立审阅'):
+    with pytest.raises(ValueError, match='只读核查包'):
         h.create_session('t', {'model': 'fake/m1'})
-    with pytest.raises(ValueError, match='受限独立审阅'):
+    with pytest.raises(ValueError, match='不支持的角色'):
+        h.create_session('t', {'model': 'fake/m1', 'review_root': str(tmp_path), 'native_role': 'orchestrator'})
+    with pytest.raises(ValueError, match='只读核查包'):
         h.create_session('t', {'model': 'fake/m1', 'review_root': str(tmp_path), 'permission': 'workspace-write'})
 
 

@@ -27,13 +27,21 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { fixedLoader } from "./loader.js";
 import { IMAGE_MIME, inside, packetTools, toolGuide } from "./packet-tools.js";
+import { parseRunnerTools, RunnerResult, runnerTools } from "./runner-tools.js";
 
 const PI_VERSION = "0.85.1";
 const ENGINE_VERSION = "briefloop-native/2";
 const REVIEWER_TOOLS = ["packet_list", "packet_read", "packet_grep", "claim_trace", "calc", "submit_review"];
+// Engine-local tools per role. Everything else a role can do is declared by the
+// runner (runner-tools.ts) and executed on the Python side.
+const ROLE_LOCAL_TOOLS: Record<string, string[]> = {
+  reviewer: REVIEWER_TOOLS,
+  evaluator: ["packet_list", "packet_read", "packet_grep", "calc"],
+};
+const RUNNER_TOOL_TIMEOUT_MS = 180_000;
 
 const REPAIR_PROMPT = "只回复这个 JSON 对象本身，不加 Markdown 代码块，前后不加说明。";
-const SUBMIT_PROMPT = "你还没有通过 submit_review 提交审阅结果。请基于已完成的核查调用 submit_review 提交完整结果对象；未通过时按返回的错误修正后再次提交。";
+const submitPrompt = (tool: string) => `你还没有通过 ${tool} 提交结果。请基于已完成的核查调用 ${tool} 提交完整结果对象；未通过时按返回的错误修正后再次提交。`;
 const STALL_PROMPT = "上一次模型请求卡住，已被运行器取消。上面的工具结果仍然有效，从中断处继续。";
 const SUBMIT_REPAIRS = 2;
 const ADMISSION_TIMEOUT_MS = 120_000;
@@ -75,6 +83,10 @@ interface SessionEntry {
   submitted: string | undefined;
   pendingAdmission: Map<string, (error: string | undefined) => void>;
   admissionSeq: number;
+  // Runner tool calls waiting for tool_result, by request id.
+  pendingTools: Map<string, (result: RunnerResult) => void>;
+  // The tool whose accepted call ends the run.
+  submitTool: string;
   turnError: string;
   usage: unknown;
   idleMs: number;
@@ -302,6 +314,20 @@ function requestAdmission(clientSid: string, entry: SessionEntry | undefined, re
   });
 }
 
+// A runner-declared tool runs on the Python side; the model waits for its answer.
+function requestRunnerTool(clientSid: string, entry: SessionEntry | undefined, tool: string, args: unknown): Promise<RunnerResult> {
+  if (!entry || !entry.execId) return Promise.resolve({ ok: false, error: "没有正在进行的执行，无法调用 " + tool });
+  const requestId = `tool-${++entry.admissionSeq}`;
+  return new Promise((done) => {
+    const timer = setTimeout(() => {
+      entry.pendingTools.delete(requestId);
+      done({ ok: false, error: `运行器未在规定时间内完成 ${tool}，请稍后重试` });
+    }, RUNNER_TOOL_TIMEOUT_MS);
+    entry.pendingTools.set(requestId, (result) => { clearTimeout(timer); done(result); });
+    emit(clientSid, entry.execId, "tool_request", { request_id: requestId, tool, args });
+  });
+}
+
 // Report figures chosen by the runner travel with the first message when the
 // model accepts images. Files are re-read inside the packet and re-hashed here;
 // the wire carries only packet paths.
@@ -333,7 +359,12 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
   if (!clientSid) throw new Error("session_id required");
   if (sessions.has(clientSid)) throw new Error(`session already exists: ${clientSid}`);
   const role = String(p.role ?? "reviewer");
-  if (role !== "reviewer") throw new Error(`phase 1 supports only role=reviewer, got ${role}`);
+  const local = ROLE_LOCAL_TOOLS[role];
+  if (!local) throw new Error(`unsupported role: ${role}`);
+  const declared = parseRunnerTools(p.runner_tools, REVIEWER_TOOLS);
+  const settling = declared.filter((t) => t.settles);
+  if (settling.length > 1) throw new Error("at most one runner tool may settle the run");
+  const submitTool = settling[0]?.name ?? (local.includes("submit_review") ? "submit_review" : "");
   const packetRoot = realpathSync(String(p.packet_root ?? ""));
   const cwd = packetRoot; // the packet is the whole world for this session
   const sessionDir = String(p.session_dir ?? packetRoot);
@@ -376,11 +407,18 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
   // The entry does not exist yet when tools are built; hooks resolve it lazily.
   let entryRef: SessionEntry | undefined;
   let modelRef = model;
-  const tools = packetTools(packetRoot, {
+  const packet = packetTools(packetRoot, {
     admit: (review) => requestAdmission(clientSid, entryRef, review),
     accept: (review) => { if (entryRef) entryRef.submitted = JSON.stringify(review); },
-  }, () => acceptsImages(modelRef), p.admission === "runner");
-  const systemPrompt = `${basePrompt}\n\n${toolGuide(tools.map((t) => t.name))}`;
+  }, () => acceptsImages(modelRef), p.admission === "runner").filter((t) => local.includes(t.name));
+  const fromRunner = runnerTools(declared, {
+    call: (tool, args) => requestRunnerTool(clientSid, entryRef, tool, args),
+    acceptsImages: () => acceptsImages(modelRef),
+    settle: (value) => { if (entryRef) entryRef.submitted = value; },
+  });
+  const tools = [...packet, ...fromRunner];
+  const guides = Object.fromEntries(declared.map((t) => [t.name, t.guide ?? t.description]));
+  const systemPrompt = `${basePrompt}\n\n${toolGuide(tools.map((t) => t.name), guides, submitTool || "提交")}`;
   const { session } = await createAgentSession({
     cwd,
     modelRuntime: runtime,
@@ -396,9 +434,10 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     settingsManager,
   });
   const active = session.getActiveToolNames().sort();
-  if (active.join(",") !== [...REVIEWER_TOOLS].sort().join(",")) {
+  const expected = [...local, ...declared.map((t) => t.name)].sort();
+  if (active.join(",") !== expected.join(",")) {
     session.dispose();
-    throw new Error(`reviewer tool confinement check failed: active tools are ${JSON.stringify(active)}`);
+    throw new Error(`${role} tool confinement check failed: active tools are ${JSON.stringify(active)}`);
   }
 
   const entry: SessionEntry = {
@@ -420,6 +459,8 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     submitted: undefined,
     pendingAdmission: new Map(),
     admissionSeq: 0,
+    pendingTools: new Map(),
+    submitTool,
     turnError: "",
     usage: undefined,
     idleMs: DEFAULT_IDLE_MS,
@@ -523,7 +564,7 @@ async function turnStart(id: string | undefined, p: Record<string, unknown>): Pr
         if (repairs < SUBMIT_REPAIRS) {
           repairs += 1;
           emit(sid, execId, "status", { message: `result not submitted; asking for submit_review (${repairs}/${SUBMIT_REPAIRS})` });
-          message = SUBMIT_PROMPT;
+          message = submitPrompt(entry.submitTool);
           continue;
         }
         // Last resort: a bare JSON reply still reaches runner admission.
@@ -555,6 +596,8 @@ async function turnStart(id: string | undefined, p: Record<string, unknown>): Pr
     disarmIdle(entry);
     for (const [, settle] of entry.pendingAdmission) settle("审阅执行已结束");
     entry.pendingAdmission.clear();
+    for (const [, settle] of entry.pendingTools) settle({ ok: false, error: "执行已结束" });
+    entry.pendingTools.clear();
   }
   emit(sid, execId, "end", {
     status,
@@ -638,6 +681,23 @@ async function dispatch(req: WireRequest): Promise<void> {
         if (!settle) throw new Error("no pending submission with that request_id");
         entry.pendingAdmission.delete(String(req.params?.request_id));
         settle(req.params?.ok === true ? undefined : String(req.params?.error || "接纳检查未通过"));
+        reply(req.id, { settled: true });
+        break;
+      }
+      case "tool_result": {
+        const entry = sessions.get(String(req.params?.session_id ?? ""));
+        if (!entry) throw new Error("unknown session_id");
+        const requestId = String(req.params?.request_id ?? "");
+        const settle = entry.pendingTools.get(requestId);
+        if (!settle) throw new Error("no pending tool call with that request_id");
+        entry.pendingTools.delete(requestId);
+        const p = req.params ?? {};
+        settle({
+          ok: p.ok === true,
+          error: typeof p.error === "string" ? p.error : undefined,
+          content: Array.isArray(p.content) ? p.content as RunnerResult["content"] : undefined,
+          settle: typeof p.settle === "string" ? p.settle : undefined,
+        });
         reply(req.id, { settled: true });
         break;
       }
