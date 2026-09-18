@@ -1,0 +1,60 @@
+- generic [ref=e2]:
+  - complementary "会话列表" [ref=e3]:
+    - link "BriefLoop" [ref=e5] [cursor=pointer]:
+      - /url: /
+    - button "当前工作区 本地工作区" [ref=e9] [cursor=pointer]:
+      - generic [ref=e10]: 当前工作区
+      - generic [ref=e11]:
+        - generic [ref=e12]: 本地工作区
+        - generic [aria-hidden] [ref=e13]: ⌄
+    - button "＋ 新对话" [ref=e14] [cursor=pointer]
+    - button "＋ 新建报告" [ref=e15] [cursor=pointer]
+    - navigation "工作区视图" [ref=e16]:
+      - button "首页" [ref=e17] [cursor=pointer]
+      - button "我的报告" [ref=e21] [cursor=pointer]
+      - button "数据源" [ref=e26] [cursor=pointer]
+      - button "模板" [ref=e30] [cursor=pointer]
+      - button "Wiki" [ref=e35] [cursor=pointer]
+      - button "设置" [ref=e39] [cursor=pointer]
+      - button "动态" [ref=e44] [cursor=pointer]
+    - generic [ref=e45]:
+      - generic [ref=e46]: 对话列表视图
+      - combobox "对话列表视图" [ref=e47]:
+        - option "最近对话" [selected]
+        - option "连接测试"
+        - option "已归档"
+        - option "回收站"
+      - button "归档已结束" [ref=e48] [cursor=pointer]
+    - paragraph [ref=e50]: 正在读取会话…
+    - generic [ref=e51]: 连接中
+  - main [ref=e55]:
+    - generic [ref=e56]:
+      - generic [ref=e57]:
+        - heading "今天，想弄清楚什么？" [level=1] [ref=e58]
+        - paragraph [ref=e59]: 与 BriefLoop 一起，把信息变成更好的报告。
+      - generic [ref=e60]:
+        - generic [ref=e61]: 发消息给 BriefLoop
+        - textbox "发消息给 BriefLoop" [ref=e62]:
+          - /placeholder: 描述你想了解的问题…
+        - generic [ref=e63]:
+          - generic [ref=e64]:
+            - button "添加文件附件" [ref=e65] [cursor=pointer]: ＋
+            - generic [ref=e66]: 执行模型
+            - button "⚙︎ 参数" [ref=e68] [cursor=pointer]
+          - generic [ref=e69]:
+            - generic [ref=e70]:
+              - textbox "执行模型 ID" [ref=e71]:
+                - /placeholder: 输入模型 ID
+              - combobox "选择模型" [ref=e72] [cursor=pointer]:
+                - option "▾" [selected]
+                - option "输入其他模型 ID…"
+                - option "搜索全部模型…"
+            - combobox "推理档位" [ref=e73]:
+              - option "模型默认"
+              - option "low"
+              - option "medium"
+              - option "high" [selected]
+              - option "xhigh"
+              - option "max"
+            - button "发送" [disabled] [ref=e75]
+      - paragraph [ref=e76]: Enter 发送 · Shift + Enter 换行 · Luna / high

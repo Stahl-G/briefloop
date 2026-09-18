@@ -1,0 +1,191 @@
+/* =============================================================
+   BriefLoop 设计令牌
+   v2 · 2026-09-18
+   -------------------------------------------------------------
+   本文件是色值/数值的唯一事实来源。
+   - 原始层(--c-*):具体值,只被语义层引用
+   - 语义层:用途别名,组件只允许引用这一层
+   - 其余 CSS 文件禁止出现裸 hex / 裸 z-index(见 DESIGN.md §9.1)
+   ============================================================= */
+
+:root {
+  /* ===========================================================
+     1. 原始层 — 色彩
+     =========================================================== */
+
+  /* 绿(品牌) */
+  --c-green-700: #145238;
+  --c-green-600: #006838;
+  --c-green-050: #e6f2ec;
+
+  /* 中性(墨 / 纸) */
+  --c-ink-900: #1e2320;
+  --c-ink-500: #6a706b;
+  --c-ink-400: #8b918b;   /* v2 新增:对白底 3.22:1,满足 WCAG 1.4.11 */
+  --c-ink-200: #dedfd8;
+  --c-ink-100: #eef0ee;
+  --c-ink-050: #f4f6ef;
+  --c-paper:   #faf9f6;
+  --c-white:   #ffffff;
+  --c-black-rgb: 30, 35, 32;   /* 用于 rgba() 组合 */
+
+  /* 状态 */
+  --c-amber-700: #8a6d1a;
+  --c-red-700:   #a5472e;
+
+  /* 分类(与 frontend/app.js 的 GENRE_META 同源,两处必须同步)
+     色相约束:不得使用绿 / 红 / 黄 —— 已被主操作 / 错误 / 警告独占 */
+  --c-cat-blue-fg:    #1565C0;  --c-cat-blue-bg:    #E8F1FD;  /* 商业 / 周报 */
+  --c-cat-magenta-fg: #AD1457;  --c-cat-magenta-bg: #FCE9F1;  /* 证券 / 对比 */
+  --c-cat-teal-fg:    #00695C;  --c-cat-teal-bg:    #E0F0EE;  /* 学术 / 资料 */
+  --c-cat-violet-fg:  #6741D9;  --c-cat-violet-bg:  #EFEAFD;  /* 协作 / 会议 */
+  --c-cat-neutral-fg: #5B6360;  --c-cat-neutral-bg: #EEF0EE;  /* 中性兜底 */
+
+  /* ===========================================================
+     2. 语义层 — 色彩
+     组件只引用这一层。深色模式将只重定义本段。
+     =========================================================== */
+
+  --color-primary:        var(--c-green-600);
+  --color-primary-hover:  var(--c-green-700);
+  --color-primary-soft:   var(--c-green-050);
+  --color-on-primary:     var(--c-white);
+
+  --color-text:           var(--c-ink-900);
+  --color-text-muted:     var(--c-ink-500);   /* 4.81:1 — 不得再调浅 */
+  --color-link:           var(--c-green-600);
+
+  --color-bg:             var(--c-paper);
+  --color-surface:        var(--c-white);
+  --color-surface-soft:   var(--c-ink-050);
+
+  /* 边框分工是硬规则,不是风格偏好:
+     --color-border         装饰性(卡片描边、分隔线)  1.34:1  无对比度要求
+     --color-border-strong  可交互控件边界              3.22:1  WCAG 1.4.11 ≥3:1 */
+  --color-border:         var(--c-ink-200);
+  --color-border-strong:  var(--c-ink-400);
+
+  --color-focus:          var(--c-green-600);
+  --color-focus-inverse:  var(--c-white);
+
+  --color-warn:           var(--c-amber-700);
+  --color-danger:         var(--c-red-700);
+
+  --color-scrim:          rgba(var(--c-black-rgb), .32);
+
+  /* 分类语义别名 */
+  --cat-business-fg:  var(--c-cat-blue-fg);     --cat-business-bg:  var(--c-cat-blue-bg);
+  --cat-markets-fg:   var(--c-cat-magenta-fg);  --cat-markets-bg:   var(--c-cat-magenta-bg);
+  --cat-academic-fg:  var(--c-cat-teal-fg);     --cat-academic-bg:  var(--c-cat-teal-bg);
+  --cat-collab-fg:    var(--c-cat-violet-fg);   --cat-collab-bg:    var(--c-cat-violet-bg);
+  --cat-neutral-fg:   var(--c-cat-neutral-fg);  --cat-neutral-bg:   var(--c-cat-neutral-bg);
+
+  /* ===========================================================
+     3. 排版
+     =========================================================== */
+
+  --font: /* 沿用既有栈 */ -apple-system, BlinkMacSystemFont, "Segoe UI",
+          "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --text-2xs:  11px;  /* 仅数字角标 / 纯拉丁标签 —— 禁止用于中文 */
+  --text-xs:   12px;  /* 中文最小字号 */
+  --text-sm:   13px;
+  --text-base: 14px;
+  --text-md:   15px;
+  --text-lg:   17px;
+  --text-xl:   23px;
+  --text-2xl:  30px;
+
+  --leading-tight:   1.4;
+  --leading-normal:  1.6;
+  --leading-relaxed: 1.9;
+
+  --fw-normal:   400;
+  --fw-medium:   500;
+  --fw-semibold: 600;
+
+  /* ===========================================================
+     4. 间距 / 圆角 / 控件尺寸
+     =========================================================== */
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --radius-sm:   6px;
+  --radius:      9px;
+  --radius-lg:   14px;
+  --radius-pill: 100px;
+
+  --control-h-sm: 28px;   /* 工具栏紧凑控件 */
+  --control-h-md: 36px;   /* 常规按钮 / 输入框 */
+  --control-h-lg: 42px;   /* 设置页表单输入 */
+  --control-check: 16px;  /* 复选框 / 单选 */
+
+  /* ===========================================================
+     5. 阴影 / 层级
+     =========================================================== */
+
+  --shadow-sm: 0 1px 2px  rgba(var(--c-black-rgb), .06);  /* 卡片 */
+  --shadow-md: 0 4px 12px rgba(var(--c-black-rgb), .10);  /* popover / 菜单 */
+  --shadow-lg: 0 12px 32px rgba(var(--c-black-rgb), .16); /* 对话框 / 抽屉 */
+
+  --z-sticky:       100;  /* 顶栏、tab 头 */
+  --z-dropdown:     200;  /* popover、菜单 */
+  --z-drawer-scrim: 300;
+  --z-drawer:       310;  /* 窄屏抽屉、覆盖式右栏 */
+  --z-dialog-scrim: 400;
+  --z-dialog:       410;
+  --z-toast:        500;
+
+  /* ===========================================================
+     6. 布局
+     =========================================================== */
+
+  --sidebar-width: 218px;
+  --rail-width:    340px;
+  --chat-column:   728px;
+  --content-max:  1080px;  /* v2 新增:主区内容上限 */
+  --page-max:     1680px;  /* v2 新增:超宽屏整页上限 */
+
+  /* 断点(仅作文档常量 —— CSS 自定义属性不能用于 media query)
+     --bp-xl 1600  超宽:整页收敛到 --page-max
+     --bp-lg 1150  右栏改覆盖式面板
+     --bp-md  780  导航收窄条,右栏改抽屉
+     --bp-sm  560  导航只留图标 */
+}
+
+/* =============================================================
+   焦点可见 —— 全局基线,见 DESIGN.md §2.2
+   每个可交互元素都必须有焦点样式;禁止裸 outline:none
+   ============================================================= */
+
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* 深色底控件换反色环,否则绿环在绿底上不可见 */
+:where(.primary, .chip--danger, .chip--warn):focus-visible {
+  outline-color: var(--color-focus-inverse);
+}
+
+/* =============================================================
+   深色模式:v1 不实现。
+   实现时只重定义本段语义层,原始层与所有组件规则不动。
+
+   [data-theme="dark"] {
+     --color-bg:            #141715;
+     --color-surface:       #1c201e;
+     --color-text:          #e8eae8;
+     --color-text-muted:    #9aa09b;
+     --color-border:        #2c312e;
+     --color-border-strong: #5a615c;
+     ...
+   }
+   ============================================================= */

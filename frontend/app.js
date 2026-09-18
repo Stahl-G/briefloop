@@ -948,7 +948,7 @@ function runtimeChoice(){const model=$('chat-model').value.trim();if(!model)thro
 function messageTime(value){const date=new Date(value);return Number.isNaN(date.getTime())?'':date.toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false})}
 function chatError(text=''){$('chat-error').textContent=text;$('chat-error').hidden=!text}
 function sessionMissing(error){return /会话或消息不存在|会话不存在/.test(String(error&&error.message||error||''))}
-function updateComposer(){syncCompactReportControls();renderChatBackendChoice();renderChatRuntimePermissions();const readonly=chat.session&&chat.session.lifecycle&&chat.session.lifecycle!=='active';const active=chatActive(),steering=active&&$('chat-mode').value==='steer';if(steering){const runtime=activeChatRuntime();$('chat-permission').value=runtime.permission||'workspace-write';$('chat-model').value=runtime.model||'';assignEffort('chat-effort',effortValue(runtime,'effort'));$('chat-model-provider').value=runtime.model_provider||'';$('chat-service-tier').value=runtime.service_tier||'';const activeMessage=chat.messages.find(m=>m.role==='user'&&m.turn_id===chat.session?.turn_id);$('chat-allow-web').checked=!!activeMessage?.allow_web} renderFastControls();$('chat-allow-web').disabled=readonly||steering||chat.busy;for(const id of ['chat-model','chat-effort','chat-model-provider','chat-service-tier'])$(id).disabled=readonly||steering||chat.busy;$('chat-permission').disabled=readonly||steering||chat.busy;$('new-session').disabled=chat.busy||chat.uploading>0;$('chat-input').readOnly=chat.busy||readonly;document.querySelectorAll('[data-chat-session]').forEach(b=>b.disabled=chat.busy||chat.uploading>0);$('chat-send').disabled=readonly||chat.busy||chat.uploading>0||(!$('chat-input').value.trim()&&!chat.attachments.size)||!$('chat-model').value.trim();const sendLabel=chat.busy?'发送中…':active?($('chat-mode').value==='steer'?'立即补充':'排队发送'):'发送消息';$('chat-send').textContent=chat.busy?'…':'↑';$('chat-send').setAttribute('aria-label',sendLabel);$('chat-send').title=sendLabel;$('chat-stop').hidden=!sessionBusy(chat.session);$('chat-stop').disabled=chat.busy;$('chat-mode').disabled=!active||chat.busy;$('chat-attach').disabled=readonly||chat.busy||chat.uploading>0;$('attach-existing').disabled=readonly||chat.busy;$('chat-attach').querySelector('span').textContent=chat.uploading?'上传中…':'文件';const model=$('chat-model').value.trim(),label=friendlyModel(model)||'输入模型 ID';$('chat-model').title=model?friendlyModel(model)+' · '+model:'输入模型 ID';if(!model)$('chat-send').title='请先选择模型';const chatBackend=chatBackendChoice();const speed=$('chat-service-tier').hidden?'':($('chat-service-tier').value==='fast'?' · Fast（请求）':$('chat-service-tier').value==='default'?' · 标准':'');const effort=chatBackend==='opencode'?(chat.session?.runtime?.variant||state.settings.model_variant||'模型默认'):($('chat-effort').value==='none'?'模型默认':$('chat-effort').value);$('composer-help').textContent=`Enter 发送 · Shift + Enter 换行 · ${label}${['codex','opencode'].includes(chatBackend)?' / '+effort:''}${speed}${active?' · 立即补充沿用当前联网与模型设置；更改设置请排队到下一回合':''}${model?'':' · 请先从模型列表选择或输入模型 ID'}`}
+function updateComposer(){syncCompactReportControls();renderChatBackendChoice();renderChatRuntimePermissions();const readonly=chat.session&&chat.session.lifecycle&&chat.session.lifecycle!=='active';const active=chatActive(),steering=active&&$('chat-mode').value==='steer';if(steering){const runtime=activeChatRuntime();$('chat-permission').value=runtime.permission||'workspace-write';$('chat-model').value=runtime.model||'';assignEffort('chat-effort',effortValue(runtime,'effort'));$('chat-model-provider').value=runtime.model_provider||'';$('chat-service-tier').value=runtime.service_tier||'';const activeMessage=chat.messages.find(m=>m.role==='user'&&m.turn_id===chat.session?.turn_id);$('chat-allow-web').checked=!!activeMessage?.allow_web} renderFastControls();$('chat-allow-web').disabled=readonly||steering||chat.busy;for(const id of ['chat-model','chat-effort','chat-model-provider','chat-service-tier'])$(id).disabled=readonly||steering||chat.busy;$('chat-permission').disabled=readonly||steering||chat.busy;$('new-session').disabled=chat.busy||chat.uploading>0;$('chat-input').readOnly=chat.busy||readonly;document.querySelectorAll('[data-chat-session]').forEach(b=>b.disabled=chat.busy||chat.uploading>0);$('chat-send').disabled=readonly||chat.busy||chat.uploading>0||(!$('chat-input').value.trim()&&!chat.attachments.size)||!$('chat-model').value.trim();const sendLabel=chat.busy?'发送中…':active?($('chat-mode').value==='steer'?'立即补充':'排队发送'):'发送消息';$('chat-send').textContent=chat.busy?'…':'发送';$('chat-send').setAttribute('aria-label',sendLabel);$('chat-send').title=sendLabel;$('chat-stop').hidden=!sessionBusy(chat.session);$('chat-stop').disabled=chat.busy;$('chat-mode').disabled=!active||chat.busy;$('chat-attach').disabled=readonly||chat.busy||chat.uploading>0;$('attach-existing').disabled=readonly||chat.busy;$('chat-attach').querySelector('span').textContent=chat.uploading?'上传中…':'文件';const model=$('chat-model').value.trim(),label=friendlyModel(model)||'输入模型 ID';$('chat-model').title=model?friendlyModel(model)+' · '+model:'输入模型 ID';if(!model)$('chat-send').title='请先选择模型';const chatBackend=chatBackendChoice();const speed=$('chat-service-tier').hidden?'':($('chat-service-tier').value==='fast'?' · Fast（请求）':$('chat-service-tier').value==='default'?' · 标准':'');const effort=chatBackend==='opencode'?(chat.session?.runtime?.variant||state.settings.model_variant||'模型默认'):($('chat-effort').value==='none'?'模型默认':$('chat-effort').value);$('composer-help').textContent=`Enter 发送 · Shift + Enter 换行 · ${label}${['codex','opencode'].includes(chatBackend)?' / '+effort:''}${speed}${active?' · 立即补充沿用当前联网与模型设置；更改设置请排队到下一回合':''}${model?'':' · 请先从模型列表选择或输入模型 ID'}`}
 function sessionBusy(session){if(!session)return false;if(typeof session.busy==='boolean')return session.busy;return ['starting','running','stopping'].includes(session.status)||!!session.turn_id||(session.id===chat.id&&(chat.messages.some(m=>['queued','sending','delivered','streaming'].includes(m.status))||chat.requests.some(r=>r.status==='pending')))}
 function renderSessions(){
  const signature=JSON.stringify([chat.view,chat.id,chat.sessions]);if(renderSessions.signature===signature)return;renderSessions.signature=signature;$('session-view').value=chat.view;
@@ -1071,10 +1071,12 @@ function homeRecentReports(){
 const scheduledReports=scheduleUI({api,getState:()=>state,refresh:async()=>{await refresh();await refresh();},notice,openReport:id=>{const brief=state.briefs.find(b=>b.id===id);if(brief&&openBrief(brief,{follow:false}))page('report')}});
 function renderHome(){
  scheduledReports.render();
- const box=$('home-recent-list');if(!box||!state)return;
  if($('home-greeting'))$('home-greeting').textContent=homeGreeting();
+ const box=$('home-recent-list');if(!box||!state)return;
  const rows=homeRecentReports();
- box.innerHTML=rows.length?rows.map(b=>{const st=reportStatus(b),desc=reportDescription(b);const when=new Date(b.updated||b.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});return `<button type="button" class="home-report" data-home-report="${esc(b.id)}"><span class="home-report-icon" aria-hidden="true">▤</span><span class="home-report-body"><strong>${esc(parse(b.detail).title||'简报')}</strong>${desc?`<small>${esc(desc)}</small>`:''}</span><span class="home-report-meta"><time>${esc(when)}</time><span class="chip ${st.cls}">${esc(st.label)}</span></span></button>`}).join(''):'<p class="help">还没有报告。生成后会显示在这里。</p>';
+ const recentBlock=$('home-block-recent');
+ if(recentBlock)recentBlock.hidden=!rows.length;
+ box.innerHTML=rows.map(b=>{const st=reportStatus(b),desc=reportDescription(b);const when=new Date(b.updated||b.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});return `<button type="button" class="home-report" data-home-report="${esc(b.id)}"><span class="home-report-icon" aria-hidden="true">▤</span><span class="home-report-body"><strong>${esc(parse(b.detail).title||'简报')}</strong>${desc?`<small>${esc(desc)}</small>`:''}</span><span class="home-report-meta"><time>${esc(when)}</time><span class="chip ${st.cls}">${esc(st.label)}</span></span></button>`}).join('');
  box.querySelectorAll('[data-home-report]').forEach(el=>el.onclick=()=>{const b=state.briefs.find(x=>x.id===el.dataset.homeReport);if(b&&openBrief(b,{follow:false}))page('report')});
 }
 let autoOpenedActivityTurn=null;
@@ -2176,7 +2178,7 @@ document.querySelectorAll('#report-tabs [data-report-tab]').forEach(b=>b.onclick
 document.querySelectorAll('#report-tabs [data-report-view]').forEach(b=>b.onclick=()=>setReportView(b.dataset.reportView));
 if($('report-panel-toggle'))$('report-panel-toggle').onclick=toggleReportPanel;
 document.querySelectorAll('.menu-wrap').forEach(wrap=>{const toggle=wrap.querySelector('button[aria-haspopup="menu"]'),pop=wrap.querySelector('.popover');if(!toggle||!pop)return;toggle.onclick=e=>{e.stopPropagation();const open=pop.hidden;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'));pop.hidden=!open;toggle.setAttribute('aria-expanded',String(open))}});
-document.addEventListener('click',e=>{if(e.target.closest?.('.export-template-row'))return;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'))});
+document.addEventListener('click',e=>{if(e.target.closest?.('.export-template-row')||e.target.closest?.('.composer-params'))return;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'))});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'))}});
 if($('assistant-form'))$('assistant-form').onsubmit=e=>{e.preventDefault();sendReportQuestion($('assistant-input').value)};
 document.querySelectorAll('[data-assistant-prompt]').forEach(b=>b.onclick=()=>{const input=$('assistant-input');if(input){input.value=b.dataset.assistantPrompt;input.focus()}});
@@ -2315,12 +2317,12 @@ function closeSourceDrawer(){const d=$('source-drawer'),b=$('source-drawer-backd
 const GENRE_ORDER=['商业报告','券商研报','学术论文','会议纪要','合同','上市公司年报','政府公文','通用报告'];
 const GENRE_META={
  '商业报告':{desc:'适用于商业分析、市场研究等。',icon:'briefcase',tile:'#E8F1FD',color:'#1565C0'},
- '券商研报':{desc:'适用于证券研究、行业分析。',icon:'chart',tile:'#FDECEA',color:'#C62828'},
- '学术论文':{desc:'适用于学术研究、论文写作。',icon:'book',tile:'#E6F2EC',color:'#006838'},
+ '券商研报':{desc:'适用于证券研究、行业分析。',icon:'chart',tile:'#FCE9F1',color:'#AD1457'},
+ '学术论文':{desc:'适用于学术研究、论文写作。',icon:'book',tile:'#E0F0EE',color:'#00695C'},
  '会议纪要':{desc:'适用于会议记录、讨论要点。',icon:'users',tile:'#EFEAFD',color:'#6741D9'},
  '合同':{desc:'适用于各类合同、协议。',icon:'file',tile:'#E8F1FD',color:'#1565C0'},
  '上市公司年报':{desc:'适用于上市公司年度报告。',icon:'bars',tile:'#E8F1FD',color:'#1565C0'},
- '政府公文':{desc:'适用于政府机关公文、政策文件；红头与字体按 GB/T 9704 固定。',icon:'landmark',tile:'#FDECEA',color:'#C8102E'},
+ '政府公文':{desc:'适用于政府机关公文、政策文件；红头与字体按 GB/T 9704 固定。',icon:'landmark',tile:'#FCE9F1',color:'#AD1457'},
  '通用报告':{desc:'适用于各类通用型报告。',icon:'layers',tile:'#EEF0EE',color:'#5B6360'},
 };
 const ICONS={
@@ -2562,7 +2564,8 @@ function syncCompactReportControls(){
  const reports=$('max-reports');if(reports&&document.activeElement!==reports&&!reports.dataset.editing)reports.value=state.settings.max_reports||4;
 }
 function mountCompactReportControls(){
- const form=$('chat-input').closest('form');form.append(compactReportControls('chat'));
+ const paramsPanel=$('composer-params-panel')||$('chat-input').closest('form');
+ paramsPanel.append(compactReportControls('chat'));
  const setup=compactReportControls('setup');const tier=$('research-tier').closest('label');tier.before(setup);tier.classList.add('compact-legacy-option');tier.hidden=true;
  if(tier.nextElementSibling?.classList.contains('help'))tier.nextElementSibling.hidden=true;
  const fact=$('requirements').elements.fact_check.closest('label');fact.classList.add('compact-legacy-option');fact.hidden=true;if(fact.nextElementSibling?.classList.contains('help'))fact.nextElementSibling.hidden=true;
@@ -2573,3 +2576,12 @@ function mountCompactReportControls(){
  syncCompactReportControls();
 }
 mountCompactReportControls();
+// Params popover: progressive disclosure (DESIGN §6.5 §7.2).
+(function wireComposerParams(){
+ const trigger=$('composer-params'),panel=$('composer-params-panel');
+ if(!trigger||!panel)return;
+ const close=()=>{panel.hidden=true;trigger.setAttribute('aria-expanded','false')};
+ trigger.onclick=e=>{e.stopPropagation();const open=panel.hidden;document.querySelectorAll('.popover').forEach(p=>{p.hidden=true});panel.hidden=!open;trigger.setAttribute('aria-expanded',String(open))};
+ document.addEventListener('click',e=>{if(!panel.hidden&&!e.target.closest('.composer-params'))close()});
+ document.addEventListener('keydown',e=>{if(e.key==='Escape')close()});
+})();
