@@ -1,14 +1,20 @@
 ---
 feature: home-v2
-status: in-progress
+status: delivered
 updated: 2026-09-18
 branch: design/system-v2
-commits: 
+commits: 4afde8358f4707fbd05ac8c23b9b794b003a5b97..41c3d2c621c59a7198f504c527339a02be41d15d
 ---
 
 # 首页按 DESIGN v2 改版
 
 ## Report
+
+**What was built** — Homepage and shared composer brought in line with DESIGN v2: tokens.css served and linked; execution parameters moved into a params popover with default row 附件/模型/参数/发送; empty schedule/recent blocks gated without placeholder copy; primary sidebar CTA on 新建报告; suggestion icons use categorical colors; GENRE_META academic/securities hues no longer collide with primary/danger.
+
+**Verification** — `npm run build` PASS; `npm test` 66 collected, 0 fail; `frontend_home_v2.mjs` PASS; Playwright: tokens.css 200 text/css, params panel ~222px open and stays open on internal click, `#new-report.primary`, `#home-block-schedule` hidden on empty.
+
+**Journey log** — Global document click closer also hides new popovers unless excluded; `.popover` subclasses must set `top:auto` when positioning with `bottom`. Server asset allowlist must include `/tokens.css` for both preload and GET branch.
 
 ## [S1] Problem
 首页仍按 v1 呈现：composer 常驻十余执行参数、空工作区三段空状态叠放、侧栏「新对话/新建报告」同权重、建议卡无分类色标、未接入 `tokens.css`。违反 DESIGN §3.2/§5/§6/§7.2/§7.3。
