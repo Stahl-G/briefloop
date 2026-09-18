@@ -204,8 +204,8 @@ export interface SubmitHooks {
 // carry tool snippets, so the engine states the real toolset itself.
 export const TOOL_GUIDE: Record<string, string> = {
   packet_list: "列出核查包内全部文件及大小。",
-  packet_read: "读取包内文件。长文本用 start_line/end_line 分段；JSON 文件用 json_path 只读需要的字段（如 evidence.bindings[0]）；图片文件返回图像（模型不接收图像时只返回说明）。要读几处就把其余放进 more，一次读完；单处最多约 6 万字符。",
-  packet_grep: "在包内文本文件中查找关键词或正则，返回文件、行号、命中片段及前后各 1 行。要核对的几个数字、日期、说法放进 patterns 一次查完；命中片段足以判断时不必再读原文。",
+  packet_read: "读取包内文件。核对来源时读完整份或完整相关部分，在一份材料里核对它支撑的全部内容；超长文件用 start_line/end_line 分段，大 JSON 用 json_path 取字段；图片文件返回图像（模型不接收图像时只返回说明）。要读几份就把其余放进 more；单处最多约 6 万字符。",
+  packet_grep: "在包内文本文件中查找关键词或正则，返回文件、行号、命中片段及前后各 1 行，用来找出内容在哪份文件、哪个位置；可用 patterns 一次查多个词。定位后读取相关来源再核对，不要逐个数字搜索。",
   claim_trace: "按 claim_id 一次取回主张内容、支持说明、绑定证据片段、所在正文段落和前提链。",
   calc: "对正文数字做确定性计算：四则运算、^、%、abs/round/min/max/sqrt/ln/log10/exp/pow（多个参数用分号分隔）。用于核对增长率、占比、加总和单位换算，不要心算。",
   submit_review: "提交最终审阅结果。先用 review 提交完整对象；提交时按 output.schema.json 和本次允许的 ID 当场校验，未通过时只用 patch 重交需要修改的顶层字段，会与上次草稿合并。通过即结束本次审阅，不要再在回复正文里输出 JSON。",
