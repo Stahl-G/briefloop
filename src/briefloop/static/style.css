@@ -984,3 +984,33 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
   font-size:var(--text-md,15px);
   color:var(--color-text-muted,#6a706b);
 }
+
+/* Attachment: icon + label (not a bare +) */
+.attach-button{
+  display:inline-flex !important;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+  width:auto !important;
+  min-width:0 !important;
+  height:40px !important;
+  min-height:40px !important;
+  padding:0 14px !important;
+  border:1px solid var(--color-border-strong,#8b918b) !important;
+  border-radius:var(--radius-sm,6px) !important;
+  background:var(--color-surface,#fff) !important;
+  color:var(--color-text,#1e2320) !important;
+  font-size:var(--text-sm,13px) !important;
+  font-weight:500;
+  line-height:1;
+  white-space:nowrap;
+}
+.attach-button .attach-icon{flex:none;display:block}
+.attach-button span{
+  display:inline !important;
+  font-size:var(--text-sm,13px) !important;
+  font-weight:500;
+  color:inherit;
+}
+.attach-button:hover{background:var(--color-surface-soft,#f4f6ef) !important}
+#chat-form .composer-tools .attach-button{font-size:inherit}

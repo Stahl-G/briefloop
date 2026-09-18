@@ -18,7 +18,9 @@ test('home loads tokens.css and keeps composer progressive disclosure markers',(
   assert.match(html,/cat-markets/);
   assert.match(html,/cat-academic/);
   assert.match(html,/data-home-icon="briefcase"/);
-  assert.match(html,/data-home-icon="bars"/);
+  assert.match(html,/data-home-icon="compare"/);
+  assert.match(html,/data-home-icon="chart"/);
+  assert.match(html,/data-home-icon="compare"/);
   assert.match(html,/id="home-rail"/);
   assert.match(html,/id="home-rail-jobs"/);
   assert.match(html,/id="home-rail-recent"/);
