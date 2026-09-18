@@ -31,7 +31,9 @@ def test_parent_resume_reuses_admissible_failed_review_in_background_lane(tmp_pa
     folder=store.root/'jobs'/child['id'];fp,files=build_packet(store,brief['id'],folder)
     with store.tx() as c:c.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)',('review_saved',brief['id'],child['id'],fp,'incomplete',dump({'packet_path':str((folder/'packet').relative_to(store.root)),'files':files}),None,now(),now()))
     (folder/'review-id.json').write_text(dump({'review_id':'review_saved'}))
-    value={'version_id':brief['id'],'fingerprint':fp,'status':'complete','summary':'Synthetic saved review',
+    from review_checks import for_version
+    value={'version_id':brief['id'],'fingerprint':fp,'status':'complete','summary':'Synthetic saved review','coverage_scan_complete':True,
+           'requirement_checks':for_version(store,brief['id']),
            'assessment':{'brief_hash':brief['hash'],'status':'complete','summary':'Synthetic score','overall':'达到要求','evidence':3,'coverage':3,'analysis':3,'expression':3}}
     (folder/'review.json').write_text(dump(value))
     store.update_job(child['id'],'failed',error='Old schema rejection');store.update_job(parent['id'],'failed',error='Child review failed')

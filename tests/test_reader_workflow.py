@@ -45,7 +45,7 @@ class RevisionRuntime:
             (folder/'draft.json').write_text(json.dumps({'title':'Report','editor_document':{'type':'doc','content':[{'type':'paragraph','content':[{'type':'text','text':'Corrected report'}]}]}}))
         elif job.get('readonly_output'):
             pack=json.loads((folder/'packet'/'target.json').read_text());index=json.loads((folder/'packet'/'index.json').read_text())
-            (folder/'review.json').write_text(json.dumps({'version_id':pack['version_id'],'fingerprint':index['fingerprint'],'status':'complete','summary':'Synthetic review','coverage_scan_complete':True,'assessment':{'brief_hash':pack['brief_hash'],'summary':'still a minor issue','overall':'建议修改','evidence':4,'coverage':4,'analysis':4,'expression':4}}))
+            (folder/'review.json').write_text(json.dumps({'version_id':pack['version_id'],'fingerprint':index['fingerprint'],'status':'complete','summary':'Synthetic review','coverage_scan_complete':True,'requirement_checks':__import__('review_checks').requirement_checks(pack),'assessment':{'brief_hash':pack['brief_hash'],'summary':'still a minor issue','overall':'建议修改','evidence':4,'coverage':4,'analysis':4,'expression':4}}))
         else:
             pack=json.loads((folder/'input.json').read_text());sha=pack['brief']['hash']
             (folder/'assessment.json').write_text(json.dumps({'brief_hash':sha,'summary':'still a minor issue','overall':'建议修改','evidence':4,'coverage':4,'analysis':4,'expression':4}))

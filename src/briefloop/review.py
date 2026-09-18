@@ -612,10 +612,16 @@ def accept_review(store,review_id,value,dry_run=False):
         seen_requirements.add(check.requirement_id)
         if check.status=='manual' and requirements[check.requirement_id]['mode']!='manual':raise ValueError('Reviewer 不能把必答要求改为人工待填')
     allowed_finding_requirements = set(allowed_requirements)
+    # "complete" is a claim about coverage; an empty or partial check list with
+    # the coverage flag unset cannot carry it, whatever the summary says.
+    if result.status=='complete' and not result.coverage_scan_complete:
+        raise ValueError('status=complete 必须在检查过正文重要主张遗漏后同时设 coverage_scan_complete=true；未完成请标为 incomplete')
     if review['data'].get('protocol','legacy')=='clauses_v1':
         validate_clause_checks(current['requirements'],result.clause_checks,result.status)
         from .deliverable_spec import clause_items
         allowed_finding_requirements.update(c['clause_id'] for c in clause_items(current['requirements']))
+    elif result.status=='complete' and allowed_requirements-seen_requirements:
+        raise ValueError('完整审阅缺少 requirement_checks；未核对的 requirement_id='+','.join(sorted(allowed_requirements-seen_requirements)))
     for finding in result.findings:
         if finding.resolution and not finding.response_to:raise ValueError('关闭发现必须指向准确的 response_id')
         if not finding.response_to:
@@ -822,7 +828,7 @@ claim_checks可以使用target.evidence.bindings、premises闭包以及candidate
 未核验事项用unchecked_items记录description及importance(core/supporting)；普通表达建议使用minor finding，不冒充核心未核验。
 {output_line}
 version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief_hash={store.one('briefs',version_id)['hash']}。
-四维评分使用既有标准，不用高分抵消重大错误。review.status表示是否完成审阅，claim_checks.status表示依据结论。coverage_scan_complete仅在确实检查了正文重要主张遗漏后设true；未核验项写unchecked。
+四维评分使用既有标准，不用高分抵消重大错误。review.status表示是否完成审阅，claim_checks.status表示依据结论。coverage_scan_complete仅在确实检查了正文重要主张遗漏后设true；review.status=complete 要求它为true且每个requirement_item都有requirement_checks，做不到就标incomplete；发现的问题必须写入findings，不能只写在summary里。未核验项写unchecked。
 字段边界（不要混用两套 finding）：requirement_checks 只有 requirement_id/status/reason，不带 basis；basis 只属于 clause_checks。顶层 overall/四维分数只属于 assessment；assessment 必须给出，不能省略。assessment.findings 用 dimension/severity/description/report_quote/requirement/source_id/locator/evidence/suggestion。顶层 findings 是核查发现，用 kind/severity/description/evidence，可带 claim_ids/block_ids/requirement_ids（条款可用 requirement_ids 关联，不要写 requirement 或 source_id）。
 '''
     if target.get('fact_checks'):
