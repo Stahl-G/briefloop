@@ -495,3 +495,20 @@ test("one grep call answers several patterns and one read call several pieces", 
   assert.match(read, /=== \.\.\/escape\.txt ===\n读取失败：/, "a bad piece fails alone and never escapes the packet");
   assert.match(await callError("tool_call", { session_id, name: "packet_grep", args: {} }), /至少给一个/);
 });
+
+test("a rejected submission is fixed by a patch of the failing fields", async () => {
+  script(
+    reply.tool("submit_review", { review: { status: "complete", version_id: "v0" } }),
+    reply.tool("submit_review", { patch: { version_id: "v1" } }),
+    reply.text("好"),
+  );
+  admission = (review) => (review.version_id === "v1" ? undefined : "Reviewer 输出未绑定本次正文与核查包");
+  const { session_id } = await reviewer();
+  const evts = await turn(session_id, "e-patch", { require_submit: true, idle_timeout_s: 30 });
+  admission = () => undefined;
+  assert.equal(ends(evts)[0].status, "completed");
+  assert.deepEqual(JSON.parse(ends(evts)[0].final_text), { status: "complete", version_id: "v1" });
+  const { session_id: fresh } = await reviewer();
+  const patchFirst = await call("tool_call", { session_id: fresh, name: "submit_review", args: { patch: { status: "complete" } } }).catch((e) => e.message);
+  assert.match(String(patchFirst), /先用 review 提交完整对象/);
+});

@@ -612,7 +612,11 @@ def accept_review(store,review_id,value,dry_run=False):
     allowed_requirements=set(requirements)
     seen_requirements=set()
     for check in result.requirement_checks:
-        if check.requirement_id not in allowed_requirements or check.requirement_id in seen_requirements:raise ValueError('要求核查引用范围外或重复的 requirement_id')
+        if check.requirement_id not in allowed_requirements or check.requirement_id in seen_requirements:
+            # Name the offending id and the valid ones: a model can fix one field
+            # instead of rereading the packet to guess.
+            raise ValueError(('要求核查引用范围外的 requirement_id=' if check.requirement_id not in allowed_requirements else '要求核查重复的 requirement_id=')
+                             +check.requirement_id+'；本次合法的 requirement_id='+','.join(sorted(allowed_requirements)))
         seen_requirements.add(check.requirement_id)
         if check.status=='manual' and requirements[check.requirement_id]['mode']!='manual':raise ValueError('Reviewer 不能把必答要求改为人工待填')
     allowed_finding_requirements = set(allowed_requirements)
@@ -629,9 +633,12 @@ def accept_review(store,review_id,value,dry_run=False):
     for finding in result.findings:
         if finding.resolution and not finding.response_to:raise ValueError('关闭发现必须指向准确的 response_id')
         if not finding.response_to:
-            if not set(finding.claim_ids).issubset(allowed_finding_claims):raise ValueError('发现引用了本次范围外的主张ID')
-            if not set(finding.block_ids).issubset(allowed_blocks):raise ValueError('发现引用了本次正文不存在的块ID')
-        if not set(finding.requirement_ids).issubset(allowed_finding_requirements):raise ValueError('发现引用了未登记的要求ID')
+            if not set(finding.claim_ids).issubset(allowed_finding_claims):
+                raise ValueError('发现引用了本次范围外的主张ID='+','.join(sorted(set(finding.claim_ids)-allowed_finding_claims))+'；不确定时省略 claim_ids，用 report_quote 定位')
+            if not set(finding.block_ids).issubset(allowed_blocks):
+                raise ValueError('发现引用了本次正文不存在的块ID='+','.join(sorted(set(finding.block_ids)-allowed_blocks))+'；段落ID见 report.txt 每行开头，不确定时省略 block_ids')
+        if not set(finding.requirement_ids).issubset(allowed_finding_requirements):
+            raise ValueError('发现引用了未登记的要求ID='+','.join(sorted(set(finding.requirement_ids)-allowed_finding_requirements))+'；可用的要求ID='+','.join(sorted(allowed_finding_requirements)))
     expected_responses=set(_response_scope(store,packet,result.version_id))
     checks={}
     for check in result.response_checks:
@@ -854,6 +861,9 @@ version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief
     allowed=sorted(ids)
     response_ids=[{'response_id':r['id'],'finding_id':r['finding_id']} for r in _response_scope(store,folder/'packet',version_id).values()]
     prompt+='\n本次允许的claim_checks.claim_id：'+dump(allowed)+'\n本版本处理说明索引（response_to必须取response_id）：'+dump(response_ids)
+    if not clauses:
+        # status=complete needs one check per item; give the ids instead of letting the model guess.
+        prompt+='\n本次 requirement_checks 须逐项覆盖的 requirement_id：'+dump([{'requirement_id':item['requirement_id'],'mode':item.get('mode')} for item in target['requirements']['requirement_items']])
     prompt+='\n本次允许的findings.claim_ids：'+dump(sorted(ids|{x['claim_id'] for x in target.get('source_statements',[])}))
     if (folder/'admission-error.json').exists():
         error=json.loads((folder/'admission-error.json').read_text(encoding='utf-8')).get('error','')

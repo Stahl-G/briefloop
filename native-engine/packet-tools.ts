@@ -208,7 +208,7 @@ export const TOOL_GUIDE: Record<string, string> = {
   packet_grep: "在包内文本文件中查找关键词或正则，返回文件、行号、命中片段及前后各 1 行。要核对的几个数字、日期、说法放进 patterns 一次查完；命中片段足以判断时不必再读原文。",
   claim_trace: "按 claim_id 一次取回主张内容、支持说明、绑定证据片段、所在正文段落和前提链。",
   calc: "对正文数字做确定性计算：四则运算、^、%、abs/round/min/max/sqrt/ln/log10/exp/pow（多个参数用分号分隔）。用于核对增长率、占比、加总和单位换算，不要心算。",
-  submit_review: "提交最终审阅结果对象。提交时按 output.schema.json 和本次允许的 ID 当场校验；未通过会返回具体错误，只改出错的字段后再次提交。通过即结束本次审阅，不要再在回复正文里输出 JSON。",
+  submit_review: "提交最终审阅结果。先用 review 提交完整对象；提交时按 output.schema.json 和本次允许的 ID 当场校验，未通过时只用 patch 重交需要修改的顶层字段，会与上次草稿合并。通过即结束本次审阅，不要再在回复正文里输出 JSON。",
 };
 
 export function toolGuide(names: string[]): string {
@@ -422,22 +422,36 @@ export function packetTools(packetRoot: string, hooks?: SubmitHooks, acceptsImag
   });
 
   let validator: ReturnType<typeof JsonSchema.Compile> | undefined;
+  // The last submitted draft, kept so a rejected result can be fixed by
+  // resending only the fields that failed instead of the whole object.
+  let draft: Record<string, unknown> | undefined;
   const submitReview = defineTool({
     name: "submit_review",
     label: "提交审阅结果",
     description:
-      "提交最终审阅结果。review 为完整结果对象，结构见 output.schema.json。提交时校验结构与本次允许的 ID；未通过时返回错误清单，修正后再次提交。",
+      "提交最终审阅结果。第一次用 review 提交完整结果对象（结构见 output.schema.json）。提交时校验结构与本次允许的 ID；" +
+      "未通过时只用 patch 重新提交需要修改的顶层字段（如 {\"requirement_checks\": [...]}），它会与上次提交的草稿合并后再校验，不要重写整个对象。",
     parameters: Type.Object({
-      review: Type.Object({}, { additionalProperties: true, description: "完整审阅结果对象" }),
+      review: Type.Optional(Type.Object({}, { additionalProperties: true, description: "完整审阅结果对象" })),
+      patch: Type.Optional(Type.Object({}, { additionalProperties: true, description: "只含需要替换的顶层字段，与上次提交合并" })),
     }),
     // Submission settles the run; it must never race another call in the batch.
     executionMode: "sequential",
     execute: async (_id, params) => {
-      let review: unknown = params.review;
-      if (typeof review === "string") {
-        try { review = JSON.parse(review); } catch { throw new Error("review 必须是 JSON 对象，而不是无法解析的字符串"); }
-      }
-      if (!review || typeof review !== "object" || Array.isArray(review)) throw new Error("review 必须是 JSON 对象");
+      const parse = (value: unknown, name: string): Record<string, unknown> | undefined => {
+        if (value === undefined) return undefined;
+        if (typeof value === "string") {
+          try { value = JSON.parse(value); } catch { throw new Error(`${name} 必须是 JSON 对象，而不是无法解析的字符串`); }
+        }
+        if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`${name} 必须是 JSON 对象`);
+        return value as Record<string, unknown>;
+      };
+      const full = parse(params.review, "review");
+      const patch = parse(params.patch, "patch");
+      if (!full && !patch) throw new Error("需要 review（完整结果）或 patch（修改的字段）");
+      if (!full && !draft) throw new Error("还没有提交过完整结果，请先用 review 提交完整对象");
+      const review = full ?? { ...draft!, ...patch };
+      draft = review;
       validator ??= JsonSchema.Compile(JSON.parse(readFileSync(inside(root, "output.schema.json"), "utf-8")));
       const [ok, errors] = validator.Errors(review) as unknown as [boolean, Array<{ instancePath: string; message: string; params?: unknown }>];
       if (!ok) {
