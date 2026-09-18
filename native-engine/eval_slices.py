@@ -51,7 +51,8 @@ def launch(leg, args, slices, out):
            **{k: v for k, v in os.environ.items() if k.endswith('_API_KEY')}}
     log = open(out / 'legs' / (leg['label'] + '.log'), 'w')
     command = ['caffeinate', '-i', sys.executable, str(HERE / 'experiment_ab.py'),
-               str(slices / leg['slice']), leg['version'], '--model', args.model, '--variant', args.variant,
+               str(slices / leg['slice']), leg['version'], '--model', args.model,
+               '--variant', dict(item.split('=', 1) for item in args.variant_for).get(leg['backend'], args.variant),
                '--backends', leg['backend'], '--repeat', '1', '--seed', str(leg['seed']),
                '--system-layers', args.system_layers]
     if sys.platform != 'darwin':
@@ -90,12 +91,14 @@ def summarise(results):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--slices', default=str(DEFAULT_SLICES))
-    parser.add_argument('--set', default='dev', choices=['dev', 'held', 'all'])
+    parser.add_argument('--set', default='dev', help="manifest set name, or 'all'")
     parser.add_argument('--backends', nargs='+', default=['briefloop-native'])
     parser.add_argument('--seeds', nargs='+', type=int, default=[11])
     parser.add_argument('--repeats', type=int, default=1)
     parser.add_argument('--model', default='deepseek/deepseek-v4-flash')
     parser.add_argument('--variant', default='high')
+    parser.add_argument('--variant-for', nargs='*', default=[], metavar='BACKEND=VARIANT',
+                        help='per-backend effort, e.g. briefloop-native=low (a backend default under test)')
     parser.add_argument('--concurrency', type=int, default=8)
     parser.add_argument('--out', required=True)
     parser.add_argument('--system-layers', default='core,role,mode', help='passed to experiment_ab.py (native ablation)')
