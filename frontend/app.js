@@ -1457,12 +1457,27 @@ $('settings-open').onclick=showSettings;$('settings-close').onclick=()=>page('ch
  const link=document.createElement('button');link.type='button';link.className='outline feedback-settings';link.textContent='学习设置';link.onclick=showSettings;$('learn-now').before(link);
 }
 
-// One width axis for reading and composing; existing controls remain mounted.
+// DESIGN §7.2 default row: 附件 | 模型 | 参数 … 发送split. Do not park model in send-controls.
 {
- const options=document.querySelector('.composer-options'),trailing=document.querySelector('.send-controls');
- trailing.prepend($('chat-model'),$('chat-effort'),$('chat-service-tier'));
- const help=$('composer-help');$('chat-form').after(help);
- const settingsButton=$('settings-open');settingsButton.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1 1-3Z"/><circle cx="12" cy="12" r="3"/></svg><span>设置</span>';
+ const options=document.querySelector('.composer-options');
+ const attach=$('chat-attach');
+ const model=$('chat-model');
+ if(options&&attach&&model&&model.parentElement!==options){
+  attach.after(model);
+ }
+ const panel=$('composer-params-panel');
+ const grid=panel?.querySelector('.composer-params-grid');
+ if(grid){
+  for(const id of ['chat-effort','chat-service-tier']){
+   const el=$(id);
+   if(el&&el.parentElement!==grid)grid.append(el);
+  }
+ }
+ const help=$('composer-help');if(help&&help.parentElement!==$('chat-form').parentElement)$('chat-form').after(help);
+ const settingsButton=$('settings-open');
+ if(settingsButton&&!settingsButton.querySelector('span')){
+  settingsButton.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1 1-3Z"/><circle cx="12" cy="12" r="3"/></svg><span>设置</span>';
+ }
 }
 
 function autoSizeChatInput(){const input=$('chat-input');input.style.height='auto';input.style.height=Math.min(210,Math.max(36,input.scrollHeight))+'px'}

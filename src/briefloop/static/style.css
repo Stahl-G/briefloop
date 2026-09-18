@@ -1069,3 +1069,89 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 }
 .chat-activity>summary::-webkit-details-marker{display:none}
 .chat-activity[open]>summary{color:var(--color-text,#1e2320);font-weight:550}
+
+/* === Composer default row: one baseline, one height (DESIGN §7.2) === */
+#chat-form .composer-tools{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:var(--space-3,12px);
+  flex-wrap:nowrap;
+}
+#chat-form .composer-options,
+#chat-form .send-controls{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  min-width:0;
+  flex-wrap:nowrap;
+}
+#chat-form .composer-options{
+  flex:1 1 auto;
+  min-width:0;
+}
+#chat-form .send-controls{
+  flex:0 0 auto;
+  margin-left:auto;
+}
+#chat-form .attach-button,
+#chat-form .params-button,
+#chat-form .model-id-input--default,
+#chat-form .model-picker,
+#chat-form .model-picker>input,
+#chat-form #chat-send,
+#chat-form .send-mode,
+#chat-form .send-split{
+  height:40px !important;
+  min-height:40px !important;
+  box-sizing:border-box;
+}
+#chat-form .model-picker{
+  display:inline-flex;
+  align-items:center;
+  width:auto;
+  max-width:220px;
+  flex:0 1 auto;
+}
+#chat-form .model-id-input--default{
+  width:100%;
+  max-width:none;
+  padding:0 10px;
+  font-size:var(--text-xs,12px);
+}
+#chat-form .send-mode{
+  height:100% !important;
+  min-height:0 !important;
+  border:0;
+  border-right:1px solid var(--color-border,#dedfd8);
+  border-radius:0;
+  max-width:120px;
+  padding:0 8px;
+  font-size:var(--text-xs,12px);
+}
+#chat-form .send-split{
+  border:1px solid var(--color-border-strong,#8b918b);
+  border-radius:var(--radius-sm,6px);
+  overflow:hidden;
+  gap:0;
+}
+#chat-form #chat-send{
+  height:100% !important;
+  min-height:0 !important;
+  border:0;
+  border-radius:0;
+  min-width:72px;
+  padding:0 16px;
+  font-size:var(--text-xs,12px);
+}
+#chat-form .composer-options .subtle-button,
+#chat-form .composer-options button:not(.attach-button):not(.primary){
+  height:40px !important;
+  min-height:40px !important;
+  padding:0 12px !important;
+  font-size:var(--text-xs,12px) !important;
+  border:1px solid var(--color-border-strong,#8b918b);
+  border-radius:var(--radius-sm,6px);
+  background:var(--color-surface,#fff);
+  color:var(--color-text,#1e2320);
+}
