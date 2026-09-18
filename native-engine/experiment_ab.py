@@ -125,6 +125,8 @@ def run_leg(source, version_id, backend, model, variant, repeat_index, seed_rng=
         job = store.enqueue('review', {
             'version_id': version_id,
             'agent_backend': backend,
+            # The model under test, not whatever the copied workspace had selected.
+            'runtime': {'model': model, 'model_variant': variant},
             'role_models': {'evaluator': {'model': model, 'model_variant': variant}},
         })
         folder = work / 'ws' / 'jobs' / job['id']
