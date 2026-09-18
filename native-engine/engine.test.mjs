@@ -526,3 +526,17 @@ test("with runner admission, structure is judged by the runner alone", async () 
   assert.equal(seen.length, 1);
   assert.equal(JSON.parse(ends(evts)[0].final_text).suggestion, "alias");
 });
+
+test("shipped models.json extends catalog providers without redirecting their models", async () => {
+  // A provider-level baseUrl or api replaces the endpoint of every catalog
+  // model of that provider (pi applies it to all of them); a catalog model on
+  // another wire format then calls a wrong URL. Endpoints go on added models.
+  const { readFileSync } = await import("node:fs");
+  const shipped = JSON.parse(readFileSync(fileURLToPath(new URL("./models.json", import.meta.url)), "utf8"));
+  for (const [name, entry] of Object.entries(shipped.providers)) {
+    if (!entry.modelOverrides) continue;
+    assert.equal(entry.baseUrl, undefined, `${name}: provider-level baseUrl`);
+    assert.equal(entry.api, undefined, `${name}: provider-level api`);
+    for (const model of entry.models ?? []) assert.ok(model.baseUrl && model.api, `${name}/${model.id}: endpoint`);
+  }
+});
