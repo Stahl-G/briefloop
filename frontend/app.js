@@ -1140,11 +1140,13 @@ function openHomeReport(id){
 }
 let autoOpenedActivityTurn=null;
 function autoOpenActivity(){
- // Default collapsed: activity panel stays closed unless the user opens it.
- // Keep the helper so renderChat call sites stay stable; only track turn for future opt-in.
- const activity=$('chat-activity');if(!activity||activity.hidden)return;
+ // Each new streaming turn starts with the activity panel collapsed (DESIGN default).
+ const activity=$('chat-activity');if(!activity)return;
  const streaming=chat.messages.find(m=>['streaming','sending'].includes(m.status));if(!streaming)return;
- autoOpenedActivityTurn=streaming.turn_id||streaming.id;
+ const turn=streaming.turn_id||streaming.id;
+ if(autoOpenedActivityTurn===turn)return;
+ autoOpenedActivityTurn=turn;
+ activity.open=false;
 }
 function renderChat(){
  const empty=chat.home||(chat.messages.length===0&&!chatActive());

@@ -1014,3 +1014,58 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 }
 .attach-button:hover{background:var(--color-surface-soft,#f4f6ef) !important}
 #chat-form .composer-tools .attach-button{font-size:inherit}
+
+/* === DESIGN §7.2 default composer row (chat + home) === */
+.send-split{
+  display:inline-flex;
+  align-items:stretch;
+  border:1px solid var(--color-border-strong,#8b918b);
+  border-radius:var(--radius-sm,6px);
+  overflow:hidden;
+  background:var(--color-surface,#fff);
+  height:var(--control-h-md,36px);
+}
+.send-split .send-mode{
+  border:0;
+  border-right:1px solid var(--color-border,#dedfd8);
+  border-radius:0;
+  height:100%;
+  margin:0;
+  padding:0 8px;
+  font-size:var(--text-xs,12px);
+  color:var(--color-text-muted,#6a706b);
+  background:var(--color-surface,#fff);
+  max-width:110px;
+}
+.send-split .send-mode:hover:not(:disabled){background:var(--color-surface-soft,#f4f6ef)}
+.send-split #chat-send{
+  border:0;
+  border-radius:0;
+  height:100%;
+  min-width:64px;
+  padding:0 14px;
+  font-size:var(--text-xs,12px);
+}
+#chat-mode:disabled{opacity:.45;cursor:not-allowed}
+
+/* conversation composer default row metrics (not only home empty) */
+#chat-form .composer-options .attach-button,
+#chat-form .composer-options .params-button,
+#chat-form .composer-options .model-id-input--default{
+  height:var(--control-h-md,36px);
+  min-height:var(--control-h-md,36px);
+  font-size:var(--text-xs,12px);
+}
+#chat-form .send-controls .send-split{height:var(--control-h-md,36px)}
+
+/* activity panel: never force-open via CSS; ensure summary is a clear toggle */
+.chat-activity{border-top:1px solid var(--color-border,#dedfd8);margin-top:12px;padding-top:8px}
+.chat-activity>summary{
+  cursor:pointer;
+  font-size:var(--text-xs,12px);
+  color:var(--color-text-muted,#6a706b);
+  list-style:none;
+  user-select:none;
+}
+.chat-activity>summary::-webkit-details-marker{display:none}
+.chat-activity[open]>summary{color:var(--color-text,#1e2320);font-weight:550}
