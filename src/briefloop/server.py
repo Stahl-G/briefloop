@@ -126,7 +126,11 @@ def _make_server(workspace, port, *, paused, backend, lock):
     from .bridge_harness import BridgeHarness
     from .backends import BRIDGE_BACKENDS
     bridge_harnesses={name:BridgeHarness(store,bridge,name) for name in BRIDGE_BACKENDS}
-    managers={'codex':harness,'opencode':opencode_harness,**bridge_harnesses}
+    from .native_engine import NativeEngine
+    from .native_harness import NativeHarness
+    native_engine=NativeEngine()
+    native_harness=NativeHarness(store,native_engine)
+    managers={'codex':harness,'opencode':opencode_harness,'briefloop-native':native_harness,**bridge_harnesses}
     from .chat_dispatch import ChatDispatcher
     chat_dispatch=ChatDispatcher(managers)
     chat_dispatch.recover()
@@ -667,7 +671,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 self.send(500,{'error':str(exc)})
     try:server=ThreadingHTTPServer(('127.0.0.1',port),Handler)
     except OSError:
-        harness.close();opencode_harness.close();lock.close();raise
+        harness.close();opencode_harness.close();native_harness.close();lock.close();raise
     server.daemon_threads=True
     server._admission=threading.Condition(threading.RLock())
     server._active_posts=0
@@ -682,13 +686,14 @@ def _make_server(workspace, port, *, paused, backend, lock):
         worker.connector_tasks=server.connector_tasks
         worker.connector_tool_url=f'http://127.0.0.1:{server.server_port}/api/connectors/task-tool'
     except Exception:
-        server.server_close();harness.close();opencode_harness.close();bridge.close();lock.close();raise
+        server.server_close();harness.close();opencode_harness.close();native_harness.close();bridge.close();lock.close();raise
     close_socket=server.server_close
     def close_server():
         try:server.connectors.close()
         finally:close_socket()
     server.server_close=close_server
     server.workspace_lock=lock;server.runtime_bridge=bridge;server.bridge_harnesses=bridge_harnesses
+    server.native_engine=native_engine;server.native_harness=native_harness
     server.store=store;server.worker=worker;server.harness=harness;server.opencode_harness=opencode_harness
     server.select_harness=pick_harness
     return server

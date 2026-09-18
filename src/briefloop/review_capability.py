@@ -10,7 +10,7 @@ combination is explained before the first model call instead of after a draft.
   ordinary assessment, never shown as an independent review, and formal
   delivery stays blocked until a supported backend completes the review.
 """
-from .backends import BACKENDS, BACKEND_LABELS, supports, validate_backend
+from .backends import BACKENDS, BACKEND_LABELS, REVIEW_ONLY_BACKENDS, supports, validate_backend
 
 CODE = 'review_backend_unsupported'
 
@@ -24,7 +24,12 @@ def restricted_review(backend):
 
 
 def review_backends():
-    return [name for name in BACKENDS if supports(name, 'restricted_review')]
+    """Backends a user can switch the main chain to and still get the Reviewer.
+
+    A review-only engine may run a pinned review job, but suggesting it as the
+    “执行后端” to change to would point at a choice the page does not offer."""
+    return [name for name in BACKENDS
+            if supports(name, 'restricted_review') and name not in REVIEW_ONLY_BACKENDS]
 
 
 def summary():

@@ -69,6 +69,12 @@ TASK_CONTEXT = """你在 BriefLoop 中执行一项已授权的本地任务。直
 
 
 def runtime_instruction(configuration, backend='codex'):
+    if backend == 'briefloop-native':
+        variant = configuration.get('model_variant') or configuration.get('reasoning_effort')
+        variant_label = variant if variant not in (None, '', 'none') else '不指定（默认）'
+        return (f"本阶段由 BriefLoop 内置引擎执行，模型固定为 {configuration['model']}，推理档位 {variant_label}。"
+                '本轮为受限独立审阅：只能使用 packet_list 与 packet_read 读取核查包内的文件，'
+                '不存在 shell、写入、联网或委派工具；指令中的“原生 read”一律指 packet_read。\n')
     if backend not in ('codex','opencode'):
         return f"本阶段执行引擎固定为 {backend}，模型为 {configuration['model']}。使用宿主提供的工具完成工作；没有原生子任务能力时自行完成，不启动嵌套模型 CLI，也不伪造子任务 ID。\n"
     if backend == 'opencode':

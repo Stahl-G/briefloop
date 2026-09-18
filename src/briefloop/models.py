@@ -170,9 +170,9 @@ class RoleModel(Model):
 
 
 def runtime_fields(value, backend='codex'):
-    if backend not in ('codex','opencode'):
+    if backend not in ('codex','opencode','briefloop-native'):
         return {'model':RoleModel.model_validate({'model':value['model']}).model}
-    if backend == 'opencode':
+    if backend in ('opencode','briefloop-native'):
         # Opencode models are provider/model in one string; effort is expressed
         # as an optional variant. Codex-only keys are dropped, never sent.
         from .backends.opencode_server import split_model

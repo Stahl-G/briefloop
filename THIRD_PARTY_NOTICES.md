@@ -9,6 +9,8 @@
 
 - pypdfium2 / PDFium：用于本地 PDF 页面渲染，通过 Python 依赖安装。pypdfium2 包声明 BSD-3-Clause、Apache-2.0 及其依赖许可，完整许可随依赖包保留。
 
+- pi（https://github.com/earendil-works/pi，`@earendil-works/pi-coding-agent` 0.85.1）：MIT。内置引擎 `native-engine/` 通过其 SDK 创建受限审阅会话，未修改上游源码。`node native-engine/build.mjs` 按 esbuild 实际输入汇总内联依赖的许可原文，写入 `src/briefloop/static/native-engine-licenses.txt`，随 wheel / sdist 分发；pi 的 npm 包未附许可文件，其 MIT 原文取自上游仓库，见 `native-engine/third_party/pi/LICENSE`。
+
 - OpenDesign（be0887b39273993d939e83c4768922115f104bed）：Apache-2.0。复用原生运行时协议和模型目录辅助代码，来源与本地改动见 third_party/open-design/NOTICE.md；许可证同时随打包后的 runtime bridge 分发。
 
 ### Runtime identification icons
