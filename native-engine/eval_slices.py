@@ -52,7 +52,8 @@ def launch(leg, args, slices, out):
     log = open(out / 'legs' / (leg['label'] + '.log'), 'w')
     command = ['caffeinate', '-i', sys.executable, str(HERE / 'experiment_ab.py'),
                str(slices / leg['slice']), leg['version'], '--model', args.model, '--variant', args.variant,
-               '--backends', leg['backend'], '--repeat', '1', '--seed', str(leg['seed'])]
+               '--backends', leg['backend'], '--repeat', '1', '--seed', str(leg['seed']),
+               '--system-layers', args.system_layers]
     if sys.platform != 'darwin':
         command = command[2:]
     return subprocess.Popen(command, cwd=HERE, env=env, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
@@ -97,6 +98,7 @@ def main():
     parser.add_argument('--variant', default='high')
     parser.add_argument('--concurrency', type=int, default=8)
     parser.add_argument('--out', required=True)
+    parser.add_argument('--system-layers', default='core,role,mode', help='passed to experiment_ab.py (native ablation)')
     args = parser.parse_args()
     slices = Path(args.slices).expanduser().resolve()
     manifest = json.loads((slices / 'manifest.json').read_text(encoding='utf-8'))

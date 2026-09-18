@@ -178,10 +178,24 @@ def main():
     parser.add_argument('--backends', default='briefloop-native,opencode')
     parser.add_argument('--repeat', type=int, default=1)
     parser.add_argument('--out')
+    parser.add_argument('--system-layers', default='core,role,mode',
+                        help='ablation: native system prompt layers to keep, of core,role,mode')
     parser.add_argument('--seed', type=int, default=None,
                         help='plant report-agnostic defects (seed_generic.py) with this rng seed (+ repeat index)')
     args = parser.parse_args()
 
+    layers = [x for x in args.system_layers.split(',') if x]
+    if layers != ['core', 'role', 'mode']:
+        # Evaluation-only ablation: the harness builds its prompt through this
+        # function in this process, so no product code changes.
+        import hashlib
+        import briefloop.agent_prompts as agent_prompts
+        files = {'core': lambda r, m: 'core.zh.md', 'role': lambda r, m: f'role.{r}.zh.md', 'mode': lambda r, m: f'mode.{m}.zh.md'}
+
+        def ablated(role, mode='background'):
+            text = '\n\n'.join(agent_prompts._asset(files[layer](role, mode)) for layer in layers)
+            return {'text': text, 'version': 'ablation-' + hashlib.sha256(text.encode()).hexdigest()[:10]}
+        agent_prompts.system_prompt = ablated
     source = Path(args.workspace).resolve()
     results = []
     for backend in args.backends.split(','):
