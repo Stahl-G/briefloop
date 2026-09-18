@@ -107,10 +107,30 @@ def event_stats(folder):
     return {'events': sum(kinds.values()), 'tool_calls': tools}
 
 
-def run_leg(source, version_id, backend, model, variant, repeat_index, seed_rng=None):
+def evaluate(store, runtime, job, version_id, folder):
+    """Score one version through Worker.assess_version, the product path.
+
+    The slices are internal reports, which a backend with the restricted
+    Reviewer sends to review instead; here the evaluator path is forced the
+    way a backend without that capability takes it (assessment_without_review).
+    """
+    import briefloop.review_capability as capability
+    from briefloop.runtime import Worker, stage_job
+    capability.restricted_review = lambda backend: False
+    worker = Worker(store, runtime=runtime)
+    brief = store.one('briefs', version_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    backend = json.loads(job['payload'])['agent_backend']
+    worker.assess_version(stage_job(store, job, 'evaluator', mode='single'), brief, folder, backend)
+    return json.loads(store.rows('SELECT data FROM assessments WHERE version_id=? ORDER BY rowid DESC LIMIT 1', (version_id,))[0]['data'])
+
+
+def run_leg(source, version_id, backend, model, variant, repeat_index, seed_rng=None, role='reviewer'):
     work = Path(tempfile.mkdtemp(prefix=f'bl-ab-{backend}-')).resolve()
     shutil.copytree(source, work / 'ws')
     truth = None
+    if seed_rng is not None and seed_rng < 0:
+        seed_rng = None  # eval_slices passes a negative seed for the unseeded original
     if seed_rng is not None:
         # Same rng for both backends of a pair, so both review the same defects.
         truth = seed_generic.seed(work / 'ws', version_id, seed_rng + repeat_index)
@@ -121,6 +141,8 @@ def run_leg(source, version_id, backend, model, variant, repeat_index, seed_rng=
     opencode = OpencodeHarness(store)
     runtime = InteractiveRuntime(store, backends={
         'briefloop-native': harness, 'opencode': opencode})
+    if role == 'evaluator':
+        return run_evaluator_leg(work, store, harness, opencode, runtime, version_id, backend, model, variant, repeat_index, truth)
     try:
         job = store.enqueue('review', {
             'version_id': version_id,
@@ -169,6 +191,49 @@ def run_leg(source, version_id, backend, model, variant, repeat_index, seed_rng=
             pass
 
 
+def run_evaluator_leg(work, store, harness, opencode, runtime, version_id, backend, model, variant, repeat_index, truth):
+    from briefloop.models import Assessment
+    from briefloop.store import uid
+    try:
+        # Written directly: the main-chain gate still refuses native assess jobs.
+        jid = uid('job')
+        payload = {'version_id': version_id, 'agent_backend': backend,
+                   'runtime': {'model': model, 'model_variant': variant},
+                   'role_models': {'evaluator': {'model': model, 'model_variant': variant}}}
+        with store.tx() as c:
+            c.execute("INSERT INTO jobs(id,kind,payload,status,result,error,created,updated) VALUES(?,?,?,?,?,?,datetime('now'),datetime('now'))",
+                      (jid, 'assess', json.dumps(payload), 'running', None, None))
+        job = store.one('jobs', jid)
+        folder = work / 'ws' / 'jobs' / jid
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / 'assessment.schema.json').write_text(json.dumps(Assessment.model_json_schema(), ensure_ascii=False, indent=2), encoding='utf-8')
+        t0 = time.monotonic()
+        outcome = {'backend': backend, 'role': 'evaluator', 'repeat': repeat_index, 'job': jid, 'folder': str(folder)}
+        try:
+            data = evaluate(store, runtime, job, version_id, folder)
+            outcome.update({
+                'wall_seconds': round(time.monotonic() - t0, 1), 'status': 'complete',
+                'assessment_status': data.get('status'), 'overall': data.get('overall'),
+                'scores': {k: data.get(k) for k in ('evidence', 'coverage', 'analysis', 'expression')},
+                'findings': len(data.get('findings', [])),
+                'major_findings': sum(1 for f in data.get('findings', []) if f.get('severity') == 'major'),
+                'finding_dimensions': {d: sum(1 for f in data.get('findings', []) if f.get('dimension') == d)
+                                       for d in ('evidence', 'coverage', 'analysis', 'expression')},
+                **({'detected': seed_generic.score(data, truth), 'planted': len(truth['planted'])} if truth else {}),
+            })
+        except Exception as exc:
+            outcome.update({'wall_seconds': round(time.monotonic() - t0, 1), 'status': 'failed', 'error': str(exc)[:500]})
+        outcome['usage'] = usage_totals(folder)
+        outcome['events'] = event_stats(folder)
+        return outcome
+    finally:
+        harness.close()
+        try:
+            opencode.close()
+        except Exception:
+            pass
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('workspace')
@@ -180,6 +245,7 @@ def main():
     parser.add_argument('--out')
     parser.add_argument('--system-layers', default='core,role,mode',
                         help='ablation: native system prompt layers to keep, of core,role,mode')
+    parser.add_argument('--role', default='reviewer', choices=['reviewer', 'evaluator'])
     parser.add_argument('--seed', type=int, default=None,
                         help='plant report-agnostic defects (seed_generic.py) with this rng seed (+ repeat index)')
     args = parser.parse_args()
@@ -201,7 +267,7 @@ def main():
     for backend in args.backends.split(','):
         for i in range(args.repeat):
             outcome = run_leg(source, args.version_id, backend.strip(),
-                              args.model, args.variant, i, args.seed)
+                              args.model, args.variant, i, args.seed, args.role)
             results.append(outcome)
             print(json.dumps(outcome, ensure_ascii=False), flush=True)
     if args.out:

@@ -54,10 +54,26 @@ def launch(leg, args, slices, out):
                str(slices / leg['slice']), leg['version'], '--model', args.model,
                '--variant', dict(item.split('=', 1) for item in args.variant_for).get(leg['backend'], args.variant),
                '--backends', leg['backend'], '--repeat', '1', '--seed', str(leg['seed']),
-               '--system-layers', args.system_layers]
+               '--system-layers', args.system_layers, '--role', args.role]
     if sys.platform != 'darwin':
         command = command[2:]
     return subprocess.Popen(command, cwd=HERE, env=env, stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+
+
+def stability(results, backend):
+    # Same slice, same seeded defects, repeated: how far the Evaluator's four
+    # grades and verdict move between runs.
+    by_slice = defaultdict(list)
+    for leg, outcome in results:
+        if leg['backend'] == backend and outcome.get('status') == 'complete' and 'scores' in outcome:
+            by_slice[(leg['slice'], leg['seed'])].append(outcome)
+    out = {}
+    for (name, seed), rows in sorted(by_slice.items()):
+        grades = {d: [r['scores'][d] for r in rows] for d in ('evidence', 'coverage', 'analysis', 'expression')}
+        out[f'{name}-{seed}'] = {'runs': len(rows), 'grades': grades,
+                                 'spread': {d: max(v) - min(v) for d, v in grades.items() if v and None not in v},
+                                 'overall': [r.get('overall') for r in rows]}
+    return out
 
 
 def summarise(results):
@@ -85,6 +101,8 @@ def summarise(results):
             'cost_mean_usd': mean(usage('cost_same_table')),
             'failed': [r.get('error', '')[:120] for r in rows if r.get('status') != 'complete'],
         }
+        if any('scores' in r for r in ok):
+            summary[backend]['score_stability'] = stability(results, backend)
     return summary
 
 
@@ -101,6 +119,7 @@ def main():
                         help='per-backend effort, e.g. briefloop-native=low (a backend default under test)')
     parser.add_argument('--concurrency', type=int, default=8)
     parser.add_argument('--out', required=True)
+    parser.add_argument('--role', default='reviewer', choices=['reviewer', 'evaluator'])
     parser.add_argument('--system-layers', default='core,role,mode', help='passed to experiment_ab.py (native ablation)')
     args = parser.parse_args()
     slices = Path(args.slices).expanduser().resolve()
