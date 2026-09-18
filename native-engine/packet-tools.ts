@@ -204,8 +204,8 @@ export interface SubmitHooks {
 // carry tool snippets, so the engine states the real toolset itself.
 export const TOOL_GUIDE: Record<string, string> = {
   packet_list: "列出核查包内全部文件及大小。",
-  packet_read: "读取一个包内文件。长文本用 start_line/end_line 分段；JSON 文件用 json_path 只读需要的字段（如 evidence.bindings[0]）；图片文件返回图像（模型不接收图像时只返回说明）。单次最多返回约 6 万字符。",
-  packet_grep: "在包内文本文件中查找关键词或正则，返回文件、行号和命中片段。核对数字、日期、原话时先搜索定位，再用 packet_read 读取上下文，不要整份通读来源。",
+  packet_read: "读取包内文件。长文本用 start_line/end_line 分段；JSON 文件用 json_path 只读需要的字段（如 evidence.bindings[0]）；图片文件返回图像（模型不接收图像时只返回说明）。要读几处就把其余放进 more，一次读完；单处最多约 6 万字符。",
+  packet_grep: "在包内文本文件中查找关键词或正则，返回文件、行号、命中片段及前后各 1 行。要核对的几个数字、日期、说法放进 patterns 一次查完；命中片段足以判断时不必再读原文。",
   claim_trace: "按 claim_id 一次取回主张内容、支持说明、绑定证据片段、所在正文段落和前提链。",
   calc: "对正文数字做确定性计算：四则运算、^、%、abs/round/min/max/sqrt/ln/log10/exp/pow（多个参数用分号分隔）。用于核对增长率、占比、加总和单位换算，不要心算。",
   submit_review: "提交最终审阅结果对象。提交时按 output.schema.json 和本次允许的 ID 当场校验；未通过会返回具体错误，只改出错的字段后再次提交。通过即结束本次审阅，不要再在回复正文里输出 JSON。",
@@ -235,48 +235,77 @@ export function packetTools(packetRoot: string, hooks?: SubmitHooks, acceptsImag
     },
   });
 
+  type ReadSpec = { path: string; start_line?: number; end_line?: number; json_path?: string };
+  const readOne = (spec: ReadSpec): { content: Content[]; details: Details } => {
+    const file = inside(root, spec.path);
+    const ext = extname(file).toLowerCase();
+    const mime = IMAGE_MIME[ext];
+    if (mime) {
+      const bytes = readFileSync(file);
+      if (!acceptsImages()) {
+        return text(`${spec.path} 是图片（${bytes.length} 字节），当前模型不接收图像输入，无法目视核验；可读取同目录的图表数据文件核对数值，并把目视核验列为未核验事项。`, { image: false, bytes: bytes.length });
+      }
+      if (bytes.length > IMAGE_LIMIT) throw new Error(`图片超过 ${IMAGE_LIMIT} 字节`);
+      const image: ImageContent = { type: "image", data: bytes.toString("base64"), mimeType: mime };
+      return { content: [{ type: "text", text: `${spec.path}（${bytes.length} 字节）` }, image], details: { image: true, bytes: bytes.length } };
+    }
+    if (BINARY_EXT.has(ext)) {
+      return text(`${spec.path} 是二进制原件，不能按文本读取；请读取同名来源的 .txt 或 .view.json。`, { binary: true });
+    }
+    const raw = readFileSync(file, "utf-8");
+    if (spec.json_path) {
+      const value = jsonPath(JSON.parse(raw), spec.json_path);
+      const body = JSON.stringify(value, null, 1);
+      return text(clip(body), { json_path: spec.json_path, chars: body.length });
+    }
+    const lines = raw.split("\n");
+    if (spec.start_line !== undefined || spec.end_line !== undefined) {
+      const from = Math.max(1, Math.floor(spec.start_line ?? 1));
+      const to = Math.min(lines.length, Math.floor(spec.end_line ?? lines.length));
+      const body = `[第 ${from}-${to} 行，共 ${lines.length} 行]\n` + lines.slice(from - 1, to).join("\n");
+      return text(clip(body), { lines: lines.length, from, to });
+    }
+    return text(clip(raw), { lines: lines.length, chars: raw.length });
+  };
+  const readParams = {
+    path: Type.String({ description: "核查包内的相对路径" }),
+    start_line: Type.Optional(Type.Number({ description: "起始行（从 1 开始）" })),
+    end_line: Type.Optional(Type.Number({ description: "结束行（含）" })),
+    json_path: Type.Optional(Type.String({ description: "JSON 字段路径，如 requirements.requirement_items 或 evidence.bindings[2].claim" })),
+  };
+
   const packetRead = defineTool({
     name: "packet_read",
     label: "读取核查包文件",
     description:
-      "读取核查包内一个文件。path 相对核查包根目录（如 target.json、sources/<id>.view.json、history/responses.json）。" +
-      "长文本用 start_line/end_line 读取一段；JSON 文件可用 json_path 只取某个字段。图片文件返回图像内容。",
+      "读取核查包内的文件。path 相对核查包根目录（如 target.json、sources/<id>.view.json、history/responses.json）。" +
+      "长文本用 start_line/end_line 读取一段；JSON 文件可用 json_path 只取某个字段；图片文件返回图像内容。" +
+      "要同时读几处时，把其余各处放进 more，一次调用全部返回。",
     parameters: Type.Object({
-      path: Type.String({ description: "核查包内的相对路径" }),
-      start_line: Type.Optional(Type.Number({ description: "起始行（从 1 开始）" })),
-      end_line: Type.Optional(Type.Number({ description: "结束行（含）" })),
-      json_path: Type.Optional(Type.String({ description: "JSON 字段路径，如 requirements.requirement_items 或 evidence.bindings[2].claim" })),
+      ...readParams,
+      more: Type.Optional(Type.Array(Type.Object(readParams), { description: "同时读取的其他片段，最多 8 处", maxItems: 8 })),
     }),
     execute: async (_id, params) => {
-      const file = inside(root, params.path);
-      const ext = extname(file).toLowerCase();
-      const mime = IMAGE_MIME[ext];
-      if (mime) {
-        const bytes = readFileSync(file);
-        if (!acceptsImages()) {
-          return text(`${params.path} 是图片（${bytes.length} 字节），当前模型不接收图像输入，无法目视核验；可读取同目录的图表数据文件核对数值，并把目视核验列为未核验事项。`, { image: false, bytes: bytes.length });
+      const specs: ReadSpec[] = [params, ...(params.more ?? [])].slice(0, 9);
+      if (specs.length === 1) return readOne(specs[0]);
+      // Each piece is read on its own, so one bad path does not lose the rest.
+      const content: Content[] = [];
+      let used = 0;
+      for (const spec of specs) {
+        const label = `=== ${spec.path}${spec.json_path ? " @" + spec.json_path : ""}${spec.start_line !== undefined || spec.end_line !== undefined ? ` 第 ${spec.start_line ?? 1}-${spec.end_line ?? "末"} 行` : ""} ===`;
+        let piece: Content[];
+        try { piece = readOne(spec).content; }
+        catch (err) { piece = [{ type: "text", text: `读取失败：${err instanceof Error ? err.message : String(err)}` }]; }
+        for (const item of piece) {
+          if (item.type === "text") {
+            const room = Math.max(0, READ_CHARS * 2 - used);
+            const body = item.text.length > room ? item.text.slice(0, room) + "\n[本次合并读取已达上限，其余片段请另行读取]" : item.text;
+            used += body.length;
+            content.push({ type: "text", text: `${label}\n${body}` });
+          } else content.push(item);
         }
-        if (bytes.length > IMAGE_LIMIT) throw new Error(`图片超过 ${IMAGE_LIMIT} 字节`);
-        const image: ImageContent = { type: "image", data: bytes.toString("base64"), mimeType: mime };
-        return { content: [{ type: "text", text: `${params.path}（${bytes.length} 字节）` }, image] as Content[], details: { image: true, bytes: bytes.length } as Details };
       }
-      if (BINARY_EXT.has(ext)) {
-        return text(`${params.path} 是二进制原件，不能按文本读取；请读取同名来源的 .txt 或 .view.json。`, { binary: true });
-      }
-      const raw = readFileSync(file, "utf-8");
-      if (params.json_path) {
-        const value = jsonPath(JSON.parse(raw), params.json_path);
-        const body = JSON.stringify(value, null, 1);
-        return text(clip(body), { json_path: params.json_path, chars: body.length });
-      }
-      const lines = raw.split("\n");
-      if (params.start_line !== undefined || params.end_line !== undefined) {
-        const from = Math.max(1, Math.floor(params.start_line ?? 1));
-        const to = Math.min(lines.length, Math.floor(params.end_line ?? lines.length));
-        const body = `[第 ${from}-${to} 行，共 ${lines.length} 行]\n` + lines.slice(from - 1, to).join("\n");
-        return text(clip(body), { lines: lines.length, from, to });
-      }
-      return text(clip(raw), { lines: lines.length, chars: raw.length });
+      return { content, details: { pieces: specs.length, chars: used } as Details };
     },
   });
 
@@ -284,48 +313,60 @@ export function packetTools(packetRoot: string, hooks?: SubmitHooks, acceptsImag
     name: "packet_grep",
     label: "搜索核查包",
     description:
-      "在核查包的文本文件中搜索关键词（默认按字面匹配）或正则，返回“文件:行号: 命中片段”。可用 path 限定文件或目录前缀（如 sources/ 或 target.json）。",
+      "在核查包的文本文件中搜索关键词（默认按字面匹配）或正则，返回“文件:行号: 命中片段”，默认附带前后各 1 行。" +
+      "要查多个词时放进 patterns，一次调用分别返回。可用 path 限定文件或目录前缀（如 sources/ 或 target.json）。",
     parameters: Type.Object({
-      pattern: Type.String({ description: "要查找的文字；regex=true 时为 JavaScript 正则" }),
+      pattern: Type.Optional(Type.String({ description: "要查找的文字；regex=true 时为 JavaScript 正则" })),
+      patterns: Type.Optional(Type.Array(Type.String(), { description: "同时查找的多个词，最多 12 个", maxItems: 12 })),
       regex: Type.Optional(Type.Boolean({ description: "按正则匹配，默认 false" })),
       path: Type.Optional(Type.String({ description: "只搜索该文件或以此开头的路径" })),
       ignore_case: Type.Optional(Type.Boolean({ description: "忽略大小写，默认 true" })),
-      context: Type.Optional(Type.Number({ description: "每处命中前后附带的行数，默认 0，最多 5" })),
-      max_matches: Type.Optional(Type.Number({ description: "最多返回的命中数，默认 40，最多 200" })),
+      context: Type.Optional(Type.Number({ description: "每处命中前后附带的行数，默认 1，最多 5" })),
+      max_matches: Type.Optional(Type.Number({ description: "每个词最多返回的命中数，默认 20，最多 200" })),
     }),
     execute: async (_id, params) => {
-      if (!params.pattern) throw new Error("pattern 不能为空");
+      const wanted = [...(params.pattern ? [params.pattern] : []), ...(params.patterns ?? [])].filter(Boolean).slice(0, 12);
+      if (wanted.length === 0) throw new Error("pattern 或 patterns 至少给一个");
       const flags = params.ignore_case === false ? "" : "i";
-      const re = new RegExp(params.regex ? params.pattern : escapeRegex(params.pattern), flags);
-      const limit = Math.max(1, Math.min(200, Math.floor(params.max_matches ?? 40)));
-      const context = Math.max(0, Math.min(5, Math.floor(params.context ?? 0)));
+      const limit = Math.max(1, Math.min(200, Math.floor(params.max_matches ?? 20)));
+      const context = Math.max(0, Math.min(5, Math.floor(params.context ?? 1)));
       const prefix = (params.path ?? "").replace(/^\.\//, "");
       if (prefix && (isAbsolute(prefix) || prefix.split("/").includes(".."))) throw new Error("path 必须是核查包内的相对路径");
       const files: string[] = [];
       walk(root, root, files);
       files.sort();
-      const out: string[] = [];
-      let total = 0;
+      const texts: Array<[string, string[]]> = [];
       for (const file of files) {
         if (prefix && file !== prefix && !file.startsWith(prefix)) continue;
         if (BINARY_EXT.has(extname(file).toLowerCase())) continue;
         const full = inside(root, file);
         if (statSync(full).size > GREP_FILE_LIMIT) continue;
-        const lines = readFileSync(full, "utf-8").split("\n");
-        for (let i = 0; i < lines.length; i++) {
-          const m = re.exec(lines[i]);
-          if (!m) continue;
-          total += 1;
-          if (out.length >= limit) continue;
-          const block: string[] = [];
-          for (let j = Math.max(0, i - context); j < i; j++) block.push(`${file}-${j + 1}- ${window(lines[j], 0, 0)}`);
-          block.push(`${file}:${i + 1}: ${window(lines[i], m.index, m[0].length)}`);
-          for (let j = i + 1; j <= Math.min(lines.length - 1, i + context); j++) block.push(`${file}-${j + 1}- ${window(lines[j], 0, 0)}`);
-          out.push(block.join("\n"));
-        }
+        texts.push([file, readFileSync(full, "utf-8").split("\n")]);
       }
-      const head = total === 0 ? "没有命中。" : `共 ${total} 处命中${total > out.length ? `，显示前 ${out.length} 处；缩小 path 或换更具体的词` : ""}。`;
-      return text(clip([head, ...out].join("\n")), { matches: total, shown: out.length });
+      const sections: string[] = [];
+      let totalAll = 0;
+      for (const pattern of wanted) {
+        const re = new RegExp(params.regex ? pattern : escapeRegex(pattern), flags);
+        const out: string[] = [];
+        let total = 0;
+        for (const [file, lines] of texts) {
+          for (let i = 0; i < lines.length; i++) {
+            const m = re.exec(lines[i]);
+            if (!m) continue;
+            total += 1;
+            if (out.length >= limit) continue;
+            const block: string[] = [];
+            for (let j = Math.max(0, i - context); j < i; j++) block.push(`${file}-${j + 1}- ${window(lines[j], 0, 0)}`);
+            block.push(`${file}:${i + 1}: ${window(lines[i], m.index, m[0].length)}`);
+            for (let j = i + 1; j <= Math.min(lines.length - 1, i + context); j++) block.push(`${file}-${j + 1}- ${window(lines[j], 0, 0)}`);
+            out.push(block.join("\n"));
+          }
+        }
+        totalAll += total;
+        const head = total === 0 ? "没有命中。" : `共 ${total} 处命中${total > out.length ? `，显示前 ${out.length} 处；缩小 path 或换更具体的词` : ""}。`;
+        sections.push((wanted.length > 1 ? `=== ${pattern} ===\n` : "") + [head, ...out].join("\n"));
+      }
+      return text(clip(sections.join("\n\n"), READ_CHARS * 2), { matches: totalAll, patterns: wanted.length });
     },
   });
 

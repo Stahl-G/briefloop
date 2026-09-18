@@ -480,3 +480,18 @@ test("report figures are attached only when the model accepts images", async () 
   const bad = await reviewer({ model: VISION_MODEL });
   assert.match(await callError("turn_start", { session_id: bad.session_id, execution_id: "e-img-bad", prompt: "x", images: tampered }), /changed before sending/);
 });
+
+test("one grep call answers several patterns and one read call several pieces", async () => {
+  const { session_id } = await reviewer();
+  const tool = async (name, args) => (await call("tool_call", { session_id, name, args })).content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
+  const grep = await tool("packet_grep", { patterns: ["85.9", "evidence text", "absent-term"], path: "sources/" });
+  assert.match(grep, /=== 85\.9 ===\n共 1 处命中/);
+  assert.match(grep, /=== evidence text ===\n共 1 处命中/);
+  assert.match(grep, /=== absent-term ===\n没有命中/);
+  assert.match(grep, /src2\.view\.json-1- /, "default context shows the neighbouring line");
+  const read = await tool("packet_read", { path: "sources/src1.txt", more: [{ path: "notes.txt", start_line: 2, end_line: 2 }, { path: "../escape.txt" }] });
+  assert.match(read, /=== sources\/src1\.txt ===\nevidence text/);
+  assert.match(read, /=== notes\.txt 第 2-2 行 ===\n\[第 2-2 行，共 6 行\]\nline2/);
+  assert.match(read, /=== \.\.\/escape\.txt ===\n读取失败：/, "a bad piece fails alone and never escapes the packet");
+  assert.match(await callError("tool_call", { session_id, name: "packet_grep", args: {} }), /至少给一个/);
+});
