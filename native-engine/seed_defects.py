@@ -31,10 +31,12 @@ SEEDS = {
     'fabricated_claim': ('（第一季度收入1.428亿美元）。', '（第一季度收入1.428亿美元）。公司同时宣布在得州新建5GW电池片工厂，预计2027年投产。'),
 }
 
-# A run detects a problem when one finding, assessment finding or unchecked
-# item matches every pattern. First-pass matching; read texts before citing.
+# A run detects a problem when one finding, assessment finding, unchecked item
+# or response-check reason matches every pattern (the chart footnote is also
+# the subject of an author response the Reviewer may judge unresolved).
+# First-pass matching; read the texts before citing a count.
 ISSUES = {
-    'chart_footnote': [r'fig_dc483082d36b4165|放量', r'1\.5', r'脚注|内嵌|PNG|图片|图注'],
+    'chart_footnote': [r'fig_dc483082d36b4165|放量', r'脚注|内嵌|PNG', r'1\.5|不一致|矛盾|冲突|相反'],
     'cash_58_9_vs_85_9': [r'85\.9|8,590', r'58\.9|5,890'],
     'net_income_changed': [r'5,480|5480|54\.8'],
     'proclamation_date_changed': [r'8月16日', r'Proclamation|11052|签署|232'],
@@ -68,5 +70,6 @@ def detections(result, issues=ISSUES):
     texts = [f.get('description', '') + ' ' + str(f.get('evidence', '')) + ' ' + str(f.get('report_quote', ''))
              for f in result.get('findings', []) + (result.get('assessment') or {}).get('findings', [])]
     texts += [u.get('description', '') for u in result.get('unchecked_items', [])]
+    texts += [c.get('reason', '') for c in result.get('response_checks', []) if c.get('decision') == 'unresolved']
     return {name: any(all(re.search(p, text) for p in patterns) for text in texts)
             for name, patterns in issues.items()}
