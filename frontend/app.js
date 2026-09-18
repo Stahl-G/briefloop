@@ -991,7 +991,10 @@ function activityEntries(){
 }
 function activeActivityEntries(entries){return entries.filter(e=>LIVE_ACTIVITY_STATUSES.includes(e.status))}
 function renderActivities(){
- const entries=activityEntries();const signature=JSON.stringify(entries);if(renderActivities.signature===signature)return;renderActivities.signature=signature;const opened=new Set([...$('activity-list').querySelectorAll('details[open]')].map(e=>e.dataset.activityKey));$('chat-activity').hidden=!entries.length;$('activity-count').textContent=entries.length?String(entries.length):'';
+ const entries=activityEntries();const signature=JSON.stringify(entries);if(renderActivities.signature===signature)return;const wasHidden=$('chat-activity').hidden;renderActivities.signature=signature;const opened=new Set([...$('activity-list').querySelectorAll('details[open]')].map(e=>e.dataset.activityKey));$('chat-activity').hidden=!entries.length;
+ // Fresh appearance (had no activity yet): start collapsed.
+ if(wasHidden&&!$('chat-activity').hidden)$('chat-activity').open=false;
+ $('activity-count').textContent=entries.length?String(entries.length):'';
  const active=activeActivityEntries(entries);$('activity-title').textContent=active.length?`正在进行 · ${active.at(-1).label}`:'工具与子 Agent 活动';
  $('activity-list').innerHTML=entries.map(e=>`<details class="activity-item" data-activity-key="${esc(e.key)}" ${opened.has(e.key)?'open':''}><summary><span class="activity-indicator ${['failed','declined','error'].includes(e.status)?'failed':(LIVE_ACTIVITY_STATUSES.includes(e.status)?'running':'done')}"></span><strong>${esc(e.label)}</strong><span>${esc(chatStates[e.status]||({inProgress:'正在执行',started:'正在执行',done:'已完成',success:'已完成',declined:'未执行',error:'未完成'}[e.status])||e.status)}</span><time>${messageTime(e.created)}</time></summary>${e.detail?`<pre>${esc(e.detail)}</pre>`:''}</details>`).join('');
 }
@@ -1137,10 +1140,11 @@ function openHomeReport(id){
 }
 let autoOpenedActivityTurn=null;
 function autoOpenActivity(){
+ // Default collapsed: activity panel stays closed unless the user opens it.
+ // Keep the helper so renderChat call sites stay stable; only track turn for future opt-in.
  const activity=$('chat-activity');if(!activity||activity.hidden)return;
  const streaming=chat.messages.find(m=>['streaming','sending'].includes(m.status));if(!streaming)return;
- const turn=streaming.turn_id||streaming.id;if(autoOpenedActivityTurn===turn)return;
- autoOpenedActivityTurn=turn;if(!activity.open)activity.open=true;
+ autoOpenedActivityTurn=streaming.turn_id||streaming.id;
 }
 function renderChat(){
  const empty=chat.home||(chat.messages.length===0&&!chatActive());
