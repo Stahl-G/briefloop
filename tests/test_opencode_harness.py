@@ -112,7 +112,8 @@ def test_server_client_maps_v1_shapes():
                                     permission=[{'permission': 'question', 'action': 'deny', 'pattern': '*'}],
                                     directory='/tmp/ws')
     assert created == {'id': 'ses_fake'}
-    client.prompt_async('ses_fake', 'hi', model='opencode-go/gpt-5.6-luna', system='BriefLoop 系统约定')
+    client.prompt_async('ses_fake', 'hi', model='opencode-go/gpt-5.6-luna', variant='high', system='BriefLoop 系统约定')
+    assert server.prompts[0]['variant'] == 'high', 'the selected effort reaches every prompt'
     assert server.prompts[0]['agent'] == 'build'
     assert server.prompts[0]['system'] == 'BriefLoop 系统约定'
     assert server.prompts[0]['parts'] == [{'type': 'text', 'text': 'hi'}]
@@ -121,7 +122,7 @@ def test_server_client_maps_v1_shapes():
     file_parts = [p for p in server.prompts[1]['parts'] if p['type'] == 'file']
     assert len(file_parts) == 1 and file_parts[0]['mime'] == 'image/png'
     assert server.prompts[1]['parts'][0] == {'type': 'text', 'text': 'see'}
-    assert 'system' not in server.prompts[1]
+    assert 'system' not in server.prompts[1] and 'variant' not in server.prompts[1]
     assert client.messages('ses_fake')[1]['info']['id'] == 'msg_a1'
     assert client.children('ses_fake') == []
     assert client.abort('ses_fake') is True

@@ -633,6 +633,7 @@ class OpencodeHarness:
                     return
             admitted_at = int(time.time() * 1000)
             client.prompt_async(bound, prompt_text, model=prompt_model(config['model']),
+                                variant=config.get('variant'),
                                 agent='build', files=prompt_files, system=instructions,
                                 directory=session['cwd'])
             with self._lock:

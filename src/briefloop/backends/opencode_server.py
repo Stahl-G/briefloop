@@ -197,7 +197,7 @@ class OpencodeServerClient:
             path += '?directory=' + urllib.parse.quote(str(directory), safe='')
         return path
 
-    def prompt_async(self, session_id, text, *, model=None, agent='build', files=None, system=None, directory=None):
+    def prompt_async(self, session_id, text, *, model=None, variant=None, agent='build', files=None, system=None, directory=None):
         parts=[{'type':'text','text':text}]
         for item in files or []:
             parts.append({'type':'file','mime':item['mime'],'filename':item.get('filename','image'),
@@ -211,6 +211,10 @@ class OpencodeServerClient:
             body['agent'] = agent
         if model:
             body['model'] = model if isinstance(model, dict) else prompt_model(model)
+        # The per-prompt model carries no variant; without this field every
+        # prompt ran at the provider's default effort, whatever was selected.
+        if variant:
+            body['variant'] = variant
         self._request('POST', self._session_path(session_id, 'prompt_async', directory), body)
 
     def messages(self, session_id, *, directory=None):
