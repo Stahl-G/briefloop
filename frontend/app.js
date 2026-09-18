@@ -1095,12 +1095,18 @@ function renderHome(){
  hydrateHomeIcons();
  const rows=homeRecentReports();
  const jobs=(state.jobs||[]).filter(j=>['queued','running'].includes(j.status));
- // Main-column recent is legacy; recent lives in the rail only (DESIGN §6.2/§7.3).
- if($('home-block-recent'))$('home-block-recent').hidden=true;
+ // Reference layout: recent reports stay in the main column; rail is for running jobs only.
+ const mainRecent=$('home-block-recent');
+ if(mainRecent)mainRecent.hidden=!rows.length;
+ const mainBox=$('home-recent-list');
+ if(mainBox&&rows.length){
+  mainBox.innerHTML=rows.map(homeReportRowHTML).join('');
+  mainBox.querySelectorAll('[data-home-report]').forEach(el=>el.onclick=()=>openHomeReport(el.dataset.homeReport));
+ }
  const rail=$('home-rail');
- const showRail=!!rail&&(jobs.length>0||rows.length>0);
+ const showRail=!!rail&&jobs.length>0;
  const chatPage=$('chat');
- if(chatPage&&!chatPage.hidden)chatPage.classList.toggle('has-home-rail',showRail);
+ if(chatPage)chatPage.classList.toggle('has-home-rail',showRail);
  if(rail)rail.hidden=!showRail;
  const jobBlock=$('home-rail-jobs'),jobList=$('home-rail-job-list');
  if(jobBlock&&jobList){
@@ -1112,22 +1118,22 @@ function renderHome(){
   }).join('');
   jobList.querySelectorAll('[data-rail-open-job]').forEach(b=>b.onclick=()=>openTask(jobFor(b.dataset.railOpenJob)));
  }
+ // Keep rail recent in sync only when rail is shown with reports too (jobs-only rail may omit recent)
  const recentBlock=$('home-rail-recent'),recentBox=$('home-rail-recent-list');
  if(recentBlock&&recentBox){
-  recentBlock.hidden=!rows.length;
-  recentBox.innerHTML=rows.map(b=>{
-   const st=reportStatus(b),desc=reportDescription(b);
-   const when=new Date(b.updated||b.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
-   const meta=homeReportIconMeta(parse(b.detail).title||b.detail);
-   return `<button type="button" class="home-report" data-home-report="${esc(b.id)}"><span class="home-report-icon ${meta.cat}" aria-hidden="true">${svgLineIcon(meta.icon,16)}</span><span class="home-report-body"><strong>${esc(parse(b.detail).title||'简报')}</strong>${desc?`<small>${esc(desc)}</small>`:''}</span><span class="home-report-meta"><time>${esc(when)}</time><span class="chip ${st.cls}">${esc(st.label)}</span></span></button>`;
-  }).join('');
-  recentBox.querySelectorAll('[data-home-report]').forEach(el=>el.onclick=()=>{
-   const b=state.briefs.find(x=>x.id===el.dataset.homeReport);
-   if(b&&openBrief(b,{follow:false}))page('report');
-  });
+  recentBlock.hidden=true;
+  recentBox.innerHTML='';
  }
- const legacy=$('home-recent-list');
- if(legacy&&!rows.length)legacy.innerHTML='';
+}
+function homeReportRowHTML(b){
+ const st=reportStatus(b),desc=reportDescription(b);
+ const when=new Date(b.updated||b.created).toLocaleString('zh-CN',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'});
+ const meta=homeReportIconMeta(parse(b.detail).title||b.detail);
+ return `<button type="button" class="home-report" data-home-report="${esc(b.id)}"><span class="home-report-icon ${meta.cat}" aria-hidden="true">${svgLineIcon(meta.icon,16)}</span><span class="home-report-body"><strong>${esc(parse(b.detail).title||'简报')}</strong>${desc?`<small>${esc(desc)}</small>`:''}</span><span class="home-report-meta"><time>${esc(when)}</time><span class="chip ${st.cls}">${esc(st.label)}</span></span></button>`;
+}
+function openHomeReport(id){
+ const b=(state.briefs||[]).find(x=>x.id===id);
+ if(b&&openBrief(b,{follow:false}))page('report');
 }
 let autoOpenedActivityTurn=null;
 function autoOpenActivity(){

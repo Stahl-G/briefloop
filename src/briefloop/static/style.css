@@ -727,7 +727,8 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 .home-rail-job small{color:var(--color-text-muted,#6a706b);font-size:11px}
 .home-rail-job .outline{align-self:flex-start;font-size:11px;padding:4px 8px;margin-top:2px}
 /* main-column recent block is only a fallback; hide when rail present */
-.chat-page.has-home-rail #home-block-recent{display:none!important}
+.chat-page.has-home-rail #home-block-recent{display:block}
+/* reference keeps recent in main; rail is jobs-only */
 @media(max-width:1150px){
   .chat-page.has-home-rail{grid-template-columns:minmax(0,1fr)}
   .chat-page.has-home-rail .home-rail{position:static;max-height:none;order:2}
@@ -797,7 +798,7 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
   color:var(--color-text-muted,#6a706b);
 }
 /* redundant trailing arrow — whole card is the target (DESIGN critique) */
-.home-suggestion-arrow{display:none}
+.home-suggestion-arrow{display:block;margin-top:auto;align-self:flex-end;color:var(--color-text-muted,#6a706b);font-size:14px}
 
 .home-report{
   display:flex;
@@ -873,4 +874,113 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 @media(max-width:560px){
   .attach-button{width:32px;height:32px;min-width:32px}
   .model-id-input--default{max-width:120px}
+}
+
+/* reference layout: contained main column when no jobs rail */
+.chat-page:not(.has-home-rail) .chat-home-top,
+.chat-page:not(.has-home-rail) .chat-home-bottom,
+.chat-page:not(.has-home-rail) .chat-composer,
+.chat-page:not(.has-home-rail) .composer-help{
+  max-width:min(var(--content-max,1080px), 920px);
+  width:100%;
+  margin-left:auto;
+  margin-right:auto;
+  align-self:center;
+}
+.chat-page:not(.has-home-rail) .home-suggestions{
+  grid-template-columns:repeat(4,minmax(0,1fr));
+}
+@media(max-width:900px){
+  .chat-page:not(.has-home-rail) .home-suggestions{grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+
+/* === home: composer is the functional center === */
+.chat-page.is-empty .chat-composer,
+#chat .chat-composer.chat-home-composer{
+  max-width:min(var(--content-max,1080px), 960px);
+  width:100%;
+  margin:0 auto;
+  padding:18px 20px 14px;
+  border-radius:var(--radius-lg,14px);
+  box-shadow:var(--shadow-md,0 4px 12px rgba(30,35,32,.08));
+}
+.chat-page.is-empty .chat-composer>textarea,
+.chat-composer>textarea.chat-home-input{
+  min-height:96px;
+  max-height:280px;
+  font-size:var(--text-base,14px);
+  line-height:var(--leading-relaxed,1.9);
+  padding:10px 4px 4px;
+}
+.chat-page.is-empty .composer-tools{
+  margin-top:var(--space-4,16px);
+  gap:var(--space-3,12px);
+  min-height:40px;
+}
+.chat-page.is-empty .attach-button,
+.chat-page.is-empty .params-button,
+.chat-page.is-empty .send-controls #chat-send,
+.chat-page.is-empty .model-id-input--default{
+  height:40px;
+  min-height:40px;
+}
+.chat-page.is-empty .model-id-input--default{
+  max-width:240px;
+  font-size:var(--text-sm,13px);
+  padding:0 12px;
+}
+.chat-page.is-empty .params-button{padding:0 14px;font-size:var(--text-sm,13px)}
+.chat-page.is-empty .send-controls #chat-send{min-width:72px;padding:0 20px;font-size:var(--text-sm,13px)}
+.chat-page.is-empty .composer-help{
+  max-width:min(var(--content-max,1080px), 960px);
+  margin:10px auto 0;
+  font-size:var(--text-xs,12px);
+  text-align:left;
+}
+/* greeting sits above the hero composer with clear hierarchy */
+.chat-page.is-empty .chat-home-top{
+  max-width:min(var(--content-max,1080px), 960px);
+  margin:0 auto;
+  padding-top:clamp(28px,7vh,64px);
+  padding-bottom:var(--space-3,12px);
+}
+.chat-page.is-empty .home-greeting{
+  font-size:clamp(32px,3.4vw,40px);
+}
+.chat-page.is-empty .chat-home-bottom{
+  max-width:min(var(--content-max,1080px), 960px);
+  margin:0 auto;
+}
+/* keep sent messages readable but secondary to composer on empty home */
+.chat-page.is-empty .chat-scroll{
+  padding-top:0;
+}
+/* Override the compact chat composer rules (height:36px / max-width:728px) on home */
+.chat-page.is-empty .chat-composer>textarea{
+  height:auto;
+  min-height:110px;
+  max-height:320px;
+}
+.chat-page.is-empty .chat-composer{
+  max-width:min(960px, 100%);
+  padding:20px 22px 16px;
+}
+.chat-page.is-empty #chat-input{
+  min-height:110px;
+  height:auto;
+}
+/* circular send disabled state from compact rules — restore readable send on home */
+.chat-page.is-empty .send-controls .primary{
+  width:auto;
+  min-width:72px;
+  height:40px;
+  min-height:40px;
+  padding:0 18px;
+  border-radius:var(--radius-sm,6px);
+  font-size:var(--text-sm,13px);
+  line-height:normal;
+}
+.chat-page.is-empty .chat-composer>textarea::placeholder{
+  font-size:var(--text-md,15px);
+  color:var(--color-text-muted,#6a706b);
 }

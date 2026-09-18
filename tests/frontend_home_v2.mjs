@@ -25,15 +25,15 @@ test('home loads tokens.css and keeps composer progressive disclosure markers',(
   assert.match(html,/chat-main-col/);
 });
 
-test('renderHome shows rail for jobs or reports and keeps recent only in rail',()=>{
+test('renderHome shows main recent when rows exist and rail for running jobs',()=>{
   assert.match(app,/has-home-rail/);
   assert.match(app,/home-rail-jobs/);
   assert.match(app,/home-rail-recent-list/);
-  assert.match(app,/home-block-recent'\)\)\$\('home-block-recent'\).hidden=true|home-block-recent.*/);
-  const renderHome=app.slice(app.indexOf('function renderHome()'),app.indexOf('function autoOpenActivity'));
+  const renderHome=app.slice(app.indexOf('function renderHome()'),app.indexOf('function homeReportRowHTML()')) || app.slice(app.indexOf('function renderHome()'),app.indexOf('let autoOpenedActivityTurn'));
   assert.match(renderHome,/has-home-rail/);
-  assert.match(renderHome,/home-rail-recent-list/);
+  assert.match(renderHome,/home-rail-jobs/);
   assert.match(renderHome,/home-block-recent/);
+  assert.match(renderHome,/mainBox.innerHTML=rows.map\(homeReportRowHTML\)/);
 });
 
 test('home does not render empty schedule/report placeholders',()=>{
