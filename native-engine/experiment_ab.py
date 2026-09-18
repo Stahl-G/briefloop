@@ -35,10 +35,7 @@ from briefloop.review import run_review, get_review  # noqa: E402
 # deepseek-v4.1-flash as listed in native-engine/models.json.
 PRICE = {'input': 0.22, 'output': 0.66, 'cacheRead': 0.007}
 
-import seed_defects  # noqa: E402
-
-# The two real problems of the acceptance version; --seed adds the planted ones.
-BASE_ISSUES = ('chart_footnote', 'cash_58_9_vs_85_9')
+import seed_generic  # noqa: E402
 
 
 def opencode_usage(folder):
@@ -87,10 +84,6 @@ def usage_totals(folder):
     return totals
 
 
-def detections(result, seeded=False):
-    issues = {name: patterns for name, patterns in seed_defects.ISSUES.items()
-              if seeded or name in BASE_ISSUES}
-    return seed_defects.detections(result, issues)
 
 
 def event_stats(folder):
@@ -114,11 +107,14 @@ def event_stats(folder):
     return {'events': sum(kinds.values()), 'tool_calls': tools}
 
 
-def run_leg(source, version_id, backend, model, variant, repeat_index, seeded=False):
+def run_leg(source, version_id, backend, model, variant, repeat_index, seed_rng=None):
     work = Path(tempfile.mkdtemp(prefix=f'bl-ab-{backend}-')).resolve()
     shutil.copytree(source, work / 'ws')
-    if seeded:
-        seed_defects.seed(work / 'ws', version_id)
+    truth = None
+    if seed_rng is not None:
+        # Same rng for both backends of a pair, so both review the same defects.
+        truth = seed_generic.seed(work / 'ws', version_id, seed_rng + repeat_index)
+        (work / 'seeded.json').write_text(json.dumps(truth, ensure_ascii=False, indent=1))
     store = Store(work / 'ws')
     engine = NativeEngine()
     harness = NativeHarness(store, engine)
@@ -155,7 +151,7 @@ def run_leg(source, version_id, backend, model, variant, repeat_index, seeded=Fa
                 'schema_correction': (folder / 'schema-correction.json').exists(),
                 'major_findings': sum(1 for f in data.get('findings', []) + (data.get('assessment') or {}).get('findings', [])
                                       if f.get('severity') == 'major'),
-                'detected': detections(data, seeded),
+                **({'detected': seed_generic.score(data, truth), 'planted': len(truth['planted'])} if truth else {}),
             })
         except Exception as exc:
             outcome.update({'wall_seconds': round(time.monotonic() - t0, 1),
@@ -180,7 +176,8 @@ def main():
     parser.add_argument('--backends', default='briefloop-native,opencode')
     parser.add_argument('--repeat', type=int, default=1)
     parser.add_argument('--out')
-    parser.add_argument('--seed', action='store_true', help='plant the known problems of seed_defects.py into the copy')
+    parser.add_argument('--seed', type=int, default=None,
+                        help='plant report-agnostic defects (seed_generic.py) with this rng seed (+ repeat index)')
     args = parser.parse_args()
 
     source = Path(args.workspace).resolve()
