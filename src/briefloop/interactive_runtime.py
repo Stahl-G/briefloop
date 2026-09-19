@@ -33,6 +33,10 @@ def _usable_output(job, folder, store=None):
         try:return isinstance(json.loads((folder/'metadata.json').read_text(encoding='utf-8-sig')),dict)
         except (OSError,ValueError):return False
     role=job.get('runtime_role')
+    if role=='scout':
+        from .models import ScoutResult
+        try:ScoutResult.model_validate(json.loads((folder/'result.json').read_text(encoding='utf-8-sig')));return True
+        except (OSError,ValueError):return False
     if role in ('evaluator','scorer','assessor'):
         name='comparison.json' if job.get('evaluation_mode')=='pairwise' or role=='assessor' else 'assessment.json'
     elif job['kind'] in ('generate','revise'):name='draft.json'

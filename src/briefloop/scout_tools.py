@@ -70,6 +70,59 @@ def join_scouts(store, paths, *, run_id=None, round_id=None, slots=None):
     return merged.model_dump()
 
 
+_LINE_PREFIX=re.compile(r'(?m)^\s*\d+:\s?')
+_SPLIT=re.compile(r'…+|\.{3,}')
+_SPACE=re.compile(r'\s+')
+_LOCATOR_SLACK=3
+
+
+def _squash(text):
+    return _SPACE.sub('',text)
+
+
+def evidence_errors(store,run_id,result):
+    """Evidence integrity of one Scout result, beyond its schema.
+
+    Each excerpt must be verbatim source text (whitespace aside; "…" may join
+    pieces of one passage; line-number prefixes copied from a numbered view are
+    ignored), and a line locator must point at where it is (a few lines of
+    slack). A paraphrase belongs in facts. Returns a list of messages.
+    """
+    errors=[];texts={}
+    for position,item in enumerate(result.sources):
+        where=f'sources[{position}]（{item.source_id}）'
+        locator=item.locator.strip()
+        if locator:
+            problem=_locator_problem(locator)
+            if problem:
+                errors.append(where+'.locator 不可解析：'+problem);continue
+        if not item.excerpt.strip():continue
+        if item.source_id not in texts:
+            try:texts[item.source_id]=store.source_text(item.source_id)
+            except (ValueError,OSError):texts[item.source_id]=None
+        text=texts[item.source_id]
+        if text is None:
+            errors.append(where+' 的来源没有可读正文，不能给 excerpt；把读取失败写进 gaps');continue
+        pieces=[_squash(piece) for piece in _SPLIT.split(_LINE_PREFIX.sub('',item.excerpt))]
+        pieces=[piece for piece in pieces if piece]
+        match=_LOCATOR_RANGE.fullmatch(locator)
+        if match and match.group(1).lower()=='line':
+            lines=text.splitlines()
+            start=max(1,int(match.group(2))-_LOCATOR_SLACK);end=int(match.group(3) or match.group(2))+_LOCATOR_SLACK
+            window=_squash('\n'.join(lines[start-1:end]))
+            if not all(piece in window for piece in pieces):
+                whole=_squash(text)
+                if all(piece in whole for piece in pieces):
+                    errors.append(where+f' 的 excerpt 在原文中，但不在 {locator} 附近；按实际行号改 locator')
+                else:
+                    errors.append(where+' 的 excerpt 不是原文逐字内容；逐字摘录原句，概括写进 facts')
+            continue
+        whole=_squash(text)
+        if not all(piece in whole for piece in pieces):
+            errors.append(where+' 的 excerpt 不是原文逐字内容；逐字摘录原句，概括写进 facts')
+    return errors
+
+
 class HandoffError(ValueError):
     """All schema violations of one agent-written handoff, structured for self-repair."""
     def __init__(self,errors):

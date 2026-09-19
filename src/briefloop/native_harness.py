@@ -107,13 +107,17 @@ class NativeHarness:
         if not isinstance(model, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_./:-]+', model.strip()):
             raise ValueError('内置引擎模型需要 provider/model 形式（如 deepseek/deepseek-v4-pro）')
         value['model'] = model.strip()
-        # Only packet-confined roles run here so far (native_roles). Refusing
-        # here keeps a misrouted generate/learn job from ever reaching a model
-        # with a permission it was not designed for.
+        # Only packet-confined roles run here so far (native_roles): the
+        # session itself reads its packet and nothing else; whatever else a
+        # role may do (a Scout's metered search and page registration) is a
+        # runner tool. Refusing here keeps a misrouted generate/learn job from
+        # ever reaching a model with a permission it was not designed for.
         from .native_roles import role_of
-        role_of(value)
+        role = role_of(value)
         if value.get('permission') != 'read-only' or not (value.get('packet_root') or value.get('review_root')):
-            raise ValueError('内置引擎当前仅执行只读核查包内的审阅与评分')
+            raise ValueError('内置引擎当前仅执行只读核查包内的角色任务')
+        if role == 'scout' and not (value.get('run_id') and value.get('result_file')):
+            raise ValueError('Scout 任务缺少所属报告或结果文件')
         return value
 
     # -- messaging ------------------------------------------------------
@@ -203,7 +207,7 @@ class NativeHarness:
             'session_id': sid,
             'role': role,
             'packet_root': config.get('packet_root') or config['review_root'],
-            'runner_tools': runner_tool_specs(role, config.get('evaluation_mode')),
+            'runner_tools': runner_tool_specs(role, config.get('evaluation_mode'), config),
             'session_dir': str(cwd),
             'model': config['model'],
             'thinking': _thinking(config),
@@ -334,7 +338,14 @@ class NativeHarness:
                 elif kind == 'submit':
                     self._admit(sid, config, event)
                 elif kind == 'tool_request':
-                    self._run_tool(sid, config, event)
+                    # A submit runs in order on this loop. Other runner tools
+                    # run off it, so a Scout's batched fetches proceed side by
+                    # side (Store opens a connection per call); the engine
+                    # matches results by request_id.
+                    if self._settles(config, event.get('tool')):
+                        self._run_tool(sid, config, event)
+                    else:
+                        threading.Thread(target=self._run_tool, args=(sid, config, event), daemon=True).start()
                 elif kind == 'status':
                     self.chat.event(sid, 'runtime/status',
                                     {'turnId': mid, 'message': event.get('message', '')})
@@ -407,6 +418,12 @@ class NativeHarness:
                 'ok': error is None, 'error': error}, timeout=15)
         except Exception:
             pass  # The engine times the submission out and tells the model.
+
+    @staticmethod
+    def _settles(config, name):
+        from .native_roles import role_of, runner_tool_specs
+        specs = runner_tool_specs(role_of(config), config.get('evaluation_mode'), config)
+        return any(spec['name'] == name and spec.get('settles') for spec in specs)
 
     def _run_tool(self, sid, config, event):
         from .native_roles import run_tool

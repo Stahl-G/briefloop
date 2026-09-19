@@ -42,6 +42,14 @@ const reply = {
     chunk(res, {}, "tool_calls", usage);
     res.end("data: [DONE]\n\n");
   },
+  // Several calls in one assistant message.
+  tools: (...calls) => (res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    chunk(res, { role: "assistant", tool_calls: calls.map(([name, args], index) => (
+      { index, id: `call_${index}_` + Math.random().toString(36).slice(2, 8), type: "function", function: { name, arguments: JSON.stringify(args) } })) });
+    chunk(res, {}, "tool_calls", usage);
+    res.end("data: [DONE]\n\n");
+  },
   stall: () => (res) => { res.writeHead(200, { "content-type": "text/event-stream" }); provider.stalled.add(res); },
   // Streams forever without content: a role chunk, then empty deltas and SSE
   // comments (a provider queueing the request behind a live connection).
@@ -221,8 +229,9 @@ before(async () => {
         }
         // Stands in for the Python runner executing a tool it declared.
         if (msg.params.kind === "tool_request") {
-          const result = runnerTool(msg.params.tool, msg.params.args);
-          void call("tool_result", { session_id: msg.params.session_id, request_id: msg.params.request_id, ...result });
+          const { session_id, request_id } = msg.params;
+          void Promise.resolve(runnerTool(msg.params.tool, msg.params.args))
+            .then((result) => call("tool_result", { session_id, request_id, ...result }));
         }
         for (const l of [...listeners]) l();
       }
@@ -629,6 +638,38 @@ test("an evaluator session has packet reads plus the runner's tools, and nothing
   assert.doesNotMatch(prompt, /submit_review|claim_trace/);
   assert.match(await callError("session_create", { session_id: "x-dup", role: "evaluator", packet_root: packet, model: MODEL,
     system_prompt: SYSTEM, runner_tools: [{ ...RENDER, name: "packet_read" }] }), /runner tool name taken: packet_read/);
+});
+
+const ADD_URL = { name: "add_url", description: "保存网页", parameters: { type: "object", required: ["url"], properties: { url: { type: "string" } } } };
+const SCOUT_SUBMIT = { name: "submit_scout_result", description: "提交研究结果", settles: true,
+  parameters: { type: "object", required: ["sources"], properties: { sources: { type: "array", items: { type: "object" } } } } };
+
+test("a scout session reads its packet and fetches through the runner, several pages at once", async () => {
+  const { session_id, tools } = await reviewer({ role: "scout", runner_tools: [ADD_URL, SCOUT_SUBMIT] });
+  assert.deepEqual(tools, ["add_url", "packet_grep", "packet_list", "packet_read", "submit_scout_result"]);
+  // Both fetches must be outstanding together: neither answers until both arrived.
+  const pending = [];
+  let release;
+  const both = new Promise((resolve) => { release = resolve; });
+  runnerTool = (tool, args) => {
+    if (tool === "submit_scout_result") return { ok: true, content: [{ type: "text", text: "已保存" }], settle: JSON.stringify(args) };
+    pending.push(args.url);
+    if (pending.length === 2) release();
+    return Promise.race([both, new Promise((r) => setTimeout(r, 3000))])
+      .then(() => ({ ok: pending.length === 2, error: "fetches ran one at a time", content: [{ type: "text", text: `saved ${args.url}` }] }));
+  };
+  script(
+    reply.tools(["add_url", { url: "https://a.test" }], ["add_url", { url: "https://b.test" }]),
+    reply.tool("submit_scout_result", { sources: [] }),
+    reply.text("好"),
+  );
+  const evts = await turn(session_id, "e-scout", { require_submit: true, idle_timeout_s: 30 });
+  runnerTool = () => ({ ok: false, error: "no runner tool configured" });
+  assert.deepEqual(pending.sort(), ["https://a.test", "https://b.test"]);
+  assert.equal(ends(evts)[0].status, "completed");
+  assert.deepEqual(JSON.parse(ends(evts)[0].final_text), { sources: [] });
+  const prompt = JSON.stringify(provider.requests[0].messages[0]);
+  assert.doesNotMatch(prompt, /submit_review|claim_trace|calc/);
 });
 
 test("runner tools run on the runner; a settling tool ends the run with the accepted value", async () => {

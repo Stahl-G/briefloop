@@ -63,7 +63,7 @@ def test_submit_assessment_is_admitted_by_the_store_rules_and_saved_by_the_runne
     assert json.loads((folder / 'assessment.json').read_text(encoding='utf-8'))['overall'] == '达到要求'
     # Only sources of this task, and only what the tool validates.
     outside = run_tool(store, config, 'render_pdf_pages', {'source_id': 'src_other', 'pages': [1]})
-    assert not outside['ok'] and 'source-index.json' in outside['error']
+    assert not outside['ok'] and '来源清单' in outside['error']
     not_pdf = run_tool(store, config, 'render_pdf_pages', {'source_id': source['id'], 'pages': [1]})
     assert not not_pdf['ok']
     assert run_tool(store, config, 'packet_read', {})['ok'] is False

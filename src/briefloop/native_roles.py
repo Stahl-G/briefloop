@@ -13,6 +13,11 @@ evaluator - frozen assessment packet (evaluator_packet below); renders PDF
             pages on request and submits the assessment for admission. In
             pairwise mode (learning's gate) it compares trial drafts over a
             comparison packet and submits a comparison instead.
+scout     - one research slot of a run. Its packet is the frozen task and
+            contracts; the run's sources (which grow as it registers pages)
+            are read, searched and rendered through runner tools, and the
+            network is reached only through BriefLoop's metered web_search /
+            add_url / extract_pages, declared only when the run allows the web.
 maintainer, proposer - WikiSkill learning steps. A host-based coordinator
             spawns a subagent per handoff and binds/collects it; here the
             runner does that bookkeeping and the session gets a frozen copy
@@ -24,7 +29,7 @@ import json
 import os
 from pathlib import Path
 
-ROLES = ('reviewer', 'evaluator', 'maintainer', 'proposer')
+ROLES = ('reviewer', 'evaluator', 'maintainer', 'proposer', 'scout')
 
 
 def role_of(config):
@@ -115,7 +120,9 @@ def evaluator_packet(store, input_pack, schema, folder):
     return packet
 
 
-def _source_ids(config):
+def _source_ids(store, config):
+    if config.get('run_id'):
+        return set(store.source_ids(config['run_id']))
     index = json.loads((Path(config['packet_root']) / 'source-index.json').read_text(encoding='utf-8'))
     return {item.get('source_id') or item.get('id') for item in index['sources']}
 
@@ -123,8 +130,8 @@ def _source_ids(config):
 def render_pdf_pages(store, config, args):
     from .media import MAX_RENDER_PAGES, render_source_pages
     sid = args.get('source_id')
-    if sid not in _source_ids(config):
-        raise ToolError('source_id 不在本次任务包的来源清单（source-index.json）中')
+    if sid not in _source_ids(store, config):
+        raise ToolError('source_id 不在本次任务的来源清单中')
     try:
         rendered = render_source_pages(store, sid, args.get('pages'))
     except ValueError as exc:
@@ -372,22 +379,264 @@ COMPARISON_TOOLS = [
      'handler': submit_comparison},
 ]
 
+# -- scout ------------------------------------------------------------------
+
+READ_CHARS = 60_000
+
+
+def scout_packet(store, task, folder):
+    """Freeze one Scout slot's task into folder/packet: the assignment, the
+    scout contract, the saved reader contract, the search policy in tool
+    words, the role skill and the index of sources registered so far."""
+    packet = Path(folder) / 'packet'
+    packet.mkdir(parents=True, exist_ok=True)
+    dump = lambda value: json.dumps(value, ensure_ascii=False, indent=1)
+    (packet / 'task.json').write_text(dump({key: task[key] for key in (
+        'slot_id', 'assignment', 'period', 'time_context', 'created', 'allow_web',
+        'search_channels', 'budget', 'research_handoff') if key in task}), encoding='utf-8')
+    (packet / 'scout-contract.md').write_text(task['contract'], encoding='utf-8')
+    (packet / 'reader-contract.json').write_text(dump(task.get('reader_contract')), encoding='utf-8')
+    (packet / 'search-policy.md').write_text(task['search_note'], encoding='utf-8')
+    if task.get('skill'):
+        (packet / 'skill.md').write_text(task['skill'], encoding='utf-8')
+    (packet / 'source-index.json').write_text(dump(task['sources']), encoding='utf-8')
+    from .models import ScoutResult
+    (packet / 'scout.schema.json').write_text(dump(ScoutResult.model_json_schema()), encoding='utf-8')
+    return packet
+
+
+def _run_source(store, config, sid):
+    if not isinstance(sid, str) or sid not in store.source_ids(config['run_id']):
+        raise ToolError('source_id 不是本轮已登记的来源；先用 add_url 登记，或查看 source-index.json')
+    return sid
+
+
+def source_read(store, config, args):
+    from .scout_tools import read_source
+    sid = _run_source(store, config, args.get('source_id'))
+    start, end = args.get('start_line'), args.get('end_line')
+    limit = min(int(args.get('max_chars') or READ_CHARS), READ_CHARS)
+    try:
+        text = read_source(store, sid, start_line=start or 1, end_line=end, max_chars=limit)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    return {'content': [{'type': 'text', 'text': text}]}
+
+
+def source_grep(store, config, args):
+    import re
+    pattern = args.get('pattern')
+    if not isinstance(pattern, str) or not pattern.strip():
+        raise ToolError('pattern 不能为空')
+    try:
+        regex = re.compile(pattern, re.IGNORECASE)
+    except re.error:
+        regex = re.compile(re.escape(pattern), re.IGNORECASE)
+    ids = [_run_source(store, config, args['source_id'])] if args.get('source_id') else store.source_ids(config['run_id'])
+    limit = min(int(args.get('max_matches') or 40), 100)
+    hits = []
+    for sid in ids:
+        try:
+            lines = store.source_text(sid).splitlines()
+        except (ValueError, OSError):
+            continue
+        for number, line in enumerate(lines, 1):
+            if regex.search(line):
+                hits.append(f'{sid} {number}: {line[:300]}')
+                if len(hits) >= limit:
+                    break
+        if len(hits) >= limit:
+            break
+    text = '\n'.join(hits) if hits else '没有匹配。'
+    return {'content': [{'type': 'text', 'text': text + (f'\n（已达 {limit} 条上限，缩小范围再查）' if len(hits) >= limit else '')}]}
+
+
+def _json_result(value):
+    return {'content': [{'type': 'text', 'text': json.dumps(value, ensure_ascii=False)}]}
+
+
+def web_search(store, config, args):
+    from . import websearch
+    provider = args.get('provider')
+    if provider not in (config.get('search_channels') or []):
+        raise ToolError('provider 不在本轮允许的受控渠道内：' + ','.join(config.get('search_channels') or []))
+    try:
+        result = websearch.search(
+            args.get('query') or '', provider=provider, purpose=args.get('purpose') or 'primary',
+            reason=args.get('reason') or '', gap_id=args.get('gap_id'), topic=args.get('topic') or 'general',
+            time_range=args.get('time_range'), start_date=args.get('start_date'), end_date=args.get('end_date'),
+            include_domains=args.get('include_domains'), exclude_domains=args.get('exclude_domains'),
+            max_results=args.get('max_results') or 5, search_depth=args.get('search_depth') or 'basic',
+            store=store, run_id=config['run_id'])
+    except websearch.SearchError as exc:
+        from .cli import _search_failure
+        return _json_result(_search_failure('search', exc, provider))
+    keep = ('status', 'provider', 'query', 'results', 'remaining', 'unadmitted_urls', 'message', 'note', 'failure_kind', 'error')
+    return _json_result({key: result[key] for key in keep if key in result})
+
+
+def _source_summary(store, source):
+    summary = {key: source.get(key) for key in ('id', 'name', 'url', 'status', 'error', 'reused', 'media_type')}
+    summary['source_id'] = summary.pop('id')
+    if source.get('status') == 'ready':
+        try:
+            summary['lines'] = len(store.source_text(source['id']).splitlines())
+        except (ValueError, OSError):
+            pass
+    return summary
+
+
+def add_url(store, config, args):
+    from .sources import fetch_for_run
+    url = args.get('url')
+    if not isinstance(url, str) or not url.strip():
+        raise ToolError('url 不能为空')
+    try:
+        result = fetch_for_run(store, config['run_id'], url)
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
+    if not result.get('id'):
+        return _json_result(result)  # budget_exhausted
+    summary = _source_summary(store, result)
+    summary['remaining'] = (result.get('budget') or {}).get('remaining')
+    return _json_result(summary)
+
+
+def extract_pages(store, config, args):
+    from . import websearch
+    urls = args.get('urls')
+    if not isinstance(urls, list) or not urls:
+        raise ToolError('urls 需要非空列表')
+    try:
+        result = websearch.extract(store, urls, run_id=config['run_id'], provider='tavily')
+    except websearch.SearchError as exc:
+        from .cli import _search_failure
+        return _json_result(_search_failure('extract', exc))
+    if isinstance(result, dict) and isinstance(result.get('sources'), list):
+        result = {**result, 'sources': [_source_summary(store, source) for source in result['sources']]}
+    return _json_result(result)
+
+
+def submit_scout_result(store, config, args):
+    from pydantic import ValidationError
+    from .models import ScoutResult
+    from .scout_tools import evidence_errors, join_scouts
+    try:
+        result = ScoutResult.model_validate({key: args[key] for key in ('sources', 'gaps', 'search_summary', 'retrieval_notes') if key in args})
+    except ValidationError as exc:
+        raise ToolError('研究结果不符合 scout.schema.json，修正后重新提交：' + str(exc)[:1500]) from exc
+    errors = evidence_errors(store, config['run_id'], result)
+    if errors:
+        raise ToolError('研究结果未通过证据校验，修正后重新提交：\n' + '\n'.join(errors[:20]))
+    target = Path(config['result_file'])
+    text = json.dumps(result.model_dump(), ensure_ascii=False, indent=1)
+    _atomic(target, text)
+    try:
+        join_scouts(store, [target], run_id=config['run_id'])
+    except ValueError as exc:
+        target.unlink(missing_ok=True)
+        raise ToolError('研究结果未通过合并校验，修正后重新提交：' + str(exc)) from exc
+    return {'content': [{'type': 'text', 'text': f'研究结果已保存（{len(result.sources)} 条来源，{len(result.gaps)} 个缺口），本槽位结束。'}],
+            'settle': json.dumps({'sources': len(result.sources), 'gaps': len(result.gaps)}, ensure_ascii=False)}
+
+
+_DATE = {'type': 'string', 'pattern': r'^\d{4}-\d{2}-\d{2}$'}
+SCOUT_READ_TOOLS = [
+    {'name': 'source_read', 'label': '读取来源',
+     'description': '读取一份本轮已登记来源的正文，带行号；一次最多约 6 万字，可用 start_line/end_line 定位。',
+     'guide': '读取本轮已登记来源的正文（带行号，单次最多约 6 万字）；excerpt 从这里逐字摘，locator 用这里的行号。',
+     'parameters': {'type': 'object', 'required': ['source_id'], 'additionalProperties': False,
+                    'properties': {'source_id': {'type': 'string'},
+                                   'start_line': {'type': 'integer', 'minimum': 1},
+                                   'end_line': {'type': 'integer', 'minimum': 1},
+                                   'max_chars': {'type': 'integer', 'minimum': 1}}},
+     'handler': source_read},
+    {'name': 'source_grep', 'label': '搜索来源',
+     'description': '在本轮已登记来源（或指定一份）中按正则或关键词查找，返回来源 ID、行号和该行。',
+     'guide': '在已登记来源中按关键词或正则定位行号，再用 source_read 读取上下文；不要只凭匹配行下结论。',
+     'parameters': {'type': 'object', 'required': ['pattern'], 'additionalProperties': False,
+                    'properties': {'pattern': {'type': 'string'}, 'source_id': {'type': 'string'},
+                                   'max_matches': {'type': 'integer', 'minimum': 1, 'maximum': 100}}},
+     'handler': source_grep},
+    {**EVALUATOR_TOOLS[0], 'description': '把本轮一份已登记 PDF 来源的指定页渲染成图片返回（最多 4 页，页码从 1 开始）。'},
+]
+
+
+def _scout_web_tools(channels):
+    tools = [
+        {'name': 'web_search', 'label': '联网搜索',
+         'description': 'BriefLoop 受控搜索：计入本轮共享研究预算，失败也计次。只返回候选链接和摘要，摘要不是正文证据。',
+         'guide': '受控搜索，计入所有 Scout 共享的硬预算；结果只是线索，要用 add_url 保存正文后才能引用。出现 budget_exhausted 时停止新增检索。',
+         'parameters': {'type': 'object', 'required': ['provider', 'query', 'purpose', 'reason'], 'additionalProperties': False,
+                        'properties': {'provider': {'type': 'string', 'enum': list(channels)},
+                                       'query': {'type': 'string'},
+                                       'purpose': {'type': 'string', 'enum': ['primary', 'coverage_probe', 'gap_repair']},
+                                       'reason': {'type': 'string', 'description': '这次想多知道什么'},
+                                       'gap_id': {'type': 'string'},
+                                       'topic': {'type': 'string', 'enum': ['general', 'news']},
+                                       'time_range': {'type': 'string', 'enum': ['day', 'week', 'month', 'year']},
+                                       'start_date': _DATE, 'end_date': _DATE,
+                                       'include_domains': {'type': 'array', 'items': {'type': 'string'}},
+                                       'exclude_domains': {'type': 'array', 'items': {'type': 'string'}},
+                                       'max_results': {'type': 'integer', 'minimum': 1, 'maximum': 20},
+                                       'search_depth': {'type': 'string', 'enum': ['basic', 'advanced']}}},
+         'handler': web_search},
+        {'name': 'add_url', 'label': '保存网页',
+         'description': '抓取一个公开 URL，保存原件、抽取正文并登记为本轮来源，返回 source_id、状态和行数；计入正文页预算，同一 URL 复用已有登记。',
+         'guide': '把候选 URL 保存为本轮来源并取得 source_id（计入正文页预算）；status 不是 ready 时正文不可用，换路径或记缺口。',
+         'parameters': {'type': 'object', 'required': ['url'], 'additionalProperties': False,
+                        'properties': {'url': {'type': 'string'}}},
+         'handler': add_url},
+    ]
+    if 'tavily' in channels:
+        tools.append({'name': 'extract_pages', 'label': '提取网页',
+                      'description': '用 Tavily Extract 提取 add_url 抓取失败的页面并登记为本轮来源；提取结果不是网站原始字节。',
+                      'guide': '只在 add_url 失败时用 Tavily 提取页面正文（计入预算）。',
+                      'parameters': {'type': 'object', 'required': ['urls'], 'additionalProperties': False,
+                                     'properties': {'urls': {'type': 'array', 'items': {'type': 'string'}, 'minItems': 1, 'maxItems': 5}}},
+                      'handler': extract_pages})
+    return tools
+
+
+SCOUT_SUBMIT = {
+    'name': 'submit_scout_result', 'label': '提交研究结果', 'settles': True,
+    'description': '提交本槽位的研究结果（结构见 scout.schema.json）：sources 每条含 source_id、locator、excerpt（原文逐字）、facts、conflicts、coverage_status、claim_ids；gaps；search_summary；retrieval_notes。运行器校验结构、来源登记与摘录，通过即保存并结束。',
+    'guide': '提交研究结果（结构见 scout.schema.json）；excerpt 必须是原文逐字、locator 指向其行号，当场校验，未通过按错误修正后重交。',
+    'parameters': {'type': 'object', 'required': ['sources', 'gaps'], 'additionalProperties': False,
+                   'properties': {'sources': {'type': 'array', 'items': {'type': 'object'}},
+                                  'gaps': {'type': 'array', 'items': {'type': 'string'}},
+                                  'search_summary': {'type': 'string'},
+                                  'retrieval_notes': {'type': 'array', 'items': {'type': 'object'}}}},
+    'handler': submit_scout_result,
+}
+
+
+def _scout_tools(config):
+    channels = config.get('search_channels') or []
+    web = _scout_web_tools(channels) if config.get('allow_web') else []
+    if config.get('allow_web') and not channels:
+        web = [tool for tool in web if tool['name'] == 'add_url']
+    return [*SCOUT_READ_TOOLS, *web, SCOUT_SUBMIT]
+
+
 RUNNER_TOOLS = {'reviewer': [], 'evaluator': EVALUATOR_TOOLS, 'maintainer': MAINTAINER_TOOLS, 'proposer': PROPOSER_TOOLS}
 
 
-def _tools(role, mode=None):
+def _tools(role, mode=None, config=None):
     if role == 'evaluator' and mode == 'pairwise':
         return COMPARISON_TOOLS
+    if role == 'scout':
+        return _scout_tools(config or {})
     return RUNNER_TOOLS[role]
 
 
-def runner_tool_specs(role, mode=None):
-    return [{key: value for key, value in tool.items() if key != 'handler'} for tool in _tools(role, mode)]
+def runner_tool_specs(role, mode=None, config=None):
+    return [{key: value for key, value in tool.items() if key != 'handler'} for tool in _tools(role, mode, config)]
 
 
 def run_tool(store, config, name, args):
     """Execute a runner tool; returns the engine's tool_result payload."""
-    tool = next((t for t in _tools(role_of(config), config.get('evaluation_mode')) if t['name'] == name), None)
+    tool = next((t for t in _tools(role_of(config), config.get('evaluation_mode'), config) if t['name'] == name), None)
     if tool is None:
         return {'ok': False, 'error': f'本角色没有工具 {name}'}
     try:

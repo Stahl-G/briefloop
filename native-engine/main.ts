@@ -39,6 +39,9 @@ const ROLE_LOCAL_TOOLS: Record<string, string[]> = {
   evaluator: ["packet_list", "packet_read", "packet_grep", "calc"],
   maintainer: ["packet_list", "packet_read", "packet_grep"],
   proposer: ["packet_list", "packet_read", "packet_grep"],
+  // Sources grow during the run (add_url), so the Scout reads them through
+  // runner tools; its packet holds only the frozen task and contracts.
+  scout: ["packet_list", "packet_read", "packet_grep"],
 };
 const RUNNER_TOOL_TIMEOUT_MS = 180_000;
 
