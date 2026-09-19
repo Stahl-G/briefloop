@@ -10,7 +10,7 @@ the native engine.
 import hashlib
 from importlib import resources
 
-ROLES = ('reviewer', 'evaluator')
+ROLES = ('reviewer', 'evaluator', 'maintainer', 'proposer')
 MODES = ('background',)
 
 

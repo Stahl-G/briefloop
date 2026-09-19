@@ -11,13 +11,18 @@ reviewer  - frozen review packet; submit_review is engine-local (review.py
             admits it through the `submit` event).
 evaluator - frozen assessment packet (evaluator_packet below); renders PDF
             pages on request and submits the assessment for admission.
+maintainer, proposer - WikiSkill learning steps. A host-based coordinator
+            spawns a subagent per handoff and binds/collects it; here the
+            runner does that bookkeeping and the session gets a frozen copy
+            of the handoff (learning_packet) plus one submit tool that goes
+            through WikiSkill's own collect validation.
 """
 import base64
 import json
 import os
 from pathlib import Path
 
-ROLES = ('reviewer', 'evaluator')
+ROLES = ('reviewer', 'evaluator', 'maintainer', 'proposer')
 
 
 def role_of(config):
@@ -138,6 +143,10 @@ def submit_assessment(store, config, args):
         store.validate_assessment(config['version_id'], value)
     except Exception as exc:
         raise ToolError(f'评分未通过校验，修正后重新提交：{exc}') from exc
+    from .models import missing_findings
+    gap = missing_findings(value)
+    if gap:
+        raise ToolError('评分未通过校验，修正后重新提交：' + gap)
     text = json.dumps(value, ensure_ascii=False, indent=2)
     _atomic(Path(config['packet_root']).parent / 'assessment.json', text)
     return {'content': [{'type': 'text', 'text': '评分已通过校验并保存，本次评价结束。'}], 'settle': json.dumps(value, ensure_ascii=False)}
@@ -159,7 +168,163 @@ EVALUATOR_TOOLS = [
      'handler': submit_assessment},
 ]
 
-RUNNER_TOOLS = {'reviewer': [], 'evaluator': EVALUATOR_TOOLS}
+# -- learning (WikiSkill maintainer / proposer) ----------------------------
+
+def learning_packet(store, handoff, stage):
+    """Freeze one WikiSkill handoff for a native session.
+
+    role.md and the learning context are copied with their file references
+    rewritten to packet paths; the current skill, training outputs and
+    feedback files are copied beside them, and sources named in feedback
+    under the same relative path (sources/<id>.txt) the feedback cites.
+    Execution traces stay outside: the context keeps their summaries.
+    """
+    packet = Path(stage) / 'packet'
+    packet.mkdir(parents=True, exist_ok=True)
+
+    def copy(path, name):
+        path = Path(path)
+        if not path.is_file():
+            return None
+        target = packet / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(path.read_bytes())
+        return name
+
+    payload = json.loads(Path(handoff['payload_file']).read_text(encoding='utf-8'))
+    copy(handoff['prompt_file'], 'role.md')
+    local = {'role': payload['role'], 'role_file': 'role.md',
+             'output': '用提交工具交回结果，运行器写入 WikiSkill 输出目录'}
+    if payload.get('context_file'):
+        context = json.loads(Path(payload['context_file']).read_text(encoding='utf-8'))
+        skill = context.get('current_skill')
+        if skill and skill.get('file'):
+            skill['file'] = copy(skill['file'], 'files/current-skill.md')
+        for row in context.get('training_records', []):
+            for key in ('output', 'trace'):
+                if row.get(key) and row[key].get('file'):
+                    row[key]['file'] = copy(row[key]['file'], f"files/records/{row.get('source_id', 'record')}/{key}-{Path(row[key]['file']).name}")
+        sources = set()
+        for row in context.get('human_feedback', []):
+            if row.get('file'):
+                row['file'] = copy(row['file'], f"files/feedback/{Path(row['file']).name}")
+            try:
+                value = json.loads(row.get('text') or '{}')
+            except ValueError:
+                continue
+            for source in value.get('sources', []) if isinstance(value, dict) else []:
+                if isinstance(source, dict) and source.get('id'):
+                    sources.add(source['id'])
+        for sid in sorted(sources):
+            try:
+                (packet / 'sources').mkdir(exist_ok=True)
+                (packet / 'sources' / f'{sid}.txt').write_text(store.source_text(sid), encoding='utf-8')
+            except (ValueError, OSError):
+                pass
+        context['packet_note'] = ('文件路径均为任务包内相对路径；反馈中 sources[].path 指向的来源正文同在 sources/ 下。'
+                                  '执行记录中的 trace_file 没有复制进任务包，只能依据其中已有的摘要，不能声称读过轨迹。')
+        (packet / 'learning-context.json').write_text(json.dumps(context, ensure_ascii=False, indent=1), encoding='utf-8')
+        local['context_file'] = 'learning-context.json'
+    if payload.get('task'):
+        local['task'] = payload['task']
+    (packet / 'payload.json').write_text(json.dumps(local, ensure_ascii=False, indent=1), encoding='utf-8')
+    return packet
+
+
+def agent_id(session_id):
+    return f'briefloop-native:{session_id}'
+
+
+def bind_session(config, session_id):
+    """WikiSkill's protocol: record the child's actual handle as soon as it
+    exists, before it runs, so an interrupted step resumes that same child.
+    Each handoff gets its own engine session, so the handle is unique.
+
+    WikiSkill records a runtime of codex or claude-code only; like the other
+    BriefLoop backends this uses the codex tag, and the handle itself names
+    the real host."""
+    if role_of(config) not in ('maintainer', 'proposer'):
+        return
+    from wikiskill import native_agents
+    from wikiskill import product
+    request = product._load(Path(config['study']).resolve())['requests'][config['request_id']]
+    delegation = request.get('delegation')
+    if delegation:
+        if delegation.get('agent_id') != agent_id(session_id):
+            raise ValueError('该学习请求已绑定到另一个子会话，不能换会话续跑')
+        return
+    native_agents.bind(config['study'], config['request_id'], agent_id(session_id), 'codex', 'fresh')
+
+
+def _collect(config, write):
+    """Write result.json into the handoff's output directory and let WikiSkill
+    validate and record it; its rejection goes back to the model."""
+    from wikiskill import native_agents
+    from wikiskill import product
+    study, request_id = config['study'], config['request_id']
+    request = product._load(Path(study).resolve())['requests'][request_id]
+    if not request.get('delegation'):
+        raise ToolError('本学习请求尚未绑定子会话，运行器不能提交')
+    write(Path(request['handoff']['output_directory']))
+    try:
+        native_agents.collect(study, request_id)
+    except ValueError as exc:
+        raise ToolError(f'WikiSkill 未接受本次提交，修正后重新提交：{exc}') from exc
+
+
+def submit_patterns(store, config, args):
+    patterns = args.get('patterns')
+    if not isinstance(patterns, list):
+        raise ToolError('patterns 必须是列表')
+    _collect(config, lambda output: _atomic(output / 'result.json', json.dumps({'patterns': patterns}, ensure_ascii=False, indent=1)))
+    return {'content': [{'type': 'text', 'text': f'已登记 {len(patterns)} 条经验，本步骤结束。'}],
+            'settle': json.dumps({'patterns': patterns}, ensure_ascii=False)}
+
+
+def submit_proposal(store, config, args):
+    note = args.get('note') or ''
+    if args.get('no_action') is True:
+        if args.get('skill'):
+            raise ToolError('no_action 与 skill 只能二选一')
+        result = {'no_action': True, 'note': note}
+        _collect(config, lambda output: _atomic(output / 'result.json', json.dumps(result, ensure_ascii=False)))
+    else:
+        skill = args.get('skill')
+        if not isinstance(skill, str) or not skill.strip():
+            raise ToolError('skill 需要完整的候选技能 Markdown 正文；不提议修改时用 no_action')
+
+        def write(output):
+            _atomic(output / 'SKILL.md', skill)
+            _atomic(output / 'result.json', json.dumps({'skill': str(output / 'SKILL.md'), 'note': note}, ensure_ascii=False))
+        _collect(config, write)
+        result = {'skill_chars': len(skill), 'note': note}
+    return {'content': [{'type': 'text', 'text': '提议已提交，本步骤结束。'}], 'settle': json.dumps(result, ensure_ascii=False)}
+
+
+MAINTAINER_TOOLS = [
+    {'name': 'submit_patterns', 'label': '提交经验', 'settles': True,
+     'description': '提交整理出的经验 patterns（每条 name、content、sources）。sources 只能引用学习上下文给出的训练记录、反馈或已有经验 ID；WikiSkill 当场校验，通过即结束本步骤，未通过时按错误修正后重交。',
+     'guide': '提交经验列表 [{name, content, sources}]，sources 只能引用上下文中的 ID；当场校验，通过即结束本步骤。没有有依据的经验时提交空列表。',
+     'parameters': {'type': 'object', 'required': ['patterns'], 'additionalProperties': False,
+                    'properties': {'patterns': {'type': 'array', 'items': {
+                        'type': 'object', 'required': ['name', 'content', 'sources'],
+                        'properties': {'name': {'type': 'string'}, 'content': {'type': 'string'},
+                                       'sources': {'type': 'array', 'items': {'type': 'string'}}}}}}},
+     'handler': submit_patterns},
+]
+
+PROPOSER_TOOLS = [
+    {'name': 'submit_proposal', 'label': '提交技能提议', 'settles': True,
+     'description': '提交一份完整的候选技能（Markdown 正文，含名称、说明、适用与不适用条件、具体做法）和修改说明；认为不应修改时提交 no_action=true 并说明理由。通过即结束本步骤。',
+     'guide': '提交完整候选技能 Markdown（skill）与修改说明（note），或 no_action=true 加理由；通过即结束本步骤。',
+     'parameters': {'type': 'object', 'required': ['note'], 'additionalProperties': False,
+                    'properties': {'skill': {'type': 'string', 'description': '完整候选技能 Markdown'},
+                                   'note': {'type': 'string', 'description': '改了什么、为什么'},
+                                   'no_action': {'type': 'boolean'}}},
+     'handler': submit_proposal},
+]
+
+RUNNER_TOOLS = {'reviewer': [], 'evaluator': EVALUATOR_TOOLS, 'maintainer': MAINTAINER_TOOLS, 'proposer': PROPOSER_TOOLS}
 
 
 def runner_tool_specs(role):

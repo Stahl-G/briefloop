@@ -213,6 +213,9 @@ class NativeHarness:
             params['admission'] = 'runner'
         if isinstance(previous, str) and previous.endswith('.jsonl'):
             params['session_file'] = previous
+        from .native_roles import bind_session
+        # Learning steps record this session as the WikiSkill child before it runs.
+        bind_session(config, sid)
         result = {**self.engine.call('session_create', params, timeout=60), 'process': self.engine.process}
         self._engine_sessions[sid] = result
         coordinator = getattr(self, 'coordinator', None)
@@ -407,7 +410,7 @@ class NativeHarness:
 
     def _run_tool(self, sid, config, event):
         from .native_roles import run_tool
-        result = run_tool(self.store, config, event.get('tool'), event.get('args'))
+        result = run_tool(self.store, {**config, 'session_id': sid}, event.get('tool'), event.get('args'))
         if not result['ok']:
             self.chat.event(sid, 'runtime/status', {
                 'turnId': self.chat.session(sid).get('turn_id'),

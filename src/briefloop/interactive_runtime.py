@@ -160,7 +160,8 @@ class InteractiveRuntime:
         native_packet = job.get('native_packet')
         if native_packet and backend == 'briefloop-native':
             runtime.update(permission='read-only', packet_root=str((folder/'packet').resolve()),
-                           native_role=native_packet['role'], version_id=native_packet['version_id'])
+                           native_role=native_packet['role'],
+                           **{key: value for key, value in native_packet.items() if key != 'role'})
         if backend == 'codex' and 'service_tier' in configured:
             runtime['service_tier'] = configured['service_tier']
         if configured.get('model_provider'):

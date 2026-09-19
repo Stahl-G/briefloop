@@ -107,6 +107,24 @@ def _role(store,runtime,job,study,round_number,phase):
     (stage/'handoffs.json').write_text(dump(dispatch))
     from .backends import validate_backend
     backend=validate_backend(json.loads(job['payload']).get('agent_backend','codex'))
+    if backend=='briefloop-native':
+        # No coordinator turn: the runner dispatches the handoff to one native
+        # session with a frozen copy of it, and binds/collects it on submit.
+        from .native_roles import learning_packet
+        handoff=handoffs[0]
+        learning_packet(store,handoff,stage)
+        submit='submit_patterns' if phase=='maintainer' else 'submit_proposal'
+        prompt=(f"这是 WikiSkill 的 {phase} 学习步骤。本轮可演化角色为 {json.loads(job['payload'])['targets']}；技能应明确适用角色和方法，不改评分规则。\n"
+                "角色说明在任务包的 role.md，任务在 payload.json 及其 learning-context.json（路径均为任务包内相对路径）。"
+                +('Maintainer 应保留观察与推断区别、适用条件、原文依据。' if phase=='maintainer' else
+                  '候选技能写给上述角色在报告任务中使用；本会话的 packet_* 工具只是你读取学习材料的方式，不是该角色的工具，技能里不要写这些工具名，也不要假定该角色只有只读工具。')
+                +f"\n完成后调用 {submit} 提交；未通过时按返回的错误修正后重新提交，不要把结果写进回复正文。")
+        staged={**stage_job(store,job,phase),'native_packet':{'role':phase,'study':str(study),'request_id':handoff['request_id']}}
+        runtime.execute(staged,prompt,stage,resume_on_complete=True)
+        state=feedback_loop.work(study)
+        if state['phase']==phase:raise RuntimeError(f'{phase} 尚未完成或结果未被 WikiSkill 收集')
+        _sync_wiki(store,study)
+        return
     command=agent_command('wikiskill',backend=backend)
     common=COMMON if backend=='codex' else COMMON_OPENCODE
     # WikiSkill's runtime tag is bookkeeping only (its RUNTIMES has no opencode

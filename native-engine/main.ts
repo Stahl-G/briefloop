@@ -37,6 +37,8 @@ const REVIEWER_TOOLS = ["packet_list", "packet_read", "packet_grep", "claim_trac
 const ROLE_LOCAL_TOOLS: Record<string, string[]> = {
   reviewer: REVIEWER_TOOLS,
   evaluator: ["packet_list", "packet_read", "packet_grep", "calc"],
+  maintainer: ["packet_list", "packet_read", "packet_grep"],
+  proposer: ["packet_list", "packet_read", "packet_grep"],
 };
 const RUNNER_TOOL_TIMEOUT_MS = 180_000;
 
