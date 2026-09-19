@@ -348,6 +348,17 @@ class Assessment(Model):
 MUST_FIX_EXPRESSION = 2
 
 
+def missing_findings(assessment) -> str | None:
+    """A verdict that asks for changes must say what to change, one finding per
+    problem; problems named only in the summary give revision nothing to act on.
+    Enforced where the host can re-ask in the same run (the native engine's
+    submit); stated in the shared contract for every host."""
+    data = assessment if isinstance(assessment, dict) else assessment.model_dump()
+    if data.get('status', 'complete') == 'complete' and data.get('overall') in ('建议修改', '存在重大问题') and not data.get('findings'):
+        return f"结论为「{data['overall']}」时，每个需要修改的问题都要写成 findings（report_quote、依据、来源定位）；摘要中提到的问题也要逐条写入，摘要不能代替 findings。"
+    return None
+
+
 def must_fix(assessment) -> bool:
     data = assessment if isinstance(assessment, dict) else assessment.model_dump()
     if data.get('status') != 'complete':

@@ -56,6 +56,8 @@ def test_submit_assessment_is_admitted_by_the_store_rules_and_saved_by_the_runne
     incomplete = run_tool(store, config, 'submit_assessment', {'assessment': _assessment(brief, evidence=None)})
     assert not incomplete['ok'] and 'four grades' in incomplete['error']
     assert not (folder / 'assessment.json').exists()
+    summary_only = run_tool(store, config, 'submit_assessment', {'assessment': _assessment(brief, overall='建议修改', summary='HJT 投资额写错')})
+    assert not summary_only['ok'] and '摘要不能代替 findings' in summary_only['error']
     ok = run_tool(store, config, 'submit_assessment', {'assessment': _assessment(brief)})
     assert ok['ok'] and json.loads(ok['settle'])['brief_hash'] == brief['hash']
     assert json.loads((folder / 'assessment.json').read_text(encoding='utf-8'))['overall'] == '达到要求'
