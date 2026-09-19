@@ -1,8 +1,6 @@
 {
   "providers": {
     "opencode-go": {
-      "baseUrl": "https://opencode.ai/zen/go/v1",
-      "api": "openai-completions",
       "apiKey": "$OPENCODE_API_KEY",
       "models": [
         {
@@ -36,7 +34,8 @@
             "medium": null,
             "high": "high",
             "max": "max"
-          }
+          },
+          "baseUrl": "https://opencode.ai/zen/go/v1"
         }
       ],
       "modelOverrides": {

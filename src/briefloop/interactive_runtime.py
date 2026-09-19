@@ -33,6 +33,10 @@ def _usable_output(job, folder, store=None):
         try:return isinstance(json.loads((folder/'metadata.json').read_text(encoding='utf-8-sig')),dict)
         except (OSError,ValueError):return False
     role=job.get('runtime_role')
+    if role=='scout':
+        from .models import ScoutResult
+        try:ScoutResult.model_validate(json.loads((folder/'result.json').read_text(encoding='utf-8-sig')));return True
+        except (OSError,ValueError):return False
     if role in ('evaluator','scorer','assessor'):
         name='comparison.json' if job.get('evaluation_mode')=='pairwise' or role=='assessor' else 'assessment.json'
     elif job['kind'] in ('generate','revise'):name='draft.json'
@@ -157,6 +161,11 @@ class InteractiveRuntime:
             require_for_review(backend)
             runtime.update(permission='read-only',review_root=str((folder/'packet').resolve()))
             if job.get('review_id'):runtime['review_id']=job['review_id']
+        native_packet = job.get('native_packet')
+        if native_packet and backend == 'briefloop-native':
+            runtime.update(permission='read-only', packet_root=str((folder/'packet').resolve()),
+                           native_role=native_packet['role'],
+                           **{key: value for key, value in native_packet.items() if key != 'role'})
         if backend == 'codex' and 'service_tier' in configured:
             runtime['service_tier'] = configured['service_tier']
         if configured.get('model_provider'):

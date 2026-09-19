@@ -42,7 +42,36 @@ const reply = {
     chunk(res, {}, "tool_calls", usage);
     res.end("data: [DONE]\n\n");
   },
+  // Several calls in one assistant message.
+  tools: (...calls) => (res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    chunk(res, { role: "assistant", tool_calls: calls.map(([name, args], index) => (
+      { index, id: `call_${index}_` + Math.random().toString(36).slice(2, 8), type: "function", function: { name, arguments: JSON.stringify(args) } })) });
+    chunk(res, {}, "tool_calls", usage);
+    res.end("data: [DONE]\n\n");
+  },
   stall: () => (res) => { res.writeHead(200, { "content-type": "text/event-stream" }); provider.stalled.add(res); },
+  // Streams forever without content: a role chunk, then empty deltas and SSE
+  // comments (a provider queueing the request behind a live connection).
+  // One reply streamed in many text chunks.
+  long: (chars) => (res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    chunk(res, { role: "assistant", content: "" });
+    for (let sent = 0; sent < chars; sent += 100) chunk(res, { content: "核".repeat(100) });
+    chunk(res, {}, "stop", usage);
+    res.end("data: [DONE]\n\n");
+  },
+  trickle: () => (res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    provider.stalled.add(res);
+    chunk(res, { role: "assistant", content: "" });
+    const timer = setInterval(() => {
+      if (res.destroyed) return clearInterval(timer);
+      chunk(res, { content: "" });
+      res.write(": keepalive\n\n");
+    }, 150);
+    res.on("close", () => clearInterval(timer));
+  },
   status: (code) => (res) => {
     res.writeHead(code, { "content-type": "application/json" });
     res.end(JSON.stringify({ error: { message: `scripted ${code}` } }));
@@ -122,6 +151,7 @@ function settle(execId, timeout = 20000) {
 const ends = (evts) => evts.filter((e) => e.kind === "end");
 let sessions = 0;
 let admission = () => undefined;
+let runnerTool = () => ({ ok: false, error: "no runner tool configured" });
 async function reviewer(extra = {}) {
   const session_id = "s" + ++sessions;
   const res = await call("session_create", {
@@ -197,6 +227,12 @@ before(async () => {
           const error = admission(msg.params.review);
           void call("submit_result", { session_id: msg.params.session_id, request_id: msg.params.request_id, ok: !error, error });
         }
+        // Stands in for the Python runner executing a tool it declared.
+        if (msg.params.kind === "tool_request") {
+          const { session_id, request_id } = msg.params;
+          void Promise.resolve(runnerTool(msg.params.tool, msg.params.args))
+            .then((result) => call("tool_result", { session_id, request_id, ...result }));
+        }
         for (const l of [...listeners]) l();
       }
       else if (msg.id && waiters.has(msg.id)) { waiters.get(msg.id)(msg); waiters.delete(msg.id); }
@@ -219,8 +255,8 @@ test("ping reports the engine and credentialed models", async () => {
   assert.equal(ping.models_available, 2);
 });
 
-test("session_create refuses non-reviewer roles and models without a provider", async () => {
-  assert.match(await callError("session_create", { session_id: "x1", role: "writer", packet_root: packet, model: MODEL }), /reviewer/);
+test("session_create refuses unknown roles and models without a provider", async () => {
+  assert.match(await callError("session_create", { session_id: "x1", role: "writer", packet_root: packet, model: MODEL }), /unsupported role: writer/);
   assert.match(await callError("session_create", { session_id: "x2", role: "reviewer", packet_root: packet, model: "m1", system_prompt: SYSTEM }), /unknown or unavailable model/);
   assert.match(await callError("session_create", { session_id: "x3", role: "reviewer", packet_root: packet, model: MODEL }), /system_prompt required/);
 });
@@ -302,6 +338,16 @@ test("a stalled request is re-asked in the same session and keeps tool results",
   assert.equal(ends(evts)[0].final_text, '{"after":"stall"}');
 });
 
+test("a stream that stays open without content counts as stalled", async () => {
+  script(reply.trickle(), reply.text('{"after":"trickle"}'));
+  const { session_id } = await reviewer();
+  const evts = await turn(session_id, "e-trickle");
+  assert.ok(evts.some((e) => e.kind === "status" && /re-asking after a stalled request \(1\/2\)/.test(e.message)));
+  assert.equal(ends(evts).length, 1);
+  assert.equal(ends(evts)[0].status, "completed");
+  assert.equal(ends(evts)[0].final_text, '{"after":"trickle"}');
+});
+
 test("repeated stalls fail the turn once, and the session stays usable", async () => {
   script(reply.stall());
   const { session_id } = await reviewer();
@@ -321,7 +367,7 @@ test("provider errors that exhaust retries end once as failed", async () => {
   script(reply.status(500));
   const { session_id } = await reviewer();
   const evts = await turn(session_id, "e-500", { idle_timeout_s: 30 });
-  assert.equal(provider.requests.length, 4, "one request plus three retries");
+  assert.equal(provider.requests.length, 7, "one request plus six retries");
   assert.equal(ends(evts).length, 1);
   assert.equal(ends(evts)[0].status, "failed");
   assert.match(ends(evts)[0].error, /500/);
@@ -479,4 +525,176 @@ test("report figures are attached only when the model accepts images", async () 
   const tampered = [{ ...images[0], sha256: "0".repeat(64) }];
   const bad = await reviewer({ model: VISION_MODEL });
   assert.match(await callError("turn_start", { session_id: bad.session_id, execution_id: "e-img-bad", prompt: "x", images: tampered }), /changed before sending/);
+});
+
+test("one grep call answers several patterns and one read call several pieces", async () => {
+  const { session_id } = await reviewer();
+  const tool = async (name, args) => (await call("tool_call", { session_id, name, args })).content.filter((c) => c.type === "text").map((c) => c.text).join("\n");
+  const grep = await tool("packet_grep", { patterns: ["85.9", "evidence text", "absent-term"], path: "sources/" });
+  assert.match(grep, /=== 85\.9 ===\n共 1 处命中/);
+  assert.match(grep, /=== evidence text ===\n共 1 处命中/);
+  assert.match(grep, /=== absent-term ===\n没有命中/);
+  assert.match(grep, /src2\.view\.json-1- /, "default context shows the neighbouring line");
+  const read = await tool("packet_read", { path: "sources/src1.txt", more: [{ path: "notes.txt", start_line: 2, end_line: 2 }, { path: "../escape.txt" }] });
+  assert.match(read, /=== sources\/src1\.txt ===\nevidence text/);
+  assert.match(read, /=== notes\.txt 第 2-2 行 ===\n\[第 2-2 行，共 6 行\]\nline2/);
+  assert.match(read, /=== \.\.\/escape\.txt ===\n读取失败：/, "a bad piece fails alone and never escapes the packet");
+  assert.match(await callError("tool_call", { session_id, name: "packet_grep", args: {} }), /至少给一个/);
+});
+
+test("a rejected submission is fixed by a patch of the failing fields", async () => {
+  script(
+    reply.tool("submit_review", { review: { status: "complete", version_id: "v0" } }),
+    reply.tool("submit_review", { patch: { version_id: "v1" } }),
+    reply.text("好"),
+  );
+  admission = (review) => (review.version_id === "v1" ? undefined : "Reviewer 输出未绑定本次正文与核查包");
+  const { session_id } = await reviewer();
+  const evts = await turn(session_id, "e-patch", { require_submit: true, idle_timeout_s: 30 });
+  admission = () => undefined;
+  assert.equal(ends(evts)[0].status, "completed");
+  assert.deepEqual(JSON.parse(ends(evts)[0].final_text), { status: "complete", version_id: "v1" });
+  const { session_id: fresh } = await reviewer();
+  const patchFirst = await call("tool_call", { session_id: fresh, name: "submit_review", args: { patch: { status: "complete" } } }).catch((e) => e.message);
+  assert.match(String(patchFirst), /先用 review 提交完整对象/);
+});
+
+test("with runner admission, structure is judged by the runner alone", async () => {
+  // The output schema forbids extra fields; the runner accepts an alias. A
+  // local schema check must not reject what the runner would admit.
+  const seen = [];
+  admission = (review) => { seen.push(review); return undefined; };
+  script(reply.tool("submit_review", { review: { status: "complete", version_id: "v1", suggestion: "alias" } }), reply.text("好"));
+  const { session_id } = await reviewer({ admission: "runner" });
+  const evts = await turn(session_id, "e-runner", { require_submit: true, idle_timeout_s: 30 });
+  admission = () => undefined;
+  assert.equal(ends(evts)[0].status, "completed");
+  assert.equal(seen.length, 1);
+  assert.equal(JSON.parse(ends(evts)[0].final_text).suggestion, "alias");
+});
+
+test("shipped models.json extends catalog providers without redirecting their models", async () => {
+  // A provider-level baseUrl or api replaces the endpoint of every catalog
+  // model of that provider (pi applies it to all of them); a catalog model on
+  // another wire format then calls a wrong URL. Endpoints go on added models.
+  const { readFileSync } = await import("node:fs");
+  const shipped = JSON.parse(readFileSync(fileURLToPath(new URL("./models.json", import.meta.url)), "utf8"));
+  for (const [name, entry] of Object.entries(shipped.providers)) {
+    if (!entry.modelOverrides) continue;
+    assert.equal(entry.baseUrl, undefined, `${name}: provider-level baseUrl`);
+    assert.equal(entry.api, undefined, `${name}: provider-level api`);
+    for (const model of entry.models ?? []) assert.ok(model.baseUrl && model.api, `${name}/${model.id}: endpoint`);
+  }
+});
+
+test("an overlong reply is stopped and the model is asked for smaller steps", async () => {
+  script(reply.long(5000), reply.text('{"after":"overlong"}'));
+  const { session_id } = await reviewer();
+  const evts = await turn(session_id, "e-overlong", { max_reply_chars: 2000, idle_timeout_s: 30 });
+  assert.ok(evts.some((e) => e.kind === "status" && /re-asking after an overlong reply \(1\/1\)/.test(e.message)));
+  assert.match(JSON.stringify(provider.requests.at(-1).messages.at(-1)), /回复过长/);
+  assert.equal(ends(evts).length, 1);
+  assert.equal(ends(evts)[0].status, "completed");
+  assert.equal(ends(evts)[0].final_text, '{"after":"overlong"}');
+
+  script(reply.long(5000));
+  const again = await turn(session_id, "e-overlong-twice", { max_reply_chars: 2000, idle_timeout_s: 30 });
+  assert.equal(ends(again).length, 1);
+  assert.equal(ends(again)[0].status, "failed");
+  assert.match(ends(again)[0].error, /exceeded 2000 characters on 2 consecutive requests/);
+});
+
+test("object and array arguments written as JSON strings are decoded before validation", async () => {
+  const seen = [];
+  admission = (review) => { seen.push(review); return undefined; };
+  script(
+    reply.tool("packet_grep", { pattern: "evidence", patterns: JSON.stringify(["text"]) }),
+    reply.tool("submit_review", { review: JSON.stringify({ status: "complete", version_id: "v1" }) }),
+    reply.text("好"),
+  );
+  const { session_id } = await reviewer({ admission: "runner" });
+  const evts = await turn(session_id, "e-stringified", { require_submit: true, idle_timeout_s: 30 });
+  admission = () => undefined;
+  const toolResults = provider.requests.flatMap((r) => r.messages).filter((m) => m.role === "tool").map((m) => JSON.stringify(m.content));
+  assert.ok(!toolResults.some((t) => /Validation failed/.test(t)), toolResults.join("\n"));
+  assert.equal(seen.length, 1);
+  assert.equal(ends(evts)[0].status, "completed");
+  assert.deepEqual(JSON.parse(ends(evts)[0].final_text), { status: "complete", version_id: "v1" });
+});
+
+const ASSESSMENT = { name: "submit_assessment", description: "提交评分结果", guide: "提交评分，通过即结束。", settles: true,
+  parameters: { type: "object", required: ["assessment"], properties: { assessment: { type: "object" } } } };
+const RENDER = { name: "render_pages", description: "渲染 PDF 页", parameters: { type: "object", required: ["source_id", "pages"],
+  properties: { source_id: { type: "string" }, pages: { type: "array", items: { type: "integer" } } } } };
+
+test("an evaluator session has packet reads plus the runner's tools, and nothing else", async () => {
+  const { session_id, tools } = await reviewer({ role: "evaluator", runner_tools: [RENDER, ASSESSMENT] });
+  assert.deepEqual(tools, ["calc", "packet_grep", "packet_list", "packet_read", "render_pages", "submit_assessment"]);
+  script(reply.text("好"));
+  await turn(session_id, "e-eval-tools", { idle_timeout_s: 30 });
+  const prompt = JSON.stringify(provider.requests[0].messages[0]);
+  assert.match(prompt, /submit_assessment：提交评分，通过即结束。/);
+  assert.match(prompt, /submit_assessment 单独提交/);
+  assert.doesNotMatch(prompt, /submit_review|claim_trace/);
+  assert.match(await callError("session_create", { session_id: "x-dup", role: "evaluator", packet_root: packet, model: MODEL,
+    system_prompt: SYSTEM, runner_tools: [{ ...RENDER, name: "packet_read" }] }), /runner tool name taken: packet_read/);
+});
+
+const ADD_URL = { name: "add_url", description: "保存网页", parameters: { type: "object", required: ["url"], properties: { url: { type: "string" } } } };
+const SCOUT_SUBMIT = { name: "submit_scout_result", description: "提交研究结果", settles: true,
+  parameters: { type: "object", required: ["sources"], properties: { sources: { type: "array", items: { type: "object" } } } } };
+
+test("a scout session reads its packet and fetches through the runner, several pages at once", async () => {
+  const { session_id, tools } = await reviewer({ role: "scout", runner_tools: [ADD_URL, SCOUT_SUBMIT] });
+  assert.deepEqual(tools, ["add_url", "packet_grep", "packet_list", "packet_read", "submit_scout_result"]);
+  // Both fetches must be outstanding together: neither answers until both arrived.
+  const pending = [];
+  let release;
+  const both = new Promise((resolve) => { release = resolve; });
+  runnerTool = (tool, args) => {
+    if (tool === "submit_scout_result") return { ok: true, content: [{ type: "text", text: "已保存" }], settle: JSON.stringify(args) };
+    pending.push(args.url);
+    if (pending.length === 2) release();
+    return Promise.race([both, new Promise((r) => setTimeout(r, 3000))])
+      .then(() => ({ ok: pending.length === 2, error: "fetches ran one at a time", content: [{ type: "text", text: `saved ${args.url}` }] }));
+  };
+  script(
+    reply.tools(["add_url", { url: "https://a.test" }], ["add_url", { url: "https://b.test" }]),
+    reply.tool("submit_scout_result", { sources: [] }),
+    reply.text("好"),
+  );
+  const evts = await turn(session_id, "e-scout", { require_submit: true, idle_timeout_s: 30 });
+  runnerTool = () => ({ ok: false, error: "no runner tool configured" });
+  assert.deepEqual(pending.sort(), ["https://a.test", "https://b.test"]);
+  assert.equal(ends(evts)[0].status, "completed");
+  assert.deepEqual(JSON.parse(ends(evts)[0].final_text), { sources: [] });
+  const prompt = JSON.stringify(provider.requests[0].messages[0]);
+  assert.doesNotMatch(prompt, /submit_review|claim_trace|calc/);
+});
+
+test("runner tools run on the runner; a settling tool ends the run with the accepted value", async () => {
+  const calls = [];
+  runnerTool = (tool, args) => {
+    calls.push([tool, args]);
+    if (tool === "render_pages") return { ok: true, content: [{ type: "text", text: "第 2 页" }, { type: "image", data: PNG.toString("base64"), mimeType: "image/png" }] };
+    if (!args.assessment.brief_hash) return { ok: false, error: "brief_hash 必须是 H1" };
+    return { ok: true, content: [{ type: "text", text: "评分已保存" }], settle: JSON.stringify(args.assessment) };
+  };
+  script(
+    reply.tool("render_pages", { source_id: "src1", pages: [2] }),
+    reply.tool("submit_assessment", { assessment: { overall: 3 } }),
+    reply.tool("submit_assessment", { assessment: { overall: 3, brief_hash: "H1" } }),
+    reply.text("不应再有这次请求"),
+  );
+  const { session_id } = await reviewer({ role: "evaluator", runner_tools: [RENDER, ASSESSMENT] });
+  const evts = await turn(session_id, "e-eval-run", { require_submit: true, idle_timeout_s: 30 });
+  runnerTool = () => ({ ok: false, error: "no runner tool configured" });
+  assert.deepEqual(calls.map(([tool]) => tool), ["render_pages", "submit_assessment", "submit_assessment"]);
+  const toolResults = provider.requests.flatMap((r) => r.messages).filter((m) => m.role === "tool").map((m) => JSON.stringify(m.content));
+  assert.ok(toolResults.some((t) => /第 2 页/.test(t) && /当前模型不接收图像输入/.test(t)), "a text-only model gets a note, not the image");
+  assert.ok(toolResults.some((t) => /brief_hash 必须是 H1/.test(t)), "the runner's rejection goes back to the model");
+  assert.equal(provider.requests.length >= 3, true);
+  assert.equal(ends(evts).length, 1);
+  assert.equal(ends(evts)[0].status, "completed");
+  assert.deepEqual(JSON.parse(ends(evts)[0].final_text), { overall: 3, brief_hash: "H1" });
 });

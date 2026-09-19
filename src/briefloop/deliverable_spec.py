@@ -154,7 +154,7 @@ def instructions(spec, role='analyst', *, include_spec=True):
     role_text = {
         'orchestrator': '''规划交接：在已有 plan.json 的 reader_contract 字段保存本轮要求解释，按 reader_contract.schema.json 逐条写 requirement_id、逐字 source_quote、kind、instruction。objective 中混合的要求按含义拆成 reader_content（应回答的问题与内容范围）、research_method（如何核查与研究）、writing_preference（呈现方式）、manual_assignment（人工分工）；每项原始要求都必须覆盖。Python只校验出处及结构，不能替你判断语义；不得把必答内容改成可选或用方法约束替代正文任务。明确指令有冲突且影响结果时才提问，其余直接执行。
 传给Scout的是具体研究任务和对应方法；传给Analyst的是同一份已保存约定、原始要求和证据索引。由你核对归类完整且没有改变用户意思，交接保留同一份约定，后续评价和修订复用。''',
-        'scout': '''研究交接：读取 plan.json 中本轮已保存的 reader_contract（不是本文件自身），按其中的内容问题与研究方法寻找并核对证据，返回事实、支持范围、来源定位与具体缺口。方法限制、抓取失败和研究状态进入结构化研究结果，供主Agent安排补查或调整判断；它们不是要求Analyst复制到正文的段落。''',
+        'scout': '''研究交接：读取 plan.json 中本轮已保存的 reader_contract（不是本文件自身），按其中的内容问题与研究方法寻找并核对证据，返回事实、支持范围、来源定位与具体缺口。每条证据是一段连续原文：excerpt 逐字摘录（同一处的几段可用“…”连接），概括、换算与判断写进 facts；locator 用 line 12-18、page 3 或序列化的证据定位 JSON，只指向这段摘录；同一来源的不同段落各写一条。方法限制、抓取失败和研究状态进入结构化研究结果，供主Agent安排补查或调整判断；它们不是要求Analyst复制到正文的段落。''',
         'analyst': '''写作交付：reader_content 决定需要完成的回答，research_method 约束取证和推理，writing_preference 决定呈现，manual_assignment 决定保留的占位。对照原始要求检查解释是否遗漏或扭曲，用户原话优先。研究交接中标为待证、没有已登记来源引用的 learnings 不能直接写成正文事实：先按本轮证据补齐引用；补不齐就丢弃，或作为明确未核验事项记入 gaps，不冒充已核验结论。提交前通读正文，检查事实、判断、图表和读者用途是否连贯，精简重复背景与检查语言；同时确认准确状态、负面事实和必要条件没有被删。''',
         'evaluator': _EVALUATION_RULES,
         'reviewer': _EVALUATION_RULES + '\n只检查已有正文、证据、约定和记录，不自行改稿、编译新约定、重新计算或补搜。需要补查或修改时提交给主Agent。',

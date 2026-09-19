@@ -481,6 +481,9 @@ def build_packet(store,version_id,folder):
         if not path.exists():path.write_bytes(blob)
         entries[name]=sha(blob)
     save('target.json',pack_dump(snapshot).encode())
+    # Purpose-split views of the same snapshot; target.json stays the authority.
+    from .packet_views import views as packet_views,overview as packet_overview
+    for name,body in packet_views(snapshot).items():save(name,body.encode())
     long_text=[]
     def collect(value,path):
         if isinstance(value,str) and len(value)>1200:long_text.append({'json_path':path,'chunks':[value[i:i+1200] for i in range(0,len(value),1200)]})
@@ -506,13 +509,25 @@ def build_packet(store,version_id,folder):
                 name='sources/'+sid+'.cells.txt';save(name,workbook_text(original.read_bytes()).encode());item['cells_file']=name
         except (ValueError,OSError) as exc:item['read_error']=str(exc)
         source_index.append(item)
+    from .figure_text import figure_texts
+    figure_index=[]
     for figure in snapshot['figures']:
+        saved={}
         for key in ('image_path','data_path','script_path'):
             path=figure.get(key)
             if path:
                 source=(store.root/path).resolve()
                 if not source.is_relative_to(store.root) or not source.is_file():raise ValueError('图表核查资源路径无效')
-                save('figures/'+figure['figure_id']+'/'+Path(path).name,source.read_bytes())
+                name='figures/'+figure['figure_id']+'/'+Path(path).name;blob=source.read_bytes()
+                save(name,blob);saved[key]=(name,blob)
+        # Text drawn onto the image, read from the frozen script without running it,
+        # so a stale footnote can be checked against the data and the report.
+        script=saved.get('script_path')
+        figure_index.append({'figure_id':figure['figure_id'],'title':figure.get('title'),'caption':figure.get('caption'),
+                             'image':saved.get('image_path',(None,))[0],'data_file':saved.get('data_path',(None,))[0],
+                             'script':script[0] if script else None,
+                             **figure_texts(script[0] if script else None,script[1] if script else b'')})
+    if figure_index:save('figure-texts.json',pack_dump(figure_index).encode())
     visual_inputs=_visual_inputs(store,snapshot,packet,source_index,save)
     save('visual-inputs.json',pack_dump(visual_inputs).encode())
     # Only this report's persisted public history; never host-global DB queries.
@@ -534,6 +549,7 @@ def build_packet(store,version_id,folder):
     save('history/executions.json',pack_dump(executions).encode())
     responses=store.rows('SELECT r.*,f.data AS finding_data,f.status AS finding_status,f.version_id AS finding_version FROM review_responses r JOIN review_findings f ON f.id=r.finding_id JOIN briefs b ON b.id=f.version_id WHERE b.run_id=? ORDER BY r.rowid',(brief['run_id'],))
     save('history/responses.json',pack_dump([{**r,'data':json.loads(r['data']),'finding_data':json.loads(r['finding_data'])} for r in responses]).encode())
+    save('overview.json',pack_dump(packet_overview({name:(packet/name).stat().st_size for name in entries},snapshot)).encode())
     fingerprint=sha(dump({'target':snapshot,'files':entries}).encode())
     index={'fingerprint':fingerprint,'version_id':version_id,'sources':source_index,
            'files':entries,'visual_inputs':'visual-inputs.json','history':['history/versions.json','history/executions.json','history/responses.json','history/tools.json','history/reviews.json'],
@@ -596,20 +612,33 @@ def accept_review(store,review_id,value,dry_run=False):
     allowed_requirements=set(requirements)
     seen_requirements=set()
     for check in result.requirement_checks:
-        if check.requirement_id not in allowed_requirements or check.requirement_id in seen_requirements:raise ValueError('要求核查引用范围外或重复的 requirement_id')
+        if check.requirement_id not in allowed_requirements or check.requirement_id in seen_requirements:
+            # Name the offending id and the valid ones: a model can fix one field
+            # instead of rereading the packet to guess.
+            raise ValueError(('要求核查引用范围外的 requirement_id=' if check.requirement_id not in allowed_requirements else '要求核查重复的 requirement_id=')
+                             +check.requirement_id+'；本次合法的 requirement_id='+','.join(sorted(allowed_requirements)))
         seen_requirements.add(check.requirement_id)
         if check.status=='manual' and requirements[check.requirement_id]['mode']!='manual':raise ValueError('Reviewer 不能把必答要求改为人工待填')
     allowed_finding_requirements = set(allowed_requirements)
+    # "complete" is a claim about coverage; an empty or partial check list with
+    # the coverage flag unset cannot carry it, whatever the summary says.
+    if result.status=='complete' and not result.coverage_scan_complete:
+        raise ValueError('status=complete 必须在检查过正文重要主张遗漏后同时设 coverage_scan_complete=true；未完成请标为 incomplete')
     if review['data'].get('protocol','legacy')=='clauses_v1':
         validate_clause_checks(current['requirements'],result.clause_checks,result.status)
         from .deliverable_spec import clause_items
         allowed_finding_requirements.update(c['clause_id'] for c in clause_items(current['requirements']))
+    elif result.status=='complete' and allowed_requirements-seen_requirements:
+        raise ValueError('完整审阅缺少 requirement_checks；未核对的 requirement_id='+','.join(sorted(allowed_requirements-seen_requirements)))
     for finding in result.findings:
         if finding.resolution and not finding.response_to:raise ValueError('关闭发现必须指向准确的 response_id')
         if not finding.response_to:
-            if not set(finding.claim_ids).issubset(allowed_finding_claims):raise ValueError('发现引用了本次范围外的主张ID')
-            if not set(finding.block_ids).issubset(allowed_blocks):raise ValueError('发现引用了本次正文不存在的块ID')
-        if not set(finding.requirement_ids).issubset(allowed_finding_requirements):raise ValueError('发现引用了未登记的要求ID')
+            if not set(finding.claim_ids).issubset(allowed_finding_claims):
+                raise ValueError('发现引用了本次范围外的主张ID='+','.join(sorted(set(finding.claim_ids)-allowed_finding_claims))+'；不确定时省略 claim_ids，用 report_quote 定位')
+            if not set(finding.block_ids).issubset(allowed_blocks):
+                raise ValueError('发现引用了本次正文不存在的块ID='+','.join(sorted(set(finding.block_ids)-allowed_blocks))+'；段落ID见 report.txt 每行开头，不确定时省略 block_ids')
+        if not set(finding.requirement_ids).issubset(allowed_finding_requirements):
+            raise ValueError('发现引用了未登记的要求ID='+','.join(sorted(set(finding.requirement_ids)-allowed_finding_requirements))+'；可用的要求ID='+','.join(sorted(allowed_finding_requirements)))
     expected_responses=set(_response_scope(store,packet,result.version_id))
     checks={}
     for check in result.response_checks:
@@ -776,6 +805,10 @@ def run_review(store,runtime,job,version_id,folder):
     clauses=clause_items(target['requirements']) if protocol=='clauses_v1' else []
     requirement_instruction=('本次为条款级审阅：对下表的 reader_contract 条款逐条给 clause_checks（clause_id、status(covered/partial/missing/not_applicable/unverified)、reason、basis）。clause_id 必须逐字复制程序给出的 ID，不要自行计算或改写。reader_content 核对正文是否实际回答；research_method 核对方法是否落实（过程要求需有来源、核查或执行记录，无法确认写 unverified）；writing_preference 核对呈现；manual_assignment 只核对占位。not_applicable 仅限条款自身带适用条件且本稿不满足，并给依据；内容条款不得标为不适用。必须逐条覆盖；仍要对照原始要求，发现漏拆或误分类用 finding 指出。' if clauses else
         '对requirements.requirement_items逐项给requirement_checks：requirement_id、status(covered/manual/partial/missing)、reason。manual只能用于用户原要求中mode=manual的项目，不得自行降低必答要求。')
+    packet_guide=('先读 overview.json，它说明每个文件的内容和大小：正文纯文本在 report.txt（每行一个段落，前面是段落ID），要求在 requirements.json，主张与证据在 claims.json，数字绑定在 numbers.json，引用摘录在 citations.json；target.json 是这些视图的完整依据，需要其他字段时按字段读取。'
+                  if (folder/'packet'/'overview.json').exists() else '先看target.json的本轮要求、正文和claim_evidence关联；')
+    figure_text_note=('（figure-texts.json 按图列出从生成脚本提取的图上文字及行号，可直接对照；标为只能看图核对的图须实际看图）'
+                      if (folder/'packet'/'figure-texts.json').exists() else '')
     from .report_time import instructions as time_instructions
     temporal_note=time_instructions(target.get('requirements_input',{}).get('time_context'))
     # The review contract is shared; how to reach the packet and hand back the
@@ -783,20 +816,21 @@ def run_review(store,runtime,job,version_id,folder):
     if json.loads(job['payload']).get('agent_backend')=='briefloop-native':
         role_line=''
         host_read=('核查包就是本会话可见的全部资料，路径一律相对核查包根目录（如 target.json、sources/<id>.view.json、history/responses.json）。'
-                   '先看target.json的本轮要求、正文和claim_evidence关联；再核对具体原文与图表。本次报告图与已选证据视觉的实际交付情况见本条消息末尾的视觉输入说明，visual-inputs.json记录它们与固定文件的对应关系；没有实际看到的图不能声称已目视核验，可以用图表数据文件核对数值。必要时读history中的本报告历史。')
+                   '{packet_guide}再核对具体原文与图表。本次报告图与已选证据视觉的实际交付情况见本条消息末尾的视觉输入说明，visual-inputs.json记录它们与固定文件的对应关系；没有实际看到的图不能声称已目视核验，可以用图表数据文件核对数值。必要时读history中的本报告历史。')
         host_tools=''
         output_line='完成后调用 submit_review 提交结果对象（结构见 output.schema.json）；提交未通过时按返回的错误修正后再次提交，不要把 JSON 写进回复正文。'
     else:
         role_line='你是独立只读 Reviewer，核对已保存产物与实际依据，不重新研究或运行计算。\n'
-        host_read=f"只读取 {folder/'packet'/'index.json'} 所索引的文件。"+'JSON已分行；遇到单行截断，target-long-text.json提供长字段分块、sources/*.view.json提供原文行与分块，按顺序无分隔拼接，不把截断当缺失。先看target.json的本轮要求、正文和claim_evidence关联；核对具体原文与图表；本次报告图和已选证据视觉会作为原生图片附件交给当前选定模型，visual-inputs.json记录它们与固定文件的对应关系。先实际检查这些附件的轴、图注、单位和可见内容，附件不可读时用原生read读取同一packet文件；仍失败则说明本次失败。必要时读history中的本报告历史。绝不查询宿主或其他工作区数据库。'
+        host_read=f"只读取 {folder/'packet'/'index.json'} 所索引的文件。"+'JSON已分行；遇到单行截断，target-long-text.json提供长字段分块、sources/*.view.json提供原文行与分块，按顺序无分隔拼接，不把截断当缺失。{packet_guide}核对具体原文与图表；本次报告图和已选证据视觉会作为原生图片附件交给当前选定模型，visual-inputs.json记录它们与固定文件的对应关系。先实际检查这些附件的轴、图注、单位和可见内容，附件不可读时用原生read读取同一packet文件；仍失败则说明本次失败。必要时读history中的本报告历史。绝不查询宿主或其他工作区数据库。'
         host_tools='只有read工具可用。禁止bash、执行脚本、修改文件、联网、委派。'
         output_line=f'最终回复一个符合 {schema} 的 JSON 对象，不加Markdown或说明，不写文件；运行器保存结果。'
+    host_read=host_read.replace('{packet_guide}',packet_guide)
     prompt=f'''{temporal_note}
 核对正文每条当期动态的事件与发布日期，不能只核对作者提交的 temporal_claims；缺少日期记录或原文日期证据写 unverified，旧消息冒充当期用 finding 指出。
 {role_line}{host_read}
 {host_tools}history/reviews.json提供过去实际审阅；只复用已完成且依赖未变的核查，历史的未核验/图像能力失败必须在本次实际输入上重新检查，不能据此判断当前模型能力。重点核对本次修改与处理说明，不重复扩大研究。发现需补搜/重算/改稿的问题交主Agent，不能自己执行。
 检查所有重要事实与判断是否有依据，包括作者未登记的主张；逐项核查已有claim并报告支持范围、反证、证据不足或未知。图像不可读、执行记录缺失和审阅失败不是通过。对每个遗漏、错误给正文片段及依据。
-报告图上的文字、脚注和标注要与该图的数据文件及正文逐项对照；同一主体、指标和期间在不同来源或正文不同位置出现的数值要互相核对，不一致时用finding指出并说明各自口径。
+报告图上的文字、脚注和标注要与该图的数据文件及正文逐项对照{figure_text_note}；同一主体、指标和期间在不同来源或正文不同位置出现的数值要互相核对，不一致时用finding指出并说明各自口径。
 企业报告的核查详情留本结果，不要求正文堆免责声明；准确日期/单位/计划性质应保留。缺口披露不抵消研究覆盖与读者要求。不要使用“无发现”代替完整性检查。
 核对target.json中的source_updates和source_timing，区分统计/事件有效期、披露/可得时间、抓取时间与本轮截止时间。更正或新期间的分类声明仍需对照旧新原件，不把proposed当已确认。
 核对target.json中的conflicts，按明确更正、不同口径、预测归属或未决分歧分类，逐项给conflict_checks；不要因日期新或官方标签一刀切采用。冲突复核可带basis_span_ids与scope说明依据范围。
@@ -808,7 +842,7 @@ claim_checks可以使用target.evidence.bindings、premises闭包以及candidate
 未核验事项用unchecked_items记录description及importance(core/supporting)；普通表达建议使用minor finding，不冒充核心未核验。
 {output_line}
 version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief_hash={store.one('briefs',version_id)['hash']}。
-四维评分使用既有标准，不用高分抵消重大错误。review.status表示是否完成审阅，claim_checks.status表示依据结论。coverage_scan_complete仅在确实检查了正文重要主张遗漏后设true；未核验项写unchecked。
+四维评分使用既有标准，不用高分抵消重大错误。review.status表示是否完成审阅，claim_checks.status表示依据结论。coverage_scan_complete仅在确实检查了正文重要主张遗漏后设true；review.status=complete 要求它为true且每个requirement_item都有requirement_checks，做不到就标incomplete；发现的问题必须写入findings，不能只写在summary里。未核验项写unchecked。
 字段边界（不要混用两套 finding）：requirement_checks 只有 requirement_id/status/reason，不带 basis；basis 只属于 clause_checks。顶层 overall/四维分数只属于 assessment；assessment 必须给出，不能省略。assessment.findings 用 dimension/severity/description/report_quote/requirement/source_id/locator/evidence/suggestion。顶层 findings 是核查发现，用 kind/severity/description/evidence，可带 claim_ids/block_ids/requirement_ids（条款可用 requirement_ids 关联，不要写 requirement 或 source_id）。
 '''
     if target.get('fact_checks'):
@@ -827,6 +861,9 @@ version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief
     allowed=sorted(ids)
     response_ids=[{'response_id':r['id'],'finding_id':r['finding_id']} for r in _response_scope(store,folder/'packet',version_id).values()]
     prompt+='\n本次允许的claim_checks.claim_id：'+dump(allowed)+'\n本版本处理说明索引（response_to必须取response_id）：'+dump(response_ids)
+    if not clauses:
+        # status=complete needs one check per item; give the ids instead of letting the model guess.
+        prompt+='\n本次 requirement_checks 须逐项覆盖的 requirement_id：'+dump([{'requirement_id':item['requirement_id'],'mode':item.get('mode')} for item in target['requirements']['requirement_items']])
     prompt+='\n本次允许的findings.claim_ids：'+dump(sorted(ids|{x['claim_id'] for x in target.get('source_statements',[])}))
     if (folder/'admission-error.json').exists():
         error=json.loads((folder/'admission-error.json').read_text(encoding='utf-8')).get('error','')

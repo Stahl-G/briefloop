@@ -73,7 +73,9 @@ def save_review(store,brief,identity):
     with store.tx() as connection:
         connection.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)',
                            (identity,brief['id'],None,fingerprint,'running',dump({'packet_path':identity+'/packet','files':files}),None,now(),now()))
+    from review_checks import for_version
     return {'version_id':brief['id'],'fingerprint':fingerprint,'status':'complete','summary':'Synthetic check',
+            'requirement_checks':for_version(store,brief['id']),
             'coverage_scan_complete':True,'assessment':{'brief_hash':brief['hash'],'status':'complete','summary':'Check',
                                                      'overall':'建议修改','evidence':3,'coverage':3,'analysis':3,'expression':3}}
 

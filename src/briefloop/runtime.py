@@ -96,7 +96,8 @@ def stage_job(store, job, role, *, mode=None):
 
     Legacy keys are read by mode from frozen jobs, not normalized in place.
     """
-    if role not in (*ROLE_NAMES,'scorer','assessor'):
+    # A Scout slot runs with the generation model; it has no model setting of its own.
+    if role not in (*ROLE_NAMES,'scorer','assessor','scout'):
         raise ValueError('Unknown execution role: '+role)
     original_role=role
     if role in ('scorer','assessor','evaluator'):
@@ -323,7 +324,7 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
    同级并行 Scout 读取已有材料或完成分配的公开来源发现任务。给每个 Scout 专用任务说明：主题、主体、时间范围、预期发布者、应寻找的事实/表头/脚注/时间限定、原文定位、冲突和缺口。
    为每个实际派发的 Scout 选择一个不同的 scout_slots 条目，把该条目的 directory、result_file、schema_path、scout_contract_path 四个绝对路径完整写进其实际 {dispatch_word} 任务消息，并记录{id_word}与 slot_id/result_file 的对应关系。
    同时把 {scout_contract} 的绝对路径与 plan.json（{folder/'plan.json'}）中本轮已保存的 reader_contract 交给每个 Scout，要求开始时完整读取一次；方法限制、抓取失败与研究状态写入研究结果，不抄进正文。
-   原生子 agent 可能共享同一个 cwd；不要假设 host 自动隔离工作目录。每个 Scout 只在指定 directory 中写临时文件，并把统一 ScoutResult 保存到指定的绝对 result_file，禁止使用根目录 result.json 或只写相对 result.json。严格遵循其 schema_path：顶层 sources/gaps，并可含 search_summary 与 retrieval_notes（本轮检索概览、查询取舍与失败简述，不是新的计量权威）；来源条目含 source_id、locator、excerpt、facts、conflicts、coverage_status，以及 claim_ids（该来源已登记来源陈述的 claim ID，可留空）。来源正文使用 input.json 的 absolute_path。
+   原生子 agent 可能共享同一个 cwd；不要假设 host 自动隔离工作目录。每个 Scout 只在指定 directory 中写临时文件，并把统一 ScoutResult 保存到指定的绝对 result_file，禁止使用根目录 result.json 或只写相对 result.json。严格遵循其 schema_path：顶层 sources/gaps，并可含 search_summary 与 retrieval_notes（本轮检索概览、查询取舍与失败简述，不是新的计量权威）；来源条目含 source_id、locator、excerpt（原文逐字摘录，locator 指向其所在行/页；概括写进 facts）、facts、conflicts、coverage_status，以及 claim_ids（该来源已登记来源陈述的 claim ID，可留空）。来源正文使用 input.json 的 absolute_path。
    允许联网：{req['allow_web']}。若允许，按上面的冻结搜索源从零来源开展查询。发现阶段可用综述、媒体、索引页发现事件及原始链接，不把所有查询限定在官网；取证阶段再优先官方发布、上市公司披露、监管/交易所、原始统计或其他公开原始发布者，二手证据明确归属与局限。有初始材料时按需要补查。
    找到 URL 后用 `{tool} add-url --run {run['id']} --url URL` 保存原始来源、提取可读正文并登记到本轮，得到真实稳定 source_id。只有成功读取的正文才能支持事实；搜索摘要或列出 URL 不算已验证。
    {registration} 返回的新来源不在最初 input.json.sources 中也是正常的：在 Scout result.json 中使用返回的真实 source_id、准确 locator/excerpt 和缺口，后续交接保留所有实际取得的 acquired source IDs。不可编造 ID 或把新来源漏掉。
@@ -399,22 +400,45 @@ def assessment_prompt(store, brief, folder, backend='codex'):
     no_question='本轮没有任何用户在旁可问：不要调用宿主的提问或等待授权的工具；遇到含糊之处自行按任务目标决断，并在结果中记录假设。\n'
     view_pages_word = '使用 view_image 读取页图' if backend == 'codex' else '用 read 工具读取返回的页图'
     figure_view_word = '实际view_image查看其absolute_image_path' if backend == 'codex' else '实际用 read 工具读取其absolute_image_path'
-    return EVALUATOR_CONTEXT+f'''
+    # The evaluation contract is shared; how the material is reached and the
+    # result handed back is host-specific and names the tools really present.
+    context=EVALUATOR_CONTEXT
+    read_input=f"本轮是单稿评分模式。直接读取 {folder/'input.json'}；"
+    read_sources=(f"先围绕引用和具体问题读取原文的相关范围，例如 `{tool} read-source --id SOURCE_ID --start-line 1 --end-line 80 --max-chars 6000`；根据实际行号定向扩展，不把截断当成全文。"
+                  f"检查覆盖或追查缺口需要其他材料时，再读取 {index_path} 中本轮全部来源的轻量索引与完整 gaps，")
+    read_visual=(f"引用图像会作为带 source_id 锚点的原生图片输入，PDF 仅提供原件和页码索引。凡引用依赖图/表视觉内容，你要实际查看图像或按 locator 选择相关页，执行 `{tool} render-source --id SOURCE_ID --pages 1 3` 后{view_pages_word}；不要默认全本渲染。"
+                 "只读到抽取文本、作者摘录或父会话看过，不算你已核对图片。记录真实页码/图表定位；视觉输入被模型/provider拒绝、图像损坏或工具不可用时说明实际限制，不静默丢图、改模型或假装已验证。")
+    schema_line=f"评分结构见 {folder/'assessment.schema.json'}。"
+    output_line='保存 assessment.json，原稿保持不变。最终回复约 200 字以内，说明本次评分是否完成、主要问题和结果位置；完整评价保存在工件中。'
+    if backend=='briefloop-native':
+        from .models import Assessment
+        from .native_roles import evaluator_packet
+        evaluator_packet(store,input_pack,Assessment.model_json_schema(),folder)
+        context='本次评价只能读取固定任务包：路径一律相对任务包根目录。\n'
+        figure_view_word='实际用 packet_read 读取其 image_path（任务包内相对路径）'
+        read_input='本轮是单稿评分模式。直接读取 input.json（正文另有每行一个段落的 report.txt）；'
+        read_sources=('先围绕引用和具体问题读取原文的相关部分：各来源全文在 sources/<来源ID>.txt（input.json 与 source-index.json 的 text_file），用 packet_read 读取、packet_grep 定位；不把截断当成全文。'
+                      '检查覆盖或追查缺口需要其他材料时，再读取 source-index.json 中本轮全部来源的轻量索引与完整 gaps，')
+        read_visual=('PDF 来源在任务包中只有抽取文本。凡引用依赖图/表视觉内容，用 render_pdf_pages 渲染相关页后查看；先用文本定位页码，不要默认全本渲染。'
+                     '只读到抽取文本、作者摘录或父会话看过，不算你已核对图片。记录真实页码/图表定位；当前模型不接收图像、图像损坏或工具失败时说明实际限制，不假装已验证。')
+        schema_line='评分结构见 assessment.schema.json。'
+        output_line='完成后调用 submit_assessment 提交评分对象；未通过时按返回的错误修正后重新提交。原稿保持不变，不要把 JSON 写进回复正文。'
+    return context+f'''
 {input_pack['time_instructions']}
 {report_profile.get('evaluation','')}
 {instructions(deliverable,role='evaluator')}
 核对正文是否完成本轮读者需求。准确限定保留在相关句子，内部核查过程留在独立记录；不要要求作者用反复免责声明证明谨慎。研究未完成照常评价覆盖。
 本次input.figures若有图表，{figure_view_word}，并按data_path/script_path及source_ids核对图中数值、轴尺度、期间、图注与正文关系。已保存图表不等于内容正确；不要只审正文忽略图表。
-本轮是单稿评分模式。直接读取 {folder/'input.json'}；初始 sources 包含稿件 citations 和 report_data 的去重引用来源，所有引用元数据均保留。gaps 为最多 10 条、每条最多 240 字的简要提示。
-{no_question}先围绕引用和具体问题读取原文的相关范围，例如 `{tool} read-source --id SOURCE_ID --start-line 1 --end-line 80 --max-chars 6000`；根据实际行号定向扩展，不把截断当成全文。检查覆盖或追查缺口需要其他材料时，再读取 {index_path} 中本轮全部来源的轻量索引与完整 gaps，按需打开额外原文；没有在初始 sources 中列出不代表来源不存在，不要求默认全量读取。
-引用图像会作为带 source_id 锚点的原生图片输入，PDF 仅提供原件和页码索引。凡引用依赖图/表视觉内容，你要实际查看图像或按 locator 选择相关页，执行 `{tool} render-source --id SOURCE_ID --pages 1 3` 后{view_pages_word}；不要默认全本渲染。只读到抽取文本、作者摘录或父会话看过，不算你已核对图片。记录真实页码/图表定位；视觉输入被模型/provider拒绝、图像损坏或工具不可用时说明实际限制，不静默丢图、改模型或假装已验证。
+{read_input}初始 sources 包含稿件 citations 和 report_data 的去重引用来源，所有引用元数据均保留。gaps 为最多 10 条、每条最多 240 字的简要提示。
+{no_question}{read_sources}按需打开额外原文；没有在初始 sources 中列出不代表来源不存在，不要求默认全量读取。
+{read_visual}
 input.refcheck 是程序对本稿的确定性检查：broken_refs 必须逐条核对原文（断链引用支撑的结论不能成立）；numbers.unmatched 是指定正文数值与原始值不一致的项目；numbers.skipped 是缺少定位、来源不可核对或单位不支持的未检查项目。numbers.status 为 not_checked 且 body_quantity_count 大于 0 时，表示正文含数值但从未登记任何数字绑定——数值维没有任何机械信号；这属于接地缺陷，必须按未核验对待并指出，不得视为已核验或遗漏检查。即使 matched，也只表示指定位置数值匹配，不证明主体、期间、指标或原文支持关系；请读取 number_bindings 对照原文检查这些含义；export.escaped_bold 说明导出件格式不完整。程序只负责"找出来"，对错由你对照原文判定。refcheck.gaps 统计影响交付的缺口（total/open/open_records）：related 是否对应真实必答问题或正文位置、impact 是否成立、status 是否未经独立确认就写 resolved，由你对照原件判断；仍有 open 的记录不因写了缺口就免除覆盖评价。input.clause_index 是本轮已保存的读者约定条款（clause_id/kind/source_quote/instruction）。四维评价按条款对齐：reader_content 决定覆盖；research_method 约束证据与分析；writing_preference 决定表达；manual_assignment 只核对占位；发现可引用对应条款的 instruction 说明违反点。
 事实核对清单（程序不擅长，必须你来）：财务指标名称是否被偷换（如 Adjusted EBITDA 写成调整后利润）；事件先后与时区是否正确（如盘前公告写成盘后开盘）；政策条件与例外是否被压缩合并（如两种税负情形写成一种）；公司预期/会议纪要是否被升级成已获批、已融资、已到账；每条结论是否真有来源原文支持，而不只是引用存在。要求中明确点名的重要对象没有研究、只有"尚未核验"时，覆盖项扣分，不因写了缺口而豁免。
-评分结构见 {folder/'assessment.schema.json'}。brief_hash 必须是 {brief['hash']}。
+{schema_line}brief_hash 必须是 {brief['hash']}。
 按任务完成程度评证据/覆盖/分析/表达四项 1–5（1根本不足，2明显不足，3达到要求，4充分完成，5对任务特别有帮助）。
-四项是本轮要求完成程度，不是事实正确率。先检查再归纳分数，遗漏有 requirement，错误以 report_quote+source_id/locator/evidence 定位。
+四项是本轮要求完成程度，不是事实正确率。先检查再归纳分数，遗漏有 requirement，错误以 report_quote+source_id/locator/evidence 定位。结论为建议修改或存在重大问题时，每个需要修改的问题都写成一条 findings，摘要不能代替。
 分别评价证据、覆盖、分析与表达；内部缺口记录不抵消正文错误或任务未完成。Reviewer工具失败或关键核验未完成应明确记录，不给假分。
-保存 assessment.json，原稿保持不变。最终回复约 200 字以内，说明本次评分是否完成、主要问题和结果位置；完整评价保存在工件中。
+{output_line}
 '''
 
 
@@ -1292,6 +1316,10 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
                 if self.runtime.cancelled.is_set() or self.stopping.is_set():
                     self.stop_job(pending['id']);raise InterruptedError('报告已停止，关联审阅也已停止')
                 time.sleep(.5)
+        if backend=='briefloop-native':
+            # The native Evaluator reads a frozen packet and submits through the
+            # runner; the version it scores is fixed here, not taken from the model.
+            job={**job,'native_packet':{'role':'evaluator','version_id':brief['id']}}
         result=self.runtime.execute(job,assessment_prompt(self.store,brief,folder,backend),folder)
         basis='assessment_without_review' if req.get('writing_mode')=='internal_report' and without_review else None
         self.store.assess(brief['id'],json.loads((folder/'assessment.json').read_text(encoding='utf-8-sig')),basis=basis)

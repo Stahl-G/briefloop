@@ -78,7 +78,8 @@ def test_findings_can_reference_packet_source_statements_without_promoting_them(
                'evidence': 'Saved sources state 12 and 14 million USD',
                'claim_ids': [statement['id'], other_statement['id']]}
     value = {'version_id': brief['id'], 'fingerprint': fingerprint, 'status': 'complete',
-             'summary': 'Comparison omitted', 'coverage_scan_complete': True, 'findings': [finding]}
+             'summary': 'Comparison omitted', 'coverage_scan_complete': True, 'findings': [finding],
+             'requirement_checks': __import__('review_checks').for_version(store, brief['id'])}
     with pytest.raises(ValueError, match='范围外的主张ID'):
         accept_review(store, 'review_statements', {**value, 'findings': [{**finding, 'claim_ids': [foreign['id']]}]})
     with pytest.raises(ValueError, match='主张核查记录不属于本次范围'):

@@ -35,13 +35,7 @@ from briefloop.review import run_review, get_review  # noqa: E402
 # deepseek-v4.1-flash as listed in native-engine/models.json.
 PRICE = {'input': 0.22, 'output': 0.66, 'cacheRead': 0.007}
 
-# Real problems in the acceptance version brief_a56c592a9aaf461d_r1, checked by
-# hand. A leg "detects" one when a finding, assessment finding or unchecked item
-# matches every pattern. Matching is a first pass; read the texts before citing.
-KNOWN_ISSUES = {
-    'chart_footnote': [r'fig_dc483082d36b4165|放量', r'1\.5', r'脚注|内嵌|PNG|图片|图注'],
-    'cash_58_9_vs_85_9': [r'85\.9|8,590', r'58\.9|5,890'],
-}
+import seed_generic  # noqa: E402
 
 
 def opencode_usage(folder):
@@ -90,13 +84,6 @@ def usage_totals(folder):
     return totals
 
 
-def detections(result):
-    import re
-    texts = [f.get('description', '') + ' ' + f.get('evidence', '') for f in result.get('findings', [])]
-    texts += [f.get('description', '') + ' ' + str(f.get('evidence', '')) for f in (result.get('assessment') or {}).get('findings', [])]
-    texts += [u.get('description', '') for u in result.get('unchecked_items', [])]
-    return {name: any(all(re.search(p, text) for p in patterns) for text in texts)
-            for name, patterns in KNOWN_ISSUES.items()}
 
 
 def event_stats(folder):
@@ -120,19 +107,48 @@ def event_stats(folder):
     return {'events': sum(kinds.values()), 'tool_calls': tools}
 
 
-def run_leg(source, version_id, backend, model, variant, repeat_index):
+def evaluate(store, runtime, job, version_id, folder):
+    """Score one version through Worker.assess_version, the product path.
+
+    The slices are internal reports, which a backend with the restricted
+    Reviewer sends to review instead; here the evaluator path is forced the
+    way a backend without that capability takes it (assessment_without_review).
+    """
+    import briefloop.review_capability as capability
+    from briefloop.runtime import Worker, stage_job
+    capability.restricted_review = lambda backend: False
+    worker = Worker(store, runtime=runtime)
+    brief = store.one('briefs', version_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    backend = json.loads(job['payload'])['agent_backend']
+    worker.assess_version(stage_job(store, job, 'evaluator', mode='single'), brief, folder, backend)
+    return json.loads(store.rows('SELECT data FROM assessments WHERE version_id=? ORDER BY rowid DESC LIMIT 1', (version_id,))[0]['data'])
+
+
+def run_leg(source, version_id, backend, model, variant, repeat_index, seed_rng=None, role='reviewer'):
     work = Path(tempfile.mkdtemp(prefix=f'bl-ab-{backend}-')).resolve()
     shutil.copytree(source, work / 'ws')
+    truth = None
+    if seed_rng is not None and seed_rng < 0:
+        seed_rng = None  # eval_slices passes a negative seed for the unseeded original
+    if seed_rng is not None:
+        # Same rng for both backends of a pair, so both review the same defects.
+        truth = seed_generic.seed(work / 'ws', version_id, seed_rng + repeat_index)
+        (work / 'seeded.json').write_text(json.dumps(truth, ensure_ascii=False, indent=1))
     store = Store(work / 'ws')
     engine = NativeEngine()
     harness = NativeHarness(store, engine)
     opencode = OpencodeHarness(store)
     runtime = InteractiveRuntime(store, backends={
         'briefloop-native': harness, 'opencode': opencode})
+    if role == 'evaluator':
+        return run_evaluator_leg(work, store, harness, opencode, runtime, version_id, backend, model, variant, repeat_index, truth)
     try:
         job = store.enqueue('review', {
             'version_id': version_id,
             'agent_backend': backend,
+            # The model under test, not whatever the copied workspace had selected.
+            'runtime': {'model': model, 'model_variant': variant},
             'role_models': {'evaluator': {'model': model, 'model_variant': variant}},
         })
         folder = work / 'ws' / 'jobs' / job['id']
@@ -159,11 +175,54 @@ def run_leg(source, version_id, backend, model, variant, repeat_index):
                 'schema_correction': (folder / 'schema-correction.json').exists(),
                 'major_findings': sum(1 for f in data.get('findings', []) + (data.get('assessment') or {}).get('findings', [])
                                       if f.get('severity') == 'major'),
-                'detected': detections(data),
+                **({'detected': seed_generic.score(data, truth), 'planted': len(truth['planted'])} if truth else {}),
             })
         except Exception as exc:
             outcome.update({'wall_seconds': round(time.monotonic() - t0, 1),
                             'status': 'failed', 'error': str(exc)[:500]})
+        outcome['usage'] = usage_totals(folder)
+        outcome['events'] = event_stats(folder)
+        return outcome
+    finally:
+        harness.close()
+        try:
+            opencode.close()
+        except Exception:
+            pass
+
+
+def run_evaluator_leg(work, store, harness, opencode, runtime, version_id, backend, model, variant, repeat_index, truth):
+    from briefloop.models import Assessment
+    from briefloop.store import uid
+    try:
+        # Written directly: the main-chain gate still refuses native assess jobs.
+        jid = uid('job')
+        payload = {'version_id': version_id, 'agent_backend': backend,
+                   'runtime': {'model': model, 'model_variant': variant},
+                   'role_models': {'evaluator': {'model': model, 'model_variant': variant}}}
+        with store.tx() as c:
+            c.execute("INSERT INTO jobs(id,kind,payload,status,result,error,created,updated) VALUES(?,?,?,?,?,?,datetime('now'),datetime('now'))",
+                      (jid, 'assess', json.dumps(payload), 'running', None, None))
+        job = store.one('jobs', jid)
+        folder = work / 'ws' / 'jobs' / jid
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / 'assessment.schema.json').write_text(json.dumps(Assessment.model_json_schema(), ensure_ascii=False, indent=2), encoding='utf-8')
+        t0 = time.monotonic()
+        outcome = {'backend': backend, 'role': 'evaluator', 'repeat': repeat_index, 'job': jid, 'folder': str(folder)}
+        try:
+            data = evaluate(store, runtime, job, version_id, folder)
+            outcome.update({
+                'wall_seconds': round(time.monotonic() - t0, 1), 'status': 'complete',
+                'assessment_status': data.get('status'), 'overall': data.get('overall'),
+                'scores': {k: data.get(k) for k in ('evidence', 'coverage', 'analysis', 'expression')},
+                'findings': len(data.get('findings', [])),
+                'major_findings': sum(1 for f in data.get('findings', []) if f.get('severity') == 'major'),
+                'finding_dimensions': {d: sum(1 for f in data.get('findings', []) if f.get('dimension') == d)
+                                       for d in ('evidence', 'coverage', 'analysis', 'expression')},
+                **({'detected': seed_generic.score(data, truth), 'planted': len(truth['planted'])} if truth else {}),
+            })
+        except Exception as exc:
+            outcome.update({'wall_seconds': round(time.monotonic() - t0, 1), 'status': 'failed', 'error': str(exc)[:500]})
         outcome['usage'] = usage_totals(folder)
         outcome['events'] = event_stats(folder)
         return outcome
@@ -184,21 +243,38 @@ def main():
     parser.add_argument('--backends', default='briefloop-native,opencode')
     parser.add_argument('--repeat', type=int, default=1)
     parser.add_argument('--out')
+    parser.add_argument('--system-layers', default='core,role,mode',
+                        help='ablation: native system prompt layers to keep, of core,role,mode')
+    parser.add_argument('--role', default='reviewer', choices=['reviewer', 'evaluator'])
+    parser.add_argument('--seed', type=int, default=None,
+                        help='plant report-agnostic defects (seed_generic.py) with this rng seed (+ repeat index)')
     args = parser.parse_args()
 
+    layers = [x for x in args.system_layers.split(',') if x]
+    if layers != ['core', 'role', 'mode']:
+        # Evaluation-only ablation: the harness builds its prompt through this
+        # function in this process, so no product code changes.
+        import hashlib
+        import briefloop.agent_prompts as agent_prompts
+        files = {'core': lambda r, m: 'core.zh.md', 'role': lambda r, m: f'role.{r}.zh.md', 'mode': lambda r, m: f'mode.{m}.zh.md'}
+
+        def ablated(role, mode='background'):
+            text = '\n\n'.join(agent_prompts._asset(files[layer](role, mode)) for layer in layers)
+            return {'text': text, 'version': 'ablation-' + hashlib.sha256(text.encode()).hexdigest()[:10]}
+        agent_prompts.system_prompt = ablated
     source = Path(args.workspace).resolve()
     results = []
     for backend in args.backends.split(','):
         for i in range(args.repeat):
             outcome = run_leg(source, args.version_id, backend.strip(),
-                              args.model, args.variant, i)
+                              args.model, args.variant, i, args.seed, args.role)
             results.append(outcome)
             print(json.dumps(outcome, ensure_ascii=False), flush=True)
     if args.out:
         out = Path(args.out).expanduser().resolve()
         out.mkdir(parents=True, exist_ok=True)
         path = out / f'ab-{int(time.time())}.json'
-        path.write_text(json.dumps({'model': args.model, 'variant': args.variant,
+        path.write_text(json.dumps({'model': args.model, 'variant': args.variant, 'seeded': args.seed,
                                     'version_id': args.version_id,
                                     'results': results}, ensure_ascii=False, indent=2))
         print(f'summary={path}')
