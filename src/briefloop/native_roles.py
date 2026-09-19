@@ -381,7 +381,7 @@ COMPARISON_TOOLS = [
 
 # -- scout ------------------------------------------------------------------
 
-READ_CHARS = 60_000
+READ_CHARS = 24_000
 
 
 def scout_packet(store, task, folder):
@@ -417,9 +417,21 @@ def source_read(store, config, args):
     start, end = args.get('start_line'), args.get('end_line')
     limit = min(int(args.get('max_chars') or READ_CHARS), READ_CHARS)
     try:
-        text = read_source(store, sid, start_line=start or 1, end_line=end, max_chars=limit)
+        offset = args.get('start_char')
+        if offset is not None:
+            lines = store.source_text(sid).splitlines(); number = start or 1
+            if (type(offset) is not int or offset < 0 or number < 1 or number > len(lines)
+                    or offset >= len(lines[number-1]) or (end is not None and end != number)):
+                raise ValueError('start_char 从 0 开始，须在 start_line 的单行范围内；end_line 若填写须与 start_line 相同')
+            line = lines[number-1]; stop = min(len(line), offset + limit)
+            text = (f'[来源 {sid}：第 {number} 行，共 {len(line)} 字符；显示字符 {offset}:{stop}（从 0 开始、不含结束）；'
+                    + (f'继续读取 start_line={number}, start_char={stop}' if stop < len(line) else '该行已读至结尾')
+                    + f']\n{number}: ' + line[offset:stop])
+        else:
+            text = read_source(store, sid, start_line=start or 1, end_line=end, max_chars=limit)
     except ValueError as exc:
         raise ToolError(str(exc)) from exc
+    text = 'source_hash: ' + store.one('sources', sid)['hash'] + '\n' + text
     return {'content': [{'type': 'text', 'text': text}]}
 
 
@@ -441,8 +453,10 @@ def source_grep(store, config, args):
         except (ValueError, OSError):
             continue
         for number, line in enumerate(lines, 1):
-            if regex.search(line):
-                hits.append(f'{sid} {number}: {line[:300]}')
+            match = regex.search(line)
+            if match:
+                offset = max(0, match.start()-100)
+                hits.append(f'{sid} {number} (start_char={offset}): {line[offset:offset+300]}')
                 if len(hits) >= limit:
                     break
         if len(hits) >= limit:
@@ -521,10 +535,20 @@ def submit_scout_result(store, config, args):
     from pydantic import ValidationError
     from .models import ScoutResult
     from .scout_tools import evidence_errors, join_scouts
+    from .scout_evidence import collect
     try:
-        result = ScoutResult.model_validate({key: args[key] for key in ('sources', 'gaps', 'search_summary', 'retrieval_notes') if key in args})
-    except ValidationError as exc:
-        raise ToolError('研究结果不符合 scout.schema.json，修正后重新提交：' + str(exc)[:1500]) from exc
+        if 'sources' in args:
+            raise ValueError('请先用 record_evidence 逐条记录；最终只提交 gaps/search_summary/retrieval_notes')
+        recorded, discarded = collect(store, config)
+        data = {key: args[key] for key in ('gaps', 'search_summary', 'retrieval_notes') if key in args}
+        data['sources'] = recorded
+        if not recorded and not data.get('gaps'):
+            raise ValueError('没有证据时须说明具体缺口，不能空提交')
+        if discarded:
+            data['gaps'] = list(data.get('gaps', [])) + [f'未采用证据 {eid}：{reason}' for eid, reason in discarded.items()]
+        result = ScoutResult.model_validate(data)
+    except (ValidationError, ValueError) as exc:
+        raise ToolError(str(exc)[:1500]) from exc
     errors = evidence_errors(store, config['run_id'], result)
     if errors:
         raise ToolError('研究结果未通过证据校验，修正后重新提交：\n' + '\n'.join(errors[:20]))
@@ -543,11 +567,12 @@ def submit_scout_result(store, config, args):
 _DATE = {'type': 'string', 'pattern': r'^\d{4}-\d{2}-\d{2}$'}
 SCOUT_READ_TOOLS = [
     {'name': 'source_read', 'label': '读取来源',
-     'description': '读取一份本轮已登记来源的正文，带行号；一次最多约 6 万字，可用 start_line/end_line 定位。',
-     'guide': '读取本轮已登记来源的正文（带行号，单次最多约 6 万字）；excerpt 从这里逐字摘，locator 用这里的行号。',
+     'description': '读取一份本轮已登记来源的正文，带行号；一次最多 24000 字符，可用 start_line/end_line 定位。',
+     'guide': '读取本轮已登记来源的正文（带行号，单次最多 24000 字符）；用返回的 source_hash、行号和短原文锚点调用 record_evidence；原文摘录由运行器截取。',
      'parameters': {'type': 'object', 'required': ['source_id'], 'additionalProperties': False,
                     'properties': {'source_id': {'type': 'string'},
                                    'start_line': {'type': 'integer', 'minimum': 1},
+                                   'start_char': {'type': 'integer', 'minimum': 0, 'description': '超长单行的字符偏移，从 0 开始；只读取 start_line 这一行'},
                                    'end_line': {'type': 'integer', 'minimum': 1},
                                    'max_chars': {'type': 'integer', 'minimum': 1}}},
      'handler': source_read},
@@ -598,16 +623,39 @@ def _scout_web_tools(channels):
     return tools
 
 
+def record_evidence(store, config, args):
+    from .scout_evidence import record
+    return _json_result(record(store, config, args))
+
+
+SCOUT_RECORD = {
+    'name': 'record_evidence', 'label': '记录证据', 'sequential': True,
+    'description': '读完相关段落立即记录：运行器按 source_hash、行段及短原文锚点截取 excerpt。稳定 id 用于单条修正或移除；通过的证据保留，只重交 rejected 项。',
+    'guide': '随读随记，互不依赖的条目可批量提交。quote 是 8–240 字符连续逐字锚点；source_hash 取 source_read 返回值。检查返回摘录是否包含单位、表头和脚注；relocated=true 时核对新行段上下文。长单行可用 start_char/end_char 明确选取所需片段（从 0 开始、不含结束字符，最多 4000 字符），不要切掉关键限定。不再整份抄写 excerpt。',
+    'parameters': {'type': 'object', 'additionalProperties': False, 'properties': {
+        'items': {'type': 'array', 'maxItems': 16, 'items': {'type': 'object',
+            'required': ['id', 'source_id', 'source_hash', 'locator', 'quote', 'facts', 'coverage_status'],
+            'additionalProperties': False, 'properties': {
+                'id': {'type': 'string'}, 'source_id': {'type': 'string'}, 'source_hash': {'type': 'string'},
+                'locator': {'type': 'string'}, 'quote': {'type': 'string'},
+                'start_char': {'type': 'integer', 'minimum': 0, 'description': '可选：长单行摘录起点，从 0 开始；需同时给 end_char'},
+                'end_char': {'type': 'integer', 'minimum': 1, 'description': '可选：长单行摘录终点，不含结束字符；摘录最多 4000 字符'},
+                'facts': {'type': 'array', 'items': {'type': 'string'}},
+                'conflicts': {'type': 'array', 'items': {'type': 'string'}},
+                'coverage_status': {'type': 'string'},
+                'claim_ids': {'type': 'array', 'items': {'type': 'string'}}}}},
+        'discard': {'type': 'array', 'maxItems': 16, 'items': {'type': 'object',
+            'required': ['id', 'reason'], 'additionalProperties': False,
+            'properties': {'id': {'type': 'string'}, 'reason': {'type': 'string'}}}}}},
+    'handler': record_evidence,
+}
+
 SCOUT_SUBMIT = {
     'name': 'submit_scout_result', 'label': '提交研究结果', 'settles': True,
-    'description': '提交本槽位的研究结果（结构见 scout.schema.json）：sources 每条是一段证据，含 source_id、locator、excerpt（原文逐字）、facts、conflicts、coverage_status、claim_ids，同一来源的不同段落各写一条；gaps；search_summary；retrieval_notes。运行器校验结构、来源登记与摘录，通过即保存并结束。',
-    'guide': '提交研究结果（结构见 scout.schema.json）。每条证据一段连续原文：excerpt 逐字摘录，locator 写成 line 12-18 这样的单一行段并只覆盖这段；同一来源的其他段落另起一条。当场校验，未通过按错误修正后重交。',
-    'parameters': {'type': 'object', 'required': ['sources', 'gaps'], 'additionalProperties': False,
-                   'properties': {'sources': {'type': 'array', 'items': {'type': 'object', 'properties': {
-                       'source_id': {'type': 'string'},
-                       'locator': {'type': 'string', 'description': '单一行段或页码，如 line 12-18、page 3'},
-                       'excerpt': {'type': 'string', 'description': '该行段内的原文逐字摘录'}}}},
-                                  'gaps': {'type': 'array', 'items': {'type': 'string'}},
+    'description': '结束本槽位，只交 gaps、search_summary、retrieval_notes。运行器合并本次 record_evidence 已保存的证据，校验后落盘为原有 ScoutResult 并结束。',
+    'guide': '确认所有证据已记录且 pending_ids 为空；不要再交 sources 或重复摘录。缺失内容写进 gaps；研究状态与覆盖不等于事实真实性已核实。',
+    'parameters': {'type': 'object', 'required': ['gaps'], 'additionalProperties': False,
+                   'properties': {'gaps': {'type': 'array', 'items': {'type': 'string'}},
                                   'search_summary': {'type': 'string'},
                                   'retrieval_notes': {'type': 'array', 'items': {'type': 'object'}}}},
     'handler': submit_scout_result,
@@ -619,7 +667,7 @@ def _scout_tools(config):
     web = _scout_web_tools(channels) if config.get('allow_web') else []
     if config.get('allow_web') and not channels:
         web = [tool for tool in web if tool['name'] == 'add_url']
-    return [*SCOUT_READ_TOOLS, *web, SCOUT_SUBMIT]
+    return [*SCOUT_READ_TOOLS, *web, SCOUT_RECORD, SCOUT_SUBMIT]
 
 
 RUNNER_TOOLS = {'reviewer': [], 'evaluator': EVALUATOR_TOOLS, 'maintainer': MAINTAINER_TOOLS, 'proposer': PROPOSER_TOOLS}

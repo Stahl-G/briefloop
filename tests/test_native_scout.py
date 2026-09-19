@@ -11,7 +11,8 @@ from briefloop.models import ScoutResult
 from briefloop.native_harness import NativeHarness
 from briefloop.native_roles import run_tool, runner_tool_specs, scout_packet
 from briefloop.scout_tools import evidence_errors
-from briefloop.store import Store
+from briefloop.store import Store, content_hash
+from briefloop.scout_evidence import begin, close
 
 TEXT = 'Header\nRevenue rose to USD 12 million in 2025,\nup from USD 10 million.\nFootnote: audited.\n'
 
@@ -31,9 +32,11 @@ def _config(store, run_id, name, **extra):
     folder = store.root / 'jobs' / name  # slots live in the workspace
     task = scout.task(store, run_id, {'slot_id': 'scout-1', 'theme': 'revenue'})
     scout_packet(store, task, folder)
-    return {'model': 'fake/m1', 'native_role': 'scout', 'packet_root': str(folder / 'packet'), 'run_id': run_id,
+    config = {'model': 'fake/m1', 'attempt_id': name, 'native_role': 'scout', 'packet_root': str(folder / 'packet'), 'run_id': run_id,
             'result_file': str(folder / 'result.json'), 'allow_web': task['allow_web'],
             'search_channels': task['search_channels'], **extra}
+    begin(store, config)
+    return config
 
 
 def _evidence(sid, **extra):
@@ -69,7 +72,9 @@ def test_excerpts_must_be_verbatim_and_where_the_locator_points(tmp_path):
 def test_scout_tools_follow_the_run_web_permission_and_channels(tmp_path):
     store, run_id, _ = _run(tmp_path / 'offline')
     names = [t['name'] for t in runner_tool_specs('scout', config=_config(store, run_id, 'o'))]
-    assert names == ['source_read', 'source_grep', 'render_pdf_pages', 'submit_scout_result']
+    assert NativeHarness._sequential(_config(store, run_id, 'seq'), 'record_evidence')
+    assert next(t for t in runner_tool_specs('scout', config=_config(store, run_id, 'seq')) if t['name']=='record_evidence')['sequential']
+    assert names == ['source_read', 'source_grep', 'render_pdf_pages', 'record_evidence', 'submit_scout_result']
 
     store, run_id, _ = _run(tmp_path / 'ddg', allow_web=True, policy={'primary_provider': 'duckduckgo'})
     specs = runner_tool_specs('scout', config=_config(store, run_id, 'd'))
@@ -85,7 +90,7 @@ def test_scout_tools_follow_the_run_web_permission_and_channels(tmp_path):
     store, run_id, _ = _run(tmp_path / 'native', allow_web=True, policy={'primary_provider': 'native'})
     config = _config(store, run_id, 'n')
     assert [t['name'] for t in runner_tool_specs('scout', config=config)] == [
-        'source_read', 'source_grep', 'render_pdf_pages', 'add_url', 'submit_scout_result']
+        'source_read', 'source_grep', 'render_pdf_pages', 'add_url', 'record_evidence', 'submit_scout_result']
     note = (store.root / 'jobs' / 'n' / 'packet' / 'search-policy.md').read_text(encoding='utf-8')
     assert '内置引擎没有这项能力' in note and 'web-search --run' not in note
 
@@ -100,7 +105,8 @@ def test_packet_prompt_and_system_prompt_name_only_native_tools(tmp_path):
     assert '逐字摘录' in (packet / 'scout-contract.md').read_text(encoding='utf-8')
     prompt = scout.native_prompt(task)
     assert 'submit_scout_result' in prompt and 'source_read' in prompt and 'scout-2' in prompt
-    assert 'briefloop' not in prompt.lower().replace('本报告', '') and str(tmp_path) not in prompt
+    assert 'record_evidence' in prompt and str(tmp_path) not in prompt
+    assert task['contract'] in prompt and '已内联部分无需再次' in prompt
     text = system_prompt('scout')['text']
     assert '研究检索（Scout）' in text and 'excerpt 逐字摘录' in text
 
@@ -128,23 +134,67 @@ def test_web_search_and_add_url_spend_the_run_budget(tmp_path, monkeypatch):
     read = run_tool(store, config, 'source_read', {'source_id': added['source_id']})
     assert '2: Orders reached 5 GW.' in read['content'][0]['text']
     grep = run_tool(store, config, 'source_grep', {'pattern': 'GW'})
-    assert f"{added['source_id']} 2: Orders reached 5 GW." in grep['content'][0]['text']
+    assert f"{added['source_id']} 2 (start_char=0): Orders reached 5 GW." in grep['content'][0]['text']
     outside = run_tool(store, config, 'source_read', {'source_id': 'src_other'})
     assert not outside['ok'] and 'add_url' in outside['error']
+
+
+def item(sid, **extra):
+    return {'id': 'revenue', 'source_id': sid, 'source_hash': content_hash(TEXT), 'locator': 'line 2-3',
+            'quote': 'Revenue rose to USD 12 million', 'facts': ['Revenue grew 20%'], 'coverage_status': 'complete', **extra}
 
 
 def test_submit_saves_a_checked_result_to_the_slot(tmp_path):
     store, run_id, sid = _run(tmp_path)
     config = _config(store, run_id, 'slot')
-    paraphrase = run_tool(store, config, 'submit_scout_result', {'sources': [_evidence(sid, excerpt='Revenue grew 20%')], 'gaps': []})
-    assert not paraphrase['ok'] and '逐字' in paraphrase['error'] and not (store.root / 'jobs' / 'slot' / 'result.json').exists()
-    other = store.add_source('Unregistered', 'Revenue rose to USD 12 million in 2025,')['id']
-    stray = run_tool(store, config, 'submit_scout_result', {'sources': [_evidence(other, locator='line 1', excerpt='Revenue rose')], 'gaps': []})
-    assert not stray['ok'] and not (store.root / 'jobs' / 'slot' / 'result.json').exists()
-    ok = run_tool(store, config, 'submit_scout_result', {'sources': [_evidence(sid)], 'gaps': ['No 2024 figure'], 'search_summary': 'offline'})
-    assert ok['ok'] and json.loads(ok['settle']) == {'sources': 1, 'gaps': 1}
-    saved = json.loads((store.root / 'jobs' / 'slot' / 'result.json').read_text(encoding='utf-8'))
-    assert saved['sources'][0]['source_id'] == sid and saved['gaps'] == ['No 2024 figure']
+    response = run_tool(store, config, 'record_evidence', {'items': [item(sid), item(sid, id='bad', quote='Revenue grew to twenty')]})
+    data = json.loads(response['content'][0]['text'])
+    assert data['total'] == 1 and data['pending_ids'] == ['bad']
+    assert not run_tool(store, config, 'submit_scout_result', {'gaps': []})['ok']
+    assert not (store.root / 'jobs' / 'slot' / 'result.json').exists()
+    # Only repair the rejected item; the first accepted item remains intact.
+    response = run_tool(store, config, 'record_evidence', {'items': [item(sid, id='bad', locator='line 4', quote='Footnote: audited.')]})
+    assert json.loads(response['content'][0]['text'])['total'] == 2
+    ok = run_tool(store, config, 'submit_scout_result', {'gaps': ['No 2024 figure'], 'search_summary': 'offline'})
+    assert ok['ok'] and json.loads(ok['settle']) == {'sources': 2, 'gaps': 1}
+    saved = json.loads((store.root / 'jobs' / 'slot' / 'result.json').read_text())
+    assert TEXT.splitlines()[1] + '\n' + TEXT.splitlines()[2] in [x['excerpt'] for x in saved['sources']]
+    assert not evidence_errors(store, run_id, ScoutResult.model_validate(saved))
+
+
+def test_incremental_identity_relocation_and_discard(tmp_path):
+    store, run_id, sid = _run(tmp_path)
+    config = _config(store, run_id, 'slot')
+    def record(items, **extra):
+        result = run_tool(store, config, 'record_evidence', {'items': items, **extra})
+        assert result['ok'], result
+        return json.loads(result['content'][0]['text'])
+    moved = record([item(sid, locator='line 20')])
+    assert moved['accepted'][0]['relocated'] and moved['accepted'][0]['locator'] == 'line 2'
+    assert record([item(sid)])['total'] == 1  # same ID replaces, not appends
+    unrelated = store.add_source('Other', TEXT)['id']
+    assert record([item(unrelated, id='wrong-run')])['rejected']
+    duplicate = store.add_source('Duplicated', TEXT + TEXT)['id']; store.attach_source(run_id, duplicate)
+    assert record([item(duplicate, id='ambiguous', source_hash=content_hash(TEXT+TEXT), locator='line 30')])['rejected']
+    assert record([item(sid, id='changed', source_hash='old')])['rejected']
+    dropped = record([], discard=[{'id': x, 'reason': 'Cannot support claim'} for x in ['wrong-run', 'ambiguous', 'changed']])
+    assert dropped['pending_ids'] == []
+    ok = run_tool(store, config, 'submit_scout_result', {'gaps': []})
+    assert ok['ok'] and json.loads(ok['settle'])['gaps'] == 3
+    close(store, config)
+    assert not run_tool(store, config, 'record_evidence', {'items': [item(sid)]})['ok']
+    retry = {**config, 'attempt_id': 'next-turn'}; begin(store, retry)
+    assert not run_tool(store, retry, 'submit_scout_result', {'gaps': []})['ok']
+
+
+def test_read_bound_and_persisted_source_hash(tmp_path):
+    store, run_id, sid = _run(tmp_path)
+    config = _config(store, run_id, 'slot')
+    long = store.add_source('Long', 'x'*30000)['id']; store.attach_source(run_id, long)
+    result = run_tool(store, config, 'source_read', {'source_id': long})
+    text = result['content'][0]['text']
+    assert 'source_hash: ' + content_hash('x'*30000) in text
+    assert '1: ' + 'x'*24000 in text and 'x'*24001 not in text
 
 
 def test_harness_requires_a_run_and_slot_for_a_scout():
@@ -171,8 +221,9 @@ class Engine:
         if method == 'turn_start':
             sink = self.sinks[params['execution_id']]
             sink.put({'kind': 'tool_request', 'request_id': 'read-1', 'tool': 'source_read', 'args': {'source_id': self.sid}})
+            sink.put({'kind': 'tool_request', 'request_id': 'record-1', 'tool': 'record_evidence', 'args': {'items': [item(self.sid)]}})
             sink.put({'kind': 'tool_request', 'request_id': 'submit-1', 'tool': 'submit_scout_result',
-                      'args': {'sources': [_evidence(self.sid)], 'gaps': []}})
+                      'args': {'gaps': []}})
             sink.put({'kind': 'end', 'status': 'completed', 'final_text': 'done'})
         return {}
 
@@ -201,9 +252,40 @@ def test_the_runtime_runs_one_scout_slot_on_the_native_engine(tmp_path):
     assert create['role'] == 'scout' and create['packet_root'] == str(slot / 'packet')
     assert [t['name'] for t in create['runner_tools']][-1] == 'submit_scout_result'
     deadline = time.monotonic() + 5
-    while len([p for name, p in engine.calls if name == 'tool_result']) < 2:
+    while len([p for name, p in engine.calls if name == 'tool_result']) < 3:
         assert time.monotonic() < deadline
         time.sleep(.02)
     results = {p['request_id']: p for name, p in engine.calls if name == 'tool_result'}
     assert results['read-1']['ok'] and results['submit-1']['ok']
     harness.close()
+
+
+def test_concurrent_records_survive_and_changed_source_cannot_publish(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    store, run_id, sid = _run(tmp_path)
+    config = _config(store, run_id, 'slot')
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda i: run_tool(store, config, 'record_evidence', {'items': [item(sid, id=f'e{i}')]}), range(2)))
+    assert all(r['ok'] for r in results)
+    from briefloop.scout_evidence import collect
+    assert len(collect(store, config)[0]) == 2
+    original = store.one('sources', sid)
+    (store.root / original['path']).write_text('Changed source', encoding='utf-8')
+    result = run_tool(store, config, 'submit_scout_result', {'gaps': []})
+    assert not result['ok'] and not (store.root/'jobs'/'slot'/'result.json').exists()
+
+
+def test_long_single_line_can_be_found_read_and_recorded_without_copying_the_whole_source(tmp_path):
+    store, run_id, _ = _run(tmp_path)
+    phrase = 'Revenue rose to USD 12 million; excludes discontinued operations.'
+    line = 'x'*30000 + phrase + 'z'*30000
+    sid = store.add_source('Long single line', line)['id']; store.attach_source(run_id, sid)
+    config = _config(store, run_id, 'long')
+    grep = run_tool(store, config, 'source_grep', {'source_id': sid, 'pattern': 'Revenue'})
+    assert 'start_char=29900' in grep['content'][0]['text'] and 'Revenue rose' in grep['content'][0]['text']
+    read = run_tool(store, config, 'source_read', {'source_id': sid, 'start_line': 1, 'start_char': 30000})
+    assert 'Revenue rose' in read['content'][0]['text'] and 'start_char=54000' in read['content'][0]['text']
+    value = item(sid, source_hash=content_hash(line), locator='line 1', start_char=30000, end_char=30000+len(phrase))
+    response = run_tool(store, config, 'record_evidence', {'items': [value]})
+    accepted = json.loads(response['content'][0]['text'])['accepted']
+    assert accepted[0]['excerpt'] == phrase and 'excludes discontinued operations.' in accepted[0]['excerpt']

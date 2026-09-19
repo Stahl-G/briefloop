@@ -245,6 +245,7 @@ class NativeHarness:
     def _dispatch(self, sid, epoch):
         mid = None
         execution = None
+        evidence_open = False
         status = 'failed'
         try:
             session = self.chat.session(sid)
@@ -256,6 +257,11 @@ class NativeHarness:
             execution = mid
             coordinator = getattr(self, 'coordinator', None)
             config = self._config(message.get('runtime') or session['runtime'])
+            if config.get('native_role') == 'scout':
+                from .scout_evidence import begin
+                config = {**config, 'attempt_id': execution}
+                begin(self.store, config)
+                evidence_open = True
             text = (coordinator.input(sid, message) if coordinator else message).get('prompt') or message['text']
             sink = self.engine.subscribe(execution)
             with self._lock:
@@ -342,7 +348,7 @@ class NativeHarness:
                     # run off it, so a Scout's batched fetches proceed side by
                     # side (Store opens a connection per call); the engine
                     # matches results by request_id.
-                    if self._settles(config, event.get('tool')):
+                    if self._sequential(config, event.get('tool')):
                         self._run_tool(sid, config, event)
                     else:
                         threading.Thread(target=self._run_tool, args=(sid, config, event), daemon=True).start()
@@ -368,6 +374,9 @@ class NativeHarness:
                 self.chat.event(sid, 'error', {'message': str(exc)[:300]})
         finally:
             with self._lock:
+                if evidence_open:
+                    from .scout_evidence import close
+                    close(self.store, config)
                 if mid:
                     for message in self.snapshot(sid)['messages']:
                         if (message.get('turn_id') == mid
@@ -425,9 +434,20 @@ class NativeHarness:
         specs = runner_tool_specs(role_of(config), config.get('evaluation_mode'), config)
         return any(spec['name'] == name and spec.get('settles') for spec in specs)
 
+    @staticmethod
+    def _sequential(config, name):
+        from .native_roles import role_of, runner_tool_specs
+        specs = runner_tool_specs(role_of(config), config.get('evaluation_mode'), config)
+        return any(spec['name'] == name and (spec.get('settles') or spec.get('sequential')) for spec in specs)
+
     def _run_tool(self, sid, config, event):
         from .native_roles import run_tool
-        result = run_tool(self.store, {**config, 'session_id': sid}, event.get('tool'), event.get('args'))
+        if config.get('native_role') == 'scout' and event.get('tool') in ('record_evidence', 'submit_scout_result'):
+            with self._lock:
+                result = ({'ok': False, 'error': '本轮已取消'} if sid in self._cancel_requested else
+                          run_tool(self.store, {**config, 'session_id': sid}, event.get('tool'), event.get('args')))
+        else:
+            result = run_tool(self.store, {**config, 'session_id': sid}, event.get('tool'), event.get('args'))
         if not result['ok']:
             self.chat.event(sid, 'runtime/status', {
                 'turnId': self.chat.session(sid).get('turn_id'),

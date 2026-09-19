@@ -67,12 +67,27 @@ def native_prompt(scout):
     web = ('按 search-policy.md 用受控搜索发现来源，add_url 保存正文后才能引用。' if scout['search_channels']
            else ('本轮允许联网但没有受控搜索渠道：只能用 add_url 保存任务里给出的 URL。' if scout['allow_web']
                  else '本轮未允许联网，只读取已登记的来源。'))
-    return (f"你是本报告 {scout['slot_id']} 槽位的 Scout。本槽位任务见 task.json 的 assignment；开始时完整读取一次 "
-            "scout-contract.md、reader-contract.json、search-policy.md" + ('、skill.md' if scout['skill'] else '')
-            + "，简短确认已读，之后不再重复读取。已登记来源的清单在 source-index.json，正文用 source_read / source_grep 读取。"
+    packet = {
+        'task.json': dump({key: scout[key] for key in ('slot_id', 'assignment', 'period', 'time_context', 'created', 'allow_web', 'budget', 'research_handoff')}),
+        'scout-contract.md': scout['contract'], 'reader-contract.json': dump(scout['reader_contract']),
+        'search-policy.md': scout['search_note'], 'skill.md': scout['skill'],
+        'source-index.json': dump(scout['sources']),
+    }
+    included, deferred, size = [], [], 0
+    for name, value in packet.items():
+        if not value: continue
+        if len(value) <= 6000 and size + len(value) <= 14000:
+            included.append('\n--- ' + name + ' ---\n' + value); size += len(value)
+        else: deferred.append(name)
+    return (f"你是本报告 {scout['slot_id']} 槽位的 Scout。以下是冻结任务包内容，已内联部分无需再次 packet_read。"
+            + ('开始时完整读取尚未内联的文件：' + '、'.join(deferred) + '。' if deferred else '')
+            + "已登记来源正文用 source_read / source_grep 读取；先定位再读完整相关部分，单次最多 24000 字符，需要时继续读取。"
             + web
-            + "预算以工具返回的 remaining 为准，所有 Scout 共用，不是每人一份；出现 budget_exhausted 时停止新增检索，保留已有证据交接。"
-            + "完成后调用 submit_scout_result 提交结果（结构见 scout.schema.json），通过即结束；不要把结果 JSON 写进回复正文。")
+            + "预算以工具返回的 remaining 为准，所有 Scout 共用；额度耗尽后保留已有证据与具体缺口。"
+            + "每读完相关段落就调用 record_evidence：稳定 id、source_id、source_hash、单一行段 locator、短逐字 quote、facts/conflicts/coverage_status/claim_ids。"
+            + "运行器取 excerpt；通过项已保存，只重交 rejected 条目。自动重定位后检查返回原文是否完整，必要时补读表头脚注再修正同一 id。"
+            + "最终 submit_scout_result 只交 gaps/search_summary/retrieval_notes，不重交 sources；不要把结果 JSON 写进回复正文。"
+            + ''.join(included))
 
 
 def host_prompt(store, scout, folder, backend):
@@ -107,10 +122,10 @@ def host_prompt(store, scout, folder, backend):
     result = folder / 'result.json'
     return (f"你是本报告 {scout['slot_id']} 槽位的 Scout，工作目录 {folder}，只在这里写文件。本槽位任务见 {folder / 'task.json'} 的 assignment；"
             f"开始时完整读取一次 {folder / 'scout-contract.md'}、{folder / 'reader-contract.json'}{skill}，简短确认已读。"
-            f"已登记来源清单在 {folder / 'source-index.json'}；正文用 `{tool} read-source --id SOURCE_ID --start-line 1 --end-line 400 --max-chars 60000` 读取，"
+            f"已登记来源清单在 {folder / 'source-index.json'}；正文用 `{tool} read-source --id SOURCE_ID --start-line 1 --end-line 400 --max-chars 24000` 读取，"
             f"PDF 页面用 `{tool} render-source --id SOURCE_ID --pages 1 3` 渲染后读图。{web}"
             "预算以工具返回的 remaining 为准，所有 Scout 共用；出现 budget_exhausted 时停止新增检索，保留已有证据交接。"
-            f"把结果按 {folder / 'scout.schema.json'} 写到 {result}（绝对路径），然后用 "
+            f"每读完一份来源就更新结果文件中该来源的证据，避免最后凭记忆抄写；尚不提供 record_evidence 时保留 excerpt 逐字与准确行号。把结果按 {folder / 'scout.schema.json'} 写到 {result}（绝对路径），然后用 "
             f"`{tool} join-scouts --run {run_id} --files {quote_path(result, backend)}` 自检，报错就按错误修正。"
             "最终回复约 200 字以内：状态、核心发现与缺口、结果文件路径。")
 

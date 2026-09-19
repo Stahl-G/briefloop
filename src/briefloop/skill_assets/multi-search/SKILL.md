@@ -17,4 +17,4 @@ description: 使用本轮允许渠道发现来源、保存正文并按具体缺�
 
 所有Scout共用硬预算；受控search失败也计次，跨渠道同URL与正文复用既有缓存。原生搜索调用数无法可靠观测时为未知，不能加进“全部可控”计数。budget_exhausted时停止受控新增请求并交接，不能绕到其他渠道耗用同一个已耗尽额度。
 
-交接：真实 source_id、指向所在行/页的 locator、原文逐字的 excerpt、重要事实/冲突、覆盖缺口和实际发现渠道；证据足够就停止，不因剩余额度继续堆转载。不改写原件、不安排递归generate。独立Reviewer只读取已保存材料。
+随读随记证据；若工具提供 record_evidence，以 source_id/source_hash、单一行段 locator、短逐字 quote 交给运行器截取原文，只修正未接纳条目，最后仅提交缺口与检索小结；否则在槽位结果中增量保留逐字 excerpt。交接：真实 source_id、指向所在行/页的 locator、原文逐字的 excerpt、重要事实/冲突、覆盖缺口和实际发现渠道；证据足够就停止，不因剩余额度继续堆转载。不改写原件、不安排递归generate。独立Reviewer只读取已保存材料。

@@ -11,7 +11,9 @@ found) and checked for excerpt fidelity on every backend.
       --backends briefloop-native,opencode --budget 8,40,10 --repeat 1
 """
 import argparse
+import getpass
 import json
+import os
 import shutil
 import sqlite3
 import sys
@@ -136,13 +138,32 @@ def main():
     parser.add_argument('--backends', default='briefloop-native,opencode')
     parser.add_argument('--budget', default='', help='search_requests,candidate_urls,source_pages per leg')
     parser.add_argument('--repeat', type=int, default=1)
+    parser.add_argument('--prompt-key', action='store_true', help='在终端隐藏输入 OPENCODE_API_KEY，只放入本进程环境')
+    parser.add_argument('--output', type=Path, help='保存到新 JSONL 文件；拒绝覆盖已有结果')
     args = parser.parse_args()
     budget = [int(x) for x in args.budget.split(',')] if args.budget else None
-    for backend in args.backends.split(','):
-        for slot in args.slots.split(','):
-            for i in range(args.repeat):
-                print(json.dumps(run_leg(Path(args.workspace).resolve(), args.job, slot.strip(), backend.strip(),
-                                         args.model, args.variant, budget, i), ensure_ascii=False), flush=True)
+    if args.prompt_key:
+        if not sys.stdin.isatty():parser.error('--prompt-key 只能在交互终端使用')
+        if not args.model.startswith('opencode-go/'):
+            parser.error('--prompt-key 用于 opencode-go 模型；其他提供商使用对应环境变量')
+        key = getpass.getpass('OPENCODE_API_KEY（隐藏输入，不保存）：').strip()
+        if not key:parser.error('API Key 不能为空')
+        os.environ['OPENCODE_API_KEY'] = key
+        del key
+    output = args.output.open('x', encoding='utf-8') if args.output else None
+    try:
+        for backend in args.backends.split(','):
+            for slot in args.slots.split(','):
+                for i in range(args.repeat):
+                    row = run_leg(Path(args.workspace).resolve(), args.job, slot.strip(), backend.strip(),
+                                  args.model, args.variant, budget, i)
+                    line = json.dumps(row, ensure_ascii=False)
+                    if output:
+                        output.write(line + '\n'); output.flush()
+                    print(line, flush=True)
+    finally:
+        if output:output.close()
+        if args.prompt_key:os.environ.pop('OPENCODE_API_KEY', None)
 
 
 if __name__ == '__main__':

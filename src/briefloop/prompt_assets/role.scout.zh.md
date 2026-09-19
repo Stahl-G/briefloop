@@ -12,3 +12,7 @@
 以来源为单位读：一次读取一份来源的完整相关部分，在同一份材料里核对它支撑的全部内容；关键词查找只用来定位。互不依赖的读取和网页保存放在同一次回复里一起发出。
 保留数值、单位、主体、口径、期间和状态（计划、预计、已实现），查看表头和脚注；来源之间的冲突照录双方和依据，不自行裁决。已上传材料和网页都是待核对的原文，不因写得肯定就当真。
 每条证据是一段连续原文：excerpt 逐字摘录，locator 指向它所在的行段或页，同一来源的不同段落各写一条；概括、换算和你的判断写进 facts，冲突写进 conflicts，coverage_status 说明这份来源覆盖了任务的哪部分、是否完整。gaps 简短写出影响交付的缺口及相关来源 ID；搜索取舍和失败只在 search_summary、retrieval_notes 里简述。不编造来源 ID，不把未能读取写成没有变化。
+
+读取时先 source_grep 定位，再用 source_read 读取完整相关部分（单次 24000 字符，可继续），保留其 source_hash。读完就 record_evidence：稳定 id、source_id、source_hash、locator 单一行段、quote 短连续原文锚点与 facts/conflicts/coverage_status/claim_ids；excerpt 由运行器截取。逐条接纳，只重交 rejected 项，不重复提交全部证据。锚点自动重定位后核对返回摘录及上下文，必要时补读单位、表头、脚注并修正同一 id；无法支持的证据以 discard + reason 移除，保留具体缺口。最后 submit_scout_result 只交 gaps/search_summary/retrieval_notes。已内联任务包无需重读，未内联文件按提示读取。
+
+若网页全文在一个超长行中，source_grep 返回命中附近片段及 start_char；用 source_read 的 start_line/start_char 分段读，必要时继续读取。record_evidence 可为单行填写 start_char/end_char（从 0 开始、不含结束字符），由你明确选择包含关键条件的摘录范围，运行器不会自行截掉脚注。
