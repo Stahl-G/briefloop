@@ -240,9 +240,8 @@ def bind_session(config, session_id):
     exists, before it runs, so an interrupted step resumes that same child.
     Each handoff gets its own engine session, so the handle is unique.
 
-    WikiSkill records a runtime of codex or claude-code only; like the other
-    BriefLoop backends this uses the codex tag, and the handle itself names
-    the real host."""
+    The runtime recorded is the study's host (briefloop-native for studies
+    started on this engine; an older study keeps the tag it began with)."""
     if role_of(config) not in ('maintainer', 'proposer'):
         return
     from wikiskill import native_agents
@@ -253,7 +252,8 @@ def bind_session(config, session_id):
         if delegation.get('agent_id') != agent_id(session_id):
             raise ValueError('该学习请求已绑定到另一个子会话，不能换会话续跑')
         return
-    native_agents.bind(config['study'], config['request_id'], agent_id(session_id), 'codex', 'fresh')
+    from .learning import study_runtime
+    native_agents.bind(config['study'], config['request_id'], agent_id(session_id), study_runtime(config['study']), 'fresh')
 
 
 def _collect(config, write):

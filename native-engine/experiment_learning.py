@@ -56,7 +56,7 @@ def run_leg(source, feedback_ids, backend, model, variant, index):
         root = store.root / 'jobs' / jid
         root.mkdir(parents=True, exist_ok=True)
         study = root / 'study'
-        feedback_loop.begin(study, feedback=feedback, rounds=1)
+        feedback_loop.begin(study, feedback=feedback, rounds=1, runtime=backend)
         store.set_meta('last_study', str(study))
         steps = []
         for phase in ('maintainer', 'proposer'):

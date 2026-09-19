@@ -93,15 +93,25 @@ def _sync_wiki(store,study):
     wiki_changed(store,text)
 
 
+def study_runtime(study, default='codex'):
+    """The host a study records its learning children under. New studies name
+    the real backend; a study started before that keeps its original tag so it
+    still resumes."""
+    from wikiskill import product
+    if not (Path(study)/'config.json').exists():return default
+    return product._load(Path(study).resolve())['config'].get('agent_runtime') or default
+
+
 def _role(store,runtime,job,study,round_number,phase):
-    dispatch=native_agents.dispatch(study,'codex')
+    host=study_runtime(study,json.loads(job['payload']).get('agent_backend','codex'))
+    dispatch=native_agents.dispatch(study,host)
     handoffs=dispatch.get('handoffs',[])
     if not handoffs:
         from wikiskill import product
         failed=product.status(study).get('failed_requests',[])
         if failed:
             for request in failed:product.retry(study,request)
-            dispatch=native_agents.dispatch(study,'codex');handoffs=dispatch.get('handoffs',[])
+            dispatch=native_agents.dispatch(study,host);handoffs=dispatch.get('handoffs',[])
     if not handoffs:raise RuntimeError('没有可执行的学习任务，请查看 WikiSkill 状态')
     stage=store.root/'jobs'/job['id']/f"{round_number}-{phase}-{handoffs[0]['request_id']}";stage.mkdir(parents=True,exist_ok=True)
     (stage/'handoffs.json').write_text(dump(dispatch))
@@ -127,12 +137,12 @@ def _role(store,runtime,job,study,round_number,phase):
         return
     command=agent_command('wikiskill',backend=backend)
     common=COMMON if backend=='codex' else COMMON_OPENCODE
-    # WikiSkill's runtime tag is bookkeeping only (its RUNTIMES has no opencode
-    # entry); real child ids still land in agents.json from actual handles.
+    # The study records the real host (study_runtime); child ids are the
+    # actual handles the host returns.
     prompt=common+f'''
 这是 WikiSkill 的 {phase} 学习步骤。本轮可演化角色为 {json.loads(job['payload'])['targets']}；把这些目标及本轮实际反馈一起传给对应子 agent，技能应明确适用角色和方法，不改评分规则。读取 {stage/'handoffs.json'}，为每个 handoff 调用实际原生子 agent。
 子 agent 读取指定 role.md 和 payload.json，不继承你的协调上下文。Maintainer 应保留观察与推断区别、适用条件、原文依据；参考反馈中的 source.path 时相对 {store.root}。
-先用真实返回的句柄登记：`{command} bind-agent {quote_path(study,backend)} --request REQUEST_ID --agent-id ACTUAL_ID --runtime codex --context fresh`。
+先用真实返回的句柄登记：`{command} bind-agent {quote_path(study,backend)} --request REQUEST_ID --agent-id ACTUAL_ID --runtime {host} --context fresh`。
 等待子 agent 完成后调用 `{command} collect {quote_path(study,backend)} --request REQUEST_ID`。
 如果 handoff 已经有 delegation，先核对那个真实句柄和已有结果，不重新创建。
 把实际 id、role、status 写到 agents.json。仅完成这一个 handoff 步骤，不启动下一轮、不擅自做比较或启用。
@@ -404,7 +414,10 @@ def learn(store,runtime,job):
     rounds=max(payload['k'],2) if requirement_sources else payload['k']
     if rounds>_budget(payload)['rounds_with_explicit_requirement']:
         raise LearningBudgetExhausted('学习轮数超过确认的上限，未开始；请重新确认后发起')
-    feedback_loop.begin(study,feedback=feedback,skill=skill_path,rounds=rounds,previous=previous,**({'requirement_sources':requirement_sources} if requirement_sources else {}))
+    # WikiSkill records the host that runs the learning children. A study that
+    # already exists keeps the tag it was started with (resume must not change it).
+    host=study_runtime(study) if (study/'config.json').exists() else __import__('briefloop.backends',fromlist=['validate_backend']).validate_backend(payload.get('agent_backend','codex'))
+    feedback_loop.begin(study,feedback=feedback,skill=skill_path,rounds=rounds,previous=previous,runtime=host,**({'requirement_sources':requirement_sources} if requirement_sources else {}))
     # Only this worker writes the workspace's Wiki; one study at a time.
     store.set_meta('last_study',str(study))
     state=feedback_loop.work(study)
