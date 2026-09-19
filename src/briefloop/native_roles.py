@@ -600,10 +600,13 @@ def _scout_web_tools(channels):
 
 SCOUT_SUBMIT = {
     'name': 'submit_scout_result', 'label': '提交研究结果', 'settles': True,
-    'description': '提交本槽位的研究结果（结构见 scout.schema.json）：sources 每条含 source_id、locator、excerpt（原文逐字）、facts、conflicts、coverage_status、claim_ids；gaps；search_summary；retrieval_notes。运行器校验结构、来源登记与摘录，通过即保存并结束。',
-    'guide': '提交研究结果（结构见 scout.schema.json）；excerpt 必须是原文逐字、locator 指向其行号，当场校验，未通过按错误修正后重交。',
+    'description': '提交本槽位的研究结果（结构见 scout.schema.json）：sources 每条是一段证据，含 source_id、locator、excerpt（原文逐字）、facts、conflicts、coverage_status、claim_ids，同一来源的不同段落各写一条；gaps；search_summary；retrieval_notes。运行器校验结构、来源登记与摘录，通过即保存并结束。',
+    'guide': '提交研究结果（结构见 scout.schema.json）。每条证据一段连续原文：excerpt 逐字摘录，locator 写成 line 12-18 这样的单一行段并只覆盖这段；同一来源的其他段落另起一条。当场校验，未通过按错误修正后重交。',
     'parameters': {'type': 'object', 'required': ['sources', 'gaps'], 'additionalProperties': False,
-                   'properties': {'sources': {'type': 'array', 'items': {'type': 'object'}},
+                   'properties': {'sources': {'type': 'array', 'items': {'type': 'object', 'properties': {
+                       'source_id': {'type': 'string'},
+                       'locator': {'type': 'string', 'description': '单一行段或页码，如 line 12-18、page 3'},
+                       'excerpt': {'type': 'string', 'description': '该行段内的原文逐字摘录'}}}},
                                   'gaps': {'type': 'array', 'items': {'type': 'string'}},
                                   'search_summary': {'type': 'string'},
                                   'retrieval_notes': {'type': 'array', 'items': {'type': 'object'}}}},

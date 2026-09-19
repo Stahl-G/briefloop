@@ -72,21 +72,27 @@ def join_scouts(store, paths, *, run_id=None, round_id=None, slots=None):
 
 _LINE_PREFIX=re.compile(r'(?m)^\s*\d+:\s?')
 _SPLIT=re.compile(r'…+|\.{3,}')
-_SPACE=re.compile(r'\s+')
+# Whitespace and inline formatting (Markdown emphasis, code ticks) are not
+# content; quote styles are normalized. Words, numbers and order must match.
+_NOISE=re.compile(r'[\s*`]+')
+_QUOTES=str.maketrans({'“':'"','”':'"','„':'"','‘':"'",'’':"'",'「':'"','」':'"'})
 _LOCATOR_SLACK=3
+_LOCATOR_SPAN=60
 
 
 def _squash(text):
-    return _SPACE.sub('',text)
+    return _NOISE.sub('',text.translate(_QUOTES))
 
 
 def evidence_errors(store,run_id,result):
     """Evidence integrity of one Scout result, beyond its schema.
 
-    Each excerpt must be verbatim source text (whitespace aside; "…" may join
-    pieces of one passage; line-number prefixes copied from a numbered view are
-    ignored), and a line locator must point at where it is (a few lines of
-    slack). A paraphrase belongs in facts. Returns a list of messages.
+    Each excerpt must be verbatim source text (whitespace, emphasis marks and
+    quote styles aside; "…" may join pieces of one passage; line-number
+    prefixes copied from a numbered view are ignored), and a line locator must
+    point at where it is (a few lines of slack) without spanning a whole
+    section. A paraphrase belongs in facts; another passage of the same source
+    is another entry. Returns a list of messages.
     """
     errors=[];texts={}
     for position,item in enumerate(result.sources):
@@ -107,8 +113,11 @@ def evidence_errors(store,run_id,result):
         pieces=[piece for piece in pieces if piece]
         match=_LOCATOR_RANGE.fullmatch(locator)
         if match and match.group(1).lower()=='line':
+            first,last=int(match.group(2)),int(match.group(3) or match.group(2))
+            if last-first+1>_LOCATOR_SPAN:
+                errors.append(where+f' 的 locator 跨 {last-first+1} 行：同一来源的不同段落各写一条，locator 只覆盖该条摘录所在的行');continue
             lines=text.splitlines()
-            start=max(1,int(match.group(2))-_LOCATOR_SLACK);end=int(match.group(3) or match.group(2))+_LOCATOR_SLACK
+            start=max(1,first-_LOCATOR_SLACK);end=last+_LOCATOR_SLACK
             window=_squash('\n'.join(lines[start-1:end]))
             if not all(piece in window for piece in pieces):
                 whole=_squash(text)

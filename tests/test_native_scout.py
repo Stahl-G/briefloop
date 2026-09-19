@@ -55,6 +55,13 @@ def test_excerpts_must_be_verbatim_and_where_the_locator_points(tmp_path):
     wrong = evidence_errors(store, run_id, ScoutResult.model_validate(
         {'sources': [_evidence(far_id, excerpt='Later note on cash.', locator='line 1-2')]}))
     assert wrong and '不在 line 1-2 附近' in wrong[0]
+    assert '跨 80 行' in evidence_errors(store, run_id, ScoutResult.model_validate(
+        {'sources': [_evidence(far_id, excerpt='Later note on cash.', locator='line 1-80')]}))[0]
+    # Emphasis marks and quote styles are formatting, not content.
+    styled = store.add_source('Styled', 'Each entered an amendment (the “**Amendment**”) on Sept. 1.\n')['id']
+    store.attach_source(run_id, styled)
+    assert evidence_errors(store, run_id, ScoutResult.model_validate({'sources': [_evidence(
+        styled, locator='line 1', excerpt='Each entered an amendment (the "Amendment") on Sept. 1.')]})) == []
     assert '不可解析' in check(locator='second paragraph')[0]
     assert check(locator='', excerpt='') == []
 
@@ -95,7 +102,7 @@ def test_packet_prompt_and_system_prompt_name_only_native_tools(tmp_path):
     assert 'submit_scout_result' in prompt and 'source_read' in prompt and 'scout-2' in prompt
     assert 'briefloop' not in prompt.lower().replace('本报告', '') and str(tmp_path) not in prompt
     text = system_prompt('scout')['text']
-    assert '研究检索（Scout）' in text and 'excerpt 是原文逐字摘录' in text
+    assert '研究检索（Scout）' in text and 'excerpt 逐字摘录' in text
 
 
 def test_web_search_and_add_url_spend_the_run_budget(tmp_path, monkeypatch):
