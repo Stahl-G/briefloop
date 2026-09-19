@@ -367,7 +367,7 @@ test("provider errors that exhaust retries end once as failed", async () => {
   script(reply.status(500));
   const { session_id } = await reviewer();
   const evts = await turn(session_id, "e-500", { idle_timeout_s: 30 });
-  assert.equal(provider.requests.length, 4, "one request plus three retries");
+  assert.equal(provider.requests.length, 7, "one request plus six retries");
   assert.equal(ends(evts).length, 1);
   assert.equal(ends(evts)[0].status, "failed");
   assert.match(ends(evts)[0].error, /500/);

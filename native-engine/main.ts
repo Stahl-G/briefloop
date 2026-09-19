@@ -400,7 +400,9 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
   const settingsManager = SettingsManager.inMemory({
     retry: {
       enabled: true,
-      maxRetries: 3,
+      // 2+4+…+64 s: rides out a provider or network outage of about two
+      // minutes, which otherwise throws away a long run's work.
+      maxRetries: 6,
       baseDelayMs: Number.isFinite(retryDelay) ? Math.max(10, Math.min(10_000, retryDelay)) : 2000,
     },
     compaction: { enabled: false },

@@ -74,7 +74,13 @@ def run_leg(source, job_id, slot, backend, model, variant, budget, index):
     outcome = {'backend': backend, 'slot': slot, 'repeat': index, 'work': str(work)}
     try:
         jid = uid('job')
-        payload = {'run_id': run_id, 'agent_backend': backend, 'runtime': {'model': model, 'model_variant': variant}}
+        # The newest generate job of a run freezes its search policy (search_policy.for_run),
+        # so this job carries the original one: its snapshot, else its frozen provider.
+        original_input = json.loads((original_job / 'input.json').read_text(encoding='utf-8'))
+        from briefloop.search_policy import resolve
+        policy = original_input.get('search_policy') or resolve(primary=original_input.get('search_provider') or 'native')
+        payload = {'run_id': run_id, 'agent_backend': backend, 'search_policy': policy,
+                   'runtime': {'model': model, 'model_variant': variant}}
         with store.tx() as c:
             # Written directly: the main-chain gate still refuses native generate jobs.
             c.execute("INSERT INTO jobs(id,kind,payload,status,result,error,created,updated) VALUES(?,?,?,?,?,?,datetime('now'),datetime('now'))",
