@@ -190,11 +190,15 @@ def test_incremental_identity_relocation_and_discard(tmp_path):
 def test_read_bound_and_persisted_source_hash(tmp_path):
     store, run_id, sid = _run(tmp_path)
     config = _config(store, run_id, 'slot')
-    long = store.add_source('Long', 'x'*30000)['id']; store.attach_source(run_id, long)
+    long = store.add_source('Long', 'x'*70000)['id']; store.attach_source(run_id, long)
     result = run_tool(store, config, 'source_read', {'source_id': long})
     text = result['content'][0]['text']
-    assert 'source_hash: ' + content_hash('x'*30000) in text
-    assert '1: ' + 'x'*24000 in text and 'x'*24001 not in text
+    assert 'source_hash: ' + content_hash('x'*70000) in text
+    assert '1: ' + 'x'*60000 in text and 'x'*60001 not in text
+    # The same explicit read window as the host remains available, without grep.
+    short = run_tool(store, config, 'source_read', {'source_id': long, 'max_chars': 1000})
+    assert '1: ' + 'x'*1000 in short['content'][0]['text']
+    assert 'x'*1001 not in short['content'][0]['text']
 
 
 def test_harness_requires_a_run_and_slot_for_a_scout():
@@ -283,7 +287,7 @@ def test_long_single_line_can_be_found_read_and_recorded_without_copying_the_who
     config = _config(store, run_id, 'long')
     grep = run_tool(store, config, 'source_grep', {'source_id': sid, 'pattern': 'Revenue'})
     assert 'start_char=29900' in grep['content'][0]['text'] and 'Revenue rose' in grep['content'][0]['text']
-    read = run_tool(store, config, 'source_read', {'source_id': sid, 'start_line': 1, 'start_char': 30000})
+    read = run_tool(store, config, 'source_read', {'source_id': sid, 'start_line': 1, 'start_char': 30000, 'max_chars': 24000})
     assert 'Revenue rose' in read['content'][0]['text'] and 'start_char=54000' in read['content'][0]['text']
     value = item(sid, source_hash=content_hash(line), locator='line 1', start_char=30000, end_char=30000+len(phrase))
     response = run_tool(store, config, 'record_evidence', {'items': [value]})

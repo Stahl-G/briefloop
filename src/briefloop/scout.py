@@ -81,10 +81,10 @@ def native_prompt(scout):
         else: deferred.append(name)
     return (f"你是本报告 {scout['slot_id']} 槽位的 Scout。以下是冻结任务包内容，已内联部分无需再次 packet_read。"
             + ('开始时完整读取尚未内联的文件：' + '、'.join(deferred) + '。' if deferred else '')
-            + "已登记来源正文用 source_read / source_grep 读取；先定位再读完整相关部分，单次最多 24000 字符，需要时继续读取。"
+            + "已登记来源正文用 source_read 直接读取，source_grep 按需用于定位，不是必经步骤；以来源为单位读取完整相关部分，单次最多 60000 字符，需要时继续读取。"
             + web
             + "预算以工具返回的 remaining 为准，所有 Scout 共用；额度耗尽后保留已有证据与具体缺口。"
-            + "每读完相关段落就调用 record_evidence：稳定 id、source_id、source_hash、单一行段 locator、短逐字 quote、facts/conflicts/coverage_status/claim_ids。"
+            + "证据通过 record_evidence 保存，可按来源批量记录：稳定 id、source_id、source_hash、单一行段 locator、短逐字 quote、facts/conflicts/coverage_status/claim_ids。记录时机按研究需要决定，不要求每读一段就中断研究提交。"
             + "运行器取 excerpt；通过项已保存，只重交 rejected 条目。自动重定位后检查返回原文是否完整，必要时补读表头脚注再修正同一 id。"
             + "最终 submit_scout_result 只交 gaps/search_summary/retrieval_notes，不重交 sources；不要把结果 JSON 写进回复正文。"
             + ''.join(included))
@@ -122,10 +122,10 @@ def host_prompt(store, scout, folder, backend):
     result = folder / 'result.json'
     return (f"你是本报告 {scout['slot_id']} 槽位的 Scout，工作目录 {folder}，只在这里写文件。本槽位任务见 {folder / 'task.json'} 的 assignment；"
             f"开始时完整读取一次 {folder / 'scout-contract.md'}、{folder / 'reader-contract.json'}{skill}，简短确认已读。"
-            f"已登记来源清单在 {folder / 'source-index.json'}；正文用 `{tool} read-source --id SOURCE_ID --start-line 1 --end-line 400 --max-chars 24000` 读取，"
+            f"已登记来源清单在 {folder / 'source-index.json'}；正文用 `{tool} read-source --id SOURCE_ID --start-line 1 --end-line 400 --max-chars 60000` 读取，"
             f"PDF 页面用 `{tool} render-source --id SOURCE_ID --pages 1 3` 渲染后读图。{web}"
             "预算以工具返回的 remaining 为准，所有 Scout 共用；出现 budget_exhausted 时停止新增检索，保留已有证据交接。"
-            f"每读完一份来源就更新结果文件中该来源的证据，避免最后凭记忆抄写；尚不提供 record_evidence 时保留 excerpt 逐字与准确行号。把结果按 {folder / 'scout.schema.json'} 写到 {result}（绝对路径），然后用 "
+            f"把结果按 {folder / 'scout.schema.json'} 写到 {result}（绝对路径），然后用 "
             f"`{tool} join-scouts --run {run_id} --files {quote_path(result, backend)}` 自检，报错就按错误修正。"
             "最终回复约 200 字以内：状态、核心发现与缺口、结果文件路径。")
 

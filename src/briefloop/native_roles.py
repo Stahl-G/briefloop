@@ -381,7 +381,7 @@ COMPARISON_TOOLS = [
 
 # -- scout ------------------------------------------------------------------
 
-READ_CHARS = 24_000
+READ_CHARS = 60_000
 
 
 def scout_packet(store, task, folder):
@@ -567,8 +567,8 @@ def submit_scout_result(store, config, args):
 _DATE = {'type': 'string', 'pattern': r'^\d{4}-\d{2}-\d{2}$'}
 SCOUT_READ_TOOLS = [
     {'name': 'source_read', 'label': '读取来源',
-     'description': '读取一份本轮已登记来源的正文，带行号；一次最多 24000 字符，可用 start_line/end_line 定位。',
-     'guide': '读取本轮已登记来源的正文（带行号，单次最多 24000 字符）；用返回的 source_hash、行号和短原文锚点调用 record_evidence；原文摘录由运行器截取。',
+     'description': '读取一份本轮已登记来源的正文，带行号；一次最多 60000 字符，可用 start_line/end_line 定位。',
+     'guide': '直接读取本轮已登记来源的完整相关部分（带行号，单次最多 60000 字符，可继续）；source_grep 仅在需要定位时使用。用返回的 source_hash、行号和短原文锚点记录证据，原文摘录由运行器截取。',
      'parameters': {'type': 'object', 'required': ['source_id'], 'additionalProperties': False,
                     'properties': {'source_id': {'type': 'string'},
                                    'start_line': {'type': 'integer', 'minimum': 1},
@@ -630,8 +630,8 @@ def record_evidence(store, config, args):
 
 SCOUT_RECORD = {
     'name': 'record_evidence', 'label': '记录证据', 'sequential': True,
-    'description': '读完相关段落立即记录：运行器按 source_hash、行段及短原文锚点截取 excerpt。稳定 id 用于单条修正或移除；通过的证据保留，只重交 rejected 项。',
-    'guide': '随读随记，互不依赖的条目可批量提交。quote 是 8–240 字符连续逐字锚点；source_hash 取 source_read 返回值。检查返回摘录是否包含单位、表头和脚注；relocated=true 时核对新行段上下文。长单行可用 start_char/end_char 明确选取所需片段（从 0 开始、不含结束字符，最多 4000 字符），不要切掉关键限定。不再整份抄写 excerpt。',
+    'description': '记录已读取的证据，可按来源批量提交，不强制逐段中断阅读：运行器按 source_hash、行段及短原文锚点截取 excerpt。稳定 id 用于单条修正或移除；通过的证据保留，只重交 rejected 项。',
+    'guide': '按研究需要记录，互不依赖的条目可批量提交。quote 是 8–240 字符连续逐字锚点；source_hash 取 source_read 返回值。检查返回摘录是否包含单位、表头和脚注；relocated=true 时核对新行段上下文。长单行可用 start_char/end_char 明确选取所需片段（从 0 开始、不含结束字符，最多 4000 字符），不要切掉关键限定。不再整份抄写 excerpt。',
     'parameters': {'type': 'object', 'additionalProperties': False, 'properties': {
         'items': {'type': 'array', 'maxItems': 16, 'items': {'type': 'object',
             'required': ['id', 'source_id', 'source_hash', 'locator', 'quote', 'facts', 'coverage_status'],
