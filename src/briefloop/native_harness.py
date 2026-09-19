@@ -203,7 +203,7 @@ class NativeHarness:
             'session_id': sid,
             'role': role,
             'packet_root': config.get('packet_root') or config['review_root'],
-            'runner_tools': runner_tool_specs(role),
+            'runner_tools': runner_tool_specs(role, config.get('evaluation_mode')),
             'session_dir': str(cwd),
             'model': config['model'],
             'thinking': _thinking(config),

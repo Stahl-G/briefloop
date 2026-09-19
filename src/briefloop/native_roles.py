@@ -10,7 +10,9 @@ the engine. Users see one backend; roles are internal.
 reviewer  - frozen review packet; submit_review is engine-local (review.py
             admits it through the `submit` event).
 evaluator - frozen assessment packet (evaluator_packet below); renders PDF
-            pages on request and submits the assessment for admission.
+            pages on request and submits the assessment for admission. In
+            pairwise mode (learning's gate) it compares trial drafts over a
+            comparison packet and submits a comparison instead.
 maintainer, proposer - WikiSkill learning steps. A host-based coordinator
             spawns a subagent per handoff and binds/collects it; here the
             runner does that bookkeeping and the session gets a frozen copy
@@ -324,16 +326,68 @@ PROPOSER_TOOLS = [
      'handler': submit_proposal},
 ]
 
+# -- pairwise Evaluator (learning's gate) -----------------------------------
+
+def comparison_packet(store, comparisons, folder):
+    """Freeze a learning comparison: the input as written for every host, each
+    case's two drafts as plain text, and the text of the sources the cases use."""
+    packet = Path(folder) / 'packet'
+    packet.mkdir(parents=True, exist_ok=True)
+    (packet / 'input.json').write_text(json.dumps(comparisons, ensure_ascii=False, indent=1), encoding='utf-8')
+    sources = set()
+    for case in comparisons:
+        directory = packet / 'cases' / case['case_id']
+        directory.mkdir(parents=True, exist_ok=True)
+        for side in ('baseline', 'candidate'):
+            (directory / f'{side}.md').write_text(case[side].get('markdown') or '', encoding='utf-8')
+        sources.update(case.get('source_ids') or [])
+    for sid in sorted(sources):
+        try:
+            (packet / 'sources').mkdir(exist_ok=True)
+            (packet / 'sources' / f'{sid}.txt').write_text(store.source_text(sid), encoding='utf-8')
+        except (ValueError, OSError):
+            pass
+    return packet
+
+
+def submit_comparison(store, config, args):
+    from .learning import comparison_errors
+    packet = Path(config['packet_root'])
+    comparisons = json.loads((packet / 'input.json').read_text(encoding='utf-8'))
+    result = {'pairs': args.get('pairs'), 'reason': args.get('reason') or ''}
+    error = comparison_errors(result, comparisons)
+    if error:
+        raise ToolError('比较结果未通过校验，修正后重新提交：' + error)
+    _atomic(packet.parent / 'comparison.json', json.dumps(result, ensure_ascii=False, indent=1))
+    return {'content': [{'type': 'text', 'text': '比较结果已通过校验并保存，本次比较结束。'}], 'settle': json.dumps(result, ensure_ascii=False)}
+
+
+COMPARISON_TOOLS = [
+    {'name': 'submit_comparison', 'label': '提交比较结果', 'settles': True,
+     'description': '提交成对比较结果：pairs 对每个案例各一条（case_id、verdict=better/tie/worse、reason、regressions 列表，有明确要求时加 requirement_checks），reason 为整体说明。运行器当场校验，通过即保存并结束。',
+     'guide': '提交比较结果 {pairs:[{case_id, verdict, reason, regressions, requirement_checks?}], reason}；当场校验，通过即结束本次比较。',
+     'parameters': {'type': 'object', 'required': ['pairs', 'reason'], 'additionalProperties': False,
+                    'properties': {'pairs': {'type': 'array', 'items': {'type': 'object'}},
+                                   'reason': {'type': 'string'}}},
+     'handler': submit_comparison},
+]
+
 RUNNER_TOOLS = {'reviewer': [], 'evaluator': EVALUATOR_TOOLS, 'maintainer': MAINTAINER_TOOLS, 'proposer': PROPOSER_TOOLS}
 
 
-def runner_tool_specs(role):
-    return [{key: value for key, value in tool.items() if key != 'handler'} for tool in RUNNER_TOOLS[role]]
+def _tools(role, mode=None):
+    if role == 'evaluator' and mode == 'pairwise':
+        return COMPARISON_TOOLS
+    return RUNNER_TOOLS[role]
+
+
+def runner_tool_specs(role, mode=None):
+    return [{key: value for key, value in tool.items() if key != 'handler'} for tool in _tools(role, mode)]
 
 
 def run_tool(store, config, name, args):
     """Execute a runner tool; returns the engine's tool_result payload."""
-    tool = next((t for t in RUNNER_TOOLS[role_of(config)] if t['name'] == name), None)
+    tool = next((t for t in _tools(role_of(config), config.get('evaluation_mode')) if t['name'] == name), None)
     if tool is None:
         return {'ok': False, 'error': f'本角色没有工具 {name}'}
     try:

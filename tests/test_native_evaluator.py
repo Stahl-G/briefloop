@@ -122,3 +122,37 @@ def test_the_harness_opens_an_evaluator_session_and_answers_its_tool_calls(tmp_p
     assert [r['request_id'] for r in results] == ['tool-1', 'tool-2']
     assert results[0]['ok'] is False and results[1]['ok'] is True and 'settle' in results[1]
     assert (folder / 'assessment.json').is_file()
+
+
+def test_pairwise_comparison_is_frozen_and_checked_against_the_learning_gate(tmp_path):
+    from briefloop.learning import comparison_errors, comparison_prompt
+    from briefloop.native_roles import comparison_packet
+    store, source, brief = _brief(tmp_path)
+    case = {'case_id': 'run_1', 'source_ids': [source['id']], 'requirements': {'objective': 'o'},
+            'baseline': {**brief, 'markdown': 'baseline text'}, 'candidate': {**brief, 'markdown': 'candidate text'},
+            'explicit_requirements': [{'source': 'feedback_1', 'text': '意向不是订单'}]}
+    folder = tmp_path / 'cmp'
+    folder.mkdir()
+    packet = comparison_packet(store, [case], folder)
+    assert (packet / 'cases/run_1/candidate.md').read_text(encoding='utf-8') == 'candidate text'
+    assert 'USD 12 million' in (packet / f"sources/{source['id']}.txt").read_text(encoding='utf-8')
+    prompt = comparison_prompt(store, folder, 'briefloop-native')
+    assert 'submit_comparison' in prompt and str(folder) not in prompt and str(store.root) not in prompt
+    host = comparison_prompt(store, folder, 'codex')
+    assert 'comparison.json' in host and 'submit_comparison' not in host
+
+    good = {'case_id': 'run_1', 'verdict': 'better', 'reason': '候选区分了意向与订单', 'regressions': [],
+            'requirement_checks': [{'source': 'feedback_1', 'fulfilled': True, 'evidence': '第二段'}]}
+    assert comparison_errors({'pairs': [good]}, [case]) is None
+    for broken, needle in ((dict(good, verdict='same'), 'verdict'), (dict(good, regressions=None), 'regressions'),
+                           (dict(good, requirement_checks=[]), 'requirement_checks'), (dict(good, case_id='run_2'), 'case_id')):
+        assert needle in comparison_errors({'pairs': [broken]}, [case])
+    assert 'case_id' in comparison_errors({'pairs': [good, good]}, [case])
+
+    config = {'native_role': 'evaluator', 'evaluation_mode': 'pairwise', 'packet_root': str(packet)}
+    assert [t['name'] for t in runner_tool_specs('evaluator', 'pairwise')] == ['submit_comparison']
+    rejected = run_tool(store, config, 'submit_comparison', {'pairs': [dict(good, verdict='same')], 'reason': 'x'})
+    assert not rejected['ok'] and not (folder / 'comparison.json').exists()
+    assert run_tool(store, config, 'submit_assessment', {})['ok'] is False
+    ok = run_tool(store, config, 'submit_comparison', {'pairs': [good], 'reason': '完成'})
+    assert ok['ok'] and json.loads((folder / 'comparison.json').read_text(encoding='utf-8'))['pairs'][0]['verdict'] == 'better'
