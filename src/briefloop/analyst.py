@@ -9,6 +9,8 @@ from pathlib import Path
 
 from .store import dump
 
+_DEFAULT_SKILL = object()
+
 
 WRITING_GUIDE = '''你是本报告的 Analyst，直接完成可读的中文报告，不再派发研究或评分角色。
 先读 input.json、writing.md、plan.json、research.json，按需要核对 source-index.json 中的原文。
@@ -28,7 +30,7 @@ WRITING_GUIDE = '''你是本报告的 Analyst，直接完成可读的中文报�
 
 
 def packet(store, run_id, folder, *, plan, research, source_ids=None, support=None,
-           base_version=None, feedback=None):
+           base_version=None, feedback=None, skill_override=_DEFAULT_SKILL):
     from .models import BriefDraft, Requirements, ScoutResult
     from .deliverable_spec import resolve, instructions
     from .report_time import instructions as time_instructions
@@ -48,7 +50,7 @@ def packet(store, run_id, folder, *, plan, research, source_ids=None, support=No
     if not {s['source_id'] for s in evidence['sources']} <= set(selected):
         raise ValueError('研究交接引用了写作包之外的来源')
     contract = store.meta('reader_contract:' + run_id) or plan.get('reader_contract')
-    skill = store.one('skills', run['skill_id']) if run.get('skill_id') else None
+    skill = (store.one('skills', run['skill_id']) if run.get('skill_id') else None) if skill_override is _DEFAULT_SKILL else skill_override
     writing = instructions(resolve(req, reader_contract=contract), role='analyst')
     writing += '\n' + time_instructions(req.get('time_context'))
     writing += '\n' + (profile_context(req).get('instructions') or '')
@@ -238,6 +240,8 @@ def submit_draft(store, config, args):
     from .native_roles import _atomic, ToolError
     try:
         path = _output_path(store, config)
+        if config.get('revision') and not (path.parent / 'responses.json').exists():
+            raise ToolError('交修订稿前先用 save_revision_metadata 保存本轮发现处理说明')
         # Older saved calls may use the wrapper; the live tool schema exposes
         # the same root object as draft.schema.json, without JSON-in-a-string.
         raw = args['draft'] if set(args) == {'draft'} else args
@@ -274,11 +278,31 @@ def prepare_data(store, config, args):
 
 
 def run(store, runtime, job, run_id, folder, backend, *, plan, research, source_ids=None,
-        support=None, base_version=None, feedback=None, expected_fingerprint=None):
+        support=None, base_version=None, feedback=None, expected_fingerprint=None, publish=True):
     from .runtime import stage_job
     folder = Path(folder).resolve()
-    frozen = packet(store, run_id, folder, plan=plan, research=research, source_ids=source_ids,
-                    support=support, base_version=base_version, feedback=feedback)
+    override = json.loads(job['payload']).get('skill_override', _DEFAULT_SKILL)
+    identity = {'plan': plan, 'research': research, 'support': support, 'base_version': base_version, 'feedback': feedback,
+                'sources': {sid: store.one('sources', sid)['hash'] for sid in sorted(source_ids if source_ids is not None else set(store.source_ids(run_id)) | set(json.loads(store.one('runs', run_id)['requirements']).get('reference_source_ids') or []))},
+                'requirements': store.one('runs', run_id)['requirements'],
+                'skill': store.one('runs', run_id).get('skill_id') if override is _DEFAULT_SKILL else override}
+    record = folder / 'writing-request.json'
+    folder.mkdir(parents=True, exist_ok=True)
+    if record.exists() and json.loads(record.read_text()) != identity:
+        raise ValueError('已保存写作包的材料、方法或分工已变化，请创建新任务；原稿与包保留')
+    from .native_roles import _atomic
+    _atomic(record, dump(identity))
+    manifest = folder / 'writing-packet.json'
+    if manifest.exists():
+        frozen = {**json.loads(manifest.read_text()), 'root': folder / 'packet'}
+        for name, sha in frozen['files'].items():
+            path = frozen['root'] / name
+            if not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != sha:
+                raise ValueError('已冻结写作材料被修改：' + name + '；原执行记录保留，未调用模型')
+    else:
+        frozen = packet(store, run_id, folder, plan=plan, research=research, source_ids=source_ids,
+                        support=support, base_version=base_version, feedback=feedback, skill_override=override)
+        _atomic(manifest, dump({k: frozen[k] for k in ('fingerprint', 'files')}))
     if expected_fingerprint and frozen['fingerprint'] != expected_fingerprint:
         raise ValueError('写作对照材料指纹变化，未调用模型')
     config = {'role': 'analyst', 'run_id': run_id, 'result_file': str(folder / 'draft.json')}
@@ -299,6 +323,9 @@ def run(store, runtime, job, run_id, folder, backend, *, plan, research, source_
     index = json.loads((frozen['root'] / 'source-index.json').read_text())['sources']
     diagnostics = inspect_draft(value, task['requirements'], store=store,
         allowed_sources={s['source_id'] for s in index if not s['reference_only']})
+    if not publish:
+        (folder / 'draft-diagnostics.json').write_text(dump(diagnostics), encoding='utf-8')
+        return {'draft_saved': True, 'packet_fingerprint': frozen['fingerprint'], 'diagnostics': diagnostics}
     version = store.publish(run_id, value, version_id='brief_' + job['id'].removeprefix('job_') + '_analyst',
                             parent_id=base_version)
     (folder / 'draft-diagnostics.json').write_text(dump(diagnostics), encoding='utf-8')

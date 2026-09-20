@@ -27,6 +27,7 @@ export interface RunnerToolSpec {
   settles?: boolean;
   // Calls that change state or end the run never race another call.
   sequential?: boolean;
+  long_running?: boolean;
 }
 
 export interface RunnerResult {

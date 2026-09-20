@@ -30,7 +30,7 @@ def test_one_declaration_and_unknown_backends_never_claim_the_reviewer():
     assert not any(restricted_review(name) for name in BRIDGE_BACKENDS)
     with pytest.raises(ValueError):
         restricted_review('made-up-host')
-    assert summary()['restricted_review'] == [{'id': 'opencode', 'label': 'Opencode CLI'}]
+    assert summary()['restricted_review'] == [{'id': 'opencode', 'label': 'Opencode CLI'}, {'id':'briefloop-native', 'label':'BriefLoop 内置引擎'}]
 
 
 def test_a_separately_chosen_reviewer_unblocks_a_main_chain_without_one(tmp_path):

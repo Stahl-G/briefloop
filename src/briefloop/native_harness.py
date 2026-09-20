@@ -1,18 +1,18 @@
 """Packet-confined sessions on the BriefLoop-owned native engine.
 
-Unlike the bridge harnesses, the engine has no foreign coding-agent persona or
-toolbelt to negotiate: BriefLoop controls the system prompt, the tool list and
-the session lifecycle directly. One engine, one wire protocol; a role
-(native_roles) picks the prompt layer and the tools. Only packet-confined roles
-run so far (the Reviewer and the Evaluator): a runtime config without a
-read-only packet is refused here, before any model call, instead of falling
-back to a wider permission.
+BriefLoop controls the role prompt, tool list and lifecycle. Interactive chat
+uses scoped business tools. Background roles read only their assigned packet;
+any research, publication or delegation is a separately admitted runner tool.
+The independent Reviewer retains its packet-only allowlist.
 
 The system prompt is BriefLoop's layered contract for the role (agent_prompts);
 the engine appends the guide for the tools it registered. submit_review is
 admitted here with the rules that later save the review; runner tools the role
 declared are executed here when the engine forwards a call (tool_request).
 """
+from contextlib import contextmanager
+from pathlib import Path
+import hashlib
 import json
 import queue
 import re
@@ -52,6 +52,7 @@ class NativeHarness:
         self._cancel_requested = set()
         self._engine_sessions = {}
         self._epoch = {}
+        self._child_runtimes = {}
 
     def list_sessions(self, view='active'):
         return self.chat.sessions(view)
@@ -99,7 +100,9 @@ class NativeHarness:
 
     @staticmethod
     def _config(runtime):
-        value = {'permission': 'read-only', **(runtime or {})}
+        restricted = bool((runtime or {}).get('packet_root') or (runtime or {}).get('review_root'))
+        value = {'permission': 'read-only' if restricted else 'workspace-write', **(runtime or {})}
+        value.setdefault('native_role', 'reviewer' if restricted else 'chat')
         if value.get('backend', 'briefloop-native') != 'briefloop-native':
             raise ValueError('内置引擎会话不能使用其他后端的模型配置')
         value['backend'] = 'briefloop-native'
@@ -107,15 +110,21 @@ class NativeHarness:
         if not isinstance(model, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_./:-]+', model.strip()):
             raise ValueError('内置引擎模型需要 provider/model 形式（如 deepseek/deepseek-v4-pro）')
         value['model'] = model.strip()
-        # Only packet-confined roles run here so far (native_roles): the
+        # Background roles are packet-confined (native_roles): the
         # session itself reads its packet and nothing else; whatever else a
         # role may do (a Scout's metered search and page registration) is a
         # runner tool. Refusing here keeps a misrouted generate/learn job from
         # ever reaching a model with a permission it was not designed for.
         from .native_roles import role_of
         role = role_of(value)
+        if role == 'chat':
+            if value.get('permission') not in ('read-only', 'workspace-write'):
+                raise ValueError('内置引擎仅支持只读或读写工作区业务工具')
+            return value
         if value.get('permission') != 'read-only' or not (value.get('packet_root') or value.get('review_root')):
             raise ValueError('内置引擎当前仅执行只读核查包内的角色任务')
+        if role in ('orchestrator', 'fact_checker') and not (value.get('job_id') and (value.get('run_id') or value.get('template_id')) and value.get('task_kind')):
+            raise ValueError('后台主 Agent 缺少冻结的任务身份')
         if role in ('scout', 'analyst') and not (value.get('run_id') and value.get('result_file')):
             raise ValueError(f'{role.title()} 任务缺少所属报告或结果文件')
         return value
@@ -194,19 +203,25 @@ class NativeHarness:
         # a turn to an unknown session. The caller already holds an event
         # subscription, which keeps the current process from being retired.
         existing = self._engine_sessions.get(sid)
+        identity = hashlib.sha256(json.dumps({k:v for k,v in config.items() if k not in ('attempt_id', 'session_id', 'allow_web', 'discuss_only')}, sort_keys=True).encode()).hexdigest()
         process = self.engine.process
+        previous = self.chat.session(sid).get('thread_id')
+        if existing and process is existing['process'] and (existing.get('identity') != identity or existing.get('session_file') != previous):
+            self.engine.call('session_close', {'session_id': sid}, timeout=15)
+            self._engine_sessions.pop(sid, None)
+            existing = None
         if existing is not None and process is not None and existing['process'] is process:
             return existing
         previous = (existing or {}).get('session_file') or self.chat.session(sid).get('thread_id')
         from .agent_prompts import system_prompt
         from .native_roles import role_of, runner_tool_specs
         role = role_of(config)
-        prompt = system_prompt(role, 'background')
+        prompt = system_prompt(role, 'interactive' if role == 'chat' else 'background')
         params = {
             'system_prompt': prompt['text'],
             'session_id': sid,
             'role': role,
-            'packet_root': config.get('packet_root') or config['review_root'],
+            'packet_root': config.get('packet_root') or config.get('review_root') or str(cwd),
             'runner_tools': runner_tool_specs(role, config.get('evaluation_mode'), config),
             'session_dir': str(cwd),
             'model': config['model'],
@@ -220,7 +235,7 @@ class NativeHarness:
         from .native_roles import bind_session
         # Learning steps record this session as the WikiSkill child before it runs.
         bind_session(config, sid)
-        result = {**self.engine.call('session_create', params, timeout=60), 'process': self.engine.process}
+        result = {**self.engine.call('session_create', params, timeout=60), 'process': self.engine.process, 'identity': identity}
         self._engine_sessions[sid] = result
         coordinator = getattr(self, 'coordinator', None)
         native_id = result.get('session_file') or sid
@@ -257,13 +272,23 @@ class NativeHarness:
             execution = mid
             coordinator = getattr(self, 'coordinator', None)
             config = self._config(message.get('runtime') or session['runtime'])
-            if config.get('native_role') in ('scout', 'analyst'):
-                config = {**config, 'attempt_id': execution}
+            config = {**config, 'attempt_id': execution}
+            if config.get('native_role') == 'chat':
+                config['allow_web'] = bool(message.get('allow_web', False))
+                config['discuss_only'] = message['text'].lstrip().startswith('/discuss')
+                from .chat_tools import chat_instructions
+                context = chat_instructions(self.store, config, allow_web=config['allow_web'], backend=self.backend)
+                context += '\n内置引擎没有 shell 或任意文件写入。workspace_action 直接传 request JSON。修改稿件时使用 action=revise_document、base_version 和完整 editor_document 对象，不传 document_file。普通答复直接写文字，不要求 JSON；正式报告由 generate 提交给后台。内置引擎没有宿主搜索，报告检索使用设置中已授权的受控渠道。'
+            else:
+                context = ''
             if config.get('native_role') == 'scout':
                 from .scout_evidence import begin
                 begin(self.store, config)
                 evidence_open = True
             text = (coordinator.input(sid, message) if coordinator else message).get('prompt') or message['text']
+            text = context + '\n\n' + text if context else text
+            if message.get('source_ids'):
+                text += '\n本轮附件来源 ID：' + json.dumps(message['source_ids'], ensure_ascii=False)
             sink = self.engine.subscribe(execution)
             with self._lock:
                 self.chat.patch_message(mid, status='sending', turn_id=mid)
@@ -282,7 +307,7 @@ class NativeHarness:
                 raise RuntimeError('内置引擎会话创建失败：' + str(exc)) from exc
             self.engine.call('turn_start', {
                 'session_id': sid, 'execution_id': execution, 'prompt': text,
-                'expect_json': True, 'require_submit': True,
+                'expect_json': config.get('native_role') != 'chat', 'require_submit': config.get('native_role') != 'chat',
                 'images': self._visual_inputs(config)}, timeout=30)
             self.chat.event(sid, 'runtime/admission',
                             {'execution_id': execution, 'status': 'accepted'})
@@ -356,7 +381,7 @@ class NativeHarness:
                     # run off it, so a Scout's batched fetches proceed side by
                     # side (Store opens a connection per call); the engine
                     # matches results by request_id.
-                    if self._sequential(config, event.get('tool')):
+                    if self._sequential(config, event.get('tool')) and event.get('tool') not in ('run_scouts', 'write_report'):
                         self._run_tool(sid, config, event)
                     else:
                         threading.Thread(target=self._run_tool, args=(sid, config, event), daemon=True).start()
@@ -381,6 +406,10 @@ class NativeHarness:
             if mid:
                 self.chat.event(sid, 'error', {'message': str(exc)[:300]})
         finally:
+            with self._lock:
+                children = list(self._child_runtimes.get(sid, ()))
+            for runtime in children:
+                runtime.cancel()
             with self._lock:
                 if evidence_open:
                     from .scout_evidence import close
@@ -448,22 +477,45 @@ class NativeHarness:
         specs = runner_tool_specs(role_of(config), config.get('evaluation_mode'), config)
         return any(spec['name'] == name and (spec.get('settles') or spec.get('sequential')) for spec in specs)
 
+    def cancel_requested(self, sid):
+        with self._lock:
+            return self._closed or sid in self._cancel_requested
+
+    @contextmanager
+    def child_runtime(self, sid, runtime):
+        with self._lock:
+            if self.cancel_requested(sid):
+                raise InterruptedError('任务已停止，未启动子任务')
+            self._child_runtimes.setdefault(sid, set()).add(runtime)
+        try:
+            yield runtime
+        finally:
+            with self._lock:
+                self._child_runtimes.get(sid, set()).discard(runtime)
+
     def _run_tool(self, sid, config, event):
         from .native_roles import run_tool
-        if config.get('native_role') in ('scout', 'analyst') and self._sequential(config, event.get('tool')):
+        def invoke():
+            if self.cancel_requested(sid) or self.chat.session(sid).get('turn_id') != config.get('attempt_id'):
+                return {'ok': False, 'error': '本轮已取消或结束，未执行迟到操作'}
+            return run_tool(self.store, {**config, 'session_id': sid, '_harness': self, '_active_attempt': config.get('attempt_id')}, event.get('tool'), event.get('args'))
+        # Short mutations serialize with cancellation. Long child execution must
+        # leave the shared driver lock free for child events and cancellation.
+        if self._sequential(config, event.get('tool')) and event.get('tool') not in ('run_scouts', 'write_report'):
             with self._lock:
-                result = ({'ok': False, 'error': '本轮已取消'} if sid in self._cancel_requested else
-                          run_tool(self.store, {**config, 'session_id': sid}, event.get('tool'), event.get('args')))
+                result = invoke()
         else:
-            result = run_tool(self.store, {**config, 'session_id': sid}, event.get('tool'), event.get('args'))
+            result = invoke()
         if not result['ok']:
             self.chat.event(sid, 'runtime/status', {
-                'turnId': self.chat.session(sid).get('turn_id'),
+                'turnId': config.get('attempt_id'),
                 'message': f"{event.get('tool')} 未通过：{result.get('error', '')[:200]}"})
+        if self.chat.session(sid).get('turn_id') not in (None, config.get('attempt_id')):
+            return
         try:
             self.engine.call('tool_result', {'session_id': sid, 'request_id': event.get('request_id'), **result}, timeout=15)
         except Exception:
-            pass  # The engine times the call out and tells the model.
+            pass
 
     def cancel(self, session_id):
         with self._lock:
@@ -477,6 +529,8 @@ class NativeHarness:
                 self.chat.update(session_id, status='stopping')
             if turn:
                 self.chat.event(session_id, 'turn/interruptRequested', {'turnId': turn})
+        for runtime in list(self._child_runtimes.get(session_id, ())):
+            runtime.cancel()
         if session_id in self._engine_sessions:
             try:
                 self.engine.call('turn_abort', {'session_id': session_id}, timeout=10)
@@ -487,6 +541,9 @@ class NativeHarness:
     def close(self):
         with self._lock:
             self._closed = True
+        for children in list(self._child_runtimes.values()):
+            for runtime in list(children):
+                runtime.cancel()
         # A call would start the engine just to stop it; only a running one
         # gets the chance to dispose its sessions before the bridge closes.
         if self.engine.process is not None:

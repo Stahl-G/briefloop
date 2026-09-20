@@ -29,7 +29,7 @@ import json
 import os
 from pathlib import Path
 
-ROLES = ('reviewer', 'evaluator', 'maintainer', 'proposer', 'scout', 'analyst')
+ROLES = ('reviewer', 'evaluator', 'maintainer', 'proposer', 'scout', 'analyst', 'orchestrator', 'chat', 'fact_checker')
 
 
 def role_of(config):
@@ -677,9 +677,13 @@ RUNNER_TOOLS = {'reviewer': [], 'evaluator': EVALUATOR_TOOLS, 'maintainer': MAIN
 
 
 def _tools(role, mode=None, config=None):
+    if role in ('orchestrator', 'chat', 'fact_checker'):
+        from .native_orchestrator import tools
+        return tools(role, config or {})
     if role == 'analyst':
         from .analyst import prepare_data, submit_draft, submit_schema, section_schema, save_draft_section, check_draft
-        return [EVALUATOR_TOOLS[0],
+        from .native_orchestrator import METADATA_TOOL
+        return [*([METADATA_TOOL] if (config or {}).get('revision') else []), EVALUATOR_TOOLS[0],
                 {'name': 'prepare_report_data', 'label': '计算报告指标',
                  'description': '使用已有报告数据格式校验来源、单位并完成确定计算；原始 records 可放入 draft.report_data。',
                  'guide': '根据任务包里的原始 records 计算比较表，不凭记忆心算。',

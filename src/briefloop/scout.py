@@ -12,6 +12,8 @@ from pathlib import Path
 
 from .store import dump
 
+_DEFAULT_SKILL = object()
+
 
 def _reader_contract(store, run_id, plan_path=None):
     saved = store.meta('reader_contract:' + run_id)
@@ -31,7 +33,7 @@ def _source_index(store, run_id):
     return rows
 
 
-def task(store, run_id, assignment, *, plan_path=None, research_handoff=None):
+def task(store, run_id, assignment, *, plan_path=None, research_handoff=None, skill_override=_DEFAULT_SKILL):
     """Everything one Scout slot is given, frozen when it starts."""
     from .deliverable_spec import resolve, instructions
     from .models import Requirements
@@ -47,7 +49,7 @@ def task(store, run_id, assignment, *, plan_path=None, research_handoff=None):
     policy = for_run(store, run_id)
     allow_web = bool(req['allow_web'])
     channels = [c for c in allowed(policy) if c in MANAGED_PROVIDERS] if allow_web else []
-    skill = store.one('skills', run['skill_id']) if run.get('skill_id') else None
+    skill = (store.one('skills', run['skill_id']) if run.get('skill_id') else None) if skill_override is _DEFAULT_SKILL else skill_override
     binding = bind_context(store, skill).get('scout') or {}
     return {
         'run_id': run_id, 'slot_id': assignment.get('slot_id'), 'assignment': assignment,
@@ -136,7 +138,8 @@ def run(store, runtime, job, run_id, assignment, folder, backend, *, plan_path=N
     from .scout_tools import join_scouts
     folder = Path(folder).resolve()
     folder.mkdir(parents=True, exist_ok=True)
-    scout = task(store, run_id, assignment, plan_path=plan_path, research_handoff=research_handoff)
+    scout = task(store, run_id, assignment, plan_path=plan_path, research_handoff=research_handoff,
+                 skill_override=json.loads(job['payload']).get('skill_override', _DEFAULT_SKILL))
     staged = {**stage_job(store, job, 'scout'), 'allow_web': scout['allow_web']}
     if backend == 'briefloop-native':
         from .native_roles import scout_packet

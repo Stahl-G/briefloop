@@ -10,8 +10,8 @@ the native engine.
 import hashlib
 from importlib import resources
 
-ROLES = ('reviewer', 'evaluator', 'maintainer', 'proposer', 'scout', 'analyst')
-MODES = ('background',)
+ROLES = ('reviewer', 'evaluator', 'maintainer', 'proposer', 'scout', 'analyst', 'orchestrator', 'chat', 'fact_checker')
+MODES = ('background', 'interactive')
 
 
 def _asset(name):

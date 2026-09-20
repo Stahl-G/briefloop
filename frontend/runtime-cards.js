@@ -1,5 +1,6 @@
 // Local artwork provenance: THIRD_PARTY_NOTICES.md and third_party/open-design/NOTICE.md.
 const brands = {
+ 'briefloop-native':['BriefLoop 内置引擎','直接连接模型 · 研究、写稿与独立审阅'],
  codex: ['Codex CLI','OpenAI 开发的命令行 Agent'],
  claude: ['Claude Code','Anthropic 开发的命令行 Agent'],
  opencode: ['OpenCode','开源命令行 Agent · 支持多家模型提供商'],
@@ -37,10 +38,10 @@ export function runtimeModelSummary(id,chosen,model,catalog,esc){
 export function runtimeCard(r,{chosen,model,catalog,esc,compact=false}){
  const brand=brands[r.id],name=brand?.[0]||r.name;
  const iconId=r.id==='deepseek-harness'?'deepseek':r.id;
- const icon=iconIds.has(iconId)?`<img src="/runtime-${iconId}.${pngIds.has(iconId)?'png':'svg'}" width="40" height="40" alt="" draggable="false">`:'<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m6 9 3 3-3 3m6 0h6"/></svg>';
+ const icon=r.id==='briefloop-native'?'<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M17 3H6a3 3 0 0 0-3 3v12a3 3 0 0 0 3 3h12a3 3 0 0 0 3-3V8M15 1l3 2-3 3M8 8h8M8 12h8M8 16h5"/></svg>':iconIds.has(iconId)?`<img src="/runtime-${iconId}.${pngIds.has(iconId)?'png':'svg'}" width="40" height="40" alt="" draggable="false">`:'<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m6 9 3 3-3 3m6 0h6"/></svg>';
  const protocol={acp:'ACP','claude-stream-json':'流式 JSON','opencode-json':'OpenCode JSON','native-manager':'原生宿主接口'}[r.protocol]||r.protocol;
  const capabilityNames={chat:'对话',cancel:'停止任务',resume:'续接',images:'图片',questions:'提问',steer:'运行中补充',restricted_reviewer:'受限审阅'};
  const supported=Object.entries(capabilityNames).filter(([key])=>r.capabilities?.[key]===true).map(([,name])=>name);
- const status=r.available?'已检测到':r.installed?'尚未接入':'未安装';
+ const status=r.available?(r.id==='briefloop-native'?'内置':'已检测到'):r.installed?'尚未接入':'未安装';
  return `<article data-runtime-card="${esc(r.id)}" class="runtime-card ${r.id===chosen?'selected':''} ${compact?'runtime-missing':''}"><div class="runtime-card-head"><span class="runtime-icon" aria-hidden="true">${icon}</span><div class="runtime-identity"><h3>${esc(name)}${r.id===chosen?'<span class="runtime-selected">当前选择</span>':''}</h3><p class="runtime-description">${esc(brand?.[1]||'本机命令行工具')}</p><p class="runtime-version">${esc(r.installed?(r.version||'版本未确认'):'本机未检测到')} <span class="runtime-detection">${status}</span></p></div>${compact?'':`<div class="runtime-actions"><button type="button" class="outline" data-runtime-select="${esc(r.id)}" ${r.available?'':'disabled'}>${r.id===chosen?'已选择':r.available?'选择':status}</button>${r.available?`<button type="button" class="outline" data-runtime-test="${esc(r.id)}" ${r.id!==chosen?'disabled':''}>测试</button>`:''}</div>`}</div>${compact?`<p class="runtime-missing-info">${esc((r.bins||[]).join(' / ')||r.id)} · ${r.integrated?'已有适配 · 安装后可测试':'尚无协议适配'}</p>`:`<p class="runtime-current-model" data-runtime-model="${esc(r.id)}">${runtimeModelSummary(r.id,chosen,model,catalog,esc)}</p>`}<details><summary>安装与能力</summary><p class="runtime-path">${esc(r.path||'未安装')}</p>${protocol?`<p>连接方式：${esc(protocol)}</p>`:''}${r.available&&supported.length?`<p>已接入：${esc(supported.join('、'))}</p>`:''}<p>${esc(r.diagnostic||(r.installed?'已检测到本机 CLI；账号与模型的可用性可通过“测试”确认。':'未在本机找到此 CLI。安装后可重新检测；接入状态以 BriefLoop 实际支持为准。'))}</p></details></article>`;
 }

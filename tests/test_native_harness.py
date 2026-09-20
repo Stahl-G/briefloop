@@ -31,31 +31,17 @@ def _wait_status(h, sid, mid, status, seconds=5):
 
 
 @pytest.mark.real_review_capabilities
-def test_the_embedded_engine_runs_pinned_reviews_but_never_the_main_chain(tmp_path):
+def test_native_main_chain_keeps_independent_reviewer_capability(tmp_path):
     store = Store(tmp_path)
     source = store.add_source('Synthetic', 'Revenue was USD 12 million.')
-    store.set_meta('settings', {**store.settings(), 'agent_backend': 'opencode',
-                                'model': 'synthetic/model', 'model_selection_required': False})
-    task = {'title': 'T', 'objective': 'o', 'allow_web': True}
-    with pytest.raises(ValueError, match='只执行受限独立审阅'):
-        store.create_run(task, [source['id']], agent_backend='briefloop-native')
-    run = store.create_run(task, [source['id']])
-    brief = store.publish(run['id'], {'title': 'T', 'markdown': 'Revenue was USD 12 million.'})
-    native = {'agent_backend': 'briefloop-native', 'runtime': {'model': 'deepseek/deepseek-v4-flash'}}
-    for kind, payload in (('generate', {'run_id': run['id']}), ('assess', {'version_id': brief['id']}),
-                          ('learn', {})):
-        with pytest.raises(ValueError, match='只执行受限独立审阅'):
-            store.enqueue(kind, {**payload, **native})
-    assert store.rows('SELECT * FROM jobs') == []
-    assert store.enqueue('review', {'version_id': brief['id'], **native})
-    with pytest.raises(ValidationError):
-        Settings.model_validate({'agent_backend': 'briefloop-native'})
-    assert restricted_review('briefloop-native') is True
-    # Never offered as the “执行后端” to switch to: the page cannot select it.
-    # It is offered only as a separately chosen Reviewer, marked experimental.
-    assert summary() == {'restricted_review': [{'id': 'opencode', 'label': 'Opencode CLI'}],
-                         'review_choices': [{'id': 'opencode', 'label': 'Opencode CLI', 'experimental': False},
-                                            {'id': 'briefloop-native', 'label': 'BriefLoop 内置引擎', 'experimental': True}]}
+    settings = Settings.model_validate({**store.settings(), 'agent_backend':'briefloop-native',
+        'model':'synthetic/model', 'model_selection_required':False})
+    store.set_meta('settings', settings.model_dump())
+    run = store.create_run({'title':'T','objective':'o','allow_web':False}, [source['id']])
+    job = store.enqueue('generate', {'run_id':run['id']})
+    assert json.loads(job['payload'])['agent_backend'] == 'briefloop-native'
+    assert restricted_review('briefloop-native')
+    assert any(r['id']=='briefloop-native' for r in summary()['restricted_review'])
 
 
 class EngineFixture:
@@ -89,14 +75,14 @@ class EngineFixture:
         pass
 
 
-def test_refuses_sessions_that_are_not_restricted_reviews(tmp_path):
+def test_chat_is_available_but_packet_roles_keep_readonly_confinement(tmp_path):
     h = NativeHarness(Store(tmp_path), EngineFixture())
-    with pytest.raises(ValueError, match='只读核查包'):
-        h.create_session('t', {'model': 'fake/m1'})
+    session = h.create_session('t', {'model':'fake/m1'})
+    assert session['runtime']['native_role'] == 'chat'
     with pytest.raises(ValueError, match='不支持的角色'):
-        h.create_session('t', {'model': 'fake/m1', 'review_root': str(tmp_path), 'native_role': 'orchestrator'})
+        h.create_session('t', {'model':'fake/m1','review_root':str(tmp_path),'native_role':'invented'})
     with pytest.raises(ValueError, match='只读核查包'):
-        h.create_session('t', {'model': 'fake/m1', 'review_root': str(tmp_path), 'permission': 'workspace-write'})
+        h.create_session('t', {'model':'fake/m1','review_root':str(tmp_path),'permission':'workspace-write'})
 
 
 def test_a_retired_engine_process_resumes_the_session_from_its_transcript(tmp_path):

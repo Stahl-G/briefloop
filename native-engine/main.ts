@@ -43,6 +43,9 @@ const ROLE_LOCAL_TOOLS: Record<string, string[]> = {
   // runner tools; its packet holds only the frozen task and contracts.
   scout: ["packet_list", "packet_read", "packet_grep"],
   analyst: ["packet_list", "packet_read", "packet_grep", "calc"],
+  orchestrator: ["packet_list", "packet_read", "packet_grep", "calc"],
+  chat: [],
+  fact_checker: ["packet_list", "packet_read", "packet_grep", "calc"],
 };
 const RUNNER_TOOL_TIMEOUT_MS = 180_000;
 
@@ -151,6 +154,7 @@ function emit(sessionId: string, executionId: string, kind: string, extra: Recor
   send({ method: "event", params: { session_id: sessionId, execution_id: executionId, kind, ...extra } });
 }
 
+let localProvidersFingerprint = "";
 async function ensureRuntime(): Promise<ModelRuntime> {
   if (!runtime) {
     // BriefLoop-owned models.json ships beside the bundle: it upserts catalog
@@ -167,6 +171,35 @@ async function ensureRuntime(): Promise<ModelRuntime> {
       modelsStorePath: join(stateDir, "models-store.json"),
     });
     registry = new ModelRegistry(runtime);
+  }
+  const localPath = join(homedir(), ".config", "briefloop", "native-engine", "providers.json");
+  if (existsSync(localPath)) {
+    const raw = readFileSync(localPath, "utf8");
+    const fingerprint = createHash("sha256").update(raw).digest("hex");
+    if (fingerprint !== localProvidersFingerprint) {
+      const rows = Object.values(JSON.parse(raw)) as Array<Record<string, any>>;
+      const protocols: Record<string, string> = { "chat-completions": "openai-completions", responses: "openai-responses", "anthropic-messages": "anthropic-messages" };
+      const providers = new Set(rows.map(r => r.provider));
+      for (const provider of providers) {
+        const items = rows.filter(r => r.provider === provider), first = items[0];
+        const api = first.api || protocols[first.protocol] || first.protocol;
+        runtime.registerProvider(provider, {
+          name: first.name, baseUrl: first.base_url, api: api as any,
+          models: items.map(r => {
+            const known = registry!.find(provider, r.model);
+            return { id: r.model, name: known?.name || r.model, api: api as any,
+              reasoning: known?.reasoning ?? false, input: r.supports_images == null ? (known?.input || ["text"]) : r.supports_images ? ["text", "image"] : ["text"],
+              cost: known?.cost || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              contextWindow: r.context_limit || known?.contextWindow || 128000, maxTokens: r.output_limit || known?.maxTokens || 8192,
+              ...(known?.compat ? { compat: known.compat } : {}),
+              ...(known?.thinkingLevelMap ? { thinkingLevelMap: known.thinkingLevelMap } : {}) };
+          }),
+        });
+        // Literal runtime auth avoids models.json's !command/env interpolation.
+        await runtime.setRuntimeApiKey(provider, first.api_key);
+      }
+      localProvidersFingerprint = fingerprint;
+    }
   }
   return runtime;
 }
@@ -189,6 +222,7 @@ function armIdle(clientSid: string, entry: SessionEntry): void {
   entry.idleTimer = setTimeout(() => {
     entry.idleTimer = undefined;
     if (!entry.execId || entry.cancelled) return;
+    if (entry.pendingTools.size) { armIdle(clientSid, entry); return; }
     entry.stalled = true;
     emit(clientSid, entry.execId, "status", {
       message: `model stream idle for ${Math.round(entry.idleMs / 1000)}s; cancelling the stalled request`,
@@ -321,15 +355,15 @@ function requestAdmission(clientSid: string, entry: SessionEntry | undefined, re
 }
 
 // A runner-declared tool runs on the Python side; the model waits for its answer.
-function requestRunnerTool(clientSid: string, entry: SessionEntry | undefined, tool: string, args: unknown): Promise<RunnerResult> {
+function requestRunnerTool(clientSid: string, entry: SessionEntry | undefined, tool: string, args: unknown, longRunning = false): Promise<RunnerResult> {
   if (!entry || !entry.execId) return Promise.resolve({ ok: false, error: "没有正在进行的执行，无法调用 " + tool });
   const requestId = `tool-${++entry.admissionSeq}`;
   return new Promise((done) => {
-    const timer = setTimeout(() => {
+    const timer = longRunning ? undefined : setTimeout(() => {
       entry.pendingTools.delete(requestId);
       done({ ok: false, error: `运行器未在规定时间内完成 ${tool}，请稍后重试` });
-    }, RUNNER_TOOL_TIMEOUT_MS);
-    entry.pendingTools.set(requestId, (result) => { clearTimeout(timer); done(result); });
+    }, RUNNER_TOOL_TIMEOUT_MS); // child lifetime follows explicit cancellation
+    entry.pendingTools.set(requestId, (result) => { if (timer) clearTimeout(timer); done(result); });
     emit(clientSid, entry.execId, "tool_request", { request_id: requestId, tool, args });
   });
 }
@@ -420,7 +454,7 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     accept: (review) => { if (entryRef) entryRef.submitted = JSON.stringify(review); },
   }, () => acceptsImages(modelRef), p.admission === "runner").filter((t) => local.includes(t.name));
   const fromRunner = runnerTools(declared, {
-    call: (tool, args) => requestRunnerTool(clientSid, entryRef, tool, args),
+    call: (tool, args) => requestRunnerTool(clientSid, entryRef, tool, args, declared.some(t => t.name === tool && t.long_running)),
     acceptsImages: () => acceptsImages(modelRef),
     settle: (value) => { if (entryRef) entryRef.submitted = value; },
   });
@@ -612,7 +646,7 @@ async function turnStart(id: string | undefined, p: Record<string, unknown>): Pr
     aborted: entry.cancelled,
     usage: entry.usage,
     session_file: entry.sessionFile,
-    ...(finalJson !== undefined ? { final_text: finalJson } : {}),
+    ...(finalJson !== undefined ? { final_text: finalJson } : !expectJson && !requireSubmit ? { final_text: entry.finalText } : {}),
     ...(error && status !== "cancelled" ? { error } : {}),
   });
   entry.execId = "";
@@ -623,6 +657,12 @@ async function turnAbort(id: string | undefined, p: Record<string, unknown>): Pr
   if (!entry) throw new Error("unknown session_id");
   entry.cancelled = true;
   disarmIdle(entry);
+  // A runner tool can be waiting for a child. Release it before awaiting pi's
+  // abort, which itself waits for the current tool invocation to settle.
+  for (const [, settle] of entry.pendingTools) settle({ok:false,error:"任务已取消"});
+  entry.pendingTools.clear();
+  for (const [, settle] of entry.pendingAdmission) settle("任务已取消");
+  entry.pendingAdmission.clear();
   await entry.session.abort();
   reply(id, { aborted: true });
 }

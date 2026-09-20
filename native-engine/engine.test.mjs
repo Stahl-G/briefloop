@@ -698,3 +698,58 @@ test("runner tools run on the runner; a settling tool ends the run with the acce
   assert.equal(ends(evts)[0].status, "completed");
   assert.deepEqual(JSON.parse(ends(evts)[0].final_text), { overall: 3, brief_hash: "H1" });
 });
+
+test('interactive chat returns normal text without a JSON or submit repair', async () => {
+  const s = await reviewer({ role: 'chat', runner_tools: [{ name:'workspace_action', description:'Workspace operation', parameters:{type:'object',properties:{}} }] });
+  provider.script = [reply.text('你好，我是 BriefLoop。')];provider.requests = [];
+  const result = await turn(s.session_id, 'chat-prose', {expect_json:false,require_submit:false});
+  assert.equal(ends(result)[0].final_text, '你好，我是 BriefLoop。');
+  assert.equal(provider.requests.length, 1);
+  assert.deepEqual(s.tools, ['workspace_action']);
+});
+
+test('main-agent child tools may outlive the model idle interval and remain cancellable', async () => {
+  const s = await reviewer({ role:'orchestrator', runner_tools:[
+    {name:'run_scouts',description:'Run children',parameters:{type:'object',properties:{}},long_running:true,sequential:true},
+    {name:'finish_task',description:'Finish',parameters:{type:'object',properties:{}},settles:true},
+  ] });
+  provider.script = [reply.tool('run_scouts'), reply.tool('finish_task')];
+  runnerTool = async (tool) => {
+    if (tool === 'run_scouts') await new Promise(r=>setTimeout(r, 1400));
+    return tool === 'finish_task' ? {ok:true,settle:'{"saved":true}'} : {ok:true,content:[{type:'text',text:'Scouts completed'}]};
+  };
+  const result = await turn(s.session_id, 'main-child-wait', {require_submit:true});
+  runnerTool=()=>({ok:false,error:'no runner tool configured'});
+  assert.equal(ends(result)[0].status,'completed');
+  assert.ok(!result.some(e=>e.kind==='status' && /idle for/.test(e.message||'')));
+  assert.ok(!s.tools.includes('bash') && !s.tools.includes('submit_review'));
+});
+
+test('locally saved provider credentials and custom models are usable without a host CLI', async () => {
+  const dir=join(root,'home','.config','briefloop','native-engine');mkdirSync(dir,{recursive:true});
+  writeFileSync(join(dir,'providers.json'),JSON.stringify({'local/model':{
+    provider:'local',model:'model',name:'Local fixture',protocol:'chat-completions',
+    base_url:`http://127.0.0.1:${server.address().port}/v1`,api_key:'fake-local-literal-key',
+    context_limit:100000,output_limit:1000,supports_images:false,
+  }}));
+  const catalog=await call('list_models',{});
+  assert.ok(catalog.models.some(m=>m.id==='local/model'));
+  const s=await reviewer({role:'chat',model:'local/model',runner_tools:[{name:'workspace_action',description:'Workspace',parameters:{type:'object'}}]});
+  provider.script=[reply.text('Configured locally')];
+  const result=await turn(s.session_id,'local-provider',{expect_json:false,require_submit:false});
+  assert.equal(ends(result)[0].final_text,'Configured locally');
+  assert.ok(!JSON.stringify(catalog).includes('fake-local-literal-key'));
+});
+
+test('aborting a pending child runner tool does not wait for its natural result', async () => {
+  const s=await reviewer({role:'orchestrator',runner_tools:[{name:'run_scouts',description:'Long child',parameters:{type:'object'},long_running:true}]});
+  script(reply.tool('run_scouts'));
+  let started;const waiting=new Promise(r=>started=r);
+  runnerTool=()=>{started();return new Promise(()=>{});};
+  const done=turn(s.session_id,'abort-child-tool',{require_submit:false,expect_json:false});
+  await waiting;
+  await call('turn_abort',{session_id:s.session_id},3000);
+  const result=await done;
+  runnerTool=()=>({ok:false,error:'no runner tool configured'});
+  assert.equal(ends(result)[0].status,'cancelled');
+});

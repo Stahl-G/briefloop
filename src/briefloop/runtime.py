@@ -70,11 +70,7 @@ TASK_CONTEXT = """你在 BriefLoop 中执行一项已授权的本地任务。直
 
 def runtime_instruction(configuration, backend='codex'):
     if backend == 'briefloop-native':
-        variant = configuration.get('model_variant') or configuration.get('reasoning_effort')
-        variant_label = variant if variant not in (None, '', 'none') else '不指定（默认）'
-        return (f"本阶段由 BriefLoop 内置引擎执行，模型固定为 {configuration['model']}，推理档位 {variant_label}。"
-                '本轮为受限独立审阅：只能使用 packet_list 与 packet_read 读取核查包内的文件，'
-                '不存在 shell、写入、联网或委派工具；指令中的“原生 read”一律指 packet_read。\n')
+        return f"本阶段使用 BriefLoop 内置引擎，冻结模型 {configuration['model']}；仅使用本角色已注册的工具。角色、任务包、允许操作和输出契约以本次执行指令为准，不启动其他 CLI。\n"
     if backend not in ('codex','opencode'):
         return f"本阶段执行引擎固定为 {backend}，模型为 {configuration['model']}。使用宿主提供的工具完成工作；没有原生子任务能力时自行完成，不启动嵌套模型 CLI，也不伪造子任务 ID。\n"
     if backend == 'opencode':
@@ -265,6 +261,9 @@ retrieval_skill.target_roles 只有 scout；不要把本技能或整份 generati
         retrieval_strategy='本轮未开启联网：只读取上传材料与已有来源，不安排公开检索，也不承诺开放搜索或分轮搜索；按已有材料识别证据缺口并如实交接。'
     else:
         retrieval_strategy=('分三轮推进检索，而不是让每个支线先一次深挖到底。第一轮侦察：整批 Scout 合计 1–2 条互补查询（不是每个 Scout 各 1–2 条），找出本期重要事件、候选主体、候选标题、URL 与可能日期；`AI news`、`AI weekly`、`artificial intelligence news` 这类同义改写不算不同方向。第二轮聚焦：按首轮线索选择互不重复的信息需求，可用意图包括 event discovery（范围内还有哪些重要变化）、entity check（某关键主体是否漏检或只有零散线索）、primary verification（定位一手正文与关键限定）、gap repair（补齐日期、指标、发布状态、冲突）；可用实体别名、原语言产品名、首轮出现的完整发布标题或明确指标词。第三轮补缺：仅当仍有高价值具体缺口时，用同一 Scout 多轮或再派少量同类任务；优先补"重要事件没有可用正文"，其次补"改变结论的指标/日期/条件"，不要给材料已充分的支线再堆重复来源。轮数是执行安排，不替代硬预算，满足任务可提前停止，不要求花完搜索次数；每条查询都要能回答"相对已有材料，这次想多知道什么"，不重复已经失败或已充分覆盖的相近查询。发现阶段可用综述、媒体、索引页发现事件及原始链接，取证阶段再优先一手来源'+('；具体搜索参数、获取失败后的换路与停止条件见本轮 Scout 技能。' if managed else '。'))
+    if backend == 'briefloop-native':
+        payload.update(retrieval_strategy=retrieval_strategy, orchestrator_instructions=instructions(deliverable,role='orchestrator')+'\n'+temporal_note)
+        (folder/'input.json').write_text(dump(payload),encoding='utf-8')
     dispatch_word = {'codex':'spawn/delegate', 'opencode':'task 工具'}.get(backend, '宿主原生子任务接口')
     id_word = '真实子 agent 会话 ID（task 结果中的 ses_ ID）' if backend == 'opencode' else '宿主实际返回的 agent ID'
     if managed:

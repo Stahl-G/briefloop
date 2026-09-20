@@ -173,6 +173,9 @@ def _conditions(store,case,payload):
     names=('store.py','runtime.py','deliverable_spec.py','models.py','learning.py','chat_tools.py',
            'document_workflows.py','agent_commands.py','harness.py','opencode_harness.py','bridge_harness.py',
            'static/runtime-bridge.mjs')
+    if payload.get('agent_backend') == 'briefloop-native':
+        names += ('native_harness.py','native_roles.py','native_orchestrator.py','analyst.py','scout.py','agent_prompts.py','static/native-engine.mjs')
+        names += tuple(str(p.relative_to(root)) for p in sorted((root/'prompt_assets').glob('*.md')))
     return {'schema':1,'requirements':requirements,
             'runtime':payload.get('runtime',store.runtime_config()),'role_models':payload.get('role_models',{}),
             'agent_backend':payload.get('agent_backend',store.settings().get('agent_backend','codex')),

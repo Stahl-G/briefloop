@@ -104,6 +104,10 @@ Windows 也可不安装桌面 App，直接启动同一套 Python 服务与网页
 | MiMo | bridge（JSON 事件流） | 原生 `models --verbose` |
 | CodeBuddy Code | bridge（原生 `--acp`） | ACP 原生模型目录；支持手输模型 ID |
 
+开发分支还提供 **BriefLoop 内置引擎**（需要 Node.js 22.19+）：在“设置 → 模型与提供商”选择它，在“API 提供商”选择用于内置引擎，保存接口地址、API Key 和模型 ID。它直接执行对话、并行 Scout、Analyst 写稿及独立评价，复用同一套报告任务、来源、稿件、一次自动修订和导出。前端入口和自动化链路已实现；本轮尚未进行真实模型、Computer Use 或桌面验收，也尚未发布到安装包。
+
+内置引擎的 API Key 保存在本机 `~/.config/briefloop/native-engine/providers.json`，文件仅当前用户可读写，不放进工作区或核查包。模型请求仍会把本次实际读取的材料发送给所选模型服务商；受控检索遵循本报告已冻结的渠道与共享预算。它没有其他 CLI 的自带搜索或任意 shell，Reviewer 只拥有核查包内的读取工具。详见[内置引擎](docs/内置引擎.md)。
+
 模型下拉只提供建议，任何宿主都接受手填模型 ID。`默认` 表示"用宿主自己配置的模型"：能读到宿主配置时（例如 Claude Code 的 `~/.claude/settings.json`）会显示解析出的真实模型名，读不到时保持通用标签。角色模型（Evaluator、Wiki Maintainer、Skill Proposer）可以分别指定，留空继承主链。
 
 输入区的控件跟随当前宿主的能力，而不是固定的 Codex 选项：权限档位来自 runtime 声明的 `permission_modes`（只有一种时不显示这个下拉）；`立即补充` 只在支持运行中追加的宿主出现；不支持读图的宿主在附图时直接提示。联网开关会向宿主放行它自己的联网工具（例如 Claude Code 的 `WebSearch` / `WebFetch`），放行后能否联网仍由宿主账号与权限决定。

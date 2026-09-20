@@ -243,8 +243,8 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
     policy=resolve_search_policy(store.settings().get('search_policy'),store.settings()['search_provider'])
     search_note='正式报告会冻结首选与允许补充渠道、共用预算；通过generate提交，不自行创建另一套流水线。'+policy_instructions(policy,'briefloop tool','本任务真实run ID')
     search_choice='尊重用户已选择的渠道，不宣称某服务覆盖必然更好，不再次要求确认原生选择。缺少密钥时提示配置该渠道；已有授权补充渠道可在预算内使用。'
-    if backend=='opencode':
-        request_runtime={'model':runtime['model'],'model_variant':runtime.get('variant'),'agent_backend':'opencode'}
+    if backend in ('opencode','briefloop-native'):
+        request_runtime={'model':runtime['model'],'model_variant':runtime.get('variant'),'agent_backend':backend}
         runtime_json=json.dumps(request_runtime,ensure_ascii=False)
         runtime_label=runtime.get('variant') or '不指定（provider 默认）'
         provider_label='Opencode 模型（provider/model）'
@@ -256,7 +256,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
         runtime_label=runtime.get('effort') if runtime.get('effort') is not None else '不指定（provider 默认）'
         provider_label=runtime.get('model_provider') or f'沿用本机 {BACKEND_LABELS[backend]} 配置'
         subagent_note='必要时使用子 agent。'
-    command=tool_command(store.root,backend=backend)+' workspace-action --request'
+    command=('workspace_action（直接传 request JSON）' if backend=='briefloop-native' else tool_command(store.root,backend=backend)+' workspace-action --request')
     from .workspace_profile import prompt as profile_prompt
     profile_note=profile_prompt(store)
     from datetime import datetime

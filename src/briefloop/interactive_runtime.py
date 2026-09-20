@@ -161,6 +161,10 @@ class InteractiveRuntime:
             require_for_review(backend)
             runtime.update(permission='read-only',review_root=str((folder/'packet').resolve()))
             if job.get('review_id'):runtime['review_id']=job['review_id']
+        if backend == 'briefloop-native' and not job.get('native_packet') and not job.get('readonly_output'):
+            from .native_orchestrator import prepare
+            native_packet, prompt = prepare(self.store, job, folder, prompt)
+            job = {**job, 'native_packet': native_packet}
         native_packet = job.get('native_packet')
         if native_packet and backend == 'briefloop-native':
             runtime.update(permission='read-only', packet_root=str((folder/'packet').resolve()),
@@ -286,7 +290,7 @@ class InteractiveRuntime:
                 self.store.event(job['id'], 'runtime_started', {'session_id': sid,
                     'message_id': binding['message_id'], 'folder': str(folder), 'runtime': configured,
                     'backend': backend,
-                    'transport': 'opencode-serve' if backend == 'opencode' else 'app-server'})
+                    'transport': 'native-engine' if backend == 'briefloop-native' else 'opencode-serve' if backend == 'opencode' else 'app-server'})
             while True:
                 snapshot = harness.snapshot(sid, after=cursor)
                 cursor = self._project(snapshot, log_path, cursor, seen_messages)

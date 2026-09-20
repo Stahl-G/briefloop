@@ -52,7 +52,7 @@ def permission_digest():
 def catalog(backend,workspace,bridge):
     backend=validate_backend(backend)
     result={'backend':backend,'workspace':str(workspace),'modes':[], 'interactive':backend in ACP-{'mimo'} or backend in ('claude','pi')}
-    if backend in ('codex','opencode'):
+    if backend in ('codex','opencode','briefloop-native'):
         result.update(kind='native',modes=[{'id':'workspace-write','name':'读写工作区'},{'id':'read-only','name':'只读'}],note='选择用于下一回合；已发送的任务保持原权限。')
     elif backend=='pi':
         result.update(kind='tools',modes=[{'id':'native','name':'沿用 Pi 工具设置'},{'id':'read','name':'只启用读取工具'},{'id':'none','name':'关闭所有工具'}],note='读取工具模式关闭扩展，仅启用 read、grep、find、ls；它不是文件路径或网络沙箱。Pi 原生工具默认不逐次询问，扩展的确认请求可在这里回答。')

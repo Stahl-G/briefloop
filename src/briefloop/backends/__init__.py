@@ -9,10 +9,8 @@ old child handles.
 
 BRIDGE_BACKENDS = ('claude','kimi','hermes','reasonix','mimo','codebuddy','kilo','kiro','vibe','deepseek-harness','antigravity','pi')
 # BriefLoop's own embedded engine (pi SDK in-process); not an external CLI.
-# Phase 1 runs only the restricted Reviewer: it has no tools to research, write
-# or learn with, so it can be pinned to a review job but never be the main
-# chain. Settings cannot select it and every other job kind is refused.
-REVIEW_ONLY_BACKENDS = ('briefloop-native',)
+# Main orchestration and independent roles share an engine, not tool permissions.
+REVIEW_ONLY_BACKENDS = ()
 BACKENDS = ('codex', 'opencode', 'briefloop-native', *BRIDGE_BACKENDS)
 
 DEFAULT_BACKEND = 'codex'
@@ -50,7 +48,7 @@ CAPABILITIES = {
     # Reviewer isolation here is our own tool proxy (packet-only reads, no
     # built-in tools at all), verified in native-engine/engine.test.mjs and the
     # phase-1 acceptance, not delegated to a host's permission UI.
-    'briefloop-native': frozenset({'cancel', 'restricted_review'}),
+    'briefloop-native': frozenset({'cancel', 'restricted_review', 'subagents'}),
 }
 
 
