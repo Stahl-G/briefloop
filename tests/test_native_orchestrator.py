@@ -122,8 +122,16 @@ def test_chat_permissions_frozen_runtime_and_submit_replay(tmp_path):
     req['request']['requirements']['allow_web']=True
     assert not run_tool(store,config,'workspace_action',req)['ok']
     req['request']['requirements']['allow_web']=False
+    h.chat.message(sid, '原始请求：10分钟目标，12次搜索，保留四个问题', mid='m1')
+    req['request']['requirements'].update(target_minutes=10, hard_timeout_minutes=0,
+        research_budget={'search_requests':12,'candidate_urls':60,'source_pages':20}, key_questions=['问题一'])
     first=run_tool(store,config,'workspace_action',req)
     assert first['ok'],first
+    admitted=json.loads(first['content'][0]['text'])
+    assert admitted['accepted_requirements']['target_minutes']==10
+    assert admitted['accepted_requirements']['research_budget']['search_requests']==12
+    assert admitted['accepted_requirements']['key_questions']==['问题一']
+    assert json.loads(store.one('runs',admitted['run_id'])['requirements'])['raw_input'].startswith('原始请求')
     assert json.loads(run_tool(store,config,'workspace_action',req)['content'][0]['text'])==json.loads(first['content'][0]['text'])
     assert len(store.rows('SELECT * FROM jobs'))==1
     payload=json.loads(store.rows('SELECT * FROM jobs')[0]['payload'])
@@ -252,3 +260,32 @@ def test_fact_checker_uses_existing_stage_admission_and_rejects_wrong_version(tm
     assert admitted['ok'],admitted
     assert fact_check.records_for(store,world['run']['id'])
     assert not run_tool(store,cfg,'submit_fact_check',result)['ok']
+
+
+def test_revision_metadata_rejects_number_bindings_before_saving(tmp_path):
+    from briefloop.native_orchestrator import revision_metadata
+    from briefloop.native_roles import ToolError
+    store=Store(tmp_path/'ws');folder=store.root/'jobs/revision';(folder/'packet').mkdir(parents=True)
+    (folder/'input.json').write_text(dump({'review_findings':[]}))
+    config={'packet_root':str(folder/'packet'),'run_id':'run-test'}
+    with pytest.raises(ToolError,match='number_bindings'):
+        revision_metadata(store,config,{'responses':[],'bindings':[{'source_id':'source','value':97}]})
+    assert not (folder/'revision_bindings.json').exists()
+    assert not (folder/'responses.json').exists()
+    revision_metadata(store,config,{'responses':[],'bindings':[]})
+    assert json.loads((folder/'revision_bindings.json').read_text())==[]
+
+
+def test_metadata_repair_rejects_source_ids_as_claims_before_settling(tmp_path):
+    from briefloop.native_orchestrator import metadata_submit
+    from briefloop.native_roles import ToolError
+    store=Store(tmp_path/'ws');folder=store.root/'repair';(folder/'packet').mkdir(parents=True)
+    packet={'version_id':'v1','brief_hash':'h1','candidate_claims':[],'document':{'type':'doc','content':[]},'findings':[]}
+    (folder/'packet/input.json').write_text(dump(packet))
+    config={'packet_root':str(folder/'packet')}
+    args={'version_id':'v1','brief_hash':'h1','bindings':[{'claim_id':'src_a','block_id':'b','quote':'text'}],'responses':[]}
+    with pytest.raises(ToolError,match='source_id'):
+        metadata_submit(store,config,args)
+    assert not (folder/'metadata.json').exists()
+    result=metadata_submit(store,config,{**args,'bindings':[]})
+    assert result['settle']

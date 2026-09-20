@@ -676,7 +676,7 @@ test("runner tools run on the runner; a settling tool ends the run with the acce
   const calls = [];
   runnerTool = (tool, args) => {
     calls.push([tool, args]);
-    if (tool === "render_pages") return { ok: true, content: [{ type: "text", text: "第 2 页" }, { type: "image", data: PNG.toString("base64"), mimeType: "image/png" }] };
+    if (tool === "render_pages") return { ok: true, content: [{ type: "text", text: "第 2 页" + "x".repeat(3994) + "🧪材料" }, { type: "image", data: PNG.toString("base64"), mimeType: "image/png" }] };
     if (!args.assessment.brief_hash) return { ok: false, error: "brief_hash 必须是 H1" };
     return { ok: true, content: [{ type: "text", text: "评分已保存" }], settle: JSON.stringify(args.assessment) };
   };
@@ -690,6 +690,12 @@ test("runner tools run on the runner; a settling tool ends the run with the acce
   const evts = await turn(session_id, "e-eval-run", { require_submit: true, idle_timeout_s: 30 });
   runnerTool = () => ({ ok: false, error: "no runner tool configured" });
   assert.deepEqual(calls.map(([tool]) => tool), ["render_pages", "submit_assessment", "submit_assessment"]);
+  const executionEvents = evts.filter(e => e.kind === 'tool');
+  assert.ok(executionEvents.every(e => e.tool_call_id && e.name), 'UI tool records require stable identities');
+  assert.ok(executionEvents.every(e => !e.output || e.output.isWellFormed()), 'preview truncation must not split a Unicode surrogate pair');
+  for (const started of executionEvents.filter(e => e.status === 'running')) {
+    assert.ok(executionEvents.some(e => e.tool_call_id === started.tool_call_id && ['completed','failed'].includes(e.status)), 'every tool start settles');
+  }
   const toolResults = provider.requests.flatMap((r) => r.messages).filter((m) => m.role === "tool").map((m) => JSON.stringify(m.content));
   assert.ok(toolResults.some((t) => /第 2 页/.test(t) && /当前模型不接收图像输入/.test(t)), "a text-only model gets a note, not the image");
   assert.ok(toolResults.some((t) => /brief_hash 必须是 H1/.test(t)), "the runner's rejection goes back to the model");

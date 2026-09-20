@@ -301,6 +301,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"read_report","version_id":"稿件ID"}}：读取富文档 JSON 和引用。用户明确要求修改内容/章节/图表时，将修改后的 JSON 保存到工作区文件，再用 {{"action":"revise_document","base_version":"刚读取版本ID","document_file":"工作区内JSON绝对路径"}} 保存新版本，不覆盖用户并发编辑。
 - {{"action":"import_word_revision","base_version":"用户指定基础版本","source_id":"DOCX来源ID"}}：导入用户修改的 Word。返回 needs_alignment 时先核对原件和基础版本，向用户说明对齐问题；仅按用户明确选择提供 accept_unaligned=true。用户希望更新模板时另用 template_import 并提供 parent_id。
 - {{"action":"generate","requirements":{{"title":"标题","objective":"用户目的","audience":"读者","language":"中文","extent":"compact|balanced|detailed","research_tier":"quick|standard|deep","allow_web":{str(bool(allow_web)).lower()},"period":"时间范围"}},"source_ids":["真实来源ID"],"runtime":{runtime_json}}}：正式生成可在页面编辑的简报。research_tier 是研究深度档位（默认 standard）：quick 单轮检索，deep 预排 4 轮迭代研究；按用户明确要求选，用户未提就不写该字段。
+提交 generate 时，必须把本轮已经确认的 key_questions、writing_preferences、章节、期间和篇幅完整写进 requirements，不能只传标题摘要。用户给出的执行约束同样在提交前冻结：target_minutes 是软目标；hard_timeout_minutes=0 表示不设硬截止；research_budget 包含 search_requests、candidate_urls、source_pages；search_policy 沿用已授权设置。不得说“后台稍后配置”而遗漏已指定的额度。并行数要求写入 writing_preferences，供主 Agent 冻结研究计划时选择 structure.parallel；不改变共享预算。提交回执中的实际冻结值与用户要求不一致时明确说明，不宣称已应用。
 - {{"action":"assess","version_id":"真实简报版本ID"}}：为已有稿件安排评分。
 - {{"action":"comment","version_id":"真实简报版本ID","text":"用户反馈"}}：记录用户明确提出的反馈。页面自动学习开启时，保存反馈可能稍后自动触发学习，要如实告知。
 - {{"action":"learn"}}：仅当用户明确要求启动技能学习时调用，会消耗额外模型额度。调用前先告诉用户上限（每轮最多 3 个案例、每案例基线与候选各试写一次，另有整理、提案与比较回合；轮数按学习设置），得到明确同意后再调用；保存反馈本身不需要调用它。

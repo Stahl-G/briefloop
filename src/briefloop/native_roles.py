@@ -646,7 +646,7 @@ SCOUT_RECORD = {
                 'facts': {'type': 'array', 'items': {'type': 'string'}},
                 'conflicts': {'type': 'array', 'items': {'type': 'string'}},
                 'coverage_status': {'type': 'string'},
-                'claim_ids': {'type': 'array', 'items': {'type': 'string'}}}}},
+                'claim_ids': {'type': 'array', 'description': '可省略。只能填已有来源陈述的真实 claim ID；不能填 reader_contract 的 req_/clause ID。没有已登记主张时留空。', 'items': {'type': 'string'}}}}},
         'discard': {'type': 'array', 'maxItems': 16, 'items': {'type': 'object',
             'required': ['id', 'reason'], 'additionalProperties': False,
             'properties': {'id': {'type': 'string'}, 'reason': {'type': 'string'}}}}}},

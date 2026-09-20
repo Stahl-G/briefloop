@@ -69,6 +69,11 @@ def action(store, config, args):
         if config.get('discuss_only'):
             raise ToolError('/discuss 只整理要求，不启动报告')
         req = dict(request.get('requirements') or {})
+        # Preserve the actual user request as context, not model-rewritten prose.
+        messages = store.rows('SELECT text FROM chat_messages WHERE id=? AND session_id=? AND role=?',
+                              (config['attempt_id'], config['session_id'], 'user'))
+        if messages:
+            req['raw_input'] = messages[0]['text']
         if req.get('allow_web') and not config.get('allow_web'):
             raise ToolError('本轮未允许联网，不能创建联网报告')
         req['allow_web'] = bool(req.get('allow_web', False) and config.get('allow_web'))
@@ -99,7 +104,10 @@ def action(store, config, args):
                 # not commit this still-open admission transaction.
                 payload = {**json.loads(job['payload']), 'session_id': config['session_id']}
                 connection.execute('UPDATE jobs SET payload=? WHERE id=?', (dump(payload), job['id']))
-                result = {'job_id': job['id'], 'run_id': run['id'], 'status': 'queued'}
+                result = {'job_id': job['id'], 'run_id': run['id'], 'status': 'queued',
+                          'accepted_requirements': {key: value for key, value in json.loads(run['requirements']).items()
+                              if key in ('title', 'target_minutes', 'hard_timeout_minutes', 'research_budget', 'key_questions',
+                                         'writing_preferences', 'target_words', 'max_words', 'period', 'search_policy')}}
                 view.set_meta(key, {'fingerprint': fingerprint, 'result': result})
         store.wake_jobs()
         from .task_notify import notify
@@ -296,8 +304,18 @@ def revision_metadata(store, config, args):
     for r in responses:
         if r.get('action') not in ('corrected', 'removed', 'disagree') or not str(r.get('reason') or '').strip():
             raise ToolError('每项处理说明需要 action 和具体 reason')
+    bindings = args.get('bindings', [])
+    if not isinstance(bindings, list):
+        raise ToolError('bindings 必须是数组；没有已登记主张时提交 []')
+    from .evidence import record
+    for binding in bindings:
+        if not isinstance(binding, dict) or any(not isinstance(binding.get(k), str) or not binding[k].strip()
+                                               for k in ('claim_id', 'block_id', 'quote')):
+            raise ToolError('bindings 每项需要 claim_id/block_id/quote；数字定位请放 draft.number_bindings，没有已登记主张时提交 []')
+        if record(store, 'claims', binding['claim_id'])['run_id'] != config['run_id']:
+            raise ToolError('bindings 只能引用本报告已登记的主张')
     _save(_folder(config) / 'responses.json', responses)
-    _save(_folder(config) / 'revision_bindings.json', args.get('bindings') or [])
+    _save(_folder(config) / 'revision_bindings.json', bindings)
     return _json_result({'saved': True})
 
 
@@ -323,6 +341,24 @@ def metadata_submit(store, config, args):
     original = json.loads((Path(config['packet_root']) / 'input.json').read_text())
     if any(args.get(k) != original[k] for k in ('version_id', 'brief_hash')):
         raise ToolError('元数据必须绑定本次既有版本与 hash')
+    bindings, responses = args.get('bindings'), args.get('responses')
+    if not isinstance(bindings, list) or not isinstance(responses, list):
+        raise ToolError('bindings/responses 必须是数组')
+    from .evidence import blocks, node_text
+    claims = {c['id'] for c in original.get('candidate_claims', [])}
+    nodes = blocks(original['document'])
+    for binding in bindings:
+        if not isinstance(binding, dict) or binding.get('claim_id') not in claims:
+            raise ToolError('claim_id 必须来自 input.candidate_claims；source_id 不是 claim_id。candidate_claims 为空时 bindings 必须为 []，数字定位仍保留在既有稿件 number_bindings。')
+        node = nodes.get(binding.get('block_id'))
+        quote = binding.get('quote')
+        if node is None or not isinstance(quote, str) or not quote or node_text(node).count(quote) != 1:
+            raise ToolError('绑定必须指向 input.document 的真实 blockId 和唯一原句')
+    expected = {f['id'] for f in original.get('findings', [])}
+    if any(not isinstance(r, dict) for r in responses) or len(responses) != len(expected) or {r.get('finding_id') for r in responses} != expected:
+        raise ToolError('responses 必须逐项对应 input.findings；为空时为 []')
+    if any(r.get('action') not in ('corrected', 'removed', 'disagree') or not str(r.get('reason') or '').strip() for r in responses):
+        raise ToolError('处理说明需要有效 action 和具体 reason')
     _save(_folder(config) / 'metadata.json', args)
     return {**_json_result({'saved': True}), 'settle': dump({'saved': True})}
 
@@ -349,8 +385,8 @@ TEXT = {'type': 'string'}
 ACTION_TOOL = spec('workspace_action', action, '调用当前角色获准的工作区业务接口，request 包含 action 及该操作参数；不支持 shell 或任意路径写入。', {'request': OBJ}, ('request',), sequential=True)
 SOURCE_TOOL = spec('source_read', read_source, '读取已登记来源，按行分页，最多 60000 字符。',
     {'source_id': TEXT, 'start_line': {'type': 'integer', 'minimum': 1}, 'end_line': {'type': 'integer', 'minimum': 1}, 'max_chars': {'type': 'integer', 'minimum': 1}}, ('source_id',))
-METADATA_TOOL = spec('save_revision_metadata', revision_metadata, '保存本轮发现的逐项处理说明 responses 及已有主张的绑定 bindings，交稿前完成。',
-    {'responses': {'type': 'array', 'items': OBJ}, 'bindings': {'type': 'array', 'items': OBJ}}, ('responses',), sequential=True)
+METADATA_TOOL = spec('save_revision_metadata', revision_metadata, '保存本轮 review_findings 的逐项处理说明 responses 和已登记主张绑定 bindings；bindings 项须有 claim_id/block_id/quote，不是数字定位。没有已登记主张或发现时相应数组为 []。',
+    {'responses': {'type': 'array', 'items': OBJ}, 'bindings': {'type': 'array', 'items': {'type':'object', 'required':['claim_id','block_id','quote'], 'properties':{'claim_id':TEXT,'block_id':TEXT,'quote':TEXT}}}}, ('responses',), sequential=True)
 
 
 def tools(role, config):
@@ -431,6 +467,7 @@ def prepare(store, job, folder, prompt):
         prompt = prompt + '\n本次没有 shell；web_search/add_url/source_read/workspace_action 直接传 JSON 参数。最后使用 submit_fact_check 提交上述结果对象，不写文件或调用 CLI。'
     elif job['kind'] == 'generate':
         prompt = ('你是本报告主 Agent。读取 input.json 的读者要求、已冻结研究计划、共享预算、角色技能和来源索引；'
+                  '来源索引里的 source_id 用 source_read 读取；packet_read 只读取本包实际文件，不存在 packet/sources 目录，不猜原文路径。'
                   '开始时保存 reader_contract 与计划（save_plan），按任务需要决定 Scout 分工，用 run_scouts 执行。'
                   'workspace_action 提供 research_status/finish_research_round/begin_research_round 及写前 reconciliation_candidates/reconciliation_save；'
                   '其请求结构见 action-guide.md。后续轮次必须针对上一轮真实 gap_id，不重复搜索。'

@@ -265,7 +265,8 @@ function wireSessionEvents(clientSid: string, entry: SessionEntry): void {
           emit(clientSid, execId, "text", { delta: delta.delta });
         }
         else if (delta?.type === "thinking_delta") emit(clientSid, execId, "reasoning", { delta: delta.delta });
-        else if (delta?.type === "toolcall_start") emit(clientSid, execId, "tool", { status: "running", tool_call_id: delta.toolCallId });
+        // Argument streaming is not execution. The SDK execution events below
+        // provide stable call IDs and a matching completion for every UI item.
         break;
       }
       case "message_end":
@@ -310,7 +311,7 @@ function wireSessionEvents(clientSid: string, entry: SessionEntry): void {
           status: e.isError ? "failed" : "completed",
           tool_call_id: e.toolCallId,
           name: e.toolName,
-          output: text.slice(0, 4000),
+          output: Array.from(text).slice(0, 4000).join(""),
           is_error: !!e.isError,
         });
         break;

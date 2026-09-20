@@ -86,7 +86,7 @@ def native_prompt(scout):
             + "已登记来源正文用 source_read 直接读取，source_grep 按需用于定位，不是必经步骤；以来源为单位读取完整相关部分，单次最多 60000 字符，需要时继续读取。"
             + web
             + "预算以工具返回的 remaining 为准，所有 Scout 共用；额度耗尽后保留已有证据与具体缺口。"
-            + "证据通过 record_evidence 保存，可按来源批量记录：稳定 id、source_id、source_hash、单一行段 locator、短逐字 quote、facts/conflicts/coverage_status/claim_ids。记录时机按研究需要决定，不要求每读一段就中断研究提交。"
+            + "证据通过 record_evidence 保存，可按来源批量记录：稳定 id、source_id、source_hash、单一行段 locator、短逐字 quote、facts/conflicts/coverage_status/claim_ids。claim_ids 可省略，仅引用已登记来源陈述的真实 ID，不能填 req_/clause 要求 ID；没有时留空。记录时机按研究需要决定，不要求每读一段就中断研究提交。"
             + "运行器取 excerpt；通过项已保存，只重交 rejected 条目。自动重定位后检查返回原文是否完整，必要时补读表头脚注再修正同一 id。"
             + "最终 submit_scout_result 只交 gaps/search_summary/retrieval_notes，不重交 sources；不要把结果 JSON 写进回复正文。"
             + ''.join(included))
