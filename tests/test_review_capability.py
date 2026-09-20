@@ -30,7 +30,46 @@ def test_one_declaration_and_unknown_backends_never_claim_the_reviewer():
     assert not any(restricted_review(name) for name in BRIDGE_BACKENDS)
     with pytest.raises(ValueError):
         restricted_review('made-up-host')
-    assert summary() == {'restricted_review': [{'id': 'opencode', 'label': 'Opencode CLI'}]}
+    assert summary()['restricted_review'] == [{'id': 'opencode', 'label': 'Opencode CLI'}]
+
+
+def test_a_separately_chosen_reviewer_unblocks_a_main_chain_without_one(tmp_path):
+    from pydantic import ValidationError
+    from briefloop.models import Settings
+    from briefloop.release import eligibility
+    from briefloop.review import enqueue_review
+    store = Store(tmp_path)
+    source = _source(store)
+    store.set_meta('settings', {**store.settings(), 'model_selection_required': False, 'company_context_enabled': False})
+    with pytest.raises(ReviewBackendUnsupported) as refused:
+        store.create_run(_web(fact_check=True), [source['id']])
+    assert '独立审阅执行后端' in str(refused.value)
+
+    reviewer = {'backend': 'opencode', 'model': 'opencode-go/deepseek-v4.1-flash', 'model_variant': 'high'}
+    store.set_meta('settings', {**store.settings(), 'review_runtime': reviewer})
+    run = store.create_run(_web(fact_check=True), [source['id']])
+    job = store.enqueue('generate', {'run_id': run['id']})
+    payload = json.loads(job['payload'])
+    assert payload['agent_backend'] == 'codex' and payload['review_runtime'] == reviewer
+
+    brief = store.publish(run['id'], {'title': 'T', 'markdown': 'Revenue was USD 12 million.'})
+    assert not [b for b in eligibility(store, brief['id'])['blockers'] if b['code'] == CODE]
+    # The route frozen with the parent job wins over later settings.
+    store.set_meta('settings', {**store.settings(), 'review_runtime': None})
+    review = json.loads(enqueue_review(store, brief['id'], payload={**payload, 'parent_job_id': job['id']})['payload'])
+    assert review['agent_backend'] == 'opencode'
+    assert review['runtime'] == {'model': 'opencode-go/deepseek-v4.1-flash', 'model_variant': 'high'}
+    assert review['role_models']['evaluator'] == review['runtime']
+    assert 'review_runtime' not in review
+    # Following the main chain again: no route, so formal delivery says why.
+    assert [b for b in eligibility(store, brief['id'])['blockers'] if b['code'] == CODE]
+    with pytest.raises(ReviewBackendUnsupported):
+        enqueue_review(store, brief['id'])
+
+    for bad in ({'backend': 'codex', 'model': 'gpt-5.6-luna'}, {'backend': 'opencode', 'model': 'no-provider'},
+                {'backend': 'briefloop-native', 'model': ' '}):
+        with pytest.raises(ValidationError):
+            Settings.model_validate({'review_runtime': bad})
 
 
 def test_fact_check_is_refused_before_the_run_exists_and_ordinary_work_continues(tmp_path):

@@ -9,7 +9,7 @@ import time
 import os
 import secrets
 from .store import Store
-from .backends import BACKENDS
+from .backends import BACKENDS, REVIEW_ONLY_BACKENDS
 from . import __version__
 
 
@@ -41,7 +41,7 @@ def main():
         if name in ('serve','start'):
             parser.add_argument('--port',type=int,default=8765)
             parser.add_argument('--paused',action='store_true',help='打开工作区但不自动重跑旧队列或反馈学习')
-            parser.add_argument('--backend',choices=BACKENDS,default=None,help='新任务默认走哪个 CLI 后端；不传则沿用工作区设置')
+            parser.add_argument('--backend',choices=[b for b in BACKENDS if b not in REVIEW_ONLY_BACKENDS],default=None,help='新任务默认走哪个 CLI 后端；不传则沿用工作区设置')
     external=sub.add_parser('external',help='连接已授权的本地工作区；不自动创建或启动服务')
     external.add_argument('--workspace',required=True)
     es=external.add_subparsers(dest='external_action',required=True)

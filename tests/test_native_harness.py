@@ -52,7 +52,10 @@ def test_the_embedded_engine_runs_pinned_reviews_but_never_the_main_chain(tmp_pa
         Settings.model_validate({'agent_backend': 'briefloop-native'})
     assert restricted_review('briefloop-native') is True
     # Never offered as the “执行后端” to switch to: the page cannot select it.
-    assert summary() == {'restricted_review': [{'id': 'opencode', 'label': 'Opencode CLI'}]}
+    # It is offered only as a separately chosen Reviewer, marked experimental.
+    assert summary() == {'restricted_review': [{'id': 'opencode', 'label': 'Opencode CLI'}],
+                         'review_choices': [{'id': 'opencode', 'label': 'Opencode CLI', 'experimental': False},
+                                            {'id': 'briefloop-native', 'label': 'BriefLoop 内置引擎', 'experimental': True}]}
 
 
 class EngineFixture:

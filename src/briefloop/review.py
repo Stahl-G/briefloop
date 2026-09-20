@@ -753,8 +753,24 @@ def review_status(store,version_id):
             'findings':[{**f,'data':json.loads(f['data'])} for f in findings]}
 
 
+def review_job_payload(store,payload):
+    """Resolve the Reviewer route into the review job's own backend and runtime.
+
+    A separately chosen Reviewer replaces the inherited main-chain backend, model
+    and role models; following the main chain leaves them untouched."""
+    values=dict(payload)
+    review_runtime=values.pop('review_runtime') if 'review_runtime' in values else store.settings().get('review_runtime')
+    from .review_capability import review_route
+    from .models import ROLE_NAMES
+    route=review_route(values.get('agent_backend',store.settings().get('agent_backend','codex')),review_runtime)
+    if route and route[1] is not None:
+        backend,runtime=route
+        values.update(agent_backend=backend,runtime=dict(runtime),role_models={role:dict(runtime) for role in ROLE_NAMES})
+    return values
+
+
 def enqueue_review(store,version_id,*,payload=None):
-    values=dict(payload or {});values['version_id']=version_id
+    values=review_job_payload(store,payload or {});values['version_id']=version_id
     identity=sha(dump({'snapshot':_snapshot(store,version_id),'runtime':values.get('runtime') or store.runtime_config()}).encode())
     for row in store.rows("SELECT * FROM jobs WHERE kind='review' AND status IN ('queued','running') ORDER BY rowid DESC"):
         old=json.loads(row['payload'])

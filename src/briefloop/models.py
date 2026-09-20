@@ -196,12 +196,36 @@ def runtime_fields(value, backend='codex'):
     return selected
 
 
+class ReviewRuntime(Model):
+    """The backend and model the independent Reviewer runs on, chosen apart
+    from the main chain so a host without restricted review can still reach
+    formal delivery. Only backends declaring restricted_review are accepted."""
+    backend: Literal['opencode', 'briefloop-native']
+    model: str = Field(min_length=1, max_length=100)
+    model_variant: str | None = Field(default=None, min_length=1, max_length=100)
+
+    @field_validator('model', 'model_variant', mode='before')
+    @classmethod
+    def strip(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+    @model_validator(mode='after')
+    def model_shape(self):
+        runtime_fields(self.model_dump(exclude_none=True), self.backend)
+        return self
+
+
 class Settings(RoleModel):
     model: str = Field(default='gpt-5.6-luna', max_length=100)
     reasoning_effort: str | None = Field(default='high', min_length=1, max_length=100)
     agent_backend: Literal['codex', 'opencode','claude','kimi','hermes','reasonix','mimo','codebuddy','kilo','kiro','vibe','deepseek-harness','antigravity','pi'] = 'codex'
     model_selection_required: bool = True
     role_models: dict[Literal['evaluator','maintainer','proposer'], RoleModel] = Field(default_factory=dict)
+    # None: the Reviewer follows agent_backend and the Evaluator model.
+    review_runtime: ReviewRuntime | None = None
     chat_allow_web: bool = True
     search_provider: Literal['native','tavily','duckduckgo','bocha','zhipu'] = 'tavily'
     search_policy: SearchPolicy | None = None

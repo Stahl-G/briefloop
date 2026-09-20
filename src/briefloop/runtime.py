@@ -984,7 +984,7 @@ class Worker:
         if score and payload.get('single_evaluation') is not False and json.loads(run['requirements']).get('fact_check'):
             # A job queued before this check, or resumed later, stops before any model turn.
             from .review_capability import require_for_fact_check
-            require_for_fact_check(backend)
+            require_for_fact_check(backend,payload.get('review_runtime'))
         run['search_provider']=normalize_search_provider(payload.get('search_provider'))
         if 'max_parallel' in payload:run['max_parallel']=payload['max_parallel']
         if payload.get('previous_job_id'):
@@ -1047,13 +1047,13 @@ class Worker:
                     (folder/'draft-refinement-suggestion.json').write_text(dump(data), encoding='utf-8');return
             latest[0]=record['id']
             if record['id'] not in known:self._remember_generated_sources(folder,record)
-            from .review_capability import restricted_review
+            from .review_capability import review_available
             if (self.thread.is_alive() and not checkpoint[0] and time.monotonic()-started>=180
                     and json.loads(run['requirements']).get('writing_mode')=='internal_report'
                     # The final scoring falls back to an ordinary assessment on a
                     # backend without the restricted Reviewer; a checkpoint review
                     # must use the same capability check instead of failing here.
-                    and restricted_review(backend)):
+                    and review_available(backend,payload.get('review_runtime'))):
                 from .review import enqueue_review
                 with self._claim_lock:
                     if not self.runtime.cancelled.is_set() and not self.stopping.is_set() and self.store.one('jobs',job['id'])['status']!='cancelled':
@@ -1299,12 +1299,13 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
 
     def assess_version(self,job,brief,folder,backend):
         req=json.loads(self.store.one('runs',brief['run_id'])['requirements'])
-        from .review_capability import restricted_review,require_for_fact_check
-        if req.get('fact_check'):require_for_fact_check(backend)
-        # An internal report on a backend without the restricted Reviewer is still
+        from .review_capability import review_available,require_for_fact_check
+        review_runtime=json.loads(job['payload']).get('review_runtime')
+        if req.get('fact_check'):require_for_fact_check(backend,review_runtime)
+        # An internal report without any route to the restricted Reviewer is still
         # scored, but as ordinary assessment: it is labelled as such and cannot
         # satisfy the delivery gate, which asks for a completed review (#726).
-        without_review=not restricted_review(backend)
+        without_review=not review_available(backend,review_runtime)
         if (req.get('writing_mode')=='internal_report' or req.get('fact_check')) and not without_review:
             from .review import run_review
             if (folder/'review'/'review-id.json').exists() or not self.thread.is_alive():return run_review(self.store,self.runtime,job,brief['id'],folder/'review')
@@ -1327,13 +1328,16 @@ responses 必须符合 {stage/'responses.schema.json'}；finding_id 只能取 in
 
     def _review_child(self,parent,brief):
         """Resume an applicable saved child before scheduling another model turn."""
-        from .review import enqueue_review,validate_applicable_review,_snapshot,sha
+        from .review import enqueue_review,validate_applicable_review,_snapshot,sha,review_job_payload
         payload={**json.loads(parent['payload']),'parent_job_id':parent['id']}
-        selected=json.loads(stage_job(self.store,parent,'evaluator',mode='single')['payload'])['runtime']
+        # Compare against the route the child would be queued with now, which may
+        # be a Reviewer backend chosen apart from the parent's main chain.
+        effective=review_job_payload(self.store,payload)
+        selected=json.loads(stage_job(self.store,{**parent,'payload':dump(effective)},'evaluator',mode='single')['payload'])['runtime']
         for child in self.store.rows("SELECT * FROM jobs WHERE kind='review' AND json_extract(payload,'$.parent_job_id')=? AND json_extract(payload,'$.version_id')=? ORDER BY rowid DESC",(parent['id'],brief['id'])):
             previous=json.loads(child['payload'])
             actual=json.loads(stage_job(self.store,child,'evaluator',mode='single')['payload'])['runtime']
-            if actual!=selected or previous.get('agent_backend','codex')!=payload.get('agent_backend','codex'):continue
+            if actual!=selected or previous.get('agent_backend','codex')!=effective.get('agent_backend','codex'):continue
             marker=self.store.root/'jobs'/child['id']/'review-id.json'
             try:
                 if marker.exists():validate_applicable_review(self.store,json.loads(marker.read_text(encoding='utf-8'))['review_id'],brief['id'])
