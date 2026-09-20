@@ -6,6 +6,7 @@ import json
 import os
 from .agent_commands import tool_command, workspace_action_example
 from .models import Requirements, Comment, Settings, runtime_fields
+from .writing_guidance import DISCUSSION_GUIDE
 
 
 def _notify_owner(request):
@@ -270,7 +271,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 选择搜索源不会自动打开联网；是否联网仍以上面的实际会话状态为准。
 {search_choice}
 {profile_note}
-用户消息以 /discuss 开头时进入需求讨论模式：先逐条确认目的、读者、必答问题、篇幅与格式，不要启动生成；确认清楚后在回复最后给出一个 briefloop-requirements 代码块（JSON 字段：title、objective、audience、period、key_questions、manual_sections、writing_preferences、workflow_id、workflow_variant、report_profile、writing_mode、research_tier、target_words、max_words），界面会给用户「应用到材料与需求」。
+{DISCUSSION_GUIDE}
 你可以调用本地工作区工具：先写一个 JSON 请求文件，再执行
 {command} REQUEST_FILE
 本次授权的工作区绝对路径：{store.root.as_posix()}。shell 工具的 workdir/cwd 必须设为此目录；请求文件也必须放在此目录内，不能使用宿主临时目录、系统 Temp 或工作区的同级目录。每次请求使用独立文件名，不覆盖其他任务的文件。以下是可直接执行的 UTF-8 capabilities 示例（后续更换 action 和文件名）：
@@ -287,7 +288,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"company_read"}}：读取本工作区企业背景及待确认冲突。企业内部周报开始前可提议维护，用户明确同意/拒绝后用 {{"action":"company_config","enabled":true}} 保存选择。
 - {{"action":"company_update","fact":{{"key":"主体/指标/期间","value":"有依据的企业背景","source_id":"真实来源ID","locator":"原文位置","effective_date":"YYYY-MM-DD","origin":"public|user"}}}}：已启用后更新企业背景。返回 pending 时向用户询问；用户明确回答后用 {{"action":"company_resolve","fact_id":"真实记录ID","accept":true}} 记录采用或拒绝。
 - {{"action":"profile_read"}}：读取本工作区基础设定（称呼、公司/组织、岗位等）。
-- {{"action":"profile_update","profile":{{"name":"称呼","organization":"公司/组织","role":"岗位","location":"城市","focus":"主要工作","report_types":"常做报告"}}}}：用户第一次打招呼或交任务时，按上文约定一次问清必要几项并保存；只写用户明确说过的内容，不猜、不编造，也不把这些当作报告证据。
+- {{"action":"profile_update","profile":{{"name":"称呼","organization":"公司/组织","role":"岗位","location":"城市","focus":"主要工作","report_types":"常做报告"}}}}：按上文约定保存用户主动提供或任务确有必要的基础信息；只写用户明确说过的内容，不猜、不编造，也不把这些当作报告证据。
 - {{"action":"research_status","run_id":"真实run ID"}}：读取该任务冻结的研究计划、轮次与用量。
 - {{"action":"freeze_research_plan","run_id":"真实run ID","preset":"quick|standard|deep","structure":{{"breadth":6,"depth":2,"parallel":2}}}}：在第一次受控联网前冻结研究计划。预算只读取任务已授权的额度，不能借冻结扩大额度或替换模型/搜索源；相同内容重复提交幂等，不同内容会被拒绝。
 - {{"action":"begin_research_round","run_id":"真实run ID","target_gap_ids":["真实gap ID"],"tasks":[{{"slot_id":"scout-1"}}]}}：在当前轮已结束、且未超过 depth 上限时开始下一轮；必须引用前轮真实缺口 ID。

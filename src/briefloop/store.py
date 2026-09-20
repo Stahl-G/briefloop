@@ -222,6 +222,10 @@ class Store:
         if "research_tier" not in requirements:
             requirements={**requirements,"research_tier":self.settings().get("research_tier","standard")}
         req = Requirements.model_validate(requirements)
+        if req.target_minutes is None:
+            req.target_minutes = self.settings()['timeout_minutes']
+        if req.hard_timeout_minutes is None:
+            req.hard_timeout_minutes = self.settings()['hard_timeout_minutes']
         if clone is None:
             from .report_time import freeze
             req.time_context = freeze(req.model_dump())

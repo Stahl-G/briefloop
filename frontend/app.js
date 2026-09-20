@@ -95,7 +95,7 @@ function updateDownloads(brief){
 }
 
 const statuses={queued:'等待运行',running:'正在运行',complete:'已完成',failed:'未完成',interrupted:'已中断',cancelled:'已停止'};
-const DISCUSS_INSTRUCTION='（讨论模式：现在不要生成报告，也不要启动生成任务。）请先和我逐条确认这份简报的需求：目的与要回答的问题、读者、时间范围、必答问题、人工填写章节、篇幅与格式偏好。确认清楚后，在回复的最后单独给出一个 ```briefloop-requirements 代码块，内容是 JSON：{"title":"","objective":"","audience":"","period":"","key_questions":[],"manual_sections":[],"writing_preferences":[],"report_profile":"brief","writing_mode":"internal_report","target_words":1500,"max_words":2000}。只讨论和确认，不写文件、不生成报告。';
+const DISCUSS_INSTRUCTION='（讨论模式：现在不要生成报告。）请根据我已经提供的信息整理写作简报：给谁看、解决什么问题、必答内容、期间、篇幅和写作偏好。只问会改变结果的缺口，不重复确认已知信息。按需求准备约定在最后提供 briefloop-requirements JSON，供我应用到材料与需求。';
 const CHAT_COMMANDS=[
  {name:'discuss',desc:'讨论需求：先确认目的、读者、范围，不直接生成'},
  {name:'new',desc:'开始一个新对话'},
@@ -132,9 +132,21 @@ function preserveWritingPreferences(req,previous,override){
 }
 function applyRequirements(text){
  let data;try{data=JSON.parse(text)}catch(e){notice('要求清单无法解析：'+e.message,true);return}
+ // Accept the observed title-shaped manual section response, never stringify objects.
+ const list=(key,manual=false)=>{
+  if(data[key]===undefined)return;
+  if(!Array.isArray(data[key]))throw Error(key+' 应为文字清单');
+  data[key]=data[key].map(item=>{
+   const text=typeof item==='string'?item:manual&&item&&typeof item.title==='string'?item.title:null;
+   if(text===null)throw Error(key+' 中存在无法识别的项目');
+   return text;
+  });
+ };
+ try{list('key_questions');list('manual_sections',true);list('writing_preferences')}catch(e){notice('要求清单无法应用：'+e.message,true);return}
  const form=$('requirements');if(!form)return;
  const set=(name,value)=>{const el=form.elements[name];if(el&&value!=null){el.value=value;el.dispatchEvent(new Event('change',{bubbles:true}))}};
  set('title',data.title);set('objective',data.objective);set('audience',data.audience);set('period',data.period);
+ for(const key of ['period_start','period_end','report_timezone'])set(key,data[key]);
  if(Array.isArray(data.key_questions))set('key_questions_text',data.key_questions.join('\n'));
  if(Array.isArray(data.manual_sections))set('manual_sections_text',data.manual_sections.join('\n'));
  if(data.report_profile)set('report_profile',data.report_profile);
@@ -144,7 +156,6 @@ function applyRequirements(text){
  if(data.target_words)set('target_words',data.target_words);
  if(data.max_words)set('max_words',data.max_words);
  if(Array.isArray(data.writing_preferences))writingPreferencesOverride=[...data.writing_preferences];
- if(Array.isArray(data.writing_preferences)&&data.writing_preferences.length){const box=form.elements.objective;if(box&&!String(box.value).includes(data.writing_preferences[0]))box.value=String(box.value||'')+'\n写作偏好：'+data.writing_preferences.join('；')}
  page('setup');notice('已填入材料与需求，请检查后生成');
 }
 const TASK_LABELS={generate:'生成简报',assess:'重新评分',review:'独立审阅',revise:'按审阅修订',fact_check:'独立事实核查',learn:'WikiSkill 学习',export_docx:'生成工作稿 Word',release:'制作正式 Word',audit_bundle:'制作审计包',source_refresh:'复查来源',prepare_template:'准备模板'};
@@ -286,7 +297,7 @@ function render(first){
  renderWorkflowChoices(first);
  if($('review-open'))$('review-open').textContent='审阅与需处理'+(state.conflicts?.length?' · '+state.conflicts.length+' 项来源分歧':'');
  if(first&&$('report-system-clock')&&state.system_clock)$('report-system-clock').textContent=`本机日期：${state.system_clock.today} · ${state.system_clock.timezone}；提交时再次由后台核对。`;
- if(first){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('chat-allow-web').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.learning_authorization?.state==='authorized';$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',effortValue(state.settings,'reasoning_effort'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.model_variant||'';updateModelLabel();renderRoleModels();renderBackend();loadSearchPolicy();renderSearchProvider();refreshRuntimeDiscovery();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});if(!state.requirements||state.requirements.fact_check==null)$('requirements').elements.fact_check.checked=!!state.settings.fact_checker;syncFactCheckControl();syncWorkflowProfile(false);previewReportTime()}
+ if(first){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('chat-allow-web').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.learning_authorization?.state==='authorized';$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',effortValue(state.settings,'reasoning_effort'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.model_variant||'';updateModelLabel();renderRoleModels();renderBackend();loadSearchPolicy();renderSearchProvider();refreshRuntimeDiscovery();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});if(!state.requirements||state.requirements.fact_check==null)$('requirements').elements.fact_check.checked=!!state.settings.fact_checker;syncFactCheckControl();syncWorkflowProfile(false);previewReportTime()}
  $('source-count').textContent=state.sources.length+' 份';$('source-list').innerHTML=state.sources.map(s=>`<div class="source-item"><input type="checkbox" data-check="${s.id}" ${selected.has(s.id)?'checked':''} aria-label="选择 ${esc(s.name)}"><button data-source="${s.id}">${esc(s.name)}</button><span class="tag ${s.status==='failed'?'error':''}">${s.status==='failed'?'读取失败':s.needs_visual?'需视觉读取':'可读取'}</span>${s.status==='failed'?`<button data-retry-source="${s.id}">重试</button>`:''}</div>`).join('');
  document.querySelectorAll('[data-retry-source]').forEach(b=>b.onclick=()=>action(async()=>{const s=await api('retry-source',{source_id:b.dataset.retrySource});selected.delete(b.dataset.retrySource);selected.add(s.id);notice(s.status==='ready'?'来源已重新读取':s.error,s.status!=='ready')}));
  document.querySelectorAll('[data-check]').forEach(b=>b.onchange=()=>{if(b.checked){selected.add(b.dataset.check);referenceSelected.delete(b.dataset.check);renderReferenceSources()}else selected.delete(b.dataset.check)});renderReferenceSources();
@@ -705,7 +716,7 @@ async function refreshProgress(){
   const running=job.status==='running';
   const labels={running:'进行中',pending_init:'启动中',completed:'已完成',done:'已完成',closed:'已结束',failed:'失败',errored:'失败'};
   $('run-progress').hidden=false;
-  $('run-progress').innerHTML=`<div class="section-title"><div><p class="eyebrow">${({learn:'技能学习',review:'独立审阅',assess:'独立评分',revise:'稿件修订',fact_check:'独立事实核查'})[job.kind]||'简报生成'} · ${running?'后台正在运行':'等待后台执行'}</p><h2>${esc(pendingRequests.length?'等待你的确认':stageLabel||(job.status==='queued'?'任务已排队':'正在启动 BriefLoop'))}</h2></div><button class="outline" id="progress-stop">停止任务</button></div><p><strong>${esc(jobModelLabel(job,start))}</strong> · 模型进程 PID ${live.pid||'—'}${live.server_pid?' · 本地服务 PID '+live.server_pid:''}</p><p class="help">${job.status==='queued'?'排队等待':p.started?'已执行':'起始时间待确认'} ${job.status==='queued'||p.started?`${mins} 分 ${secs} 秒`:''} · ${state.settings.timeout_minutes===0?'不限时':'单次执行上限 '+state.settings.timeout_minutes+' 分钟'} <button id="progress-timeout" class="subtle-button">调整时限</button>${run?` · ${JSON.parse(run.source_ids).length} 份初始来源 · ${req.allow_web?'允许联网':'仅本地来源'}`:''}</p>${p.message?`<p class="progress-message">${esc(p.message)}</p>`:''}${stageRailHTML(p.stages)||`<div class="agent-progress">${agents.map(a=>`<div><strong>${esc(a.role)}</strong><span>${labels[a.status]||esc(a.status)}</span>${a.task?`<p>${esc(a.task)}</p>`:''}</div>`).join('')}</div>`}<p class="help">${p.draft_ready?'正文已可查看，评分独立完成。':'正文保存后会自动显示；等待子 agent 时可能暂时没有新消息。'}${p.last_activity?' 最近活动：'+new Date(p.last_activity).toLocaleTimeString():''}</p>`;
+  $('run-progress').innerHTML=`<div class="section-title"><div><p class="eyebrow">${({learn:'技能学习',review:'独立审阅',assess:'独立评分',revise:'稿件修订',fact_check:'独立事实核查'})[job.kind]||'简报生成'} · ${running?'后台正在运行':'等待后台执行'}</p><h2>${esc(pendingRequests.length?'等待你的确认':stageLabel||(job.status==='queued'?'任务已排队':'正在启动 BriefLoop'))}</h2></div><button class="outline" id="progress-stop">停止任务</button></div><p><strong>${esc(jobModelLabel(job,start))}</strong> · 模型进程 PID ${live.pid||'—'}${live.server_pid?' · 本地服务 PID '+live.server_pid:''}</p><p class="help">${job.status==='queued'?'排队等待':p.started?'已执行':'起始时间待确认'} ${job.status==='queued'||p.started?`${mins} 分 ${secs} 秒`:''} · ${req.target_minutes?'目标约 '+req.target_minutes+' 分钟'+(running&&p.started&&elapsed>req.target_minutes*60?' · 已超过目标，继续执行':''):'未设目标用时'}${req.hard_timeout_minutes?' · 单轮最长运行 '+req.hard_timeout_minutes+' 分钟':''} <button id="progress-timeout" class="subtle-button">后续任务设置</button>${run?` · ${JSON.parse(run.source_ids).length} 份初始来源 · ${req.allow_web?'允许联网':'仅本地来源'}`:''}</p>${p.message?`<p class="progress-message">${esc(p.message)}</p>`:''}${stageRailHTML(p.stages)||`<div class="agent-progress">${agents.map(a=>`<div><strong>${esc(a.role)}</strong><span>${labels[a.status]||esc(a.status)}</span>${a.task?`<p>${esc(a.task)}</p>`:''}</div>`).join('')}</div>`}<p class="help">${p.draft_ready?'正文已可查看，评分独立完成。':'正文保存后会自动显示；等待子 agent 时可能暂时没有新消息。'}${p.last_activity?' 最近活动：'+new Date(p.last_activity).toLocaleTimeString():''}</p>`;
   if(pendingRequests.length){
    $('run-progress').insertAdjacentHTML('beforeend',`<div class="agent-question" role="status"><strong>有 ${pendingRequests.length} 项操作等待确认</strong><p>打开任务对话，查看具体操作并选择允许、拒绝或补充信息。回答后任务会继续。</p><button id="progress-requests" class="primary">查看并处理</button></div>`);
    $('progress-requests').onclick=()=>selectChat(taskSession);
@@ -1384,7 +1395,7 @@ function renderContext(){
  $('context-details').innerHTML=usage?`<strong>最近一次模型请求</strong><dl><div><dt>输入 Token</dt><dd>${count(last.inputTokens)}</dd></div><div><dt>其中缓存</dt><dd>${count(last.cachedInputTokens)}</dd></div><div><dt>输出 Token</dt><dd>${count(last.outputTokens)}</dd></div><div><dt>模型窗口</dt><dd>${hasWindow?count(windowSize):'未知'}</dd></div></dl>${hasInput&&hasWindow?`<meter min="0" max="${windowSize}" value="${Math.min(last.inputTokens,windowSize)}" aria-label="最近输入与上下文窗口的比例"></meter><p>最近输入占窗口 ${(last.inputTokens/windowSize*100).toFixed(1)}%。</p>`:''}<p>输入量来自最近一次请求，累计用量不作为上下文占用。</p>`:'<p>开始执行后，按后端返回的真实数据更新；暂无用量。</p>';
 }
 $('chat-permission').onchange=()=>{rememberDraft();updateComposer()};
-function showSettings(){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;moveSearchSettings('settings');page('settings-dialog');$('settings-dialog').scrollIntoView({block:'start'});refreshRuntimeDiscovery();updateLearningPause().catch(()=>{});refreshTavilySettings().catch(()=>{})}
+function showSettings(){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;moveSearchSettings('settings');page('settings-dialog');$('settings-dialog').scrollIntoView({block:'start'});refreshRuntimeDiscovery();updateLearningPause().catch(()=>{});refreshTavilySettings().catch(()=>{})}
 $('settings-open').onclick=showSettings;$('settings-close').onclick=()=>page('chat');
 {
  const modelPanel=document.querySelector('.model-settings');const shortcut=document.createElement('div');shortcut.className='setup-settings-shortcut';shortcut.innerHTML='<div><span>生成模型</span><strong id="setup-model-summary">Luna / high</strong></div><button type="button" class="outline">模型与角色设置</button>';shortcut.querySelector('button').onclick=showSettings;modelPanel.before(shortcut);$('settings-model-block').append(modelPanel);
@@ -1901,9 +1912,14 @@ $('custom-preset').onchange=()=>{
 
 $('timeout-minutes').onchange=()=>action(async()=>{
  const minutes=Number($('timeout-minutes').value);
- if(!Number.isInteger(minutes)||minutes<0||minutes>240)throw Error('执行时限请输入 0–240 的整数，0 表示不限时');
+ if(!Number.isInteger(minutes)||minutes<0||minutes>240)throw Error('目标用时请输入 0–240 的整数，0 表示不设目标');
  await api('settings',{timeout_minutes:minutes});
-},'执行时限已更新，当前报告也会采用新上限');
+},'后续报告的目标用时已更新，超出目标不会自动停止');
+$('hard-timeout-minutes').onchange=()=>action(async()=>{
+ const minutes=Number($('hard-timeout-minutes').value);
+ if(!Number.isInteger(minutes)||minutes<0||minutes>1440)throw Error('最长运行保护请输入 0–1440 的整数');
+ await api('settings',{hard_timeout_minutes:minutes});
+},'后续任务的最长运行保护已更新，当前任务保持原设置');
 async function chooseCompanyContext(enabled){
  await api('settings',{company_context_enabled:enabled});state.settings.company_context_enabled=enabled;
  $('company-mode').value=enabled?'on':'off';$('company-choice-dialog').close();$('requirements').requestSubmit();
@@ -2537,7 +2553,7 @@ function compactReportInstruction(){
 }
 function compactReportControls(where){
  const row=document.createElement('div');row.className='compact-report-options';row.dataset.reportOptions=where;
- row.innerHTML='<label>研究 <select data-option="tier" aria-label="研究深度"><option value="quick">快速</option><option value="standard" selected>标准</option><option value="deep">深度研究</option></select></label><label title="生成后联网补查关键主张，增加时间与用量"><input type="checkbox" data-option="fact">事实核查</label><label title="改稿或评论后在后台启动学习验证，会调用模型；已启用的技能不受这个开关影响"><input type="checkbox" data-option="learn">自动学习</label><label><input type="number" min="1" max="20" value="1" data-option="rounds" aria-label="自动学习最多轮数">轮</label><details><summary aria-label="更多报告选项">更多 ⋯</summary><div class="compact-options-menu"><label>单次执行上限 <select data-option="timeout"><option value="30">30 分钟</option><option value="60" selected>60 分钟</option><option value="120">120 分钟</option><option value="0">不限时</option></select></label><label>Scout 并发 <input data-option="scouts" type="number" min="1" max="16" value="4"></label></div></details>';
+ row.innerHTML='<label>研究 <select data-option="tier" aria-label="研究深度"><option value="quick">快速</option><option value="standard" selected>标准</option><option value="deep">深度研究</option></select></label><label title="生成后联网补查关键主张，增加时间与用量"><input type="checkbox" data-option="fact">事实核查</label><label title="改稿或评论后在后台启动学习验证，会调用模型；已启用的技能不受这个开关影响"><input type="checkbox" data-option="learn">自动学习</label><label><input type="number" min="1" max="20" value="1" data-option="rounds" aria-label="自动学习最多轮数">轮</label><details><summary aria-label="更多报告选项">更多 ⋯</summary><div class="compact-options-menu"><label>目标用时 <select data-option="timeout"><option value="10">约 10 分钟</option><option value="30">30 分钟</option><option value="60" selected>60 分钟</option><option value="120">120 分钟</option><option value="0">不设目标</option></select></label><label>Scout 并发 <input data-option="scouts" type="number" min="1" max="16" value="4"></label></div></details>';
  row.addEventListener('change',event=>action(async()=>{
   const key=event.target.dataset.option;if(!key)return;const value=event.target.type==='checkbox'?event.target.checked:event.target.value;
   if(key==='learn'){try{await setAutoLearn(value);await refresh()}finally{syncCompactReportControls()}$('auto-learn').checked=state.learning_authorization?.state==='authorized';return}

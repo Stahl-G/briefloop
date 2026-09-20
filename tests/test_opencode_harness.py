@@ -648,7 +648,7 @@ def test_plain_chat_child_wait_has_absolute_deadline(tmp_path, monkeypatch, read
     from types import SimpleNamespace
     from briefloop.backends.opencode_server import OpencodeError
     store = Store(tmp_path)
-    store.set_meta('settings', {**store.settings(), 'timeout_minutes': 1})
+    store.set_meta('settings', {**store.settings(), 'timeout_minutes': 1, 'hard_timeout_minutes': 1})
     manager = OpencodeHarness(store, FakeClient)
     sid = manager.create_session()['id']
     manager.chat.message(sid, 'Work', mid='turn', status='delivered', turn_id='turn')
@@ -741,6 +741,7 @@ def test_empty_assistant_fails_startup_only_without_real_parts(tmp_path, monkeyp
     monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: clock[0],
         sleep=lambda seconds: clock.__setitem__(0, clock[0] + 30)))
     class EmptyShell:
+        def session_status(self, owner, *, directory=None): return {'type': 'idle'}
         def __init__(self):self.aborts = []
         def abort(self, owner, *, directory=None):self.aborts.append(owner)
         def children(self, owner, *, directory=None):
@@ -829,7 +830,7 @@ def test_unlimited_turn_can_finish_or_be_cancelled_after_long_wait(tmp_path, mon
     from types import SimpleNamespace
     from briefloop.models import Settings
     store = Store(tmp_path)
-    store.set_meta('settings', Settings(timeout_minutes=0).model_dump())
+    store.set_meta('settings', Settings(timeout_minutes=10).model_dump())
     manager = OpencodeHarness(store, FakeClient)
     sid = manager.create_session()['id']
     manager.chat.message(sid, 'Work', mid='turn', status='delivered', turn_id='turn')
@@ -841,6 +842,7 @@ def test_unlimited_turn_can_finish_or_be_cancelled_after_long_wait(tmp_path, mon
         if cancel: manager._cancel_requested.add(sid)
     monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: clock[0], sleep=sleep))
     class LongTurn:
+        def session_status(self, owner, *, directory=None): return {'type': 'busy'}
         aborts = []
         def abort(self, owner, *, directory=None): self.aborts.append(owner)
         def children(self, owner, *, directory=None): return []

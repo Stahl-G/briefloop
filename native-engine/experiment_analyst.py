@@ -73,7 +73,8 @@ def prepare(source, job_id, output, arm_names=None):
     manifest['input_fingerprint'] = expected
     manifest['code_files'] = {str(p.relative_to(Path(__file__).resolve().parent.parent)): hashlib.sha256(p.read_bytes()).hexdigest()
                               for p in [Path(__file__).resolve(), *[Path(__file__).resolve().parent.parent/f for f in (
-                                  'src/briefloop/analyst.py', 'src/briefloop/native_roles.py', 'src/briefloop/native_harness.py', 'src/briefloop/agent_prompts.py',
+                                  'src/briefloop/analyst.py', 'src/briefloop/draft_checks.py', 'src/briefloop/delivery_checks.py', 'src/briefloop/cli.py',
+                                  'src/briefloop/native_roles.py', 'src/briefloop/native_harness.py', 'src/briefloop/agent_prompts.py',
                                   'src/briefloop/prompt_assets/role.analyst.zh.md', 'src/briefloop/static/native-engine.mjs')]]}
     (output/'manifest.json').write_text(dump(manifest))
     (output/'inputs.json').write_text(dump({'plan': plan, 'research': research, 'source_ids': source_ids, 'support': support}))
@@ -145,7 +146,7 @@ def execute(output, arm_names):
                 brief=store.one('briefs',admitted['version_id'])
                 write_reader(store,brief,target,arm)
                 (target/'draft.json').write_bytes((folder/'draft.json').read_bytes())
-                row.update(status='complete',**admitted)
+                row.update(status='draft_saved',**admitted)
             except Exception as exc:
                 row.update(status='failed',error=str(exc)[:800])
             finally:
@@ -155,7 +156,7 @@ def execute(output, arm_names):
             with outcome_path.open('x') as f:json.dump(row,f,ensure_ascii=False,indent=2)
             with (output/'results.jsonl').open('a') as f:f.write(dump(row)+'\n')
             print(dump(row),flush=True)
-            if arm['name']=='native-deepseek' and row['status']!='complete':break
+            if arm['name']=='native-deepseek' and row['status']!='draft_saved':break
     finally:os.environ.pop('OPENCODE_API_KEY',None)
 
 

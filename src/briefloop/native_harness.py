@@ -293,7 +293,14 @@ class NativeHarness:
             output = ''
             reasoning = ''
             tools = {}
+            from .execution_timing import policy
+            import time
+            minutes = policy(self.store, session_id=sid)['hard_timeout_minutes']
+            started = time.monotonic()
             while True:
+                if minutes > 0 and time.monotonic() - started > minutes * 60:
+                    self.engine.call('turn_abort', {'session_id': sid}, timeout=10)
+                    raise TimeoutError('运行超过明确设置的最长运行保护，已保存内容保留')
                 if sid in self._cancel_requested:
                     try:
                         self.engine.call('turn_abort', {'session_id': sid}, timeout=10)

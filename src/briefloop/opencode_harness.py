@@ -690,6 +690,8 @@ class OpencodeHarness:
         directory = self.chat.session(sid)['cwd']
         assistant_id = None
         seen_tools = set()
+        from .execution_timing import policy
+        minutes = policy(self.store, session_id=sid)['hard_timeout_minutes']
         started_at = time.monotonic()
         child_poll = {'client':client}
         last_activity = started_at
@@ -697,7 +699,6 @@ class OpencodeHarness:
         status_poll = {}
         last_error = None
         while True:
-            minutes = self.store.settings()['timeout_minutes']
             deadline = started_at + minutes * 60 if minutes > 0 else float('inf')
             child_poll['deadline'] = deadline
             if self._epoch.get(sid) != epoch:
@@ -718,6 +719,8 @@ class OpencodeHarness:
                 self._finish(sid, mid, 'failed')
                 raise TimeoutError('Opencode 已达到本轮执行时限')
             self._poll_runtime_status(client, sid, mid, bound, directory, status_poll)
+            host_idle = (status_poll.get('observed_type') == 'idle' and
+                         time.monotonic() - status_poll.get('observed_at', float('-inf')) <= 10)
             try:
                 messages = client.messages(bound, directory=directory)
             except OpencodeError as exc:
@@ -800,12 +803,12 @@ class OpencodeHarness:
                     child_running = any(row.get('status') == 'running' and
                                         time.monotonic() - row.get('observed_running_at', float('-inf')) <= 10
                                         for row in child_poll.get('children', {}).values())
-                    if minutes > 0 and time.monotonic() - last_activity > 120 and not child_running:
+                    if host_idle and time.monotonic() - last_activity > 120 and not child_running:
                         self.chat.event(sid, 'error', {'message': 'Opencode 子步骤完成后 120 秒无后续，已停止等待'})
                         self._finish(sid, mid, 'failed')
                         raise RuntimeError('Opencode 执行停滞；详情保存在会话与任务日志')
-            if minutes > 0 and not execution_started and time.monotonic() - started_at >= 90:
-                # Unresolvable models stall without any step event; fail fast
+            if host_idle and not execution_started and time.monotonic() - started_at >= 90:
+                # Only a freshly observed idle host with no step events can fail fast
                 # with an actionable message instead of burning the job budget.
                 self._interrupt_once(sid, bound, mid, client=client)
                 self.chat.event(sid, 'error', {'message': 'Opencode 90 秒内未开始执行；请检查模型 ID、provider 登录与可用额度'})
@@ -830,6 +833,8 @@ class OpencodeHarness:
             return  # Message polling still reports actual transport failures.
         if not isinstance(status, dict):
             return
+        cache['observed_type'] = status.get('type')
+        cache['observed_at'] = now
         retry = status.get('type') == 'retry'
         if retry:
             data = {'turnId': mid, 'status': 'retry',

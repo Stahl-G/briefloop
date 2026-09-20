@@ -77,6 +77,7 @@ def main():
     count.add_argument('--target-words',type=int);count.add_argument('--max-words',type=int)
     check=ts.add_parser('check-draft',help='按稿件契约自检 draft.json；只检查不发布')
     check.add_argument('--file',required=True)
+    check.add_argument('--run',help='按本次报告要求返回篇幅、引用与数字定位诊断；不发布、不评分')
     report_data=ts.add_parser('prepare-report-data',help='核对行业指标来源并计算变化；输出计算表与数据缺口')
     report_data.add_argument('--run',required=True);report_data.add_argument('--file',required=True)
     report_data.add_argument('--output',help='保存计算包 JSON 的路径；原始 records 写入 draft.report_data')
@@ -216,8 +217,15 @@ def main():
             from .workbook_figures import extract_workbook_figures
             print(json.dumps(extract_workbook_figures(store,a.id),ensure_ascii=False))
         elif a.tool=='check-draft':
-            from .models import BriefDraft, check_artifact
-            report=check_artifact(json.loads(Path(a.file).expanduser().read_text(encoding='utf-8-sig')),BriefDraft)
+            from .models import BriefDraft, check_artifact, prune_unknown
+            value=json.loads(Path(a.file).expanduser().read_text(encoding='utf-8-sig'))
+            report=check_artifact(value,BriefDraft)
+            if report['status']=='ok':
+                from .draft_checks import inspect_draft
+                requirements=json.loads(store.one('runs',a.run)['requirements']) if a.run else None
+                allowed=set(store.source_ids(a.run)) - set((requirements or {}).get('reference_source_ids') or []) if a.run else None
+                normalized,_=prune_unknown(value,BriefDraft)
+                report['diagnostics']=inspect_draft(normalized,requirements,store=store,allowed_sources=allowed)
             print(json.dumps(report,ensure_ascii=False))
             if report['status']!='ok':raise SystemExit(1)
         elif a.tool=='count-brief':

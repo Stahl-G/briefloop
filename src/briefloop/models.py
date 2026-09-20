@@ -82,6 +82,8 @@ class Requirements(Model):
     period_end: str = ""
     report_timezone: str = ""
     time_context: dict | None = None
+    target_minutes: int | None = Field(default=None, ge=0, le=240)
+    hard_timeout_minutes: int | None = Field(default=None, ge=0, le=1440)
     raw_input: str = ""
     # Research tier chosen at task creation; stored on the run so pause/resume and
     # a later plan freeze read the same choice. research_plan.PRESETS is the value.
@@ -211,7 +213,9 @@ class Settings(RoleModel):
     auto_learn_authorized_plan: str | None = Field(default=None, min_length=64, max_length=64)
     max_reports: int = Field(default=4, ge=1, le=16)
     max_parallel: int = Field(default=4, ge=1, le=16)
-    timeout_minutes: int = Field(default=60, ge=0, le=240)  # 0 disables the run deadline.
+    # Legacy settings key now means a soft planning target, never a deadline.
+    timeout_minutes: int = Field(default=60, ge=0, le=240)
+    hard_timeout_minutes: int = Field(default=0, ge=0, le=1440)
     skill_targets: list[str] = Field(default_factory=lambda: ["scout", "analyst"])
     auto_revision: bool = True
     default_template_id: str | None = None

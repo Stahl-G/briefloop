@@ -254,6 +254,8 @@ class InteractiveRuntime:
         with self.lock:
             self.session_id = sid
             self.session_backend = backend
+        from .execution_timing import policy
+        timing = policy(self.store, job_id=job['id'])
         started = time.monotonic()
         cursor = 0
         seen_messages = set()
@@ -330,7 +332,7 @@ class InteractiveRuntime:
                     if status != 'completed':
                         raise RuntimeError('Agent 执行失败；详情保存在会话与任务日志')
                     return result
-                minutes = self.store.settings()['timeout_minutes']
+                minutes = timing['hard_timeout_minutes']
                 if minutes > 0 and time.monotonic() - started > minutes * 60:
                     harness.cancel(sid)
                     raise TimeoutError('运行超过本轮时间上限，已保留稿件和执行记录')

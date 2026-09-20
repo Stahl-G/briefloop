@@ -201,10 +201,11 @@ class BridgeHarness(OpencodeHarness):
             self.chat.event(sid,'runtime/admission',{'execution_id':execution,'status':'accepted'})
             self.chat.patch_message(mid,status='delivered');self.chat.update(sid,status='running')
             assistant=self.chat.message(sid,'',role='assistant',status='streaming',turn_id=mid,runtime=config)
+            from .execution_timing import policy
+            minutes=policy(self.store, session_id=sid)['hard_timeout_minutes']
             output='';reasoning='';tools={};started=time.monotonic()
             while True:
                 if sid in self._cancel_requested:self.bridge.call('cancel',{'execution_id':execution})
-                minutes=self.store.settings()['timeout_minutes']
                 if minutes>0 and time.monotonic()-started>minutes*60:
                     self.bridge.call('cancel',{'execution_id':execution});raise TimeoutError('运行超过本轮时间上限')
                 try:event=sink.get(timeout=.5)

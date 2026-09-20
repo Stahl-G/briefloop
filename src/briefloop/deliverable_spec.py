@@ -66,6 +66,8 @@ def resolve(requirements, template=None, *, reader_contract=None):
             'requirement_items': requirement_items(requirements),
             'references': '正文短编号，图表简注，文末精简来源表；详细核查另存',
             'interpretation_rule': 'objective及requirement_items保留用户原始要求；reader_contract是待对照原文核查的执行解释，不得降级或替换明确要求。'}
+    if requirements.get('target_minutes') is not None:
+        spec['target_minutes'] = requirements['target_minutes']
     if requirements.get('workflow_snapshot'):
         spec['workflow_snapshot'] = deepcopy(requirements['workflow_snapshot'])
     if reader_contract is not None:
@@ -163,6 +165,12 @@ def instructions(spec, role='analyst', *, include_spec=True):
     if role in ('evaluator', 'reviewer'):
         reader = '以下是被审报告的交付标准，用来核对产物；其中补查、改稿等动作由主Agent执行。\n' + reader
     parts = [reader, common, role_text]
+    if role in ('analyst', 'revision'):
+        from .writing_guidance import ANALYST_GUIDE
+        parts.append(ANALYST_GUIDE)
+    if role in ('orchestrator', 'analyst', 'revision'):
+        from .execution_timing import instructions as timing_instructions
+        parts.append(timing_instructions(spec.get('target_minutes')))
     from .document_workflows import workflow_context
     method = workflow_context(spec.get('workflow_snapshot'), role)
     if method:
