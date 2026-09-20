@@ -97,7 +97,7 @@ def stage_job(store, job, role, *, mode=None):
     Legacy keys are read by mode from frozen jobs, not normalized in place.
     """
     # A Scout slot runs with the generation model; it has no model setting of its own.
-    if role not in (*ROLE_NAMES,'scorer','assessor','scout'):
+    if role not in (*ROLE_NAMES,'scorer','assessor','scout','analyst'):
         raise ValueError('Unknown execution role: '+role)
     original_role=role
     if role in ('scorer','assessor','evaluator'):

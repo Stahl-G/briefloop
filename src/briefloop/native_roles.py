@@ -29,7 +29,7 @@ import json
 import os
 from pathlib import Path
 
-ROLES = ('reviewer', 'evaluator', 'maintainer', 'proposer', 'scout')
+ROLES = ('reviewer', 'evaluator', 'maintainer', 'proposer', 'scout', 'analyst')
 
 
 def role_of(config):
@@ -121,6 +121,9 @@ def evaluator_packet(store, input_pack, schema, folder):
 
 
 def _source_ids(store, config):
+    if config.get('native_role') == 'analyst':
+        index = json.loads((Path(config['packet_root']) / 'source-index.json').read_text())
+        return {s['source_id'] for s in index['sources']}
     if config.get('run_id'):
         return set(store.source_ids(config['run_id']))
     index = json.loads((Path(config['packet_root']) / 'source-index.json').read_text(encoding='utf-8'))
@@ -674,6 +677,19 @@ RUNNER_TOOLS = {'reviewer': [], 'evaluator': EVALUATOR_TOOLS, 'maintainer': MAIN
 
 
 def _tools(role, mode=None, config=None):
+    if role == 'analyst':
+        from .analyst import prepare_data, submit_draft
+        return [EVALUATOR_TOOLS[0],
+                {'name': 'prepare_report_data', 'label': '计算报告指标',
+                 'description': '使用已有报告数据格式校验来源、单位并完成确定计算；原始 records 可放入 draft.report_data。',
+                 'guide': '根据任务包里的原始 records 计算比较表，不凭记忆心算。',
+                 'parameters': {'type': 'object', 'required': ['data'], 'properties': {'data': {'type': 'object'}}},
+                 'handler': prepare_data},
+                {'name': 'submit_draft', 'label': '保存报告', 'settles': True,
+                 'description': '提交完整 BriefDraft（draft.schema.json）；正文使用 editor_document。校验后保存，错误会返回修正。',
+                 'guide': '完成正文后提交完整 draft，不把正文仅写在聊天回复里。',
+                 'parameters': {'type': 'object', 'required': ['draft'], 'properties': {'draft': {'type': 'object'}}},
+                 'handler': submit_draft}]
     if role == 'evaluator' and mode == 'pairwise':
         return COMPARISON_TOOLS
     if role == 'scout':

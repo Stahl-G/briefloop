@@ -116,8 +116,8 @@ class NativeHarness:
         role = role_of(value)
         if value.get('permission') != 'read-only' or not (value.get('packet_root') or value.get('review_root')):
             raise ValueError('内置引擎当前仅执行只读核查包内的角色任务')
-        if role == 'scout' and not (value.get('run_id') and value.get('result_file')):
-            raise ValueError('Scout 任务缺少所属报告或结果文件')
+        if role in ('scout', 'analyst') and not (value.get('run_id') and value.get('result_file')):
+            raise ValueError(f'{role.title()} 任务缺少所属报告或结果文件')
         return value
 
     # -- messaging ------------------------------------------------------

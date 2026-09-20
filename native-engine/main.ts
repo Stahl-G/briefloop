@@ -42,6 +42,7 @@ const ROLE_LOCAL_TOOLS: Record<string, string[]> = {
   // Sources grow during the run (add_url), so the Scout reads them through
   // runner tools; its packet holds only the frozen task and contracts.
   scout: ["packet_list", "packet_read", "packet_grep"],
+  analyst: ["packet_list", "packet_read", "packet_grep", "calc"],
 };
 const RUNNER_TOOL_TIMEOUT_MS = 180_000;
 
