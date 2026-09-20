@@ -148,15 +148,90 @@ def validate_draft(store, config, value):
     return draft.model_dump(mode='json')
 
 
+def _output_path(store, config):
+    path = Path(config['result_file']).resolve()
+    if path != Path(config['packet_root']).resolve().parent / 'draft.json' or not path.is_relative_to(store.root):
+        raise ValueError('无效的稿件输出路径')
+    return path
+
+
+def _sections_file(store, config):
+    # One dispatch owns its partials; a fresh attempt never inherits them.
+    attempt = config.get('attempt_id')
+    if not isinstance(attempt, str) or not attempt:
+        raise ValueError('分节保存缺少本轮执行身份')
+    token = hashlib.sha256((config['run_id'] + ':' + attempt).encode()).hexdigest()[:24]
+    return _output_path(store, config).parent / ('draft-sections-' + token + '.json')
+
+
+def save_draft_section(store, config, args):
+    from .native_roles import _atomic, _json_result
+    import re
+    sid = args.get('section_id')
+    if not isinstance(sid, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,80}', sid):
+        raise ValueError('section_id 只允许字母、数字、下划线、短横线')
+    path = _sections_file(store, config)
+    value = validate_draft(store, config, {'title': sid,
+        'editor_document': {'type': 'doc', 'content': args.get('content')},
+        'citations': args.get('citations', [])})
+    ledger = json.loads(path.read_text()) if path.exists() else {}
+    ledger[sid] = {k: value[k] for k in ('editor_document', 'citations')}
+    _atomic(path, dump(ledger))
+    from .length import count_brief
+    # Return a receipt, not another full copy of the authored content.
+    return _json_result({'saved_section': sid, 'section_ids': list(ledger),
+        'body_units': count_brief(value['markdown']),
+        'hash': hashlib.sha256(dump(ledger[sid]).encode()).hexdigest()})
+
+
+def _assemble_sections(store, config, value):
+    value = dict(value)
+    ids = value.pop('section_ids', None)
+    if ids is None:
+        return value
+    if value.get('editor_document') is not None or value.get('markdown'):
+        raise ValueError('section_ids 与整篇正文只能选择一种，避免丢弃正文')
+    if not isinstance(ids, list) or not ids or any(not isinstance(s, str) for s in ids) or len(ids) != len(set(ids)):
+        raise ValueError('section_ids 必须按正文顺序列出，不得重复或为空')
+    path = _sections_file(store, config)
+    ledger = json.loads(path.read_text()) if path.exists() else {}
+    missing = [sid for sid in ids if sid not in ledger]
+    if missing:
+        raise ValueError('本轮尚未保存的章节：' + ', '.join(missing))
+    value['editor_document'] = {'type': 'doc', 'content': [
+        block for sid in ids for block in ledger[sid]['editor_document']['content']]}
+    citations = [c for sid in ids for c in ledger[sid]['citations']] + value.get('citations', [])
+    value['citations'] = list({dump(c): c for c in citations}.values())
+    return value
+
+
+def submit_schema():
+    from .models import BriefDraft
+    schema = BriefDraft.model_json_schema()
+    schema['properties']['section_ids'] = {'type': 'array', 'items': {'type': 'string'},
+        'description': '已保存章节的完整有序清单；使用此项时省略 editor_document 和 markdown。'}
+    return schema
+
+
+def section_schema():
+    from .models import Citation
+    return {'type': 'object', 'required': ['section_id', 'content'], 'additionalProperties': False,
+            'properties': {'section_id': {'type': 'string'},
+                'content': {'type': 'array', 'items': {'type': 'object'},
+                            'description': 'editor_document.content 中的富文本块；可包含章节标题、段落、列表、表格。'},
+                'citations': {'type': 'array', 'items': Citation.model_json_schema()}}}
+
+
 def submit_draft(store, config, args):
     from .native_roles import _atomic, ToolError
     try:
-        value = validate_draft(store, config, args.get('draft'))
-        path = Path(config['result_file']).resolve()
-        if path != Path(config['packet_root']).resolve().parent / 'draft.json' or not path.is_relative_to(store.root):
-            raise ValueError('无效的稿件输出路径')
+        path = _output_path(store, config)
+        # Older saved calls may use the wrapper; the live tool schema exposes
+        # the same root object as draft.schema.json, without JSON-in-a-string.
+        raw = args['draft'] if set(args) == {'draft'} else args
+        value = validate_draft(store, config, _assemble_sections(store, config, raw))
         _atomic(path, dump(value))
-    except (ValueError, KeyError) as exc:
+    except (ValueError, KeyError, TypeError) as exc:
         raise ToolError('稿件未通过接纳，请修正后重交：' + str(exc)) from exc
     return {'content': [{'type': 'text', 'text': '稿件已保存。结构与来源归属已校验，内容仍需独立审阅。'}],
             'settle': dump({'status': 'saved', 'title': value['title']})}
@@ -187,7 +262,7 @@ def run(store, runtime, job, run_id, folder, backend, *, plan, research, source_
     staged = stage_job(store, job, 'analyst')
     if backend == 'briefloop-native':
         staged['native_packet'] = config
-        prompt = WRITING_GUIDE + '\n所有路径相对任务包，用 packet_read/packet_grep 读取。完成后调用 submit_draft，校验失败只按错误修正，不自行评分。'
+        prompt = WRITING_GUIDE + '\n所有路径相对任务包，用 packet_read/packet_grep 读取。长稿可用 save_draft_section 逐章保存富文本与引用，最后用 section_ids 按序组装；也可一次提交 editor_document。submit_draft 接纳后会结束本次写作，只提交实际成稿，不用占位稿测试接口。校验失败按错误修正，不自行评分。'
     else:
         from .agent_commands import tool_command
         prompt = WRITING_GUIDE + f'\n任务包目录：{frozen["root"]}。只在 {folder} 内写文件。'

@@ -678,17 +678,21 @@ RUNNER_TOOLS = {'reviewer': [], 'evaluator': EVALUATOR_TOOLS, 'maintainer': MAIN
 
 def _tools(role, mode=None, config=None):
     if role == 'analyst':
-        from .analyst import prepare_data, submit_draft
+        from .analyst import prepare_data, submit_draft, submit_schema, section_schema, save_draft_section
         return [EVALUATOR_TOOLS[0],
                 {'name': 'prepare_report_data', 'label': '计算报告指标',
                  'description': '使用已有报告数据格式校验来源、单位并完成确定计算；原始 records 可放入 draft.report_data。',
                  'guide': '根据任务包里的原始 records 计算比较表，不凭记忆心算。',
                  'parameters': {'type': 'object', 'required': ['data'], 'properties': {'data': {'type': 'object'}}},
                  'handler': prepare_data},
+                {'name': 'save_draft_section', 'label': '保存报告章节', 'sequential': True,
+                 'description': '长稿可逐章保存富文本块与该章引用；同一 section_id 重交会替换该章。只返回保存回执。最终 submit_draft 按 section_ids 组装，不用重抄整篇。',
+                 'guide': '长稿优先逐章保存，减少单次输出中断造成的返工。',
+                 'parameters': section_schema(), 'handler': save_draft_section},
                 {'name': 'submit_draft', 'label': '保存报告', 'settles': True,
-                 'description': '提交完整 BriefDraft（draft.schema.json）；正文使用 editor_document。校验后保存，错误会返回修正。',
+                 'description': '直接提交 BriefDraft 根对象，不要 draft 包装或转成字符串。正文用 editor_document，或列出已保存的 section_ids。接纳即结束写作；仅提交实际成稿，不用占位稿试接口。',
                  'guide': '完成正文后提交完整 draft，不把正文仅写在聊天回复里。',
-                 'parameters': {'type': 'object', 'required': ['draft'], 'properties': {'draft': {'type': 'object'}}},
+                 'parameters': submit_schema(),
                  'handler': submit_draft}]
     if role == 'evaluator' and mode == 'pairwise':
         return COMPARISON_TOOLS

@@ -35,7 +35,7 @@ ARMS = [
 ]
 
 
-def prepare(source, job_id, output):
+def prepare(source, job_id, output, arm_names=None):
     original = source/'jobs'/job_id
     plan = json.loads((original/'plan.json').read_text())
     research = json.loads((original/'joined-scouts.json').read_text())
@@ -52,7 +52,9 @@ def prepare(source, job_id, output):
                 'variant': 'low', 'language': 'zh-CN', 'model_repeats': 1, 'writing_stage_allow_web': False,
                 'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(), 'arms': []}
     expected = None
-    for name, backend, model in ARMS:
+    selected = [arm for arm in ARMS if not arm_names or arm[0] in arm_names]
+    if not selected:raise ValueError("No matching experiment arms")
+    for name, backend, model in selected:
         ws = output/name/'ws'
         shutil.copytree(source, ws, ignore=shutil.ignore_patterns('jobs', '*.log', 'server.json'))
         store = Store(ws)
@@ -71,11 +73,11 @@ def prepare(source, job_id, output):
     manifest['input_fingerprint'] = expected
     manifest['code_files'] = {str(p.relative_to(Path(__file__).resolve().parent.parent)): hashlib.sha256(p.read_bytes()).hexdigest()
                               for p in [Path(__file__).resolve(), *[Path(__file__).resolve().parent.parent/f for f in (
-                                  'src/briefloop/analyst.py', 'src/briefloop/native_roles.py', 'src/briefloop/agent_prompts.py',
+                                  'src/briefloop/analyst.py', 'src/briefloop/native_roles.py', 'src/briefloop/native_harness.py', 'src/briefloop/agent_prompts.py',
                                   'src/briefloop/prompt_assets/role.analyst.zh.md', 'src/briefloop/static/native-engine.mjs')]]}
     (output/'manifest.json').write_text(dump(manifest))
     (output/'inputs.json').write_text(dump({'plan': plan, 'research': research, 'source_ids': source_ids, 'support': support}))
-    print(dump({'prepared': True, 'arms': len(ARMS), 'sources': len(source_ids), 'fingerprint': expected}), flush=True)
+    print(dump({'prepared': True, 'arms': len(selected), 'sources': len(source_ids), 'fingerprint': expected}), flush=True)
 
 
 def usage(folder, backend):
@@ -85,6 +87,11 @@ def usage(folder, backend):
         rows = [{'input': r.get('input', 0), 'output': r.get('output', 0), 'reasoning': r.get('reasoning', 0),
                  'cacheRead': r.get('cacheRead', 0), 'cacheWrite': r.get('cacheWrite', 0)} for r in raw]
         missing = []
+        for path in folder.glob('20*.jsonl'):
+            for line in path.read_text().splitlines():
+                entry = json.loads(line);message = entry.get('message', {})
+                if message.get('role') == 'assistant' and message.get('stopReason') in ('error', 'aborted'):
+                    missing.append(entry.get('id') or message.get('timestamp'))
     else:
         db = Path.home()/'.local/share/opencode/opencode.db'
         c = sqlite3.connect(f'file:{db}?mode=ro', uri=True)
@@ -96,7 +103,7 @@ def usage(folder, backend):
                          'reasoning': t.get('reasoning', 0), 'cacheRead': t.get('cache', {}).get('read', 0),
                          'cacheWrite': t.get('cache', {}).get('write', 0)})
             if m.get('finish') not in ('stop', 'tool-calls') and not sum(rows[-1].values()):missing.append(m.get('id'))
-    return {'requests': len(rows), 'missing_usage_requests': missing,
+    return {'requests': len(rows), 'missing_usage_requests': missing, 'usage_complete': not missing,
             **{k: sum(r[k] for r in rows) for k in ('input', 'output', 'reasoning', 'cacheRead', 'cacheWrite')}}
 
 
@@ -160,5 +167,5 @@ if __name__ == '__main__':
     parser.add_argument('--run',action='store_true')
     parser.add_argument('--arms',default='')
     args=parser.parse_args()
-    if args.prepare:prepare(args.prepare.resolve(),args.job,args.output.resolve())
+    if args.prepare:prepare(args.prepare.resolve(),args.job,args.output.resolve(),args.arms.split(',') if args.arms else None)
     if args.run:execute(args.output.resolve(),args.arms.split(',') if args.arms else [])

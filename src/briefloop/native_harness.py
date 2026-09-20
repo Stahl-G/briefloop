@@ -257,9 +257,10 @@ class NativeHarness:
             execution = mid
             coordinator = getattr(self, 'coordinator', None)
             config = self._config(message.get('runtime') or session['runtime'])
+            if config.get('native_role') in ('scout', 'analyst'):
+                config = {**config, 'attempt_id': execution}
             if config.get('native_role') == 'scout':
                 from .scout_evidence import begin
-                config = {**config, 'attempt_id': execution}
                 begin(self.store, config)
                 evidence_open = True
             text = (coordinator.input(sid, message) if coordinator else message).get('prompt') or message['text']
@@ -442,7 +443,7 @@ class NativeHarness:
 
     def _run_tool(self, sid, config, event):
         from .native_roles import run_tool
-        if config.get('native_role') == 'scout' and event.get('tool') in ('record_evidence', 'submit_scout_result'):
+        if config.get('native_role') in ('scout', 'analyst') and self._sequential(config, event.get('tool')):
             with self._lock:
                 result = ({'ok': False, 'error': '本轮已取消'} if sid in self._cancel_requested else
                           run_tool(self.store, {**config, 'session_id': sid}, event.get('tool'), event.get('args')))

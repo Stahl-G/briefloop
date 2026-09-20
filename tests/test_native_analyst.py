@@ -35,7 +35,7 @@ def test_writer_packet_is_identical_across_directories_and_confined(tmp_path):
     config = {'native_role': 'analyst', 'run_id': run['id'], 'packet_root': str(a['root']),
               'result_file': str(a['root'].parent/'draft.json')}
     names = [t['name'] for t in runner_tool_specs('analyst', config=config)]
-    assert names == ['render_pdf_pages', 'prepare_report_data', 'submit_draft']
+    assert names == ['render_pdf_pages', 'prepare_report_data', 'save_draft_section', 'submit_draft']
     assert not run_tool(store, config, 'web_search', {'query': 'q'})['ok']
     outside = store.add_source('无关任务', 'Cannot cite me')
     refused = run_tool(store, config, 'submit_draft', {'draft': draft(outside['id'])})
@@ -87,3 +87,50 @@ def test_source_tampering_and_output_escape_are_rejected(tmp_path):
     cfg['result_file'] = str(p['root'].parent/'draft.json')
     result = run_tool(store, cfg, 'submit_draft', {'draft': draft(source['id'])})
     assert not result['ok']
+
+
+def test_root_submission_and_saved_sections_preserve_order_and_attempt_scope(tmp_path):
+    store, run, source, inputs = setup(tmp_path)
+    p = analyst.packet(store, run['id'], store.root/'writer', **inputs)
+    cfg = {'native_role': 'analyst', 'run_id': run['id'], 'packet_root': str(p['root']),
+           'result_file': str(p['root'].parent/'draft.json'), 'attempt_id': 'attempt-a'}
+    spec = next(t for t in runner_tool_specs('analyst', config=cfg) if t['name'] == 'submit_draft')
+    assert 'title' in spec['parameters']['properties'] and 'draft' not in spec['parameters']['properties']
+    outside = store.add_source('另一任务', '不能引用')
+    bad = draft(outside['id'])
+    assert not run_tool(store, cfg, 'save_draft_section', {
+        'section_id': 'bad', 'content': bad['editor_document']['content']})['ok']
+    for sid, text in [('second', '第二章旧稿'), ('first', '第一章正文'), ('second', '第二章修订')]:
+        d = draft(source['id'], text)
+        r = run_tool(store, cfg, 'save_draft_section', {
+            'section_id': sid, 'content': d['editor_document']['content'], 'citations': d['citations']})
+        assert r['ok'] and 'settle' not in r and text not in json.dumps(r, ensure_ascii=False)
+    value = {'title': '经营简报', 'section_ids': ['first', 'second']}
+    assert not run_tool(store, {**cfg, 'attempt_id': 'attempt-b'}, 'submit_draft', value)['ok']
+    assert not run_tool(store, cfg, 'submit_draft', {**value, 'section_ids': ['first', 'missing']})['ok']
+    assert not run_tool(store, cfg, 'submit_draft', {**value, 'editor_document': draft(source['id'])['editor_document']})['ok']
+    assert not Path(cfg['result_file']).exists()
+    assert run_tool(store, cfg, 'submit_draft', value)['ok']
+    saved = json.loads(Path(cfg['result_file']).read_text())
+    assert saved['markdown'].index('第一章') < saved['markdown'].index('第二章修订')
+    assert '旧稿' not in saved['markdown'] and len(saved['citations']) == 1
+    assert run_tool(store, cfg, 'submit_draft', draft(source['id']))['ok']
+
+
+def test_cancelled_writer_cannot_save_late_sections_or_finish(tmp_path):
+    from briefloop.native_harness import NativeHarness
+    from types import SimpleNamespace
+    store, run, source, inputs = setup(tmp_path)
+    p = analyst.packet(store, run['id'], store.root/'writer', **inputs)
+    cfg = {'model': 'fake/writer', 'native_role': 'analyst', 'run_id': run['id'],
+           'packet_root': str(p['root']), 'review_root': str(p['root']),
+           'result_file': str(p['root'].parent/'draft.json'), 'attempt_id': 'cancelled'}
+    replies = []
+    harness = NativeHarness(store, SimpleNamespace(call=lambda method, params, **kw: replies.append(params)))
+    sid = harness.create_session('writer', cfg)['id']
+    harness.cancel(sid)
+    for name, args in [('save_draft_section', {'section_id': 'one', 'content': draft(source['id'])['editor_document']['content']}),
+                       ('submit_draft', draft(source['id']))]:
+        harness._run_tool(sid, cfg, {'tool': name, 'args': args, 'request_id': name})
+        assert replies[-1]['ok'] is False and '取消' in replies[-1]['error']
+    assert not Path(cfg['result_file']).exists() and not list(p['root'].parent.glob('draft-sections-*'))
