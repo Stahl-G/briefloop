@@ -1,5 +1,5 @@
+import {esc} from './dom.js';
 // Public facts only; presentation never estimates percent complete or time remaining.
-const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const states={queued:'等待开始',running:'正在运行',complete:'任务已结束',failed:'未完成',interrupted:'已中断',cancelled:'已停止'};
 const workerStates={running:'进行中',pending_init:'启动中',completed:'已完成',done:'已完成',closed:'已结束',failed:'失败',errored:'失败',unknown:'状态待确认'};
 export function elapsedText(start,end=Date.now()){
@@ -8,7 +8,7 @@ export function elapsedText(start,end=Date.now()){
  return seconds<60?`${seconds} 秒`:`${Math.floor(seconds/60)} 分 ${seconds%60} 秒`;
 }
 export function taskProgressCard(job,p,{label='报告任务',kindLabel='',expanded=false,materials=false,error=false,busy='',now=Date.now()}={}){
- const e=escape,active=['queued','running'].includes(job.status),paused=['failed','interrupted','cancelled'].includes(job.status);
+ const e=esc,active=['queued','running'].includes(job.status),paused=['failed','interrupted','cancelled'].includes(job.status);
  if(p?.status&&p.status!==job.status)p={...p,stage:null,stages:[],agents:[],needs_attention:false,attention_unknown:false,error:null,ended:null};
  const reportTask=['generate','review','revise','assess','fact_check'].includes(job.kind);
  const title=p?.title||label;

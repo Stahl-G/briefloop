@@ -9,7 +9,7 @@ function fixture(status='running'){
  const nodes=new Map(),pending=[];
  const node=id=>{if(!nodes.has(id))nodes.set(id,{hidden:false,innerHTML:'',textContent:'',insertAdjacentHTML(_position,html){this.innerHTML+=html}});return nodes.get(id)};
  const job={id:'job',kind:'generate',status,payload:'{"run_id":"report"}',created:new Date().toISOString()};
- const context=vm.createContext({withoutSupersededRetries,$:node,parse:s=>JSON.parse(s||'{}'),esc:String,modelLabel:()=> 'test/model',
+ const context=vm.createContext({withoutSupersededRetries,$:node,taskLabel:kind=>({generate:'生成简报',review:'独立审阅',assess:'重新评分',revise:'按审阅修订',fact_check:'独立事实核查',learn:'WikiSkill 学习'})[kind],parse:s=>JSON.parse(s||'{}'),esc:String,modelLabel:()=> 'test/model',
   current:null,pendingRun:'report',
   state:{jobs:[job],briefs:[],runs:[],sources:[],settings:{timeout_minutes:30}},
   showSettings:()=>{},page:()=>{},action:async fn=>fn(),

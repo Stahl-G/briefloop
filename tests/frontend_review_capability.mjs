@@ -46,5 +46,6 @@ test('before state loads the page does not guess; the server still enforces',()=
 });
 
 test('the ordinary-assessment label comes from the controller-set basis',()=>{
- assert.match(source,/d\.basis==='assessment_without_review'\?'<p class="help review-basis">普通评分，不是独立受限审阅/);
+ const panelSource=fs.readFileSync(new URL('../frontend/assessment-panel.js',import.meta.url),'utf8').replace(/\r\n/g,'\n');
+ assert.match(panelSource,/d\.basis==='assessment_without_review'\?'<p class="help review-basis">普通评分，不是独立受限审阅/);
 });

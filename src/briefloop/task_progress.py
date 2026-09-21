@@ -3,12 +3,9 @@ import json
 import re
 from .research_plan import frozen, pending_requests
 from .research_budget import snapshot
+from .task_labels import label as task_label
 
 ACTIVE = ('queued', 'running')
-LABELS = {'generate': '制作报告', 'fact_check': '事实核查', 'review': '独立审阅',
-          'assess': '独立评分', 'revise': '修订稿件', 'export_docx': '制作 Word',
-          'release': '制作正式 Word', 'learn': '整理反馈经验', 'audit_bundle': '制作审计包',
-          'source_refresh': '复查来源', 'prepare_template': '准备模板'}
 
 
 def public_text(value, limit=240):
@@ -35,9 +32,9 @@ def summary(store, job_id):
     p = json.loads(progress_event['data']) if progress_event else {}
     running = job['status'] in ACTIVE
     child = next((j for j in reversed(children) if j['status'] in ACTIVE), None) if running else None
-    stage = public_text(p.get('stage')) or ('等待开始' if job['status'] == 'queued' else LABELS.get(job['kind'], '处理任务'))
+    stage = public_text(p.get('stage')) or ('等待开始' if job['status'] == 'queued' else task_label(job['kind'], '处理任务'))
     if child:
-        stage = LABELS.get(child['kind'], '子任务') + ('等待开始' if child['status'] == 'queued' else '进行中')
+        stage = task_label(child['kind'], '子任务') + ('等待开始' if child['status'] == 'queued' else '进行中')
     if not running:
         stage = {'complete': '任务已结束', 'failed': '任务未完成', 'cancelled': '任务已停止', 'interrupted': '任务已中断'}.get(job['status'], '任务状态待确认')
     # Review/export cards point at their actual input, not an unrelated newer edit.
@@ -50,7 +47,7 @@ def summary(store, job_id):
     brief = briefs[0] if briefs else None
     if running and not brief and stage == '正文已保存，正在准备评分':
         stage = '正文已生成，正在保存稿件'
-    title = req.get('title') or (json.loads(brief['detail']).get('title') if brief else '') or LABELS.get(job['kind'], '报告任务')
+    title = req.get('title') or (json.loads(brief['detail']).get('title') if brief else '') or task_label(job['kind'], '报告任务')
     sources = []
     if run:
         for sid in store.source_ids(run_id):
@@ -111,7 +108,7 @@ def summary(store, job_id):
     if revision_phase:
         stages = [{'id': 'revision', 'label': '修订与复核', 'status': 'active'}]
     if child:
-        stages = [{'id': child['kind'], 'label': LABELS.get(child['kind'], '子任务'), 'status': 'active'}]
+        stages = [{'id': child['kind'], 'label': task_label(child['kind'], '子任务'), 'status': 'active'}]
     if not running:
         for s in stages:
             if s['status'] == 'active': s['status'] = 'paused' if job['status'] != 'complete' else 'recorded'

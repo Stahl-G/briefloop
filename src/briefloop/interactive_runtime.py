@@ -9,6 +9,7 @@ import threading
 import time
 from .harness import HarnessManager
 from .store import dump, now, uid
+from .task_labels import label as task_label
 
 TERMINAL = {'completed', 'failed', 'interrupted', 'cancelled'}
 
@@ -203,7 +204,7 @@ class InteractiveRuntime:
         else:
             evaluation_title='Evaluator · 比较' if job.get('evaluation_mode')=='pairwise' else 'Evaluator · 评分'
             title = {'evaluator': evaluation_title, 'scorer': 'Evaluator · 评分', 'assessor': 'Evaluator · 比较', 'maintainer': '整理反馈经验', 'proposer': '提出技能改进'}.get(job.get('runtime_role'))
-            title = title or {'company_review':'维护企业背景', 'generate': '生成简报', 'assess': '核对简报评分', 'learn': '整理反馈与改进技能'}.get(job['kind'], '简报任务')
+            title = title or task_label(job['kind'], '简报任务')
             session = harness.create_session(title, runtime, folder)
             binding = {'job_id': job['id'], 'session_id': session['id'], 'runtime': runtime,
                        'backend': backend, 'message_id': None, 'history': []}

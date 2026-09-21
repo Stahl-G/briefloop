@@ -77,7 +77,7 @@ console.log('PASS: explicit document purpose survives template changes');
 c.page=()=>{};c.notice=()=>{};c.Event=class{};
 const manualSections={value:'',dispatchEvent(){}};
 el('requirements').elements={manual_sections_text:manualSections};
-vm.runInContext(source.slice(source.indexOf('function applyRequirements(text)'),source.indexOf('const TASK_LABELS=')),c);
+vm.runInContext(source.slice(source.indexOf('function applyRequirements(text)'),source.indexOf('const taskLabel=')),c);
 vm.runInContext(source.slice(source.indexOf('function applyOutlineToSetup()'),source.indexOf('function expandReportPanel()')),c);
 el('workflow-choice').value='business_report/work_progress';
 vm.runInContext('applyRequirements(JSON.stringify({manual_sections:["融资进度"]}))',c);
