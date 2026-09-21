@@ -24,6 +24,9 @@ def fixture(tmp_path):
 def test_review_bound_to_exact_version_and_author_cannot_close(tmp_path):
     store,source,brief,value=fixture(tmp_path)
     with pytest.raises(ValueError,match='未绑定'):accept_review(store,'review_test',{**value,'fingerprint':'other'})
+    wrong={**value,'assessment':{**value['assessment'],'brief_hash':brief['hash'][:-1]}}
+    with pytest.raises(ValueError,match=brief['hash']):accept_review(store,'review_test',wrong)
+    assert not store.rows('SELECT id FROM assessments WHERE version_id=?',(brief['id'],))
     accept_review(store,'review_test',value)
     accept_review(store,'review_test',value)
     assert len(store.rows('SELECT id FROM assessments WHERE version_id=?',(brief['id'],)))==1

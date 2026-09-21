@@ -458,7 +458,9 @@ class Store:
         brief = self.one("briefs", version_id)
         assessment = Assessment.model_validate(value)
         if assessment.brief_hash != brief["hash"]:
-            raise Conflict("评分对应的稿件内容与当前版本不一致")
+            raise Conflict("评分对应的稿件内容与当前版本不一致："
+                           f"assessment.brief_hash 应为 {brief['hash']}。"
+                           "请核对冻结审阅包的版本与正文；若审阅了其他稿件，须重新核查，不能只替换标识。")
         for f in assessment.findings:
             if f.source_id:
                 self.one("sources", f.source_id)
