@@ -222,10 +222,20 @@ def _save_section(store, config, args):
     if not isinstance(sid, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,80}', sid):
         raise ValueError('section_id 只允许字母、数字、下划线、短横线')
     path = _sections_file(store, config)
-    value = validate_draft(store, config, {'title': sid,
-        'editor_document': {'type': 'doc', 'content': args.get('content')},
-        'citations': args.get('citations', [])})
     ledger = json.loads(path.read_text()) if path.exists() else {}
+    content, citations = args.get('content'), args.get('citations', [])
+    if 'text_replacements' in args:
+        from .analyst_drafts import replace_section_text
+        if 'content' in args:
+            raise ValueError('content 与 text_replacements 只能选择一种')
+        patched = replace_section_text(ledger.get(sid), args['text_replacements'], args.get('expected_hash'))
+        content = patched['editor_document']['content']
+        citations = args.get('citations', patched['citations'])
+    elif 'expected_hash' in args:
+        raise ValueError('expected_hash 仅与 text_replacements 一起使用')
+    value = validate_draft(store, config, {'title': sid,
+        'editor_document': {'type': 'doc', 'content': content},
+        'citations': citations})
     ledger[sid] = {k: value[k] for k in ('editor_document', 'citations')}
     _atomic(path, dump(ledger))
     from .length import count_brief, length_stats
@@ -298,10 +308,16 @@ def read_draft(store, config, args):
 
 def section_schema():
     from .models import Citation
-    return {'type': 'object', 'required': ['section_id', 'content'], 'additionalProperties': False,
+    return {'type': 'object', 'required': ['section_id'], 'additionalProperties': False,
+            'oneOf': [{'required': ['content']}, {'required': ['text_replacements', 'expected_hash']}],
             'properties': {'section_id': {'type': 'string'},
                 'content': {'type': 'array', 'items': {'type': 'object'},
                             'description': 'editor_document.content 中的富文本块；可包含章节标题、段落、列表、表格。'},
+                'expected_hash': {'type': 'string', 'description': '精确改字时必填：最新章节保存回执的 hash 或 read_draft 的 section_hash。'},
+                'text_replacements': {'type': 'array', 'minItems': 1, 'maxItems': 24,
+                    'description': '改字或缩写优先使用，无需重抄整章；old_text 须在当前章节单个文字节点中唯一命中。空 new_text 删除该段文字，格式和 citation 节点保留。',
+                    'items': {'type': 'object', 'required': ['old_text', 'new_text'], 'additionalProperties': False,
+                              'properties': {'old_text': {'type': 'string', 'minLength': 1}, 'new_text': {'type': 'string'}}}},
                 'citations': {'type': 'array', 'items': Citation.model_json_schema()}}}
 
 

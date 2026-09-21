@@ -701,7 +701,7 @@ def _tools(role, mode=None, config=None):
                  'handler': read_draft},
                 {'name': 'save_draft_section', 'label': '保存报告章节', 'sequential': True,
                  'description': '长稿可逐章保存富文本块与该章引用；同一 section_id 重交会替换该章。只返回保存回执。随后 save_draft 按 section_ids 组装，不用重抄整篇。',
-                 'guide': '长稿优先逐章保存，减少单次输出中断造成的返工。',
+                 'guide': '分章保存看累计长度。缩写/改字用 expected_hash + text_replacements 精确替换，保留格式引用，不重抄整章；结构变化才传 content。修改后用 base_revision + section_ids 重新组装，仅补改动的元数据。',
                  'parameters': section_schema(), 'handler': save_draft_section},
                 {'name': 'save_draft', 'label': '保存待检查稿件', 'sequential': True,
                  'description': '保存完整正文及引用、数字/时间绑定，或按 section_ids 组装。返回 revision；base_revision 可用于局部更新元数据。',

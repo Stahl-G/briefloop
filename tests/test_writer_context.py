@@ -83,3 +83,50 @@ def test_section_receipt_counts_latest_content_and_partial_reassembly_keeps_meta
     assert value['gaps'] == ['仍缺验收数据']
     checked = run_tool(store, config, 'check_draft', {'revision': second})
     assert json.loads(checked['content'][0]['text'])['diagnostics']['length']['count'] == 120
+
+
+def test_exact_text_revision_preserves_rich_nodes_and_requires_new_complete_check(tmp_path):
+    from test_analyst_draft_versions import writer, check
+    store, _, source, config = writer(tmp_path)
+    body = draft(source['id'], '需安装对应 PR 分支，不能直接安装主分支。')
+    body['editor_document']['content'][0]['content'][0]['marks'] = [{'type': 'bold'}]
+    def call(name, args):
+        result = run_tool(store, config, name, args)
+        assert result['ok'], result
+        return json.loads(result['content'][0]['text'])
+    receipt = call('save_draft_section', {'section_id': 'adoption',
+        'content': body['editor_document']['content'], 'citations': body['citations']})
+    first = saved_revision(store, config, {'title': '报告', 'section_ids': ['adoption'], 'gaps': ['待验证']})
+    check(store, config, first)
+    edited = call('save_draft_section', {'section_id': 'adoption', 'expected_hash': receipt['hash'],
+        'text_replacements': [{'old_text': '对应 PR 分支，不能直接安装主分支', 'new_text': 'PR 分支'}]})
+    assert edited['body_units'] < receipt['body_units']
+    assert not run_tool(store, config, 'submit_draft', {'revision': first})['ok']
+    view = call('read_draft', {'field': 'body', 'section_id': 'adoption'})
+    assert view['section_hash'] == edited['hash']
+    nodes = view['items'][0]['content']
+    assert nodes[0]['text'] == '需安装PR 分支。'
+    assert nodes[0]['marks'] == [{'type': 'bold'}]
+    assert nodes[1] == {'type': 'citation', 'attrs': {'sourceId': source['id']}}
+    second = saved_revision(store, config, {'base_revision': first, 'section_ids': ['adoption']})
+    assert check(store, config, second)['diagnostics']['citations']['missing_locator'] == []
+    assert run_tool(store, config, 'submit_draft', {'revision': second})['ok']
+
+
+def test_failed_or_ambiguous_text_batch_leaves_saved_section_unchanged(tmp_path):
+    from test_analyst_draft_versions import writer
+    from briefloop.analyst import _sections_file
+    store, _, source, config = writer(tmp_path)
+    original = run_tool(store, config, 'save_draft_section', {'section_id': 'one',
+        'content': draft(source['id'], '保留条件；重复，重复。')['editor_document']['content']})
+    h = json.loads(original['content'][0]['text'])['hash']
+    path = _sections_file(store, config)
+    before = path.read_bytes()
+    for expected, edits in [
+        (h, [{'old_text': '保留条件', 'new_text': '新条件'}, {'old_text': '不存在', 'new_text': 'x'}]),
+        (h, [{'old_text': '重复', 'new_text': ''}]),
+        ('0'*64, [{'old_text': '保留条件', 'new_text': '新条件'}]),
+    ]:
+        assert not run_tool(store, config, 'save_draft_section', {'section_id': 'one',
+            'expected_hash': expected, 'text_replacements': edits})['ok']
+        assert path.read_bytes() == before

@@ -17,6 +17,41 @@ def _hash(value):
     return hashlib.sha256(dump(value).encode()).hexdigest()
 
 
+def replace_section_text(section, replacements, expected_hash):
+    """Apply exact edits to a copy, preserving rich nodes and citation bindings."""
+    from copy import deepcopy
+    if not section or expected_hash != _hash(section):
+        raise ValueError('章节版本不匹配；先 read_draft 读取当前章节及 section_hash，再修改')
+    if not isinstance(replacements, list) or not 1 <= len(replacements) <= 24:
+        raise ValueError('text_replacements 需要 1–24 项精确文字替换')
+    value = deepcopy(section)
+    def text_nodes(node):
+        if node.get('type') == 'text':
+            yield node
+        for child in node.get('content', []):
+            yield from text_nodes(child)
+    for edit in replacements:
+        if (not isinstance(edit, dict) or set(edit) != {'old_text', 'new_text'}
+                or not isinstance(edit['old_text'], str) or not edit['old_text']
+                or not isinstance(edit['new_text'], str)):
+            raise ValueError('替换项需要非空 old_text 和字符串 new_text')
+        nodes = list(text_nodes(value['editor_document']))
+        matches = sum(node['text'].count(edit['old_text']) for node in nodes)
+        if matches != 1:
+            raise ValueError(f'old_text 在当前章节命中 {matches} 处；须在单个文字节点内唯一匹配，本批修改未保存')
+        for node in nodes:
+            if edit['old_text'] in node['text']:
+                node['text'] = node['text'].replace(edit['old_text'], edit['new_text'], 1)
+    def remove_empty_text(node):
+        if 'content' in node:
+            node['content'] = [child for child in node['content']
+                               if child.get('type') != 'text' or child.get('text')]
+            for child in node['content']:
+                remove_empty_text(child)
+    remove_empty_text(value['editor_document'])
+    return value
+
+
 def _root(store, config):
     from .analyst import _sections_file
     return _sections_file(store, config).with_suffix('')
@@ -217,6 +252,7 @@ def read_saved(store, config, args):
             if field != 'body' or section_id not in ledger:
                 raise ValueError('读取章节须用 field=body 和本轮已保存的 section_id')
             value = ledger[section_id]['editor_document']['content']
+            overview['section_hash'] = _hash(ledger[section_id])
         elif field == 'overview':
             return overview
         elif not candidate:
