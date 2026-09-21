@@ -18,6 +18,10 @@ permissions:
   contents: read
 jobs:
   windows:
+    # GitHub requires repository write access even to read an unpublished draft.
+    # This manual job only downloads the frozen wheel; it never publishes assets.
+    permissions:
+      contents: write
     runs-on: windows-latest
     timeout-minutes: 25
     defaults:
