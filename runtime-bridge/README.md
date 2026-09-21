@@ -27,6 +27,7 @@ stdin/stdout 各一行 JSON：请求 `{id,method,params}`，应答 `{id,result}`
 | Codex、OpenCode | 原有 native manager | 本 bridge 检测它们；Python facade 负责分发给已存在的执行管理器 |
 | Antigravity | stream-json | 使用 agy 正式无界面协议，支持文本/工具/指定会话续接；遵守宿主原生权限，未提供 headless 权限回答 |
 | DeepSeek Harness | ACP | 使用已安装 dsh 的 acp profile；profile 初始化由宿主处理，实际模型调用需单独验证 |
+| ZCode | stream-json | 使用 `--prompt --output-format stream-json`；文本/推理/工具/用量/会话续接已实测。ZCode 已弃用 ACP，改用自有 ZCode Protocol，本桥接不走 app-server/agent-server |
 | 其他已知 CLI | 仅检测 | 未实现执行，不显示为已接通 |
 
 ACP `agent_thought_chunk`（以及 Claude `thinking` 块、Opencode `reasoning` part）作为独立的 `reasoning` 事件传给本地聊天展示，不与可见正文或工具事件混在一起；执行日志、通知与审计包仍由 BriefLoop 的既有记录层排除推理。并不将此通道宣称为通用敏感资料脱敏器；执行日志和审计包仍由 BriefLoop 的现有记录层处理。
@@ -40,6 +41,8 @@ ACP `agent_thought_chunk`（以及 Claude `thinking` 块、Opencode `reasoning` 
 模型目录直接复用上游 ACP、Codex 和 OpenCode 解析函数及 Claude 本机路由发现。Reasonix 使用原生 doctor 模型配置。内置建议标注来源，不作为选择白名单；用户仍可手填模型。
 
 DeepSeek Harness uses `dsh --profile acp` with its existing provider credentials. ACP session continuation prefers advertised `session/load`, or uses `session/resume` when advertised instead; unsupported continuation fails before prompting. Model IDs come from the host catalog.
+
+ZCode 的无界面运行没有选择模型的参数：模型取自 `~/.zcode/cli/config.json` 的 `model.main`，`list_models` 如实返回该项并标记 `host_default_only`，指定其他模型直接拒绝而不是静默忽略。提示词只能经命令行参数传入，超长即拒绝。权限用它的原生 `--mode`（build/edit/plan/yolo）；无界面下没有逐项授权通道，被模式拦下的操作直接失败，规划模式可能以「只提交计划、没有回答」结束，这种回合记为失败而不是完成。
 
 Antigravity 协议依据 https://antigravity.google/docs/cli/headless/；只把 SUCCESS 且正常退出的结果记为完成，累计会话用量不作本轮上下文输入。
 
