@@ -15,7 +15,9 @@ def options(backend, model, workspace, bridge):
     if not isinstance(model, str) or len(model) > 100:
         raise ValueError('无效模型 ID')
     profile = _PROFILES[backend]
-    if profile['kind'] not in ('negotiated', 'variant') and not (backend == 'antigravity' and model.startswith('gemini-')):
+    probe = (profile['kind'] in ('negotiated', 'variant') or backend == 'codex'
+             or backend == 'antigravity' and model.startswith('gemini-'))
+    if not probe:
         return {**profile, 'backend': backend,
                 'options': [{'id': value, 'name': value} for value in profile.get('levels', [])]}
     key = (backend, model, str(workspace))

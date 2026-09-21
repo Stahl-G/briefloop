@@ -155,6 +155,15 @@ async function permissionOptions(p:any){
 }
 async function reasoningOptions(p:any){
  const profile=reasoningProfile(p.runtime_id);
+ if(p.runtime_id==='codex'){
+  const bin=findBin(defFor('codex'),p.path);if(!bin)throw Error('Runtime not installed');
+  try{
+   const r=await exec(bin,['debug','models'],{env,timeout:5000,maxBuffer:4*1024*1024}),data=JSON.parse(r.stdout);
+   const model=(Array.isArray(data)?data:data.models||[]).find((m:any)=>(m.slug||m.id)===p.model);
+   if(Array.isArray(model?.supported_reasoning_levels))return {kind:'levels',source:'host',options:model.supported_reasoning_levels.filter((o:any)=>typeof o.effort==='string'&&o.effort!=='none').map((o:any)=>({id:o.effort,name:o.effort}))};
+  }catch{}
+  return {...profile,source:'cli_defaults',note:'宿主未返回所选模型的档位；显示 CLI 常用档位，实际能力取决于模型。'};
+ }
  if(p.runtime_id==='antigravity'&&p.model?.startsWith('gemini-')){
   const family=reasoningModel(p.runtime_id,p.model,'low'),catalog=await listModels(p);
   const levels=profile.levels.filter((level:string)=>catalog.models.some((m:any)=>m.id===family+'-'+level));

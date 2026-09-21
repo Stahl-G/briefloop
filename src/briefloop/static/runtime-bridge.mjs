@@ -1689,6 +1689,17 @@ async function permissionOptions(p) {
 }
 async function reasoningOptions2(p) {
   const profile = reasoningProfile(p.runtime_id);
+  if (p.runtime_id === "codex") {
+    const bin2 = findBin(defFor("codex"), p.path);
+    if (!bin2) throw Error("Runtime not installed");
+    try {
+      const r = await exec(bin2, ["debug", "models"], { env, timeout: 5e3, maxBuffer: 4 * 1024 * 1024 }), data = JSON.parse(r.stdout);
+      const model = (Array.isArray(data) ? data : data.models || []).find((m) => (m.slug || m.id) === p.model);
+      if (Array.isArray(model?.supported_reasoning_levels)) return { kind: "levels", source: "host", options: model.supported_reasoning_levels.filter((o) => typeof o.effort === "string" && o.effort !== "none").map((o) => ({ id: o.effort, name: o.effort })) };
+    } catch {
+    }
+    return { ...profile, source: "cli_defaults", note: "\u5BBF\u4E3B\u672A\u8FD4\u56DE\u6240\u9009\u6A21\u578B\u7684\u6863\u4F4D\uFF1B\u663E\u793A CLI \u5E38\u7528\u6863\u4F4D\uFF0C\u5B9E\u9645\u80FD\u529B\u53D6\u51B3\u4E8E\u6A21\u578B\u3002" };
+  }
   if (p.runtime_id === "antigravity" && p.model?.startsWith("gemini-")) {
     const family = reasoningModel(p.runtime_id, p.model, "low"), catalog = await listModels(p);
     const levels = profile.levels.filter((level) => catalog.models.some((m) => m.id === family + "-" + level));

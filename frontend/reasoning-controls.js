@@ -9,7 +9,7 @@ export function reasoningModel(backend,model,effort){
 }
 export function reasoningControls({api}){
  const requests=new Map();let revision=0;
- const names={off:'关闭思考',on:'开启思考',minimal:'最少',low:'低',medium:'中',high:'高',xhigh:'极高',max:'最高'};
+ const names={off:'关闭思考',on:'开启思考',minimal:'最少',low:'低',medium:'中',high:'高',xhigh:'极高',max:'最高',ultra:'超强'};
  function configure(control,backend,model,{variant=false}={}){
   if(!control)return;
   const key=JSON.stringify([backend,model||'default',revision]);

@@ -251,3 +251,11 @@ test('variant choices preserve model-specific names rather than a fixed high-onl
  b.send(2,'reasoning_options',{...f,runtime_id:'opencode',model:'test/plain'});
  assert.deepEqual((await b.wait(x=>x.id===2)).result.options,[]);
 });
+
+test('Codex uses the selected model levels including ultra without inventing it for other models',async t=>{
+ const b=bridge(t),f=fixture(t,`console.log(JSON.stringify({models:[{slug:'new',supported_reasoning_levels:[{effort:'low'},{effort:'high'},{effort:'ultra'}]},{slug:'old',supported_reasoning_levels:[{effort:'low'},{effort:'high'}]}]}));`);
+ for(const [i,model] of ['new','old'].entries()){
+  b.send(i+1,'reasoning_options',{...f,runtime_id:'codex',model});
+  assert.deepEqual((await b.wait(x=>x.id===i+1)).result.options.map(o=>o.id),model==='new'?['low','high','ultra']:['low','high']);
+ }
+});
