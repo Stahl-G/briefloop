@@ -584,7 +584,7 @@ var catalog_default = [
   },
   {
     id: "codebuddy",
-    name: "Codebuddy Code",
+    name: "CodeBuddy Code",
     bins: [
       "codebuddy",
       "cbc"
@@ -678,7 +678,7 @@ var catalog_default = [
   },
   {
     id: "opencode",
-    name: "OpenCode",
+    name: "Opencode CLI",
     bins: [
       "opencode-cli",
       "opencode"

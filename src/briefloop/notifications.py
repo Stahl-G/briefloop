@@ -49,7 +49,7 @@ def job_status(store, job, status):
     # Successful template/wiki updates are emitted when their content is saved.
     if kind in ('prepare_template','learn') and status in ('running','complete'):
         return
-    from .task_notify import KIND_LABELS
+    from .task_labels import LABELS as KIND_LABELS
     payload=json.loads(job['payload'])
     label=KIND_LABELS[kind]
     title=label+' '+{'running':'已开始','complete':'已完成','failed':'失败','interrupted':'已中断','cancelled':'已停止'}[status]

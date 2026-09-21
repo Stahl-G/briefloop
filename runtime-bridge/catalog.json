@@ -52,7 +52,7 @@
   },
   {
     "id": "codebuddy",
-    "name": "Codebuddy Code",
+    "name": "CodeBuddy Code",
     "bins": [
       "codebuddy",
       "cbc"
@@ -146,7 +146,7 @@
   },
   {
     "id": "opencode",
-    "name": "OpenCode",
+    "name": "Opencode CLI",
     "bins": [
       "opencode-cli",
       "opencode"
