@@ -296,6 +296,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     self.send(200,key_status())
                 elif u.path=='/api/opencode/providers':
                     self.send(200,{'configurations':opencode_harness._client().provider_settings()})
+                elif u.path=='/api/runtime/reasoning':
+                    from .runtime_reasoning import options
+                    self.send(200,options(q.get('backend',['codex'])[0],q.get('model',['default'])[0],store.root,bridge))
                 elif u.path=='/api/runtime/permissions':
                     from .runtime_permissions import catalog
                     self.send(200,catalog(q.get('backend',['codex'])[0],store.root,bridge))

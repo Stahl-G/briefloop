@@ -1,10 +1,11 @@
+import {settingsEffort} from '../frontend/reasoning-controls.js';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
 const source=fs.readFileSync('frontend/app.js','utf8');
 const code=source.slice(source.indexOf('function restoreDraft(){'),source.indexOf('function renderChatRuntimePermissions()'));
 const elements=new Map();const el=id=>{if(!elements.has(id))elements.set(id,{});return elements.get(id)};
-const c=vm.createContext({$:el,chat:{id:'existing',drafts:new Map(),session:{runtime:{backend:'claude',model:'default'}}},state:{settings:{agent_backend:'claude',model:'default',model_selection_required:true}},effortValue:()=>null,assignEffort:()=>{},refreshInlineModelPickers:()=>{},renderAttachments:()=>{},updateComposer:()=>{},autoSizeChatInput:()=>{}});
+const c=vm.createContext({settingsEffort,$:el,chat:{id:'existing',drafts:new Map(),session:{runtime:{backend:'claude',model:'default'}}},state:{settings:{agent_backend:'claude',model:'default',model_selection_required:true}},effortValue:()=>null,assignEffort:()=>{},refreshInlineModelPickers:()=>{},renderAttachments:()=>{},updateComposer:()=>{},autoSizeChatInput:()=>{}});
 vm.runInContext(source.slice(source.indexOf('function chatBackendChoice(){'),source.indexOf('function renderChatBackendChoice(){')),c);
 vm.runInContext(code,c);vm.runInContext('restoreDraft()',c);assert.equal(el('chat-model').value,'default');
 c.chat.id=null;c.chat.session=null;c.chat.drafts.set('new',{text:'unsent message',backend:'claude',model:'default'});
@@ -42,9 +43,9 @@ console.log('PASS: failed initial send preserves text and model on the created s
 const permissionCode=source.slice(source.indexOf('const PERMISSION_MODES='),source.indexOf('function messageTime('));
 const select={value:'',hidden:false,title:'',replaceChildren(...options){this.options=options}};
 const mode={value:'queue',options:[{value:'queue'},{value:'steer',hidden:false,disabled:false}]};
-const p=vm.createContext({$:id=>id==='chat-permission'?select:id==='chat-mode'?mode:{hidden:false},
+const p=vm.createContext({$:id=>id==='chat-permission'?select:id==='chat-mode'?mode:{value:'',hidden:false},
  chat:{session:{runtime:{backend:'claude'}}},state:{settings:{agent_backend:'claude'}},runtimeCatalog:[],
- document:{querySelector:()=>({hidden:false})},JSON,console,
+ reasoning:{configure(){}},document:{querySelector:()=>({hidden:false})},JSON,console,
  Option:class{constructor(text,value){this.text=text;this.value=value}}});
 vm.runInContext(source.slice(source.indexOf('function chatBackendChoice(){'),source.indexOf('function renderChatBackendChoice(){')),p);
 vm.runInContext(permissionCode,p);

@@ -1,0 +1,86 @@
+{
+  "codex": {
+    "kind": "levels",
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  "opencode": {
+    "kind": "variant",
+    "note": "档位由所选模型提供，可输入模型支持的档位。"
+  },
+  "claude": {
+    "kind": "levels",
+    "levels": [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  "antigravity": {
+    "kind": "levels",
+    "levels": [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  "codebuddy": {
+    "kind": "levels",
+    "levels": [
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  "pi": {
+    "kind": "levels",
+    "levels": [
+      "off",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  "kimi": {
+    "kind": "negotiated"
+  },
+  "hermes": {
+    "kind": "negotiated"
+  },
+  "reasonix": {
+    "kind": "negotiated"
+  },
+  "kilo": {
+    "kind": "negotiated"
+  },
+  "kiro": {
+    "kind": "negotiated"
+  },
+  "vibe": {
+    "kind": "negotiated"
+  },
+  "deepseek-harness": {
+    "kind": "negotiated"
+  },
+  "mimo": {
+    "kind": "variant",
+    "note": "档位由所选 MiMo 模型提供，可输入模型支持的档位。"
+  },
+  "zcode": {
+    "kind": "host",
+    "note": "ZCode 当前无界面接口未提供独立推理档位，沿用宿主设置。"
+  }
+}

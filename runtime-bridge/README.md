@@ -46,7 +46,7 @@ ZCode 的无界面运行没有选择模型的参数：模型取自 `~/.zcode/cli
 
 Antigravity 协议依据 https://antigravity.google/docs/cli/headless/；只把 SUCCESS 且正常退出的结果记为完成，累计会话用量不作本轮上下文输入。
 
-Antigravity 使用本机已有登录和原生权限。无界面调用不能回答交互权限请求；需要批准的工具可能被宿主 soft-deny，即使宿主返回 SUCCESS。桥接会保留工具错误，并把仅有失败工具且无正文的回合记为失败。请在 BriefLoop 权限面板或宿主官方 permissions.allow 配置明确的文件/工具范围；BriefLoop 不自动添加全局授权，也不传递跳过权限的参数。图片输入暂不支持。
+Antigravity 使用本机已有登录和原生权限。无界面调用不能回答交互权限请求；需要批准的工具可能被宿主 soft-deny，即使宿主返回 SUCCESS。桥接会保留工具错误，并把仅有失败工具且无正文的回合记为失败。请在 BriefLoop 权限面板或宿主官方 permissions.allow 配置明确的文件/工具范围；BriefLoop 不自动添加全局授权，也不传递跳过权限的参数。图片使用用户附加的本地路径交由宿主 view_file 读取，仍遵守宿主权限。
 
 Pi 使用已安装 CLI 的 `--mode rpc`，按 `get_available_models` 返回的 provider/model 精确选择，使用原生 sessionFile 续接。等待 `agent_settled` 结束回合；扩展 select/confirm 请求由用户回答，文本型扩展输入尚未接入，图片暂不支持。协议来源为 Pi 随包 docs/rpc.md。
 
@@ -57,3 +57,7 @@ Pi 使用已安装 CLI 的 `--mode rpc`，按 `get_available_models` 返回的 p
 Antigravity 规则编辑仅修改用户提交的精确 allow/ask/deny 条目，保留其他原生设置；使用文件版本冲突检查和原子替换。全局规则改变后，已排队的旧权限任务拒绝自动执行，要求用户确认后重新发送。宿主自身的拒绝规则不会被静默移除。
 
 Pi 的 input 不含 cacheRead/cacheWrite；上下文显示把三者合计为本次输入，并从实际选择的模型信息读取窗口上限。对话联网开关移入“运行与搜索”，新对话默认开启，旧草稿和已排队消息保留明确的选择。
+
+## 推理强度
+
+`reasoning_options` 只读取模型元数据，不提交模型提示，并在读取后关闭所启动的 CLI。`start.effort` 映射到 Claude / CodeBuddy / Antigravity 的 `--effort`、MiMo 的 `--variant`、Pi 的 `set_thinking_level`，或 ACP 的 `thought_level` 配置；ACP 与 Pi 校验宿主返回值。档位与宿主支持能力以 `src/briefloop/static/runtime-reasoning.json` 和宿主元数据为准。未公开独立档位的宿主保留原生默认值，不用提示词模拟。

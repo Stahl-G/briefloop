@@ -171,7 +171,12 @@ class RoleModel(Model):
 
 def runtime_fields(value, backend='codex'):
     if backend not in ('codex','opencode'):
-        return {'model':RoleModel.model_validate({'model':value['model']}).model}
+        # A legacy workspace's Codex default must not silently become a bridge
+        # override. Settings store bridge choices per host; frozen runs/roles
+        # carry the selected effort directly.
+        effort = value.get('runtime_efforts', {}).get(backend) if 'runtime_efforts' in value else value.get('reasoning_effort', value.get('effort'))
+        selected = RoleModel.model_validate({'model': value['model'], 'reasoning_effort': effort})
+        return {'model': selected.model, **({'reasoning_effort': selected.reasoning_effort} if selected.reasoning_effort is not None else {})}
     if backend == 'opencode':
         # Opencode models are provider/model in one string; effort is expressed
         # as an optional variant. Codex-only keys are dropped, never sent.
@@ -198,6 +203,14 @@ class Settings(RoleModel):
     model: str = Field(default='gpt-5.6-luna', max_length=100)
     reasoning_effort: str | None = Field(default='high', min_length=1, max_length=100)
     agent_backend: Literal['codex', 'opencode','claude','kimi','hermes','reasonix','mimo','codebuddy','kilo','kiro','vibe','deepseek-harness','antigravity','pi','zcode'] = 'codex'
+    runtime_efforts: dict[str, str | None] = Field(default_factory=dict)
+
+    @field_validator('runtime_efforts')
+    @classmethod
+    def normalize_runtime_efforts(cls, values):
+        from .backends import validate_backend
+        return {validate_backend(backend): RoleModel(model='default', reasoning_effort=effort).reasoning_effort
+                for backend, effort in values.items()}
     model_selection_required: bool = True
     role_models: dict[Literal['evaluator','maintainer','proposer'], RoleModel] = Field(default_factory=dict)
     chat_allow_web: bool = True
