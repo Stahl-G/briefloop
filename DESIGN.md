@@ -2,7 +2,7 @@
 
 **范围**:`src/briefloop/static/`(原生 HTML/CSS/JS,无构建框架)
 **状态**:v2 · 最后更新 2026-09-18
-**令牌实现**:`tokens.css`(本文件是说明,`tokens.css` 是唯一事实来源)
+**令牌实现**:`src/briefloop/static/tokens.css`(本文件是说明,该文件是唯一事实来源;它就是应用实际加载的那一份,不要再复制一份到别处)
 
 ---
 
@@ -39,7 +39,7 @@
 
 ### 1.1 色彩
 
-完整清单见 `tokens.css`。语义层关键条目:
+完整清单见 `src/briefloop/static/tokens.css`。语义层关键条目:
 
 | 语义令牌 | 引用 | 用途 |
 |---|---|---|
@@ -308,7 +308,7 @@ v1 未定义首页布局(只在零散小节里提到局部)。以下为 v2 补�
 
 1. **首页建议卡** `.home-suggestion-icon`:按意图着色(周报→商业蓝,公司→商业蓝或协作紫,竞品→证券品红,资料→学术青),配可区分的**线性图标**,不是同色方块
 2. **我的报告 / 最近的报告** `.report-card-icon`:按该报告绑定的内容方法或模板 genre 取同一 tile/前景色
-3. **模板页 `GENRE_META`**(`frontend/app.js`):色板源头。改色只改这里和 `tokens.css`,两处同步
+3. **模板页 `GENRE_META`**(`frontend/app.js`):色板源头。改色只改这里和 `src/briefloop/static/tokens.css`,两处同步
 
 ### 5.3 规则
 
@@ -425,7 +425,7 @@ v1 未定义首页布局(只在零散小节里提到局部)。以下为 v2 补�
 
 ### 9.1 令牌纪律
 
-CSS 中**禁止裸 hex 与裸像素**,仅 `tokens.css` 豁免。stylelint:
+CSS 中**禁止裸 hex 与裸像素**,仅 `src/briefloop/static/tokens.css` 豁免。stylelint:
 
 ```json
 {
