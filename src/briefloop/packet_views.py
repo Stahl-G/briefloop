@@ -91,6 +91,7 @@ def views(snapshot):
 
 PURPOSE = {
     'report.txt': '被审正文的纯文本，每行一个段落，前面是段落 ID，[src_…] 为引用位置',
+    'reader-preview.md': '产品阅读渲染后的同稿文本，包含短引用编号与自动来源表；不是实际 Word 排版验收',
     'requirements.json': '本轮要求（含读者约定与条款）及用户原话',
     'claims.json': '主张与证据绑定、候选主张、来源陈述、冲突',
     'numbers.json': '数字绑定（正文原句与来源摘录）及结构化数据',

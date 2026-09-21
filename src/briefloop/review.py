@@ -484,6 +484,11 @@ def build_packet(store,version_id,folder):
     # Purpose-split views of the same snapshot; target.json stays the authority.
     from .packet_views import views as packet_views,overview as packet_overview
     for name,body in packet_views(snapshot).items():save(name,body.encode())
+    # The locator view uses internal source IDs; the reader/export view numbers
+    # citations and appends references. Freeze both so formatting is not judged
+    # from the internal representation alone.
+    from .exports import reader_markdown
+    save('reader-preview.md',reader_markdown(store,store.one('briefs',version_id)).encode())
     long_text=[]
     def collect(value,path):
         if isinstance(value,str) and len(value)>1200:long_text.append({'json_path':path,'chunks':[value[i:i+1200] for i in range(0,len(value),1200)]})
@@ -823,6 +828,8 @@ def run_review(store,runtime,job,version_id,folder):
         '对requirements.requirement_items逐项给requirement_checks：requirement_id、status(covered/manual/partial/missing)、reason。manual只能用于用户原要求中mode=manual的项目，不得自行降低必答要求。')
     packet_guide=('先读 overview.json，它说明每个文件的内容和大小：正文纯文本在 report.txt（每行一个段落，前面是段落ID），要求在 requirements.json，主张与证据在 claims.json，数字绑定在 numbers.json，引用摘录在 citations.json；target.json 是这些视图的完整依据，需要其他字段时按字段读取。'
                   if (folder/'packet'/'overview.json').exists() else '先看target.json的本轮要求、正文和claim_evidence关联；')
+    if (folder/'packet'/'reader-preview.md').exists():
+        packet_guide+=' reader-preview.md 是同一稿件通过产品阅读渲染器生成的文本预览，含短编号和自动来源表。report.txt 的 [src_…] 是核查定位标记，不是用户看到的编号；涉及引用展示/来源表的发现须对照预览，不能要求作者重复补写渲染器已生成的内容。预览不证明实际 Word 分页、样式或原生可点击性，这些须另查实际文件。'
     figure_text_note=('（figure-texts.json 按图列出从生成脚本提取的图上文字及行号，可直接对照；标为只能看图核对的图须实际看图）'
                       if (folder/'packet'/'figure-texts.json').exists() else '')
     from .report_time import instructions as time_instructions

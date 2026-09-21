@@ -73,12 +73,15 @@ def test_packet_views_split_the_snapshot_by_purpose(tmp_path):
     store = Store(tmp_path)
     source = store.add_source('Synthetic', 'Revenue was USD 12 million.')
     run = store.create_run({'title': 'T', 'objective': 'Explain revenue'}, [source['id']])
-    brief = store.publish(run['id'], {'title': 'T', 'markdown': 'Revenue was USD 12 million.'})
+    brief = store.publish(run['id'], {'title': 'T', 'markdown': 'Revenue was USD 12 million.[@'+source['id']+']'})
     _, files = build_packet(store, brief['id'], store.root / 'review')
     packet = store.root / 'review/packet'
-    for name in ('report.txt', 'requirements.json', 'claims.json', 'numbers.json', 'citations.json', 'overview.json'):
+    for name in ('report.txt', 'reader-preview.md', 'requirements.json', 'claims.json', 'numbers.json', 'citations.json', 'overview.json'):
         assert name in files
     assert 'Revenue was USD 12 million.' in (packet / 'report.txt').read_text(encoding='utf-8')
+    preview=(packet/'reader-preview.md').read_text(encoding='utf-8')
+    assert 'million.[1]' in preview and '## 来源' in preview and '1. Synthetic' in preview
+    assert source['id'] not in preview and source['id'] in (packet/'report.txt').read_text(encoding='utf-8')
     overview = json.loads((packet / 'overview.json').read_text(encoding='utf-8'))
     listed = {item['path']: item for item in overview['files']}
     assert listed['report.txt']['contains'] and listed['report.txt']['bytes'] > 0
