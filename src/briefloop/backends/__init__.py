@@ -7,7 +7,7 @@ backends mid-flight; a backend change starts a new attempt instead of resuming
 old child handles.
 """
 
-BRIDGE_BACKENDS = ('claude','kimi','hermes','reasonix','mimo','codebuddy','kilo','kiro','vibe','deepseek-harness','antigravity','pi')
+BRIDGE_BACKENDS = ('claude','kimi','hermes','reasonix','mimo','codebuddy','kilo','kiro','vibe','deepseek-harness','antigravity','pi','zcode')
 BACKENDS = ('codex', 'opencode', *BRIDGE_BACKENDS)
 
 DEFAULT_BACKEND = 'codex'
@@ -27,6 +27,7 @@ BACKEND_LABELS = {
     'vibe': 'Mistral Vibe CLI',
     'deepseek-harness': 'DeepSeek Harness',
     'antigravity': 'Antigravity',
+    'zcode': 'ZCode',
     'pi': 'Pi',
 }
 

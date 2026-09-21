@@ -1,5 +1,6 @@
 import hashlib
 import json
+from pathlib import Path
 import pytest
 from briefloop import runtime_permissions as permissions
 from briefloop.bridge_harness import normalize_bridge_usage
@@ -25,12 +26,21 @@ def test_scoped_native_rule_preserves_other_settings_and_rejects_stale_write(tmp
 
 
 def test_invalid_modes_and_symlink_never_change_native_settings(tmp_path, monkeypatch):
-    for backend,mode in [('pi','bypass'),('claude','bypassPermissions'),('codex','read'),('antigravity','yolo')]:
+    for backend,mode in [('pi','bypass'),('claude','bypassPermissions'),('codex','read'),('antigravity','yolo'),('zcode','acceptEdits')]:
         with pytest.raises(ValueError):permissions.validate_options(backend,{'mode':mode})
     target=tmp_path/'target';target.write_text('{}');link=tmp_path/'link';link.symlink_to(target)
     monkeypatch.setattr(permissions,'antigravity_settings',lambda:link)
     with pytest.raises(ValueError,match='符号链接'):permissions.catalog('antigravity',tmp_path,None)
     assert target.read_text()=='{}'
+
+
+def test_zcode_offers_its_own_modes_without_claiming_interactive_approval():
+    """ZCode headless has no permission channel: a blocked action just fails."""
+    found=permissions.catalog('zcode',Path('/tmp'),None)
+    assert [m['id'] for m in found['modes']]==['native','build','edit','plan','yolo']
+    assert found['interactive'] is False
+    assert '不提供逐项授权通道' in found['note']
+    assert permissions.validate_options('zcode',{'mode':'plan'})=={'mode':'plan'}
 
 
 def test_pi_usage_includes_cached_prompt_without_double_counting_other_hosts():

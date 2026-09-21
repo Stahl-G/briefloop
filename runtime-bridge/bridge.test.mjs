@@ -168,3 +168,49 @@ test('Codex catalog keeps new host models and skips both hidden spellings',async
  assert.equal(result.source,'host');
  assert.deepEqual(result.models.map(x=>x.id),['default','new-host-model','legacy-visible']);
 });
+const zcodeFake=(tail)=>`const args=process.argv.slice(2);const flag=n=>{const i=args.indexOf(n);return i<0?null:args[i+1]};
+if(flag('--output-format')!=='stream-json')process.exit(2);
+const sid='sess_fixture';const ev=(type,payload)=>process.stdout.write(JSON.stringify({type,payload,sessionId:sid,seq:1})+'\\n');
+${tail}`;
+test('ZCode maps its session stream and keeps reasoning out of the answer',async t=>{
+ const b=bridge(t),f=fixture(t,zcodeFake(`
+ if(flag('--prompt')!=='continue'||flag('--mode')!=='build'||flag('--resume')!=='sess_saved')process.exit(2);
+ ev('model.streaming',{kind:'reasoning_delta',delta:'HIDDEN'});
+ ev('model.streaming',{kind:'tool_call',toolCallId:'call_1',toolName:'Read',input:{file_path:'probe.txt'}});
+ ev('tool.updated',{kind:'result',toolCallId:'call_1',result:{success:true,content:'probe'}});
+ ev('model.streaming',{kind:'text_delta',delta:'OK'});
+ ev('turn.completed',{response:'OK',resultType:'success',usage:{inputTokens:10,outputTokens:2}});
+ ev('result',{});`));
+ b.send(1,'start',{...f,runtime_id:'zcode',execution_id:'z',prompt:'continue',session_id:'sess_saved',host_options:{mode:'build'},permission:'runtime-native',allow_web:null});
+ assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');
+ assert.equal(b.frames.find(x=>x.params?.kind==='session').params.session_id,'sess_fixture');
+ assert.ok(b.frames.some(x=>x.params?.kind==='reasoning'&&x.params.text==='HIDDEN'));
+ assert.ok(!b.frames.some(x=>x.params?.kind==='text'&&String(x.params.text).includes('HIDDEN')));
+ assert.ok(b.frames.some(x=>x.params?.kind==='text'&&x.params.text==='OK'));
+ const tool=b.frames.filter(x=>x.params?.kind==='tool').at(-1).params;
+ assert.equal(tool.name,'Read');assert.equal(tool.status,'completed');assert.equal(tool.output,'probe');
+ assert.equal(b.frames.find(x=>x.params?.kind==='usage').params.usage.outputTokens,2);
+});
+test('ZCode plan mode that only files a plan is not a completed answer',async t=>{
+ const b=bridge(t),f=fixture(t,zcodeFake(`
+ if(flag('--mode')!=='plan')process.exit(2);
+ ev('model.streaming',{kind:'tool_call',toolCallId:'call_1',toolName:'ExitPlanMode',input:{plan:'x'}});
+ ev('tool.updated',{kind:'error',toolCallId:'call_1',error:{message:'headless cannot approve'}});
+ ev('turn.completed',{response:'',resultType:'success',usage:{}});`));
+ b.send(1,'start',{...f,runtime_id:'zcode',execution_id:'plan',prompt:'x',host_options:{mode:'plan'},permission:'runtime-native',allow_web:null});
+ const end=await b.wait(x=>x.params?.kind==='end');
+ assert.equal(end.params.status,'failed');
+ assert.match(end.params.error,/没有给出回答/);
+ assert.equal(b.frames.filter(x=>x.params?.kind==='tool').at(-1).params.status,'failed');
+});
+test('ZCode refuses a model choice it cannot apply and reports the configured one',async t=>{
+ const b=bridge(t),f=fixture(t,zcodeFake(`process.exit(2);`));
+ b.send(1,'list_models',{runtime_id:'zcode',...f});
+ const list=await b.wait(x=>x.id===1);
+ assert.equal(list.result.source,'host_default_only');
+ assert.deepEqual(list.result.models.map(x=>x.id),['default']);
+ b.send(2,'start',{...f,runtime_id:'zcode',execution_id:'model',prompt:'x',model:'glm-5.3',permission:'runtime-native',allow_web:null});
+ const end=await b.wait(x=>x.params?.kind==='end');
+ assert.equal(end.params.status,'failed');
+ assert.match(end.params.error,/不接受模型参数/);
+});

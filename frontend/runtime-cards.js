@@ -29,6 +29,7 @@ const descriptions = {
  'qwen': 'Qwen 命令行编程 Agent',
  'trae-cli': 'Trae 的命令行 Agent',
  'vibe': 'Mistral 开源命令行 Agent',
+ 'zcode': '智谱开源的命令行 Agent',
 };
 const iconIds=new Set(['codex','claude','opencode','codebuddy','hermes','kimi','mimo','reasonix','aider','amr','antigravity','copilot','cursor-agent','deepseek','devin','grok-build','kilo','kiro','pi','qoder','qwen','trae-cli','vibe']);
 const pngIds=new Set(['aider','devin','trae-cli']);
