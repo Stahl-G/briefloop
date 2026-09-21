@@ -31,7 +31,9 @@ def test_industry_periodic_export_has_toc_and_heading_bookmarks(tmp_path):
     ids = [node.get(W + 'id') for node in starts]
     assert len(set(ids)) == len(ids), 'each heading must have a unique Word bookmark identity'
     assert ids == [node.get(W + 'id') for node in tree.findall('.//' + W + 'bookmarkEnd')]
-    toc = next(field for field in tree.findall('.//' + W + 'fldSimple') if ' TOC ' in field.get(W + 'instr', ''))
+    code = next(node for node in tree.findall('.//' + W + 'instrText') if ' TOC ' in (node.text or ''))
+    toc = code.getparent().getparent()
+    assert [node.get(W + 'fldCharType') for node in toc.findall('.//' + W + 'fldChar')] == ['begin', 'separate', 'end']
     assert [link.get(W + 'anchor') for link in toc.findall(W + 'hyperlink')] == ['block_a', 'block_b', 'block_c']
     assert '目录将在打开文档时自动生成' not in document_xml
     names = [line for line in document_xml.split('w:bookmarkStart ') if 'w:name=' in line]
