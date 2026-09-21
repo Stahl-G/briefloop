@@ -1183,3 +1183,55 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 }
 #chat-form .composer-tools{align-items:center}
 #chat-form .composer-options>*,#chat-form .send-controls>*{align-self:center}
+
+/* Rebalance: compact controls, roomier input (DESIGN control-h-md / larger draft area) */
+#chat-form .attach-button,
+#chat-form .params-button,
+#chat-form .model-id-input--default,
+#chat-form .model-picker,
+#chat-form .model-picker>input,
+#chat-form #chat-send,
+#chat-form .send-mode,
+#chat-form .send-split,
+#chat-form .composer-options button:not(.attach-button):not(.primary){
+  height:36px !important;
+  min-height:36px !important;
+}
+#chat-form .send-split{height:36px !important}
+#chat-form .send-mode,
+#chat-form #chat-send{height:36px !important}
+#chat-form .model-picker{max-width:280px}
+
+/* conversation + home: primary draft area */
+.chat-composer>textarea{
+  min-height:88px !important;
+  height:auto !important;
+  max-height:240px;
+}
+.chat-page.is-empty .chat-composer>textarea,
+#chat-form #chat-input{
+  min-height:96px;
+}
+.chat-composer{padding:14px 16px 12px !important}
+.composer-tools{margin-top:10px !important}
+
+/* labeled fields inside params */
+#chat-form .params-field{
+  display:inline-flex;
+  align-items:center;
+  gap:6px;
+  font-size:var(--text-xs,12px);
+  color:var(--color-text-muted,#6a706b);
+  margin:0;
+}
+#chat-form .params-field>span{white-space:nowrap}
+#chat-form .params-field select,
+#chat-form .params-field input{
+  width:auto;
+  min-width:96px;
+  height:32px !important;
+  min-height:32px !important;
+  margin:0;
+  font-size:var(--text-xs,12px);
+  padding:0 8px;
+}
