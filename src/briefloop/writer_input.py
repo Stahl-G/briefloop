@@ -170,7 +170,7 @@ class EvidenceChange(Input):
 class UpdateEvidence(Input):
     base_revision: Text
     field: Literal['citations', 'number_bindings', 'temporal_claims']
-    changes: list[EvidenceChange] = Field(min_length=1, max_length=30)
+    changes: list[EvidenceChange] = Field(min_length=1, max_length=60)
 
 
 def evidence_key(value):
@@ -283,15 +283,19 @@ def operations():
     from .models import Citation, NumberBinding, TemporalClaim
     from pydantic import create_model
     for field, record in [('citations', Citation), ('number_bindings', NumberBinding), ('temporal_claims', TemporalClaim)]:
-        change = create_model(field + '_change', __base__=Input,
-                              record_key=(str | None, None), value=(record | None, None))
+        item = create_model(field + '_record', __base__=record, record_key=(str | None, None))
         request = create_model(field + '_update', __base__=Input, base_revision=(Text, ...),
-                               changes=(list[change], Field(min_length=1, max_length=30)))
+                               records=(list[item], Field(default_factory=list, max_length=30)),
+                               remove_keys=(list[str], Field(default_factory=list, max_length=30)))
         def update(store, config, args, field=field, request=request):
             parsed = request.model_validate(args)
-            return update_draft_evidence(store, config, {**parsed.model_dump(mode='json'), 'field': field})
+            changes = [{'record_key': r.record_key, 'value': r.model_dump(mode='json', exclude={'record_key'})}
+                       for r in parsed.records]
+            changes.extend({'record_key': key, 'value': None} for key in parsed.remove_keys)
+            return update_draft_evidence(store, config, {'base_revision': parsed.base_revision,
+                                                        'field': field, 'changes': changes})
         result['update_' + field] = (request, update,
-            f'独立更新 {field}，只交改变的记录，不重交正文。record_key从read_draft对应字段取；新记录省略键，删除传键并令value=null。')
+            f'独立更新 {field}。records中直接写记录字段，不包装value对象；数字记录的value就是数值。修改时在该记录加read_draft返回的record_key，新记录省略键。删除仅传remove_keys。不要重交正文。')
     return result
 
 

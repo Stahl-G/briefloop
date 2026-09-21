@@ -183,10 +183,22 @@ def test_evidence_tools_have_flat_typed_inputs_and_save_records(tmp_path):
     for name in ('update_citations','update_number_bindings','update_temporal_claims'):
         schema=specs[name]['parameters']
         assert schema['type']=='object' and 'base_revision' in schema['properties']
-        assert 'anyOf' not in schema and schema['properties']['changes']['type']=='array'
+        assert 'anyOf' not in schema and schema['properties']['records']['type']=='array'
     saved=writer.write_report(store,config,{'title':'报告','markdown':f'收入同比增长20%。[@{source["id"]}]'})
     result=run_tool(store,config,'update_citations',{'base_revision':saved['revision'],
-        'changes':[{'value':{'source_id':source['id'],'locator':'line 1','excerpt':store.source_text(source['id'])}}]})
+        'records':[{'source_id':source['id'],'locator':'line 1','excerpt':store.source_text(source['id'])}]})
     assert result['ok'],result
     report=json.loads(result['content'][0]['text'])
     assert drafts._candidate(store,config,{'revision':report['revision']})['draft']['citations'][0]['source_id']==source['id']
+    numbers=run_tool(store,config,'update_number_bindings',{'base_revision':report['revision'],
+        'records':[{'label':'收入','value':1200,'unit':'万元','source_id':source['id'],
+                    'locator':'line 1','source_excerpt':store.source_text(source['id'])}]})
+    assert numbers['ok'],numbers
+    numbered=json.loads(numbers['content'][0]['text'])
+    removed=run_tool(store,config,'update_number_bindings',{'base_revision':numbered['revision'],
+        'remove_keys':numbered['record_keys']})
+    assert removed['ok'],removed
+    final=json.loads(removed['content'][0]['text'])
+    value=drafts._candidate(store,config,{'revision':final['revision']})['draft']
+    assert value['number_bindings']==[] and value['citations'][0]['source_id']==source['id']
+
