@@ -688,7 +688,7 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 .composer-params{position:relative}
 .params-button{display:inline-flex;align-items:center;gap:4px;height:var(--control-h-sm,28px);padding:4px 8px;font-size:var(--text-xs,12px);color:var(--color-text-muted,#6a706b);border:1px solid var(--color-border,#dedfd8);border-radius:var(--radius-sm,6px);background:var(--color-surface,#fff);white-space:nowrap}
 .params-button:hover{background:var(--color-surface-soft,#f4f6ef)}
-.composer-params-panel{position:absolute;top:auto;right:auto;bottom:calc(100% + 8px);left:0;min-width:min(360px,86vw);max-height:min(70vh,480px);overflow:auto;padding:12px;display:flex;flex-direction:column;gap:10px;background:var(--color-surface,#fff);border:1px solid var(--color-border,#dedfd8);border-radius:var(--radius,9px);box-shadow:var(--shadow-md,0 4px 12px rgba(30,35,32,.10));z-index:var(--z-dropdown,200)}
+.composer-params-panel{position:absolute;top:auto;right:0;bottom:calc(100% + 8px);left:auto;min-width:min(360px,86vw);max-width:calc(100vw - 32px);max-height:min(70vh,480px);overflow:auto;padding:12px;display:flex;flex-direction:column;gap:10px;background:var(--color-surface,#fff);border:1px solid var(--color-border,#dedfd8);border-radius:var(--radius,9px);box-shadow:var(--shadow-md,0 4px 12px rgba(30,35,32,.10));z-index:var(--z-dropdown,200)}
 .composer-params-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .composer-params-grid{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .composer-params-grid select{height:var(--control-h-sm,28px);font-size:var(--text-xs,12px);max-width:140px}
@@ -706,7 +706,6 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 
 @media(max-width:560px){
   #new-report.new-session--primary{color:var(--color-on-primary,#fff)}
-  .composer-params-panel{left:auto;right:0}
 }
 
 /* === home-v2 S4: normal-mode right rail (DESIGN §3.2 §7.3) === */
@@ -1070,13 +1069,17 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 .chat-activity>summary::-webkit-details-marker{display:none}
 .chat-activity[open]>summary{color:var(--color-text,#1e2320);font-weight:550}
 
-/* === Composer default row: one baseline, one height (DESIGN §7.2) === */
+/* === Composer row: one layout, one height (DESIGN §7.2) ===
+   The row lives here; the height is the --control-h-md token, not a number.
+   Heights stay !important because the original composer rules near the top of
+   this file still set a per-control pixel height on the same elements. */
 #chat-form .composer-tools{
   display:flex;
   align-items:center;
   justify-content:space-between;
   gap:var(--space-3,12px);
   flex-wrap:nowrap;
+  margin-top:10px !important;
 }
 #chat-form .composer-options,
 #chat-form .send-controls{
@@ -1086,68 +1089,26 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
   min-width:0;
   flex-wrap:nowrap;
 }
-#chat-form .composer-options{
-  flex:1 1 auto;
-  min-width:0;
-}
-#chat-form .send-controls{
-  flex:0 0 auto;
-  margin-left:auto;
-}
+#chat-form .composer-options{flex:1 1 auto}
+#chat-form .send-controls{flex:0 0 auto;margin-left:auto}
+#chat-form .composer-options>*,
+#chat-form .send-controls>*{align-self:center}
 #chat-form .attach-button,
 #chat-form .params-button,
 #chat-form .model-id-input--default,
 #chat-form .model-picker,
 #chat-form .model-picker>input,
-#chat-form #chat-send,
+#chat-form .send-split,
 #chat-form .send-mode,
-#chat-form .send-split{
-  height:40px !important;
-  min-height:40px !important;
+#chat-form #chat-send,
+#chat-form .composer-options .subtle-button,
+#chat-form .composer-options button:not(.attach-button):not(.primary){
+  height:var(--control-h-md,36px) !important;
+  min-height:var(--control-h-md,36px) !important;
   box-sizing:border-box;
-}
-#chat-form .model-picker{
-  display:inline-flex;
-  align-items:center;
-  width:auto;
-  max-width:220px;
-  flex:0 1 auto;
-}
-#chat-form .model-id-input--default{
-  width:100%;
-  max-width:none;
-  padding:0 10px;
-  font-size:var(--text-xs,12px);
-}
-#chat-form .send-mode{
-  height:100% !important;
-  min-height:0 !important;
-  border:0;
-  border-right:1px solid var(--color-border,#dedfd8);
-  border-radius:0;
-  max-width:120px;
-  padding:0 8px;
-  font-size:var(--text-xs,12px);
-}
-#chat-form .send-split{
-  border:1px solid var(--color-border-strong,#8b918b);
-  border-radius:var(--radius-sm,6px);
-  overflow:hidden;
-  gap:0;
-}
-#chat-form #chat-send{
-  height:100% !important;
-  min-height:0 !important;
-  border:0;
-  border-radius:0;
-  min-width:72px;
-  padding:0 16px;
-  font-size:var(--text-xs,12px);
 }
 #chat-form .composer-options .subtle-button,
 #chat-form .composer-options button:not(.attach-button):not(.primary){
-  height:40px !important;
-  min-height:40px !important;
   padding:0 12px !important;
   font-size:var(--text-xs,12px) !important;
   border:1px solid var(--color-border-strong,#8b918b);
@@ -1155,10 +1116,20 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
   background:var(--color-surface,#fff);
   color:var(--color-text,#1e2320);
 }
-/* exact 40px row: split without shrinking children inside 1px border box */
+#chat-form .model-picker{
+  display:inline-flex;
+  align-items:center;
+  width:auto;
+  max-width:280px;
+  flex:0 1 auto;
+}
+#chat-form .model-id-input--default{
+  width:100%;
+  max-width:none;
+  font-size:var(--text-xs,12px);
+}
+/* the split is only a track: mode and send draw the one border around them */
 #chat-form .send-split{
-  height:40px !important;
-  min-height:40px !important;
   border:0 !important;
   background:transparent !important;
   overflow:visible;
@@ -1166,43 +1137,23 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
   padding:0;
 }
 #chat-form .send-mode{
-  height:40px !important;
-  min-height:40px !important;
   border:1px solid var(--color-border-strong,#8b918b) !important;
   border-right:0 !important;
   border-radius:var(--radius-sm,6px) 0 0 var(--radius-sm,6px) !important;
+  max-width:120px;
   padding:0 10px !important;
   font-size:var(--text-xs,12px);
 }
 #chat-form #chat-send{
-  height:40px !important;
-  min-height:40px !important;
   border:0 !important;
   border-radius:0 var(--radius-sm,6px) var(--radius-sm,6px) 0 !important;
   min-width:72px;
+  padding:0 16px;
+  font-size:var(--text-xs,12px);
 }
-#chat-form .composer-tools{align-items:center}
-#chat-form .composer-options>*,#chat-form .send-controls>*{align-self:center}
 
-/* Rebalance: compact controls, roomier input (DESIGN control-h-md / larger draft area) */
-#chat-form .attach-button,
-#chat-form .params-button,
-#chat-form .model-id-input--default,
-#chat-form .model-picker,
-#chat-form .model-picker>input,
-#chat-form #chat-send,
-#chat-form .send-mode,
-#chat-form .send-split,
-#chat-form .composer-options button:not(.attach-button):not(.primary){
-  height:36px !important;
-  min-height:36px !important;
-}
-#chat-form .send-split{height:36px !important}
-#chat-form .send-mode,
-#chat-form #chat-send{height:36px !important}
-#chat-form .model-picker{max-width:280px}
-
-/* conversation + home: primary draft area */
+/* the draft area stays the largest thing in the composer */
+.chat-composer{padding:14px 16px 12px !important}
 .chat-composer>textarea{
   min-height:88px !important;
   height:auto !important;
@@ -1212,10 +1163,8 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 #chat-form #chat-input{
   min-height:96px;
 }
-.chat-composer{padding:14px 16px 12px !important}
-.composer-tools{margin-top:10px !important}
 
-/* labeled fields inside params */
+/* labelled fields inside the params popover */
 #chat-form .params-field{
   display:inline-flex;
   align-items:center;
