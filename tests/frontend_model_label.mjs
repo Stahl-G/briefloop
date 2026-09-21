@@ -1,3 +1,4 @@
+import * as time from '../frontend/time.js';
 // Settings and frozen job payloads use different backend field names.
 import fs from 'node:fs';
 import vm from 'node:vm';
@@ -5,7 +6,7 @@ import assert from 'node:assert/strict';
 import {withoutSupersededRetries} from '../frontend/review-status.js';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const code=['friendlyModel','runtimeName','modelLabel','jobModelLabel'].map(name=>source.split('\n').find(line=>line.startsWith('function '+name+'('))).join('\n');
-const view=vm.createContext({withoutSupersededRetries,parse:s=>JSON.parse(s||'{}'),runtimeCatalog:[{id:'opencode',name:'OpenCode'},{id:'codex',name:'Codex'},{id:'other',name:'Other'}]});
+const view=vm.createContext({...time,withoutSupersededRetries,parse:s=>JSON.parse(s||'{}'),runtimeCatalog:[{id:'opencode',name:'OpenCode'},{id:'codex',name:'Codex'},{id:'other',name:'Other'}]});
 vm.runInContext(code,view);
 const model='opencode/muse-spark-1.3-contributor-free';
 for(const variant of [undefined,null,'','high']){
@@ -28,9 +29,9 @@ const nodes=new Map();
 view.$=id=>{if(!nodes.has(id))nodes.set(id,{innerHTML:'',hidden:false});return nodes.get(id)};
 view.esc=String;view.statuses={running:'运行中'};
 const job={id:'job_display',kind:'generate',status:'running',created:new Date().toISOString(),payload:JSON.stringify({agent_backend:'opencode',runtime:{model},run_id:'report'})};
-view.state={jobs:[job],briefs:[],runs:[],sources:[],settings:{timeout_minutes:30,agent_backend:'codex'}};
+view.state={jobs:[job],briefs:[],runs:[],sources:[],task_labels:{generate:'生成简报',fact_check:'独立事实核查'},settings:{timeout_minutes:30,agent_backend:'codex'}};
 const historyLine=source.split('\n').find(line=>line.trimStart().startsWith("$('jobs').innerHTML=state.jobs"));
-vm.runInContext(source.split('\n').find(line=>line.startsWith('const TASK_LABELS=')),view);
+vm.runInContext(source.split('\n').find(line=>line.startsWith('const taskLabel=')),view);
 vm.runInContext(historyLine,view);
 assert.match(view.$('jobs').innerHTML,/OpenCode · opencode\/muse-spark-1.3-contributor-free \/ 模型默认/);
 view.state.jobs.push({...job,id:'job_check',kind:'fact_check'});

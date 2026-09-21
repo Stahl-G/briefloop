@@ -1,8 +1,8 @@
+import {esc} from './dom.js';
+import {moment} from './time.js';
 // Settings UI uses public connector DTOs only. Existing credentials never enter
 // the browser; blank credential inputs preserve the server-side binding.
-export function connectorSettings(root, api) {
- const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
- const labels={disabled:'未启用',disconnected:'未连接',connecting:'连接中',connected:'已连接',error:'连接异常'};
+export function connectorSettings(root, api) { const labels={disabled:'未启用',disconnected:'未连接',connecting:'连接中',connected:'已连接',error:'连接异常'};
  let records=[],editing=null,busy=false;
  root.innerHTML=`<div class="section-title"><h2>数据连接器（MCP）</h2><button type="button" data-refresh>刷新状态</button></div>
  <p class="help">管理本工作区的 MCP 服务与连接状态。连接测试读取服务能力目录。</p>
@@ -41,7 +41,7 @@ export function connectorSettings(root, api) {
    return `<article class="connector-card"><div class="section-title"><h3>${esc(r.name)}</h3><span class="tag ${r.state==='error'?'error':''}">${esc(labels[r.state]||r.state)}</span></div>
     <p class="help connector-address">${esc(r.transport==='http'?r.url:r.command)} · v${esc(r.revision)}</p>
     ${r.protocol?`<p class="help">协议 ${esc(r.protocol)} · ${caps.tools?.length||0} 个工具 · ${caps.resources?.length||0} 个资源</p>`:''}
-    ${test?`<p class="help">最近测试${test.ok?'通过':'未通过'} · ${esc(new Date(test.checked_at).toLocaleString())}${test.duration_seconds!=null?' · '+Number(test.duration_seconds).toFixed(1)+' 秒':''}</p>`:''}
+    ${test?`<p class="help">最近测试${test.ok?'通过':'未通过'} · ${esc(moment(test.checked_at))}${test.duration_seconds!=null?' · '+Number(test.duration_seconds).toFixed(1)+' 秒':''}</p>`:''}
     ${r.error||test?.error?`<p class="connector-error">${esc((r.error||test.error).message)}</p>`:''}
     ${(r.warnings?.length?r.warnings:test?.warnings||[]).map(w=>`<p class="help">${esc(w.message)}</p>`).join('')}
     <div class="connector-actions"><button type="button" data-op="test" data-id="${esc(r.id)}">测试连接</button>

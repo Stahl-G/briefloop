@@ -405,21 +405,140 @@ async function runPi(p, state, launch2, terminate2, emit2) {
   }
 }
 
+// runtime-bridge/zcode.ts
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import path2 from "node:path";
+var MODES = ["build", "edit", "plan", "yolo"];
+var IMAGE_TYPES = [".png", ".jpg", ".jpeg", ".webp"];
+var PROMPT_LIMIT = 2e5;
+var THINK = /^(think|thinking|reasoning)$/i;
+function configuredModel() {
+  try {
+    const file = JSON.parse(readFileSync(path2.join(homedir(), ".zcode", "cli", "config.json"), "utf8"));
+    const main = file?.model?.main;
+    return typeof main === "string" ? main.trim() : "";
+  } catch {
+    return "";
+  }
+}
+function zcodeModels() {
+  const main = configuredModel();
+  return {
+    models: [{ id: "default", label: main ? "\u914D\u7F6E\u7684\u6A21\u578B\uFF1A" + main : "\u5BBF\u4E3B\u9ED8\u8BA4\u6A21\u578B" }],
+    source: "host_default_only",
+    note: "ZCode \u7684\u65E0\u754C\u9762\u8FD0\u884C\u6CA1\u6709\u9009\u62E9\u6A21\u578B\u7684\u53C2\u6570\uFF0C\u672C\u8F6E\u4F7F\u7528 ~/.zcode/cli/config.json \u91CC model.main \u914D\u7F6E\u7684\u6A21\u578B\uFF1B\u8981\u6362\u6A21\u578B\u8BF7\u5728 ZCode \u4E2D\u8BBE\u7F6E\u3002"
+  };
+}
+function toolOutput(payload) {
+  const result = payload.result;
+  if (payload.kind === "error") return payload.error?.message || payload.error?.type || "\u5DE5\u5177\u5931\u8D25";
+  if (result && typeof result === "object" && "content" in result) return result.content;
+  return result;
+}
+async function runZcode(p, state, launch2, terminate2, emit2) {
+  if (p.model && p.model !== "default") throw Error("ZCode \u65E0\u754C\u9762\u8FD0\u884C\u4E0D\u63A5\u53D7\u6A21\u578B\u53C2\u6570\uFF1A\u53EA\u80FD\u4F7F\u7528\u5B83\u81EA\u5DF1\u914D\u7F6E\u7684\u6A21\u578B\uFF0C\u8BF7\u5728 ZCode \u4E2D\u5207\u6362\u540E\u91CD\u8BD5");
+  if (p.prompt.length > PROMPT_LIMIT) throw Error("\u63D0\u793A\u8BCD\u8D85\u51FA ZCode \u547D\u4EE4\u884C\u53EF\u4F20\u957F\u5EA6");
+  const args = ["--prompt", p.prompt, "--cwd", p.cwd, "--output-format", "stream-json", "--no-color"];
+  const selected = p.host_options?.mode;
+  const mode = !selected || selected === "native" ? "build" : selected;
+  if (!MODES.includes(mode)) throw Error("Invalid ZCode permission mode");
+  args.push("--mode", mode);
+  if (p.session_id) args.push("--resume", p.session_id);
+  for (const image of p.images || []) {
+    const file = path2.resolve(typeof image === "string" ? image : image.path);
+    if (!IMAGE_TYPES.includes(path2.extname(file).toLowerCase())) throw Error("\u4E0D\u652F\u6301\u7684\u56FE\u7247\u683C\u5F0F");
+    if (readFileSync(file).length > 20 * 1024 * 1024) throw Error("\u56FE\u7247\u8D85\u8FC7 20 MiB");
+    args.push("--attach", file);
+  }
+  const child = launch2(state.bin, args, p.cwd);
+  state.child = child;
+  state.cancel = () => terminate2(child);
+  const names = /* @__PURE__ */ new Map();
+  let lastSession = null, textSeen = false, completed = false, response = "", failure = "", stderr = "";
+  await new Promise((resolve, reject) => {
+    const timer = p.timeout_ms ? setTimeout(() => {
+      terminate2(child);
+      reject(Error("ZCode turn timed out"));
+    }, p.timeout_ms) : null;
+    const parser = createJsonLineStream((m) => {
+      if (m.sessionId && m.sessionId !== lastSession) {
+        lastSession = m.sessionId;
+        emit2(p.execution_id, "session", { session_id: m.sessionId });
+      }
+      const payload = m.payload || {};
+      if (m.type === "model.streaming") {
+        if (payload.kind === "text_delta" && payload.delta) {
+          textSeen = true;
+          emit2(p.execution_id, "text", { text: payload.delta, delta: true });
+        } else if (payload.kind === "reasoning_delta" && payload.delta) emit2(p.execution_id, "reasoning", { text: payload.delta, delta: true });
+        else if (payload.kind === "tool_call" && payload.toolCallId && !THINK.test(payload.toolName || "")) {
+          names.set(payload.toolCallId, payload.toolName);
+          emit2(p.execution_id, "tool", { id: payload.toolCallId, name: payload.toolName || "\u5DE5\u5177\u64CD\u4F5C", status: "running", input: payload.input });
+        }
+      } else if (m.type === "tool.updated" && payload.toolCallId) {
+        const name = names.get(payload.toolCallId) || payload.toolName;
+        if (THINK.test(name || "")) return;
+        if (payload.kind === "started") emit2(p.execution_id, "tool", { id: payload.toolCallId, name: name || "\u5DE5\u5177\u64CD\u4F5C", status: "running" });
+        else if (payload.kind === "result" || payload.kind === "error") {
+          const ok = payload.kind === "result" && payload.result?.success !== false;
+          emit2(p.execution_id, "tool", { id: payload.toolCallId, name: name || "\u5DE5\u5177\u64CD\u4F5C", status: ok ? "completed" : "failed", output: toolOutput(payload) });
+        }
+      } else if (m.type === "turn.completed") {
+        completed = true;
+        if (payload.usage) emit2(p.execution_id, "usage", { usage: payload.usage });
+        if (typeof payload.response === "string") response = payload.response;
+        if (payload.resultType === "cancelled") state.cancelled = true;
+        else if (payload.resultType && payload.resultType !== "success") failure = "ZCode \u672A\u6B63\u5E38\u7ED3\u675F\uFF1A" + payload.resultType;
+      } else if (m.type === "turn.failed") {
+        failure = String(payload.error?.message || payload.error?.type || "ZCode \u56DE\u5408\u5931\u8D25").slice(0, 2e3);
+      }
+    });
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (c) => parser.feed(c));
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (c) => {
+      stderr = (stderr + c).slice(-8192);
+    });
+    child.stdin.on("error", () => {
+    });
+    child.on("error", (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      parser.flush();
+      if (state.cancelled) return resolve();
+      if (failure) return reject(Error(failure));
+      if (!completed) return reject(Error("ZCode \u672A\u5B8C\u6210\u672C\u56DE\u5408\uFF08exit " + code + "\uFF09" + (stderr.trim() ? "\uFF1A" + stderr.trim().slice(-400) : "")));
+      if (!textSeen && response.trim()) {
+        textSeen = true;
+        emit2(p.execution_id, "text", { text: response, delta: true });
+      }
+      if (!textSeen) return reject(Error("ZCode \u7ED3\u675F\u65F6\u6CA1\u6709\u7ED9\u51FA\u56DE\u7B54\uFF1A\u89C4\u5212\u6A21\u5F0F\u4E0B\u5B83\u53EA\u63D0\u4EA4\u8BA1\u5212\u800C\u65E0\u6CD5\u5728\u65E0\u754C\u9762\u4E0B\u7EE7\u7EED\uFF0C\u8BF7\u6539\u7528 build \u6A21\u5F0F\u6216\u5728\u63D0\u793A\u4E2D\u8981\u6C42\u76F4\u63A5\u7ED9\u51FA\u7ED3\u8BBA"));
+      if (code !== 0) return reject(Error("ZCode exited with code " + code));
+      resolve();
+    });
+    child.stdin.end();
+  });
+}
+
 // runtime-bridge/main.ts
 import { spawn, execFile } from "node:child_process";
-import { accessSync, constants, readFileSync } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import path3 from "node:path";
+import { accessSync, constants, readFileSync as readFileSync2 } from "node:fs";
+import { homedir as homedir3 } from "node:os";
+import path4 from "node:path";
 import { promisify } from "node:util";
 import { createInterface } from "node:readline";
 
 // third_party/open-design/acp/session-params.ts
-import path2 from "node:path";
+import path3 from "node:path";
 function buildAcpSessionNewParams(cwd, { mcpServers, envFormat = "array" } = {}) {
   const servers = Array.isArray(mcpServers) ? mcpServers : [];
   const wantsMap = envFormat === "map";
   return {
-    cwd: path2.resolve(cwd),
+    cwd: path3.resolve(cwd),
     // MCP is an optional compatibility layer. Default to no MCP servers so ACP
     // agents can run through the skill + CLI path without MCP support. Do not
     // auto-install or mutate user/global MCP config; callers must pass an
@@ -602,7 +721,7 @@ var catalog_default = [
   },
   {
     id: "codebuddy",
-    name: "Codebuddy Code",
+    name: "CodeBuddy Code",
     bins: [
       "codebuddy",
       "cbc"
@@ -696,7 +815,7 @@ var catalog_default = [
   },
   {
     id: "opencode",
-    name: "OpenCode",
+    name: "Opencode CLI",
     bins: [
       "opencode-cli",
       "opencode"
@@ -744,6 +863,13 @@ var catalog_default = [
     bins: [
       "vibe-acp"
     ]
+  },
+  {
+    id: "zcode",
+    name: "ZCode",
+    bins: [
+      "zcode"
+    ]
   }
 ];
 
@@ -762,7 +888,7 @@ function sanitizeCustomModel(id) {
 
 // third_party/open-design/runtime-models/mmd-routes.ts
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir as homedir2 } from "node:os";
 import { join } from "node:path";
 var DEFAULT_MMD_MODEL_ROUTES_FILE = join(".config", "mms", "model-routes.json");
 var MMD_MODEL_ROUTES_FILE_ENV = "MMD_MODEL_ROUTES_FILE";
@@ -773,7 +899,7 @@ function stringEnv(env2, key) {
   return trimmed.length > 0 ? trimmed : null;
 }
 function resolveHome(env2) {
-  return stringEnv(env2, "HOME") ?? homedir() ?? null;
+  return stringEnv(env2, "HOME") ?? homedir2() ?? null;
 }
 function expandRoutesFileOverride(raw, env2) {
   if (raw === "~") return resolveHome(env2);
@@ -1176,13 +1302,13 @@ function exec(bin, args, options) {
 }
 var acpArgs = { codebuddy: ["--acp"], kimi: ["acp"], hermes: ["acp"], reasonix: ["acp"], kilo: ["acp"], kiro: ["acp"], vibe: [], "deepseek-harness": ["--profile", "acp"] };
 function acpArguments(id, bin) {
-  return id === "hermes" && /^hermes-acp(?:\.(?:exe|cmd|bat))?$/i.test(path3.basename(bin)) ? [] : [...acpArgs[id]];
+  return id === "hermes" && /^hermes-acp(?:\.(?:exe|cmd|bat))?$/i.test(path4.basename(bin)) ? [] : [...acpArgs[id]];
 }
 var active = /* @__PURE__ */ new Map();
 var defaults = [{ id: "default", label: "\u5BBF\u4E3B\u9ED8\u8BA4\u6A21\u578B" }];
 function claudeConfiguredModel() {
   try {
-    const file = JSON.parse(readFileSync(path3.join(homedir2(), ".claude", "settings.json"), "utf8"));
+    const file = JSON.parse(readFileSync2(path4.join(homedir3(), ".claude", "settings.json"), "utf8"));
     const alias = typeof file?.model === "string" ? file.model.trim() : "";
     const configured = file?.env && typeof file.env === "object" ? file.env : {};
     const merged = { ...configured, ...env };
@@ -1210,12 +1336,12 @@ if (process.platform === "win32") {
   env.PATH = process.env.PATH || process.env.Path || "";
   delete env.Path;
 }
-var dirs = [...(env.PATH || "").split(path3.delimiter), path3.join(homedir2(), ".local/bin"), path3.join(homedir2(), ".kimi-code/bin"), path3.join(homedir2(), ".opencode/bin"), path3.join(homedir2(), ".npm-global/bin"), path3.join(homedir2(), ".bun/bin"), path3.join(homedir2(), ".cargo/bin"), path3.join(homedir2(), ".dsh/bin"), "/opt/homebrew/bin", "/usr/local/bin"];
-if (process.platform === "win32" && env.APPDATA) dirs.push(path3.join(env.APPDATA, "npm"));
-env.PATH = [...new Set(dirs)].join(path3.delimiter);
+var dirs = [...(env.PATH || "").split(path4.delimiter), path4.join(homedir3(), ".local/bin"), path4.join(homedir3(), ".kimi-code/bin"), path4.join(homedir3(), ".opencode/bin"), path4.join(homedir3(), ".npm-global/bin"), path4.join(homedir3(), ".bun/bin"), path4.join(homedir3(), ".cargo/bin"), path4.join(homedir3(), ".dsh/bin"), "/opt/homebrew/bin", "/usr/local/bin"];
+if (process.platform === "win32" && env.APPDATA) dirs.push(path4.join(env.APPDATA, "npm"));
+env.PATH = [...new Set(dirs)].join(path4.delimiter);
 function findBin(def, custom) {
   const extensions = process.platform === "win32" ? [".exe", ".cmd", ".bat", ""] : [""];
-  for (const f of custom ? [path3.resolve(custom)] : def.bins.flatMap((b) => dirs.flatMap((d) => extensions.map((e) => path3.join(d, b + e))))) {
+  for (const f of custom ? [path4.resolve(custom)] : def.bins.flatMap((b) => dirs.flatMap((d) => extensions.map((e) => path4.join(d, b + e))))) {
     try {
       accessSync(f, constants.X_OK);
       return f;
@@ -1238,11 +1364,11 @@ function emit(id, kind, data = {}) {
   wire({ method: "event", params: { execution_id: id, kind, ...data } });
 }
 function protocol(id) {
-  return id in acpArgs ? "acp" : id === "pi" ? "pi-rpc" : id === "antigravity" ? "antigravity-stream-json" : id === "claude" ? "claude-stream-json" : id === "mimo" ? "opencode-json" : id === "codex" || id === "opencode" ? "native-manager" : null;
+  return id in acpArgs ? "acp" : id === "pi" ? "pi-rpc" : id === "antigravity" ? "antigravity-stream-json" : id === "zcode" ? "zcode-stream-json" : id === "claude" ? "claude-stream-json" : id === "mimo" ? "opencode-json" : id === "codex" || id === "opencode" ? "native-manager" : null;
 }
 function capabilities(id) {
   const p = protocol(id);
-  return { chat: !!p, cancel: !!p, resume: p === "acp" ? "negotiated" : p === "claude-stream-json" || p === "opencode-json" || p === "antigravity-stream-json" || p === "pi-rpc", images: p === "acp" ? "negotiated" : p === "claude-stream-json" || p === "antigravity-stream-json", questions: p === "acp" || p === "pi-rpc" || p === "claude-stream-json", steer: false, read_only: false, network_control: false, permission_modes: ["runtime-native"] };
+  return { chat: !!p, cancel: !!p, resume: p === "acp" ? "negotiated" : p === "claude-stream-json" || p === "opencode-json" || p === "antigravity-stream-json" || p === "zcode-stream-json" || p === "pi-rpc", images: p === "acp" ? "negotiated" : p === "claude-stream-json" || p === "antigravity-stream-json" || p === "zcode-stream-json", questions: p === "acp" || p === "pi-rpc" || p === "claude-stream-json", steer: false, read_only: false, network_control: false, permission_modes: ["runtime-native"] };
 }
 function terminate(child) {
   if (!child?.pid || terminating.has(child)) return;
@@ -1380,6 +1506,7 @@ async function listModels(p) {
   }
   const fallback = [...hostDefaults(p.runtime_id), ...fallbacks_default[p.runtime_id] || []];
   if (p.runtime_id === "pi") return piModels(bin, p, launch, terminate);
+  if (p.runtime_id === "zcode") return zcodeModels();
   if (p.runtime_id === "antigravity") {
     const r = await exec(bin, ["models"], { env, cwd: p.cwd || process.cwd(), timeout: 2e4, maxBuffer: 1024 * 1024 });
     const models = r.stdout.split(/\r?\n/).map((line) => line.trim().split(/\t+/)).filter(([id, label]) => label && sanitizeCustomModel(id)).map(([id, label]) => ({ id, label }));
@@ -1487,9 +1614,9 @@ async function runAcp(p, state) {
     if (p.images?.length && !init.agentCapabilities?.promptCapabilities?.image) throw Error("Host does not advertise image input");
     for (const image of p.images || []) {
       const f = typeof image === "string" ? image : image.path;
-      const mime = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" }[path3.extname(f).toLowerCase()];
+      const mime = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" }[path4.extname(f).toLowerCase()];
       if (!mime) throw Error("Unsupported image format");
-      const data = readFileSync(f);
+      const data = readFileSync2(f);
       if (data.length > 20 * 1024 * 1024) throw Error("Image exceeds 20 MiB");
       blocks.push({ type: "image", mimeType: mime, data: data.toString("base64") });
     }
@@ -1503,9 +1630,9 @@ async function runAcp(p, state) {
 }
 async function runAntigravity(p, state) {
   const imagePaths = (p.images || []).map((image) => {
-    const f = path3.resolve(typeof image === "string" ? image : image.path);
-    if (![".png", ".jpg", ".jpeg", ".webp"].includes(path3.extname(f).toLowerCase())) throw Error("\u4E0D\u652F\u6301\u7684\u56FE\u7247\u683C\u5F0F");
-    if (readFileSync(f).length > 20 * 1024 * 1024) throw Error("\u56FE\u7247\u8D85\u8FC7 20 MiB");
+    const f = path4.resolve(typeof image === "string" ? image : image.path);
+    if (![".png", ".jpg", ".jpeg", ".webp"].includes(path4.extname(f).toLowerCase())) throw Error("\u4E0D\u652F\u6301\u7684\u56FE\u7247\u683C\u5F0F");
+    if (readFileSync2(f).length > 20 * 1024 * 1024) throw Error("\u56FE\u7247\u8D85\u8FC7 20 MiB");
     return f;
   });
   const prompt = imagePaths.length ? p.prompt + "\n\n\u7528\u6237\u9644\u52A0\u7684\u56FE\u7247\uFF08\u8BF7\u8C03\u7528 view_file \u5B9E\u9645\u8BFB\u53D6\u540E\u56DE\u7B54\uFF0C\u4E0D\u8981\u6839\u636E\u6587\u4EF6\u540D\u731C\u6D4B\uFF09\uFF1A\n" + imagePaths.map((f) => JSON.stringify(f)).join("\n") : p.prompt;
@@ -1679,13 +1806,13 @@ async function runStream(p, state) {
       const content = [{ type: "text", text: p.prompt }];
       for (const img of p.images || []) {
         const f = typeof img === "string" ? img : img.path;
-        const mime = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" }[path3.extname(f).toLowerCase()];
+        const mime = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp" }[path4.extname(f).toLowerCase()];
         if (!mime) {
           terminate(child);
           reject(Error("Unsupported image"));
           return;
         }
-        const data = readFileSync(f);
+        const data = readFileSync2(f);
         if (data.length > 20 * 1024 * 1024) {
           terminate(child);
           reject(Error("Image exceeds 20 MiB"));
@@ -1703,6 +1830,7 @@ async function execute(p, state) {
     if (p.runtime_id in acpArgs) await runAcp(p, state);
     else if (p.runtime_id === "pi") await runPi(p, state, launch, terminate, emit);
     else if (p.runtime_id === "antigravity") await runAntigravity(p, state);
+    else if (p.runtime_id === "zcode") await runZcode(p, state, launch, terminate, emit);
     else await runStream(p, state);
     if (!state.cancelled && !state.publicActivity) throw Error("Host ended without visible output or tool activity; verify host configuration");
     emit(p.execution_id, "end", { status: state.cancelled ? "cancelled" : "completed" });

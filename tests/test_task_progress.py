@@ -36,8 +36,8 @@ def test_child_phase_and_saved_draft_are_bound_to_report(tmp_path):
     child=store.enqueue('fact_check',{'run_id':run['id'],'version_id':brief['id'],'parent_job_id':job['id']})
     store.update_job(child['id'],'running')
     p=summary(store,job['id'])
-    assert p['version_id']==brief['id'] and p['stage']=='事实核查进行中'
-    assert p['stages']==[{'id':'fact_check','label':'事实核查','status':'active'}]
+    assert p['version_id']==brief['id'] and p['stage']=='独立事实核查进行中'
+    assert p['stages']==[{'id':'fact_check','label':'独立事实核查','status':'active'}]
     store.update_job(job['id'],'interrupted')
     assert summary(store,job['id'])['stage']=='任务已中断'
 

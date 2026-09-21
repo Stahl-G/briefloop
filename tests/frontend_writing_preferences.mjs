@@ -18,7 +18,7 @@ console.log('PASS: form preserves unedited writing preferences, respects explici
 // Applying the discussion must preserve original wording and exact date fields.
 const fields=Object.fromEntries(['title','objective','audience','period','period_start','period_end','report_timezone','key_questions_text','manual_sections_text','target_words','max_words'].map(k=>[k,{value:'',dispatchEvent(){}}]));
 const d=vm.createContext({$:()=>({elements:fields}),Event:class {},notice(){},page(){},initializeWorkflowChoice(){},syncWorkflowProfile(){}});
-vm.runInContext('let writingPreferencesOverride;'+source.slice(source.indexOf('function applyRequirements('),source.indexOf('const TASK_LABELS=')),d);
+vm.runInContext('let writingPreferencesOverride;'+source.slice(source.indexOf('function applyRequirements('),source.indexOf('// The backend names every task kind')),d);
 const brief={title:'周报',objective:'判断交付延迟的影响',audience:'业务负责人',period_start:'2026-09-01',period_end:'2026-09-07',report_timezone:'Asia/Shanghai',key_questions:['进度变化影响什么？'],manual_sections:['融资'],writing_preferences:['先结论，后依据']};
 d.applyRequirements(JSON.stringify(brief));
 for(const key of ['objective','period_start','period_end','report_timezone'])assert.equal(fields[key].value,brief[key]);

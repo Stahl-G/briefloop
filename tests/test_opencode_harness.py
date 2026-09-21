@@ -346,6 +346,7 @@ def test_settings_side_model_variant_reaches_session(tmp_path):
                       for m in manager.snapshot(session['id'])['messages']))
     assert manager.client.created[0]['model'] == {'providerID': 'opencode-go', 'id': 'x',
                                                   'variant': 'high'}
+    assert manager.client.prompts[0][2]['variant'] == 'high'
     manager.close()
 
 

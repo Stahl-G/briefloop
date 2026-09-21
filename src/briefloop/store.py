@@ -686,6 +686,7 @@ class Store:
         from .schedules import listing as schedule_listing
         from .review_capability import summary as review_capability_summary
         from .learning_budget import snapshot as learning_authorization
+        from .task_labels import reported_labels
         return {"schedules":schedule_listing(self),"notifications":notification_snapshot(self),"workspace": self.root.name, "workspace_id":self.meta("workspace_id"), "learning_authorization":learning_authorization(self.settings()), "review_capability":review_capability_summary(), "requirements": self.meta("requirements"), "settings": self.settings(),
                 "profile": self.meta("workspace_profile") or {},
                 "workflows":list_workflows(),
@@ -699,6 +700,7 @@ class Store:
                 "assessments": self.rows("SELECT * FROM assessments ORDER BY rowid DESC"),
                 "feedback": self.rows("SELECT * FROM feedback ORDER BY rowid DESC LIMIT 100"),
                 "jobs": jobs,
+                "task_labels": reported_labels(),
                 "skills": self.rows("SELECT * FROM skills ORDER BY rowid DESC"),
                 "active_skill": self.meta("active_skill"),
                 "wiki": (self.root/"wiki/index.md").read_text(encoding='utf-8') if (self.root/"wiki/index.md").exists() else ""}

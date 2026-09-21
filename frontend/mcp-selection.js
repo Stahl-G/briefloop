@@ -1,3 +1,4 @@
+import {esc} from './dom.js';
 // Per-report selection, independent of the workspace connector enable switch.
 export function materialSelection(records, chosen, maxCalls, maxBytes) {
  const selections=[];
@@ -16,9 +17,7 @@ export function materialSelection(records, chosen, maxCalls, maxBytes) {
  if(maxBytes<minimum)throw Error('材料预算不能小于所选连接器的单次响应上限');
  return {selections,max_calls:maxCalls,max_total_bytes:maxBytes};
 }
-export function mcpSelection(root,api){
- const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
- const chosen=new Map();let records=[],loading=false,loadError=false;
+export function mcpSelection(root,api){ const chosen=new Map();let records=[],loading=false,loadError=false;
  root.innerHTML=`<details><summary>本轮连接器材料（可选）</summary><p class="help">选择允许 BriefLoop 读取的材料和调用的工具。联网开关单独控制公开搜索。</p><button type="button" class="outline" data-refresh>刷新连接器</button><p data-status role="status"></p><div data-catalog></div><div class="row"><label>调用次数上限<input type="number" data-calls min="1" max="1000" step="1" value="20"></label><label>材料总量上限（MiB）<input type="number" data-bytes min="1" max="1024" step="1" value="20"></label></div><p class="help">仅勾选项授予本轮任务；未勾选时不使用连接器。读取成功的材料会出现在报告来源中。</p></details>`;
  const find=s=>root.querySelector(s);
  function render(){

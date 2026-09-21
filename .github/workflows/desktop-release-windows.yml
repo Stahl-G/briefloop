@@ -1,0 +1,79 @@
+name: Build frozen Windows release
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing draft release tag
+        required: true
+        type: string
+      source_sha:
+        description: Full frozen source commit
+        required: true
+        type: string
+      wheel_sha256:
+        description: SHA-256 of the shared release wheel
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: desktop/electron/package-lock.json
+      - name: Fetch and verify the shared wheel without rebuilding it
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          WHEEL_SHA256: ${{ inputs.wheel_sha256 }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          python -c "import os,re; assert re.fullmatch(r'[0-9a-f]{40}',os.environ['SOURCE_SHA']); assert re.fullmatch(r'[0-9a-f]{64}',os.environ['WHEEL_SHA256'])"
+          $version = python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])"
+          if ($env:RELEASE_TAG -ne "v$version") { throw 'Release tag does not match source version' }
+          if ((git rev-parse HEAD) -ne $env:SOURCE_SHA) { throw 'Source commit differs' }
+          $release = gh release view $env:RELEASE_TAG --json isDraft,targetCommitish | ConvertFrom-Json
+          if (!$release.isDraft -or $release.targetCommitish -ne $env:SOURCE_SHA) { throw 'Expected a draft tied to the frozen commit' }
+          New-Item -ItemType Directory -Force desktop/electron/backend | Out-Null
+          gh release download $env:RELEASE_TAG --pattern "briefloop-$version-py3-none-any.whl" --dir desktop/electron/backend
+          python -c "import os,json,hashlib,pathlib,tomllib; p=pathlib.Path('desktop/electron/backend'); w=next(p.glob('*.whl')); h=hashlib.sha256(w.read_bytes()).hexdigest(); assert h==os.environ['WHEEL_SHA256']; v=tomllib.load(open('pyproject.toml','rb'))['project']['version']; (p/'manifest.json').write_text(json.dumps({'version':v,'wheel':w.name,'sha256':h})+'\n')"
+          python tests/check_distribution.py "desktop/electron/backend/briefloop-$version-py3-none-any.whl"
+          python -m pip install "desktop/electron/backend/briefloop-$version-py3-none-any.whl"
+      - name: Build native installer and differential update metadata
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          npm ci --prefix desktop/electron
+          npm test --prefix desktop/electron
+          node desktop/electron/scripts/build-windows.cjs
+      - name: Verify packaged executable and shared backend
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $wheel = @(Get-ChildItem desktop/electron/backend/*.whl)[0].FullName
+          python scripts/check_versions.py --cli (Get-Command briefloop).Source --windows-app desktop/electron/dist/win-unpacked/BriefLoop.exe --wheel $wheel > desktop/electron/dist/windows-versions.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          if-no-files-found: error
+          path: |
+            desktop/electron/dist/BriefLoop-Setup-*.exe
+            desktop/electron/dist/BriefLoop-Setup-*.exe.blockmap
+            desktop/electron/dist/latest.yml
+            desktop/electron/dist/windows-artifact.json
+            desktop/electron/dist/windows-versions.json

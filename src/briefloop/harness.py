@@ -415,10 +415,12 @@ class HarnessManager:
         self._idle_since=None
         for request in self.snapshot(sid)['requests']:
             if request['status'] in ('pending','answering') and request['data'].get('turnId')==turn_id:self.chat.request_status(request['id'],'expired')
+        # Message completion is polled as the terminal receipt. Clear the live
+        # session first so that receipt never exposes an unclosed turn.
+        self.chat.update(sid,turn_id=None,status='idle' if status=='completed' else status)
         for message in self.snapshot(sid)['messages']:
             if message['turn_id']==turn_id and message['status'] in ('delivered','streaming'):
                 self.chat.patch_message(message['id'],status=status)
-        self.chat.update(sid,turn_id=None,status='idle' if status=='completed' else status)
     def handle_notification(self,notification):
         method=notification.get('method','');params=notification.get('params',{})
         # Reasoning is kept for the local chat view only; audit/report/progress

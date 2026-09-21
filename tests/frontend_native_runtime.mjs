@@ -9,7 +9,7 @@ const ctx=vm.createContext({$:el,state:{settings:{model_variant:'low'}},chat:{},
  api:async(route,body)=>{calls.push({route,body:{...body}});return {model:'custom/model',models:[],status:'reachable'}},
  esc:x=>x,action:fn=>fn(),selectChat:async()=>{},saveModel:async()=>{},refresh:async()=>{},renderBackend:()=>{},refreshModelSuggestions:async()=>{},chatActive:()=>true});
 vm.runInContext(source.slice(source.indexOf('function runtimeChoice(){'),source.indexOf('function messageTime(')),ctx);
-el('chat-model').value='custom/model';el('chat-permission').value='read-only';
+el('chat-variant').value='low';el('chat-model').value='custom/model';el('chat-permission').value='read-only';
 assert.deepEqual(JSON.parse(JSON.stringify(vm.runInContext('runtimeChoice()',ctx))),{backend:'briefloop-native',model:'custom/model',variant:'low',permission:'read-only'});
 el('chat-model').value='default';assert.throws(()=>vm.runInContext('runtimeChoice()',ctx),/provider\/model/);
 vm.runInContext(source.slice(source.indexOf('function providerEndpoint(){'),source.indexOf("$('provider-engine').onchange=")),ctx);
@@ -22,6 +22,6 @@ assert.equal(calls[0].route,'native/provider');assert.equal(calls[0].body.api_ke
 assert.equal(el('custom-api-key').value,'');assert.equal(calls[1].route,'native/provider-catalog');
 await el('provider-test-model').onclick();assert.equal(calls.at(-1).route,'runtime-test');
 assert.equal(calls.at(-1).body.backend,'briefloop-native');assert.equal(calls.at(-1).body.model,'custom/model');
-const html=runtimeCard({id:'briefloop-native',installed:true,available:true,version:'test'},{chosen:'briefloop-native',model:'custom/model',esc:x=>x});
+const html=runtimeCard({id:'briefloop-native',name:'BriefLoop 内置引擎',installed:true,available:true,version:'test'},{chosen:'briefloop-native',model:'custom/model',esc:x=>x});
 assert.ok(html.includes('BriefLoop 内置引擎')&&html.includes('data-runtime-select="briefloop-native"')&&html.includes('<svg'));
 console.log('PASS: Native model/permission selection, local provider save and test route use the chosen engine');

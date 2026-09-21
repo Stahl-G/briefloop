@@ -157,7 +157,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
     token=secrets.token_urlsafe(24)
     assets=files('briefloop').joinpath('static')
     # Serve one UI/backend version for this process; builds must not replace a live UI halfway.
-    asset_bytes={name:assets.joinpath(name).read_bytes() for name in ('index.html','app.js','style.css')}
+    asset_bytes={name:assets.joinpath(name).read_bytes() for name in ('index.html','app.js','style.css','tokens.css')}
     icon_names={p.name for p in assets.iterdir() if p.name.startswith('runtime-') and p.name.endswith(('.svg','.png'))}
     asset_bytes.update({name:assets.joinpath(name).read_bytes() for name in icon_names})
     class Handler(BaseHTTPRequestHandler):
@@ -191,7 +191,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
         def do_GET(self):
             try:
                 u=urlsplit(self.path);q=parse_qs(u.query)
-                public=u.path in ('/','/index.html','/app.js','/style.css') or u.path[1:] in icon_names
+                public=u.path in ('/','/index.html','/app.js','/style.css','/tokens.css') or u.path[1:] in icon_names
                 if not public:
                     # Browser origin protection, not authentication of local
                     # processes. Native clients and address-bar downloads omit
@@ -434,7 +434,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     self.send(200,asset_bytes['index.html'],'text/html; charset=utf-8')
                 elif u.path[1:] in icon_names:
                     self.send(200,asset_bytes[u.path[1:]],'image/png' if u.path.endswith('.png') else 'image/svg+xml')
-                elif u.path in ('/app.js','/style.css'):
+                elif u.path in ('/app.js','/style.css','/tokens.css'):
                     self.send(200,asset_bytes[u.path[1:]],'text/javascript' if u.path.endswith('.js') else 'text/css')
                 else:self.send(404,{'error':'未找到页面'})
             except (ValueError,KeyError,OSError,RuntimeError) as exc:self.error(exc)
