@@ -29,6 +29,7 @@ def test_navigation_includes_restriction_and_later_removal_without_rewriting_sou
     assert a['fingerprint'] == b['fingerprint']
     frozen = json.loads((a['root']/'source-context.json').read_text())['sources'][source['id']]
     assert frozen['candidate_ranges'] == hints['candidate_ranges']
+    assert [e['text'] for e in frozen['candidate_excerpts']] == [lines[266], lines[299]]
     assert (a['root']/f"sources/{source['id']}.txt").read_text() == text
     assert 'source-context.json' in a['files']
 
@@ -39,6 +40,10 @@ def test_navigation_discloses_truncation_and_no_match_is_not_clearance():
     assert len(hints['candidate_ranges']) == 16 and hints['omitted_ranges'] == 4
     assert navigation('No technical details provided.')['candidate_ranges'] == []
     assert '无匹配不代表没有条件' in navigation('No technical details provided.')['scope']
+    quotes = navigation(('Pending ' + 'detail '*200 + '\n')*20, include_excerpts=True)
+    assert sum(len(e['text']) for e in quotes['candidate_excerpts']) <= 3000
+    assert quotes['omitted_excerpt_lines'] == 15
+    assert all(e['truncated'] for e in quotes['candidate_excerpts'])
 
 
 def test_packet_table_example_validates_and_keeps_reader_citation(tmp_path):

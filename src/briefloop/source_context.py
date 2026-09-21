@@ -14,23 +14,31 @@ _CUES = re.compile(
 )
 
 
-def navigation(text, *, max_ranges=16):
-    """Locate nearby lines without copying or summarizing source assertions."""
+def navigation(text, *, max_ranges=16, include_excerpts=False):
+    """Locate nearby lines; optional short quotes remain untouched source text."""
     lines = text.splitlines()
     ranges = []
     matched = 0
+    excerpts, chars = [], 0
     for number, line in enumerate(lines, 1):
         if not _CUES.search(line):
             continue
         matched += 1
+        if include_excerpts and len(excerpts) < 12 and chars < 3000:
+            excerpt = line[:min(600, 3000 - chars)]
+            excerpts.append({'line': number, 'text': excerpt, 'truncated': len(excerpt) < len(line)})
+            chars += len(excerpt)
         start, end = max(1, number - 3), min(len(lines), number + 6)
         if ranges and start <= ranges[-1]['end_line'] + 1:
             ranges[-1]['end_line'] = end
         else:
             ranges.append({'start_line': start, 'end_line': end})
-    return {'total_lines': len(lines), 'candidate_ranges': ranges[:max_ranges],
+    result = {'total_lines': len(lines), 'candidate_ranges': ranges[:max_ranges],
             'matched_lines': matched, 'omitted_ranges': max(0, len(ranges) - max_ranges),
             'scope': '仅关键词定位，包含限制与解除/更正线索；不是已读记录或事实判断。无匹配不代表没有条件。'}
+    if include_excerpts:
+        result.update(candidate_excerpts=excerpts, omitted_excerpt_lines=matched - len(excerpts))
+    return result
 
 
 def navigation_note(text):

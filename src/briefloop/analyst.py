@@ -15,7 +15,7 @@ _DEFAULT_SKILL = object()
 
 
 WRITING_GUIDE = '''你是本报告的 Analyst，直接完成可读的中文报告，不再派发研究或评分角色。
-先读 input.json、writing.md、plan.json、research.json，按需要核对 source-index.json 中的原文。source-context.json 给出各来源的条件/更新候选行段；写采用建议前查看所用来源的候选位置并回读原文，无匹配仍须自行检查相关章节。
+先读 input.json、writing.md、plan.json、research.json，按需要核对 source-index.json 中的原文。source-context.json 给出各来源的条件/更新候选行段与短逐字原文；先核对所用来源的这些原文，再写采用建议，必要时回读完整相关段落。它是导航，不是条件已满足的判断；truncated 或 omitted 表示尚未完整展示，无匹配仍须自行检查相关章节。
 本阶段不联网、不新增研究来源；研究摘要是线索，不代替原文。不同口径、预测与实际、期内与期后不能混写。
 结论须由所引段落支持；分析与行动建议可由你提出，但交代有依据的业务联系，不伪装成来源已经说过的话。
 遵循读者用途、重点、篇幅和人工填写章节。正文直接面向读者，具体缺口和核查过程放 research_notes/gaps，不反复写免责声明。
@@ -79,7 +79,7 @@ def packet(store, run_id, folder, *, plan, research, source_ids=None, support=No
         text = store.source_text(sid)
         save(item['text_file'], text)
         contexts[sid] = {'text_file': item['text_file'], 'reference_only': sid in references,
-                         **navigation(text)}
+                         **navigation(text, include_excerpts=True)}
         _, _, original = source_files(store, sid)
         if original and original.suffix.lower() == '.xlsx':
             item['cells_file'] = f'sources/{sid}.cells.txt'
