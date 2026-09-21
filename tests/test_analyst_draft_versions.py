@@ -105,3 +105,25 @@ def test_below_target_is_advisory_but_actual_errors_remain_visible(tmp_path):
     result = inspect_draft({'title': '报告', 'markdown': text}, {'target_words': 1500, 'max_words': 2000})
     assert result['status'] == 'needs_attention'
     assert result['warnings'][0]['code'] == 'over_limit'
+
+
+def test_saved_work_can_be_read_after_context_loss_without_new_permission(tmp_path):
+    store, run, source, config = writer(tmp_path)
+    def read(**args):
+        value=run_tool(store, config, 'read_draft', args)
+        assert value['ok'], value
+        return json.loads(value['content'][0]['text'])
+    assert read()['revision'] is None
+    section={'section_id':'one','content':draft(source['id'])['editor_document']['content']}
+    assert run_tool(store, config, 'save_draft_section', section)['ok']
+    assert read()['section_ids']==['one']
+    assert read(field='body',section_id='one')['items'][0]['content'][0]['text'].startswith('收入')
+    revision=saved_revision(store,config,{'title':'报告','section_ids':['one'],'gaps':['不能把预测当事实']})
+    check(store,config,revision)
+    assert read()['checked'] and read()['revision']==revision
+    assert read(field='gaps')['items']==['不能把预测当事实']
+    section['content']=draft(source['id'],'修改后')['editor_document']['content']
+    assert run_tool(store,config,'save_draft_section',section)['ok']
+    assert read()['sections_changed_since_save'] and not read()['checked']
+    assert not run_tool(store,config,'read_draft',{'field':'body','section_id':'../secret'})['ok']
+    assert read(field='body',offset=100)['items']==[]

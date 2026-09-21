@@ -681,7 +681,7 @@ def _tools(role, mode=None, config=None):
         from .native_orchestrator import tools
         return tools(role, config or {})
     if role == 'analyst':
-        from .analyst import prepare_data, save_draft, save_schema, submit_draft, submit_schema, section_schema, save_draft_section, check_draft
+        from .analyst import prepare_data, save_draft, save_schema, submit_draft, submit_schema, section_schema, save_draft_section, check_draft, read_draft
         from .native_orchestrator import METADATA_TOOL
         return [*([METADATA_TOOL] if (config or {}).get('revision') else []), EVALUATOR_TOOLS[0],
                 {'name': 'prepare_report_data', 'label': '计算报告指标',
@@ -689,6 +689,14 @@ def _tools(role, mode=None, config=None):
                  'guide': '根据任务包里的原始 records 计算比较表，不凭记忆心算。',
                  'parameters': {'type': 'object', 'required': ['data'], 'properties': {'data': {'type': 'object'}}},
                  'handler': prepare_data},
+                {'name': 'read_draft', 'label': '读取已保存稿件',
+                 'description': '压缩上下文或续接后，先读 overview 找到本轮完整 revision 与已保存章节；body/元数据可分页读取。不修改稿件、不扩大文件权限。',
+                 'guide': '以工具返回的当前状态为准，摘要中的旧 revision 不代表现在仍有效。有改动先重新组装保存和检查。',
+                 'parameters': {'type': 'object', 'additionalProperties': False, 'properties': {
+                     'field': {'enum': ['overview', 'body', 'citations', 'number_bindings', 'temporal_claims', 'gaps', 'research_notes']},
+                     'section_id': {'type': 'string', 'description': '只用于 field=body，读取尚未组装的已保存章节。'},
+                     'offset': {'type': 'integer', 'minimum': 0}, 'limit': {'type': 'integer', 'minimum': 1, 'maximum': 20}}},
+                 'handler': read_draft},
                 {'name': 'save_draft_section', 'label': '保存报告章节', 'sequential': True,
                  'description': '长稿可逐章保存富文本块与该章引用；同一 section_id 重交会替换该章。只返回保存回执。随后 save_draft 按 section_ids 组装，不用重抄整篇。',
                  'guide': '长稿优先逐章保存，减少单次输出中断造成的返工。',

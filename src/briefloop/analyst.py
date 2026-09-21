@@ -266,6 +266,12 @@ def save_draft(store, config, args):
     return _json_result(save(store, config, args))
 
 
+def read_draft(store, config, args):
+    from .analyst_drafts import read_saved
+    from .native_roles import _json_result
+    return _json_result(read_saved(store, config, args))
+
+
 def section_schema():
     from .models import Citation
     return {'type': 'object', 'required': ['section_id', 'content'], 'additionalProperties': False,

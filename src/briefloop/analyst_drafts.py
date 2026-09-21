@@ -182,3 +182,50 @@ def file_config(store, run_id, path):
     if message is None or message['status'] in ('cancelled', 'failed', 'interrupted'):
         raise ValueError('写作任务已停止或执行身份不匹配')
     return config
+
+
+def read_saved(store, config, args):
+    """Recover saved work through the same role tools after SDK compaction."""
+    from .analyst import _sections_file
+    field = args.get('field', 'overview')
+    fields = {'overview', 'body', 'citations', 'number_bindings', 'temporal_claims', 'gaps', 'research_notes'}
+    if field not in fields:
+        raise ValueError('未知稿件字段')
+    offset, limit = args.get('offset', 0), args.get('limit', 5)
+    if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 20:
+        raise ValueError('offset 须为非负整数，limit 须为 1–20')
+    with guard(store, config):
+        root = _root(store, config)
+        ledger_path = _sections_file(store, config)
+        ledger = _read(ledger_path) if ledger_path.exists() else {}
+        current = root / 'current.json'
+        revision = _read(current)['revision'] if current.exists() else None
+        candidate = _candidate(store, config, {'revision': revision}, allow_section_changes=True) if revision else None
+        draft = candidate['draft'] if candidate else {}
+        changed = bool(candidate and candidate['sections_hash'] is not None and candidate['sections_hash'] != _sections_hash(store, config))
+        check_path = root / ('checked-' + revision + '.json') if revision else None
+        checked = bool(check_path and not changed and check_path.exists()
+                       and _read(check_path).get('check_version') == CHECK_VERSION)
+        overview = {'revision': revision, 'title': draft.get('title'), 'section_ids': list(ledger),
+                    'sections_changed_since_save': changed,
+                    'body_blocks': len((draft.get('editor_document') or {}).get('content', [])),
+                    'checked': checked,
+                    'review_status': 'not_reviewed'}
+        section_id = args.get('section_id')
+        if section_id is not None:
+            if field != 'body' or section_id not in ledger:
+                raise ValueError('读取章节须用 field=body 和本轮已保存的 section_id')
+            value = ledger[section_id]['editor_document']['content']
+        elif field == 'overview':
+            return overview
+        elif not candidate:
+            raise ValueError('还没有完整稿件；先读取已保存 section_id 的正文')
+        elif field == 'body':
+            value = draft['editor_document']['content']
+        else:
+            value = draft.get(field) or []
+        if isinstance(value, str):
+            # Long notes are read in 1000-character pages; never truncate silently.
+            value = [value[i:i+1000] for i in range(0, len(value), 1000)]
+        return {**overview, 'field': field, 'section_id': section_id, 'offset': offset,
+                'items': value[offset:offset+limit], 'total': len(value), 'has_more': offset+limit < len(value)}

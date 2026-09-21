@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -761,4 +761,88 @@ test('aborting a pending child runner tool does not wait for its natural result'
   const result=await done;
   runnerTool=()=>({ok:false,error:'no runner tool configured'});
   assert.equal(ends(result)[0].status,'cancelled');
+});
+
+
+test("manual compaction retains BriefLoop focus, SDK checkpoints and explicit user focus", async () => {
+  const s = await reviewer({role: 'analyst'});
+  assert.equal(s.runtime_policy.compaction, true);
+  const long = 'Historical material without new instructions. '.repeat(2400);
+  script(reply.text('{"saved":"SAVED_REVISION_r7", "source":"src1 line 2", "gap":"grant-42"}'));
+  await turn(s.session_id, 'compact-seed-1', {prompt: long});
+  await turn(s.session_id, 'compact-seed-2', {prompt: long});
+  script(reply.text('SAVED_REVISION_r7; src1 line 2; grant-42 unresolved; must read original before checking.'));
+  const result = await call('session_compact', {session_id: s.session_id, instructions: '保留 grant-42 额度状态'});
+  assert.equal(result.compacted, true);
+  assert.ok(provider.requests.length > 0);
+  for (const request of provider.requests) {
+    const prompt = JSON.stringify(request.messages);
+    assert.match(prompt, /压缩用于继续 BriefLoop 当前任务/);
+    assert.match(prompt, /grant-42/);
+  }
+  const records=readFileSync(s.session_file,'utf8').trim().split('\n').map(JSON.parse);
+  const checkpoint=records.filter(r=>r.type==='compaction').at(-1);
+  assert.equal(checkpoint.details.briefloop_policy,'briefloop-continuity/1');
+  assert.match(checkpoint.summary,/SAVED_REVISION_r7/);
+  await call('session_close',{session_id:s.session_id});
+  const restored=await reviewer({role:'analyst',session_file:s.session_file});
+  script(reply.text('{"resumed":true}'));
+  await turn(restored.session_id,'compact-resumed');
+  assert.match(JSON.stringify(provider.requests[0].messages),/SAVED_REVISION_r7/);
+});
+
+test("automatic compaction applies the same focus and reports usage without summary leakage", async () => {
+  const s=await reviewer({role:'analyst'});
+  const long='Prior saved evidence and report state. '.repeat(2800);
+  script(reply.text('{"saved":"r8"}'));
+  await turn(s.session_id,'auto-seed-1',{prompt:long});
+  await turn(s.session_id,'auto-seed-2',{prompt:long});
+  script(res=>{
+    res.writeHead(200,{'content-type':'text/event-stream'});
+    chunk(res,{role:'assistant',content:'{"saved":"r9"}'});
+    chunk(res,{},'stop',{prompt_tokens:95000,completion_tokens:2,total_tokens:95002});
+    res.end('data: [DONE]\n\n');
+  },reply.text('SUMMARY_PRIVATE_MARKER; latest r9; sources/src1.txt; unresolved grant-42.'));
+  const evts=await turn(s.session_id,'auto-compact',{prompt:'Continue using saved work'});
+  const compaction=evts.find(e=>e.kind==='performance'&&e.phase==='compaction');
+  assert.ok(compaction && !compaction.failed && !compaction.aborted);
+  assert.ok(evts.some(e=>e.kind==='usage'&&e.phase==='compaction'));
+  assert.doesNotMatch(JSON.stringify(compaction),/SUMMARY_PRIVATE_MARKER/);
+  assert.ok(provider.requests.length>1);
+  for(const r of provider.requests.slice(1))assert.match(JSON.stringify(r.messages),/压缩用于继续 BriefLoop 当前任务/);
+  const restricted=await reviewer();assert.equal(restricted.runtime_policy.compaction,false);
+});
+
+test("cancelled compaction preserves the old transcript and can resume",async()=>{
+  const s=await reviewer({role:'analyst'});
+  const long='Saved evidence remains on disk. '.repeat(3500);
+  script(reply.text('{"saved":"r10"}'));
+  await turn(s.session_id,'cancel-compact-seed1',{prompt:long});
+  await turn(s.session_id,'cancel-compact-seed2',{prompt:long});
+  const before=readFileSync(s.session_file,'utf8');
+  script(reply.stall());
+  const failed=callError('session_compact',{session_id:s.session_id});
+  for(let i=0;i<100&&!events.some(e=>e.session_id===s.session_id&&e.message==='正在压缩上下文，保留任务要求与稿件位置');i++)await new Promise(r=>setTimeout(r,10));
+  assert.match(await callError('session_compact',{session_id:s.session_id}),/busy/);
+  await call('turn_abort',{session_id:s.session_id});
+  assert.match(await failed,/abort|cancel/i);
+  assert.equal(readFileSync(s.session_file,'utf8'),before);
+  script(reply.text('{"continued":true}'));
+  assert.equal(ends(await turn(s.session_id,'after-compact-cancel'))[0].status,'completed');
+});
+
+test("failed focused compaction never falls back to an unfocused paid call",async()=>{
+  const s=await reviewer({role:'analyst'});
+  script(reply.text('{"saved":"r11"}'));
+  const long='Saved evidence remains available for recovery. '.repeat(2400);
+  await turn(s.session_id,'failed-compact-seed1',{prompt:long});
+  await turn(s.session_id,'failed-compact-seed2',{prompt:long});
+  const before=readFileSync(s.session_file,'utf8');
+  script(reply.status(400),reply.text('Unexpected unfocused fallback'));
+  assert.match(await callError('session_compact',{session_id:s.session_id}),/压缩失败/);
+  assert.equal(provider.requests.length,1);
+  assert.equal(readFileSync(s.session_file,'utf8'),before);
+  assert.ok(events.some(e=>e.session_id===s.session_id&&e.phase==='compaction'&&e.failed));
+  script(reply.text('{"continued":true}'));
+  assert.equal(ends(await turn(s.session_id,'after-compact-failure'))[0].status,'completed');
 });

@@ -4,7 +4,8 @@ The engine speaks the same NDJSON stdio protocol as RuntimeBridge, so this
 client swaps the bundled script. The runner chooses each role and its tools.
 For the independent Reviewer, The reviewer's whole world is the generated packet —
 packet_list/packet_read resolve inside it; there are no built-in tools, no
-extensions, no context-file discovery. Confinement is our own tool proxy, not
+user extensions, no context-file discovery. The bundled compaction hook adds
+no tools or permissions. Confinement is our own tool proxy, not
 pi's read tool (which accepts absolute paths) and not prompt wording.
 """
 from .runtime_bridge import RuntimeBridge

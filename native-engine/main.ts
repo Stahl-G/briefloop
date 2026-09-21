@@ -2,10 +2,10 @@
 // (createAgentSession) and serves job-scoped sessions over NDJSON stdio, the
 // same wire shape as runtime-bridge.mjs so the Python client is shared.
 //
-// Phase 1 scope: restricted reviewer sessions only. A session has no built-in
-// tools (no read/bash/edit/write), no extensions, no context-file discovery.
-// Its tools (packet-tools.ts) resolve strictly inside the generated review
-// packet. Confinement is enforced in this process by our own tools — not by
+// Roles receive only their registered tools: no built-in read/bash/edit/write,
+// user extensions or context-file discovery. A bundled hook adds preservation
+// guidance to Pi compaction without adding tools. Packet tools resolve inside
+// the generated packet. Confinement is enforced by our own tools — not by
 // pi's read tool (which accepts absolute paths) and not by prompt wording.
 //
 // BriefLoop supplies the system prompt (shared baseline + role + mode); the
@@ -26,6 +26,7 @@ import {
   SettingsManager,
 } from "@earendil-works/pi-coding-agent";
 import { fixedLoader } from "./loader.js";
+import { AUTHOR_COMPACTION_ROLES, COMPACTION_POLICY_VERSION, continuityExtension } from "./compaction.js";
 import { IMAGE_MIME, inside, packetTools, toolGuide } from "./packet-tools.js";
 import { parseRunnerTools, RunnerResult, runnerTools } from "./runner-tools.js";
 
@@ -80,6 +81,8 @@ interface SessionEntry {
   // single terminal `end` for that execution has been written.
   execId: string;
   cancelled: boolean;
+  compacting: boolean;
+  compactionFailed: boolean;
   stalled: boolean;
   overlong: boolean;
   replyChars: number;
@@ -219,6 +222,7 @@ function resolveModel(spec: unknown) {
 // that request; turnStart decides whether to re-ask or to fail the turn.
 function armIdle(clientSid: string, entry: SessionEntry): void {
   if (entry.idleTimer) clearTimeout(entry.idleTimer);
+  if (entry.compacting) { entry.idleTimer = undefined; return; }
   entry.idleTimer = setTimeout(() => {
     entry.idleTimer = undefined;
     if (!entry.execId || entry.cancelled) return;
@@ -241,7 +245,7 @@ function disarmIdle(entry: SessionEntry): void {
 // event, written by turnStart after every repair or retry has finished.
 function wireSessionEvents(clientSid: string, entry: SessionEntry): void {
   let requestSequence = 0, requestStarted: number | null = null, firstDelta: number | null = null;
-  let turnStarted: number | null = null;
+  let turnStarted: number | null = null, compactStarted: number | null = null;
   const toolStarted = new Map<string, {at: number; chars: number}>();
   entry.unsubscribe = entry.session.subscribe((event) => {
     const execId = entry.execId;
@@ -343,6 +347,24 @@ function wireSessionEvents(clientSid: string, entry: SessionEntry): void {
         break;
       case "turn_end":
         emit(clientSid, execId, "turn_end");
+        break;
+      case "compaction_start":
+        entry.compacting = true;
+        entry.compactionFailed = false;
+        compactStarted = performance.now();
+        disarmIdle(entry); // SDK stream and explicit cancellation own this operation.
+        emit(clientSid, execId, "status", {message: "正在压缩上下文，保留任务要求与稿件位置"});
+        break;
+      case "compaction_end":
+        entry.compacting = false;
+        emit(clientSid, execId, "performance", {phase: "compaction", reason: e.reason,
+          duration_ms: compactStarted === null ? null : performance.now() - compactStarted,
+          tokens_before: e.result?.tokensBefore ?? null, tokens_after: e.result?.estimatedTokensAfter ?? null,
+          summary_characters: e.result?.summary?.length ?? null, aborted: e.aborted,
+          failed: !!e.errorMessage || entry.compactionFailed, policy: COMPACTION_POLICY_VERSION});
+        if (e.result?.usage) emit(clientSid, execId, "usage", {usage: e.result.usage, phase: "compaction"});
+        compactStarted = null;
+        armIdle(clientSid, entry);
         break;
       case "auto_retry_start":
         emit(clientSid, execId, "status", { message: `retry ${e.attempt}/${e.maxAttempts}: ${e.errorMessage}` });
@@ -449,10 +471,11 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     : SessionManager.create(cwd, sessionDir);
 
   const retryDelay = Number(p.retry_base_delay_ms);
+  const autoCompaction = AUTHOR_COMPACTION_ROLES.has(role);
   // Settings are BriefLoop's, not the user's ~/.pi or anything under the
   // packet: an auditor must not inherit a personal retry or compaction policy.
-  // Compaction is off because summarising packet reads mid-review would let
-  // the verdict rest on a paraphrase instead of the evidence.
+  // Authors use Pi auto-compaction; restricted review/learning roles retain
+  // their existing policy. Both auto and explicit compaction use our focus hook.
   const settingsManager = SettingsManager.inMemory({
     retry: {
       enabled: true,
@@ -461,7 +484,7 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
       maxRetries: 6,
       baseDelayMs: Number.isFinite(retryDelay) ? Math.max(10, Math.min(10_000, retryDelay)) : 2000,
     },
-    compaction: { enabled: false },
+    compaction: { enabled: autoCompaction },
   });
 
   const basePrompt = String(p.system_prompt ?? "").trim();
@@ -482,6 +505,7 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
   const tools = [...packet, ...fromRunner];
   const guides = Object.fromEntries(declared.map((t) => [t.name, t.guide ?? t.description]));
   const systemPrompt = `${basePrompt}\n\n${toolGuide(tools.map((t) => t.name), guides, submitTool || "提交")}`;
+  let compactSession: AgentSession;
   const { session } = await createAgentSession({
     cwd,
     modelRuntime: runtime,
@@ -492,10 +516,15 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     // built-ins (read/bash/edit/write) off.
     tools: tools.map((t) => t.name),
     customTools: tools,
-    resourceLoader: fixedLoader(systemPrompt),
+    resourceLoader: fixedLoader(systemPrompt, [continuityExtension(() => compactSession, role, () => {
+      if (!entryRef) return;
+      entryRef.compactionFailed = true;
+      emit(clientSid, entryRef.execId, "status", {message: "上下文压缩未完成，原会话已保留；未改用其他压缩规则"});
+    })]),
     sessionManager,
     settingsManager,
   });
+  compactSession = session;
   const active = session.getActiveToolNames().sort();
   const expected = [...local, ...declared.map((t) => t.name)].sort();
   if (active.join(",") !== expected.join(",")) {
@@ -511,6 +540,8 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     sessionFile: (session as any).sessionFile ?? sessionFile,
     execId: "",
     cancelled: false,
+    compacting: false,
+    compactionFailed: false,
     stalled: false,
     overlong: false,
     replyChars: 0,
@@ -544,7 +575,7 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     model: `${model.provider}/${model.id}`,
     thinking: session.thinkingLevel,
     runtime_policy: {sdk: "pi-coding-agent", thinking: session.thinkingLevel,
-      compaction: false, retries: 6, context_window: model.contextWindow, output_limit: model.maxTokens,
+      compaction: session.autoCompactionEnabled, compaction_policy: COMPACTION_POLICY_VERSION, retries: 6, context_window: model.contextWindow, output_limit: model.maxTokens,
       tool_schema_sha256: createHash("sha256").update(JSON.stringify(declared)).digest("hex")},
     tools: active,
   });
@@ -687,6 +718,7 @@ async function turnAbort(id: string | undefined, p: Record<string, unknown>): Pr
   entry.pendingTools.clear();
   for (const [, settle] of entry.pendingAdmission) settle("任务已取消");
   entry.pendingAdmission.clear();
+  entry.session.abortCompaction();
   await entry.session.abort();
   reply(id, { aborted: true });
 }
@@ -774,6 +806,22 @@ async function dispatch(req: WireRequest): Promise<void> {
         break;
       }
       case "turn_abort": await turnAbort(req.id, req.params ?? {}); break;
+      case "session_compact": {
+        const sid = String(req.params?.session_id ?? "");
+        const entry = sessions.get(sid);
+        if (!entry) throw new Error("unknown session_id");
+        if (entry.execId || !entry.session.isIdle) throw new Error("session busy; compact cannot interrupt a task");
+        entry.execId = String(req.params?.execution_id ?? `compact-${req.id}`);
+        try {
+          const result = await entry.session.compact(String(req.params?.instructions ?? ""));
+          reply(req.id, {compacted: true, tokens_before: result.tokensBefore,
+            summary_characters: result.summary.length, policy: COMPACTION_POLICY_VERSION});
+        } catch (error) {
+          if (entry.compactionFailed) throw new Error("上下文压缩失败，原会话已保留");
+          throw error;
+        } finally { disarmIdle(entry); entry.execId = ""; }
+        break;
+      }
       case "session_close": await sessionClose(req.id, req.params ?? {}); break;
       case "shutdown":
         reply(req.id, { ok: true });
