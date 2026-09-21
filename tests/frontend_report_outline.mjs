@@ -4,7 +4,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 const source=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const outlineCode=source.slice(source.indexOf('function outlineHeadings'),source.indexOf('function applyOutlineToSetup'));
-const openCode=source.slice(source.indexOf('function openBrief'),source.indexOf('async function renderDeliveryChecks'));
+const openCode=source.slice(source.indexOf('function openBrief'),source.indexOf('function changed()'));
 const elements=new Map();
 const el=id=>{if(!elements.has(id))elements.set(id,{value:'',textContent:'',hidden:false,innerHTML:'',querySelectorAll:()=>[]});return elements.get(id)};
 let editorContent='';
