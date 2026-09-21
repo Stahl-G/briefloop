@@ -227,7 +227,7 @@ test('equal-version local reinstall keeps filename and exact tag binding', async
 test('GitHub primary rate limit explains reset and avoids repeat metadata requests', async () => {
   let requests = 0;
   const reset = Math.floor(Date.now() / 1000) + 120;
-  const updater = createUpdater({app: {getVersion: () => '0.19.0'}, shell: {}, platform: 'darwin',
+  const updater = createUpdater({app: {getVersion: () => '0.19.0'}, shell: {}, platform: 'darwin', arch: 'arm64',
     fetch: async () => {requests++; return new Response('', {status: 403,
       headers: {'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset)}});}});
   const first = await updater.check();
@@ -240,7 +240,7 @@ test('GitHub primary rate limit explains reset and avoids repeat metadata reques
 
 test('429 uses retry-after, while other 403 errors are not mislabeled as quota', async () => {
   for (const [status, headers, expected] of [[429, {'retry-after': '120'}, 'github_rate_limited'], [403, {}, 'http_403']]) {
-    const updater = createUpdater({app: {getVersion: () => '0.19.0'}, shell: {}, platform: 'darwin',
+    const updater = createUpdater({app: {getVersion: () => '0.19.0'}, shell: {}, platform: 'darwin', arch: 'arm64',
       fetch: async () => new Response('', {status, headers})});
     assert.equal((await updater.check()).error.code, expected);
   }
