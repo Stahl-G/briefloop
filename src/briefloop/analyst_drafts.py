@@ -105,28 +105,33 @@ def _revision(args):
 
 
 def save(store, config, args):
-    from .analyst import validate_draft, _assemble_sections
     with guard(store, config):
-        value = dict(args)
-        base = value.pop('base_revision', None)
-        root = _root(store, config)
-        if base is not None:
-            prior = _candidate(store, config, {'revision': base}, allow_section_changes='section_ids' in value)
-            value = {**prior['draft'], **value}
-            if 'section_ids' in value:
-                value.pop('editor_document', None)
-                value.pop('markdown', None)
-        section_hash = _sections_hash(store, config) if 'section_ids' in value else None
-        value = validate_draft(store, config, _assemble_sections(store, config, value))
-        candidate = {'draft': value, 'packet_hash': _packet_hash(config),
-                     'attempt_id': config['attempt_id'], 'sections_hash': section_hash}
-        revision = _hash(candidate)
-        _write(root / (revision + '.json'), candidate)
-        _write(root / 'current.json', {'revision': revision})
-        from .length import count_brief
-        return {'revision': revision, 'status': 'saved', 'body_units': count_brief(value['markdown']),
-                'review_status': 'not_reviewed', 'next': 'check_draft：只传 revision，检查完整正文及元数据',
-                'update': '局部改稿用 base_revision 加改变的字段；修改章节后传 base_revision 与完整有序 section_ids，不重复未改元数据。'}
+        return _save_locked(store, config, args)
+
+
+def _save_locked(store, config, args):
+    """Caller must hold guard; shared by atomic writer-input operations."""
+    from .analyst import validate_draft, _assemble_sections
+    value = dict(args)
+    base = value.pop('base_revision', None)
+    root = _root(store, config)
+    if base is not None:
+        prior = _candidate(store, config, {'revision': base}, allow_section_changes='section_ids' in value)
+        value = {**prior['draft'], **value}
+        if 'section_ids' in value:
+            value.pop('editor_document', None)
+            value.pop('markdown', None)
+    section_hash = _sections_hash(store, config) if 'section_ids' in value else None
+    value = validate_draft(store, config, _assemble_sections(store, config, value))
+    candidate = {'draft': value, 'packet_hash': _packet_hash(config),
+                 'attempt_id': config['attempt_id'], 'sections_hash': section_hash}
+    revision = _hash(candidate)
+    _write(root / (revision + '.json'), candidate)
+    _write(root / 'current.json', {'revision': revision})
+    from .length import count_brief
+    return {'revision': revision, 'status': 'saved', 'body_units': count_brief(value['markdown']),
+            'review_status': 'not_reviewed', 'next': 'check_draft：只传 revision，检查完整正文及元数据',
+            'update': '局部改稿用 base_revision 加改变的字段；修改章节后传 base_revision 与完整有序 section_ids，不重复未改元数据。'}
 
 
 def _candidate(store, config, args, *, allow_section_changes=False):
@@ -264,5 +269,11 @@ def read_saved(store, config, args):
         if isinstance(value, str):
             # Long notes are read in 1000-character pages; never truncate silently.
             value = [value[i:i+1000] for i in range(0, len(value), 1000)]
-        return {**overview, 'field': field, 'section_id': section_id, 'offset': offset,
+        from .writer_input import block_keys, evidence_key
+        identities = {}
+        if field == 'body' and not section_id:
+            identities['block_keys'] = block_keys(value)[offset:offset+limit]
+        elif field in ('citations', 'number_bindings', 'temporal_claims'):
+            identities['record_keys'] = [evidence_key(item) for item in value[offset:offset+limit]]
+        return {**overview, **identities, 'field': field, 'section_id': section_id, 'offset': offset,
                 'items': value[offset:offset+limit], 'total': len(value), 'has_more': offset+limit < len(value)}

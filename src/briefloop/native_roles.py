@@ -685,7 +685,7 @@ def _tools(role, mode=None, config=None):
     if role == 'analyst':
         from .analyst import prepare_data, save_draft, save_schema, submit_draft, submit_schema, section_schema, save_draft_section, check_draft, read_draft
         from .native_orchestrator import METADATA_TOOL
-        return [*([METADATA_TOOL] if (config or {}).get('revision') else []), EVALUATOR_TOOLS[0],
+        tools = [*([METADATA_TOOL] if (config or {}).get('revision') else []), EVALUATOR_TOOLS[0],
                 {'name': 'prepare_report_data', 'label': '计算报告指标',
                  'description': '使用已有报告数据格式校验来源、单位并完成确定计算；原始 records 可放入 draft.report_data。',
                  'guide': '根据任务包里的原始 records 计算比较表，不凭记忆心算。',
@@ -716,6 +716,12 @@ def _tools(role, mode=None, config=None):
                  'guide': '保存并检查完整版本后提交 revision，不重复生成正文。',
                  'parameters': submit_schema(),
                  'handler': submit_draft}]
+        from .writer_input import protocol, PROTOCOL, tool_specs, with_revision_base
+        if config and config.get('packet_root') and protocol(config) == PROTOCOL:
+            tools = [t for t in tools if t['name'] not in ('save_draft', 'save_draft_section')]
+            tools.extend(tool_specs())
+            tools = [with_revision_base(t) for t in tools]
+        return tools
     if role == 'evaluator' and mode == 'pairwise':
         return COMPARISON_TOOLS
     if role == 'scout':

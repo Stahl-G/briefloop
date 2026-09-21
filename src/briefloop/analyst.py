@@ -36,7 +36,7 @@ WRITING_GUIDE += '\n' + DECISION_EVIDENCE_GUIDE
 
 
 def packet(store, run_id, folder, *, plan, research, source_ids=None, support=None,
-           base_version=None, feedback=None, skill_override=_DEFAULT_SKILL):
+           base_version=None, feedback=None, skill_override=_DEFAULT_SKILL, writer_protocol="rich_json_v1"):
     from .models import BriefDraft, Requirements, ScoutResult
     from .deliverable_spec import resolve, instructions
     from .report_time import instructions as time_instructions
@@ -131,12 +131,23 @@ def packet(store, run_id, folder, *, plan, research, source_ids=None, support=No
             'scope': '只核对绑定数值与片段；不检查语义支持或全部正文。未检查项交独立审阅，不反复造定位或改事实以消除提示。',
         },
     })
+    if writer_protocol == 'writer_input_v1':
+        from .writer_input import tool_specs, GUIDE
+        guide = json.loads((root / 'document-guide.json').read_text())
+        save('document-guide.json', {'protocol': writer_protocol, 'writing': GUIDE,
+            'number_bindings': guide['number_bindings'], 'checks': guide['checks'],
+            'table_example': '| 项目 | 采用条件 |\n|---|---|\n| 项目A | 在指定条件下采用。[@src_ID] |'})
+        save('draft.schema.json', {'protocol': writer_protocol,
+            'tools': {t['name']: t['parameters'] for t in tool_specs()}})
+    elif writer_protocol != 'rich_json_v1':
+        raise ValueError('未知写稿协议')
     save('input.json', {'run_id': run_id, 'requirements': req, 'reader_contract': contract,
                        'mode': 'revision' if base else 'draft', 'base_version': base_version,
                        'base_hash': base['hash'] if base else None,
                        'reconciliation_id': plan.get('reconciliation_id') or (json.loads(base['detail']).get('reconciliation_id') if base else None),
                        'feedback': feedback or [],
-                       'support_files': sorted((support or {}).keys())})
+                       'support_files': sorted((support or {}).keys()),
+                       **({'writer_input_protocol': writer_protocol} if writer_protocol != 'rich_json_v1' else {})})
     for name, value in (support or {}).items():
         if Path(name).name != name:
             raise ValueError('写作补充材料必须使用简单文件名')
@@ -352,10 +363,14 @@ def run(store, runtime, job, run_id, folder, backend, *, plan, research, source_
     from .runtime import stage_job
     folder = Path(folder).resolve()
     override = json.loads(job['payload']).get('skill_override', _DEFAULT_SKILL)
+    frozen_input = folder / 'packet' / 'input.json'
+    writer_protocol = (json.loads(frozen_input.read_text()).get('writer_input_protocol', 'rich_json_v1')
+                       if frozen_input.exists() else json.loads(job['payload']).get('writer_input_protocol', 'rich_json_v1'))
     identity = {'plan': plan, 'research': research, 'support': support, 'base_version': base_version, 'feedback': feedback,
                 'sources': {sid: store.one('sources', sid)['hash'] for sid in sorted(source_ids if source_ids is not None else set(store.source_ids(run_id)) | set(json.loads(store.one('runs', run_id)['requirements']).get('reference_source_ids') or []))},
                 'requirements': store.one('runs', run_id)['requirements'],
                 'skill': store.one('runs', run_id).get('skill_id') if override is _DEFAULT_SKILL else override}
+    if writer_protocol != 'rich_json_v1': identity['writer_input_protocol'] = writer_protocol
     record = folder / 'writing-request.json'
     folder.mkdir(parents=True, exist_ok=True)
     if record.exists() and json.loads(record.read_text()) != identity:
@@ -371,20 +386,32 @@ def run(store, runtime, job, run_id, folder, backend, *, plan, research, source_
                 raise ValueError('已冻结写作材料被修改：' + name + '；原执行记录保留，未调用模型')
     else:
         frozen = packet(store, run_id, folder, plan=plan, research=research, source_ids=source_ids,
-                        support=support, base_version=base_version, feedback=feedback, skill_override=override)
+                        support=support, base_version=base_version, feedback=feedback, skill_override=override, writer_protocol=writer_protocol)
         _atomic(manifest, dump({k: frozen[k] for k in ('fingerprint', 'files')}))
     if expected_fingerprint and frozen['fingerprint'] != expected_fingerprint:
         raise ValueError('写作对照材料指纹变化，未调用模型')
+    writing_guide = WRITING_GUIDE
+    if writer_protocol == 'writer_input_v1':
+        from .writer_input import GUIDE
+        writing_guide = '\n'.join(line for line in WRITING_GUIDE.splitlines()
+            if not line.startswith(('输出完整 BriefDraft', '图表只复用', '来源 ID 仅用于')))
+        writing_guide += '\n结构化指标仍可交 prepare_report_data 确定计算；来源ID只放引用标记，不输出来源ID表。\n' + GUIDE
     config = {'role': 'analyst', 'run_id': run_id, 'result_file': str(folder / 'draft.json')}
     staged = stage_job(store, job, 'analyst')
     if backend == 'briefloop-native':
         staged['native_packet'] = config
-        prompt = WRITING_GUIDE + '\n所有路径相对任务包，用 packet_read/packet_grep 读取。完整稿件连同引用、数字/时间绑定等元数据用 save_draft 保存一次；长稿可用 save_draft_section 分章保存后以 section_ids 组装。取得 revision 后，check_draft 和 submit_draft 均只传同一 revision，不重抄正文。修改章节或元数据后重新 save_draft、检查新 revision 再提交；base_revision 支持只更新改变的字段。冻结 reader_contract 由程序绑定，不要复制。只修具体问题；工具未支持的单位保留原状，不为凑目标字数扩写。提交接纳后结束写作，不自行评分。'
+        prompt = writing_guide + '\n所有路径相对任务包，用 packet_read/packet_grep 读取。完整稿件连同引用、数字/时间绑定等元数据用 save_draft 保存一次；长稿可用 save_draft_section 分章保存后以 section_ids 组装。取得 revision 后，check_draft 和 submit_draft 均只传同一 revision，不重抄正文。修改章节或元数据后重新 save_draft、检查新 revision 再提交；base_revision 支持只更新改变的字段。冻结 reader_contract 由程序绑定，不要复制。只修具体问题；工具未支持的单位保留原状，不为凑目标字数扩写。提交接纳后结束写作，不自行评分。'
     else:
         from .agent_commands import tool_command
-        prompt = WRITING_GUIDE + f'\n任务包目录：{frozen["root"]}。只在 {folder} 内写文件。'
+        prompt = writing_guide + f'\n任务包目录：{frozen["root"]}。只在 {folder} 内写文件。'
         prompt += f'\n需要确定计算时可使用本地计算工具；report_data 计算入口为 `{tool_command(store.root,backend=backend)} prepare-report-data --run {run_id} --file RAW_JSON --output PREPARED_JSON`。'
         prompt += f'\n将完整 BriefDraft 原子写入 {folder / "draft.json"}，随后用 `{tool_command(store.root,backend=backend)} check-draft --run {run_id} --file {folder / "draft.json"}` 检查结构、各章篇幅与引用/数字定位，修正后重新检查；检查返回完整 revision，再用 `{tool_command(store.root,backend=backend)} submit-draft --run {run_id} --file {folder / "draft.json"} --revision 返回的REVISION` 提交已检查版本。文件或元数据改变后旧 revision 无效。reader_contract 由程序绑定，不要复制。完成后简短回复文件路径，不重复整篇正文。'
+    if writer_protocol == 'writer_input_v1':
+        prompt = writing_guide + f'\n任务包目录：{frozen["root"]}。'
+        if backend != 'briefloop-native':
+            command = tool_command(store.root, backend=backend)
+            prompt += f'\n只在 {folder} 内写文件。先将正文写入 article.md，然后调用 `{command} writer --run {run_id} --draft-file {folder / "draft.json"} --operation write_report --title "报告标题" --file {folder / "article.md"}`。'
+            prompt += f'\n其他操作共用 `{command} writer --run {run_id} --draft-file {folder / "draft.json"} --operation 操作名 --file 操作参数.json`；参数格式见 draft.schema.json。check_draft/submit_draft只传 --revision REVISION、不传 --file；read_draft可不传文件，或以JSON选择field。所有输入文件必须在本任务目录内。不要直接覆盖 draft.json。'
     runtime.execute(staged, prompt, folder)
     from .analyst_drafts import submitted
     value = submitted(store, {**config, 'packet_root': str(frozen['root'])})

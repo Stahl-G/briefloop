@@ -75,6 +75,11 @@ def main():
     count=ts.add_parser('count-brief',help='按统一中英混合规则统计 Markdown 正文长度')
     count.add_argument('--file',required=True,help='Markdown 正文文件，不包含 citations 元数据')
     count.add_argument('--target-words',type=int);count.add_argument('--max-words',type=int)
+    writer=ts.add_parser('writer',help='按冻结写作协议保存Markdown正文、局部修订和证据；不发布')
+    writer.add_argument('--run',required=True);writer.add_argument('--draft-file',required=True)
+    writer.add_argument('--operation',required=True,choices=['write_report','write_sections','assemble_report','update_draft_evidence','update_draft_details','patch_report_text','replace_report_blocks','read_draft','check_draft','submit_draft'])
+    writer.add_argument('--file',help='本次任务目录内的UTF-8 Markdown（write_report）或操作JSON')
+    writer.add_argument('--title');writer.add_argument('--revision')
     check=ts.add_parser('check-draft',help='按稿件契约自检 draft.json；只检查不发布')
     check.add_argument('--file',required=True)
     check.add_argument('--run',help='按本次报告要求返回篇幅、引用与数字定位诊断；不发布、不评分')
@@ -219,6 +224,28 @@ def main():
         elif a.tool=='extract-workbook-figures':
             from .workbook_figures import extract_workbook_figures
             print(json.dumps(extract_workbook_figures(store,a.id),ensure_ascii=False))
+        elif a.tool=='writer':
+            from . import writer_input, analyst_drafts
+            from .native_roles import run_tool
+            try:
+                target=Path(a.draft_file).expanduser().resolve()
+                config=analyst_drafts.file_config(store,a.run,target)
+                config['native_role']='analyst'
+                if writer_input.protocol(config)!=writer_input.PROTOCOL:
+                    raise ValueError('本任务未启用 writer_input_v1')
+                args={}
+                if a.file:
+                    path=Path(a.file).expanduser().resolve()
+                    if not path.is_relative_to(target.parent):raise ValueError('输入文件必须位于本次写作任务目录')
+                    raw=path.read_text(encoding='utf-8-sig')
+                    args={'title':a.title,'markdown':raw} if a.operation=='write_report' else json.loads(raw)
+                if a.revision:args['revision']=a.revision
+                result=run_tool(store,config,a.operation,args)
+                if not result['ok']:raise ValueError(result['error'])
+                report=json.loads(result.get('settle') or result['content'][0]['text'])
+            except (ValueError,KeyError,OSError) as exc:
+                print(json.dumps({'status':'invalid','error':str(exc)},ensure_ascii=False));raise SystemExit(1)
+            print(json.dumps(report,ensure_ascii=False))
         elif a.tool in ('check-draft','submit-draft'):
             from .models import BriefDraft, check_artifact, prune_unknown
             path=Path(a.file).expanduser().resolve()
