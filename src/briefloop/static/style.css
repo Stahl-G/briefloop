@@ -698,15 +698,11 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 .send-split{display:inline-flex;align-items:center}
 .send-controls #chat-send{min-width:56px}
 
-.home-suggestion-icon.cat-business{background:var(--cat-business-bg,#E8F1FD);color:var(--cat-business-fg,#1565C0)}
-.home-suggestion-icon.cat-markets{background:var(--cat-markets-bg,#FCE9F1);color:var(--cat-markets-fg,#AD1457)}
-.home-suggestion-icon.cat-academic{background:var(--cat-academic-bg,#E0F0EE);color:var(--cat-academic-fg,#00695C)}
-.home-suggestion-icon.cat-collab{background:var(--cat-collab-bg,#EFEAFD);color:var(--cat-collab-fg,#6741D9)}
-.home-suggestion-icon.cat-neutral{background:var(--cat-neutral-bg,#EEF0EE);color:var(--cat-neutral-fg,#5B6360)}
 
 @media(max-width:560px){
   #new-report.new-session--primary{color:var(--color-on-primary,#fff)}
 }
+
 
 /* === home-v2 S4: normal-mode right rail (DESIGN §3.2 §7.3) === */
 .chat-page{display:flex;flex-direction:column}
@@ -823,10 +819,6 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
   background:var(--cat-neutral-bg,#EEF0EE);
   color:var(--cat-neutral-fg,#5B6360);
 }
-.home-report-icon.cat-business{background:var(--cat-business-bg,#E8F1FD);color:var(--cat-business-fg,#1565C0)}
-.home-report-icon.cat-markets{background:var(--cat-markets-bg,#FCE9F1);color:var(--cat-markets-fg,#AD1457)}
-.home-report-icon.cat-academic{background:var(--cat-academic-bg,#E0F0EE);color:var(--cat-academic-fg,#00695C)}
-.home-report-icon.cat-collab{background:var(--cat-collab-bg,#EFEAFD);color:var(--cat-collab-fg,#6741D9)}
 .home-report-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
 .home-report-body strong{font-size:var(--text-sm,13px);font-weight:600;color:var(--color-text,#1e2320)}
 .home-report-body small{font-size:var(--text-xs,12px);color:var(--color-text-muted,#6a706b);line-height:var(--leading-normal,1.6);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -1068,6 +1060,16 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
 }
 .chat-activity>summary::-webkit-details-marker{display:none}
 .chat-activity[open]>summary{color:var(--color-text,#1e2320);font-weight:550}
+
+/* One category palette, from the tokens, for any tile that carries the class:
+   the home cards, the template tiles and the report lists. It used to be
+   written out per element type, with the hex repeated as a fallback, and
+   the report tile had no neutral variant so unclassified reports stayed green. */
+.cat-business{background:var(--cat-business-bg);color:var(--cat-business-fg)}
+.cat-markets{background:var(--cat-markets-bg);color:var(--cat-markets-fg)}
+.cat-academic{background:var(--cat-academic-bg);color:var(--cat-academic-fg)}
+.cat-collab{background:var(--cat-collab-bg);color:var(--cat-collab-fg)}
+.cat-neutral{background:var(--cat-neutral-bg);color:var(--cat-neutral-fg)}
 
 /* === Composer row: one layout, one height (DESIGN §7.2) ===
    The row lives here; the height is the --control-h-md token, not a number.

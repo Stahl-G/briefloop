@@ -2396,15 +2396,17 @@ async function openSourceDrawer(id,usage){
 }
 function closeSourceDrawer(){const d=$('source-drawer'),b=$('source-drawer-backdrop');if(d)d.hidden=true;if(b)b.hidden=true}
 const GENRE_ORDER=['商业报告','券商研报','学术论文','会议纪要','合同','上市公司年报','政府公文','通用报告'];
+// Categories name a colour from the token palette; the tiles take it from
+// the .cat-* class, so the hex lives in tokens.css only.
 const GENRE_META={
- '商业报告':{desc:'适用于商业分析、市场研究等。',icon:'briefcase',tile:'#E8F1FD',color:'#1565C0'},
- '券商研报':{desc:'适用于证券研究、行业分析。',icon:'chart',tile:'#FCE9F1',color:'#AD1457'},
- '学术论文':{desc:'适用于学术研究、论文写作。',icon:'book',tile:'#E0F0EE',color:'#00695C'},
- '会议纪要':{desc:'适用于会议记录、讨论要点。',icon:'users',tile:'#EFEAFD',color:'#6741D9'},
- '合同':{desc:'适用于各类合同、协议。',icon:'file',tile:'#E8F1FD',color:'#1565C0'},
- '上市公司年报':{desc:'适用于上市公司年度报告。',icon:'bars',tile:'#E8F1FD',color:'#1565C0'},
- '政府公文':{desc:'适用于政府机关公文、政策文件；红头与字体按 GB/T 9704 固定。',icon:'landmark',tile:'#FCE9F1',color:'#AD1457'},
- '通用报告':{desc:'适用于各类通用型报告。',icon:'layers',tile:'#EEF0EE',color:'#5B6360'},
+ '商业报告':{desc:'适用于商业分析、市场研究等。',icon:'briefcase',cat:'cat-business'},
+ '券商研报':{desc:'适用于证券研究、行业分析。',icon:'chart',cat:'cat-markets'},
+ '学术论文':{desc:'适用于学术研究、论文写作。',icon:'book',cat:'cat-academic'},
+ '会议纪要':{desc:'适用于会议记录、讨论要点。',icon:'users',cat:'cat-collab'},
+ '合同':{desc:'适用于各类合同、协议。',icon:'file',cat:'cat-business'},
+ '上市公司年报':{desc:'适用于上市公司年度报告。',icon:'bars',cat:'cat-business'},
+ '政府公文':{desc:'适用于政府机关公文、政策文件；红头与字体按 GB/T 9704 固定。',icon:'landmark',cat:'cat-markets'},
+ '通用报告':{desc:'适用于各类通用型报告。',icon:'layers',cat:'cat-neutral'},
 };
 const ICONS={
  briefcase:'<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>',
@@ -2445,13 +2447,13 @@ function renderTemplatesPage(){
  }
  const fallback=(state.settings||{}).default_template_id;
  const cards=GENRE_ORDER.filter(g=>genres[g]).map(genre=>{
-  const meta=GENRE_META[genre]||{desc:'',icon:'file',tile:'#EEF0EE',color:'#5B6360'};
+  const meta=GENRE_META[genre]||{desc:'',icon:'file',cat:'cat-neutral'};
   const items=genres[genre];
   const chosen=templatePick&&templatePick.genre===genre?templatePick.theme:items[0].theme;
   const selected=templatePick&&templatePick.genre===genre;
   const dots=items.map(it=>`<button type="button" class="color-dot${chosen===it.theme?' selected':''}" style="background:${THEME_COLORS[it.theme]||'#999'};color:${THEME_COLORS[it.theme]||'#999'}" data-genre="${esc(genre)}" data-theme="${esc(it.theme)}" data-id="${esc(it.id)}" title="${esc(genre+' · '+it.theme)}" aria-label="${esc(genre+' '+it.theme)}"></button>`).join('');
   return `<div class="tpl-card${selected?' selected':''}" data-genre="${esc(genre)}"><span class="tpl-check">✓</span>`
-   +`<span class="tpl-icon" style="background:${meta.tile};color:${meta.color}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[meta.icon]||''}</svg></span>`
+   +`<span class="tpl-icon ${meta.cat}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[meta.icon]||''}</svg></span>`
    +`<span class="tpl-name">${esc(genre)}</span><span class="tpl-desc" title="${esc(meta.desc)}">${esc(meta.desc)}</span>`
    +`<span class="tpl-dots"><span class="label">配色</span>${dots}</span></div>`;
  }).join('');

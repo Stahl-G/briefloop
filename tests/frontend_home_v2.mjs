@@ -6,6 +6,8 @@ const html=fs.readFileSync(new URL('../src/briefloop/static/index.html',import.m
 const app=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const schedules=fs.readFileSync(new URL('../frontend/schedules.js',import.meta.url),'utf8');
 const genre=fs.readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
+const tokens=fs.readFileSync(new URL('../src/briefloop/static/tokens.css',import.meta.url),'utf8');
+const style=fs.readFileSync(new URL('../src/briefloop/static/style.css',import.meta.url),'utf8');
 
 test('home loads tokens.css and keeps composer progressive disclosure markers',()=>{
   assert.match(html,/href="\/tokens\.css"/);
@@ -50,11 +52,19 @@ test('home does not render empty schedule/report placeholders',()=>{
   assert.match(app,/composer-params-panel/);
 });
 
-test('GENRE_META avoids primary/danger hue collisions for academic and markets',()=>{
-  assert.match(genre,/'学术论文'[^}]*color:'#00695C'/);
-  assert.match(genre,/'券商研报'[^}]*color:'#AD1457'/);
-  assert.doesNotMatch(genre,/'学术论文'[^}]*color:'#006838'/);
-  assert.doesNotMatch(genre,/'券商研报'[^}]*color:'#C62828'/);
+test('the category palette lives in the tokens and avoids the status hues',()=>{
+  // The palette used to be written three times: here as hex in GENRE_META, as
+  // per-element CSS rules with the hex repeated as a fallback, and in the
+  // tokens. Only the tokens carry a value now.
+  assert.match(tokens,/--c-cat-teal-fg:\s*#00695C/);
+  assert.match(tokens,/--c-cat-magenta-fg:\s*#AD1457/);
+  assert.doesNotMatch(tokens,/--c-cat-[a-z]+-fg:\s*#006838/);   // the primary green
+  assert.doesNotMatch(tokens,/--c-cat-[a-z]+-fg:\s*#C62828/);   // the danger red
+  assert.match(genre,/'学术论文'[^}]*cat:'cat-academic'/);
+  assert.match(genre,/'券商研报'[^}]*cat:'cat-markets'/);
+  assert.doesNotMatch(genre,/tile:'#|color:'#/);
+  for(const cat of ['business','markets','academic','collab','neutral'])
+    assert.match(style,new RegExp(`\\.cat-${cat}\\{background:var\\(--cat-${cat}-bg\\);color:var\\(--cat-${cat}-fg\\)\\}`));
 });
 
  test('home hydrates linear ICONS from settings icon set',()=>{
