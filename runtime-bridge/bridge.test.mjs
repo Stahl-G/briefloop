@@ -87,9 +87,9 @@ test('DeepSeek Harness grouped model choices round-trip and session/resume is ne
 });
 
 test('Antigravity stream uses explicit model/resume and does not duplicate final text or cumulative usage',async t=>{
- const b=bridge(t),f=fixture(t,`const a=process.argv.slice(2);if(a[0]==='models'){console.log('fixture-model\tFixture');process.exit(0);}if(a[a.indexOf('--print-timeout')+1]!=='87600h'||!a.includes('--disable-slash-commands')||a[a.indexOf('--conversation')+1]!=='saved-agy'||a[a.indexOf('--model')+1]!=='fixture-model')process.exit(3);let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{const m=JSON.parse(s);if(m.event!=='user'||m.message.content!=='hello')process.exit(4);const send=x=>console.log(JSON.stringify(x));send({event:'init',conversation_id:'saved-agy'});send({event:'step_update',step_update:{step_type:'agent_response',text_delta:'OK',state:'DONE',usage:{input_tokens:12}}});send({event:'result',result:{status:'SUCCESS',response:'OK',conversation_id:'saved-agy',usage:{input_tokens:999}}});});`);
+ const b=bridge(t),f=fixture(t,`const a=process.argv.slice(2);if(a[0]!=='models'&&a[a.indexOf('--effort')+1]!=='low')process.exit(7);if(a[0]==='models'){console.log('fixture-model\tFixture');process.exit(0);}if(a[a.indexOf('--print-timeout')+1]!=='87600h'||!a.includes('--disable-slash-commands')||a[a.indexOf('--conversation')+1]!=='saved-agy'||a[a.indexOf('--model')+1]!=='gemini-3.8-flash')process.exit(3);let s='';process.stdin.on('data',c=>s+=c);process.stdin.on('end',()=>{const m=JSON.parse(s);if(m.event!=='user'||m.message.content!=='hello')process.exit(4);const send=x=>console.log(JSON.stringify(x));send({event:'init',conversation_id:'saved-agy'});send({event:'step_update',step_update:{step_type:'agent_response',text_delta:'OK',state:'DONE',usage:{input_tokens:12}}});send({event:'result',result:{status:'SUCCESS',response:'OK',conversation_id:'saved-agy',usage:{input_tokens:999}}});});`);
  b.send(1,'list_models',{runtime_id:'antigravity',...f});assert.ok((await b.wait(x=>x.id===1)).result.models.some(m=>m.id==='fixture-model'));
- b.send(2,'start',{...f,runtime_id:'antigravity',execution_id:'agy',session_id:'saved-agy',model:'fixture-model',prompt:'hello',permission:'runtime-native',allow_web:null});
+ b.send(2,'start',{...f,runtime_id:'antigravity',execution_id:'agy',effort:'low',session_id:'saved-agy',model:'gemini-3.8-flash-high',prompt:'hello',permission:'runtime-native',allow_web:null});
  assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');assert.equal(b.frames.filter(x=>x.params?.kind==='text').map(x=>x.params.text).join(''),'OK');assert.equal(b.frames.filter(x=>x.params?.kind==='usage').length,1);
 });
 test('Antigravity zero exit with error result fails, and cancellation stops an active host',async t=>{
@@ -105,14 +105,14 @@ test('Antigravity soft-denied tool without reply fails even when host says SUCCE
 });
 
 test('Pi RPC selects exact provider model, resumes its session and waits for agent_settled',async t=>{
- const b=bridge(t),f=fixture(t,`const rl=require('node:readline').createInterface({input:process.stdin});const send=x=>console.log(JSON.stringify(x));rl.on('line',l=>{const m=JSON.parse(l),ok=data=>send({type:'response',id:m.id,command:m.type,success:true,data});if(m.type==='get_available_models')ok({models:[{provider:'test',id:'flash',name:'Flash'}]});else if(m.type==='get_state')ok({sessionFile:'/tmp/pi-test.jsonl'});else if(m.type==='set_model'){if(m.provider!=='test'||m.modelId!=='flash')process.exit(3);ok({});}else if(m.type==='prompt'){if(!process.argv.includes('--no-tools')||!process.argv.includes('--no-extensions'))process.exit(5);ok({});send({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:'Pi OK'}});send({type:'message_end',message:{role:'assistant',content:[{type:'text',text:'Pi OK'}],stopReason:'stop'}});send({type:'agent_end',messages:[]});setTimeout(()=>send({type:'agent_settled'}),50);}});`);
+ const b=bridge(t),f=fixture(t,`let thinking='high';const rl=require('node:readline').createInterface({input:process.stdin});const send=x=>console.log(JSON.stringify(x));rl.on('line',l=>{const m=JSON.parse(l),ok=data=>send({type:'response',id:m.id,command:m.type,success:true,data});if(m.type==='get_available_models')ok({models:[{provider:'test',id:'flash',name:'Flash'}]});else if(m.type==='get_state')ok({sessionFile:'/tmp/pi-test.jsonl',thinkingLevel:thinking});else if(m.type==='set_thinking_level'){thinking=m.level;ok({});}else if(m.type==='set_model'){if(m.provider!=='test'||m.modelId!=='flash')process.exit(3);ok({});}else if(m.type==='prompt'){if(!process.argv.includes('--no-tools')||!process.argv.includes('--no-extensions'))process.exit(5);ok({});send({type:'message_update',assistantMessageEvent:{type:'text_delta',delta:'Pi OK'}});send({type:'message_end',message:{role:'assistant',content:[{type:'text',text:'Pi OK'}],stopReason:'stop'}});send({type:'agent_end',messages:[]});setTimeout(()=>send({type:'agent_settled'}),50);}});`);
  b.send(1,'list_models',{...f,runtime_id:'pi'});assert.ok((await b.wait(x=>x.id===1)).result.models.some(m=>m.id==='test/flash'));
- b.send(2,'start',{...f,runtime_id:'pi',execution_id:'pi',host_options:{mode:'none'},session_id:'/tmp/pi-test.jsonl',model:'test/flash',prompt:'hello',permission:'runtime-native',allow_web:null});assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');assert.equal(b.frames.filter(x=>x.params?.kind==='text').map(x=>x.params.text).join(''),'Pi OK');
+ b.send(2,'start',{...f,runtime_id:'pi',execution_id:'pi',effort:'low',host_options:{mode:'none'},session_id:'/tmp/pi-test.jsonl',model:'test/flash',prompt:'hello',permission:'runtime-native',allow_web:null});assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');assert.equal(b.frames.filter(x=>x.params?.kind==='text').map(x=>x.params.text).join(''),'Pi OK');
 });
 
 test('Claude forwards native allow and deny over open stdio',async t=>{
- const b=bridge(t),f=fixture(t,`const rl=require('node:readline').createInterface({input:process.stdin});let count=0;const send=x=>console.log(JSON.stringify(x));rl.on('line',line=>{const m=JSON.parse(line);if(m.type==='user')send({type:'control_request',request_id:'first',request:{subtype:'can_use_tool',tool_name:'Read',input:{file_path:'/fixture'}}});else if(m.type==='control_response'){const r=m.response;if(r.request_id==='first'){if(r.response.behavior!=='allow'||r.response.updatedInput.file_path!=='/fixture')process.exit(3);send({type:'control_request',request_id:'second',request:{subtype:'can_use_tool',tool_name:'Write',input:{file_path:'/fixture'}}});}else{if(r.response.behavior!=='deny')process.exit(4);send({type:'assistant',message:{content:[{type:'text',text:'Permission answered'}]}});send({type:'result',is_error:false});}}});`);
- b.send(1,'start',{...f,runtime_id:'claude',execution_id:'claude-permission',prompt:'x',permission:'runtime-native',allow_web:null,host_options:{mode:'manual'}});
+ const b=bridge(t),f=fixture(t,`const rl=require('node:readline').createInterface({input:process.stdin});if(process.argv[process.argv.indexOf('--effort')+1]!=='medium')process.exit(7);let count=0;const send=x=>console.log(JSON.stringify(x));rl.on('line',line=>{const m=JSON.parse(line);if(m.type==='user')send({type:'control_request',request_id:'first',request:{subtype:'can_use_tool',tool_name:'Read',input:{file_path:'/fixture'}}});else if(m.type==='control_response'){const r=m.response;if(r.request_id==='first'){if(r.response.behavior!=='allow'||r.response.updatedInput.file_path!=='/fixture')process.exit(3);send({type:'control_request',request_id:'second',request:{subtype:'can_use_tool',tool_name:'Write',input:{file_path:'/fixture'}}});}else{if(r.response.behavior!=='deny')process.exit(4);send({type:'assistant',message:{content:[{type:'text',text:'Permission answered'}]}});send({type:'result',is_error:false});}}});`);
+ b.send(1,'start',{...f,runtime_id:'claude',execution_id:'claude-permission',effort:'medium',prompt:'x',permission:'runtime-native',allow_web:null,host_options:{mode:'manual'}});
  await b.wait(x=>x.params?.request_id==='first');b.send(2,'answer',{execution_id:'claude-permission',request_id:'first',option_id:'allow'});
  await b.wait(x=>x.params?.request_id==='second');b.send(3,'answer',{execution_id:'claude-permission',request_id:'second',option_id:'deny'});
  assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');
@@ -128,8 +128,8 @@ test('ACP accepts only an advertised permission mode before prompting',async t=>
 });
 
 test('MiMo retains JSON execution and applies only an advertised native agent mode',async t=>{
- const b=bridge(t),f=fixture(t,`if(process.argv[2]!=='acp'){if(!process.argv.includes('--agent')||!process.argv.includes('plan'))process.exit(3);process.stdin.resume();process.stdin.on('end',()=>{console.log(JSON.stringify({type:'text',part:{text:'MiMo mode OK'}}));console.log(JSON.stringify({type:'step_finish',part:{tokens:{input:1}}}));});}else{`+rpcFake.replace("models:{availableModels:","modes:{availableModes:[{id:'plan',name:'Plan'}]},models:{availableModels:")+`}`);
- b.send(1,'start',{...f,runtime_id:'mimo',execution_id:'mimo-mode',prompt:'hello',permission:'runtime-native',host_options:{mode:'plan'}});
+ const b=bridge(t),f=fixture(t,`if(process.argv[2]!=='acp'){if(process.argv[process.argv.indexOf('--variant')+1]!=='high')process.exit(7);if(!process.argv.includes('--agent')||!process.argv.includes('plan'))process.exit(3);process.stdin.resume();process.stdin.on('end',()=>{console.log(JSON.stringify({type:'text',part:{text:'MiMo mode OK'}}));console.log(JSON.stringify({type:'step_finish',part:{tokens:{input:1}}}));});}else{`+rpcFake.replace("models:{availableModels:","modes:{availableModes:[{id:'plan',name:'Plan'}]},models:{availableModels:")+`}`);
+ b.send(1,'start',{...f,runtime_id:'mimo',execution_id:'mimo-mode',effort:'high',prompt:'hello',permission:'runtime-native',host_options:{mode:'plan'}});
  assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');
  assert.ok(b.frames.some(x=>x.params?.text==='MiMo mode OK'));
 });
@@ -223,4 +223,39 @@ test('ZCode refuses a model choice it cannot apply and reports the configured on
  const end=await b.wait(x=>x.params?.kind==='end');
  assert.equal(end.params.status,'failed');
  assert.match(end.params.error,/不接受模型参数/);
+});
+
+test('ACP reasoning is read from the selected model and set before prompting; default sends no override',async t=>{
+ const b=bridge(t),f=fixture(t,`const rl=require('node:readline').createInterface({input:process.stdin});let value='high',changed=false;const configs=()=>[{id:'thought',category:'thought_level',type:'select',currentValue:value,options:[{value:'low',name:'Low'},{value:'high',name:'High'}]}];rl.on('line',line=>{const m=JSON.parse(line),result=r=>console.log(JSON.stringify({id:m.id,result:r}));if(m.method==='initialize')result({agentCapabilities:{}});else if(m.method==='session/new')result({sessionId:'s',configOptions:[]});else if(m.method==='session/set_model')result({configOptions:configs()});else if(m.method==='session/set_config_option'){if(m.params.configId!=='thought')process.exit(3);value=m.params.value;changed=true;result({configOptions:configs()});}else if(m.method==='session/prompt'){const text=m.params.prompt[0].text;if((text==='low'&&value!=='low')||(text==='default'&&changed))process.exit(4);console.log(JSON.stringify({method:'session/update',params:{update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'OK'}}}}));result({stopReason:'end_turn'});}});`);
+ b.send(1,'reasoning_options',{...f,runtime_id:'kimi',model:'test/model'});
+ assert.deepEqual((await b.wait(x=>x.id===1)).result.options.map(x=>x.id),['low','high']);
+ for(const [i,effort] of ['low',null,'max'].entries()){
+  const execution_id='thought-'+i;
+  b.send(i+2,'start',{...f,runtime_id:'kimi',execution_id,model:'test/model',effort,prompt:effort||'default'});
+  const end=await b.wait(x=>x.params?.execution_id===execution_id&&x.params.kind==='end');
+  assert.equal(end.params.status,effort==='max'?'failed':'completed');
+ }
+});
+
+test('CodeBuddy native effort flag is forwarded without an unsupported ACP override',async t=>{
+ const b=bridge(t),f=fixture(t,`if(process.argv[process.argv.indexOf('--effort')+1]!=='medium')process.exit(7);`+rpcFake);
+ b.send(1,'start',{...f,runtime_id:'codebuddy',execution_id:'buddy-effort',effort:'medium',prompt:'x'});
+ const q=await b.wait(x=>x.params?.kind==='question');b.send(2,'answer',{execution_id:'buddy-effort',request_id:q.params.request_id,option_id:'yes'});
+ assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');
+});
+
+test('variant choices preserve model-specific names rather than a fixed high-only list',async t=>{
+ const b=bridge(t),f=fixture(t,`console.log('test/reasoner\\n'+JSON.stringify({variants:{low:{},high:{},turbo:{}}}));`);
+ b.send(1,'reasoning_options',{...f,runtime_id:'opencode',model:'test/reasoner'});
+ assert.deepEqual((await b.wait(x=>x.id===1)).result.options.map(x=>x.id),['low','high','turbo']);
+ b.send(2,'reasoning_options',{...f,runtime_id:'opencode',model:'test/plain'});
+ assert.deepEqual((await b.wait(x=>x.id===2)).result.options,[]);
+});
+
+test('Codex uses the selected model levels including ultra without inventing it for other models',async t=>{
+ const b=bridge(t),f=fixture(t,`console.log(JSON.stringify({models:[{slug:'new',supported_reasoning_levels:[{effort:'low'},{effort:'high'},{effort:'ultra'}]},{slug:'old',supported_reasoning_levels:[{effort:'low'},{effort:'high'}]}]}));`);
+ for(const [i,model] of ['new','old'].entries()){
+  b.send(i+1,'reasoning_options',{...f,runtime_id:'codex',model});
+  assert.deepEqual((await b.wait(x=>x.id===i+1)).result.options.map(o=>o.id),model==='new'?['low','high','ultra']:['low','high']);
+ }
 });

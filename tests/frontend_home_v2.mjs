@@ -85,9 +85,9 @@ test('the Opencode effort field is not wired to the model picker',()=>{
   assert.match(field,/list="effort-suggestions"/);
   assert.match(html,/<datalist id="effort-suggestions">(?:<option value="(?:low|medium|high|max)"><\/option>)+<\/datalist>/);
   // one name for one concept, in the composer and in both settings surfaces
-  assert.match(html,/<label class="params-field" for="chat-variant"[^>]*><span>推理 effort<\/span>/);
-  assert.match(html,/<label id="variant-field" hidden>推理 effort<input id="model-variant" list="effort-suggestions"/);
-  assert.match(app,/role-variant-field[^`]*<span>推理 effort<\/span>/);
+  assert.match(html,/<label class="params-field" for="chat-variant"[^>]*><span>推理强度<\/span>/);
+  assert.match(html,/<label id="variant-field" hidden>推理强度<input id="model-variant" list="effort-suggestions"/);
+  assert.match(app,/role-variant-field[^`]*<span>推理强度<\/span>/);
   for(const id of ['model-variant','role-\\$\\{role\\}-variant'])
     assert.doesNotMatch(html+app,new RegExp('id="'+id+'"[^>]*list="model-suggestions"'));
 });

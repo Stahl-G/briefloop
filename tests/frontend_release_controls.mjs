@@ -1,3 +1,4 @@
+import {settingsEffort} from '../frontend/reasoning-controls.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -32,7 +33,7 @@ test('an empty schedule list still lets the user create the first schedule',()=>
 test('applying settings updates the next-turn effort, and clearing it selects model default',()=>{
  const $=elements();
  for(const [id,value] of Object.entries({'chat-model':'fixture/model','chat-variant':'low','chat-permission':'workspace-write','model-select':'fixture/model','model-variant':'high'}))$(id).value=value;
- const context=vm.createContext({$,state:{settings:{model_variant:'high'}},chatBackendChoice:()=> 'opencode',backendValue:()=> 'opencode',
+ const context=vm.createContext({settingsEffort,$,state:{settings:{model_variant:'high'}},chatBackendChoice:()=> 'opencode',backendValue:()=> 'opencode',
   chat:{session:{lifecycle:'active'},events:new Map()},chatActive:()=>false,assignEffort:(id,value)=>$(id).value=value,
   rememberDraft(){},updateComposer(){},renderSettingsSessionNote(){},notice(){}});
  vm.runInContext(section('function runtimeChoice()','\nfunction messageTime('),context);
@@ -46,7 +47,7 @@ test('applying settings updates the next-turn effort, and clearing it selects mo
 
 test('task completion clears the rail even while an existing conversation is open',()=>{
  const $=elements(),state={jobs:[{id:'job1',kind:'generate',status:'running',created:'2026-09-21T00:00:00Z'}]};
- const context=vm.createContext({$,state,chat:{home:false,messages:[{role:'user'}],session:null},chatActive:()=>false,
+ const context=vm.createContext({settingsEffort,$,state,chat:{home:false,messages:[{role:'user'}],session:null},chatActive:()=>false,
   taskLabel:()=> '生成简报',bannerTitle:()=> 'Test report',esc:String,dayTime:String,chatStates:{},
   renderMessages(){},renderActivities(){},autoOpenActivity(){},renderRequests(){},renderContext(){},renderSessions(){},renderSessionLifecycle(){},updateComposer(){},modelLabel(){}});
  vm.runInContext(section('function renderHomeTasks()','function homeReportRowHTML('),context);
@@ -64,7 +65,7 @@ test('task completion clears the rail even while an existing conversation is ope
 
 test('welcome applies the selected host together with its model and effort',()=>{
  const $=elements();$('chat-input').focus=()=>{};
- const context=vm.createContext({$,state:{settings:{agent_backend:'zcode',model:'default',model_variant:'',reasoning_effort:'high'}},
+ const context=vm.createContext({settingsEffort,$,state:{settings:{agent_backend:'zcode',model:'default',model_variant:'',reasoning_effort:'high'}},
   chat:{nextBackend:'codex',hostOptions:{mode:'plan'}},notice(){},page(){},updateComposer(){},refreshInlineModelPickers(){},rememberDraft(){},
   assignEffort:(id,value)=>$(id).value=value,effortValue:(s,k)=>s[k]});
  vm.runInContext(section("$('welcome-start').onclick=",'\nfunction render(first)'),context);

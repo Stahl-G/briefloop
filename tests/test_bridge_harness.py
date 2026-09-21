@@ -288,3 +288,29 @@ def test_bridge_public_failures_redact_credentials(tmp_path,failure):
     errors=[e for e in snap['events'] if e['kind']=='error']
     assert errors and 'acceptance-secret-value' not in json.dumps(errors)
     assert '[credential omitted]' in json.dumps(errors)
+
+
+def test_bridge_effort_reaches_host_and_explicit_default_clears_it(tmp_path):
+    bridge = BridgeFixture()
+    h = BridgeHarness(Store(tmp_path), bridge, 'claude')
+    from briefloop.chat_dispatch import ChatDispatcher
+    ChatDispatcher({'claude': h})
+    s = h.create_session('effort', {'model': 'default', 'effort': 'low'})
+    h.send(s['id'], 'first', message_id='effort-low')
+    _wait_status(h, s['id'], 'effort-low', 'completed')
+    h.send(s['id'], 'default', runtime={'model': 'default', 'effort': None}, message_id='effort-default')
+    _wait_status(h, s['id'], 'effort-default', 'completed')
+    assert [p['effort'] for p in bridge.starts] == ['low', None]
+    assert not bridge.starts[1].get('session_id'), 'default must not resume a native session carrying the old override'
+
+
+def test_settings_keep_effort_per_host_and_freeze_it_for_roles(tmp_path):
+    from briefloop.models import Settings, runtime_fields
+    legacy = Settings(agent_backend='claude', model='default').model_dump()
+    assert 'reasoning_effort' not in runtime_fields(legacy, 'claude')
+    configured = Settings(**{**legacy, 'runtime_efforts': {'claude': 'low', 'pi': 'off'}}).model_dump()
+    assert runtime_fields(configured, 'claude') == {'model': 'default', 'reasoning_effort': 'low'}
+    assert runtime_fields(configured, 'pi')['reasoning_effort'] == 'off'
+    assert runtime_fields({'model': 'other', 'reasoning_effort': None}, 'claude') == {'model': 'other'}
+    with pytest.raises(ValueError):
+        Settings(runtime_efforts={'claude': 'x'*101})

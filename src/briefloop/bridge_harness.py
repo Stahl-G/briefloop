@@ -88,6 +88,10 @@ class BridgeHarness(OpencodeHarness):
         if value.get('review_root') or value['permission']!='runtime-native':
             raise ValueError('此 CLI 尚未验证受限文件或联网隔离；请选择支持该权限的执行引擎')
         if not isinstance(value['model'],str) or not value['model'].strip():raise ValueError('请输入模型 ID')
+        effort=value.get('effort')
+        if effort in (None,'','none'):value['effort']=None
+        elif not isinstance(effort,str) or not effort.strip() or len(effort)>100:raise ValueError('无效推理强度')
+        else:value['effort']=effort.strip()
         from .runtime_permissions import validate_options
         value['host_options']=validate_options(self.backend,value.get('host_options'))
         return value
@@ -183,7 +187,7 @@ class BridgeHarness(OpencodeHarness):
             from .search_policy import native_allowed
             internal=bool(self.store.rows("SELECT seq FROM chat_events WHERE session_id=? AND kind='session/internal' LIMIT 1",(sid,)))
             params={'execution_id':execution,'runtime_id':self.backend,'cwd':session['cwd'],'prompt':text,
-                    'model':config['model'],'permission':'runtime-native','allow_web':None,'host_options':config.get('host_options',{}),
+                    'model':config['model'],'effort':config.get('effort'),'permission':'runtime-native','allow_web':None,'host_options':config.get('host_options',{}),
                     'images':images,
                     # The host owns its search tools; grant them only when this turn
                     # asked for web access AND the run is not frozen to a managed
@@ -250,6 +254,8 @@ class BridgeHarness(OpencodeHarness):
                           'options':[{'label':o.get('name') or o.get('optionId'),'description':o.get('kind','')} for o in options]}],
                          'native_options':options})
                     self.chat.event(sid,'runtime/question',{'requestId':rid})
+                elif kind=='performance':
+                    self.chat.event(sid,'runtime/configuration',sanitize(event))
                 elif kind=='usage':
                     usage=event.get('usage') or {}
                     self.chat.event(sid,'thread/tokenUsage/updated',{'tokenUsage':normalize_bridge_usage(usage,self.backend)})
