@@ -829,21 +829,21 @@ function renderChatBackendChoice(){
 $('chat-backend').onchange=()=>{
  chat.nextBackend=$('chat-backend').value;chat.hostOptions={};$('chat-mode').value='queue';
  const previous=[...chat.messages].reverse().find(m=>m.role==='user'&&m.runtime?.backend===chat.nextBackend)?.runtime;
- $('chat-model').value=previous?.model||'';$('chat-model-provider').value=previous?.model_provider||'';$('chat-service-tier').value=previous?.service_tier||'';assignEffort('chat-effort',effortValue(previous||{},'effort'));
+ $('chat-model').value=previous?.model||'';$('chat-model-provider').value=previous?.model_provider||'';$('chat-service-tier').value=previous?.service_tier||'';assignEffort('chat-effort',effortValue(previous||{},'effort'));if($('chat-variant'))$('chat-variant').value=previous?.variant||'';
  chat.hostOptions=previous?.host_options||{};renderChatRuntimePermissions();if(previous?.permission)$('chat-permission').value=previous.permission;
  chat.request=null;rememberDraft();updateComposer();refreshInlineModelPickers();
 };
-function rememberDraft(){chat.drafts.set(chat.id||'new',{text:$('chat-input').value,sources:[...chat.attachments],backend:chatBackendChoice(),model:$('chat-model').value,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,service_tier:(chatBackendChoice())==='codex'?($('chat-service-tier').value||null):null,allow_web:$('chat-allow-web').checked,permission:$('chat-permission').value,host_options:chat.hostOptions||{}});try{sessionStorage.setItem('briefloop-chat-drafts',JSON.stringify([...chat.drafts].slice(-30)))}catch{}}
+function rememberDraft(){chat.drafts.set(chat.id||'new',{text:$('chat-input').value,sources:[...chat.attachments],backend:chatBackendChoice(),model:$('chat-model').value,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,variant:($('chat-variant')?.value||'').trim(),service_tier:(chatBackendChoice())==='codex'?($('chat-service-tier').value||null):null,allow_web:$('chat-allow-web').checked,permission:$('chat-permission').value,host_options:chat.hostOptions||{}});try{sessionStorage.setItem('briefloop-chat-drafts',JSON.stringify([...chat.drafts].slice(-30)))}catch{}}
 function restoreDraft(){
  const d=chat.drafts.get(chat.id||'new'),sessionRuntime=chat.session?.runtime;
  const backend=(chat.id&&d?.backend)||sessionRuntime?.backend||state.settings.agent_backend||'codex';
  chat.nextBackend=backend;
  const saved=d&&(chat.id||d.backend===backend||(!d.backend&&sessionRuntime))?d:null;
- const fallback={model:state.settings.model_selection_required?'':state.settings.model,backend,effort:state.settings.reasoning_effort,model_provider:state.settings.model_provider,service_tier:state.settings.service_tier};
+ const fallback={model:state.settings.model_selection_required?'':state.settings.model,backend,effort:state.settings.reasoning_effort,variant:state.settings.model_variant,model_provider:state.settings.model_provider,service_tier:state.settings.service_tier};
  const runtime=saved||sessionRuntime||fallback;
  // Searching is the expected default for a fresh chat; a saved draft keeps the user's own choice.
  $('chat-input').value=d?.text||'';chat.attachments=new Set(d?.sources||[]);$('chat-allow-web').checked=d&&('allow_web' in d)?!!d.allow_web:(chat.id?[...(chat.messages||[])].reverse().find(m=>m.role==='user')?.allow_web??(state.settings.chat_allow_web!==false):state.settings.chat_allow_web!==false);chat.hostOptions=runtime.host_options||{};
- $('chat-model').value=runtime.model||'';assignEffort('chat-effort',effortValue(runtime,'effort'));
+ $('chat-model').value=runtime.model||'';assignEffort('chat-effort',effortValue(runtime,'effort'));if($('chat-variant'))$('chat-variant').value=runtime.variant||'';
  $('chat-model-provider').value=runtime.model_provider||'';$('chat-service-tier').value=runtime.service_tier||'';$('chat-permission').value=runtime.permission||'workspace-write';
  renderAttachments();updateComposer();autoSizeChatInput();refreshInlineModelPickers();
 }
@@ -875,12 +875,16 @@ function renderChatRuntimePermissions(){
  for(const option of $('chat-mode').options){if(option.value==='steer'){option.hidden=!canSteer;option.disabled=!canSteer}}
  if(!canSteer&&$('chat-mode').value==='steer')$('chat-mode').value='queue';
  $('chat-effort').hidden=backend!=='codex';document.querySelector('.chat-provider-row').hidden=backend!=='codex';
+ const variantField=document.querySelector('label[for="chat-variant"]');
+ if(variantField)variantField.hidden=backend!=='opencode';
+ const effortField=document.querySelector('label[for="chat-effort"]');
+ if(effortField)effortField.hidden=backend==='opencode';
 }
-function runtimeChoice(){const model=$('chat-model').value.trim();if(!model)throw Error('请输入模型 ID');const backend=chatBackendChoice();if(!['codex','opencode'].includes(backend)){return {model,backend,permission:'runtime-native',host_options:chat.hostOptions||{}}}if(backend==='opencode'){if(!model.includes('/'))throw Error('Opencode 模型必须是 provider/model 形式，例如 opencode-go/gpt-5.6-luna');return {model,backend,variant:state.settings.model_variant||null,permission:$('chat-permission').value}}return {model,backend,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,service_tier:selectedServiceTier('chat-service-tier',fastControlConfig('chat'),true),permission:$('chat-permission').value}}
+function runtimeChoice(){const model=$('chat-model').value.trim();if(!model)throw Error('请输入模型 ID');const backend=chatBackendChoice();if(!['codex','opencode'].includes(backend)){return {model,backend,permission:'runtime-native',host_options:chat.hostOptions||{}}}if(backend==='opencode'){if(!model.includes('/'))throw Error('Opencode 模型必须是 provider/model 形式，例如 opencode-go/gpt-5.6-luna');return {model,backend,variant:($('chat-variant')?.value||'').trim()||state.settings.model_variant||null,permission:$('chat-permission').value}}return {model,backend,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,service_tier:selectedServiceTier('chat-service-tier',fastControlConfig('chat'),true),permission:$('chat-permission').value}}
 function messageTime(value){return clock(value)}
 function chatError(text=''){$('chat-error').textContent=text;$('chat-error').hidden=!text}
 function sessionMissing(error){return /会话或消息不存在|会话不存在/.test(String(error&&error.message||error||''))}
-function updateComposer(){syncCompactReportControls();renderChatBackendChoice();renderChatRuntimePermissions();const readonly=chat.session&&chat.session.lifecycle&&chat.session.lifecycle!=='active';const active=chatActive(),steering=active&&$('chat-mode').value==='steer';if(steering){const runtime=activeChatRuntime();$('chat-permission').value=runtime.permission||'workspace-write';$('chat-model').value=runtime.model||'';assignEffort('chat-effort',effortValue(runtime,'effort'));$('chat-model-provider').value=runtime.model_provider||'';$('chat-service-tier').value=runtime.service_tier||'';const activeMessage=chat.messages.find(m=>m.role==='user'&&m.turn_id===chat.session?.turn_id);$('chat-allow-web').checked=!!activeMessage?.allow_web} renderFastControls();$('chat-allow-web').disabled=readonly||steering||chat.busy;for(const id of ['chat-model','chat-effort','chat-model-provider','chat-service-tier'])$(id).disabled=readonly||steering||chat.busy;$('chat-permission').disabled=readonly||steering||chat.busy;$('new-session').disabled=chat.busy||chat.uploading>0;$('chat-input').readOnly=chat.busy||readonly;document.querySelectorAll('[data-chat-session]').forEach(b=>b.disabled=chat.busy||chat.uploading>0);$('chat-send').disabled=readonly||chat.busy||chat.uploading>0||(!$('chat-input').value.trim()&&!chat.attachments.size)||!$('chat-model').value.trim();const sendLabel=chat.busy?'发送中…':active?($('chat-mode').value==='steer'?'立即补充':'排队发送'):'发送消息';$('chat-send').textContent=chat.busy?'…':'↑';$('chat-send').setAttribute('aria-label',sendLabel);$('chat-send').title=sendLabel;$('chat-stop').hidden=!sessionBusy(chat.session);$('chat-stop').disabled=chat.busy;$('chat-mode').disabled=!active||chat.busy;$('chat-attach').disabled=readonly||chat.busy||chat.uploading>0;$('attach-existing').disabled=readonly||chat.busy;$('chat-attach').querySelector('span').textContent=chat.uploading?'上传中…':'文件';const model=$('chat-model').value.trim(),label=friendlyModel(model)||'输入模型 ID';$('chat-model').title=model?friendlyModel(model)+' · '+model:'输入模型 ID';if(!model)$('chat-send').title='请先选择模型';const chatBackend=chatBackendChoice();const speed=$('chat-service-tier').hidden?'':($('chat-service-tier').value==='fast'?' · Fast（请求）':$('chat-service-tier').value==='default'?' · 标准':'');const effort=chatBackend==='opencode'?(chat.session?.runtime?.variant||state.settings.model_variant||'模型默认'):($('chat-effort').value==='none'?'模型默认':$('chat-effort').value);$('composer-help').textContent=`Enter 发送 · Shift + Enter 换行 · ${label}${['codex','opencode'].includes(chatBackend)?' / '+effort:''}${speed}${active?' · 立即补充沿用当前联网与模型设置；更改设置请排队到下一回合':''}${model?'':' · 请先从模型列表选择或输入模型 ID'}`}
+function updateComposer(){syncCompactReportControls();renderChatBackendChoice();renderChatRuntimePermissions();const readonly=chat.session&&chat.session.lifecycle&&chat.session.lifecycle!=='active';const active=chatActive(),steering=active&&$('chat-mode').value==='steer';if(steering){const runtime=activeChatRuntime();$('chat-permission').value=runtime.permission||'workspace-write';$('chat-model').value=runtime.model||'';assignEffort('chat-effort',effortValue(runtime,'effort'));if($('chat-variant'))$('chat-variant').value=runtime.variant||'';$('chat-model-provider').value=runtime.model_provider||'';$('chat-service-tier').value=runtime.service_tier||'';const activeMessage=chat.messages.find(m=>m.role==='user'&&m.turn_id===chat.session?.turn_id);$('chat-allow-web').checked=!!activeMessage?.allow_web} renderFastControls();$('chat-allow-web').disabled=readonly||steering||chat.busy;for(const id of ['chat-model','chat-effort','chat-variant','chat-model-provider','chat-service-tier'])if($(id))$(id).disabled=readonly||steering||chat.busy;$('chat-permission').disabled=readonly||steering||chat.busy;$('new-session').disabled=chat.busy||chat.uploading>0;$('chat-input').readOnly=chat.busy||readonly;document.querySelectorAll('[data-chat-session]').forEach(b=>b.disabled=chat.busy||chat.uploading>0);$('chat-send').disabled=readonly||chat.busy||chat.uploading>0||(!$('chat-input').value.trim()&&!chat.attachments.size)||!$('chat-model').value.trim();const sendLabel=chat.busy?'发送中…':active?($('chat-mode').value==='steer'?'立即补充':'排队发送'):'发送消息';$('chat-send').textContent=chat.busy?'…':'发送';$('chat-send').setAttribute('aria-label',sendLabel);$('chat-send').title=sendLabel;$('chat-stop').hidden=!sessionBusy(chat.session);$('chat-stop').disabled=chat.busy;$('chat-mode').disabled=!active||chat.busy;$('chat-attach').disabled=readonly||chat.busy||chat.uploading>0;$('attach-existing').disabled=readonly||chat.busy;$('chat-attach').querySelector('span').textContent=chat.uploading?'上传中…':'附件';const model=$('chat-model').value.trim(),label=friendlyModel(model)||'输入模型 ID';$('chat-model').title=model?friendlyModel(model)+' · '+model:'输入模型 ID';if(!model)$('chat-send').title='请先选择模型';const chatBackend=chatBackendChoice();const speed=$('chat-service-tier').hidden?'':($('chat-service-tier').value==='fast'?' · Fast（请求）':$('chat-service-tier').value==='default'?' · 标准':'');const effort=chatBackend==='opencode'?(($('chat-variant')?.value||'').trim()||chat.session?.runtime?.variant||state.settings.model_variant||'模型默认'):($('chat-effort').value==='none'?'模型默认':$('chat-effort').value);$('composer-help').textContent=`Enter 发送 · Shift + Enter 换行 · ${label}${['codex','opencode'].includes(chatBackend)?' / '+effort:''}${speed}${active?' · 立即补充沿用当前联网与模型设置；更改设置请排队到下一回合':''}${model?'':' · 请先从模型列表选择或输入模型 ID'}`}
 function sessionBusy(session){if(!session)return false;if(typeof session.busy==='boolean')return session.busy;return ['starting','running','stopping'].includes(session.status)||!!session.turn_id||(session.id===chat.id&&(chat.messages.some(m=>['queued','sending','delivered','streaming'].includes(m.status))||chat.requests.some(r=>r.status==='pending')))}
 function renderSessions(){
  const signature=JSON.stringify([chat.view,chat.id,chat.sessions]);if(renderSessions.signature===signature)return;renderSessions.signature=signature;$('session-view').value=chat.view;
@@ -923,7 +927,10 @@ function activityEntries(){
 }
 function activeActivityEntries(entries){return entries.filter(e=>LIVE_ACTIVITY_STATUSES.includes(e.status))}
 function renderActivities(){
- const entries=activityEntries();const signature=JSON.stringify(entries);if(renderActivities.signature===signature)return;renderActivities.signature=signature;const opened=new Set([...$('activity-list').querySelectorAll('details[open]')].map(e=>e.dataset.activityKey));$('chat-activity').hidden=!entries.length;$('activity-count').textContent=entries.length?String(entries.length):'';
+ const entries=activityEntries();const signature=JSON.stringify(entries);if(renderActivities.signature===signature)return;const wasHidden=$('chat-activity').hidden;renderActivities.signature=signature;const opened=new Set([...$('activity-list').querySelectorAll('details[open]')].map(e=>e.dataset.activityKey));$('chat-activity').hidden=!entries.length;
+ // Fresh appearance (had no activity yet): start collapsed.
+ if(wasHidden&&!$('chat-activity').hidden)$('chat-activity').open=false;
+ $('activity-count').textContent=entries.length?String(entries.length):'';
  const active=activeActivityEntries(entries);$('activity-title').textContent=active.length?`正在进行 · ${active.at(-1).label}`:'工具与子 Agent 活动';
  $('activity-list').innerHTML=entries.map(e=>`<details class="activity-item" data-activity-key="${esc(e.key)}" ${opened.has(e.key)?'open':''}><summary><span class="activity-indicator ${['failed','declined','error'].includes(e.status)?'failed':(LIVE_ACTIVITY_STATUSES.includes(e.status)?'running':'done')}"></span><strong>${esc(e.label)}</strong><span>${esc(chatStates[e.status]||({inProgress:'正在执行',started:'正在执行',done:'已完成',success:'已完成',declined:'未执行',error:'未完成'}[e.status])||e.status)}</span><time>${messageTime(e.created)}</time></summary>${e.detail?`<pre>${esc(e.detail)}</pre>`:''}</details>`).join('');
 }
@@ -1001,20 +1008,81 @@ function homeRecentReports(){
  return rows;
 }
 const scheduledReports=scheduleUI({api,getState:()=>state,refresh:async()=>{await refresh();await refresh();},notice,openReport:id=>{const brief=state.briefs.find(b=>b.id===id);if(brief&&openBrief(brief,{follow:false}))page('report')}});
+function svgLineIcon(name,size=18){
+ const body=ICONS[name]||ICONS.file||'';
+ return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+}
+function hydrateHomeIcons(){
+ document.querySelectorAll('[data-home-icon]').forEach(el=>{
+  if(el.dataset.homeIconReady)return;
+  el.innerHTML=svgLineIcon(el.dataset.homeIcon,18);
+  el.dataset.homeIconReady='1';
+ });
+}
+function homeReportIconMeta(title){
+ const t=String(title||'');
+ if(/周报|月报|行业|定期/.test(t))return {icon:'bars',cat:'cat-business'};
+ if(/竞品|对比|对手/.test(t))return {icon:'chart',cat:'cat-markets'};
+ if(/资料|文献|论文|研究简报/.test(t))return {icon:'book',cat:'cat-academic'};
+ if(/会议|纪要|讨论/.test(t))return {icon:'users',cat:'cat-collab'};
+ if(/合同|协议|公文/.test(t))return {icon:'file',cat:'cat-neutral'};
+ return {icon:'layers',cat:'cat-neutral'};
+}
 function renderHome(){
  scheduledReports.render();
- const box=$('home-recent-list');if(!box||!state)return;
  if($('home-greeting'))$('home-greeting').textContent=homeGreeting();
+ hydrateHomeIcons();
  const rows=homeRecentReports();
- box.innerHTML=rows.length?rows.map(b=>{const st=reportStatus(b),desc=reportDescription(b);const when=dayTime(b.updated||b.created);return `<button type="button" class="home-report" data-home-report="${esc(b.id)}"><span class="home-report-icon" aria-hidden="true">▤</span><span class="home-report-body"><strong>${esc(parse(b.detail).title||'简报')}</strong>${desc?`<small>${esc(desc)}</small>`:''}</span><span class="home-report-meta"><time>${esc(when)}</time><span class="chip ${st.cls}">${esc(st.label)}</span></span></button>`}).join(''):'<p class="help">还没有报告。生成后会显示在这里。</p>';
- box.querySelectorAll('[data-home-report]').forEach(el=>el.onclick=()=>{const b=state.briefs.find(x=>x.id===el.dataset.homeReport);if(b&&openBrief(b,{follow:false}))page('report')});
+ const jobs=(state.jobs||[]).filter(j=>['queued','running'].includes(j.status));
+ // Reference layout: recent reports stay in the main column; rail is for running jobs only.
+ const mainRecent=$('home-block-recent');
+ if(mainRecent)mainRecent.hidden=!rows.length;
+ const mainBox=$('home-recent-list');
+ if(mainBox&&rows.length){
+  mainBox.innerHTML=rows.map(homeReportRowHTML).join('');
+  mainBox.querySelectorAll('[data-home-report]').forEach(el=>el.onclick=()=>openHomeReport(el.dataset.homeReport));
+ }
+ const rail=$('home-rail');
+ const showRail=!!rail&&jobs.length>0;
+ const chatPage=$('chat');
+ if(chatPage)chatPage.classList.toggle('has-home-rail',showRail);
+ if(rail)rail.hidden=!showRail;
+ const jobBlock=$('home-rail-jobs'),jobList=$('home-rail-job-list');
+ if(jobBlock&&jobList){
+  jobBlock.hidden=!jobs.length;
+  jobList.innerHTML=jobs.map(j=>{
+   const label=bannerTitle(j)||taskLabel(j.kind)||j.kind;
+   const st=j.status==='queued'?'排队中':'执行中';
+   return `<article class="home-rail-job" data-job-id="${esc(j.id)}"><strong>${esc(label)}</strong><small>${esc(st)} · ${esc(dayTime(j.created))}</small><button type="button" class="outline" data-rail-open-job="${esc(j.id)}">打开任务</button></article>`;
+  }).join('');
+  jobList.querySelectorAll('[data-rail-open-job]').forEach(b=>b.onclick=()=>openTask(jobFor(b.dataset.railOpenJob)));
+ }
+ // Keep rail recent in sync only when rail is shown with reports too (jobs-only rail may omit recent)
+ const recentBlock=$('home-rail-recent'),recentBox=$('home-rail-recent-list');
+ if(recentBlock&&recentBox){
+  recentBlock.hidden=true;
+  recentBox.innerHTML='';
+ }
+}
+function homeReportRowHTML(b){
+ const st=reportStatus(b),desc=reportDescription(b);
+ const when=dayTime(b.updated||b.created);
+ const meta=homeReportIconMeta(parse(b.detail).title||b.detail);
+ return `<button type="button" class="home-report" data-home-report="${esc(b.id)}"><span class="home-report-icon ${meta.cat}" aria-hidden="true">${svgLineIcon(meta.icon,16)}</span><span class="home-report-body"><strong>${esc(parse(b.detail).title||'简报')}</strong>${desc?`<small>${esc(desc)}</small>`:''}</span><span class="home-report-meta"><time>${esc(when)}</time><span class="chip ${st.cls}">${esc(st.label)}</span></span></button>`;
+}
+function openHomeReport(id){
+ const b=(state.briefs||[]).find(x=>x.id===id);
+ if(b&&openBrief(b,{follow:false}))page('report');
 }
 let autoOpenedActivityTurn=null;
 function autoOpenActivity(){
- const activity=$('chat-activity');if(!activity||activity.hidden)return;
+ // Each new streaming turn starts with the activity panel collapsed (DESIGN default).
+ const activity=$('chat-activity');if(!activity)return;
  const streaming=chat.messages.find(m=>['streaming','sending'].includes(m.status));if(!streaming)return;
- const turn=streaming.turn_id||streaming.id;if(autoOpenedActivityTurn===turn)return;
- autoOpenedActivityTurn=turn;if(!activity.open)activity.open=true;
+ const turn=streaming.turn_id||streaming.id;
+ if(autoOpenedActivityTurn===turn)return;
+ autoOpenedActivityTurn=turn;
+ activity.open=false;
 }
 function renderChat(){
  const empty=chat.home||(chat.messages.length===0&&!chatActive());
@@ -1073,7 +1141,7 @@ $('chat-input').onkeydown=e=>{
  if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();if(!$('chat-send').disabled)$('chat-form').requestSubmit()}
 };
 $('chat-mode').onchange=updateComposer;
-for(const id of ['chat-model','chat-effort','chat-model-provider','chat-service-tier'])$(id).onchange=()=>{rememberDraft();chatError();updateComposer()};
+for(const id of ['chat-model','chat-effort','chat-variant','chat-model-provider','chat-service-tier'])$(id).onchange=()=>{rememberDraft();chatError();updateComposer()};
 $('chat-stop').onclick=async()=>{if(!chat.id||chat.busy)return;chat.busy=true;updateComposer();try{await api('harness/cancel',{session_id:chat.id});await pollChat(true)}catch(e){chatError(e.message)}finally{chat.busy=false;updateComposer()}};
 $('chat-attach').onclick=()=>$('chat-upload').click();
 $('attach-existing').onclick=()=>{const show=$('existing-sources').hidden;$('existing-sources').hidden=!show;$('attach-existing').setAttribute('aria-expanded',String(show));renderAttachments()};
@@ -1226,7 +1294,7 @@ function renderRequests(){
 function serviceTierOptions(value){return [['','速度：沿用本机'],['default','速度：标准'],['fast','速度：Fast']].map(([id,label])=>`<option value="${id}" ${id===(value||'')?'selected':''}>${label}</option>`).join('')}
 function renderRoleModels(){
  const roles=[['evaluator','Evaluator','给产物评分；比较候选产物，判断是否改善'],['maintainer','Wiki Maintainer','将反馈和执行经验整理成 Wiki'],['proposer','Skill Proposer','根据 Wiki 提出或改进 Skill']];
-  $('role-model-options').innerHTML=roles.map(([role,name,label])=>{const configured=state.settings.role_models||{},value=(role==='evaluator'?(configured.evaluator||configured.scorer||configured.assessor):configured[role])||{},inherits=!value.model,effort=effortValue(inherits?state.settings:value,'reasoning_effort');return `<div class="role-model-row"><span><b>${name}</b><small>${label}</small></span><div class="role-runtime-fields"><div class="role-model-pair"><input id="role-${role}-model" aria-label="${name} 模型 ID" data-role-model="${role}" list="model-suggestions" autocomplete="off" spellcheck="false" value="${esc(value.model||'')}" placeholder="留空继承主链模型" title="${esc(value.model?friendlyModel(value.model):'继承主链模型')}"><select id="role-${role}-effort" class="role-effort-select" aria-label="${name} 推理档位" data-role-effort="${role}" ${inherits?'disabled':''}>${[...new Set(['none','low','medium','high','xhigh','max',effort])].map(e=>`<option value="${e}" ${e===effort?'selected':''}>${e==='none'?'模型默认':e}</option>`).join('')}</select><select id="role-${role}-service-tier" aria-label="${name} 速度" hidden ${inherits?'disabled':''}>${serviceTierOptions(value.service_tier)}</select></div><label class="role-provider-field"><span>Provider</span><input id="role-${role}-provider" aria-label="${name} Codex provider" value="${esc(value.model_provider||'')}" placeholder="${inherits?'继承主链全部配置':'留空沿用本机 Codex 配置'}" autocomplete="off" spellcheck="false" ${inherits?'disabled':''}></label><label class="role-variant-field" hidden><span>Variant</span><input id="role-${role}-variant" aria-label="${name} Opencode variant" data-role-variant="${role}" value="${esc(value.model_variant||'')}" placeholder="如 high / max，留空默认" autocomplete="off" spellcheck="false" ${inherits?'disabled':''}></label></div></div>`}).join('');
+  $('role-model-options').innerHTML=roles.map(([role,name,label])=>{const configured=state.settings.role_models||{},value=(role==='evaluator'?(configured.evaluator||configured.scorer||configured.assessor):configured[role])||{},inherits=!value.model,effort=effortValue(inherits?state.settings:value,'reasoning_effort');return `<div class="role-model-row"><span><b>${name}</b><small>${label}</small></span><div class="role-runtime-fields"><div class="role-model-pair"><input id="role-${role}-model" aria-label="${name} 模型 ID" data-role-model="${role}" list="model-suggestions" autocomplete="off" spellcheck="false" value="${esc(value.model||'')}" placeholder="留空继承主链模型" title="${esc(value.model?friendlyModel(value.model):'继承主链模型')}"><select id="role-${role}-effort" class="role-effort-select" aria-label="${name} 推理档位" data-role-effort="${role}" ${inherits?'disabled':''}>${[...new Set(['none','low','medium','high','xhigh','max',effort])].map(e=>`<option value="${e}" ${e===effort?'selected':''}>${e==='none'?'模型默认':e}</option>`).join('')}</select><select id="role-${role}-service-tier" aria-label="${name} 速度" hidden ${inherits?'disabled':''}>${serviceTierOptions(value.service_tier)}</select></div><label class="role-provider-field"><span>Provider</span><input id="role-${role}-provider" aria-label="${name} Codex provider" value="${esc(value.model_provider||'')}" placeholder="${inherits?'继承主链全部配置':'留空沿用本机 Codex 配置'}" autocomplete="off" spellcheck="false" ${inherits?'disabled':''}></label><label class="role-variant-field" hidden><span>推理 effort</span><input id="role-${role}-variant" aria-label="${name} 推理档位（Opencode variant）" data-role-variant="${role}" list="effort-suggestions" value="${esc(value.model_variant||'')}" placeholder="模型默认，如 high / max" autocomplete="off" spellcheck="false" ${inherits?'disabled':''}></label></div></div>`}).join('');
   $('role-model-options').querySelectorAll('input,select').forEach(input=>input.onchange=saveRoleModels);renderBackend();
  setupModelPickers($('role-model-options'));
 }
@@ -1325,12 +1393,27 @@ $('settings-open').onclick=showSettings;$('settings-close').onclick=()=>page('ch
  const link=document.createElement('button');link.type='button';link.className='outline feedback-settings';link.textContent='学习设置';link.onclick=showSettings;$('learn-now').before(link);
 }
 
-// One width axis for reading and composing; existing controls remain mounted.
+// DESIGN §7.2 default row: 附件 | 模型 | 参数 … 发送split. Do not park model in send-controls.
 {
- const options=document.querySelector('.composer-options'),trailing=document.querySelector('.send-controls');
- trailing.prepend($('chat-model'),$('chat-effort'),$('chat-service-tier'));
- const help=$('composer-help');$('chat-form').after(help);
- const settingsButton=$('settings-open');settingsButton.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1 1-3Z"/><circle cx="12" cy="12" r="3"/></svg><span>设置</span>';
+ const options=document.querySelector('.composer-options');
+ const attach=$('chat-attach');
+ const model=$('chat-model');
+ if(options&&attach&&model&&model.parentElement!==options){
+  attach.after(model);
+ }
+ const panel=$('composer-params-panel');
+ const grid=panel?.querySelector('.composer-params-grid');
+ if(grid){
+  for(const id of ['chat-effort','chat-service-tier']){
+   const el=$(id);
+   if(el&&el.parentElement!==grid)grid.append(el);
+  }
+ }
+ const help=$('composer-help');if(help&&help.parentElement!==$('chat-form').parentElement)$('chat-form').after(help);
+ const settingsButton=$('settings-open');
+ if(settingsButton&&!settingsButton.querySelector('span')){
+  settingsButton.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1 1-3Z"/><circle cx="12" cy="12" r="3"/></svg><span>设置</span>';
+ }
 }
 
 function autoSizeChatInput(){const input=$('chat-input');input.style.height='auto';input.style.height=Math.min(210,Math.max(36,input.scrollHeight))+'px'}
@@ -2108,7 +2191,7 @@ document.querySelectorAll('#report-tabs [data-report-tab]').forEach(b=>b.onclick
 document.querySelectorAll('#report-tabs [data-report-view]').forEach(b=>b.onclick=()=>setReportView(b.dataset.reportView));
 if($('report-panel-toggle'))$('report-panel-toggle').onclick=toggleReportPanel;
 document.querySelectorAll('.menu-wrap').forEach(wrap=>{const toggle=wrap.querySelector('button[aria-haspopup="menu"]'),pop=wrap.querySelector('.popover');if(!toggle||!pop)return;toggle.onclick=e=>{e.stopPropagation();const open=pop.hidden;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'));pop.hidden=!open;toggle.setAttribute('aria-expanded',String(open))}});
-document.addEventListener('click',e=>{if(e.target.closest?.('.export-template-row'))return;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'))});
+document.addEventListener('click',e=>{if(e.target.closest?.('.export-template-row')||e.target.closest?.('.composer-params'))return;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'))});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'))}});
 if($('assistant-form'))$('assistant-form').onsubmit=e=>{e.preventDefault();sendReportQuestion($('assistant-input').value)};
 document.querySelectorAll('[data-assistant-prompt]').forEach(b=>b.onclick=()=>{const input=$('assistant-input');if(input){input.value=b.dataset.assistantPrompt;input.focus()}});
@@ -2245,25 +2328,33 @@ async function openSourceDrawer(id,usage){
 }
 function closeSourceDrawer(){const d=$('source-drawer'),b=$('source-drawer-backdrop');if(d)d.hidden=true;if(b)b.hidden=true}
 const GENRE_ORDER=['商业报告','券商研报','学术论文','会议纪要','合同','上市公司年报','政府公文','通用报告'];
+// Categories name a colour from the token palette; the tiles take it from
+// the .cat-* class, so the hex lives in tokens.css only.
 const GENRE_META={
- '商业报告':{desc:'适用于商业分析、市场研究等。',icon:'briefcase',tile:'#E8F1FD',color:'#1565C0'},
- '券商研报':{desc:'适用于证券研究、行业分析。',icon:'chart',tile:'#FDECEA',color:'#C62828'},
- '学术论文':{desc:'适用于学术研究、论文写作。',icon:'book',tile:'#E6F2EC',color:'#006838'},
- '会议纪要':{desc:'适用于会议记录、讨论要点。',icon:'users',tile:'#EFEAFD',color:'#6741D9'},
- '合同':{desc:'适用于各类合同、协议。',icon:'file',tile:'#E8F1FD',color:'#1565C0'},
- '上市公司年报':{desc:'适用于上市公司年度报告。',icon:'bars',tile:'#E8F1FD',color:'#1565C0'},
- '政府公文':{desc:'适用于政府机关公文、政策文件；红头与字体按 GB/T 9704 固定。',icon:'landmark',tile:'#FDECEA',color:'#C8102E'},
- '通用报告':{desc:'适用于各类通用型报告。',icon:'layers',tile:'#EEF0EE',color:'#5B6360'},
+ '商业报告':{desc:'适用于商业分析、市场研究等。',icon:'briefcase',cat:'cat-business'},
+ '券商研报':{desc:'适用于证券研究、行业分析。',icon:'chart',cat:'cat-markets'},
+ '学术论文':{desc:'适用于学术研究、论文写作。',icon:'book',cat:'cat-academic'},
+ '会议纪要':{desc:'适用于会议记录、讨论要点。',icon:'users',cat:'cat-collab'},
+ '合同':{desc:'适用于各类合同、协议。',icon:'file',cat:'cat-business'},
+ '上市公司年报':{desc:'适用于上市公司年度报告。',icon:'bars',cat:'cat-business'},
+ '政府公文':{desc:'适用于政府机关公文、政策文件；红头与字体按 GB/T 9704 固定。',icon:'landmark',cat:'cat-markets'},
+ '通用报告':{desc:'适用于各类通用型报告。',icon:'layers',cat:'cat-neutral'},
 };
 const ICONS={
  briefcase:'<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>',
- chart:'<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
+ // Filled rounded bars matching home suggestion tiles (DESIGN §5 / settings icon set)
+ chart:'<rect x="4" y="12" width="4" height="8" rx="1.2"/><rect x="10" y="6" width="4" height="14" rx="1.2"/><rect x="16" y="9" width="4" height="11" rx="1.2"/>',
  book:'<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>',
  users:'<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
  file:'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>',
- bars:'<line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/>',
+ bars:'<rect x="4" y="12" width="4" height="8" rx="1.2"/><rect x="10" y="6" width="4" height="14" rx="1.2"/><rect x="16" y="9" width="4" height="11" rx="1.2"/>',
+ // Comparison: two column pairs for competitor benchmarking
+ compare:'<rect x="3" y="10" width="3.5" height="10" rx="1"/><rect x="7.5" y="6" width="3.5" height="14" rx="1"/><rect x="13" y="13" width="3.5" height="7" rx="1"/><rect x="17.5" y="8" width="3.5" height="12" rx="1"/>',
  landmark:'<line x1="3" y1="22" x2="21" y2="22"/><line x1="5" y1="22" x2="5" y2="11"/><line x1="9" y1="22" x2="9" y2="11"/><line x1="15" y1="22" x2="15" y2="11"/><line x1="19" y1="22" x2="19" y2="11"/><path d="M2 11L12 3l10 8z"/>',
  layers:'<polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/>',
+ paperclip:'<path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
+ // Two buildings separated by a slash — competitor / dual-entity compare (Downloads icon ref)
+ buildingsSlash:'<path d="M4 21V9.5L9 6v15"/><path d="M4 21h7"/><line x1="6.2" y1="11" x2="7.8" y2="11"/><line x1="6.2" y1="14" x2="7.8" y2="14"/><line x1="6.2" y1="17" x2="7.8" y2="17"/><line x1="13.2" y1="5.5" x2="17.8" y2="18.5"/><path d="M14 21v-9.5L18.5 8.5V21"/><path d="M14 21h7"/><line x1="16" y1="14" x2="17.5" y2="14"/><line x1="16" y1="17" x2="17.5" y2="17"/>',
 };
 const THEME_COLORS={'品牌绿':'#006838','极简蓝':'#2563EB','珊瑚红':'#C62828','石墨黑':'#1E2320','典雅灰':'#8A9089'};
 const THEME_ORDER=Object.keys(THEME_COLORS);
@@ -2288,13 +2379,13 @@ function renderTemplatesPage(){
  }
  const fallback=(state.settings||{}).default_template_id;
  const cards=GENRE_ORDER.filter(g=>genres[g]).map(genre=>{
-  const meta=GENRE_META[genre]||{desc:'',icon:'file',tile:'#EEF0EE',color:'#5B6360'};
+  const meta=GENRE_META[genre]||{desc:'',icon:'file',cat:'cat-neutral'};
   const items=genres[genre];
   const chosen=templatePick&&templatePick.genre===genre?templatePick.theme:items[0].theme;
   const selected=templatePick&&templatePick.genre===genre;
   const dots=items.map(it=>`<button type="button" class="color-dot${chosen===it.theme?' selected':''}" style="background:${THEME_COLORS[it.theme]||'#999'};color:${THEME_COLORS[it.theme]||'#999'}" data-genre="${esc(genre)}" data-theme="${esc(it.theme)}" data-id="${esc(it.id)}" title="${esc(genre+' · '+it.theme)}" aria-label="${esc(genre+' '+it.theme)}"></button>`).join('');
   return `<div class="tpl-card${selected?' selected':''}" data-genre="${esc(genre)}"><span class="tpl-check">✓</span>`
-   +`<span class="tpl-icon" style="background:${meta.tile};color:${meta.color}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[meta.icon]||''}</svg></span>`
+   +`<span class="tpl-icon ${meta.cat}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[meta.icon]||''}</svg></span>`
    +`<span class="tpl-name">${esc(genre)}</span><span class="tpl-desc" title="${esc(meta.desc)}">${esc(meta.desc)}</span>`
    +`<span class="tpl-dots"><span class="label">配色</span>${dots}</span></div>`;
  }).join('');
@@ -2494,7 +2585,8 @@ function syncCompactReportControls(){
  const reports=$('max-reports');if(reports&&document.activeElement!==reports&&!reports.dataset.editing)reports.value=state.settings.max_reports||4;
 }
 function mountCompactReportControls(){
- const form=$('chat-input').closest('form');form.append(compactReportControls('chat'));
+ const paramsPanel=$('composer-params-panel')||$('chat-input').closest('form');
+ paramsPanel.append(compactReportControls('chat'));
  const setup=compactReportControls('setup');const tier=$('research-tier').closest('label');tier.before(setup);tier.classList.add('compact-legacy-option');tier.hidden=true;
  if(tier.nextElementSibling?.classList.contains('help'))tier.nextElementSibling.hidden=true;
  const fact=$('requirements').elements.fact_check.closest('label');fact.classList.add('compact-legacy-option');fact.hidden=true;if(fact.nextElementSibling?.classList.contains('help'))fact.nextElementSibling.hidden=true;
@@ -2505,3 +2597,12 @@ function mountCompactReportControls(){
  syncCompactReportControls();
 }
 mountCompactReportControls();
+// Params popover: progressive disclosure (DESIGN §6.5 §7.2).
+(function wireComposerParams(){
+ const trigger=$('composer-params'),panel=$('composer-params-panel');
+ if(!trigger||!panel)return;
+ const close=()=>{panel.hidden=true;trigger.setAttribute('aria-expanded','false')};
+ trigger.onclick=e=>{e.stopPropagation();const open=panel.hidden;document.querySelectorAll('.popover').forEach(p=>{p.hidden=true});panel.hidden=!open;trigger.setAttribute('aria-expanded',String(open))};
+ document.addEventListener('click',e=>{if(!panel.hidden&&!e.target.closest('.composer-params'))close()});
+ document.addEventListener('keydown',e=>{if(e.key==='Escape')close()});
+})();
