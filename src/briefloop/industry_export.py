@@ -189,7 +189,7 @@ def populate_table_of_contents(doc):
     headings = []
     for paragraph in doc.paragraphs:
         anchors = paragraph._p.xpath('./w:bookmarkStart')
-        if anchors and paragraph.text.strip():
+        if anchors and paragraph.text.strip() and not anchors[0].get(qn('w:name'), '').startswith('briefloop_source_'):
             headings.append((anchors[0].get(qn('w:name')), paragraph.text))
     for field in fields:
         # WPS does not display hyperlink results nested inside fldSimple TOCs.
