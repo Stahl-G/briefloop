@@ -36,8 +36,9 @@ test('renderHome shows main recent when rows exist and rail for running jobs',()
   assert.match(app,/home-rail-jobs/);
   assert.match(app,/home-rail-recent-list/);
   const renderHome=app.slice(app.indexOf('function renderHome()'),app.indexOf('function homeReportRowHTML()')) || app.slice(app.indexOf('function renderHome()'),app.indexOf('let autoOpenedActivityTurn'));
-  assert.match(renderHome,/has-home-rail/);
-  assert.match(renderHome,/home-rail-jobs/);
+  const rail=app.slice(app.indexOf('function renderHomeTasks()'),app.indexOf('function homeReportRowHTML('));
+  assert.match(rail,/has-home-rail/);
+  assert.match(rail,/home-rail-jobs/);
   assert.match(renderHome,/home-block-recent/);
   assert.match(renderHome,/mainBox.innerHTML=rows.map\(homeReportRowHTML\)/);
 });

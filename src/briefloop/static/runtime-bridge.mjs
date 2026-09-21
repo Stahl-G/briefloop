@@ -422,11 +422,10 @@ async function runZcode(p, state, launch2, terminate2, emit2) {
   if (p.model && p.model !== "default") throw Error("ZCode \u65E0\u754C\u9762\u8FD0\u884C\u4E0D\u63A5\u53D7\u6A21\u578B\u53C2\u6570\uFF1A\u53EA\u80FD\u4F7F\u7528\u5B83\u81EA\u5DF1\u914D\u7F6E\u7684\u6A21\u578B\uFF0C\u8BF7\u5728 ZCode \u4E2D\u5207\u6362\u540E\u91CD\u8BD5");
   if (p.prompt.length > PROMPT_LIMIT) throw Error("\u63D0\u793A\u8BCD\u8D85\u51FA ZCode \u547D\u4EE4\u884C\u53EF\u4F20\u957F\u5EA6");
   const args = ["--prompt", p.prompt, "--cwd", p.cwd, "--output-format", "stream-json", "--no-color"];
-  const mode = p.host_options?.mode || "native";
-  if (mode !== "native") {
-    if (!MODES.includes(mode)) throw Error("Invalid ZCode permission mode");
-    args.push("--mode", mode);
-  }
+  const selected = p.host_options?.mode;
+  const mode = !selected || selected === "native" ? "build" : selected;
+  if (!MODES.includes(mode)) throw Error("Invalid ZCode permission mode");
+  args.push("--mode", mode);
   if (p.session_id) args.push("--resume", p.session_id);
   for (const image of p.images || []) {
     const file = path2.resolve(typeof image === "string" ? image : image.path);

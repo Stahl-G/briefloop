@@ -37,10 +37,13 @@ def test_invalid_modes_and_symlink_never_change_native_settings(tmp_path, monkey
 def test_zcode_offers_its_own_modes_without_claiming_interactive_approval():
     """ZCode headless has no permission channel: a blocked action just fails."""
     found=permissions.catalog('zcode',Path('/tmp'),None)
-    assert [m['id'] for m in found['modes']]==['native','build','edit','plan','yolo']
+    assert [m['id'] for m in found['modes']]==['build','edit','plan','yolo']
+    assert found['default_mode']=='build'
     assert found['interactive'] is False
     assert '不提供逐项授权通道' in found['note']
     assert permissions.validate_options('zcode',{'mode':'plan'})=={'mode':'plan'}
+    assert permissions.validate_options('zcode',{})=={'mode':'build'}
+    assert permissions.validate_options('zcode',{'mode':'native'})=={'mode':'build'}
 
 
 def test_pi_usage_includes_cached_prompt_without_double_counting_other_hosts():

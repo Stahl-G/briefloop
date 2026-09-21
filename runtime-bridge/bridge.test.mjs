@@ -172,6 +172,16 @@ const zcodeFake=(tail)=>`const args=process.argv.slice(2);const flag=n=>{const i
 if(flag('--output-format')!=='stream-json')process.exit(2);
 const sid='sess_fixture';const ev=(type,payload)=>process.stdout.write(JSON.stringify({type,payload,sessionId:sid,seq:1})+'\\n');
 ${tail}`;
+test('ZCode always sends build by default and yolo only after an explicit selection',async t=>{
+ for(const options of [{},{mode:'native'},{mode:'yolo'}]){
+  const expected=options.mode==='yolo'?'yolo':'build';
+  const b=bridge(t),f=fixture(t,zcodeFake(`
+   if(flag('--mode')!==${JSON.stringify(expected)})process.exit(2);
+   ev('turn.completed',{response:'OK',resultType:'success'});`));
+  b.send(1,'start',{...f,runtime_id:'zcode',execution_id:'mode',prompt:'x',host_options:options,permission:'runtime-native',allow_web:null});
+  assert.equal((await b.wait(x=>x.params?.kind==='end')).params.status,'completed');
+ }
+});
 test('ZCode maps its session stream and keeps reasoning out of the answer',async t=>{
  const b=bridge(t),f=fixture(t,zcodeFake(`
  if(flag('--prompt')!=='continue'||flag('--mode')!=='build'||flag('--resume')!=='sess_saved')process.exit(2);

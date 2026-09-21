@@ -59,7 +59,7 @@ def catalog(backend,workspace,bridge):
     elif backend=='claude':
         result.update(kind='host',modes=[{'id':'native','name':'沿用宿主设置，接收授权请求'},{'id':'manual','name':'需要时询问'},{'id':'acceptEdits','name':'自动允许文件编辑'},{'id':'dontAsk','name':'拒绝需要询问的操作'},{'id':'plan','name':'规划模式'}],note='使用 Claude 的原生权限模式。已有拒绝规则继续有效；规划模式不是操作系统级只读隔离。')
     elif backend=='zcode':
-        result.update(kind='host',modes=[{'id':'native','name':'沿用 ZCode 无界面默认'},{'id':'build','name':'构建模式'},{'id':'edit','name':'编辑模式'},{'id':'plan','name':'规划模式'},{'id':'yolo','name':'不再询问'}],note='使用 ZCode 的原生权限模式，应用于下一回合。ZCode 无界面运行不提供逐项授权通道：被模式拦下的操作直接失败，规划模式也不是操作系统级只读隔离。')
+        result.update(kind='host',default_mode='build',modes=[{'id':'build','name':'构建模式（默认）'},{'id':'edit','name':'编辑模式'},{'id':'plan','name':'规划模式'},{'id':'yolo','name':'不再询问（yolo）'}],note='默认明确使用构建模式；只有选择“不再询问”才启用 yolo。下一回合生效。ZCode 无界面运行不提供逐项授权通道：被模式拦下的操作直接失败，规划模式也不是操作系统级只读隔离。')
     elif backend=='antigravity':
         with _lock:
             path,raw,data,permissions=_read()
@@ -111,6 +111,7 @@ def validate_options(backend,options):
     if options is None:return {}
     if not isinstance(options,dict) or set(options)-{'mode'}:raise ValueError('无效宿主权限选项')
     mode=options.get('mode','native')
+    if backend=='zcode' and mode=='native':mode='build'
     if not isinstance(mode,str) or not mode or len(mode)>100:raise ValueError('无效权限模式')
     allowed={'pi':{'native','read','none'},'claude':{'native','manual','acceptEdits','dontAsk','plan'},'antigravity':{'native'},'zcode':{'native','build','edit','plan','yolo'}}
     if backend in allowed and mode not in allowed[backend]:raise ValueError('此宿主不支持该权限模式')

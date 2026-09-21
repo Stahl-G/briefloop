@@ -38,13 +38,13 @@ export async function runZcode(p:any, state:any, launch:any, terminate:any, emit
  if (p.model && p.model !== 'default') throw Error('ZCode 无界面运行不接受模型参数：只能使用它自己配置的模型，请在 ZCode 中切换后重试');
  if (p.prompt.length > PROMPT_LIMIT) throw Error('提示词超出 ZCode 命令行可传长度');
  const args = ['--prompt', p.prompt, '--cwd', p.cwd, '--output-format', 'stream-json', '--no-color'];
- const mode = p.host_options?.mode || 'native';
- // 'native' keeps ZCode's own headless default; the flag is only added for an
- // explicit choice, so this bridge never silently loosens the host's setting.
- if (mode !== 'native') {
-  if (!MODES.includes(mode)) throw Error('Invalid ZCode permission mode');
-  args.push('--mode', mode);
- }
+ // ZCode --prompt defaults to yolo, regardless of the interactive setting.
+ // Preserve legacy 'native' records as the ordinary build mode; yolo requires
+ // an explicit choice in BriefLoop and is never inferred from a missing flag.
+ const selected = p.host_options?.mode;
+ const mode = !selected || selected === 'native' ? 'build' : selected;
+ if (!MODES.includes(mode)) throw Error('Invalid ZCode permission mode');
+ args.push('--mode', mode);
  if (p.session_id) args.push('--resume', p.session_id);
  for (const image of p.images || []) {
   const file = path.resolve(typeof image === 'string' ? image : image.path);

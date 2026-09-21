@@ -40,3 +40,8 @@ def test_steps_are_named_but_are_not_reported_as_tasks():
     """company_review is a stage inside generation, not a task of its own."""
     assert LABELS['company_review'] and 'company_review' not in REPORTED
     assert 'company_review' not in reported_labels()
+
+
+def test_naming_an_internal_step_does_not_make_it_a_user_task(monkeypatch):
+    monkeypatch.setitem(LABELS, 'internal_probe', '内部探测')
+    assert 'internal_probe' not in reported_labels()

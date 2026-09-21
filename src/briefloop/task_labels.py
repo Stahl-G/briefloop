@@ -28,7 +28,9 @@ LABELS = {
 }
 
 STEPS = ('company_review',)
-REPORTED = tuple(kind for kind in LABELS if kind not in STEPS)
+REPORTED = ('generate', 'assess', 'review', 'revise', 'fact_check', 'learn',
+            'export_docx', 'release', 'audit_bundle', 'source_refresh',
+            'prepare_template')
 
 
 def label(kind, default='报告任务'):
