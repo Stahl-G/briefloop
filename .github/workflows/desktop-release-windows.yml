@@ -18,12 +18,18 @@ permissions:
   contents: read
 jobs:
   windows:
+    # GitHub requires repository write access even to read an unpublished draft.
+    # This manual job only downloads the frozen wheel; it never publishes assets.
+    permissions:
+      contents: write
     runs-on: windows-latest
     timeout-minutes: 25
     defaults:
       run:
         shell: pwsh
     steps:
+      - name: Preserve canonical source bytes for shared-wheel verification
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_sha }}
@@ -60,7 +66,9 @@ jobs:
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
           npm ci --prefix desktop/electron
-          npm test --prefix desktop/electron
+          # Exercise Windows ownership, packaging and native installer gates.
+          # Mac DMG/range-download fixtures run on macOS, not the NSIS path.
+          node --test desktop/electron/test/environment.test.cjs desktop/electron/test/service.test.cjs desktop/electron/test/windows-asar.test.cjs desktop/electron/test/workspace-switch.test.cjs desktop/electron/test/pdf-export.test.cjs desktop/electron/test/updater-integration.test.cjs
           node desktop/electron/scripts/build-windows.cjs
       - name: Verify packaged executable and shared backend
         run: |
