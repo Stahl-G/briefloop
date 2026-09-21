@@ -312,7 +312,7 @@ def tool_specs():
                           for e in exc.errors(include_input=False, include_url=False)[:8]]
                 raise ValueError(dump({'code': 'invalid_fields', 'errors': errors,
                                       'next': '只修这些字段；已保存正文不受影响。'})) from None
-        result.append({'name': name, 'label': description.split('。')[0], 'description': description,
+        result.append({'name': name, 'label': description.split('。')[0], 'description': description + ' 同一稿件每轮只调用一个写入工具；收到新revision后再发下一次写入，不在同一轮并列提交。',
                        'guide': description, 'sequential': True,
                        'parameters': model.model_json_schema(), 'handler': handler})
     return result
@@ -320,6 +320,7 @@ def tool_specs():
 
 GUIDE = '''写作协议 writer_input_v1：正文使用 Markdown，普通表格使用管道表格，引用使用 [@src_ID]，图表使用已登记的 briefloop-figure:fig_ID。不要输出 editor_document、tableRow 或完整 BriefDraft JSON。
 短稿一次 write_report(title, markdown)；长稿 write_sections 后 assemble_report。先保存正文，再分别通过 update_citations、update_number_bindings、update_temporal_claims 登记必要的引用定位、重要数字和日期；不因拆开提交而遗漏证据。来源归属、口径、采用条件要求不变。
+同一稿件的写入有先后依赖：每轮只发一个写入调用，等返回新 revision 后再发下一个。不要把多个证据更新放在同一轮共用 base_revision；执行器串行执行也不会自动替换你传入的旧版本。
 取得 revision 后 check_draft 检查；局部文字用 patch_report_text，结构改动先 read_draft(field=body) 取得 block_keys，再 replace_report_blocks。证据修改只交变更记录；每次变更使用最新 base_revision，再检查新 revision。只修明确问题，不反复重交全文。submit_draft 提交已检查的最新 revision，结束写作，不自行评分。
 已有人工富文本不得整稿降级；保留未修改节点、图片和样式。工具若提示高级排版需保留，改用精确文字修改。原始输入已保存不代表接纳或核实。'''
 
