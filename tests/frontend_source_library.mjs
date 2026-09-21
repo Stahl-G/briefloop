@@ -1,3 +1,4 @@
+import * as time from '../frontend/time.js';
 // A failed source keeps no usable original: the detail drawer must not show a
 // dead "打开原件" link. The same control must follow original_url when present and
 // open the page URL for web sources.
@@ -16,7 +17,7 @@ function makeContext(record,response){
  const nodes=new Map();const $=id=>{if(!nodes.has(id))nodes.set(id,makeNode());return nodes.get(id)};
  const overview={innerHTML:'',querySelectorAll:()=>[]},usage={innerHTML:'',querySelectorAll:()=>[]};
  const document={querySelector:sel=>sel.includes('"overview"')?overview:sel.includes('"usage"')?usage:null,createElement:()=>({className:'',src:'',alt:'',append(){}})};
- const c=vm.createContext({$:$,esc:String,parse:JSON.parse,document,URL,Map,
+ const c=vm.createContext({...time,$:$,esc:String,parse:JSON.parse,document,URL,Map,
   state:{sources:[record],runs:[],briefs:[]},
   api:async()=>response,action:async fn=>fn(),notice:()=>{},openBrief:()=>{},page:()=>{}});
  vm.runInContext(code,c);return c;

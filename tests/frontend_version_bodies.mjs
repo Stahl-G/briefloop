@@ -1,3 +1,4 @@
+import * as time from '../frontend/time.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -27,7 +28,7 @@ function fixture(load){
  const current={id:'v3',run_id:'r',author:'user',created:'2026-09-15T10:00:00Z',markdown:'三',editor_document:doc('三')};
  // Polled state: summaries only, the open draft included.
  const summaries=['v3','v2','v1'].map((id,i)=>({id,run_id:'r',author:i===2?'agent':'user',hash:'h'+id,created:'2026-09-15T0'+(9-i)+':00:00Z',excerpt:'…'}));
- const ctx=vm.createContext({
+ const ctx=vm.createContext({...time,
   $:el,esc:s=>String(s),notice:(...args)=>notices.push(args),parse:s=>JSON.parse(s||'{}'),
   state:{briefs:summaries},current,savedVersion:async()=>current.id,
   action:async fn=>{try{await fn()}catch(e){notices.push([e.message,true])}},

@@ -46,3 +46,16 @@ emptyContext.renderReports();assert.doesNotMatch(el('reports-list').innerHTML,/é
 // instead of escaping markup â€” and every card silently renders %u65E5%u62A5.
 assert.doesNotMatch(taskProgressCard({...job,status:'running'},{...p,title:'<b>x</b>'}),/%u|%3C/);
 assert.match(taskProgressCard({...job,status:'running'},{...p,title:'<b>x</b>'}),/&lt;b&gt;/);
+
+// Five of the ten date call sites passed no locale, so a Chinese interface
+// printed "9/21/2026, 5:40:05 PM" on an en-US browser. Every format names it.
+{
+ const t=await import('../frontend/time.js');
+ const when='2026-09-21T10:40:05Z';
+ for(const [name,fn] of Object.entries(t)){
+  const out=fn(when,'UTC');
+  assert.doesNotMatch(out,/AM|PM|[A-Za-z]/, `${name} must not fall back to a non-Chinese format`);
+ }
+ assert.equal(t.clock(when,'UTC').includes(':'),true);
+ for(const [name,fn] of Object.entries(t)) assert.equal(fn('not a date'),'',`${name} must render nothing for an unparseable value`);
+}

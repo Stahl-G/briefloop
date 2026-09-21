@@ -1,4 +1,5 @@
 import {$,esc} from './dom.js';
+import {moment} from './time.js';
 // Unread state lives in the workspace, not the browser's transient UI state.
 export function activityCenter({api,getState,page,openBrief,showSettings,settingsView}){
  let signature='',checking=false,checkedWorkspace=null;
@@ -52,7 +53,7 @@ export function activityCenter({api,getState,page,openBrief,showSettings,setting
   $('notifications-read-all').disabled=!value.unread;
   const next=JSON.stringify(value.items);if(signature!==next){
    signature=next;
-   $('notifications-list').innerHTML=value.items.length?value.items.map(item=>`<article class="notification-item ${item.read_at?'':'unread'} ${item.severity==='error'?'activity-error':''}"><div><strong>${esc(item.title)}</strong><small>${esc(categoryNames[item.category]||'动态')} · ${esc(new Date(item.created).toLocaleString('zh-CN'))}${item.read_at?'':' · 未读'}</small><p>${esc(item.body)}</p></div><button type="button" class="outline" data-activity-open="${item.seq}">查看</button></article>`).join(''):'<p class="help">还没有新动态。报告任务、模板、Wiki 和版本更新会显示在这里。</p>';
+   $('notifications-list').innerHTML=value.items.length?value.items.map(item=>`<article class="notification-item ${item.read_at?'':'unread'} ${item.severity==='error'?'activity-error':''}"><div><strong>${esc(item.title)}</strong><small>${esc(categoryNames[item.category]||'动态')} · ${esc(moment(item.created))}${item.read_at?'':' · 未读'}</small><p>${esc(item.body)}</p></div><button type="button" class="outline" data-activity-open="${item.seq}">查看</button></article>`).join(''):'<p class="help">还没有新动态。报告任务、模板、Wiki 和版本更新会显示在这里。</p>';
    $('notifications-list').querySelectorAll('[data-activity-open]').forEach(button=>button.onclick=()=>open(value.items.find(i=>i.seq===Number(button.dataset.activityOpen))).catch(error=>{$('notifications-error').textContent=error.message}));
   }
   checkVersion();
