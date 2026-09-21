@@ -4,7 +4,7 @@
 
 首次写作使用 `write_report(title, markdown)`。长稿可批量 `write_sections`，再 `assemble_report`。普通表格用 Markdown 管道表格，引用用 `[@src_ID]`，图片仅使用已登记的 `briefloop-figure:fig_ID`。系统不接纳原始 HTML 或任意外部图片，不会把无法表达的格式静默丢弃。
 
-正文保存后，引用定位、数字和日期通过 `update_draft_evidence` 单独更新。读取已保存字段可获得内容身份键 `record_keys`，在列表重新排序时仍指向同一记录；记录内容改变后返回新键。删除须明确传键和 `value: null`。缺口、研究记录、已计算指标可通过 `update_draft_details` 独立更新。程序不会替模型决定主体、期间、单位或引用是否支持结论。
+正文保存后，引用定位、数字和日期分别通过 `update_citations`、`update_number_bindings`、`update_temporal_claims` 单独更新。读取已保存字段可获得内容身份键 `record_keys`，在列表重新排序时仍指向同一记录；记录内容改变后返回新键。删除须明确传键和 `value: null`。缺口、研究记录、已计算指标可通过 `update_draft_details` 独立更新。程序不会替模型决定主体、期间、单位或引用是否支持结论。
 
 已有稿件用 `patch_report_text` 精确改字，或先 `read_draft(field=body)` 获取 `block_keys`，再替换指定连续块。块键与当前版本绑定。图片、高级表格排版等不能通过 Markdown 块替换降级。指定范围之外的富文本保留。修订任务从冻结原稿初始化，无需模型重新抄写。
 

@@ -178,23 +178,6 @@ def evidence_key(value):
     return drafts._hash(value)
 
 
-def evidence_schema():
-    from .models import Citation, NumberBinding, TemporalClaim
-    from pydantic import create_model
-    from typing import Literal
-    branches = []
-    definitions = {}
-    for field, record in [('citations', Citation), ('number_bindings', NumberBinding), ('temporal_claims', TemporalClaim)]:
-        change = create_model(field + '_change', __base__=Input,
-                              record_key=(str | None, None), value=(record | None, None))
-        request = create_model(field + '_update', __base__=Input,
-                               base_revision=(Text, ...), field=(Literal[field], ...),
-                               changes=(list[change], Field(min_length=1, max_length=30)))
-        schema = request.model_json_schema()
-        definitions.update(schema.pop('$defs', {})); branches.append(schema)
-    return {'type': 'object', 'anyOf': branches, '$defs': definitions}
-
-
 def update_draft_evidence(store, config, args):
     from .models import Citation, NumberBinding, TemporalClaim
     types = {'citations': Citation, 'number_bindings': NumberBinding, 'temporal_claims': TemporalClaim}
@@ -286,15 +269,30 @@ def protocol(config):
 
 
 def operations():
-    return {
+    result = {
         'write_report': (WriteReport, write_report, '首次保存正文。只写标题和Markdown，引用用 [@src_ID]；不手写富文本JSON。'),
         'write_sections': (WriteSections, write_sections, '长稿分章保存Markdown；修改已存章节附其expected_hash。可一批保存数章。'),
         'assemble_report': (AssembleReport, assemble_report, '按章节ID顺序组装正文，已存完整稿须带base_revision。'),
-        'update_draft_evidence': (None, update_draft_evidence, '独立更新引用/数字/时间证据，只交改变的记录。record_key从read_draft取；新记录不传键，删除传键并令value=null。'),
         'update_draft_details': (DraftDetails, update_draft_details, '单独更新缺口、研究说明或已计算报告数据；只传改变的字段，不重写正文。'),
         'patch_report_text': (PatchText, patch_report_text, '精确改正文文字，保留格式与引用。old_text必须在单个文字节点唯一命中。'),
         'replace_report_blocks': (ReplaceBlocks, replace_report_blocks, '仅替换连续的正文块，block_keys从read_draft取。图片/高级排版不降级，使用精确改字。'),
     }
+
+    # Flat, field-specific tools: providers may drop arguments for root anyOf
+    # schemas. Each model sees the exact record type it needs to populate.
+    from .models import Citation, NumberBinding, TemporalClaim
+    from pydantic import create_model
+    for field, record in [('citations', Citation), ('number_bindings', NumberBinding), ('temporal_claims', TemporalClaim)]:
+        change = create_model(field + '_change', __base__=Input,
+                              record_key=(str | None, None), value=(record | None, None))
+        request = create_model(field + '_update', __base__=Input, base_revision=(Text, ...),
+                               changes=(list[change], Field(min_length=1, max_length=30)))
+        def update(store, config, args, field=field, request=request):
+            parsed = request.model_validate(args)
+            return update_draft_evidence(store, config, {**parsed.model_dump(mode='json'), 'field': field})
+        result['update_' + field] = (request, update,
+            f'独立更新 {field}，只交改变的记录，不重交正文。record_key从read_draft对应字段取；新记录省略键，删除传键并令value=null。')
+    return result
 
 
 def tool_specs():
@@ -312,12 +310,12 @@ def tool_specs():
                                       'next': '只修这些字段；已保存正文不受影响。'})) from None
         result.append({'name': name, 'label': description.split('。')[0], 'description': description,
                        'guide': description, 'sequential': True,
-                       'parameters': model.model_json_schema() if model else evidence_schema(), 'handler': handler})
+                       'parameters': model.model_json_schema(), 'handler': handler})
     return result
 
 
 GUIDE = '''写作协议 writer_input_v1：正文使用 Markdown，普通表格使用管道表格，引用使用 [@src_ID]，图表使用已登记的 briefloop-figure:fig_ID。不要输出 editor_document、tableRow 或完整 BriefDraft JSON。
-短稿一次 write_report(title, markdown)；长稿 write_sections 后 assemble_report。先保存正文，再通过 update_draft_evidence 登记必要的引用定位、重要数字和日期；不因拆开提交而遗漏证据。来源归属、口径、采用条件要求不变。
+短稿一次 write_report(title, markdown)；长稿 write_sections 后 assemble_report。先保存正文，再分别通过 update_citations、update_number_bindings、update_temporal_claims 登记必要的引用定位、重要数字和日期；不因拆开提交而遗漏证据。来源归属、口径、采用条件要求不变。
 取得 revision 后 check_draft 检查；局部文字用 patch_report_text，结构改动先 read_draft(field=body) 取得 block_keys，再 replace_report_blocks。证据修改只交变更记录；每次变更使用最新 base_revision，再检查新 revision。只修明确问题，不反复重交全文。submit_draft 提交已检查的最新 revision，结束写作，不自行评分。
 已有人工富文本不得整稿降级；保留未修改节点、图片和样式。工具若提示高级排版需保留，改用精确文字修改。原始输入已保存不代表接纳或核实。'''
 

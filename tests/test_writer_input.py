@@ -170,3 +170,23 @@ def test_markdown_keeps_alignment_strike_and_literal_code():
     assert cells[0]['attrs']['textAlign'] == 'left'
     assert cells[1]['attrs']['textAlign'] == 'right'
     assert cells[0]['content'][0]['content'][0]['marks'] == [{'type':'strike'}]
+
+
+def test_evidence_tools_have_flat_typed_inputs_and_save_records(tmp_path):
+    from pathlib import Path
+    from briefloop.native_roles import run_tool, runner_tool_specs
+    store,run,source,config = setup_writer(tmp_path)
+    task = Path(config['packet_root'])/'input.json';payload=json.loads(task.read_text())
+    payload['writer_input_protocol']=writer.PROTOCOL;task.write_text(json.dumps(payload))
+    specs={t['name']:t for t in runner_tool_specs('analyst',config=config)}
+    assert 'update_draft_evidence' not in specs
+    for name in ('update_citations','update_number_bindings','update_temporal_claims'):
+        schema=specs[name]['parameters']
+        assert schema['type']=='object' and 'base_revision' in schema['properties']
+        assert 'anyOf' not in schema and schema['properties']['changes']['type']=='array'
+    saved=writer.write_report(store,config,{'title':'报告','markdown':f'收入同比增长20%。[@{source["id"]}]'})
+    result=run_tool(store,config,'update_citations',{'base_revision':saved['revision'],
+        'changes':[{'value':{'source_id':source['id'],'locator':'line 1','excerpt':store.source_text(source['id'])}}]})
+    assert result['ok'],result
+    report=json.loads(result['content'][0]['text'])
+    assert drafts._candidate(store,config,{'revision':report['revision']})['draft']['citations'][0]['source_id']==source['id']

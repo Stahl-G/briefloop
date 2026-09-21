@@ -77,7 +77,7 @@ def main():
     count.add_argument('--target-words',type=int);count.add_argument('--max-words',type=int)
     writer=ts.add_parser('writer',help='按冻结写作协议保存Markdown正文、局部修订和证据；不发布')
     writer.add_argument('--run',required=True);writer.add_argument('--draft-file',required=True)
-    writer.add_argument('--operation',required=True,choices=['write_report','write_sections','assemble_report','update_draft_evidence','update_draft_details','patch_report_text','replace_report_blocks','read_draft','check_draft','submit_draft'])
+    writer.add_argument('--operation',required=True,choices=['write_report','write_sections','assemble_report','update_citations','update_number_bindings','update_temporal_claims','update_draft_details','patch_report_text','replace_report_blocks','read_draft','check_draft','submit_draft'])
     writer.add_argument('--file',help='本次任务目录内的UTF-8 Markdown（write_report）或操作JSON')
     writer.add_argument('--title');writer.add_argument('--revision')
     check=ts.add_parser('check-draft',help='按稿件契约自检 draft.json；只检查不发布')
