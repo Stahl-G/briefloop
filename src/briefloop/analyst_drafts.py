@@ -90,7 +90,8 @@ def save(store, config, args):
         _write(root / 'current.json', {'revision': revision})
         from .length import count_brief
         return {'revision': revision, 'status': 'saved', 'body_units': count_brief(value['markdown']),
-                'review_status': 'not_reviewed', 'next': 'check_draft：只传 revision，检查完整正文及元数据'}
+                'review_status': 'not_reviewed', 'next': 'check_draft：只传 revision，检查完整正文及元数据',
+                'update': '局部改稿用 base_revision 加改变的字段；修改章节后传 base_revision 与完整有序 section_ids，不重复未改元数据。'}
 
 
 def _candidate(store, config, args, *, allow_section_changes=False):

@@ -220,4 +220,5 @@ def read_source(store,source_id,*,start_line=None,end_line=None,max_chars=None):
     state='已截取部分正文' if omitted else '完整正文'
     if partial:state+='，末行仅显示部分字符'
     header=f'[来源 {source_id}：共 {total} 行；显示第 {start}–{actual_end} 行；{state}。max-chars 仅限制正文字符，不含行号和说明。]'
-    return media_header+header+'\n'+'\n'.join(f'{start+i}: {line}' for i,line in enumerate(shown))
+    from .source_context import navigation_note
+    return media_header+header+'\n'+navigation_note(text)+'\n'+'\n'.join(f'{start+i}: {line}' for i,line in enumerate(shown))

@@ -430,6 +430,8 @@ def source_read(store, config, args):
             text = (f'[来源 {sid}：第 {number} 行，共 {len(line)} 字符；显示字符 {offset}:{stop}（从 0 开始、不含结束）；'
                     + (f'继续读取 start_line={number}, start_char={stop}' if stop < len(line) else '该行已读至结尾')
                     + f']\n{number}: ' + line[offset:stop])
+            from .source_context import navigation_note
+            text += '\n' + navigation_note('\n'.join(lines))
         else:
             text = read_source(store, sid, start_line=start or 1, end_line=end, max_chars=limit)
     except ValueError as exc:
