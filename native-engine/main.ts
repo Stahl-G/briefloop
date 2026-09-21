@@ -143,6 +143,9 @@ function extractJson(text: string): unknown | undefined {
 const sessions = new Map<string, SessionEntry>();
 let runtime: ModelRuntime | undefined;
 let registry: ModelRegistry | undefined;
+// Product default chosen by the user; explicit provider limits still win.
+const DEFAULT_CONTEXT_WINDOW = 1_000_000;
+const contextOverrides = new Map<string, number>();
 
 function send(msg: unknown): void {
   process.stdout.write(JSON.stringify(msg) + "\n");
@@ -164,6 +167,14 @@ async function ensureRuntime(): Promise<ModelRuntime> {
     // models the pinned pi release does not know yet (e.g. deepseek-v4.1-flash)
     // without touching the user's ~/.pi config.
     const modelsJson = fileURLToPath(new URL("./native-engine-models.json", import.meta.url));
+    if (existsSync(modelsJson)) {
+      const configured = JSON.parse(readFileSync(modelsJson, "utf8"));
+      for (const [provider, entry] of Object.entries(configured.providers ?? {}) as Array<[string, any]>) {
+        for (const model of entry.models ?? []) {
+          if (Number(model.contextWindow) > 0) contextOverrides.set(`${provider}/${model.id}`, Number(model.contextWindow));
+        }
+      }
+    }
     // FileModelsStore otherwise writes its cache beside modelsPath, which is
     // inside the installed package — not writable and not ours to dirty.
     const stateDir = join(homedir(), ".config", "briefloop", "native-engine");
@@ -181,6 +192,9 @@ async function ensureRuntime(): Promise<ModelRuntime> {
     const fingerprint = createHash("sha256").update(raw).digest("hex");
     if (fingerprint !== localProvidersFingerprint) {
       const rows = Object.values(JSON.parse(raw)) as Array<Record<string, any>>;
+      for (const row of rows) {
+        if (Number(row.context_limit) > 0) contextOverrides.set(`${row.provider}/${row.model}`, Number(row.context_limit));
+      }
       const protocols: Record<string, string> = { "chat-completions": "openai-completions", responses: "openai-responses", "anthropic-messages": "anthropic-messages" };
       const providers = new Set(rows.map(r => r.provider));
       for (const provider of providers) {
@@ -193,7 +207,7 @@ async function ensureRuntime(): Promise<ModelRuntime> {
             return { id: r.model, name: known?.name || r.model, api: api as any,
               reasoning: known?.reasoning ?? false, input: r.supports_images == null ? (known?.input || ["text"]) : r.supports_images ? ["text", "image"] : ["text"],
               cost: known?.cost || { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-              contextWindow: r.context_limit || known?.contextWindow || 128000, maxTokens: r.output_limit || known?.maxTokens || 8192,
+              contextWindow: r.context_limit || DEFAULT_CONTEXT_WINDOW, maxTokens: r.output_limit || known?.maxTokens || 8192,
               ...(known?.compat ? { compat: known.compat } : {}),
               ...(known?.thinkingLevelMap ? { thinkingLevelMap: known.thinkingLevelMap } : {}) };
           }),
@@ -213,7 +227,8 @@ function resolveModel(spec: unknown) {
   const s = String(spec ?? "").trim();
   const slash = s.indexOf("/");
   if (slash <= 0) return undefined;
-  return registry.find(s.slice(0, slash), s.slice(slash + 1));
+  const model = registry.find(s.slice(0, slash), s.slice(slash + 1));
+  return model ? { ...model, contextWindow: contextOverrides.get(s) ?? DEFAULT_CONTEXT_WINDOW } : undefined;
 }
 
 // Any session event proves the model stream or a tool is alive. If nothing
@@ -484,7 +499,7 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
       maxRetries: 6,
       baseDelayMs: Number.isFinite(retryDelay) ? Math.max(10, Math.min(10_000, retryDelay)) : 2000,
     },
-    compaction: { enabled: autoCompaction },
+    compaction: { enabled: autoCompaction, reserveTokens: Math.ceil(model.contextWindow * 0.05) },
   });
 
   const basePrompt = String(p.system_prompt ?? "").trim();
@@ -575,7 +590,7 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     model: `${model.provider}/${model.id}`,
     thinking: session.thinkingLevel,
     runtime_policy: {sdk: "pi-coding-agent", thinking: session.thinkingLevel,
-      compaction: session.autoCompactionEnabled, compaction_policy: COMPACTION_POLICY_VERSION, retries: 6, context_window: model.contextWindow, output_limit: model.maxTokens,
+      compaction: session.autoCompactionEnabled, compaction_policy: COMPACTION_POLICY_VERSION, retries: 6, context_window: model.contextWindow, compaction_threshold: Math.floor(model.contextWindow * 0.95), output_limit: model.maxTokens,
       tool_schema_sha256: createHash("sha256").update(JSON.stringify(declared)).digest("hex")},
     tools: active,
   });

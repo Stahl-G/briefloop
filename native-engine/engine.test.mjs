@@ -767,6 +767,8 @@ test('aborting a pending child runner tool does not wait for its natural result'
 test("manual compaction retains BriefLoop focus, SDK checkpoints and explicit user focus", async () => {
   const s = await reviewer({role: 'analyst'});
   assert.equal(s.runtime_policy.compaction, true);
+  assert.equal(s.runtime_policy.context_window, 100000); // Explicit fixture override.
+  assert.equal(s.runtime_policy.compaction_threshold, 95000);
   const long = 'Historical material without new instructions. '.repeat(2400);
   script(reply.text('{"saved":"SAVED_REVISION_r7", "source":"src1 line 2", "gap":"grant-42"}'));
   await turn(s.session_id, 'compact-seed-1', {prompt: long});
