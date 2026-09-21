@@ -395,7 +395,7 @@ def run(store, runtime, job, run_id, folder, backend, *, plan, research, source_
         from .writer_input import GUIDE
         writing_guide = '\n'.join(line for line in WRITING_GUIDE.splitlines()
             if not line.startswith(('输出完整 BriefDraft', '图表只复用', '来源 ID 仅用于')))
-        writing_guide += '\n结构化指标仍可交 prepare_report_data 确定计算；来源ID只放引用标记，不输出来源ID表。\n' + GUIDE
+        writing_guide += '\n结构化指标仍可交 prepare_report_data 确定计算，使用后通过 update_draft_details 的 report_data 保留原始 records。表格内事实的引用放在相应单元格，不能只登记在 citations 元数据里。来源ID只放引用标记，不输出来源ID表。\n' + GUIDE
     config = {'role': 'analyst', 'run_id': run_id, 'result_file': str(folder / 'draft.json')}
     staged = stage_job(store, job, 'analyst')
     if backend == 'briefloop-native':

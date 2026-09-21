@@ -202,3 +202,24 @@ def test_evidence_tools_have_flat_typed_inputs_and_save_records(tmp_path):
     value=drafts._candidate(store,config,{'revision':final['revision']})['draft']
     assert value['number_bindings']==[] and value['citations'][0]['source_id']==source['id']
 
+
+
+def test_markdown_prompt_preserves_content_rules_and_frozen_protocol(tmp_path):
+    from briefloop import analyst
+    from test_native_analyst import setup
+    store,run,source,inputs=setup(tmp_path)
+    class Captured(Exception): pass
+    class Runtime:
+        def execute(self,job,prompt,folder):
+            assert '保留原始 records' in prompt
+            assert '表格内事实的引用放在相应单元格' in prompt
+            assert 'writer_input_v1' in prompt
+            assert '将完整 BriefDraft 原子写入' not in prompt
+            raise Captured()
+    folder=store.root/'new-protocol-run'
+    for requested in ('writer_input_v1','rich_json_v1'):
+        job={'id':'job_protocol','kind':'generate','payload':json.dumps({'run_id':run['id'],
+            'agent_backend':'briefloop-native','runtime':{'model':'fake/writer'},'writer_input_protocol':requested})}
+        with pytest.raises(Captured):
+            analyst.run(store,Runtime(),job,run['id'],folder,'briefloop-native',**inputs)
+    assert json.loads((folder/'packet/input.json').read_text())['writer_input_protocol']=='writer_input_v1'
