@@ -63,3 +63,20 @@ test('GENRE_META avoids primary/danger hue collisions for academic and markets',
   assert.match(app,/homeReportIconMeta/);
   assert.match(app,/ICONS\[name\]/);
 });
+
+test('the Opencode effort field is not wired to the model picker',()=>{
+  // setupModelPickers() converts every input[list="model-suggestions"] into a
+  // model selector: it strips the list, wraps the input and hangs a dropdown of
+  // every model off it. A reasoning-level field must never carry that list, or
+  // picking from the dropdown writes a model ID where an effort belongs.
+  const field=html.match(/<input id="chat-variant"[^>]*>/)[0];
+  assert.doesNotMatch(field,/list="model-suggestions"/);
+  assert.match(field,/list="effort-suggestions"/);
+  assert.match(html,/<datalist id="effort-suggestions">(?:<option value="(?:low|medium|high|max)"><\/option>)+<\/datalist>/);
+  // one name for one concept, in the composer and in both settings surfaces
+  assert.match(html,/<label class="params-field" for="chat-variant"[^>]*><span>推理 effort<\/span>/);
+  assert.match(html,/<label id="variant-field" hidden>推理 effort<input id="model-variant" list="effort-suggestions"/);
+  assert.match(app,/role-variant-field[^`]*<span>推理 effort<\/span>/);
+  for(const id of ['model-variant','role-\\$\\{role\\}-variant'])
+    assert.doesNotMatch(html+app,new RegExp('id="'+id+'"[^>]*list="model-suggestions"'));
+});
