@@ -240,6 +240,8 @@ function disarmIdle(entry: SessionEntry): void {
 // to settle it. It never emits `end`: one execution has exactly one terminal
 // event, written by turnStart after every repair or retry has finished.
 function wireSessionEvents(clientSid: string, entry: SessionEntry): void {
+  let requestSequence = 0, requestStarted: number | null = null, firstDelta: number | null = null;
+  const toolStarted = new Map<string, {at: number; chars: number}>();
   entry.unsubscribe = entry.session.subscribe((event) => {
     const execId = entry.execId;
     if (!execId) return;
@@ -248,10 +250,12 @@ function wireSessionEvents(clientSid: string, entry: SessionEntry): void {
     switch (e.type) {
       case "message_start":
         entry.replyChars = 0;
+        if (e.message?.role === "assistant") { requestSequence++; requestStarted = performance.now(); firstDelta = null; }
         emit(clientSid, execId, "message_start", { role: e.message?.role });
         break;
       case "message_update": {
         const delta = e.assistantMessageEvent;
+        if (delta?.type?.endsWith("_delta") && firstDelta === null) firstDelta = performance.now();
         if ((delta?.type === "text_delta" || delta?.type === "thinking_delta") && typeof delta.delta === "string") {
           entry.replyChars += delta.delta.length;
           if (entry.replyChars > entry.maxReplyChars && !entry.overlong) {
@@ -271,6 +275,10 @@ function wireSessionEvents(clientSid: string, entry: SessionEntry): void {
       }
       case "message_end":
         if (e.message?.role === "assistant") {
+          emit(clientSid, execId, "performance", {phase: "model_message", sequence: requestSequence,
+            duration_ms: requestStarted === null ? null : performance.now() - requestStarted,
+            first_delta_ms: firstDelta === null || requestStarted === null ? null : firstDelta - requestStarted,
+            stop_reason: e.message?.stopReason, clock: "monotonic", scope: "sdk_events_not_http_ttft"});
           // The last assistant message decides: a provider error that pi
           // retried successfully must not fail the turn afterwards.
           if (e.message?.stopReason === "error") {
@@ -286,6 +294,7 @@ function wireSessionEvents(clientSid: string, entry: SessionEntry): void {
         }
         break;
       case "tool_execution_start":
+        toolStarted.set(e.toolCallId, {at: performance.now(), chars: JSON.stringify(e.args ?? {}).length});
         entry.toolCalls += 1;
         if (entry.toolCalls > entry.maxToolCalls) {
           // Runaway guard: a model that never stops calling tools burns budget
@@ -304,6 +313,11 @@ function wireSessionEvents(clientSid: string, entry: SessionEntry): void {
         });
         break;
       case "tool_execution_end": {
+        const started = toolStarted.get(e.toolCallId);
+        emit(clientSid, execId, "performance", {phase: "tool", tool_id: e.toolCallId, tool: e.toolName,
+          duration_ms: started ? performance.now() - started.at : null,
+          argument_characters: started?.chars ?? null, failed: !!e.isError, clock: "monotonic"});
+        toolStarted.delete(e.toolCallId);
         const text = Array.isArray(e.result?.content)
           ? e.result.content.filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n")
           : "";
@@ -522,7 +536,10 @@ async function sessionCreate(id: string | undefined, p: Record<string, unknown>)
     session_file: entry.sessionFile,
     resumed: resuming,
     model: `${model.provider}/${model.id}`,
-    thinking: p.thinking ?? "high",
+    thinking: session.thinkingLevel,
+    runtime_policy: {sdk: "pi-coding-agent", thinking: session.thinkingLevel,
+      compaction: false, retries: 6, context_window: model.contextWindow, output_limit: model.maxTokens,
+      tool_schema_sha256: createHash("sha256").update(JSON.stringify(declared)).digest("hex")},
     tools: active,
   });
 }

@@ -16,3 +16,5 @@
 正文可直接用 source_read 读取完整相关部分（单次 60000 字符，可继续），source_grep 仅在需要定位时使用，不是必经步骤。保留 source_hash。证据通过 record_evidence 保存，可按来源批量记录，时机由研究需要决定，不强制每读一段就中断阅读：稳定 id、source_id、source_hash、locator 单一行段、quote 短连续原文锚点与 facts/conflicts/coverage_status/claim_ids；excerpt 由运行器截取。逐条接纳，只重交 rejected 项，不重复提交全部证据。锚点自动重定位后核对返回摘录及上下文，必要时补读单位、表头、脚注并修正同一 id；无法支持的证据以 discard + reason 移除，保留具体缺口。最后 submit_scout_result 只交 gaps/search_summary/retrieval_notes。已内联任务包无需重读，未内联文件按提示读取。
 
 若网页全文在一个超长行中，source_grep 返回命中附近片段及 start_char；用 source_read 的 start_line/start_char 分段读，必要时继续读取。record_evidence 可为单行填写 start_char/end_char（从 0 开始、不含结束字符），由你明确选择包含关键条件的摘录范围，运行器不会自行截掉脚注。
+
+交接支持功能时，同时检查原文中会改变采用建议的适用范围、尚未完成阶段和前置步骤；必要时另存带定位的证据记录，在 coverage_status 说明关联。条件不是矛盾，未检查也不是没有限制。历史缺口对照当前材料更新，保留原记录，不将未找到当不存在。

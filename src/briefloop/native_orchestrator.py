@@ -456,7 +456,7 @@ def prepare(store, job, folder, prompt):
                research=json.loads(research_path.read_text()) if research_path.exists() else {'sources': [], 'gaps': []},
                base_version=data['brief']['id'], feedback=data)
         return {**config, 'role': 'analyst', 'revision': True, 'result_file': str(folder / 'draft.json')}, (WRITING_GUIDE +
-            '\n先读取 input.feedback 的 assessment/review_findings/revision_reasons。交稿前调用 save_revision_metadata，逐项说明处理，不自行关闭发现；然后 submit_draft。')
+            '\n先读取 input.feedback 的 assessment/review_findings/revision_reasons。交稿前调用 save_revision_metadata，逐项说明处理，不自行关闭发现；随后 save_draft 保存完整正文及引用/数字/时间元数据，check_draft 只传返回的 revision，修正后重新保存和检查，最后 submit_draft 只传已检查 revision。不要反复提交整篇正文或复制冻结 reader_contract。')
     _save(root / 'input.json', data)
     for name in ('reader_contract.schema.json', 'plan.json', 'research.json', 'analyst-writing.md'):
         if (folder / name).exists():

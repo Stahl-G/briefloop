@@ -45,6 +45,7 @@ def task(store, run_id, assignment, *, plan_path=None, research_handoff=None, sk
     run = store.one('runs', run_id)
     raw = json.loads(run['requirements'])
     req = Requirements.model_validate(raw).model_dump()
+    from .writing_guidance import DECISION_EVIDENCE_GUIDE
     temporal = time_instructions(req.get('time_context'))
     policy = for_run(store, run_id)
     allow_web = bool(req['allow_web'])
@@ -56,7 +57,7 @@ def task(store, run_id, assignment, *, plan_path=None, research_handoff=None, sk
         'period': req.get('period'), 'time_context': req.get('time_context'), 'created': run['created'],
         'allow_web': allow_web, 'search_channels': channels, 'policy': policy,
         'budget': snapshot(store, run_id), 'research_handoff': research_handoff,
-        'contract': instructions(resolve(req), role='scout') + '\n' + temporal,
+        'contract': instructions(resolve(req), role='scout') + '\n' + temporal + '\n' + DECISION_EVIDENCE_GUIDE,
         'reader_contract': _reader_contract(store, run_id, plan_path),
         'search_note': (search_instructions(policy, None, run_id, native=True) if allow_web
                         else '本轮未允许联网，只读取已登记的材料，不安排公开检索。'),

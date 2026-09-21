@@ -78,6 +78,9 @@ def main():
     check=ts.add_parser('check-draft',help='按稿件契约自检 draft.json；只检查不发布')
     check.add_argument('--file',required=True)
     check.add_argument('--run',help='按本次报告要求返回篇幅、引用与数字定位诊断；不发布、不评分')
+    submit=ts.add_parser('submit-draft',help='接纳已经检查的完整稿件版本；不发布或评分')
+    submit.add_argument('--file',required=True);submit.add_argument('--run',required=True)
+    submit.add_argument('--revision',required=True)
     report_data=ts.add_parser('prepare-report-data',help='核对行业指标来源并计算变化；输出计算表与数据缺口')
     report_data.add_argument('--run',required=True);report_data.add_argument('--file',required=True)
     report_data.add_argument('--output',help='保存计算包 JSON 的路径；原始 records 写入 draft.report_data')
@@ -216,18 +219,40 @@ def main():
         elif a.tool=='extract-workbook-figures':
             from .workbook_figures import extract_workbook_figures
             print(json.dumps(extract_workbook_figures(store,a.id),ensure_ascii=False))
-        elif a.tool=='check-draft':
+        elif a.tool in ('check-draft','submit-draft'):
             from .models import BriefDraft, check_artifact, prune_unknown
-            value=json.loads(Path(a.file).expanduser().read_text(encoding='utf-8-sig'))
-            report=check_artifact(value,BriefDraft)
-            if report['status']=='ok':
-                from .draft_checks import inspect_draft
-                requirements=json.loads(store.one('runs',a.run)['requirements']) if a.run else None
-                allowed=set(store.source_ids(a.run)) - set((requirements or {}).get('reference_source_ids') or []) if a.run else None
-                normalized,_=prune_unknown(value,BriefDraft)
-                report['diagnostics']=inspect_draft(normalized,requirements,store=store,allowed_sources=allowed)
+            path=Path(a.file).expanduser().resolve()
+            try:
+                value=json.loads(path.read_text(encoding='utf-8-sig'))
+                if (path.parent/'packet/input.json').exists():
+                    from .analyst_drafts import file_config, save, check, submit
+                    run_id=a.run or json.loads((path.parent/'packet/input.json').read_text())['run_id']
+                    config=file_config(store,run_id,path)
+                    if a.tool=='submit-draft':
+                        report=submit(store,config,{'revision':a.revision},file_value=value)
+                    else:
+                        saved=save(store,config,value)
+                        report={'status':'ok','scope':'writer_packet','unknown_fields':[],'errors':[],
+                                **check(store,config,{'revision':saved['revision']})}
+                        report['status']='ok'
+                elif a.tool=='submit-draft':
+                    raise ValueError('提交需要当前写作任务包和执行身份')
+                else:
+                    report=check_artifact(value,BriefDraft)
+                    report['scope']='run_diagnostics' if a.run else 'schema_only'
+                    if report['status']=='ok':
+                        from .draft_checks import inspect_draft
+                        requirements=json.loads(store.one('runs',a.run)['requirements']) if a.run else None
+                        allowed=set(store.source_ids(a.run)) - set((requirements or {}).get('reference_source_ids') or []) if a.run else None
+                        frozen=store.meta('reader_contract:'+a.run) if a.run else None
+                        if frozen and value.get('reader_contract') not in (None,frozen):
+                            raise ValueError('不能改写本轮冻结的 reader_contract')
+                        normalized,_=prune_unknown(value,BriefDraft)
+                        report['diagnostics']=inspect_draft(normalized,requirements,store=store,allowed_sources=allowed)
+            except (ValueError,KeyError,OSError) as exc:
+                report={'status':'invalid','errors':[{'field':'draft','message':str(exc)}]}
             print(json.dumps(report,ensure_ascii=False))
-            if report['status']!='ok':raise SystemExit(1)
+            if report['status'] not in ('ok','saved'):raise SystemExit(1)
         elif a.tool=='count-brief':
             from .length import length_stats
             result=length_stats(Path(a.file).expanduser().read_text(encoding='utf-8'),target_words=a.target_words,max_words=a.max_words)

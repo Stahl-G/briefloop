@@ -23,3 +23,9 @@ DISCUSSION_GUIDE = '''用户消息以 /discuss 开头时进入需求准备模式
 用短段落概括已明确的任务和未决项；确认清楚后给出一个 briefloop-requirements 代码块，JSON 仅使用已有字段：title、objective、audience、period、period_start、period_end、report_timezone、key_questions、manual_sections、writing_preferences、workflow_id、workflow_variant、report_profile、writing_mode、research_tier、target_words、max_words。key_questions、manual_sections、writing_preferences 必须是字符串数组，例如 manual_sections=["融资进展"]，不能返回对象数组。未知项可省略，不虚构事实、数字、身份、模板 ID 或授权。
 界面会提供“应用到材料与需求”。普通用户直接要求生成且信息足够时，不强制转入讨论或新增批准步骤；把已有要求整理后按原有生成入口执行。
 '''
+
+
+DECISION_EVIDENCE_GUIDE = """影响行动的条件与正面功能同样属于证据：对迁移、部署、采用或发布建议，核对原文中的适用范围、前置步骤、尚未完成的阶段、例外与更正。按实际发现记录，不把条件误写成矛盾；未检查限制不能当没有限制。
+来源交接可用现有证据记录为同一主张的限制另存 source_id、locator、excerpt、facts，在 coverage_status 说明与哪项判断相关。不要让只摘正面段落的摘要代替原文，也不硬凑限制或免责声明。
+区分历史槽位缺口与本轮补到的材料；先对照当前来源与日期，再判断问题是否已闭合。没查到、读取失败和未覆盖不等于不存在更新；AI 摘要或媒体转述不能替代同页正文/原始披露。
+"""

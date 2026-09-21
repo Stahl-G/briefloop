@@ -681,7 +681,7 @@ def _tools(role, mode=None, config=None):
         from .native_orchestrator import tools
         return tools(role, config or {})
     if role == 'analyst':
-        from .analyst import prepare_data, submit_draft, submit_schema, section_schema, save_draft_section, check_draft
+        from .analyst import prepare_data, save_draft, save_schema, submit_draft, submit_schema, section_schema, save_draft_section, check_draft
         from .native_orchestrator import METADATA_TOOL
         return [*([METADATA_TOOL] if (config or {}).get('revision') else []), EVALUATOR_TOOLS[0],
                 {'name': 'prepare_report_data', 'label': '计算报告指标',
@@ -690,16 +690,20 @@ def _tools(role, mode=None, config=None):
                  'parameters': {'type': 'object', 'required': ['data'], 'properties': {'data': {'type': 'object'}}},
                  'handler': prepare_data},
                 {'name': 'save_draft_section', 'label': '保存报告章节', 'sequential': True,
-                 'description': '长稿可逐章保存富文本块与该章引用；同一 section_id 重交会替换该章。只返回保存回执。最终 submit_draft 按 section_ids 组装，不用重抄整篇。',
+                 'description': '长稿可逐章保存富文本块与该章引用；同一 section_id 重交会替换该章。只返回保存回执。随后 save_draft 按 section_ids 组装，不用重抄整篇。',
                  'guide': '长稿优先逐章保存，减少单次输出中断造成的返工。',
                  'parameters': section_schema(), 'handler': save_draft_section},
+                {'name': 'save_draft', 'label': '保存待检查稿件', 'sequential': True,
+                 'description': '保存完整正文及引用、数字/时间绑定，或按 section_ids 组装。返回 revision；base_revision 可用于局部更新元数据。',
+                 'guide': '写入一次，检查与提交只引用保存的版本。冻结 reader_contract 不用复制。',
+                 'parameters': save_schema(), 'handler': save_draft},
                 {'name': 'check_draft', 'label': '检查待提交稿件', 'sequential': True,
-                 'description': '只读检查完整稿件或已保存 section_ids：返回总量、各章字数、引用定位与数字绑定诊断，不保存、不结束会话、不作事实评分。',
+                 'description': '按 revision 检查已保存完整版本：返回身份、结构、各章字数、引用和数字绑定诊断及绑定回执；不发布、不结束会话、不作事实评分。',
                  'guide': '最终提交前检查实际待交对象；重点章节对照用户原话，不为凑字数添加无关内容。',
                  'parameters': submit_schema(), 'handler': check_draft},
                 {'name': 'submit_draft', 'label': '保存报告', 'settles': True,
-                 'description': '直接提交 BriefDraft 根对象，不要 draft 包装或转成字符串。正文用 editor_document，或列出已保存的 section_ids。接纳即结束写作；仅提交实际成稿，不用占位稿试接口。',
-                 'guide': '完成正文后提交完整 draft，不把正文仅写在聊天回复里。',
+                 'description': '只传已保存且检查过的最新 revision。正文或任何元数据改动后先重新保存并检查。接纳即结束写作。',
+                 'guide': '保存并检查完整版本后提交 revision，不重复生成正文。',
                  'parameters': submit_schema(),
                  'handler': submit_draft}]
     if role == 'evaluator' and mode == 'pairwise':

@@ -33,6 +33,14 @@ def _usable_output(job, folder, store=None):
         try:return isinstance(json.loads((folder/'metadata.json').read_text(encoding='utf-8-sig')),dict)
         except (OSError,ValueError):return False
     role=job.get('runtime_role')
+    if role=='analyst':
+        if store is None:return False
+        from .analyst_drafts import submitted
+        try:
+            submitted(store,{'run_id':json.loads(job['payload'])['run_id'],
+                'packet_root':str(folder/'packet'),'result_file':str(folder/'draft.json')})
+            return True
+        except (OSError,ValueError,KeyError):return False
     if role=='scout':
         from .models import ScoutResult
         try:ScoutResult.model_validate(json.loads((folder/'result.json').read_text(encoding='utf-8-sig')));return True

@@ -26,16 +26,21 @@ export async function piModels(bin:string,p:any,launch:any,terminate:any){
 export async function runPi(p:any,state:any,launch:any,terminate:any,emit:any){
  if(p.images?.length)throw Error('Pi image input is not enabled in this adapter');
  let finish:any,fail:any,lastMessage:any=null,textSeen=false,started=false,contextWindow:any;
+ let requestSequence=0,requestStarted:number|null=null,firstDelta:number|null=null;
+ const toolStarted=new Map<string,{at:number,chars:number}>();
  const settled=new Promise<void>((resolve,reject)=>{finish=resolve;fail=reject;});settled.catch(()=>{});
  const c=piConnection(state.bin,p,launch,terminate,(m:any)=>{
   if(!started)return;
-  if(m.type==='message_start'&&m.message?.role==='assistant')textSeen=false;
-  if(m.type==='message_update'){const e=m.assistantMessageEvent||{};if(e.type==='text_delta'){textSeen=true;emit(p.execution_id,'text',{text:e.delta,delta:true});}else if(e.type==='thinking_delta')emit(p.execution_id,'reasoning',{text:e.delta,delta:true});}
+  if(m.type==='message_start'&&m.message?.role==='assistant'){textSeen=false;requestSequence++;requestStarted=performance.now();firstDelta=null;}
+  if(m.type==='message_update'){const e=m.assistantMessageEvent||{};if(e.type?.endsWith('_delta')&&firstDelta===null)firstDelta=performance.now();if(e.type==='text_delta'){textSeen=true;emit(p.execution_id,'text',{text:e.delta,delta:true});}else if(e.type==='thinking_delta')emit(p.execution_id,'reasoning',{text:e.delta,delta:true});}
   if(m.type==='message_end'&&m.message?.role==='assistant'){
+   emit(p.execution_id,'performance',{phase:'model_message',sequence:requestSequence,duration_ms:requestStarted===null?null:performance.now()-requestStarted,first_delta_ms:firstDelta===null||requestStarted===null?null:firstDelta-requestStarted,stop_reason:m.message.stopReason,clock:'monotonic',scope:'sdk_events_not_http_ttft'});
    lastMessage=m.message;
    if(!textSeen)for(const b of lastMessage.content||[])if(b.type==='text')emit(p.execution_id,'text',{text:b.text,delta:true});
    if(lastMessage.usage)emit(p.execution_id,'usage',{usage:{...lastMessage.usage,model_context_window:contextWindow}});
   }
+  if(m.type==='tool_execution_start')toolStarted.set(m.toolCallId,{at:performance.now(),chars:JSON.stringify(m.args||{}).length});
+  if(m.type==='tool_execution_end'){const start=toolStarted.get(m.toolCallId);emit(p.execution_id,'performance',{phase:'tool',tool_id:m.toolCallId,tool:m.toolName,duration_ms:start?performance.now()-start.at:null,argument_characters:start?.chars??null,failed:!!m.isError,clock:'monotonic'});toolStarted.delete(m.toolCallId);}
   if(typeof m.type==='string'&&m.type.startsWith('tool_execution_'))emit(p.execution_id,'tool',{id:m.toolCallId,name:m.toolName,status:m.type==='tool_execution_end'?(m.isError?'failed':'completed'):'running',input:m.args,output:m.result||m.partialResult});
   if(m.type==='extension_ui_request'){
    if(!['select','confirm','input','editor'].includes(m.method))return;
@@ -55,6 +60,9 @@ export async function runPi(p:any,state:any,launch:any,terminate:any,emit:any){
   if(p.session_id&&path.resolve(info.sessionFile)!==path.resolve(p.session_id))throw Error('Pi resumed a different session');
   let selectedModel=info.model;
   if(p.model&&p.model!=='default'){const split=p.model.indexOf('/');if(split<1)throw Error('Pi model must be provider/model');selectedModel=await c.call('set_model',{provider:p.model.slice(0,split),modelId:p.model.slice(split+1)});}
+  if(p.thinking)await c.call('set_thinking_level',{level:p.thinking});
+  const effective=await c.call('get_state');
+  emit(p.execution_id,'performance',{phase:'configuration',thinking:effective.thinkingLevel,context_window:selectedModel?.contextWindow,output_limit:selectedModel?.maxTokens,tool_mode:p.host_options?.mode||'native',compaction:'host_setting'});
   contextWindow=selectedModel?.contextWindow;
   emit(p.execution_id,'session',{session_id:info.sessionFile});started=true;
   if(p.timeout_ms)timer=setTimeout(()=>{c.close();fail(Error('Pi turn timed out'));},p.timeout_ms);

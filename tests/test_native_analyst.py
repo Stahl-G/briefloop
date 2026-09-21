@@ -27,22 +27,37 @@ def draft(sid, text='收入增长20%，下一步观察毛利能否同步改善�
         'citations': [{'source_id': sid, 'locator': 'line 1'}]}
 
 
+def saved_revision(store, config, value):
+    result = run_tool(store, config, 'save_draft', value)
+    assert result['ok'], result
+    return json.loads(result['content'][0]['text'])['revision']
+
+
+def finish(store, config, value):
+    result = run_tool(store, config, 'save_draft', value.get('draft', value))
+    if not result['ok']: return result
+    revision = json.loads(result['content'][0]['text'])['revision']
+    checked = run_tool(store, config, 'check_draft', {'revision': revision})
+    if not checked['ok']: return checked
+    return run_tool(store, config, 'submit_draft', {'revision': revision})
+
+
 def test_writer_packet_is_identical_across_directories_and_confined(tmp_path):
     store, run, source, inputs = setup(tmp_path)
     a = analyst.packet(store, run['id'], store.root/'a', **inputs)
     b = analyst.packet(store, run['id'], store.root/'b', **inputs)
     assert a['fingerprint'] == b['fingerprint']
     config = {'native_role': 'analyst', 'run_id': run['id'], 'packet_root': str(a['root']),
-              'result_file': str(a['root'].parent/'draft.json')}
+              'result_file': str(a['root'].parent/'draft.json'), 'attempt_id': 'a'}
     names = [t['name'] for t in runner_tool_specs('analyst', config=config)]
-    assert names == ['render_pdf_pages', 'prepare_report_data', 'save_draft_section', 'check_draft', 'submit_draft']
+    assert names == ['render_pdf_pages', 'prepare_report_data', 'save_draft_section', 'save_draft', 'check_draft', 'submit_draft']
     assert not run_tool(store, config, 'web_search', {'query': 'q'})['ok']
     outside = store.add_source('无关任务', 'Cannot cite me')
-    refused = run_tool(store, config, 'submit_draft', {'draft': draft(outside['id'])})
+    refused = finish(store, config, {'draft': draft(outside['id'])})
     assert not refused['ok'] and '超出' in refused['error']
     assert not (a['root'].parent/'draft.json').exists()
     assert '主写稿' in system_prompt('analyst')['text']
-    result = run_tool(store, config, 'submit_draft', {'draft': draft(source['id'])})
+    result = finish(store, config, {'draft': draft(source['id'])})
     assert result['ok'] and result['settle']
     assert json.loads((a['root'].parent/'draft.json').read_text())['editor_document']
 
@@ -57,8 +72,8 @@ def test_real_role_runner_saves_draft_and_revision_without_overwriting_user_edit
         def execute(self, staged, prompt, folder):
             self.calls += 1
             assert staged['runtime_role'] == 'analyst' and staged['allow_web'] is False
-            cfg = {**staged['native_packet'], 'native_role': 'analyst', 'packet_root': str(folder/'packet')}
-            assert run_tool(store, cfg, 'submit_draft', {'draft': draft(source['id'])})['ok']
+            cfg = {**staged['native_packet'], 'native_role': 'analyst', 'packet_root': str(folder/'packet'), 'attempt_id': staged['id']}
+            assert finish(store, cfg, {'draft': draft(source['id'])})['ok']
     runtime = Runtime()
     first = analyst.run(store, runtime, job, run['id'], store.root/'first', 'briefloop-native', **inputs)
     original = store.one('briefs', first['version_id'])
@@ -80,12 +95,12 @@ def test_source_tampering_and_output_escape_are_rejected(tmp_path):
     store, run, source, inputs = setup(tmp_path)
     p = analyst.packet(store, run['id'], store.root/'writer', **inputs)
     cfg = {'native_role': 'analyst', 'run_id': run['id'], 'packet_root': str(p['root']),
-           'result_file': str(tmp_path/'escape.json')}
-    assert not run_tool(store, cfg, 'submit_draft', {'draft': draft(source['id'])})['ok']
+           'result_file': str(tmp_path/'escape.json'), 'attempt_id': 'a'}
+    assert not finish(store, cfg, {'draft': draft(source['id'])})['ok']
     assert not (tmp_path/'escape.json').exists()
     (store.root/source['path']).write_text('已被篡改')
     cfg['result_file'] = str(p['root'].parent/'draft.json')
-    result = run_tool(store, cfg, 'submit_draft', {'draft': draft(source['id'])})
+    result = finish(store, cfg, {'draft': draft(source['id'])})
     assert not result['ok']
 
 
@@ -95,7 +110,7 @@ def test_root_submission_and_saved_sections_preserve_order_and_attempt_scope(tmp
     cfg = {'native_role': 'analyst', 'run_id': run['id'], 'packet_root': str(p['root']),
            'result_file': str(p['root'].parent/'draft.json'), 'attempt_id': 'attempt-a'}
     spec = next(t for t in runner_tool_specs('analyst', config=cfg) if t['name'] == 'submit_draft')
-    assert 'title' in spec['parameters']['properties'] and 'draft' not in spec['parameters']['properties']
+    assert list(spec['parameters']['properties']) == ['revision']
     outside = store.add_source('另一任务', '不能引用')
     bad = draft(outside['id'])
     assert not run_tool(store, cfg, 'save_draft_section', {
@@ -106,15 +121,15 @@ def test_root_submission_and_saved_sections_preserve_order_and_attempt_scope(tmp
             'section_id': sid, 'content': d['editor_document']['content'], 'citations': d['citations']})
         assert r['ok'] and 'settle' not in r and text not in json.dumps(r, ensure_ascii=False)
     value = {'title': '经营简报', 'section_ids': ['first', 'second']}
-    assert not run_tool(store, {**cfg, 'attempt_id': 'attempt-b'}, 'submit_draft', value)['ok']
-    assert not run_tool(store, cfg, 'submit_draft', {**value, 'section_ids': ['first', 'missing']})['ok']
-    assert not run_tool(store, cfg, 'submit_draft', {**value, 'editor_document': draft(source['id'])['editor_document']})['ok']
+    assert not finish(store, {**cfg, 'attempt_id': 'attempt-b'}, value)['ok']
+    assert not finish(store, cfg, {**value, 'section_ids': ['first', 'missing']})['ok']
+    assert not finish(store, cfg, {**value, 'editor_document': draft(source['id'])['editor_document']})['ok']
     assert not Path(cfg['result_file']).exists()
-    assert run_tool(store, cfg, 'submit_draft', value)['ok']
+    assert finish(store, cfg, value)['ok']
     saved = json.loads(Path(cfg['result_file']).read_text())
     assert saved['markdown'].index('第一章') < saved['markdown'].index('第二章修订')
     assert '旧稿' not in saved['markdown'] and len(saved['citations']) == 1
-    assert run_tool(store, cfg, 'submit_draft', draft(source['id']))['ok']
+    assert finish(store, cfg, draft(source['id']))['ok']
 
 
 def test_cancelled_writer_cannot_save_late_sections_or_finish(tmp_path):
@@ -148,19 +163,20 @@ def test_preflight_reports_short_sections_and_missing_provenance_without_finishi
             *draft(source['id'])['editor_document']['content']]
     saved = run_tool(store, cfg, 'save_draft_section', {'section_id': 'one', 'content': body})
     assert saved['ok']
-    ledger = next(p['root'].parent.glob('draft-sections-*'))
+    ledger = next(p['root'].parent.glob('draft-sections-*.json'))
     original = ledger.read_bytes()
-    result = run_tool(store, cfg, 'check_draft', {'title': '经营简报', 'section_ids': ['one']})
+    revision = saved_revision(store, cfg, {'title': '经营简报', 'section_ids': ['one']})
+    result = run_tool(store, cfg, 'check_draft', {'revision': revision})
     assert result['ok'] and 'settle' not in result
-    data = json.loads(result['content'][0]['text'])
+    data = json.loads(result['content'][0]['text'])['diagnostics']
     assert data['review_status'] == 'not_reviewed' and data['length']['below_target']
     assert data['sections'][0]['title'] == '经营分析' and data['sections'][0]['body_units'] > 0
     assert data['citations']['missing_locator'] == [source['id']]
     assert data['numbers']['status'] == 'not_checked'
-    assert {w['code'] for w in data['warnings']} == {'below_target', 'citation_location_missing', 'number_bindings_missing'}
+    assert {w['code'] for w in data['warnings']} == {'citation_location_missing', 'number_bindings_missing'}
     assert not Path(cfg['result_file']).exists() and ledger.read_bytes() == original
     # Diagnostic warnings must never hide the user's draft or prevent ordinary saving.
-    assert run_tool(store, cfg, 'submit_draft', {'title': '经营简报', 'section_ids': ['one']})['ok']
+    assert run_tool(store, cfg, 'submit_draft', {'revision': revision})['ok']
 
 
 def test_preflight_reuses_exact_number_binding_check_not_citation_presence(tmp_path):

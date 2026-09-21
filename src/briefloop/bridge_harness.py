@@ -192,6 +192,7 @@ class BridgeHarness(OpencodeHarness):
                     # requires a separately frozen opt-in; its calls are not counted
                     # as managed search_requests/candidate_urls.
                     'web_tools':bool(message['allow_web']) and native_allowed(config,internal)}
+            if self.backend=='pi' and config.get('effort'):params['thinking']=config['effort']
             if instructions:params['prompt']=instructions+text
             if session.get('thread_id'):params['session_id']=session['thread_id']
             try:self.bridge.call('start',params,timeout=15)
@@ -213,6 +214,8 @@ class BridgeHarness(OpencodeHarness):
                 kind=event['kind']
                 if kind=='text':
                     output+=event.get('text','');self.chat.patch_message(assistant['id'],text=output)
+                elif kind=='performance':
+                    self.chat.event(sid,'runtime/performance',{'turnId':mid,**sanitize(event)})
                 elif kind=='reasoning':
                     reasoning+=event.get('text','');self.chat.patch_message(assistant['id'],reasoning=reasoning)
                 elif kind=='session':

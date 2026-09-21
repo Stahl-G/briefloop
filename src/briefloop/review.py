@@ -867,6 +867,8 @@ version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief
                  'execution.status 为 cancelled/failed/budget_exhausted 只说明执行收束原因，不代表主张真假，其未覆盖主张按未核查处理；covers_this_version 为 false 的记录属于旧稿，不能当作本稿已核查。')
     from .deliverable_spec import instructions
     prompt+='\n'+instructions(target['requirements'],role='reviewer',include_spec=False)
+    from .writing_guidance import DECISION_EVIDENCE_GUIDE
+    prompt+='\n'+DECISION_EVIDENCE_GUIDE+'审阅时只核对已存原件；条件确实改变建议才指出具体问题，来源没有限制时不要自行补造。'
     if clauses:
         prompt+='\n本次条款清单（clause_checks.clause_id 只能取这些值）：'+dump([{k:c[k] for k in ('clause_id','kind','source_quote','instruction')} for c in clauses])
     ids=set()

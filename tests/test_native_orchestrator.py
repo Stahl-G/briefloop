@@ -59,7 +59,7 @@ class FlowEngine:
                     {'type':'text','text':'2025年收入1200万元。'}, {'type':'citation','attrs':{'sourceId':self.source['id']}}]}]},
                     'citations':[{'source_id':self.source['id'],'locator':'line 1'}]}
                 packet=json.loads((Path(self.sessions[sid]['packet_root'])/'input.json').read_text())
-                self.queues[sid]=([('save_revision_metadata',{'responses':[],'bindings':[]})] if packet.get('mode')=='revision' else [])+[('submit_draft',draft)]
+                self.queues[sid]=([('save_revision_metadata',{'responses':[],'bindings':[]})] if packet.get('mode')=='revision' else [])+[('save_draft',draft),('check_draft',{}),('submit_draft',{})]
             elif role == 'evaluator':
                 packet=json.loads((Path(self.sessions[sid]['packet_root'])/'input.json').read_text())
                 self.queues[sid]=[('submit_assessment',{'assessment':{'brief_hash':packet['brief']['hash'],'summary':'synthetic check','overall':'达到要求','evidence':3,'coverage':3,'analysis':3,'expression':3}})]
@@ -69,12 +69,18 @@ class FlowEngine:
             if not p['ok']:
                 self.sinks[self.sessions[sid]['eid']].put({'kind':'end','status':'failed','error':p['error']})
                 return {}
+            if self.sessions[sid]['role']=='analyst' and 'content' in p and 'settle' not in p:
+                receipt=json.loads(p['content'][0]['text'])
+                if receipt.get('revision'):
+                    self.sessions[sid]['draft_revision']=receipt['revision']
             if 'settle' in p:
                 self.sinks[self.sessions[sid]['eid']].put({'kind':'end','status':'completed','final_text':p['settle']})
             else:self.next(sid)
         return {}
     def next(self,sid):
         name,args=self.queues[sid].pop(0)
+        if name in ('check_draft','submit_draft'):
+            args={'revision':self.sessions[sid]['draft_revision']}
         self.sinks[self.sessions[sid]['eid']].put({'kind':'tool_request','tool':name,'args':args,'request_id':name})
     def close(self):pass
 
@@ -215,7 +221,9 @@ def test_writer_recovery_refuses_changed_packet_before_model_call(tmp_path):
     store,source,run,job=setup(tmp_path)
     class Writer:
         def execute(self,job,prompt,folder,*args,**kw):
-            (folder/'draft.json').write_text(dump({'title':'T','editor_document':{'type':'doc','content':[{'type':'paragraph','content':[{'type':'text','text':'Synthetic report'}]}]}}))
+            from test_native_analyst import finish
+            config={**job['native_packet'],'native_role':'analyst','packet_root':str(folder/'packet'),'attempt_id':'fixture'}
+            assert finish(store,config,{'title':'T','editor_document':{'type':'doc','content':[{'type':'paragraph','content':[{'type':'text','text':'Synthetic report'}]}]}})['ok']
     folder=store.root/'writer'
     analyst.run(store,Writer(),job,run['id'],folder,'briefloop-native',plan={},research={'sources':[],'gaps':[]},publish=False)
     (folder/'packet'/'writing.md').write_text('changed outside the task')

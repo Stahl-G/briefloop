@@ -22,10 +22,12 @@ def inspect_draft(value, requirements=None, *, store=None, allowed_sources=None)
     checked = sum(n['checked'] for n in numbers)
     quantity_count = len(list(quantities(draft.markdown)))
     warnings = []
+    notes = []
     if length['over_limit']:
         warnings.append({'code': 'over_limit', 'message': '正文超过本轮上限；请保留重点并压缩重复内容。'})
     if length['below_target']:
-        warnings.append({'code': 'below_target', 'message': '正文低于目标；请核对必答内容与重点章节，不为凑字数扩写。'})
+        notes.append({'code': 'below_target', 'kind': 'advisory',
+                      'message': '目标字数是偏好；核对明确范围与必答内容，不能仅因低于目标就扩写。'})
     if cited - located:
         warnings.append({'code': 'citation_location_missing', 'source_ids': sorted(cited - located),
                          'message': '正文引用缺少对应定位记录；有来源ID不代表该句得到原文支持。'})
@@ -34,12 +36,13 @@ def inspect_draft(value, requirements=None, *, store=None, allowed_sources=None)
     if any(n['checked'] and not n['found'] for n in numbers):
         warnings.append({'code': 'number_mismatch', 'message': '存在绑定数值不匹配，请回到对应原文修正。'})
     if any(not n['checked'] for n in numbers):
-        warnings.append({'code': 'number_unchecked', 'message': '部分数字绑定缺定位或无法检查，不能当作已核验。'})
+        warnings.append({'code': 'number_unchecked', 'kind': 'needs_semantic_review',
+                         'message': '部分绑定缺定位或工具无法检查。缺定位可补；不支持的单位保留原状交审阅，不删单位或反复改数值以消除提示。'})
     return {'status': 'needs_attention' if warnings else 'checks_completed',
             'review_status': 'not_reviewed', 'length': length, 'sections': sections,
             'citations': {'body_source_count': len(cited), 'missing_locator': sorted(cited - located)},
             'numbers': {'total': len(numbers), 'checked': checked,
                         'status': 'not_checked' if not checked else 'partial' if checked < len(numbers) else 'checked_bindings',
                         'body_quantity_count': quantity_count, 'results': numbers},
-            'warnings': warnings,
+            'warnings': [{**w, 'kind': w.get('kind', 'repairable_error')} for w in warnings], 'notes': notes,
             'scope': '仅确定性诊断；各章是否充分、主体/期间/条件、引用支持与推断强度仍需独立审阅。'}

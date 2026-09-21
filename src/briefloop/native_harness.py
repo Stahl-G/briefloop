@@ -253,6 +253,7 @@ class NativeHarness:
             'prompt_version': prompt['version'],
             'system_prompt_sha256': result.get('system_prompt_sha256'),
             'image_input': result.get('image_input'),
+            'runtime_policy': result.get('runtime_policy'),
             'tools': result.get('tools'),
         })
         return result
@@ -366,6 +367,8 @@ class NativeHarness:
                                      tool.get('input') or {}, tool.get('output', ''),
                                      status=tool['status'],
                                      native_session=sid)
+                elif kind == 'performance':
+                    self.chat.event(sid, 'runtime/performance', {'turnId': mid, **sanitize(event)})
                 elif kind == 'usage':
                     usage = event.get('usage') or {}
                     self.chat.event(sid, 'thread/tokenUsage/updated', {'tokenUsage': {
