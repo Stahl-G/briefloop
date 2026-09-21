@@ -306,6 +306,7 @@ async function runPi(p, state, launch2, terminate2, emit2) {
   if (p.images?.length) throw Error("Pi image input is not enabled in this adapter");
   let finish, fail, lastMessage = null, textSeen = false, started = false, contextWindow;
   let requestSequence = 0, requestStarted = null, firstDelta = null;
+  let turnStarted = null;
   const toolStarted = /* @__PURE__ */ new Map();
   const settled = new Promise((resolve, reject) => {
     finish = resolve;
@@ -315,6 +316,7 @@ async function runPi(p, state, launch2, terminate2, emit2) {
   });
   const c = piConnection(state.bin, p, launch2, terminate2, (m) => {
     if (!started) return;
+    if (m.type === "turn_start") turnStarted = performance.now();
     if (m.type === "message_start" && m.message?.role === "assistant") {
       textSeen = false;
       requestSequence++;
@@ -330,7 +332,7 @@ async function runPi(p, state, launch2, terminate2, emit2) {
       } else if (e.type === "thinking_delta") emit2(p.execution_id, "reasoning", { text: e.delta, delta: true });
     }
     if (m.type === "message_end" && m.message?.role === "assistant") {
-      emit2(p.execution_id, "performance", { phase: "model_message", sequence: requestSequence, duration_ms: requestStarted === null ? null : performance.now() - requestStarted, first_delta_ms: firstDelta === null || requestStarted === null ? null : firstDelta - requestStarted, stop_reason: m.message.stopReason, clock: "monotonic", scope: "sdk_events_not_http_ttft" });
+      emit2(p.execution_id, "performance", { phase: "model_message", sequence: requestSequence, duration_ms: requestStarted === null ? null : performance.now() - requestStarted, first_delta_ms: firstDelta === null || requestStarted === null ? null : firstDelta - requestStarted, turn_to_message_end_ms: turnStarted === null ? null : performance.now() - turnStarted, turn_to_first_delta_ms: firstDelta === null || turnStarted === null ? null : firstDelta - turnStarted, stop_reason: m.message.stopReason, clock: "monotonic", scope: "sdk_events_not_http_ttft" });
       lastMessage = m.message;
       if (!textSeen) {
         for (const b of lastMessage.content || []) if (b.type === "text") emit2(p.execution_id, "text", { text: b.text, delta: true });

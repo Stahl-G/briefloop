@@ -295,12 +295,15 @@ test("reviewer session exposes exactly the packet tools and confines reads", asy
 
 // ---- turn lifecycle -------------------------------------------------------------
 test("a JSON reply completes with one end carrying the object", async () => {
-  script(reply.text('{"ok":true}'));
+  script(res => setTimeout(() => reply.text('{"ok":true}')(res), 40));
   const { session_id } = await reviewer();
   const evts = await turn(session_id, "e-json");
   assert.equal(ends(evts).length, 1);
   assert.equal(ends(evts)[0].status, "completed");
   assert.equal(ends(evts)[0].final_text, '{"ok":true}');
+  const timing = evts.find(e => e.kind === "performance" && e.phase === "model_message");
+  assert.ok(timing.turn_to_first_delta_ms >= 20, "include waiting before message_start");
+  assert.ok(timing.turn_to_message_end_ms >= timing.duration_ms);
 });
 
 test("prose then JSON: the correction reply is delivered, not dropped", async () => {

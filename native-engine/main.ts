@@ -241,6 +241,7 @@ function disarmIdle(entry: SessionEntry): void {
 // event, written by turnStart after every repair or retry has finished.
 function wireSessionEvents(clientSid: string, entry: SessionEntry): void {
   let requestSequence = 0, requestStarted: number | null = null, firstDelta: number | null = null;
+  let turnStarted: number | null = null;
   const toolStarted = new Map<string, {at: number; chars: number}>();
   entry.unsubscribe = entry.session.subscribe((event) => {
     const execId = entry.execId;
@@ -278,6 +279,8 @@ function wireSessionEvents(clientSid: string, entry: SessionEntry): void {
           emit(clientSid, execId, "performance", {phase: "model_message", sequence: requestSequence,
             duration_ms: requestStarted === null ? null : performance.now() - requestStarted,
             first_delta_ms: firstDelta === null || requestStarted === null ? null : firstDelta - requestStarted,
+            turn_to_message_end_ms: turnStarted === null ? null : performance.now() - turnStarted,
+            turn_to_first_delta_ms: firstDelta === null || turnStarted === null ? null : firstDelta - turnStarted,
             stop_reason: e.message?.stopReason, clock: "monotonic", scope: "sdk_events_not_http_ttft"});
           // The last assistant message decides: a provider error that pi
           // retried successfully must not fail the turn afterwards.
@@ -331,6 +334,9 @@ function wireSessionEvents(clientSid: string, entry: SessionEntry): void {
         break;
       }
       case "turn_start":
+        // message_start can arrive only after the provider responds. Keep the
+        // earlier SDK turn boundary too; neither timestamp is HTTP-level TTFT.
+        turnStarted = performance.now();
         entry.finalText = "";
         emit(clientSid, execId, "turn_start");
         emit(clientSid, execId, "text_reset");
