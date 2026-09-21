@@ -1184,3 +1184,47 @@ body.report-chat-open .workspace-shell>main:has(>.chat-page:not([hidden])){paddi
   font-size:var(--text-xs,12px);
   padding:0 8px;
 }
+
+/* The row reads as text and icons, not as a line of boxes: only the send
+   button is filled, everything else is quiet until you point at it. */
+#chat-form .attach-button,
+#chat-form .params-button,
+#chat-form .model-id-input--default,
+#chat-form .composer-options .subtle-button,
+#chat-form .composer-options button:not(.attach-button):not(.primary){
+  border:0 !important;
+  background:transparent !important;
+  color:var(--color-text-muted,#6a706b) !important;
+  border-radius:var(--radius-sm,6px);
+}
+#chat-form .attach-button:hover:not(:disabled),
+#chat-form .params-button:hover:not(:disabled),
+#chat-form .model-id-input--default:hover:not(:disabled),
+#chat-form .composer-options button:not(.attach-button):not(.primary):hover:not(:disabled){
+  background:var(--color-surface-soft,#f4f6ef) !important;
+  color:var(--color-text,#1e2320) !important;
+}
+#chat-form .model-id-input--default:focus{
+  background:var(--color-surface-soft,#f4f6ef) !important;
+  color:var(--color-text,#1e2320) !important;
+}
+#chat-form .attach-button{padding:0 10px !important}
+#chat-form .model-picker{flex:0 1 300px;max-width:300px}
+#chat-form .model-id-input--default{width:100%;min-width:0}
+#chat-form .model-id-input--default{text-overflow:ellipsis}
+
+/* send: one filled button, with the queue mode as quiet text beside it */
+#chat-form .send-split{gap:2px}
+#chat-form .send-mode{
+  border:0 !important;
+  border-radius:var(--radius-sm,6px) !important;
+  background:transparent !important;
+  color:var(--color-text-muted,#6a706b);
+  padding:0 6px !important;
+}
+#chat-form .send-mode:hover:not(:disabled){background:var(--color-surface-soft,#f4f6ef) !important}
+#chat-form #chat-send{
+  border-radius:999px !important;
+  padding:0 18px;
+  font-weight:550;
+}
