@@ -40,3 +40,9 @@ emptyContext.state.jobs.push({kind:'generate',status:'running'});
 emptyContext.renderReports();assert.match(el('reports-list').innerHTML,/首份报告正在制作/);
 emptyContext.state.jobs[0].status='cancelled';
 emptyContext.renderReports();assert.doesNotMatch(el('reports-list').innerHTML,/首份报告正在制作/);
+
+// The module used to alias its own copy as `const e=escape`. With the copy
+// gone that name resolves to the legacy global escape(), which percent-encodes
+// instead of escaping markup — and every card silently renders %u65E5%u62A5.
+assert.doesNotMatch(taskProgressCard({...job,status:'running'},{...p,title:'<b>x</b>'}),/%u|%3C/);
+assert.match(taskProgressCard({...job,status:'running'},{...p,title:'<b>x</b>'}),/&lt;b&gt;/);

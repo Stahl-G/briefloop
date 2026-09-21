@@ -1,3 +1,4 @@
+import {$,esc} from './dom.js';
 import {renderVersionDiff} from './version-diff.js';
 import {DOMSerializer} from '@tiptap/pm/model';
 import {beginPanel,updatePanel} from './report-panels.js';
@@ -47,7 +48,7 @@ document.addEventListener('mouseover',e=>{const node=e.target.closest?.('.must-f
 document.addEventListener('mousemove',e=>{if(e.target.closest?.('.must-fix,.suggestion-fix'))placeHighlightTip(e)});
 document.addEventListener('mouseout',e=>{if(e.target.closest?.('.must-fix,.suggestion-fix')&&!e.relatedTarget?.closest?.('.highlight-tip'))hideHighlightTip()});
 document.addEventListener('click',e=>{const node=e.target.closest?.('.must-fix,.suggestion-fix');if(node)jumpToFinding(node.dataset.finding)});
-const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])),parse=s=>JSON.parse(s||'{}');
+const parse=s=>JSON.parse(s||'{}');
 let followUpdates=true;
 let uploadLimits=null;
 let token='',state,current,pendingRun=null,editor,dirty=false,saving=false,saveTimer,learnTimer,markdownMode=false,selected=new Set(),referenceSelected=new Set();
@@ -753,7 +754,7 @@ function renderSettingsSessionNote(){
 }
 function refreshRuntimeModelSummaries(){
  if(!state)return;
- document.querySelectorAll('[data-runtime-model]').forEach(el=>{el.innerHTML=runtimeModelSummary(el.dataset.runtimeModel,backendValue(),$('model-select').value.trim(),modelCatalogs.get(el.dataset.runtimeModel),esc)});
+ document.querySelectorAll('[data-runtime-model]').forEach(el=>{el.innerHTML=runtimeModelSummary(el.dataset.runtimeModel,backendValue(),$('model-select').value.trim(),modelCatalogs.get(el.dataset.runtimeModel))});
 }
 function renderRuntimeDiscovery(){
  const select=$('agent-backend'),chosen=select.value||state.settings.agent_backend||'codex';
@@ -762,7 +763,7 @@ function renderRuntimeDiscovery(){
  if(![...select.options].some(o=>o.value===chosen))select.add(new Option(chosen+' · 未检测到',chosen));select.value=chosen;
  const modelBlock=$('settings-model-block');
  const installed=runtimeCatalog.filter(r=>r.installed).sort((a,b)=>Number(b.id===chosen)-Number(a.id===chosen)),missing=runtimeCatalog.filter(r=>!r.installed);
- const row=r=>runtimeCard(r,{chosen,model:$('model-select').value.trim(),catalog:modelCatalogs.get(r.id),esc});
+ const row=r=>runtimeCard(r,{chosen,model:$('model-select').value.trim(),catalog:modelCatalogs.get(r.id)});
  $('runtime-discovery-details').innerHTML=installed.map(row).join('')+`<details class="runtime-uninstalled"><summary>未安装的 CLI · ${missing.length}</summary><div class="runtime-missing-grid">${missing.map(r=>runtimeCard(r,{chosen,model:'',esc,compact:true})).join('')}</div></details>`;
  const selectedCard=[...$('runtime-discovery-details').querySelectorAll('[data-runtime-card]')].find(c=>c.dataset.runtimeCard===chosen);
  if(selectedCard)selectedCard.append(modelBlock);else $('settings-cli').append(modelBlock);
@@ -2519,7 +2520,7 @@ if($('settings-view-updates')){
 }
 // End App updates.
 
-activity=activityCenter({api,getState:()=>state,page,openBrief,showSettings,settingsView,$,esc});
+activity=activityCenter({api,getState:()=>state,page,openBrief,showSettings,settingsView});
 
 async function showSearchActivity(runId){
  const dialog=$('search-activity-dialog');dialog.showModal();$('search-activity-body').textContent='正在读取…';

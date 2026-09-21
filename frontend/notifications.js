@@ -1,5 +1,6 @@
+import {$,esc} from './dom.js';
 // Unread state lives in the workspace, not the browser's transient UI state.
-export function activityCenter({api,getState,page,openBrief,showSettings,settingsView,$,esc}){
+export function activityCenter({api,getState,page,openBrief,showSettings,settingsView}){
  let signature='',checking=false,checkedWorkspace=null;
  const categoryNames={reports:'报告',templates:'模板',learning:'Wiki',updates:'版本'};
  const nav={reports:'[data-page="reports"]',templates:'[data-page="templates"]',learning:'[data-page="learning"]',updates:'#settings-open'};

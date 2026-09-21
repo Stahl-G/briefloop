@@ -1,3 +1,4 @@
+import {esc} from './dom.js';
 // Local artwork provenance: THIRD_PARTY_NOTICES.md and third_party/open-design/NOTICE.md.
 // The runtime's name comes from the bridge catalogue with the rest of its
 // record; only the one-line description is the page's own copy.
@@ -31,12 +32,12 @@ const descriptions = {
 };
 const iconIds=new Set(['codex','claude','opencode','codebuddy','hermes','kimi','mimo','reasonix','aider','amr','antigravity','copilot','cursor-agent','deepseek','devin','grok-build','kilo','kiro','pi','qoder','qwen','trae-cli','vibe']);
 const pngIds=new Set(['aider','devin','trae-cli']);
-export function runtimeModelSummary(id,chosen,model,catalog,esc){
+export function runtimeModelSummary(id,chosen,model,catalog){
  const choice=id===chosen?(model||'待选择模型'):'选择后配置模型';
  const source={host:'宿主目录',native_config:'本机配置',builtin_hints:'内置建议',local_routes:'本机路由',host_default_only:'宿主默认'}[catalog?.source];
  return `模型 <strong>${esc(choice)}</strong>${catalog?`<span class="runtime-model-source">${esc(source||'模型目录')} · ${catalog.models.length} 项</span>`:''}`;
 }
-export function runtimeCard(r,{chosen,model,catalog,esc,compact=false}){
+export function runtimeCard(r,{chosen,model,catalog,compact=false}){
  const name=r.name||r.id;
  const iconId=r.id==='deepseek-harness'?'deepseek':r.id;
  const icon=iconIds.has(iconId)?`<img src="/runtime-${iconId}.${pngIds.has(iconId)?'png':'svg'}" width="40" height="40" alt="" draggable="false">`:'<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m6 9 3 3-3 3m6 0h6"/></svg>';

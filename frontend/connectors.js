@@ -1,8 +1,7 @@
+import {esc} from './dom.js';
 // Settings UI uses public connector DTOs only. Existing credentials never enter
 // the browser; blank credential inputs preserve the server-side binding.
-export function connectorSettings(root, api) {
- const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
- const labels={disabled:'未启用',disconnected:'未连接',connecting:'连接中',connected:'已连接',error:'连接异常'};
+export function connectorSettings(root, api) { const labels={disabled:'未启用',disconnected:'未连接',connecting:'连接中',connected:'已连接',error:'连接异常'};
  let records=[],editing=null,busy=false;
  root.innerHTML=`<div class="section-title"><h2>数据连接器（MCP）</h2><button type="button" data-refresh>刷新状态</button></div>
  <p class="help">管理本工作区的 MCP 服务与连接状态。连接测试读取服务能力目录。</p>

@@ -1,6 +1,5 @@
-export function scheduleUI({api,getState,refresh,notice,openReport}){
- const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
- const display=(s,zone)=>s?new Date(s).toLocaleString('zh-CN',{timeZone:zone,hour12:false}):'—';
+import {$,esc} from './dom.js';
+export function scheduleUI({api,getState,refresh,notice,openReport}){ const display=(s,zone)=>s?new Date(s).toLocaleString('zh-CN',{timeZone:zone,hour12:false}):'—';
  let editing=null,requirements={};
  const statuses={accepted:'已排队',queued:'已排队',running:'执行中',complete:'已完成',failed:'失败',interrupted:'已中断',cancelled:'已停止',skipped:'已跳过'};
  function render(){
