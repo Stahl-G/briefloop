@@ -6,12 +6,7 @@ conversation are still visible in the sidebar's current-tasks block.
 """
 import json
 
-KIND_LABELS = {
-    'generate': '生成简报', 'assess': '重新评分', 'review': '独立审阅', 'revise': '按审阅修订',
-    'fact_check': '独立事实核查', 'learn': 'WikiSkill 学习', 'export_docx': '生成工作稿 Word',
-    'release': '制作正式 Word', 'audit_bundle': '制作审计包', 'source_refresh': '复查来源',
-    'prepare_template': '准备模板',
-}
+from .task_labels import LABELS, REPORTED
 TERMINAL = ('complete', 'failed', 'interrupted', 'cancelled')
 
 
@@ -36,9 +31,9 @@ def target_session(store, payload):
 
 
 def status_text(kind, status, error=None):
-    if kind not in KIND_LABELS:
+    if kind not in REPORTED:
         return None
-    label = KIND_LABELS[kind]
+    label = LABELS[kind]
     if status == 'queued':
         return f'已开始任务：{label}。完成后我会在这里汇报。'
     if status == 'complete':

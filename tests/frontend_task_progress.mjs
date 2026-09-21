@@ -17,7 +17,7 @@ const vm=await import('node:vm');
 const source=readFileSync(new URL('../frontend/app.js',import.meta.url),'utf8');
 const controller=source.slice(source.indexOf('const taskSnapshots='),source.indexOf('function renderTasks(){'));
 const pending=[],renders=[];
-const c=vm.createContext({state:{jobs:[{...job,kind:'generate',payload:'{}'}]},TASK_LABELS:{generate:'报告'},parse:JSON.parse,
+const c=vm.createContext({state:{jobs:[{...job,kind:'generate',payload:'{}'}],task_labels:{generate:'报告'}},taskLabel:k=>({generate:'报告'})[k],parse:JSON.parse,
  $:()=>({hidden:false}),api:route=>new Promise((resolve,reject)=>pending.push({route,resolve,reject})),
  renderTasks:()=>renders.push(true)});
 vm.runInContext(controller,c);

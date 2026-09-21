@@ -59,7 +59,7 @@ assert.ok(vm.runInContext('effectiveReportJobs().some(j=>j.id==="learn")',c));
  const oldReview=job('review_old','review','failed',{run_id:'report',version_id:original.id});
  const oldGeneration=job('job_original','generate','failed',{run_id:'report'});
  const history=[review,producer,oldReview,oldGeneration];
- const view=vm.createContext({withoutSupersededRetries,$:node,parse:s=>JSON.parse(s||'{}'),esc:String,modelLabel:()=> 'Selected model',page:()=>{},showSettings:()=>{},
+ const view=vm.createContext({withoutSupersededRetries,$:node,taskLabel:kind=>({generate:'生成简报',review:'独立审阅',assess:'重新评分',revise:'按审阅修订',fact_check:'独立事实核查',learn:'WikiSkill 学习'})[kind],parse:s=>JSON.parse(s||'{}'),esc:String,modelLabel:()=> 'Selected model',page:()=>{},showSettings:()=>{},
   current:revised,pendingRun:null,state:{jobs:history,briefs:[revised,original],runs:[],sources:[],settings:{timeout_minutes:30}},
   api:async(route,payload)=>{requests.push({route,payload});return route.startsWith('events?')?[]:{}},action:async fn=>fn()});
  vm.runInContext(progressCode+source.slice(source.indexOf('let progressRequest='),source.indexOf('function friendlyModel')),view);
