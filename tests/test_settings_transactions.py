@@ -5,6 +5,9 @@ import http.client
 import json
 import threading
 
+import pytest
+from pydantic import ValidationError
+
 from briefloop import learning_budget
 from briefloop.server import make_server, _close_service
 from briefloop.skills import register_target
@@ -121,3 +124,65 @@ def test_settings_patches_preserve_registered_targets_and_explicit_model(tmp_pat
         assert saved['model_selection_required'] is False
         assert store.runtime_config()['model'] == 'gpt-5.6-luna'
         assert saved['auto_learn'] is False
+
+
+def test_concurrent_role_registration_keeps_both_instructions_and_revoked_consent(tmp_path, monkeypatch):
+    first, second = Store(tmp_path), Store(tmp_path)
+    first.update_settings({'auto_learn': True, 'confirm_learning_rounds': 1})
+    first.update_settings({'auto_learn': False})
+    original_targets = first.settings()['skill_targets']
+    first_locked, second_entered, release_first = (threading.Event() for _ in range(3))
+    first_tx, second_tx = first.tx, second.tx
+
+    @contextmanager
+    def hold_first_writer():
+        with first_tx() as connection:
+            first_locked.set()
+            assert release_first.wait(10)
+            yield connection
+
+    @contextmanager
+    def observe_second_writer():
+        second_entered.set()
+        with second_tx() as connection:
+            yield connection
+
+    monkeypatch.setattr(first, 'tx', hold_first_writer)
+    monkeypatch.setattr(second, 'tx', observe_second_writer)
+    with ThreadPoolExecutor(max_workers=2) as clients:
+        units = clients.submit(register_target, first, 'units', 'Check units.')
+        try:
+            assert first_locked.wait(10)
+            totals = clients.submit(register_target, second, 'totals', 'Check totals.')
+            assert second_entered.wait(10)
+            # A read outside the write transaction would already be stale here.
+        finally:
+            release_first.set()
+        assert units.result(timeout=10)['instruction'] == 'Check units.'
+        assert totals.result(timeout=10)['instruction'] == 'Check totals.'
+
+    saved = Store(tmp_path)
+    assert saved.meta('additional_roles') == {
+        'units': {'role_id': 'units', 'instruction': 'Check units.'},
+        'totals': {'role_id': 'totals', 'instruction': 'Check totals.'}}
+    settings = saved.settings()
+    assert settings['skill_targets'] == [*original_targets, 'units', 'totals']
+    assert settings['auto_learn'] is False
+    assert settings['auto_learn_authorized_rounds'] is None
+    assert settings['auto_learn_authorized_plan'] is None
+
+
+def test_role_registration_rolls_back_when_settings_validation_fails(tmp_path, monkeypatch):
+    store = Store(tmp_path)
+    register_target(store, 'units', 'Original instruction.')
+    roles, settings = store.meta('additional_roles'), store.settings()
+    merge = learning_budget.apply_settings_change
+
+    def invalid_settings(current, body):
+        return {**merge(current, body), 'k': 0}
+
+    monkeypatch.setattr(learning_budget, 'apply_settings_change', invalid_settings)
+    with pytest.raises(ValidationError):
+        register_target(store, 'units', 'Must not be partially saved.')
+    assert store.meta('additional_roles') == roles
+    assert store.settings() == settings

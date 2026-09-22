@@ -3,8 +3,9 @@ import json
 from pathlib import Path
 import pytest
 from wikiskill import feedback_loop,native_agents
-from briefloop.store import Store
-from briefloop.learning import _experience,_sync_wiki
+from briefloop.store import Store,content_hash,dump,now
+from briefloop.learning import _experience,_sync_wiki,apply_accepted
+from briefloop.skills import bind_context
 from briefloop.models import Comment
 
 
@@ -98,3 +99,44 @@ def test_model_retry_retains_explicit_scope_without_duplicate_feedback(tmp_path)
     assert len(state['feedback'])==1 and state['explicit_requirement_sources']==['f1']
     candidate(second)
     assert feedback_loop.finish(second,pairs=[pair()])['history'][-1]['accepted']
+
+
+def test_accepted_same_text_binds_targets_without_rewriting_old_versions(tmp_path):
+    store=Store(tmp_path/'workspace')
+    text='# Method\nUse owner/action/date.'
+    legacy_id='skill_'+content_hash(text)[:16]
+    with store.tx() as connection:
+        connection.execute('INSERT INTO skills VALUES(?,?,?,?,?,?)',
+                           (legacy_id,None,text,dump(['scout']),'Legacy binding',now()))
+    store.bind_skill(legacy_id)
+    legacy=store.one('skills',legacy_id)
+    source=store.add_source('Historical facts','Three files.')
+    historical=store.create_run({'title':'Historical','objective':'Summarize'},[source['id']])
+    initial=tmp_path/'initial.md';initial.write_text(text,encoding='utf-8')
+
+    def accept(name,targets):
+        study=tmp_path/name
+        feedback_loop.begin(study,skill=initial,feedback=[{'text':'Use owner/action/date',
+            'source':'f1','origin':'human','learning_intent':'explicit_requirement'}])
+        candidate(study,text)
+        state=feedback_loop.finish(study,pairs=[pair()])
+        assert state['history'][-1]['accepted']
+        job=store.enqueue('learn',{'skill_id':store.meta('active_skill'),'targets':targets})
+        apply_accepted(store,job,study,state)
+        return store.one('skills',store.meta('active_skill')),job,study,state
+
+    analyst,_,_,_=accept('analyst',['analyst'])
+    both,_,_,_=accept('both',['scout','analyst'])
+    reordered,job,study,state=accept('reordered',['analyst','scout','analyst'])
+    assert analyst['id']!=both['id'] and reordered['id']==both['id']
+    assert set(bind_context(store,analyst))=={'analyst'}
+    assert set(bind_context(store,both))=={'scout','analyst'}
+    assert json.loads(both['targets'])==['analyst','scout']
+    assert store.one('skills',legacy_id)==legacy
+    assert store.one('runs',historical['id'])['skill_id']==legacy_id
+    assert set(bind_context(store,legacy))=={'scout'}
+    assert len(store.rows('SELECT id FROM skills'))==3
+    # A completed adoption replay must still preserve a later user rollback.
+    store.bind_skill(legacy_id)
+    apply_accepted(store,job,study,state)
+    assert store.meta('active_skill')==legacy_id

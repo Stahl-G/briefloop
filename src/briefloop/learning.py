@@ -518,10 +518,14 @@ def apply_accepted(store,job,study,state):
     accepted=[x for x in state['history'] if x['accepted']]
     if not accepted:return
     decision=accepted[-1];payload=json.loads(job['payload'])
-    text=(Path(study)/decision['skill']['file']).read_text();sid='skill_'+content_hash(text)[:16]
+    text=(Path(study)/decision['skill']['file']).read_text()
+    # A retained version includes its role binding. Keep legacy rows immutable;
+    # target order and duplicate roles do not change the effective binding.
+    targets=sorted(set(payload['targets']))
+    sid='skill_'+content_hash(dump({'content':text,'targets':targets}))[:16]
     with store.tx() as c:
         if c.execute("SELECT seq FROM events WHERE job_id=? AND kind='adoption_processed'",(job['id'],)).fetchone():return
-        c.execute('INSERT OR IGNORE INTO skills VALUES(?,?,?,?,?,?)',(sid,payload['skill_id'],text,dump(payload['targets']),decision.get('reason',''),now()))
+        c.execute('INSERT OR IGNORE INTO skills VALUES(?,?,?,?,?,?)',(sid,payload['skill_id'],text,dump(targets),decision.get('reason',''),now()))
         row=c.execute("SELECT value FROM meta WHERE key='active_skill'").fetchone()
         current=json.loads(row['value']) if row else None
         applied=current==payload['skill_id']
