@@ -223,12 +223,17 @@ class Engine:
         if method == 'session_create':
             return {'session_id': params['session_id'], 'session_file': '/s.jsonl', 'model': params['model']}
         if method == 'turn_start':
-            sink = self.sinks[params['execution_id']]
-            sink.put({'kind': 'tool_request', 'request_id': 'read-1', 'tool': 'source_read', 'args': {'source_id': self.sid}})
-            sink.put({'kind': 'tool_request', 'request_id': 'record-1', 'tool': 'record_evidence', 'args': {'items': [item(self.sid)]}})
-            sink.put({'kind': 'tool_request', 'request_id': 'submit-1', 'tool': 'submit_scout_result',
-                      'args': {'gaps': []}})
-            sink.put({'kind': 'end', 'status': 'completed', 'final_text': 'done'})
+            self.sink = self.sinks[params['execution_id']]
+            self.sink.put({'kind': 'tool_request', 'request_id': 'read-1', 'tool': 'source_read', 'args': {'source_id': self.sid}})
+        elif method == 'tool_result':
+            # The real engine awaits tool results before a sequential mutation
+            # or completion. Ending early races the harness's late-call guard.
+            if params['request_id'] == 'read-1':
+                self.sink.put({'kind': 'tool_request', 'request_id': 'record-1', 'tool': 'record_evidence', 'args': {'items': [item(self.sid)]}})
+            elif params['request_id'] == 'record-1':
+                self.sink.put({'kind': 'tool_request', 'request_id': 'submit-1', 'tool': 'submit_scout_result', 'args': {'gaps': []}})
+            elif params['request_id'] == 'submit-1':
+                self.sink.put({'kind': 'end', 'status': 'completed', 'final_text': 'done'})
         return {}
 
     def close(self):
