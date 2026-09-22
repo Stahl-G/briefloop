@@ -61,7 +61,7 @@ def test_citation_only_native_revision_preserves_old_word_and_review_binding(tmp
     assert saved['hash']==base['hash'] and saved['editor_document']==base['editor_document']
     assert json.loads(saved['detail'])['citations']==citations
     assert json.loads(saved['detail'])['gaps']==json.loads(base['detail'])['gaps']
-    assert Store(tmp_path).one('briefs',saved['id'])==saved
+    assert Store(tmp_path).brief_view(saved['id'])==saved
     assert store.one('briefs',base['id'])==base and not store.rows('SELECT * FROM feedback')
     assert revise_native(store,config,saved['id'],document,citations)['id']==saved['id']
 

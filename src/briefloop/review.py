@@ -275,6 +275,7 @@ def _snapshot(store,version_id,snapshot_version=7):
                                   'scope':data.get('scope',''),'attribution':data.get('attribution',''),
                                   'supports':[support['span_id'] for support in data.get('supports',[])]})
     detail=json.loads(brief['detail']);requirements=json.loads(run['requirements'])
+    from .length import length_stats
     reconciliation=None
     if detail.get('reconciliation_id'):
         try:
@@ -306,6 +307,8 @@ def _snapshot(store,version_id,snapshot_version=7):
             **({'source_updates':changes,'source_timing':timing} if snapshot_version>=5 else {}),
             **({'source_statements':source_statements,'reconciliation':reconciliation} if snapshot_version>=6 else {}),
             **({'fact_checks':fact_checks} if snapshot_version>=7 else {}),
+            **({'length_stats':length_stats(brief['markdown'],target_words=requirements.get('target_words'),
+                                           max_words=requirements.get('max_words'))} if snapshot_version>=8 else {}),
             'sources':sources,'conflicts':conflicts,'evidence':inspect_bindings(store,version_id),
             'figures':validate_figures(store,run['id'],brief['markdown'])}
 
@@ -463,7 +466,9 @@ def visual_input_files(store,review_id,packet_root):
 
 def build_packet(store,version_id,folder):
     from .media import source_files
-    snapshot=_snapshot(store,version_id);folder=Path(folder)
+    # Length diagnostics belong to new review packets. Other consumers (notably
+    # pending releases) retain their existing snapshot identity.
+    snapshot=_snapshot(store,version_id,8);folder=Path(folder)
     # A saved reader contract must survive into the packet. Losing it silently would
     # let the Reviewer check content without the user's own delivery interpretation.
     saved_contract=snapshot['detail'].get('reader_contract')
@@ -830,6 +835,8 @@ def run_review(store,runtime,job,version_id,folder):
                   if (folder/'packet'/'overview.json').exists() else '先看target.json的本轮要求、正文和claim_evidence关联；')
     if (folder/'packet'/'reader-preview.md').exists():
         packet_guide+=' reader-preview.md 是同一稿件通过产品阅读渲染器生成的文本预览，含短编号和自动来源表。report.txt 的 [src_…] 是核查定位标记，不是用户看到的编号；涉及引用展示/来源表的发现须对照预览，不能要求作者重复补写渲染器已生成的内容。预览不证明实际 Word 分页、样式或原生可点击性，这些须另查实际文件。'
+    if target.get('length_stats'):
+        packet_guide+=' target.json 和 requirements.json 的 length_stats 是已存正文的确定性计数，按 count/rule 对照原始要求与读者约定，不估算字数或把核查段落ID、来源表计入正文。over_limit 只比较结构化 max_words，不表示已满足全部篇幅要求或后续反馈。'
     figure_text_note=('（figure-texts.json 按图列出从生成脚本提取的图上文字及行号，可直接对照；标为只能看图核对的图须实际看图）'
                       if (folder/'packet'/'figure-texts.json').exists() else '')
     from .report_time import instructions as time_instructions

@@ -65,7 +65,8 @@ def action(store, config, args):
     if name == 'revise_document':
         if not isinstance(request.get('editor_document'), dict):
             raise ToolError('revise_document 需要 base_version 和完整 editor_document 对象')
-        return _json_result(store.revise(request['base_version'], editor_document=request['editor_document'], citations=request.get('citations'), author='agent'))
+        saved=store.revise(request['base_version'], editor_document=request['editor_document'], citations=request.get('citations'), author='agent')
+        return _json_result(store.brief_view(saved['id']))
     if name == 'generate':
         if config.get('discuss_only'):
             raise ToolError('/discuss 只整理要求，不启动报告')

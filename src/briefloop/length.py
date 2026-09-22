@@ -3,7 +3,7 @@ from html.parser import HTMLParser
 import re
 from markdown_it import MarkdownIt
 
-COUNTING_RULE = '中文汉字每字计 1；连续英文字母或数字串计 1。忽略 Markdown 标记、URL 和 [@source_id] 引用；标题、列表和表格中的文字计入正文。'
+COUNTING_RULE = '中文汉字每字计 1；连续英文字母或数字串计 1。忽略 Markdown 标记、URL 和 [@source_id] 引用；标题、列表、表格及正文内摘要的文字均计入。'
 _CITATION = re.compile(r'\[@[^\]\n]+\]')
 _URL = re.compile(r'(?:https?://|www\.)[^\s<>\]\)。，；！？、：“”‘’]+', re.IGNORECASE)
 _UNITS = re.compile(r'[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U0002fa1f]|[A-Za-z0-9]+')
@@ -53,4 +53,5 @@ def length_stats(markdown, *, target_words=None, max_words=None):
     return {'count':count,'target_words':target_words,'max_words':max_words,
             'over_limit':count>max_words if max_words is not None else None,
             'over_by':max(0,count-max_words) if max_words is not None else None,
+            'limit_scope':'over_limit 和 over_by 只比较传入的结构化 max_words；不表示符合用户原始要求、读者约定或后续反馈。',
             'rule':COUNTING_RULE}

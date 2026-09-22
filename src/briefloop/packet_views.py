@@ -78,7 +78,8 @@ def views(snapshot):
         'report.txt': report_text(snapshot.get('document') or {'type': 'doc', 'content': []}),
         'requirements.json': dump({'requirements': snapshot.get('requirements'),
                                    'original_input': requested.get('raw_input'),
-                                   'time_context': requested.get('time_context')}),
+                                   'time_context': requested.get('time_context'),
+                                   **({'length_stats':snapshot['length_stats']} if 'length_stats' in snapshot else {})}),
         'claims.json': dump({key: snapshot[key] for key in ('evidence', 'candidate_claims', 'source_statements',
                                                              'reconciliation', 'conflicts', 'fact_checks')
                              if key in snapshot}),
@@ -92,7 +93,7 @@ def views(snapshot):
 PURPOSE = {
     'report.txt': '被审正文的纯文本，每行一个段落，前面是段落 ID，[src_…] 为引用位置',
     'reader-preview.md': '产品阅读渲染后的同稿文本，包含短引用编号与自动来源表；不是实际 Word 排版验收',
-    'requirements.json': '本轮要求（含读者约定与条款）及用户原话',
+    'requirements.json': '本轮要求（含读者约定与条款）、用户原话，以及新版核查包的已存正文确定性 length_stats',
     'claims.json': '主张与证据绑定、候选主张、来源陈述、冲突',
     'numbers.json': '数字绑定（正文原句与来源摘录）及结构化数据',
     'citations.json': '各引用对应的来源摘录与定位',
