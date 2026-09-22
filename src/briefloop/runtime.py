@@ -138,7 +138,7 @@ def _research_handoff(store, run_id, plan):
     silently inheriting unverified learnings.
     """
     from .scout_tools import check_handoff, HandoffError
-    if int((plan.get('structure') or {}).get('depth') or 1) < 2:
+    if plan is None or int((plan.get('structure') or {}).get('depth') or 1) < 2:
         return None
     closed = [info for info in (plan.get('rounds') or {}).values() if info.get('status') == 'closed']
     for info in sorted(closed, key=lambda item: int(item.get('index') or 0), reverse=True):
