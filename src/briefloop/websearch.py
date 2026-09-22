@@ -158,9 +158,9 @@ def search(query,*,provider=None,topic='general',time_range=None,start_date=None
             gaps=[g for info in plan.get('rounds',{}).values() for g in info.get('gaps',[])]
             if not any(g.get('id')==gap_id for g in gaps):raise SearchError('缺口不属于本轮计划')
         from . import research_budget as budget
-        # The identity uses validated options before a shared budget may cap
-        # max_results. A different key-file path must not join another account,
-        # but neither its path nor credential is stored in the claim table.
+        # The identity uses validated options; the shared budget caps admitted
+        # URLs, not provider results. Different key files must not join one
+        # account's flight, but their paths and credentials stay out of claims.
         identity={'provider':provider,'query':query,'parameters':parameters,
                   'purpose':purpose,'gap_id':gap_id,'key_file':str(key_file) if key_file is not None else None}
         for _ in range(3):

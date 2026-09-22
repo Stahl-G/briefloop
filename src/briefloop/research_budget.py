@@ -203,7 +203,10 @@ def _reserve_search_tx(store,connection,run_id,max_results,round_id,stage):
         for kind in ('search_requests','candidate_urls'):
             used=state[kind] if kind=='search_requests' else len(state[kind])
             if used>=limits[kind]:raise BudgetExhausted(kind,_view(store,run_id,limits,state))
-        max_results=min(max_results,limits['candidate_urls']-len(state['candidate_urls']))
+        # Keep the provider's validated result count. Earlier ranked hits may
+        # already be known, so capping the response to remaining admission
+        # slots can hide the next new URL. record_candidates() enforces the
+        # hard unique-URL ceiling against the full response below.
     state['search_requests']+=1
     _save(connection,key,state)
     request_id=uid('search')

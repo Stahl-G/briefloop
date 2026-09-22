@@ -73,7 +73,7 @@ def test_candidate_overflow_is_explicit_and_complete_response_is_retained(tmp_pa
     def search_response(endpoint,payload,**kwargs):requests.append(payload);return response,raw
     monkeypatch.setattr(tavily,'_post',search_response)
     result=tavily.search('query',max_results=10,store=store,run_id=run['id'])
-    assert requests[0]['max_results']==2
+    assert requests[0]['max_results']==10
     assert result['status']=='budget_exhausted' and len(result['results'])==2
     assert len(result['unadmitted_urls'])==2 and Path(result['discovery_path']).read_bytes()==raw
     assert result['budget']['used']['candidate_urls']==2
@@ -81,6 +81,37 @@ def test_candidate_overflow_is_explicit_and_complete_response_is_retained(tmp_pa
     assert len(requests)==1
     admitted=budget.record_candidates(store,run['id'],['https://example.test/0#section'])
     assert not admitted['unadmitted_urls'] and admitted['budget']['used']['candidate_urls']==2
+
+
+def test_known_top_result_does_not_hide_new_candidate_when_one_slot_remains(tmp_path,monkeypatch):
+    from briefloop import research_plan as plan
+    limits={'search_requests':2,'candidate_urls':2,'source_pages':1}
+    store=Store(tmp_path/'workspace')
+    store.set_meta('settings',{**store.settings(),'search_provider':'tavily'})
+    run=store.create_run({'title':'quality','objective':'research','allow_web':True,
+                          'fact_check':False,'research_budget':limits},[],research_protocol='quality_v1')['id']
+    plan.freeze(store,run)
+    known='https://example.test/known';new='https://example.test/new';overflow='https://example.test/overflow'
+    requests=[]
+    def search_response(endpoint,payload,**_):
+        requests.append(payload['max_results'])
+        ranked=([known] if len(requests)==1 else [known,new,overflow])
+        response={'results':[{'url':url,'content':'snippet'} for url in ranked[:payload['max_results']]]}
+        return response,json.dumps(response).encode()
+    monkeypatch.setattr(tavily,'_post',search_response)
+    first=tavily.search('first',max_results=1,store=store,run_id=run)
+    assert first['status']=='ok' and [row['url'] for row in first['results']]==[known]
+    second=tavily.search('second',max_results=3,store=store,run_id=run)
+    assert requests==[1,3]  # One remaining admission slot must not truncate provider ranking.
+    assert second['status']=='budget_exhausted'
+    assert [row['url'] for row in second['results']]==[known,new]
+    assert second['unadmitted_urls']==[overflow]
+    current=budget.snapshot(store,run)
+    assert current['used']=={'search_requests':2,'candidate_urls':2,'source_pages':0}
+    assert current['stages']['research']['search_requests']==2
+    assert current['remaining']=={'search_requests':0,'candidate_urls':0,'source_pages':1}
+    assert tavily.search('third',store=store,run_id=run)['status']=='budget_exhausted'
+    assert requests==[1,3]
 
 
 def test_failed_direct_then_extract_and_cache_count_one_page_per_run(tmp_path,monkeypatch):
