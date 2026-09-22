@@ -77,8 +77,9 @@ def main():
     count.add_argument('--target-words',type=int);count.add_argument('--max-words',type=int)
     writer=ts.add_parser('writer',help='按冻结写作协议保存Markdown正文、局部修订和证据；不发布')
     writer.add_argument('--run',required=True);writer.add_argument('--draft-file',required=True)
-    writer.add_argument('--operation',required=True,choices=['write_report','write_sections','assemble_report','update_citations','update_number_bindings','update_temporal_claims','update_draft_details','patch_report_text','replace_report_blocks','read_draft','check_draft','submit_draft'])
+    writer.add_argument('--operation',required=True,choices=['write_report','write_sections','assemble_report','assemble_evidence','update_citations','update_number_bindings','update_temporal_claims','update_draft_details','patch_report_text','replace_report_blocks','read_draft','check_draft','submit_draft'])
     writer.add_argument('--file',help='本次任务目录内的UTF-8 Markdown（write_report）或操作JSON')
+    writer.add_argument('--evidence-file',help='write_report可同时装配本次任务目录内的证据JSON；省略locator时按逐字摘录定位')
     writer.add_argument('--title');writer.add_argument('--revision')
     check=ts.add_parser('check-draft',help='按稿件契约自检 draft.json；只检查不发布')
     check.add_argument('--file',required=True)
@@ -239,6 +240,14 @@ def main():
                     if not path.is_relative_to(target.parent):raise ValueError('输入文件必须位于本次写作任务目录')
                     raw=path.read_text(encoding='utf-8-sig')
                     args={'title':a.title,'markdown':raw} if a.operation=='write_report' else json.loads(raw)
+                if a.evidence_file:
+                    if a.operation!='write_report' or not a.file:
+                        raise ValueError('--evidence-file 只用于附有正文文件的 write_report')
+                    evidence_path=Path(a.evidence_file).expanduser().resolve()
+                    if not evidence_path.is_relative_to(target.parent):raise ValueError('证据文件必须位于本次写作任务目录')
+                    raw_evidence=json.loads(evidence_path.read_text(encoding='utf-8-sig'))
+                    evidence=writer_input.EvidenceInput.model_validate(raw_evidence)
+                    args.update(evidence.model_dump(mode='json',exclude_unset=True))
                 if a.revision:args['revision']=a.revision
                 result=run_tool(store,config,a.operation,args)
                 if not result['ok']:raise ValueError(result['error'])

@@ -411,6 +411,7 @@ def run(store, runtime, job, run_id, folder, backend, *, plan, research, source_
         if backend != 'briefloop-native':
             command = tool_command(store.root, backend=backend)
             prompt += f'\n只在 {folder} 内写文件。先将正文写入 article.md，然后调用 `{command} writer --run {run_id} --draft-file {folder / "draft.json"} --operation write_report --title "报告标题" --file {folder / "article.md"}`。'
+            prompt += '\n可附 --evidence-file evidence.json 同次装配引用、数字和时间；只传三类证据数组，原文行号由程序定位。已有正文则用 assemble_evidence 和一次 base_revision 批量装配，不要自行编写生成富文档或查行号的脚本。'
             prompt += f'\n其他操作共用 `{command} writer --run {run_id} --draft-file {folder / "draft.json"} --operation 操作名 --file 操作参数.json`；参数格式见 draft.schema.json。check_draft/submit_draft只传 --revision REVISION、不传 --file；read_draft可不传文件，或以JSON选择field。所有输入文件必须在本任务目录内。不要直接覆盖 draft.json。'
     runtime.execute(staged, prompt, folder)
     from .analyst_drafts import submitted

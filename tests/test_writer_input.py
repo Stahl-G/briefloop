@@ -115,20 +115,29 @@ def test_native_and_cli_use_same_frozen_protocol(tmp_path):
     config['attempt_id'] = message['id']
     (folder/'conversation.json').write_text(json.dumps({'session_id':session['id'], 'message_id':message['id']}))
     body = f'收入增长20%。[@{source["id"]}]'
-    result = run_tool(store,config,'write_report',{'title':'报告','markdown':body})
+    evidence = {'number_bindings': [{'label':'收入同比','value':20,'unit':'%',
+        'entity':'示例公司','period':'2025年','source_id':source['id'],
+        'source_excerpt':'2025年收入1200万元，同比增长20%。',
+        'report_quote':'收入增长20%','number_text':'20%'}]}
+    result = run_tool(store,config,'write_report',{'title':'报告','markdown':body,**evidence})
     assert result['ok'], result
     revision = json.loads(result['content'][0]['text'])['revision']
     (folder/'article.md').write_text(body)
+    (folder/'evidence.json').write_text(json.dumps(evidence))
     def cli(operation,*args):
         proc = subprocess.run([sys.executable,'-m','briefloop','tool','--workspace',str(store.root),
             'writer','--run',run['id'],'--draft-file',config['result_file'],'--operation',operation,*args],capture_output=True,text=True)
         assert proc.returncode == 0, proc.stdout + proc.stderr
         return json.loads(proc.stdout)
-    replay = cli('write_report','--file',str(folder/'article.md'),'--title','报告')
+    replay = cli('write_report','--file',str(folder/'article.md'),'--title','报告',
+                 '--evidence-file',str(folder/'evidence.json'))
     assert replay['revision'] == revision
     assert cli('check_draft','--revision',revision)['revision'] == revision
     assert cli('submit_draft','--revision',revision)['revision'] == revision
     assert Path(config['result_file']).is_file()
+    stored = json.loads(Path(config['result_file']).read_text())
+    assert stored['number_bindings'][0]['locator'] == 'line 1'
+    assert stored['citations'][0]['excerpt'] == evidence['number_bindings'][0]['source_excerpt']
 
 
 def test_protocol_packet_contains_only_new_format_contract(tmp_path):

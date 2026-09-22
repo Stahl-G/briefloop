@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from . import analyst_drafts as drafts
 from .document_model import markdown_document
 from .store import dump
+from .writer_assembly import EvidenceInput, assemble as assemble_evidence_records
 
 PROTOCOL = 'writer_input_v1'
 Text = Annotated[str, Field(min_length=1)]
@@ -23,7 +24,7 @@ class Input(BaseModel):
     model_config = ConfigDict(extra='forbid', strict=True)
 
 
-class WriteReport(Input):
+class WriteReport(EvidenceInput):
     title: Text
     markdown: Text
 
@@ -112,11 +113,16 @@ def _validated(store, config, title, document):
 
 def write_report(store, config, args):
     from .length import count_brief
+    from .analyst import validate_draft
     with drafts.guard(store, config):
         _archive(store, config, 'write_report', args)
         request = WriteReport.model_validate(args)
+        drafts._packet_hash(config)
         current = drafts._root(store, config) / 'current.json'
         value = _validated(store, config, request.title, compile_markdown(request.markdown))
+        evidence = assemble_evidence_records(config, request, value['markdown'])
+        if evidence:
+            value = validate_draft(store, config, {**value, **evidence})
         if current.exists():
             revision = drafts._read(current)['revision']
             candidate = drafts._candidate(store, config, {'revision': revision})
@@ -125,6 +131,25 @@ def write_report(store, config, args):
                         'review_status': 'not_reviewed', 'body_units': count_brief(value['markdown'])}
             raise WritingError('draft_exists', '已有稿件；读取当前版本后局部修改，不覆盖已保存正文', field='revision')
         return drafts._save_locked(store, config, value)
+
+
+class AssembleEvidence(EvidenceInput):
+    base_revision: Text
+
+
+def assemble_evidence(store, config, args):
+    """One evidence batch, one version check and one atomic candidate save."""
+    with drafts.guard(store, config):
+        request = AssembleEvidence.model_validate(args)
+        prior = drafts._candidate(store, config, {'revision': request.base_revision})['draft']
+        if request.model_fields_set == {'base_revision'}:
+            raise WritingError('empty_change', '请提供至少一类证据字段')
+        _archive(store, config, 'assemble_evidence', args)
+        changes = assemble_evidence_records(config, request, prior['markdown'], prior.get('citations', []))
+        saved = drafts._save_locked(store, config, {'base_revision': request.base_revision, **changes})
+        return {**saved, 'evidence_counts': {k: len(v) for k, v in changes.items()},
+                'record_keys': {k: [evidence_key(r) for r in v] for k, v in changes.items()},
+                'evidence_status': 'exact_locations_resolved_not_semantically_reviewed'}
 
 
 def write_sections(store, config, args):
@@ -270,7 +295,8 @@ def protocol(config):
 
 def operations():
     result = {
-        'write_report': (WriteReport, write_report, '首次保存正文。只写标题和Markdown，引用用 [@src_ID]；不手写富文本JSON。'),
+        'write_report': (WriteReport, write_report, '首次保存正文。标题和Markdown，引用用 [@src_ID]；可同时传citations、number_bindings、temporal_claims，程序按逐字摘录定位并装配，不手写富文本JSON或行号。'),
+        'assemble_evidence': (AssembleEvidence, assemble_evidence, '一次装配保存多类证据。传当前base_revision与改变的证据数组；所传数组整类替换，未传字段保留。citations给source_id/excerpt；数字与日期给source_excerpt，locator可省略，重复摘录才需line范围。数字仍给value/unit、主体期间与正文report_quote/number_text。来源摘录自动登记到citations，不自动给正文加标记。不需要自己编写组装脚本。'),
         'write_sections': (WriteSections, write_sections, '长稿分章保存Markdown；修改已存章节附其expected_hash。可一批保存数章。'),
         'assemble_report': (AssembleReport, assemble_report, '按章节ID顺序组装正文，已存完整稿须带base_revision。'),
         'update_draft_details': (DraftDetails, update_draft_details, '单独更新缺口、研究说明或已计算报告数据；只传改变的字段，不重写正文。'),
@@ -319,7 +345,7 @@ def tool_specs():
 
 
 GUIDE = '''写作协议 writer_input_v1：正文使用 Markdown，普通表格使用管道表格，引用使用 [@src_ID]，图表使用已登记的 briefloop-figure:fig_ID。不要输出 editor_document、tableRow 或完整 BriefDraft JSON。
-短稿一次 write_report(title, markdown)；长稿 write_sections 后 assemble_report。先保存正文，再分别通过 update_citations、update_number_bindings、update_temporal_claims 登记必要的引用定位、重要数字和日期；不因拆开提交而遗漏证据。来源归属、口径、采用条件要求不变。
+短稿一次 write_report(title, markdown)，可同次附 citations、number_bindings、temporal_claims；长稿 write_sections 后 assemble_report。也可先保存正文，再一次 assemble_evidence 登记三类证据。程序生成富文本、按逐字摘录找行号、核对数字的正文片段并装配记录，不要再自己写 Python 组装脚本。citations给source_id/excerpt；数字和日期给source_excerpt；locator唯一匹配时可省略，重复匹配才提供line范围。value/unit、主体、期间、结论与证据的关系仍由你确定，不省略这些语义字段。所传证据数组整类替换，未传的类别保留；少量记录修改继续用 update_citations/update_number_bindings/update_temporal_claims。来源归属、口径、采用条件要求不变。
 同一稿件的写入有先后依赖：每轮只发一个写入调用，等返回新 revision 后再发下一个。不要把多个证据更新放在同一轮共用 base_revision；执行器串行执行也不会自动替换你传入的旧版本。
 取得 revision 后 check_draft 检查；局部文字用 patch_report_text，结构改动先 read_draft(field=body) 取得 block_keys，再 replace_report_blocks。证据修改只交变更记录；每次变更使用最新 base_revision，再检查新 revision。只修明确问题，不反复重交全文。submit_draft 提交已检查的最新 revision，结束写作，不自行评分。
 已有人工富文本不得整稿降级；保留未修改节点、图片和样式。工具若提示高级排版需保留，改用精确文字修改。原始输入已保存不代表接纳或核实。'''
