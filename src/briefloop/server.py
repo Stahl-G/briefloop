@@ -604,7 +604,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif path=='/api/fact-check-grant':
                     # 用户明确追加核查预算：并入阶段计量限额；阶段以预算耗尽收束后追加重开并继续核查。
                     from .fact_check import grant as grant_fact_check
-                    result=grant_fact_check(store,body['version_id'],body.get('limits'))
+                    result=grant_fact_check(store,body['version_id'],body.get('limits'),request_id=body.get('request_id'))
                 elif path=='/api/template-import':
                     from .templates import import_template
                     result=import_template(store,body['name'],_upload_data(body),body.get('parent_id'))

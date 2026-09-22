@@ -68,7 +68,7 @@ export function factCheckHTML(data) {
  // The user-facing grant entry (plan D3): visible while the stage can still
  // spend (active) or was closed by exhaustion (追加后重开继续)；预登记 shows when
  // the switch is on but the stage has not been admitted yet.
- const grantable = stage ? ['active', 'budget_exhausted'].includes(stage.status) : !!data?.enabled;
+ const grantable = data?.grant_request || (stage ? ['active', 'budget_exhausted'].includes(stage.status) : !!data?.enabled);
  const grantNote = data?.pending_grant
   ? `<p class="help">已登记追加核查预算（${escHtml(factGrantText(data.pending_grant.limits))}），将在核查阶段接纳时并入计量。</p>` : '';
  const stageSection = (stage || data?.enabled || grantNote)
@@ -76,7 +76,7 @@ export function factCheckHTML(data) {
      (stage ? `<p class="help">预算来源：${escHtml(stage.budget_source?.kind === 'user_grant' ? '用户明确追加' : '任务预留份额')}${(stage.grants || []).length ? `，另追加 ${(stage.grants || []).length} 次` : ''}；追加额度只在阶段进行期间并入计量。</p>` : '') +
      grantNote +
      (stage?.status === 'budget_exhausted' ? '<p class="help">预算耗尽只是执行收束原因，不代表主张真假；追加后重开阶段继续核查。</p>' : '') +
-     (grantable ? `<p><button data-fact-grant="${escHtml(data.version_id)}">追加核查预算（${escHtml(factGrantText())}）</button></p>` : '') +
+     (grantable ? `<p><button data-fact-grant="${escHtml(data.version_id)}" ${data.grant_request_busy?'disabled':''}>${data.grant_request_busy?'正在确认追加':data.grant_request?'重试确认上次追加':'追加核查预算'}（${escHtml(factGrantText(data.grant_request?.limits))}）</button></p>` : '') +
     '</section>'
   : '';
  return stageSection + records.map(record => {

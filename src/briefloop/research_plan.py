@@ -628,8 +628,8 @@ def add_fact_check_grant(store, run_id, limits, *, job_id=None):
     can continue. Completed/cancelled/failed stages are never reopened here.
     Returns {'status': 'admitted'|'pending'|'active'|'reopened', ...}.
 
-    The public API has no request id: each call is a distinct authorized addition,
-    not a retry-safe operation. Internal stage admission/consumption is replayable.
+    This low-level ledger has no request id: each call is a distinct addition.
+    Product request replay belongs to fact_check.grant's outer transaction.
     """
     source = _fact_check_budget_source({'kind': 'user_grant', 'limits': limits})
     grant = {'id': uid('grant'), 'limits': source['limits'], 'created': now()}

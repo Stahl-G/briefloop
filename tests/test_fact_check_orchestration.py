@@ -281,7 +281,7 @@ def test_parallel_grants_survive_stale_admission_and_replayed_consumption(tmp_pa
         stage_id = admitted.result()['stage_id']
         assert addition.result()['stage_id'] == stage_id
     assert research_plan.pending_fact_check_grant(store, run['id']) is None
-    # The internal retry is idempotent; the public add API has no request_id,
+    # The internal retry is idempotent; the low-level ledger has no request_id,
     # so each call above intentionally contributes another authorized amount.
     before_retry = research_plan.frozen(store, run['id'])
     assert research_plan.admit_fact_check(store, run['id'], {'kind': 'user_grant', 'limits': stale['limits']})['idempotent']
@@ -391,7 +391,8 @@ def test_grant_entry_reopens_exhausted_stage_and_reschedules_the_check(tmp_path)
     assert research_plan.frozen(store, run['id'])['fact_check']['status'] == 'active'
 
 
-def test_failed_grant_dispatch_rolls_back_then_the_same_call_can_retry(tmp_path, monkeypatch):
+@pytest.mark.parametrize('request_id', [None, 'retry-after-insert-failure'])
+def test_failed_grant_dispatch_rolls_back_then_the_same_call_can_retry(tmp_path, monkeypatch, request_id):
     store, run, _ = _world(tmp_path)
     _admitted(store, run)
     brief, _, _ = _claim_version(store, run)
@@ -411,12 +412,13 @@ def test_failed_grant_dispatch_rolls_back_then_the_same_call_can_retry(tmp_path,
     with monkeypatch.context() as failed:
         failed.setattr(Store, 'enqueue', fail_after_insert)
         with pytest.raises(OSError, match='synthetic admission'):
-            fact_check.grant(store, brief['id'], SHARE)
+            fact_check.grant(store, brief['id'], SHARE, request_id=request_id)
     assert research_plan.frozen(store, run['id']) == before
     assert budget.spent(store, run['id']) == used
     assert store.rows('SELECT id FROM jobs') == [] and wakeups == []
+    assert store.rows('SELECT * FROM fact_check_grant_requests') == []
 
-    outcome = fact_check.grant(store, brief['id'], SHARE)
+    outcome = fact_check.grant(store, brief['id'], SHARE, request_id=request_id)
     assert outcome['status'] == 'reopened'
     assert store.rows('SELECT id FROM jobs') == [{'id': outcome['job_id']}]
     stage = research_plan.frozen(store, run['id'])['fact_check']
@@ -424,6 +426,66 @@ def test_failed_grant_dispatch_rolls_back_then_the_same_call_can_retry(tmp_path,
     assert not stage.get('grants')
     assert json.loads(store.one('jobs', outcome['job_id'])['payload'])['stage_id'] == stage['stage_id']
     assert wakeups == [(1, 'active')]  # never wakes a worker before the transaction commits
+    if request_id:
+        receipt = store.rows('SELECT result FROM fact_check_grant_requests')[0]
+        assert json.loads(receipt['result']) == outcome
+
+
+def test_grant_receipt_replays_one_authorization_and_preserves_new_operations(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from briefloop.store import Conflict
+
+    store, run, _ = _world(tmp_path)
+    # Opening an existing pre-receipt workspace creates the table centrally.
+    with store.tx() as connection:connection.execute('DROP TABLE fact_check_grant_requests')
+    store = Store(store.root)
+    _admitted(store, run)
+    brief, _, _ = _claim_version(store, run)
+    research_plan.finish_fact_check(store, run['id'], status='budget_exhausted')
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        outcomes = list(pool.map(lambda _: fact_check.grant(store, brief['id'], SHARE, request_id='same-click'), range(4)))
+    first = next(outcome for outcome in outcomes if not outcome['replayed'])
+    assert sum(not outcome['replayed'] for outcome in outcomes) == 1
+    assert all(outcome == {**first, 'replayed': outcome['replayed']} for outcome in outcomes)
+    stage = research_plan.frozen(store, run['id'])['fact_check']
+    assert len(stage['initial_grants']) == 1 and not stage.get('grants')
+    assert store.rows("SELECT id FROM jobs WHERE kind='fact_check'") == [{'id': first['job_id']}]
+    assert len(store.rows('SELECT * FROM fact_check_grant_requests')) == 1
+
+    for version, limits in [(brief['id'], {**SHARE, 'search_requests': 3}), ('different-version', SHARE)]:
+        with pytest.raises(Conflict, match='不同内容'):
+            fact_check.grant(store, version, limits, request_id='same-click')
+    # Fresh explicit actions remain separate grants, including old clients.
+    fact_check.grant(store, brief['id'], SHARE, request_id='new-click')
+    legacy = [fact_check.grant(store, brief['id'], SHARE) for _ in range(2)]
+    assert all('request_id' not in value and 'replayed' not in value for value in legacy)
+    assert len(research_plan.frozen(store, run['id'])['fact_check']['grants']) == 3
+    assert len(store.rows('SELECT * FROM fact_check_grant_requests')) == 2
+    assert len(store.rows("SELECT id FROM jobs WHERE kind='fact_check'")) == 1
+
+    # Replayed success must not consult the now-closed stage or current model.
+    research_plan.finish_fact_check(store, run['id'], status='completed')
+    store.set_meta('settings', {**store.settings(), 'model_selection_required': True})
+    before = research_plan.frozen(store, run['id'])
+    used = budget.spent(store, run['id'])
+    assert fact_check.grant(store, brief['id'], dict(reversed(list(SHARE.items()))), request_id='same-click') == {**first, 'replayed': True}
+    assert research_plan.frozen(store, run['id']) == before and budget.spent(store, run['id']) == used
+
+
+def test_pending_grant_receipt_does_not_add_again_after_the_stage_consumes_it(tmp_path):
+    store, run, _ = _world(tmp_path)
+    brief, _, _ = _claim_version(store, run)
+    request = {'request_id': 'pending-click'}
+    first = fact_check.grant(store, brief['id'], SHARE, **request)
+    assert first['status'] == 'pending' and 'job_id' not in first
+    research_plan.finish_round(store, run['id'])
+    research_plan.admit_fact_check(store, run['id'], {'kind': 'user_grant', 'limits': SHARE})
+    before = research_plan.frozen(store, run['id'])
+    assert fact_check.grant(store, brief['id'], SHARE, **request) == {**first, 'replayed': True}
+    assert research_plan.frozen(store, run['id']) == before
+    assert len(before['fact_check']['initial_grants']) == 1
+    assert research_plan.pending_fact_check_grant(store, run['id']) is None
+    assert store.rows("SELECT id FROM jobs WHERE kind='fact_check'") == []
 
 
 def test_old_active_stage_without_dispatch_recovers_one_job_for_parallel_topups(tmp_path):
@@ -485,7 +547,7 @@ def test_worker_prefers_a_pending_user_grant_when_admitting(tmp_path):
     assert budget.snapshot(store, run['id'])['limits']['search_requests'] == BUDGET['search_requests'] + 2
 
 
-def test_grant_is_reachable_through_the_product_http_api(tmp_path):
+def test_grant_is_reachable_through_the_product_http_api(tmp_path, monkeypatch):
     import http.client
     from briefloop.server import make_server
     server = make_server(tmp_path / 'ws', port=0, paused=True)
@@ -522,13 +584,43 @@ def test_grant_is_reachable_through_the_product_http_api(tmp_path):
         view = fact_check.view(store, brief['id'])
         assert view['enabled'] is True and view['stage']['status'] == 'active'
         assert view['stage']['budget_source']['kind'] == 'user_grant'
+        # Simulate a connection lost after the transaction commits but before
+        # the HTTP response is delivered. The user retries the saved click ID.
+        dropped = []
+        original_send = server.RequestHandlerClass.send
+
+        def lose_receipt(handler, status, data, *args, **kwargs):
+            if status == 200 and isinstance(data, dict) and data.get('request_id') == 'lost-success' and not dropped:
+                dropped.append(data)
+                handler.close_connection = True
+                return
+            return original_send(handler, status, data, *args, **kwargs)
+
+        request = {'version_id': brief['id'], 'limits': SHARE, 'request_id': 'lost-success'}
+        with monkeypatch.context() as fault:
+            fault.setattr(server.RequestHandlerClass, 'send', lose_receipt)
+            with pytest.raises(http.client.RemoteDisconnected):post('/api/fact-check-grant', request)
+        assert len(research_plan.frozen(store, run['id'])['fact_check']['grants']) == 1
+        research_plan.finish_fact_check(store, run['id'], status='completed')
+        connection.close()
+        connection = http.client.HTTPConnection('127.0.0.1', server.server_port)
+        status, replay = post('/api/fact-check-grant', request)
+        assert status == 200 and replay == {**dropped[0], 'replayed': True}
+        assert len(research_plan.frozen(store, run['id'])['fact_check']['grants']) == 1
+        assert len(store.rows("SELECT id FROM jobs WHERE kind='fact_check'")) == 1
+        status, refused = post('/api/fact-check-grant', {**request, 'limits': {**SHARE, 'source_pages': 3}})
+        assert status == 409 and '不同内容' in refused['error']
+        for invalid_id in ['', ['invalid'], 'x' * 129]:
+            status, refused = post('/api/fact-check-grant', {**request, 'request_id': invalid_id})
+            assert status == 400 and 'request_id' in refused['error']
         # Malformed limits are a structured refusal, not a crash.
         status, refused = post('/api/fact-check-grant', {'version_id': brief['id'], 'limits': {'search_requests': -1}})
         assert status == 400 and refused.get('code') == 'fact_check_budget_source'
         connection.close()
     finally:
         server.shutdown(); thread.join()
-        server.harness.close(); server.opencode_harness.close()
+        server.harness.close(); server.opencode_harness.close(); server.native_harness.close()
+        server.runtime_bridge.close(); server.native_engine.close()
         server.server_close(); server.workspace_lock.close()
 
 @pytest.mark.parametrize('check_fails', [False, True])
