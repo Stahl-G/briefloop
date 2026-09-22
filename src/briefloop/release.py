@@ -272,7 +272,7 @@ def eligibility(store, version_id):
     result = {'version_id': version_id, 'eligible': False, 'blockers': [], 'notices': []}
     # Say why a review cannot be started here, instead of offering one that fails.
     from .review_capability import delivery_blocker
-    unsupported = delivery_blocker(store.settings().get('agent_backend', 'codex'))
+    unsupported = delivery_blocker(store.settings().get('agent_backend', 'codex'), store.settings().get('review_runtime'))
     if not candidates:
         result['blockers'].append({'code': 'review_missing', 'message': '本版本尚未完成独立核查'})
         if unsupported:

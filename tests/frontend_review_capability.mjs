@@ -9,12 +9,12 @@ const line=name=>source.split('\n').find(l=>l.startsWith(`function ${name}(`));
 const start=source.indexOf('function syncFactCheckControl(){');
 const sync=source.slice(start,source.indexOf('\n}\n',start)+2);
 
-function form({backend='codex',label='Codex CLI',allowWeb=true,factCheck=true,mode='internal_report',listed=[{id:'opencode',label:'Opencode CLI'}]}={}){
+function form({backend='codex',label='Codex CLI',allowWeb=true,factCheck=true,mode='internal_report',listed=[{id:'opencode',label:'Opencode CLI'}],reviewer=null}={}){
  const note={hidden:true,textContent:''};
  const elements={fact_check:{checked:factCheck,disabled:false},allow_web:{checked:allowWeb},writing_mode:{value:mode}};
  const nodes={requirements:{elements},'review-capability-note':note,'agent-backend':{value:backend,selectedOptions:[{textContent:label}]}};
- const ctx=vm.createContext({$:id=>nodes[id],state:listed===null?undefined:{review_capability:{restricted_review:listed}},backendValue:()=>backend});
- vm.runInContext(line('reviewBackends')+'\n'+sync,ctx);
+ const ctx=vm.createContext({$:id=>nodes[id],state:listed===null?undefined:{review_capability:{restricted_review:listed},settings:{review_runtime:reviewer}},backendValue:()=>backend});
+ vm.runInContext(line('reviewBackends')+'\n'+line('reviewRuntime')+'\n'+sync,ctx);
  ctx.syncFactCheckControl();
  return {elements,note};
 }
@@ -37,6 +37,13 @@ test('a supported backend keeps the switch and hides the note',()=>{
  assert.equal(elements.fact_check.checked,true);
  assert.equal(note.hidden,true);
  assert.equal(form({backend:'opencode',allowWeb:false}).elements.fact_check.disabled,true,'offline still disables it');
+});
+
+test('a separately chosen Reviewer keeps fact check available on any main backend',()=>{
+ const {elements,note}=form({reviewer:{backend:'briefloop-native',model:'opencode-go/deepseek-v4.1-flash'}});
+ assert.equal(elements.fact_check.disabled,false);
+ assert.equal(note.hidden,true);
+ assert.match(form().note.textContent,/独立审阅执行后端/);
 });
 
 test('before state loads the page does not guess; the server still enforces',()=>{

@@ -242,7 +242,7 @@ def test_cancel_during_turn_start_gap_is_compensated_after_reply(tmp_path):
         manager.close()
 
 
-def test_turn_completing_before_publish_does_not_stick_in_running(tmp_path):
+def test_turn_completing_before_publish_does_not_stick_in_running(tmp_path, monkeypatch):
     """A turn that finishes inside the in-flight window adopts its terminal
     state instead of being published as a running turn nobody completes."""
     class StalledStart(RPC):
@@ -254,6 +254,12 @@ def test_turn_completing_before_publish_does_not_stick_in_running(tmp_path):
                 self.pending.set();assert self.release.wait(5)
             return super().request(method,params)
     manager=HarnessManager(Store(tmp_path),StalledStart)
+    original_patch=manager.chat.patch_message
+    def checked_patch(mid, **fields):
+        if mid=='f1' and fields.get('status')=='failed':
+            assert manager.chat.session(sid)['turn_id'] is None
+        return original_patch(mid, **fields)
+    monkeypatch.setattr(manager.chat,'patch_message',checked_patch)
     try:
         sid=manager.create_session()['id']
         manager.send(sid,'instantly failing turn',message_id='f1')

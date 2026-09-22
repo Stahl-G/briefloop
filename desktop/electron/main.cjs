@@ -321,7 +321,8 @@ else {
       {label: '视图', submenu: [{role: 'resetZoom'}, {role: 'zoomIn'}, {role: 'zoomOut'}, {role: 'togglefullscreen'}]},
       {label: '窗口', submenu: [{role: 'minimize'}, {role: 'front'}]},
     ]));
+    const readiness = environment.startup();
     await window.loadURL(welcomeURL);
-    await environment.inspect();
+    await readiness;
   }).catch(error => { dialog.showErrorBox('BriefLoop 启动失败', String(error.message || error)); quitting = true; app.quit(); });
 }

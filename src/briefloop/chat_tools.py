@@ -6,6 +6,7 @@ import json
 import os
 from .agent_commands import tool_command, workspace_action_example
 from .models import Requirements, Comment, Settings, runtime_fields
+from .writing_guidance import DISCUSSION_GUIDE
 
 
 def _notify_owner(request):
@@ -242,8 +243,8 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
     policy=resolve_search_policy(store.settings().get('search_policy'),store.settings()['search_provider'])
     search_note='正式报告会冻结首选与允许补充渠道、共用预算；通过generate提交，不自行创建另一套流水线。'+policy_instructions(policy,'briefloop tool','本任务真实run ID')
     search_choice='尊重用户已选择的渠道，不宣称某服务覆盖必然更好，不再次要求确认原生选择。缺少密钥时提示配置该渠道；已有授权补充渠道可在预算内使用。'
-    if backend=='opencode':
-        request_runtime={'model':runtime['model'],'model_variant':runtime.get('variant'),'agent_backend':'opencode'}
+    if backend in ('opencode','briefloop-native'):
+        request_runtime={'model':runtime['model'],'model_variant':runtime.get('variant'),'agent_backend':backend}
         runtime_json=json.dumps(request_runtime,ensure_ascii=False)
         runtime_label=runtime.get('variant') or '不指定（provider 默认）'
         provider_label='Opencode 模型（provider/model）'
@@ -255,7 +256,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
         runtime_label=runtime.get('effort') if runtime.get('effort') is not None else '不指定（provider 默认）'
         provider_label=runtime.get('model_provider') or f'沿用本机 {BACKEND_LABELS[backend]} 配置'
         subagent_note='必要时使用子 agent。'
-    command=tool_command(store.root,backend=backend)+' workspace-action --request'
+    command=('workspace_action（直接传 request JSON）' if backend=='briefloop-native' else tool_command(store.root,backend=backend)+' workspace-action --request')
     from .workspace_profile import prompt as profile_prompt
     profile_note=profile_prompt(store)
     from datetime import datetime
@@ -270,7 +271,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 选择搜索源不会自动打开联网；是否联网仍以上面的实际会话状态为准。
 {search_choice}
 {profile_note}
-用户消息以 /discuss 开头时进入需求讨论模式：先逐条确认目的、读者、必答问题、篇幅与格式，不要启动生成；确认清楚后在回复最后给出一个 briefloop-requirements 代码块（JSON 字段：title、objective、audience、period、key_questions、manual_sections、writing_preferences、workflow_id、workflow_variant、report_profile、writing_mode、research_tier、target_words、max_words），界面会给用户「应用到材料与需求」。
+{DISCUSSION_GUIDE}
 你可以调用本地工作区工具：先写一个 JSON 请求文件，再执行
 {command} REQUEST_FILE
 本次授权的工作区绝对路径：{store.root.as_posix()}。shell 工具的 workdir/cwd 必须设为此目录；请求文件也必须放在此目录内，不能使用宿主临时目录、系统 Temp 或工作区的同级目录。每次请求使用独立文件名，不覆盖其他任务的文件。以下是可直接执行的 UTF-8 capabilities 示例（后续更换 action 和文件名）：
@@ -287,7 +288,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"company_read"}}：读取本工作区企业背景及待确认冲突。企业内部周报开始前可提议维护，用户明确同意/拒绝后用 {{"action":"company_config","enabled":true}} 保存选择。
 - {{"action":"company_update","fact":{{"key":"主体/指标/期间","value":"有依据的企业背景","source_id":"真实来源ID","locator":"原文位置","effective_date":"YYYY-MM-DD","origin":"public|user"}}}}：已启用后更新企业背景。返回 pending 时向用户询问；用户明确回答后用 {{"action":"company_resolve","fact_id":"真实记录ID","accept":true}} 记录采用或拒绝。
 - {{"action":"profile_read"}}：读取本工作区基础设定（称呼、公司/组织、岗位等）。
-- {{"action":"profile_update","profile":{{"name":"称呼","organization":"公司/组织","role":"岗位","location":"城市","focus":"主要工作","report_types":"常做报告"}}}}：用户第一次打招呼或交任务时，按上文约定一次问清必要几项并保存；只写用户明确说过的内容，不猜、不编造，也不把这些当作报告证据。
+- {{"action":"profile_update","profile":{{"name":"称呼","organization":"公司/组织","role":"岗位","location":"城市","focus":"主要工作","report_types":"常做报告"}}}}：按上文约定保存用户主动提供或任务确有必要的基础信息；只写用户明确说过的内容，不猜、不编造，也不把这些当作报告证据。
 - {{"action":"research_status","run_id":"真实run ID"}}：读取该任务冻结的研究计划、轮次与用量。
 - {{"action":"freeze_research_plan","run_id":"真实run ID","preset":"quick|standard|deep","structure":{{"breadth":6,"depth":2,"parallel":2}}}}：在第一次受控联网前冻结研究计划。预算只读取任务已授权的额度，不能借冻结扩大额度或替换模型/搜索源；相同内容重复提交幂等，不同内容会被拒绝。
 - {{"action":"begin_research_round","run_id":"真实run ID","target_gap_ids":["真实gap ID"],"tasks":[{{"slot_id":"scout-1"}}]}}：在当前轮已结束、且未超过 depth 上限时开始下一轮；必须引用前轮真实缺口 ID。
@@ -300,6 +301,7 @@ def chat_instructions(store, runtime, *, internal=False, allow_web=False, backen
 - {{"action":"read_report","version_id":"稿件ID"}}：读取富文档 JSON 和引用。用户明确要求修改内容/章节/图表时，将修改后的 JSON 保存到工作区文件，再用 {{"action":"revise_document","base_version":"刚读取版本ID","document_file":"工作区内JSON绝对路径"}} 保存新版本，不覆盖用户并发编辑。
 - {{"action":"import_word_revision","base_version":"用户指定基础版本","source_id":"DOCX来源ID"}}：导入用户修改的 Word。返回 needs_alignment 时先核对原件和基础版本，向用户说明对齐问题；仅按用户明确选择提供 accept_unaligned=true。用户希望更新模板时另用 template_import 并提供 parent_id。
 - {{"action":"generate","requirements":{{"title":"标题","objective":"用户目的","audience":"读者","language":"中文","extent":"compact|balanced|detailed","research_tier":"quick|standard|deep","allow_web":{str(bool(allow_web)).lower()},"period":"时间范围"}},"source_ids":["真实来源ID"],"runtime":{runtime_json}}}：正式生成可在页面编辑的简报。research_tier 是研究深度档位（默认 standard）：quick 单轮检索，deep 预排 4 轮迭代研究；按用户明确要求选，用户未提就不写该字段。
+提交 generate 时，必须把本轮已经确认的 key_questions、writing_preferences、章节、期间和篇幅完整写进 requirements，不能只传标题摘要。用户给出的执行约束同样在提交前冻结：target_minutes 是软目标；hard_timeout_minutes=0 表示不设硬截止；research_budget 包含 search_requests、candidate_urls、source_pages；search_policy 沿用已授权设置。不得说“后台稍后配置”而遗漏已指定的额度。并行数要求写入 writing_preferences，供主 Agent 冻结研究计划时选择 structure.parallel；不改变共享预算。提交回执中的实际冻结值与用户要求不一致时明确说明，不宣称已应用。
 - {{"action":"assess","version_id":"真实简报版本ID"}}：为已有稿件安排评分。
 - {{"action":"comment","version_id":"真实简报版本ID","text":"用户反馈"}}：记录用户明确提出的反馈。页面自动学习开启时，保存反馈可能稍后自动触发学习，要如实告知。
 - {{"action":"learn"}}：仅当用户明确要求启动技能学习时调用，会消耗额外模型额度。调用前先告诉用户上限（每轮最多 3 个案例、每案例基线与候选各试写一次，另有整理、提案与比较回合；轮数按学习设置），得到明确同意后再调用；保存反馈本身不需要调用它。

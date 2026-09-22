@@ -71,7 +71,7 @@ test('the category palette lives in the tokens and avoids the status hues',()=>{
  test('home hydrates linear ICONS from settings icon set',()=>{
   assert.match(app,/svgLineIcon/);
   assert.match(app,/hydrateHomeIcons/);
-  assert.match(app,/homeReportIconMeta/);
+  assert.match(app,/reportIconMeta/);
   assert.match(app,/ICONS\[name\]/);
 });
 

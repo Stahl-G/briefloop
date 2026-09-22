@@ -82,6 +82,8 @@ class Requirements(Model):
     period_end: str = ""
     report_timezone: str = ""
     time_context: dict | None = None
+    target_minutes: int | None = Field(default=None, ge=0, le=240)
+    hard_timeout_minutes: int | None = Field(default=None, ge=0, le=1440)
     raw_input: str = ""
     # Research tier chosen at task creation; stored on the run so pause/resume and
     # a later plan freeze read the same choice. research_plan.PRESETS is the value.
@@ -170,14 +172,14 @@ class RoleModel(Model):
 
 
 def runtime_fields(value, backend='codex'):
-    if backend not in ('codex','opencode'):
+    if backend not in ('codex','opencode','briefloop-native'):
         # A legacy workspace's Codex default must not silently become a bridge
         # override. Settings store bridge choices per host; frozen runs/roles
         # carry the selected effort directly.
         effort = value.get('runtime_efforts', {}).get(backend) if 'runtime_efforts' in value else value.get('reasoning_effort', value.get('effort'))
         selected = RoleModel.model_validate({'model': value['model'], 'reasoning_effort': effort})
         return {'model': selected.model, **({'reasoning_effort': selected.reasoning_effort} if selected.reasoning_effort is not None else {})}
-    if backend == 'opencode':
+    if backend in ('opencode','briefloop-native'):
         # Opencode models are provider/model in one string; effort is expressed
         # as an optional variant. Codex-only keys are dropped, never sent.
         from .backends.opencode_server import split_model
@@ -199,10 +201,32 @@ def runtime_fields(value, backend='codex'):
     return selected
 
 
+class ReviewRuntime(Model):
+    """The backend and model the independent Reviewer runs on, chosen apart
+    from the main chain so a host without restricted review can still reach
+    formal delivery. Only backends declaring restricted_review are accepted."""
+    backend: Literal['opencode', 'briefloop-native']
+    model: str = Field(min_length=1, max_length=100)
+    model_variant: str | None = Field(default=None, min_length=1, max_length=100)
+
+    @field_validator('model', 'model_variant', mode='before')
+    @classmethod
+    def strip(cls, value):
+        if isinstance(value, str):
+            value = value.strip()
+            return value or None
+        return value
+
+    @model_validator(mode='after')
+    def model_shape(self):
+        runtime_fields(self.model_dump(exclude_none=True), self.backend)
+        return self
+
+
 class Settings(RoleModel):
     model: str = Field(default='gpt-5.6-luna', max_length=100)
     reasoning_effort: str | None = Field(default='high', min_length=1, max_length=100)
-    agent_backend: Literal['codex', 'opencode','claude','kimi','hermes','reasonix','mimo','codebuddy','kilo','kiro','vibe','deepseek-harness','antigravity','pi','zcode'] = 'codex'
+    agent_backend: Literal['codex', 'opencode','briefloop-native','claude','kimi','hermes','reasonix','mimo','codebuddy','kilo','kiro','vibe','deepseek-harness','antigravity','pi','zcode'] = 'codex'
     runtime_efforts: dict[str, str | None] = Field(default_factory=dict)
 
     @field_validator('runtime_efforts')
@@ -213,6 +237,8 @@ class Settings(RoleModel):
                 for backend, effort in values.items()}
     model_selection_required: bool = True
     role_models: dict[Literal['evaluator','maintainer','proposer'], RoleModel] = Field(default_factory=dict)
+    # None: the Reviewer follows agent_backend and the Evaluator model.
+    review_runtime: ReviewRuntime | None = None
     chat_allow_web: bool = True
     search_provider: Literal['native','tavily','duckduckgo','bocha','zhipu'] = 'tavily'
     search_policy: SearchPolicy | None = None
@@ -224,7 +250,9 @@ class Settings(RoleModel):
     auto_learn_authorized_plan: str | None = Field(default=None, min_length=64, max_length=64)
     max_reports: int = Field(default=4, ge=1, le=16)
     max_parallel: int = Field(default=4, ge=1, le=16)
-    timeout_minutes: int = Field(default=60, ge=0, le=240)  # 0 disables the run deadline.
+    # Legacy settings key now means a soft planning target, never a deadline.
+    timeout_minutes: int = Field(default=60, ge=0, le=240)
+    hard_timeout_minutes: int = Field(default=0, ge=0, le=1440)
     skill_targets: list[str] = Field(default_factory=lambda: ["scout", "analyst"])
     auto_revision: bool = True
     default_template_id: str | None = None
@@ -359,6 +387,17 @@ class Assessment(Model):
 # "must fix": the existing single revision is triggered even when the overall verdict
 # would otherwise look passing.
 MUST_FIX_EXPRESSION = 2
+
+
+def missing_findings(assessment) -> str | None:
+    """A verdict that asks for changes must say what to change, one finding per
+    problem; problems named only in the summary give revision nothing to act on.
+    Enforced where the host can re-ask in the same run (the native engine's
+    submit); stated in the shared contract for every host."""
+    data = assessment if isinstance(assessment, dict) else assessment.model_dump()
+    if data.get('status', 'complete') == 'complete' and data.get('overall') in ('建议修改', '存在重大问题') and not data.get('findings'):
+        return f"结论为「{data['overall']}」时，每个需要修改的问题都要写成 findings（report_quote、依据、来源定位）；摘要中提到的问题也要逐条写入，摘要不能代替 findings。"
+    return None
 
 
 def must_fix(assessment) -> bool:

@@ -58,6 +58,7 @@ def test_candidates_and_reviewer_judgements_are_separately_queryable(tmp_path):
                             for claim in world['claims'].values()]
             output = {'fingerprint': packet['fingerprint'], 'version_id': brief['id'], 'status': 'complete',
                       'summary': '复核了核查候选', 'coverage_scan_complete': True, 'claim_checks': claim_checks,
+                      'requirement_checks': __import__('review_checks').requirement_checks(json.loads((target/'packet'/'target.json').read_text(encoding='utf-8'))),
                       'findings': [{'kind': 'insufficient_evidence', 'severity': 'major', 'claim_ids': [fiscal['id']],
                                     'block_ids': [fiscal['block']], 'report_quote': fiscal['quote'],
                                     'evidence': '公告原文为财年口径，自然年度披露未取得', 'description': '财年口径主张需补充原文'}]}

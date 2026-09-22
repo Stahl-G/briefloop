@@ -188,6 +188,9 @@ function pythonCandidates(platform = process.platform, env = process.env) {
 }
 const PROBE = 'import json,os,sys; print(json.dumps({"version":list(sys.version_info[:3]),"executable":os.path.realpath(getattr(sys,"_base_executable",sys.executable))}))';
 const VERIFY = 'import importlib,importlib.metadata,json,pathlib,sys; assert sys.prefix != sys.base_prefix; assert pathlib.Path(sys.prefix).resolve() == pathlib.Path(sys.argv[1]).resolve(); [importlib.import_module(name) for name in ["briefloop","wikiskill","mcp","docx","lxml","PIL","pypdf","pypdfium2","openpyxl"]]; print(json.dumps({"version":importlib.metadata.version("briefloop")}))';
+// An activated environment already passed imports and pip check. On ordinary
+// launches, check its interpreter, package presence and version in one process.
+const HEALTH = 'import importlib.util,importlib.metadata,json,pathlib,sys; assert sys.version_info >= (3,11); assert sys.prefix != sys.base_prefix; assert pathlib.Path(sys.prefix).resolve() == pathlib.Path(sys.argv[1]).resolve(); assert all(importlib.util.find_spec(name) is not None for name in ["briefloop","wikiskill","mcp","docx","lxml","PIL","pypdf","pypdfium2","openpyxl"]); print(json.dumps({"version":importlib.metadata.version("briefloop")}))';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 
 function createEnvironment({app, payloadPath, changed = () => {}, platform = process.platform, arch = process.arch,
@@ -255,30 +258,45 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
     return null;
   }
   function environmentPython(id) { return path.join(directory, id, ...(platform === 'win32' ? ['Scripts', 'python.exe'] : ['bin', 'python3'])); }
-  async function validate(id, manifest, signal) {
+  async function validate(id, manifest, signal, {quick = false} = {}) {
     const envDir = path.join(directory, id);
     if ((await fs.lstat(envDir)).isSymbolicLink()) throw new EnvironmentError('invalid_environment', '运行环境目录无效，请重新准备。');
     const python = environmentPython(id);
-    phase(data.state === 'installing' ? 'installing' : 'checking', 'verify-imports');
-    const result = JSON.parse((await run(python, ['-I', '-c', VERIFY, envDir], signal, 60000)).stdout.trim());
+    phase(data.state === 'installing' ? 'installing' : 'checking', quick ? 'check-runtime' : 'verify-imports');
+    const result = JSON.parse((await run(python, ['-I', '-c', quick ? HEALTH : VERIFY, envDir], signal, quick ? 15000 : 60000)).stdout.trim());
     if (result.version !== manifest.version) throw new EnvironmentError('version_mismatch', '已安装组件版本与 App 不一致，请重新准备。');
-    phase(data.state, 'verify-dependencies');
-    await run(python, ['-I', '-m', 'pip', '--isolated', '--disable-pip-version-check', '--no-input', 'check'], signal, 60000);
+    if (!quick) {
+      phase(data.state, 'verify-dependencies');
+      await run(python, ['-I', '-m', 'pip', '--isolated', '--disable-pip-version-check', '--no-input', 'check'], signal, 60000);
+    }
     return python;
   }
-  async function inspectImpl(signal) {
+  async function inspectImpl(signal, {startup = false} = {}) {
     verified = null;
     const manifest = await payload(signal);
     let active;
     try { if ((await fs.lstat(directory)).isSymbolicLink()) throw new EnvironmentError('unsafe_path', 'App 运行环境目录不可用。'); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     try { active = JSON.parse(await fs.readFile(activeFile, 'utf8')); } catch {}
+    const matches = active?.schema === 1 && UUID.test(active.environmentId || '') && active.sha256 === manifest.sha256
+      && active.version === manifest.version && active.wheel === manifest.wheel && active.platform === platform && active.arch === arch;
+    if (startup && matches && path.isAbsolute(active.hostPython || '')) {
+      try {
+        await fs.access(active.hostPython, platform === 'win32' ? constants.F_OK : constants.X_OK);
+        const executable = await validate(active.environmentId, manifest, signal, {quick: true});
+        verified = {python: executable, basePython: active.hostPython, node: process.execPath, nodeIsElectron: true};
+        publish({state: 'ready', phase: 'ready', pythonVersion: active.pythonVersion, error: null, retryable: false});
+        return {manifest, python: {executable: active.hostPython, version: active.pythonVersion}};
+      } catch (error) {
+        if (['cleanup_failed', 'supervisor_unavailable'].includes(error.code)) throw error;
+        checkAbort(signal); // Damaged or missing environments enter the full diagnostic path.
+      }
+    }
     const python = await host(active, signal);
     if (!python) { publish({state: 'missing-python', phase: 'detect-python', pythonVersion: null,
       error: {code: 'missing_python', message: '未找到 Python 3.11 或更高版本。请从 python.org 安装 Python 后重新检测；不会自动安装系统 Python。'}, retryable: true}); return {manifest, python}; }
     publish({pythonVersion: python.version});
-    if (active?.schema === 1 && UUID.test(active.environmentId || '') && active.sha256 === manifest.sha256
-        && active.version === manifest.version && active.wheel === manifest.wheel && active.platform === platform && active.arch === arch) {
+    if (matches) {
       try {
         if (!await probe(active.hostPython, signal)) throw Error('Missing base Python');
         const executable = await validate(active.environmentId, manifest, signal);
@@ -333,6 +351,7 @@ function createEnvironment({app, payloadPath, changed = () => {}, platform = pro
   }
   return {
     status,
+    startup: () => operation(async signal => {await inspectImpl(signal, {startup: true}); return status();}),
     inspect: () => operation(async signal => {await inspectImpl(signal); return status();}),
     prepare: () => operation(prepareImpl),
     runtime: () => {if (!verified || data.state !== 'ready') throw Error('运行环境尚未验证就绪，请先完成环境准备。'); return {...verified};},

@@ -432,6 +432,9 @@ async function piModels(bin, p, launch2, terminate2) {
 async function runPi(p, state, launch2, terminate2, emit2) {
   if (p.images?.length) throw Error("Pi image input is not enabled in this adapter");
   let finish, fail, lastMessage = null, textSeen = false, started = false, contextWindow;
+  let requestSequence = 0, requestStarted = null, firstDelta = null;
+  let turnStarted = null;
+  const toolStarted = /* @__PURE__ */ new Map();
   const settled = new Promise((resolve, reject) => {
     finish = resolve;
     fail = reject;
@@ -440,20 +443,34 @@ async function runPi(p, state, launch2, terminate2, emit2) {
   });
   const c = piConnection(state.bin, p, launch2, terminate2, (m) => {
     if (!started) return;
-    if (m.type === "message_start" && m.message?.role === "assistant") textSeen = false;
+    if (m.type === "turn_start") turnStarted = performance.now();
+    if (m.type === "message_start" && m.message?.role === "assistant") {
+      textSeen = false;
+      requestSequence++;
+      requestStarted = performance.now();
+      firstDelta = null;
+    }
     if (m.type === "message_update") {
       const e = m.assistantMessageEvent || {};
+      if (e.type?.endsWith("_delta") && firstDelta === null) firstDelta = performance.now();
       if (e.type === "text_delta") {
         textSeen = true;
         emit2(p.execution_id, "text", { text: e.delta, delta: true });
       } else if (e.type === "thinking_delta") emit2(p.execution_id, "reasoning", { text: e.delta, delta: true });
     }
     if (m.type === "message_end" && m.message?.role === "assistant") {
+      emit2(p.execution_id, "performance", { phase: "model_message", sequence: requestSequence, duration_ms: requestStarted === null ? null : performance.now() - requestStarted, first_delta_ms: firstDelta === null || requestStarted === null ? null : firstDelta - requestStarted, turn_to_message_end_ms: turnStarted === null ? null : performance.now() - turnStarted, turn_to_first_delta_ms: firstDelta === null || turnStarted === null ? null : firstDelta - turnStarted, stop_reason: m.message.stopReason, clock: "monotonic", scope: "sdk_events_not_http_ttft" });
       lastMessage = m.message;
       if (!textSeen) {
         for (const b of lastMessage.content || []) if (b.type === "text") emit2(p.execution_id, "text", { text: b.text, delta: true });
       }
       if (lastMessage.usage) emit2(p.execution_id, "usage", { usage: { ...lastMessage.usage, model_context_window: contextWindow } });
+    }
+    if (m.type === "tool_execution_start") toolStarted.set(m.toolCallId, { at: performance.now(), chars: JSON.stringify(m.args || {}).length });
+    if (m.type === "tool_execution_end") {
+      const start = toolStarted.get(m.toolCallId);
+      emit2(p.execution_id, "performance", { phase: "tool", tool_id: m.toolCallId, tool: m.toolName, duration_ms: start ? performance.now() - start.at : null, argument_characters: start?.chars ?? null, failed: !!m.isError, clock: "monotonic" });
+      toolStarted.delete(m.toolCallId);
     }
     if (typeof m.type === "string" && m.type.startsWith("tool_execution_")) emit2(p.execution_id, "tool", { id: m.toolCallId, name: m.toolName, status: m.type === "tool_execution_end" ? m.isError ? "failed" : "completed" : "running", input: m.args, output: m.result || m.partialResult });
     if (m.type === "extension_ui_request") {

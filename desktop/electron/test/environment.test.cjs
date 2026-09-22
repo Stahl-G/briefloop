@@ -24,7 +24,7 @@ async function fixture(t) {
   await payload(version);
   const runProcess=async(executable,args,options)=>{
     calls.push({executable,args,options});
-    if(args.includes('-c')&&args.some(value=>value.includes('sys.version_info')))return {stdout:JSON.stringify({version:[3,12,5],executable:host})};
+    if(args.includes('-c')&&args.some(value=>value.includes('list(sys.version_info')))return {stdout:JSON.stringify({version:[3,12,5],executable:host})};
     if(args[2]==='venv'){
       const target=args.at(-1);versions.set(target,version);await fs.mkdir(path.join(target,'bin'));
       await fs.writeFile(path.join(target,'bin','python3'),'Synthetic venv marker',{mode:0o700});return {stdout:''};
@@ -87,6 +87,35 @@ test('cancel waits for its setup operation and removes only its incomplete venv'
   assert.equal((await f.environment.cancel()).error.code,'cancelled');await pending;
   assert.equal(await fs.readFile(activeFile,'utf8'),before);
   assert.deepEqual((await fs.readdir(path.dirname(activeFile))).sort(),['active.json',JSON.parse(before).environmentId].sort());
+});
+
+test('warm startup uses one lightweight process; explicit inspection still checks imports and dependencies',async t=>{
+  const f=await fixture(t);await f.environment.prepare();f.calls.length=0;
+  const warm=createEnvironment(f.config);assert.equal((await warm.startup()).state,'ready');
+  assert.equal(f.calls.length,1);assert.match(f.calls[0].args[2],/find_spec/);
+  assert.equal(warm.runtime().python,f.environment.runtime().python);
+  f.calls.length=0;assert.equal((await warm.inspect()).state,'ready');
+  assert.ok(f.calls.some(c=>c.args.some(a=>a.includes('importlib.import_module'))));
+  assert.ok(f.calls.some(c=>c.args.at(-1)==='check'));
+  await fs.unlink(warm.runtime().python);
+  assert.equal((await createEnvironment(f.config).startup()).state,'needs-setup');
+  f.calls.length=0;await f.payload('0.20.0');
+  assert.equal((await createEnvironment(f.config).startup()).state,'needs-setup');
+  assert.ok(!f.calls.some(c=>c.args.includes('install')||c.args.some(a=>a.includes('find_spec'))));
+});
+
+test('startup keeps payload verification and falls back on missing packages without losing cleanup failures',async t=>{
+  const f=await fixture(t);await f.environment.prepare();
+  const broken=createEnvironment({...f.config,runProcess:async(executable,args,options)=>{
+    if(args.some(a=>a.includes('find_spec')||a.includes('importlib.import_module')))throw Object.assign(Error('missing package'),{code:'process_failed'});
+    return f.config.runProcess(executable,args,options);
+  }});
+  assert.equal((await broken.startup()).state,'needs-setup');assert.throws(()=>broken.runtime(),/尚未验证/);
+  const stuck=createEnvironment({...f.config,runProcess:async()=>{throw Object.assign(Error('cleanup uncertain'),{code:'cleanup_failed'})}});
+  assert.equal((await stuck.startup()).error.code,'cleanup_failed');assert.throws(()=>stuck.runtime(),/尚未验证/);
+  await fs.appendFile(path.join(f.payloadPath,'briefloop-0.19.0-py3-none-any.whl'),'tampered');
+  f.calls.length=0;assert.equal((await createEnvironment(f.config).startup()).error.code,'payload_hash');
+  assert.equal(f.calls.length,0);
 });
 
 test('owned subprocess cancellation reaps the child and ignores inherited Python/pip configuration',async()=>{

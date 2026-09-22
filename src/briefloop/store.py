@@ -222,6 +222,10 @@ class Store:
         if "research_tier" not in requirements:
             requirements={**requirements,"research_tier":self.settings().get("research_tier","standard")}
         req = Requirements.model_validate(requirements)
+        if req.target_minutes is None:
+            req.target_minutes = self.settings()['timeout_minutes']
+        if req.hard_timeout_minutes is None:
+            req.hard_timeout_minutes = self.settings()['hard_timeout_minutes']
         if clone is None:
             from .report_time import freeze
             req.time_context = freeze(req.model_dump())
@@ -238,10 +242,13 @@ class Store:
             req.fact_check = self.settings().get('fact_checker') is True
         if req.fact_check and not req.allow_web:
             raise OfflineFactCheck('离线任务不能开启联网事实核查；请允许联网检索，或关闭该开关')
+        from .backends import require_main_chain
+        require_main_chain(options.get('agent_backend') or self.settings().get('agent_backend','codex'))
         if clone is None and req.fact_check:
             # Checked before the run exists: callers pass the backend they will enqueue with.
             from .review_capability import require_for_fact_check
-            require_for_fact_check(options.get('agent_backend') or self.settings().get('agent_backend','codex'))
+            require_for_fact_check(options.get('agent_backend') or self.settings().get('agent_backend','codex'),
+                                   options.get('review_runtime',self.settings().get('review_runtime')))
         if clone is None and req.template_id:
             from .templates import template
             selected=template(self,req.template_id)
@@ -451,7 +458,9 @@ class Store:
         brief = self.one("briefs", version_id)
         assessment = Assessment.model_validate(value)
         if assessment.brief_hash != brief["hash"]:
-            raise Conflict("评分对应的稿件内容与当前版本不一致")
+            raise Conflict("评分对应的稿件内容与当前版本不一致："
+                           f"assessment.brief_hash 应为 {brief['hash']}。"
+                           "请核对冻结审阅包的版本与正文；若审阅了其他稿件，须重新核查，不能只替换标识。")
         for f in assessment.findings:
             if f.source_id:
                 self.one("sources", f.source_id)
@@ -507,7 +516,7 @@ class Store:
         backend=backend or settings.get('agent_backend','codex')
         fields=runtime_fields(runtime or {},backend)
         if not str(fields.get('model') or '').strip():return settings
-        if backend not in ('codex','opencode'):
+        if backend not in ('codex','opencode','briefloop-native'):
             fields['runtime_efforts']={**settings.get('runtime_efforts',{}),backend:fields.pop('reasoning_effort',None)}
             fields.update(model_provider=None,model_variant=None)
         updated=Settings.model_validate({**settings,**fields,'agent_backend':backend,'model_selection_required':False})
@@ -539,13 +548,17 @@ class Store:
 
     def enqueue(self, kind, payload, *, before_commit=None):
         if kind not in ('export_docx','release','audit_bundle','source_refresh'):
-            from .backends import validate_backend
+            from .backends import require_main_chain,validate_backend
             from .models import normalize_search_provider
             backend=validate_backend(payload.get('agent_backend',self.settings().get('agent_backend','codex')))
+            if kind!='review':require_main_chain(backend)
             runtime=runtime_fields(payload['runtime'] if 'runtime' in payload else self.runtime_config(),backend)
             # Refuse before queueing, not after a paid turn: a fact-checked run and a
             # Review always need the restricted Reviewer (#726).
             from .review_capability import require_for_fact_check,require_for_review
+            # The Reviewer route is frozen with the job like the main runtime; a
+            # review job itself already carries the resolved backend.
+            review_runtime=None if kind=='review' else payload.get('review_runtime',self.settings().get('review_runtime'))
             if kind=='review':require_for_review(backend)
             elif kind in ('generate','assess','fact_check') and payload.get('single_evaluation') is not False:
                 run_id=payload.get('run_id')
@@ -553,7 +566,7 @@ class Store:
                     found=self.rows('SELECT run_id FROM briefs WHERE id=?',(payload['version_id'],))
                     run_id=found[0]['run_id'] if found else None
                 found=self.rows('SELECT requirements FROM runs WHERE id=?',(run_id,)) if run_id else []
-                if found and json.loads(found[0]['requirements']).get('fact_check') is True:require_for_fact_check(backend)
+                if found and json.loads(found[0]['requirements']).get('fact_check') is True:require_for_fact_check(backend,review_runtime)
             # Freeze inherited defaults too; later settings never mutate queued jobs.
             overrides=normalize_role_models(payload.get('role_models',self.role_model_config(runtime,backend)))
             provider=normalize_search_provider(payload.get('search_provider',self.settings()['search_provider']))
@@ -570,6 +583,7 @@ class Store:
             provider=policy['primary_provider']
             payload={**payload,'agent_backend':backend,'runtime':runtime,'search_provider':provider,'search_policy':policy,
                      'role_models':{role:runtime_fields(overrides.get(role,runtime),backend) for role in ROLE_NAMES}}
+            if kind!='review':payload['review_runtime']=review_runtime
             if kind=='generate':
                 payload.setdefault('auto_revision',self.settings()['auto_revision'])
                 payload.setdefault('max_parallel',self.settings()['max_parallel'])

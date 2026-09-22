@@ -3,6 +3,7 @@ import {esc} from './dom.js';
 // The runtime's name comes from the bridge catalogue with the rest of its
 // record; only the one-line description is the page's own copy.
 const descriptions = {
+ 'briefloop-native':'基于 Pi SDK · 直接连接模型',
  'codex': 'OpenAI 开发的命令行 Agent',
  'claude': 'Anthropic 开发的命令行 Agent',
  'opencode': '开源命令行 Agent · 支持多家模型提供商',
@@ -33,18 +34,22 @@ const descriptions = {
 };
 const iconIds=new Set(['codex','claude','opencode','codebuddy','hermes','kimi','mimo','reasonix','aider','amr','antigravity','copilot','cursor-agent','deepseek','devin','grok-build','kilo','kiro','pi','qoder','qwen','trae-cli','vibe']);
 const pngIds=new Set(['aider','devin','trae-cli']);
+export function runtimeIcon(id){
+ const iconId=id==='deepseek-harness'?'deepseek':id;
+ if(id==='briefloop-native')return '<img src="/runtime-briefloop.svg" width="40" height="40" alt="" draggable="false">';
+ return iconIds.has(iconId)?`<img src="/runtime-${iconId}.${pngIds.has(iconId)?'png':'svg'}" width="40" height="40" alt="" draggable="false">`:'<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m6 9 3 3-3 3m6 0h6"/></svg>';
+}
 export function runtimeModelSummary(id,chosen,model,catalog){
  const choice=id===chosen?(model||'待选择模型'):'选择后配置模型';
- const source={host:'宿主目录',native_config:'本机配置',builtin_hints:'内置建议',local_routes:'本机路由',host_default_only:'宿主默认'}[catalog?.source];
+ const source={host:'模型目录',native_config:'本机配置',builtin_hints:'内置建议',local_routes:'本机路由',host_default_only:'引擎默认'}[catalog?.source];
  return `模型 <strong>${esc(choice)}</strong>${catalog?`<span class="runtime-model-source">${esc(source||'模型目录')} · ${catalog.models.length} 项</span>`:''}`;
 }
 export function runtimeCard(r,{chosen,model,catalog,compact=false}){
  const name=r.name||r.id;
- const iconId=r.id==='deepseek-harness'?'deepseek':r.id;
- const icon=iconIds.has(iconId)?`<img src="/runtime-${iconId}.${pngIds.has(iconId)?'png':'svg'}" width="40" height="40" alt="" draggable="false">`:'<svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="4" width="20" height="16" rx="3"/><path d="m6 9 3 3-3 3m6 0h6"/></svg>';
- const protocol={acp:'ACP','claude-stream-json':'流式 JSON','opencode-json':'OpenCode JSON','native-manager':'原生宿主接口'}[r.protocol]||r.protocol;
+ const icon=runtimeIcon(r.id);
+ const protocol={acp:'ACP','claude-stream-json':'流式 JSON','opencode-json':'OpenCode JSON','native-manager':'原生 Agent 接口'}[r.protocol]||r.protocol;
  const capabilityNames={chat:'对话',cancel:'停止任务',resume:'续接',images:'图片',questions:'提问',steer:'运行中补充',restricted_reviewer:'受限审阅'};
  const supported=Object.entries(capabilityNames).filter(([key])=>r.capabilities?.[key]===true).map(([,name])=>name);
- const status=r.available?'已检测到':r.installed?'尚未接入':'未安装';
+ const status=r.available?(r.id==='briefloop-native'?'内置':'已检测到'):r.installed?'尚未接入':'未安装';
  return `<article data-runtime-card="${esc(r.id)}" class="runtime-card ${r.id===chosen?'selected':''} ${compact?'runtime-missing':''}"><div class="runtime-card-head"><span class="runtime-icon" aria-hidden="true">${icon}</span><div class="runtime-identity"><h3>${esc(name)}${r.id===chosen?'<span class="runtime-selected">当前选择</span>':''}</h3><p class="runtime-description">${esc(descriptions[r.id]||'本机命令行工具')}</p><p class="runtime-version">${esc(r.installed?(r.version||'版本未确认'):'本机未检测到')} <span class="runtime-detection">${status}</span></p></div>${compact?'':`<div class="runtime-actions"><button type="button" class="outline" data-runtime-select="${esc(r.id)}" ${r.available?'':'disabled'}>${r.id===chosen?'已选择':r.available?'选择':status}</button>${r.available?`<button type="button" class="outline" data-runtime-test="${esc(r.id)}" ${r.id!==chosen?'disabled':''}>测试</button>`:''}</div>`}</div>${compact?`<p class="runtime-missing-info">${esc((r.bins||[]).join(' / ')||r.id)} · ${r.integrated?'已有适配 · 安装后可测试':'尚无协议适配'}</p>`:`<p class="runtime-current-model" data-runtime-model="${esc(r.id)}">${runtimeModelSummary(r.id,chosen,model,catalog,esc)}</p>`}<details><summary>安装与能力</summary><p class="runtime-path">${esc(r.path||'未安装')}</p>${protocol?`<p>连接方式：${esc(protocol)}</p>`:''}${r.available&&supported.length?`<p>已接入：${esc(supported.join('、'))}</p>`:''}<p>${esc(r.diagnostic||(r.installed?'已检测到本机 CLI；账号与模型的可用性可通过“测试”确认。':'未在本机找到此 CLI。安装后可重新检测；接入状态以 BriefLoop 实际支持为准。'))}</p></details></article>`;
 }

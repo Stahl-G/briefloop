@@ -40,3 +40,17 @@ assert.match(cards,/runtime-codex.svg/);
 assert.doesNotMatch(runtimeCard(runtimes[1],{chosen:'hermes',model:'private-model',esc:String}),/private-model/);
 assert.doesNotMatch(runtimeCard({id:'kilo',name:'Kilo',bins:['kilo'],installed:false,integrated:false,capabilities:{chat:true}},{chosen:'hermes',model:'private-model',esc:String,compact:true}),/安装后重新检测|已接入：/);
 console.log('PASS: detected, selectable and unintegrated runtimes remain distinct; no inference is claimed by discovery');
+
+// Rebuilding the CLI list detaches the shared model controls. Native rendering
+// must use the captured value before those controls are reattached to its card.
+let detached=false;
+const model=node('model-select');model.value='custom/model';
+const detail=node('runtime-discovery-details');
+Object.defineProperty(detail,'innerHTML',{set(value){this.html=value;detached=true},get(){return this.html||''},configurable:true});
+view.$=id=>id==='model-select'&&detached?null:node(id);
+runtimes.push({id:'briefloop-native',name:'BriefLoop Agent',installed:true,available:true});
+node('agent-backend').value='briefloop-native';
+view.renderRuntimeDiscovery();
+assert.match(node('settings-native-runtime').innerHTML,/custom\/model/);
+assert.doesNotMatch(detail.innerHTML,/data-runtime-card="briefloop-native"/);
+console.log('PASS: Native is separate from Agent CLI and keeps the model while the cards rebuild');

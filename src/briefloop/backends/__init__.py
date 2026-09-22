@@ -8,7 +8,10 @@ old child handles.
 """
 
 BRIDGE_BACKENDS = ('claude','kimi','hermes','reasonix','mimo','codebuddy','kilo','kiro','vibe','deepseek-harness','antigravity','pi','zcode')
-BACKENDS = ('codex', 'opencode', *BRIDGE_BACKENDS)
+# BriefLoop's own embedded engine (pi SDK in-process); not an external CLI.
+# Main orchestration and independent roles share an engine, not tool permissions.
+REVIEW_ONLY_BACKENDS = ()
+BACKENDS = ('codex', 'opencode', 'briefloop-native', *BRIDGE_BACKENDS)
 
 DEFAULT_BACKEND = 'codex'
 
@@ -29,6 +32,7 @@ BACKEND_LABELS = {
     'antigravity': 'Antigravity',
     'zcode': 'ZCode',
     'pi': 'Pi',
+    'briefloop-native': 'BriefLoop Agent',
 }
 
 # Verified against opencode 1.18.20 (v1 message surface, same as the official
@@ -42,12 +46,24 @@ BACKEND_LABELS = {
 CAPABILITIES = {
     'codex': frozenset({'steer', 'cancel', 'questions', 'subagents', 'native_search'}),
     'opencode': frozenset({'cancel', 'subagents', 'native_search', 'restricted_review'}),
+    # Reviewer isolation here is our own tool proxy (packet-only reads, no
+    # built-in tools at all), verified in native-engine/engine.test.mjs and the
+    # phase-1 acceptance, not delegated to a host's permission UI.
+    'briefloop-native': frozenset({'cancel', 'restricted_review', 'subagents'}),
 }
 
 
 def validate_backend(name):
     if name not in BACKENDS:
         raise ValueError('未接入的 agent_backend：'+str(name))
+    return name
+
+
+def require_main_chain(name):
+    """The backend a report, scoring, research or learning job will run on."""
+    name = validate_backend(name)
+    if name in REVIEW_ONLY_BACKENDS:
+        raise ValueError(f'{BACKEND_LABELS[name]}目前只执行受限独立审阅，不能用于生成、评分、研究或学习；请改用其他执行后端。')
     return name
 
 

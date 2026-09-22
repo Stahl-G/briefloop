@@ -3,6 +3,7 @@ import pytest
 from briefloop.store import Store
 from briefloop.review import build_packet,accept_review,respond,review_status,ReviewOutput
 from briefloop.opencode_harness import _permission_rules
+from review_checks import for_version
 from briefloop.backends.opencode_server import OpencodeServerClient,OpencodeError
 
 
@@ -14,6 +15,7 @@ def fixture(tmp_path):
     folder=store.root/'jobs'/job['id'];fp,files=build_packet(store,brief['id'],folder)
     with store.tx() as c:c.execute('INSERT INTO reviews VALUES(?,?,?,?,?,?,?,?,?)',('review_test',brief['id'],job['id'],fp,'running',json.dumps({'packet_path':str((folder/'packet').relative_to(store.root)),'files':files}),None,'2026','2026'))
     value={'fingerprint':fp,'version_id':brief['id'],'status':'complete','summary':'One issue','coverage_scan_complete':True,
+           'requirement_checks':for_version(store,brief['id']),
            'assessment':{'brief_hash':brief['hash'],'status':'complete','summary':'Issue','overall':'建议修改','evidence':3,'coverage':3,'analysis':3,'expression':3},
            'findings':[{'kind':'insufficient_evidence','severity':'major','description':'Need support','evidence':'Source only contains one value','report_quote':'Revenue 12 million USD.'}]}
     return store,src,brief,value
@@ -22,6 +24,9 @@ def fixture(tmp_path):
 def test_review_bound_to_exact_version_and_author_cannot_close(tmp_path):
     store,source,brief,value=fixture(tmp_path)
     with pytest.raises(ValueError,match='未绑定'):accept_review(store,'review_test',{**value,'fingerprint':'other'})
+    wrong={**value,'assessment':{**value['assessment'],'brief_hash':brief['hash'][:-1]}}
+    with pytest.raises(ValueError,match=brief['hash']):accept_review(store,'review_test',wrong)
+    assert not store.rows('SELECT id FROM assessments WHERE version_id=?',(brief['id'],))
     accept_review(store,'review_test',value)
     accept_review(store,'review_test',value)
     assert len(store.rows('SELECT id FROM assessments WHERE version_id=?',(brief['id'],)))==1
@@ -326,3 +331,15 @@ def test_finding_can_reference_frozen_clause_but_not_foreign_clause(tmp_path, fo
         accept_review(store,'review_clause',result)
         saved = review_status(store,brief['id'])['findings'][0]['data']
         assert saved['requirement_ids'] == [rid,cid]
+
+
+def test_complete_needs_the_coverage_flag_and_every_requirement_checked(tmp_path):
+    # A "complete" review with empty check lists once passed admission while
+    # its summary listed problems it never recorded as findings.
+    store,source,brief,value=fixture(tmp_path)
+    with pytest.raises(ValueError,match='coverage_scan_complete=true'):
+        accept_review(store,'review_test',{**value,'coverage_scan_complete':False})
+    with pytest.raises(ValueError,match='缺少 requirement_checks'):
+        accept_review(store,'review_test',{**value,'requirement_checks':value['requirement_checks'][1:]})
+    partial={**value,'status':'incomplete','coverage_scan_complete':False,'requirement_checks':[],'findings':[]}
+    assert accept_review(store,'review_test',partial)['result']['status']=='incomplete'

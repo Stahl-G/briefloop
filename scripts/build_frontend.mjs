@@ -13,6 +13,18 @@ const rows = collectFrontendLicenses(result.metafile, root);
 const artifacts = [...result.outputFiles.map(file => ({ path: file.path, contents: file.contents })),
   { path: path.join(root, 'src/briefloop/static/frontend-licenses.txt'),
     contents: Buffer.from(renderFrontendLicenses(rows)) }];
+// Retain the legacy layout during migration; the shared component layer is
+// authored once and appended deterministically, never hand-edited in the bundle.
+const stylePath = path.join(root, 'src/briefloop/static/style.css');
+const systemMarker = '/* BEGIN GENERATED UI SYSTEM */';
+const legacyStyle = fs.readFileSync(stylePath, 'utf8').split(systemMarker)[0].trimEnd();
+artifacts.push({path: stylePath, contents: Buffer.from(`${legacyStyle}\n\n${systemMarker}\n${fs.readFileSync(path.join(root, 'frontend/ui-system.css'), 'utf8')}`)});
+// Desktop starts before the web service. Package the same tokens and mark,
+// with byte-for-byte checks so its launcher cannot drift from the app design.
+for (const [source, target] of [['tokens.css', 'ui-tokens.css'], ['runtime-briefloop.svg', 'briefloop-mark.svg']]) {
+  artifacts.push({path: path.join(root, 'desktop/electron/assets', target),
+    contents: fs.readFileSync(path.join(root, 'src/briefloop/static', source))});
+}
 let stale = false;
 for (const artifact of artifacts) {
   if (check) {

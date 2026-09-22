@@ -126,7 +126,11 @@ def _make_server(workspace, port, *, paused, backend, lock):
     from .bridge_harness import BridgeHarness
     from .backends import BRIDGE_BACKENDS
     bridge_harnesses={name:BridgeHarness(store,bridge,name) for name in BRIDGE_BACKENDS}
-    managers={'codex':harness,'opencode':opencode_harness,**bridge_harnesses}
+    from .native_engine import NativeEngine
+    from .native_harness import NativeHarness
+    native_engine=NativeEngine()
+    native_harness=NativeHarness(store,native_engine)
+    managers={'codex':harness,'opencode':opencode_harness,'briefloop-native':native_harness,**bridge_harnesses}
     from .chat_dispatch import ChatDispatcher
     chat_dispatch=ChatDispatcher(managers)
     chat_dispatch.recover()
@@ -144,7 +148,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
         if not model:raise ValueError('请先选择测试模型')
         manager=managers[backend]
         root=store.root/'runtime-tests'/secrets.token_hex(8);root.mkdir(parents=True)
-        runtime={'backend':backend,'model':model,'permission':'read-only' if backend in ('codex','opencode') else 'runtime-native'}
+        runtime={'backend':backend,'model':model,'permission':'read-only' if backend in ('codex','opencode','briefloop-native') else 'runtime-native'}
         session=manager.create_session(backend+' · 连接测试',runtime,root)
         manager.chat.event(session['id'],'runtime/test',{'backend':backend,'model':model,'kind':'short_model_call'})
         message=manager.send(session['id'],'Reply with OK only. Do not use tools.',runtime=runtime,allow_web=False)
@@ -298,12 +302,18 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     self.send(200,{'configurations':opencode_harness._client().provider_settings()})
                 elif u.path=='/api/runtime/reasoning':
                     from .runtime_reasoning import options
-                    self.send(200,options(q.get('backend',['codex'])[0],q.get('model',['default'])[0],store.root,bridge))
+                    self.send(200,options(q.get('backend',['codex'])[0],q.get('model',['default'])[0],store.root,bridge,native=native_harness))
                 elif u.path=='/api/runtime/permissions':
                     from .runtime_permissions import catalog
                     self.send(200,catalog(q.get('backend',['codex'])[0],store.root,bridge))
+                elif u.path=='/api/native/providers':
+                    from .native_providers import configurations
+                    self.send(200,{'configurations':configurations()})
                 elif u.path=='/api/runtimes':
-                    self.send(200,bridge.discover())
+                    result=bridge.discover()
+                    from .native_engine import discovery
+                    result['runtimes'].insert(0,discovery())
+                    self.send(200,result)
                 elif u.path=='/api/runtime/fast-capability':
                     from .backends import validate_backend
                     backend=validate_backend(q.get('backend',[store.settings().get('agent_backend','codex')])[0])
@@ -318,7 +328,9 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 elif u.path=='/api/models':
                     from .backends import validate_backend
                     backend=validate_backend(q.get('backend',[store.settings().get('agent_backend','codex')])[0])
-                    if backend=='opencode':
+                    if backend=='briefloop-native':
+                        models=native_harness.list_models(refresh=q.get('refresh',[''])[0]=='1')
+                    elif backend=='opencode':
                         models=opencode_harness.list_models(refresh=q.get('refresh',[''])[0]=='1')
                     elif backend in bridge_harnesses:
                         catalog=bridge_harnesses[backend].list_models(refresh=q.get('refresh',[''])[0]=='1')
@@ -620,6 +632,12 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     result=store.brief_view(store.revise(value.base_version,value.markdown,value.editor_document,allow_markdown_conversion=value.allow_markdown_conversion)['id'])
                 elif path=='/api/comment':
                     value=Comment.model_validate(body);result=store.comment(value.version_id,value.text,learning_intent=value.learning_intent)
+                elif path=='/api/native/provider':
+                    from .native_providers import save
+                    result=save(body)
+                elif path=='/api/native/provider-catalog':
+                    from .native_providers import catalog
+                    result=catalog(body)
                 elif path=='/api/settings':
                     from .learning_budget import apply_settings_change
                     merged=apply_settings_change(store.settings(),body)
@@ -670,7 +688,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                 self.send(500,{'error':str(exc)})
     try:server=ThreadingHTTPServer(('127.0.0.1',port),Handler)
     except OSError:
-        harness.close();opencode_harness.close();lock.close();raise
+        harness.close();opencode_harness.close();native_harness.close();lock.close();raise
     server.daemon_threads=True
     server._admission=threading.Condition(threading.RLock())
     server._active_posts=0
@@ -683,15 +701,17 @@ def _make_server(workspace, port, *, paused, backend, lock):
         from .connectors.tasks import TaskMaterials
         server.connector_tasks=TaskMaterials(store,server.connectors)
         worker.connector_tasks=server.connector_tasks
+        native_harness.connector_tasks=server.connector_tasks
         worker.connector_tool_url=f'http://127.0.0.1:{server.server_port}/api/connectors/task-tool'
     except Exception:
-        server.server_close();harness.close();opencode_harness.close();bridge.close();lock.close();raise
+        server.server_close();harness.close();opencode_harness.close();native_harness.close();bridge.close();lock.close();raise
     close_socket=server.server_close
     def close_server():
         try:server.connectors.close()
         finally:close_socket()
     server.server_close=close_server
     server.workspace_lock=lock;server.runtime_bridge=bridge;server.bridge_harnesses=bridge_harnesses
+    server.native_engine=native_engine;server.native_harness=native_harness
     server.store=store;server.worker=worker;server.harness=harness;server.opencode_harness=opencode_harness
     server.select_harness=pick_harness
     return server

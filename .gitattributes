@@ -1,3 +1,5 @@
 # Build checks compare these generated artifacts byte-for-byte on every platform.
 /src/briefloop/static/app.js text eol=lf
 /src/briefloop/static/frontend-licenses.txt text eol=lf
+/frontend/ui-system.css text eol=lf
+/src/briefloop/static/style.css text eol=lf

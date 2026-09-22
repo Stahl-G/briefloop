@@ -45,8 +45,11 @@ def native_allowed(config, internal=False):
     return 'native' in allowed(policy)
 
 
-def instructions(policy, tool, run_id):
+def instructions(policy, tool, run_id, *, native=False):
+    """The frozen policy in words. native=True names the engine's runner tools
+    instead of `briefloop tool` commands; the engine has no host search."""
     p=resolve(policy);channels=allowed(p)
+    if native:channels=[c for c in channels if c!='native']
     text='本轮冻结搜索策略：优先 '+LABELS[p['primary_provider']]+'；允许渠道：'+ '、'.join(LABELS[c] for c in channels)+'。'
     text+='优先不等于独占；按具体信息需要选择已允许渠道，不必先浪费一次首选查询。'
     if p['coverage_mode']=='coverage' and len(channels)>1:
@@ -55,6 +58,16 @@ def instructions(policy, tool, run_id):
     text+='关注市场/语言：'+(p['market_scope'] or '按报告需求')+'；关注平台：'+('、'.join(p['platform_scope']) or '按报告需求')+'。'
     text+='中文主体用原名/别名和本地发布记录补查。公众号、小红书分别核对是否发现链接、是否读到正文；不能承诺全量覆盖，摘要不当原文。'
     managed=[c for c in channels if c!='native']
+    if native:
+        if managed:
+            text+='受控搜索用 web_search（provider 可选 '+','.join(managed)+'；purpose 为 primary|coverage_probe|gap_repair，reason 写具体信息需求），日期、域名、topic、max_results 按工具说明。所有受控服务共享同一硬预算，失败也计次，不能换源绕过额度。'
+            text+='搜索后用 add_url 保存正文'+('；Tavily 在允许渠道内，add_url 失败的页面可用 extract_pages 提取。' if 'tavily' in managed else '。')
+        else:
+            text+='本轮允许的搜索渠道只有宿主自带搜索，内置引擎没有这项能力：不能发起搜索，只能用 add_url 保存任务中已给出的 URL，把无法检索写成缺口。'
+        if 'zhipu' in channels:
+            text+='智谱搜索引擎：'+p['zhipu_engine']+'；查询最多70字符，仅支持time_range及单个include_domains，不支持绝对日期或exclude_domains；夸克不支持域名过滤。'
+        text+='渠道分数不可直接平均；同一URL不重复抓取，转载不算独立佐证。401/402等错误保留，只有已允许替代渠道可继续，不绕过权限拒绝。'
+        return text
     if managed:
         text+=f'受控搜索统一命令：`{tool} web-search --run {run_id} --provider PROVIDER --purpose primary|coverage_probe|gap_repair --reason "具体信息需求" --query "关键词"`。PROVIDER 可选 '+','.join(managed)+'。'
         text+='可选 --gap-id 绑定已登记缺口；日期、域名、topic、max-results参数沿用web-search。所有受控服务共享同一硬预算，失败也计次，不能换源绕过额度。'

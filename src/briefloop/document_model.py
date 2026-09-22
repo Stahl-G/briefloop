@@ -158,17 +158,23 @@ def markdown_document(markdown):
                'ordered_list': 'orderedList', 'list_item': 'listItem', 'blockquote': 'blockquote',
                'table': 'table', 'tr': 'tableRow', 'th': 'tableHeader', 'td': 'tableCell'}
     def add_text(text, marks):
+        if any(mark['type'] == 'code' for mark in marks):
+            stack[-1].setdefault('content', []).append({'type': 'text', 'text': text, 'marks': copy.deepcopy(marks)})
+            return
         for part in re.split(r'(\[@src_[A-Za-z0-9_-]+\])', text):
             if not part: continue
             if re.fullmatch(r'\[@src_[A-Za-z0-9_-]+\]', part):
                 node = {'type': 'citation', 'attrs': {'sourceId': part[2:-1]}}
             else: node = {'type': 'text', 'text': part, **({'marks': copy.deepcopy(marks)} if marks else {})}
             stack[-1].setdefault('content', []).append(node)
-    for token in MarkdownIt('commonmark').enable('table').parse(markdown):
+    for token in MarkdownIt('commonmark').enable(['table', 'strikethrough']).parse(markdown):
         name = token.type.rsplit('_', 1)[0]
         if token.type.endswith('_open') and name in mapping:
             node = {'type': mapping[name], 'content': []}
             if name == 'heading': node['attrs'] = {'level': int(token.tag[1:])}
+            if name in ('th', 'td') and token.attrGet('style'):
+                alignment = re.fullmatch(r'text-align:(left|center|right)', token.attrGet('style'))
+                if alignment: node['attrs'] = {'textAlign': alignment.group(1)}
             if name == 'ordered_list' and token.attrGet('start'): node['attrs'] = {'start': int(token.attrGet('start'))}
             stack[-1]['content'].append(node); stack.append(node)
         elif token.type.endswith('_close') and name in mapping: stack.pop()

@@ -96,11 +96,26 @@ def render_document(doc, document, *, figures=None, sources=None, append_sources
         if sid not in used: used.append(sid)
         return '[' + str(used.index(sid) + 1) + ']'
 
+    def citation_run(paragraph, sid):
+        label = cite(sid)
+        run = paragraph.add_run(label)
+        url = sources.get(sid, {}).get('url') or ''
+        link = OxmlElement('w:hyperlink')
+        if url.startswith(('https://', 'http://')):
+            link.set(qn('r:id'), paragraph.part.relate_to(url, RELATIONSHIP_TYPE.HYPERLINK, is_external=True))
+        elif append_sources:
+            link.set(qn('w:anchor'), 'briefloop_source_' + str(used.index(sid) + 1))
+        else:
+            return
+        run.font.color.rgb = RGBColor.from_string('0563C1')
+        run.font.underline = True
+        link.append(run._r);paragraph._p.append(link)
+
     def inline(paragraph, nodes):
         for node in nodes:
             kind = node['type']
             if kind == 'hardBreak': paragraph.add_run().add_break(); continue
-            if kind == 'citation': paragraph.add_run(cite(node['attrs']['sourceId'])); continue
+            if kind == 'citation': citation_run(paragraph, node['attrs']['sourceId']); continue
             if kind != 'text': raise ValueError('段落中包含不支持的内容')
             marks = {m['type']: m.get('attrs', {}) for m in node.get('marks', [])}
             href = marks.get('link', {}).get('href')
@@ -108,7 +123,7 @@ def render_document(doc, document, *, figures=None, sources=None, append_sources
             if href and href.startswith('#source-'):
                 reference = cite(href[8:])
                 if not citation_label_text(node['text']):
-                    paragraph.add_run(reference); continue
+                    citation_run(paragraph, href[8:]); continue
                 # Text typed into a citation link is still authored content.
                 # Keep it in full, including any numeric prefix we cannot infer.
                 href = None
@@ -125,7 +140,7 @@ def render_document(doc, document, *, figures=None, sources=None, append_sources
                 link.set(qn('r:id'), paragraph.part.relate_to(href, RELATIONSHIP_TYPE.HYPERLINK, is_external=True))
                 link.append(run._r); paragraph._p.append(link)
                 run.font.underline = True
-            if reference: paragraph.add_run(reference)
+            if reference: citation_run(paragraph, marks['link']['href'][8:])
 
     def paragraph(container, style=None):
         # Word creates an initial empty paragraph inside a cell.
@@ -231,6 +246,7 @@ def render_document(doc, document, *, figures=None, sources=None, append_sources
         for i, sid in enumerate(used, 1):
             source = sources.get(sid, {})
             p = doc.add_paragraph(f'{i}. ')
+            anchor_heading(p, 'briefloop_source_' + str(i))
             label = source.get('name') or '引用来源未关联，请补充核对'
             url = source.get('url') or ''
             if url.startswith(('https://', 'http://')):

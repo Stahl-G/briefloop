@@ -34,6 +34,18 @@ def _usable_output(job, folder, store=None):
         try:return isinstance(json.loads((folder/'metadata.json').read_text(encoding='utf-8-sig')),dict)
         except (OSError,ValueError):return False
     role=job.get('runtime_role')
+    if role=='analyst':
+        if store is None:return False
+        from .analyst_drafts import submitted
+        try:
+            submitted(store,{'run_id':json.loads(job['payload'])['run_id'],
+                'packet_root':str(folder/'packet'),'result_file':str(folder/'draft.json')})
+            return True
+        except (OSError,ValueError,KeyError):return False
+    if role=='scout':
+        from .models import ScoutResult
+        try:ScoutResult.model_validate(json.loads((folder/'result.json').read_text(encoding='utf-8-sig')));return True
+        except (OSError,ValueError):return False
     if role in ('evaluator','scorer','assessor'):
         name='comparison.json' if job.get('evaluation_mode')=='pairwise' or role=='assessor' else 'assessment.json'
     elif job['kind'] in ('generate','revise'):name='draft.json'
@@ -158,6 +170,15 @@ class InteractiveRuntime:
             require_for_review(backend)
             runtime.update(permission='read-only',review_root=str((folder/'packet').resolve()))
             if job.get('review_id'):runtime['review_id']=job['review_id']
+        if backend == 'briefloop-native' and not job.get('native_packet') and not job.get('readonly_output'):
+            from .native_orchestrator import prepare
+            native_packet, prompt = prepare(self.store, job, folder, prompt)
+            job = {**job, 'native_packet': native_packet}
+        native_packet = job.get('native_packet')
+        if native_packet and backend == 'briefloop-native':
+            runtime.update(permission='read-only', packet_root=str((folder/'packet').resolve()),
+                           native_role=native_packet['role'],
+                           **{key: value for key, value in native_packet.items() if key != 'role'})
         if backend == 'codex' and 'service_tier' in configured:
             runtime['service_tier'] = configured['service_tier']
         if configured.get('model_provider'):
@@ -246,6 +267,8 @@ class InteractiveRuntime:
         with self.lock:
             self.session_id = sid
             self.session_backend = backend
+        from .execution_timing import policy
+        timing = policy(self.store, job_id=job['id'])
         started = time.monotonic()
         cursor = 0
         seen_messages = set()
@@ -276,7 +299,7 @@ class InteractiveRuntime:
                 self.store.event(job['id'], 'runtime_started', {'session_id': sid,
                     'message_id': binding['message_id'], 'folder': str(folder), 'runtime': configured,
                     'backend': backend,
-                    'transport': 'opencode-serve' if backend == 'opencode' else 'app-server'})
+                    'transport': 'native-engine' if backend == 'briefloop-native' else 'opencode-serve' if backend == 'opencode' else 'app-server'})
             while True:
                 snapshot = harness.snapshot(sid, after=cursor)
                 cursor = self._project(snapshot, log_path, cursor, seen_messages)
@@ -322,7 +345,7 @@ class InteractiveRuntime:
                     if status != 'completed':
                         raise RuntimeError('Agent 执行失败；详情保存在会话与任务日志')
                     return result
-                minutes = self.store.settings()['timeout_minutes']
+                minutes = timing['hard_timeout_minutes']
                 if minutes > 0 and time.monotonic() - started > minutes * 60:
                     harness.cancel(sid)
                     raise TimeoutError('运行超过本轮时间上限，已保留稿件和执行记录')

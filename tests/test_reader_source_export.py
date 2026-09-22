@@ -24,7 +24,10 @@ def test_reader_export_replaces_internal_index_with_linked_title_without_mutatin
     assert sum(p.text == '来源' for p in doc.paragraphs) == 1
     assert 'src_one' not in doc.element.xml
     links = doc.element.xpath('//w:hyperlink')
-    assert len(links) == 1
+    assert len(links) == 2
+    assert links[0].xpath('.//w:t')[0].text == '[1]'
+    assert doc.part.rels[links[0].get(qn('r:id'))].target_ref == 'https://example.org/report'
+    links = links[1:]
     assert links[0].xpath('.//w:t')[0].text == 'Official source'
     relation = doc.part.rels[links[0].get(qn('r:id'))]
     assert relation.is_external and relation.target_ref == 'https://example.org/report'
@@ -42,3 +45,11 @@ def test_export_without_source_append_keeps_authored_index():
     doc = Document()
     render_document(doc, fixture(), sources={'src_one': {'name': 'Source'}}, append_sources=False)
     assert len(doc.tables) == 1
+
+
+def test_local_source_citation_has_a_resolving_document_anchor():
+    doc = Document()
+    render_document(doc, fixture(), sources={'src_one': {'name': 'Local source'}})
+    citation = doc.element.xpath('//w:hyperlink')[0]
+    anchor = citation.get(qn('w:anchor'))
+    assert anchor and anchor in [n.get(qn('w:name')) for n in doc.element.xpath('//w:bookmarkStart')]

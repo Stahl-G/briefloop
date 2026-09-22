@@ -13,6 +13,7 @@ import {scheduleUI} from './schedules.js';
 import {adaptivePoll} from './polling.js';
 import {preflightSources,uploadPayload} from './uploads.js';
 import {runtimeCard,runtimeModelSummary} from './runtime-cards.js';
+import {welcomeAgents,welcomeAgentCard,welcomeReady} from './welcome.js';
 import {activityCenter} from './notifications.js';
 var activity=null;
 import {reviewPending,withoutSupersededRetries,factCheckHTML} from './review-status.js';
@@ -56,7 +57,7 @@ const parse=s=>JSON.parse(s||'{}');
 let followUpdates=true;
 let state,current,pendingRun=null,editor,dirty=false,saving=false,saveTimer,learnTimer,markdownMode=false,selected=new Set(),referenceSelected=new Set();
 function notice(s,error=false){$('notice').textContent=s;$('notice').classList.toggle('error',error);$('notice').hidden=false;clearTimeout(notice.timer);notice.timer=setTimeout(()=>$('notice').hidden=true,error?12000:4500)}
-function page(name){if(document.body.classList.contains('report-chat-open'))setReportChatOpen(false);if(((name==='chat'&&!chat.id)||name==='setup')&&(state?.settings?.model_selection_required||!state?.settings?.model)){notice('请先在欢迎页选择执行宿主和模型');name='welcome'}if(name!=='settings-dialog'&&$('custom-api-key'))$('custom-api-key').value='';for(const id of ['chat','report','reports','sources','templates','setup','learning','settings-dialog','welcome'])$(id).hidden=id!==name;document.querySelectorAll('nav [data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===name));if(name==='learning')refreshCandidates();if(name==='setup'){if(typeof reportMcpSelection!=='undefined')reportMcpSelection.refresh();moveSearchSettings('setup');applyPendingSetupFields()}else if($('tavily-key')){$('tavily-key').value='';$('bocha-key').value='';$('zhipu-key').value=''}if(name==='reports'){renderTasks();renderTaskGraph()}if(['reports','templates','learning'].includes(name))activity?.readCategory(name)}
+function page(name){if(document.body.classList.contains('report-chat-open'))setReportChatOpen(false);if(((name==='chat'&&!chat.id)||name==='setup')&&(state?.settings?.model_selection_required||!state?.settings?.model)){notice('请先选择 Agent 和模型');name='welcome'}if(name!=='settings-dialog'&&$('custom-api-key'))$('custom-api-key').value='';for(const id of ['chat','report','reports','sources','templates','setup','learning','settings-dialog','welcome'])$(id).hidden=id!==name;document.querySelectorAll('nav [data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===name));if(name==='learning')refreshCandidates();if(name==='setup'){if(typeof reportMcpSelection!=='undefined')reportMcpSelection.refresh();moveSearchSettings('setup');applyPendingSetupFields()}else if($('tavily-key')){$('tavily-key').value='';$('bocha-key').value='';$('zhipu-key').value=''}if(name==='reports'){renderTasks();renderTaskGraph()}if(['reports','templates','learning'].includes(name))activity?.readCategory(name)}
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>page(b.dataset.page));
 async function action(fn,message){try{await fn();if(message)notice(message);await refresh()}catch(e){notice(e.message,true)}}
 let tooltipTarget=null;
@@ -97,7 +98,7 @@ function updateDownloads(brief){
 }
 
 const statuses={queued:'等待运行',running:'正在运行',complete:'已完成',failed:'未完成',interrupted:'已中断',cancelled:'已停止'};
-const DISCUSS_INSTRUCTION='（讨论模式：现在不要生成报告，也不要启动生成任务。）请先和我逐条确认这份简报的需求：目的与要回答的问题、读者、时间范围、必答问题、人工填写章节、篇幅与格式偏好。确认清楚后，在回复的最后单独给出一个 ```briefloop-requirements 代码块，内容是 JSON：{"title":"","objective":"","audience":"","period":"","key_questions":[],"manual_sections":[],"writing_preferences":[],"report_profile":"brief","writing_mode":"internal_report","target_words":1500,"max_words":2000}。只讨论和确认，不写文件、不生成报告。';
+const DISCUSS_INSTRUCTION='（讨论模式：现在不要生成报告。）请根据我已经提供的信息整理写作简报：给谁看、解决什么问题、必答内容、期间、篇幅和写作偏好。只问会改变结果的缺口，不重复确认已知信息。按需求准备约定在最后提供 briefloop-requirements JSON，供我应用到材料与需求。';
 const CHAT_COMMANDS=[
  {name:'discuss',desc:'讨论需求：先确认目的、读者、范围，不直接生成'},
  {name:'new',desc:'开始一个新对话'},
@@ -134,9 +135,21 @@ function preserveWritingPreferences(req,previous,override){
 }
 function applyRequirements(text){
  let data;try{data=JSON.parse(text)}catch(e){notice('要求清单无法解析：'+e.message,true);return}
+ // Accept the observed title-shaped manual section response, never stringify objects.
+ const list=(key,manual=false)=>{
+  if(data[key]===undefined)return;
+  if(!Array.isArray(data[key]))throw Error(key+' 应为文字清单');
+  data[key]=data[key].map(item=>{
+   const text=typeof item==='string'?item:manual&&item&&typeof item.title==='string'?item.title:null;
+   if(text===null)throw Error(key+' 中存在无法识别的项目');
+   return text;
+  });
+ };
+ try{list('key_questions');list('manual_sections',true);list('writing_preferences')}catch(e){notice('要求清单无法应用：'+e.message,true);return}
  const form=$('requirements');if(!form)return;
  const set=(name,value)=>{const el=form.elements[name];if(el&&value!=null){el.value=value;el.dispatchEvent(new Event('change',{bubbles:true}))}};
  set('title',data.title);set('objective',data.objective);set('audience',data.audience);set('period',data.period);
+ for(const key of ['period_start','period_end','report_timezone'])set(key,data[key]);
  if(Array.isArray(data.key_questions))set('key_questions_text',data.key_questions.join('\n'));
  if(Array.isArray(data.manual_sections))set('manual_sections_text',data.manual_sections.join('\n'));
  if(data.report_profile)set('report_profile',data.report_profile);
@@ -146,7 +159,6 @@ function applyRequirements(text){
  if(data.target_words)set('target_words',data.target_words);
  if(data.max_words)set('max_words',data.max_words);
  if(Array.isArray(data.writing_preferences))writingPreferencesOverride=[...data.writing_preferences];
- if(Array.isArray(data.writing_preferences)&&data.writing_preferences.length){const box=form.elements.objective;if(box&&!String(box.value).includes(data.writing_preferences[0]))box.value=String(box.value||'')+'\n写作偏好：'+data.writing_preferences.join('；')}
  page('setup');notice('已填入材料与需求，请检查后生成');
 }
 // The backend names every task kind (task_labels.py) and says which ones a
@@ -258,35 +270,77 @@ function renderTaskBanner(){
  }
  box.querySelector('[data-banner-close]').onclick=()=>{setBannerDismissKey(job.id+':'+job.status);box.hidden=true;box.innerHTML=''};
 }
-const WELCOME_PURPOSES=[
- {id:'internal',label:'内部简报',prompt:'/discuss 我要做一份面向管理层的内部简报，请先和我确认目的、读者、必答问题、篇幅与格式。',fields:{writing_mode:'internal_report',report_profile:'brief'}},
- {id:'public',label:'公开研究',prompt:'请围绕我的研究目标查找公开资料，写一份有依据的简报。',fields:{writing_mode:'general',report_profile:'brief',allow_web:true}},
- {id:'industry',label:'行业报告',prompt:'请做一份行业定期报告，先确认行业、目标组织、报告日期与覆盖期间。',fields:{writing_mode:'general',report_profile:'industry_periodic'}},
-];
-let welcomeIndex=0,welcomePurpose=null;
-function welcomeAvailable(){return (runtimeCatalog||[]).filter(r=>r.available)}
-function chooseWelcomeHost(id){const select=$('agent-backend');if(select&&select.value!==id){select.value=id;select.dispatchEvent(new Event('change'))}if(state&&state.settings){state.settings.model_selection_required=true;state.settings.model=''}renderWelcome()}
-function applyWelcomePurpose(id){const purpose=WELCOME_PURPOSES.find(p=>p.id===id);if(!purpose)return;welcomePurpose=id;$('chat-input').value=purpose.prompt;rememberDraft();if(purpose.fields)sessionStorage.setItem('briefloop-welcome-fields',JSON.stringify(purpose.fields));renderWelcome()}
+let welcomeMode=null,welcomeBackend,welcomeExpanded=false,welcomeBusy=false,welcomeScanning=false,welcomeFromProvider=false;
+async function chooseWelcomeAgent(id){
+ if(welcomeBusy||!runtimeCatalog.some(r=>r.id===id&&r.available))return;
+ if(id===state.settings.agent_backend){renderWelcome();return}
+ welcomeBusy=true;renderWelcome();
+ try{$('agent-backend').value=id;await $('agent-backend').onchange()}
+ finally{$('agent-backend').value=state.settings.agent_backend;welcomeBusy=false;renderWelcome()}
+}
+function setWelcomeMode(mode){
+ if(welcomeBusy)return;
+ welcomeMode=mode;
+ if(mode==='native')chooseWelcomeAgent('briefloop-native');
+ renderWelcome();
+}
 function applyPendingSetupFields(){let fields=null;try{fields=JSON.parse(sessionStorage.getItem('briefloop-welcome-fields')||'null')}catch{}if(!fields)return;sessionStorage.removeItem('briefloop-welcome-fields');const form=$('requirements');if(!form)return;for(const [name,value] of Object.entries(fields)){const el=form.elements[name];if(!el)continue;if(el.type==='checkbox')el.checked=!!value;else el.value=value;el.dispatchEvent(new Event('change',{bubbles:true}))}initializeWorkflowChoice(fields,true);syncWorkflowProfile(false)}
 function renderWelcome(){
  const box=$('welcome-runtimes');if(!box)return;
- const avail=welcomeAvailable(),chosen=state?.settings?.agent_backend||'codex';
- if(!runtimeScanned&&!avail.length){box.innerHTML='<p class="help">正在检测本机宿主…</p>';$('welcome-choice').textContent='正在检测本机宿主…';$('welcome-start').disabled=true;return}
- box.innerHTML=avail.length?avail.map(r=>`<button type="button" class="welcome-host ${r.id===chosen?'selected':''}" data-welcome-host="${esc(r.id)}"><strong>${esc(r.name)}</strong><small>${esc(r.version||'版本未确认')}${r.id===chosen?' · 当前选择':''}</small></button>`).join(''):'<p class="help">未检测到可用宿主。请先安装并登录一个 CLI，或在设置里配置 API 提供商。</p>';
- box.querySelectorAll('[data-welcome-host]').forEach(b=>b.onclick=()=>{welcomeIndex=Math.max(0,avail.findIndex(r=>r.id===b.dataset.welcomeHost));chooseWelcomeHost(b.dataset.welcomeHost)});
- const model=state?.settings?.model_selection_required?'':state?.settings?.model;
- $('welcome-choice').textContent=`将使用：${runtimeName(chosen)} · ${model?friendlyModel(model):'待选择模型'}`;
- $('welcome-start').disabled=!model;
- const pbox=$('welcome-purposes');
- pbox.innerHTML='<span class="help">这次想做什么？可选。</span>'+WELCOME_PURPOSES.map(p=>`<button type="button" class="welcome-purpose ${welcomePurpose===p.id?'selected':''}" data-welcome-purpose="${p.id}">${esc(p.label)}</button>`).join('');
- pbox.querySelectorAll('[data-welcome-purpose]').forEach(b=>b.onclick=()=>applyWelcomePurpose(b.dataset.welcomePurpose));
+ const settings=state?.settings||{},chosen=settings.agent_backend;
+ if(welcomeMode===null||welcomeBackend!==chosen){welcomeMode=chosen==='briefloop-native'?'native':'cli';welcomeBackend=chosen}
+ for(const mode of ['native','cli']){
+  const tab=$('welcome-'+mode+'-tab');tab.setAttribute('aria-selected',String(welcomeMode===mode));tab.tabIndex=welcomeMode===mode?0:-1;tab.disabled=welcomeBusy;
+  $('welcome-'+mode).hidden=welcomeMode!==mode;
+ }
+ const {visible,total}=welcomeAgents(runtimeCatalog,chosen,welcomeExpanded);
+ const html=visible.length?visible.map(r=>welcomeAgentCard(r,chosen,welcomeBusy)).join(''):`<p class="help">${runtimeScanned?'未检测到可用的 Agent CLI。安装并登录后重新扫描，或选择 BriefLoop Agent。':'正在检测本机 Agent…'}</p>`;
+ if(box.dataset.cards!==html){box.dataset.cards=html;box.innerHTML=html;box.querySelectorAll('[data-welcome-agent]').forEach(b=>b.onclick=()=>chooseWelcomeAgent(b.dataset.welcomeAgent))}
+ $('welcome-more').hidden=total<=6;$('welcome-more').textContent=welcomeExpanded?'收起更多 Agent⌃':'显示更多 Agent⌄';$('welcome-more').setAttribute('aria-expanded',String(welcomeExpanded));
+ $('welcome-refresh').disabled=welcomeScanning||welcomeBusy;$('welcome-refresh').textContent=welcomeScanning?'正在扫描…':'↻ 重新扫描';
+ const selected=(welcomeMode==='native')===(chosen==='briefloop-native')&&runtimeCatalog.some(r=>r.id===chosen&&r.available);
+ const model=selected&&!settings.model_selection_required?settings.model:'';
+ $('welcome-model-label').textContent='模型'+(selected?' · '+runtimeName(chosen):'');
+ $('welcome-model-name').textContent=model||'选择或搜索模型';$('welcome-model').disabled=!selected||welcomeBusy;
+ $('welcome-start').disabled=!welcomeReady(settings,runtimeCatalog,welcomeMode,welcomeBusy);
+ $('welcome-choice').textContent=welcomeBusy?'正在保存选择…':!selected?'请先选择一个 Agent。':!model?'请选择模型；连接状态可在设置中测试。':'已保存选择；连接状态可在设置中测试。';
+ if(!model){
+  const effort=$('welcome-effort');effort.hidden=false;effort.disabled=true;effort.replaceChildren(new Option('模型默认','none'));
+  $('welcome-variant').hidden=true;const choices=$('welcome-variant-choices');if(choices)choices.hidden=true;
+  effort.parentElement.querySelectorAll('[data-reasoning-note]').forEach(note=>note.hidden=true);
+  delete effort.dataset.reasoningSignature;if(choices)delete choices.dataset.reasoningSignature;
+  return;
+ }
+ const variant=['opencode','briefloop-native','mimo'].includes(chosen),control=$(variant?'welcome-variant':'welcome-effort');
+ $('welcome-effort').hidden=variant;if(!variant)$('welcome-variant').hidden=true;
+ const variantSelect=$('welcome-variant-choices');if(variantSelect)variantSelect.hidden=!variant;
+ control.disabled=!model||welcomeBusy;
+ if(variant)control.value=chosen==='mimo'?(settings.runtime_efforts?.mimo||''):(settings.model_variant||'');
+ else assignEffort('welcome-effort',settingsEffort(settings,chosen));
+ reasoning.configure(control,chosen,model||'',{variant});
 }
 $('welcome-demo').onclick=()=>action(async()=>{const result=await api('demo',{});await refresh();$('welcome').hidden=true;openBrief(state.briefs.find(b=>b.id===result.version_id));page('report');notice(result.notice)});
 $('welcome-model').onclick=()=>openModelPicker('model-select');
-$('welcome-cycle').onclick=()=>{const avail=welcomeAvailable();if(avail.length<2)return;welcomeIndex=(welcomeIndex+1)%avail.length;chooseWelcomeHost(avail[welcomeIndex].id)};
+$('welcome-native-tab').onclick=()=>setWelcomeMode('native');
+$('welcome-cli-tab').onclick=()=>setWelcomeMode('cli');
+for(const mode of ['native','cli'])$('welcome-'+mode+'-tab').onkeydown=event=>{
+ if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)||welcomeBusy)return;
+ event.preventDefault();const next=event.key==='Home'?'native':event.key==='End'?'cli':mode==='native'?'cli':'native';
+ setWelcomeMode(next);$('welcome-'+next+'-tab').focus();
+};
+$('welcome-more').onclick=()=>{welcomeExpanded=!welcomeExpanded;renderWelcome()};
+$('welcome-refresh').onclick=async()=>{welcomeScanning=true;renderWelcome();try{await refreshRuntimeDiscovery(true)}finally{welcomeScanning=false;renderWelcome()}};
+$('welcome-configure').onclick=()=>{welcomeFromProvider=true;showSettings();settingsView('models');$('settings-tab-api').click();$('provider-close').textContent='返回选择';$('provider-close').setAttribute('aria-label','返回选择')};
+for(const id of ['welcome-effort','welcome-variant'])$(id).onchange=async()=>{
+ if(welcomeBusy)return;
+ const target=id==='welcome-variant'?'model-variant':'effort-select';
+ if(target==='effort-select')assignEffort(target,$(id).value);else $(target).value=$(id).value;
+ welcomeBusy=true;renderWelcome();
+ try{await action(saveModel,'思考强度已保存')}finally{welcomeBusy=false;renderWelcome()}
+};
 $('welcome-start').onclick=()=>{
  const settings=state?.settings||{};
- if(!settings.model||settings.model_selection_required){notice('请先选择模型',true);return}
+ if(!welcomeReady(settings,runtimeCatalog,welcomeMode,welcomeBusy)){notice('请先选择 Agent 和模型',true);return}
  const backend=settings.agent_backend||'codex';
  if(chat.nextBackend!==backend)chat.hostOptions={};
  chat.nextBackend=backend;
@@ -300,7 +354,7 @@ function render(first){
  renderWorkflowChoices(first);
  if($('review-open'))$('review-open').textContent='审阅与需处理'+(state.conflicts?.length?' · '+state.conflicts.length+' 项来源分歧':'');
  if(first&&$('report-system-clock')&&state.system_clock)$('report-system-clock').textContent=`本机日期：${state.system_clock.today} · ${state.system_clock.timezone}；提交时再次由后台核对。`;
- if(first){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('chat-allow-web').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.learning_authorization?.state==='authorized';$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',settingsEffort(state.settings,state.settings.agent_backend||'codex'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.agent_backend==='mimo'?(state.settings.runtime_efforts?.mimo||''):(state.settings.model_variant||'');updateModelLabel();renderRoleModels();renderBackend();loadSearchPolicy();renderSearchProvider();refreshRuntimeDiscovery();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});if(!state.requirements||state.requirements.fact_check==null)$('requirements').elements.fact_check.checked=!!state.settings.fact_checker;syncFactCheckControl();syncWorkflowProfile(false);previewReportTime()}
+ if(first){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('chat-allow-web').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;$('company-mode').value=state.settings.company_context_enabled==null?'ask':state.settings.company_context_enabled?'on':'off';$('auto-revision').checked=state.settings.auto_revision!==false;state.sources.forEach(s=>selected.add(s.id));$('rounds').value=state.settings.k;$('auto-learn').checked=state.learning_authorization?.state==='authorized';$('model-select').value=state.settings.model_selection_required?'':state.settings.model||'gpt-5.6-luna';assignEffort('effort-select',settingsEffort(state.settings,state.settings.agent_backend||'codex'));$('model-provider').value=state.settings.model_provider||'';$('service-tier').value=state.settings.service_tier||'';$('agent-backend').value=state.settings.agent_backend||'codex';$('model-variant').value=state.settings.agent_backend==='mimo'?(state.settings.runtime_efforts?.mimo||''):(state.settings.model_variant||'');updateModelLabel();renderRoleModels();renderReviewRuntime();renderBackend();loadSearchPolicy();renderSearchProvider();refreshRuntimeDiscovery();if(state.requirements)for(const [k,v] of Object.entries(state.requirements)){const e=$('requirements').elements[k];if(e)e.type==='checkbox'?e.checked=v:e.value=v}$('requirements').elements.key_questions_text.value=(state.requirements?.key_questions||[]).join('\n');$('requirements').elements.manual_sections_text.value=(state.requirements?.manual_sections||[]).join('\n');initializeLengthInputs(state.requirements||{});initializeResearchBudget(state.requirements||{});initializeReportProfile(state.requirements||{});if(!state.requirements||state.requirements.fact_check==null)$('requirements').elements.fact_check.checked=!!state.settings.fact_checker;syncFactCheckControl();syncWorkflowProfile(false);previewReportTime()}
  $('source-count').textContent=state.sources.length+' 份';$('source-list').innerHTML=state.sources.map(s=>`<div class="source-item"><input type="checkbox" data-check="${s.id}" ${selected.has(s.id)?'checked':''} aria-label="选择 ${esc(s.name)}"><button data-source="${s.id}">${esc(s.name)}</button><span class="tag ${s.status==='failed'?'error':''}">${s.status==='failed'?'读取失败':s.needs_visual?'需视觉读取':'可读取'}</span>${s.status==='failed'?`<button data-retry-source="${s.id}">重试</button>`:''}</div>`).join('');
  document.querySelectorAll('[data-retry-source]').forEach(b=>b.onclick=()=>action(async()=>{const s=await api('retry-source',{source_id:b.dataset.retrySource});selected.delete(b.dataset.retrySource);selected.add(s.id);notice(s.status==='ready'?'来源已重新读取':s.error,s.status!=='ready')}));
  document.querySelectorAll('[data-check]').forEach(b=>b.onchange=()=>{if(b.checked){selected.add(b.dataset.check);referenceSelected.delete(b.dataset.check);renderReferenceSources()}else selected.delete(b.dataset.check)});renderReferenceSources();
@@ -483,7 +537,7 @@ document.addEventListener('click',async event=>{
    const blob=await res.blob();img.src=await new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(blob)});
   }
   const title=parse(brief.detail).title||'报告';
-  const html='<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>'+esc(title)+'</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;color:#1E2320;line-height:1.7;margin:40px auto;padding:0 24px;max-width:900px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #DEDFD8;padding:8px}img{max-width:100%;height:auto}a{color:#006838}h1,h2,h3{break-after:avoid}tr,img{break-inside:avoid}@page{size:A4;margin:20mm}@media print{body{margin:0;padding:0;max-width:none}}</style><body>'+body.innerHTML+'</body></html>';
+  const html='<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>'+esc(title)+'</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif;color:#1E2320;line-height:1.7;margin:40px auto;padding:0 24px;max-width:900px}table{border-collapse:collapse;width:100%}td,th{border:1px solid #DEDFD8;padding:6px 8px;vertical-align:top}td p,th p{margin:0}img{max-width:100%;height:auto}figure{margin:16px 0}figure p{margin:4px 0}a{color:#006838}h1,h2,h3{break-after:avoid}tr,img{break-inside:avoid}@page{size:A4;margin:20mm}@page briefloop-report{size:A4;margin:20mm}@media print{body{page:briefloop-report;margin:0;padding:0;max-width:none;font-size:11pt;line-height:1.55}p{margin:0 0 8pt}h1{font-size:20pt;margin:0 0 14pt}h2{font-size:14pt;margin:14pt 0 7pt}h3{font-size:12pt;margin:12pt 0 6pt}td,th{padding:4pt 6pt}td p,th p{margin:0}table{margin:8pt 0 12pt}thead{display:table-header-group}p{orphans:3;widows:3}figure{margin:10pt 0}img{max-height:220mm;object-fit:contain}}</style><body>'+body.innerHTML+'</body></html>';
   if(kind==='pdf')await exportPdf(html,title);
   else{const url=URL.createObjectURL(new Blob([html],{type:'text/html;charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=exportFileName(title)+'.html';document.body.append(a);a.click();a.remove();notice('HTML 已生成，正在下载');setTimeout(()=>URL.revokeObjectURL(url),60000)}
  }catch(e){notice('导出未完成：'+e.message,true)}
@@ -511,15 +565,41 @@ $('close-source').onclick=()=>$('source-dialog').close();
 $('requirements').addEventListener('reset',()=>{writingPreferencesOverride=[];syncFactCheckControl()});
 // The server lists backends with a verified restricted Reviewer; the page keeps no list (#726).
 function reviewBackends(){return state?.review_capability?.restricted_review}
+function reviewRuntime(){return state?.settings?.review_runtime||null}
 function syncFactCheckControl(){
  const form=$('requirements'),box=form.elements.fact_check,listed=reviewBackends(),backend=backendValue();
- const reviewer=!listed||listed.some(b=>b.id===backend);
+ // A Reviewer chosen apart from the main chain is a route to independent review too.
+ const reviewer=!!reviewRuntime()||!listed||listed.some(b=>b.id===backend);
  box.disabled=!form.elements.allow_web.checked||!reviewer;if(box.disabled)box.checked=false;
  const note=$('review-capability-note');if(!note)return;
  note.hidden=reviewer;if(reviewer){note.textContent='';return}
  const label=$('agent-backend')?.selectedOptions?.[0]?.textContent||backend,alternatives=listed.map(b=>b.label).join('、')||'暂无已验证的执行后端';
- note.textContent=`${label} 尚未验证受限独立审阅，不能开启事实核查。`+(form.elements.writing_mode.value==='internal_report'?'企业内部报告仍可生成，评分为普通评分（不是独立审阅），正式交付需要先完成独立审阅。':'')+`需要时可在“执行后端”改用 ${alternatives}。`;
+ note.textContent=`${label} 尚未验证受限独立审阅，不能开启事实核查。`+(form.elements.writing_mode.value==='internal_report'?'企业内部报告仍可生成，评分为普通评分（不是独立审阅），正式交付需要先完成独立审阅。':'')+`需要时可在“独立审阅执行后端”单独选择审阅后端，或在“执行后端”改用 ${alternatives}。`;
 }
+function renderReviewRuntime(){
+ const select=$('review-backend');if(!select)return;
+ const choices=state?.review_capability?.review_choices||[],current=reviewRuntime();
+ select.innerHTML='<option value="">跟随执行后端</option>'+choices.map(c=>`<option value="${esc(c.id)}">${esc(c.label)}${c.experimental?'（实验）':''}</option>`).join('');
+ select.value=current?.backend||'';$('review-model').value=current?.model||'';$('review-variant').value=current?.model_variant||'';
+ $('review-model').disabled=$('review-variant').disabled=!select.value;
+ renderReviewRuntimeSummary();
+}
+function renderReviewRuntimeSummary(){
+ const current=reviewRuntime(),choice=(state?.review_capability?.review_choices||[]).find(c=>c.id===current?.backend);
+ $('review-runtime-summary').textContent=current?`${choice?.label||current.backend} · ${friendlyModel(current.model)}${current.model_variant?' / '+current.model_variant:''}`:'跟随执行后端';
+}
+async function saveReviewRuntime(){
+ const backend=$('review-backend').value,model=$('review-model').value.trim(),status=$('review-runtime-status');
+ $('review-model').disabled=$('review-variant').disabled=!backend;
+ if(backend&&!model){status.textContent='输入审阅模型（provider/model）后保存。';return}
+ const review_runtime=backend?{backend,model,model_variant:$('review-variant').value.trim()||null}:null;
+ status.textContent='保存中…';
+ try{const saved=await api('settings',{review_runtime});state.settings.review_runtime=saved.review_runtime??null;renderReviewRuntimeSummary();syncFactCheckControl();status.textContent='已保存，之后新建的任务使用这个审阅设置；已排队的任务不变。'}
+ catch(e){status.textContent='未保存：'+e.message}
+}
+$('review-backend').addEventListener('change',()=>action(saveReviewRuntime));
+$('review-model').addEventListener('change',()=>action(saveReviewRuntime));
+$('review-variant').addEventListener('change',()=>action(saveReviewRuntime));
 $('requirements').elements.allow_web.addEventListener('change',syncFactCheckControl);
 $('requirements').elements.writing_mode.addEventListener('change',syncFactCheckControl);
 $('agent-backend').addEventListener('change',syncFactCheckControl);
@@ -649,7 +729,7 @@ async function refreshProgress(){
   const running=job.status==='running';
   const labels={running:'进行中',pending_init:'启动中',completed:'已完成',done:'已完成',closed:'已结束',failed:'失败',errored:'失败'};
   $('run-progress').hidden=false;
-  $('run-progress').innerHTML=`<div class="section-title"><div><p class="eyebrow">${taskLabel(job.kind)||'简报生成'} · ${running?'后台正在运行':'等待后台执行'}</p><h2>${esc(pendingRequests.length?'等待你的确认':stageLabel||(job.status==='queued'?'任务已排队':'正在启动 BriefLoop'))}</h2></div><button class="outline" id="progress-stop">停止任务</button></div><p><strong>${esc(jobModelLabel(job,start))}</strong> · 模型进程 PID ${live.pid||'—'}${live.server_pid?' · 本地服务 PID '+live.server_pid:''}</p><p class="help">${job.status==='queued'?'排队等待':p.started?'已执行':'起始时间待确认'} ${job.status==='queued'||p.started?`${mins} 分 ${secs} 秒`:''} · ${state.settings.timeout_minutes===0?'不限时':'单次执行上限 '+state.settings.timeout_minutes+' 分钟'} <button id="progress-timeout" class="subtle-button">调整时限</button>${run?` · ${JSON.parse(run.source_ids).length} 份初始来源 · ${req.allow_web?'允许联网':'仅本地来源'}`:''}</p>${p.message?`<p class="progress-message">${esc(p.message)}</p>`:''}${stageRailHTML(p.stages)||`<div class="agent-progress">${agents.map(a=>`<div><strong>${esc(a.role)}</strong><span>${labels[a.status]||esc(a.status)}</span>${a.task?`<p>${esc(a.task)}</p>`:''}</div>`).join('')}</div>`}<p class="help">${p.draft_ready?'正文已可查看，评分独立完成。':'正文保存后会自动显示；等待子 agent 时可能暂时没有新消息。'}${p.last_activity?' 最近活动：'+clock(p.last_activity):''}</p>`;
+  $('run-progress').innerHTML=`<div class="section-title"><div><p class="eyebrow">${taskLabel(job.kind)||'简报生成'} · ${running?'后台正在运行':'等待后台执行'}</p><h2>${esc(pendingRequests.length?'等待你的确认':stageLabel||(job.status==='queued'?'任务已排队':'正在启动 BriefLoop'))}</h2></div><button class="outline" id="progress-stop">停止任务</button></div><p><strong>${esc(jobModelLabel(job,start))}</strong> · 模型进程 PID ${live.pid||'—'}${live.server_pid?' · 本地服务 PID '+live.server_pid:''}</p><p class="help">${job.status==='queued'?'排队等待':p.started?'已执行':'起始时间待确认'} ${job.status==='queued'||p.started?`${mins} 分 ${secs} 秒`:''} · ${req.target_minutes?'目标约 '+req.target_minutes+' 分钟'+(running&&p.started&&elapsed>req.target_minutes*60?' · 已超过目标，继续执行':''):'未设目标用时'}${req.hard_timeout_minutes?' · 单轮最长运行 '+req.hard_timeout_minutes+' 分钟':''} <button id="progress-timeout" class="subtle-button">后续任务设置</button>${run?` · ${JSON.parse(run.source_ids).length} 份初始来源 · ${req.allow_web?'允许联网':'仅本地来源'}`:''}</p>${p.message?`<p class="progress-message">${esc(p.message)}</p>`:''}${stageRailHTML(p.stages)||`<div class="agent-progress">${agents.map(a=>`<div><strong>${esc(a.role)}</strong><span>${labels[a.status]||esc(a.status)}</span>${a.task?`<p>${esc(a.task)}</p>`:''}</div>`).join('')}</div>`}<p class="help">${p.draft_ready?'正文已可查看，评分独立完成。':'正文保存后会自动显示；等待子 agent 时可能暂时没有新消息。'}${p.last_activity?' 最近活动：'+clock(p.last_activity):''}</p>`;
   if(pendingRequests.length){
    $('run-progress').insertAdjacentHTML('beforeend',`<div class="agent-question" role="status"><strong>有 ${pendingRequests.length} 项操作等待确认</strong><p>打开任务对话，查看具体操作并选择允许、拒绝或补充信息。回答后任务会继续。</p><button id="progress-requests" class="primary">查看并处理</button></div>`);
    $('progress-requests').onclick=()=>selectChat(taskSession);
@@ -672,23 +752,23 @@ function fastControlConfig(target){const isChat=target==='chat',role=target.star
 const fastCapabilityRequests=new Map();
 async function loadFastCapability(cfg){const key=fastChoiceKey(cfg);if(fastCapabilityRequests.has(key))return fastCapabilityRequests.get(key);const request=(async()=>{try{const query=new URLSearchParams({backend:cfg.backend,model:cfg.model,model_provider:cfg.model_provider||''});const result=await api('runtime/fast-capability?'+query);if(fastChoiceKey(result)===key)fastCapabilities.set(key,result);else fastCapabilities.set(key,{enabled:false});}catch{fastCapabilities.set(key,{enabled:false})}finally{fastCapabilityRequests.delete(key);renderFastControls(false);updateModelLabel()}})();fastCapabilityRequests.set(key,request);return request}
 function renderFastControls(fetchMissing=true){for(const target of ['main','chat','role-evaluator','role-maintainer','role-proposer']){const id=target==='main'?'service-tier':target==='chat'?'chat-service-tier':target+'-service-tier',control=$(id);if(!control)continue;const cfg=fastControlConfig(target),key=fastChoiceKey(cfg),capability=fastCapabilities.get(key),supported=fastAvailable(cfg,capability);control.hidden=!supported;const wrapper=control.closest('[data-fast-control]');if(wrapper)wrapper.hidden=!supported;if(fetchMissing&&cfg.backend==='codex'&&cfg.model&&!capability)loadFastCapability(cfg);}}
-function modelLabel(cfg){if(!cfg?.model)return '未指定模型';const backend=cfg.agent_backend||cfg.backend;const prefix=backend?runtimeName(backend)+' · ':'';if(cfg.model_variant!=null||backend==='opencode'){const variant=cfg.model_variant||'模型默认';return prefix+friendlyModel(cfg.model)+' / '+variant}if(backend&&!['codex','opencode'].includes(backend)&&!Object.hasOwn(cfg,'reasoning_effort'))return prefix+friendlyModel(cfg.model);const effort=cfg.reasoning_effort,effortLabel=Object.prototype.hasOwnProperty.call(cfg,'reasoning_effort')?(!effort||effort==='none'?'模型默认':effort):'未记录';return prefix+friendlyModel(cfg.model)+' / '+effortLabel+(cfg.model_provider?' · '+cfg.model_provider:'')+(cfg.service_tier==='fast'?' · Fast（请求）':cfg.service_tier==='default'?' · 标准':'')}
+function modelLabel(cfg){if(!cfg?.model)return '未指定模型';const backend=cfg.agent_backend||cfg.backend;const prefix=backend?runtimeName(backend)+' · ':'';if(cfg.model_variant!=null||['opencode','briefloop-native'].includes(backend)){const variant=cfg.model_variant||'模型默认';return prefix+friendlyModel(cfg.model)+' / '+variant}if(backend&&!['codex','opencode'].includes(backend)&&!Object.hasOwn(cfg,'reasoning_effort'))return prefix+friendlyModel(cfg.model);const effort=cfg.reasoning_effort,effortLabel=Object.prototype.hasOwnProperty.call(cfg,'reasoning_effort')?(!effort||effort==='none'?'模型默认':effort):'未记录';return prefix+friendlyModel(cfg.model)+' / '+effortLabel+(cfg.model_provider?' · '+cfg.model_provider:'')+(cfg.service_tier==='fast'?' · Fast（请求）':cfg.service_tier==='default'?' · 标准':'')}
 function backendValue(){return ($('agent-backend')&&$('agent-backend').value)||state.settings.agent_backend||'codex'}
 function renderBackend(){
- const backend=backendValue(),variant=['opencode','mimo'].includes(backend),codex=backend==='codex';
+ const backend=backendValue(),variant=['opencode','briefloop-native','mimo'].includes(backend),codex=backend==='codex';
  $('variant-field').hidden=!variant;document.querySelector('.main-provider-field').style.display=codex?'':'none';
  $('effort-select').hidden=variant;$('effort-select').closest('label').hidden=variant;
  reasoning.configure($(variant?'model-variant':'effort-select'),backend,$('model-select').value.trim(),{variant});
- $('model-select').placeholder=backend==='opencode'?'如 opencode-go/gpt-5.6-luna':'输入任意模型 ID';
+ $('model-select').placeholder=['opencode','briefloop-native'].includes(backend)?'如 opencode-go/gpt-5.6-luna':'输入任意模型 ID';
  document.querySelectorAll('.role-variant-field').forEach(e=>e.hidden=!variant);
  document.querySelectorAll('.role-provider-field').forEach(e=>e.style.display=codex?'':'none');
  document.querySelectorAll('.role-effort-select').forEach(e=>{e.style.display=variant?'none':'';reasoning.configure(variant?$(`role-${e.dataset.roleEffort}-variant`):e,backend,$(`role-${e.dataset.roleEffort}-model`).value.trim()||$('model-select').value.trim(),{variant})});
  renderSearchProvider();updateModelLabel();renderFastControls();
 }
-function updateModelLabel(){refreshRuntimeModelSummaries();const op=backendValue()==='opencode';const cfg=op?{model:$('model-select').value.trim(),model_variant:$('model-variant').value.trim()||null,agent_backend:'opencode'}:{model:$('model-select').value.trim(),reasoning_effort:backendValue()==='mimo'?($('model-variant').value.trim()||null):$('effort-select').value,model_provider:$('model-provider').value.trim(),service_tier:selectedServiceTier('service-tier',fastControlConfig('main')),agent_backend:backendValue()};$('execution-choice').textContent='即将使用：'+modelLabel(cfg);if($('setup-model-summary'))$('setup-model-summary').textContent=modelLabel(cfg);$('generate-button').textContent='使用 '+modelLabel(cfg)+' 生成简报 →';$('model-select').title=cfg.model?friendlyModel(cfg.model)+' · '+cfg.model:'输入模型 ID'}
-async function saveModel(){if(backendValue()==='codex')await loadFastCapability(fastControlConfig('main'));const model=reasoningModel(backendValue(),$('model-select').value.trim(),$('effort-select').value);$('model-select').value=model;if(!model)throw Error('请输入模型 ID');const op=backendValue()==='opencode';if(op){if(!model.includes('/'))throw Error('Opencode 模型必须是 provider/model 形式');await api('settings',{agent_backend:'opencode',model_selection_required:false,model,model_variant:$('model-variant').value.trim()||null})}else if(backendValue()!=='codex')await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,model_provider:null,model_variant:null,runtime_efforts:{...state.settings.runtime_efforts,[backendValue()]:backendValue()==='mimo'?($('model-variant').value.trim()||null):($('effort-select').value==='none'?null:$('effort-select').value)}});else await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,reasoning_effort:$('effort-select').value,model_provider:$('model-provider').value.trim()||null,service_tier:selectedServiceTier('service-tier',fastControlConfig('main'),true)});updateModelLabel();if($('welcome')&&!$('welcome').hidden)renderWelcome()}
+function updateModelLabel(){refreshRuntimeModelSummaries();const op=['opencode','briefloop-native'].includes(backendValue());const cfg=op?{model:$('model-select').value.trim(),model_variant:$('model-variant').value.trim()||null,agent_backend:backendValue()}:{model:$('model-select').value.trim(),reasoning_effort:backendValue()==='mimo'?($('model-variant').value.trim()||null):$('effort-select').value,model_provider:$('model-provider').value.trim(),service_tier:selectedServiceTier('service-tier',fastControlConfig('main')),agent_backend:backendValue()};$('execution-choice').textContent='即将使用：'+modelLabel(cfg);if($('setup-model-summary'))$('setup-model-summary').textContent=modelLabel(cfg);$('generate-button').textContent='使用 '+modelLabel(cfg)+' 生成简报 →';$('model-select').title=cfg.model?friendlyModel(cfg.model)+' · '+cfg.model:'输入模型 ID'}
+async function saveModel(){if(backendValue()==='codex')await loadFastCapability(fastControlConfig('main'));const model=reasoningModel(backendValue(),$('model-select').value.trim(),$('effort-select').value);$('model-select').value=model;if(!model)throw Error('请输入模型 ID');const op=['opencode','briefloop-native'].includes(backendValue());if(op){if(!model.includes('/'))throw Error('模型 ID 必须是 provider/model 形式');await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,model_variant:$('model-variant').value.trim()||null})}else if(backendValue()!=='codex')await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,model_provider:null,model_variant:null,runtime_efforts:{...state.settings.runtime_efforts,[backendValue()]:backendValue()==='mimo'?($('model-variant').value.trim()||null):($('effort-select').value==='none'?null:$('effort-select').value)}});else await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,reasoning_effort:$('effort-select').value,model_provider:$('model-provider').value.trim()||null,service_tier:selectedServiceTier('service-tier',fastControlConfig('main'),true)});updateModelLabel();if($('welcome')&&!$('welcome').hidden)renderWelcome()}
 let runtimeCatalog=[],runtimeScanned=false;
-function runtimeName(id){return runtimeCatalog.find(r=>r.id===id)?.name||id}
+function runtimeName(id){return id==='briefloop-native'?'BriefLoop Agent':runtimeCatalog.find(r=>r.id===id)?.name||id}
 function renderSettingsSessionNote(){
  const box=$('settings-session-note');if(!box)return;
  const session=chat.session,backend=session?.runtime?.backend,chosen=backendValue();
@@ -713,22 +793,28 @@ function renderRuntimeDiscovery(){
  for(const runtime of runtimeCatalog){const option=new Option(runtime.name+(runtime.available?'':(runtime.installed?' · 尚未支持':' · 未安装')),runtime.id);option.disabled=!runtime.available;select.add(option)}
  if(![...select.options].some(o=>o.value===chosen))select.add(new Option(chosen+' · 未检测到',chosen));select.value=chosen;
  const modelBlock=$('settings-model-block');
- const installed=runtimeCatalog.filter(r=>r.installed).sort((a,b)=>Number(b.id===chosen)-Number(a.id===chosen)),missing=runtimeCatalog.filter(r=>!r.installed);
- const row=r=>runtimeCard(r,{chosen,model:$('model-select').value.trim(),catalog:modelCatalogs.get(r.id)});
- $('runtime-discovery-details').innerHTML=installed.map(row).join('')+`<details class="runtime-uninstalled"><summary>未安装的 CLI · ${missing.length}</summary><div class="runtime-missing-grid">${missing.map(r=>runtimeCard(r,{chosen,model:'',esc,compact:true})).join('')}</div></details>`;
- const selectedCard=[...$('runtime-discovery-details').querySelectorAll('[data-runtime-card]')].find(c=>c.dataset.runtimeCard===chosen);
- if(selectedCard)selectedCard.append(modelBlock);else $('settings-cli').append(modelBlock);
- $('runtime-discovery-details').querySelectorAll('[data-runtime-test]').forEach(button=>button.onclick=()=>action(async()=>{
- const model=$('model-select').value.trim();if(!model)throw Error('请先选择或输入模型 ID');
- const r=await api('runtime-test',{backend:button.dataset.runtimeTest,model});chat.view='tests';await selectChat(r.session_id);
- },'已提交模型测试；进展见对话，可随时停止'));
- $('runtime-discovery-details').querySelectorAll('[data-runtime-select]').forEach(button=>button.onclick=()=>{if(button.dataset.runtimeSelect===backendValue())return;select.value=button.dataset.runtimeSelect;select.dispatchEvent(new Event('change'))});
+ const cli=runtimeCatalog.filter(r=>r.id!=='briefloop-native');
+ const installed=cli.filter(r=>r.installed).sort((a,b)=>Number(b.id===chosen)-Number(a.id===chosen)),missing=cli.filter(r=>!r.installed);
+ const model=$('model-select').value.trim();
+ const row=r=>runtimeCard(r,{chosen,model,catalog:modelCatalogs.get(r.id)});
+ const roots=[$('runtime-discovery-details'),$('settings-native-runtime')];
+ roots[0].innerHTML=installed.map(row).join('')+`<details class="runtime-uninstalled"><summary>未安装的 CLI · ${missing.length}</summary><div class="runtime-missing-grid">${missing.map(r=>runtimeCard(r,{chosen,model:'',compact:true})).join('')}</div></details>`;
+ roots[1].innerHTML=runtimeCatalog.filter(r=>r.id==='briefloop-native').map(row).join('');
+ const selectedCard=roots.flatMap(root=>[...root.querySelectorAll('[data-runtime-card]')]).find(c=>c.dataset.runtimeCard===chosen);
+ if(selectedCard)selectedCard.append(modelBlock);else $(chosen==='briefloop-native'?'settings-api':'settings-cli').append(modelBlock);
+ for(const root of roots){
+  root.querySelectorAll('[data-runtime-test]').forEach(button=>button.onclick=()=>action(async()=>{
+   const model=$('model-select').value.trim();if(!model)throw Error('请先选择或输入模型 ID');
+   const r=await api('runtime-test',{backend:button.dataset.runtimeTest,model});chat.view='tests';await selectChat(r.session_id);
+  },'已提交模型测试；进展见对话，可随时停止'));
+  root.querySelectorAll('[data-runtime-select]').forEach(button=>button.onclick=()=>{if(button.dataset.runtimeSelect===backendValue())return;select.value=button.dataset.runtimeSelect;select.dispatchEvent(new Event('change'))});
+ }
  renderSettingsSessionNote();
 }
 async function refreshRuntimeDiscovery(force=false){
  const select=$('agent-backend');if(!select.value){const backend=state.settings.agent_backend||'codex';if(!Array.from(select.options).some(o=>o.value===backend))select.add(new Option(backend,backend));select.value=backend;}
- if(!$('runtime-discovery-status')){const box=document.createElement('section');box.className='runtime-discovery';box.innerHTML='<div class="section-title"><strong>本机 Runtime</strong><button type="button" id="runtime-discovery-refresh" class="outline">重新检测</button></div><p id="runtime-discovery-status" class="help" role="status"></p><div id="runtime-discovery-details" class="help"></div><p id="runtime-model-status" class="help" role="status"></p>';$('settings-runtime-list').append(box);$('runtime-discovery-refresh').onclick=()=>refreshRuntimeDiscovery(true)}
- $('runtime-discovery-status').textContent='正在检测本机 CLI…';$('runtime-discovery-refresh').disabled=true;
+ if(!$('runtime-discovery-status')){const box=document.createElement('section');box.className='runtime-discovery';box.innerHTML='<div class="section-title"><strong>本机 Agent CLI</strong><button type="button" id="runtime-discovery-refresh" class="outline">重新检测</button></div><p id="runtime-discovery-status" class="help" role="status"></p><div id="runtime-discovery-details" class="help"></div><p id="runtime-model-status" class="help" role="status"></p>';$('settings-runtime-list').append(box);$('runtime-discovery-refresh').onclick=()=>refreshRuntimeDiscovery(true)}
+ $('runtime-discovery-status').textContent='正在检测执行引擎…';$('runtime-discovery-refresh').disabled=true;
  try{const data=await api('runtimes'+(force?'?refresh=1':''));runtimeCatalog=data.runtimes||[];renderRuntimeDiscovery();$('runtime-discovery-status').textContent=`检测到 ${runtimeCatalog.filter(r=>r.installed).length} 个本机 CLI，其中 ${runtimeCatalog.filter(r=>r.available).length} 个可选择；检测未验证账号与模型调用，需另行短测试。`+(data.diagnostic?` ${data.diagnostic}`:'');await refreshModelSuggestions(force)}catch(e){$('runtime-discovery-status').textContent='检测失败：'+e.message}finally{$('runtime-discovery-refresh').disabled=false;runtimeScanned=true;if($('welcome')&&!$('welcome').hidden)renderWelcome()}
 }
 $('agent-backend').onchange=()=>action(async()=>{const backend=backendValue(),dropped=Object.keys(state.settings.role_models||{}).length;await api('settings',{agent_backend:backend,model_selection_required:true,role_models:{}});state.settings.agent_backend=backend;state.settings.model_selection_required=true;state.settings.role_models={};assignEffort('effort-select',settingsEffort(state.settings,backend));$('model-variant').value=backend==='mimo'?(state.settings.runtime_efforts?.mimo||''):(state.settings.model_variant||'');reasoning.refresh();$('model-select').value='';$('chat-model').value='';modelCatalog={backend:null,at:0,models:[]};renderRuntimeDiscovery();renderRoleModels();renderBackend();updateComposer();await refreshModelSuggestions();notice(dropped?'宿主已切换；原宿主的角色模型已清空，留空即继承主链模型':'Runtime 已保存；请选择或输入模型')});$('model-variant').onchange=()=>action(saveModel,'Variant 已保存；下一次启动生效');
@@ -769,7 +855,9 @@ async function renderModelPicker(){
     if(m.provider!==lastProvider){lastProvider=m.provider;html+=`<h3 class="workspace-list-heading">${esc(m.provider)}</h3>`}
     html+=`<button type="button" class="workspace-choice" data-model-pick="${esc(m.id)}"><span><strong>${esc(m.id)}</strong><small>${esc(m.name||'')}</small></span><em>选用</em></button>`;
   }
-  $('model-picker-list').innerHTML=html||(error?('<p class="help">读取失败：'+esc(error)+'</p>'):(models.length?'<p class="help">没有匹配的模型。可直接输入完整模型 ID 后按回车选用。</p>':'<p class="help">'+esc(emptyCatalogLabel(backend,modelCatalogs.get(backend)))+'</p>'));
+  const custom=$('model-picker-search').value.trim();
+  const customChoice=custom&&!/\s/.test(custom)&&!shown.some(m=>m.id===custom)?`<button type="button" class="workspace-choice" data-model-pick="${esc(custom)}"><span><strong>${esc(custom)}</strong><small>使用此模型 ID</small></span><em>选用</em></button>`:'';
+  $('model-picker-list').innerHTML=(html||(error?('<p class="help">读取失败：'+esc(error)+'</p>'):(models.length?'<p class="help">没有匹配的模型。可直接输入完整模型 ID 后按回车选用。</p>':'<p class="help">'+esc(emptyCatalogLabel(backend,modelCatalogs.get(backend)))+'</p>')))+customChoice;
   $('model-picker-list').querySelectorAll('[data-model-pick]').forEach(b=>b.onclick=()=>pickModel(b.dataset.modelPick));
 }
 function pickModel(id){
@@ -781,6 +869,7 @@ function pickModel(id){
 }
 $('model-picker-close').onclick=()=>$('model-picker').close();
 $('model-picker-search').oninput=()=>renderModelPicker();
+$('model-picker-search').onkeydown=event=>{if(event.key==='Enter'&&!event.isComposing){event.preventDefault();const id=event.target.value.trim();if(id&&!/\s/.test(id))pickModel(id)}};
 $('model-picker-refresh').onclick=()=>action(async()=>{await refreshModelSuggestions(true);await renderModelPicker()},'模型目录已刷新');
 $('model-select').onchange=()=>{reasoning.refresh();renderBackend();return action(saveModel,'模型已保存；下一次启动生效')};$('service-tier').onchange=()=>action(saveModel,'速度已保存；下一次启动生效');$('effort-select').onchange=()=>action(saveModel,'推理档位已保存；下一次启动生效');$('model-provider').onchange=()=>action(saveModel,'Provider 已保存；下一次启动生效');$('model-browse').onclick=()=>openModelPicker('model-select');
 $('model-apply-session').onclick=()=>{
@@ -877,7 +966,7 @@ const PERMISSION_MODES={
 function permissionModes(runtime){
  const caps=((runtimeCatalog||[]).find(r=>r.id===runtime)||{}).capabilities;
  // Before discovery finishes, fall back to what each host family supports.
- const modes=(caps?.permission_modes||(['codex','opencode'].includes(runtime)?['workspace-write','read-only']:['runtime-native'])).filter(mode=>PERMISSION_MODES[mode]);
+ const modes=(caps?.permission_modes||(['codex','opencode','briefloop-native'].includes(runtime)?['workspace-write','read-only']:['runtime-native'])).filter(mode=>PERMISSION_MODES[mode]);
  return modes.length?modes:['workspace-write'];
 }
 function renderChatRuntimePermissions(){
@@ -896,17 +985,17 @@ function renderChatRuntimePermissions(){
  const canSteer=backend===(chat.session?.runtime?.backend||backend)&&(declaredCaps?declaredCaps.steer!==false:backend==='codex');
  for(const option of $('chat-mode').options){if(option.value==='steer'){option.hidden=!canSteer;option.disabled=!canSteer}}
  if(!canSteer&&$('chat-mode').value==='steer')$('chat-mode').value='queue';
- $('chat-effort').hidden=['opencode','mimo'].includes(backend);reasoning.configure($(['opencode','mimo'].includes(backend)?'chat-variant':'chat-effort'),backend,$('chat-model').value.trim(),{variant:['opencode','mimo'].includes(backend)});document.querySelector('.chat-provider-row').hidden=backend!=='codex';
+ $('chat-effort').hidden=['opencode','briefloop-native','mimo'].includes(backend);reasoning.configure($(['opencode','briefloop-native','mimo'].includes(backend)?'chat-variant':'chat-effort'),backend,$('chat-model').value.trim(),{variant:['opencode','briefloop-native','mimo'].includes(backend)});document.querySelector('.chat-provider-row').hidden=backend!=='codex';
  const variantField=document.querySelector('label[for="chat-variant"]');
- if(variantField)variantField.hidden=!['opencode','mimo'].includes(backend);
+ if(variantField)variantField.hidden=!['opencode','briefloop-native','mimo'].includes(backend);
  const effortField=document.querySelector('label[for="chat-effort"]');
- if(effortField)effortField.hidden=['opencode','mimo'].includes(backend);
+ if(effortField)effortField.hidden=['opencode','briefloop-native','mimo'].includes(backend);
 }
-function runtimeChoice(){const model=$('chat-model').value.trim();if(!model)throw Error('请输入模型 ID');const backend=chatBackendChoice();if(!['codex','opencode'].includes(backend)){return {model:reasoningModel(backend,model,$('chat-effort').value),backend,effort:backend==='mimo'?($('chat-variant').value.trim()||null):($('chat-effort').value==='none'?null:$('chat-effort').value),permission:'runtime-native',host_options:chat.hostOptions||{}}}if(backend==='opencode'){if(!model.includes('/'))throw Error('Opencode 模型必须是 provider/model 形式，例如 opencode-go/gpt-5.6-luna');return {model,backend,variant:($('chat-variant')?.value||'').trim()||null,permission:$('chat-permission').value}}return {model,backend,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,service_tier:selectedServiceTier('chat-service-tier',fastControlConfig('chat'),true),permission:$('chat-permission').value}}
+function runtimeChoice(){const model=$('chat-model').value.trim();if(!model)throw Error('请输入模型 ID');const backend=chatBackendChoice();if(!['codex','opencode','briefloop-native'].includes(backend)){return {model:reasoningModel(backend,model,$('chat-effort').value),backend,effort:backend==='mimo'?($('chat-variant').value.trim()||null):($('chat-effort').value==='none'?null:$('chat-effort').value),permission:'runtime-native',host_options:chat.hostOptions||{}}}if(['opencode','briefloop-native'].includes(backend)){if(!model.includes('/'))throw Error('Opencode 模型必须是 provider/model 形式，例如 opencode-go/gpt-5.6-luna');return {model,backend,variant:($('chat-variant')?.value||'').trim()||null,permission:$('chat-permission').value}}return {model,backend,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,service_tier:selectedServiceTier('chat-service-tier',fastControlConfig('chat'),true),permission:$('chat-permission').value}}
 function messageTime(value){return clock(value)}
 function chatError(text=''){$('chat-error').textContent=text;$('chat-error').hidden=!text}
 function sessionMissing(error){return /会话或消息不存在|会话不存在/.test(String(error&&error.message||error||''))}
-function updateComposer(){syncCompactReportControls();renderChatBackendChoice();renderChatRuntimePermissions();const readonly=chat.session&&chat.session.lifecycle&&chat.session.lifecycle!=='active';const active=chatActive(),steering=active&&$('chat-mode').value==='steer';if(steering){const runtime=activeChatRuntime();$('chat-permission').value=runtime.permission||'workspace-write';$('chat-model').value=runtime.model||'';assignEffort('chat-effort',effortValue(runtime,'effort'));if($('chat-variant'))$('chat-variant').value=runtime.variant||(runtime.backend==='mimo'?runtime.effort:'')||'';$('chat-model-provider').value=runtime.model_provider||'';$('chat-service-tier').value=runtime.service_tier||'';const activeMessage=chat.messages.find(m=>m.role==='user'&&m.turn_id===chat.session?.turn_id);$('chat-allow-web').checked=!!activeMessage?.allow_web} renderFastControls();$('chat-allow-web').disabled=readonly||steering||chat.busy;for(const id of ['chat-model','chat-effort','chat-variant','chat-model-provider','chat-service-tier'])if($(id)){$(id).disabled=readonly||steering||chat.busy;if($(id+'-choices'))$(id+'-choices').disabled=$(id).disabled;}$('chat-permission').disabled=readonly||steering||chat.busy;$('new-session').disabled=chat.busy||chat.uploading>0;$('chat-input').readOnly=chat.busy||readonly;document.querySelectorAll('[data-chat-session]').forEach(b=>b.disabled=chat.busy||chat.uploading>0);$('chat-send').disabled=readonly||chat.busy||chat.uploading>0||(!$('chat-input').value.trim()&&!chat.attachments.size)||!$('chat-model').value.trim();const sendLabel=chat.busy?'发送中…':active?($('chat-mode').value==='steer'?'立即补充':'排队发送'):'发送消息';$('chat-send').textContent=chat.busy?'…':'发送';$('chat-send').setAttribute('aria-label',sendLabel);$('chat-send').title=sendLabel;$('chat-stop').hidden=!sessionBusy(chat.session);$('chat-stop').disabled=chat.busy;$('chat-mode').disabled=!active||chat.busy;$('chat-attach').disabled=readonly||chat.busy||chat.uploading>0;$('attach-existing').disabled=readonly||chat.busy;$('chat-attach').querySelector('span').textContent=chat.uploading?'上传中…':'附件';const model=$('chat-model').value.trim(),label=friendlyModel(model)||'输入模型 ID';$('chat-model').title=model?friendlyModel(model)+' · '+model:'输入模型 ID';if(!model)$('chat-send').title='请先选择模型';const chatBackend=chatBackendChoice();const speed=$('chat-service-tier').hidden?'':($('chat-service-tier').value==='fast'?' · Fast（请求）':$('chat-service-tier').value==='default'?' · 标准':'');const effort=['opencode','mimo'].includes(chatBackend)?(($('chat-variant')?.value||'').trim()||'模型默认'):($('chat-effort').value==='none'?'模型默认':$('chat-effort').value);$('composer-help').textContent=`Enter 发送 · Shift + Enter 换行 · ${label}${' / '+effort}${speed}${active?' · 立即补充沿用当前联网与模型设置；更改设置请排队到下一回合':''}${model?'':' · 请先从模型列表选择或输入模型 ID'}`}
+function updateComposer(){syncCompactReportControls();renderChatBackendChoice();renderChatRuntimePermissions();const readonly=chat.session&&chat.session.lifecycle&&chat.session.lifecycle!=='active';const active=chatActive(),steering=active&&$('chat-mode').value==='steer';if(steering){const runtime=activeChatRuntime();$('chat-permission').value=runtime.permission||'workspace-write';$('chat-model').value=runtime.model||'';assignEffort('chat-effort',effortValue(runtime,'effort'));if($('chat-variant'))$('chat-variant').value=runtime.variant||(runtime.backend==='mimo'?runtime.effort:'')||'';$('chat-model-provider').value=runtime.model_provider||'';$('chat-service-tier').value=runtime.service_tier||'';const activeMessage=chat.messages.find(m=>m.role==='user'&&m.turn_id===chat.session?.turn_id);$('chat-allow-web').checked=!!activeMessage?.allow_web} renderFastControls();$('chat-allow-web').disabled=readonly||steering||chat.busy;for(const id of ['chat-model','chat-effort','chat-variant','chat-model-provider','chat-service-tier'])if($(id)){$(id).disabled=readonly||steering||chat.busy;if($(id+'-choices'))$(id+'-choices').disabled=$(id).disabled;}$('chat-permission').disabled=readonly||steering||chat.busy;$('new-session').disabled=chat.busy||chat.uploading>0;$('chat-input').readOnly=chat.busy||readonly;document.querySelectorAll('[data-chat-session]').forEach(b=>b.disabled=chat.busy||chat.uploading>0);$('chat-send').disabled=readonly||chat.busy||chat.uploading>0||(!$('chat-input').value.trim()&&!chat.attachments.size)||!$('chat-model').value.trim();const sendLabel=chat.busy?'发送中…':active?($('chat-mode').value==='steer'?'立即补充':'排队发送'):'发送消息';$('chat-send').textContent=chat.busy?'…':'发送';$('chat-send').setAttribute('aria-label',sendLabel);$('chat-send').title=sendLabel;$('chat-stop').hidden=!sessionBusy(chat.session);$('chat-stop').disabled=chat.busy;$('chat-mode').disabled=!active||chat.busy;$('chat-attach').disabled=readonly||chat.busy||chat.uploading>0;$('attach-existing').disabled=readonly||chat.busy;$('chat-attach').querySelector('span').textContent=chat.uploading?'上传中…':'附件';const model=$('chat-model').value.trim(),label=friendlyModel(model)||'输入模型 ID';$('chat-model').title=model?friendlyModel(model)+' · '+model:'输入模型 ID';if(!model)$('chat-send').title='请先选择模型';const chatBackend=chatBackendChoice();const speed=$('chat-service-tier').hidden?'':($('chat-service-tier').value==='fast'?' · Fast（请求）':$('chat-service-tier').value==='default'?' · 标准':'');const effort=['opencode','briefloop-native','mimo'].includes(chatBackend)?(($('chat-variant')?.value||'').trim()||'模型默认'):($('chat-effort').value==='none'?'模型默认':$('chat-effort').value);$('composer-help').textContent=`Enter 发送 · Shift + Enter 换行 · ${label}${' / '+effort}${speed}${active?' · 立即补充沿用当前联网与模型设置；更改设置请排队到下一回合':''}${model?'':' · 请先从模型列表选择或输入模型 ID'}`}
 function sessionBusy(session){if(!session)return false;if(typeof session.busy==='boolean')return session.busy;return ['starting','running','stopping'].includes(session.status)||!!session.turn_id||(session.id===chat.id&&(chat.messages.some(m=>['queued','sending','delivered','streaming'].includes(m.status))||chat.requests.some(r=>r.status==='pending')))}
 function renderSessions(){
  const signature=JSON.stringify([chat.view,chat.id,chat.sessions]);if(renderSessions.signature===signature)return;renderSessions.signature=signature;$('session-view').value=chat.view;
@@ -1041,15 +1130,6 @@ function hydrateHomeIcons(){
   el.dataset.homeIconReady='1';
  });
 }
-function homeReportIconMeta(title){
- const t=String(title||'');
- if(/周报|月报|行业|定期/.test(t))return {icon:'bars',cat:'cat-business'};
- if(/竞品|对比|对手/.test(t))return {icon:'chart',cat:'cat-markets'};
- if(/资料|文献|论文|研究简报/.test(t))return {icon:'book',cat:'cat-academic'};
- if(/会议|纪要|讨论/.test(t))return {icon:'users',cat:'cat-collab'};
- if(/合同|协议|公文/.test(t))return {icon:'file',cat:'cat-neutral'};
- return {icon:'layers',cat:'cat-neutral'};
-}
 function renderHome(){
  scheduledReports.render();
  if($('home-greeting'))$('home-greeting').textContent=homeGreeting();
@@ -1088,10 +1168,17 @@ function renderHomeTasks(){
   recentBox.innerHTML='';
  }
 }
+function reportIconMeta(b){
+ const run=(state.runs||[]).find(r=>r.id===b.run_id),req=run?parse(run.requirements):{};
+ const method=req.workflow_snapshot?.id||req.document_workflow?.id;
+ const family={business_report:'商业报告',stock_research:'券商研报',meeting_minutes:'会议纪要',general_report:'通用报告'}[method];
+ const template=(state.templates||[]).find(t=>t.id===req.template_id);
+ return GENRE_META[family||splitTemplateName(template?.name||'').genre]||{icon:'layers',cat:'cat-neutral'};
+}
 function homeReportRowHTML(b){
  const st=reportStatus(b),desc=reportDescription(b);
  const when=dayTime(b.updated||b.created);
- const meta=homeReportIconMeta(parse(b.detail).title||b.detail);
+ const meta=reportIconMeta(b);
  return `<button type="button" class="home-report" data-home-report="${esc(b.id)}"><span class="home-report-icon ${meta.cat}" aria-hidden="true">${svgLineIcon(meta.icon,16)}</span><span class="home-report-body"><strong>${esc(parse(b.detail).title||'简报')}</strong>${desc?`<small>${esc(desc)}</small>`:''}</span><span class="home-report-meta"><time>${esc(when)}</time><span class="chip ${st.cls}">${esc(st.label)}</span></span></button>`;
 }
 function openHomeReport(id){
@@ -1325,7 +1412,7 @@ function renderRoleModels(){
 }
 async function saveRoleModels(){
   await Promise.all(['evaluator','maintainer','proposer'].map(role=>{const cfg=fastControlConfig('role-'+role);return cfg.backend==='codex'&&cfg.model?loadFastCapability(cfg):null}));
-  const op=backendValue()==='opencode';const role_models={};for(const input of $('role-model-options').querySelectorAll('[data-role-model]')){const role=input.dataset.roleModel,effortValue=$(`role-${role}-effort`).value,model=reasoningModel(backendValue(),input.value.trim(),effortValue),effort=$(`role-${role}-effort`),provider=$(`role-${role}-provider`),variant=$(`role-${role}-variant`);effort.disabled=!model;provider.disabled=!model;variant.disabled=!model;if(model)role_models[role]=op?{model,model_variant:variant.value.trim()||null}:{model,reasoning_effort:backendValue()==='mimo'?(variant.value.trim()||null):effort.value,model_provider:provider.value.trim()||null,service_tier:selectedServiceTier(`role-${role}-service-tier`,fastControlConfig('role-'+role),true)}}
+  const op=['opencode','briefloop-native'].includes(backendValue());const role_models={};for(const input of $('role-model-options').querySelectorAll('[data-role-model]')){const role=input.dataset.roleModel,effortValue=$(`role-${role}-effort`).value,model=reasoningModel(backendValue(),input.value.trim(),effortValue),effort=$(`role-${role}-effort`),provider=$(`role-${role}-provider`),variant=$(`role-${role}-variant`);effort.disabled=!model;provider.disabled=!model;variant.disabled=!model;if(model)role_models[role]=op?{model,model_variant:variant.value.trim()||null}:{model,reasoning_effort:backendValue()==='mimo'?(variant.value.trim()||null):effort.value,model_provider:provider.value.trim()||null,service_tier:selectedServiceTier(`role-${role}-service-tier`,fastControlConfig('role-'+role),true)}}
   const controls=[...$('role-model-options').querySelectorAll('input,select')];controls.forEach(input=>input.disabled=true);$('role-model-status').textContent='保存中…';
   try{await api('settings',{role_models});state.settings.role_models=role_models;$('role-model-status').textContent='已保存，下一次启动时生效。'}catch(e){$('role-model-status').textContent='未保存：'+e.message;renderRoleModels()}finally{for(const input of $('role-model-options').querySelectorAll('[data-role-model]')){input.disabled=false;const inherits=!input.value.trim();$(`role-${input.dataset.roleModel}-effort`).disabled=inherits;$(`role-${input.dataset.roleModel}-provider`).disabled=inherits;$(`role-${input.dataset.roleModel}-variant`).disabled=inherits;$(`role-${input.dataset.roleModel}-service-tier`).disabled=inherits}renderBackend()}
 }
@@ -1409,7 +1496,7 @@ function renderContext(){
  $('context-details').innerHTML=usage?`<strong>最近一次模型请求</strong><dl><div><dt>输入 Token</dt><dd>${count(last.inputTokens)}</dd></div><div><dt>其中缓存</dt><dd>${count(last.cachedInputTokens)}</dd></div><div><dt>输出 Token</dt><dd>${count(last.outputTokens)}</dd></div><div><dt>模型窗口</dt><dd>${hasWindow?count(windowSize):'未知'}</dd></div></dl>${hasInput&&hasWindow?`<meter min="0" max="${windowSize}" value="${Math.min(last.inputTokens,windowSize)}" aria-label="最近输入与上下文窗口的比例"></meter><p>最近输入占窗口 ${(last.inputTokens/windowSize*100).toFixed(1)}%。</p>`:''}<p>输入量来自最近一次请求，累计用量不作为上下文占用。</p>`:'<p>开始执行后，按后端返回的真实数据更新；暂无用量。</p>';
 }
 $('chat-permission').onchange=()=>{rememberDraft();updateComposer()};
-function showSettings(){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;moveSearchSettings('settings');page('settings-dialog');$('settings-dialog').scrollIntoView({block:'start'});refreshRuntimeDiscovery();updateLearningPause().catch(()=>{});refreshTavilySettings().catch(()=>{})}
+function showSettings(){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;moveSearchSettings('settings');page('settings-dialog');$('settings-dialog').scrollIntoView({block:'start'});refreshRuntimeDiscovery();updateLearningPause().catch(()=>{});refreshTavilySettings().catch(()=>{})}
 $('settings-open').onclick=showSettings;$('settings-close').onclick=()=>page('chat');
 {
  const modelPanel=document.querySelector('.model-settings');const shortcut=document.createElement('div');shortcut.className='setup-settings-shortcut';shortcut.innerHTML='<div><span>生成模型</span><strong id="setup-model-summary">Luna / high</strong></div><button type="button" class="outline">模型与角色设置</button>';shortcut.querySelector('button').onclick=showSettings;modelPanel.before(shortcut);$('settings-model-block').append(modelPanel);
@@ -1436,7 +1523,7 @@ $('settings-open').onclick=showSettings;$('settings-close').onclick=()=>page('ch
  }
  const help=$('composer-help');if(help&&help.parentElement!==$('chat-form').parentElement)$('chat-form').after(help);
  const settingsButton=$('settings-open');
- if(settingsButton&&!settingsButton.querySelector('span')){
+ if(settingsButton&&!settingsButton.querySelector('svg')){
   settingsButton.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1 1-3Z"/><circle cx="12" cy="12" r="3"/></svg><span>设置</span>';
  }
 }
@@ -1513,7 +1600,7 @@ const SEARCH_LABELS={native:'宿主自带搜索',tavily:'Tavily',duckduckgo:'Duc
 function readSearchPolicy(){return {primary_provider:$('search-provider').value,supplemental_providers:[...$('search-supplements').querySelectorAll('input[value]:checked')].map(e=>e.value).filter(v=>v!==$('search-provider').value),zhipu_engine:$('zhipu-engine').value,native_search_enabled:$('search-native').checked,coverage_mode:$('search-coverage').value,market_scope:$('search-market').value,platform_scope:[]}}
 function loadSearchPolicy(){const p=state.settings.search_policy||{primary_provider:state.settings.search_provider,native_search_enabled:state.settings.search_provider==='tavily'};$('search-provider').value=p.primary_provider||'native';$('search-coverage').value=p.coverage_mode||'coverage';$('search-market').value=p.market_scope||'';$('zhipu-engine').value=p.zhipu_engine||'search_std';$('search-native').checked=!!p.native_search_enabled;$('search-supplements').querySelectorAll('input[value]').forEach(e=>e.checked=(p.supplemental_providers||[]).includes(e.value));refreshBochaSettings();refreshZhipuSettings()}
 function nativeSearchName(){return SEARCH_LABELS[$('search-provider').value]||'宿主自带搜索'}
-function renderSearchProvider(){const p=readSearchPolicy(),all=[p.primary_provider,...p.supplemental_providers];$('tavily-settings').hidden=!all.includes('tavily');$('bocha-settings').hidden=!all.includes('bocha');$('zhipu-settings').hidden=!all.includes('zhipu');$('search-supplements').disabled=p.coverage_mode==='primary_only';$('search-supplements').querySelectorAll('input[value]').forEach(e=>{e.disabled=e.value===p.primary_provider;if(e.disabled)e.checked=false});$('search-native').disabled=p.primary_provider==='native';$('search-native-note').textContent=runtimeName(state.settings.agent_backend||'codex')+'：能否搜索由宿主实际工具和授权决定。原生调用次数未知，不纳入受控 API 次数；发现的正文仍须保存。';$('setup-search-summary').textContent='优先 '+nativeSearchName()+(p.coverage_mode==='primary_only'?' · 仅首选':(p.supplemental_providers.length?' · 补充 '+p.supplemental_providers.map(x=>SEARCH_LABELS[x]).join('、'):'')+(p.native_search_enabled&&p.primary_provider!=='native'?' · 允许宿主搜索':''));renderBudgetProviderScope()}
+function renderSearchProvider(){const p=readSearchPolicy(),all=[p.primary_provider,...p.supplemental_providers];$('tavily-settings').hidden=!all.includes('tavily');$('bocha-settings').hidden=!all.includes('bocha');$('zhipu-settings').hidden=!all.includes('zhipu');$('search-supplements').disabled=p.coverage_mode==='primary_only';$('search-supplements').querySelectorAll('input[value]').forEach(e=>{e.disabled=e.value===p.primary_provider;if(e.disabled)e.checked=false});$('search-native').disabled=p.primary_provider==='native';$('search-native-note').textContent=(state.settings.agent_backend==='briefloop-native'?'内置引擎不提供宿主自带搜索；请使用已配置的受控搜索渠道。当前开关在切换其他宿主后适用。':runtimeName(state.settings.agent_backend||'codex')+'：能否搜索由宿主实际工具和授权决定。原生调用次数未知，不纳入受控 API 次数；发现的正文仍须保存。');$('setup-search-summary').textContent='优先 '+nativeSearchName()+(p.coverage_mode==='primary_only'?' · 仅首选':(p.supplemental_providers.length?' · 补充 '+p.supplemental_providers.map(x=>SEARCH_LABELS[x]).join('、'):'')+(p.native_search_enabled&&p.primary_provider!=='native'?' · 允许宿主搜索':''));renderBudgetProviderScope()}
 async function saveSearchPolicy(){const button=$('search-policy-save');button.disabled=true;const policy=readSearchPolicy();$('search-settings-status').textContent='保存中…';try{await api('settings',{search_provider:policy.primary_provider,search_policy:policy});state.settings.search_provider=policy.primary_provider;state.settings.search_policy=policy;$('search-settings-status').textContent='已保存。新任务采用此策略，运行中的报告保持原配置。';await Promise.all([refreshTavilySettings(),refreshBochaSettings(),refreshZhipuSettings()])}catch(e){$('search-settings-status').textContent='未保存：'+e.message}finally{button.disabled=false;renderSearchProvider()}}
 async function refreshBochaSettings(){try{const r=await api('bocha');$('bocha-key-status').textContent=r.configured?'已配置 · '+(r.source==='environment'?'环境变量':'本机配置'):'尚未配置，博查搜索需填写 API Key';$('bocha-key-remove').hidden=r.source!=='file'}catch{$('bocha-key-status').textContent='无法读取博查配置，请重试'}}
 async function refreshZhipuSettings(){try{const r=await api('zhipu-search');$('zhipu-key-status').textContent=r.configured?'已配置 · '+(r.source==='environment'?'环境变量':'本机配置'):'尚未配置，智谱搜索需填写 API Key';$('zhipu-key-remove').hidden=r.source!=='file'}catch{$('zhipu-key-status').textContent='无法读取智谱搜索配置，请重试'}}
@@ -1874,8 +1961,10 @@ $('word-import-file').onchange=e=>action(async()=>{const file=e.target.files[0];
 $('template-default').onclick=()=>action(()=>api('settings',{default_template_id:$('template-select').value||null}),'已保存工作区默认模板');
 
 let savedProviderConfigurations=[];
+function providerEndpoint(){return $('provider-engine').value==='briefloop-native'?'native':'opencode'}
+$('provider-engine').onchange=()=>{$('custom-api-key').value='';$('custom-provider').value='';$('provider-open').click()};
 $('provider-open').onclick=async()=>{$('provider-result').textContent='';$('custom-supports-images').value='';$('provider-use').hidden=true;settingsView('models');settingsModelTab('api');
- try{const r=await api('opencode/providers');savedProviderConfigurations=r.configurations||[];
+ try{const r=await api(providerEndpoint()+'/providers');savedProviderConfigurations=r.configurations||[];
  $('custom-saved').innerHTML='<option value="">新建配置</option>'+savedProviderConfigurations.map((p,i)=>`<option value="${i}">${esc(p.name)} · ${esc(p.model)}</option>`).join('');
  if(!$('custom-provider').value.trim()&&savedProviderConfigurations.length){
   const previous=localStorage.getItem('briefloop-provider-id');const index=Math.max(0,savedProviderConfigurations.findIndex(p=>p.provider===previous));
@@ -1888,15 +1977,15 @@ $('custom-saved').onchange=()=>{
  for(const [id,key] of [['custom-provider','provider'],['custom-name','name'],['custom-model','model'],['custom-protocol','protocol'],['custom-base-url','base_url'],['custom-context-limit','context_limit'],['custom-output-limit','output_limit'],['custom-supports-images','supports_images']])$(id).value=p[key]==null?'':String(p[key]);
  $('custom-api-key').value='';$('provider-use').hidden=true;localStorage.setItem('briefloop-provider-id',p.provider);loadProviderCatalog();
 };
-$('provider-close').onclick=()=>{$('custom-api-key').value='';settingsModelTab('cli')};
+$('provider-close').onclick=()=>{$('custom-api-key').value='';if(welcomeFromProvider){welcomeFromProvider=false;page('welcome');renderWelcome();$('provider-close').textContent='返回 Agent CLI';$('provider-close').setAttribute('aria-label','返回 Agent CLI')}else settingsModelTab('cli')};
 $('provider-dialog').addEventListener('close',()=>{$('custom-api-key').value=''});
 $('provider-form').onsubmit=async event=>{
- event.preventDefault();const button=$('provider-save');button.disabled=true;$('provider-result').textContent='正在保存到 Opencode…';
+ event.preventDefault();const button=$('provider-save');button.disabled=true;$('provider-result').textContent='正在保存到本机…';
  const body={protocol:$('custom-protocol').value,name:$('custom-name').value.trim(),context_limit:$('custom-context-limit').value?Number($('custom-context-limit').value):null,output_limit:$('custom-output-limit').value?Number($('custom-output-limit').value):null,provider:$('custom-provider').value.trim(),base_url:$('custom-base-url').value.trim(),model:$('custom-model').value.trim(),api_key:$('custom-api-key').value,supports_images:$('custom-supports-images').value===''?null:$('custom-supports-images').value==='true'};
  $('custom-api-key').value='';
  try{
-  const result=await api('opencode/provider',body);body.api_key='';
-  $('provider-use').hidden=false;$('provider-use').dataset.model=result.model;
+  const result=await api(providerEndpoint()+'/provider',body);body.api_key='';
+  $('provider-use').hidden=false;$('provider-use').dataset.model=result.model;$('provider-use').dataset.backend=$('provider-engine').value;
   $('provider-result').textContent='已保存 '+result.model+'。当前模型选择保持原值。';
  await loadProviderCatalog();
  }catch(e){$('provider-result').textContent=e.message}finally{body.api_key='';button.disabled=false}
@@ -1905,11 +1994,11 @@ $('provider-form').onsubmit=async event=>{
 let providerCatalogRequest=0;
 async function loadProviderCatalog(){
  const provider=$('custom-provider').value.trim();if(!provider)return;
- const request=++providerCatalogRequest;$('provider-model-options').innerHTML='';
+ const engine=providerEndpoint(),request=++providerCatalogRequest;$('provider-model-options').innerHTML='';
  $('provider-result').textContent='正在读取模型目录…';
  try{
-  const r=await api('opencode/provider-catalog',{provider});
-  if(request!==providerCatalogRequest||provider!==$('custom-provider').value.trim())return;
+  const r=await api(engine+'/provider-catalog',{provider});
+  if(request!==providerCatalogRequest||engine!==providerEndpoint()||provider!==$('custom-provider').value.trim())return;
   $('provider-model-options').innerHTML=(r.models||[]).map(id=>`<option value="${esc(id)}"></option>`).join('');
   const labels={reachable:'目录已更新',auth_failed:'认证失败',insufficient_balance:'余额不足',forbidden:'无权访问',catalog_unavailable:'目录接口不可用，可手填模型',rate_limited:'请求限流',upstream_unavailable:'服务商暂不可用',connection_failed:'连接失败，可手填模型',invalid_catalog:'响应不是可识别的模型目录',http_error:'接口返回错误'};
   $('provider-result').textContent=(labels[r.status]||r.status)+' · '+(r.models||[]).length+' 个模型。未调用模型。';
@@ -1918,14 +2007,15 @@ async function loadProviderCatalog(){
 $('provider-catalog').onclick=loadProviderCatalog;
 $('provider-test-model').onclick=()=>action(async()=>{
  $('provider-result').textContent='正在提交短工具调用…';
- const r=await api('opencode/provider-test',{provider:$('custom-provider').value.trim(),model:$('custom-model').value.trim()});
+ const r=providerEndpoint()==='native'?await api('runtime-test',{backend:'briefloop-native',model:$('custom-provider').value.trim()+'/'+$('custom-model').value.trim()}):await api('opencode/provider-test',{provider:$('custom-provider').value.trim(),model:$('custom-model').value.trim()});
  chat.view='tests';await selectChat(r.session_id);
 },'已提交模型工具测试；进展见对话，可随时停止');
 $('provider-use').onclick=()=>action(async()=>{
- const model=$('provider-use').dataset.model;
- $('agent-backend').value='opencode';$('model-select').value=model;
+ const model=$('provider-use').dataset.model,backend=$('provider-use').dataset.backend;
+ if(backend!==backendValue())$('model-variant').value='';
+ $('agent-backend').value=backend;$('model-select').value=model;
  await saveModel();await refresh();renderBackend();await refreshModelSuggestions(true);
- if(!chatActive()){$('chat-model').value=model;rememberDraft();updateComposer()}
+ if(!chatActive()){chat.nextBackend=backend;chat.hostOptions={};$('chat-model').value=model;$('chat-model-provider').value='';$('chat-service-tier').value='';$('chat-variant').value=$('model-variant').value;renderChatRuntimePermissions();rememberDraft();updateComposer()}
  $('provider-result').textContent='已选用 '+model+'，下一次任务生效。';
 },'模型已选用');
 $('custom-protocol').onchange=()=>{
@@ -1941,9 +2031,14 @@ $('custom-preset').onchange=()=>{
 
 $('timeout-minutes').onchange=()=>action(async()=>{
  const minutes=Number($('timeout-minutes').value);
- if(!Number.isInteger(minutes)||minutes<0||minutes>240)throw Error('执行时限请输入 0–240 的整数，0 表示不限时');
+ if(!Number.isInteger(minutes)||minutes<0||minutes>240)throw Error('目标用时请输入 0–240 的整数，0 表示不设目标');
  await api('settings',{timeout_minutes:minutes});
-},'执行时限已更新，当前报告也会采用新上限');
+},'后续报告的目标用时已更新，超出目标不会自动停止');
+$('hard-timeout-minutes').onchange=()=>action(async()=>{
+ const minutes=Number($('hard-timeout-minutes').value);
+ if(!Number.isInteger(minutes)||minutes<0||minutes>1440)throw Error('最长运行保护请输入 0–1440 的整数');
+ await api('settings',{hard_timeout_minutes:minutes});
+},'后续任务的最长运行保护已更新，当前任务保持原设置');
 async function chooseCompanyContext(enabled){
  await api('settings',{company_context_enabled:enabled});state.settings.company_context_enabled=enabled;
  $('company-mode').value=enabled?'on':'off';$('company-choice-dialog').close();$('requirements').requestSubmit();
@@ -2112,7 +2207,7 @@ function settingsModelTab(name){
  if($('settings-workspace-open'))$('settings-workspace-open').onclick=()=>openWorkspaceFrom('settings-workspace-path',false);
  if($('settings-workspace-create'))$('settings-workspace-create').onclick=()=>openWorkspaceFrom('settings-workspace-new',true);
  $('settings-tab-cli').onclick=()=>settingsModelTab('cli');
- $('settings-tab-api').onclick=()=>$('provider-open').click();
+ $('settings-tab-api').onclick=()=>{if($('provider-engine').value!=='briefloop-native'){$('provider-engine').value='briefloop-native';$('provider-engine').onchange()}else $('provider-open').click()};
  $('agent-backend').closest('label').classList.add('runtime-select-legacy');
  document.querySelector('.model-settings legend').textContent='当前模型与角色';
 }
@@ -2260,7 +2355,7 @@ function renderReports(){
  const makingFirst=!state.briefs.length&&state.jobs.some(j=>j.kind==='generate'&&['queued','running'].includes(j.status));
  const sig=JSON.stringify([view,q,fStatus,fTime,fSource,makingFirst,all.length,rows.map(b=>{const st=reportStatus(b);return [b.id,b.status,b.updated,st.label,runSourceCount(b.run_id)]})]);if(renderReports.sig===sig)return;renderReports.sig=sig;
  const end=$('reports-end');if(end)end.hidden=!rows.length;
- box.innerHTML=rows.length?rows.map(b=>{const st=reportStatus(b),sources=runSourceCount(b.run_id),desc=reportDescription(b);const when=dayTime(b.updated||b.created);return `<article class="report-card"><span class="report-card-icon" aria-hidden="true">▤</span><div class="report-card-body"><h3 class="report-card-title">${esc(parse(b.detail).title||'简报')}</h3>${desc?`<p class="report-card-desc">${esc(desc)}</p>`:''}<div class="report-card-meta"><span>${sources} 个来源</span><span>${esc(when)} 最后编辑</span></div></div><div class="report-card-side"><span class="chip ${st.cls}">${esc(st.label)}</span><button type="button" class="primary" data-report-open="${esc(b.id)}">${st.key==='draft'?'继续编辑':'打开'}</button><div class="menu-wrap report-card-menu"><button type="button" class="ghost" data-report-menu aria-haspopup="menu" aria-expanded="false" aria-label="更多操作">⋯</button><div class="popover" role="menu" hidden><button type="button" role="menuitem" data-report-open="${esc(b.id)}">打开</button><a role="menuitem" href="/api/download?version=${encodeURIComponent(b.id)}">下载 Markdown</a><button type="button" role="menuitem" data-report-release="${esc(b.id)}">正式交付与审计包</button></div></div></div></article>`}).join(''):(makingFirst?'<div class="empty-inline"><strong>首份报告正在制作</strong><p class="help">初稿保存后会显示在这里。</p></div>':all.length?'<div class="empty-inline"><p class="help">没有符合筛选条件的报告，请调整搜索或筛选。</p></div>':'<div class="empty-inline"><p class="help">还没有报告。生成后会显示在这里。</p><button type="button" class="primary" data-page="setup">＋ 新建报告</button></div>');
+ box.innerHTML=rows.length?rows.map(b=>{const st=reportStatus(b),sources=runSourceCount(b.run_id),desc=reportDescription(b);const when=dayTime(b.updated||b.created),meta=reportIconMeta(b);return `<article class="report-card"><span class="report-card-icon ${meta.cat}" aria-hidden="true">${svgLineIcon(meta.icon,24)}</span><div class="report-card-body"><h3 class="report-card-title">${esc(parse(b.detail).title||'简报')}</h3>${desc?`<p class="report-card-desc">${esc(desc)}</p>`:''}<div class="report-card-meta"><span>${sources} 个来源</span><span>${esc(when)} 最后编辑</span></div></div><div class="report-card-side"><span class="chip ${st.cls}">${esc(st.label)}</span><button type="button" class="primary" data-report-open="${esc(b.id)}">${st.key==='draft'?'继续编辑':'打开'}</button><div class="menu-wrap report-card-menu"><button type="button" class="ghost" data-report-menu aria-haspopup="menu" aria-expanded="false" aria-label="更多操作">⋯</button><div class="popover" role="menu" hidden><button type="button" role="menuitem" data-report-open="${esc(b.id)}">打开</button><a role="menuitem" href="/api/download?version=${encodeURIComponent(b.id)}">下载 Markdown</a><button type="button" role="menuitem" data-report-release="${esc(b.id)}">正式交付与审计包</button></div></div></div></article>`}).join(''):(makingFirst?'<div class="empty-inline"><strong>首份报告正在制作</strong><p class="help">初稿保存后会显示在这里。</p></div>':all.length?'<div class="empty-inline"><p class="help">没有符合筛选条件的报告，请调整搜索或筛选。</p></div>':'<div class="empty-inline"><p class="help">还没有报告。使用左侧「新建报告」开始制作。</p></div>');
  box.querySelectorAll('[data-report-open]').forEach(el=>el.onclick=()=>{const b=state.briefs.find(x=>x.id===el.dataset.reportOpen);if(b&&openBrief(b,{follow:false}))page('report')});
  box.querySelectorAll('[data-page="setup"]').forEach(el=>el.onclick=()=>page('setup'));
  box.querySelectorAll('.report-card-menu').forEach(wrap=>{const toggle=wrap.querySelector('[data-report-menu]'),pop=wrap.querySelector('.popover');if(!toggle||!pop)return;toggle.onclick=e=>{e.stopPropagation();const open=pop.hidden;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'));pop.hidden=!open;toggle.setAttribute('aria-expanded',String(open))}});
@@ -2408,9 +2503,9 @@ function renderTemplatesPage(){
   const items=genres[genre];
   const chosen=templatePick&&templatePick.genre===genre?templatePick.theme:items[0].theme;
   const selected=templatePick&&templatePick.genre===genre;
-  const dots=items.map(it=>`<button type="button" class="color-dot${chosen===it.theme?' selected':''}" style="background:${THEME_COLORS[it.theme]||'#999'};color:${THEME_COLORS[it.theme]||'#999'}" data-genre="${esc(genre)}" data-theme="${esc(it.theme)}" data-id="${esc(it.id)}" title="${esc(genre+' · '+it.theme)}" aria-label="${esc(genre+' '+it.theme)}"></button>`).join('');
+  const dots=items.map(it=>`<button type="button" class="color-dot${chosen===it.theme?' selected':''}" style="--swatch-color:${THEME_COLORS[it.theme]||'#999'}" data-genre="${esc(genre)}" data-theme="${esc(it.theme)}" data-id="${esc(it.id)}" title="${esc(genre+' · '+it.theme)}" aria-label="${esc(genre+' '+it.theme)}"></button>`).join('');
   return `<div class="tpl-card${selected?' selected':''}" data-genre="${esc(genre)}"><span class="tpl-check">✓</span>`
-   +`<span class="tpl-icon ${meta.cat}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[meta.icon]||''}</svg></span>`
+   +`<span class="tpl-icon ${meta.cat}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${ICONS[meta.icon]||''}</svg></span>`
    +`<span class="tpl-name">${esc(genre)}</span><span class="tpl-desc" title="${esc(meta.desc)}">${esc(meta.desc)}</span>`
    +`<span class="tpl-dots"><span class="label">配色</span>${dots}</span></div>`;
  }).join('');
@@ -2585,7 +2680,7 @@ function compactReportInstruction(){
 }
 function compactReportControls(where){
  const row=document.createElement('div');row.className='compact-report-options';row.dataset.reportOptions=where;
- row.innerHTML='<label>研究 <select data-option="tier" aria-label="研究深度"><option value="quick">快速</option><option value="standard" selected>标准</option><option value="deep">深度研究</option></select></label><label title="生成后联网补查关键主张，增加时间与用量"><input type="checkbox" data-option="fact">事实核查</label><label title="改稿或评论后在后台启动学习验证，会调用模型；已启用的技能不受这个开关影响"><input type="checkbox" data-option="learn">自动学习</label><label><input type="number" min="1" max="20" value="1" data-option="rounds" aria-label="自动学习最多轮数">轮</label><details><summary aria-label="更多报告选项">更多 ⋯</summary><div class="compact-options-menu"><label>单次执行上限 <select data-option="timeout"><option value="30">30 分钟</option><option value="60" selected>60 分钟</option><option value="120">120 分钟</option><option value="0">不限时</option></select></label><label>Scout 并发 <input data-option="scouts" type="number" min="1" max="16" value="4"></label></div></details>';
+ row.innerHTML='<label>研究 <select data-option="tier" aria-label="研究深度"><option value="quick">快速</option><option value="standard" selected>标准</option><option value="deep">深度研究</option></select></label><label title="生成后联网补查关键主张，增加时间与用量"><input type="checkbox" data-option="fact">事实核查</label><label title="改稿或评论后在后台启动学习验证，会调用模型；已启用的技能不受这个开关影响"><input type="checkbox" data-option="learn">自动学习</label><label><input type="number" min="1" max="20" value="1" data-option="rounds" aria-label="自动学习最多轮数">轮</label><details><summary aria-label="更多报告选项">更多 ⋯</summary><div class="compact-options-menu"><label>目标用时 <select data-option="timeout"><option value="10">约 10 分钟</option><option value="30">30 分钟</option><option value="60" selected>60 分钟</option><option value="120">120 分钟</option><option value="0">不设目标</option></select></label><label>Scout 并发 <input data-option="scouts" type="number" min="1" max="16" value="4"></label></div></details>';
  row.addEventListener('change',event=>action(async()=>{
   const key=event.target.dataset.option;if(!key)return;const value=event.target.type==='checkbox'?event.target.checked:event.target.value;
   if(key==='learn'){try{await setAutoLearn(value);await refresh()}finally{syncCompactReportControls()}$('auto-learn').checked=state.learning_authorization?.state==='authorized';return}

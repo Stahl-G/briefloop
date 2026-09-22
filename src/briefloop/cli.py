@@ -9,7 +9,7 @@ import time
 import os
 import secrets
 from .store import Store
-from .backends import BACKENDS
+from .backends import BACKENDS, REVIEW_ONLY_BACKENDS
 from . import __version__
 
 
@@ -41,7 +41,7 @@ def main():
         if name in ('serve','start'):
             parser.add_argument('--port',type=int,default=8765)
             parser.add_argument('--paused',action='store_true',help='打开工作区但不自动重跑旧队列或反馈学习')
-            parser.add_argument('--backend',choices=BACKENDS,default=None,help='新任务默认走哪个 CLI 后端；不传则沿用工作区设置')
+            parser.add_argument('--backend',choices=[b for b in BACKENDS if b not in REVIEW_ONLY_BACKENDS],default=None,help='新任务默认走哪个 CLI 后端；不传则沿用工作区设置')
     external=sub.add_parser('external',help='连接已授权的本地工作区；不自动创建或启动服务')
     external.add_argument('--workspace',required=True)
     es=external.add_subparsers(dest='external_action',required=True)
@@ -75,8 +75,18 @@ def main():
     count=ts.add_parser('count-brief',help='按统一中英混合规则统计 Markdown 正文长度')
     count.add_argument('--file',required=True,help='Markdown 正文文件，不包含 citations 元数据')
     count.add_argument('--target-words',type=int);count.add_argument('--max-words',type=int)
+    writer=ts.add_parser('writer',help='按冻结写作协议保存Markdown正文、局部修订和证据；不发布')
+    writer.add_argument('--run',required=True);writer.add_argument('--draft-file',required=True)
+    writer.add_argument('--operation',required=True,choices=['write_report','write_sections','assemble_report','assemble_evidence','update_citations','update_number_bindings','update_temporal_claims','update_draft_details','patch_report_text','replace_report_blocks','read_draft','check_draft','submit_draft'])
+    writer.add_argument('--file',help='本次任务目录内的UTF-8 Markdown（write_report）或操作JSON')
+    writer.add_argument('--evidence-file',help='write_report可同时装配本次任务目录内的证据JSON；省略locator时按逐字摘录定位')
+    writer.add_argument('--title');writer.add_argument('--revision')
     check=ts.add_parser('check-draft',help='按稿件契约自检 draft.json；只检查不发布')
     check.add_argument('--file',required=True)
+    check.add_argument('--run',help='按本次报告要求返回篇幅、引用与数字定位诊断；不发布、不评分')
+    submit=ts.add_parser('submit-draft',help='接纳已经检查的完整稿件版本；不发布或评分')
+    submit.add_argument('--file',required=True);submit.add_argument('--run',required=True)
+    submit.add_argument('--revision',required=True)
     report_data=ts.add_parser('prepare-report-data',help='核对行业指标来源并计算变化；输出计算表与数据缺口')
     report_data.add_argument('--run',required=True);report_data.add_argument('--file',required=True)
     report_data.add_argument('--output',help='保存计算包 JSON 的路径；原始 records 写入 draft.report_data')
@@ -215,11 +225,70 @@ def main():
         elif a.tool=='extract-workbook-figures':
             from .workbook_figures import extract_workbook_figures
             print(json.dumps(extract_workbook_figures(store,a.id),ensure_ascii=False))
-        elif a.tool=='check-draft':
-            from .models import BriefDraft, check_artifact
-            report=check_artifact(json.loads(Path(a.file).expanduser().read_text(encoding='utf-8-sig')),BriefDraft)
+        elif a.tool=='writer':
+            from . import writer_input, analyst_drafts
+            from .native_roles import run_tool
+            try:
+                target=Path(a.draft_file).expanduser().resolve()
+                config=analyst_drafts.file_config(store,a.run,target)
+                config['native_role']='analyst'
+                if writer_input.protocol(config)!=writer_input.PROTOCOL:
+                    raise ValueError('本任务未启用 writer_input_v1')
+                args={}
+                if a.file:
+                    path=Path(a.file).expanduser().resolve()
+                    if not path.is_relative_to(target.parent):raise ValueError('输入文件必须位于本次写作任务目录')
+                    raw=path.read_text(encoding='utf-8-sig')
+                    args={'title':a.title,'markdown':raw} if a.operation=='write_report' else json.loads(raw)
+                if a.evidence_file:
+                    if a.operation!='write_report' or not a.file:
+                        raise ValueError('--evidence-file 只用于附有正文文件的 write_report')
+                    evidence_path=Path(a.evidence_file).expanduser().resolve()
+                    if not evidence_path.is_relative_to(target.parent):raise ValueError('证据文件必须位于本次写作任务目录')
+                    raw_evidence=json.loads(evidence_path.read_text(encoding='utf-8-sig'))
+                    evidence=writer_input.EvidenceInput.model_validate(raw_evidence)
+                    args.update(evidence.model_dump(mode='json',exclude_unset=True))
+                if a.revision:args['revision']=a.revision
+                result=run_tool(store,config,a.operation,args)
+                if not result['ok']:raise ValueError(result['error'])
+                report=json.loads(result.get('settle') or result['content'][0]['text'])
+            except (ValueError,KeyError,OSError) as exc:
+                print(json.dumps({'status':'invalid','error':str(exc)},ensure_ascii=False));raise SystemExit(1)
             print(json.dumps(report,ensure_ascii=False))
-            if report['status']!='ok':raise SystemExit(1)
+        elif a.tool in ('check-draft','submit-draft'):
+            from .models import BriefDraft, check_artifact, prune_unknown
+            path=Path(a.file).expanduser().resolve()
+            try:
+                value=json.loads(path.read_text(encoding='utf-8-sig'))
+                if (path.parent/'packet/input.json').exists():
+                    from .analyst_drafts import file_config, save, check, submit
+                    run_id=a.run or json.loads((path.parent/'packet/input.json').read_text())['run_id']
+                    config=file_config(store,run_id,path)
+                    if a.tool=='submit-draft':
+                        report=submit(store,config,{'revision':a.revision},file_value=value)
+                    else:
+                        saved=save(store,config,value)
+                        report={'status':'ok','scope':'writer_packet','unknown_fields':[],'errors':[],
+                                **check(store,config,{'revision':saved['revision']})}
+                        report['status']='ok'
+                elif a.tool=='submit-draft':
+                    raise ValueError('提交需要当前写作任务包和执行身份')
+                else:
+                    report=check_artifact(value,BriefDraft)
+                    report['scope']='run_diagnostics' if a.run else 'schema_only'
+                    if report['status']=='ok':
+                        from .draft_checks import inspect_draft
+                        requirements=json.loads(store.one('runs',a.run)['requirements']) if a.run else None
+                        allowed=set(store.source_ids(a.run)) - set((requirements or {}).get('reference_source_ids') or []) if a.run else None
+                        frozen=store.meta('reader_contract:'+a.run) if a.run else None
+                        if frozen and value.get('reader_contract') not in (None,frozen):
+                            raise ValueError('不能改写本轮冻结的 reader_contract')
+                        normalized,_=prune_unknown(value,BriefDraft)
+                        report['diagnostics']=inspect_draft(normalized,requirements,store=store,allowed_sources=allowed)
+            except (ValueError,KeyError,OSError) as exc:
+                report={'status':'invalid','errors':[{'field':'draft','message':str(exc)}]}
+            print(json.dumps(report,ensure_ascii=False))
+            if report['status'] not in ('ok','saved'):raise SystemExit(1)
         elif a.tool=='count-brief':
             from .length import length_stats
             result=length_stats(Path(a.file).expanduser().read_text(encoding='utf-8'),target_words=a.target_words,max_words=a.max_words)

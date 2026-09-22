@@ -2,6 +2,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "design:check": "node scripts/check_ui_design.mjs",
     "build": "node scripts/build_frontend.mjs",
     "build:check": "node scripts/build_frontend.mjs --check",
     "test": "node scripts/test_frontend.mjs"

@@ -182,26 +182,40 @@ def insert_table_of_contents(doc):
 
 
 def populate_table_of_contents(doc):
-    """Keep a linked heading list visible until the reader recalculates pages."""
+    """Cache linked headings in a complex TOC field that Word and WPS display."""
     fields = [field for field in doc.element.xpath('.//w:fldSimple')
               if ' TOC ' in (field.get(qn('w:instr')) or '')]
     if not fields:return
     headings = []
     for paragraph in doc.paragraphs:
         anchors = paragraph._p.xpath('./w:bookmarkStart')
-        if anchors and paragraph.text.strip():
+        if anchors and paragraph.text.strip() and not anchors[0].get(qn('w:name'), '').startswith('briefloop_source_'):
             headings.append((anchors[0].get(qn('w:name')), paragraph.text))
     for field in fields:
-        for child in list(field):field.remove(child)
+        # WPS does not display hyperlink results nested inside fldSimple TOCs.
+        # A complex field keeps cached links as ordinary paragraph children.
+        holder = field.getparent()
+        instruction = field.get(qn('w:instr'))
+        holder.remove(field)
+        def marker(kind):
+            run = OxmlElement('w:r')
+            node = OxmlElement('w:fldChar');node.set(qn('w:fldCharType'), kind)
+            run.append(node);holder.append(run)
+        marker('begin')
+        run = OxmlElement('w:r');code = OxmlElement('w:instrText')
+        code.set(qn('xml:space'), 'preserve');code.text = instruction
+        run.append(code);holder.append(run)
+        marker('separate')
         for index, (anchor, title) in enumerate(headings):
             if index:
-                line = OxmlElement('w:r');line.append(OxmlElement('w:br'));field.append(line)
+                line = OxmlElement('w:r');line.append(OxmlElement('w:br'));holder.append(line)
             link = OxmlElement('w:hyperlink');link.set(qn('w:anchor'), anchor)
             run = OxmlElement('w:r');text = OxmlElement('w:t');text.text = title
-            run.append(text);link.append(run);field.append(link)
+            run.append(text);link.append(run);holder.append(link)
         if not headings:
             run = OxmlElement('w:r');text = OxmlElement('w:t');text.text = '暂无可列入目录的标题'
-            run.append(text);field.append(run)
+            run.append(text);holder.append(run)
+        marker('end')
 
 
 def enable_update_fields(doc):

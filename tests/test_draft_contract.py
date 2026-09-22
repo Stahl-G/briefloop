@@ -116,3 +116,18 @@ def test_free_form_fields_keep_every_key_they_were_given():
                                       'research_notes': [{'anything': True}]}, BriefDraft)
     assert dropped == [] and cleaned['editor_document'] == document
     assert check_artifact({'title': 't', 'markdown': 'x'}, BriefDraft)['status'] == 'ok'
+
+
+def test_check_draft_run_returns_advisory_diagnostics_without_publishing(tmp_path):
+    store, run, source = make_run(tmp_path)
+    path = tmp_path/'short.json'
+    path.write_text(json.dumps({'title': '短稿', 'markdown': '收入增长20%。[@'+source['id']+']'},ensure_ascii=False))
+    before = store.rows('SELECT id,hash FROM briefs')
+    done = subprocess.run([sys.executable, '-m', 'briefloop', 'tool', '--workspace', str(store.root),
+                           'check-draft', '--run', run['id'], '--file', str(path)],
+                          capture_output=True, encoding='utf-8', check=True)
+    diagnostics = json.loads(done.stdout)['diagnostics']
+    assert diagnostics['length']['below_target']
+    assert diagnostics['citations']['missing_locator'] == [source['id']]
+    assert diagnostics['review_status'] == 'not_reviewed'
+    assert store.rows('SELECT id,hash FROM briefs') == before

@@ -1,6 +1,6 @@
 {
   "name": "briefloop-desktop",
-  "version": "0.23.1",
+  "version": "0.23.2",
   "private": true,
   "description": "BriefLoop local desktop workspace",
   "author": "Stahl-G",
@@ -28,6 +28,7 @@
     "files": [
       "*.cjs",
       "welcome.html",
+      "welcome.css",
       "welcome.js",
       "package.json",
       "assets/**"

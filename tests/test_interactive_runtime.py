@@ -221,11 +221,12 @@ def test_legacy_review_binding_rejects_changed_execution_or_packet(tmp_path,chan
     with pytest.raises(ValueError):runtime.execute(stage,'Resume original review',folder)
     assert len(harness.starts)==1 and marker.read_bytes()==original
 
+@pytest.mark.parametrize('target', [0, 10])
 @pytest.mark.parametrize('cancel', [False, True])
-def test_unlimited_report_preserves_completion_and_manual_stop(tmp_path, monkeypatch, cancel):
+def test_unlimited_report_preserves_completion_and_manual_stop(tmp_path, monkeypatch, cancel, target):
     import briefloop.interactive_runtime as module
     store, job, harness, runtime, folder = setup(tmp_path)
-    store.set_meta('settings', {**store.settings(), 'timeout_minutes': 0})
+    store.set_meta('settings', {**store.settings(), 'timeout_minutes': target})
     clock = [0]
     monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: clock[0], sleep=lambda _: None))
     ticks = []

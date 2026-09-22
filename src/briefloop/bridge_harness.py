@@ -196,6 +196,7 @@ class BridgeHarness(OpencodeHarness):
                     # requires a separately frozen opt-in; its calls are not counted
                     # as managed search_requests/candidate_urls.
                     'web_tools':bool(message['allow_web']) and native_allowed(config,internal)}
+            if self.backend=='pi' and config.get('effort'):params['thinking']=config['effort']
             if instructions:params['prompt']=instructions+text
             if session.get('thread_id'):params['session_id']=session['thread_id']
             try:self.bridge.call('start',params,timeout=15)
@@ -205,10 +206,11 @@ class BridgeHarness(OpencodeHarness):
             self.chat.event(sid,'runtime/admission',{'execution_id':execution,'status':'accepted'})
             self.chat.patch_message(mid,status='delivered');self.chat.update(sid,status='running')
             assistant=self.chat.message(sid,'',role='assistant',status='streaming',turn_id=mid,runtime=config)
+            from .execution_timing import policy
+            minutes=policy(self.store, session_id=sid)['hard_timeout_minutes']
             output='';reasoning='';tools={};started=time.monotonic()
             while True:
                 if sid in self._cancel_requested:self.bridge.call('cancel',{'execution_id':execution})
-                minutes=self.store.settings()['timeout_minutes']
                 if minutes>0 and time.monotonic()-started>minutes*60:
                     self.bridge.call('cancel',{'execution_id':execution});raise TimeoutError('运行超过本轮时间上限')
                 try:event=sink.get(timeout=.5)
@@ -216,6 +218,8 @@ class BridgeHarness(OpencodeHarness):
                 kind=event['kind']
                 if kind=='text':
                     output+=event.get('text','');self.chat.patch_message(assistant['id'],text=output)
+                elif kind=='performance':
+                    self.chat.event(sid,'runtime/performance',{'turnId':mid,**sanitize(event)})
                 elif kind=='reasoning':
                     reasoning+=event.get('text','');self.chat.patch_message(assistant['id'],reasoning=reasoning)
                 elif kind=='session':
