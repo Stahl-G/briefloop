@@ -57,6 +57,10 @@ class Conflict(ValueError):
     pass
 
 
+class SourceTooLarge(ValueError):
+    pass
+
+
 class OfflineFactCheck(ValueError):
     """Offline runs cannot enable web fact checks; code reaches API callers."""
     code = 'fact_check_requires_web'
@@ -218,12 +222,21 @@ class Store:
             source = dict(c.execute('SELECT * FROM sources WHERE id=?', (sid,)).fetchone())
         return source
 
-    def source_text(self, sid):
+    def source_text(self, sid, *, max_bytes=None):
         r = self.one("sources", sid)
         path = (self.root/r["path"]).resolve()
         if not path.is_relative_to(self.root):
             raise ValueError("Invalid source path")
-        text = path.read_bytes().decode("utf-8")
+        if max_bytes is None:
+            raw = path.read_bytes()
+        else:
+            if type(max_bytes) is not int or max_bytes < 1:
+                raise ValueError('Invalid source read limit')
+            with path.open('rb') as stream:
+                raw = stream.read(max_bytes + 1)
+            if len(raw) > max_bytes:
+                raise SourceTooLarge('正文超过本次搜索的单份读取上限')
+        text = raw.decode("utf-8")
         if content_hash(text) != r["hash"]:
             raise Conflict("Source changed outside the application")
         return text

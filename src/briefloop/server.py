@@ -231,6 +231,11 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     self.send(200,store.brief_view(q['id'][0]))
                 elif u.path=='/api/report-search':
                     self.send(200,{'run_ids':store.search_briefs(q.get('q',[''])[0])})
+                elif u.path=='/api/source-search':
+                    from .source_library_search import search
+                    self.send(200,search(store,q.get('q',[''])[0],run_id=q.get('run_id',[''])[0],
+                        source_type=q.get('type',[''])[0],channel=q.get('channel',[''])[0],
+                        status=q.get('status',[''])[0],cursor=q.get('cursor',[''])[0],limit=int(q.get('limit',['20'])[0])))
                 elif u.path=='/api/software-version':
                     self.send(200,software_identity)
                 elif u.path=='/api/workspaces':
