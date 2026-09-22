@@ -74,18 +74,22 @@ def _html_block_reason(data, content_type='', encoding=''):
     page evidence (challenge markup/text, or an actual password form) before
     marking the retained HTTP response as an extraction failure.
     """
-    if 'html' not in (content_type or '').lower():return None
     try:page=data.decode(encoding or 'utf-8','ignore')
     except (LookupError,UnicodeDecodeError):page=data.decode('utf-8','ignore')
+    # A missing or incorrect Content-Type must not turn an otherwise readable
+    # HTML interstitial into report text.  Keep this sniff deliberately narrow.
+    if 'html' not in (content_type or '').lower() and not re.match(r'^\s*(?:<!doctype\s+html|<html\b|<head\b|<title\b)',page,re.I):return None
     title_match=re.search(r'<title[^>]*>(.*?)</title>',page,re.I|re.S)
     title=re.sub(r'\s+',' ',unescape(title_match.group(1))).strip() if title_match else ''
-    lower=page.lower()
+    # Evidence must come from outside <title>/<head>: otherwise a normal
+    # article title such as “Checking your browser performance” self-confirms.
+    body=re.sub(r'<head\b[^>]*>.*?</head\s*>|<title\b[^>]*>.*?</title\s*>','',page,flags=re.I|re.S).lower()
     challenge_markers=('checking your browser','verify you are human','enable javascript and cookies',
                        'cf-chl-','challenge-platform','captcha')
-    if _GENERIC_TITLE_RE.match(title) and any(marker in lower for marker in challenge_markers):
+    if _GENERIC_TITLE_RE.match(title) and any(marker in body for marker in challenge_markers):
         return '网页返回访问拦截页，未保存为可用正文'
-    has_password=bool(re.search(r'<input\b[^>]*\btype\s*=\s*["\']?password\b',lower,re.I))
-    has_form='<form' in lower
+    has_password=bool(re.search(r'<input\b[^>]*\btype\s*=\s*["\']?password\b',body,re.I))
+    has_form='<form' in body
     if _LOGIN_TITLE_RE.match(title) and has_form and has_password:
         return '网页返回登录页，未保存为可用正文'
     return None
@@ -418,17 +422,23 @@ def fetch_for_run(store,run_id,url):
         shared=future.result()
         return {**shared,'reused':True,'shared':True,'budget':budget.snapshot(store,run_id)}
     try:
-        try:reservation=budget.reserve_pages(store,run_id,[canonical])
-        except budget.BudgetExhausted as exc:
-            result={**exc.result,'url':url}
+        # A prior caller can finish after our first lookup and before this
+        # caller obtains the in-flight slot.  Recheck as the slot owner.
+        previous=existing_for_run(store,run_id,canonical)
+        if previous:
+            result={**previous,'reused':True,'shared':False,'budget':budget.snapshot(store,run_id)}
         else:
-            source=fetch(store,url)
-            store.attach_source(run_id,source['id'])
-            if reservation.get('round_id'):
-                from .research_plan import settle_request
-                settle_request(store,run_id,reservation['request_id'],'completed' if source.get('status')=='ready' else 'failed')
-            result={**source,'reused':False,'shared':False,'budget':budget.snapshot(store,run_id),
-                    'round_id':reservation.get('round_id'),'local_request_id':reservation.get('request_id')}
+            try:reservation=budget.reserve_pages(store,run_id,[canonical])
+            except budget.BudgetExhausted as exc:
+                result={**exc.result,'url':url}
+            else:
+                source=fetch(store,url)
+                store.attach_source(run_id,source['id'])
+                if reservation.get('round_id'):
+                    from .research_plan import settle_request
+                    settle_request(store,run_id,reservation['request_id'],'completed' if source.get('status')=='ready' else 'failed')
+                result={**source,'reused':False,'shared':False,'budget':budget.snapshot(store,run_id),
+                        'round_id':reservation.get('round_id'),'local_request_id':reservation.get('request_id')}
         future.set_result(result)
         return result
     except BaseException as exc:

@@ -107,6 +107,21 @@ def test_html_title_is_used_as_a_readable_source_label():
     assert html_title(('<title>'+'长'*300+'</title>').encode(), 'text/html') == '长'*200
 
 
+def test_html_access_page_detection_requires_body_evidence_and_sniffs_html():
+    blocked=b'<html><title>Checking your browser</title><body><div class="challenge-platform">Checking your browser</div></body></html>'
+    performance=b'<html><title>Checking your browser performance</title><body><article>We measured browser startup and rendering speed.</article></body></html>'
+    notice=b'<html><title>Access denied</title><body><p>Office closure notice for the public holiday.</p></body></html>'
+    login=b'<html><title>Sign in</title><body><form action="/session"><input type="password" name="secret"></form></body></html>'
+    example=b'<html><title>Sign in examples</title><body><article>Use <input type="password"> in this code example.</article></body></html>'
+    assert sources._html_block_reason(blocked,'text/html')
+    assert sources._html_block_reason(performance,'text/html') is None
+    assert sources._html_block_reason(notice,'text/html') is None
+    assert sources._html_block_reason(login,'text/html')
+    assert sources._html_block_reason(example,'text/html') is None
+    assert sources._html_block_reason(blocked,'')
+    assert sources._html_block_reason(blocked,'text/plain')
+
+
 def test_real_http_interstitial_is_retained_but_not_marked_ready(tmp_path,monkeypatch):
     """A 200 anti-bot page is evidence of a failed read, not report content."""
     from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
@@ -175,6 +190,31 @@ def test_parallel_run_fetches_share_one_snapshot_and_retry_after_failure(tmp_pat
     monkeypatch.setattr(sources,'_fetch_bytes',response)
     sources.fetch_for_run(store,other,'https://example.test/report?edition=1')
     assert len(calls)==2 and research_budget.snapshot(store,other)['used']['source_pages']==1
+
+
+def test_fetch_rechecks_snapshot_after_handoff_window(tmp_path,monkeypatch):
+    """B's initial miss must not fetch after A has completed and released it."""
+    import threading
+    store=Store(tmp_path)
+    run=store.create_run({'title':'r','objective':'o','allow_web':True,
+                          'research_budget':{'search_requests':1,'candidate_urls':1,'source_pages':1}},[])['id']
+    original=sources.existing_for_run; b_checked=threading.Event(); release_b=threading.Event(); calls=[]
+    def staged_existing(store_arg,run_id,url):
+        if not b_checked.is_set():
+            b_checked.set();assert release_b.wait(2)
+            return None
+        return original(store_arg,run_id,url)
+    def response(url,**_):calls.append(url);return b'<html><body>saved once</body></html>','text/html','utf-8'
+    monkeypatch.setattr(sources,'existing_for_run',staged_existing)
+    monkeypatch.setattr(sources,'_fetch_bytes',response)
+    with ThreadPoolExecutor(max_workers=2,thread_name_prefix='scout') as pool:
+        # Submit B first and stop it at its initial miss; A only starts after
+        # that checkpoint, so this tests the handoff without a sleep race.
+        b=pool.submit(sources.fetch_for_run,store,run,'https://example.test/handoff')
+        assert b_checked.wait(2)
+        a=pool.submit(sources.fetch_for_run,store,run,'https://example.test/handoff').result()
+        release_b.set();shared=b.result(timeout=2)
+    assert a['status']=='ready' and shared['id']==a['id'] and len(calls)==1
 
 
 def test_snapshot_run_includes_attached_sources_in_count(tmp_path):
