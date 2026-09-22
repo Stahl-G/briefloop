@@ -1,29 +1,51 @@
 import fs from 'node:fs';
 import vm from 'node:vm';
 import assert from 'node:assert/strict';
+import {welcomeReady,welcomeAgents,welcomeAgentCard} from '../frontend/welcome.js';
 const source=fs.readFileSync('frontend/app.js','utf8');
 const elements=new Map();const el=id=>{if(!elements.has(id))elements.set(id,{hidden:id!=='welcome'});return elements.get(id)};
-el('welcome-runtimes');el('welcome-choice');el('welcome-start');el('welcome-purposes');el('welcome');
-el('welcome-runtimes').querySelectorAll=()=>[];el('welcome-purposes').querySelectorAll=()=>[];
+// A factory model, an unavailable CLI or an unfinished selection must not start.
+const settings={agent_backend:'codex',model:'gpt-5.6-luna',model_selection_required:true};
+const runtimes=[{id:'codex',name:'Codex CLI',available:true},{id:'briefloop-native',available:true}];
+assert.equal(welcomeReady(settings,runtimes,'cli'),false);
+settings.model_selection_required=false;
+assert.equal(welcomeReady(settings,runtimes,'cli'),true);
+assert.equal(welcomeReady(settings,runtimes,'cli',true),false);
+assert.equal(welcomeReady(settings,runtimes,'native'),false);
+assert.equal(welcomeReady(settings,[],'cli'),false);
+settings.agent_backend='briefloop-native';
+assert.equal(welcomeReady(settings,runtimes,'cli'),false);
+assert.equal(welcomeReady(settings,runtimes,'native'),true);
+// Re-selecting the same Agent preserves the user's selected model.
+let backendChanges=0;
+const selection=vm.createContext({$:el,state:{settings},runtimeCatalog:runtimes,renderWelcome(){}});
+el('agent-backend').onchange=()=>{backendChanges++};
+vm.runInContext(source.slice(source.indexOf('let welcomeMode='),source.indexOf('function applyPendingSetupFields')),selection);
+await vm.runInContext("chooseWelcomeAgent('briefloop-native')",selection);
+assert.equal(backendChanges,0);
+assert.equal(settings.model_selection_required,false);
+assert.equal(settings.model,'gpt-5.6-luna');
+// Compact cards never omit the selection or mix Native into the CLI list.
+const many=['antigravity','hermes','kimi','codex','claude','pi','opencode','deepseek-harness'].map(id=>({id,available:true}));
+many.push({id:'briefloop-native',available:true},{id:'unavailable',available:false});
+const compact=welcomeAgents(many,'kimi');
+assert.equal(compact.total,8);assert.equal(compact.visible.length,6);
+assert.ok(compact.visible.some(r=>r.id==='kimi'));
+assert.ok(!welcomeAgents(many,'',true).visible.some(r=>['briefloop-native','unavailable'].includes(r.id)));
+assert.match(welcomeAgentCard({id:'deepseek-harness',name:'DeepSeek Harness'},'deepseek-harness'),/runtime-deepseek.svg/);
+assert.match(welcomeAgentCard({id:'codex',name:'Codex <CLI>'},'codex'),/Codex &lt;CLI&gt;/);
+console.log('PASS: explicit model choice, selected mode, available Agent and same-card selection');
 
-// Behavior, not string presence: a fresh workspace ships the factory model
-// (gpt-5.6-luna) but must NOT enable 开始 until the user actually picks one.
-const welcomeCode=source.slice(source.indexOf('let welcomeIndex=0'),source.indexOf("$('welcome-model').onclick"));
-const c=vm.createContext({
- $:el,esc:String,runtimeName:id=>id,friendlyModel:m=>m,
- state:{settings:{agent_backend:'codex',model:'gpt-5.6-luna',model_selection_required:true}},
- runtimeCatalog:[{id:'codex',name:'Codex CLI',available:true}],runtimeScanned:true,
- WELCOME_PURPOSES:[{id:'public',label:'公开研究',prompt:'写一份有依据的简报'}],
- openModelPicker:()=>{},Event:class{constructor(t){this.type=t}},notice:()=>{},
- sessionStorage:{setItem(){},getItem(){return null}},
-});
-vm.runInContext(welcomeCode,c);
-vm.runInContext('renderWelcome()',c);
-assert.equal(el('welcome-start').disabled,true,'a fresh workspace must not treat the factory default as a choice');
-vm.runInContext('state.settings.model_selection_required=false',c);
-vm.runInContext('renderWelcome()',c);
-assert.equal(el('welcome-start').disabled,false,'a saved model selection enables 开始');
-console.log('PASS: the welcome gate requires an explicit model choice, not the factory default');
+// The only model entry on welcome must also accept an explicit ID when the
+// provider does not offer a catalogue. IME composition must not submit it.
+const picked=[];
+const custom=vm.createContext({$:el,pickModel:id=>picked.push(id),renderModelPicker(){}});
+vm.runInContext(source.split('\n').find(line=>line.startsWith("$('model-picker-search').onkeydown=")),custom);
+const input={key:'Enter',target:{value:' vendor/model '},preventDefault(){}};
+el('model-picker-search').onkeydown({...input,isComposing:true});
+assert.equal(picked.length,0);
+el('model-picker-search').onkeydown(input);
+assert.deepEqual(picked,['vendor/model']);
 
 // Clicking the sidebar cannot bypass the first-run page.
 const pageCode=source.slice(source.indexOf('function page(name){'),source.indexOf("document.querySelectorAll('[data-page]')"));

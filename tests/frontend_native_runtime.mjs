@@ -24,7 +24,7 @@ await el('provider-use').onclick();assert.equal(ctx.chat.nextBackend,'briefloop-
 await el('provider-test-model').onclick();assert.equal(calls.at(-1).route,'runtime-test');
 assert.equal(calls.at(-1).body.backend,'briefloop-native');assert.equal(calls.at(-1).body.model,'custom/model');
 const html=runtimeCard({id:'briefloop-native',name:'BriefLoop 内置引擎',installed:true,available:true,version:'test'},{chosen:'briefloop-native',model:'custom/model',esc:x=>x});
-assert.ok(html.includes('BriefLoop 内置引擎')&&html.includes('data-runtime-select="briefloop-native"')&&html.includes('<svg'));
+assert.ok(html.includes('BriefLoop Agent')&&html.includes('data-runtime-select="briefloop-native"')&&html.includes('/runtime-briefloop.svg'));
 // Opening the Native tab changes the configuration form, not the saved host.
 ctx.state.settings.agent_backend='opencode';
 el('provider-engine').value='opencode';el('custom-api-key').value='old-test-key';

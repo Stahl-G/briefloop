@@ -1,3 +1,4 @@
+import {welcomeReady} from '../frontend/welcome.js';
 import {settingsEffort} from '../frontend/reasoning-controls.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -65,7 +66,7 @@ test('task completion clears the rail even while an existing conversation is ope
 
 test('welcome applies the selected host together with its model and effort',()=>{
  const $=elements();$('chat-input').focus=()=>{};
- const context=vm.createContext({settingsEffort,$,state:{settings:{agent_backend:'zcode',model:'default',model_variant:'',reasoning_effort:'high'}},
+ const context=vm.createContext({welcomeReady,welcomeMode:'cli',welcomeBusy:false,runtimeCatalog:[{id:'zcode',available:true}],settingsEffort,$,state:{settings:{agent_backend:'zcode',model:'default',model_variant:'',reasoning_effort:'high'}},
   chat:{nextBackend:'codex',hostOptions:{mode:'plan'}},notice(){},page(){},updateComposer(){},refreshInlineModelPickers(){},rememberDraft(){},
   assignEffort:(id,value)=>$(id).value=value,effortValue:(s,k)=>s[k]});
  vm.runInContext(section("$('welcome-start').onclick=",'\nfunction render(first)'),context);

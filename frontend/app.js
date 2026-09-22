@@ -13,6 +13,7 @@ import {scheduleUI} from './schedules.js';
 import {adaptivePoll} from './polling.js';
 import {preflightSources,uploadPayload} from './uploads.js';
 import {runtimeCard,runtimeModelSummary} from './runtime-cards.js';
+import {welcomeAgents,welcomeAgentCard,welcomeReady} from './welcome.js';
 import {activityCenter} from './notifications.js';
 var activity=null;
 import {reviewPending,withoutSupersededRetries,factCheckHTML} from './review-status.js';
@@ -56,7 +57,7 @@ const parse=s=>JSON.parse(s||'{}');
 let followUpdates=true;
 let state,current,pendingRun=null,editor,dirty=false,saving=false,saveTimer,learnTimer,markdownMode=false,selected=new Set(),referenceSelected=new Set();
 function notice(s,error=false){$('notice').textContent=s;$('notice').classList.toggle('error',error);$('notice').hidden=false;clearTimeout(notice.timer);notice.timer=setTimeout(()=>$('notice').hidden=true,error?12000:4500)}
-function page(name){if(document.body.classList.contains('report-chat-open'))setReportChatOpen(false);if(((name==='chat'&&!chat.id)||name==='setup')&&(state?.settings?.model_selection_required||!state?.settings?.model)){notice('请先在欢迎页选择执行宿主和模型');name='welcome'}if(name!=='settings-dialog'&&$('custom-api-key'))$('custom-api-key').value='';for(const id of ['chat','report','reports','sources','templates','setup','learning','settings-dialog','welcome'])$(id).hidden=id!==name;document.querySelectorAll('nav [data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===name));if(name==='learning')refreshCandidates();if(name==='setup'){if(typeof reportMcpSelection!=='undefined')reportMcpSelection.refresh();moveSearchSettings('setup');applyPendingSetupFields()}else if($('tavily-key')){$('tavily-key').value='';$('bocha-key').value='';$('zhipu-key').value=''}if(name==='reports'){renderTasks();renderTaskGraph()}if(['reports','templates','learning'].includes(name))activity?.readCategory(name)}
+function page(name){if(document.body.classList.contains('report-chat-open'))setReportChatOpen(false);if(((name==='chat'&&!chat.id)||name==='setup')&&(state?.settings?.model_selection_required||!state?.settings?.model)){notice('请先选择 Agent 和模型');name='welcome'}if(name!=='settings-dialog'&&$('custom-api-key'))$('custom-api-key').value='';for(const id of ['chat','report','reports','sources','templates','setup','learning','settings-dialog','welcome'])$(id).hidden=id!==name;document.querySelectorAll('nav [data-page]').forEach(b=>b.classList.toggle('active',b.dataset.page===name));if(name==='learning')refreshCandidates();if(name==='setup'){if(typeof reportMcpSelection!=='undefined')reportMcpSelection.refresh();moveSearchSettings('setup');applyPendingSetupFields()}else if($('tavily-key')){$('tavily-key').value='';$('bocha-key').value='';$('zhipu-key').value=''}if(name==='reports'){renderTasks();renderTaskGraph()}if(['reports','templates','learning'].includes(name))activity?.readCategory(name)}
 document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>page(b.dataset.page));
 async function action(fn,message){try{await fn();if(message)notice(message);await refresh()}catch(e){notice(e.message,true)}}
 let tooltipTarget=null;
@@ -269,35 +270,77 @@ function renderTaskBanner(){
  }
  box.querySelector('[data-banner-close]').onclick=()=>{setBannerDismissKey(job.id+':'+job.status);box.hidden=true;box.innerHTML=''};
 }
-const WELCOME_PURPOSES=[
- {id:'internal',label:'内部简报',prompt:'/discuss 我要做一份面向管理层的内部简报，请先和我确认目的、读者、必答问题、篇幅与格式。',fields:{writing_mode:'internal_report',report_profile:'brief'}},
- {id:'public',label:'公开研究',prompt:'请围绕我的研究目标查找公开资料，写一份有依据的简报。',fields:{writing_mode:'general',report_profile:'brief',allow_web:true}},
- {id:'industry',label:'行业报告',prompt:'请做一份行业定期报告，先确认行业、目标组织、报告日期与覆盖期间。',fields:{writing_mode:'general',report_profile:'industry_periodic'}},
-];
-let welcomeIndex=0,welcomePurpose=null;
-function welcomeAvailable(){return (runtimeCatalog||[]).filter(r=>r.available)}
-function chooseWelcomeHost(id){const select=$('agent-backend');if(select&&select.value!==id){select.value=id;select.dispatchEvent(new Event('change'))}if(state&&state.settings){state.settings.model_selection_required=true;state.settings.model=''}renderWelcome()}
-function applyWelcomePurpose(id){const purpose=WELCOME_PURPOSES.find(p=>p.id===id);if(!purpose)return;welcomePurpose=id;$('chat-input').value=purpose.prompt;rememberDraft();if(purpose.fields)sessionStorage.setItem('briefloop-welcome-fields',JSON.stringify(purpose.fields));renderWelcome()}
+let welcomeMode=null,welcomeBackend,welcomeExpanded=false,welcomeBusy=false,welcomeScanning=false,welcomeFromProvider=false;
+async function chooseWelcomeAgent(id){
+ if(welcomeBusy||!runtimeCatalog.some(r=>r.id===id&&r.available))return;
+ if(id===state.settings.agent_backend){renderWelcome();return}
+ welcomeBusy=true;renderWelcome();
+ try{$('agent-backend').value=id;await $('agent-backend').onchange()}
+ finally{$('agent-backend').value=state.settings.agent_backend;welcomeBusy=false;renderWelcome()}
+}
+function setWelcomeMode(mode){
+ if(welcomeBusy)return;
+ welcomeMode=mode;
+ if(mode==='native')chooseWelcomeAgent('briefloop-native');
+ renderWelcome();
+}
 function applyPendingSetupFields(){let fields=null;try{fields=JSON.parse(sessionStorage.getItem('briefloop-welcome-fields')||'null')}catch{}if(!fields)return;sessionStorage.removeItem('briefloop-welcome-fields');const form=$('requirements');if(!form)return;for(const [name,value] of Object.entries(fields)){const el=form.elements[name];if(!el)continue;if(el.type==='checkbox')el.checked=!!value;else el.value=value;el.dispatchEvent(new Event('change',{bubbles:true}))}initializeWorkflowChoice(fields,true);syncWorkflowProfile(false)}
 function renderWelcome(){
  const box=$('welcome-runtimes');if(!box)return;
- const avail=welcomeAvailable(),chosen=state?.settings?.agent_backend||'codex';
- if(!runtimeScanned&&!avail.length){box.innerHTML='<p class="help">正在检测本机宿主…</p>';$('welcome-choice').textContent='正在检测本机宿主…';$('welcome-start').disabled=true;return}
- box.innerHTML=avail.length?avail.map(r=>`<button type="button" class="welcome-host ${r.id===chosen?'selected':''}" data-welcome-host="${esc(r.id)}"><strong>${esc(r.name)}</strong><small>${esc(r.version||'版本未确认')}${r.id===chosen?' · 当前选择':''}</small></button>`).join(''):'<p class="help">未检测到可用宿主。请先安装并登录一个 CLI，或在设置里配置 API 提供商。</p>';
- box.querySelectorAll('[data-welcome-host]').forEach(b=>b.onclick=()=>{welcomeIndex=Math.max(0,avail.findIndex(r=>r.id===b.dataset.welcomeHost));chooseWelcomeHost(b.dataset.welcomeHost)});
- const model=state?.settings?.model_selection_required?'':state?.settings?.model;
- $('welcome-choice').textContent=`将使用：${runtimeName(chosen)} · ${model?friendlyModel(model):'待选择模型'}`;
- $('welcome-start').disabled=!model;
- const pbox=$('welcome-purposes');
- pbox.innerHTML='<span class="help">这次想做什么？可选。</span>'+WELCOME_PURPOSES.map(p=>`<button type="button" class="welcome-purpose ${welcomePurpose===p.id?'selected':''}" data-welcome-purpose="${p.id}">${esc(p.label)}</button>`).join('');
- pbox.querySelectorAll('[data-welcome-purpose]').forEach(b=>b.onclick=()=>applyWelcomePurpose(b.dataset.welcomePurpose));
+ const settings=state?.settings||{},chosen=settings.agent_backend;
+ if(welcomeMode===null||welcomeBackend!==chosen){welcomeMode=chosen==='briefloop-native'?'native':'cli';welcomeBackend=chosen}
+ for(const mode of ['native','cli']){
+  const tab=$('welcome-'+mode+'-tab');tab.setAttribute('aria-selected',String(welcomeMode===mode));tab.tabIndex=welcomeMode===mode?0:-1;tab.disabled=welcomeBusy;
+  $('welcome-'+mode).hidden=welcomeMode!==mode;
+ }
+ const {visible,total}=welcomeAgents(runtimeCatalog,chosen,welcomeExpanded);
+ const html=visible.length?visible.map(r=>welcomeAgentCard(r,chosen,welcomeBusy)).join(''):`<p class="help">${runtimeScanned?'未检测到可用的 Agent CLI。安装并登录后重新扫描，或选择 BriefLoop Agent。':'正在检测本机 Agent…'}</p>`;
+ if(box.dataset.cards!==html){box.dataset.cards=html;box.innerHTML=html;box.querySelectorAll('[data-welcome-agent]').forEach(b=>b.onclick=()=>chooseWelcomeAgent(b.dataset.welcomeAgent))}
+ $('welcome-more').hidden=total<=6;$('welcome-more').textContent=welcomeExpanded?'收起更多 Agent⌃':'显示更多 Agent⌄';$('welcome-more').setAttribute('aria-expanded',String(welcomeExpanded));
+ $('welcome-refresh').disabled=welcomeScanning||welcomeBusy;$('welcome-refresh').textContent=welcomeScanning?'正在扫描…':'↻ 重新扫描';
+ const selected=(welcomeMode==='native')===(chosen==='briefloop-native')&&runtimeCatalog.some(r=>r.id===chosen&&r.available);
+ const model=selected&&!settings.model_selection_required?settings.model:'';
+ $('welcome-model-label').textContent='模型'+(selected?' · '+runtimeName(chosen):'');
+ $('welcome-model-name').textContent=model||'选择或搜索模型';$('welcome-model').disabled=!selected||welcomeBusy;
+ $('welcome-start').disabled=!welcomeReady(settings,runtimeCatalog,welcomeMode,welcomeBusy);
+ $('welcome-choice').textContent=welcomeBusy?'正在保存选择…':!selected?'请先选择一个 Agent。':!model?'请选择模型；连接状态可在设置中测试。':'已保存选择；连接状态可在设置中测试。';
+ if(!model){
+  const effort=$('welcome-effort');effort.hidden=false;effort.disabled=true;effort.replaceChildren(new Option('模型默认','none'));
+  $('welcome-variant').hidden=true;const choices=$('welcome-variant-choices');if(choices)choices.hidden=true;
+  effort.parentElement.querySelectorAll('[data-reasoning-note]').forEach(note=>note.hidden=true);
+  delete effort.dataset.reasoningSignature;if(choices)delete choices.dataset.reasoningSignature;
+  return;
+ }
+ const variant=['opencode','briefloop-native','mimo'].includes(chosen),control=$(variant?'welcome-variant':'welcome-effort');
+ $('welcome-effort').hidden=variant;if(!variant)$('welcome-variant').hidden=true;
+ const variantSelect=$('welcome-variant-choices');if(variantSelect)variantSelect.hidden=!variant;
+ control.disabled=!model||welcomeBusy;
+ if(variant)control.value=chosen==='mimo'?(settings.runtime_efforts?.mimo||''):(settings.model_variant||'');
+ else assignEffort('welcome-effort',settingsEffort(settings,chosen));
+ reasoning.configure(control,chosen,model||'',{variant});
 }
 $('welcome-demo').onclick=()=>action(async()=>{const result=await api('demo',{});await refresh();$('welcome').hidden=true;openBrief(state.briefs.find(b=>b.id===result.version_id));page('report');notice(result.notice)});
 $('welcome-model').onclick=()=>openModelPicker('model-select');
-$('welcome-cycle').onclick=()=>{const avail=welcomeAvailable();if(avail.length<2)return;welcomeIndex=(welcomeIndex+1)%avail.length;chooseWelcomeHost(avail[welcomeIndex].id)};
+$('welcome-native-tab').onclick=()=>setWelcomeMode('native');
+$('welcome-cli-tab').onclick=()=>setWelcomeMode('cli');
+for(const mode of ['native','cli'])$('welcome-'+mode+'-tab').onkeydown=event=>{
+ if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key)||welcomeBusy)return;
+ event.preventDefault();const next=event.key==='Home'?'native':event.key==='End'?'cli':mode==='native'?'cli':'native';
+ setWelcomeMode(next);$('welcome-'+next+'-tab').focus();
+};
+$('welcome-more').onclick=()=>{welcomeExpanded=!welcomeExpanded;renderWelcome()};
+$('welcome-refresh').onclick=async()=>{welcomeScanning=true;renderWelcome();try{await refreshRuntimeDiscovery(true)}finally{welcomeScanning=false;renderWelcome()}};
+$('welcome-configure').onclick=()=>{welcomeFromProvider=true;showSettings();settingsView('models');$('settings-tab-api').click();$('provider-close').textContent='返回选择';$('provider-close').setAttribute('aria-label','返回选择')};
+for(const id of ['welcome-effort','welcome-variant'])$(id).onchange=async()=>{
+ if(welcomeBusy)return;
+ const target=id==='welcome-variant'?'model-variant':'effort-select';
+ if(target==='effort-select')assignEffort(target,$(id).value);else $(target).value=$(id).value;
+ welcomeBusy=true;renderWelcome();
+ try{await action(saveModel,'思考强度已保存')}finally{welcomeBusy=false;renderWelcome()}
+};
 $('welcome-start').onclick=()=>{
  const settings=state?.settings||{};
- if(!settings.model||settings.model_selection_required){notice('请先选择模型',true);return}
+ if(!welcomeReady(settings,runtimeCatalog,welcomeMode,welcomeBusy)){notice('请先选择 Agent 和模型',true);return}
  const backend=settings.agent_backend||'codex';
  if(chat.nextBackend!==backend)chat.hostOptions={};
  chat.nextBackend=backend;
@@ -723,9 +766,9 @@ function renderBackend(){
  renderSearchProvider();updateModelLabel();renderFastControls();
 }
 function updateModelLabel(){refreshRuntimeModelSummaries();const op=['opencode','briefloop-native'].includes(backendValue());const cfg=op?{model:$('model-select').value.trim(),model_variant:$('model-variant').value.trim()||null,agent_backend:backendValue()}:{model:$('model-select').value.trim(),reasoning_effort:backendValue()==='mimo'?($('model-variant').value.trim()||null):$('effort-select').value,model_provider:$('model-provider').value.trim(),service_tier:selectedServiceTier('service-tier',fastControlConfig('main')),agent_backend:backendValue()};$('execution-choice').textContent='即将使用：'+modelLabel(cfg);if($('setup-model-summary'))$('setup-model-summary').textContent=modelLabel(cfg);$('generate-button').textContent='使用 '+modelLabel(cfg)+' 生成简报 →';$('model-select').title=cfg.model?friendlyModel(cfg.model)+' · '+cfg.model:'输入模型 ID'}
-async function saveModel(){if(backendValue()==='codex')await loadFastCapability(fastControlConfig('main'));const model=reasoningModel(backendValue(),$('model-select').value.trim(),$('effort-select').value);$('model-select').value=model;if(!model)throw Error('请输入模型 ID');const op=['opencode','briefloop-native'].includes(backendValue());if(op){if(!model.includes('/'))throw Error('Opencode 模型必须是 provider/model 形式');await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,model_variant:$('model-variant').value.trim()||null})}else if(backendValue()!=='codex')await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,model_provider:null,model_variant:null,runtime_efforts:{...state.settings.runtime_efforts,[backendValue()]:backendValue()==='mimo'?($('model-variant').value.trim()||null):($('effort-select').value==='none'?null:$('effort-select').value)}});else await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,reasoning_effort:$('effort-select').value,model_provider:$('model-provider').value.trim()||null,service_tier:selectedServiceTier('service-tier',fastControlConfig('main'),true)});updateModelLabel();if($('welcome')&&!$('welcome').hidden)renderWelcome()}
+async function saveModel(){if(backendValue()==='codex')await loadFastCapability(fastControlConfig('main'));const model=reasoningModel(backendValue(),$('model-select').value.trim(),$('effort-select').value);$('model-select').value=model;if(!model)throw Error('请输入模型 ID');const op=['opencode','briefloop-native'].includes(backendValue());if(op){if(!model.includes('/'))throw Error('模型 ID 必须是 provider/model 形式');await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,model_variant:$('model-variant').value.trim()||null})}else if(backendValue()!=='codex')await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,model_provider:null,model_variant:null,runtime_efforts:{...state.settings.runtime_efforts,[backendValue()]:backendValue()==='mimo'?($('model-variant').value.trim()||null):($('effort-select').value==='none'?null:$('effort-select').value)}});else await api('settings',{agent_backend:backendValue(),model_selection_required:false,model,reasoning_effort:$('effort-select').value,model_provider:$('model-provider').value.trim()||null,service_tier:selectedServiceTier('service-tier',fastControlConfig('main'),true)});updateModelLabel();if($('welcome')&&!$('welcome').hidden)renderWelcome()}
 let runtimeCatalog=[],runtimeScanned=false;
-function runtimeName(id){return runtimeCatalog.find(r=>r.id===id)?.name||id}
+function runtimeName(id){return id==='briefloop-native'?'BriefLoop Agent':runtimeCatalog.find(r=>r.id===id)?.name||id}
 function renderSettingsSessionNote(){
  const box=$('settings-session-note');if(!box)return;
  const session=chat.session,backend=session?.runtime?.backend,chosen=backendValue();
@@ -750,16 +793,22 @@ function renderRuntimeDiscovery(){
  for(const runtime of runtimeCatalog){const option=new Option(runtime.name+(runtime.available?'':(runtime.installed?' · 尚未支持':' · 未安装')),runtime.id);option.disabled=!runtime.available;select.add(option)}
  if(![...select.options].some(o=>o.value===chosen))select.add(new Option(chosen+' · 未检测到',chosen));select.value=chosen;
  const modelBlock=$('settings-model-block');
- const installed=runtimeCatalog.filter(r=>r.installed).sort((a,b)=>Number(b.id===chosen)-Number(a.id===chosen)),missing=runtimeCatalog.filter(r=>!r.installed);
- const row=r=>runtimeCard(r,{chosen,model:$('model-select').value.trim(),catalog:modelCatalogs.get(r.id)});
- $('runtime-discovery-details').innerHTML=installed.map(row).join('')+`<details class="runtime-uninstalled"><summary>未安装的 CLI · ${missing.length}</summary><div class="runtime-missing-grid">${missing.map(r=>runtimeCard(r,{chosen,model:'',esc,compact:true})).join('')}</div></details>`;
- const selectedCard=[...$('runtime-discovery-details').querySelectorAll('[data-runtime-card]')].find(c=>c.dataset.runtimeCard===chosen);
- if(selectedCard)selectedCard.append(modelBlock);else $('settings-cli').append(modelBlock);
- $('runtime-discovery-details').querySelectorAll('[data-runtime-test]').forEach(button=>button.onclick=()=>action(async()=>{
- const model=$('model-select').value.trim();if(!model)throw Error('请先选择或输入模型 ID');
- const r=await api('runtime-test',{backend:button.dataset.runtimeTest,model});chat.view='tests';await selectChat(r.session_id);
- },'已提交模型测试；进展见对话，可随时停止'));
- $('runtime-discovery-details').querySelectorAll('[data-runtime-select]').forEach(button=>button.onclick=()=>{if(button.dataset.runtimeSelect===backendValue())return;select.value=button.dataset.runtimeSelect;select.dispatchEvent(new Event('change'))});
+ const cli=runtimeCatalog.filter(r=>r.id!=='briefloop-native');
+ const installed=cli.filter(r=>r.installed).sort((a,b)=>Number(b.id===chosen)-Number(a.id===chosen)),missing=cli.filter(r=>!r.installed);
+ const model=$('model-select').value.trim();
+ const row=r=>runtimeCard(r,{chosen,model,catalog:modelCatalogs.get(r.id)});
+ const roots=[$('runtime-discovery-details'),$('settings-native-runtime')];
+ roots[0].innerHTML=installed.map(row).join('')+`<details class="runtime-uninstalled"><summary>未安装的 CLI · ${missing.length}</summary><div class="runtime-missing-grid">${missing.map(r=>runtimeCard(r,{chosen,model:'',compact:true})).join('')}</div></details>`;
+ roots[1].innerHTML=runtimeCatalog.filter(r=>r.id==='briefloop-native').map(row).join('');
+ const selectedCard=roots.flatMap(root=>[...root.querySelectorAll('[data-runtime-card]')]).find(c=>c.dataset.runtimeCard===chosen);
+ if(selectedCard)selectedCard.append(modelBlock);else $(chosen==='briefloop-native'?'settings-api':'settings-cli').append(modelBlock);
+ for(const root of roots){
+  root.querySelectorAll('[data-runtime-test]').forEach(button=>button.onclick=()=>action(async()=>{
+   const model=$('model-select').value.trim();if(!model)throw Error('请先选择或输入模型 ID');
+   const r=await api('runtime-test',{backend:button.dataset.runtimeTest,model});chat.view='tests';await selectChat(r.session_id);
+  },'已提交模型测试；进展见对话，可随时停止'));
+  root.querySelectorAll('[data-runtime-select]').forEach(button=>button.onclick=()=>{if(button.dataset.runtimeSelect===backendValue())return;select.value=button.dataset.runtimeSelect;select.dispatchEvent(new Event('change'))});
+ }
  renderSettingsSessionNote();
 }
 async function refreshRuntimeDiscovery(force=false){
@@ -806,7 +855,9 @@ async function renderModelPicker(){
     if(m.provider!==lastProvider){lastProvider=m.provider;html+=`<h3 class="workspace-list-heading">${esc(m.provider)}</h3>`}
     html+=`<button type="button" class="workspace-choice" data-model-pick="${esc(m.id)}"><span><strong>${esc(m.id)}</strong><small>${esc(m.name||'')}</small></span><em>选用</em></button>`;
   }
-  $('model-picker-list').innerHTML=html||(error?('<p class="help">读取失败：'+esc(error)+'</p>'):(models.length?'<p class="help">没有匹配的模型。可直接输入完整模型 ID 后按回车选用。</p>':'<p class="help">'+esc(emptyCatalogLabel(backend,modelCatalogs.get(backend)))+'</p>'));
+  const custom=$('model-picker-search').value.trim();
+  const customChoice=custom&&!/\s/.test(custom)&&!shown.some(m=>m.id===custom)?`<button type="button" class="workspace-choice" data-model-pick="${esc(custom)}"><span><strong>${esc(custom)}</strong><small>使用此模型 ID</small></span><em>选用</em></button>`:'';
+  $('model-picker-list').innerHTML=(html||(error?('<p class="help">读取失败：'+esc(error)+'</p>'):(models.length?'<p class="help">没有匹配的模型。可直接输入完整模型 ID 后按回车选用。</p>':'<p class="help">'+esc(emptyCatalogLabel(backend,modelCatalogs.get(backend)))+'</p>')))+customChoice;
   $('model-picker-list').querySelectorAll('[data-model-pick]').forEach(b=>b.onclick=()=>pickModel(b.dataset.modelPick));
 }
 function pickModel(id){
@@ -818,6 +869,7 @@ function pickModel(id){
 }
 $('model-picker-close').onclick=()=>$('model-picker').close();
 $('model-picker-search').oninput=()=>renderModelPicker();
+$('model-picker-search').onkeydown=event=>{if(event.key==='Enter'&&!event.isComposing){event.preventDefault();const id=event.target.value.trim();if(id&&!/\s/.test(id))pickModel(id)}};
 $('model-picker-refresh').onclick=()=>action(async()=>{await refreshModelSuggestions(true);await renderModelPicker()},'模型目录已刷新');
 $('model-select').onchange=()=>{reasoning.refresh();renderBackend();return action(saveModel,'模型已保存；下一次启动生效')};$('service-tier').onchange=()=>action(saveModel,'速度已保存；下一次启动生效');$('effort-select').onchange=()=>action(saveModel,'推理档位已保存；下一次启动生效');$('model-provider').onchange=()=>action(saveModel,'Provider 已保存；下一次启动生效');$('model-browse').onclick=()=>openModelPicker('model-select');
 $('model-apply-session').onclick=()=>{
@@ -1446,7 +1498,7 @@ function renderContext(){
  $('context-details').innerHTML=usage?`<strong>最近一次模型请求</strong><dl><div><dt>输入 Token</dt><dd>${count(last.inputTokens)}</dd></div><div><dt>其中缓存</dt><dd>${count(last.cachedInputTokens)}</dd></div><div><dt>输出 Token</dt><dd>${count(last.outputTokens)}</dd></div><div><dt>模型窗口</dt><dd>${hasWindow?count(windowSize):'未知'}</dd></div></dl>${hasInput&&hasWindow?`<meter min="0" max="${windowSize}" value="${Math.min(last.inputTokens,windowSize)}" aria-label="最近输入与上下文窗口的比例"></meter><p>最近输入占窗口 ${(last.inputTokens/windowSize*100).toFixed(1)}%。</p>`:''}<p>输入量来自最近一次请求，累计用量不作为上下文占用。</p>`:'<p>开始执行后，按后端返回的真实数据更新；暂无用量。</p>';
 }
 $('chat-permission').onchange=()=>{rememberDraft();updateComposer()};
-function showSettings(){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;$('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;moveSearchSettings('settings');page('settings-dialog');$('settings-dialog').scrollIntoView({block:'start'});refreshRuntimeDiscovery();updateLearningPause().catch(()=>{});refreshTavilySettings().catch(()=>{})}
+function showSettings(){$('settings-chat-web-default').checked=state.settings.chat_allow_web!==false;$('timeout-minutes').value=state.settings.timeout_minutes;$('hard-timeout-minutes').value=state.settings.hard_timeout_minutes||0;moveSearchSettings('settings');page('settings-dialog');$('settings-dialog').scrollIntoView({block:'start'});refreshRuntimeDiscovery();updateLearningPause().catch(()=>{});refreshTavilySettings().catch(()=>{})}
 $('settings-open').onclick=showSettings;$('settings-close').onclick=()=>page('chat');
 {
  const modelPanel=document.querySelector('.model-settings');const shortcut=document.createElement('div');shortcut.className='setup-settings-shortcut';shortcut.innerHTML='<div><span>生成模型</span><strong id="setup-model-summary">Luna / high</strong></div><button type="button" class="outline">模型与角色设置</button>';shortcut.querySelector('button').onclick=showSettings;modelPanel.before(shortcut);$('settings-model-block').append(modelPanel);
@@ -1927,7 +1979,7 @@ $('custom-saved').onchange=()=>{
  for(const [id,key] of [['custom-provider','provider'],['custom-name','name'],['custom-model','model'],['custom-protocol','protocol'],['custom-base-url','base_url'],['custom-context-limit','context_limit'],['custom-output-limit','output_limit'],['custom-supports-images','supports_images']])$(id).value=p[key]==null?'':String(p[key]);
  $('custom-api-key').value='';$('provider-use').hidden=true;localStorage.setItem('briefloop-provider-id',p.provider);loadProviderCatalog();
 };
-$('provider-close').onclick=()=>{$('custom-api-key').value='';settingsModelTab('cli')};
+$('provider-close').onclick=()=>{$('custom-api-key').value='';if(welcomeFromProvider){welcomeFromProvider=false;page('welcome');renderWelcome();$('provider-close').textContent='返回 Agent CLI';$('provider-close').setAttribute('aria-label','返回 Agent CLI')}else settingsModelTab('cli')};
 $('provider-dialog').addEventListener('close',()=>{$('custom-api-key').value=''});
 $('provider-form').onsubmit=async event=>{
  event.preventDefault();const button=$('provider-save');button.disabled=true;$('provider-result').textContent='正在保存到本机…';
