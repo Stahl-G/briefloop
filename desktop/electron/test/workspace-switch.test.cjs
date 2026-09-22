@@ -85,13 +85,32 @@ test('an invalid folder keeps the welcome renderer alive to show its opening err
   const status = {textContent: ''};
   const renderer = vm.createContext({status, environment: {state: 'ready'}, opening: false,
     renderEnvironment() {}, open: f.run});
-  vm.runInContext(welcome.slice(welcome.indexOf('async function action('), welcome.indexOf("document.getElementById('prepare').onclick")), renderer);
+  vm.runInContext(welcome.slice(welcome.indexOf('function welcomeErrorMessage('), welcome.indexOf("document.getElementById('prepare').onclick")), renderer);
   await vm.runInContext('action(open)', renderer);
   assert.equal(f.document(), f.oldDocument, 'the IPC rejection must reach the same welcome document');
   assert.match(status.textContent, /preflight failed/);
   assert.equal(named(f, 'load').length, 0); assert.equal(named(f, 'start-target').length, 0);
   assert.equal(renderer.opening, false); assert.equal(f.context.switching, false);
   assert.equal(f.context.service, null);
+});
+
+test('welcome removes the IPC envelope while preserving the actionable error and diagnostic type', async () => {
+  const status = {textContent: ''};
+  const renderer = vm.createContext({status, environment: {state: 'ready'}, opening: false, renderEnvironment() {}});
+  vm.runInContext(welcome.slice(welcome.indexOf('function welcomeErrorMessage('), welcome.indexOf("document.getElementById('prepare').onclick")), renderer);
+  const explanation = '这个文件夹还不是 BriefLoop 工作区，请使用“新建工作区”。';
+  for (const [message, expected] of [
+    [`Error invoking remote method 'workspace:choose': Error: ${explanation}`, explanation],
+    ["Error invoking remote method 'workspace:open': TypeError: invalid workspace result", 'TypeError: invalid workspace result'],
+    ['EACCES: cannot read workspace', 'EACCES: cannot read workspace'],
+  ]) {
+    const error = Error(message), stack = error.stack;
+    renderer.open = async () => { throw error; };
+    await vm.runInContext('action(open)', renderer);
+    assert.equal(status.textContent, expected);
+    assert.equal(error.message, message); assert.equal(error.stack, stack);
+    assert.equal(renderer.opening, false);
+  }
 });
 
 test('target preflight fails before saving or stopping the current editor', async () => {
