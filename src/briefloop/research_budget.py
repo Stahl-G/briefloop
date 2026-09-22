@@ -204,20 +204,24 @@ def reserve_search(store,run_id,max_results):
     return {'request_id':request_id,'max_results':max_results,'round_id':round_id,'stage':stage}
 
 
-def record_candidates(store,run_id,urls):
+def record_candidates(store,run_id,urls,*,reservation=None):
     """Concurrent responses may overflow; admission is atomic and overflow explicit."""
     incoming=list(dict.fromkeys(canonical_url(url) for url in urls))
     with store.tx() as connection:
-        key,limits,state=_load(store,connection,run_id,persist_offset=True)
+        from .research_plan import admit_response
+        accepted=admit_response(connection,run_id,reservation,'search')
+        key,limits,state=_load(store,connection,run_id,persist_offset=accepted)
         known=set(state['candidate_urls']);overflow=[]
         for url in incoming:
+            if not accepted:
+                overflow.append(url);continue
             if url in known:continue
             if limits is not None and len(known)>=limits['candidate_urls']:
                 overflow.append(url);continue
             known.add(url);state['candidate_urls'].append(url)
-        _save(connection,key,state)
+        if accepted:_save(connection,key,state)
         view=_view(store,run_id,limits,state)
-    return {'allowed_urls':[url for url in incoming if url not in overflow],
+    return {'accepted':accepted,'allowed_urls':[url for url in incoming if url not in overflow],
             'unadmitted_urls':overflow,'budget':view}
 
 

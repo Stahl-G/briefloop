@@ -151,7 +151,7 @@ def extract(store,urls,*,run_id=None,extract_depth='basic',key_file=None):
     if isinstance(urls,str):urls=[urls]
     if not isinstance(urls,list) or not urls or len(urls)>10 or not all(isinstance(url,str) and url.startswith(('https://','http://')) for url in urls):raise TavilyError('请提供 1–10 个 HTTP(S) 来源地址')
     if extract_depth not in ('basic','advanced'):raise TavilyError('无效提取深度')
-    cached=[];local_id=None;round_id=None
+    cached=[];local_id=None;round_id=None;reservation=None
     if run_id:
         check_run(store,run_id)
         from .sources import existing_for_run
@@ -183,6 +183,10 @@ def extract(store,urls,*,run_id=None,extract_depth='basic',key_file=None):
                 from .research_plan import settle_request
                 settle_request(store,run_id,local_id,'failed',failure_kind=envelope['failure_kind'],record_path=path)
         raise
+    from .sources import PendingSources
+    pending_sources=PendingSources(store) if run_id else None
+    source_store=pending_sources if pending_sources is not None else store
+    discovery=budget.save_discovery(store,run_id,local_id,raw) if run_id else None
     results=list(cached);failed=[]
     for url in dict.fromkeys(urls):
         item=next((x for x in response.get('results',[]) if isinstance(x,dict) and x.get('url')==url),None)
@@ -195,9 +199,9 @@ def extract(store,urls,*,run_id=None,extract_depth='basic',key_file=None):
         if error:provenance['error']=error;failed.append(url)
         if item and item.get('url')!=url:provenance['provider_url']=item.get('url')
         (store.root/'sources'/(sid+'.provenance.json')).write_text(dump(provenance))
-        source=store.add_source((item.get('title') if item else None) or url.rsplit('/',1)[-1] or url,text,url=url,error=error,source_id=sid)
-        if run_id:store.attach_source(run_id,sid)
+        source=source_store.add_source((item.get('title') if item else None) or url.rsplit('/',1)[-1] or url,text,url=url,error=error,source_id=sid)
         results.append({**source,'provenance':provenance})
+    accepted=pending_sources.admit(run_id,reservation) if pending_sources is not None else True
     envelope['provider_request_id']=response.get('request_id');envelope['outcome']='success'
     envelope['admitted_urls']=list(dict.fromkeys(urls));envelope['unadmitted_urls']=[]
     envelope['extraction_failed_urls']=failed
@@ -206,7 +210,14 @@ def extract(store,urls,*,run_id=None,extract_depth='basic',key_file=None):
             'round_id':round_id,
             'extraction_failed_urls':failed,'request_record_path':None}
     if run_id:
-        envelope['raw_response_path']=budget.save_discovery(store,run_id,local_id,raw)
+        envelope['raw_response_path']=discovery
+        if not accepted:
+            envelope.update(outcome='response_rejected',admitted_urls=[],unadmitted_urls=list(dict.fromkeys(urls)),
+                            rejection_reason='stage_closed_or_replaced',
+                            retained_source_ids=[row['id'] for row,_ in pending_sources.records])
+            output.update(status='response_rejected',outcome='response_rejected',sources=list(cached),
+                          unprocessed_urls=envelope['unadmitted_urls'],
+                          message='请求所属阶段已结束或更换；迟到提取响应已保留，未登记新报告来源')
         envelope['budget_after']=budget.snapshot(store,run_id)
         output['budget']=envelope['budget_after']
         output['request_record_path']=budget.save_request_record(store,run_id,local_id,envelope)

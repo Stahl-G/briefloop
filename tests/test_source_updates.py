@@ -184,3 +184,42 @@ def test_only_a_user_queued_refresh_may_reach_private_networks(tmp_path, monkeyp
         store.update_job(job['id'], 'running')
         Worker(store)._execute_main_job(job)
     assert private == [False, False, True]
+
+
+@pytest.mark.parametrize('reopen', [False, True])
+def test_refresh_late_response_is_retained_without_source_admission(tmp_path, monkeypatch, reopen):
+    from pathlib import Path
+    from briefloop import research_plan, research_budget, sources
+
+    store, old, run, _, _, _ = case(tmp_path, allow_web=True)
+    research_plan.mark_protocol(store, run['id'])
+    research_plan.freeze(store, run['id'])
+    research_plan.finish_round(store, run['id'])
+    share = {'search_requests': 0, 'candidate_urls': 0, 'source_pages': 3}
+    stage = research_plan.admit_fact_check(store, run['id'], {'kind': 'task_reserve', 'limits': share})
+    raw = b'Late changed source content.'
+
+    def late(url, **_):
+        research_plan.finish_fact_check(store, run['id'], status='budget_exhausted' if reopen else 'cancelled')
+        if reopen:
+            research_plan.add_fact_check_grant(store, run['id'], {**share, 'source_pages': 1})
+        return raw, 'text/plain', 'utf-8'
+
+    monkeypatch.setattr(sources, '_fetch_bytes', late)
+    result = refresh(store, run['id'], old['id'], information_cutoff='2026-09-30')
+    assert result['outcome'] == 'response_rejected' and result['new_source_id'] is None
+    assert 'new_snapshot' not in result['data'] and 'conflict_id' not in result['data']
+    assert store.source_ids(run['id']) == [old['id']]
+    assert store.rows('SELECT id FROM sources') == [{'id': old['id']}]
+    assert store.rows('SELECT id FROM conflicts') == []
+    assert research_budget.spent(store, run['id'])['source_pages'] == 1
+    response = json.loads(Path(result['data']['request_record_path']).read_text())
+    assert response == result['data']['rejected_response'] and response['admitted'] is False
+    provenance = json.loads((store.root / response['provenance_path']).read_text())
+    assert (store.root / provenance['original_path']).read_bytes() == raw
+    request = research_plan.pending_requests(store, run['id'])[response['local_request_id']]
+    assert request['round_id'] == stage['stage_id'] and request['status'] == 'response_rejected'
+    if reopen:
+        current = research_plan.frozen(store, run['id'])['fact_check']
+        assert current['stage_id'] != stage['stage_id'] and current['status'] == 'active'
+        assert research_budget.snapshot(store, run['id'])['remaining']['source_pages'] == 3

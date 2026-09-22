@@ -184,16 +184,55 @@ def record_request(store, connection, run_id, request_id, operation, round_id, s
     key = _requests_key(run_id)
     row = connection.execute('SELECT value FROM meta WHERE key=?', (key,)).fetchone()
     data = json.loads(row['value']) if row else {}
+    if request_id in data:
+        raise AdmissionError('网络请求身份已经登记，不能覆盖原请求', code='request_already_reserved')
     data[request_id] = {'operation': operation, 'round_id': round_id, 'stage': stage,
                         'status': 'reserved', 'created': now()}
     connection.execute('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)', (key, dump(data)))
 
 
-def settle_request(store, run_id, request_id, status, *, failure_kind=None, record_path=None):
-    """Settle a reserved request after the network call; never settles someone else's id.
+def admit_response(connection, run_id, reservation, operation, *, status='completed', failure_kind=None):
+    """Check and settle a response inside the transaction that admits its data.
 
-    Returns False without writing when the request belongs to a fact-check stage
-    that already closed: a result arriving after cancellation is not admitted.
+    This does not refund an already-issued request. Rejected responses remain in
+    the request ledger, while their caller retains the raw response separately.
+    Legacy runs without the quality protocol need no stage reservation.
+    """
+    marker = connection.execute('SELECT value FROM meta WHERE key=?', (_protocol_key(run_id),)).fetchone()
+    quality = marker is not None and json.loads(marker['value']) == PROTOCOL
+    reservation = reservation or {}
+    if not quality and not reservation.get('round_id'):
+        return True
+    request_id = reservation.get('request_id')
+    row = connection.execute('SELECT value FROM meta WHERE key=?', (_requests_key(run_id),)).fetchone()
+    data = json.loads(row['value']) if row else {}
+    entry = data.get(request_id)
+    if not entry or any(entry.get(key) != value for key, value in (
+            ('operation', operation), ('round_id', reservation.get('round_id')), ('stage', reservation.get('stage')))):
+        raise AdmissionError('网络响应没有匹配本轮已登记的请求身份，未接纳', code='response_request_mismatch')
+    if entry.get('status') != 'reserved':
+        return False  # A response cannot be admitted twice or overwrite an earlier rejection.
+    plan = _read_plan(connection, run_id) or {}
+    if entry['stage'] == 'fact_check':
+        current = plan.get('fact_check') or {}
+        accepted = current.get('stage_id') == entry['round_id'] and current.get('status') == 'active'
+    else:
+        current = (plan.get('rounds') or {}).get(entry['round_id']) or {}
+        accepted = plan.get('current_round_id') == entry['round_id'] and current.get('status') == 'active'
+    entry.update({'status': status if accepted else 'response_rejected', 'updated': now()})
+    if not accepted:
+        entry.update({'response_status': status, 'rejection_reason': 'stage_closed_or_replaced'})
+    if failure_kind is not None:
+        entry['failure_kind'] = failure_kind
+    connection.execute('UPDATE meta SET value=? WHERE key=?', (dump(data), _requests_key(run_id)))
+    return accepted
+
+
+def settle_request(store, run_id, request_id, status, *, failure_kind=None, record_path=None):
+    """Record network failure or enrich an already atomically admitted response.
+
+    Successful candidate/source admission must call admit_response in its own
+    write transaction. This later metadata update never changes that decision.
     """
     if not request_id:
         return True
@@ -201,20 +240,22 @@ def settle_request(store, run_id, request_id, status, *, failure_kind=None, reco
         key = _requests_key(run_id)
         row = connection.execute('SELECT value FROM meta WHERE key=?', (key,)).fetchone()
         data = json.loads(row['value']) if row else {}
-        entry = data.get(request_id) or {}
-        if entry.get('stage') == 'fact_check':
-            plan_row = connection.execute('SELECT value FROM meta WHERE key=?', (_plan_key(run_id),)).fetchone()
-            stage = (json.loads(plan_row['value']) if plan_row else {}).get('fact_check') or {}
-            if stage.get('stage_id') == entry.get('round_id') and stage.get('status') != 'active':
-                return False
-        entry.update({'status': status, 'updated': now()})
-        if failure_kind is not None:
-            entry['failure_kind'] = failure_kind
+        entry = data.get(request_id)
+        if not entry:
+            marker = connection.execute('SELECT value FROM meta WHERE key=?', (_protocol_key(run_id),)).fetchone()
+            return marker is None or json.loads(marker['value']) != PROTOCOL
+        if entry.get('status') == 'reserved':
+            reservation = {'request_id': request_id, 'round_id': entry.get('round_id'), 'stage': entry.get('stage')}
+            accepted = admit_response(connection, run_id, reservation, entry['operation'],
+                                      status=status, failure_kind=failure_kind)
+            row = connection.execute('SELECT value FROM meta WHERE key=?', (key,)).fetchone()
+            data = json.loads(row['value']);entry = data[request_id]
+        else:
+            accepted = entry.get('status') != 'response_rejected'
         if record_path is not None:
             entry['request_record_path'] = record_path
-        data[request_id] = entry
-        connection.execute('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)', (key, dump(data)))
-    return True
+        connection.execute('UPDATE meta SET value=? WHERE key=?', (dump(data), key))
+    return accepted
 
 
 def pending_requests(store, run_id):

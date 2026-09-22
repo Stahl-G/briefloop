@@ -215,13 +215,13 @@ def test_reopened_grant_retains_consumed_credit_without_carrying_unused_budget(t
     store, run, _ = _world(tmp_path, budget=base)
     original_requirements = store.one('runs', run['id'])['requirements']
     urls = lambda prefix, count: [f'https://example.test/{prefix}/{index}' for index in range(count)]
-    for _ in range(2):budget.reserve_search(store, run['id'], 1)
-    budget.record_candidates(store, run['id'], urls('research', 4))
+    for _ in range(2):reserved = budget.reserve_search(store, run['id'], 1)
+    budget.record_candidates(store, run['id'], urls('research', 4), reservation=reserved)
     budget.reserve_pages(store, run['id'], urls('research', 2))
     research_plan.finish_round(store, run['id'])
     research_plan.add_fact_check_grant(store, run['id'], grant)
-    for _ in range(2):budget.reserve_search(store, run['id'], 1)
-    budget.record_candidates(store, run['id'], urls('first-check', 1))
+    for _ in range(2):reserved = budget.reserve_search(store, run['id'], 1)
+    budget.record_candidates(store, run['id'], urls('first-check', 1), reservation=reserved)
     budget.reserve_pages(store, run['id'], urls('first-check', 1))
     research_plan.finish_fact_check(store, run['id'], status='budget_exhausted')
     used = budget.spent(store, run['id'])
@@ -231,15 +231,15 @@ def test_reopened_grant_retains_consumed_credit_without_carrying_unused_budget(t
     # later research. Original requirements and cumulative charges stay fixed.
     research_plan.begin_round(store, run['id'])
     with pytest.raises(budget.BudgetExhausted):budget.reserve_search(store, run['id'], 1)
-    assert budget.record_candidates(store, run['id'], urls('later-research', 1))['allowed_urls'] == []
+    with pytest.raises(research_plan.AdmissionError):budget.record_candidates(store, run['id'], urls('later-research', 1))
     with pytest.raises(budget.BudgetExhausted):budget.reserve_pages(store, run['id'], urls('later-research', 1))
     research_plan.finish_round(store, run['id'])
     research_plan.add_fact_check_grant(store, run['id'], grant)
     view = budget.snapshot(store, run['id'])
     assert view['limits'] == {key: used[key] + grant[key] for key in base}
     assert budget.spent(store, run['id']) == used
-    for _ in range(2):budget.reserve_search(store, run['id'], 1)
-    candidates = budget.record_candidates(store, run['id'], urls('second-check', 4))
+    for _ in range(2):reserved = budget.reserve_search(store, run['id'], 1)
+    candidates = budget.record_candidates(store, run['id'], urls('second-check', 4), reservation=reserved)
     assert len(candidates['allowed_urls']) == 3 and len(candidates['unadmitted_urls']) == 1
     budget.reserve_pages(store, run['id'], urls('second-check', 2))
     with pytest.raises(budget.BudgetExhausted):budget.reserve_search(store, run['id'], 1)
@@ -321,9 +321,10 @@ def test_upgrade_restores_unspent_old_active_grant_before_another_addition(tmp_p
     original_requirements = store.one('runs', run['id'])['requirements']
 
     def spend(label):
-        budget.reserve_search(store, run['id'], 1)
-        budget.record_candidates(store, run['id'], [f'https://example.test/{label}'])
+        reserved = budget.reserve_search(store, run['id'], 1)
+        budget.record_candidates(store, run['id'], [f'https://example.test/{label}'], reservation=reserved)
         budget.reserve_pages(store, run['id'], [f'https://example.test/{label}'])
+        return reserved
 
     spend('research')
     research_plan.finish_round(store, run['id'])
@@ -342,9 +343,9 @@ def test_upgrade_restores_unspent_old_active_grant_before_another_addition(tmp_p
     assert budget.snapshot(store, run['id'])['limits'] == {key: 4 for key in unit}
     assert budget.spent(store, run['id']) == {key: 2 for key in unit}
     spend('after-upgrade-1')
-    spend('after-upgrade-2')
+    reserved = spend('after-upgrade-2')
     with pytest.raises(budget.BudgetExhausted):budget.reserve_search(store, run['id'], 1)
-    assert budget.record_candidates(store, run['id'], ['https://example.test/extra'])['allowed_urls'] == []
+    assert budget.record_candidates(store, run['id'], ['https://example.test/extra'], reservation=reserved)['allowed_urls'] == []
     with pytest.raises(budget.BudgetExhausted):budget.reserve_pages(store, run['id'], ['https://example.test/extra'])
     assert budget.snapshot(store, run['id'])['limits'] == {key: 4 for key in unit}
     assert store.one('runs', run['id'])['requirements'] == original_requirements

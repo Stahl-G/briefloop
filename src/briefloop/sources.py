@@ -363,6 +363,39 @@ def existing_for_run(store,run_id,url):
     return None
 
 
+class PendingSources:
+    """Acquire raw files now; admit source rows and run bindings together later.
+
+    Fetch/extraction uses the normal Store interface, but add_source only stages
+    the decoded text. No network or extraction runs under the admission lock.
+    """
+    def __init__(self,store):
+        self.store=store
+        self.records=[]
+
+    def __getattr__(self,name):
+        return getattr(self.store,name)
+
+    def add_source(self,name,text,*,url=None,error=None,source_id=None):
+        from .store import uid,now,content_hash
+        sid=source_id or uid('src')
+        row={'id':sid,'name':name,'path':'sources/'+sid+'.txt','url':url,
+             'status':'failed' if error else 'ready','error':error,'hash':content_hash(text),'created':now()}
+        self.records.append((row,text))
+        return row
+
+    def admit(self,run_id,reservation,*,status='completed'):
+        from .research_plan import admit_response
+        with self.store.tx() as connection:
+            if not admit_response(connection,run_id,reservation,'pages',status=status):return False
+            for row,text in self.records:
+                saved=self.store.add_source(row['name'],text,url=row['url'],error=row['error'],
+                                             source_id=row['id'],connection=connection)
+                connection.execute('INSERT OR IGNORE INTO run_sources VALUES(?,?)',(run_id,row['id']))
+                row.update(saved)
+        return True
+
+
 def fetch_for_run(store,run_id,url):
     import json
     run=store.one('runs',run_id)
@@ -372,10 +405,23 @@ def fetch_for_run(store,run_id,url):
     if previous:return {**previous,'reused':True,'budget':budget.snapshot(store,run_id)}
     try:reservation=budget.reserve_pages(store,run_id,[url])
     except budget.BudgetExhausted as exc:return {**exc.result,'url':url}
-    source=fetch(store,url)
-    store.attach_source(run_id,source['id'])
-    if reservation.get('round_id'):
-        from .research_plan import settle_request
-        settle_request(store,run_id,reservation['request_id'],'completed' if source.get('status')=='ready' else 'failed')
+    pending=PendingSources(store)
+    source=fetch(pending,url)
+    status='completed' if source.get('status')=='ready' else 'failed'
+    accepted=pending.admit(run_id,reservation,status=status)
+    provenance=store.root/'sources'/(source['id']+'.provenance.json')
+    envelope={'local_request_id':reservation['request_id'],'run_id':run_id,'round_id':reservation.get('round_id'),
+              'stage':reservation.get('stage'),'operation':'direct_fetch','url':url,
+              'outcome':status if accepted else 'response_rejected','source_id':source['id'],
+              'error':source.get('error'),'admitted':accepted,
+              'provenance_path':str(provenance.relative_to(store.root)) if provenance.exists() else None}
+    path=budget.save_request_record(store,run_id,reservation['request_id'],envelope)
+    from .research_plan import settle_request,AdmissionError
+    settle_request(store,run_id,reservation['request_id'],status,record_path=path)
+    if not accepted:
+        error=AdmissionError('请求所属阶段已结束或更换；迟到网页响应已保留，未登记为报告来源',code='response_rejected')
+        error.request_record_path=path
+        raise error
     return {**source,'reused':False,'budget':budget.snapshot(store,run_id),
-            'round_id':reservation.get('round_id'),'local_request_id':reservation.get('request_id')}
+            'round_id':reservation.get('round_id'),'local_request_id':reservation.get('request_id'),
+            'request_record_path':path}

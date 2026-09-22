@@ -167,19 +167,24 @@ def search(query,*,provider=None,topic='general',time_range=None,start_date=None
             'local_request_id':local_id,'provider_request_id':provider_request_id,'outcome':'success','failure_kind':None,
             'request_record_path':None,'round_id':round_id,'note':module.search_note()}
     if reservation:
-        admitted=budget.record_candidates(store,run_id,[row['url'] for row in results])
+        admitted=budget.record_candidates(store,run_id,[row['url'] for row in results],reservation=reservation)
         allowed=set(admitted['allowed_urls'])
         from .search_policy import record_origins
-        record_origins(store,allowed,envelope)
+        if admitted['accepted']:record_origins(store,allowed,envelope)
         envelope['admitted_urls']=sorted(allowed);envelope['unadmitted_urls']=admitted['unadmitted_urls'];envelope['budget_after']=admitted['budget']
         output.update({'results':[row for row in results if budget.canonical_url(row['url']) in allowed],
-                       'status':'budget_exhausted' if admitted['unadmitted_urls'] else 'ok',
+                       'status':('response_rejected' if not admitted['accepted'] else
+                                 'budget_exhausted' if admitted['unadmitted_urls'] else 'ok'),
                        'unadmitted_urls':admitted['unadmitted_urls'],'discovery_path':discovery,
                        'remaining':admitted['budget']['remaining'],'budget':admitted['budget']})
+        if not admitted['accepted']:
+            envelope['outcome']=output['outcome']='response_rejected'
+            envelope['rejection_reason']='stage_closed_or_replaced'
+            output['message']='请求所属阶段已结束或更换；迟到搜索响应已保留，候选未接纳，也未占用新阶段额度'
         output['request_record_path']=budget.save_request_record(store,run_id,reservation['request_id'],envelope)
         from .research_plan import settle_request
         settle_request(store,run_id,reservation['request_id'],'completed',record_path=output['request_record_path'])
-        if admitted['unadmitted_urls']:
+        if admitted['accepted'] and admitted['unadmitted_urls']:
             output['message']='候选 URL 预算已用完；未纳入的 URL 和完整搜索响应已保留，不继续扩大检索'
     return output
 
