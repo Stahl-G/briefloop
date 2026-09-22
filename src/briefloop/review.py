@@ -625,14 +625,25 @@ def accept_review(store,review_id,value,dry_run=False):
         seen_requirements.add(check.requirement_id)
         if check.status=='manual' and requirements[check.requirement_id]['mode']!='manual':raise ValueError('Reviewer 不能把必答要求改为人工待填')
     allowed_finding_requirements = set(allowed_requirements)
+    mixed_parent_clauses = {}
     # "complete" is a claim about coverage; an empty or partial check list with
     # the coverage flag unset cannot carry it, whatever the summary says.
     if result.status=='complete' and not result.coverage_scan_complete:
         raise ValueError('status=complete 必须在检查过正文重要主张遗漏后同时设 coverage_scan_complete=true；未完成请标为 incomplete')
     if review['data'].get('protocol','legacy')=='clauses_v1':
         validate_clause_checks(current['requirements'],result.clause_checks,result.status)
-        from .deliverable_spec import clause_items
-        allowed_finding_requirements.update(c['clause_id'] for c in clause_items(current['requirements']))
+        from .deliverable_spec import SOFT_CONTRACT_KINDS, clause_items
+        clauses = clause_items(current['requirements'])
+        allowed_finding_requirements.update(c['clause_id'] for c in clauses)
+        by_parent = {}
+        for clause in clauses:
+            by_parent.setdefault(clause['requirement_id'], []).append(clause)
+        mixed_parent_clauses = {
+            parent: [clause['clause_id'] for clause in items]
+            for parent, items in by_parent.items()
+            if any(clause['kind'] in SOFT_CONTRACT_KINDS for clause in items)
+            and any(clause['kind'] not in SOFT_CONTRACT_KINDS for clause in items)
+        }
     elif result.status=='complete' and allowed_requirements-seen_requirements:
         raise ValueError('完整审阅缺少 requirement_checks；未核对的 requirement_id='+','.join(sorted(allowed_requirements-seen_requirements)))
     for finding in result.findings:
@@ -644,6 +655,16 @@ def accept_review(store,review_id,value,dry_run=False):
                 raise ValueError('发现引用了本次正文不存在的块ID='+','.join(sorted(set(finding.block_ids)-allowed_blocks))+'；段落ID见 report.txt 每行开头，不确定时省略 block_ids')
         if not set(finding.requirement_ids).issubset(allowed_finding_requirements):
             raise ValueError('发现引用了未登记的要求ID='+','.join(sorted(set(finding.requirement_ids)-allowed_finding_requirements))+'；可用的要求ID='+','.join(sorted(allowed_finding_requirements)))
+        # A mixed parent is hard at the release gate. A new compliance finding
+        # must identify its actual clause so its delivery effect is unambiguous.
+        # Response findings only refer to previously saved findings and may carry
+        # their old parent IDs while the reviewer resolves them.
+        if not finding.response_to and finding.severity == 'major' and finding.kind in ('missing_requirement', 'execution_gap'):
+            mixed = sorted(set(finding.requirement_ids) & mixed_parent_clauses.keys())
+            if mixed:
+                choices = sorted({cid for parent in mixed for cid in mixed_parent_clauses[parent]})
+                raise ValueError('重大要求或执行缺口不能引用混合父 requirement_id='+','.join(mixed)
+                                 +'；请引用本次冻结的具体 clause_id='+','.join(choices))
     expected_responses=set(_response_scope(store,packet,result.version_id))
     checks={}
     for check in result.response_checks:
@@ -824,7 +845,7 @@ def run_review(store,runtime,job,version_id,folder):
     # a legacy review restored after upgrade must keep the legacy instruction.
     protocol=review['data'].get('protocol','legacy')
     clauses=clause_items(target['requirements']) if protocol=='clauses_v1' else []
-    requirement_instruction=('本次为条款级审阅：对下表的 reader_contract 条款逐条给 clause_checks（clause_id、status(covered/partial/missing/not_applicable/unverified)、reason、basis）。clause_id 必须逐字复制程序给出的 ID，不要自行计算或改写。reader_content 核对正文是否实际回答；research_method 核对方法是否落实（过程要求需有来源、核查或执行记录，无法确认写 unverified）；writing_preference 核对呈现；manual_assignment 只核对占位。not_applicable 仅限条款自身带适用条件且本稿不满足，并给依据；内容条款不得标为不适用。必须逐条覆盖；仍要对照原始要求，发现漏拆或误分类用 finding 指出。' if clauses else
+    requirement_instruction=('本次为条款级审阅：对下表的 reader_contract 条款逐条给 clause_checks（clause_id、status(covered/partial/missing/not_applicable/unverified)、reason、basis）。clause_id 必须逐字复制程序给出的 ID，不要自行计算或改写。reader_content 核对正文是否实际回答；research_method 核对方法是否落实（过程要求需有来源、核查或执行记录，无法确认写 unverified）；writing_preference 核对呈现；manual_assignment 只核对占位。not_applicable 仅限条款自身带适用条件且本稿不满足，并给依据；内容条款不得标为不适用。必须逐条覆盖；仍要对照原始要求，发现漏拆或误分类用 finding 指出。重大 missing_requirement 或 execution_gap 若引用同时含硬软条款的原始要求，findings.requirement_ids 必须写具体冻结 clause_id，不能写混合父 requirement_id。' if clauses else
         '对requirements.requirement_items逐项给requirement_checks：requirement_id、status(covered/manual/partial/missing)、reason。manual只能用于用户原要求中mode=manual的项目，不得自行降低必答要求。')
     packet_guide=('先读 overview.json，它说明每个文件的内容和大小：正文纯文本在 report.txt（每行一个段落，前面是段落ID），要求在 requirements.json，主张与证据在 claims.json，数字绑定在 numbers.json，引用摘录在 citations.json；target.json 是这些视图的完整依据，需要其他字段时按字段读取。'
                   if (folder/'packet'/'overview.json').exists() else '先看target.json的本轮要求、正文和claim_evidence关联；')
