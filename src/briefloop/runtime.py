@@ -585,6 +585,9 @@ class Worker:
                 if row is None:raise ValueError('任务不存在')
                 job=dict(row)
                 if job['status'] not in ('failed','interrupted','cancelled'):raise ValueError('这个任务不需要恢复')
+                # Stop commits before execution unwinds; keep its slot until final settlement.
+                if jid in self._generation_jobs or jid in self._review_jobs or jid==self.current or jid==self.file_current:
+                    raise ValueError('原任务仍在停止，请稍后恢复')
                 payload=json.loads(job['payload'])
                 if payload.get('inline_owner_job_id'):
                     raise ValueError('这是学习任务内部的试写，请恢复对应的学习任务，它会接着跑这一步')

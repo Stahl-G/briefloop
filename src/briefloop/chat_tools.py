@@ -120,7 +120,7 @@ def workspace_action(store, request):
     if action=='company_config':
         enabled=request.get('enabled')
         if type(enabled) is not bool:raise ValueError('请选择是否启用企业背景知识库')
-        store.set_meta('settings',{**store.settings(),'company_context_enabled':enabled})
+        store.update_settings({'company_context_enabled':enabled})
         return {'enabled':enabled}
     if action=='company_update':
         from .company_context import propose

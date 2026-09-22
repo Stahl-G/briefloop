@@ -112,7 +112,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
     try:
         store=Store(workspace)
         if backend is not None:
-            store.set_meta('settings',Settings.model_validate({**store.settings(),'agent_backend':backend}).model_dump())
+            store.update_settings({'agent_backend':backend})
     except BaseException:
         lock.close();raise
     harness=HarnessManager(store)
@@ -639,12 +639,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                     from .native_providers import catalog
                     result=catalog(body)
                 elif path=='/api/settings':
-                    from .learning_budget import apply_settings_change
-                    merged=apply_settings_change(store.settings(),body)
-                    # Saving a model is the explicit choice the pending flag waits for.
-                    if 'model_selection_required' not in body and str(body.get('model') or '').strip():merged['model_selection_required']=False
-                    settings=Settings.model_validate(merged)
-                    store.set_meta('settings',settings.model_dump());result=settings.model_dump()
+                    result=store.update_settings(body)
                     if 'auto_learn' in body:worker.opened_paused=False
                 elif path=='/api/release':
                     from .release import enqueue_release

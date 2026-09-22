@@ -163,8 +163,9 @@ class Store:
         with self.tx() as c:
             c.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", (key, dump(value)))
 
-    def settings(self):
-        result=Settings.model_validate(self.meta("settings")).model_dump()
+    def settings(self, *, connection=None):
+        value=self.meta('settings') if connection is None else json.loads(connection.execute("SELECT value FROM meta WHERE key='settings'").fetchone()['value'])
+        result=Settings.model_validate(value).model_dump()
         if result.get('model_provider') is None:
             result.pop('model_provider',None)
         backend=result.get('agent_backend','codex')
@@ -177,6 +178,25 @@ class Store:
                 # so the UI can show them, and fail loudly only when enqueued.
                 shaped[role]={key:config[key] for key in ('model','model_provider','reasoning_effort','model_variant') if key in config}
         result['role_models']=shaped
+        return result
+
+    def update_settings(self, changes):
+        """Apply a patch (or compute one) against the latest settings atomically.
+
+        Hold the SQLite write transaction through merge and validation, so an
+        unrelated save cannot restore a concurrently revoked learning consent.
+        Transforms are for read-dependent changes such as appending a target.
+        """
+        from .learning_budget import apply_settings_change
+        with self.tx() as c:
+            current=self.settings(connection=c)
+            body=changes(current) if callable(changes) else changes
+            merged=apply_settings_change(current,body)
+            # Saving a model is the explicit choice the pending flag waits for.
+            if 'model_selection_required' not in body and str(body.get('model') or '').strip():
+                merged['model_selection_required']=False
+            result=Settings.model_validate(merged).model_dump()
+            c.execute("INSERT OR REPLACE INTO meta VALUES('settings',?)",(dump(result),))
         return result
 
     def add_source(self, name, text, *, url=None, error=None, source_id=None, connection=None):
@@ -511,17 +531,16 @@ class Store:
         show a selected model while still refusing to start a report because the
         pending-selection flag was never cleared.
         """
-        settings=self.settings()
-        if not settings.get('model_selection_required'):return settings
-        backend=backend or settings.get('agent_backend','codex')
-        fields=runtime_fields(runtime or {},backend)
-        if not str(fields.get('model') or '').strip():return settings
-        if backend not in ('codex','opencode','briefloop-native'):
-            fields['runtime_efforts']={**settings.get('runtime_efforts',{}),backend:fields.pop('reasoning_effort',None)}
-            fields.update(model_provider=None,model_variant=None)
-        updated=Settings.model_validate({**settings,**fields,'agent_backend':backend,'model_selection_required':False})
-        self.set_meta('settings',updated.model_dump())
-        return updated.model_dump()
+        def change(settings):
+            if not settings.get('model_selection_required'):return {}
+            chosen=backend or settings.get('agent_backend','codex')
+            fields=runtime_fields(runtime or {},chosen)
+            if not str(fields.get('model') or '').strip():return {}
+            if chosen not in ('codex','opencode','briefloop-native'):
+                fields['runtime_efforts']={**settings.get('runtime_efforts',{}),chosen:fields.pop('reasoning_effort',None)}
+                fields.update(model_provider=None,model_variant=None)
+            return {**fields,'agent_backend':chosen,'model_selection_required':False}
+        return self.update_settings(change)
 
     def role_model_config(self, runtime=None, backend=None):
         base=runtime or self.runtime_config()

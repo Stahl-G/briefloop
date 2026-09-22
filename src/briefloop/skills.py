@@ -9,9 +9,7 @@ def register_target(store, role_id, instruction):
     roles=store.meta('additional_roles',{})
     roles[role_id]={'role_id':role_id,'instruction':instruction}
     store.set_meta('additional_roles',roles)
-    settings=store.settings()
-    if role_id not in settings['skill_targets']:
-        settings['skill_targets'].append(role_id);store.set_meta('settings',settings)
+    store.update_settings(lambda settings: {'skill_targets': list(dict.fromkeys([*settings['skill_targets'],role_id]))})
     return roles[role_id]
 
 

@@ -56,6 +56,7 @@ def test_stop_is_persisted_before_transport_finishes_and_settlement_cannot_overw
     else:worker._review_jobs[job['id']]=(None,runtime,None)
     worker.stop_job(job['id'])
     assert store.one('jobs',job['id'])['status']=='cancelled' and runtime.cancelled.is_set()
+    with pytest.raises(ValueError,match='仍在停止'):worker.resume(job['id'])
     worker._settle_job(job['id'],'complete',result={'saved':True},runtime=runtime)
     worker._settle_job(job['id'],'failed',error='Late transport failure')
     assert store.one('jobs',job['id'])['status']=='cancelled'
@@ -155,6 +156,53 @@ def wait_for(check):
     assert check()
 
 
+def test_report_resume_waits_for_cancelled_executor_to_release_ownership(tmp_path):
+    store=Store(tmp_path)
+    store.set_meta('settings',{**store.settings(),'auto_learn':False,'max_reports':2})
+    worker=Worker(store,NoModel(),report_runtime_factory=NoModel)
+    entered={};started={attempt:threading.Event() for attempt in (1,2)}
+    release={attempt:threading.Event() for attempt in (1,2)}
+    def generate(job):
+        attempt=json.loads(job['payload']).get('attempt',1)
+        entered[attempt]=worker.runtime;started[attempt].set()
+        assert release[attempt].wait(10),'test did not release the report executor'
+        return {'attempt':attempt}
+    worker.generate=generate
+    job=store.enqueue('generate',{})
+    worker.thread.start()
+    try:
+        assert started[1].wait(5)
+        first_thread,first_runtime=worker._generation_jobs[job['id']]
+        worker.stop_job(job['id'])
+        stopped=store.one('jobs',job['id'])
+        assert stopped['status']=='cancelled' and first_runtime.cancelled.is_set()
+        # A spare slot must not admit a new attempt while the old one can settle.
+        with pytest.raises(ValueError,match='仍在停止'):worker.resume(job['id'])
+        assert store.one('jobs',job['id'])==stopped
+        assert worker._generation_jobs[job['id']]==(first_thread,first_runtime)
+        assert first_thread.is_alive() and not started[2].is_set()
+        release[1].set();first_thread.join(5)
+        assert not first_thread.is_alive() and job['id'] not in worker._generation_jobs
+        assert store.one('jobs',job['id'])==stopped
+
+        resumed=worker.resume(job['id'])
+        assert json.loads(resumed['payload'])['attempt']==2
+        assert started[2].wait(5)
+        second_thread,second_runtime=worker._generation_jobs[job['id']]
+        assert second_runtime is entered[2] and second_runtime is not first_runtime
+        assert store.one('jobs',job['id'])['status']=='running'
+        worker.stop_job(job['id'])
+        assert second_runtime.cancelled.is_set()
+        release[2].set();second_thread.join(5)
+        assert not second_thread.is_alive() and job['id'] not in worker._generation_jobs
+        finished=store.one('jobs',job['id'])
+        assert finished['status']=='cancelled' and json.loads(finished['payload'])['attempt']==2
+        assert not finished['result']  # Neither cancelled executor replaced the saved result.
+    finally:
+        for gate in release.values():gate.set()
+        worker.close()
+
+
 def test_word_file_completes_while_generation_and_review_still_run(tmp_path):
     from zipfile import ZipFile
     from briefloop.export_jobs import enqueue_export,output_path
@@ -204,6 +252,7 @@ def test_file_stop_preserves_terminal_state_without_cancelling_model_and_can_res
         worker.stop_job(export['id'])
         assert store.one('jobs',export['id'])['status']=='cancelled'
         assert worker._file_cancelled.is_set() and not primary.cancelled.is_set()
+        with pytest.raises(ValueError,match='仍在停止'):worker.resume(export['id'])
         release_settlement.set();wait_for(lambda:worker.file_current is None)
         assert store.one('jobs',export['id'])['status']=='cancelled'
         assert store.one('jobs',generation['id'])['status']=='running'
