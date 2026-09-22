@@ -26,6 +26,56 @@ def until(check):
         time.sleep(.01)
     assert check()
 
+def test_owned_child_metadata_before_and_after_legacy_spawn(tmp_path):
+    for metadata_first in (False,True):
+        manager=HarnessManager(Store(tmp_path/str(metadata_first)),RPC)
+        sid=manager.create_session()['id'];other=manager.create_session()['id']
+        try:
+            manager.send(sid,'synthetic task')
+            until(lambda:manager.snapshot(sid)['session']['turn_id']=='turn1')
+            manager.send(other,'unrelated task')
+            until(lambda:manager.snapshot(other)['session']['turn_id']=='turn2')
+            def started(thread,parent,role=None):
+                manager.handle_notification({'method':'thread/started','params':{'thread':{
+                    'id':thread,'agentRole':role,'preview':'PRIVATE PREVIEW',
+                    'turns':[{'prompt':'PRIVATE PROMPT'}],
+                    'source':{'subAgent':{'thread_spawn':{'parent_thread_id':parent,
+                        'agent_path':'PRIVATE PATH','agent_role':'not-an-actual-role','depth':1}}}}}})
+            def spawn(parent,receivers):
+                manager.handle_notification({'method':'item/completed','params':{
+                    'threadId':parent,'turnId':'turn1','item':{'id':'spawn','type':'collabAgentToolCall',
+                    'tool':'spawnAgent','status':'completed','receiverThreadIds':receivers,
+                    'agentsStates':{r:{'status':'running'} for r in receivers}}}})
+            started('outsider','unknown','unrelated')
+            assert 'outsider' not in manager._children
+            if metadata_first:
+                started('child','t1','analyst')
+                assert 'child' not in manager._active_children  # Identity is not activity.
+            spawn('t1',['child'])
+            if not metadata_first:started('child','t1','analyst')
+            started('grandchild','child')
+            started('grandchild','not-yet-known','scout')
+            started('other-child','t2','reviewer')
+            started('other-child','t1','wrong-owner')
+            spawn('t1',['other-child','t2'])
+            assert manager._children['other-child']==other
+            assert 't2' not in manager._children
+            main_usage={'total':{'totalTokens':100}}
+            for thread,turn,usage in [('t1','turn1',main_usage),('child','child-turn',{'total':{'totalTokens':21}})]:
+                manager.handle_notification({'method':'thread/tokenUsage/updated','params':{
+                    'threadId':thread,'turnId':turn,'tokenUsage':usage}})
+            snapshot=manager.snapshot(sid)
+            identities=[e['data'] for e in snapshot['events'] if e['kind']=='child/thread/started']
+            assert identities==[{'threadId':'child','parentThreadId':'t1','agentRole':'analyst'},
+                                {'threadId':'grandchild','parentThreadId':'child','agentRole':None},
+                                {'threadId':'grandchild','agentRole':'scout'}]
+            assert snapshot['token_usage']==main_usage
+            usage_events=[e['data'] for e in snapshot['events'] if e['kind'].endswith('tokenUsage/updated')]
+            assert [(e['threadId'],e['turnId']) for e in usage_events]==[('t1','turn1'),('child','child-turn')]
+            assert all(text not in str(snapshot) for text in ('PRIVATE','other-child','wrong-owner','outsider'))
+        finally:
+            manager.close()
+
 def test_queue_steering_and_public_stream(tmp_path):
     manager=HarnessManager(Store(tmp_path),RPC)
     sid=manager.create_session(runtime={'permission':'read-only'})['id']
