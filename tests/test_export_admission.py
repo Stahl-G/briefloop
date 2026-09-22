@@ -52,7 +52,7 @@ def test_reader_source_upgrade_invalidates_both_renderer_caches(tmp_path, monkey
     current_input = export_jobs.export_input
     def old_input(*args, **kwargs):
         identity, figures = current_input(*args, **kwargs)
-        identity['renderer'] = 15 if identity['requirements'].get('template_id') else 17
+        identity['renderer'] = 22 if identity['requirements'].get('template_id') else 23
         return identity, figures
     for layout in (None, template_id):
         monkeypatch.setattr(export_jobs, 'export_input', old_input)

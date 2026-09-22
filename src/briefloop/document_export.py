@@ -64,7 +64,7 @@ def without_duplicate_cover_heading(document,title):
     return result
 
 
-def render_document(doc, document, *, figures=None, sources=None, append_sources=True, styles=None):
+def render_document(doc, document, *, figures=None, sources=None, append_sources=True, styles=None, citations=None):
     from .industry_export import append_figure
     document = normalize_document(document); figures = figures or {}; sources = sources or {}; styles = styles or {}
     used = []; section = doc.sections[0]
@@ -254,6 +254,11 @@ def render_document(doc, document, *, figures=None, sources=None, append_sources
                         {'type': 'textStyle', 'attrs': {'color': '#0563C1'}}]}])
             else:
                 p.add_run(label)
+            # Locations belong to this saved version, not the global source.
+            # Keep the title's hyperlink and the source paragraph's bookmark.
+            locators=list(dict.fromkeys(ref.get('locator','') for ref in (citations or [])
+                                        if ref.get('source_id')==sid and ref.get('locator')))
+            if locators:p.add_run(' · '+'；'.join(locators))
     from .industry_export import populate_table_of_contents
     populate_table_of_contents(doc)
     return doc
