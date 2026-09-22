@@ -210,6 +210,156 @@ def check_numbers(markdown, bindings, store=None, allowed_sources=None):
     return results
 
 
+_NUMERIC_OCCURRENCE_SAMPLE_LIMIT = 12
+_VISIBLE_URL = re.compile(r'(?i)(?:https?://|www\.)[^\s<>]+')
+
+
+def numeric_occurrence_review(document, bindings, results):
+    """Locate explicit-unit numbers not uniquely covered by a checked binding.
+
+    This is a writing aid, not a rate of factual correctness. Each repeated
+    appearance is a separate occurrence; unrecognised units and table values
+    whose unit exists only in a header deliberately remain outside its scope.
+    """
+    from .document_model import document_markdown, markdown_document, table_layout
+
+    def visible_text(node):
+        kind = node.get('type')
+        if kind in ('codeBlock', 'citation', 'image', 'tableHeader'):
+            return '\ufffc'
+        if kind == 'text':
+            if any(mark.get('type') == 'code' for mark in node.get('marks', [])):
+                return '\ufffc'
+            value = node.get('text', '')
+            # A visible URL is a locator, even when a unit-like suffix occurs.
+            return _VISIBLE_URL.sub('\ufffc', value)
+        if kind == 'hardBreak':
+            return '\ufffc'
+        children = [visible_text(child) for child in node.get('content', [])]
+        return ('\ufffc' if kind in ('tableCell', 'blockquote', 'listItem') else '').join(children)
+
+    candidates = []
+    paragraph_index = 0
+    table_index = 0
+    raw_blocks = {}
+
+    def raw_scanned_block(node):
+        """Render only eligible content, retaining its original Markdown marks.
+
+        The real quote may be in a heading, code node or table header that the
+        visible scanner skips. A matching plain number elsewhere must not
+        inherit that binding just because formatting projects to the same text.
+        """
+        identity = id(node)
+        if identity not in raw_blocks:
+            def without_excluded(item):
+                kind = item.get('type')
+                if kind in ('codeBlock', 'image'):
+                    return {'type': 'paragraph', 'content': [{'type': 'text', 'text': '\ufffc'}]}
+                if kind in ('citation', 'hardBreak') or (
+                        kind == 'text' and any(mark.get('type') == 'code' for mark in item.get('marks', []))):
+                    return {'type': 'text', 'text': '\ufffc'}
+                copy = dict(item)
+                if kind == 'text':
+                    copy['text'] = _VISIBLE_URL.sub('\ufffc', item.get('text', ''))
+                elif 'content' in item:
+                    copy['content'] = [without_excluded(child) for child in item['content']]
+                return copy
+
+            blocks = node.get('content', []) if node.get('type') == 'tableCell' else [node]
+            try:
+                raw_blocks[identity] = document_markdown({'type': 'doc',
+                    'content': [without_excluded(block) for block in blocks]})
+            except ValueError:
+                raw_blocks[identity] = ''
+        return raw_blocks[identity]
+
+    def scan(text, location, node):
+        for start, end, (_, dimension) in quantities(text):
+            if dimension in ('scalar', 'year'):
+                continue
+            # Ordinal labels such as 第1次 or 第2项 are not factual quantities.
+            if re.search(r'第\s*$', text[max(0, start - 4):start]):
+                continue
+            context = text[max(0, start - 30):min(len(text), end + 30)].replace('\ufffc', ' ').strip()
+            candidates.append({'text': text[start:end], 'context': context,
+                               'start': start, 'end': end, 'body': text, 'node': node, **location})
+
+    def walk(node):
+        nonlocal paragraph_index, table_index
+        kind = node.get('type')
+        if kind in ('codeBlock', 'heading', 'tableHeader'):
+            return
+        if kind == 'table':
+            table_index += 1
+            for row, column, _, _, cell in table_layout(node)[2]:
+                if cell.get('type') != 'tableCell':
+                    continue
+                location = {'kind': 'table_cell', 'table': table_index,
+                            'row': row + 1, 'column': column + 1}
+                block_id = (cell.get('attrs') or {}).get('blockId')
+                if block_id:
+                    location['block_id'] = block_id
+                scan(visible_text(cell), location, cell)
+            return
+        if kind == 'paragraph':
+            paragraph_index += 1
+            location = {'kind': 'paragraph', 'paragraph': paragraph_index}
+            block_id = (node.get('attrs') or {}).get('blockId')
+            if block_id:
+                location['block_id'] = block_id
+            scan(visible_text(node), location, node)
+            return
+        for child in node.get('content', []):
+            walk(child)
+
+    walk(document)
+    covered = set()
+    for binding, result in zip(bindings or [], results):
+        if not result.get('checked') or not result.get('found') or not isinstance(binding, dict):
+            continue
+        quote, token = binding.get('report_quote', ''), binding.get('number_text', '')
+        if not quote or not token or quote.count(token) != 1:
+            continue
+        # check_numbers has already proven the original Markdown quote is
+        # unique. The occurrence scan reads visible rich-text nodes instead:
+        # **1200万元** and [1200万元](url) both display as 1200万元. Project the
+        # quote through the same Markdown importer without relaxing uniqueness
+        # of the visible position. Ambiguous projections remain review hints.
+        forms = [quote]
+        if any(marker in quote for marker in ('*', '_', '[', '`', '~', '\\', '>')):
+            try:
+                projected = visible_text(markdown_document(quote))
+                if projected and projected not in forms and '\ufffc' not in projected:
+                    forms.append(projected)
+            except ValueError:
+                pass
+        matching = set()
+        for form in forms:
+            if form.count(token) != 1:
+                continue
+            for index, candidate in enumerate(candidates):
+                if candidate['text'] != token or raw_scanned_block(candidate['node']).count(quote) != 1:
+                    continue
+                body = candidate['body']
+                if body.count(form) != 1:
+                    continue
+                start = body.index(form) + form.index(token)
+                if candidate['start'] == start:
+                    matching.add(index)
+        if len(matching) == 1:
+            covered.update(matching)
+
+    remaining = [candidate for index, candidate in enumerate(candidates) if index not in covered]
+    samples = [{key: value for key, value in candidate.items() if key not in ('body', 'node', 'start', 'end')}
+               for candidate in remaining[:_NUMERIC_OCCURRENCE_SAMPLE_LIMIT]]
+    return {'candidate_count': len(candidates), 'checked_occurrences': len(covered),
+            'review_candidate_count': len(remaining), 'samples': samples,
+            'sample_limit': _NUMERIC_OCCURRENCE_SAMPLE_LIMIT,
+            'truncated': len(remaining) > len(samples),
+            'scope': '仅定位正文及数据单元格中可识别的带明确单位数值；每次出现单独计数。跳过代码、标题、网址、引用标识、独立年份与序号。单位只在表头、复杂单位或富文本跨段时可能漏检；待看候选不等于错误，已匹配也不证明事实含义或来源支持。'}
+
+
 def check_export(markdown):
     return {'escaped_bold': bool(ESCAPED_BOLD_RE.search(markdown or '')),
             'figure_markers': sorted(set(re.findall(r'briefloop-figure:([A-Za-z0-9_-]+)', markdown or '')))}
@@ -262,7 +412,9 @@ def brief_checks(store, version_id):
     allowed = set(store.source_ids(run['id'])) - references
     numbers = check_numbers(brief['markdown'], detail.get('number_bindings'), store, allowed)
     from .document_model import brief_document
-    layout = check_layout(brief_document(brief))
+    document = brief_document(brief)
+    layout = check_layout(document)
+    occurrence_review = numeric_occurrence_review(document, detail.get('number_bindings'), numbers)
     rows = store.rows('SELECT data FROM assessments WHERE version_id=? ORDER BY rowid DESC LIMIT 1', (version_id,))
     checked = sum(r['checked'] for r in numbers)
     export = check_export(brief['markdown'])
@@ -299,7 +451,8 @@ def brief_checks(store, version_id):
                         # inactive case.  A binary presence signal only: dates
                         # and line references also count, so it is NOT a
                         # matched-rate denominator.
-                        'body_quantity_count': len(list(quantities(brief['markdown'])))},
+                        'body_quantity_count': len(list(quantities(brief['markdown']))),
+                        'occurrence_review': occurrence_review},
             'export': export,
             'layout': layout,
             'assessment_overall': json.loads(rows[0]['data']).get('overall') if rows else None}

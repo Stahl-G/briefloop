@@ -68,7 +68,8 @@ def _table_citation_notes(draft):
 
 
 def inspect_draft(value, requirements=None, *, store=None, allowed_sources=None):
-    from .delivery_checks import check_numbers, quantities
+    from .delivery_checks import check_numbers, numeric_occurrence_review, quantities
+    from .document_model import markdown_document
     draft = BriefDraft.model_validate(value)
     req = requirements or {}
     length = length_stats(draft.markdown, target_words=req.get('target_words'), max_words=req.get('max_words'))
@@ -80,10 +81,17 @@ def inspect_draft(value, requirements=None, *, store=None, allowed_sources=None)
         sections.append({'title': title.strip(), 'body_units': count_brief(body)})
     cited = set(re.findall(r'\[@([^\]\n]+)\]', draft.markdown))
     located = {c.source_id for c in draft.citations if c.locator.strip()}
-    numbers = check_numbers(draft.markdown, [b.model_dump() for b in draft.number_bindings],
+    bindings = [b.model_dump() for b in draft.number_bindings]
+    numbers = check_numbers(draft.markdown, bindings,
                             store=store, allowed_sources=allowed_sources)
     checked = sum(n['checked'] for n in numbers)
     quantity_count = len(list(quantities(draft.markdown)))
+    try:
+        occurrence_review = numeric_occurrence_review(
+            draft.editor_document or markdown_document(draft.markdown), bindings, numbers)
+    except ValueError:
+        # A new advisory cannot make an otherwise saveable legacy draft fail.
+        occurrence_review = None
     warnings = []
     notes = []
     if length['over_limit']:
@@ -101,12 +109,19 @@ def inspect_draft(value, requirements=None, *, store=None, allowed_sources=None)
     if any(not n['checked'] for n in numbers):
         warnings.append({'code': 'number_unchecked', 'kind': 'needs_semantic_review',
                          'message': '部分绑定缺定位或工具无法检查。缺定位可补；不支持的单位保留原状交审阅，不删单位或反复改数值以消除提示。'})
+    if occurrence_review and occurrence_review['review_candidate_count']:
+        notes.append({'code': 'numeric_occurrences_to_review', 'kind': 'advisory',
+                      'count': occurrence_review['review_candidate_count'],
+                      'samples': occurrence_review['samples'],
+                      'message': '正文中还有带明确单位的数值出现位置，未找到唯一对应的成功数值绑定；请判断是否需要核对来源或说明计算依据。候选不是事实错误。',
+                      'scope': occurrence_review['scope']})
     notes.extend(_table_citation_notes(draft))
     return {'status': 'needs_attention' if warnings else 'checks_completed',
             'review_status': 'not_reviewed', 'length': length, 'sections': sections,
             'citations': {'body_source_count': len(cited), 'missing_locator': sorted(cited - located)},
             'numbers': {'total': len(numbers), 'checked': checked,
                         'status': 'not_checked' if not checked else 'partial' if checked < len(numbers) else 'checked_bindings',
-                        'body_quantity_count': quantity_count, 'results': numbers},
+                        'body_quantity_count': quantity_count, 'results': numbers,
+                        'occurrence_review': occurrence_review},
             'warnings': [{**w, 'kind': w.get('kind', 'repairable_error')} for w in warnings], 'notes': notes,
             'scope': '仅确定性诊断；各章是否充分、主体/期间/条件、引用支持与推断强度仍需独立审阅。'}
