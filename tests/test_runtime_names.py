@@ -32,3 +32,9 @@ def test_the_card_takes_the_name_from_the_record_it_is_given():
 def test_every_backend_python_offers_is_a_runtime_the_bridge_knows():
     from briefloop.backends import BRIDGE_BACKENDS
     assert not set(BRIDGE_BACKENDS) - set(CATALOG)
+
+
+def test_native_discovery_uses_the_canonical_product_name(monkeypatch):
+    from briefloop import native_engine, host_bins
+    monkeypatch.setattr(host_bins, 'find', lambda _: '/test/node')
+    assert native_engine.discovery()['name'] == BACKEND_LABELS['briefloop-native'] == 'BriefLoop Agent'

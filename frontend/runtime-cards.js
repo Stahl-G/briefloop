@@ -45,7 +45,7 @@ export function runtimeModelSummary(id,chosen,model,catalog){
  return `模型 <strong>${esc(choice)}</strong>${catalog?`<span class="runtime-model-source">${esc(source||'模型目录')} · ${catalog.models.length} 项</span>`:''}`;
 }
 export function runtimeCard(r,{chosen,model,catalog,compact=false}){
- const name=r.id==='briefloop-native'?'BriefLoop Agent':r.name||r.id;
+ const name=r.name||r.id;
  const icon=runtimeIcon(r.id);
  const protocol={acp:'ACP','claude-stream-json':'流式 JSON','opencode-json':'OpenCode JSON','native-manager':'原生 Agent 接口'}[r.protocol]||r.protocol;
  const capabilityNames={chat:'对话',cancel:'停止任务',resume:'续接',images:'图片',questions:'提问',steer:'运行中补充',restricted_reviewer:'受限审阅'};
