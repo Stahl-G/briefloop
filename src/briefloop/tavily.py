@@ -3,12 +3,12 @@ from . import __version__,websearch
 import hashlib
 import json
 import os
-import tempfile
 import urllib.request
 import urllib.error
 from datetime import date
 from pathlib import Path
 from .store import now,uid,content_hash,dump
+from .search_credentials import write_key
 
 NAME='tavily'
 LABEL='Tavily'
@@ -41,7 +41,7 @@ def _key_path(key_file=None):
 def _read_key(key_file=None):
     key=os.environ.get('TAVILY_API_KEY','').strip()
     if key:return key,'environment'
-    try:key=_key_path(key_file).read_text().strip()
+    try:key=_key_path(key_file).read_text(encoding='utf-8').strip()
     except FileNotFoundError:return '',None
     except OSError:raise TavilyError('无法读取本机 Tavily 凭据文件') from None
     return (key,'file') if key else ('',None)
@@ -55,13 +55,7 @@ def key_status(*,key_file=None):
 def save_key(api_key,*,key_file=None):
     if not isinstance(api_key,str) or not api_key.strip() or any(c.isspace() for c in api_key.strip()):
         raise TavilyError('请输入有效的 Tavily API Key')
-    path=_key_path(key_file);path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
-    descriptor,temporary=tempfile.mkstemp(prefix='.tavily-',dir=path.parent)
-    try:
-        with os.fdopen(descriptor,'w') as file:file.write(api_key.strip())
-        os.chmod(temporary,0o600);os.replace(temporary,path)
-    finally:
-        if os.path.exists(temporary):os.unlink(temporary)
+    write_key(_key_path(key_file),api_key.strip())
     return key_status(key_file=key_file)
 
 
@@ -75,12 +69,19 @@ def delete_key(*,key_file=None):
 _ssl_context=websearch.ssl_context
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # A fixed provider API must never forward its bearer token elsewhere.
+        return None
+
+
 def _post(endpoint,payload,*,key_file=None):
     key,_=_read_key(key_file)
     if not key:raise TavilyError('尚未配置 Tavily API Key，请在设置中填写')
     request=urllib.request.Request('https://api.tavily.com/'+endpoint,data=dump(payload).encode(),headers={'Authorization':'Bearer '+key,'Content-Type':'application/json','User-Agent':f'BriefLoop/{__version__}'},method='POST')
+    opener=urllib.request.build_opener(_NoRedirect(),urllib.request.HTTPSHandler(context=_ssl_context()))
     try:
-        with urllib.request.urlopen(request,timeout=65,context=_ssl_context()) as response:
+        with opener.open(request,timeout=65) as response:
             raw=response.read(25*1024*1024+1)
         if len(raw)>25*1024*1024:raise _marked('Tavily 响应过大，未保存不完整结果','too_large')
         if key.encode() in raw:raise _marked('Tavily 响应包含凭据信息，未保存或展示','invalid_response')

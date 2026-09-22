@@ -2,12 +2,12 @@
 from . import __version__,websearch
 import json
 import os
-import tempfile
 import urllib.request
 import urllib.error
 from datetime import date
 from pathlib import Path
 from .store import dump
+from .search_credentials import write_key
 
 NAME='bocha'
 LABEL='博查'
@@ -40,7 +40,7 @@ def _key_path(key_file=None):
 def _read_key(key_file=None):
     key=os.environ.get('BOCHA_API_KEY','').strip()
     if key:return key,'environment'
-    try:key=_key_path(key_file).read_text().strip()
+    try:key=_key_path(key_file).read_text(encoding='utf-8').strip()
     except FileNotFoundError:return '',None
     except OSError:raise BochaError('无法读取本机 Bocha 凭据文件') from None
     return (key,'file') if key else ('',None)
@@ -54,13 +54,7 @@ def key_status(*,key_file=None):
 def save_key(api_key,*,key_file=None):
     if not isinstance(api_key,str) or not api_key.strip() or any(c.isspace() for c in api_key.strip()):
         raise BochaError('请输入有效的 Bocha API Key')
-    path=_key_path(key_file);path.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
-    descriptor,temporary=tempfile.mkstemp(prefix='.bocha-',dir=path.parent)
-    try:
-        with os.fdopen(descriptor,'w') as file:file.write(api_key.strip())
-        os.chmod(temporary,0o600);os.replace(temporary,path)
-    finally:
-        if os.path.exists(temporary):os.unlink(temporary)
+    write_key(_key_path(key_file),api_key.strip())
     return key_status(key_file=key_file)
 
 
