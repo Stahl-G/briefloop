@@ -2,7 +2,9 @@
 import http.client
 import json
 import os
+import socket
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -240,6 +242,77 @@ def test_shutdown_finishes_admitted_save_before_cancelling_jobs(service, monkeyp
         assert shutdown.wait(3)
     assert store.one('briefs',saved['id'])['markdown']=='Saved before exit'
     assert store.one('jobs',job['id'])['status']=='cancelled'
+
+
+def test_shutdown_interrupts_partial_bodies_without_committing_them(service, monkeypatch):
+    server,request=service;store=server.store
+    token=request('/api/session')[1]['token']
+    previous=store.settings()['max_reports']
+    job=store.enqueue('review',{})
+    stopped=threading.Event();shutdown=server.shutdown
+    def observe_shutdown():
+        shutdown();stopped.set()
+    monkeypatch.setattr(server,'shutdown',observe_shutdown)
+    connections=[]
+    try:
+        # Even a syntactically complete JSON prefix must not be applied when
+        # the declared request body has not finished arriving.
+        for path,body in [('/api/upload-file?name=partial.txt',b'x'),
+                          ('/api/settings',json.dumps({'max_reports':2 if previous!=2 else 3}).encode())]:
+            connection=socket.create_connection(('127.0.0.1',server.server_port),timeout=5)
+            connections.append(connection)
+            connection.sendall((f'POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{server.server_port}\r\n'
+                                f'X-BriefLoop-Token: {token}\r\nContent-Length: {len(body)+2}\r\n\r\n').encode()+body)
+        deadline=time.monotonic()+3
+        while server._active_posts!=2 and time.monotonic()<deadline:time.sleep(.01)
+        assert server._active_posts==2
+        assert request('/api/service-stop',{'pid':os.getpid(),'workspace_id':store.meta('workspace_id'),
+                                            'busy_action':'cancel'})==(200,{'stopping':True})
+        assert stopped.wait(3),'Stopping still waits for the clients to finish their bodies'
+        for connection in connections:
+            response=http.client.HTTPResponse(connection);response.begin()
+            assert response.status==503 and json.loads(response.read())['code']=='service_draining'
+        assert server._active_posts==0
+        assert not store.rows('SELECT id FROM sources')
+        assert store.settings()['max_reports']==previous
+        assert store.one('jobs',job['id'])['status']=='cancelled'
+    finally:
+        for connection in connections:connection.close()
+
+
+def test_body_idle_timeout_allows_progressing_uploads(service, monkeypatch):
+    server,request=service
+    monkeypatch.setattr(server.RequestHandlerClass,'timeout',.5)
+    token=request('/api/session')[1]['token']
+    address=('127.0.0.1',server.server_port)
+    def headers(path,size):
+        return (f'POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{server.server_port}\r\n'
+                f'X-BriefLoop-Token: {token}\r\nContent-Length: {size}\r\n\r\n').encode()
+    with socket.create_connection(address,timeout=5) as connection:
+        connection.sendall(headers('/api/upload-file?name=stalled.txt',3)+b'x')
+        response=http.client.HTTPResponse(connection);response.begin()
+        assert response.status==408 and json.loads(response.read())['code']=='request_timeout'
+    assert not server.store.rows('SELECT id FROM sources')
+    previous=server.store.settings()['max_reports']
+    body=json.dumps({'max_reports':2 if previous!=2 else 3}).encode()
+    with socket.create_connection(address,timeout=5) as connection:
+        connection.sendall(headers('/api/settings',len(body)+1)+body)
+        connection.shutdown(socket.SHUT_WR)
+        response=http.client.HTTPResponse(connection);response.begin()
+        assert response.status==400 and json.loads(response.read())['code']=='incomplete_request'
+    assert server.store.settings()['max_reports']==previous
+    # Total upload time exceeds the idle limit, but each chunk makes progress.
+    chunk=b'Synthetic evidence\n'*4096
+    with socket.create_connection(address,timeout=5) as connection:
+        connection.sendall(headers('/api/upload-file?name=complete.txt',len(chunk)*5))
+        for index in range(5):
+            if index:time.sleep(.2)
+            connection.sendall(chunk)
+        response=http.client.HTTPResponse(connection);response.begin()
+        source=json.loads(response.read())
+        assert response.status==200 and source['status']=='ready'
+    assert server.store.source_text(source['id'])==(chunk*5).decode()
+    assert request('/api/settings',{'max_reports':3})[0]==200
 
 
 def test_corrupt_connector_config_preserves_workspace_and_recovers_after_repair(tmp_path):
