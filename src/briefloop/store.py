@@ -72,6 +72,10 @@ CREATE TABLE IF NOT EXISTS sources(id TEXT PRIMARY KEY, name TEXT NOT NULL, path
 CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY, requirements TEXT NOT NULL,
  source_ids TEXT NOT NULL, skill_id TEXT, created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS run_sources(run_id TEXT NOT NULL REFERENCES runs(id), source_id TEXT NOT NULL REFERENCES sources(id), PRIMARY KEY(run_id,source_id));
+CREATE TABLE IF NOT EXISTS page_claims(run_id TEXT NOT NULL REFERENCES runs(id), url TEXT NOT NULL,
+ owner TEXT NOT NULL, expires_at REAL NOT NULL, request_id TEXT NOT NULL, PRIMARY KEY(run_id,url));
+CREATE TABLE IF NOT EXISTS page_claim_results(owner TEXT NOT NULL, url TEXT NOT NULL,
+ outcome TEXT NOT NULL, source_id TEXT, error TEXT, completed_at REAL NOT NULL, PRIMARY KEY(owner,url));
 CREATE TABLE IF NOT EXISTS briefs(id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
  parent_id TEXT REFERENCES briefs(id), author TEXT NOT NULL, markdown TEXT NOT NULL,
  hash TEXT NOT NULL, detail TEXT NOT NULL, editor_document TEXT, created TEXT NOT NULL);
