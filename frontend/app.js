@@ -813,7 +813,7 @@ function renderRuntimeDiscovery(){
 }
 async function refreshRuntimeDiscovery(force=false){
  const select=$('agent-backend');if(!select.value){const backend=state.settings.agent_backend||'codex';if(!Array.from(select.options).some(o=>o.value===backend))select.add(new Option(backend,backend));select.value=backend;}
- if(!$('runtime-discovery-status')){const box=document.createElement('section');box.className='runtime-discovery';box.innerHTML='<div class="section-title"><strong>本机 Runtime</strong><button type="button" id="runtime-discovery-refresh" class="outline">重新检测</button></div><p id="runtime-discovery-status" class="help" role="status"></p><div id="runtime-discovery-details" class="help"></div><p id="runtime-model-status" class="help" role="status"></p>';$('settings-runtime-list').append(box);$('runtime-discovery-refresh').onclick=()=>refreshRuntimeDiscovery(true)}
+ if(!$('runtime-discovery-status')){const box=document.createElement('section');box.className='runtime-discovery';box.innerHTML='<div class="section-title"><strong>本机 Agent CLI</strong><button type="button" id="runtime-discovery-refresh" class="outline">重新检测</button></div><p id="runtime-discovery-status" class="help" role="status"></p><div id="runtime-discovery-details" class="help"></div><p id="runtime-model-status" class="help" role="status"></p>';$('settings-runtime-list').append(box);$('runtime-discovery-refresh').onclick=()=>refreshRuntimeDiscovery(true)}
  $('runtime-discovery-status').textContent='正在检测执行引擎…';$('runtime-discovery-refresh').disabled=true;
  try{const data=await api('runtimes'+(force?'?refresh=1':''));runtimeCatalog=data.runtimes||[];renderRuntimeDiscovery();$('runtime-discovery-status').textContent=`检测到 ${runtimeCatalog.filter(r=>r.installed).length} 个本机 CLI，其中 ${runtimeCatalog.filter(r=>r.available).length} 个可选择；检测未验证账号与模型调用，需另行短测试。`+(data.diagnostic?` ${data.diagnostic}`:'');await refreshModelSuggestions(force)}catch(e){$('runtime-discovery-status').textContent='检测失败：'+e.message}finally{$('runtime-discovery-refresh').disabled=false;runtimeScanned=true;if($('welcome')&&!$('welcome').hidden)renderWelcome()}
 }
@@ -1130,15 +1130,6 @@ function hydrateHomeIcons(){
   el.dataset.homeIconReady='1';
  });
 }
-function homeReportIconMeta(title){
- const t=String(title||'');
- if(/周报|月报|行业|定期/.test(t))return {icon:'bars',cat:'cat-business'};
- if(/竞品|对比|对手/.test(t))return {icon:'chart',cat:'cat-markets'};
- if(/资料|文献|论文|研究简报/.test(t))return {icon:'book',cat:'cat-academic'};
- if(/会议|纪要|讨论/.test(t))return {icon:'users',cat:'cat-collab'};
- if(/合同|协议|公文/.test(t))return {icon:'file',cat:'cat-neutral'};
- return {icon:'layers',cat:'cat-neutral'};
-}
 function renderHome(){
  scheduledReports.render();
  if($('home-greeting'))$('home-greeting').textContent=homeGreeting();
@@ -1177,10 +1168,17 @@ function renderHomeTasks(){
   recentBox.innerHTML='';
  }
 }
+function reportIconMeta(b){
+ const run=(state.runs||[]).find(r=>r.id===b.run_id),req=run?parse(run.requirements):{};
+ const method=req.workflow_snapshot?.id||req.document_workflow?.id;
+ const family={business_report:'商业报告',stock_research:'券商研报',meeting_minutes:'会议纪要',general_report:'通用报告'}[method];
+ const template=(state.templates||[]).find(t=>t.id===req.template_id);
+ return GENRE_META[family||splitTemplateName(template?.name||'').genre]||{icon:'layers',cat:'cat-neutral'};
+}
 function homeReportRowHTML(b){
  const st=reportStatus(b),desc=reportDescription(b);
  const when=dayTime(b.updated||b.created);
- const meta=homeReportIconMeta(parse(b.detail).title||b.detail);
+ const meta=reportIconMeta(b);
  return `<button type="button" class="home-report" data-home-report="${esc(b.id)}"><span class="home-report-icon ${meta.cat}" aria-hidden="true">${svgLineIcon(meta.icon,16)}</span><span class="home-report-body"><strong>${esc(parse(b.detail).title||'简报')}</strong>${desc?`<small>${esc(desc)}</small>`:''}</span><span class="home-report-meta"><time>${esc(when)}</time><span class="chip ${st.cls}">${esc(st.label)}</span></span></button>`;
 }
 function openHomeReport(id){
@@ -1525,7 +1523,7 @@ $('settings-open').onclick=showSettings;$('settings-close').onclick=()=>page('ch
  }
  const help=$('composer-help');if(help&&help.parentElement!==$('chat-form').parentElement)$('chat-form').after(help);
  const settingsButton=$('settings-open');
- if(settingsButton&&!settingsButton.querySelector('span')){
+ if(settingsButton&&!settingsButton.querySelector('svg')){
   settingsButton.innerHTML='<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1 1-3Z"/><circle cx="12" cy="12" r="3"/></svg><span>设置</span>';
  }
 }
@@ -2357,7 +2355,7 @@ function renderReports(){
  const makingFirst=!state.briefs.length&&state.jobs.some(j=>j.kind==='generate'&&['queued','running'].includes(j.status));
  const sig=JSON.stringify([view,q,fStatus,fTime,fSource,makingFirst,all.length,rows.map(b=>{const st=reportStatus(b);return [b.id,b.status,b.updated,st.label,runSourceCount(b.run_id)]})]);if(renderReports.sig===sig)return;renderReports.sig=sig;
  const end=$('reports-end');if(end)end.hidden=!rows.length;
- box.innerHTML=rows.length?rows.map(b=>{const st=reportStatus(b),sources=runSourceCount(b.run_id),desc=reportDescription(b);const when=dayTime(b.updated||b.created);return `<article class="report-card"><span class="report-card-icon" aria-hidden="true">▤</span><div class="report-card-body"><h3 class="report-card-title">${esc(parse(b.detail).title||'简报')}</h3>${desc?`<p class="report-card-desc">${esc(desc)}</p>`:''}<div class="report-card-meta"><span>${sources} 个来源</span><span>${esc(when)} 最后编辑</span></div></div><div class="report-card-side"><span class="chip ${st.cls}">${esc(st.label)}</span><button type="button" class="primary" data-report-open="${esc(b.id)}">${st.key==='draft'?'继续编辑':'打开'}</button><div class="menu-wrap report-card-menu"><button type="button" class="ghost" data-report-menu aria-haspopup="menu" aria-expanded="false" aria-label="更多操作">⋯</button><div class="popover" role="menu" hidden><button type="button" role="menuitem" data-report-open="${esc(b.id)}">打开</button><a role="menuitem" href="/api/download?version=${encodeURIComponent(b.id)}">下载 Markdown</a><button type="button" role="menuitem" data-report-release="${esc(b.id)}">正式交付与审计包</button></div></div></div></article>`}).join(''):(makingFirst?'<div class="empty-inline"><strong>首份报告正在制作</strong><p class="help">初稿保存后会显示在这里。</p></div>':all.length?'<div class="empty-inline"><p class="help">没有符合筛选条件的报告，请调整搜索或筛选。</p></div>':'<div class="empty-inline"><p class="help">还没有报告。生成后会显示在这里。</p><button type="button" class="primary" data-page="setup">＋ 新建报告</button></div>');
+ box.innerHTML=rows.length?rows.map(b=>{const st=reportStatus(b),sources=runSourceCount(b.run_id),desc=reportDescription(b);const when=dayTime(b.updated||b.created),meta=reportIconMeta(b);return `<article class="report-card"><span class="report-card-icon ${meta.cat}" aria-hidden="true">${svgLineIcon(meta.icon,24)}</span><div class="report-card-body"><h3 class="report-card-title">${esc(parse(b.detail).title||'简报')}</h3>${desc?`<p class="report-card-desc">${esc(desc)}</p>`:''}<div class="report-card-meta"><span>${sources} 个来源</span><span>${esc(when)} 最后编辑</span></div></div><div class="report-card-side"><span class="chip ${st.cls}">${esc(st.label)}</span><button type="button" class="primary" data-report-open="${esc(b.id)}">${st.key==='draft'?'继续编辑':'打开'}</button><div class="menu-wrap report-card-menu"><button type="button" class="ghost" data-report-menu aria-haspopup="menu" aria-expanded="false" aria-label="更多操作">⋯</button><div class="popover" role="menu" hidden><button type="button" role="menuitem" data-report-open="${esc(b.id)}">打开</button><a role="menuitem" href="/api/download?version=${encodeURIComponent(b.id)}">下载 Markdown</a><button type="button" role="menuitem" data-report-release="${esc(b.id)}">正式交付与审计包</button></div></div></div></article>`}).join(''):(makingFirst?'<div class="empty-inline"><strong>首份报告正在制作</strong><p class="help">初稿保存后会显示在这里。</p></div>':all.length?'<div class="empty-inline"><p class="help">没有符合筛选条件的报告，请调整搜索或筛选。</p></div>':'<div class="empty-inline"><p class="help">还没有报告。使用左侧「新建报告」开始制作。</p></div>');
  box.querySelectorAll('[data-report-open]').forEach(el=>el.onclick=()=>{const b=state.briefs.find(x=>x.id===el.dataset.reportOpen);if(b&&openBrief(b,{follow:false}))page('report')});
  box.querySelectorAll('[data-page="setup"]').forEach(el=>el.onclick=()=>page('setup'));
  box.querySelectorAll('.report-card-menu').forEach(wrap=>{const toggle=wrap.querySelector('[data-report-menu]'),pop=wrap.querySelector('.popover');if(!toggle||!pop)return;toggle.onclick=e=>{e.stopPropagation();const open=pop.hidden;document.querySelectorAll('.popover').forEach(p=>p.hidden=true);document.querySelectorAll('[aria-haspopup="menu"]').forEach(b=>b.setAttribute('aria-expanded','false'));pop.hidden=!open;toggle.setAttribute('aria-expanded',String(open))}});
@@ -2505,9 +2503,9 @@ function renderTemplatesPage(){
   const items=genres[genre];
   const chosen=templatePick&&templatePick.genre===genre?templatePick.theme:items[0].theme;
   const selected=templatePick&&templatePick.genre===genre;
-  const dots=items.map(it=>`<button type="button" class="color-dot${chosen===it.theme?' selected':''}" style="background:${THEME_COLORS[it.theme]||'#999'};color:${THEME_COLORS[it.theme]||'#999'}" data-genre="${esc(genre)}" data-theme="${esc(it.theme)}" data-id="${esc(it.id)}" title="${esc(genre+' · '+it.theme)}" aria-label="${esc(genre+' '+it.theme)}"></button>`).join('');
+  const dots=items.map(it=>`<button type="button" class="color-dot${chosen===it.theme?' selected':''}" style="--swatch-color:${THEME_COLORS[it.theme]||'#999'}" data-genre="${esc(genre)}" data-theme="${esc(it.theme)}" data-id="${esc(it.id)}" title="${esc(genre+' · '+it.theme)}" aria-label="${esc(genre+' '+it.theme)}"></button>`).join('');
   return `<div class="tpl-card${selected?' selected':''}" data-genre="${esc(genre)}"><span class="tpl-check">✓</span>`
-   +`<span class="tpl-icon ${meta.cat}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[meta.icon]||''}</svg></span>`
+   +`<span class="tpl-icon ${meta.cat}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${ICONS[meta.icon]||''}</svg></span>`
    +`<span class="tpl-name">${esc(genre)}</span><span class="tpl-desc" title="${esc(meta.desc)}">${esc(meta.desc)}</span>`
    +`<span class="tpl-dots"><span class="label">配色</span>${dots}</span></div>`;
  }).join('');

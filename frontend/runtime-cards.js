@@ -41,13 +41,13 @@ export function runtimeIcon(id){
 }
 export function runtimeModelSummary(id,chosen,model,catalog){
  const choice=id===chosen?(model||'待选择模型'):'选择后配置模型';
- const source={host:'宿主目录',native_config:'本机配置',builtin_hints:'内置建议',local_routes:'本机路由',host_default_only:'宿主默认'}[catalog?.source];
+ const source={host:'模型目录',native_config:'本机配置',builtin_hints:'内置建议',local_routes:'本机路由',host_default_only:'引擎默认'}[catalog?.source];
  return `模型 <strong>${esc(choice)}</strong>${catalog?`<span class="runtime-model-source">${esc(source||'模型目录')} · ${catalog.models.length} 项</span>`:''}`;
 }
 export function runtimeCard(r,{chosen,model,catalog,compact=false}){
  const name=r.id==='briefloop-native'?'BriefLoop Agent':r.name||r.id;
  const icon=runtimeIcon(r.id);
- const protocol={acp:'ACP','claude-stream-json':'流式 JSON','opencode-json':'OpenCode JSON','native-manager':'原生宿主接口'}[r.protocol]||r.protocol;
+ const protocol={acp:'ACP','claude-stream-json':'流式 JSON','opencode-json':'OpenCode JSON','native-manager':'原生 Agent 接口'}[r.protocol]||r.protocol;
  const capabilityNames={chat:'对话',cancel:'停止任务',resume:'续接',images:'图片',questions:'提问',steer:'运行中补充',restricted_reviewer:'受限审阅'};
  const supported=Object.entries(capabilityNames).filter(([key])=>r.capabilities?.[key]===true).map(([,name])=>name);
  const status=r.available?(r.id==='briefloop-native'?'内置':'已检测到'):r.installed?'尚未接入':'未安装';

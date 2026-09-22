@@ -84,8 +84,9 @@
      3. 排版
      =========================================================== */
 
-  --font: /* 沿用既有栈 */ -apple-system, BlinkMacSystemFont, "Segoe UI",
+  --font-ui: /* 沿用既有栈 */ -apple-system, BlinkMacSystemFont, "Segoe UI",
           "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font: var(--font-ui);
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
   --text-2xs:  11px;  /* 仅数字角标 / 纯拉丁标签 —— 禁止用于中文 */

@@ -21,6 +21,7 @@ jobs:
       - run: npm ci
       - run: node runtime-bridge/build.mjs
       - run: npm run build:check
+      - run: npm run design:check
       - run: npm test
       - run: node --test runtime-bridge/bridge.test.mjs
       - name: Test desktop PDF export channel

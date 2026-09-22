@@ -1,8 +1,8 @@
 # BriefLoop 界面设计系统
 
-**范围**:`src/briefloop/static/`(原生 HTML/CSS/JS,无构建框架)
-**状态**:v2 · 最后更新 2026-09-18
-**令牌实现**:`src/briefloop/static/tokens.css`(本文件是说明,该文件是唯一事实来源;它就是应用实际加载的那一份,不要再复制一份到别处)
+**范围**：Web 工作区、Onboarding、设置与 Electron 启动页。原生 HTML/CSS，前端脚本由 esbuild 构建。
+**状态**：v2.1 · 最后更新 2026-09-23
+**令牌实现**：`src/briefloop/static/tokens.css` 是唯一数值来源。公共组件写在 `frontend/ui-system.css`，构建时追加到 `static/style.css` 的生成区；不要手改生成区。Electron 的 `assets/ui-tokens.css` 是逐字节校验的打包副本，不是第二份人工维护的设计系统。旧页面布局暂留在生成区之前，迁移时不得继续新增独立颜色或尺寸体系。
 
 ---
 
@@ -174,8 +174,8 @@
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
 }
-/* 深色底(主按钮等)换用反色环 */
-.primary:focus-visible { outline-color: var(--color-focus-inverse); }
+/* 主按钮保留绿色外环，并增加白色内环，与填充色隔开。 */
+.primary:focus-visible { outline-offset: 3px; box-shadow: 0 0 0 2px var(--color-focus-inverse); }
 ```
 
 禁止 `outline: none` 且不提供替代焦点样式。
@@ -234,7 +234,7 @@ v1 未定义首页布局(只在零散小节里提到局部)。以下为 v2 补�
 
 | 组件 | class | 说明 |
 |---|---|---|
-| 顶栏 | `.report-topbar` | 面包屑 + 标题 + 状态 chips + 右侧动作。高 64px,底部 `--color-border` |
+| 顶栏 | `.report-topbar` | 面包屑 + 标题 + 状态 chips + 右侧动作。标题／字数说明与操作分行，底部 `--color-border`；操作不能挤占标题宽度 |
 | 状态 chip | `.chip` | 见 §4.2 |
 | 分段 tab | `.seg-tabs` / `.rail-tabs` | 选中:`--color-text` + 底部 2px `--color-primary`;未选 `--color-text-muted` |
 | 右栏 | `.rail` | tab 头 + 可滚动 pane,`[data-pane]` 切换,同时只显示一个 |
@@ -276,7 +276,7 @@ v1 未定义首页布局(只在零散小节里提到局部)。以下为 v2 补�
 | tab | ✓ | ✓ | selected | ✓ | ✓ | — |
 | `.source-row` | ✓ | ✓ | — | ✓ | — | ✓ |
 
-`disabled`:`opacity: .45` + `cursor: not-allowed`,**保留可读对比度**,不得靠降透明度把文字压到 4.5:1 以下。
+`disabled`：`cursor: not-allowed`，使用次要文字与中性背景表达；不统一降低整个控件透明度，以免文字不可读。
 `loading`:保留原尺寸,不得因换成 spinner 导致布局跳动。
 
 ---
@@ -308,7 +308,7 @@ v1 未定义首页布局(只在零散小节里提到局部)。以下为 v2 补�
 
 1. **首页建议卡** `.home-suggestion-icon`:按意图着色(周报→商业蓝,公司→商业蓝或协作紫,竞品→证券品红,资料→学术青),配可区分的**线性图标**,不是同色方块
 2. **我的报告 / 最近的报告** `.report-card-icon`:按该报告绑定的内容方法或模板 genre 取同一 tile/前景色
-3. **模板页 `GENRE_META`**(`frontend/app.js`):色板源头。改色只改这里和 `src/briefloop/static/tokens.css`,两处同步
+3. **模板页 `GENRE_META`**（`frontend/app.js`）只维护类别与图标。颜色只改 `tokens.css`；报告首页与列表优先读取本次冻结内容方法，其次读取已绑定模板，没有可识别类别用中性，不猜标题、不随机取色。
 
 ### 5.3 规则
 
@@ -338,8 +338,8 @@ v1 未定义首页布局(只在零散小节里提到局部)。以下为 v2 补�
 
 ### 7.1 报告工作区
 
-- **顶栏**:面包屑 `#report-title` · 状态 chips `#report-status` · `版本`(`#version-select` + `#version-history`)· `导出`(Markdown / Word / 图文包 / 正式交付 / 审计包)· `⋯`(导入 Word 修订 / 导入 Markdown / 按审阅修改 / 独立审阅)
-- **顶部 tab**:`编辑`(默认)· `数据与来源` · `检查与评价`;后两者直接切右栏对应 pane
+- **顶栏**:面包屑 `#report-title` · 状态 chips `#report-status` · `版本`(`#version-select` + `#version-history`)· `下载 Word`（直接制作并下载）· `其他格式`（HTML / PDF / Markdown / 图文包等）· 正式交付 / 审计包· `⋯`(导入 Word 修订 / 导入 Markdown / 按审阅修改 / 独立审阅)
+- **顶部 tab**:`编辑`(默认)· `大纲` · `数据与来源` · `检查与评价`;后两者直接切右栏对应 pane
 - **右栏 tab**:`BriefLoop` · `来源与数据` · `检查结果`
 - **编辑器**:格式工具条保留;`当前段落依据` 进检查 pane(后续版本改行内浮层)
 
@@ -356,11 +356,11 @@ v1 未定义首页布局(只在零散小节里提到局部)。以下为 v2 补�
 | 参数 | 图标按钮,打开 popover |
 | 发送 | split button:主键 `发送` + 下拉(排队发送 / 定时) |
 
-高度 `--control-h-sm`,`--text-xs`,`--fw-normal`,`--leading-normal`,`--color-text-muted`,垂直居中。
+高度 `--control-h-md`，文字 `--text-xs`、`--fw-normal`、`--leading-normal`、`--color-text-muted`，垂直居中。紧凑控件仍使用 `--control-h-sm`，不要将已确认的 composer 改回 28px。
 
 **参数层(`参数` popover 内):**
 
-权限 · 已有来源 · 宿主 · 推理档位 · 研究档位 · 事实核查 · WikiSkill 及轮数 · 执行上限 · Scout 并发
+权限 · 已有来源 · 执行方式（BriefLoop Agent／Agent CLI）· 推理档位 · 研究档位 · 事实核查 · WikiSkill 及轮数 · 执行上限 · Scout 并发
 
 **规则:**
 - 附件图标与发送箭头保留固有图标尺寸
@@ -377,10 +377,10 @@ v1 未定义首页布局(只在零散小节里提到局部)。以下为 v2 补�
 | 区块 | 位置 | 空态 |
 |---|---|---|
 | 运行中的任务 | 右栏 | 不渲染 |
-| 最近的报告 | 右栏 | 不渲染 |
-| 定时报告 | 主区,置于最近报告前 | 不渲染 |
+| 最近的报告 | 主区 | 不渲染 |
+| 定时报告 | 主区 | 无计划时仅留紧凑「新建计划」入口，不显示空列表、标题和说明 |
 
-「最近的报告」**只在右栏出现一次**(§6.2)。
+「最近的报告」**只在主区出现一次**(§6.2)，右栏保留运行中任务。
 
 定时报告用 `home-block` + `.panel`,名称、频率/时区、下一次执行、最近状态分行;操作共用现有按钮,窄屏自动换行;表单用原生 `dialog` + `label`,预设/自定义频率不展示 JSON。
 
@@ -398,7 +398,7 @@ v1 未定义首页布局(只在零散小节里提到局部)。以下为 v2 补�
 - 名称与本地品牌图标在首行;简介、检测版本、模型信息分行
 - **品牌图标保留原色**(分类色规则的唯一豁免),其余继续用令牌
 - 路径、协议、能力与诊断折叠展示
-- 首页只保留可操作的宿主选择器,不重复显示「当前」宿主标签
+- 首页参数区保留可操作的 Agent CLI／BriefLoop Agent 选择器，不重复显示「当前」标签
 - 窄屏操作按钮移至第二行,长版本号与模型 ID 自动换行
 
 ### 7.6 稿件改动视图
@@ -425,22 +425,11 @@ v1 未定义首页布局(只在零散小节里提到局部)。以下为 v2 补�
 
 ### 9.1 令牌纪律
 
-CSS 中**禁止裸 hex 与裸像素**,仅 `src/briefloop/static/tokens.css` 豁免。stylelint:
+新增公共 UI 样式以语义令牌为准，使用 `npm run design:check` 验证 `frontend/ui-system.css` 与 Electron `welcome.css` 的颜色、字号／字重／行高／圆角、层级、令牌引用和 CSS 语法。CI 已执行此检查；`build:check` 同时验证生成样式及桌面令牌副本。
 
-```json
-{
-  "rules": {
-    "declaration-property-value-disallowed-list": {
-      "/^(color|background|background-color|border|border-color|box-shadow|outline-color)$/":
-        ["/#[0-9a-fA-F]{3,8}/", "/\\brgba?\\(/"],
-      "/^(z-index)$/": ["/^\\d+$/"]
-    }
-  },
-  "overrides": [{ "files": ["**/tokens.css"], "rules": { "declaration-property-value-disallowed-list": null } }]
-}
-```
+这是明确范围的轻量检查，**不声称旧样式已全部迁移，也不替代实际页面验收**。响应式断点、细边框、焦点环允许数值；品牌原图、用户正文颜色与 Word 模板配色不套用应用分类色限制。旧 `style.css` 的历史布局保留，后续按组件清理，不整份重写或继续堆逐页补丁。新增样式写进公共源文件，生成区由构建维护。
 
-**本文档同样受此约束。** 规范正文引用令牌名(`--space-4`),不写裸数值(`16px`)。文档里出现裸 px,等于默许代码里出现裸 px——这是 v1 的实际情况。
+页面主标题用 `--text-2xl`，窄屏用 `--text-xl`；卡片和面板标题可用 `--text-lg`，不根据 HTML 标签孤立推断尺寸。报告正文用 `--text-md`，不覆盖用户明确保存的字号／颜色。目标点击区域至少 `--control-h-sm`；模板配色色点用伪元素显示小圆点，按钮本身保留足够面积。
 
 ### 9.2 测试钩子
 
@@ -462,15 +451,24 @@ v1 规则「保留既有 `#id`(前端测试依赖),结构重构用 class,不轻�
 
 | # | 事项 | 影响 | 建议 |
 |---|---|---|---|
-| 1 | `GENRE_META` 需按 §5.1 更新两个色值 | 模板页、首页卡、报告列表 | 与 `tokens.css` 同批改 |
+| 1 | 旧布局样式仍保留 | 新公共组件层已覆盖主要页面，历史特定状态仍需逐步迁移 | 按组件迁移，不一次重写 |
 | 2 | `data-testid` 迁移未启动 | 阻塞结构重构 | 按 §9.2 分批 |
-| 3 | 深色模式未排期 | 语义层已预留,但裸 hex 会成为债 | 先落地 §9.1 的 stylelint |
-| 4 | `--text-2xs`(11px)现有使用点未审计 | 中文可读性 | 全量搜索,中文场景升至 `--text-xs` |
+| 3 | 深色模式未排期 | 语义层已预留,但裸 hex 会成为债 | 继续迁移旧样式，公共组件遵守 §9.1 的检查 |
+| 4 | 罕见错误／运行中状态的中文小字仍需持续验收 | 主要页面已经统一，不能当作全状态证明 | 新增页面实际检查中文最小字号 |
 | 5 | 图标集合未统一登记 | §8 无法校验 | 建立图标清单 |
 
 ---
 
 ## 11. 变更记录
+
+### v2.1 — 2026-09-23
+
+- Web 与 Electron 共用令牌，公共 UI 组件集中维护并构建校验。
+- 修正中文小字、字段边界、复选框、模板点击面积及报告顶栏宽度分配。
+- 报告图标读取冻结内容方法／已绑定模板；统一列表与首页分类。
+- 保留一个主要新建报告入口；无定时计划时保留紧凑创建入口。
+- 名称统一为 BriefLoop Agent（基于 Pi SDK）／Agent CLI；保留直接 Word 下载与实际 36px composer。
+- 区分已执行的公共样式检查与尚未完成的全量旧样式迁移。
 
 ### v2 — 2026-09-18
 
@@ -507,7 +505,7 @@ v1 规则「保留既有 `#id`(前端测试依赖),结构重构用 class,不轻�
 - §7.2 重写 composer:10 个常驻控件 → 4 个默认 + 参数 popover(v1 §7 与「报告快捷选项」两节已被实现推翻)
 
 **纪律**
-- §9.1 stylelint 强制令牌,规则从约定变为保证
+- §9.1 当时提出 stylelint 规则；v2 未接入 CI，v2.1 改为已执行、范围明确的轻量检查
 
 ### v1
 初版。
