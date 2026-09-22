@@ -70,7 +70,7 @@ document.addEventListener('focusout',e=>{if(e.target.closest('[data-tip]'))hideT
 document.addEventListener('scroll',()=>{if(tooltipTarget)hideTip()},true);
 function refresh(first=false){if(refresh.pending)return refresh.pending;refresh.pending=refreshState(first).finally(()=>{refresh.pending=null});return refresh.pending}
 function backgroundActive(){return !!state?.jobs?.some(j=>['queued','running'].includes(j.status))||chat.busy||chat.sessions.some(sessionBusy)}
-async function refreshState(first=false){try{const next=await api('state');$('connection').textContent='本地已连接';const signature=JSON.stringify(next);state=next;scheduledReports.render();activity?.render();renderWordExports();if($('release-dialog')?.open)refreshReleaseState().catch(e=>notice(e.message,true));if(first||signature!==refresh.signature){refresh.signature=signature;render(first)}await refreshProgress();if(first||!$('learning').hidden)await refreshCandidates();if(first||!$('report').hidden)await refreshReportBudget()}catch(e){$('connection').textContent='连接中断';if(first)notice(e.message,true)}}
+async function refreshState(first=false,signal){try{const next=await api('state');if(signal?.aborted)return false;$('connection').textContent='本地已连接';const signature=JSON.stringify(next);state=next;scheduledReports.render();activity?.render();renderWordExports();if($('release-dialog')?.open)refreshReleaseState().catch(e=>notice(e.message,true));const initialize=first&&!refresh.initialized;if(initialize||signature!==refresh.signature){render(initialize);refresh.signature=signature;if(initialize)refresh.initialized=true}await refreshProgress();if(first||!$('learning').hidden)await refreshCandidates();if(first||!$('report').hidden)await refreshReportBudget();return !signal?.aborted}catch(e){if(signal?.aborted)return false;$('connection').textContent='连接中断';if(first)throw e}}
 // BEGIN_FIGURE_EDITOR_MAPPING: also exercised against the real MarkdownManager.
 const figureImagePattern=/(!\[(?:\\.|[^\]\\])*\]\()\s*(<?[^)\s]+>?)(\s+(?:"(?:\\.|[^"])*"|'(?:\\.|[^'])*'))?\s*(\))/g;
 function figureIdFromUrl(value){
@@ -645,7 +645,66 @@ $('markdown-import-cancel').onclick=cancelMarkdownImport;
 $('markdown-import-dialog').addEventListener('cancel',()=>{pendingMarkdownImport=null;$('markdown-import').value=''});
 $('markdown-import-confirm').onclick=()=>action(async()=>{const pending=pendingMarkdownImport;if(!pending)return;const text=await pending.file.text();const base=await savedVersion();if(base!==pending.base)throw Error('报告已有修改，请取消后重新选择 Markdown 文件');editor.commands.setContent(toEditor(text),{contentType:'markdown',emitUpdate:true});await savedVersion();cancelMarkdownImport();notice('已导入为新的富文档版本')});
 $('markdown-source').oninput=changed;window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue=''}});
-(async()=>{try{setToken((await api('session')).token);await refresh(true);await initChat();refreshWorkspaces().catch(()=>{});adaptivePoll(()=>refresh(),{active:backgroundActive,fast:3000})}catch(e){notice(e.message,true)}})();
+// BEGIN_WORKSPACE_STARTUP
+const startup={sessionReady:false,stateReady:false,chatReady:false,ready:false,paused:false,suspended:false,running:null,controller:null,pollStops:[]};
+const startupDelays=[1000,2000,5000,10000,30000];
+function startupStatus(message,{retry=false,pausable=true}={}){
+ if(!startup.panel){
+  const box=document.createElement('section');box.className='panel';box.dataset.testid='startup-status';box.setAttribute('role','status');
+  const text=document.createElement('p'),again=document.createElement('button'),pause=document.createElement('button');
+  again.type=pause.type='button';again.className='outline';pause.className='ghost';again.textContent='重试连接';pause.textContent='暂停重试';
+  again.onclick=()=>{cancelStartup(false);void startWorkspace()};pause.onclick=()=>cancelStartup();
+  box.append(text,again,pause);document.querySelector('main').prepend(box);startup.panel={box,text,again,pause};
+ }
+ const {box,text,again,pause}=startup.panel;box.hidden=false;text.textContent=message;again.disabled=!retry;pause.hidden=!pausable;
+ $('connection').textContent='工作区尚未连接';
+}
+function cancelStartup(paused=true){
+ startup.paused=paused;startup.controller?.abort();
+ if(paused&&!startup.ready)startupStatus('连接重试已暂停，输入内容保留。',{retry:true,pausable:false});
+}
+function startupWait(ms,signal){
+ return new Promise(resolve=>{
+  const done=()=>{clearTimeout(timer);signal.removeEventListener('abort',done);resolve()};
+  const timer=setTimeout(done,ms);signal.addEventListener('abort',done,{once:true});
+  if(signal.aborted)done();
+ });
+}
+function startWorkspacePolls(){
+ if(startup.pollStops.length)return;
+ startup.pollStops=[adaptivePoll(()=>refresh(),{active:backgroundActive,fast:3000}),adaptivePoll(()=>pollChat(),{active:backgroundActive,fast:1300})];
+}
+function startWorkspace(){
+ if(startup.paused||startup.suspended)return Promise.resolve(false);
+ if(startup.running)return startup.controller?.signal.aborted?startup.running.then(()=>startWorkspace()):startup.running;
+ if(startup.ready){startWorkspacePolls();return Promise.resolve(true)}
+ const controller=startup.controller=new AbortController(),signal=controller.signal;
+ startup.running=(async()=>{
+  for(let attempt=0;!signal.aborted;attempt++){
+   startupStatus('正在连接本地工作区…');
+   try{
+    if(!startup.sessionReady){const session=await api('session');if(signal.aborted)return false;setToken(session.token);startup.sessionReady=true}
+    if(!startup.stateReady){if(!await refreshState(true,signal))return false;startup.stateReady=true}
+    if(!startup.chatReady){if(!await initChat(signal))return false;startup.chatReady=true}
+    if(signal.aborted)return false;
+    startup.ready=true;startup.panel.box.hidden=true;$('connection').textContent='本地已连接';startWorkspacePolls();refreshWorkspaces().catch(()=>{});return true;
+   }catch(error){
+    if(signal.aborted)return false;
+    const delay=startupDelays[attempt];
+    if(delay===undefined){startupStatus('连接仍未恢复，自动重试已暂停。网络恢复后可重试连接。原因：'+error.message,{retry:true,pausable:false});return false}
+    startupStatus(`连接未完成，${delay/1000} 秒后重试（${attempt+1}/${startupDelays.length}）。输入内容保留。原因：${error.message}`,{retry:true});
+    await startupWait(delay,signal);
+   }
+  }
+  return false;
+ })().finally(()=>{startup.running=null});
+ return startup.running;
+}
+window.addEventListener('online',()=>{if(!startup.paused)void startWorkspace()});
+window.addEventListener('pagehide',()=>{startup.suspended=true;startup.controller?.abort();for(const stop of startup.pollStops)stop();startup.pollStops=[]});
+window.addEventListener('pageshow',()=>{startup.suspended=false;if(!startup.paused)void startWorkspace()});
+void startWorkspace();
+// END_WORKSPACE_STARTUP
 
 $('editor').addEventListener('click',e=>{const a=e.target.closest('a[href^="#source-"]');if(a){e.preventDefault();const id=a.getAttribute('href').slice(8);action(async()=>{const r=await api('source?id='+id);showSource(r)})}});
 
@@ -1288,10 +1347,12 @@ for(const name of ['dragenter','dragover'])chatComposer.addEventListener(name,ev
 for(const name of ['dragleave','dragend'])chatComposer.addEventListener(name,()=>chatComposer.classList.remove('drag-over'));
 chatComposer.addEventListener('drop',event=>{const files=[...(event.dataTransfer?.files||[])];chatComposer.classList.remove('drag-over');if(!files.length)return;event.preventDefault();uploadChatFiles(files)});
 document.querySelectorAll('[data-prompt]').forEach(b=>b.onclick=()=>{$('chat-input').value=b.dataset.prompt;rememberDraft();updateComposer();$('chat-input').focus()});
-async function initChat(){
- try{const saved=JSON.parse(sessionStorage.getItem('briefloop-chat-drafts')||'[]');if(Array.isArray(saved))chat.drafts=new Map(saved)}catch{}
- chat.id=localStorage.getItem('briefloop-chat-session')||null;
- try{const list=await api('harness/sessions?view=active');chat.sessions=list.sessions||[]}catch{chat.sessions=[]}
+async function initChat(signal){
+ const list=await api('harness/sessions?view=active');if(signal?.aborted)return false;
+ const liveHomeChoice=!!chat.drafts.get('new')?.model;
+ // Input typed during a connection retry takes precedence over the stored snapshot.
+ try{const saved=JSON.parse(sessionStorage.getItem('briefloop-chat-drafts')||'[]');if(Array.isArray(saved))chat.drafts=new Map([...saved,...chat.drafts])}catch{}
+ chat.id=localStorage.getItem('briefloop-chat-session')||null;chat.sessions=list.sessions||[];
  const recoverable=!!chat.id&&chat.sessions.some(s=>s.id===chat.id);
  const settings=state&&state.settings;
  const fresh=chat.sessions.length===0&&!((state&&state.runs)||[]).length&&!((state&&state.briefs)||[]).length;
@@ -1305,10 +1366,9 @@ async function initChat(){
  }else{
   // Home always opens on the landing; conversations are opened from the sidebar.
   chat.home=true;chat.id=null;chat.session=null;chat.messages=[];chat.requests=[];chat.events=new Map();chat.after=0;chat.request=null;renderMessages.signature='';localStorage.removeItem('briefloop-chat-session');
-  page('chat');restoreDraft();renderChat();
-  try{await pollChat(true)}catch(e){chatError(e.message)}
+  page('chat');restoreDraft({preserveNewDraft:liveHomeChoice});renderChat();
  }
- adaptivePoll(()=>pollChat(),{active:backgroundActive,fast:1300});
+ return true;
 }
 
 $('chat-allow-web').onchange=rememberDraft;
