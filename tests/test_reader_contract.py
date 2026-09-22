@@ -76,6 +76,29 @@ def test_publication_rejects_unbound_contract(tmp_path):
     assert not store.rows('SELECT id FROM briefs')
 
 
+def test_second_clause_quote_error_identifies_original_requirement_without_saving(tmp_path):
+    from briefloop.chat_tools import workspace_action
+    from briefloop.store import Store
+    store=Store(tmp_path);source=store.add_source('Source','Evidence')
+    run=store.create_run({'title':'Report','objective':'说明交付变化。区分计划与实际。保留日期和单位。'},[source['id']])
+    spec=resolve(json.loads(run['requirements']));schema=reader_contract_schema(spec)
+    identity=spec['requirement_items'][0]['requirement_id']
+    value={'source_fingerprint':schema['properties']['source_fingerprint']['const'],'clauses':[
+        {'requirement_id':identity,'kind':'reader_content','source_quote':'说明交付变化。','instruction':'说明变化'},
+        {'requirement_id':identity,'kind':'research_method','source_quote':'说明交付变化。保留日期和单位。','instruction':'保留口径'}]}
+    original=deepcopy(value)
+    with pytest.raises(ValueError) as error:
+        workspace_action(store,{'action':'set_reader_contract','run_id':run['id'],'reader_contract':value})
+    assert 'clauses[1].source_quote' in str(error.value) and 'requirement_id='+identity in str(error.value)
+    assert 'requirement.text' in str(error.value) and '连续逐字' in str(error.value) and '不得拼接' in str(error.value)
+    assert store.meta('reader_contract:'+run['id']) is None and value==original
+    value['clauses'][1]['source_quote']='保留日期和单位。'
+    accepted=workspace_action(store,{'action':'set_reader_contract','run_id':run['id'],'reader_contract':value})
+    assert accepted==value==store.meta('reader_contract:'+run['id'])
+    description=schema['properties']['clauses']['items']['properties']['source_quote']['description']
+    assert 'requirement.text' in description and '连续逐字' in description and '不得拼接' in description
+
+
 def test_scout_contract_and_saved_contract_reach_the_dispatch(tmp_path):
     # The scout contract must actually be written and handed over through the real
     # dispatch, and the Scout must be pointed at the saved plan.json contract rather

@@ -47,7 +47,8 @@ class EvidenceInput(Model):
 
 class Support(Model):
     span_id: str
-    supports_quote: str = Field(min_length=1)
+    supports_quote: str = Field(min_length=1,
+        description='本条 statement 中的连续逐字片段；取自 statement，而非来源 excerpt。')
     rationale: str = ''
 
 
@@ -191,10 +192,12 @@ def create_claim(store,run_id,request,previous_id=None):
     requirement_ids={x['requirement_id'] for x in requirement_items(json.loads(store.one('runs',run_id)['requirements']))}
     if not set(value.requirement_ids).issubset(requirement_ids):raise ValueError('主张关联了未登记的报告要求')
     if previous_id and record(store,'claims',previous_id)['run_id']!=run_id:raise ValueError('主张修订属于另一报告')
-    for support in value.supports:
+    for index,support in enumerate(value.supports):
         evidence=record(store,'evidence_spans',support.span_id)
         if evidence['source_id'] not in allowed-references:raise ValueError('主张证据未登记到本轮报告')
-        if support.supports_quote not in value.statement:raise ValueError('支持范围必须明确对应本条主张中的片段')
+        if support.supports_quote not in value.statement:
+            raise ValueError(f'supports[{index}].supports_quote：必须是本条 statement 中连续逐字存在的片段；'
+                             '请从 statement 取值，而非来源 excerpt。')
     if value.claim_role=='source_statement':
         if not value.supports:raise ValueError('来源陈述必须引用已登记的证据片段')
         if value.figure_ids:raise ValueError('来源陈述不能登记图表依据')

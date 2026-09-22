@@ -90,7 +90,8 @@ def reader_contract_schema(spec):
                     'properties': {
                         'requirement_id': {'type': 'string', 'enum': [x['requirement_id'] for x in spec['requirement_items']]},
                         'kind': {'type': 'string', 'enum': list(CONTRACT_KINDS)},
-                        'source_quote': {'type': 'string', 'minLength': 1},
+                        'source_quote': {'type': 'string', 'minLength': 1,
+                                         'description': '对应 requirement_id 的原始 requirement.text 中连续逐字片段；不得拼接不连续内容。'},
                         'instruction': {'type': 'string', 'minLength': 1}},
                     'required': ['requirement_id', 'kind', 'source_quote', 'instruction']}}},
             'required': ['source_fingerprint', 'clauses']}
@@ -110,7 +111,7 @@ def validate_reader_contract(spec, value):
     if not isinstance(value['clauses'], list) or not value['clauses']:
         raise ValueError('产物约定必须解释本轮要求')
     seen, clauses = set(), []
-    for clause in value['clauses']:
+    for index, clause in enumerate(value['clauses']):
         if not isinstance(clause, dict) or set(clause) != {'requirement_id', 'kind', 'source_quote', 'instruction'}:
             raise ValueError('产物约定条目字段无效')
         if any(not isinstance(text, str) or not text.strip() for text in clause.values()):
@@ -119,7 +120,8 @@ def validate_reader_contract(spec, value):
         if not requirement or clause['kind'] not in CONTRACT_KINDS:
             raise ValueError('产物约定引用未知要求或类型')
         if clause['source_quote'] not in requirement['text']:
-            raise ValueError('产物约定来源片段必须逐字存在于对应原始要求')
+            raise ValueError(f"clauses[{index}].source_quote（requirement_id={clause['requirement_id']}）："
+                             '必须是对应原始 requirement.text 中连续逐字存在的片段；不得拼接不连续内容。')
         prescribed_kind = {'manual': 'manual_assignment', 'question': 'reader_content', 'writing': 'writing_preference'}.get(requirement['kind'])
         if prescribed_kind and clause['kind'] != prescribed_kind:
             raise ValueError('显式必答问题、写作偏好及人工分工不可被重新分类')
