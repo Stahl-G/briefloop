@@ -10,6 +10,8 @@ from .store import dump,uid,now
 KINDS=('search_requests','candidate_urls','source_pages')
 PAGE_LEASE_SECONDS=90
 PAGE_WAIT_SECONDS=690
+SEARCH_LEASE_SECONDS=90
+SEARCH_WAIT_SECONDS=690
 
 
 class BudgetExhausted(ValueError):
@@ -194,35 +196,130 @@ def snapshot(store,run_id):
     return _view(store,run_id,limits,state)
 
 
-def reserve_search(store,run_id,max_results):
-    """Charge before the HTTP call; failed requests retain this charge.
-
-    Admission (frozen plan + active round or fact-check stage for quality runs)
-    and the request reservation happen in the same transaction, before any
-    network call.
-    """
-    from .research_plan import admission,record_request
-    with store.tx() as connection:
-        round_id,stage=admission(store,connection,run_id,'search')
-        key,limits,state=_load(store,connection,run_id,persist_offset=True)
-        if limits is not None:
-            for kind in ('search_requests','candidate_urls'):
-                used=state[kind] if kind=='search_requests' else len(state[kind])
-                if used>=limits[kind]:raise BudgetExhausted(kind,_view(store,run_id,limits,state))
-            max_results=min(max_results,limits['candidate_urls']-len(state['candidate_urls']))
-        state['search_requests']+=1
-        _save(connection,key,state)
-        request_id=uid('search')
-        if round_id:record_request(store,connection,run_id,request_id,'search',round_id,stage=stage)
+def _reserve_search_tx(store,connection,run_id,max_results,round_id,stage):
+    from .research_plan import record_request
+    key,limits,state=_load(store,connection,run_id,persist_offset=True)
+    if limits is not None:
+        for kind in ('search_requests','candidate_urls'):
+            used=state[kind] if kind=='search_requests' else len(state[kind])
+            if used>=limits[kind]:raise BudgetExhausted(kind,_view(store,run_id,limits,state))
+        max_results=min(max_results,limits['candidate_urls']-len(state['candidate_urls']))
+    state['search_requests']+=1
+    _save(connection,key,state)
+    request_id=uid('search')
+    if round_id:record_request(store,connection,run_id,request_id,'search',round_id,stage=stage)
     return {'request_id':request_id,'max_results':max_results,'round_id':round_id,'stage':stage}
 
 
-def record_candidates(store,run_id,urls,*,reservation=None):
+def reserve_search(store,run_id,max_results):
+    """Charge before HTTP with admission and reservation in one transaction."""
+    from .research_plan import admission
+    with store.tx() as connection:
+        round_id,stage=admission(store,connection,run_id,'search')
+        return _reserve_search_tx(store,connection,run_id,max_results,round_id,stage)
+
+
+def claim_search(store,run_id,identity,max_results):
+    """Share only an in-flight search, before charging a second request.
+
+    ``identity`` contains provider/query/options/purpose but no credential. The
+    current admitted stage is read in the same transaction as the claim and
+    budget charge, so another round can never join the previous round's call.
+    """
+    import hashlib
+    from .research_plan import admission
+    owner=uid('searchflight');waiting=None;reservation=None;exhausted=None
+    with store.tx() as connection:
+        round_id,stage=admission(store,connection,run_id,'search')
+        claim_key=hashlib.sha256(dump({'round_id':round_id,'stage':stage,'request':identity}).encode()).hexdigest()
+        clock=time.time()
+        connection.execute('DELETE FROM search_claim_results WHERE completed_at<?',(clock-86400,))
+        row=connection.execute('SELECT owner,expires_at,request_id FROM search_claims WHERE run_id=? AND claim_key=?',
+                               (run_id,claim_key)).fetchone()
+        if row and row['expires_at']>clock:
+            waiting=row['owner']
+        else:
+            if row:
+                reject_claim_request(connection,run_id,{'request_id':row['request_id']},
+                                     response_status='unobserved',reason='search_claim_expired')
+            try:reservation=_reserve_search_tx(store,connection,run_id,max_results,round_id,stage)
+            except BudgetExhausted as exc:exhausted=exc.result
+            else:
+                connection.execute('INSERT OR REPLACE INTO search_claims VALUES(?,?,?,?,?)',
+                                   (run_id,claim_key,owner,clock+SEARCH_LEASE_SECONDS,reservation['request_id']))
+    return {'owner':owner,'claim_key':claim_key,'waiting':waiting,
+            'reservation':reservation,'budget_exhausted':exhausted}
+
+
+def owns_search_claim(connection,run_id,claim_key,owner):
+    row=connection.execute('SELECT owner,expires_at FROM search_claims WHERE run_id=? AND claim_key=?',
+                           (run_id,claim_key)).fetchone()
+    return bool(row and row['owner']==owner and row['expires_at']>time.time())
+
+
+def finish_search_claim(store,run_id,claim_key,owner,*,outcome,result_path=None,error=None,
+                        failure_kind=None,http_status=None,request_record_path=None):
+    """Release a completed flight; a replaced owner cannot publish to waiters."""
+    with store.tx() as connection:
+        if not owns_search_claim(connection,run_id,claim_key,owner):return False
+        connection.execute('INSERT OR REPLACE INTO search_claim_results VALUES(?,?,?,?,?,?,?,?)',
+                           (owner,outcome,result_path,error,failure_kind,http_status,request_record_path,time.time()))
+        connection.execute('DELETE FROM search_claims WHERE run_id=? AND claim_key=? AND owner=?',
+                           (run_id,claim_key,owner))
+    return True
+
+
+def wait_for_search_claim(store,run_id,claim_key,owner):
+    deadline=time.monotonic()+SEARCH_WAIT_SECONDS
+    while time.monotonic()<deadline:
+        rows=store.rows('SELECT * FROM search_claim_results WHERE owner=?',(owner,))
+        if rows:return rows[0]
+        rows=store.rows('SELECT owner,expires_at FROM search_claims WHERE run_id=? AND claim_key=?',
+                        (run_id,claim_key))
+        if not rows or rows[0]['owner']!=owner or rows[0]['expires_at']<=time.time():
+            rows=store.rows('SELECT * FROM search_claim_results WHERE owner=?',(owner,))
+            return rows[0] if rows else {'outcome':'stale'}
+        time.sleep(.1)
+    return {'outcome':'timeout','error':'等待同一搜索请求超时'}
+
+
+@contextmanager
+def keep_search_claim_alive(store,run_id,claim_key,owner):
+    stop=threading.Event()
+    def heartbeat():
+        while not stop.wait(SEARCH_LEASE_SECONDS/3):
+            try:
+                with store.tx() as connection:
+                    connection.execute('UPDATE search_claims SET expires_at=? WHERE run_id=? AND claim_key=? AND owner=?',
+                                       (time.time()+SEARCH_LEASE_SECONDS,run_id,claim_key,owner))
+            except Exception:
+                # A missed heartbeat is fenced when the response is admitted.
+                pass
+    thread=threading.Thread(target=heartbeat,daemon=True);thread.start()
+    try:yield
+    finally:stop.set();thread.join(timeout=1)
+
+
+def save_search_result(store,run_id,request_id,result):
+    folder=store.root/'discovery'/run_id/'claim-results';folder.mkdir(parents=True,exist_ok=True)
+    path=folder/(request_id+'.json')
+    path.write_text(dump(result),encoding='utf-8')
+    return str(path)
+
+
+def record_candidates(store,run_id,urls,*,reservation=None,claim_key=None,claim_owner=None):
     """Concurrent responses may overflow; admission is atomic and overflow explicit."""
     incoming=list(dict.fromkeys(canonical_url(url) for url in urls))
     with store.tx() as connection:
         from .research_plan import admit_response
-        accepted=admit_response(connection,run_id,reservation,'search')
+        claim_lost=claim_key is not None and not owns_search_claim(connection,run_id,claim_key,claim_owner)
+        if claim_lost:
+            reject_claim_request(connection,run_id,reservation,response_status='completed',reason='search_claim_lost')
+            row=connection.execute('SELECT value FROM meta WHERE key=?',('research_requests:'+run_id,)).fetchone()
+            entry=(json.loads(row['value']) if row else {}).get(reservation['request_id'],{})
+            rejection_reason=entry.get('rejection_reason','search_claim_lost')
+            accepted=False
+        else:accepted=admit_response(connection,run_id,reservation,'search')
         key,limits,state=_load(store,connection,run_id,persist_offset=accepted)
         known=set(state['candidate_urls']);overflow=[]
         for url in incoming:
@@ -235,7 +332,8 @@ def record_candidates(store,run_id,urls,*,reservation=None):
         if accepted:_save(connection,key,state)
         view=_view(store,run_id,limits,state)
     return {'accepted':accepted,'allowed_urls':[url for url in incoming if url not in overflow],
-            'unadmitted_urls':overflow,'budget':view}
+            'unadmitted_urls':overflow,'budget':view,
+            'rejection_reason':rejection_reason if claim_lost else 'stage_closed_or_replaced' if not accepted else None}
 
 
 def _reserve_pages_tx(store,connection,run_id,urls,*,request_id=None,refresh_job_id=None,source_id=None):
@@ -343,7 +441,9 @@ def reject_claim_request(connection,run_id,reservation,*,response_status,reason=
         entry.update(status='response_rejected',response_status=response_status,
                      rejection_reason=reason,updated=now())
         connection.execute('UPDATE meta SET value=? WHERE key=?',(dump(data),key))
-    elif entry and entry.get('status')=='response_rejected' and entry.get('rejection_reason')=='page_claim_expired' and response_status!='unobserved':
+    elif (entry and entry.get('status')=='response_rejected'
+          and entry.get('rejection_reason') in ('page_claim_expired','search_claim_expired')
+          and response_status!='unobserved'):
         entry.update(response_status=response_status,updated=now())
         connection.execute('UPDATE meta SET value=? WHERE key=?',(dump(data),key))
 

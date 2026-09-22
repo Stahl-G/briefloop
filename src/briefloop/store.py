@@ -76,6 +76,11 @@ CREATE TABLE IF NOT EXISTS page_claims(run_id TEXT NOT NULL REFERENCES runs(id),
  owner TEXT NOT NULL, expires_at REAL NOT NULL, request_id TEXT NOT NULL, PRIMARY KEY(run_id,url));
 CREATE TABLE IF NOT EXISTS page_claim_results(owner TEXT NOT NULL, url TEXT NOT NULL,
  outcome TEXT NOT NULL, source_id TEXT, error TEXT, completed_at REAL NOT NULL, PRIMARY KEY(owner,url));
+CREATE TABLE IF NOT EXISTS search_claims(run_id TEXT NOT NULL REFERENCES runs(id), claim_key TEXT NOT NULL,
+ owner TEXT NOT NULL, expires_at REAL NOT NULL, request_id TEXT NOT NULL, PRIMARY KEY(run_id,claim_key));
+CREATE TABLE IF NOT EXISTS search_claim_results(owner TEXT PRIMARY KEY, outcome TEXT NOT NULL,
+ result_path TEXT, error TEXT, failure_kind TEXT, http_status INTEGER, request_record_path TEXT,
+ completed_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS briefs(id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
  parent_id TEXT REFERENCES briefs(id), author TEXT NOT NULL, markdown TEXT NOT NULL,
  hash TEXT NOT NULL, detail TEXT NOT NULL, editor_document TEXT, created TEXT NOT NULL);
