@@ -1,5 +1,6 @@
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from briefloop import sources
 from briefloop.store import Store
@@ -104,6 +105,76 @@ def test_html_title_is_used_as_a_readable_source_label():
     assert html_title(b'<title>x</title>', 'application/pdf') == ''
     assert html_title(b'<title>Just a moment...</title>', 'text/html') == ''
     assert html_title(('<title>'+'长'*300+'</title>').encode(), 'text/html') == '长'*200
+
+
+def test_real_http_interstitial_is_retained_but_not_marked_ready(tmp_path,monkeypatch):
+    """A 200 anti-bot page is evidence of a failed read, not report content."""
+    from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            pages={
+                '/challenge':b'<html><title>Just a moment...</title><body><div id="challenge-platform">Checking your browser before accessing the site.</div></body></html>',
+                '/notice':b'<html><title>Maintenance notice</title><body>Brief scheduled maintenance.</body></html>',
+                '/article':b'<html><title>How anti-bot checks work</title><body>This article discusses CAPTCHA and checking your browser techniques.</body></html>',
+            }
+            body=pages[self.path];self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8');self.end_headers();self.wfile.write(body)
+        def log_message(self,*_):pass
+    server=ThreadingHTTPServer(('127.0.0.1',0),Handler)
+    import threading
+    thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+    try:
+        # The production SSRF policy correctly forbids loopback.  Keep the
+        # request real while admitting this test-only local HTTP listener.
+        monkeypatch.setattr(sources,'_checked_addresses',lambda *_args,**_kwargs:['127.0.0.1'])
+        store=Store(tmp_path)
+        base='http://127.0.0.1:'+str(server.server_port)
+        blocked=sources.fetch(store,base+'/challenge',allow_private=True)
+        assert blocked['status']=='failed' and '访问拦截页' in blocked['error']
+        metadata=json.loads((store.root/'sources'/(blocked['id']+'.provenance.json')).read_text())
+        assert (store.root/metadata['original_path']).read_bytes().startswith(b'<html><title>Just a moment')
+        assert metadata['extraction_status']=='failed' and store.source_text(blocked['id'])==''
+        assert sources.fetch(store,base+'/notice',allow_private=True)['status']=='ready'
+        assert sources.fetch(store,base+'/article',allow_private=True)['status']=='ready'
+    finally:
+        server.shutdown();thread.join()
+
+
+def test_parallel_run_fetches_share_one_snapshot_and_retry_after_failure(tmp_path,monkeypatch):
+    store=Store(tmp_path)
+    run=store.create_run({'title':'r','objective':'o','allow_web':True,
+                          'research_budget':{'search_requests':1,'candidate_urls':1,'source_pages':1}},[])['id']
+    calls=[]
+    import threading,time
+    lock=threading.Lock()
+    def response(url,**_):
+        with lock:calls.append(url)
+        time.sleep(.08)
+        return b'<html><title>Shared</title><body>one source</body></html>','text/html','utf-8'
+    monkeypatch.setattr(sources,'_fetch_bytes',response)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first,second=list(pool.map(lambda _:sources.fetch_for_run(store,run,'https://example.test/report?edition=1'),range(2)))
+    assert len(calls)==1 and first['id']==second['id']
+    assert len(store.source_ids(run))==1
+    from briefloop import research_budget
+    assert research_budget.snapshot(store,run)['used']['source_pages']==1
+    assert any(item.get('shared') for item in (first,second))
+    # A failed in-flight request is not cached: a later caller gets a new
+    # snapshot attempt (without spending this run's canonical URL twice).
+    attempts=[]
+    def flaky(url,**_):
+        attempts.append(url)
+        return (b'<html></html>','text/html','utf-8') if len(attempts)==1 else (b'usable retry','text/plain','utf-8')
+    monkeypatch.setattr(sources,'_fetch_bytes',flaky)
+    retry_run=store.create_run({'title':'retry','objective':'o','allow_web':True,
+                                'research_budget':{'search_requests':1,'candidate_urls':1,'source_pages':1}},[])['id']
+    assert sources.fetch_for_run(store,retry_run,'https://example.test/retry')['status']=='failed'
+    assert sources.fetch_for_run(store,retry_run,'https://example.test/retry')['status']=='ready'
+    assert len(attempts)==2 and research_budget.snapshot(store,retry_run)['used']['source_pages']==1
+    other=store.create_run({'title':'other','objective':'o','allow_web':True,
+                            'research_budget':{'search_requests':1,'candidate_urls':1,'source_pages':1}},[])['id']
+    monkeypatch.setattr(sources,'_fetch_bytes',response)
+    sources.fetch_for_run(store,other,'https://example.test/report?edition=1')
+    assert len(calls)==2 and research_budget.snapshot(store,other)['used']['source_pages']==1
 
 
 def test_snapshot_run_includes_attached_sources_in_count(tmp_path):

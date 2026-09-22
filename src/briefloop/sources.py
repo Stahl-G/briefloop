@@ -6,6 +6,7 @@ from .host_bins import find as find_host_bin
 from io import BytesIO
 from urllib.parse import urlsplit
 from pathlib import Path
+from concurrent.futures import Future
 import hashlib
 import http.client
 import ipaddress
@@ -18,10 +19,17 @@ import urllib.request
 import urllib.error
 import zipfile
 import xml.etree.ElementTree as ET
+import threading
 
 TITLE_MAX_CHARS=200
 # Interstitial/anti-bot/error titles are not source labels.
 _GENERIC_TITLE_RE=re.compile(r'^(?:just a moment|attention required|access denied|access to this page has been denied|are you a robot|verify you are human|checking your browser|enable javascript|403 forbidden|404 not found|429 too many requests|too many requests|service unavailable|bad gateway)\b',re.I)
+_LOGIN_TITLE_RE=re.compile(r'^(?:sign in|log in|login|登录)\b',re.I)
+
+# This is deliberately an in-process, per-workspace/run registry, not a content
+# cache.  It only joins callers while one snapshot is being created.
+_INFLIGHT_FETCHES={}
+_INFLIGHT_FETCHES_LOCK=threading.Lock()
 
 
 class TextHTML(HTMLParser):
@@ -56,6 +64,31 @@ def html_title(data, content_type='', encoding=''):
     title=re.sub(r'\s+',' ',unescape(match.group(1))).strip()
     if not title or _GENERIC_TITLE_RE.match(title):return ''
     return title[:TITLE_MAX_CHARS]
+
+
+def _html_block_reason(data, content_type='', encoding=''):
+    """Return a reason only for a high-confidence HTML access interstitial.
+
+    A generic title is intentionally not enough: short public notices and
+    articles describing challenges are valid sources.  We require independent
+    page evidence (challenge markup/text, or an actual password form) before
+    marking the retained HTTP response as an extraction failure.
+    """
+    if 'html' not in (content_type or '').lower():return None
+    try:page=data.decode(encoding or 'utf-8','ignore')
+    except (LookupError,UnicodeDecodeError):page=data.decode('utf-8','ignore')
+    title_match=re.search(r'<title[^>]*>(.*?)</title>',page,re.I|re.S)
+    title=re.sub(r'\s+',' ',unescape(title_match.group(1))).strip() if title_match else ''
+    lower=page.lower()
+    challenge_markers=('checking your browser','verify you are human','enable javascript and cookies',
+                       'cf-chl-','challenge-platform','captcha')
+    if _GENERIC_TITLE_RE.match(title) and any(marker in lower for marker in challenge_markers):
+        return '网页返回访问拦截页，未保存为可用正文'
+    has_password=bool(re.search(r'<input\b[^>]*\btype\s*=\s*["\']?password\b',lower,re.I))
+    has_form='<form' in lower
+    if _LOGIN_TITLE_RE.match(title) and has_form and has_password:
+        return '网页返回登录页，未保存为可用正文'
+    return None
 
 
 def extract(name, data, *, with_extractor=False):
@@ -324,6 +357,8 @@ def _fetch(store, url, *, allow_private=False):
                 'media_type':detect_media_type(raw_name,data,content_type),'needs_visual':False,'pages':None}
     text='';error=None;extractor='source extraction'
     try:
+        blocked=_html_block_reason(data,content_type,encoding)
+        if blocked:raise ValueError(blocked)
         text,extractor,details=_source_content(store,raw_name,data,content_type=content_type,encoding=encoding)
         provenance.update(details)
         if not text.strip():raise ValueError('网页没有可读取正文')
@@ -367,15 +402,38 @@ def fetch_for_run(store,run_id,url):
     import json
     run=store.one('runs',run_id)
     if not json.loads(run['requirements']).get('allow_web'):raise ValueError('本轮仅允许本地来源')
-    previous=existing_for_run(store,run_id,url)
+    from .research_budget import canonical_url
+    canonical=canonical_url(url)
+    previous=existing_for_run(store,run_id,canonical)
     from . import research_budget as budget
     if previous:return {**previous,'reused':True,'budget':budget.snapshot(store,run_id)}
-    try:reservation=budget.reserve_pages(store,run_id,[url])
-    except budget.BudgetExhausted as exc:return {**exc.result,'url':url}
-    source=fetch(store,url)
-    store.attach_source(run_id,source['id'])
-    if reservation.get('round_id'):
-        from .research_plan import settle_request
-        settle_request(store,run_id,reservation['request_id'],'completed' if source.get('status')=='ready' else 'failed')
-    return {**source,'reused':False,'budget':budget.snapshot(store,run_id),
-            'round_id':reservation.get('round_id'),'local_request_id':reservation.get('request_id')}
+    key=(str(store.root),run_id,canonical)
+    with _INFLIGHT_FETCHES_LOCK:
+        future=_INFLIGHT_FETCHES.get(key)
+        leader=future is None
+        if leader:
+            future=Future()
+            _INFLIGHT_FETCHES[key]=future
+    if not leader:
+        shared=future.result()
+        return {**shared,'reused':True,'shared':True,'budget':budget.snapshot(store,run_id)}
+    try:
+        try:reservation=budget.reserve_pages(store,run_id,[canonical])
+        except budget.BudgetExhausted as exc:
+            result={**exc.result,'url':url}
+        else:
+            source=fetch(store,url)
+            store.attach_source(run_id,source['id'])
+            if reservation.get('round_id'):
+                from .research_plan import settle_request
+                settle_request(store,run_id,reservation['request_id'],'completed' if source.get('status')=='ready' else 'failed')
+            result={**source,'reused':False,'shared':False,'budget':budget.snapshot(store,run_id),
+                    'round_id':reservation.get('round_id'),'local_request_id':reservation.get('request_id')}
+        future.set_result(result)
+        return result
+    except BaseException as exc:
+        future.set_exception(exc)
+        raise
+    finally:
+        with _INFLIGHT_FETCHES_LOCK:
+            _INFLIGHT_FETCHES.pop(key,None)
