@@ -1,4 +1,4 @@
-"""Fixed review/release JSON is UTF-8 even in a non-UTF-8 API host."""
+"""Fixed internal JSON is UTF-8 even in a non-UTF-8 API host."""
 from copy import deepcopy
 import json
 import os
@@ -106,7 +106,137 @@ def _manifest_case(root):
         validate_release(store, extended)
 
 
-@pytest.mark.parametrize('case', ['review', 'release', 'manifest'])
+def _company_case(root):
+    from briefloop.company_context import prepare_review
+    from briefloop.native_orchestrator import prepare
+    store = Store(root)
+    store.update_settings({'company_context_enabled': True, 'auto_learn': False})
+    source = store.add_source(TEXT, TEXT)
+    run = store.create_run({'title': TEXT, 'objective': TEXT, 'writing_mode': 'internal_report'}, [source['id']])
+    job = store.enqueue('generate', {'run_id': run['id'], 'agent_backend': 'briefloop-native',
+                                    'runtime': {'model': 'fake/unused'}})
+    folder = store.root/'jobs'/job['id']; folder.mkdir(parents=True)
+    class NoModel(Exception): pass
+    class Runtime:
+        reached = False
+        def execute(self, staged, prompt, review_folder, **kwargs):
+            payload = json.loads((review_folder/'input.json').read_text(encoding='utf-8'))
+            assert payload['requirements']['objective'] == TEXT
+            assert payload['sources'][0]['hash'] == source['hash']
+            config, _ = prepare(store, staged, review_folder, prompt)
+            assert config['task_kind'] == 'company_review'
+            assert json.loads((review_folder/'packet/input.json').read_text(encoding='utf-8')) == payload
+            self.reached = True
+            raise NoModel()
+    runtime = Runtime()
+    with pytest.raises(NoModel):
+        prepare_review(store, runtime, job, run, folder, 'briefloop-native')
+    assert runtime.reached
+    assert store.one('runs', run['id'])['requirements'] == run['requirements']
+    assert store.source_text(source['id']) == TEXT
+
+
+def _template_prepare_case(root):
+    import hashlib
+    from briefloop.native_orchestrator import prepare
+    assert sys.flags.utf8_mode == 0
+    store = Store(root)
+    info = json.loads((root/'template-fixture.json').read_text(encoding='utf-8'))
+    original = root/'templates'/info['id']/'original.docx'
+    inventory = original.with_name('inventory.json')
+    before = json.loads(inventory.read_text(encoding='utf-8'))
+    job = store.enqueue('prepare_template', {'template_id': info['id']})
+    folder = root/'prepare'; folder.mkdir()
+    config, _ = prepare(store, job, folder, 'Read the frozen inventory')
+    assert config['task_kind'] == 'prepare_template'
+    assert json.loads((folder/'packet/inventory.json').read_text(encoding='utf-8')) == before
+    assert before['blocks'][0]['text'] == '合成产品名 🧪'
+    assert before['headers'] == [[TEXT]] and before['footers'] == [[TEXT]]
+    assert hashlib.sha256(original.read_bytes()).hexdigest() == info['source_hash']
+    # Valid GBK is not valid UTF-8; never silently reinterpret internal JSON.
+    inventory.write_bytes(b'{"note":"\xa1\xa1"}')
+    with pytest.raises(UnicodeDecodeError):
+        prepare(store, job, folder, 'No model')
+    assert hashlib.sha256(original.read_bytes()).hexdigest() == info['source_hash']
+
+
+def _template_case(root):
+    import hashlib
+    from io import BytesIO
+    from docx import Document
+    from briefloop.templates import import_template
+    store = Store(root)
+    document = Document(); document.add_paragraph('合成产品名 🧪')
+    document.sections[0].header.paragraphs[0].text = TEXT
+    document.sections[0].footer.paragraphs[0].text = TEXT
+    output = BytesIO(); document.save(output); data = output.getvalue()
+    row = import_template(store, '合成模板 🧪.docx', data, prepare_job=False)
+    assert row['source_hash'] == hashlib.sha256(data).hexdigest()
+    assert (root/'templates'/row['id']/'original.docx').read_bytes() == data
+    (root/'template-fixture.json').write_text(dump(row), encoding='utf-8')
+    code = 'from pathlib import Path; import sys; from test_review_packet_utf8 import _template_prepare_case; _template_prepare_case(Path(sys.argv[1]))'
+    prepared = subprocess.run([sys.executable, '-X', 'utf8=0', '-c', code, str(root)],
+                              capture_output=True, text=True, encoding='utf-8', timeout=30)
+    assert prepared.returncode == 0, prepared.stderr
+
+
+def _analyst_case(root):
+    from briefloop import analyst, analyst_drafts as drafts, writer_input as writer
+    from briefloop.native_roles import _source_ids
+    store = Store(root)
+    source = store.add_source(TEXT, TEXT)
+    run = store.create_run({'title': TEXT, 'objective': TEXT, 'allow_web': False}, [source['id']])
+    inputs = {'plan': {'draft_structure': [TEXT]}, 'research': {'sources': [{
+        'source_id': source['id'], 'locator': 'line 1', 'excerpt': TEXT,
+        'facts': [TEXT], 'coverage_status': 'complete'}], 'gaps': []}}
+    job = store.enqueue('generate', {'run_id': run['id'], 'writer_input_protocol': 'writer_input_v1',
+                                    'agent_backend': 'briefloop-native', 'runtime': {'model': 'fake/unused'}})
+    folder = root/'writer'
+    class Runtime:
+        calls = 0
+        def execute(self, staged, prompt, destination):
+            self.calls += 1
+            self.config = {**staged['native_packet'], 'native_role': 'analyst',
+                           'packet_root': str(destination/'packet'), 'attempt_id': staged['id']}
+            cfg = self.config
+            assert writer.protocol(cfg) == 'writer_input_v1'
+            assert _source_ids(store, cfg) == {source['id']}
+            writer.ensure_revision_base(store, cfg)
+            if self.calls == 1:
+                writer.write_sections(store, cfg, {'sections': [
+                    {'section_id': 'body', 'markdown': f'{TEXT}[@{source["id"]}]'},
+                    {'section_id': 'next', 'markdown': TEXT}]})
+                saved = writer.assemble_report(store, cfg, {'title': TEXT, 'section_ids': ['body', 'next']})
+                saved = writer.assemble_evidence(store, cfg, {'base_revision': saved['revision'],
+                    'citations': [{'source_id': source['id'], 'excerpt': TEXT}]})
+                self.revision = saved['revision']
+            drafts.check(store, cfg, {'revision': self.revision})
+            drafts.submit(store, cfg, {'revision': self.revision})
+    runtime = Runtime()
+    first = analyst.run(store, runtime, job, run['id'], folder, 'briefloop-native', publish=False, **inputs)
+    frozen = {path.relative_to(folder/'packet').as_posix(): path.read_bytes()
+              for path in (folder/'packet').rglob('*') if path.is_file()}
+    task = json.loads(frozen['input.json'].decode('utf-8'))
+    assert task['requirements']['objective'] == TEXT
+    assert json.loads(frozen['document-guide.json'].decode('utf-8'))['protocol'] == 'writer_input_v1'
+    assert frozen[f'sources/{source["id"]}.txt'].decode('utf-8') == TEXT
+    repeated = analyst.run(store, runtime, job, run['id'], folder, 'briefloop-native', publish=False,
+                           expected_fingerprint=first['packet_fingerprint'], **inputs)
+    assert repeated == first and runtime.calls == 2
+    assert all((folder/'packet'/name).read_bytes() == content for name, content in frozen.items())
+    original = store.publish(run['id'], drafts.submitted(store, runtime.config))
+    revised = analyst.packet(store, run['id'], root/'revision', base_version=original['id'],
+                             feedback=[TEXT], writer_protocol='writer_input_v1', **inputs)
+    cfg = {'run_id': run['id'], 'packet_root': str(revised['root']),
+           'result_file': str(root/'revision/draft.json'), 'attempt_id': 'revision'}
+    writer.ensure_revision_base(store, cfg)
+    current = drafts._read(drafts._root(store, cfg)/'current.json')
+    writer.ensure_revision_base(store, cfg)
+    assert drafts._read(drafts._root(store, cfg)/'current.json') == current
+    assert TEXT in drafts._candidate(store, cfg, current)['draft']['markdown']
+
+
+@pytest.mark.parametrize('case', ['review', 'release', 'manifest', 'company', 'template', 'analyst'])
 def test_fixed_packets_in_non_utf8_subprocess(tmp_path, case):
     import briefloop
 

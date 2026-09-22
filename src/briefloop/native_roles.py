@@ -122,7 +122,7 @@ def evaluator_packet(store, input_pack, schema, folder):
 
 def _source_ids(store, config):
     if config.get('native_role') == 'analyst':
-        index = json.loads((Path(config['packet_root']) / 'source-index.json').read_text())
+        index = json.loads((Path(config['packet_root']) / 'source-index.json').read_text(encoding='utf-8'))
         return {s['source_id'] for s in index['sources']}
     if config.get('run_id'):
         return set(store.source_ids(config['run_id']))

@@ -123,7 +123,7 @@ def prepare_review(store, runtime, job, run, folder, backend):
     review_folder=folder/'company-review';review_folder.mkdir(exist_ok=True)
     data={'run_id':run['id'],'requirements':req,'company_context':snapshot(store),
           'sources':[source_context(store,sid) for sid in store.source_ids(run['id'])]}
-    (review_folder/'input.json').write_text(dump(data))
+    (review_folder/'input.json').write_text(dump(data),encoding='utf-8')
     tool=tool_command(store.root,backend=json.loads(job['payload']).get('agent_backend','codex'))
     prompt_text=TASK_CONTEXT+f"""
 你负责本轮报告开始前的企业背景维护。尚未完成此阶段时，系统不会启动报告写作。
