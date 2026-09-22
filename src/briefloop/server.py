@@ -445,7 +445,7 @@ def _make_server(workspace, port, *, paused, backend, lock):
                             report_date=req.get('report_date',''),organization=req.get('organization',''),industry=req.get('industry',''),
                             period=req.get('period',''),report_data=report_data,figures=export_figures(store,b),
                             document=json.loads(b['editor_document']) if b.get('editor_document') else None,
-                            source_records={sid:store.one('sources',sid) for sid in store.source_ids(b['run_id'])}),
+                            source_records={sid:store.one('sources',sid) for sid in store.source_ids(b['run_id'])},citations=detail.get('citations',[])),
                             'application/vnd.openxmlformats-officedocument.wordprocessingml.document',download_name='report.docx')
                     else:self.send(200,md.encode(),'text/markdown; charset=utf-8')
                 elif u.path in ('/','/index.html'):
