@@ -410,9 +410,13 @@ def run(store, runtime, job, run_id, folder, backend, *, plan, research, source_
         prompt = writing_guide + f'\n任务包目录：{frozen["root"]}。'
         if backend != 'briefloop-native':
             command = tool_command(store.root, backend=backend)
-            prompt += f'\n只在 {folder} 内写文件。先将正文写入 article.md，然后调用 `{command} writer --run {run_id} --draft-file {folder / "draft.json"} --operation write_report --title "报告标题" --file {folder / "article.md"}`。'
+            writer_command = f'{command} writer --run {run_id} --draft-file {folder / "draft.json"}'
+            prompt += f'\n只在 {folder} 内写文件。先将正文写入 article.md，然后调用 `{writer_command} --operation write_report --title "报告标题" --file {folder / "article.md"}`；write_report 的 --file 是 Markdown，不传 --revision。'
             prompt += '\n可附 --evidence-file evidence.json 同次装配引用、数字和时间；只传三类证据数组，原文行号由程序定位。已有正文则用 assemble_evidence 和一次 base_revision 批量装配，不要自行编写生成富文档或查行号的脚本。'
-            prompt += f'\n其他操作共用 `{command} writer --run {run_id} --draft-file {folder / "draft.json"} --operation 操作名 --file 操作参数.json`；参数格式见 draft.schema.json。check_draft/submit_draft只传 --revision REVISION、不传 --file；read_draft可不传文件，或以JSON选择field。所有输入文件必须在本任务目录内。不要直接覆盖 draft.json。'
+            prompt += f'\n写入/更新：write_sections、assemble_report、assemble_evidence、update_citations、update_number_bindings、update_temporal_claims、update_draft_details、patch_report_text、replace_report_blocks 使用 `{writer_command} --operation OPERATION --file INPUT_JSON`；--file 是操作参数 JSON，这些操作不传 --revision。'
+            prompt += '\n需要并发版本的更新/组装操作，将最新 revision 写入操作参数 JSON 的 base_revision 字段；不加 JSON revision 字段，也不用 --revision 代替。具体字段见 draft.schema.json；write_sections 覆盖已有章节使用 expected_hash。每次写入后等返回新 revision，再用它构造下一次更新。'
+            prompt += f'\n检查：`{writer_command} --operation check_draft --revision REVISION`；提交：`{writer_command} --operation submit_draft --revision REVISION`。二者只传 --revision，不传 --file；提交必须使用已检查的最新 revision。'
+            prompt += f'\n读取：`{writer_command} --operation read_draft`；需要选择 field 时才附 --file READ_JSON，不传 --revision。所有输入文件必须在本任务目录内。不要直接覆盖 draft.json。'
     runtime.execute(staged, prompt, folder)
     from .analyst_drafts import submitted
     value = submitted(store, {**config, 'packet_root': str(frozen['root'])})
