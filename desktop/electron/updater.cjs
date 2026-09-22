@@ -25,7 +25,7 @@ function loopback(value) {
 }
 
 function createUpdater({app, shell, changed = () => {}, platform = process.platform, arch = process.arch,
-                        installMode = platform === 'darwin' ? 'zip' : 'native', nativeUpdater,
+                        installMode = platform === 'darwin' ? 'zip' : 'native', nativeUpdaterFactory,
                         testFeed = null, fetch: fetchImpl = globalThis.fetch} = {}) {
   if (!app || !shell || !['native', 'dmg', 'zip'].includes(installMode)) throw new Error('Invalid updater configuration');
   const local = testFeed ? loopback(testFeed) : null;
@@ -37,12 +37,16 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
   let metadataRateLimit = null, operation = 'check';
   const status = () => structuredClone(data);
   const publish = patch => {data = {...data, ...patch}; changed(status()); return status();};
-  const fail = error => {
+  const fail = (error, kind = operation) => {
+    if (installMode === 'native' && platform === 'win32' && kind === 'install') {
+      retireNative();
+      if (!(error instanceof UpdateError)) error = new UpdateError('native_install_failed', '更新未能启动，请重新下载后重试。');
+    }
     if (installMode === 'native' && platform === 'win32' && error?.code === 'ERR_UPDATER_CHANNEL_FILE_NOT_FOUND') {
       error = new UpdateError('windows_update_unavailable', '官方发布尚未提供 Windows 更新文件，请稍后重试。');
     }
     return publish({state: 'error', error: {
-      operation, code: error instanceof UpdateError ? error.code : 'update_failed',
+      operation: kind, code: error instanceof UpdateError ? error.code : 'update_failed',
       message: error instanceof UpdateError ? error.message : '更新请求失败，请检查网络后重试。'},
       retryable: error instanceof UpdateError ? error.retryable : true});
   };
@@ -135,30 +139,93 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
   function setupNative() {
     if (native) return native;
     if (platform !== 'win32' && platform !== 'darwin') throw new UpdateError('unsupported_platform', '此平台尚未配置原生更新。', false);
-    native = nativeUpdater || require('electron-updater').autoUpdater;
-    native.autoDownload = false;
-    native.disableDifferentialDownload = false;
-    native.autoInstallOnAppQuit = false;
-    native.allowPrerelease = false;
-    native.allowDowngrade = false;
-    native.setFeedURL({provider: 'github', owner: 'Stahl-G', repo: 'briefloop', private: false});
-    native.on('download-progress', value => publish({state: 'downloading', progress: {
+    // A failed NsisUpdater retains its install guard. Recovery needs a new
+    // instance, not the module's cached autoUpdater or a private flag reset.
+    const updater = nativeUpdaterFactory ? nativeUpdaterFactory() : platform === 'win32'
+      ? new (require('electron-updater').NsisUpdater)() : require('electron-updater').autoUpdater;
+    const session = native = {updater, checkedVersion: null, downloaded: null};
+    updater.autoDownload = false;
+    updater.disableDifferentialDownload = false;
+    updater.autoInstallOnAppQuit = false;
+    updater.allowPrerelease = false;
+    updater.allowDowngrade = false;
+    updater.setFeedURL({provider: 'github', owner: 'Stahl-G', repo: 'briefloop', private: false});
+    session.progress = value => {if (native === session) publish({state: 'downloading', progress: {
       percent: Math.max(0, Math.min(100, Number(value.percent) || 0)),
-      transferred: Number(value.transferred) || 0, total: Number(value.total) || 0}}));
-    // Errors must have a listener, but never copy raw provider diagnostics into UI.
-    native.on('error', error => fail(error));
-    return native;
+      transferred: Number(value.transferred) || 0, total: Number(value.total) || 0}});};
+    session.downloadedListener = value => {
+      if (native !== session) return;
+      try {session.downloaded = structuredClone(value);} catch {session.downloaded = null;}
+    };
+    updater.on('download-progress', session.progress);
+    updater.on('update-downloaded', session.downloadedListener);
+    // Keep this guarded listener after retirement: a late EventEmitter error
+    // must neither mutate the new session nor become an unhandled exception.
+    updater.on('error', error => {if (native === session) fail(error, session.installing ? 'install' : operation);});
+    return session;
+  }
+  function retireNative() {
+    if (native) {
+      native.updater.removeListener('download-progress', native.progress);
+      native.updater.removeListener('update-downloaded', native.downloadedListener);
+    }
+    native = null;
+    ready = null;
+  }
+  async function checkNative(session) {
+    const result = await session.updater.checkForUpdates();
+    if (native !== session || !result?.updateInfo) throw new UpdateError('feed_unavailable', '原生更新源尚未就绪，请稍后重试。');
+    session.checkedVersion = releaseVersion(result.updateInfo.version);
+    return result.updateInfo;
+  }
+  function nativeReady(session, files) {
+    const info = session.downloaded, version = data.releaseVersion;
+    const invalid = () => new UpdateError('invalid_native_download', '更新文件与版本的校验信息不完整，请重新检查并下载。');
+    // This build uses one full NSIS EXE. The public event identifies only the
+    // installer, so reject web-installer packages rather than guess their paths.
+    if (!info || info.version !== version || !Array.isArray(files) || files.length !== 1
+        || (info.packages && Object.keys(info.packages).length)) throw invalid();
+    const expectedName = `BriefLoop-Setup-${version}-${arch}.exe`;
+    const installers = (Array.isArray(info.files) ? info.files : []).filter(file => {
+      try {return /\.exe$/i.test(new URL(file.url, 'https://github.com/').pathname);} catch {return false;}
+    });
+    if (installers.length !== 1) throw invalid();
+    const entry = installers[0];
+    let name;
+    try {name = path.posix.basename(decodeURIComponent(new URL(entry.url, 'https://github.com/').pathname));} catch {throw invalid();}
+    if (name !== expectedName || typeof info.downloadedFile !== 'string' || !path.isAbsolute(info.downloadedFile)
+        || typeof files[0] !== 'string' || path.normalize(files[0]) !== path.normalize(info.downloadedFile)
+        || path.basename(info.downloadedFile) !== expectedName
+        || typeof entry.sha512 !== 'string' || Buffer.from(entry.sha512, 'base64').length !== 64
+        || Buffer.from(entry.sha512, 'base64').toString('base64') !== entry.sha512) throw invalid();
+    return Object.freeze({native: true, session, version, file: path.normalize(info.downloadedFile), sha512: entry.sha512});
+  }
+  async function verifyNativeReady(value) {
+    if (native !== value.session || value.version !== data.releaseVersion) throw new UpdateError('native_changed', '更新版本发生变化，请重新检查并下载。');
+    try {
+      for (const file of [value.file, path.dirname(value.file)]) {
+        const stat = await fs.lstat(file);
+        if (stat.isSymbolicLink() || (file === value.file ? !stat.isFile() || stat.size > MAX_ASSET : !stat.isDirectory())) {
+          throw new Error('invalid update file');
+        }
+      }
+      const hash = crypto.createHash('sha512');
+      for await (const chunk of require('node:fs').createReadStream(value.file)) hash.update(chunk);
+      if (hash.digest('base64') !== value.sha512) throw new UpdateError('hash_mismatch', '已下载更新文件发生变化，请重新下载。');
+    } catch (error) {
+      if (error instanceof UpdateError) throw error;
+      throw new UpdateError('update_file_unavailable', '已下载更新文件不可用，请重新下载。');
+    }
   }
   async function checkImpl() {
     if (data.state === 'downloaded') return status();
     publish({state: 'checking', error: null, retryable: false, progress: null, reinstall: false}); asset = null; available = false;
     if (installMode === 'native') {
-      const result = await setupNative().checkForUpdates();
-      if (!result?.updateInfo) throw new UpdateError('feed_unavailable', '原生更新源尚未就绪，请稍后重试。');
-      const version = releaseVersion(result.updateInfo.version);
+      const info = await checkNative(setupNative());
+      const version = releaseVersion(info.version);
       available = semver.gt(version, currentAppVersion);
       return publish({state: available ? 'available' : 'current',
-        releaseVersion: version, notes: typeof result.updateInfo.releaseNotes === 'string' ? result.updateInfo.releaseNotes.slice(0, 20000) : '',
+        releaseVersion: version, notes: typeof info.releaseNotes === 'string' ? info.releaseNotes.slice(0, 20000) : '',
         url: `${RELEASES}tag/v${version}`});
     }
     if (arch !== 'arm64') throw new UpdateError('unsupported_arch', '当前手动更新仅支持 macOS Apple Silicon。', false);
@@ -212,9 +279,13 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
     publish({state: 'downloading', error: null, retryable: false, progress: {percent: 0, transferred: 0, total: asset?.size || 0}});
     ready = null;
     if (installMode === 'native') {
-      const files = await setupNative().downloadUpdate();
+      const session = setupNative();
+      if (!session.checkedVersion) await checkNative(session);
+      if (session.checkedVersion !== data.releaseVersion) throw new UpdateError('release_changed', '可用更新版本已变化，请重新检查后下载。');
+      session.downloaded = null;
+      const files = await session.updater.downloadUpdate();
       if (!Array.isArray(files) || !files.length) throw new UpdateError('download_failed', '原生更新尚未下载完成。');
-      ready = {native: true};
+      ready = platform === 'win32' ? nativeReady(session, files) : {native: true, session};
       return publish({state: 'downloaded', progress: {...data.progress, percent: 100}});
     }
     if (!asset) throw new UpdateError('not_available', '请重新检查可用更新。');
@@ -286,7 +357,11 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
     operation = 'install';
     try {
       if (ready.native) {
-        setupNative().quitAndInstall(false, true);
+        const value = ready;
+        if (platform === 'win32') await verifyNativeReady(value);
+        if (native !== value.session || ready !== value) throw new UpdateError('native_changed', '更新状态发生变化，请重新下载。');
+        value.session.installing = true;
+        value.session.updater.quitAndInstall(false, true);
         // BaseUpdater reports synchronous installation failures through its error event.
         if (data.state === 'error') throw new UpdateError(data.error.code, data.error.message, data.retryable);
         return {mode: 'native', requested: true};
@@ -308,7 +383,7 @@ function createUpdater({app, shell, changed = () => {}, platform = process.platf
       const error = await shell.openPath(target);
       if (error) throw new UpdateError('open_failed', '无法打开已下载更新包，请重试。');
       return {mode: installMode, opened: true, manualInstall: true};
-    } catch (error) {fail(error); throw new UpdateError(data.error.code, data.error.message, data.retryable);}
+    } catch (error) {fail(error, 'install'); throw new UpdateError(data.error.code, data.error.message, data.retryable);}
   }
   return {status, check: () => once(checkImpl, 'check'), download: () => once(downloadImpl, 'download'), installReady};
 }

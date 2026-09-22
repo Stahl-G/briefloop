@@ -9,6 +9,16 @@ const crypto = require('node:crypto');
 const {EventEmitter} = require('node:events');
 const {createUpdater} = require('../updater.cjs');
 
+async function nativeFile(t) {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'briefloop-native-'));
+  const name = `BriefLoop-Setup-0.20.0-${process.arch}.exe`, file = path.join(directory, name);
+  const bytes = Buffer.from('Synthetic inert NSIS bytes; never executed.');
+  await fs.writeFile(file, bytes);
+  t.after(() => fs.rm(directory, {recursive: true, force: true}));
+  const info = {version: '0.20.0', files: [{url: name, sha512: crypto.createHash('sha512').update(bytes).digest('base64')}]};
+  return {file, info};
+}
+
 async function fixture(t, options = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'briefloop-update-test-'));
   const bytes = Buffer.from('Synthetic DMG payload; not an executable or installer.');
@@ -96,16 +106,20 @@ test('official source only accepts repository assets, with app version independe
   assert.equal(updater.status().source, 'github');
 });
 
-test('native integration delegates download/install and never auto-installs on quit', async () => {
+test('native integration binds download metadata and never auto-installs on quit', async t => {
+  const f = await nativeFile(t);
   class Native extends EventEmitter {
     calls = [];
     setFeedURL(value) {this.feed = value;}
-    async checkForUpdates() {this.calls.push('check'); return {updateInfo: {version: '0.20.0', releaseNotes: 'Native notes'}};}
-    async downloadUpdate() {this.calls.push('download'); this.emit('download-progress', {percent: 50, transferred: 5, total: 10}); return ['installer.exe'];}
+    async checkForUpdates() {this.calls.push('check'); return {updateInfo: f.info};}
+    async downloadUpdate() {
+      this.calls.push('download'); this.emit('download-progress', {percent: 50, transferred: 5, total: 10});
+      this.emit('update-downloaded', {...f.info, downloadedFile: f.file}); return [f.file];
+    }
     quitAndInstall(...args) {this.calls.push(['install', ...args]);}
   }
   const native = new Native();
-  const updater = createUpdater({app: {getVersion: () => '0.19.0'}, shell: {}, platform: 'win32', nativeUpdater: native});
+  const updater = createUpdater({app: {getVersion: () => '0.19.0'}, shell: {}, platform: 'win32', nativeUpdaterFactory: () => native});
   await updater.check();
   assert.deepEqual(native.feed, {provider: 'github', owner: 'Stahl-G', repo: 'briefloop', private: false});
   assert.equal(native.autoDownload, false); assert.equal(native.autoInstallOnAppQuit, false);
@@ -132,7 +146,7 @@ test('Windows missing update files have a specific safe message and checking can
   }
   const native = new Native(), changes = [];
   const updater = createUpdater({app: {getVersion: () => '0.19.0'}, shell: {}, platform: 'win32',
-    nativeUpdater: native, changed: value => changes.push(value)});
+    nativeUpdaterFactory: () => native, changed: value => changes.push(value)});
   const missing = await updater.check();
   assert.equal(missing.state, 'error'); assert.equal(missing.retryable, true);
   assert.deepEqual(missing.error, {operation: 'check', code: 'windows_update_unavailable', message: '官方发布尚未提供 Windows 更新文件，请稍后重试。'});
@@ -172,18 +186,36 @@ test('DMG version and exact official release tag must match metadata', async t =
   tag = 'v0.20.0'; assert.equal((await updater.check()).state, 'available');
 });
 
-test('native installation error event is propagated so the main gate can recover', async () => {
+test('native installation error event is propagated so the main gate can recover', async t => {
+  const f = await nativeFile(t);
   class Native extends EventEmitter {
     setFeedURL() {}
-    async checkForUpdates() {return {updateInfo: {version: '0.20.0'}};}
-    async downloadUpdate() {return ['installer.exe'];}
+    async checkForUpdates() {return {updateInfo: f.info};}
+    async downloadUpdate() {this.emit('update-downloaded', {...f.info, downloadedFile: f.file}); return [f.file];}
     quitAndInstall() {this.emit('error', Error('private diagnostic must not be displayed'));}
   }
-  const updater = createUpdater({app: {getVersion: () => '0.19.0'}, shell: {}, platform: 'win32', nativeUpdater: new Native()});
+  const updater = createUpdater({app: {getVersion: () => '0.19.0'}, shell: {}, platform: 'win32', nativeUpdaterFactory: () => new Native()});
   await updater.check(); await updater.download();
-  await assert.rejects(updater.installReady(), /更新请求失败/);
+  await assert.rejects(updater.installReady(), /重新下载/);
   assert.equal(updater.status().state, 'error');
   assert.doesNotMatch(JSON.stringify(updater.status()), /private diagnostic/);
+});
+
+test('native ready rejects ambiguous package metadata and a changed target version', async t => {
+  const f = await nativeFile(t);
+  let event = {...f.info, packages: {x64: {path: 'extra.7z', sha512: f.info.files[0].sha512}}};
+  class Native extends EventEmitter {
+    setFeedURL() {}
+    async checkForUpdates() {return {updateInfo: f.info};}
+    async downloadUpdate() {this.emit('update-downloaded', {...event, downloadedFile: f.file}); return [f.file];}
+    quitAndInstall() {assert.fail('invalid metadata must not request installation');}
+  }
+  const updater = createUpdater({app: {getVersion: () => '0.19.0'}, shell: {}, platform: 'win32', nativeUpdaterFactory: () => new Native()});
+  await updater.check();
+  assert.equal((await updater.download()).error.code, 'invalid_native_download');
+  event = {...f.info, version: '0.21.0'};
+  assert.equal((await updater.download()).error.code, 'invalid_native_download');
+  await assert.rejects(updater.installReady(), /尚未下载/);
 });
 
 
