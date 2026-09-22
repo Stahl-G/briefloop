@@ -4,6 +4,69 @@ from .models import BriefDraft
 from .length import count_brief, length_stats
 
 
+_TABLE_CITATION_SAMPLE_LIMIT = 12
+
+
+def _table_citation_notes(draft):
+    """Describe absent cell-local markers, without inferring evidence support."""
+    from .delivery_checks import quantities
+    from .document_model import markdown_document, table_layout
+    try:
+        document = draft.editor_document or markdown_document(draft.markdown)
+    except ValueError:
+        # A new advisory must not reject legacy Markdown that previously saved.
+        return []
+
+    def tables(node):
+        if node['type'] == 'table':
+            yield node
+        for child in node.get('content', []):
+            yield from tables(child)
+
+    def cell_content(node):
+        kind = node['type']
+        marks = node.get('marks', [])
+        if kind in ('codeBlock', 'table') or any(m['type'] == 'code' for m in marks):
+            # A separator prevents numeric text on either side of code joining.
+            return '\ufffc', False
+        cited = kind == 'citation' or any(
+            m['type'] == 'link' and m.get('attrs', {}).get('href', '').startswith('#source-')
+            for m in marks)
+        text = node.get('text', '')
+        for child in node.get('content', []):
+            part, has_source = cell_content(child)
+            text += part
+            cited = cited or has_source
+        if kind in ('paragraph', 'hardBreak'):
+            text += '\n'
+        return text, cited
+
+    count, samples = 0, []
+    for table_index, table in enumerate(tables(document), 1):
+        # Placements enumerate each physical cell once, including merged cells.
+        for row, column, rowspan, colspan, cell in table_layout(table)[2]:
+            if cell['type'] != 'tableCell':
+                continue
+            text, cited = cell_content(cell)
+            if cited or not any(value[1] not in ('scalar', 'year') for _, _, value in quantities(text)):
+                continue
+            count += 1
+            if len(samples) < _TABLE_CITATION_SAMPLE_LIMIT:
+                sample = {'table': table_index, 'row': row + 1, 'column': column + 1,
+                          'rowspan': rowspan, 'colspan': colspan,
+                          'text': ' '.join(text.replace('\ufffc', ' ').split())[:120]}
+                if cell.get('attrs', {}).get('blockId'):
+                    sample['block_id'] = cell['attrs']['blockId']
+                samples.append(sample)
+    if not count:
+        return []
+    return [{'code': 'table_numeric_cell_citation_missing', 'kind': 'advisory',
+             'count': count, 'samples': samples, 'sample_limit': _TABLE_CITATION_SAMPLE_LIMIT,
+             'truncated': count > len(samples),
+             'message': '部分数值单元格没有单元格来源标记；若转述来源事实，请在相应单元格补引用；若为计算、计划或假设，请说明依据。不要自动复制表前引用或为消除提示编造来源。',
+             'scope': '仅提醒单元格内工具可识别的带明确单位数值；跳过表头、代码、年份和裸数，单位只在表头时可能漏检。行列从1开始，合并单元格按一个物理单元格计数。标记缺失不等于无依据，有标记也不证明数字或引用支持正确。'}]
+
+
 def inspect_draft(value, requirements=None, *, store=None, allowed_sources=None):
     from .delivery_checks import check_numbers, quantities
     draft = BriefDraft.model_validate(value)
@@ -38,6 +101,7 @@ def inspect_draft(value, requirements=None, *, store=None, allowed_sources=None)
     if any(not n['checked'] for n in numbers):
         warnings.append({'code': 'number_unchecked', 'kind': 'needs_semantic_review',
                          'message': '部分绑定缺定位或工具无法检查。缺定位可补；不支持的单位保留原状交审阅，不删单位或反复改数值以消除提示。'})
+    notes.extend(_table_citation_notes(draft))
     return {'status': 'needs_attention' if warnings else 'checks_completed',
             'review_status': 'not_reviewed', 'length': length, 'sections': sections,
             'citations': {'body_source_count': len(cited), 'missing_locator': sorted(cited - located)},
