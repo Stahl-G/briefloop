@@ -790,7 +790,22 @@ class Worker:
         except InterruptedError as exc:self._settle_job(job['id'],'cancelled',error=str(exc))
         except Exception as exc:
             if job['kind']=='prepare_template':
-                with self.store.tx() as c:c.execute("UPDATE templates SET status='failed',error=? WHERE id=?",(str(exc),json.loads(job['payload'])['template_id']))
+                template_id=json.loads(job['payload'])['template_id']
+                saved,observed=self._saved_template_result(template_id)
+                if saved:
+                    self._settle_job(job['id'],'complete',result=saved,runtime=self.runtime)
+                    return
+                if observed:
+                    # Do not overwrite a ready snapshot admitted by another turn
+                    # after this failure inspected the template row.
+                    with self.store.tx() as c:
+                        changed=c.execute("UPDATE templates SET status='failed',error=? WHERE id=? AND status=? AND spec=?",
+                                          (str(exc),template_id,observed['status'],observed['spec'])).rowcount
+                    if not changed:
+                        saved,_=self._saved_template_result(template_id)
+                        if saved:
+                            self._settle_job(job['id'],'complete',result=saved,runtime=self.runtime)
+                            return
             self._settle_job(job['id'],'failed',error=str(exc))
         finally:
             with self._claim_lock:
@@ -798,6 +813,31 @@ class Worker:
                 if self.current==job["id"]:self.current=None
             if hasattr(self._execution_local,"runtime"):del self._execution_local.runtime
             self.wake()
+
+    def _saved_template_result(self,template_id):
+        """Accept an already persisted template after its native host fails late."""
+        from hashlib import sha256
+        from io import BytesIO
+        from docx import Document
+        from .media import office_archive
+        from .templates import _path
+
+        rows=self.store.rows('SELECT id,revision,status,spec FROM templates WHERE id=?',(template_id,))
+        if not rows:return None,None
+        row=rows[0]
+        if row['status']!='ready':return None,row
+        try:
+            spec=json.loads(row['spec'])
+            digest=spec.get('prepared_hash') if isinstance(spec,dict) else None
+            if not isinstance(digest,str):return None,row
+            data=_path(self.store,row,'prepared.docx').read_bytes()
+            if sha256(data).hexdigest()!=digest:return None,row
+            office_archive(data).close()
+            if len(Document(BytesIO(data)).sections)!=1:return None,row
+        except Exception:
+            return None,row
+        return {'template_id':row['id'],'revision':row['revision'],'status':'ready'},row
+
     def file_loop(self):
         """Produce requested files even while generation or Review is running."""
         for jobs in self._queued(2,"SELECT * FROM jobs WHERE status='queued' AND kind IN (?,?,?) ORDER BY rowid LIMIT 1",FILE_JOB_KINDS):
