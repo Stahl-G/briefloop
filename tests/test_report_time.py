@@ -36,9 +36,9 @@ def test_frozen_context_and_temporal_checks(tmp_path):
     folder=tmp_path/'prompt';folder.mkdir()
     text=generation_prompt(store,run,folder,backend='antigravity')
     assert window['start'] in text
-    assert window['start'] in (folder/'scout-contract.md').read_text()
-    assert window['start'] in (folder/'analyst-writing.md').read_text()
-    assert json.loads((folder/'input.json').read_text())['requirements']['time_context']==window
+    assert window['start'] in (folder/'scout-contract.md').read_text(encoding='utf-8')
+    assert window['start'] in (folder/'analyst-writing.md').read_text(encoding='utf-8')
+    assert json.loads((folder/'input.json').read_text(encoding='utf-8'))['requirements']['time_context']==window
 
 
 def test_tavily_uses_frozen_dates(tmp_path,monkeypatch):
@@ -49,9 +49,9 @@ def test_tavily_uses_frozen_dates(tmp_path,monkeypatch):
     run=store.create_run({'title':'日报','objective':'核对日期','allow_web':True,'period':'2026-09-14'},[])
     key=tmp_path/'key';tavily.save_key('test',key_file=key)
     seen=[]
-    def respond(request,**kwargs):
+    def respond(opener,request,**kwargs):
         seen.append(json.loads(request.data))
         return BytesIO(b'{"results":[]}')
-    monkeypatch.setattr(tavily.urllib.request,'urlopen',respond)
+    monkeypatch.setattr(tavily.urllib.request.OpenerDirector,'open',respond)
     tavily.search('news',store=store,run_id=run['id'],start_date='2025-01-01',key_file=key)
     assert seen[0]['start_date']=='2026-09-14' and seen[0]['end_date']=='2026-09-15'

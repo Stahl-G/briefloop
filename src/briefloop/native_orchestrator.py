@@ -56,15 +56,16 @@ def action(store, config, args):
         if request.get('run_id', run_id) != run_id:
             raise ToolError('操作必须属于本轮报告')
         request['run_id'] = run_id
-        if request.get('version_id') and store.one('briefs', request['version_id'])['run_id'] != run_id:
-            raise ToolError('稿件不属于本轮报告')
+        for field in ('version_id','base_version'):
+            if request.get(field) and store.one('briefs', request[field])['run_id'] != run_id:
+                raise ToolError('稿件不属于本轮报告')
         source = (request.get('evidence') or request.get('fact') or {}).get('source_id')
         if source and source not in store.source_ids(run_id):
             raise ToolError('来源不属于本轮报告')
     if name == 'revise_document':
         if not isinstance(request.get('editor_document'), dict):
             raise ToolError('revise_document 需要 base_version 和完整 editor_document 对象')
-        return _json_result(store.revise(request['base_version'], editor_document=request['editor_document'], author='agent'))
+        return _json_result(store.revise(request['base_version'], editor_document=request['editor_document'], citations=request.get('citations'), author='agent'))
     if name == 'generate':
         if config.get('discuss_only'):
             raise ToolError('/discuss 只整理要求，不启动报告')
