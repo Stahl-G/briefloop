@@ -1266,7 +1266,7 @@ function renderChat(){
  renderMessages();renderActivities();autoOpenActivity();renderRequests();renderContext();renderSessions();renderSessionLifecycle();updateComposer();
 }
 async function selectChat(id){
- if(chat.busy||chat.uploading)return;if(id===chat.id){chat.home=false;renderChat();page('chat');return}rememberDraft();chat.home=false;chat.id=id;chat.session=chat.sessions.find(s=>s.id===id)||null;chat.tokenUsage=null;chat.messages=[];chat.requests=[];chat.events=new Map();chat.after=0;chat.request=null;renderMessages.signature='';localStorage.setItem('briefloop-chat-session',id);chatError();restoreDraft();renderChat();page('chat');await pollChat(true);if(!chat.drafts.has(id))restoreDraft();
+ if(chat.busy||chat.uploading)return;if(id===chat.id){chat.home=false;renderChat();page('chat');return}rememberDraft();chat.home=false;chat.id=id;chat.session=chat.sessions.find(s=>s.id===id)||null;chat.tokenUsage=null;chat.messages=[];chat.requests=[];chat.events=new Map();chat.after=0;chat.request=null;renderMessages.signature='';localStorage.setItem('briefloop-chat-session',id);chatError();restoreDraft();renderChat();page('chat');await pollChat(true);if(chat.id===id&&!chat.drafts.has(id))restoreDraft();
 }
 async function openChatHome({resetDraft=false}={}){
  if(chat.busy||chat.uploading)return;
@@ -1278,11 +1278,28 @@ async function openChatHome({resetDraft=false}={}){
 async function newChat(){await openChatHome({resetDraft:true})}
 async function showHome(){if(chat.busy||chat.uploading){page('chat');return}await openChatHome()}
 async function pollChat(force=false){
- if(chat.polling&&!force)return;chat.polling=true;const sid=chat.id,after=chat.after,view=chat.view;
- try{
-  const [list,snapshot]=await Promise.all([api('harness/sessions?view='+view),sid?api(`harness/session?id=${encodeURIComponent(sid)}&after=${after}&reasoning=1`):Promise.resolve(null)]);
-  if(view===chat.view)chat.sessions=list.sessions||[];if(sid===chat.id&&snapshot){chat.session=snapshot.session;chat.tokenUsage=snapshot.token_usage||null;chat.messages=snapshot.messages||[];chat.requests=snapshot.requests||[];for(const event of snapshot.events||[]){chat.events.set(event.seq,event);chat.after=Math.max(chat.after,event.seq)}}renderChat();
- }catch(e){if(force)throw e;else if(!$('chat').hidden){if(sessionMissing(e)){chat.id=null;chat.session=null;chat.messages=[];localStorage.removeItem('briefloop-chat-session');chatError();renderChat()}else{$('chat-status').textContent='会话连接中断，正在重连';chatError(e.message)}}}finally{chat.polling=false}
+ if(chat.pollPromise||chat.pollQueued){
+  if(!force)return;
+  // Mutations and navigation supersede the in-flight snapshot; coalesce their refreshes.
+  chat.pollTicket=(chat.pollTicket||0)+1;
+  if(!chat.pollQueued)chat.pollQueued=chat.pollPromise.catch(()=>{}).then(()=>{chat.pollQueued=null;return pollChat(true)});
+  return chat.pollQueued;
+ }
+ const ticket=chat.pollTicket=(chat.pollTicket||0)+1,sid=chat.id,after=chat.after,view=chat.view,events=chat.events;
+ const relevant=()=>ticket===chat.pollTicket&&sid===chat.id&&events===chat.events;
+ chat.polling=true;
+ const pending=Promise.resolve().then(async()=>{
+  try{
+   // Wait for both reads, even if one fails, before starting a queued refresh.
+   const results=await Promise.allSettled([api('harness/sessions?view='+view),sid?api(`harness/session?id=${encodeURIComponent(sid)}&after=${after}&reasoning=1`):Promise.resolve(null)]);
+   if(!relevant())return;
+   const failure=results.find(result=>result.status==='rejected');if(failure)throw failure.reason;
+   const [list,snapshot]=results.map(result=>result.value);
+   if(view===chat.view)chat.sessions=list.sessions||[];
+   if(snapshot){chat.session=snapshot.session;chat.tokenUsage=snapshot.token_usage||null;chat.messages=snapshot.messages||[];chat.requests=snapshot.requests||[];for(const event of snapshot.events||[]){chat.events.set(event.seq,event);chat.after=Math.max(chat.after,event.seq)}}renderChat();
+  }catch(e){if(!relevant())return;if(force)throw e;else if(!$('chat').hidden){if(sessionMissing(e)){chat.id=null;chat.session=null;chat.messages=[];localStorage.removeItem('briefloop-chat-session');chatError();renderChat()}else{$('chat-status').textContent='会话连接中断，正在重连';chatError(e.message)}}}
+ }).finally(()=>{if(chat.pollPromise===pending){chat.pollPromise=null;chat.polling=false}});
+ chat.pollPromise=pending;return pending;
 }
 async function sendChat(event){
  event.preventDefault();if(chat.busy||chat.uploading||chat.session&&chat.session.lifecycle&&chat.session.lifecycle!=='active')return;const rawInput=$('chat-input').value.trim();const command=/^\/(\w+)(?:\s+([\s\S]*))?$/.exec(rawInput);if(command){const name=command[1].toLowerCase();if(name==='new'){const panel=commandPanel();if(panel)panel.hidden=true;await newChat();return}if(name==='help'){notice(COMMAND_HELP);$('chat-input').value='';const panel=commandPanel();if(panel)panel.hidden=true;updateComposer();return}}const text=rawInput||(chat.attachments.size?'请查看附件。':'');if(!text)return;const discuss=/^\/discuss\b\s*/i.test(text),displayText=text.replace(/^\/discuss\b\s*/i,'').trim()||'讨论需求',sendText=discuss?(DISCUSS_INSTRUCTION+(displayText!=='讨论需求'?('\n\n用户补充：'+displayText):'')):text;chat.home=false;chat.busy=true;chatError();updateComposer();
