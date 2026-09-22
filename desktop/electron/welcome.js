@@ -10,7 +10,9 @@ function renderEnvironment(value) {
   const busy = ['checking', 'installing'].includes(value.state);
   const cleanupBlocked = value.error?.code === 'cleanup_failed' && value.retryable === false;
   const detail = value.phase === 'install-dependencies' ? `使用已有 Python ${value.pythonVersion}，正在下载并安装 BriefLoop 依赖…` : phases[value.phase];
-  document.getElementById('setup').hidden = value.state === 'ready';
+  document.getElementById('setup').hidden = ['checking', 'ready'].includes(value.state);
+  document.getElementById('startup-status').hidden = value.state !== 'checking';
+  document.getElementById('setup-title').textContent = value.state === 'error' ? '运行环境需要处理' : '准备运行环境';
   document.getElementById('environment-status').textContent = value.error?.message || detail
     || (value.state === 'needs-setup' ? `将使用已有 Python ${value.pythonVersion}，仅下载 BriefLoop 依赖。` : '正在检测运行环境…');
   document.getElementById('environment-progress').hidden = !busy;
@@ -19,7 +21,7 @@ function renderEnvironment(value) {
   document.getElementById('python-help').hidden = !['missing-python', 'error'].includes(value.state);
   document.getElementById('inspect').hidden = busy || cleanupBlocked;
   document.getElementById('cancel-setup').hidden = value.state !== 'installing';
-  document.querySelectorAll('#workspace-actions button').forEach(button => {button.disabled = opening || value.state !== 'ready';});
+  document.querySelectorAll('#workspace-actions button, #recent').forEach(button => {button.disabled = opening || value.state !== 'ready';});
 }
 async function setupAction(callback) {
   try { renderEnvironment(await callback()); }
@@ -44,7 +46,12 @@ setupAction(() => api.environment.status());
 api.recentWorkspace().then(directory => {
   if (!directory) return;
   const button = document.getElementById('recent');
-  button.textContent = '继续上次工作区 · ' + directory;
+  const parts = directory.replace(/\\/g, '/').split('/').filter(Boolean);
+  document.getElementById('recent-name').textContent = parts.at(-1) || directory;
+  document.getElementById('recent-path').textContent = directory;
+  button.title = directory;
+  button.setAttribute('aria-label', '继续工作区：' + (parts.at(-1) || directory));
+  document.getElementById('create').classList.remove('primary');
   button.hidden = false;
   button.onclick = () => action(() => api.openWorkspace({path: directory, create: false}));
 }).catch(error => {status.textContent = error.message;});

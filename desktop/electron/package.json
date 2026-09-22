@@ -28,6 +28,7 @@
     "files": [
       "*.cjs",
       "welcome.html",
+      "welcome.css",
       "welcome.js",
       "package.json",
       "assets/**"

@@ -2,6 +2,8 @@
 
 桌面 App 不内置完整 Python。`environment.cjs` 检测本机 Python 3.11 或更高版本；未找到时明确引导安装 Python，检测本身不安装软件。用户触发准备后，使用随包 wheel 的声明依赖创建 App 专属 venv，不修改系统 Python 或工作区的环境。
 
+正常启动仍校验随包 wheel 的 SHA-256、已激活记录的版本／平台／架构，以及基础 Python 是否存在。匹配时只启动一次隔离 Python，检查 venv 归属、最低版本、必需包是否可定位和 BriefLoop 包版本；不扫描所有 Python、不逐项导入大型依赖、不运行 `pip check`，也不联网。首次安装、升级身份变化或轻量检查失败会回到完整检测；安装后激活前仍必须通过导入与 `pip check`。包可定位不等于所有模块可成功运行，实际后台启动仍负责加载其依赖；用户也可在启动页选择“检查运行环境”执行完整诊断。
+
 ## 主进程接口
 
 ```js
@@ -11,7 +13,8 @@ const environment = createEnvironment({
   payloadPath: path.join(process.resourcesPath, 'backend'),
   changed: dto => sendEnvironmentStatus(dto),
 });
-await environment.inspect();  // 检测和验证；不创建 venv、不联网安装
+await environment.startup();  // 正常启动：优先复用与随包 wheel 身份一致的已激活环境
+await environment.inspect();  // 用户选择完整检测；不创建 venv、不联网安装
 await environment.prepare();  // 只接用户明确选择“准备环境”的无参数 IPC
 const runtime = environment.runtime(); // 仅验证 ready 后返回，否则抛错
 await environment.cancel();   // 等待本模块自己的准备进程退出并清理未完成目录
@@ -20,7 +23,7 @@ await environment.cancel();   // 等待本模块自己的准备进程退出并�
 `status()` 返回独立 DTO 副本：
 
 - `state`: `checking`、`missing-python`、`needs-setup`、`installing`、`ready`、`error`。
-- `phase`: `idle`、`verify-payload`、`detect-python`、`needs-setup`、`create-venv`、`install-dependencies`、`verify-imports`、`verify-dependencies`、`activate-environment`、`ready`。
+- `phase`: `idle`、`verify-payload`、`check-runtime`、`detect-python`、`needs-setup`、`create-venv`、`install-dependencies`、`verify-imports`、`verify-dependencies`、`activate-environment`、`ready`。
 - `pythonVersion`: 检测到的 Python 版本或 null。
 - `error`: null 或 `{code,message}`，只有固定安全提示，不复制子进程原始输出、路径、环境变量或网络诊断。
 - `retryable`: 是否可重新检测或准备。
