@@ -32,7 +32,7 @@ BACKEND_LABELS = {
     'antigravity': 'Antigravity',
     'zcode': 'ZCode',
     'pi': 'Pi',
-    'briefloop-native': 'BriefLoop 内置引擎',
+    'briefloop-native': 'BriefLoop Agent',
 }
 
 # Verified against opencode 1.18.20 (v1 message surface, same as the official

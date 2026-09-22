@@ -18,10 +18,11 @@ class NativeEngine(RuntimeBridge):
 
 def discovery():
     from .host_bins import find
+    from .backends import BACKEND_LABELS
     from . import __version__
     import os
     node = find(os.environ.get('BRIEFLOOP_NODE') or 'node')
-    return {'id': 'briefloop-native', 'name': 'BriefLoop 内置引擎', 'installed': True,
+    return {'id': 'briefloop-native', 'name': BACKEND_LABELS['briefloop-native'], 'installed': True,
             'available': bool(node), 'integrated': True, 'version': __version__, 'path': '随 BriefLoop 安装',
             'protocol': 'BriefLoop tools',
             'capabilities': {'chat': True, 'cancel': True, 'resume': True, 'steer': False,
