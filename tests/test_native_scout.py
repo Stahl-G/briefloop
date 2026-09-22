@@ -1,6 +1,7 @@
 """The Scout on the native engine: a frozen task, metered web tools, checked evidence."""
 import json
 import queue
+import threading
 import time
 
 import pytest
@@ -210,6 +211,10 @@ class Engine:
     def __init__(self, sid):
         self.sid, self.calls, self.sinks = sid, [], {}
         self.process = object()
+        self._lock = threading.Lock()
+        self._execution_id = None
+        self._completed_requests = set()
+        self._end_emitted = False
 
     def subscribe(self, execution_id):
         self.sinks[execution_id] = queue.Queue()
@@ -219,16 +224,27 @@ class Engine:
         self.sinks.pop(execution_id, None)
 
     def call(self, method, params, timeout=None):
-        self.calls.append((method, params))
+        with self._lock:
+            self.calls.append((method, params))
         if method == 'session_create':
             return {'session_id': params['session_id'], 'session_file': '/s.jsonl', 'model': params['model']}
         if method == 'turn_start':
-            sink = self.sinks[params['execution_id']]
+            with self._lock:
+                self._execution_id = params['execution_id']
+                self._completed_requests.clear()
+                self._end_emitted = False
+                sink = self.sinks[self._execution_id]
             sink.put({'kind': 'tool_request', 'request_id': 'read-1', 'tool': 'source_read', 'args': {'source_id': self.sid}})
             sink.put({'kind': 'tool_request', 'request_id': 'record-1', 'tool': 'record_evidence', 'args': {'items': [item(self.sid)]}})
             sink.put({'kind': 'tool_request', 'request_id': 'submit-1', 'tool': 'submit_scout_result',
                       'args': {'gaps': []}})
-            sink.put({'kind': 'end', 'status': 'completed', 'final_text': 'done'})
+        elif method == 'tool_result':
+            with self._lock:
+                if params['request_id'] in {'read-1', 'record-1', 'submit-1'}:
+                    self._completed_requests.add(params['request_id'])
+                if not self._end_emitted and self._completed_requests == {'read-1', 'record-1', 'submit-1'}:
+                    self._end_emitted = True
+                    self.sinks[self._execution_id].put({'kind': 'end', 'status': 'completed', 'final_text': 'done'})
         return {}
 
     def close(self):
