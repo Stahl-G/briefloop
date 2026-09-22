@@ -180,15 +180,16 @@ class Store:
         result['role_models']=shaped
         return result
 
-    def update_settings(self, changes):
+    def update_settings(self, changes, *, connection=None):
         """Apply a patch (or compute one) against the latest settings atomically.
 
         Hold the SQLite write transaction through merge and validation, so an
         unrelated save cannot restore a concurrently revoked learning consent.
         Transforms are for read-dependent changes such as appending a target.
+        A supplied write transaction remains owned by the caller.
         """
         from .learning_budget import apply_settings_change
-        with self.tx() as c:
+        with (self.tx() if connection is None else nullcontext(connection)) as c:
             current=self.settings(connection=c)
             body=changes(current) if callable(changes) else changes
             merged=apply_settings_change(current,body)
