@@ -54,7 +54,10 @@ def replace_section_text(section, replacements, expected_hash):
 
 def _root(store, config):
     from .analyst import _sections_file
-    return _sections_file(store, config).with_suffix('')
+    from .platform_support import filesystem_path
+    # Keep existing full revision names while reads, checks and atomic writes
+    # can exceed MAX_PATH beneath a valid Windows workspace.
+    return filesystem_path(_sections_file(store, config).with_suffix(''))
 
 
 @contextmanager

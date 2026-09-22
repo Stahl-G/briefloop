@@ -4,6 +4,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 from briefloop import analyst
 from briefloop.chat_store import ChatStore
 from briefloop.native_roles import run_tool
@@ -127,3 +129,37 @@ def test_saved_work_can_be_read_after_context_loss_without_new_permission(tmp_pa
     assert read()['sections_changed_since_save'] and not read()['checked']
     assert not run_tool(store,config,'read_draft',{'field':'body','section_id':'../secret'})['ok']
     assert read(field='body',offset=100)['items']==[]
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='Real Windows long-path file I/O')
+def test_windows_long_revision_paths_keep_saved_checked_and_submitted_drafts(tmp_path):
+    from briefloop import analyst_drafts
+    # The candidate directory is 191 characters; its 64-hex revision plus the
+    # atomic-write suffix reaches 265, even though the writer packet fits.
+    parent=tmp_path/('w'*max(1,142-len(str(tmp_path))-1))
+    store, run, source, config=writer(parent)
+    logical_root=analyst._sections_file(store,config).with_suffix('')
+    assert len(str(logical_root/('a'*64+'.json.tmp')))>=265
+    first=saved_revision(store,config,draft(source['id']))
+    assert len(first)==64
+    check(store,config,first)
+    # Existing on-disk names and full revision identities stay compatible.
+    disk_root=Path('\\\\?\\'+str(logical_root))
+    old_bytes=(disk_root/(first+'.json')).read_bytes()
+    assert analyst_drafts._hash(json.loads(old_bytes))==first
+    second=saved_revision(store,config,{'base_revision':first,'gaps':['Keep this unresolved question']})
+    assert second!=first and (disk_root/(first+'.json')).read_bytes()==old_bytes
+    assert not run_tool(store,config,'submit_draft',{'revision':first})['ok']
+    check(store,config,second)
+    overview=run_tool(store,config,'read_draft',{})
+    assert overview['ok'] and json.loads(overview['content'][0]['text'])['checked']
+    assert run_tool(store,config,'submit_draft',{'revision':second})['ok']
+    saved=Path(config['result_file']).read_bytes()
+    assert json.loads(saved)['gaps']==['Keep this unresolved question']
+    assert not list(disk_root.glob('*.tmp'))
+    candidate=disk_root/(second+'.json')
+    changed=json.loads(candidate.read_bytes());changed['draft']['title']='Tampered title'
+    candidate.write_text(json.dumps(changed),encoding='utf-8')
+    rejected=run_tool(store,config,'submit_draft',{'revision':second})
+    assert not rejected['ok'] and '稿件版本内容' in rejected['error']
+    assert Path(config['result_file']).read_bytes()==saved
