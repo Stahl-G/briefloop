@@ -477,6 +477,24 @@ test("grep, json_path, claim_trace and calc answer inside the packet", async () 
   assert.match(await callError("tool_call", { session_id, name: "calc", args: { expression: "process.exit(1)" } }), /无法识别/);
 });
 
+test("packet regex stops backtracking and keeps the engine usable", async () => {
+  const file = join(packet, "sources", "grep-regression.txt");
+  writeFileSync(file, "a".repeat(40) + "!\n收入 Revenue (USD) [net]: 12\nRevenue USD: 19");
+  try {
+    const { session_id } = await reviewer();
+    const args = { path: "sources/grep-regression.txt" };
+    const tool = async (extra) => (await call("tool_call", { session_id, name: "packet_grep", args: { ...args, ...extra } })).content[0].text;
+    assert.match(await tool({ pattern: "revenue (usd) [net]" }), /grep-regression\.txt:2: 收入 Revenue \(USD\) \[net\]: 12/);
+    assert.match(await tool({ pattern: "Revenue\\s+USD", regex: true }), /grep-regression\.txt:3: Revenue USD: 19/);
+    const error = await callError("tool_call", { session_id, name: "packet_grep", args: { ...args, pattern: "(a+)+$", regex: true } });
+    assert.match(error, /正则搜索超时/);
+    assert.match(await tool({ pattern: "收入" }), /共 1 处命中/);
+    assert.match(await callError("tool_call", { session_id, name: "packet_grep", args: { ...args, pattern: "[", regex: true } }), /正则 pattern 无效/);
+  } finally {
+    rmSync(file);
+  }
+});
+
 test("submit_review rejects schema and admission errors, then settles the run", async () => {
   let rejections = 0;
   admission = (review) => (review.version_id !== "v1" && ++rejections ? "Reviewer 输出未绑定本次正文与核查包" : undefined);

@@ -441,31 +441,22 @@ def source_read(store, config, args):
 
 
 def source_grep(store, config, args):
-    import re
+    from .source_search import search
     pattern = args.get('pattern')
     if not isinstance(pattern, str) or not pattern.strip():
         raise ToolError('pattern 不能为空')
-    try:
-        regex = re.compile(pattern, re.IGNORECASE)
-    except re.error:
-        regex = re.compile(re.escape(pattern), re.IGNORECASE)
     ids = [_run_source(store, config, args['source_id'])] if args.get('source_id') else store.source_ids(config['run_id'])
     limit = min(int(args.get('max_matches') or 40), 100)
-    hits = []
-    for sid in ids:
-        try:
-            lines = store.source_text(sid).splitlines()
-        except (ValueError, OSError):
-            continue
-        for number, line in enumerate(lines, 1):
-            match = regex.search(line)
-            if match:
-                offset = max(0, match.start()-100)
-                hits.append(f'{sid} {number} (start_char={offset}): {line[offset:offset+300]}')
-                if len(hits) >= limit:
-                    break
-        if len(hits) >= limit:
-            break
+    def sources():
+        for sid in ids:
+            try:
+                yield sid, store.source_text(sid)
+            except (ValueError, OSError):
+                continue
+    try:
+        hits = search(pattern, sources(), limit, regex=args.get('regex', False))
+    except ValueError as exc:
+        raise ToolError(str(exc)) from exc
     text = '\n'.join(hits) if hits else '没有匹配。'
     return {'content': [{'type': 'text', 'text': text + (f'\n（已达 {limit} 条上限，缩小范围再查）' if len(hits) >= limit else '')}]}
 
@@ -582,10 +573,11 @@ SCOUT_READ_TOOLS = [
                                    'max_chars': {'type': 'integer', 'minimum': 1}}},
      'handler': source_read},
     {'name': 'source_grep', 'label': '搜索来源',
-     'description': '在本轮已登记来源（或指定一份）中按正则或关键词查找，返回来源 ID、行号和该行。',
-     'guide': '在已登记来源中按关键词或正则定位行号，再用 source_read 读取上下文；不要只凭匹配行下结论。',
+     'description': '在本轮已登记来源（或指定一份）中按关键词查找，返回来源 ID、行号和该行；只有 regex=true 时按限时正则匹配。',
+     'guide': '默认按关键词原样定位行号，括号等不作正则解释；需要正则时显式 regex=true，复杂表达式会超时。再用 source_read 读取上下文；不要只凭匹配行下结论。',
      'parameters': {'type': 'object', 'required': ['pattern'], 'additionalProperties': False,
                     'properties': {'pattern': {'type': 'string'}, 'source_id': {'type': 'string'},
+                                   'regex': {'type': 'boolean', 'description': '按正则匹配，默认 false；超时或无效表达式返回错误'},
                                    'max_matches': {'type': 'integer', 'minimum': 1, 'maximum': 100}}},
      'handler': source_grep},
     {**EVALUATOR_TOOLS[0], 'description': '把本轮一份已登记 PDF 来源的指定页渲染成图片返回（最多 4 页，页码从 1 开始）。'},

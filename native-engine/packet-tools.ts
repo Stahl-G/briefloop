@@ -10,6 +10,7 @@
 import { createHash } from "node:crypto";
 import { realpathSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { extname, isAbsolute, resolve, sep } from "node:path";
+import { Script } from "node:vm";
 import { Type } from "typebox";
 import * as JsonSchema from "typebox/schema";
 import { defineTool } from "@earendil-works/pi-coding-agent";
@@ -98,6 +99,55 @@ export function jsonPath(value: unknown, path: string): unknown {
 
 function escapeRegex(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+type GrepMatches = { total: number; hits: Array<[number, number, number, number]> };
+// Only this constant program runs in the VM; patterns remain RegExp data. The
+// timeout bounds synchronous backtracking across all patterns in one call.
+const regexScan = new Script(`
+  wanted.map(pattern => {
+    const re = new RegExp(pattern, flags);
+    const hits = [];
+    let total = 0;
+    for (let file = 0; file < texts.length; file++) {
+      const lines = texts[file][1];
+      for (let line = 0; line < lines.length; line++) {
+        const match = re.exec(lines[line]);
+        if (!match) continue;
+        total++;
+        if (hits.length < limit) hits.push([file, line, match.index, match[0].length]);
+      }
+    }
+    return { total, hits };
+  })
+`);
+
+function grepMatches(texts: Array<[string, string[]]>, wanted: string[], flags: string, limit: number, regex: boolean): GrepMatches[] {
+  if (regex) {
+    try {
+      return regexScan.runInNewContext({ texts, wanted, flags, limit }, { timeout: 1000 });
+    } catch (error: any) {
+      if (error?.code === "ERR_SCRIPT_EXECUTION_TIMEOUT") {
+        throw new Error("正则搜索超时；请简化 pattern、缩小 path，或使用默认关键词搜索（regex=false）");
+      }
+      throw new Error("正则 pattern 无效；请修正表达式，或使用默认关键词搜索（regex=false）");
+    }
+  }
+  return wanted.map(pattern => {
+    const re = new RegExp(escapeRegex(pattern), flags);
+    const hits: GrepMatches["hits"] = [];
+    let total = 0;
+    for (let file = 0; file < texts.length; file++) {
+      const lines = texts[file][1];
+      for (let line = 0; line < lines.length; line++) {
+        const match = re.exec(lines[line]);
+        if (!match) continue;
+        total++;
+        if (hits.length < limit) hits.push([file, line, match.index, match[0].length]);
+      }
+    }
+    return { total, hits };
+  });
 }
 
 function window(line: string, index: number, length: number): string {
@@ -205,7 +255,7 @@ export interface SubmitHooks {
 export const TOOL_GUIDE: Record<string, string> = {
   packet_list: "列出核查包内全部文件及大小。",
   packet_read: "读取包内文件。核对来源时读完整份或完整相关部分，在一份材料里核对它支撑的全部内容；超长文件用 start_line/end_line 分段，大 JSON 用 json_path 取字段；图片文件返回图像（模型不接收图像时只返回说明）。要读几份就把其余放进 more；单处最多约 6 万字符。",
-  packet_grep: "在包内文本文件中查找关键词或正则，返回文件、行号、命中片段及前后各 1 行，用来找出内容在哪份文件、哪个位置；可用 patterns 一次查多个词。定位后读取相关来源再核对，不要逐个数字搜索。",
+  packet_grep: "在包内文本文件中默认按关键词原样查找；仅 regex=true 时使用限时正则。返回文件、行号、命中片段及前后各 1 行，用来找出内容在哪份文件、哪个位置；可用 patterns 一次查多个词。定位后读取相关来源再核对，不要逐个数字搜索。",
   claim_trace: "按 claim_id 一次取回主张内容、支持说明、绑定证据片段、所在正文段落和前提链。",
   calc: "对正文数字做确定性计算：四则运算、^、%、abs/round/min/max/sqrt/ln/log10/exp/pow（多个参数用分号分隔）。用于核对增长率、占比、加总和单位换算，不要心算。",
   submit_review: "提交最终审阅结果。先用 review 提交完整对象；提交时按 output.schema.json 和本次允许的 ID 当场校验，未通过时只用 patch 重交需要修改的顶层字段，会与上次草稿合并。通过即结束本次审阅，不要再在回复正文里输出 JSON。",
@@ -323,7 +373,7 @@ export function packetTools(packetRoot: string, hooks?: SubmitHooks, acceptsImag
     parameters: Type.Object({
       pattern: Type.Optional(Type.String({ description: "要查找的文字；regex=true 时为 JavaScript 正则" })),
       patterns: Type.Optional(Type.Array(Type.String(), { description: "同时查找的多个词，最多 12 个", maxItems: 12 })),
-      regex: Type.Optional(Type.Boolean({ description: "按正则匹配，默认 false" })),
+      regex: Type.Optional(Type.Boolean({ description: "按正则匹配，默认 false；超时或无效表达式返回错误" })),
       path: Type.Optional(Type.String({ description: "只搜索该文件或以此开头的路径" })),
       ignore_case: Type.Optional(Type.Boolean({ description: "忽略大小写，默认 true" })),
       context: Type.Optional(Type.Number({ description: "每处命中前后附带的行数，默认 1，最多 5" })),
@@ -350,22 +400,18 @@ export function packetTools(packetRoot: string, hooks?: SubmitHooks, acceptsImag
       }
       const sections: string[] = [];
       let totalAll = 0;
-      for (const pattern of wanted) {
-        const re = new RegExp(params.regex ? pattern : escapeRegex(pattern), flags);
+      const matches = grepMatches(texts, wanted, flags, limit, params.regex === true);
+      for (let patternIndex = 0; patternIndex < wanted.length; patternIndex++) {
+        const pattern = wanted[patternIndex];
         const out: string[] = [];
-        let total = 0;
-        for (const [file, lines] of texts) {
-          for (let i = 0; i < lines.length; i++) {
-            const m = re.exec(lines[i]);
-            if (!m) continue;
-            total += 1;
-            if (out.length >= limit) continue;
-            const block: string[] = [];
-            for (let j = Math.max(0, i - context); j < i; j++) block.push(`${file}-${j + 1}- ${window(lines[j], 0, 0)}`);
-            block.push(`${file}:${i + 1}: ${window(lines[i], m.index, m[0].length)}`);
-            for (let j = i + 1; j <= Math.min(lines.length - 1, i + context); j++) block.push(`${file}-${j + 1}- ${window(lines[j], 0, 0)}`);
-            out.push(block.join("\n"));
-          }
+        const { total, hits } = matches[patternIndex];
+        for (const [fileIndex, i, index, length] of hits) {
+          const [file, lines] = texts[fileIndex];
+          const block: string[] = [];
+          for (let j = Math.max(0, i - context); j < i; j++) block.push(`${file}-${j + 1}- ${window(lines[j], 0, 0)}`);
+          block.push(`${file}:${i + 1}: ${window(lines[i], index, length)}`);
+          for (let j = i + 1; j <= Math.min(lines.length - 1, i + context); j++) block.push(`${file}-${j + 1}- ${window(lines[j], 0, 0)}`);
+          out.push(block.join("\n"));
         }
         totalAll += total;
         const head = total === 0 ? "没有命中。" : `共 ${total} 处命中${total > out.length ? `，显示前 ${out.length} 处；缩小 path 或换更具体的词` : ""}。`;
