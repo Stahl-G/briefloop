@@ -93,6 +93,52 @@ def test_source_projection_invalidates_word_cache_only_when_rendered_source_chan
         assert export_jobs.enqueue_export(store, brief['id'], layout)['id'] == relinked['id']
 
 
+@pytest.mark.parametrize('use_template', [False, True])
+def test_word_renders_fingerprinted_sources_when_the_run_changes_at_stage_two(tmp_path, monkeypatch, use_template):
+    from briefloop.templates import import_builtin
+    store = Store(tmp_path)
+    layout = None
+    if use_template:
+        import_builtin(store)
+        layout = store.rows('SELECT id FROM templates LIMIT 1')[0]['id']
+    first = store.add_source('Original source', 'Initial evidence', url='https://example.org/original')
+    later = store.add_source('Later source', 'Additional evidence', url='https://example.org/later')
+    run = store.create_run({'title': 'Source snapshot', 'objective': 'Check Word'}, [first['id']])
+    brief = store.publish(run['id'], {'title': 'Source snapshot',
+                                      'editor_document': _indexed_document([first['id'], later['id']])})
+    job = export_jobs.enqueue_export(store, brief['id'], layout)
+    original_event = store.event
+    changed = []
+
+    def change_during_stage_two(job_id, kind, data):
+        original_event(job_id, kind, data)
+        if kind == 'export_progress' and data['step'] == 2 and not changed:
+            changed.append(True)
+            store.attach_source(run['id'], later['id'])
+            with store.tx() as connection:
+                connection.execute('UPDATE sources SET name=?,url=? WHERE id=?',
+                                   ('Updated source', 'https://example.org/updated', first['id']))
+
+    monkeypatch.setattr(store, 'event', change_during_stage_two)
+    old_doc = _complete_word(store, job)
+    assert changed
+    assert _has_source_index(old_doc, later['id'])
+    assert any('Original source' in p.text for p in old_doc.paragraphs)
+    assert not any('Updated source' in p.text or 'Later source' in p.text for p in old_doc.paragraphs)
+    old_urls = {rel.target_ref for rel in old_doc.part.rels.values() if rel.is_external}
+    assert 'https://example.org/original' in old_urls
+    assert 'https://example.org/updated' not in old_urls
+
+    new_job = export_jobs.enqueue_export(store, brief['id'], layout)
+    assert new_job['id'] != job['id']
+    new_doc = _complete_word(store, new_job)
+    assert not _has_source_index(new_doc, later['id'])
+    assert any('Updated source' in p.text for p in new_doc.paragraphs)
+    assert any('Later source' in p.text for p in new_doc.paragraphs)
+    new_urls = {rel.target_ref for rel in new_doc.part.rels.values() if rel.is_external}
+    assert 'https://example.org/updated' in new_urls
+
+
 def test_concurrent_exports_share_job_and_rebuild_missing_or_damaged_file(tmp_path, monkeypatch):
     store = Store(tmp_path)
     source = store.add_source('Synthetic', '本周两项交付。')
@@ -140,7 +186,7 @@ def test_reader_source_upgrade_invalidates_both_renderer_caches(tmp_path, monkey
     current_input = export_jobs.export_input
     def old_input(*args, **kwargs):
         identity, figures = current_input(*args, **kwargs)
-        identity['renderer'] = 22 if identity['requirements'].get('template_id') else 23
+        identity['renderer'] = 24 if identity['requirements'].get('template_id') else 25
         return identity, figures
     for layout in (None, template_id):
         monkeypatch.setattr(export_jobs, 'export_input', old_input)
