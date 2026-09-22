@@ -379,7 +379,7 @@ def validate_release(store, release):
     manifest_path = safe_file(store.root, result['manifest_path'])
     if sha(manifest_path.read_bytes()) != result['manifest_hash']:
         raise ValueError('正式交付清单已变化')
-    manifest = json.loads(manifest_path.read_text())
+    manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
     if manifest['release_id'] != release['id'] or manifest['fingerprint'] != release['fingerprint'] or manifest['version_id'] != release['version_id']:
         raise ValueError('正式件与交付记录版本不一致')
     folder = manifest_path.parent
@@ -390,7 +390,7 @@ def validate_release(store, release):
         raise ValueError('正式 Word 与交付记录不一致')
     if result['path'] != str((folder / 'report.docx').relative_to(store.root)):
         raise ValueError('正式 Word 下载未指向该交付文件')
-    if json.loads(safe_file(folder, 'records.json').read_text()) != release['data']:
+    if json.loads(safe_file(folder, 'records.json').read_text(encoding='utf-8')) != release['data']:
         raise ValueError('正式交付输入与冻结文件不一致')
     return manifest
 
