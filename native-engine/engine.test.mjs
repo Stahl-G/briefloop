@@ -213,6 +213,7 @@ before(async () => {
     stdio: ["pipe", "pipe", "inherit"],
     env: { PATH: process.env.PATH, HOME: home, USERPROFILE: home, FAKE_PROVIDER_KEY: "k", NO_PROXY: "*" },
   });
+  proc.stdout.setEncoding("utf8"); // A transport chunk may split a Chinese character or emoji.
   proc.stdout.on("data", (d) => {
     buf += d;
     let i;
@@ -566,6 +567,90 @@ test("one grep call answers several patterns and one read call several pieces", 
   assert.match(read, /=== notes\.txt 第 2-2 行 ===\n\[第 2-2 行，共 6 行\]\nline2/);
   assert.match(read, /=== \.\.\/escape\.txt ===\n读取失败：/, "a bad piece fails alone and never escapes the packet");
   assert.match(await callError("tool_call", { session_id, name: "packet_grep", args: {} }), /至少给一个/);
+});
+
+// Parse only model-visible content: details are not carried into the model's
+// tool result. Offsets exclude the batch label and optional line-range heading.
+function readPage(value) {
+  if (value.startsWith("=== ")) value = value.slice(value.indexOf("\n") + 1);
+  const marker = value.lastIndexOf("\n[字符分页：");
+  assert.ok(marker >= 0, "pagination status must be visible in content");
+  const state = /start_char=(\d+)；next_start_char=(\d+)；eof=(true|false)/.exec(value.slice(marker));
+  assert.ok(state);
+  let body = value.slice(0, marker);
+  if (body.startsWith("[第 ")) body = body.slice(body.indexOf("\n") + 1);
+  assert.ok(body.isWellFormed(), "a page must not split a surrogate pair");
+  return { body, from: Number(state[1]), next: Number(state[2]), eof: state[3] === "true" };
+}
+
+test("packet_read character cursors restore Chinese text, selected lines and JSON fields without a model call", async () => {
+  const { session_id } = await reviewer(), requests = provider.requests.length;
+  const raw = "量".repeat(120007) + "🙂🧪仅限已验证机型；未安装驱动时不得启用。尾部条件_END";
+  writeFileSync(join(packet, "pagination.txt"), raw);
+  writeFileSync(join(packet, "pagination-lines.txt"), `开始\n${raw}\n结束`);
+  writeFileSync(join(packet, "pagination.json"), JSON.stringify({ body: raw }));
+  const read = async args => {
+    const result = await call("tool_call", { session_id, name: "packet_read", args });
+    const value = result.content.filter(c => c.type === "text").map(c => c.text).join("\n");
+    assert.ok(value.length <= 60000, "keep the existing UTF-16 per-read budget including status");
+    return value;
+  };
+  for (const [selection, expected] of [
+    [{ path: "pagination.txt" }, raw],
+    [{ path: "pagination-lines.txt", start_line: 2, end_line: 2 }, raw],
+    [{ path: "pagination.json", json_path: "body" }, JSON.stringify(raw, null, 1)],
+  ]) {
+    let offset = 0, rebuilt = "";
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const page = readPage(await read({ ...selection, ...(attempt ? { start_char: offset } : {}) }));
+      assert.equal(page.from, offset);
+      assert.equal(page.next, offset + Array.from(page.body).length);
+      rebuilt += page.body;
+      if (page.eof) break;
+      assert.ok(page.next > offset);
+      offset = page.next;
+    }
+    assert.equal(rebuilt, expected);
+  }
+  assert.equal(await read({ path: "pagination-lines.txt", start_line: 1, end_line: 1 }), "[第 1-1 行，共 3 行]\n开始");
+  const pastEnd = readPage(await read({ path: "pagination.txt", start_char: Number.MAX_SAFE_INTEGER }));
+  assert.equal(pastEnd.body, ""); assert.equal(pastEnd.eof, true);
+  assert.equal(pastEnd.next, Array.from(raw).length);
+  for (const start_char of [-1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.match(await callError("tool_call", { session_id, name: "packet_read", args: { path: "pagination.txt", start_char } }), /非负安全整数/);
+  }
+  assert.equal(provider.requests.length, requests);
+});
+
+test("packet_read batch budgets preserve emoji and actual cursors while marking unread pieces", async () => {
+  const { session_id } = await reviewer(), requests = provider.requests.length;
+  const emoji = "🙂".repeat(40000), second = "字".repeat(59900) + "尾部条件";
+  writeFileSync(join(packet, "pagination-emoji.txt"), emoji);
+  writeFileSync(join(packet, "pagination-second.txt"), second);
+  writeFileSync(join(packet, "pagination-last.txt"), "必须另读的片段");
+  const result = await call("tool_call", { session_id, name: "packet_read", args: {
+    path: "pagination-emoji.txt", more: [{ path: "pagination-second.txt" }, { path: "pagination-last.txt" }],
+  } });
+  const contents = result.content.filter(c => c.type === "text").map(c => c.text);
+  assert.equal(contents.length, 3);
+  assert.ok(contents.reduce((n, value) => n + value.length, 0) <= 120000);
+  const pages = contents.slice(0, 2).map(readPage);
+  for (let index = 0; index < pages.length; index++) {
+    const page = pages[index], expected = [emoji, second][index];
+    assert.equal(page.eof, false);
+    assert.equal(page.next, Array.from(page.body).length);
+    const next = await call("tool_call", { session_id, name: "packet_read", args: {
+      path: ["pagination-emoji.txt", "pagination-second.txt"][index], start_char: page.next,
+    } });
+    const remainder = readPage(next.content[0].text);
+    assert.equal(remainder.eof, true);
+    assert.equal(page.body + remainder.body, expected);
+  }
+  assert.match(contents[2], /未读取.*单独读取/);
+  assert.doesNotMatch(contents[2], /eof=true|必须另读的片段/);
+  const last = await call("tool_call", { session_id, name: "packet_read", args: { path: "pagination-last.txt" } });
+  assert.equal(last.content[0].text, "必须另读的片段", "normal short default output stays unchanged");
+  assert.equal(provider.requests.length, requests);
 });
 
 test("a rejected submission is fixed by a patch of the failing fields", async () => {

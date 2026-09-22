@@ -72,6 +72,39 @@ function clip(value: string, limit = READ_CHARS): string {
   return value.length <= limit ? value : value.slice(0, limit) + `\n[已截断：共 ${value.length} 字符，本次返回前 ${limit} 字符；用 start_line/end_line 或 json_path 读取其余部分]`;
 }
 
+// Output budgets retain their existing UTF-16 string.length unit. Cursors use
+// Unicode code points; find their UTF-16 positions without a whole-file array.
+function codePointPosition(value: string, offset: number) {
+  let total = 0, unit = 0, start = 0;
+  for (const character of value) {
+    if (total === offset) start = unit;
+    total++;
+    unit += character.length;
+  }
+  return { total, start: offset >= total ? value.length : start };
+}
+
+function safePrefix(value: string, units: number): string {
+  let end = Math.max(0, Math.min(value.length, units));
+  const left = value.charCodeAt(end - 1), right = value.charCodeAt(end);
+  if (left >= 0xd800 && left <= 0xdbff && right >= 0xdc00 && right <= 0xdfff) end--;
+  return value.slice(0, end);
+}
+
+function textPage(body: string, offset: number | undefined, heading: string, budget: number, forceState: boolean, details: Details) {
+  if (offset === undefined && !forceState && heading.length + body.length <= budget) return text(heading + body, details);
+  const position = codePointPosition(body, offset ?? 0), from = Math.min(offset ?? 0, position.total);
+  const state = (next: number, eof: boolean) => `\n[字符分页：Unicode码点；start_char=${from}；next_start_char=${next}；eof=${eof}；所选正文共 ${position.total} 码点。eof=false 时保持 path/行范围/json_path 不变，以 next_start_char 续读。]`;
+  // Reserve the longest footer before slicing; the returned cursor describes
+  // exactly this payload, with no later truncation of body or status.
+  const room = Math.max(0, budget - heading.length - state(position.total, false).length);
+  const shown = safePrefix(body.slice(position.start), room);
+  let next = from;
+  for (const _character of shown) next++;
+  const eof = next === position.total;
+  return text(heading + shown + state(next, eof), { ...details, start_char: from, next_start_char: next, eof, offset_unit: "unicode_code_point" });
+}
+
 // a.b[0].c and a["odd key"] — enough to address any field of a packet JSON.
 export function jsonPath(value: unknown, path: string): unknown {
   const tokens: Array<string | number> = [];
@@ -254,7 +287,7 @@ export interface SubmitHooks {
 // carry tool snippets, so the engine states the real toolset itself.
 export const TOOL_GUIDE: Record<string, string> = {
   packet_list: "列出核查包内全部文件及大小。",
-  packet_read: "读取包内文件。核对来源时读完整份或完整相关部分，在一份材料里核对它支撑的全部内容；超长文件用 start_line/end_line 分段，大 JSON 用 json_path 取字段；图片文件返回图像（模型不接收图像时只返回说明）。要读几份就把其余放进 more；单处最多约 6 万字符。",
+  packet_read: "读取包内文件。核对来源时读完整份或完整相关部分；可用 start_line/end_line 选行、json_path 选 JSON 字段。长文本按返回的 next_start_char 续读，保持选择范围不变；偏移按 Unicode 码点计，eof 仅表示所选正文读完。图片返回图像（不支持时返回说明）。其余读取放进 more；批量未读取的片段须另读。单处最多约 6 万 UTF-16 码元，合计最多 12 万。",
   packet_grep: "在包内文本文件中默认按关键词原样查找；仅 regex=true 时使用限时正则。返回文件、行号、命中片段及前后各 1 行，用来找出内容在哪份文件、哪个位置；可用 patterns 一次查多个词。定位后读取相关来源再核对，不要逐个数字搜索。",
   claim_trace: "按 claim_id 一次取回主张内容、支持说明、绑定证据片段、所在正文段落和前提链。",
   calc: "对正文数字做确定性计算：四则运算、^、%、abs/round/min/max/sqrt/ln/log10/exp/pow（多个参数用分号分隔）。用于核对增长率、占比、加总和单位换算，不要心算。",
@@ -290,43 +323,48 @@ export function packetTools(packetRoot: string, hooks?: SubmitHooks, acceptsImag
     },
   });
 
-  type ReadSpec = { path: string; start_line?: number; end_line?: number; json_path?: string };
-  const readOne = (spec: ReadSpec): { content: Content[]; details: Details } => {
+  type ReadSpec = { path: string; start_line?: number; end_line?: number; json_path?: string; start_char?: number };
+  const readOne = (spec: ReadSpec, budget = READ_CHARS, forceState = false): { content: Content[]; details: Details } => {
+    if (spec.start_char !== undefined && (!Number.isSafeInteger(spec.start_char) || spec.start_char < 0)) {
+      throw new Error("start_char 必须是非负安全整数，按所选正文的 Unicode 码点计");
+    }
     const file = inside(root, spec.path);
     const ext = extname(file).toLowerCase();
     const mime = IMAGE_MIME[ext];
     if (mime) {
       const bytes = readFileSync(file);
       if (!acceptsImages()) {
-        return text(`${spec.path} 是图片（${bytes.length} 字节），当前模型不接收图像输入，无法目视核验；可读取同目录的图表数据文件核对数值，并把目视核验列为未核验事项。`, { image: false, bytes: bytes.length });
+        return text(safePrefix(`${spec.path} 是图片（${bytes.length} 字节），当前模型不接收图像输入，无法目视核验；可读取同目录的图表数据文件核对数值，并把目视核验列为未核验事项。`, budget), { image: false, bytes: bytes.length });
       }
       if (bytes.length > IMAGE_LIMIT) throw new Error(`图片超过 ${IMAGE_LIMIT} 字节`);
       const image: ImageContent = { type: "image", data: bytes.toString("base64"), mimeType: mime };
-      return { content: [{ type: "text", text: `${spec.path}（${bytes.length} 字节）` }, image], details: { image: true, bytes: bytes.length } };
+      return { content: [{ type: "text", text: safePrefix(`${spec.path}（${bytes.length} 字节）`, budget) }, image], details: { image: true, bytes: bytes.length } };
     }
     if (BINARY_EXT.has(ext)) {
-      return text(`${spec.path} 是二进制原件，不能按文本读取；请读取同名来源的 .txt 或 .view.json。`, { binary: true });
+      return text(safePrefix(`${spec.path} 是二进制原件，不能按文本读取；请读取同名来源的 .txt 或 .view.json。`, budget), { binary: true });
     }
     const raw = readFileSync(file, "utf-8");
     if (spec.json_path) {
       const value = jsonPath(JSON.parse(raw), spec.json_path);
       const body = JSON.stringify(value, null, 1);
-      return text(clip(body), { json_path: spec.json_path, chars: body.length });
+      return textPage(body, spec.start_char, "", budget, forceState, { json_path: spec.json_path, chars: body.length });
     }
     const lines = raw.split("\n");
     if (spec.start_line !== undefined || spec.end_line !== undefined) {
       const from = Math.max(1, Math.floor(spec.start_line ?? 1));
       const to = Math.min(lines.length, Math.floor(spec.end_line ?? lines.length));
-      const body = `[第 ${from}-${to} 行，共 ${lines.length} 行]\n` + lines.slice(from - 1, to).join("\n");
-      return text(clip(body), { lines: lines.length, from, to });
+      const heading = `[第 ${from}-${to} 行，共 ${lines.length} 行]\n`;
+      return textPage(lines.slice(from - 1, to).join("\n"), spec.start_char, heading, budget, forceState, { lines: lines.length, from, to });
     }
-    return text(clip(raw), { lines: lines.length, chars: raw.length });
+    return textPage(raw, spec.start_char, "", budget, forceState, { lines: lines.length, chars: raw.length });
   };
   const readParams = {
     path: Type.String({ description: "核查包内的相对路径" }),
     start_line: Type.Optional(Type.Number({ description: "起始行（从 1 开始）" })),
     end_line: Type.Optional(Type.Number({ description: "结束行（含）" })),
     json_path: Type.Optional(Type.String({ description: "JSON 字段路径，如 requirements.requirement_items 或 evidence.bindings[2].claim" })),
+    start_char: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER,
+      description: "所选正文的 Unicode 码点偏移，从 0 开始；不含行范围标题。JSON 针对序列化后的文本。保持选择不变，用返回的 next_start_char 续读；超出末尾返回 eof=true。" })),
   };
 
   const packetRead = defineTool({
@@ -335,7 +373,8 @@ export function packetTools(packetRoot: string, hooks?: SubmitHooks, acceptsImag
     description:
       "读取核查包内的文件。path 相对核查包根目录（如 target.json、sources/<id>.view.json、history/responses.json）。" +
       "长文本用 start_line/end_line 读取一段；JSON 文件可用 json_path 只取某个字段；图片文件返回图像内容。" +
-      "要同时读几处时，把其余各处放进 more，一次调用全部返回。",
+      "长单行或字段按返回的 next_start_char 续读（Unicode 码点），eof 仅指所选正文。" +
+      "要同时读几处时放进 more；受合计额度限制而未读取的片段须另读。",
     parameters: Type.Object({
       ...readParams,
       more: Type.Optional(Type.Array(Type.Object(readParams), { description: "同时读取的其他片段，最多 8 处", maxItems: 8 })),
@@ -343,20 +382,28 @@ export function packetTools(packetRoot: string, hooks?: SubmitHooks, acceptsImag
     execute: async (_id, params) => {
       const specs: ReadSpec[] = [params, ...(params.more ?? [])].slice(0, 9);
       if (specs.length === 1) return readOne(specs[0]);
-      // Each piece is read on its own, so one bad path does not lose the rest.
+      // Budget labels, complete status footers and unread notices before body
+      // slicing. A batch must never clip a page again after computing its cursor.
       const content: Content[] = [];
       let used = 0;
-      for (const spec of specs) {
-        const label = `=== ${spec.path}${spec.json_path ? " @" + spec.json_path : ""}${spec.start_line !== undefined || spec.end_line !== undefined ? ` 第 ${spec.start_line ?? 1}-${spec.end_line ?? "末"} 行` : ""} ===`;
+      const unread = "[未读取：本次合并读取已达上限；请用同一读取参数单独读取此片段。]";
+      const labels = specs.map(spec => `=== ${safePrefix(`${spec.path}${spec.json_path ? " @" + spec.json_path : ""}${spec.start_line !== undefined || spec.end_line !== undefined ? ` 第 ${spec.start_line ?? 1}-${spec.end_line ?? "末"} 行` : ""}`, 500)} ===\n`);
+      for (let index = 0; index < specs.length; index++) {
+        const spec = specs[index], label = labels[index];
+        const reserve = labels.slice(index + 1).reduce((sum, value) => sum + value.length + unread.length, 0);
+        const budget = Math.min(READ_CHARS, READ_CHARS * 2 - used - reserve) - label.length;
+        if (budget < 256) {
+          content.push({ type: "text", text: label + unread });
+          used += label.length + unread.length;
+          continue;
+        }
         let piece: Content[];
-        try { piece = readOne(spec).content; }
-        catch (err) { piece = [{ type: "text", text: `读取失败：${err instanceof Error ? err.message : String(err)}` }]; }
+        try { piece = readOne(spec, budget, true).content; }
+        catch (err) { piece = [{ type: "text", text: safePrefix(`读取失败：${err instanceof Error ? err.message : String(err)}`, budget) }]; }
         for (const item of piece) {
           if (item.type === "text") {
-            const room = Math.max(0, READ_CHARS * 2 - used);
-            const body = item.text.length > room ? item.text.slice(0, room) + "\n[本次合并读取已达上限，其余片段请另行读取]" : item.text;
-            used += body.length;
-            content.push({ type: "text", text: `${label}\n${body}` });
+            used += label.length + item.text.length;
+            content.push({ type: "text", text: label + item.text });
           } else content.push(item);
         }
       }
