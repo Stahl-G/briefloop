@@ -76,6 +76,16 @@ def catalog(backend,workspace,bridge):
     return result
 
 
+def _protect_temp_file(fd, name, path):
+    # Host settings may contain credentials. Protect the replacement before
+    # serializing them; chmod/fchmod do not set a private Windows DACL.
+    if os.name == 'nt':
+        from .connectors.windows_acl import protect_private
+        protect_private(name)
+    else:
+        os.fchmod(fd, path.stat().st_mode & 0o777 if path.exists() else 0o600)
+
+
 def change_antigravity(body):
     """Patch only the exact permission rule explicitly submitted by the user."""
     with _lock:
@@ -98,8 +108,9 @@ def change_antigravity(body):
         path.parent.mkdir(parents=True,exist_ok=True)
         fd,name=tempfile.mkstemp(prefix='.briefloop-permissions-',dir=path.parent)
         try:
-            os.fchmod(fd,path.stat().st_mode & 0o777 if path.exists() else 0o600)
-            with os.fdopen(fd,'w',encoding='utf-8') as f:json.dump(data,f,ensure_ascii=False,indent=2);f.write('\n');f.flush();os.fsync(f.fileno())
+            with os.fdopen(fd,'w',encoding='utf-8') as f:
+                _protect_temp_file(f.fileno(),name,path)
+                json.dump(data,f,ensure_ascii=False,indent=2);f.write('\n');f.flush();os.fsync(f.fileno())
             if path.is_symlink() or (path.read_bytes() if path.exists() else b'{}')!=raw:raise ValueError('宿主配置被同时修改，请刷新后重试')
             os.replace(name,path)
         finally:

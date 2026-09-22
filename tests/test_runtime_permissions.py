@@ -34,6 +34,22 @@ def test_invalid_modes_and_symlink_never_change_native_settings(tmp_path, monkey
     assert target.read_text()=='{}'
 
 
+def test_failed_temporary_file_protection_keeps_existing_host_settings(tmp_path, monkeypatch):
+    path=tmp_path/'settings.json'
+    path.write_text('{"permissions":{},"auth":{"fixture":"unchanged"}}')
+    monkeypatch.setattr(permissions,'antigravity_settings',lambda:path)
+    revision=permissions.catalog('antigravity',tmp_path,None)['revision']
+    before=path.read_bytes()
+    def fail_before_write(fd,name,existing):
+        assert existing==path and Path(name).read_bytes()==b''
+        raise OSError('synthetic protection failure')
+    monkeypatch.setattr(permissions,'_protect_temp_file',fail_before_write)
+    with pytest.raises(OSError,match='synthetic protection failure'):
+        permissions.change_antigravity({'revision':revision,'operation':'preset','preset':'turbo'})
+    assert path.read_bytes()==before
+    assert not list(tmp_path.glob('.briefloop-permissions-*'))
+
+
 def test_zcode_offers_its_own_modes_without_claiming_interactive_approval():
     """ZCode headless has no permission channel: a blocked action just fails."""
     found=permissions.catalog('zcode',Path('/tmp'),None)
