@@ -179,7 +179,40 @@ def admission(store, connection, run_id, operation):
     return round_id, 'research'
 
 
-def record_request(store, connection, run_id, request_id, operation, round_id, stage='research'):
+def source_refresh_binding(connection, run_id, job_id, source_id, url):
+    """Bind one host-dispatched user refresh, independently of closed research.
+
+    A trigger label is not authorization. This reads the actual running queue
+    record, frozen run permission, selected report/source and original URL.
+    """
+    from .research_budget import canonical_url
+    job = connection.execute('SELECT * FROM jobs WHERE id=?', (job_id,)).fetchone()
+    if not job or job['kind'] != 'source_refresh' or job['status'] != 'running':
+        raise AdmissionError('来源刷新任务未在执行，不能接纳请求', code='refresh_job_inactive')
+    payload = json.loads(job['payload'])
+    if payload.get('requested_by') != 'user' or payload.get('run_id') != run_id or payload.get('source_id') != source_id:
+        raise AdmissionError('来源刷新任务与用户选择不匹配', code='refresh_job_mismatch')
+    run = connection.execute('SELECT requirements,source_ids FROM runs WHERE id=?', (run_id,)).fetchone()
+    brief = connection.execute('SELECT run_id FROM briefs WHERE id=?', (payload.get('version_id'),)).fetchone()
+    source = connection.execute('SELECT url FROM sources WHERE id=?', (source_id,)).fetchone()
+    attached = source_id in json.loads(run['source_ids']) if run else False
+    if not attached:
+        attached = connection.execute('SELECT 1 FROM run_sources WHERE run_id=? AND source_id=?', (run_id, source_id)).fetchone()
+    if not run or not brief or brief['run_id'] != run_id or not source or not source['url'] or not attached:
+        raise AdmissionError('刷新任务没有绑定本报告的来源', code='refresh_job_mismatch')
+    if not json.loads(run['requirements']).get('allow_web'):
+        raise AdmissionError('本报告冻结为离线任务，不能联网刷新', code='refresh_offline')
+    canonical = canonical_url(url)
+    # Older queued UI jobs name the immutable source but lack source_url. Freeze
+    # its saved URL into the request binding on the first attempt, never a redirect.
+    frozen_url = payload.get('source_url', source['url'])
+    if not frozen_url or canonical_url(source['url']) != canonical or canonical_url(frozen_url) != canonical:
+        raise AdmissionError('刷新URL与用户排队时选择的来源不一致', code='refresh_job_mismatch')
+    return {'job_id': job_id, 'attempt': int(payload.get('attempt', 1)), 'run_id': run_id,
+            'version_id': payload['version_id'], 'source_id': source_id, 'url': canonical}
+
+
+def record_request(store, connection, run_id, request_id, operation, round_id, stage='research', *, refresh=None):
     """Persist a reserved controlled request in the same transaction as admission."""
     key = _requests_key(run_id)
     row = connection.execute('SELECT value FROM meta WHERE key=?', (key,)).fetchone()
@@ -188,6 +221,8 @@ def record_request(store, connection, run_id, request_id, operation, round_id, s
         raise AdmissionError('网络请求身份已经登记，不能覆盖原请求', code='request_already_reserved')
     data[request_id] = {'operation': operation, 'round_id': round_id, 'stage': stage,
                         'status': 'reserved', 'created': now()}
+    if refresh is not None:
+        data[request_id]['refresh'] = refresh
     connection.execute('INSERT OR REPLACE INTO meta(key,value) VALUES(?,?)', (key, dump(data)))
 
 
@@ -213,7 +248,14 @@ def admit_response(connection, run_id, reservation, operation, *, status='comple
     if entry.get('status') != 'reserved':
         return False  # A response cannot be admitted twice or overwrite an earlier rejection.
     plan = _read_plan(connection, run_id) or {}
-    if entry['stage'] == 'fact_check':
+    if entry['stage'] == 'source_refresh':
+        bound = entry.get('refresh') or {}
+        try:
+            current = source_refresh_binding(connection, run_id, entry['round_id'], bound.get('source_id'), bound.get('url'))
+            accepted = current == bound
+        except (AdmissionError, ValueError, TypeError):
+            accepted = False
+    elif entry['stage'] == 'fact_check':
         current = plan.get('fact_check') or {}
         accepted = current.get('stage_id') == entry['round_id'] and current.get('status') == 'active'
     else:
@@ -221,7 +263,8 @@ def admit_response(connection, run_id, reservation, operation, *, status='comple
         accepted = plan.get('current_round_id') == entry['round_id'] and current.get('status') == 'active'
     entry.update({'status': status if accepted else 'response_rejected', 'updated': now()})
     if not accepted:
-        entry.update({'response_status': status, 'rejection_reason': 'stage_closed_or_replaced'})
+        entry.update({'response_status': status, 'rejection_reason':
+                      'refresh_job_changed_or_stopped' if entry['stage'] == 'source_refresh' else 'stage_closed_or_replaced'})
     if failure_kind is not None:
         entry['failure_kind'] = failure_kind
     connection.execute('UPDATE meta SET value=? WHERE key=?', (dump(data), _requests_key(run_id)))

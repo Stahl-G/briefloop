@@ -111,14 +111,14 @@ def _fact_check_grant_limits(connection,run_id,*,persist_offset=False):
     return extra if any(extra.values()) else None
 
 
-def _load(store,connection,run_id,*,persist_offset=False):
+def _load(store,connection,run_id,*,persist_offset=False,include_fact_check_grants=True):
     row=connection.execute('SELECT requirements FROM runs WHERE id=?',(run_id,)).fetchone()
     if row is None:raise KeyError('Run not found')
     requirements=json.loads(row['requirements'])
     # Missing on old records means unlimited; never infer a preset retroactively.
     limits=(ResearchBudget.model_validate(requirements['research_budget']).model_dump()
             if 'research_budget' in requirements else None)
-    extra=_fact_check_grant_limits(connection,run_id,persist_offset=persist_offset)
+    extra=_fact_check_grant_limits(connection,run_id,persist_offset=persist_offset) if include_fact_check_grants else None
     if extra is not None:
         # A run without an authorized budget starts its fact-check stage from
         # zero plus the grant; the user's explicit amount is the ceiling.
@@ -147,6 +147,7 @@ def _stage_usage(store,run_id):
     stages={'research':{'search_requests':0,'source_pages':0},'fact_check':{'search_requests':0,'source_pages':0}}
     for entry in pending_requests(store,run_id).values():
         stage=entry.get('stage') or 'research'
+        if stage=='source_refresh':stages.setdefault(stage,{'search_requests':0,'source_pages':0})
         key={'search':'search_requests','pages':'source_pages'}.get(entry.get('operation'))
         if stage in stages and key:stages[stage][key]+=1
     return stages
@@ -225,21 +226,34 @@ def record_candidates(store,run_id,urls,*,reservation=None):
             'unadmitted_urls':overflow,'budget':view}
 
 
-def reserve_pages(store,run_id,urls,*,request_id=None):
+def reserve_pages(store,run_id,urls,*,request_id=None,refresh_job_id=None,source_id=None):
     """A failed direct fetch and same-URL Extract fallback consume one unique page."""
-    from .research_plan import admission,record_request
+    from .research_plan import admission,record_request,source_refresh_binding,AdmissionError
     urls=list(dict.fromkeys(canonical_url(url) for url in urls))
     with store.tx() as connection:
-        round_id,stage=admission(store,connection,run_id,'pages')
-        key,limits,state=_load(store,connection,run_id,persist_offset=True)
+        refresh=None
+        if refresh_job_id is not None:
+            if len(urls)!=1:
+                raise AdmissionError('单次用户刷新只能请求所选来源URL',code='refresh_job_mismatch')
+            refresh=source_refresh_binding(connection,run_id,refresh_job_id,source_id,urls[0])
+            fixed_id=refresh_job_id+'_refresh_'+str(refresh['attempt'])
+            if request_id is not None and request_id!=fixed_id:
+                raise AdmissionError('刷新请求身份与任务执行次数不匹配',code='refresh_job_mismatch')
+            request_id=fixed_id
+            round_id,stage=refresh_job_id,'source_refresh'
+        else:
+            round_id,stage=admission(store,connection,run_id,'pages')
+        key,limits,state=_load(store,connection,run_id,persist_offset=refresh is None,
+                               include_fact_check_grants=refresh is None)
         new=[url for url in urls if url not in state['source_pages']]
         if limits is not None and len(state['source_pages'])+len(new)>limits['source_pages']:
             raise BudgetExhausted('source_pages',_view(store,run_id,limits,state))
         state['source_pages'].extend(new)
         _save(connection,key,state)
         request_id=request_id or uid('extract')
-        if round_id:record_request(store,connection,run_id,request_id,'pages',round_id,stage=stage)
-    return {**snapshot(store,run_id),'round_id':round_id,'stage':stage,'request_id':request_id}
+        if round_id:record_request(store,connection,run_id,request_id,'pages',round_id,stage=stage,refresh=refresh)
+    view=_view(store,run_id,limits,state) if refresh is not None else snapshot(store,run_id)
+    return {**view,'round_id':round_id,'stage':stage,'request_id':request_id}
 
 
 def save_discovery(store,run_id,request_id,raw):

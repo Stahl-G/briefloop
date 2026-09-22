@@ -173,12 +173,12 @@ def test_only_a_user_queued_refresh_may_reach_private_networks(tmp_path, monkeyp
         return store.add_source('Fresh response', 'Revenue was USD 12 million in H1.', url=url)
 
     monkeypatch.setattr(sources, 'fetch', acquire)
-    store, old, run, _, _, _ = case(tmp_path, allow_web=True)
+    store, old, run, brief, _, _ = case(tmp_path, allow_web=True)
     # An agent tool call cannot raise its own network scope, whatever trigger it claims.
     workspace_action(store, {'action': 'refresh_source', 'run_id': run['id'], 'source_id': old['id'],
                              'information_cutoff': '2026-08-31', 'trigger': 'manual'})
     for requested_by in (None, 'user'):
-        payload = {'run_id': run['id'], 'source_id': old['id'], 'information_cutoff': '2026-08-31'}
+        payload = {'run_id': run['id'], 'version_id': brief['id'], 'source_id': old['id'], 'information_cutoff': '2026-08-31'}
         if requested_by: payload['requested_by'] = requested_by
         job = store.enqueue('source_refresh', payload)
         store.update_job(job['id'], 'running')

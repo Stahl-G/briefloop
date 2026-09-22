@@ -262,7 +262,7 @@ def for_version(store, version_id):
     return result
 
 
-def refresh(store, run_id, source_id, *, information_cutoff, trigger='manual', allow_private=False):
+def refresh(store, run_id, source_id, *, information_cutoff, trigger='manual', allow_private=False, user_job_id=None):
     """Actually acquire a new snapshot, within the same run's existing budget.
 
     Deliberately bypass existing_for_run: its cached response cannot demonstrate
@@ -270,6 +270,8 @@ def refresh(store, run_id, source_id, *, information_cutoff, trigger='manual', a
     allow_private comes only from a user's own request (the queued UI job), never
     from agent-supplied fields such as trigger: a registered URL may since have
     started redirecting or resolving elsewhere.
+    user_job_id is passed only by the queue worker, not by workspace-action; the
+    running job is revalidated on reservation and again before source admission.
     """
     _interval(information_cutoff)
     if trigger not in ('manual', 'next_run', 'research_refresh'):
@@ -288,7 +290,8 @@ def refresh(store, run_id, source_id, *, information_cutoff, trigger='manual', a
     else:
         from . import research_budget, sources
         try:
-            data['budget'] = research_budget.reserve_pages(store, run_id, [source['url']])
+            data['budget'] = research_budget.reserve_pages(store, run_id, [source['url']],
+                                                           refresh_job_id=user_job_id, source_id=source_id)
         except research_budget.BudgetExhausted as exc:
             outcome = 'budget_exhausted'
             data['budget'] = exc.result['budget']
