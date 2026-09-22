@@ -395,18 +395,41 @@ def grant(store,version_id,limits,*,job_id=None):
     add_fact_check_grant / research_budget._load），可实际花费；阶段以
     budget_exhausted 收束后追加会重开阶段并重新编排一次核查任务继续执行。
     """
-    from .research_plan import add_fact_check_grant
-    brief=store.one('briefs',version_id)
-    outcome=add_fact_check_grant(store,brief['run_id'],limits,job_id=job_id)
-    if outcome['status']=='reopened':
-        from .research_plan import _owner_job
-        owner=_owner_job(store,brief['run_id'])
-        payload={'run_id':brief['run_id'],'version_id':brief['id']}
-        if owner is not None:
-            original=json.loads(owner['payload'])
-            payload.update({key:original[key] for key in ('runtime','agent_backend','search_provider','search_policy','role_models') if key in original})
-        job=store.enqueue('fact_check',payload)
-        outcome['job_id']=job['id']
+    from .research_plan import add_fact_check_grant, _owner_job
+    from .external_requests import _RequestStore
+    # Reopening and dispatch are one admission. If model validation, INSERT, or
+    # any later admission step fails, neither this grant nor its stage survives.
+    # A retry of that failed call can therefore apply the amount exactly once.
+    with store.tx() as connection:
+        view=_RequestStore(store,connection)
+        brief=view.one('briefs',version_id)
+        outcome=add_fact_check_grant(view,brief['run_id'],limits,job_id=job_id)
+        if outcome['status'] in ('reopened','active'):
+            stage=(view.meta('research_plan:'+brief['run_id']) or {})['fact_check']
+            owner=_owner_job(view,brief['run_id'])
+            matching=[]
+            for saved in view.rows("SELECT * FROM jobs WHERE kind='fact_check' AND json_extract(payload,'$.run_id')=? ORDER BY rowid DESC",
+                                   (brief['run_id'],)):
+                payload=json.loads(saved['payload'])
+                # Older jobs did not carry stage_id. They can belong to this
+                # stage only if created after its admission, not an earlier one.
+                if (payload.get('stage_id')==stage['stage_id'] or
+                        not payload.get('stage_id') and saved['created']>=stage['created']):
+                    matching.append(saved)
+            if matching:
+                # Failed/interrupted jobs retain their explicit resume path;
+                # adding allowance must not start a second paid attempt.
+                outcome['job_id']=matching[0]['id']
+            elif outcome['status']=='reopened' or owner is None or owner['status'] not in ('queued','running'):
+                # Repair old active stages stranded before dispatch. An active
+                # generating parent still owns its own first child admission.
+                payload={'run_id':brief['run_id'],'version_id':brief['id'],'stage_id':stage['stage_id']}
+                if owner is not None:
+                    original=json.loads(owner['payload'])
+                    payload.update({key:original[key] for key in ('runtime','agent_backend','search_provider','search_policy','role_models') if key in original})
+                job=view.enqueue('fact_check',payload)
+                outcome['job_id']=job['id']
+    if view.jobs_admitted:store.wake_jobs()
     return outcome
 
 

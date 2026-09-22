@@ -391,6 +391,76 @@ def test_grant_entry_reopens_exhausted_stage_and_reschedules_the_check(tmp_path)
     assert research_plan.frozen(store, run['id'])['fact_check']['status'] == 'active'
 
 
+def test_failed_grant_dispatch_rolls_back_then_the_same_call_can_retry(tmp_path, monkeypatch):
+    store, run, _ = _world(tmp_path)
+    _admitted(store, run)
+    brief, _, _ = _claim_version(store, run)
+    research_plan.finish_fact_check(store, run['id'], status='budget_exhausted')
+    before = research_plan.frozen(store, run['id'])
+    used = budget.spent(store, run['id'])
+    wakeups = []
+    store._job_wakeup = lambda: wakeups.append((len(store.rows('SELECT id FROM jobs')),
+                                              research_plan.frozen(store, run['id'])['fact_check']['status']))
+    enqueue = Store.enqueue
+
+    def fail_after_insert(self, *args, **kwargs):
+        enqueue(self, *args, **kwargs)
+        assert len(self.rows("SELECT id FROM jobs WHERE kind='fact_check'")) == 1
+        raise OSError('synthetic admission failure after INSERT')
+
+    with monkeypatch.context() as failed:
+        failed.setattr(Store, 'enqueue', fail_after_insert)
+        with pytest.raises(OSError, match='synthetic admission'):
+            fact_check.grant(store, brief['id'], SHARE)
+    assert research_plan.frozen(store, run['id']) == before
+    assert budget.spent(store, run['id']) == used
+    assert store.rows('SELECT id FROM jobs') == [] and wakeups == []
+
+    outcome = fact_check.grant(store, brief['id'], SHARE)
+    assert outcome['status'] == 'reopened'
+    assert store.rows('SELECT id FROM jobs') == [{'id': outcome['job_id']}]
+    stage = research_plan.frozen(store, run['id'])['fact_check']
+    assert stage['budget_source']['limits'] == SHARE and len(stage['initial_grants']) == 1
+    assert not stage.get('grants')
+    assert json.loads(store.one('jobs', outcome['job_id'])['payload'])['stage_id'] == stage['stage_id']
+    assert wakeups == [(1, 'active')]  # never wakes a worker before the transaction commits
+
+
+def test_old_active_stage_without_dispatch_recovers_one_job_for_parallel_topups(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    store, run, _ = _world(tmp_path)
+    _admitted(store, run)
+    brief, _, _ = _claim_version(store, run)
+    research_plan.finish_fact_check(store, run['id'], status='budget_exhausted')
+    reopened = research_plan.add_fact_check_grant(store, run['id'], SHARE)  # old split admission stranded here
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        outcomes = list(pool.map(lambda _: fact_check.grant(store, brief['id'], SHARE), range(2)))
+    assert outcomes[0]['job_id'] == outcomes[1]['job_id']
+    assert len(store.rows("SELECT id FROM jobs WHERE kind='fact_check'")) == 1
+    stage = research_plan.frozen(store, run['id'])['fact_check']
+    assert stage['stage_id'] == reopened['stage_id'] and len(stage['grants']) == 2
+    assert budget.snapshot(store, run['id'])['limits']['search_requests'] == BUDGET['search_requests'] + 3 * SHARE['search_requests']
+    # Explicit additions are not interchangeable request ids. Keep both amounts,
+    # but do not create another attempt if the existing job later needs resume.
+    store.update_job(outcomes[0]['job_id'], 'failed', error='synthetic transport failure')
+    added = fact_check.grant(store, brief['id'], SHARE)
+    assert added['job_id'] == outcomes[0]['job_id']
+    assert len(store.rows("SELECT id FROM jobs WHERE kind='fact_check'")) == 1
+    assert store.one('jobs', added['job_id'])['status'] == 'failed'
+
+
+def test_active_generating_parent_keeps_ownership_of_first_fact_check_dispatch(tmp_path):
+    store, run, _ = _world(tmp_path)
+    parent = store.enqueue('generate', {'run_id': run['id']})
+    store.update_job(parent['id'], 'running')
+    _admitted(store, run)
+    brief, _, _ = _claim_version(store, run)
+    outcome = fact_check.grant(store, brief['id'], SHARE)
+    assert outcome['status'] == 'active' and 'job_id' not in outcome
+    assert store.rows("SELECT id FROM jobs WHERE kind='fact_check'") == []
+
+
 def test_worker_prefers_a_pending_user_grant_when_admitting(tmp_path):
     store, run, source = _world(tmp_path, folder='grant')
     research_plan.add_fact_check_grant(store, run['id'], SHARE)  # granted mid-research → pending
