@@ -729,9 +729,47 @@ def respond(store,finding_id,version_id,action,reason):
     return {'id':identity,'status':'addressed_pending_review'}
 
 
+def _review_requirement_index(store,review):
+    """Read this review's bound display index, without rescanning its evidence packet."""
+    from .deliverable_spec import clause_items
+    from .release import safe_file
+    result={'protocol':'legacy','requirement_items':[],'clause_items':[]}
+    try:
+        data=json.loads(review['data'])
+        if not isinstance(data,dict):raise ValueError('Invalid review metadata')
+        result['protocol']=data.get('protocol','legacy')
+        relative=data['packet_path'];files=data['files']
+        if not isinstance(relative,str) or not relative or not isinstance(files,dict):
+            raise ValueError('Missing packet index')
+        def read(name):
+            # Status is polled: at most two fixed files, each capped at 2 MiB.
+            # Oversized/old packets still show their saved results without labels.
+            with safe_file(store.root,Path(relative)/name).open('rb') as stream:
+                raw=stream.read(2*1024*1024+1)
+            if len(raw)>2*1024*1024 or sha(raw)!=files[name]:raise ValueError('Changed packet index')
+            value=json.loads(raw.decode('utf-8'))
+            if not isinstance(value,dict):raise ValueError('Invalid packet index')
+            return value
+        index=read('index.json')
+        name='requirements.json' if 'requirements.json' in files else 'target.json'
+        if (index.get('version_id')!=review['version_id'] or index.get('fingerprint')!=review['fingerprint']
+                or not isinstance(index.get('files'),dict) or index['files'].get(name)!=files[name]):
+            raise ValueError('Unbound requirement index')
+        view=read(name)
+        if name=='target.json' and view.get('version_id')!=review['version_id']:raise ValueError('Wrong version')
+        requirements=view['requirements'];items=requirements['requirement_items']
+        if not isinstance(items,list) or any(not isinstance(item,dict) for item in items):
+            raise ValueError('Invalid requirements')
+        clauses=clause_items(requirements)
+        result.update(requirement_items=items,clause_items=clauses)
+    except (OSError,ValueError,TypeError,KeyError,AttributeError):
+        result['requirement_index_error']='此审阅的冻结要求索引不可用；仅显示已保存的核查结果与 ID。'
+    return result
+
+
 def review_status(store,version_id):
     brief=store.one('briefs',version_id)
-    reviews=store.rows('SELECT id,status,created,result FROM reviews WHERE version_id=? ORDER BY rowid DESC',(version_id,))
+    reviews=store.rows('SELECT id,version_id,status,created,result,data,fingerprint FROM reviews WHERE version_id=? ORDER BY rowid DESC',(version_id,))
     findings=store.rows("SELECT f.* FROM review_findings f JOIN briefs b ON b.id=f.version_id WHERE b.run_id=? ORDER BY f.rowid",(brief['run_id'],))
     ancestry=_ancestry(store,version_id)
     findings=[finding for finding in findings if finding['version_id'] in ancestry]
@@ -758,7 +796,9 @@ def review_status(store,version_id):
             reconciliation=read_reconciliation(store,brief['run_id'],detail['reconciliation_id'])
         except (ValueError,OSError) as exc:
             reconciliation={'id':detail['reconciliation_id'],'error':str(exc)}
-    return {'version_id':version_id,'conflicts':for_run(store,brief['run_id']),'reviews':[{**r,'result':json.loads(r['result']) if r['result'] else None} for r in reviews],
+    return {'version_id':version_id,'conflicts':for_run(store,brief['run_id']),'reviews':[
+                {**{k:r[k] for k in ('id','status','created')},'result':json.loads(r['result']) if r['result'] else None,
+                 **_review_requirement_index(store,r)} for r in reviews],
             'reconciliation':reconciliation,
             'findings':[{**f,'data':json.loads(f['data'])} for f in findings]}
 
@@ -828,8 +868,10 @@ def run_review(store,runtime,job,version_id,folder):
     # The persisted protocol decides the prompt, not whether clauses happen to exist;
     # a legacy review restored after upgrade must keep the legacy instruction.
     protocol=review['data'].get('protocol','legacy')
-    clauses=clause_items(target['requirements']) if protocol=='clauses_v1' else []
-    requirement_instruction=('本次为条款级审阅：对下表的 reader_contract 条款逐条给 clause_checks（clause_id、status(covered/partial/missing/not_applicable/unverified)、reason、basis）。clause_id 必须逐字复制程序给出的 ID，不要自行计算或改写。reader_content 核对正文是否实际回答；research_method 核对方法是否落实（过程要求需有来源、核查或执行记录，无法确认写 unverified）；writing_preference 核对呈现；manual_assignment 只核对占位。not_applicable 仅限条款自身带适用条件且本稿不满足，并给依据；内容条款不得标为不适用。必须逐条覆盖；仍要对照原始要求，发现漏拆或误分类用 finding 指出。' if clauses else
+    clause_protocol=protocol=='clauses_v1'
+    clauses=clause_items(target['requirements']) if clause_protocol else []
+    completion_checks='每个条款都有clause_checks' if clause_protocol else '每个requirement_item都有requirement_checks'
+    requirement_instruction=('本次为条款级审阅：对下表的 reader_contract 条款逐条给 clause_checks（clause_id、status(covered/partial/missing/not_applicable/unverified)、reason、basis）。clause_id 必须逐字复制程序给出的 ID，不要自行计算或改写。reader_content 核对正文是否实际回答；research_method 核对方法是否落实（过程要求需有来源、核查或执行记录，无法确认写 unverified）；writing_preference 核对呈现；manual_assignment 只核对占位。not_applicable 仅限条款自身带适用条件且本稿不满足，并给依据；内容条款不得标为不适用。必须逐条覆盖；仍要对照原始要求，发现漏拆或误分类用 finding 指出。' if clause_protocol else
         '对requirements.requirement_items逐项给requirement_checks：requirement_id、status(covered/manual/partial/missing)、reason。manual只能用于用户原要求中mode=manual的项目，不得自行降低必答要求。')
     packet_guide=('先读 overview.json，它说明每个文件的内容和大小：正文纯文本在 report.txt（每行一个段落，前面是段落ID），要求在 requirements.json，主张与证据在 claims.json，数字绑定在 numbers.json，引用摘录在 citations.json；target.json 是这些视图的完整依据，需要其他字段时按字段读取。'
                   if (folder/'packet'/'overview.json').exists() else '先看target.json的本轮要求、正文和claim_evidence关联；')
@@ -872,7 +914,7 @@ claim_checks可以使用target.evidence.bindings、premises闭包以及candidate
 未核验事项用unchecked_items记录description及importance(core/supporting)；普通表达建议使用minor finding，不冒充核心未核验。
 {output_line}
 version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief_hash={store.one('briefs',version_id)['hash']}。
-四维评分使用既有标准，不用高分抵消重大错误。review.status表示是否完成审阅，claim_checks.status表示依据结论。coverage_scan_complete仅在确实检查了正文重要主张遗漏后设true；review.status=complete 要求它为true且每个requirement_item都有requirement_checks，做不到就标incomplete；发现的问题必须写入findings，不能只写在summary里。未核验项写unchecked。
+四维评分使用既有标准，不用高分抵消重大错误。review.status表示是否完成审阅，claim_checks.status表示依据结论。coverage_scan_complete仅在确实检查了正文重要主张遗漏后设true；review.status=complete 要求它为true且{completion_checks}，做不到就标incomplete；发现的问题必须写入findings，不能只写在summary里。未核验项写unchecked。
 字段边界（不要混用两套 finding）：requirement_checks 只有 requirement_id/status/reason，不带 basis；basis 只属于 clause_checks。顶层 overall/四维分数只属于 assessment；assessment 必须给出，不能省略。assessment.findings 用 dimension/severity/description/report_quote/requirement/source_id/locator/evidence/suggestion。顶层 findings 是核查发现，用 kind/severity/description/evidence，可带 claim_ids/block_ids/requirement_ids（条款可用 requirement_ids 关联，不要写 requirement 或 source_id）。
 '''
     if target.get('fact_checks'):
@@ -883,7 +925,7 @@ version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief
     prompt+='\n'+instructions(target['requirements'],role='reviewer',include_spec=False)
     from .writing_guidance import DECISION_EVIDENCE_GUIDE
     prompt+='\n'+DECISION_EVIDENCE_GUIDE+'审阅时只核对已存原件；条件确实改变建议才指出具体问题，来源没有限制时不要自行补造。'
-    if clauses:
+    if clause_protocol:
         prompt+='\n本次条款清单（clause_checks.clause_id 只能取这些值）：'+dump([{k:c[k] for k in ('clause_id','kind','source_quote','instruction')} for c in clauses])
     ids=set()
     def collect_ids(node):
@@ -893,7 +935,7 @@ version_id={version_id}，fingerprint={review['fingerprint']}。assessment.brief
     allowed=sorted(ids)
     response_ids=[{'response_id':r['id'],'finding_id':r['finding_id']} for r in _response_scope(store,folder/'packet',version_id).values()]
     prompt+='\n本次允许的claim_checks.claim_id：'+dump(allowed)+'\n本版本处理说明索引（response_to必须取response_id）：'+dump(response_ids)
-    if not clauses:
+    if not clause_protocol:
         # status=complete needs one check per item; give the ids instead of letting the model guess.
         prompt+='\n本次 requirement_checks 须逐项覆盖的 requirement_id：'+dump([{'requirement_id':item['requirement_id'],'mode':item.get('mode')} for item in target['requirements']['requirement_items']])
     prompt+='\n本次允许的findings.claim_ids：'+dump(sorted(ids|{x['claim_id'] for x in target.get('source_statements',[])}))
