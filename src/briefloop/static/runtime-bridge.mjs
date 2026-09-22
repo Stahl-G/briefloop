@@ -1,5 +1,132 @@
 // Includes Apache-2.0 Open Design helpers; see runtime-bridge.LICENSE.txt and runtime-bridge.NOTICE.txt.
 
+// src/briefloop/static/runtime-reasoning.json
+var runtime_reasoning_default = {
+  codex: {
+    kind: "levels",
+    levels: [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  opencode: {
+    kind: "variant",
+    note: "\u6863\u4F4D\u7531\u6240\u9009\u6A21\u578B\u63D0\u4F9B\uFF0C\u53EF\u8F93\u5165\u6A21\u578B\u652F\u6301\u7684\u6863\u4F4D\u3002"
+  },
+  claude: {
+    kind: "levels",
+    levels: [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  antigravity: {
+    kind: "levels",
+    levels: [
+      "low",
+      "medium",
+      "high"
+    ]
+  },
+  codebuddy: {
+    kind: "levels",
+    levels: [
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  pi: {
+    kind: "levels",
+    levels: [
+      "off",
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+      "max"
+    ]
+  },
+  kimi: {
+    kind: "negotiated"
+  },
+  hermes: {
+    kind: "negotiated"
+  },
+  reasonix: {
+    kind: "negotiated"
+  },
+  kilo: {
+    kind: "negotiated"
+  },
+  kiro: {
+    kind: "negotiated"
+  },
+  vibe: {
+    kind: "negotiated"
+  },
+  "deepseek-harness": {
+    kind: "negotiated"
+  },
+  mimo: {
+    kind: "variant",
+    note: "\u6863\u4F4D\u7531\u6240\u9009 MiMo \u6A21\u578B\u63D0\u4F9B\uFF0C\u53EF\u8F93\u5165\u6A21\u578B\u652F\u6301\u7684\u6863\u4F4D\u3002"
+  },
+  zcode: {
+    kind: "host",
+    note: "ZCode \u5F53\u524D\u65E0\u754C\u9762\u63A5\u53E3\u672A\u63D0\u4F9B\u72EC\u7ACB\u63A8\u7406\u6863\u4F4D\uFF0C\u6CBF\u7528\u5BBF\u4E3B\u8BBE\u7F6E\u3002"
+  }
+};
+
+// runtime-bridge/reasoning.ts
+function effortValue(value) {
+  if (value === null || value === void 0 || value === "" || value === "none") return null;
+  if (typeof value !== "string" || value.length > 100 || !value.trim()) throw Error("\u65E0\u6548\u63A8\u7406\u5F3A\u5EA6");
+  return value.trim();
+}
+function reasoningProfile(runtime) {
+  const p = runtime_reasoning_default[runtime] || { kind: "host", note: "\u5F53\u524D\u5BBF\u4E3B\u63A5\u53E3\u6CA1\u6709\u63D0\u4F9B\u63A8\u7406\u5F3A\u5EA6\u8BBE\u7F6E\u3002" };
+  return { ...p, options: (p.levels || []).map((id) => ({ id, name: id })) };
+}
+function reasoningModel(runtime, model, effort) {
+  return runtime === "antigravity" && effortValue(effort) && /^gemini-/.test(model || "") ? model.replace(/-(low|medium|high)$/, "") : model;
+}
+function validateEffort(runtime, value) {
+  const effort = effortValue(value);
+  if (!effort) return null;
+  const p = reasoningProfile(runtime);
+  if (p.kind === "host") throw Error(p.note);
+  if (p.kind === "levels" && !p.levels.includes(effort)) throw Error("\u6B64\u5BBF\u4E3B\u4E0D\u652F\u6301\u63A8\u7406\u5F3A\u5EA6\uFF1A" + effort);
+  return effort;
+}
+var flatten = (items) => items.flatMap((item) => Array.isArray(item?.options) ? flatten(item.options) : [item]);
+function acpReasoning(options) {
+  if (!Array.isArray(options)) return null;
+  const field = options.find((o) => o.category === "thought_level") || options.find((o) => /^(reasoning[_-]?effort|thinking[_-]?(level|mode)|thought[_-]?level|effort)$/i.test(o.id || ""));
+  if (!field || !Array.isArray(field.options)) return null;
+  const choices = flatten(field.options).filter((o) => typeof o?.value === "string").map((o) => ({ id: o.value === "none" ? "off" : o.value, name: o.name || o.value, value: o.value }));
+  return choices.length ? { id: field.id, kind: "levels", options: choices, current: field.currentValue } : null;
+}
+async function applyAcpEffort(conn, sessionId, options, value) {
+  const effort = effortValue(value);
+  if (!effort) return;
+  const field = acpReasoning(options), choice = field?.options.find((o) => o.id === effort);
+  if (!field || !choice) throw Error("\u5BBF\u4E3B\u672A\u63D0\u4F9B\u6240\u9009\u63A8\u7406\u5F3A\u5EA6\uFF0C\u8BF7\u91CD\u65B0\u8BFB\u53D6\u6863\u4F4D\u6216\u9009\u62E9\u6A21\u578B\u9ED8\u8BA4");
+  const result = await conn.call("session/set_config_option", { sessionId, configId: field.id, value: choice.value });
+  const actual = acpReasoning(result?.configOptions);
+  if (actual && actual.current !== void 0 && actual.current !== choice.value) throw Error("\u5BBF\u4E3B\u6CA1\u6709\u91C7\u7528\u6240\u9009\u63A8\u7406\u5F3A\u5EA6");
+}
+
 // runtime-bridge/pi.ts
 import path from "node:path";
 
@@ -389,8 +516,10 @@ async function runPi(p, state, launch2, terminate2, emit2) {
       if (split < 1) throw Error("Pi model must be provider/model");
       selectedModel = await c.call("set_model", { provider: p.model.slice(0, split), modelId: p.model.slice(split + 1) });
     }
-    if (p.thinking) await c.call("set_thinking_level", { level: p.thinking });
+    const thinking = p.effort || p.thinking;
+    if (thinking) await c.call("set_thinking_level", { level: thinking });
     const effective = await c.call("get_state");
+    if (thinking && effective.thinkingLevel !== thinking) throw Error("Pi \u6CA1\u6709\u91C7\u7528\u6240\u9009\u63A8\u7406\u5F3A\u5EA6");
     emit2(p.execution_id, "performance", { phase: "configuration", thinking: effective.thinkingLevel, context_window: selectedModel?.contextWindow, output_limit: selectedModel?.maxTokens, tool_mode: p.host_options?.mode || "native", compaction: "host_setting" });
     contextWindow = selectedModel?.contextWindow;
     emit2(p.execution_id, "session", { session_id: info.sessionFile });
@@ -1453,8 +1582,8 @@ async function handshake(conn, p) {
 }
 function acpModelOptions(runtime, options) {
   if (!Array.isArray(options)) return options;
-  const flatten = (values) => values.flatMap((v) => Array.isArray(v?.options) ? flatten(v.options) : [v]);
-  return options.map((o) => ({ ...o, options: Array.isArray(o.options) ? flatten(o.options).map((v) => {
+  const flatten2 = (values) => values.flatMap((v) => Array.isArray(v?.options) ? flatten2(v.options) : [v]);
+  return options.map((o) => ({ ...o, options: Array.isArray(o.options) ? flatten2(o.options).map((v) => {
     if (runtime !== "deepseek-harness") return v;
     try {
       const pair = JSON.parse(v.value);
@@ -1541,6 +1670,7 @@ async function listModels(p) {
   return { models: fallback, source: "builtin_hints" };
 }
 function validate(p) {
+  p.effort = validateEffort(p.runtime_id, p.effort);
   if (p.model && !sanitizeCustomModel(p.model)) throw Error("Invalid model ID");
   if (!p.execution_id || !p.cwd || typeof p.prompt !== "string") throw Error("execution_id, cwd and prompt required");
   if (active.has(p.execution_id)) throw Error("Execution already active");
@@ -1574,9 +1704,53 @@ async function permissionOptions(p) {
     terminate(conn.child);
   }
 }
+async function reasoningOptions2(p) {
+  const profile = reasoningProfile(p.runtime_id);
+  if (p.runtime_id === "codex") {
+    const bin2 = findBin(defFor("codex"), p.path);
+    if (!bin2) throw Error("Runtime not installed");
+    try {
+      const r = await exec(bin2, ["debug", "models"], { env, timeout: 5e3, maxBuffer: 4 * 1024 * 1024 }), data = JSON.parse(r.stdout);
+      const model = (Array.isArray(data) ? data : data.models || []).find((m) => (m.slug || m.id) === p.model);
+      if (Array.isArray(model?.supported_reasoning_levels)) return { kind: "levels", source: "host", options: model.supported_reasoning_levels.filter((o) => typeof o.effort === "string" && o.effort !== "none").map((o) => ({ id: o.effort, name: o.effort })) };
+    } catch {
+    }
+    return { ...profile, source: "cli_defaults", note: "\u5BBF\u4E3B\u672A\u8FD4\u56DE\u6240\u9009\u6A21\u578B\u7684\u6863\u4F4D\uFF1B\u663E\u793A CLI \u5E38\u7528\u6863\u4F4D\uFF0C\u5B9E\u9645\u80FD\u529B\u53D6\u51B3\u4E8E\u6A21\u578B\u3002" };
+  }
+  if (p.runtime_id === "antigravity" && p.model?.startsWith("gemini-")) {
+    const family = reasoningModel(p.runtime_id, p.model, "low"), catalog = await listModels(p);
+    const levels = profile.levels.filter((level) => catalog.models.some((m) => m.id === family + "-" + level));
+    return { ...profile, options: levels.map((id) => ({ id, name: id })), note: "\u63A8\u7406\u5F3A\u5EA6\u8986\u76D6 Gemini \u6A21\u578B\u540D\u4E2D\u7684\u6863\u4F4D\uFF1B\u5B9E\u9645\u8BF7\u6C42\u4F7F\u7528\u540C\u7CFB\u5217\u6A21\u578B\u3002", source: "host" };
+  }
+  if (profile.kind === "variant") {
+    const catalog = await listModels(p), model = catalog.models.find((m) => m.id === p.model);
+    return { ...profile, options: (model?.reasoningOptions || []).filter((o) => o.id !== "default").map((o) => ({ id: o.id, name: o.label || o.id })), source: catalog.source };
+  }
+  if (profile.kind !== "negotiated") return profile;
+  const bin = findBin(defFor(p.runtime_id), p.path);
+  if (!bin) throw Error("Runtime not installed");
+  const args = acpArguments(p.runtime_id, bin);
+  if (p.runtime_id === "reasonix" && p.model && p.model !== "default") args.push("-model", p.model);
+  const conn = connect(bin, args, p.cwd, () => {
+  }, (_m, reply) => reply({ outcome: { outcome: "cancelled" } }));
+  try {
+    const { session } = await handshake(conn, { cwd: p.cwd });
+    let options = session.configOptions;
+    if (p.model && p.model !== "default" && p.runtime_id !== "reasonix") {
+      const cfg = findModelConfigOption(options);
+      const changed = await conn.call(cfg ? "session/set_config_option" : "session/set_model", cfg ? { sessionId: session.sessionId, configId: cfg.configId, value: acpSelectedModel(p.runtime_id, p.model, options) } : { sessionId: session.sessionId, modelId: p.model });
+      options = changed?.configOptions || options;
+    }
+    const field = acpReasoning(options);
+    return field ? { kind: "levels", options: field.options.map(({ id, name }) => ({ id, name })), source: "host" } : { kind: "host", options: [], note: "\u5F53\u524D\u5BBF\u4E3B\u548C\u6A21\u578B\u672A\u63D0\u4F9B\u72EC\u7ACB\u63A8\u7406\u6863\u4F4D\uFF0C\u6CBF\u7528\u5BBF\u4E3B\u8BBE\u7F6E\u3002" };
+  } finally {
+    terminate(conn.child);
+  }
+}
 async function runAcp(p, state) {
   let sessionId;
   const args = acpArguments(p.runtime_id, state.bin);
+  if (p.runtime_id === "codebuddy" && p.effort) args.push("--effort", p.effort);
   if (p.runtime_id === "reasonix" && p.model && p.model !== "default") args.push("-model", p.model);
   const conn = connect(state.bin, args, p.cwd, (m) => {
     if (m.method !== "session/update" || !state.promptStarted) return;
@@ -1608,10 +1782,13 @@ async function runAcp(p, state) {
       if (!acpPermissionModes(session).some((m) => m.id === p.host_options.mode)) throw Error("Host does not advertise this permission mode");
       await conn.call("session/set_mode", { sessionId, modeId: p.host_options.mode });
     }
+    let options = session.configOptions;
     if (p.model && p.model !== "default" && p.runtime_id !== "reasonix") {
-      const cfg = findModelConfigOption(session.configOptions);
-      await conn.call(cfg ? "session/set_config_option" : "session/set_model", cfg ? { sessionId, configId: cfg.configId, value: acpSelectedModel(p.runtime_id, p.model, session.configOptions) } : { sessionId, modelId: p.model });
+      const cfg = findModelConfigOption(options);
+      const changed = await conn.call(cfg ? "session/set_config_option" : "session/set_model", cfg ? { sessionId, configId: cfg.configId, value: acpSelectedModel(p.runtime_id, p.model, options) } : { sessionId, modelId: p.model });
+      options = changed?.configOptions || options;
     }
+    if (p.runtime_id !== "codebuddy") await applyAcpEffort(conn, sessionId, options, p.effort);
     const blocks = buildPromptBlocks(p.prompt, []);
     if (p.images?.length && !init.agentCapabilities?.promptCapabilities?.image) throw Error("Host does not advertise image input");
     for (const image of p.images || []) {
@@ -1639,7 +1816,8 @@ async function runAntigravity(p, state) {
   });
   const prompt = imagePaths.length ? p.prompt + "\n\n\u7528\u6237\u9644\u52A0\u7684\u56FE\u7247\uFF08\u8BF7\u8C03\u7528 view_file \u5B9E\u9645\u8BFB\u53D6\u540E\u56DE\u7B54\uFF0C\u4E0D\u8981\u6839\u636E\u6587\u4EF6\u540D\u731C\u6D4B\uFF09\uFF1A\n" + imagePaths.map((f) => JSON.stringify(f)).join("\n") : p.prompt;
   const args = ["--input-format", "stream-json", "--output-format", "stream-json", "--disable-slash-commands"];
-  if (p.model && p.model !== "default") args.push("--model", p.model);
+  if (p.effort) args.push("--effort", p.effort);
+  if (p.model && p.model !== "default") args.push("--model", reasoningModel(p.runtime_id, p.model, p.effort));
   if (p.session_id) args.push("--conversation", p.session_id);
   args.push("--print-timeout", p.timeout_ms ? Math.ceil(p.timeout_ms / 1e3 + 30) + "s" : "87600h");
   const child = launch(state.bin, args, p.cwd);
@@ -1705,7 +1883,7 @@ async function runAntigravity(p, state) {
         return resolve();
       }
       const status = typeof result?.status === "string" && /^[A-Z_]+$/.test(result.status) ? result.status : "NO_RESULT";
-      reject(Error("Antigravity " + status + " (exit " + code + ")"));
+      reject(Error(typeof result?.error === "string" ? "Antigravity: " + result.error.slice(0, 1200) : "Antigravity " + status + " (exit " + code + ")"));
     });
     child.stdin.end(JSON.stringify({ event: "user", message: { content: prompt } }) + "\n");
   });
@@ -1717,6 +1895,8 @@ async function runStream(p, state) {
     if (!["manual", "acceptEdits", "dontAsk", "plan"].includes(p.host_options.mode)) throw Error("Invalid Claude permission mode");
     args.push("--permission-mode", p.host_options.mode);
   }
+  if (claude && p.effort) args.push("--effort", p.effort);
+  if (!claude && p.effort) args.push("--variant", p.effort);
   if (!claude && p.host_options?.mode && p.host_options.mode !== "native") {
     const options = await permissionOptions({ ...p, path: state.bin });
     if (!options.modes.some((m) => m.id === p.host_options.mode)) throw Error("Host does not advertise this mode");
@@ -1848,6 +2028,7 @@ async function handle(method, p) {
   if (method === "discover") return discover(p);
   if (method === "list_models") return listModels(p);
   if (method === "permission_options") return permissionOptions(p);
+  if (method === "reasoning_options") return reasoningOptions2(p);
   if (method === "start") {
     const bin = validate(p);
     const state = { bin, cancelled: false, questions: /* @__PURE__ */ new Map() };

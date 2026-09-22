@@ -62,8 +62,10 @@ export async function runPi(p:any,state:any,launch:any,terminate:any,emit:any){
   if(p.session_id&&path.resolve(info.sessionFile)!==path.resolve(p.session_id))throw Error('Pi resumed a different session');
   let selectedModel=info.model;
   if(p.model&&p.model!=='default'){const split=p.model.indexOf('/');if(split<1)throw Error('Pi model must be provider/model');selectedModel=await c.call('set_model',{provider:p.model.slice(0,split),modelId:p.model.slice(split+1)});}
-  if(p.thinking)await c.call('set_thinking_level',{level:p.thinking});
+  const thinking=p.effort||p.thinking;
+  if(thinking)await c.call('set_thinking_level',{level:thinking});
   const effective=await c.call('get_state');
+  if(thinking&&effective.thinkingLevel!==thinking)throw Error('Pi 没有采用所选推理强度');
   emit(p.execution_id,'performance',{phase:'configuration',thinking:effective.thinkingLevel,context_window:selectedModel?.contextWindow,output_limit:selectedModel?.maxTokens,tool_mode:p.host_options?.mode||'native',compaction:'host_setting'});
   contextWindow=selectedModel?.contextWindow;
   emit(p.execution_id,'session',{session_id:info.sessionFile});started=true;

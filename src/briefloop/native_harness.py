@@ -24,7 +24,7 @@ from .harness import InternalRun
 from .native_engine import NativeEngine
 from .store import uid
 
-THINKING_LEVELS = {'minimal', 'low', 'medium', 'high', 'xhigh', 'max'}
+THINKING_LEVELS = {'off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'}
 # Default when no effort is selected. On the seeded slice evaluation (2026-09-18)
 # the Reviewer caught the same defects at low as at high while thinking ~40%
 # less; low was faster and cheaper than Opencode at high on a held-out set.
@@ -35,6 +35,8 @@ def _thinking(config):
     value = config.get('variant') or config.get('model_variant') or config.get('effort')
     if isinstance(value, str) and value.strip().lower() in THINKING_LEVELS:
         return value.strip().lower()
+    if value not in (None, '', 'none'):
+        raise ValueError('内置引擎不支持所选推理档位：' + str(value))
     return DEFAULT_THINKING
 
 

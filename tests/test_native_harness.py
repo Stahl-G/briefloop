@@ -186,3 +186,28 @@ def test_real_engine_session_survives_bridge_idle_retirement(tmp_path, monkeypat
     finally:
         h.close()
         server.shutdown()
+
+
+def test_native_reasoning_catalog_and_workspace_choice_survive_shared_controls(tmp_path):
+    from briefloop.runtime_reasoning import options
+    from briefloop.native_harness import _thinking
+    from briefloop.models import runtime_fields
+
+    class NativeCatalog:
+        def list_models(self):
+            return [{'id': 'fake/m1', 'thinking_levels': ['off', 'low', 'high']}]
+
+    class NoBridge:
+        def call(self, *args, **kwargs):
+            raise AssertionError('Native metadata must not launch another host')
+
+    result = options('briefloop-native', 'fake/m1', tmp_path, NoBridge(), NativeCatalog())
+    assert [o['id'] for o in result['options']] == ['off', 'low', 'high']
+    with pytest.raises(ValueError, match='尚未登记'):
+        options('briefloop-native', 'fake/missing', tmp_path, NoBridge(), NativeCatalog())
+    store = Store(tmp_path)
+    selected = store.confirm_runtime_choice('briefloop-native', {'model': 'fake/m1', 'model_variant': 'high'})
+    assert runtime_fields(selected, 'briefloop-native') == {'model': 'fake/m1', 'model_variant': 'high'}
+    assert _thinking({'variant': 'off'}) == 'off'
+    with pytest.raises(ValueError, match='不支持'):
+        _thinking({'variant': 'invented'})

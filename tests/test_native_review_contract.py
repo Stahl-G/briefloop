@@ -133,4 +133,5 @@ def test_native_review_defaults_to_low_effort_unless_selected():
     assert _thinking({}) == 'low'
     assert _thinking({'variant': 'high'}) == 'high'
     assert _thinking({'model_variant': ' MAX '}) == 'max'
-    assert _thinking({'variant': 'not-a-level'}) == 'low'
+    with pytest.raises(ValueError, match='不支持'):
+        _thinking({'variant': 'not-a-level'})

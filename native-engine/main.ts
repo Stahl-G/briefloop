@@ -30,6 +30,16 @@ import { AUTHOR_COMPACTION_ROLES, COMPACTION_POLICY_VERSION, continuityExtension
 import { IMAGE_MIME, inside, packetTools, toolGuide } from "./packet-tools.js";
 import { parseRunnerTools, RunnerResult, runnerTools } from "./runner-tools.js";
 
+// Respect pi 0.85.1's model-declared map: null disables a level; extended
+// levels need explicit model support. Catalog access never submits a prompt.
+function catalogThinkingLevels(model: any): string[] {
+  if (!model.reasoning) return ["off"];
+  return ["off", "minimal", "low", "medium", "high", "xhigh", "max"].filter(level => {
+    const mapped = model.thinkingLevelMap?.[level];
+    return mapped !== null && (!["xhigh", "max"].includes(level) || mapped !== undefined);
+  });
+}
+
 const PI_VERSION = "0.85.1";
 const ENGINE_VERSION = "briefloop-native/2";
 const REVIEWER_TOOLS = ["packet_list", "packet_read", "packet_grep", "claim_trace", "calc", "submit_review"];
@@ -770,7 +780,9 @@ async function dispatch(req: WireRequest): Promise<void> {
           id: `${m.provider}/${m.id}`,
           name: m.name ?? m.id,
           provider: m.provider,
-          context_window: m.contextWindow,
+          context_window: resolveModel(`${m.provider}/${m.id}`)!.contextWindow,
+          output_limit: m.maxTokens,
+          thinking_levels: catalogThinkingLevels(m),
         }));
         reply(req.id, { models });
         break;

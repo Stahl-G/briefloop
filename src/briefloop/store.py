@@ -516,7 +516,9 @@ class Store:
         backend=backend or settings.get('agent_backend','codex')
         fields=runtime_fields(runtime or {},backend)
         if not str(fields.get('model') or '').strip():return settings
-        if backend not in ('codex','opencode'):fields.update(model_provider=None,model_variant=None)
+        if backend not in ('codex','opencode','briefloop-native'):
+            fields['runtime_efforts']={**settings.get('runtime_efforts',{}),backend:fields.pop('reasoning_effort',None)}
+            fields.update(model_provider=None,model_variant=None)
         updated=Settings.model_validate({**settings,**fields,'agent_backend':backend,'model_selection_required':False})
         self.set_meta('settings',updated.model_dump())
         return updated.model_dump()

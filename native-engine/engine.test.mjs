@@ -253,6 +253,11 @@ test("ping reports the engine and credentialed models", async () => {
   const ping = await call("ping");
   assert.equal(ping.engine, "briefloop-native/2");
   assert.equal(ping.models_available, 2);
+  const catalog = await call("list_models");
+  const model = catalog.models.find(m => m.id === MODEL);
+  assert.equal(model.context_window, 100_000);
+  assert.ok(Array.isArray(model.thinking_levels));
+  assert.ok(model.thinking_levels.includes("off"));
 });
 
 test("session_create refuses unknown roles and models without a provider", async () => {
