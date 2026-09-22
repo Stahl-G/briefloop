@@ -178,7 +178,8 @@ async function openWorkspace(request) {
     }
     if (!service?.info && (!previousInfo || navigating)) {
       workspaceOrigin = null;
-      await window.loadURL(welcomeURL);
+      // Keep the welcome renderer that is waiting to display this IPC error.
+      if (window.webContents.getURL() !== welcomeURL) await window.loadURL(welcomeURL);
     }
     throw error;
   } finally { switching = false; resumeEditing(); }
