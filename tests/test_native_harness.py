@@ -1,6 +1,7 @@
 """BriefLoop's embedded engine: review-only routing and session lifecycle."""
 import http.server
 import json
+import os
 import queue
 import re
 import shutil
@@ -104,6 +105,92 @@ def test_a_retired_engine_process_resumes_the_session_from_its_transcript(tmp_pa
     assert [p['session_id'] for name, p in engine.calls if name == 'turn_start'] == [sid, sid, sid]
 
 
+def test_provider_revisions_rebind_only_between_turns_and_keep_the_transcript(tmp_path):
+    class ProviderEngine(EngineFixture):
+        revision = 1
+        create_revision = None
+
+        def call(self, method, params, timeout=None):
+            result = super().call(method, params, timeout)
+            if method == 'ping':
+                result['configuration_revision'] = self.revision
+            if method == 'session_create':
+                # A provider save can race between the metadata probe and create.
+                if self.create_revision is not None:
+                    self.revision = self.create_revision
+                    self.create_revision = None
+                result['configuration_revision'] = self.revision
+            return result
+
+    engine = ProviderEngine()
+    h = NativeHarness(Store(tmp_path), engine)
+    sid = h.create_session('provider edits', {'model': 'fake/m1', 'review_root': str(tmp_path)})['id']
+    creates = lambda: [p for name, p in engine.calls if name == 'session_create']
+    for text in ('first', 'unchanged'):
+        _wait_status(h, sid, h.send(sid, text)['id'], 'completed')
+    assert len(creates()) == 1
+    engine.revision = 2
+    engine.create_revision = 3
+    _wait_status(h, sid, h.send(sid, 'updated provider')['id'], 'completed')
+    assert len(creates()) == 2
+    assert creates()[1]['session_file'] == creates()[0].get('session_file', '/sessions/s1.jsonl')
+    assert [p for name, p in engine.calls if name == 'session_close'] == [{'session_id': sid}]
+    _wait_status(h, sid, h.send(sid, 'same actual revision')['id'], 'completed')
+    assert len(creates()) == 2, 'bind the actual created revision, not the earlier probe'
+    bound = [e['data'] for e in h.snapshot(sid)['events'] if e['kind'] == 'session/bound']
+    assert [event['configuration_revision'] for event in bound] == [1, 3]
+    assert [event['resumed'] for event in bound] == [False, True]
+
+
+@pytest.mark.parametrize('blocked_method', ['ping', 'session_create'])
+def test_cancellation_during_provider_refresh_never_starts_the_cancelled_turn(tmp_path, blocked_method):
+    class RefreshEngine(EngineFixture):
+        revision = 1
+        block_next = None
+
+        def __init__(self):
+            super().__init__()
+            self.entered = threading.Event()
+            self.release = threading.Event()
+
+        def call(self, method, params, timeout=None):
+            result = super().call(method, params, timeout)
+            if method in ('ping', 'session_create'):
+                result['configuration_revision'] = self.revision
+            if method == self.block_next:
+                self.block_next = None
+                self.entered.set()
+                assert self.release.wait(5), 'test must release the blocked configuration operation'
+            return result
+
+    engine = RefreshEngine()
+    h = NativeHarness(Store(tmp_path), engine)
+    sid = h.create_session('cancel provider refresh', {'model': 'fake/m1', 'review_root': str(tmp_path)})['id']
+    try:
+        _wait_status(h, sid, h.send(sid, 'first')['id'], 'completed')
+        transcript = h.chat.session(sid)['thread_id']
+        engine.revision = 2
+        engine.block_next = blocked_method
+        mid = h.send(sid, 'cancel before model starts')['id']
+        assert engine.entered.wait(5)
+        h.cancel(sid)
+        engine.release.set()
+        _wait_status(h, sid, mid, 'cancelled')
+        with h._lock:
+            starts = [params for method, params in engine.calls if method == 'turn_start']
+            assert len(starts) == 1, 'cancelling metadata/recreation must not issue a second model request'
+            assert not engine.sinks and sid not in h._busy
+            assert h.chat.session(sid)['thread_id'] == transcript
+            assert h._engine_sessions[sid]['session_file'] == transcript
+        _wait_status(h, sid, h.send(sid, 'explicitly continue')['id'], 'completed')
+        assert len([params for method, params in engine.calls if method == 'turn_start']) == 2
+        creates = [params for method, params in engine.calls if method == 'session_create']
+        assert len(creates) == 2 and creates[-1]['session_file'] == transcript
+    finally:
+        engine.release.set()
+        h.close()
+
+
 def _node_supports_engine():
     node = shutil.which('node')
     if not node:
@@ -145,7 +232,8 @@ def test_real_engine_session_survives_bridge_idle_retirement(tmp_path, monkeypat
     threading.Thread(target=server.serve_forever, daemon=True).start()
     package = tmp_path / 'package'
     (package / 'static').mkdir(parents=True)
-    shutil.copy(Path(str(files('briefloop').joinpath('static/native-engine.mjs'))), package / 'static/native-engine.mjs')
+    bundle = os.environ.get('BRIEFLOOP_NATIVE_TEST_BUNDLE') or str(files('briefloop').joinpath('static/native-engine.mjs'))
+    shutil.copy(Path(bundle), package / 'static/native-engine.mjs')
     (package / 'static/native-engine-models.json').write_text(json.dumps({'providers': {'fake': {
         'baseUrl': f'http://127.0.0.1:{server.server_port}/v1', 'api': 'openai-completions', 'apiKey': 'FAKE_PROVIDER_KEY',
         'models': [{'id': 'm1', 'name': 'M1', 'api': 'openai-completions', 'provider': 'fake', 'reasoning': False,
@@ -186,6 +274,85 @@ def test_real_engine_session_survives_bridge_idle_retirement(tmp_path, monkeypat
     finally:
         h.close()
         server.shutdown()
+
+
+@pytest.mark.skipif(not _node_supports_engine(), reason='the embedded engine needs Node 22.19+')
+def test_saved_provider_updates_reach_existing_and_new_conversation_requests(tmp_path, monkeypatch):
+    from briefloop import native_providers
+    import briefloop.runtime_bridge as runtime_bridge
+
+    requests = []
+
+    class Provider(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers['content-length'])))
+            requests.append({'path': self.path, 'key': self.headers.get('Authorization'),
+                             'output': body.get('max_completion_tokens', body.get('max_tokens')),
+                             'messages': body['messages']})
+            self.send_response(200)
+            self.send_header('content-type', 'text/event-stream')
+            self.end_headers()
+            for delta, finish in (({'role': 'assistant', 'content': 'saved conversation'}, None), ({}, 'stop')):
+                chunk = {'id': 'c', 'object': 'chat.completion.chunk', 'created': 0, 'model': 'model',
+                         'choices': [{'index': 0, 'delta': delta, 'finish_reason': finish}]}
+                self.wfile.write(b'data: ' + json.dumps(chunk).encode() + b'\n\n')
+            self.wfile.write(b'data: [DONE]\n\n')
+
+    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Provider)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    home = tmp_path / 'home'
+    home.mkdir()
+    package = tmp_path / 'package'
+    (package / 'static').mkdir(parents=True)
+    bundle = os.environ.get('BRIEFLOOP_NATIVE_TEST_BUNDLE') or str(files('briefloop').joinpath('static/native-engine.mjs'))
+    shutil.copy(bundle, package / 'static/native-engine.mjs')
+    (package / 'static/native-engine-models.json').write_text('{"providers":{}}')
+    monkeypatch.setattr(runtime_bridge, 'files', lambda name: package)
+    for name, value in (('HOME', str(home)), ('USERPROFILE', str(home)), ('NO_PROXY', '*')):
+        monkeypatch.setenv(name, value)
+    engine = NativeEngine()
+    h = NativeHarness(Store(tmp_path / 'workspace'), engine)
+
+    def save(path, key, context, output):
+        native_providers.save({'provider': 'fixture', 'model': 'model', 'protocol': 'chat-completions',
+                               'base_url': f'http://127.0.0.1:{server.server_port}/{path}/v1', 'api_key': key,
+                               'context_limit': context, 'output_limit': output})
+
+    def send(sid, text):
+        return _wait_status(h, sid, h.send(sid, text)['id'], 'completed', seconds=15)
+
+    try:
+        save('old', 'fixture-old-key', 65536, 1024)
+        sid = h.create_session('provider changes', {'model': 'fixture/model'})['id']
+        send(sid, 'first')
+        process = engine.process
+        save('new', 'fixture-new-key', 32768, 256)
+        h.list_models(refresh=True)
+        send(sid, 'after update')
+        save('new', 'fixture-new-key', None, None)
+        # The next turn detects a save even when no catalog refresh took place.
+        continued = send(sid, 'after clearing limits')
+        new_sid = h.create_session('fresh', {'model': 'fixture/model'})['id']
+        send(new_sid, 'fresh conversation')
+        assert engine.process is process, 'apply saved configuration without killing the shared engine'
+        assert [(r['path'], r['key'], r['output']) for r in requests] == [
+            ('/old/v1/chat/completions', 'Bearer fixture-old-key', 1024),
+            ('/new/v1/chat/completions', 'Bearer fixture-new-key', 256),
+            ('/new/v1/chat/completions', 'Bearer fixture-new-key', 8192),
+            ('/new/v1/chat/completions', 'Bearer fixture-new-key', 8192),
+        ]
+        assert 'first' in json.dumps(requests[1]['messages'])
+        assert 'after update' in json.dumps(requests[2]['messages'])
+        bindings = [e['data'] for e in continued['events'] if e['kind'] == 'session/bound']
+        assert [b['runtime_policy']['context_window'] for b in bindings] == [65536, 32768, 1_000_000]
+        assert [b['resumed'] for b in bindings] == [False, True, True]
+    finally:
+        h.close()
+        server.shutdown()
+        server.server_close()
 
 
 def test_native_reasoning_catalog_and_workspace_choice_survive_shared_controls(tmp_path):

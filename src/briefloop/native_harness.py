@@ -40,6 +40,13 @@ def _thinking(config):
     return DEFAULT_THINKING
 
 
+def _session_identity(config, provider_revision):
+    runtime = {k: v for k, v in config.items()
+               if k not in ('attempt_id', 'session_id', 'allow_web', 'discuss_only')}
+    return hashlib.sha256(json.dumps({'runtime': runtime, 'provider_revision': provider_revision},
+                                    sort_keys=True).encode()).hexdigest()
+
+
 class NativeHarness:
     backend = 'briefloop-native'
 
@@ -204,8 +211,13 @@ class NativeHarness:
         # no longer exists; recreate it from its transcript instead of sending
         # a turn to an unknown session. The caller already holds an event
         # subscription, which keeps the current process from being retired.
+        # Provider edits do not change provider/model text. Check their opaque
+        # engine-local revision at the next turn boundary, then resume the
+        # transcript in a session with the complete new configuration. Catalog
+        # refreshes never mutate a session that is already executing a turn.
+        provider_revision = self.engine.call('ping', {}, timeout=30).get('configuration_revision')
         existing = self._engine_sessions.get(sid)
-        identity = hashlib.sha256(json.dumps({k:v for k,v in config.items() if k not in ('attempt_id', 'session_id', 'allow_web', 'discuss_only')}, sort_keys=True).encode()).hexdigest()
+        identity = _session_identity(config, provider_revision)
         process = self.engine.process
         previous = self.chat.session(sid).get('thread_id')
         if existing and process is existing['process'] and (existing.get('identity') != identity or existing.get('session_file') != previous):
@@ -237,7 +249,11 @@ class NativeHarness:
         from .native_roles import bind_session
         # Learning steps record this session as the WikiSkill child before it runs.
         bind_session(config, sid)
-        result = {**self.engine.call('session_create', params, timeout=60), 'process': self.engine.process, 'identity': identity}
+        created = self.engine.call('session_create', params, timeout=60)
+        # A save can race the metadata probe. Bind to the revision actually
+        # selected by session_create, not the earlier observed revision.
+        result = {**created, 'process': self.engine.process,
+                  'identity': _session_identity(config, created.get('configuration_revision', provider_revision))}
         self._engine_sessions[sid] = result
         coordinator = getattr(self, 'coordinator', None)
         native_id = result.get('session_file') or sid
@@ -252,6 +268,7 @@ class NativeHarness:
             'session_file': result.get('session_file'),
             'resumed': bool(result.get('resumed')),
             'model': result.get('model'),
+            'configuration_revision': result.get('configuration_revision'),
             'prompt_version': prompt['version'],
             'system_prompt_sha256': result.get('system_prompt_sha256'),
             'image_input': result.get('image_input'),
@@ -308,14 +325,23 @@ class NativeHarness:
                 self.chat.event(sid, 'runtime/admission',
                                 {'execution_id': execution, 'status': 'failed'})
                 raise RuntimeError('内置引擎会话创建失败：' + str(exc)) from exc
-            self.engine.call('turn_start', {
+            turn_params = {
                 'session_id': sid, 'execution_id': execution, 'prompt': text,
                 'expect_json': config.get('native_role') != 'chat', 'require_submit': config.get('native_role') != 'chat',
-                'images': self._visual_inputs(config)}, timeout=30)
-            self.chat.event(sid, 'runtime/admission',
-                            {'execution_id': execution, 'status': 'accepted'})
-            self.chat.patch_message(mid, status='delivered')
-            self.chat.update(sid, status='running')
+                'images': self._visual_inputs(config)}
+            # Metadata refresh/session recreation may block while cancel() is
+            # accepted. Keep the newly bound transcript, but never start a model
+            # request for that cancelled turn. The same lock also closes the
+            # check-to-start race with cancel(); turn_start only awaits wire ACK.
+            with self._lock:
+                if self.cancel_requested(sid):
+                    status = 'cancelled'
+                    return
+                self.engine.call('turn_start', turn_params, timeout=30)
+                self.chat.event(sid, 'runtime/admission',
+                                {'execution_id': execution, 'status': 'accepted'})
+                self.chat.patch_message(mid, status='delivered')
+                self.chat.update(sid, status='running')
             assistant = self.chat.message(sid, '', role='assistant', status='streaming',
                                           turn_id=mid, runtime=config)
             output = ''
