@@ -32,7 +32,9 @@ def workbook_text(data):
                 for c in row:
                     v=c.find('s:v',NS);text=v.text if v is not None else None
                     if c.get('t')=='s' and text is not None:text=shared[int(text)]
-                    elif c.get('t')=='inlineStr':text=''.join(c.find('s:is',NS).itertext())
+                    elif c.get('t')=='inlineStr':
+                        inline=c.find('s:is',NS)
+                        text=''.join(inline.itertext()) if inline is not None else ''
                     if text is None and c.find('s:f',NS) is not None:text='[公式没有保存值]'
                     if text is not None:cells.append(c.get('r','')+': '+text)
                 if cells:lines.append(' | '.join(cells))
