@@ -207,7 +207,10 @@ def file_config(store, run_id, path):
     """Resolve a host call against its actual writer conversation, not user IDs."""
     from .analyst import _output_path
     path = Path(path).resolve()
-    binding = _read(path.parent / 'conversation.json')
+    marker = path.parent / 'conversation.json'
+    if not marker.exists():
+        raise ValueError('写作任务尚未准备好：缺少 conversation.json 会话绑定；请由任务启动器完成会话初始化后重试。不要自行创建身份或修改工作区。')
+    binding = _read(marker)
     if not binding.get('message_id'):
         raise ValueError('写作会话尚无执行身份')
     config = {'run_id': run_id, 'attempt_id': binding['message_id'],

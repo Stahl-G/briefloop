@@ -4,11 +4,11 @@
 
 首次写作使用 `write_report(title, markdown)`。长稿可批量 `write_sections`，再 `assemble_report`。普通表格用 Markdown 管道表格，引用用 `[@src_ID]`，图片仅使用已登记的 `briefloop-figure:fig_ID`。系统不接纳原始 HTML 或任意外部图片，不会把无法表达的格式静默丢弃。
 
-仓库自带证据装配：`write_report` 现在可同时传 `citations`、`number_bindings`、`temporal_claims`。也可先保存正文，再用 `assemble_evidence(base_revision, ...)` 一次更新多类证据。正文结构、原文行号和记录装配由程序完成，不需要宿主临时编写 Python 脚本。
+仓库自带证据装配：优先用 `write_report` 单独保存正文，取得 revision 后再用 `assemble_evidence(base_revision, ...)` 一次更新多类证据。兼容同次附 `citations`、`number_bindings`、`temporal_claims`；结构有效但证据定位失败时，正文仍保存，回执明确 `evidence_status=not_saved` 和具体错误。使用返回的 revision 修复证据，不重交整稿。请求本身缺少正文或结构非法时仍拒绝。正文结构、原文行号和记录装配由程序完成，不需要宿主临时编写 Python 脚本。
 
 引用传 `source_id` 与逐字 `excerpt`；数字和日期传 `source_excerpt`。`locator` 可省略：摘录在冻结原文中唯一时生成实际行号，跨行生成行范围；重复时必须提供能消除歧义的 `line` 范围或更长摘录，绝不取第一个匹配。数值、单位、主体、期间、日期和证据含义仍由写作者提供。数字的 `report_quote` 必须在规范正文中逐字唯一，`number_text` 必须在该片段中逐字唯一。来源与正文不得模糊匹配。
 
-装配一次校验整个批次，通过后只保存一个新版本；失败保留原候选和输入记录。每类最多120条。所传证据数组整类替换，未传类别保留；数字/日期摘录自动补入引用定位记录，但不在正文随意插入引用标记。后续单条修正仍可用已有局部更新工具。结构及定位成功不等于语义核验，仍须 `check_draft` 和 `submit_draft`。
+`assemble_evidence` 一次校验整个证据批次，通过后只保存一个新版本；失败保留原候选和输入记录，不接纳半批证据。每类最多120条。所传证据数组整类替换，未传类别保留；数字/日期摘录自动补入引用定位记录，但不在正文随意插入引用标记。后续单条修正仍可用已有局部更新工具。结构及定位成功不等于语义核验，仍须 `check_draft` 和 `submit_draft`。
 
 正文保存后，引用定位、数字和日期分别通过 `update_citations`、`update_number_bindings`、`update_temporal_claims` 单独更新。读取已保存字段可获得内容身份键 `record_keys`，在列表重新排序时仍指向同一记录；记录内容改变后返回新键。直接在 `records` 中写记录字段；数字记录的 `value` 就是数值，没有外层包装。修改时在记录内附 `record_key`，删除只传 `remove_keys`。缺口、研究记录、已计算指标可通过 `update_draft_details` 独立更新。程序不会替模型决定主体、期间、单位或引用是否支持结论。
 

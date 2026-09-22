@@ -66,3 +66,35 @@ def test_batch_failure_is_atomic_and_preserves_body(tmp_path):
         with pytest.raises(ValueError, match=pattern):
             writer.assemble_evidence(store, config, {'base_revision': saved['revision'], 'number_bindings': [value]})
     assert drafts._read(drafts._root(store, config)/'current.json')['revision'] == saved['revision']
+
+
+def test_invalid_optional_evidence_keeps_first_body_and_repairs_by_revision(tmp_path):
+    store, run, source, config = setup_writer(tmp_path)
+    binding = number(source['id'])
+    bad = dict(binding, report_quote='不存在的正文')
+    args = {'title': '报告', 'markdown': f'收入增长20%。[@{source["id"]}]',
+            'number_bindings': [bad]}
+    saved = writer.write_report(store, config, args)
+    assert saved['status'] == 'saved'
+    assert saved['evidence_status'] == 'not_saved'
+    assert 'number_bindings[0]' in saved['evidence_error']
+    assert saved['next_operation'] == 'assemble_evidence'
+    candidate = drafts._candidate(store, config, {'revision': saved['revision']})['draft']
+    assert '收入增长20%' in candidate['markdown']
+    assert not candidate['number_bindings']
+    assert writer.write_report(store, config, args)['revision'] == saved['revision']
+    with pytest.raises(ValueError, match='draft_exists'):
+        writer.write_report(store, config, {**args, 'markdown': '不允许覆盖'})
+    repaired = writer.assemble_evidence(store, config, {
+        'base_revision': saved['revision'], 'number_bindings': [binding]})
+    assert repaired['revision'] != saved['revision']
+    assert drafts.check(store, config, {'revision': repaired['revision']})['diagnostics']['numbers']['checked'] == 1
+    drafts.submit(store, config, {'revision': repaired['revision']})
+
+
+def test_missing_binding_is_setup_error_not_identity_creation(tmp_path):
+    store, run, source, config = setup_writer(tmp_path)
+    target = drafts._root(store, config).parent / 'unprepared' / 'report.json'
+    with pytest.raises(ValueError, match='任务启动器'):
+        drafts.file_config(store, run['id'], target)
+    assert not (target.parent / 'conversation.json').exists()

@@ -120,17 +120,27 @@ def write_report(store, config, args):
         drafts._packet_hash(config)
         current = drafts._root(store, config) / 'current.json'
         value = _validated(store, config, request.title, compile_markdown(request.markdown))
-        evidence = assemble_evidence_records(config, request, value['markdown'])
-        if evidence:
-            value = validate_draft(store, config, {**value, **evidence})
+        # Evidence is optional and must not discard a valid first body. Never
+        # accept a partially assembled batch or overwrite an existing draft.
+        evidence_error = None
+        try:
+            evidence = assemble_evidence_records(config, request, value['markdown'])
+            if evidence:
+                value = validate_draft(store, config, {**value, **evidence})
+        except ValueError as exc:
+            evidence_error = str(exc)
+        pending = ({'evidence_status': 'not_saved', 'evidence_error': evidence_error,
+                    'next_operation': 'assemble_evidence',
+                    'next_action': '正文已保存；读取本revision的正文，修正证据后以base_revision调用assemble_evidence，不要重交正文。'}
+                   if evidence_error else {})
         if current.exists():
             revision = drafts._read(current)['revision']
             candidate = drafts._candidate(store, config, {'revision': revision})
             if candidate['draft'] == value:
                 return {'status': 'saved', 'revision': revision, 'replayed': True,
-                        'review_status': 'not_reviewed', 'body_units': count_brief(value['markdown'])}
+                        'review_status': 'not_reviewed', 'body_units': count_brief(value['markdown']), **pending}
             raise WritingError('draft_exists', '已有稿件；读取当前版本后局部修改，不覆盖已保存正文', field='revision')
-        return drafts._save_locked(store, config, value)
+        return {**drafts._save_locked(store, config, value), **pending}
 
 
 class AssembleEvidence(EvidenceInput):
@@ -295,7 +305,7 @@ def protocol(config):
 
 def operations():
     result = {
-        'write_report': (WriteReport, write_report, '首次保存正文。标题和Markdown，引用用 [@src_ID]；可同时传citations、number_bindings、temporal_claims，程序按逐字摘录定位并装配，不手写富文本JSON或行号。'),
+        'write_report': (WriteReport, write_report, '首次保存正文。标题和Markdown，引用用 [@src_ID]。优先只交正文，再用assemble_evidence补证据。兼容同时附证据；定位失败时正文仍保存，回执evidence_status=not_saved，按返回revision修复证据，不重交正文。'),
         'assemble_evidence': (AssembleEvidence, assemble_evidence, '一次装配保存多类证据。传当前base_revision与改变的证据数组；所传数组整类替换，未传字段保留。citations给source_id/excerpt；数字与日期给source_excerpt，locator可省略，重复摘录才需line范围。数字仍给value/unit、主体期间与正文report_quote/number_text。来源摘录自动登记到citations，不自动给正文加标记。不需要自己编写组装脚本。'),
         'write_sections': (WriteSections, write_sections, '长稿分章保存Markdown；修改已存章节附其expected_hash。可一批保存数章。'),
         'assemble_report': (AssembleReport, assemble_report, '按章节ID顺序组装正文，已存完整稿须带base_revision。'),
@@ -345,7 +355,7 @@ def tool_specs():
 
 
 GUIDE = '''写作协议 writer_input_v1：正文使用 Markdown，普通表格使用管道表格，引用使用 [@src_ID]，图表使用已登记的 briefloop-figure:fig_ID。不要输出 editor_document、tableRow 或完整 BriefDraft JSON。
-短稿一次 write_report(title, markdown)，可同次附 citations、number_bindings、temporal_claims；长稿 write_sections 后 assemble_report。也可先保存正文，再一次 assemble_evidence 登记三类证据。程序生成富文本、按逐字摘录找行号、核对数字的正文片段并装配记录，不要再自己写 Python 组装脚本。citations给source_id/excerpt；数字和日期给source_excerpt；locator唯一匹配时可省略，重复匹配才提供line范围。value/unit、主体、期间、结论与证据的关系仍由你确定，不省略这些语义字段。所传证据数组整类替换，未传的类别保留；少量记录修改继续用 update_citations/update_number_bindings/update_temporal_claims。来源归属、口径、采用条件要求不变。
+先独立保存正文：短稿 write_report(title, markdown)，长稿 write_sections 后 assemble_report。取得revision后，再一次 assemble_evidence 登记三类证据。兼容同次附证据；如果回执evidence_status=not_saved，正文已保存但证据未保存，按返回revision修正证据，不重交正文。程序生成富文本、按逐字摘录找行号、核对数字的正文片段并装配记录，不要再自己写 Python 组装脚本。citations给source_id/excerpt；数字和日期给source_excerpt；locator唯一匹配时可省略，重复匹配才提供line范围。value/unit、主体、期间、结论与证据的关系仍由你确定，不省略这些语义字段。所传证据数组整类替换，未传的类别保留；少量记录修改继续用 update_citations/update_number_bindings/update_temporal_claims。来源归属、口径、采用条件要求不变。
 同一稿件的写入有先后依赖：每轮只发一个写入调用，等返回新 revision 后再发下一个。不要把多个证据更新放在同一轮共用 base_revision；执行器串行执行也不会自动替换你传入的旧版本。
 取得 revision 后 check_draft 检查；局部文字用 patch_report_text，结构改动先 read_draft(field=body) 取得 block_keys，再 replace_report_blocks。证据修改只交变更记录；每次变更使用最新 base_revision，再检查新 revision。只修明确问题，不反复重交全文。submit_draft 提交已检查的最新 revision，结束写作，不自行评分。
 已有人工富文本不得整稿降级；保留未修改节点、图片和样式。工具若提示高级排版需保留，改用精确文字修改。原始输入已保存不代表接纳或核实。'''
