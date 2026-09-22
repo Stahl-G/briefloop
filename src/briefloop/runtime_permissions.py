@@ -83,7 +83,7 @@ def _protect_temp_file(fd, name, path):
         from .connectors.windows_acl import protect_private
         protect_private(name)
     else:
-        os.fchmod(fd, path.stat().st_mode & 0o777 if path.exists() else 0o600)
+        os.fchmod(fd, 0o600)
 
 
 def change_antigravity(body):

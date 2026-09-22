@@ -16,6 +16,7 @@ def test_scoped_native_rule_preserves_other_settings_and_rejects_stale_write(tmp
     rule='read_file('+str(tmp_path/'fixture.txt')+')'
     permissions.change_antigravity({'revision':view['revision'],'decision':'allow','rule':rule,'operation':'add'})
     result=json.loads(path.read_text());assert result['auth']==original['auth']
+    assert path.stat().st_mode & 0o777 == 0o600
     assert result['permissions']['deny']==original['permissions']['deny']
     assert result['permissions']['allow']==[rule]
     with pytest.raises(ValueError,match='已变化'):
