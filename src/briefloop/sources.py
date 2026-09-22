@@ -24,7 +24,10 @@ import threading
 TITLE_MAX_CHARS=200
 # Interstitial/anti-bot/error titles are not source labels.
 _GENERIC_TITLE_RE=re.compile(r'^(?:just a moment|attention required|access denied|access to this page has been denied|are you a robot|verify you are human|checking your browser|enable javascript|403 forbidden|404 not found|429 too many requests|too many requests|service unavailable|bad gateway)\b',re.I)
-_LOGIN_TITLE_RE=re.compile(r'^(?:sign in|log in|login|登录)\b',re.I)
+# Rejecting a source needs an entire interstitial title, not an article prefix.
+# Permit terminal punctuation and the known Cloudflare brand, not arbitrary text.
+_ACCESS_TITLE_RE=re.compile(_GENERIC_TITLE_RE.pattern+r'[.!?…]*(?:\s*[|–—-]\s*Cloudflare)?',re.I)
+_LOGIN_TITLE_RE=re.compile(r'(?:sign in|log in|login|登录)[.!?…]*',re.I)
 
 # This is deliberately an in-process, per-workspace/run registry, not a content
 # cache.  It only joins callers while one snapshot is being created.
@@ -86,11 +89,11 @@ def _html_block_reason(data, content_type='', encoding=''):
     body=re.sub(r'<head\b[^>]*>.*?</head\s*>|<title\b[^>]*>.*?</title\s*>','',page,flags=re.I|re.S).lower()
     challenge_markers=('checking your browser','verify you are human','enable javascript and cookies',
                        'cf-chl-','challenge-platform','captcha')
-    if _GENERIC_TITLE_RE.match(title) and any(marker in body for marker in challenge_markers):
+    if _ACCESS_TITLE_RE.fullmatch(title) and any(marker in body for marker in challenge_markers):
         return '网页返回访问拦截页，未保存为可用正文'
     has_password=bool(re.search(r'<input\b[^>]*\btype\s*=\s*["\']?password\b',body,re.I))
     has_form='<form' in body
-    if _LOGIN_TITLE_RE.match(title) and has_form and has_password:
+    if _LOGIN_TITLE_RE.fullmatch(title) and has_form and has_password:
         return '网页返回登录页，未保存为可用正文'
     return None
 

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import pytest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from briefloop import sources
@@ -114,12 +115,33 @@ def test_html_access_page_detection_requires_body_evidence_and_sniffs_html():
     login=b'<html><title>Sign in</title><body><form action="/session"><input type="password" name="secret"></form></body></html>'
     example=b'<html><title>Sign in examples</title><body><article>Use <input type="password"> in this code example.</article></body></html>'
     assert sources._html_block_reason(blocked,'text/html')
+    assert sources._html_block_reason(blocked.replace(b'<title>Checking your browser</title>',b'<title>Attention Required! | Cloudflare</title>'),'text/html')
+    assert sources._html_block_reason(blocked.replace(b'<title>Checking your browser</title>',b'<title>Checking your browser: performance guide</title>'),'text/html') is None
     assert sources._html_block_reason(performance,'text/html') is None
     assert sources._html_block_reason(notice,'text/html') is None
     assert sources._html_block_reason(login,'text/html')
     assert sources._html_block_reason(example,'text/html') is None
     assert sources._html_block_reason(blocked,'')
     assert sources._html_block_reason(blocked,'text/plain')
+
+
+@pytest.mark.parametrize('raw,expected',[
+    (b'<!doctype html><html><head><title>Checking your browser performance</title></head>'
+     b'<body><article><h1>Checking your browser performance</h1>'
+     b'<p>This browser benchmark compares startup time and rendering speed.</p>'
+     b'</article></body></html>','browser benchmark'),
+    (b'<!doctype html><html><head><title>Login form examples</title></head>'
+     b'<body><article><h1>Login form examples</h1><p>A working password field example:</p>'
+     b'<form action="/example"><label>Password <input type="password" name="secret"></label>'
+     b'<button>Try example</button></form><p>Use a label to make the field accessible.</p>'
+     b'</article></body></html>','make the field accessible'),
+],ids=['browser-performance-article','login-form-tutorial'])
+def test_articles_with_access_title_prefixes_are_readable(tmp_path,monkeypatch,raw,expected):
+    store=Store(tmp_path)
+    monkeypatch.setattr(sources,'_fetch_bytes',lambda url,**_:(raw,'text/html','utf-8'))
+    record=sources.fetch(store,'https://example.test/tutorial')
+    assert record['status']=='ready'
+    assert expected in store.source_text(record['id'])
 
 
 def test_real_http_interstitial_is_retained_but_not_marked_ready(tmp_path,monkeypatch):
@@ -145,7 +167,7 @@ def test_real_http_interstitial_is_retained_but_not_marked_ready(tmp_path,monkey
         base='http://127.0.0.1:'+str(server.server_port)
         blocked=sources.fetch(store,base+'/challenge',allow_private=True)
         assert blocked['status']=='failed' and '访问拦截页' in blocked['error']
-        metadata=json.loads((store.root/'sources'/(blocked['id']+'.provenance.json')).read_text())
+        metadata=json.loads((store.root/'sources'/(blocked['id']+'.provenance.json')).read_text(encoding='utf-8'))
         assert (store.root/metadata['original_path']).read_bytes().startswith(b'<html><title>Just a moment')
         assert metadata['extraction_status']=='failed' and store.source_text(blocked['id'])==''
         assert sources.fetch(store,base+'/notice',allow_private=True)['status']=='ready'
