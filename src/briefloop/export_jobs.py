@@ -4,7 +4,8 @@ import json
 import os
 from pathlib import Path
 from .store import dump, now, uid
-from .document_model import brief_document
+from .document_model import brief_document, source_ids
+from .document_export import reader_source_blocks
 from .figure_support import export_figures
 
 
@@ -15,9 +16,19 @@ def export_input(store, brief, template_override=None):
         # rendering template and must change the export fingerprint.
         requirements = {**requirements, 'template_id': template_override}
     figures = export_figures(store, brief)
+    document = brief_document(brief)
+    # Both Word paths pass the run's current sources into render_document.
+    # An internal source index is only replaced when all its rows resolve, so
+    # determine the effective blocks before choosing metadata for the hash.
+    run_sources = {sid: store.one('sources', sid) for sid in store.source_ids(brief['run_id'])}
+    blocks, indexed = reader_source_blocks(document, run_sources)
+    rendered_ids = dict.fromkeys(source_ids({'type': 'doc', 'content': blocks}) + indexed)
+    rendered_sources = {sid: {'name': run_sources[sid]['name'], 'url': run_sources[sid]['url'] or ''}
+                        if sid in run_sources else None for sid in rendered_ids}
     identity = {'renderer': 24 if requirements.get('template_id') else 25, 'version_id': brief['id'], 'brief_hash': brief['hash'],
-                'document': brief_document(brief), 'detail': json.loads(brief['detail']),
+                'document': document, 'detail': json.loads(brief['detail']),
                 'requirements': requirements,
+                'sources': rendered_sources,
                 'figures': {fid: {**{k: v for k, v in f.items() if k != 'image_bytes'},
                                   'image_hash': hashlib.sha256(f['image_bytes']).hexdigest()} for fid, f in figures.items()}}
     if requirements.get('template_id'):
