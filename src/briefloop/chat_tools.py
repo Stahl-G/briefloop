@@ -32,11 +32,13 @@ def workspace_action(store, request):
     if action=='capabilities':
         from .source_updates import SourceTimes,ChangeInput
         from .evidence import EvidenceInput,ClaimInput
+        from .reconciliation import OPEN_QUESTIONS_GUIDE
         return {'actions':list(WORKSPACE_ACTIONS),'schemas':{
             'source_snapshot.timing':SourceTimes.model_json_schema(),
             'source_change.change':ChangeInput.model_json_schema(),
             'evidence_span.evidence':EvidenceInput.model_json_schema(),
             'claim_create.claim':ClaimInput.model_json_schema()},
+            'reconciliation_save.open_questions':OPEN_QUESTIONS_GUIDE,
             'export_word.template_id':'可选；就绪模板ID（内置或自备）。缺省沿用报告设置。同稿换版式：正文与版本不变，仅按所选模板重排生成 Word。',
             'authority':'当前执行此命令的运行时接口；不从其他源码目录推定已安装能力。'}
     if action=='source_impacts':
