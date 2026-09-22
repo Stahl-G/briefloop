@@ -188,12 +188,13 @@ def test_grant_paths_pending_active_reopened_refused(tmp_path):
     assert admitted['status'] == 'admitted'
     plan = research_plan.frozen(store, run['id'])
     assert plan['fact_check']['budget_source'] == {'kind': 'user_grant',
-                                                  'limits': {'search_requests': 1, 'candidate_urls': 5, 'source_pages': 1}}
+                                                  'limits': {'search_requests': 3, 'candidate_urls': 15, 'source_pages': 3}}
+    assert research_plan.pending_fact_check_grant(store, run['id']) is None
     active = research_plan.add_fact_check_grant(store, run['id'], SHARE)  # top up a running stage
     assert active['status'] == 'active'
     plan = research_plan.frozen(store, run['id'])
     assert [grant['limits'] for grant in plan['fact_check']['grants']] == [dict(SHARE)]
-    assert budget.snapshot(store, run['id'])['limits']['search_requests'] == BUDGET['search_requests'] + 1 + 2
+    assert budget.snapshot(store, run['id'])['limits']['search_requests'] == BUDGET['search_requests'] + 2 + 1 + 2
     exhausted = plan['fact_check']['stage_id']
     research_plan.finish_fact_check(store, run['id'], status='budget_exhausted', summary='额度用完')
     reopened = research_plan.add_fact_check_grant(store, run['id'], SHARE)
@@ -206,6 +207,172 @@ def test_grant_paths_pending_active_reopened_refused(tmp_path):
     with pytest.raises(research_plan.AdmissionError) as info:  # completed stages never reopen via money
         research_plan.add_fact_check_grant(store, run['id'], SHARE)
     assert info.value.code == 'fact_check_closed'
+
+
+def test_reopened_grant_retains_consumed_credit_without_carrying_unused_budget(tmp_path):
+    base = {'search_requests': 2, 'candidate_urls': 4, 'source_pages': 2}
+    grant = {'search_requests': 2, 'candidate_urls': 3, 'source_pages': 2}
+    store, run, _ = _world(tmp_path, budget=base)
+    original_requirements = store.one('runs', run['id'])['requirements']
+    urls = lambda prefix, count: [f'https://example.test/{prefix}/{index}' for index in range(count)]
+    for _ in range(2):budget.reserve_search(store, run['id'], 1)
+    budget.record_candidates(store, run['id'], urls('research', 4))
+    budget.reserve_pages(store, run['id'], urls('research', 2))
+    research_plan.finish_round(store, run['id'])
+    research_plan.add_fact_check_grant(store, run['id'], grant)
+    for _ in range(2):budget.reserve_search(store, run['id'], 1)
+    budget.record_candidates(store, run['id'], urls('first-check', 1))
+    budget.reserve_pages(store, run['id'], urls('first-check', 1))
+    research_plan.finish_fact_check(store, run['id'], status='budget_exhausted')
+    used = budget.spent(store, run['id'])
+    assert used == {'search_requests': 4, 'candidate_urls': 5, 'source_pages': 3}
+
+    # Closing the check does not donate its unused 2 candidates / 1 page to
+    # later research. Original requirements and cumulative charges stay fixed.
+    research_plan.begin_round(store, run['id'])
+    with pytest.raises(budget.BudgetExhausted):budget.reserve_search(store, run['id'], 1)
+    assert budget.record_candidates(store, run['id'], urls('later-research', 1))['allowed_urls'] == []
+    with pytest.raises(budget.BudgetExhausted):budget.reserve_pages(store, run['id'], urls('later-research', 1))
+    research_plan.finish_round(store, run['id'])
+    research_plan.add_fact_check_grant(store, run['id'], grant)
+    view = budget.snapshot(store, run['id'])
+    assert view['limits'] == {key: used[key] + grant[key] for key in base}
+    assert budget.spent(store, run['id']) == used
+    for _ in range(2):budget.reserve_search(store, run['id'], 1)
+    candidates = budget.record_candidates(store, run['id'], urls('second-check', 4))
+    assert len(candidates['allowed_urls']) == 3 and len(candidates['unadmitted_urls']) == 1
+    budget.reserve_pages(store, run['id'], urls('second-check', 2))
+    with pytest.raises(budget.BudgetExhausted):budget.reserve_search(store, run['id'], 1)
+    with pytest.raises(budget.BudgetExhausted):budget.reserve_pages(store, run['id'], urls('second-check-extra', 1))
+    assert budget.spent(store, run['id']) == {key: used[key] + grant[key] for key in base}
+    research_plan.finish_fact_check(store, run['id'], status='budget_exhausted')
+    research_plan.add_fact_check_grant(store, run['id'], grant)
+    assert budget.snapshot(store, run['id'])['limits'] == {key: used[key] + 2 * grant[key] for key in base}
+    assert store.one('runs', run['id'])['requirements'] == original_requirements
+    plan = research_plan.frozen(store, run['id'])
+    assert len(plan['fact_check_history']) == 2 and plan['budget'] == base
+
+
+def test_parallel_grants_survive_stale_admission_and_replayed_consumption(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    store, run, _ = _world(tmp_path)
+    research_plan.add_fact_check_grant(store, run['id'], SHARE)
+    stale = research_plan.pending_fact_check_grant(store, run['id'])
+    # A persisted pre-ledger pending grant must also survive the upgrade.
+    store.set_meta('fact_check_grant:' + run['id'], {'limits': stale['limits'], 'created': stale['created']})
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        pending = list(pool.map(lambda _: research_plan.add_fact_check_grant(store, run['id'], SHARE), range(4)))
+    assert all(item['status'] == 'pending' for item in pending)
+    assert research_plan.pending_fact_check_grant(store, run['id'])['limits'] == {key: 5 * value for key, value in SHARE.items()}
+    research_plan.finish_round(store, run['id'])
+    barrier = threading.Barrier(2)
+
+    def admit():
+        barrier.wait()
+        return research_plan.admit_fact_check(store, run['id'], {'kind': 'user_grant', 'limits': stale['limits']})
+
+    def add():
+        barrier.wait()
+        return research_plan.add_fact_check_grant(store, run['id'], SHARE)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        admitted, addition = pool.submit(admit), pool.submit(add)
+        stage_id = admitted.result()['stage_id']
+        assert addition.result()['stage_id'] == stage_id
+    assert research_plan.pending_fact_check_grant(store, run['id']) is None
+    # The internal retry is idempotent; the public add API has no request_id,
+    # so each call above intentionally contributes another authorized amount.
+    before_retry = research_plan.frozen(store, run['id'])
+    assert research_plan.admit_fact_check(store, run['id'], {'kind': 'user_grant', 'limits': stale['limits']})['idempotent']
+    assert research_plan.consume_pending_fact_check_grant(store, run['id'], stage_id)
+    assert research_plan.consume_pending_fact_check_grant(store, run['id'], stage_id)
+    assert research_plan.frozen(store, run['id']) == before_retry
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        active = list(pool.map(lambda _: research_plan.add_fact_check_grant(store, run['id'], SHARE), range(4)))
+    assert all(item['status'] == 'active' for item in active)
+    stage = research_plan.frozen(store, run['id'])['fact_check']
+    records = stage['initial_grants'] + stage.get('grants', [])
+    assert len(records) == 10
+    assert len({item['id'] for item in records if 'id' in item}) == 9  # one legacy record
+    assert budget.snapshot(store, run['id'])['limits'] == {key: BUDGET[key] + 10 * SHARE[key] for key in SHARE}
+    assert budget.spent(store, run['id']) == {key: 0 for key in SHARE}
+
+
+def test_legacy_research_usage_does_not_consume_new_explicit_grants(tmp_path):
+    store, run, _ = _world(tmp_path, with_budget=False)
+    _legacy_without_budget(store, run)
+    for _ in range(3):budget.reserve_search(store, run['id'], 1)
+    research_plan.finish_round(store, run['id'])
+    for _ in range(2):
+        previously_spent = budget.spent(store, run['id'])['search_requests']
+        research_plan.add_fact_check_grant(store, run['id'], SHARE)
+        assert budget.snapshot(store, run['id'])['limits']['search_requests'] == previously_spent + SHARE['search_requests']
+        for _ in range(2):budget.reserve_search(store, run['id'], 1)
+        with pytest.raises(budget.BudgetExhausted):budget.reserve_search(store, run['id'], 1)
+        research_plan.finish_fact_check(store, run['id'], status='budget_exhausted')
+    assert budget.spent(store, run['id'])['search_requests'] == 7
+    assert 'research_budget' not in json.loads(store.one('runs', run['id'])['requirements'])
+
+
+def test_upgrade_restores_unspent_old_active_grant_before_another_addition(tmp_path):
+    unit = {key: 1 for key in SHARE}
+    store, run, _ = _world(tmp_path, budget=unit)
+    original_requirements = store.one('runs', run['id'])['requirements']
+
+    def spend(label):
+        budget.reserve_search(store, run['id'], 1)
+        budget.record_candidates(store, run['id'], [f'https://example.test/{label}'])
+        budget.reserve_pages(store, run['id'], [f'https://example.test/{label}'])
+
+    spend('research')
+    research_plan.finish_round(store, run['id'])
+    research_plan.add_fact_check_grant(store, run['id'], unit)
+    spend('first-check')
+    research_plan.finish_fact_check(store, run['id'], status='budget_exhausted')
+    research_plan.add_fact_check_grant(store, run['id'], unit)
+    plan = research_plan.frozen(store, run['id'])
+    for stage in plan['fact_check_history'] + [plan['fact_check']]:
+        stage.pop('budget_offset', None)
+        stage.pop('initial_grants', None)
+    store.set_meta('research_plan:' + run['id'], plan)  # persisted pre-upgrade stage
+    assert budget.snapshot(store, run['id'])['limits'] == {key: 3 for key in unit}
+    assert research_plan.frozen(store, run['id']) == plan  # reads never migrate SQLite
+    research_plan.add_fact_check_grant(store, run['id'], unit)
+    assert budget.snapshot(store, run['id'])['limits'] == {key: 4 for key in unit}
+    assert budget.spent(store, run['id']) == {key: 2 for key in unit}
+    spend('after-upgrade-1')
+    spend('after-upgrade-2')
+    with pytest.raises(budget.BudgetExhausted):budget.reserve_search(store, run['id'], 1)
+    assert budget.record_candidates(store, run['id'], ['https://example.test/extra'])['allowed_urls'] == []
+    with pytest.raises(budget.BudgetExhausted):budget.reserve_pages(store, run['id'], ['https://example.test/extra'])
+    assert budget.snapshot(store, run['id'])['limits'] == {key: 4 for key in unit}
+    assert store.one('runs', run['id'])['requirements'] == original_requirements
+
+
+def test_upgrade_excludes_current_stage_spending_and_freezes_recovered_offset(tmp_path):
+    store, run, _ = _world(tmp_path, budget={'search_requests': 1, 'candidate_urls': 20, 'source_pages': 10})
+    grant = {'search_requests': 3, 'candidate_urls': 0, 'source_pages': 0}
+    budget.reserve_search(store, run['id'], 1)
+    research_plan.finish_round(store, run['id'])
+    research_plan.add_fact_check_grant(store, run['id'], grant)
+    budget.reserve_search(store, run['id'], 1)  # only 1 of the old grant's 3 was used
+    research_plan.finish_fact_check(store, run['id'], status='budget_exhausted')
+    research_plan.add_fact_check_grant(store, run['id'], grant)
+    for _ in range(2):budget.reserve_search(store, run['id'], 1)  # valid under the old ceiling of 4
+    plan = research_plan.frozen(store, run['id'])
+    for stage in plan['fact_check_history'] + [plan['fact_check']]:
+        stage.pop('budget_offset', None)
+    store.set_meta('research_plan:' + run['id'], plan)
+    # Counting current used-base as historical credit would grant 3 instead of 1.
+    assert budget.snapshot(store, run['id'])['limits']['search_requests'] == 5
+    budget.reserve_search(store, run['id'], 1)  # the first writer freezes the recovered 1
+    research_plan.add_fact_check_grant(store, run['id'], {**grant, 'search_requests': 1})
+    assert budget.snapshot(store, run['id'])['limits']['search_requests'] == 6
+    budget.reserve_search(store, run['id'], 1)
+    with pytest.raises(budget.BudgetExhausted):budget.reserve_search(store, run['id'], 1)
+    assert budget.spent(store, run['id'])['search_requests'] == 6
+    assert budget.snapshot(store, run['id'])['limits']['search_requests'] == 6
 
 
 def test_grant_entry_reopens_exhausted_stage_and_reschedules_the_check(tmp_path):
