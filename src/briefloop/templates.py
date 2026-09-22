@@ -382,7 +382,8 @@ def export_template(store,brief,document,figures,template_id=None):
                 if samples:profile.setdefault('paragraph_style',samples[min(index,len(samples)-1)].get('paragraph_style'))
         styles={**defaults,**styles}
     render_document(doc,document,figures=figures,styles=styles,
-                    sources={sid:store.one('sources',sid) for sid in store.source_ids(brief['run_id'])})
+                    sources={sid:store.one('sources',sid) for sid in store.source_ids(brief['run_id'])},
+                    citations=detail.get('citations',[]))
     if ' TOC ' in doc.element.xml:
         from .industry_export import enable_update_fields
         enable_update_fields(doc)

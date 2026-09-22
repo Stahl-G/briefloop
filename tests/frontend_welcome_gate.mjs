@@ -83,3 +83,31 @@ vm.runInContext(statusCode,empty);
 vm.runInContext('renderReportStatus()',empty);
 assert.equal(el('report-status').innerHTML,'');
 console.log('PASS: cold-start status rendering tolerates an empty workspace');
+
+// Restoring the locally edited demo does not enter renderChat. The session list
+// still needs to leave its HTML loading placeholder before the first idle poll.
+const startupElements=new Map();
+const startupEl=id=>{if(!startupElements.has(id))startupElements.set(id,{hidden:true,innerHTML:'',querySelectorAll:()=>[]});return startupElements.get(id)};
+startupEl('session-list').innerHTML='<p>正在读取会话…</p>';
+const startupPages=[],startupOpened=[],startupPolls=[];
+const savedDemo={id:'edited-demo',run_id:'demo-run',author:'user'};
+const startup=vm.createContext({
+ $:startupEl,chat:{id:null,sessions:[],view:'active',drafts:new Map()},
+ state:{settings:{model_selection_required:true},demo:{run_id:'demo-run'},briefs:[savedDemo],runs:[{id:'demo-run'}],jobs:[]},
+ sessionStorage:{getItem:()=>null},localStorage:{getItem:()=>null,removeItem(){}},
+ api:async route=>{assert.equal(route,'harness/sessions?view=active');return {sessions:[]}},
+ page:name=>startupPages.push(name),openBrief:brief=>startupOpened.push(brief),
+ adaptivePoll:(task,options)=>startupPolls.push({task,options}),backgroundActive:()=>false,
+ renderWelcome(){throw Error('a saved demo should open locally')},renderChat(){throw Error('demo restoration does not enter chat')},
+});
+for(const name of ['renderSessions','initChat']){
+ const at=source.indexOf(`${name==='initChat'?'async ':''}function ${name}(`);
+ vm.runInContext(source.slice(at,source.indexOf('\n}',at)+2),startup);
+}
+await vm.runInContext('initChat()',startup);
+assert.deepEqual(startupPages,['report']);
+assert.equal(startupOpened[0],savedDemo);
+assert.match(startupEl('session-list').innerHTML,/对话会保存在这里/);
+assert.doesNotMatch(startupEl('session-list').innerHTML,/正在读取会话/);
+assert.equal(startupPolls.length,1,'background polling remains scheduled');
+console.log('PASS: demo restoration renders the loaded session list before background polling');
