@@ -26,6 +26,8 @@ def thread_usage(events):
         if isinstance(item, dict) and item.get('type') == 'collab_tool_call':
             for receiver in item.get('receiverThreadIds', []):
                 observe(receiver, 'child')  # Legacy spawn order; role/parent unknown.
+        elif isinstance(item, dict) and item.get('type') == 'subagent_activity':
+            observe(item.get('agentThreadId'), 'child')  # Activity does not establish parent/role/usage.
         if kind not in ('thread.tokenUsage.updated', 'child.thread.tokenUsage.updated'):
             continue
         usage = data.get('tokenUsage')

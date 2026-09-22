@@ -396,7 +396,8 @@ class InteractiveRuntime:
                 value = {'type': kind.replace('/', '.'), 'harness_seq': cursor, 'data': data}
                 if kind.removeprefix('child/') in ('item/started', 'item/updated', 'item/completed'):
                     item = dict(data.get('item', {}))
-                    aliases = {'collabAgentToolCall': 'collab_tool_call', 'commandExecution': 'command_execution'}
+                    aliases = {'collabAgentToolCall': 'collab_tool_call', 'commandExecution': 'command_execution',
+                               'subAgentActivity': 'subagent_activity'}
                     item['type'] = aliases.get(item.get('type'), item.get('type'))
                     if 'agentsStates' in item:
                         item['agents_states'] = item.pop('agentsStates')

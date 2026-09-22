@@ -521,6 +521,13 @@ class HarnessManager:
                     else:
                         created=self.chat.message(sid,item.get('text',''),role='assistant',status='completed' if method.endswith('completed') else 'streaming',item_id=item['id'],turn_id=turn_id)['id'];self._items[key]=created;self._reasoning_target[(sid,turn_id)]=created
                         if accumulated:self.chat.patch_message(created,reasoning=accumulated)
+                elif kind=='subAgentActivity':
+                    if not isinstance(item.get('id'),str) or item.get('kind') not in ('started','interacted','interrupted','completed'):return
+                    if not self._register_child(item.get('agentThreadId'),sid):return
+                    # Activity identifies an owned target, not its direct parent,
+                    # role or turn liveness. Never retain agentPath or raw input.
+                    public={key:item[key] for key in ('id','type','agentThreadId','kind')}
+                    self.chat.event(sid,('child/' if child else '')+method,{'item':public,'turnId':turn_id,'threadId':thread_id})
                 elif kind in ('commandExecution','fileChange','mcpToolCall','webSearch','collabAgentToolCall','imageView','dynamicToolCall'):
                     fields=('id','type','status','command','cwd','tool','server','receiverThreadIds','senderThreadId','agentsStates','query','model','reasoningEffort')
                     public={k:item[k] for k in fields if k in item}
