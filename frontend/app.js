@@ -945,9 +945,9 @@ $('chat-backend').onchange=()=>{
  chat.request=null;rememberDraft();updateComposer();refreshInlineModelPickers();
 };
 function rememberDraft(){chat.drafts.set(chat.id||'new',{text:$('chat-input').value,sources:[...chat.attachments],backend:chatBackendChoice(),model:$('chat-model').value,model_provider:$('chat-model-provider').value.trim()||null,effort:$('chat-effort').value,variant:($('chat-variant')?.value||'').trim(),service_tier:(chatBackendChoice())==='codex'?($('chat-service-tier').value||null):null,allow_web:$('chat-allow-web').checked,permission:$('chat-permission').value,host_options:chat.hostOptions||{}});try{sessionStorage.setItem('briefloop-chat-drafts',JSON.stringify([...chat.drafts].slice(-30)))}catch{}}
-function restoreDraft(){
+function restoreDraft({preserveNewDraft=false}={}){
  const d=chat.drafts.get(chat.id||'new'),sessionRuntime=chat.session?.runtime;
- const backend=(chat.id&&d?.backend)||sessionRuntime?.backend||state.settings.agent_backend||'codex';
+ const backend=((chat.id||preserveNewDraft)&&d?.backend)||sessionRuntime?.backend||state.settings.agent_backend||'codex';
  chat.nextBackend=backend;
  const saved=d&&(chat.id||d.backend===backend||(!d.backend&&sessionRuntime))?d:null;
  const fallback={model:state.settings.model_selection_required?'':state.settings.model,backend,effort:settingsEffort(state.settings,backend),variant:backend==='mimo'?state.settings.runtime_efforts?.mimo:state.settings.model_variant,model_provider:state.settings.model_provider,service_tier:state.settings.service_tier};
@@ -1209,10 +1209,15 @@ function renderChat(){
 async function selectChat(id){
  if(chat.busy||chat.uploading)return;if(id===chat.id){chat.home=false;renderChat();page('chat');return}rememberDraft();chat.home=false;chat.id=id;chat.session=chat.sessions.find(s=>s.id===id)||null;chat.tokenUsage=null;chat.messages=[];chat.requests=[];chat.events=new Map();chat.after=0;chat.request=null;renderMessages.signature='';localStorage.setItem('briefloop-chat-session',id);chatError();restoreDraft();renderChat();page('chat');await pollChat(true);if(!chat.drafts.has(id))restoreDraft();
 }
-async function newChat(){
- if(chat.busy||chat.uploading)return;rememberDraft();chat.home=true;chat.view='active';$('session-view').value='active';chat.sessions=[];chat.id=null;chat.session=null;chat.tokenUsage=null;chat.messages=[];chat.requests=[];chat.events=new Map();chat.after=0;chat.request=null;renderMessages.signature='';chat.drafts.delete('new');localStorage.removeItem('briefloop-chat-session');restoreDraft();chatError();renderChat();page('chat');$('chat-input').focus();await pollChat(true).catch(e=>chatError(e.message));
+async function openChatHome({resetDraft=false}={}){
+ if(chat.busy||chat.uploading)return;
+ rememberDraft();chat.home=true;chat.view='active';$('session-view').value='active';chat.sessions=[];chat.id=null;chat.session=null;chat.tokenUsage=null;chat.messages=[];chat.requests=[];chat.events=new Map();chat.after=0;chat.request=null;renderMessages.signature='';
+ // Navigation restores the pending home composer; only an explicit new chat resets it.
+ if(resetDraft)chat.drafts.delete('new');
+ localStorage.removeItem('briefloop-chat-session');restoreDraft({preserveNewDraft:!resetDraft});rememberDraft();chatError();renderChat();page('chat');$('chat-input').focus();await pollChat(true).catch(e=>chatError(e.message));
 }
-async function showHome(){if(chat.busy||chat.uploading){page('chat');return}await newChat()}
+async function newChat(){await openChatHome({resetDraft:true})}
+async function showHome(){if(chat.busy||chat.uploading){page('chat');return}await openChatHome()}
 async function pollChat(force=false){
  if(chat.polling&&!force)return;chat.polling=true;const sid=chat.id,after=chat.after,view=chat.view;
  try{
@@ -1223,7 +1228,7 @@ async function pollChat(force=false){
 async function sendChat(event){
  event.preventDefault();if(chat.busy||chat.uploading||chat.session&&chat.session.lifecycle&&chat.session.lifecycle!=='active')return;const rawInput=$('chat-input').value.trim();const command=/^\/(\w+)(?:\s+([\s\S]*))?$/.exec(rawInput);if(command){const name=command[1].toLowerCase();if(name==='new'){const panel=commandPanel();if(panel)panel.hidden=true;await newChat();return}if(name==='help'){notice(COMMAND_HELP);$('chat-input').value='';const panel=commandPanel();if(panel)panel.hidden=true;updateComposer();return}}const text=rawInput||(chat.attachments.size?'请查看附件。':'');if(!text)return;const discuss=/^\/discuss\b\s*/i.test(text),displayText=text.replace(/^\/discuss\b\s*/i,'').trim()||'讨论需求',sendText=discuss?(DISCUSS_INSTRUCTION+(displayText!=='讨论需求'?('\n\n用户补充：'+displayText):'')):text;chat.home=false;chat.busy=true;chatError();updateComposer();
  try{
-  const runtime=runtimeChoice();if(!chat.id){const result=await api('harness/session',{title:displayText.slice(0,48),runtime});chat.session=result.session||result;chat.id=chat.session.id;if(!chat.id)throw Error('未能创建会话');localStorage.setItem('briefloop-chat-session',chat.id);rememberDraft()}
+  const runtime=runtimeChoice();if(!chat.id){const result=await api('harness/session',{title:displayText.slice(0,48),runtime});chat.session=result.session||result;chat.id=chat.session.id;if(!chat.id)throw Error('未能创建会话');localStorage.setItem('briefloop-chat-session',chat.id);chat.drafts.delete('new');rememberDraft()}
   const reportOptions=compactReportInstruction();
   const payload={session_id:chat.id,text:sendText+reportOptions,display_text:reportOptions||sendText!==displayText?displayText:undefined,mode:chatActive()?$('chat-mode').value:'queue',source_ids:[...chat.attachments],runtime,allow_web:$('chat-allow-web').checked};const signature=JSON.stringify(payload);
   if(!chat.request||chat.request.signature!==signature)chat.request={signature,message_id:crypto.randomUUID()};
