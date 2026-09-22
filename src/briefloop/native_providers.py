@@ -20,7 +20,7 @@ def _read():
     path = config_path()
     if path.is_symlink():
         raise ValueError('内置引擎配置文件不能是符号链接')
-    return json.loads(path.read_text()) if path.exists() else {}
+    return json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
 
 
 def configurations():
@@ -57,11 +57,17 @@ def save(body):
         for row in rows.values():
             if row['provider'] == provider:
                 row.update(api_key=key, base_url=url, protocol=protocol, api=PROTOCOLS[protocol])
-        path = config_path();path.parent.mkdir(parents=True, exist_ok=True)
+        path = config_path();path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         fd, temp = tempfile.mkstemp(dir=path.parent, prefix='.providers-')
         try:
-            os.fchmod(fd, 0o600)
-            with os.fdopen(fd, 'w') as stream:
+            # Enter the context before securing the file so a permission failure
+            # closes the descriptor before cleanup (Windows cannot unlink it open).
+            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+                if os.name == 'nt':
+                    from .connectors.windows_acl import protect_private
+                    protect_private(Path(temp))
+                else:
+                    os.fchmod(stream.fileno(), 0o600)
                 json.dump(rows, stream);stream.flush();os.fsync(stream.fileno())
             os.replace(temp, path)
         finally:

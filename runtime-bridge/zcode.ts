@@ -9,9 +9,19 @@ import {createJsonLineStream} from '../third_party/open-design/core/json-line-st
 const MODES = ['build', 'edit', 'plan', 'yolo'];
 const IMAGE_TYPES = ['.png', '.jpg', '.jpeg', '.webp'];
 // The prompt travels in argv: ZCode headless has no stdin prompt channel, so a
-// long prompt has to fail here rather than as a spawn-level argument overflow.
+// long prompt must fail explicitly instead of losing any of its content.
+// launch checks the actual Windows owner command, including quoting and paths;
+// other OS limits can also reject an argument below this upper bound.
 const PROMPT_LIMIT = 200000;
 const THINK = /^(think|thinking|reasoning)$/i;
+
+function promptTooLong() {
+ return Error('ZCode 提示词及附加参数超出命令行长度限制：请缩短提示词，或将长内容保存为材料后引用；图片路径、会话 ID 和引号转义也计入长度。内容未截断，请调整后重试。');
+}
+
+function launchError(error:any) {
+ return ['E2BIG', 'ENAMETOOLONG'].includes(error?.code) ? promptTooLong() : error;
+}
 
 function configuredModel() {
  try {
@@ -36,7 +46,7 @@ function toolOutput(payload:any) {
 
 export async function runZcode(p:any, state:any, launch:any, terminate:any, emit:any) {
  if (p.model && p.model !== 'default') throw Error('ZCode 无界面运行不接受模型参数：只能使用它自己配置的模型，请在 ZCode 中切换后重试');
- if (p.prompt.length > PROMPT_LIMIT) throw Error('提示词超出 ZCode 命令行可传长度');
+ if (p.prompt.length > PROMPT_LIMIT) throw promptTooLong();
  const args = ['--prompt', p.prompt, '--cwd', p.cwd, '--output-format', 'stream-json', '--no-color'];
  // ZCode --prompt defaults to yolo, regardless of the interactive setting.
  // Preserve legacy 'native' records as the ordinary build mode; yolo requires
@@ -52,7 +62,9 @@ export async function runZcode(p:any, state:any, launch:any, terminate:any, emit
   if (readFileSync(file).length > 20 * 1024 * 1024) throw Error('图片超过 20 MiB');
   args.push('--attach', file);
  }
- const child = launch(state.bin, args, p.cwd);
+ let child:any;
+ try {child = launch(state.bin, args, p.cwd);}
+ catch (error) {throw launchError(error);}
  state.child = child; state.cancel = () => terminate(child);
  // tool.updated carries the call id but not the name; model.streaming named it.
  const names = new Map<string, string>();
@@ -90,11 +102,14 @@ export async function runZcode(p:any, state:any, launch:any, terminate:any, emit
   child.stdout.setEncoding('utf8'); child.stdout.on('data', c => parser.feed(c));
   child.stderr.setEncoding('utf8'); child.stderr.on('data', c => {stderr = (stderr + c).slice(-8192);});
   child.stdin.on('error', () => {});
-  child.on('error', e => {clearTimeout(timer); reject(e);});
+  child.on('error', e => {clearTimeout(timer); reject(launchError(e));});
   child.on('close', code => {
    clearTimeout(timer); parser.flush();
    if (state.cancelled) return resolve();
    if (failure) return reject(Error(failure));
+   // The Python owner may resolve an npm shim to a longer native command.
+   // Its CreateProcess failure occurs before the host/model starts.
+   if (!completed && process.platform === 'win32' && /\[WinError 206\]/.test(stderr)) return reject(promptTooLong());
    if (!completed) return reject(Error('ZCode 未完成本回合（exit ' + code + '）' + (stderr.trim() ? '：' + stderr.trim().slice(-400) : '')));
    if (!textSeen && response.trim()) {textSeen = true; emit(p.execution_id, 'text', {text:response, delta:true});}
    // plan mode ends the turn on ExitPlanMode, which headless cannot approve, so

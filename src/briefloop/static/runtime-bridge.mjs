@@ -544,6 +544,12 @@ var MODES = ["build", "edit", "plan", "yolo"];
 var IMAGE_TYPES = [".png", ".jpg", ".jpeg", ".webp"];
 var PROMPT_LIMIT = 2e5;
 var THINK = /^(think|thinking|reasoning)$/i;
+function promptTooLong() {
+  return Error("ZCode \u63D0\u793A\u8BCD\u53CA\u9644\u52A0\u53C2\u6570\u8D85\u51FA\u547D\u4EE4\u884C\u957F\u5EA6\u9650\u5236\uFF1A\u8BF7\u7F29\u77ED\u63D0\u793A\u8BCD\uFF0C\u6216\u5C06\u957F\u5185\u5BB9\u4FDD\u5B58\u4E3A\u6750\u6599\u540E\u5F15\u7528\uFF1B\u56FE\u7247\u8DEF\u5F84\u3001\u4F1A\u8BDD ID \u548C\u5F15\u53F7\u8F6C\u4E49\u4E5F\u8BA1\u5165\u957F\u5EA6\u3002\u5185\u5BB9\u672A\u622A\u65AD\uFF0C\u8BF7\u8C03\u6574\u540E\u91CD\u8BD5\u3002");
+}
+function launchError(error) {
+  return ["E2BIG", "ENAMETOOLONG"].includes(error?.code) ? promptTooLong() : error;
+}
 function configuredModel() {
   try {
     const file = JSON.parse(readFileSync(path2.join(homedir(), ".zcode", "cli", "config.json"), "utf8"));
@@ -569,7 +575,7 @@ function toolOutput(payload) {
 }
 async function runZcode(p, state, launch2, terminate2, emit2) {
   if (p.model && p.model !== "default") throw Error("ZCode \u65E0\u754C\u9762\u8FD0\u884C\u4E0D\u63A5\u53D7\u6A21\u578B\u53C2\u6570\uFF1A\u53EA\u80FD\u4F7F\u7528\u5B83\u81EA\u5DF1\u914D\u7F6E\u7684\u6A21\u578B\uFF0C\u8BF7\u5728 ZCode \u4E2D\u5207\u6362\u540E\u91CD\u8BD5");
-  if (p.prompt.length > PROMPT_LIMIT) throw Error("\u63D0\u793A\u8BCD\u8D85\u51FA ZCode \u547D\u4EE4\u884C\u53EF\u4F20\u957F\u5EA6");
+  if (p.prompt.length > PROMPT_LIMIT) throw promptTooLong();
   const args = ["--prompt", p.prompt, "--cwd", p.cwd, "--output-format", "stream-json", "--no-color"];
   const selected = p.host_options?.mode;
   const mode = !selected || selected === "native" ? "build" : selected;
@@ -582,7 +588,12 @@ async function runZcode(p, state, launch2, terminate2, emit2) {
     if (readFileSync(file).length > 20 * 1024 * 1024) throw Error("\u56FE\u7247\u8D85\u8FC7 20 MiB");
     args.push("--attach", file);
   }
-  const child = launch2(state.bin, args, p.cwd);
+  let child;
+  try {
+    child = launch2(state.bin, args, p.cwd);
+  } catch (error) {
+    throw launchError(error);
+  }
   state.child = child;
   state.cancel = () => terminate2(child);
   const names = /* @__PURE__ */ new Map();
@@ -635,13 +646,14 @@ async function runZcode(p, state, launch2, terminate2, emit2) {
     });
     child.on("error", (e) => {
       clearTimeout(timer);
-      reject(e);
+      reject(launchError(e));
     });
     child.on("close", (code) => {
       clearTimeout(timer);
       parser.flush();
       if (state.cancelled) return resolve();
       if (failure) return reject(Error(failure));
+      if (!completed && process.platform === "win32" && /\[WinError 206\]/.test(stderr)) return reject(promptTooLong());
       if (!completed) return reject(Error("ZCode \u672A\u5B8C\u6210\u672C\u56DE\u5408\uFF08exit " + code + "\uFF09" + (stderr.trim() ? "\uFF1A" + stderr.trim().slice(-400) : "")));
       if (!textSeen && response.trim()) {
         textSeen = true;
@@ -653,6 +665,24 @@ async function runZcode(p, state, launch2, terminate2, emit2) {
     });
     child.stdin.end();
   });
+}
+
+// runtime-bridge/windows-command.ts
+function quotedLength(argument) {
+  if (argument.length && !/[ \t"]/.test(argument)) return argument.length;
+  let extra = 2, slashes = 0;
+  for (const character of argument) {
+    if (character === "\\") slashes++;
+    else {
+      if (character === '"') extra += slashes + 1;
+      slashes = 0;
+    }
+  }
+  return argument.length + extra + slashes;
+}
+function checkWindowsCommandLine(bin, args) {
+  const length = [bin, ...args].reduce((size, argument) => size + quotedLength(argument) + 1, 0);
+  if (length > 32767) throw Object.assign(new Error("Windows \u547D\u4EE4\u884C\u8D85\u51FA 32767 UTF-16 \u5B57\u7B26\u9650\u5236\uFF08\u5305\u62EC\u7A0B\u5E8F\u8DEF\u5F84\u3001\u53C2\u6570\u8F6C\u4E49\u53CA\u7ED3\u675F\u7B26\uFF09"), { code: "E2BIG" });
 }
 
 // runtime-bridge/main.ts
@@ -1527,7 +1557,9 @@ function launch(bin, args, cwd, childEnv = env) {
   if (stopping) throw Error("Runtime bridge is shutting down");
   if (process.platform === "win32") {
     if (!env.BRIEFLOOP_PYTHON || !env.BRIEFLOOP_PROCESS_HELPER) throw Error("Windows process owner is unavailable");
-    return own(spawn(env.BRIEFLOOP_PYTHON, ["-X", "utf8", env.BRIEFLOOP_PROCESS_HELPER, bin, ...args], { cwd, env: childEnv, stdio: ["pipe", "pipe", "pipe"], windowsHide: true }));
+    const ownerArgs = ["-X", "utf8", env.BRIEFLOOP_PROCESS_HELPER, bin, ...args];
+    checkWindowsCommandLine(env.BRIEFLOOP_PYTHON, ownerArgs);
+    return own(spawn(env.BRIEFLOOP_PYTHON, ownerArgs, { cwd, env: childEnv, stdio: ["pipe", "pipe", "pipe"], windowsHide: true }));
   }
   return own(spawn(bin, args, { cwd, env: childEnv, stdio: ["pipe", "pipe", "pipe"], detached: true }));
 }

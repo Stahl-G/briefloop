@@ -1,6 +1,7 @@
 import {reasoningProfile,reasoningModel,validateEffort,acpReasoning,applyAcpEffort} from './reasoning.js';
 import {piModels,runPi} from './pi.js';
 import {runZcode,zcodeModels} from './zcode.js';
+import {checkWindowsCommandLine} from './windows-command.js';
 // BriefLoop protocol glue. Upstream Apache helpers: third_party/open-design/NOTICE.md.
 import {spawn, execFile} from 'node:child_process';
 import {accessSync, constants, readFileSync, existsSync} from 'node:fs';
@@ -80,7 +81,9 @@ function launch(bin:string,args:string[],cwd:string,childEnv:any=env){
  if(stopping)throw Error('Runtime bridge is shutting down');
  if(process.platform==='win32'){
   if(!env.BRIEFLOOP_PYTHON||!env.BRIEFLOOP_PROCESS_HELPER)throw Error('Windows process owner is unavailable');
-  return own(spawn(env.BRIEFLOOP_PYTHON,['-X','utf8',env.BRIEFLOOP_PROCESS_HELPER,bin,...args],{cwd,env:childEnv,stdio:['pipe','pipe','pipe'],windowsHide:true}));
+  const ownerArgs=['-X','utf8',env.BRIEFLOOP_PROCESS_HELPER,bin,...args];
+  checkWindowsCommandLine(env.BRIEFLOOP_PYTHON,ownerArgs);
+  return own(spawn(env.BRIEFLOOP_PYTHON,ownerArgs,{cwd,env:childEnv,stdio:['pipe','pipe','pipe'],windowsHide:true}));
  }
  return own(spawn(bin,args,{cwd,env:childEnv,stdio:['pipe','pipe','pipe'],detached:true}));
 }

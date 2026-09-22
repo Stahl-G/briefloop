@@ -174,18 +174,29 @@ def test_owned_service_stops_on_stdin_eof_but_standalone_does_not(tmp_path):
     import time
     from briefloop.platform_support import WorkspaceLock
     root=tmp_path/'owned'
+    log_path=tmp_path/'service.log'
     env={**os.environ,'BRIEFLOOP_DESKTOP_OWNER_PIPE':'1','BRIEFLOOP_LAUNCH_ID':'synthetic-owner'}
     def launch(owned):
         child_env=dict(env)
         if not owned:child_env.pop('BRIEFLOOP_DESKTOP_OWNER_PIPE')
-        return subprocess.Popen([sys.executable,'-m','briefloop','serve','--workspace',str(root),
-                                 '--port','0','--paused'],env=child_env,stdin=subprocess.PIPE,
-                                stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+        executable=sys.executable
+        if os.name=='nt':
+            # Match the desktop launcher: bypass the venv redirector while
+            # retaining its environment, so Popen owns the actual service PID.
+            executable=sys._base_executable
+            child_env['__PYVENV_LAUNCHER__']=sys.executable
+        # Set UTF-8 on this child too; the parent's -X flag is not inherited and
+        # a CLI UTF-8 re-exec would otherwise create another intermediary PID.
+        with log_path.open('ab') as log:
+            return subprocess.Popen([executable,'-I','-X','utf8','-u','-m','briefloop','serve','--workspace',str(root),
+                                     '--port','0','--paused'],env=child_env,stdin=subprocess.PIPE,
+                                    stdout=log,stderr=log,
+                                    creationflags=subprocess.CREATE_NO_WINDOW if os.name=='nt' else 0)
     def ready(process):
         deadline=time.monotonic()+10
         marker=root/'server.json'
         while not marker.exists() or json.loads(marker.read_text()).get('pid')!=process.pid:
-            assert process.poll() is None and time.monotonic()<deadline
+            assert process.poll() is None and time.monotonic()<deadline, log_path.read_text(encoding='utf-8')
             time.sleep(.03)
     owned=launch(True)
     try:
