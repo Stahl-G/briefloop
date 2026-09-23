@@ -1,0 +1,108 @@
+name: Publish verified release to PyPI
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published stable GitHub release tag
+        required: true
+        type: string
+      source_sha:
+        description: Frozen source commit used for the release wheel
+        required: true
+        type: string
+      wheel_sha256:
+        description: SHA-256 of the shared release wheel
+        required: true
+        type: string
+      sdist_sha256:
+        description: SHA-256 of the verified source distribution
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: pypi-${{ inputs.tag }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    outputs:
+      pending: ${{ steps.verify.outputs.pending }}
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Download the frozen artifacts and verify published identity
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          WHEEL_SHA256: ${{ inputs.wheel_sha256 }}
+          SDIST_SHA256: ${{ inputs.sdist_sha256 }}
+        run: |
+          python - <<'PY'
+          import email,hashlib,json,os,pathlib,re,subprocess,tarfile,urllib.error,urllib.request,zipfile
+          tag=os.environ['RELEASE_TAG'];sha=os.environ['SOURCE_SHA']
+          assert re.fullmatch(r'v\d+\.\d+\.\d+',tag), 'Expected a stable version tag'
+          assert re.fullmatch(r'[0-9a-f]{40}',sha), 'Expected a full commit SHA'
+          version=tag[1:]
+          expected={f'briefloop-{version}-py3-none-any.whl':os.environ['WHEEL_SHA256'],
+                    f'briefloop-{version}.tar.gz':os.environ['SDIST_SHA256']}
+          assert all(re.fullmatch(r'[0-9a-f]{64}',h) for h in expected.values())
+          release=json.loads(subprocess.check_output(['gh','release','view',tag,'--json','isDraft,isPrerelease,targetCommitish,tagName']))
+          assert not release['isDraft'] and not release['isPrerelease'], 'Release must already be published'
+          assert release['targetCommitish']==sha and release['tagName']==tag, 'Release source identity differs'
+          repo=os.environ['GH_REPO']
+          ref=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/git/ref/tags/{tag}']))['object']
+          if ref['type']=='tag':ref=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/git/tags/{ref["sha"]}']))['object']
+          assert ref['type']=='commit' and ref['sha']==sha, 'Tag no longer names the frozen commit'
+          pathlib.Path('dist').mkdir()
+          for name,digest in expected.items():
+              subprocess.run(['gh','release','download',tag,'--pattern',name,'--dir','dist'],check=True)
+              p=pathlib.Path('dist')/name
+              assert hashlib.sha256(p.read_bytes()).hexdigest()==digest, 'Artifact hash differs: '+name
+              if name.endswith('.whl'):
+                  with zipfile.ZipFile(p) as archive:raw=archive.read(f'briefloop-{version}.dist-info/METADATA')
+              else:
+                  with tarfile.open(p) as archive:raw=archive.extractfile(f'briefloop-{version}/PKG-INFO').read()
+              metadata=email.message_from_bytes(raw)
+              assert metadata['Name']=='briefloop' and metadata['Version']==version, 'Package metadata differs'
+          # Partial publication is recoverable; never skip a different same-name file.
+          try:
+              with urllib.request.urlopen(f'https://pypi.org/pypi/briefloop/{version}/json',timeout=30) as response:published=json.load(response)['urls']
+          except urllib.error.HTTPError as error:
+              if error.code!=404:raise
+              published=[]
+          for item in published:
+              name=item['filename']
+              if name in expected:
+                  assert not item.get('yanked') and item['digests']['sha256']==expected[name], 'Existing PyPI artifact differs: '+name
+                  (pathlib.Path('dist')/name).unlink()
+          pending=any(pathlib.Path('dist').iterdir())
+          with open(os.environ['GITHUB_OUTPUT'],'a') as f:f.write('pending='+str(pending).lower()+'\n')
+          print('Verified release identity and hashes; pending upload:',pending)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: steps.verify.outputs.pending == 'true'
+        with:
+          name: verified-pypi-distributions
+          path: dist/*
+          if-no-files-found: error
+  publish:
+    needs: verify
+    if: needs.verify.outputs.pending == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/briefloop/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: verified-pypi-distributions
+          path: dist
+      - name: Publish the verified artifacts without rebuilding
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # release/v1
