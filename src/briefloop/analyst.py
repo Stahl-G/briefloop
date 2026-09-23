@@ -98,7 +98,7 @@ def packet(store, run_id, folder, *, plan, research, source_ids=None, support=No
                        'figures': [read_figure(store, fid, run_id) for fid in json.loads(base['detail'])['figures']]}
         save('source-index.json', {'sources': index})
         evaluator_packet(store, figure_pack, {}, folder)
-        save('figures.json', json.loads((root / 'input.json').read_text())['figures'])
+        save('figures.json', json.loads((root / 'input.json').read_text(encoding='utf-8'))['figures'])
     save('source-index.json', {'sources': index})
     save('source-context.json', {'scope': '原文导航，不是摘要、已读覆盖或事实核实；参考材料不作为当期事实来源。',
                                  'sources': contexts})
@@ -233,7 +233,7 @@ def _save_section(store, config, args):
     if not isinstance(sid, str) or not re.fullmatch(r'[a-zA-Z0-9_-]{1,80}', sid):
         raise ValueError('section_id 只允许字母、数字、下划线、短横线')
     path = _sections_file(store, config)
-    ledger = json.loads(path.read_text()) if path.exists() else {}
+    ledger = json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
     content, citations = args.get('content'), args.get('citations', [])
     if 'text_replacements' in args:
         from .analyst_drafts import replace_section_text
@@ -251,7 +251,7 @@ def _save_section(store, config, args):
     _atomic(path, dump(ledger))
     from .length import count_brief, length_stats
     from .document_model import document_markdown
-    req = json.loads((Path(config['packet_root']) / 'input.json').read_text())['requirements']
+    req = json.loads((Path(config['packet_root']) / 'input.json').read_text(encoding='utf-8'))['requirements']
     assembled = document_markdown({'type': 'doc', 'content': [
         block for section in ledger.values() for block in section['editor_document'].get('content', [])]})
     length = length_stats(assembled, target_words=req.get('target_words'), max_words=req.get('max_words'))
@@ -350,7 +350,7 @@ def prepare_data(store, config, args):
     from .native_roles import _json_result
     from .industry_data import IndustryData
     data = IndustryData.model_validate(args.get('data'))
-    index = json.loads((Path(config['packet_root']) / 'source-index.json').read_text())['sources']
+    index = json.loads((Path(config['packet_root']) / 'source-index.json').read_text(encoding='utf-8'))['sources']
     allowed = {s['source_id'] for s in index if not s['reference_only']}
     ids = {r.source_id for r in data.records} | {r.previous_source_id for r in data.records if r.previous_source_id}
     if not ids <= allowed:
