@@ -101,6 +101,32 @@ def quantities(text):
             yield match.start(), match.end(), result
 
 
+def complete_number_token(quote, token, value, unit):
+    """Expand a uniquely selected bare number to its existing, equal quantity.
+
+    Never change the author's value/unit or choose among repeated body spans.
+    This is a location correction, not an assertion of factual support.
+    """
+    if not token or quote.count(token) != 1 or not re.fullmatch(_NUM, token):
+        return None
+    expected = normalized(value, unit)
+    if expected is None:
+        return None
+    start = quote.index(token)
+    spans = {(a, b) for a, b, quantity in quantities(quote) if quantity == expected}
+    matches = []
+    for match in _QUANTITY.finditer(quote):
+        # Select the complete original numeric component, never its suffix.
+        if match.span('number') != (start, start + len(token)) or match.span() not in spans:
+            continue
+        # Counts share an arithmetic dimension but people, companies and
+        # items are not interchangeable units for an automatic correction.
+        if expected[1] == 'count' and (match['unit'] or '').strip().lower() != unit.strip().lower():
+            continue
+        matches.append(match[0].strip())
+    return matches[0] if len(matches) == 1 else None
+
+
 def body_refs(markdown):
     return list(dict.fromkeys(match.replace('\\', '') for match in REF_RE.findall(markdown or '')))
 
@@ -207,6 +233,13 @@ def check_numbers(markdown, bindings, store=None, allowed_sources=None):
                       if a == start and quote[a:b].strip() == token.strip()]
         if not candidates:
             row['reason'] = '正文数值不是完整的受支持数值与单位，未检查'
+            # A supported quantity already surrounds this exact body span:
+            # its incomplete binding is repairable, not a semantic unknown.
+            if any(a <= start and start + len(token) <= b for a, b, _ in quantities(quote)):
+                row['remediation'] = 'repair_binding'
+                suggestion = complete_number_token(quote, token, item.get('value'), item.get('unit', ''))
+                if suggestion:
+                    row['suggested_number_text'] = suggestion
             continue
         row['checked'] = True
         row['found'] = candidates[0] == expected

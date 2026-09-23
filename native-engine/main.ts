@@ -77,7 +77,11 @@ const JSON_REPAIRS = 1;
 // about 70k characters. Stop that request and ask for smaller steps.
 const DEFAULT_MAX_REPLY_CHARS = 120_000;
 const OVERLONG_RETRIES = 1;
-const OVERLONG_PROMPT = "上一次回复过长，已被运行器中止。不要在一次思考里核对全部内容：用工具分批取证，把已经确认的结论写进结果，然后调用 submit_review 提交。";
+const overlongPrompt = (entry: Pick<SessionEntry, "role" | "submitTool">) =>
+  `上一次回复过长，已被运行器中止。当前角色是 ${entry.role}，已成功的工具结果和已保存内容仍然有效，不要重复执行。把剩余工作拆成较小步骤，使用本次已提供的工具继续。` +
+  (entry.submitTool
+    ? `按工具回执完成尚未完成的修正，再单独调用 ${entry.submitTool} 提交结果。`
+    : "任务已完成时直接简洁回复，不需要额外的提交工具。");
 
 interface WireRequest { id?: string; method: string; params?: Record<string, unknown>; }
 interface SessionEntry {
@@ -690,7 +694,7 @@ async function turnStart(id: string | undefined, p: Record<string, unknown>): Pr
         if (overlongs < OVERLONG_RETRIES) {
           overlongs += 1;
           emit(sid, execId, "status", { message: `re-asking after an overlong reply (${overlongs}/${OVERLONG_RETRIES})` });
-          message = OVERLONG_PROMPT;
+          message = overlongPrompt(entry);
           continue;
         }
         status = "failed";
@@ -712,7 +716,7 @@ async function turnStart(id: string | undefined, p: Record<string, unknown>): Pr
       if (requireSubmit) {
         if (repairs < SUBMIT_REPAIRS) {
           repairs += 1;
-          emit(sid, execId, "status", { message: `result not submitted; asking for submit_review (${repairs}/${SUBMIT_REPAIRS})` });
+          emit(sid, execId, "status", { message: `result not submitted; asking for ${entry.submitTool} (${repairs}/${SUBMIT_REPAIRS})` });
           message = submitPrompt(entry.submitTool);
           continue;
         }

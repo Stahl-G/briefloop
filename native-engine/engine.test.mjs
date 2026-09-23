@@ -584,6 +584,24 @@ test("one grep call answers several patterns and one read call several pieces", 
   assert.match(await callError("tool_call", { session_id, name: "packet_grep", args: {} }), /至少给一个/);
 });
 
+test("packet_read accepts a more-only model call and rejects an empty request", async () => {
+  const { session_id } = await reviewer();
+  script(reply.tool("packet_read", { more: [
+    { path: "sources/src1.txt" }, { path: "notes.txt", start_line: 2, end_line: 2 },
+  ] }), reply.text('{"read":true}'));
+  const evts = await turn(session_id, "e-more-only", { idle_timeout_s: 30 });
+  const reads = evts.filter(e => e.kind === "tool" && e.name === "packet_read");
+  assert.ok(reads.some(e => e.status === "completed"));
+  assert.ok(!reads.some(e => e.is_error));
+  const result = provider.requests.at(-1).messages.find(m => m.role === "tool");
+  assert.match(JSON.stringify(result.content), /evidence text/);
+  assert.match(JSON.stringify(result.content), /line2/);
+  assert.equal(ends(evts)[0].status, "completed");
+  for (const args of [{}, { more: [] }]) {
+    assert.match(await callError("tool_call", { session_id, name: "packet_read", args }), /至少提供一个读取位置/);
+  }
+});
+
 // Parse only model-visible content: details are not carried into the model's
 // tool result. Offsets exclude the batch label and optional line-range heading.
 function readPage(value) {
@@ -728,6 +746,32 @@ test("an overlong reply is stopped and the model is asked for smaller steps", as
   assert.equal(ends(again).length, 1);
   assert.equal(ends(again)[0].status, "failed");
   assert.match(ends(again)[0].error, /exceeded 2000 characters on 2 consecutive requests/);
+});
+
+test("overlong recovery uses the role's actual submit tool or ordinary chat reply", async () => {
+  const submit = { name: "submit_draft", description: "提交当前稿件", settles: true,
+    parameters: { type: "object", properties: {} } };
+  runnerTool = () => ({ ok: true, settle: '{"saved":true}' });
+  try {
+    const analyst = await reviewer({ role: "analyst", runner_tools: [submit] });
+    script(reply.long(5000), reply.tool("submit_draft"));
+    const evts = await turn(analyst.session_id, "e-analyst-overlong", { max_reply_chars: 2000, idle_timeout_s: 30, require_submit: true });
+    const recovery = JSON.stringify(provider.requests[1].messages.at(-1));
+    assert.match(recovery, /当前角色是 analyst/);
+    assert.match(recovery, /submit_draft/);
+    assert.doesNotMatch(recovery, /submit_review/);
+    assert.equal(ends(evts)[0].final_text, '{"saved":true}');
+
+    const chat = await reviewer({ role: "chat" });
+    script(reply.long(5000), reply.text("已经完成。"));
+    const chatEvents = await turn(chat.session_id, "e-chat-overlong", { max_reply_chars: 2000, idle_timeout_s: 30, expect_json: false });
+    const chatRecovery = JSON.stringify(provider.requests[1].messages.at(-1));
+    assert.match(chatRecovery, /直接简洁回复/);
+    assert.doesNotMatch(chatRecovery, /submit_review|submit_draft/);
+    assert.equal(ends(chatEvents)[0].final_text, "已经完成。");
+  } finally {
+    runnerTool = () => ({ ok: false, error: "no runner tool configured" });
+  }
 });
 
 test("object and array arguments written as JSON strings are decoded before validation", async () => {

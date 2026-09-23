@@ -11,7 +11,7 @@ from briefloop.agent_prompts import system_prompt
 from briefloop.models import ScoutResult
 from briefloop.native_harness import NativeHarness
 from briefloop.native_roles import run_tool, runner_tool_specs, scout_packet
-from briefloop.scout_tools import evidence_errors
+from briefloop.scout_tools import evidence_errors, join_scouts
 from briefloop.store import Store, content_hash
 from briefloop.scout_evidence import begin, close
 
@@ -68,6 +68,49 @@ def test_excerpts_must_be_verbatim_and_where_the_locator_points(tmp_path):
         styled, locator='line 1', excerpt='Each entered an amendment (the "Amendment") on Sept. 1.')]})) == []
     assert '不可解析' in check(locator='second paragraph')[0]
     assert check(locator='', excerpt='') == []
+
+
+@pytest.mark.parametrize('change', [
+    {'excerpt': 'Revenue grew 20% to USD 12 million'},
+    {'locator': 'line 20-22'},
+    {'locator': '第1段'},
+])
+def test_native_and_host_admit_the_same_excerpt_contract(tmp_path, monkeypatch, change):
+    store, run_id, sid = _run(tmp_path)
+    config = _config(store, run_id, 'native')
+    value = _evidence(sid, **change)
+    # Exercise final Native admission as well as the earlier record_evidence
+    # check, e.g. when a persisted slot record was damaged before submission.
+    from briefloop import scout_evidence
+    monkeypatch.setattr(scout_evidence, 'collect', lambda *_: ([value], {}))
+    native = run_tool(store, config, 'submit_scout_result', {'gaps': []})
+    assert not native['ok'] and '证据校验' in native['error']
+    target = store.root / 'jobs' / 'native' / 'result.json'
+    assert not target.exists()
+    host = store.root / 'host-result.json'
+    original = json.dumps({'sources': [value], 'gaps': []}, ensure_ascii=False)
+    host.write_text(original, encoding='utf-8')
+    with pytest.raises(ValueError, match='证据校验') as rejected:
+        join_scouts(store, [host], run_id=run_id)
+    assert str(rejected.value) == native['error']
+    assert host.read_text(encoding='utf-8') == original
+
+
+def test_host_join_rejects_bad_slot_without_discarding_other_results(tmp_path):
+    store, run_id, sid = _run(tmp_path)
+    good, bad = store.root / 'good.json', store.root / 'bad.json'
+    good.write_text(json.dumps({'sources': [_evidence(sid)]}), encoding='utf-8')
+    bad.write_text(json.dumps({'sources': [_evidence(sid, excerpt='Not in the source')]}), encoding='utf-8')
+    originals = {path: path.read_bytes() for path in (good, bad)}
+    with pytest.raises(ValueError, match='不是原文逐字内容'):
+        join_scouts(store, [good, bad], run_id=run_id)
+    assert all(path.read_bytes() == body for path, body in originals.items())
+    # Repair only the rejected slot; merging preserves the original deduplication
+    # and does not turn the Scout's freely worded interpretation into a verdict.
+    bad.write_text(json.dumps({'sources': [_evidence(sid)]}), encoding='utf-8')
+    result = join_scouts(store, [good, bad], run_id=run_id)
+    assert len(result['sources']) == 1
+    assert result['sources'][0]['facts'] == ['Revenue grew 20% to USD 12 million']
 
 
 def test_scout_tools_follow_the_run_web_permission_and_channels(tmp_path):

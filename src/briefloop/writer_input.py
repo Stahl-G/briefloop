@@ -149,23 +149,87 @@ def write_report(store, config, args):
         return {**drafts._save_locked(store, config, value), **pending}
 
 
+class EvidenceCorrection(Input):
+    field: Literal['citations', 'number_bindings', 'temporal_claims']
+    index: int = Field(ge=0)
+    record: dict
+
+
 class AssembleEvidence(EvidenceInput):
     base_revision: Text
+    repair_batch_id: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
+    corrections: list[EvidenceCorrection] = Field(default_factory=list, max_length=120)
+
+
+def _pending_evidence(store, config, request, candidate):
+    """Retain rejected input only. It is never a saved/accepted evidence set."""
+    value = {'attempt_id': config['attempt_id'], 'packet_hash': candidate['packet_hash'],
+             'base_revision': request.base_revision, 'input': _canonical(request)}
+    identity = drafts._hash(value)
+    root = drafts._root(store, config) / 'rejected-evidence'
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / (identity + '.json')
+    if not path.exists():
+        drafts._write(path, value)
+    return identity
+
+
+def _correct_evidence(store, config, request, candidate):
+    from copy import deepcopy
+    path = drafts._root(store, config) / 'rejected-evidence' / (request.repair_batch_id + '.json')
+    if not path.is_file():
+        raise WritingError('unknown_evidence_batch', '未找到本次写作的待修复批次；不要使用其他任务的ID')
+    rejected = drafts._read(path)
+    if (drafts._hash(rejected) != request.repair_batch_id
+            or rejected['attempt_id'] != config['attempt_id']
+            or rejected['packet_hash'] != candidate['packet_hash']
+            or rejected['base_revision'] != request.base_revision):
+        raise WritingError('stale_evidence_batch', '证据批次的稿件、材料或执行身份已变化；请按最新版本重新装配')
+    value = deepcopy(rejected['input'])
+    seen = set()
+    for patch in request.corrections:
+        key = (patch.field, patch.index)
+        records = value.get(patch.field)
+        if key in seen or not isinstance(records, list) or patch.index >= len(records):
+            raise WritingError('invalid_evidence_index', '只能替换拒收批次中已有且不重复的索引', field=patch.field)
+        seen.add(key)
+        records[patch.index] = patch.record
+    # Revalidate every field, not just the corrected records. All accepted
+    # evidence is still committed in a single revision after source checking.
+    return AssembleEvidence.model_validate(value)
 
 
 def assemble_evidence(store, config, args):
     """One evidence batch, one version check and one atomic candidate save."""
     with drafts.guard(store, config):
         request = AssembleEvidence.model_validate(args)
-        if request.model_fields_set == {'base_revision'}:
+        evidence_fields = request.model_fields_set & {'citations', 'number_bindings', 'temporal_claims'}
+        if request.repair_batch_id:
+            if evidence_fields or not request.corrections:
+                raise WritingError('invalid_evidence_repair', '修复时只传base_revision、repair_batch_id和corrections，不重传证据数组')
+        elif request.corrections or 'repair_batch_id' in request.model_fields_set:
+            raise WritingError('invalid_evidence_repair', 'corrections需要失败回执中的repair_batch_id')
+        elif not evidence_fields:
             raise WritingError('empty_change', '请提供至少一类证据字段')
         request_args = _canonical(request)
         replay = drafts._replay_writer_input_locked(store, config, 'assemble_evidence', request_args)
         if replay is not None:
             return replay
-        prior = drafts._candidate(store, config, {'revision': request.base_revision})['draft']
+        candidate = drafts._candidate(store, config, {'revision': request.base_revision})
+        prior = candidate['draft']
         _archive(store, config, 'assemble_evidence', args)
-        changes = assemble_evidence_records(config, request, prior['markdown'], prior.get('citations', []))
+        if any(getattr(request, field) is None for field in evidence_fields):
+            raise WritingError('null_evidence_field', '证据字段不能为null；省略表示保留，清空请传[]。本批未保存，请重交正确数组。')
+        if request.repair_batch_id:
+            request = _correct_evidence(store, config, request, candidate)
+        try:
+            changes = assemble_evidence_records(config, request, prior['markdown'], prior.get('citations', []))
+        except ValueError as exc:
+            batch_id = _pending_evidence(store, config, request, candidate)
+            raise ValueError(dump({'code': 'evidence_batch_rejected', 'errors': str(exc),
+                'base_revision': request.base_revision, 'repair_batch_id': batch_id,
+                'next_operation': 'assemble_evidence',
+                'next_action': '本批未保存。只传base_revision、repair_batch_id与corrections；每项为field、index（从0开始）、record（该条完整修正记录）。正确记录已留存，无需重交；全部重新校验通过才保存。'})) from None
         return drafts._save_locked(store, config, {'base_revision': request.base_revision, **changes},
             writer_request=('assemble_evidence', request_args), response_fields={
                 'evidence_counts': {k: len(v) for k, v in changes.items()},
@@ -370,7 +434,7 @@ def protocol(config):
 def operations():
     result = {
         'write_report': (WriteReport, write_report, '首次保存正文。标题和Markdown，引用用 [@src_ID]。优先只交正文，再用assemble_evidence补证据。兼容同时附证据；定位失败时正文仍保存，回执evidence_status=not_saved，按返回revision修复证据，不重交正文。'),
-        'assemble_evidence': (AssembleEvidence, assemble_evidence, '一次装配保存多类证据。传当前base_revision与改变的证据数组；所传数组整类替换，未传字段保留。citations给source_id/excerpt；数字与日期给source_excerpt，locator可省略，重复摘录才需line范围。数字仍给value/unit、主体期间与正文report_quote/number_text。来源摘录自动登记到citations，不自动给正文加标记。不需要自己编写组装脚本。'),
+        'assemble_evidence': (AssembleEvidence, assemble_evidence, '一次装配保存多类证据。传当前base_revision与改变的证据数组；所传数组整类替换，未传字段保留。citations给source_id/excerpt；数字与日期给source_excerpt，locator可省略，重复摘录才需line范围。数字仍给value/unit、主体期间与正文report_quote/number_text。来源摘录自动登记到citations，不自动给正文加标记。失败回执有repair_batch_id时，只传base_revision、该ID和corrections（field、从0开始的index、该条完整record），不重交正确记录。全部校验通过才保存。不需要自己编写组装脚本。'),
         'write_sections': (WriteSections, write_sections, '长稿分章保存Markdown；修改已存章节附其expected_hash。可一批保存数章。'),
         'assemble_report': (AssembleReport, assemble_report, '按章节ID顺序组装正文，已存完整稿须带base_revision。'),
         'update_draft_details': (DraftDetails, update_draft_details, '单独更新缺口、研究说明或已计算报告数据；只传改变的字段，不重写正文。'),
@@ -424,6 +488,7 @@ def tool_specs():
 GUIDE = '''写作协议 writer_input_v1：正文使用 Markdown，普通表格使用管道表格，引用使用 [@src_ID]，图表使用已登记的 briefloop-figure:fig_ID。不要输出 editor_document、tableRow 或完整 BriefDraft JSON。
 先独立保存正文：短稿 write_report(title, markdown)，长稿 write_sections 后 assemble_report。取得revision后，再一次 assemble_evidence 登记三类证据。兼容同次附证据；如果回执evidence_status=not_saved，正文已保存但证据未保存，按返回revision修正证据，不重交正文。程序生成富文本、按逐字摘录找行号、核对数字的正文片段并装配记录，不要再自己写 Python 组装脚本。citations给source_id/excerpt；数字和日期给source_excerpt；locator唯一匹配时可省略，重复匹配才提供line范围。value/unit、主体、期间、结论与证据的关系仍由你确定，不省略这些语义字段。所传证据数组整类替换，未传的类别保留；少量记录修改继续用 update_citations/update_number_bindings/update_temporal_claims。来源归属、口径、采用条件要求不变。
 同一稿件的写入有先后依赖：每轮只发一个写入调用，等返回新 revision 后再发下一个。不要把多个证据更新放在同一轮共用 base_revision；执行器串行执行也不会自动替换你传入的旧版本。
+assemble_evidence失败后正确记录保留在拒收批次中；用回执的repair_batch_id和corrections只替换错误索引。每项corrections传field、index（从0开始）、record（该条完整修正记录），同时传原base_revision，不重传证据数组。修复后程序仍会完整校验再原子保存；正文或材料变化后旧批次失效。不要把拒收批次当成已保存证据。
 局部证据更新与批量装配使用同一套摘录字段；update_temporal_claims同样接受source_excerpt，程序生成locator。修改某条记录只交该条与record_key，不重传整类数组。
 若 assemble_evidence、assemble_report、update_*、patch_report_text 或 replace_report_blocks 的回执丢失，原样重试同一操作及完整参数；仅当它仍是当前修订时返回 replayed=true。若已被后续修改覆盖，先 read_draft 读取新 revision，不改旧 base_revision 盲目重发。
 取得 revision 后 check_draft 检查；局部文字用 patch_report_text，结构改动先 read_draft(field=body) 取得 block_keys，再 replace_report_blocks。证据修改只交变更记录；每次变更使用最新 base_revision，再检查新 revision。只修明确问题，不反复重交全文。submit_draft 提交已检查的最新 revision，结束写作，不自行评分。

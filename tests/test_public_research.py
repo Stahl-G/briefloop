@@ -31,7 +31,7 @@ def test_public_research_empty_inputs_and_actual_network_instructions(tmp_path):
     acquired=store.add_source('官方披露','预计下一季度交付 10 台。',url='https://example.com/disclosure')
     store.attach_source(run['id'],acquired['id'])
     result=folder/'scout-result.json'
-    result.write_text(dump({'sources':[{'source_id':acquired['id'],'locator':'第1段','excerpt':'预计下一季度交付 10 台。','facts':['预计交付'],'coverage_status':'covered'}],'gaps':[]}))
+    result.write_text(dump({'sources':[{'source_id':acquired['id'],'locator':'line 1','excerpt':'预计下一季度交付 10 台。','facts':['预计交付'],'coverage_status':'covered'}],'gaps':[]}))
     assert join_scouts(store,[str(result)])['sources'][0]['source_id']==acquired['id']
     brief=store.publish(run['id'],{'title':'周报','markdown':'预计下一季度交付。','citations':[{'source_id':acquired['id'],'locator':'第1段'}]})
     score=folder/'scorer';score.mkdir()

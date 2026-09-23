@@ -129,7 +129,7 @@ def host_prompt(store, scout, folder, backend):
             f"PDF 页面用 `{tool} render-source --id SOURCE_ID --pages 1 3` 渲染后读图。{web}"
             "预算以工具返回的 remaining 为准，所有 Scout 共用；出现 budget_exhausted 时停止新增检索，保留已有证据交接。"
             f"把结果按 {folder / 'scout.schema.json'} 写到 {result}（绝对路径），然后用 "
-            f"`{tool} join-scouts --run {run_id} --files {quote_path(result, backend)}` 自检，报错就按错误修正。"
+            f"`{tool} join-scouts --run {run_id} --files {quote_path(result, backend)}` 检查结构、来源归属及摘录定位；报错只修对应条目，原文件保留，通过不代表事实解释已经核实。"
             "最终回复约 200 字以内：状态、核心发现与缺口、结果文件路径。")
 
 

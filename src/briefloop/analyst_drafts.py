@@ -11,7 +11,7 @@ from pathlib import Path
 from .store import dump
 
 CHECK_VERSION = 1
-DIAGNOSTIC_VERSION = 2
+DIAGNOSTIC_VERSION = 3
 
 
 def _hash(value):

@@ -287,7 +287,7 @@ export interface SubmitHooks {
 // carry tool snippets, so the engine states the real toolset itself.
 export const TOOL_GUIDE: Record<string, string> = {
   packet_list: "列出核查包内全部文件及大小。",
-  packet_read: "读取包内文件。核对来源时读完整份或完整相关部分；可用 start_line/end_line 选行、json_path 选 JSON 字段。长文本按返回的 next_start_char 续读，保持选择范围不变；偏移按 Unicode 码点计，eof 仅表示所选正文读完。图片返回图像（不支持时返回说明）。其余读取放进 more；批量未读取的片段须另读。单处最多约 6 万 UTF-16 码元，合计最多 12 万。",
+  packet_read: "读取包内文件。核对来源时读完整份或完整相关部分；可用 start_line/end_line 选行、json_path 选 JSON 字段。长文本按返回的 next_start_char 续读，保持选择范围不变；偏移按 Unicode 码点计，eof 仅表示所选正文读完。图片返回图像（不支持时返回说明）。多处读取可全部放进 more，或用 path 加 more；每处均需 path，批量未读取的片段须另读。单处最多约 6 万 UTF-16 码元，合计最多 12 万。",
   packet_grep: "在包内文本文件中默认按关键词原样查找；仅 regex=true 时使用限时正则。返回文件、行号、命中片段及前后各 1 行，用来找出内容在哪份文件、哪个位置；可用 patterns 一次查多个词。定位后读取相关来源再核对，不要逐个数字搜索。",
   claim_trace: "按 claim_id 一次取回主张内容、支持说明、绑定证据片段、所在正文段落和前提链。",
   calc: "对正文数字做确定性计算：四则运算、^、%、abs/round/min/max/sqrt/ln/log10/exp/pow（多个参数用分号分隔）。用于核对增长率、占比、加总和单位换算，不要心算。",
@@ -374,13 +374,18 @@ export function packetTools(packetRoot: string, hooks?: SubmitHooks, acceptsImag
       "读取核查包内的文件。path 相对核查包根目录（如 target.json、sources/<id>.view.json、history/responses.json）。" +
       "长文本用 start_line/end_line 读取一段；JSON 文件可用 json_path 只取某个字段；图片文件返回图像内容。" +
       "长单行或字段按返回的 next_start_char 续读（Unicode 码点），eof 仅指所选正文。" +
-      "要同时读几处时放进 more；受合计额度限制而未读取的片段须另读。",
+      "要同时读几处时可全部放进 more，不必另填根级 path；受合计额度限制而未读取的片段须另读。",
     parameters: Type.Object({
       ...readParams,
+      path: Type.Optional(readParams.path),
       more: Type.Optional(Type.Array(Type.Object(readParams), { description: "同时读取的其他片段，最多 8 处", maxItems: 8 })),
     }),
     execute: async (_id, params) => {
-      const specs: ReadSpec[] = [params, ...(params.more ?? [])].slice(0, 9);
+      const specs: ReadSpec[] = [...(params.path !== undefined ? [{ ...params, path: params.path }] : []), ...(params.more ?? [])].slice(0, 9);
+      if (!specs.length) throw new Error('至少提供一个读取位置：{"path":"source-index.json"} 或 {"more":[{"path":"source-index.json"}]}');
+      if (params.path === undefined && [params.start_line, params.end_line, params.json_path, params.start_char].some(value => value !== undefined)) {
+        throw new Error("根级读取范围需要 path；仅使用 more 时，请把读取范围放在对应的 more 项中");
+      }
       if (specs.length === 1) return readOne(specs[0]);
       // Budget labels, complete status footers and unread notices before body
       // slicing. A batch must never clip a page again after computing its cursor.

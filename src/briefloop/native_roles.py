@@ -529,8 +529,7 @@ def extract_pages(store, config, args):
 
 def submit_scout_result(store, config, args):
     from pydantic import ValidationError
-    from .models import ScoutResult
-    from .scout_tools import evidence_errors, join_scouts
+    from .scout_tools import validate_scout_result
     from .scout_evidence import collect
     try:
         if 'sources' in args:
@@ -542,20 +541,14 @@ def submit_scout_result(store, config, args):
             raise ValueError('没有证据时须说明具体缺口，不能空提交')
         if discarded:
             data['gaps'] = list(data.get('gaps', [])) + [f'未采用证据 {eid}：{reason}' for eid, reason in discarded.items()]
-        result = ScoutResult.model_validate(data)
+        result = validate_scout_result(store, data, run_id=config['run_id'])
     except (ValidationError, ValueError) as exc:
         raise ToolError(str(exc)[:1500]) from exc
-    errors = evidence_errors(store, config['run_id'], result)
-    if errors:
-        raise ToolError('研究结果未通过证据校验，修正后重新提交：\n' + '\n'.join(errors[:20]))
-    target = Path(config['result_file'])
+    target = Path(config['result_file']).resolve()
+    if not target.is_relative_to(store.root.resolve()):
+        raise ToolError('Scout output must be inside this workspace')
     text = json.dumps(result.model_dump(), ensure_ascii=False, indent=1)
     _atomic(target, text)
-    try:
-        join_scouts(store, [target], run_id=config['run_id'])
-    except ValueError as exc:
-        target.unlink(missing_ok=True)
-        raise ToolError('研究结果未通过合并校验，修正后重新提交：' + str(exc)) from exc
     return {'content': [{'type': 'text', 'text': f'研究结果已保存（{len(result.sources)} 条来源，{len(result.gaps)} 个缺口），本槽位结束。'}],
             'settle': json.dumps({'sources': len(result.sources), 'gaps': len(result.gaps)}, ensure_ascii=False)}
 

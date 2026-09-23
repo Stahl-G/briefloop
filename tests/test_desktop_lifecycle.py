@@ -28,7 +28,7 @@ def service(tmp_path):
     try:yield server,request
     finally:
         server.shutdown();thread.join(timeout=5)
-        server.harness.close();server.opencode_harness.close();server.runtime_bridge.close()
+        server.harness.close();server.opencode_harness.close();server.native_harness.close();server.runtime_bridge.close()
         server.server_close();server.workspace_lock.close()
 
 
@@ -94,13 +94,48 @@ def test_cleanup_attempts_every_owner_and_releases_socket_and_lock_after_failure
         return SimpleNamespace(close=close)
     server=SimpleNamespace(bridge_harnesses={'synthetic':closer('bridge',True)},
                            worker=closer('worker',True),harness=closer('harness'),
-                           opencode_harness=closer('opencode'),runtime_bridge=closer('runtime_bridge'),
+                           opencode_harness=closer('opencode'),native_harness=closer('native',True),
+                           runtime_bridge=closer('runtime_bridge'),
                            server_close=closer('socket').close,workspace_lock=closer('lock'))
     errors=_close_service(server)
-    assert seen==['bridge','worker','harness','opencode','runtime_bridge','socket','lock']
+    assert seen==['bridge','worker','harness','opencode','native','runtime_bridge','socket','lock']
     assert errors==[{'component':'bridge:synthetic','error_type':'RuntimeError'},
-                    {'component':'worker','error_type':'RuntimeError'}]
+                    {'component':'worker','error_type':'RuntimeError'},
+                    {'component':'native','error_type':'RuntimeError'}]
     assert 'synthetic private diagnostic' not in json.dumps(errors)
+
+
+def test_service_cleanup_closes_native_owner_and_process_once(tmp_path,monkeypatch):
+    """Exercise the real manager/engine ownership with a harmless local child."""
+    import sys
+    from briefloop.platform_support import OwnedProcess, WorkspaceLock
+    server=make_server(tmp_path/'native-owner',port=0,paused=True)
+    server.worker.start()
+    engine=server.native_engine
+    assert server.native_harness.engine is engine
+    child=OwnedProcess([sys.executable,'-c','import time; time.sleep(60)'],parent_death=True)
+    engine._process=child
+    closed=[];calls=[];original=engine.close
+    def close():
+        closed.append('engine');original()
+    def call(method,params,timeout):
+        calls.append(method)
+        assert method=='shutdown' and params=={}
+        return {'ok':True}
+    monkeypatch.setattr(engine,'close',close)
+    monkeypatch.setattr(engine,'call',call)
+    try:
+        assert _close_service(server)==[]
+        assert calls==['shutdown'] and closed==['engine']
+        assert server.native_harness._closed and engine._closed
+        assert child.poll() is not None
+        assert not server.worker.thread.is_alive()
+        # Closing the process precedes releasing ownership of the workspace.
+        replacement=WorkspaceLock(server.store.root)
+        replacement.close()
+    finally:
+        if child.poll() is None:child.close_tree(timeout=.2)
+        server.server_close();server.workspace_lock.close()
 
 
 def test_cancel_failure_is_recorded_and_running_job_remains_recoverable(service,monkeypatch):

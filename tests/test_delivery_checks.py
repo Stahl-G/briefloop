@@ -74,6 +74,18 @@ def test_number_source_excerpt_is_checked_only_at_its_locator(tmp_path):
         assert not result['checked'] and not result['found'], (locator, result)
 
 
+def test_incomplete_supported_token_is_repairable_not_semantic_unknown(tmp_path):
+    store = Store(tmp_path)
+    quote = '收入增长20%。'
+    item = bound(store, quote, '20', 20, '%', '收入增长20%。')
+    result = check_numbers(quote, [item], store)[0]
+    assert not result['checked'] and result['remediation'] == 'repair_binding'
+    assert result['suggested_number_text'] == '20%'
+    unsupported = bound(store, '电量20MWh', '20', 20, 'MWh', '电量20MWh')
+    result = check_numbers('电量20MWh', [unsupported], store)[0]
+    assert not result['checked'] and result['remediation'] == 'semantic_review'
+
+
 def test_located_magnitude_mismatch_blocks_even_when_reviewer_supports_claim(tmp_path):
     from briefloop.evidence import bind_claim, blocks, create_claim, create_span
     from briefloop.document_model import brief_document

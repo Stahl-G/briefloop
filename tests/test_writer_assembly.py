@@ -154,3 +154,101 @@ def test_local_number_update_rejects_ambiguous_body_without_saving(tmp_path):
     with pytest.raises(ValueError, match='report_quote'):
         update(store, config, {'base_revision': first['revision'], 'records': [number(source['id'])]})
     assert drafts._read(drafts._root(store, config)/'current.json')['revision'] == first['revision']
+
+
+def test_failed_batch_repairs_only_bad_record_and_replays_atomically(tmp_path):
+    store, run, source, config = setup_writer(tmp_path)
+    sid = source['id']
+    first = writer.write_report(store, config, {'title': '报告', 'markdown': f'收入增长20%。[@{sid}]'})
+    valid = number(sid)
+    request = {'base_revision': first['revision'], 'number_bindings': [valid],
+               'citations': [{'source_id': sid, 'excerpt': '不存在的摘录'}]}
+    with pytest.raises(ValueError) as error:
+        writer.assemble_evidence(store, config, request)
+    rejected = json.loads(str(error.value))
+    assert rejected['code'] == 'evidence_batch_rejected'
+    repair = {'base_revision': first['revision'], 'repair_batch_id': rejected['repair_batch_id'],
+              'corrections': [{'field': 'citations', 'index': 0,
+                              'record': {'source_id': sid, 'excerpt': valid['source_excerpt']}}]}
+    saved = writer.assemble_evidence(store, config, repair)
+    assert writer.assemble_evidence(store, config, repair) == {**saved, 'replayed': True}
+    candidate = drafts._candidate(store, config, {'revision': saved['revision']})['draft']
+    assert candidate['number_bindings'][0]['value'] == 20  # not resent by the author
+    assert candidate['citations'][0]['excerpt'] == valid['source_excerpt']
+    assert drafts.check(store, config, {'revision': saved['revision']})['diagnostics']['numbers']['checked'] == 1
+    drafts.submit(store, config, {'revision': saved['revision']})
+
+
+def test_evidence_repair_rejects_stale_scope_and_invalid_indexes(tmp_path):
+    store, run, source, config = setup_writer(tmp_path)
+    first = writer.write_report(store, config, {'title': '报告', 'markdown': '收入增长20%。'})
+    with pytest.raises(ValueError) as error:
+        writer.assemble_evidence(store, config, {'base_revision': first['revision'],
+            'citations': [{'source_id': source['id'], 'excerpt': '不存在'}]})
+    receipt = json.loads(str(error.value))
+    patch = {'field': 'citations', 'index': 0, 'record': {'source_id': source['id'],
+                                                      'excerpt': number(source['id'])['source_excerpt']}}
+    args = {'base_revision': first['revision'], 'repair_batch_id': receipt['repair_batch_id'], 'corrections': [patch]}
+    for edits in ({'corrections': [dict(patch, index=1)]}, {'corrections': [patch, patch]},
+                  {'repair_batch_id': '0'*64}, {'corrections': []}, {'citations': []}):
+        with pytest.raises(ValueError):
+            writer.assemble_evidence(store, config, {**args, **edits})
+    before = drafts._read(drafts._root(store, config)/'current.json')
+    assert before['revision'] == first['revision']
+    with pytest.raises(ValueError):
+        writer.assemble_evidence(store, {**config, 'attempt_id': 'another'}, args)
+    updated = writer.patch_report_text(store, config, {'base_revision': first['revision'],
+                    'replacements': [{'old_text': '收入', 'new_text': '当年收入'}]})
+    with pytest.raises(ValueError, match='最新稿件版本'):
+        writer.assemble_evidence(store, config, args)
+    with pytest.raises(ValueError, match='stale_evidence_batch'):
+        writer.assemble_evidence(store, config, {**args, 'base_revision': updated['revision']})
+
+
+def test_evidence_repair_rechecks_all_sources_and_keeps_failed_input(tmp_path):
+    store, run, source, config = setup_writer(tmp_path)
+    first = writer.write_report(store, config, {'title': '报告', 'markdown': '收入增长20%。'})
+    with pytest.raises(ValueError) as error:
+        writer.assemble_evidence(store, config, {'base_revision': first['revision'],
+            'citations': [{'source_id': source['id'], 'excerpt': '不存在'}]})
+    receipt = json.loads(str(error.value))
+    pending = drafts._root(store, config)/'rejected-evidence'/(receipt['repair_batch_id']+'.json')
+    original = pending.read_bytes()
+    (store.root/source['path']).write_text('来源更新了')
+    with pytest.raises(ValueError):
+        writer.assemble_evidence(store, config, {'base_revision': first['revision'],
+            'repair_batch_id': receipt['repair_batch_id'], 'corrections': [{'field': 'citations', 'index': 0,
+                'record': {'source_id': source['id'], 'excerpt': number(source['id'])['source_excerpt']}}]})
+    assert pending.read_bytes() == original
+    assert drafts._read(drafts._root(store, config)/'current.json')['revision'] == first['revision']
+
+
+def test_bare_number_location_expands_only_equal_body_quantity(tmp_path):
+    store, run, source, config = setup_writer(tmp_path)
+    binding = dict(number(source['id']), number_text='20')
+    saved = writer.write_report(store, config, {'title': '报告', 'markdown': '收入增长20%。',
+                                               'number_bindings': [binding]})
+    record = drafts._candidate(store, config, {'revision': saved['revision']})['draft']['number_bindings'][0]
+    assert record['number_text'] == '20%'
+    assert record['value'] == binding['value'] and record['unit'] == binding['unit']
+    assert drafts.check(store, config, {'revision': saved['revision']})['diagnostics']['numbers']['checked'] == 1
+    from briefloop.delivery_checks import complete_number_token
+    assert complete_number_token('收入120%', '20', 20, '%') is None
+    assert complete_number_token('收入120%', '20', 120, '%') is None
+    assert complete_number_token('新增20家公司', '20', 20, '人') is None
+    assert complete_number_token('新增20家公司', '20', 20, '家') == '20家'
+    assert complete_number_token('价格20美元/件', '20', 20, '美元/件') is None
+    assert complete_number_token('20%与20%', '20', 20, '%') is None
+    assert complete_number_token('收入20元', '20', 20, '%') is None
+
+
+def test_null_evidence_field_has_no_unusable_repair_batch(tmp_path):
+    store, run, source, config = setup_writer(tmp_path)
+    saved = writer.write_report(store, config, {'title': '报告', 'markdown': '收入增长20%。'})
+    args = {'base_revision': saved['revision'], 'citations': None}
+    with pytest.raises(ValueError) as error:
+        writer.assemble_evidence(store, config, args)
+    diagnostic = json.loads(str(error.value))
+    assert diagnostic['code'] == 'null_evidence_field' and 'repair_batch_id' not in diagnostic
+    assert not (drafts._root(store, config)/'rejected-evidence').exists()
+    writer.assemble_evidence(store, config, {**args, 'citations': []})

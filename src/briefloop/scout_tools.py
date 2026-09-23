@@ -1,4 +1,4 @@
-"""Structural joining only; Analyst resolves semantic conflicts."""
+"""Shared Scout admission and joining; Analyst resolves semantic conflicts."""
 from pathlib import Path
 import json
 import re
@@ -26,8 +26,33 @@ def _locator_problem(locator):
     return '必须是 line 3、line 3-7、page 2 这样的行号/页码，或序列化为字符串的证据定位 JSON'
 
 
+def validate_scout_result(store, value, *, run_id=None):
+    """One admission contract for runner tools and CLI-produced slot files.
+
+    Source ownership and excerpt location are checked, not whether the Scout's
+    interpretation in facts is true. Rejection never modifies the input file.
+    """
+    result = ScoutResult.model_validate(value)
+    allowed = set(store.source_ids(run_id)) if run_id else None
+    for item in result.sources:
+        store.one('sources', item.source_id)
+        if allowed is not None and item.source_id not in allowed:
+            raise ValueError('Scout 来源未登记到本轮报告：' + item.source_id)
+        for claim_id in item.claim_ids:
+            from .evidence import record
+            claim = record(store, 'claims', claim_id)
+            if run_id and claim['run_id'] != run_id:
+                raise ValueError('Scout 引用了不属于本轮的主张')
+            if claim['data'].get('claim_role', 'report_statement') != 'source_statement':
+                raise ValueError('Scout 的 claim_ids 只能引用来源陈述')
+    errors = evidence_errors(store, run_id, result)
+    if errors:
+        raise ValueError('研究结果未通过证据校验，修正后重新提交：\n' + '\n'.join(errors[:20]))
+    return result
+
+
 def join_scouts(store, paths, *, run_id=None, round_id=None, slots=None):
-    """Structural merge only; no semantic adjudication.
+    """Merge results after shared source/excerpt admission, not semantic judgment.
 
     With a run/round/slot contract it also checks that each result belongs to an
     allocated slot and that every referenced source/claim is allowed for the run.
@@ -47,18 +72,8 @@ def join_scouts(store, paths, *, run_id=None, round_id=None, slots=None):
         if not path.is_relative_to(store.root):raise ValueError('Scout output must be inside this workspace')
         if allowed_slots is not None and str(path) not in allowed_slots:
             raise ValueError('Scout 输出文件不在本任务分配的槽位内：'+path.name)
-        result=ScoutResult.model_validate(json.loads(path.read_text(encoding='utf-8-sig')))
-        allowed=set(store.source_ids(run_id)) if run_id else None
+        result=validate_scout_result(store,json.loads(path.read_text(encoding='utf-8-sig')),run_id=run_id)
         for item in result.sources:
-            store.one('sources',item.source_id)
-            if allowed is not None and item.source_id not in allowed:
-                raise ValueError('Scout 来源未登记到本轮报告：'+item.source_id)
-            for claim_id in item.claim_ids:
-                from .evidence import record
-                claim=record(store,'claims',claim_id)
-                if run_id and claim['run_id']!=run_id:raise ValueError('Scout 引用了不属于本轮的主张')
-                if claim['data'].get('claim_role','report_statement')!='source_statement':
-                    raise ValueError('Scout 的 claim_ids 只能引用来源陈述')
             data=item.model_dump();key=json.dumps(data,sort_keys=True,ensure_ascii=False)
             if key not in seen:results.append(data);seen.add(key)
         for gap in result.gaps:

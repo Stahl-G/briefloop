@@ -106,6 +106,10 @@ def resolve_record(field, value, markdown, locate, *, require_number_quote=True)
                 raise ValueError('report_quote 必须在保存后的正文中逐字唯一，请用 read_draft(field=body) 读取准确片段')
             if not token or quote.count(token) != 1:
                 raise ValueError('number_text 必须在 report_quote 中逐字唯一；缩小到对应数值的准确正文片段')
+            from .delivery_checks import complete_number_token
+            complete = complete_number_token(quote, token, value.get('value'), value.get('unit', ''))
+            if complete:
+                value['number_text'] = complete
     if field == 'temporal_claims':
         value.pop('source_excerpt')
     return value
